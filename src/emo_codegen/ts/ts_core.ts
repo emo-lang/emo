@@ -504,6 +504,26 @@ function utf8IndexOf(s: string, needle: string): number {
   return -1;
 }
 
+// `trim` strips the interpreter's five whitespace bytes — space, tab,
+// newline, carriage return, form feed — and `lower` folds A–Z only. The
+// methods see bytes, so neither reaches past ASCII the way the JS
+// `trim` (every Unicode space) and `toLowerCase` (every script) do.
+function isTrimSpace(c: number): boolean {
+  return c === 32 || c === 9 || c === 10 || c === 13 || c === 12;
+}
+
+function asciiTrim(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && isTrimSpace(s.charCodeAt(a))) a++;
+  while (b > a && isTrimSpace(s.charCodeAt(b - 1))) b--;
+  return s.slice(a, b);
+}
+
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
 // Deep equality: primitives by value, compounds element-wise,
 // instances through their class-declared content (__eq).
 function deepEq(a: any, b: any): boolean {
@@ -1503,8 +1523,8 @@ const E: any = {
           throw new Error("`split` expects a non-empty String separator");
         return new EArray(recv.split(sep));
       }
-      if (name === "trim") return recv.trim();
-      if (name === "lower") return recv.toLowerCase();
+      if (name === "trim") return asciiTrim(recv);
+      if (name === "lower") return asciiLower(recv);
       if (name === "index_of")
         return BigInt(utf8IndexOf(recv, args[0] as string));
       if (name === "starts_with") return recv.startsWith(args[0] as string);

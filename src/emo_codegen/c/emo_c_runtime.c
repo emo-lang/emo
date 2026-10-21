@@ -418,11 +418,18 @@ emo_value emo_cell_lower(emo_value s) {
   return emo_autorelease(v);
 }
 
+/* The five bytes `trim` strips, the interpreter's set: space, tab,
+   newline, carriage return, form feed — not the vertical tab, and
+   nothing else below 0x20. */
+static int emo_trim_space(unsigned char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+}
+
 emo_value emo_cell_trim(emo_value s) {
   emo_str src = emo_str_of(s);
   int64_t lo = 0, hi = src.len;
-  while (lo < hi && (unsigned char)src.bytes[lo] <= ' ') lo++;
-  while (hi > lo && (unsigned char)src.bytes[hi - 1] <= ' ') hi--;
+  while (lo < hi && emo_trim_space((unsigned char)src.bytes[lo])) lo++;
+  while (hi > lo && emo_trim_space((unsigned char)src.bytes[hi - 1])) hi--;
   return emo_autorelease(emo_box_str((emo_str){hi - lo, src.bytes + lo}));
 }
 
@@ -3645,23 +3652,47 @@ emo_str emo_str_lower(emo_str s) {
 
 emo_str emo_str_trim(emo_str s) {
   int64_t lo = 0, hi = s.len;
-  while (lo < hi && (unsigned char)s.bytes[lo] <= ' ') lo++;
-  while (hi > lo && (unsigned char)s.bytes[hi - 1] <= ' ') hi--;
+  while (lo < hi && emo_trim_space((unsigned char)s.bytes[lo])) lo++;
+  while (hi > lo && emo_trim_space((unsigned char)s.bytes[hi - 1])) hi--;
   return emo_str_from_parts(s.bytes + lo, hi - lo);
 }
 
 int64_t emo_str_length(emo_str s) { return s.len; }
 
+/* The interpreter's parse_decimal: an optional leading '-', then one or
+   more digits and nothing else — no sign '+', no surrounding space —
+   within Int64; the digits accumulate unsigned so the magnitude check
+   can admit -9223372036854775808. */
 int64_t emo_str_to_int64(emo_str s) {
-  char *clean = (char *)emo_str_cstr(emo_str_trim(s));
-  char *end = NULL;
-  long long v = strtoll(clean, &end, 10);
-  if (end == clean || *end != '\0') {
+  int64_t i = 0;
+  int neg = 0;
+  if (s.len > 0 && s.bytes[0] == '-') {
+    neg = 1;
+    i = 1;
+  }
+  int ok = i < s.len;
+  uint64_t acc = 0;
+  for (; ok && i < s.len; i++) {
+    unsigned char c = (unsigned char)s.bytes[i];
+    if (c < '0' || c > '9') {
+      ok = 0;
+      break;
+    }
+    uint64_t d = (uint64_t)(c - '0');
+    if (acc > (UINT64_MAX - d) / 10) {
+      ok = 0;
+      break;
+    }
+    acc = acc * 10 + d;
+  }
+  uint64_t limit = neg ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
+  if (ok && acc > limit) ok = 0;
+  if (!ok) {
     fprintf(stderr, "uncaught exception: cannot parse `%.*s` as an Int64\n",
             (int)s.len, s.bytes);
     exit(70);
   }
-  return (int64_t)v;
+  return neg ? (int64_t)(0ULL - acc) : (int64_t)acc;
 }
 
 emo_value emo_str_split(emo_str s, emo_str sep) {

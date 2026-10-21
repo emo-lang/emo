@@ -349,6 +349,7 @@ let wasm_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";
@@ -400,6 +401,7 @@ let beam_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";
@@ -606,6 +608,7 @@ let c_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";

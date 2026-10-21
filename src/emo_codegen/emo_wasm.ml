@@ -256,6 +256,10 @@ let rt = function
   | "str_starts_with" -> 90
   | "str_split" -> 91
   | "tuple_str" -> 92
+  | "str_index_of" -> 93
+  | "str_trim" -> 94
+  | "str_lower" -> 95
+  | "str_to_int64" -> 96
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -265,9 +269,10 @@ let rt = function
    them for the same reason, as do the array and builder renderings
    (73..74) the `to_str` chain calls, the Map ops (75..86) after
    those, the Bytes rendering (87), the send snapshot's deep copy
-   (88), the String split surface (89..91), and the tuple rendering
-   (92) last. *)
-let runtime_count = 93
+   (88), the String split surface (89..91), the tuple rendering
+   (92), and the rest of the String surface — index_of, trim, lower,
+   to_int64 (93..96) — last. *)
+let runtime_count = 97
 
 (* ---- Lowering state ---- *)
 
@@ -989,6 +994,16 @@ and method_call env self_ name args =
       expr env self_;
       expr env prefix;
       e env (W.Call (rt "str_starts_with"))
+  | "index_of", [ needle ] ->
+      expr env self_;
+      expr env needle;
+      e env (W.Call (rt "str_index_of"))
+  | "trim", [] ->
+      expr env self_;
+      e env (W.Call (rt "str_trim"))
+  | "lower", [] ->
+      expr env self_;
+      e env (W.Call (rt "str_lower"))
   | "split", [ sep ] ->
       expr env self_;
       expr env sep;
@@ -1168,17 +1183,27 @@ and method_call env self_ name args =
       e env (W.Struct_get (t_vfloat, 0));
       e env W.I64_trunc_f64_s;
       e env (W.Struct_new t_vint)
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
+      expr env self_;
+      e env (W.Call (rt "str_to_int64"))
   | "to_int64", [] ->
-      (* identity for Int64 and Byte; a String receiver would parse, which
-         this target does not do yet — the shape test keeps it from
-         passing the string through. *)
+      (* identity for Int64 and Byte; a String receiver the static type
+         did not name parses at run time — the shape test tells them
+         apart, and anything else traps. *)
       let recv = fresh_local env "__to_int64_recv" W.Anyref in
       expr env self_;
       e env (W.Local_set recv);
-      e env (W.Local_get recv);
-      e env (W.Ref_test t_vint);
-      e env (W.If (W.Void, [], [ W.Unreachable ]));
-      e env (W.Local_get recv)
+      e env
+        (W.If_else
+           ( W.Result W.Anyref,
+             [ W.Local_get recv; W.Ref_test t_vstring ],
+             [ W.Local_get recv; W.Call (rt "str_to_int64") ],
+             [
+               W.Local_get recv;
+               W.Ref_test t_vint;
+               W.If (W.Void, [], [ W.Unreachable ]);
+               W.Local_get recv;
+             ] ))
   | "to_byte", [] ->
       expr env self_;
       mask_byte env
@@ -5004,6 +5029,370 @@ let rt_tuple_str : W.func_type =
       @ [ W.Call (rt "strcat"); W.Local_set 1; W.Local_get 1; W.Struct_new t_vstring ];
   }
 
+(* index_of(recv, needle) -> $vint: the byte offset of the needle's
+   first occurrence, -1 when absent, an empty needle found at 0 — the
+   interpreter's rule. Locals: 2 src, 3 needle, 4 i, 5 k. *)
+let rt_str_index_of : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "s"; "needle" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (2, W.I32) ];
+    fbody =
+      bytes_of 0 @ [ W.Local_set 2 ] @ bytes_of 1
+      @ [
+          W.Local_set 3;
+          W.I32_const 0;
+          W.Local_set 4;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      (* the needle no longer fits: absent *)
+                      W.Local_get 4;
+                      W.Local_get 3;
+                      W.Array_len t_bytes;
+                      W.I32_add;
+                      W.Local_get 2;
+                      W.Array_len t_bytes;
+                      W.I32_gt;
+                      W.Br_if 1;
+                      W.I32_const 0;
+                      W.Local_set 5;
+                      W.Block
+                        ( W.Void,
+                          [
+                            W.Loop
+                              ( W.Void,
+                                [
+                                  (* every needle byte matched: found here *)
+                                  W.Local_get 5;
+                                  W.Local_get 3;
+                                  W.Array_len t_bytes;
+                                  W.I32_ge;
+                                  W.If
+                                    ( W.Void,
+                                      [
+                                        W.Local_get 4;
+                                        W.I64_extend_i32_s;
+                                        W.Struct_new t_vint;
+                                        W.Return;
+                                      ],
+                                      [] );
+                                  (* a differing byte: the next position *)
+                                  W.Local_get 2;
+                                  W.Local_get 4;
+                                  W.Local_get 5;
+                                  W.I32_add;
+                                  W.Array_get_u t_bytes;
+                                  W.Local_get 3;
+                                  W.Local_get 5;
+                                  W.Array_get_u t_bytes;
+                                  W.I32_ne;
+                                  W.Br_if 1;
+                                  W.Local_get 5;
+                                  W.I32_const 1;
+                                  W.I32_add;
+                                  W.Local_set 5;
+                                  W.Br 0;
+                                ] );
+                          ] );
+                      W.Local_get 4;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 4;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.I64_const (-1L);
+          W.Struct_new t_vint;
+        ];
+  }
+
+(* The byte of a bytes local at an index is one of trim's five: space,
+   tab, newline, carriage return, form feed — the interpreter's set, so
+   not the vertical tab. *)
+let trim_space_at (bytes : int) (idx : W.instr list) : W.instr list =
+  let byte = (W.Local_get bytes :: idx) @ [ W.Array_get_u t_bytes ] in
+  List.concat
+    (List.mapi
+       (fun k c ->
+         byte @ [ W.I32_const c; W.I32_eq ] @ if k = 0 then [] else [ W.I32_or ])
+       [ 32; 9; 10; 13; 12 ])
+
+(* trim(recv) -> $vstring: the receiver without its leading and trailing
+   trim spaces, sliced once. Locals: 1 src, 2 lo, 3 hi. *)
+let rt_str_trim : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals = [ (1, W.RefNull t_bytes); (2, W.I32) ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set 1;
+          W.I32_const 0;
+          W.Local_set 2;
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [ W.Local_get 2; W.Local_get 3; W.I32_ge; W.Br_if 1 ]
+                    @ trim_space_at 1 [ W.Local_get 2 ]
+                    @ [
+                        W.I32_eqz;
+                        W.Br_if 1;
+                        W.Local_get 2;
+                        W.I32_const 1;
+                        W.I32_add;
+                        W.Local_set 2;
+                        W.Br 0;
+                      ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 2;
+                      W.I32_gt;
+                      W.I32_eqz;
+                      W.Br_if 1;
+                    ]
+                    @ trim_space_at 1
+                        [ W.Local_get 3; W.I32_const 1; W.I32_sub ]
+                    @ [
+                        W.I32_eqz;
+                        W.Br_if 1;
+                        W.Local_get 3;
+                        W.I32_const 1;
+                        W.I32_sub;
+                        W.Local_set 3;
+                        W.Br 0;
+                      ] );
+              ] );
+          W.Local_get 1;
+          W.Local_get 2;
+          W.Local_get 3;
+          W.Local_get 2;
+          W.I32_sub;
+          W.Call (rt "str_slice");
+          W.Struct_new t_vstring;
+        ];
+  }
+
+(* lower(recv) -> $vstring: A–Z folded to a–z, every other byte kept.
+   Locals: 1 src, 2 out, 3 i, 4 c. *)
+let rt_str_lower : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (2, W.I32) ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Array_new_default t_bytes;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 1;
+                      W.Array_len t_bytes;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 1;
+                      W.Local_get 3;
+                      W.Array_get_u t_bytes;
+                      W.Local_set 4;
+                      W.Local_get 4;
+                      W.I32_const 65;
+                      W.I32_ge;
+                      W.Local_get 4;
+                      W.I32_const 90;
+                      W.I32_gt;
+                      W.I32_eqz;
+                      W.I32_and;
+                      W.If
+                        ( W.Void,
+                          [
+                            W.Local_get 4;
+                            W.I32_const 32;
+                            W.I32_add;
+                            W.Local_set 4;
+                          ],
+                          [] );
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Local_get 4;
+                      W.Array_set t_bytes;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 2;
+          W.Struct_new t_vstring;
+        ];
+  }
+
+(* to_int64(recv) -> $vint: the interpreter's parse_decimal — an optional
+   leading '-', then digits only, within Int64 — raising its message
+   otherwise. The value accumulates negative so one floor admits
+   -9223372036854775808 and rejects 9223372036854775808. Locals: 1 src,
+   2 i, 3 neg, 4 scratch (the message constants), 5 acc, 6 floor,
+   7 message, 8 digit. *)
+let rt_str_to_int64 : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (2, W.I32);
+        (1, W.RefNull t_bytes);
+        (2, W.I64);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set 1;
+          W.I32_const 0;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.I64_const 0L;
+          W.Local_set 5;
+          (* a leading '-' *)
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.I32_const 0;
+          W.I32_gt;
+          W.If
+            ( W.Void,
+              [
+                W.Local_get 1;
+                W.I32_const 0;
+                W.Array_get_u t_bytes;
+                W.I32_const 45;
+                W.I32_eq;
+                W.If
+                  ( W.Void,
+                    [ W.I32_const 1; W.Local_set 3; W.I32_const 1; W.Local_set 2 ],
+                    [] );
+              ],
+              [] );
+          (* the floor the running value may not pass: Int64's minimum
+             for a negative number, one above it for a positive one *)
+          W.I64_const Int64.min_int;
+          W.Local_get 3;
+          W.I32_eqz;
+          W.I64_extend_i32_u;
+          W.I64_add;
+          W.Local_set 6;
+          W.Block
+            ( W.Void,
+              [
+                (* no digit at all *)
+                W.Local_get 2;
+                W.Local_get 1;
+                W.Array_len t_bytes;
+                W.I32_ge;
+                W.Br_if 0;
+                W.Block
+                  ( W.Void,
+                    [
+                      W.Loop
+                        ( W.Void,
+                          [
+                            W.Local_get 2;
+                            W.Local_get 1;
+                            W.Array_len t_bytes;
+                            W.I32_ge;
+                            W.Br_if 1;
+                            (* the byte must be a digit *)
+                            W.Local_get 1;
+                            W.Local_get 2;
+                            W.Array_get_u t_bytes;
+                            W.I32_const 48;
+                            W.I32_sub;
+                            W.Local_set 8;
+                            W.Local_get 8;
+                            W.I32_const 0;
+                            W.I32_lt_s;
+                            W.Local_get 8;
+                            W.I32_const 9;
+                            W.I32_gt;
+                            W.I32_or;
+                            W.Br_if 2;
+                            (* acc * 10 - digit would pass the floor *)
+                            W.Local_get 5;
+                            W.Local_get 6;
+                            W.Local_get 8;
+                            W.I64_extend_i32_s;
+                            W.I64_add;
+                            W.I64_const 10L;
+                            W.I64_div_s;
+                            W.I64_lt_s;
+                            W.Br_if 2;
+                            W.Local_get 5;
+                            W.I64_const 10L;
+                            W.I64_mul;
+                            W.Local_get 8;
+                            W.I64_extend_i32_s;
+                            W.I64_sub;
+                            W.Local_set 5;
+                            W.Local_get 2;
+                            W.I32_const 1;
+                            W.I32_add;
+                            W.Local_set 2;
+                            W.Br 0;
+                          ] );
+                    ] );
+                (* every byte consumed: the value, negated back unless
+                   '-' led *)
+                W.Local_get 3;
+                W.I32_eqz;
+                W.If
+                  ( W.Void,
+                    [ W.I64_const 0L; W.Local_get 5; W.I64_sub; W.Local_set 5 ],
+                    [] );
+                W.Local_get 5;
+                W.Struct_new t_vint;
+                W.Return;
+              ] );
+        ]
+      (* cannot parse `<s>` as an Int64 *)
+      @ (bytes_const "cannot parse `" @ [ W.Local_set 7 ])
+      @ [ W.Local_get 7; W.Local_get 1; W.Call (rt "strcat"); W.Local_set 7 ]
+      @ (W.Local_get 7 :: bytes_const "` as an Int64")
+      @ [
+          W.Call (rt "strcat");
+          W.Struct_new t_vstring;
+          W.Call (rt "throw");
+          W.Unreachable;
+        ];
+  }
+
 (* builder_str(b) -> $vstring: "ArrayBuilder[a, b, c]" over the live
    prefix. Locals: 1 result, 2 builder, 3 i, 4 scratch, 5 first. *)
 let rt_builder_str : W.func_type =
@@ -6771,6 +7160,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_str_starts_with;
         rt_str_split;
         rt_tuple_str;
+        rt_str_index_of;
+        rt_str_trim;
+        rt_str_lower;
+        rt_str_to_int64;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

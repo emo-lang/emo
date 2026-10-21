@@ -1,0 +1,2806 @@
+// The Emo runtime's core: tagged values, the stringification rule,
+// builtins, and method dispatch. It holds no host dependency — the
+// platform-specific half is a host object installed by the file this
+// one is concatenated with: ts_node.ts for a Node program, or
+// ts_browser.ts for a browser bundle. Emitted programs are
+// self-contained; everything lives in one namespace, E.
+
+// The host seam. A Node program runs each task under an async-local
+// store carrying its pid and can host the networking section; a browser
+// program has no async-local storage, no sockets, and no process, so it
+// keeps one pid and refuses the capabilities it cannot honor at build
+// time (the emitter refuses them, so core code never runs them there).
+// `method` answers _hostMethodMiss for every receiver the host does not
+// own, which leaves the core's own dispatch table in charge.
+interface EHost {
+  write(text: string): void;
+  runAs<T>(pid: number, f: () => T): T;
+  currentPid(): number | null;
+  shutdownOnRootEnd(): boolean;
+  shutdown(): void;
+  method(recv: any, name: string, args: any[]): any;
+  runtimeImpl(name: string, args: any[]): any;
+}
+let _host: EHost;
+const _hostMethodMiss = Symbol("host method miss");
+
+const _mailboxes = new Map<number, any[]>();
+const _waiters = new Map<number, (msg: any) => void>();
+let _nextPid = 1;
+
+class EHalt {}
+class EReturn {
+  value: any;
+  constructor(value: any) {
+    this.value = value;
+  }
+}
+
+// The root process is the program: once it ends, every task still
+// parked is dropped. Closing the handles they were parked on is what
+// wakes them, so each resumption point calls _endIfShutdown before it
+// continues — unwinding the task instead of running it past the root.
+// A handle the task owns by then is passed in, so it is released too.
+class EProgramEnd {}
+let _shutdown = false;
+
+function _endIfShutdown(handle?: any): void {
+  if (!_shutdown) return;
+  if (handle) {
+    try {
+      if (handle.destroy) handle.destroy();
+      else if (handle.close) handle.close();
+    } catch (e) {}
+  }
+  throw new EProgramEnd();
+}
+
+// Processes end cleanly on EHalt/EReturn and on an uncaught Emo
+// exception. A spawned process's exception ends that process silently —
+// the root's is reported, matching the native scheduler's event log.
+function _taskError(e: any): any {
+  if (e instanceof EHalt || e instanceof EReturn || e instanceof EProgramEnd)
+    return undefined;
+  if (e instanceof EEmoException) {
+    console.error(
+      "error[E3010]: uncaught exception: " + toStr(e.messageValue)
+    );
+    return undefined;
+  }
+  throw e;
+}
+
+function _taskEnd(e: any): void {
+  if (e instanceof EProgramEnd) return;
+  if (e instanceof EHalt || e instanceof EReturn) return;
+  if (e instanceof EEmoException) return;
+  throw e;
+}
+
+// The root body has ended. On Node that means the program has ended —
+// see the host's shutdownOnRootEnd; in a browser the page keeps its
+// listeners, so only the host's own flush runs here.
+function endRoot(): void {
+  if (_host.shutdownOnRootEnd()) _shutdown = true;
+  _host.shutdown();
+}
+
+// Node runs emitted programs in strip-only mode: plain field
+// declarations and explicit assignments only — no parameter
+// properties, no enums, no decorators.
+
+class EFloat {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class EChar {
+  c: string;
+  constructor(c: string) {
+    this.c = c;
+  }
+}
+
+class EBox {
+  v: any;
+  constructor(v: any) {
+    this.v = v;
+  }
+}
+
+class EBytes {
+  data: Uint8Array;
+  constructor(n: number) {
+    this.data = new Uint8Array(n);
+  }
+}
+
+// The List deque: a doubly-linked chain with O(1) push and pop at both
+// ends. The identity is the object, so mutation is visible through every
+// alias — the same shape a Box takes. Dispatch goes through E.method's
+// EList arms, so the class carries no methods of its own (an `is`
+// interface check stays false, like Box and Bytes).
+class EListNode {
+  v: any;
+  prev: EListNode | null;
+  next: EListNode | null;
+  constructor(v: any) {
+    this.v = v;
+    this.prev = null;
+    this.next = null;
+  }
+}
+
+class EList {
+  head: EListNode | null;
+  tail: EListNode | null;
+  size: number;
+  constructor() {
+    this.head = null;
+    this.tail = null;
+    this.size = 0;
+  }
+}
+
+function listPushFront(l: EList, v: any): EList {
+  const node = new EListNode(v);
+  node.next = l.head;
+  if (l.head) l.head.prev = node;
+  else l.tail = node;
+  l.head = node;
+  l.size++;
+  return l;
+}
+
+function listPushBack(l: EList, v: any): EList {
+  const node = new EListNode(v);
+  node.prev = l.tail;
+  if (l.tail) l.tail.next = node;
+  else l.head = node;
+  l.tail = node;
+  l.size++;
+  return l;
+}
+
+function listPopFront(l: EList): any {
+  if (!l.head) throw new Error("`pop_front` on an empty List");
+  const node = l.head;
+  l.head = node.next;
+  if (l.head) l.head.prev = null;
+  else l.tail = null;
+  l.size--;
+  return node.v;
+}
+
+function listPopBack(l: EList): any {
+  if (!l.tail) throw new Error("`pop_back` on an empty List");
+  const node = l.tail;
+  l.tail = node.prev;
+  if (l.tail) l.tail.next = null;
+  else l.head = null;
+  l.size--;
+  return node.v;
+}
+
+// The ArrayBuilder: a growable array under construction. JS's own
+// Array.push is already amortized O(1), so the class holds the buffer and
+// nothing else; `to_array` hands out a copy through EArray's own slice.
+// Dispatch goes through E.method's EBuilder arms, so the class carries no
+// methods of its own (an `is` interface check stays false, like Box and
+// Bytes).
+class EBuilder {
+  items: any[];
+  constructor() {
+    this.items = [];
+  }
+}
+
+class ETuple {
+  items: any[];
+  constructor(items: any[]) {
+    this.items = items;
+  }
+}
+
+class EArray {
+  items: any[];
+  constructor(items: any[]) {
+    this.items = items;
+  }
+}
+
+// The Map: a mutable, insertion-ordered hash table. JS's own Map keeps
+// insertion order; the keys cross it normalized to tagged strings, so
+// the primitive Emo key types hash and compare per Emo's rule (Int64
+// 1n, Byte 1, and Float64 1.0 are three distinct keys).
+class EMap {
+  entries: Map<string, [any, any]>;
+  constructor() {
+    this.entries = new Map();
+  }
+}
+
+function isMapKey(k: any): boolean {
+  return (
+    typeof k === "string" ||
+    typeof k === "bigint" ||
+    typeof k === "number" ||
+    typeof k === "boolean" ||
+    isFloat(k) ||
+    isChar(k)
+  );
+}
+
+function emoMapKey(k: any): string {
+  if (typeof k === "string") return "s:" + k;
+  if (typeof k === "bigint") return "i:" + k.toString();
+  if (typeof k === "number") return "y:" + k;
+  if (typeof k === "boolean") return "b:" + k;
+  if (isFloat(k)) return "f:" + k.v;
+  if (isChar(k)) return "c:" + k.c;
+  throw new Error(
+    "a map key must be a String, Int64, Byte, Bool, Char, or Float64"
+  );
+}
+
+class EEnum {
+  type: string;
+  member: string;
+  constructor(type: string, member: string) {
+    this.type = type;
+    this.member = member;
+  }
+}
+
+class EPid {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+// A message crosses a process boundary by copy: the receiver must not
+// observe a write the sender makes after the send. The rule is the
+// interpreter's `snapshot` (emo_eval.ml) — every mutable aggregate is
+// rebuilt, while primitive data (Int64, Float64, String, Char, Bool),
+// an Enum, a Pid, and a Closure pass through as-is (the closure is an
+// identity the boundary deliberately shares).
+function deepCopy(v: any): any {
+  if (v instanceof EBox) return new EBox(deepCopy(v.v));
+  if (v instanceof EBytes) {
+    const copy = new EBytes(v.data.length);
+    copy.data.set(v.data);
+    return copy;
+  }
+  if (v instanceof ETuple) return new ETuple(v.items.map(deepCopy));
+  if (v instanceof EArray) return new EArray(v.items.map(deepCopy));
+  if (v instanceof EList) {
+    const copy = new EList();
+    for (let n = v.head; n; n = n.next) listPushBack(copy, deepCopy(n.v));
+    return copy;
+  }
+  if (v instanceof EBuilder) {
+    const copy = new EBuilder();
+    copy.items = v.items.map(deepCopy);
+    return copy;
+  }
+  if (v instanceof EMap) {
+    const copy = new EMap();
+    for (const [key, pair] of v.entries)
+      copy.entries.set(key, [pair[0], deepCopy(pair[1])]);
+    return copy;
+  }
+  // An Emo class instance: the class stays, the fields are copied.
+  // Emitted classes carry their display name as a static `__emo`.
+  const proto =
+    v !== null && typeof v === "object" ? Object.getPrototypeOf(v) : null;
+  const ctor = proto ? proto.constructor : null;
+  if (ctor && typeof ctor.__emo === "string") {
+    const copy = Object.create(proto);
+    for (const key of Object.keys(v)) copy[key] = deepCopy(v[key]);
+    return copy;
+  }
+  return v;
+}
+
+class EEmoException extends Error {
+  messageValue: any;
+  dataValue: any;
+  constructor(messageValue: any, dataValue: any = null) {
+    super("uncaught exception");
+    this.messageValue = messageValue;
+    this.dataValue = dataValue;
+  }
+}
+
+function isFloat(x: any): x is EFloat {
+  return x instanceof EFloat;
+}
+
+function isChar(x: any): x is EChar {
+  return x instanceof EChar;
+}
+
+function isInt(x: any): boolean {
+  return typeof x === "number" && Number.isInteger(x);
+}
+
+// The integer value is an Int64 (BigInt) everywhere; JS-native
+// collections and APIs take numbers — this is the boundary.
+function num(x: any): number {
+  return typeof x === "bigint" ? Number(x) : (x as number);
+}
+
+function isI64(x: any): boolean {
+  return typeof x === "bigint";
+}
+
+// OCaml's %g: six significant digits, exponent form below 1e-4 or at
+// 1e6 and above, exponent spelled with a sign and two digits.
+function g6(x: number): string {
+  if (Number.isNaN(x)) return "nan";
+  if (x === Infinity) return "inf";
+  if (x === -Infinity) return "-inf";
+  if (x === 0) return Object.is(x, -0) ? "-0" : "0";
+  const exp = Math.floor(Math.log10(Math.abs(x)));
+  if (exp < -4 || exp >= 6) {
+    let r = Number((x / Math.pow(10, exp)).toFixed(5));
+    let e = exp;
+    if (Math.abs(r) >= 10) {
+      r = Number((r / 10).toFixed(5));
+      e += 1;
+    }
+    let ms = r.toFixed(5);
+    if (ms.includes(".")) ms = ms.replace(/0+$/, "").replace(/\.$/, "");
+    return (
+      ms + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0")
+    );
+  }
+  const decimals = Math.max(0, 5 - exp);
+  let s = x.toFixed(decimals);
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+}
+
+function floatStr(f: number): string {
+  if (Number.isInteger(f) && Math.abs(f) < 1e16) return f.toFixed(1);
+  return g6(f);
+}
+
+// Strings are UTF-8 on every target, so `to_bytes` and `Bytes.to_string`
+// are the UTF-8 codec, written out like `%g` above. Invalid sequences
+// become U+FFFD (a JS string cannot carry raw non-UTF-8 bytes; the byte
+// targets memcpy, so they keep them).
+
+function utf8Encode(s: string): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    let cp = s.charCodeAt(i);
+    if (cp >= 0xd800 && cp <= 0xdbff && i + 1 < s.length) {
+      const lo = s.charCodeAt(i + 1);
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
+        i++;
+      } else {
+        cp = 0xfffd;
+      }
+    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
+      cp = 0xfffd;
+    }
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800)
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+    else if (cp < 0x10000)
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    else
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 63),
+        0x80 | ((cp >> 6) & 63),
+        0x80 | (cp & 63)
+      );
+  }
+  return Uint8Array.from(out);
+}
+
+function utf8Decode(d: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < d.length; ) {
+    const b = d[i];
+    if (b < 0x80) {
+      s += String.fromCharCode(b);
+      i++;
+      continue;
+    }
+    const len = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+    let cp = 0;
+    let ok = i + len <= d.length;
+    if (ok && len === 2) {
+      cp = b & 0x1f;
+      ok = b >= 0xc2;
+    } else if (ok && len === 3) {
+      cp = b & 0x0f;
+      ok = b >= 0xe0 && b < 0xf0;
+    } else if (ok) {
+      cp = b & 0x07;
+      ok = b >= 0xf0 && b < 0xf5;
+    }
+    for (let k = 1; ok && k < len; k++) {
+      const c = d[i + k];
+      if ((c & 0xc0) !== 0x80) ok = false;
+      else cp = (cp << 6) | (c & 0x3f);
+    }
+    if (
+      !ok ||
+      (len === 3 && cp < 0x800) ||
+      (len === 4 && cp < 0x10000) ||
+      (cp >= 0xd800 && cp <= 0xdfff) ||
+      cp > 0x10ffff
+    ) {
+      s += "\ufffd";
+      i++;
+      continue;
+    }
+    if (cp > 0xffff) {
+      cp -= 0x10000;
+      s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+    } else {
+      s += String.fromCharCode(cp);
+    }
+    i += len;
+  }
+  return s;
+}
+
+// A String is a UTF-8 byte sequence on every target, so `length`,
+// `substring`, and `index_of` count bytes, never UTF-16 code units. An
+// all-ASCII string is its own encoding and takes the JS fast path; any
+// other goes through the codec, and a substring cut inside a multi-byte
+// sequence decodes to U+FFFD here where the byte targets keep the raw
+// bytes.
+const ASCII_ONLY = /^[\x00-\x7f]*$/;
+
+function utf8Length(s: string): number {
+  if (ASCII_ONLY.test(s)) return s.length;
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (
+      c >= 0xd800 &&
+      c <= 0xdbff &&
+      i + 1 < s.length &&
+      (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00
+    ) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
+function utf8Substring(s: string, start: number, len: number): string {
+  const total = utf8Length(s);
+  if (start < 0 || len < 0 || start + len > total)
+    throw new Error(
+      "substring (" + start + ", " + len + ") is out of bounds for a length-" +
+        total + " String"
+    );
+  if (ASCII_ONLY.test(s)) return s.substr(start, len);
+  return utf8Decode(utf8Encode(s).subarray(start, start + len));
+}
+
+function utf8IndexOf(s: string, needle: string): number {
+  if (ASCII_ONLY.test(s) && ASCII_ONLY.test(needle)) return s.indexOf(needle);
+  const h = utf8Encode(s);
+  const n = utf8Encode(needle);
+  outer: for (let i = 0; i + n.length <= h.length; i++) {
+    for (let k = 0; k < n.length; k++) if (h[i + k] !== n[k]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+// `trim` strips the interpreter's five whitespace bytes — space, tab,
+// newline, carriage return, form feed — and `lower` folds A–Z only. The
+// methods see bytes, so neither reaches past ASCII the way the JS
+// `trim` (every Unicode space) and `toLowerCase` (every script) do.
+function isTrimSpace(c: number): boolean {
+  return c === 32 || c === 9 || c === 10 || c === 13 || c === 12;
+}
+
+function asciiTrim(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && isTrimSpace(s.charCodeAt(a))) a++;
+  while (b > a && isTrimSpace(s.charCodeAt(b - 1))) b--;
+  return s.slice(a, b);
+}
+
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+// Deep equality: primitives by value, compounds element-wise,
+// instances through their class-declared content (__eq).
+function deepEq(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (isFloat(a) && isFloat(b)) return a.v === b.v;
+  if (isChar(a) && isChar(b)) return a.c === b.c;
+  if (a instanceof ETuple && b instanceof ETuple)
+    return (
+      a.items.length === b.items.length &&
+      a.items.every((x: any, i: number) => deepEq(x, b.items[i]))
+    );
+  if (a instanceof EArray && b instanceof EArray)
+    return (
+      a.items.length === b.items.length &&
+      a.items.every((x: any, i: number) => deepEq(x, b.items[i]))
+    );
+  if (a instanceof EMap && b instanceof EMap) {
+    if (a.entries.size !== b.entries.size) return false;
+    for (const [key, kv] of a.entries) {
+      const other = b.entries.get(key);
+      if (!other || !deepEq(kv[1], other[1])) return false;
+    }
+    return true;
+  }
+  if (a instanceof EEnum && b instanceof EEnum)
+    return a.type === b.type && a.member === b.member;
+  if (a instanceof EBytes && b instanceof EBytes)
+    return (
+      a.data.length === b.data.length &&
+      a.data.every((x: number, i: number) => x === b.data[i])
+    );
+  if (a instanceof EList && b instanceof EList) {
+    if (a.size !== b.size) return false;
+    let na = a.head;
+    let nb = b.head;
+    while (na && nb) {
+      if (!deepEq(na.v, nb.v)) return false;
+      na = na.next;
+      nb = nb.next;
+    }
+    return true;
+  }
+  if (a instanceof EBuilder && b instanceof EBuilder) {
+    if (a.items.length !== b.items.length) return false;
+    return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
+  }
+  if (
+    a &&
+    b &&
+    typeof a === "object" &&
+    typeof b === "object" &&
+    typeof a.__eq === "function"
+  )
+    return a.__eq(b);
+  return false;
+}
+
+// Inside a map's rendering, strings show quoted — the debug form the
+// interpreter's Map rendering uses.
+function toStrDbg(v: any): string {
+  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
+}
+
+// The one stringification rule: interpolation and `.to_string()` share
+// it, exactly like the interpreter.
+function toStr(v: any): string {
+  if (typeof v === "number") return String(v);
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (v === null || v === undefined) return "nil";
+  if (isFloat(v)) return floatStr(v.v);
+  if (isChar(v)) return v.c;
+  if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
+  if (v instanceof EList) {
+    const items: string[] = [];
+    for (let n = v.head; n; n = n.next) items.push(toStr(n.v));
+    return "List[" + items.join(", ") + "]";
+  }
+  if (v instanceof EBuilder)
+    return "ArrayBuilder[" + v.items.map(toStr).join(", ") + "]";
+  if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
+  if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
+  if (v instanceof EMap)
+    return (
+      "{" +
+      [...v.entries.values()]
+        .map((kv: [any, any]) => toStrDbg(kv[0]) + ": " + toStrDbg(kv[1]))
+        .join(", ") +
+      "}"
+    );
+  // The bare tag — the interpreter's form, and every other target's
+  // (CHECK.md, the enum display entry): the qualified spelling is the
+  // vocabulary's written form, not a value's.
+  if (v instanceof EEnum) return v.member;
+  if (v instanceof EPid) return "<pid " + v.id + ">";
+  if (v instanceof EEmoException) return toStr(v.messageValue);
+  if (v && typeof v === "object" && v.constructor && v.constructor.__emo)
+    return v.constructor.__emo;
+  return String(v);
+}
+
+function println(v: any): void {
+  _host.write(toStr(v) + "\n");
+}
+
+// ---- printf ----
+
+// C17 §7.21.6.1 on the JS primitives. bigint Int64s format through
+// two's-complement masking; floats take a BigInt-exact decimal
+// expansion with round-half-to-even, matching the C targets' snprintf
+// where `toFixed` (half away from zero) would not. `%s` measures width
+// and precision in UTF-8 bytes; a cut landing mid-codepoint decodes to
+// U+FFFD, since a JS string cannot carry a partial byte.
+
+class PFSpec {
+  minus: boolean = false;
+  plus: boolean = false;
+  space: boolean = false;
+  hash: boolean = false;
+  zero: boolean = false;
+  width: number | "*" | null = null;
+  prec: number | "*" | null = null;
+  conv: string = "d";
+}
+
+function pfParse(fmt: string): any[] {
+  const parts: any[] = [];
+  let text = "";
+  const flush = () => {
+    if (text) {
+      parts.push(text);
+      text = "";
+    }
+  };
+  let i = 0;
+  while (i < fmt.length) {
+    if (fmt[i] !== "%") {
+      text += fmt[i];
+      i++;
+      continue;
+    }
+    flush();
+    i++;
+    if (i >= fmt.length)
+      throw new Error("printf: the format ends with a lone `%`");
+    if (fmt[i] === "%") {
+      parts.push("%");
+      i++;
+      continue;
+    }
+    const s = new PFSpec();
+    while (i < fmt.length && "-+ #0".includes(fmt[i])) {
+      const f = fmt[i];
+      if (f === "-") s.minus = true;
+      else if (f === "+") s.plus = true;
+      else if (f === " ") s.space = true;
+      else if (f === "#") s.hash = true;
+      else s.zero = true;
+      i++;
+    }
+    if (i < fmt.length && fmt[i] === "*") {
+      s.width = "*";
+      i++;
+    } else if (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+      let digits = "";
+      while (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+        digits += fmt[i];
+        i++;
+      }
+      s.width = Math.min(Number(digits), 999999999);
+    }
+    if (i < fmt.length && fmt[i] === ".") {
+      i++;
+      if (i < fmt.length && fmt[i] === "*") {
+        s.prec = "*";
+        i++;
+      } else {
+        let digits = "";
+        while (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+          digits += fmt[i];
+          i++;
+        }
+        // `%.f` spells an explicit precision of zero in C.
+        s.prec = Math.min(Number(digits || "0"), 999999999);
+      }
+    }
+    if (i < fmt.length && "hlLzjt".includes(fmt[i]))
+      throw new Error(
+        "printf: length modifiers (`h`, `l`, `ll`, `z`, ...) have no meaning in Emo"
+      );
+    if (i >= fmt.length)
+      throw new Error("printf: the format ends with a bare `%`");
+    s.conv = fmt[i];
+    i++;
+    if ("diuoxXcsfFeEgG".includes(s.conv)) parts.push(s);
+    else if (s.conv === "a" || s.conv === "A")
+      throw new Error(
+        "printf: hex-float conversion `%" + s.conv + "` is not supported"
+      );
+    else if (s.conv === "n")
+      throw new Error("printf: `%n` is not supported (it writes through pointers)");
+    else if (s.conv === "p")
+      throw new Error("printf: `%p` is not supported (Emo has no pointers)");
+    else throw new Error("printf: unknown conversion `%" + s.conv + "`");
+  }
+  flush();
+  return parts;
+}
+
+function pfSlots(parts: any[]): number {
+  let n = 0;
+  for (const p of parts) {
+    if (typeof p === "string") continue;
+    const s = p as PFSpec;
+    n += (s.width === "*" ? 1 : 0) + (s.prec === "*" ? 1 : 0) + 1;
+  }
+  return n;
+}
+
+function pfDecompose(x: number): { neg: boolean; mant: bigint; exp: number } {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const hi = view.getUint32(0);
+  const lo = view.getUint32(4);
+  const neg = (hi >>> 31) === 1;
+  const rawExp = (hi >>> 20) & 0x7ff;
+  const frac = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
+  if (rawExp === 0) return { neg, mant: frac, exp: -1074 };
+  return { neg, mant: frac | (1n << 52n), exp: rawExp - 1075 };
+}
+
+// Round q+r/d to nearest, ties to even.
+function pfRound(q: bigint, r: bigint, d: bigint): bigint {
+  const twice = r * 2n;
+  if (twice > d) return q + 1n;
+  if (twice === d) return q + (q & 1n);
+  return q;
+}
+
+// sign(mant × 2^exp − 10^x), exact, over positive integers.
+function pfCmpPow10(mant: bigint, exp: number, x: number): number {
+  let lnum = mant;
+  let lden = 1n;
+  let rnum = 1n;
+  let rden = 1n;
+  if (exp >= 0) lnum <<= BigInt(exp);
+  else lden <<= BigInt(-exp);
+  if (x >= 0) {
+    rnum = pfPow10(x);
+  } else {
+    rden = pfPow10(-x);
+  }
+  const l = lnum * rden;
+  const r = rnum * lden;
+  return l < r ? -1 : l > r ? 1 : 0;
+}
+
+function pfPow10(n: number): bigint {
+  let r = 1n;
+  const fives = 5n ** BigInt(n);
+  // 10^n = 2^n × 5^n; the shift is cheap, the power is the work.
+  return fives << BigInt(n);
+}
+
+function pfTwoDigit(n: number): string {
+  return (n < 10 ? "0" : "") + n;
+}
+
+// The (Q, X) rendering of a positive value with exactly `digits`
+// significant figures: value ≈ Q × 10^(X − digits + 1), Q carrying
+// `digits` digits, correctly rounded (half to even). X adjusts up when
+// the rounding bumps the leading digit (9.99… → 1.0…).
+function pfSignificant(
+  mant: bigint,
+  exp: number,
+  digits: number
+): { q: bigint; x: number } {
+  let x = Math.floor(Math.log10(Number(mant) * Math.pow(2, exp)));
+  while (pfCmpPow10(mant, exp, x) < 0) x--;
+  while (pfCmpPow10(mant, exp, x + 1) >= 0) x++;
+  const shift = digits - 1 - x;
+  let num = mant;
+  let den = 1n;
+  if (exp >= 0) num <<= BigInt(exp);
+  else den <<= BigInt(-exp);
+  if (shift >= 0) num *= pfPow10(shift);
+  else den *= pfPow10(-shift);
+  let q = pfRound(num / den, num % den, den);
+  if (q >= pfPow10(digits)) {
+    q = pfPow10(digits - 1);
+    x += 1;
+  }
+  return { q, x };
+}
+
+// Fixed notation from a (Q, X) significant rendering.
+function pfFixedFromSig(q: bigint, digits: number, x: number): string {
+  const d = String(q).padStart(digits, "0");
+  const point = x + 1; // digits before the decimal point
+  if (point <= 0) return "0." + "0".repeat(-point) + d;
+  if (point >= digits) return d + "0".repeat(point - digits);
+  return d.slice(0, point) + "." + d.slice(point);
+}
+
+// Scientific notation: d.ddd…e±XX, `digits` − 1 fraction digits.
+function pfSciFromSig(
+  q: bigint,
+  digits: number,
+  x: number,
+  upper: boolean,
+  hash: boolean
+): string {
+  const d = String(q).padStart(digits, "0");
+  let frac = digits > 1 ? d.slice(1) : "";
+  let point = "";
+  if (frac !== "") point = ".";
+  else if (hash) point = ".";
+  return (
+    d[0] +
+    point +
+    frac +
+    (upper ? "E" : "e") +
+    (x < 0 ? "-" : "+") +
+    pfTwoDigit(Math.abs(x))
+  );
+}
+
+// Fixed notation for the value |x| with `prec` digits after the point,
+// correctly rounded; the integer part never loses a digit.
+function pfFixedPrec(mant: bigint, exp: number, prec: number): string {
+  if (mant === 0n) return prec > 0 ? "0." + "0".repeat(prec) : "0";
+  if (exp >= 0) {
+    const int = String(mant << BigInt(exp));
+    return prec > 0 ? int + "." + "0".repeat(prec) : int;
+  }
+  let num = mant * pfPow10(prec);
+  const den = 1n << BigInt(-exp);
+  const q = pfRound(num / den, num % den, den);
+  const s = String(q).padStart(prec + 1, "0");
+  return prec > 0
+    ? s.slice(0, s.length - prec) + "." + s.slice(s.length - prec)
+    : s.slice(0, s.length - prec);
+}
+
+// The padded rendering of one float conversion (f/F/e/E/g/G).
+function pfFloat(
+  x: number,
+  s: PFSpec,
+  minus: boolean,
+  zero: boolean,
+  width: number,
+  prec: number | null
+): string {
+  const upper = s.conv === "F" || s.conv === "E" || s.conv === "G";
+  const neg = pfDecompose(x).neg;
+  let sign = neg ? "-" : s.plus ? "+" : s.space ? " " : "";
+  let body: string;
+  if (!Number.isFinite(x)) {
+    body = Number.isNaN(x) ? "nan" : "inf";
+    if (upper) body = body.toUpperCase();
+    // The 0 flag has no effect on inf and nan.
+    const total = sign + body;
+    if (width > total.length) {
+      if (minus) return total + " ".repeat(width - total.length);
+      return " ".repeat(width - total.length) + total;
+    }
+    return total;
+  }
+  const { mant, exp } = pfDecompose(x);
+  if (s.conv === "f" || s.conv === "F") {
+    const p = prec === null ? 6 : prec;
+    body = pfFixedPrec(mant, exp, p);
+    // '#' keeps the decimal point even with an explicit precision of
+    // zero.
+    if (s.hash && p === 0 && !body.includes(".")) body += ".";
+  } else if (s.conv === "e" || s.conv === "E") {
+    const p = prec === null ? 6 : prec;
+    const sig = pfSignificant(mant, exp, p + 1);
+    body = pfSciFromSig(sig.q, p + 1, sig.x, upper, s.hash);
+  } else {
+    let p = prec === null ? 6 : prec;
+    if (p === 0) p = 1; // C: a %g precision of zero is taken as one.
+    if (mant === 0n) {
+      // %g of zero: style f, all fraction digits stripped unless #.
+      body = s.hash ? "0." + "0".repeat(p - 1) : "0";
+    } else {
+      const sig = pfSignificant(mant, exp, p);
+      if (sig.x >= -4 && sig.x < p) {
+        body = pfFixedFromSig(sig.q, p, sig.x);
+        if (!s.hash) {
+          const dot = body.indexOf(".");
+          if (dot >= 0) {
+            body = body.replace(/0+$/, "");
+            if (body.endsWith(".")) body = body.slice(0, -1);
+          }
+        }
+      } else {
+        body = pfSciFromSig(sig.q, p, sig.x, upper, s.hash);
+        if (!s.hash) {
+          const eAt = body.indexOf(upper ? "E" : "e");
+          let mantissa = body.slice(0, eAt);
+          const expPart = body.slice(eAt);
+          if (mantissa.includes(".")) {
+            mantissa = mantissa.replace(/0+$/, "");
+            if (mantissa.endsWith(".")) mantissa = mantissa.slice(0, -1);
+          }
+          body = mantissa + expPart;
+        }
+      }
+    }
+  }
+  const total = sign + body;
+  if (width > total.length) {
+    if (minus) return total + " ".repeat(width - total.length);
+    if (zero) return sign + "0".repeat(width - total.length) + body;
+    return " ".repeat(width - total.length) + total;
+  }
+  return total;
+}
+
+function printf(fmt: any, data: any): void {
+  if (typeof fmt !== "string")
+    throw new Error("`printf` expects (format String, data Array)");
+  if (!(data instanceof EArray))
+    throw new Error(
+      "`printf` expects (format String, data Array), got " + tag(data) + " as data"
+    );
+  const parts = pfParse(fmt);
+  const items = data.items;
+  if (pfSlots(parts) !== items.length)
+    throw new Error(
+      "printf: the format consumes " +
+        pfSlots(parts) +
+        " argument(s), the array has " +
+        items.length +
+        " element(s)"
+    );
+  let idx = 0;
+  const pull = (): any => items[idx++];
+  const pullI64 = (conv: string): any => {
+    const v = pull();
+    if (typeof v === "bigint") return v;
+    if (typeof v === "number" && Number.isInteger(v)) return BigInt(v);
+    throw new Error(
+      "printf: `%" +
+        conv +
+        "` expects " +
+        (conv === "c"
+          ? "a Char, Byte, or Int64"
+          : conv === "s"
+          ? "a String"
+          : "fFeEgG".includes(conv)
+          ? "a Float64"
+          : "an Int64") +
+        ", got " +
+        tag(v)
+    );
+  };
+  let out = "";
+  for (const p of parts) {
+    if (typeof p === "string") {
+      out += p;
+      continue;
+    }
+    const s = p as PFSpec;
+    let minus = s.minus;
+    let width: number;
+    if (s.width === "*") {
+      width = pfStarWidth(pull());
+      // C: a negative width via `*` means left-align with the absolute
+      // value.
+      if (width < 0) {
+        minus = true;
+        width = -width;
+      }
+    } else width = s.width === null ? 0 : (s.width as number);
+    let prec: number | null =
+      s.prec === "*" ? pfStarPrec(pull()) : (s.prec as number | null);
+    if (s.conv === "%") {
+      out += "%";
+      continue;
+    }
+    const v = pull();
+    if ("diuoxX".includes(s.conv)) {
+      if (typeof v !== "bigint" && !(typeof v === "number" && Number.isInteger(v)))
+        throw new Error(
+          "printf: `%" + s.conv + "` expects an Int64, got " + tag(v)
+        );
+      const n: bigint = typeof v === "bigint" ? v : BigInt(v);
+      let body: string;
+      if (s.conv === "d" || s.conv === "i") {
+        body = BigInt.asIntN(64, n).toString();
+      } else if (s.conv === "u") {
+        body = BigInt.asUintN(64, n).toString();
+      } else if (s.conv === "o") {
+        body = BigInt.asUintN(64, n).toString(8);
+      } else if (s.conv === "x") {
+        body = BigInt.asUintN(64, n).toString(16);
+      } else {
+        body = BigInt.asUintN(64, n).toString(16).toUpperCase();
+      }
+      // '#' prefixes 0, 0x, 0X on o/x/X when the value is nonzero.
+      if (s.hash && n !== 0n) {
+        if (s.conv === "o") body = "0" + body;
+        else if (s.conv === "x") body = "0x" + body;
+        else if (s.conv === "X") body = "0X" + body;
+      }
+      let sign = "";
+      if (s.conv === "d" || s.conv === "i") {
+        const neg = body.startsWith("-");
+        if (neg) {
+          sign = "-";
+          body = body.slice(1);
+        } else if (s.plus) sign = "+";
+        else if (s.space) sign = " ";
+      }
+      out += pfPad(sign, body, minus, s.zero, width);
+    } else if (s.conv === "c") {
+      let byte: number;
+      if (v instanceof EChar) byte = v.c.charCodeAt(0);
+      else if (typeof v === "number" && Number.isInteger(v)) byte = v & 0xff;
+      else if (typeof v === "bigint") byte = Number(v & 0xffn);
+      else
+        throw new Error(
+          "printf: `%c` expects a Char, Byte, or Int64, got " + tag(v)
+        );
+      const ch = String.fromCharCode(byte);
+      if (width > ch.length) {
+        if (minus) out += ch + " ".repeat(width - 1);
+        else out += " ".repeat(width - 1) + ch;
+      } else out += ch;
+    } else if (s.conv === "s") {
+      if (typeof v !== "string")
+        throw new Error("printf: `%s` expects a String, got " + tag(v));
+      let bytes = utf8Encode(v);
+      if (prec !== null && prec < bytes.length) bytes = bytes.slice(0, prec);
+      const missing = width - bytes.length;
+      if (missing > 0 && !minus) out += " ".repeat(missing);
+      out += utf8Decode(bytes);
+      if (missing > 0 && minus) out += " ".repeat(missing);
+    } else {
+      if (!(v instanceof EFloat))
+        throw new Error(
+          "printf: `%" + s.conv + "` expects a Float64, got " + tag(v)
+        );
+      out += pfFloat(v.v, s, minus, s.zero, width, prec);
+    }
+  }
+  _host.write(out);
+}
+
+function pfStarWidth(v: any): number {
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "number" && Number.isInteger(v)) return v;
+  throw new Error("printf: `%*` expects an Int64, got " + tag(v));
+}
+
+function pfStarPrec(v: any): number | null {
+  const n = pfStarWidth(v);
+  // C17: a negative precision through `*` is treated as omitted.
+  return n < 0 ? null : n;
+}
+
+// Numeric padding with sign and zero-fill (integers and floats).
+function pfPad(
+  sign: string,
+  body: string,
+  minus: boolean,
+  zero: boolean,
+  width: number
+): string {
+  const total = sign + body;
+  if (width <= total.length) return total;
+  const fill = width - total.length;
+  if (minus) return total + " ".repeat(fill);
+  if (zero) return sign + "0".repeat(fill) + body;
+  return " ".repeat(fill) + total;
+}
+
+
+function tag(v: any): string {
+  if (typeof v === "number") return Number.isInteger(v) ? "Byte" : "Float64";
+  if (typeof v === "bigint") return "Int64";
+  if (typeof v === "string") return "String";
+  if (typeof v === "boolean") return "Bool";
+  if (isFloat(v)) return "Float64";
+  if (isChar(v)) return "Char";
+  if (v instanceof ETuple) return "Tuple";
+  if (v instanceof EArray) return "Array";
+  if (v instanceof EMap) return "Map";
+  if (v instanceof EEnum) return "Enum";
+  if (v instanceof EBox) return "Box";
+  if (v instanceof EBytes) return "Bytes";
+  if (v instanceof EList) return "List";
+  if (v instanceof EBuilder) return "ArrayBuilder";
+  return "an instance";
+}
+
+// Predicate-method and interface names arrive sanitized (? → _q) at
+// the definition site; dispatch tries the plain name first, then the
+// sanitized one.
+function sanitize(name: string): string {
+  return name.split("?").join("_q");
+}
+
+function unfloat(x: any): number {
+  return isFloat(x) ? x.v : (x as number);
+}
+
+function bothInt(a: any, b: any): boolean {
+  if (isI64(a) && isI64(b)) return true;
+  return isInt(a) && isInt(b);
+}
+
+function wrap64(x: bigint): bigint {
+  return BigInt.asIntN(64, x);
+}
+
+const E: any = {
+  float: (v: number) => new EFloat(v),
+  char: (c: string) => new EChar(c),
+  tuple: (...items: any[]) => new ETuple(items),
+  array: (items: any[]) => new EArray(items),
+  box: (v: any) => new EBox(v),
+  bytesNew: (n: any) => {
+    const len = num(n);
+    if (!Number.isInteger(len) || len < 0)
+      throw new Error("`Bytes.new` needs a non-negative Int64 length");
+    return new EBytes(len);
+  },
+  listNew: (arr: any) => {
+    if (!(arr instanceof EArray))
+      throw new Error("`List.new` expects an Array, got " + tag(arr));
+    const l = new EList();
+    for (const item of arr.items) listPushBack(l, item);
+    return l;
+  },
+  builderNew: () => new EBuilder(),
+  enum_: (type: string, member: string) => new EEnum(type, member),
+
+  eq: deepEq,
+  ne: (a: any, b: any) => !deepEq(a, b),
+  truthy: (b: any) => b === true,
+  println,
+  printf,
+  builtin(name: string, _args: any[]): never {
+    throw new Error(
+      "builtin `" + name + "` is not available on the typescript target",
+    );
+  },
+  interpolate: (items: any[]) => items.map(toStr).join(""),
+  toStr,
+
+  // The Map's constructor: (key, value) tuple pairs, in insertion
+  // order; a later pair overwrites an earlier one.
+  mapNew(pairs: any[]): EMap {
+    const m = new EMap();
+    for (const p of pairs) {
+      if (!(p instanceof ETuple) || p.items.length !== 2)
+        throw new Error("`Map.new` takes (key, value) pairs of two elements");
+      m.entries.set(emoMapKey(p.items[0]), [p.items[0], p.items[1]]);
+    }
+    return m;
+  },
+
+  add(a: any, b: any) {
+    if (typeof a === "string" && typeof b === "string") return a + b;
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) + (b as bigint));
+    if (bothInt(a, b)) return (a as number) + (b as number);
+    return new EFloat(unfloat(a) + unfloat(b));
+  },
+  sub(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) - (b as bigint));
+    if (bothInt(a, b)) return (a as number) - (b as number);
+    return new EFloat(unfloat(a) - unfloat(b));
+  },
+  mul(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) * (b as bigint));
+    if (bothInt(a, b)) return (a as number) * (b as number);
+    return new EFloat(unfloat(a) * unfloat(b));
+  },
+  div(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Div(a as bigint, b as bigint);
+    if (bothInt(a, b)) return Math.trunc((a as number) / (b as number));
+    return new EFloat(unfloat(a) / unfloat(b));
+  },
+  mod(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Mod(a as bigint, b as bigint);
+    if (bothInt(a, b)) return (a as number) % (b as number);
+    return new EFloat(unfloat(a) % unfloat(b));
+  },
+  // Bitwise work is integer work. JS bitwise ops run on int32, so
+  // results past 2^31 follow the platform's word — the width family
+  // (Int64/Byte) carries the exact contract later.
+  requireInt(v: any, op: string): number {
+    if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int64, got ${tag(v)}`);
+    return v as number;
+  },
+  bitAnd(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) & (b as bigint));
+    return this.requireInt(a, "&") & this.requireInt(b, "&");
+  },
+  bitOr(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) | (b as bigint));
+    return this.requireInt(a, "|") | this.requireInt(b, "|");
+  },
+  bitXor(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) ^ (b as bigint));
+    return this.requireInt(a, "^") ^ this.requireInt(b, "^");
+  },
+  shl(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Shl(a as bigint, b as bigint);
+    const n = this.requireInt(b, "<<");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, "<<") << n;
+  },
+  shr(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Shr(a as bigint, b as bigint);
+    const n = this.requireInt(b, ">>");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, ">>") >> n;
+  },
+  bitNot(a: any) {
+    if (isI64(a)) return wrap64(~(a as bigint));
+    return ~this.requireInt(a, "~");
+  },
+  neg(a: any) {
+    if (isInt(a)) return -(a as number);
+    return new EFloat(-unfloat(a));
+  },
+  lt(a: any, b: any) {
+    return unfloat(a) < unfloat(b);
+  },
+  le(a: any, b: any) {
+    return unfloat(a) <= unfloat(b);
+  },
+  gt(a: any, b: any) {
+    return unfloat(a) > unfloat(b);
+  },
+  ge(a: any, b: any) {
+    return unfloat(a) >= unfloat(b);
+  },
+
+  // The fixed-width family. Int64 values are BigInts — arithmetic wraps
+  // in two's complement at 64 bits; Byte values are numbers that wrap
+  // modulo 256. Comparisons reuse lt/le/gt/ge: JS reads BigInts and
+  // numbers natively, so only the producing operators need a path.
+  i64Add: (a: bigint, b: bigint) => BigInt.asIntN(64, a + b),
+  i64Sub: (a: bigint, b: bigint) => BigInt.asIntN(64, a - b),
+  i64Mul: (a: bigint, b: bigint) => BigInt.asIntN(64, a * b),
+  i64Div: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a / b);
+  },
+  i64Mod: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a % b);
+  },
+  i64BitAnd: (a: bigint, b: bigint) => BigInt.asIntN(64, a & b),
+  i64BitOr: (a: bigint, b: bigint) => BigInt.asIntN(64, a | b),
+  i64BitXor: (a: bigint, b: bigint) => BigInt.asIntN(64, a ^ b),
+  i64Shl: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? 0n : BigInt.asIntN(64, a << b);
+  },
+  i64Shr: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? (a < 0n ? -1n : 0n) : a >> b;
+  },
+  i64BitNot: (a: bigint) => BigInt.asIntN(64, ~a),
+  i64Neg: (a: bigint) => BigInt.asIntN(64, -a),
+
+  byteAdd: (a: number, b: number) => (a + b) & 0xff,
+  byteSub: (a: number, b: number) => (a - b) & 0xff,
+  byteMul: (a: number, b: number) => (a * b) & 0xff,
+  byteDiv: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return (a / b) | 0;
+  },
+  byteMod: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return a % b;
+  },
+  byteBitAnd: (a: number, b: number) => a & b,
+  byteBitOr: (a: number, b: number) => a | b,
+  byteBitXor: (a: number, b: number) => a ^ b,
+  byteShl: (a: number, b: number) => (b >= 8 ? 0 : (a << b) & 0xff),
+  byteShr: (a: number, b: number) => (b >= 8 ? 0 : a >> b),
+  byteBitNot: (a: number) => ~a & 0xff,
+
+  index(coll: any, i: any): any {
+    const items: any[] =
+      coll instanceof EArray ? coll.items : (coll as ETuple).items;
+    // The index is an Int64 (BigInt); the collection is JS-native.
+    const n = typeof i === "bigint" ? Number(i) : (i as number);
+    if (n < 0 || n >= items.length)
+      throw new Error("index " + i + " is out of bounds");
+    return items[n];
+  },
+
+  callValue(f: any, args: any[]): any {
+    return f(...args);
+  },
+
+  // Method dispatch: instances by property, builtins by shape — one
+  // table, like the native runtime's method_call.
+  method(recv: any, name: string, args: any[]): any {
+    if (recv && typeof recv === "object") {
+      const direct = recv[name] ?? recv[sanitize(name)];
+      if (typeof direct === "function") return direct.apply(recv, args);
+      // A field can shadow a prototype method (same name): when the
+      // own property is not a function, try the prototype's.
+      const proto = Object.getPrototypeOf(recv) as any;
+      const protoM = proto ? proto[name] ?? proto[sanitize(name)] : undefined;
+      if (typeof protoM === "function") return protoM.apply(recv, args);
+      if (name === "read" && recv instanceof EBox) return recv.v;
+      if (name === "replace" && recv instanceof EBox) {
+        recv.v = args[0];
+        return args[0];
+      }
+      if (recv instanceof EBytes) {
+        const d = recv.data;
+        const idx = (mname2: string) => {
+          const i = num(args[0]);
+          if (!Number.isInteger(i))
+            throw new Error("`" + mname2 + "` expects an Int64 index");
+          if (i < 0 || i >= d.length)
+            throw new Error(
+              "index " + i + " is out of bounds for a length-" + d.length + " Bytes"
+            );
+          return i;
+        };
+        if (name === "length") return BigInt(d.length);
+        if (name === "get") return BigInt(d[idx(name)]);
+        if (name === "set") {
+          const i = idx(name);
+          const v = num(args[1]);
+          if (!Number.isInteger(v) || v < 0 || v > 255)
+            throw new Error("`set` expects a byte value in 0-255");
+          d[i] = v;
+          return BigInt(v);
+        }
+        if (name === "get_u16_le" || name === "get_u32_le") {
+          const w = name === "get_u16_le" ? 2 : 4;
+          const i = idx(name);
+          let acc = 0;
+          for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
+          return BigInt(acc);
+        }
+        if (name === "set_u16_le" || name === "set_u32_le") {
+          const w = name === "set_u16_le" ? 2 : 4;
+          const i = idx(name);
+          let v = num(args[1]);
+          if (!Number.isInteger(v))
+            throw new Error("`" + name + "` expects an Int64 value");
+          v = v >>> 0;
+          for (let k = 0; k < w; k++) d[i + k] = (v >>> (8 * k)) & 0xff;
+          return BigInt(w === 2 ? v & 0xffff : v >>> 0);
+        }
+        if (name === "get_u64_le" || name === "set_u64_le") {
+          const i = num(args[0]);
+          if (typeof i !== "number" || i < 0 || i + 8 > d.length)
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " " +
+                (name === "get_u64_le" ? "read" : "write")
+            );
+          if (name === "get_u64_le") {
+            let acc = 0n;
+            for (let k = 7; k >= 0; k--)
+              acc = (acc << 8n) | BigInt(d[i + k]);
+            return BigInt.asIntN(64, acc);
+          }
+          const v = args[1];
+          if (typeof v !== "bigint")
+            throw new Error("`set_u64_le` expects an Int64 value");
+          const w = BigInt.asUintN(64, v);
+          for (let k = 0; k < 8; k++)
+            d[i + k] = Number((w >> BigInt(8 * k)) & 0xffn);
+          return BigInt.asIntN(64, v);
+        }
+        if (name === "to_string") {
+          return utf8Decode(d);
+        }
+      }
+      if (isFloat(recv) && name === "to_bits") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setFloat64(0, recv.v, true);
+        return dv.getBigInt64(0, true);
+      }
+      if (isFloat(recv)) {
+        // The Float64 method surface: the libm root/rounding functions,
+        // the truncating Int64 conversion, and to_string.
+        if (name === "sqrt") return new EFloat(Math.sqrt(recv.v));
+        if (name === "floor") return new EFloat(Math.floor(recv.v));
+        if (name === "ceil") return new EFloat(Math.ceil(recv.v));
+        if (name === "trunc") return new EFloat(Math.trunc(recv.v));
+        if (name === "to_int64") return BigInt(Math.trunc(recv.v));
+        if (name === "to_string") return floatStr(recv.v);
+      }
+      if (recv instanceof EList) {
+        if (name === "push_front") return listPushFront(recv, args[0]);
+        if (name === "push_back") return listPushBack(recv, args[0]);
+        if (name === "pop_front") return listPopFront(recv);
+        if (name === "pop_back") return listPopBack(recv);
+        if (name === "length") return BigInt(recv.size);
+        if (name === "to_string") return toStr(recv);
+      }
+      if (recv instanceof EBuilder) {
+        if (name === "push") {
+          recv.items.push(args[0]);
+          return recv;
+        }
+        if (name === "get") {
+          const i = Number(args[0]);
+          if (!Number.isInteger(i) || i < 0 || i >= recv.items.length)
+            throw new Error(
+              "index " +
+                args[0] +
+                " is out of bounds for a length-" +
+                recv.items.length +
+                " ArrayBuilder",
+            );
+          return recv.items[i];
+        }
+        if (name === "to_array") return new EArray(recv.items.slice());
+        if (name === "length") return BigInt(recv.items.length);
+        if (name === "to_string") return toStr(recv);
+      }
+      if (name === "length" && recv instanceof EArray)
+        return BigInt(recv.items.length);
+      if (name === "append" && recv instanceof EArray)
+        return new EArray(recv.items.concat([args[0]]));
+      if (recv instanceof EMap) {
+        if (name === "get") {
+          const hit = recv.entries.get(emoMapKey(args[0]));
+          if (!hit)
+            throw new Error("no key " + toStrDbg(args[0]) + " in this Map");
+          return hit[1];
+        }
+        if (name === "set") {
+          recv.entries.set(emoMapKey(args[0]), [args[0], args[1]]);
+          return recv;
+        }
+        if (name === "has") {
+          if (!isMapKey(args[0])) return false;
+          return recv.entries.has(emoMapKey(args[0]));
+        }
+        if (name === "remove") {
+          if (isMapKey(args[0])) recv.entries.delete(emoMapKey(args[0]));
+          return recv;
+        }
+        if (name === "length") return BigInt(recv.entries.size);
+        if (name === "keys")
+          return new EArray(
+            [...recv.entries.values()].map((kv: [any, any]) => kv[0])
+          );
+        if (name === "values")
+          return new EArray(
+            [...recv.entries.values()].map((kv: [any, any]) => kv[1])
+          );
+        if (name === "to_string") return toStr(recv);
+      }
+      // The host's own receivers — connections, listeners, datagram
+      // sockets on Node; DOM handles on the browser.
+      const hostResult = _host.method(recv, name, args);
+      if (hostResult !== _hostMethodMiss) return hostResult;
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "number") {
+      if (name === "to_string") return String(recv);
+      // A Byte receiver is a plain number; to_int64 widens to Int64.
+      if (name === "to_int64") return BigInt(recv);
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "bigint") {
+      if (name === "to_string") return recv.toString();
+      if (name === "to_byte") return Number(BigInt.asUintN(8, recv));
+      if (name === "to_float64") return new EFloat(Number(recv));
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "boolean") {
+      if (name === "to_string") return recv ? "true" : "false";
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "string") {
+      if (name === "length") return BigInt(utf8Length(recv));
+      if (name === "to_string") return recv;
+      if (name === "is") return isType(recv, args[0] as string);
+      if (name === "substring")
+        return utf8Substring(recv, num(args[0]), num(args[1]));
+      if (name === "split") {
+        const sep = args[0] as string;
+        if (sep === "")
+          throw new Error("`split` expects a non-empty String separator");
+        return new EArray(recv.split(sep));
+      }
+      if (name === "trim") return asciiTrim(recv);
+      if (name === "lower") return asciiLower(recv);
+      if (name === "index_of")
+        return BigInt(utf8IndexOf(recv, args[0] as string));
+      if (name === "starts_with") return recv.startsWith(args[0] as string);
+      if (name === "to_int64") {
+        const body = recv.startsWith("-") ? recv.slice(1) : recv;
+        if (body === "" || !/^[0-9]+$/.test(body))
+          throw new Error("cannot parse `" + recv + "` as an Int64");
+        const v = BigInt(recv);
+        if (BigInt.asIntN(64, v) !== v)
+          throw new Error("cannot parse `" + recv + "` as an Int64");
+        return v;
+      }
+      if (name === "to_bytes") {
+        const enc = utf8Encode(recv);
+        const out = new EBytes(enc.length);
+        out.data.set(enc);
+        return out;
+      }
+      // Static constructors: a type name is a bare string in value
+      // position, told apart from a String by the method asked for.
+      if (name === "from_int64") {
+        if (recv === "Int64") return args[0];
+        if (recv === "Byte") {
+          const n = args[0] as bigint;
+          if (n < 0n || n > 255n)
+            throw new EEmoException(
+              "`Byte.from_int64` needs a value in 0-255, got " + n
+            );
+          return Number(n);
+        }
+      }
+      if (name === "from_bits" && recv === "Float64") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setBigInt64(0, args[0] as bigint, true);
+        return new EFloat(dv.getFloat64(0, true));
+      }
+    }
+    throw new Error(
+      "NoMethodError: `" + toStr(recv) + "` has no method `" + name + "`"
+    );
+  },
+
+  caseError(v: any): never {
+    throw new Error("no `case` branch matched this " + tag(v) + " value");
+  },
+
+  throwException(msg: any, data: any = E.mapNew([])): never {
+    throw new EEmoException(msg, data);
+  },
+
+  renderError(e: any): string {
+    if (e instanceof EEmoException)
+      return "error[E3010]: uncaught exception: " + toStr(e.messageValue);
+    return "error[E3010]: uncaught exception: " + (e && e.message);
+  },
+
+  runtimeImpl(name: string, args: any[]): any {
+    return _host.runtimeImpl(name, args);
+  },
+
+  // Registered by the emitted program: interface name → method/arity
+  // list, for `is` narrowing against interfaces.
+  interfaces: {} as Record<string, [string, number][]>,
+
+  // ---- Processes ----
+
+  spawn(task: () => Promise<any>): EPid {
+    const pid = new EPid(_nextPid++);
+    _mailboxes.set(pid.id, []);
+    _host.runAs(pid.id, () => {
+      (async () => task())().catch((e) => _taskEnd(e));
+    });
+    return pid;
+  },
+
+  self(): EPid {
+    const pid = _host.currentPid();
+    if (pid === null) throw new Error("self_pid() outside a process");
+    return new EPid(pid);
+  },
+
+  send(to: any, msg: any): any {
+    const id = to instanceof EPid ? to.id : to;
+    const snapshot = deepCopy(msg);
+    const waiter = _waiters.get(id);
+    const q = _mailboxes.get(id) || [];
+    if (waiter) {
+      _waiters.delete(id);
+      waiter(snapshot);
+    } else {
+      q.push(snapshot);
+    }
+    return snapshot;
+  },
+
+  // Selective receive: the dispatch runs each branch's body for the
+  // first message it matches (returning anything but false); non-
+  // matching messages stay in the mailbox in order; no match means the
+  // task waits for the next delivery.
+  async receive(dispatch: (msg: any) => Promise<any>): Promise<any> {
+    const pid = _host.currentPid();
+    if (pid === null) throw new Error("receive() outside a process");
+    for (;;) {
+      const q = _mailboxes.get(pid)!;
+      let i = 0;
+      while (i < q.length) {
+        const msg = q[i];
+        q.splice(i, 1);
+        const r = await dispatch(msg);
+        if (r !== false) return r;
+        q.splice(i, 0, msg);
+        i++;
+      }
+      // Queue drained: the next delivery resolves us directly with the
+      // message (send hands it to the waiter, not to the mailbox).
+      const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
+      _endIfShutdown();
+      const r = await dispatch(fresh);
+      if (r !== false) return r;
+      // No branch took it: keep it at the head so FIFO order holds.
+      q.unshift(fresh);
+    }
+  },
+
+  halt(): never {
+    throw new EHalt();
+  },
+
+  // Runs the entry under the main process (pid 0). Spawned tasks run
+  // on the event loop; the program ends when the entry ends.
+  runMain(entry: () => Promise<any>): Promise<void> {
+    const pid = _nextPid++;
+    _mailboxes.set(pid, []);
+    return _host
+      .runAs(pid, async () => {
+        try {
+          await entry();
+        } catch (e) {
+          _taskError(e);
+        }
+      })
+      .finally(endRoot);
+  },
+
+  // Called by the emitted root body as it finishes — see endRoot above.
+  endRoot,
+};
+
+// `is` narrowing: an interface check when one is registered under the
+// name, a class-name compare otherwise.
+function isType(recv: any, typeName: string): boolean {
+  if (recv === null || recv === undefined) return false;
+  const sigs = E.interfaces[typeName];
+  if (sigs) {
+    return sigs.every(([m, arity]) => {
+      const f = recv[m];
+      return typeof f === "function" && f.length === arity;
+    });
+  }
+  const cls = recv.constructor && recv.constructor.__emo;
+  return cls === typeName;
+}
+// The Node host for the TypeScript runtime: the networking section,
+// the async-local process context, and the host object the core calls
+// into. The compiler concatenates this file after ts_core.ts, so it
+// never runs on its own.
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import * as nodeNet from "node:net";
+import * as nodeDgram from "node:dgram";
+import * as nodeTls from "node:tls";
+import * as nodeDns from "node:dns";
+import * as nodeFs from "node:fs";
+
+const _als = new AsyncLocalStorage<{ pid: number }>();
+
+// ---- Networking ----
+// The net package's surface — TCP, Unix-domain sockets, UDP, DNS, and
+// TLS — rides Node's net/dgram/tls/dns modules. Every operation answers
+// a promise the emitted `await` settles, so the Emo code stays direct
+// style; a connection's deadline is per-operation, computed when the
+// call starts, exactly like the native scheduler's.
+
+function netError(message: string): EEmoException {
+  return new EEmoException(message);
+}
+
+function netFail(message: string): never {
+  throw netError(message);
+}
+
+// The wire's return convention (T29.3): a data-driven failure — a
+// refused connection, an unresolvable name, an exceeded deadline, a
+// closed socket — is the value (R.error, reason); only the caller's own
+// mistakes raise. Every network operation answers one of these.
+function netOk(v: any): any {
+  return new ETuple([new EEnum("R", "ok"), v]);
+}
+
+function netErr(why: string): any {
+  return new ETuple([new EEnum("R", "error"), why]);
+}
+
+// Runs a network operation, delivering its value as (R.ok, v) and a
+// data-driven failure as (R.error, reason); an argument mistake still
+// raises, telling the two apart by the exception's kind.
+async function netResult(
+  op: () => Promise<any> | any
+): Promise<any> {
+  try {
+    return netOk(await op());
+  } catch (e) {
+    if (e instanceof EEmoException) return netErr(String(e.messageValue));
+    throw e;
+  }
+}
+
+// Every live network object, so the root process finishing can release
+// the handles that would otherwise keep Node's loop alive — the native
+// rule: the root process finishing ends the program.
+const _netRoots = new Set<any>();
+
+// Operation deadlines that are still ticking. They hold the loop open
+// on their own, so releasing the handles is not enough to end the
+// program: the parked operation they belong to is dropped with them.
+const _netTimers = new Set<any>();
+
+function netShutdown(): void {
+  _netRoots.forEach((r) => {
+    try {
+      if (r instanceof EListener) r.server.close();
+      else if (r instanceof EUdp) r.sock.close();
+      else r.sock.destroy();
+    } catch (e) {}
+  });
+  _netRoots.clear();
+  _netTimers.forEach((t) => clearTimeout(t));
+  _netTimers.clear();
+}
+
+function netReason(e: any): string {
+  if (e === null || e === undefined) return "unknown error";
+  if (typeof e.message === "string" && e.message.length > 0) return e.message;
+  return String(e);
+}
+
+function netInt(x: any): number {
+  if (isFloat(x)) return Math.trunc((x as EFloat).v);
+  return typeof x === "bigint" ? Number(x) : num(x);
+}
+
+// A Float64 parameter is an EFloat wrapper; `num` only unwraps Int64.
+function netFloat(x: any): number {
+  if (isFloat(x)) return (x as EFloat).v;
+  return netInt(x);
+}
+
+function netDeadline(seconds: number): number | null {
+  return seconds > 0 ? Date.now() + seconds * 1000 : null;
+}
+
+// Races an operation against its deadline; the operation itself is never
+// abandoned — a socket read that arrives late is buffered for the next
+// call, like the native parked continuation.
+function netRace(
+  p: Promise<any>,
+  deadline: number | null,
+  message: string
+): Promise<any> {
+  if (deadline === null) return p;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return Promise.reject(netError(message));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      _netTimers.delete(timer);
+      reject(netError(message));
+    }, remaining);
+    _netTimers.add(timer);
+    const done = () => {
+      clearTimeout(timer);
+      _netTimers.delete(timer);
+    };
+    p.then(
+      (v) => {
+        done();
+        resolve(v);
+      },
+      (e) => {
+        done();
+        reject(e);
+      }
+    );
+  });
+}
+
+function netSetTimeout(recv: any, seconds: any): any {
+  if (!isFloat(seconds))
+    throw new Error("`set_timeout` expects a Float64, got " + tag(seconds));
+  if ((seconds as EFloat).v < 0)
+    throw new Error("the timeout must not be negative");
+  recv.timeout = (seconds as EFloat).v;
+  return recv;
+}
+
+// A live TCP or TLS connection: the Node socket plus the unconsumed
+// bytes, the reader state, and the operation deadline. One persistent
+// reader drains the socket into [acc]; read operations wait on it, so a
+// timed-out read leaves the bytes it received in place.
+class EConn {
+  sock: any;
+  desc: string;
+  timeout: number;
+  closed: boolean;
+  eof: boolean;
+  failed: any;
+  acc: Buffer;
+  reader: boolean;
+  waiting: Set<() => void>;
+  isTls: boolean;
+
+  constructor(sock: any, desc: string, isTls: boolean) {
+    this.sock = sock;
+    this.desc = desc;
+    this.timeout = 0;
+    this.closed = false;
+    this.eof = false;
+    this.failed = null;
+    this.acc = Buffer.alloc(0);
+    this.reader = false;
+    this.waiting = new Set();
+    this.isTls = isTls;
+    // A socket error must never escape as an uncaught 'error' event;
+    // the reader records it and read operations report it.
+    sock.on("error", () => {});
+    sock.on("close", () => _netRoots.delete(this));
+    _netRoots.add(this);
+  }
+}
+
+class EListener {
+  server: any;
+  desc: string;
+  port: number;
+  unix: boolean;
+  timeout: number;
+  closed: boolean;
+  failed: any;
+  queue: any[];
+  waiting: any[];
+  isTls: boolean;
+
+  constructor(
+    server: any,
+    desc: string,
+    port: number,
+    unix: boolean,
+    isTls: boolean
+  ) {
+    this.server = server;
+    this.desc = desc;
+    this.port = port;
+    this.unix = unix;
+    this.timeout = 0;
+    this.closed = false;
+    this.failed = null;
+    this.queue = [];
+    this.waiting = [];
+    this.isTls = isTls;
+    // A TLS server hands back the socket only once the handshake is
+    // done; a plain one at accept time.
+    _netRoots.add(this);
+    server.on(isTls ? "secureConnection" : "connection", (sock: any) => {
+      if (this.waiting.length > 0) this.waiting.shift().resolve(sock);
+      else this.queue.push(sock);
+    });
+    server.on("error", (e: any) => {
+      this.failed = e;
+      const ws = this.waiting;
+      this.waiting = [];
+      ws.forEach((w) =>
+        w.reject(
+          new EEmoException(
+            "cannot accept on " + this.desc + ": " + netReason(e)
+          )
+        )
+      );
+    });
+    server.on("close", () => _netRoots.delete(this));
+  }
+}
+
+class EUdp {
+  sock: any;
+  desc: string;
+  port: number;
+  timeout: number;
+  closed: boolean;
+  queue: any[];
+  waiting: any[];
+
+  constructor(sock: any, desc: string, port: number) {
+    this.sock = sock;
+    this.desc = desc;
+    this.port = port;
+    this.timeout = 0;
+    this.closed = false;
+    this.queue = [];
+    this.waiting = [];
+    _netRoots.add(this);
+    sock.on("close", () => _netRoots.delete(this));
+    sock.on("message", (msg: Buffer, rinfo: any) => {
+      if (this.waiting.length > 0) this.waiting.shift().resolve([msg, rinfo]);
+      else this.queue.push([msg, rinfo]);
+    });
+  }
+}
+
+function connNotify(c: EConn): void {
+  const ws = c.waiting;
+  c.waiting = new Set();
+  ws.forEach((w) => w());
+}
+
+function connWait(
+  c: EConn,
+  deadline: number | null,
+  message: string
+): Promise<void> {
+  let me: (() => void) | null = null;
+  const p = new Promise<void>((resolve) => {
+    me = resolve;
+    c.waiting.add(resolve);
+  });
+  const drop = () => {
+    if (me) c.waiting.delete(me);
+    me = null;
+  };
+  return netRace(p, deadline, message).then(
+    (v) => {
+      drop();
+      _endIfShutdown();
+      return v;
+    },
+    (e) => {
+      drop();
+      _endIfShutdown();
+      throw e;
+    }
+  );
+}
+
+function connOpen(c: EConn): void {
+  if (c.closed) netFail("the connection to " + c.desc + " is closed");
+}
+
+function connStartReader(c: EConn): void {
+  if (c.reader) return;
+  c.reader = true;
+  (async () => {
+    try {
+      for await (const chunk of c.sock) {
+        const b = chunk as Buffer;
+        c.acc =
+          c.acc.length === 0 ? Buffer.from(b) : Buffer.concat([c.acc, b]);
+        connNotify(c);
+      }
+      c.eof = true;
+    } catch (e) {
+      c.failed = e;
+    }
+    connNotify(c);
+  })();
+}
+
+function connCheckRead(c: EConn): void {
+  if (c.failed !== null && !c.eof)
+    netFail("cannot read on " + c.desc + ": " + netReason(c.failed));
+}
+
+async function connReadLine(c: EConn): Promise<string> {
+  connOpen(c);
+  connStartReader(c);
+  const deadline = netDeadline(c.timeout);
+  const message = "timed out reading a line from " + c.desc;
+  for (;;) {
+    const at = c.acc.indexOf(10);
+    if (at >= 0) {
+      let line = c.acc.subarray(0, at);
+      c.acc = c.acc.subarray(at + 1);
+      if (line.length > 0 && line[line.length - 1] === 13)
+        line = line.subarray(0, line.length - 1);
+      return utf8Decode(line);
+    }
+    if (c.eof) {
+      if (c.acc.length === 0) return "";
+      netFail("the connection to " + c.desc + " closed mid-line");
+    }
+    connCheckRead(c);
+    await connWait(c, deadline, message);
+  }
+}
+
+async function connReadExactly(c: EConn, n: any): Promise<string> {
+  connOpen(c);
+  if (typeof n !== "bigint")
+    throw new Error("`read_exactly` expects an Int64, got " + tag(n));
+  const count = Number(n);
+  if (count < 0) throw new Error("`read_exactly` expects a non-negative Int64");
+  connStartReader(c);
+  const deadline = netDeadline(c.timeout);
+  const message = "timed out reading from " + c.desc;
+  for (;;) {
+    if (c.acc.length >= count) {
+      const out = c.acc.subarray(0, count);
+      c.acc = c.acc.subarray(count);
+      return utf8Decode(out);
+    }
+    if (c.eof)
+      netFail(
+        "the connection to " +
+          c.desc +
+          " closed after " +
+          c.acc.length +
+          " of " +
+          count +
+          " bytes"
+      );
+    connCheckRead(c);
+    await connWait(c, deadline, message);
+  }
+}
+
+async function connReadAll(c: EConn): Promise<string> {
+  connOpen(c);
+  connStartReader(c);
+  const deadline = netDeadline(c.timeout);
+  const message = "timed out reading from " + c.desc;
+  for (;;) {
+    if (c.eof) {
+      const out = c.acc;
+      c.acc = Buffer.alloc(0);
+      return utf8Decode(out);
+    }
+    connCheckRead(c);
+    await connWait(c, deadline, message);
+  }
+}
+
+function connWrite(c: EConn, data: any): Promise<EConn> {
+  connOpen(c);
+  if (typeof data !== "string")
+    throw new Error("`write` expects a String, got " + tag(data));
+  const deadline = netDeadline(c.timeout);
+  const message = "timed out writing to " + c.desc;
+  const flushed = new Promise<void>((resolve, reject) => {
+    c.sock.write(Buffer.from(data, "utf8"), (e: any) => {
+      if (e)
+        reject(netError("cannot write on " + c.desc + ": " + netReason(e)));
+      else resolve();
+    });
+  });
+  return netRace(flushed, deadline, message).then(() => c);
+}
+
+function connClose(c: EConn): EConn {
+  connOpen(c);
+  c.closed = true;
+  // Graceful: writes were delivered in full before returning, so this
+  // sends the FIN and lets the peer read everything that was written.
+  try {
+    c.sock.end();
+  } catch (e) {}
+  return c;
+}
+
+function netPeerDesc(sock: any): string {
+  const host = sock.remoteAddress ? String(sock.remoteAddress) : "";
+  const port = sock.remotePort ? String(sock.remotePort) : "0";
+  return host + ":" + port;
+}
+
+function wrapAccepted(l: EListener, sock: any): EConn {
+  return new EConn(sock, netPeerDesc(sock), l.isTls);
+}
+
+function listenerAccept(l: EListener): Promise<EConn> {
+  if (l.closed)
+    return Promise.reject(
+      netError("the listener on " + l.desc + " is closed")
+    );
+  if (l.failed !== null)
+    return Promise.reject(
+      netError("cannot accept on " + l.desc + ": " + netReason(l.failed))
+    );
+  if (l.queue.length > 0)
+    return Promise.resolve(wrapAccepted(l, l.queue.shift()));
+  const deadline = netDeadline(l.timeout);
+  const message = "timed out waiting to accept on " + l.desc;
+  let entry: any = null;
+  const wait = new Promise<any>((resolve, reject) => {
+    entry = { resolve, reject };
+    l.waiting.push(entry);
+  });
+  const drop = () => {
+    const i = l.waiting.indexOf(entry);
+    if (i >= 0) l.waiting.splice(i, 1);
+  };
+  return netRace(wait, deadline, message).then(
+    (sock) => {
+      drop();
+      _endIfShutdown(sock);
+      return wrapAccepted(l, sock);
+    },
+    (e) => {
+      drop();
+      _endIfShutdown();
+      throw e;
+    }
+  );
+}
+
+function listenerPort(l: EListener): bigint {
+  if (l.unix)
+    netFail("a unix-domain listener (" + l.desc + ") has no port");
+  return BigInt(l.port);
+}
+
+function listenerClose(l: EListener): EListener {
+  if (l.closed)
+    netFail("the listener on " + l.desc + " is already closed");
+  l.closed = true;
+  try {
+    l.server.close();
+  } catch (e) {}
+  return l;
+}
+
+function udpSendTo(u: EUdp, host: any, port: any, data: any): Promise<EUdp> {
+  if (u.closed)
+    return Promise.reject(
+      netError("the udp socket on " + u.desc + " is closed")
+    );
+  const p = netInt(port);
+  const deadline = netDeadline(u.timeout);
+  const message = "timed out sending on " + u.desc;
+  return netResolveAddrs(host)
+    .then((addrs) => {
+      if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
+      return netRace(
+        new Promise<void>((resolve, reject) => {
+          u.sock.send(
+            Buffer.from(data, "utf8"),
+            p,
+            addrs[0],
+            (e: any) => {
+              if (e)
+                reject(
+                  new EEmoException(
+                    "cannot send on " + u.desc + ": " + netReason(e)
+                  )
+                );
+              else resolve();
+            }
+          );
+        }),
+        deadline,
+        message
+      );
+    })
+    .then(() => u);
+}
+
+function udpRecvFrom(u: EUdp): Promise<any> {
+  if (u.closed)
+    return Promise.reject(
+      netError("the udp socket on " + u.desc + " is closed")
+    );
+  const deliver = (pair: any) =>
+    new ETuple([utf8Decode(pair[0]), pair[1].address, BigInt(pair[1].port)]);
+  if (u.queue.length > 0) return Promise.resolve(deliver(u.queue.shift()));
+  const deadline = netDeadline(u.timeout);
+  const message = "timed out waiting to receive on " + u.desc;
+  let entry: any = null;
+  const wait = new Promise<any>((resolve, reject) => {
+    entry = { resolve, reject };
+    u.waiting.push(entry);
+  });
+  const drop = () => {
+    const i = u.waiting.indexOf(entry);
+    if (i >= 0) u.waiting.splice(i, 1);
+  };
+  return netRace(wait, deadline, message).then(
+    (pair) => {
+      drop();
+      _endIfShutdown();
+      return deliver(pair);
+    },
+    (e) => {
+      drop();
+      _endIfShutdown();
+      throw e;
+    }
+  );
+}
+
+function udpClose(u: EUdp): EUdp {
+  if (u.closed)
+    netFail("the udp socket on " + u.desc + " is already closed");
+  u.closed = true;
+  try {
+    u.sock.close();
+  } catch (e) {}
+  return u;
+}
+
+async function netResolveAddrs(host: any): Promise<string[]> {
+  try {
+    const r = await nodeDns.promises.lookup(String(host), {
+      all: true,
+      verbatim: true,
+    });
+    return r.map((a: any) => String(a.address));
+  } catch (e) {
+    return [];
+  }
+}
+
+async function netResolve(host: any): Promise<EArray> {
+  if (typeof host !== "string")
+    throw new Error("`net_resolve` expects a String host, got " + tag(host));
+  const addrs = await netResolveAddrs(host);
+  _endIfShutdown();
+  if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
+  return new EArray(addrs);
+}
+
+// An address literal needs no SNI name; a hostname does.
+function netIsIpLiteral(host: string): boolean {
+  return /^[0-9.]+$/.test(host) || host.indexOf(":") >= 0;
+}
+
+function netConnectErrorValue(host: string, port: number, e: any): any {
+  const target = host + ":" + port;
+  if (e && e.code === "ECONNREFUSED")
+    return new EEmoException("connection refused to " + target);
+  if (e instanceof EEmoException) return e;
+  return new EEmoException(
+    "cannot connect to " + target + ": " + netReason(e)
+  );
+}
+
+function netTlsErrorValue(host: string, port: number, e: any): any {
+  if (e instanceof EEmoException) return e;
+  return new EEmoException(
+    "the TLS handshake with " +
+      host +
+      ":" +
+      port +
+      " failed: " +
+      netReason(e)
+  );
+}
+
+// The per-connection TLS policy the options record carries: a private
+// trust store, a client certificate for mutual TLS, the name SNI and
+// verification use, and the explicit verification opt-out. A missing
+// or unreadable file is the (R.error, reason) the simple calls give.
+function netTlsClientOptions(
+  verify: boolean,
+  caFile: any,
+  certFile: any,
+  keyFile: any,
+  serverName: any
+): any {
+  const opts: any = { rejectUnauthorized: verify };
+  if (caFile !== "") {
+    try {
+      opts.ca = nodeFs.readFileSync(caFile);
+    } catch (e) {
+      netFail("cannot load the TLS CA file `" + caFile + "`: " + netReason(e));
+    }
+  }
+  if (certFile !== "") {
+    try {
+      opts.cert = nodeFs.readFileSync(certFile);
+      opts.key = nodeFs.readFileSync(keyFile);
+    } catch (e) {
+      netFail(
+        "cannot load the TLS client certificate `" +
+          certFile +
+          "`: " +
+          netReason(e)
+      );
+    }
+  }
+  if (serverName !== "") opts.servername = serverName;
+  return opts;
+}
+
+function netConnectOne(
+  addr: string,
+  port: number,
+  tlsOpts: any,
+  host: string,
+  deadline: number | null,
+  message: string
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let sock: any = null;
+    let done = false;
+    let timer: any = null;
+    const finish = (fn: () => void) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+    if (tlsOpts !== null) {
+      const opts: any = Object.assign({}, tlsOpts, { host: addr, port: port });
+      const name = tlsOpts.servername || host;
+      opts.servername = netIsIpLiteral(name) ? undefined : name;
+      sock = nodeTls.connect(opts);
+      sock.once("secureConnect", () => finish(() => resolve(sock)));
+      sock.once("error", (e: any) =>
+        finish(() => reject(netTlsErrorValue(host, port, e)))
+      );
+    } else {
+      sock = nodeNet.createConnection({ host: addr, port: port });
+      sock.once("connect", () => finish(() => resolve(sock)));
+      sock.once("error", (e: any) =>
+        finish(() => reject(netConnectErrorValue(host, port, e)))
+      );
+    }
+    if (deadline !== null)
+      timer = setTimeout(
+        () =>
+          finish(() => {
+            try {
+              sock.destroy();
+            } catch (e) {}
+            reject(netFail(message));
+          }),
+        Math.max(1, deadline - Date.now())
+      );
+  });
+}
+
+async function netConnect(
+  host: any,
+  port: any,
+  timeout: any,
+  tlsOpts: any
+): Promise<EConn> {
+  const p = netInt(port);
+  const t = netFloat(timeout);
+  if (tlsOpts !== null && tlsOpts.rejectUnauthorized) {
+    const name = tlsOpts.servername || host;
+    if (netIsIpLiteral(name))
+      netFail(
+        "tls: cannot verify a certificate for the IP address `" +
+          name +
+          "`; pass server_name with the certificate's DNS name"
+      );
+  }
+  const addrs = await netResolveAddrs(host);
+  _endIfShutdown();
+  if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
+  const deadline = netDeadline(t);
+  const message =
+    "timed out after " + g6(t) + "s connecting to " + host + ":" + p;
+  let last: any = null;
+  for (const addr of addrs) {
+    if (deadline !== null && Date.now() >= deadline) netFail(message);
+    try {
+      const sock = await netConnectOne(
+        addr,
+        p,
+        tlsOpts,
+        host,
+        deadline,
+        message
+      );
+      _endIfShutdown(sock);
+      return new EConn(sock, netPeerDesc(sock), tlsOpts !== null);
+    } catch (e) {
+      if (e instanceof EProgramEnd) throw e;
+      last = e;
+    }
+  }
+  if (last instanceof EEmoException) throw last;
+  netFail("cannot connect to " + host + ":" + p);
+}
+
+async function netConnectUnix(path: any, timeout: any): Promise<EConn> {
+  const t = netFloat(timeout);
+  const target = "unix socket " + path;
+  const deadline = netDeadline(t);
+  const message = "timed out after " + g6(t) + "s connecting to " + target;
+  const c: EConn = await new Promise<EConn>((resolve, reject) => {
+    let done = false;
+    let timer: any = null;
+    const finish = (fn: () => void) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+    const sock = nodeNet.createConnection({ path: path });
+    sock.once("connect", () =>
+      finish(() => resolve(new EConn(sock, target, false)))
+    );
+    sock.once("error", (e: any) =>
+      finish(() =>
+        reject(
+          e && e.code === "ECONNREFUSED"
+            ? new EEmoException("connection refused to " + target)
+            : new EEmoException(
+                "cannot connect to " + target + ": " + netReason(e)
+              )
+        )
+      )
+    );
+    if (deadline !== null)
+      timer = setTimeout(
+        () =>
+          finish(() => {
+            try {
+              sock.destroy();
+            } catch (e) {}
+            reject(netError(message));
+          }),
+        Math.max(1, deadline - Date.now())
+      );
+  });
+  _endIfShutdown(c.sock);
+  return c;
+}
+
+async function netListen(host: any, port: any): Promise<EListener> {
+  const p = netInt(port);
+  const l = new EListener(nodeNet.createServer(), "", 0, false, false);
+  await new Promise<void>((resolve, reject) => {
+    l.server.once("error", (e: any) => {
+      if (e && e.code === "ENOTFOUND")
+        reject(netError("cannot resolve host `" + host + "`"));
+      else
+        reject(
+          netError(
+            "cannot listen on " + host + ":" + p + ": " + netReason(e)
+          )
+        );
+    });
+    l.server.listen({ host: host, port: p }, () => resolve());
+  });
+  _endIfShutdown();
+  const addr = l.server.address();
+  l.port = addr && typeof addr === "object" ? addr.port : p;
+  l.desc = host + ":" + l.port;
+  return l;
+}
+
+async function netListenUnix(path: any): Promise<EListener> {
+  const l = new EListener(
+    nodeNet.createServer(),
+    "unix socket " + path,
+    0,
+    true,
+    false
+  );
+  await new Promise<void>((resolve, reject) => {
+    l.server.once("error", (e: any) =>
+      reject(
+        netError(
+          "cannot listen on unix socket " + path + ": " + netReason(e)
+        )
+      )
+    );
+    l.server.listen({ path: path }, () => resolve());
+  });
+  _endIfShutdown();
+  return l;
+}
+
+async function netListenTls(
+  host: any,
+  port: any,
+  certPath: any,
+  keyPath: any,
+  caFile: any,
+  requireClientCert: boolean
+): Promise<EListener> {
+  const p = netInt(port);
+  if (requireClientCert && caFile === "")
+    netFail("tls: require_client_cert needs a ca_file to verify against");
+  let cert: any;
+  let key: any;
+  try {
+    cert = nodeFs.readFileSync(certPath);
+    key = nodeFs.readFileSync(keyPath);
+  } catch (e) {
+    netFail(
+      "cannot load the TLS certificate for " +
+        host +
+        ":" +
+        p +
+        ": " +
+        netReason(e)
+    );
+  }
+  const serverOpts: any = { cert: cert, key: key };
+  if (caFile !== "") {
+    try {
+      serverOpts.ca = nodeFs.readFileSync(caFile);
+    } catch (e) {
+      netFail(
+        "cannot load the TLS client CA file `" + caFile + "`: " + netReason(e)
+      );
+    }
+    serverOpts.requestCert = true;
+    serverOpts.rejectUnauthorized = requireClientCert;
+  }
+  const l = new EListener(
+    nodeTls.createServer(serverOpts),
+    "",
+    0,
+    false,
+    true
+  );
+  await new Promise<void>((resolve, reject) => {
+    l.server.once("error", (e: any) => {
+      if (e && e.code === "ENOTFOUND")
+        reject(netError("cannot resolve host `" + host + "`"));
+      else
+        reject(
+          netError(
+            "cannot listen on " + host + ":" + p + ": " + netReason(e)
+          )
+        );
+    });
+    l.server.listen({ host: host, port: p }, () => resolve());
+  });
+  _endIfShutdown();
+  const addr = l.server.address();
+  l.port = addr && typeof addr === "object" ? addr.port : p;
+  l.desc = host + ":" + l.port;
+  return l;
+}
+
+async function netUdpBind(host: any, port: any): Promise<EUdp> {
+  const p = netInt(port);
+  const sock = nodeDgram.createSocket("udp4");
+  await new Promise<void>((resolve, reject) => {
+    sock.once("error", (e: any) => {
+      if (e && e.code === "ENOTFOUND")
+        reject(netError("cannot resolve host `" + host + "`"));
+      else
+        reject(
+          netError(
+            "cannot bind udp on " + host + ":" + p + ": " + netReason(e)
+          )
+        );
+    });
+    sock.bind({ address: String(host), port: p }, () => resolve());
+  });
+  const addr = sock.address();
+  const bound = addr ? addr.port : p;
+  return new EUdp(sock, host + ":" + bound, bound);
+}
+
+
+// The host method table: the receivers the networking section owns.
+function nodeMethod(recv: any, name: string, args: any[]): any {
+  if (recv instanceof EConn) {
+    if (name === "read_line") return netResult(() => connReadLine(recv));
+    if (name === "read_exactly")
+      return netResult(() => connReadExactly(recv, args[0]));
+    if (name === "read_all") return netResult(() => connReadAll(recv));
+    if (name === "write") return netResult(() => connWrite(recv, args[0]));
+    if (name === "close") return netResult(() => connClose(recv));
+    if (name === "set_timeout") return netSetTimeout(recv, args[0]);
+  }
+  if (recv instanceof EListener) {
+    if (name === "accept") return netResult(() => listenerAccept(recv));
+    if (name === "port") return listenerPort(recv);
+    if (name === "close") return netResult(() => listenerClose(recv));
+    if (name === "set_timeout") return netSetTimeout(recv, args[0]);
+  }
+  if (recv instanceof EUdp) {
+    if (name === "send_to")
+      return netResult(() => udpSendTo(recv, args[0], args[1], args[2]));
+    if (name === "recv_from") return netResult(() => udpRecvFrom(recv));
+    if (name === "port") return BigInt(recv.port);
+    if (name === "close") return netResult(() => udpClose(recv));
+    if (name === "set_timeout") return netSetTimeout(recv, args[0]);
+  }
+  return _hostMethodMiss;
+}
+
+function nodeRuntimeImpl(name: string, args: any[]): any {
+  switch (name) {
+    case "net_resolve":
+      return netResult(() => netResolve(args[0]));
+    case "net_connect":
+      return netResult(() => netConnect(args[0], args[1], args[2], null));
+    case "net_connect_unix":
+      return netResult(() => netConnectUnix(args[0], args[1]));
+    case "net_listen":
+      return netResult(() => netListen(args[0], args[1]));
+    case "net_listen_unix":
+      return netResult(() => netListenUnix(args[0]));
+    case "net_udp_bind":
+      return netResult(() => netUdpBind(args[0], args[1]));
+    case "net_tls_connect":
+      return netResult(() =>
+        netConnect(
+          args[0],
+          args[1],
+          args[2],
+          netTlsClientOptions(true, "", "", "", "")
+        )
+      );
+    case "net_tls_connect_insecure":
+      return netResult(() =>
+        netConnect(
+          args[0],
+          args[1],
+          args[2],
+          netTlsClientOptions(false, "", "", "", "")
+        )
+      );
+    case "net_tls_connect_with":
+      return netResult(() =>
+        netConnect(
+          args[0],
+          args[1],
+          args[2],
+          netTlsClientOptions(
+            !args[7],
+            args[3],
+            args[4],
+            args[5],
+            args[6]
+          )
+        )
+      );
+    case "net_listen_tls":
+      return netResult(() =>
+        netListenTls(args[0], args[1], args[2], args[3], "", false)
+      );
+    case "net_listen_tls_with":
+      return netResult(() =>
+        netListenTls(args[0], args[1], args[2], args[3], args[4], args[5])
+      );
+    default:
+      throw new Error(
+        "the `" +
+          name +
+          "` runtime implementation is not supported on the typescript target yet"
+      );
+  }
+}
+
+// The root body has ended, so the program has ended. The emitted root
+// calls this the moment its last statement is done — synchronously,
+// before the microtasks a preceding send queued run — so a task a send
+// made runnable never gets to execute past the root. Node's own loop
+// then drains: the handles are closed, the timers are cleared, and the
+// pending resumptions unwinding at _endIfShutdown leave nothing behind.
+function nodeShutdown(): void {
+  netShutdown();
+}
+
+function nodeWrite(text: string): void {
+  process.stdout.write(text);
+}
+
+function nodeRunAs<T>(pid: number, f: () => T): T {
+  return _als.run({ pid }, f);
+}
+
+function nodeCurrentPid(): number | null {
+  const st = _als.getStore();
+  return st ? st.pid : null;
+}
+
+_host = {
+  write: nodeWrite,
+  runAs: nodeRunAs,
+  currentPid: nodeCurrentPid,
+  shutdownOnRootEnd: () => true,
+  shutdown: nodeShutdown,
+  method: nodeMethod,
+  runtimeImpl: nodeRuntimeImpl,
+};
+
+// ---- program ----
+let main__s__emo_cache;
+let main__ff__emo_cache;
+let main__vt__emo_cache;
+async function main__vt() {
+  if (main__vt__emo_cache === undefined) {
+    main__vt__emo_cache = await (async () => {
+return E.bytesNew(1n);
+    })();
+  }
+  return main__vt__emo_cache;
+}
+async function main__ff() {
+  if (main__ff__emo_cache === undefined) {
+    main__ff__emo_cache = await (async () => {
+return E.bytesNew(1n);
+    })();
+  }
+  return main__ff__emo_cache;
+}
+async function main__s() {
+  if (main__s__emo_cache === undefined) {
+    main__s__emo_cache = await (async () => {
+return "\u{e9}\u{d7}a\u{28ff}";
+    })();
+  }
+  return main__s__emo_cache;
+}
+
+E.runMain(async () => {
+try {
+const s = (await main__s());
+E.println((await E.method(s, "length", [])));
+E.println((await E.method(s, "substring", [0n, 2n])));
+E.println((await E.method(s, "substring", [2n, 2n])));
+E.println((await E.method(s, "substring", [4n, 1n])));
+E.println((await E.method(s, "substring", [5n, 3n])));
+E.println((await E.method(s, "index_of", ["\u{d7}a"])));
+E.println((await E.method(s, "index_of", ["\u{28ff}"])));
+E.println((await E.method(s, "index_of", ["z"])));
+E.println((await E.method(s, "index_of", [""])));
+E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "length", [])));
+E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "substring", [3n, 6n])));
+E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "index_of", ["\u{8a9e}"])));
+E.println((await E.method("a\u{1f600}b", "length", [])));
+E.println((await E.method("a\u{1f600}b", "index_of", ["b"])));
+E.println((await E.method("a\u{1f600}b", "substring", [1n, 4n])));
+E.println((await E.method((await E.method("\u{e9}\u{d7}a", "to_bytes", [])), "length", [])));
+E.println((await E.method("a,b,,c", "split", [","])));
+E.println((await E.method("\u{65e5}\u{672c},\u{8a9e}", "split", [","])));
+E.println((await E.method("abc", "starts_with", ["ab"])));
+E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}", "starts_with", ["\u{672c}"])));
+const ff = (await main__ff());
+(await E.method(ff, "set", [0n, 12n]));
+const vt = (await main__vt());
+(await E.method(vt, "set", [0n, 11n]));
+E.println((await E.method(" \t x y \r\n", "trim", [])));
+E.println((await E.method((await E.method(" x ", "trim", [])), "length", [])));
+E.println((await E.method((await E.method("\u{3000}x\u{3000}", "trim", [])), "length", [])));
+E.println((await E.method((await E.method(E.add(E.add((await E.method(ff, "to_string", [])), "a"), (await E.method(ff, "to_string", []))), "trim", [])), "length", [])));
+E.println((await E.method((await E.method(E.add(E.add((await E.method(vt, "to_string", [])), "a"), (await E.method(vt, "to_string", []))), "trim", [])), "length", [])));
+E.println((await E.method("\u{c9}COLE \u{3a3} \u{130} ABC", "lower", [])));
+E.println((await E.method("MiXeD 123 Z", "lower", [])));
+E.println((await E.method("42", "to_int64", [])));
+E.println((await E.method("-7", "to_int64", [])));
+E.println((await E.method("0042", "to_int64", [])));
+E.println((await E.method("-0", "to_int64", [])));
+E.println((await E.method("-9223372036854775808", "to_int64", [])));
+E.println((await E.method("9223372036854775807", "to_int64", [])));
+let dyn = { v: E.array([]) };
+dyn.v = (await E.method(dyn.v, "append", ["  -15 "]));
+dyn.v = (await E.method(dyn.v, "append", ["\u{c0}BC d"]));
+E.println((await E.method((await E.method(E.index(dyn.v, 0n), "trim", [])), "to_int64", [])));
+E.println((await E.method(E.index(dyn.v, 1n), "lower", [])));
+E.println((await E.method(E.index(dyn.v, 1n), "index_of", ["d"])));
+} finally {
+E.endRoot();
+}
+}).catch((e: any) => {
+if (e instanceof EHalt || e instanceof EReturn) return;
+      console.error(E.renderError(e));
+  process.exitCode = 70;
+});

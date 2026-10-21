@@ -704,7 +704,18 @@ and method_call env self_ name args =
       put env "call 'erlang':'trunc'(";
       expr env self_;
       put env ")"
-  | "to_int64", [] -> expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
+      put env "apply 'emo_str_to_int64'/1 ";
+      args_list env [ self_ ]
+  | "to_int64", []
+    when self_.Emo_ir.ety = Emo_check.Int64 || self_.Emo_ir.ety = Emo_check.Byte
+    ->
+      expr env self_
+  | "to_int64", [] ->
+      (* the static type did not settle it: the runtime tells a binary
+         (parsed), a float (truncated), and an integer (kept) apart *)
+      put env "apply 'emo_to_int64'/1 ";
+      args_list env [ self_ ]
   | "to_byte", [] ->
       put env "apply 'emo_to_byte'/1 ";
       args_list env [ self_ ]
@@ -722,6 +733,15 @@ and method_call env self_ name args =
       | "starts_with", [ prefix ] ->
           put env "apply 'emo_str_starts_with'/2 ";
           args_list env [ self_; prefix ]
+      | "index_of", [ needle ] ->
+          put env "apply 'emo_str_index_of'/2 ";
+          args_list env [ self_; needle ]
+      | "trim", [] ->
+          put env "apply 'emo_str_trim'/1 ";
+          args_list env [ self_ ]
+      | "lower", [] ->
+          put env "apply 'emo_str_lower'/1 ";
+          args_list env [ self_ ]
       | "split", [ sep ] ->
           put env "apply 'emo_str_split'/2 ";
           args_list env [ self_; sep ]
@@ -2563,6 +2583,139 @@ let rt_source =
 		  call 'erlang':'iolist_to_binary'([116, 104, 101, 32, 115, 101, 112, 97, 114, 97, 116, 111, 114, 32, 109, 117, 115, 116, 32, 110, 111, 116, 32, 98, 101, 32, 101, 109, 112, 116, 121])})
 	  <_other> when 'true' ->
 	      call 'binary':'split'(_s, _sep, ['global'])
+	end
+
+'emo_str_index_of'/2 =
+    fun (_s, _n) ->
+	case call 'erlang':'byte_size'(_n) of
+	  <0> when 'true' -> 0
+	  <_nlen> when 'true' ->
+	      case call 'binary':'match'(_s, _n) of
+		<'nomatch'> when 'true' -> call 'erlang':'-'(0, 1)
+		<{_pos, _mlen}> when 'true' -> _pos
+	      end
+	end
+
+'emo_trim_space'/1 =
+    fun (_c) ->
+	case _c of
+	  <32> when 'true' -> 'true'
+	  <9> when 'true' -> 'true'
+	  <10> when 'true' -> 'true'
+	  <13> when 'true' -> 'true'
+	  <12> when 'true' -> 'true'
+	  <_o> when 'true' -> 'false'
+	end
+
+'emo_trim_lo'/3 =
+    fun (_s, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'false'> when 'true' -> _i
+	  <'true'> when 'true' ->
+	      case apply 'emo_trim_space'/1 (call 'binary':'at'(_s, _i)) of
+		<'true'> when 'true' -> apply 'emo_trim_lo'/3 (_s, call 'erlang':'+'(_i, 1), _n)
+		<'false'> when 'true' -> _i
+	      end
+	end
+
+'emo_trim_hi'/3 =
+    fun (_s, _lo, _hi) ->
+	case call 'erlang':'>'(_hi, _lo) of
+	  <'false'> when 'true' -> _hi
+	  <'true'> when 'true' ->
+	      case apply 'emo_trim_space'/1 (call 'binary':'at'(_s, call 'erlang':'-'(_hi, 1))) of
+		<'true'> when 'true' -> apply 'emo_trim_hi'/3 (_s, _lo, call 'erlang':'-'(_hi, 1))
+		<'false'> when 'true' -> _hi
+	      end
+	end
+
+'emo_str_trim'/1 =
+    fun (_s) ->
+	let <_n> = call 'erlang':'byte_size'(_s) in
+	let <_lo> = apply 'emo_trim_lo'/3 (_s, 0, _n) in
+	let <_hi> = apply 'emo_trim_hi'/3 (_s, _lo, _n) in
+	  call 'binary':'part'(_s, _lo, call 'erlang':'-'(_hi, _lo))
+
+'emo_lower_byte'/1 =
+    fun (_c) ->
+	case call 'erlang':'>='(_c, 65) of
+	  <'false'> when 'true' -> _c
+	  <'true'> when 'true' ->
+	      case call 'erlang':'=<'(_c, 90) of
+		<'true'> when 'true' -> call 'erlang':'+'(_c, 32)
+		<'false'> when 'true' -> _c
+	      end
+	end
+
+'emo_str_lower'/1 =
+    fun (_s) ->
+	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_lower_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
+
+'emo_digits_ok'/3 =
+    fun (_s, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'false'> when 'true' -> 'true'
+	  <'true'> when 'true' ->
+	      let <_c> = call 'binary':'at'(_s, _i) in
+		case call 'erlang':'>='(_c, 48) of
+		  <'false'> when 'true' -> 'false'
+		  <'true'> when 'true' ->
+		      case call 'erlang':'=<'(_c, 57) of
+			<'false'> when 'true' -> 'false'
+			<'true'> when 'true' -> apply 'emo_digits_ok'/3 (_s, call 'erlang':'+'(_i, 1), _n)
+		      end
+		end
+	end
+
+'emo_decimal_ok'/1 =
+    fun (_s) ->
+	let <_n> = call 'erlang':'byte_size'(_s) in
+	let <_start> =
+	    case _n of
+	      <0> when 'true' -> 0
+	      <_k> when 'true' ->
+		  case call 'binary':'at'(_s, 0) of
+		    <45> when 'true' -> 1
+		    <_c> when 'true' -> 0
+		  end
+	    end
+	in
+	  case call 'erlang':'<'(_start, _n) of
+	    <'false'> when 'true' -> 'false'
+	    <'true'> when 'true' -> apply 'emo_digits_ok'/3 (_s, _start, _n)
+	  end
+
+'emo_bad_int64'/1 =
+    fun (_s) ->
+	call 'erlang':'error'
+	    ({'emo_bad_int64',
+	      call 'erlang':'iolist_to_binary'([99, 97, 110, 110, 111, 116, 32, 112, 97, 114, 115, 101, 32, 96, _s, 96, 32, 97, 115, 32, 97, 110, 32, 73, 110, 116, 54, 52])})
+
+'emo_str_to_int64'/1 =
+    fun (_s) ->
+	case apply 'emo_decimal_ok'/1 (_s) of
+	  <'false'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+	  <'true'> when 'true' ->
+	      let <_v> = call 'erlang':'binary_to_integer'(_s) in
+		case call 'erlang':'<'(_v, call 'erlang':'-'(0, 9223372036854775808)) of
+		  <'true'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+		  <'false'> when 'true' ->
+		      case call 'erlang':'>'(_v, 9223372036854775807) of
+			<'true'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+			<'false'> when 'true' -> _v
+		      end
+		end
+	end
+
+'emo_to_int64'/1 =
+    fun (_v) ->
+	case call 'erlang':'is_binary'(_v) of
+	  <'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
+	  <'false'> when 'true' ->
+	      case call 'erlang':'is_float'(_v) of
+		<'true'> when 'true' -> call 'erlang':'trunc'(_v)
+		<'false'> when 'true' -> _v
+	      end
 	end
 
 'emo_bytes_label'/1 =
