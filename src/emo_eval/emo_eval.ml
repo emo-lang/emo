@@ -37,7 +37,7 @@ type value =
   | BuiltinFn of string
   | RuntimeImplFn of string
   | ForeignFn of string
-      (* a `foreign def` binding: inert at load time, E3009 when called *)
+    (* a `foreign def` binding: inert at load time, E3009 when called *)
   | ClassDef of class_def_value
   | Instance of instance_value
   | EnumType of enum_type_value
@@ -574,6 +574,12 @@ let builder_get span (b : emo_builder) (i : value) : value =
 let builder_to_array (b : emo_builder) : value =
   Array (Array.sub b.bitems 0 b.bsize)
 
+(* The call that runs a class's own `to_string` — the evaluator installs
+   it below, after the values — so that rendering can answer an
+   instance's method first, the `emo.to_string` protocol. *)
+let call_to_string : (instance_value -> closure -> value) ref =
+  ref (fun _ _ -> failwith "emo_eval: the to_string hook is not installed")
+
 (* The one stringification rule: interpolation and `.to_string()` share it. *)
 let rec to_string v =
   match v with
@@ -622,7 +628,7 @@ let rec to_string v =
   | RuntimeImplFn name -> Printf.sprintf "<runtime implementation %s>" name
   | ForeignFn name -> Printf.sprintf "<foreign %s>" name
   | ClassDef c -> c.cname
-  | Instance i ->
+  | Instance i -> (
       if
         (* Provisional default format, per the step-06 spec. *)
         i.iclass.builtin_exception
@@ -631,11 +637,23 @@ let rec to_string v =
         | Some message -> to_string message
         | None -> "#Exception()"
       else
-        let fields =
-          String.concat ", "
-            (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) i.ifields)
-        in
-        "#" ^ i.iclass.cname ^ "(" ^ fields ^ ")"
+        (* A class's own `to_string` answers first — the protocol entry
+         `emo.to_string` — and the structure dump is the defined
+         default, not a fallback the method can shadow by a different
+         signature. *)
+        match List.assoc_opt "to_string" i.iclass.cmethods with
+        | Some closure when closure.params = [] -> (
+            match !call_to_string i closure with
+            | String s -> s
+            | _ ->
+                error Emo_support.Span.zero "E3015"
+                  "`to_string` must answer a String")
+        | _ ->
+            let fields =
+              String.concat ", "
+                (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) i.ifields)
+            in
+            "#" ^ i.iclass.cname ^ "(" ^ fields ^ ")")
   | EnumType e -> e.ename
   | EnumMember (_, m) -> m
   | TypeValue t -> t
@@ -3568,6 +3586,16 @@ let may_end_without_return (d : Ast.fun_def) =
   | None -> true
   | Some { Ast.type_desc = Ast.Named_type "Void"; _ } -> true
   | Some _ -> false
+
+(* Rendering calls a class's `to_string` the way any method call does:
+   an empty argument frame, `self` bound to the instance. *)
+let () =
+  call_to_string :=
+    fun i closure ->
+      let span = Emo_support.Span.zero in
+      let frame = bind_params closure span [] in
+      define frame "self" ~mutable_:false (Instance i);
+      eval_frame closure frame span
 
 (* Top-level items: defs register closures in the environment, statements
    run in order. Closures capture [env] by reference, so a def resolves

@@ -1026,7 +1026,7 @@ println(Walker.new().walk(200000))|}));
 
 let to_string_tests =
   [
-    tc "instances render with the provisional default format" (fun () ->
+    tc "instances without to_string render as the structure dump" (fun () ->
         Alcotest.(check string)
           "instance" "#User(name: \"Ada\", age: 36)\n"
           (run_program
@@ -1051,6 +1051,43 @@ println("${Color.red}")|}));
              {|const e = Exception.new(message: "boom")
 println(e.to_string())
 println("${e}")|}));
+    tc "a class's to_string answers println, interpolation, and the call"
+      (fun () ->
+        Alcotest.(check string)
+          "protocol" "(1, 2)\n(1, 2)\nat (1, 2)\n"
+          (run_program
+             {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+
+  def to_string() String {
+    return "(${self.x}, ${self.y})"
+  }
+}
+const p = Point.new(1, 2)
+println(p)
+println(p.to_string())
+println("at ${p}")|}));
+    tc "containers render their elements through the class's to_string"
+      (fun () ->
+        Alcotest.(check string)
+          "protocol" "[(1, 2), (3, 4)]\n{\"k\": (5, 6)}\n((7, 8), 9)\n"
+          (run_program
+             {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+
+  def to_string() String {
+    return "(${self.x}, ${self.y})"
+  }
+}
+println([Point.new(1, 2), Point.new(3, 4)])
+println({"k": Point.new(5, 6)})
+println("${(Point.new(7, 8), 9)}")|}));
   ]
 
 let object_acceptance_tests =
