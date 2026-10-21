@@ -1,39 +1,111 @@
 // The PNG backend's byte level: the DEFLATE stream, the zlib wrapper,
 // the chunk frames, and the file itself, every byte computed here — no
-// host image library. The byte arrays are Array[Int64] rather than
-// Bytes: an element read stays a static Int64, and the checksums and
-// the Huffman packer need bitwise work that the dynamic world refuses.
+// host image library. Two stores, each shaped by a target wall: the
+// bytes a figure hands over live in `Pack` (chunked, constant-time
+// reads — a flat `Bytes` set copies its backing binary on beam, an
+// `Array` index walks a list), while the bytes the compressor hands
+// back are `Array[Int64]` — an element read stays a static Int64, and
+// the checksums need bitwise work that the dynamic world refuses.
 // Mixed arithmetic and bitwise expressions carry their parentheses —
 // the language puts `&`, `|`, and `^` at the additive level.
 
-// Three little-endian bytes of a slot in one of the chain tables.
-def get3(b Bytes, i Int64) Int64 {
-  return b.get(i * 3) + b.get(i * 3 + 1) * 256 + b.get(i * 3 + 2) * 65536
+// The chain tables behind the LZ77 matcher: a Map of 256-slot chunks,
+// three little-endian bytes a slot. A write rebinds one 768-byte chunk,
+// where one flat Bytes would rebuild the whole table — the beam target's
+// `Bytes` set copies its backing binary every time, and a flat
+// 300-thousand-slot table under a PNG-sized stream is minutes.
+class Chain {
+  def init(slots Int64) {
+    self.tab = Map.new()
+    var s = 0
+    while s < slots {
+      self.tab.set(s / 256, Bytes.new(768))
+      s = s + 256
+    }
+  }
+
+  // The names stay clear of `get`/`set`: a receiver the IR lost the
+  // type of dispatches those to the builtin shape tests (CHECK.md).
+  def slot(i Int64) Int64 {
+    const c = self.tab.get(i / 256)
+    const k = (i % 256) * 3
+    return c.get(k) + c.get(k + 1) * 256 + c.get(k + 2) * 65536
+  }
+
+  def set_slot(i Int64, v Int64) Void {
+    const c = self.tab.get(i / 256)
+    const k = (i % 256) * 3
+    c.set(k, v % 256)
+    c.set(k + 1, v / 256 % 256)
+    c.set(k + 2, v / 65536 % 256)
+  }
 }
 
-def set3(b Bytes, i Int64, v Int64) Void {
-  b.set(i * 3, v % 256)
-  b.set(i * 3 + 1, v / 256 % 256)
-  b.set(i * 3 + 2, v / 65536 % 256)
+// The stream a figure is compressed from: 4096-byte chunks in a Map,
+// written once front to back and read at random. `Bytes` alone would
+// have the beam target's set copy its whole backing binary per write,
+// and an `Array` would have it walk to every index — a list underneath
+// — so the deflater reads through this instead, and every read answers
+// in constant time on every target.
+class Pack {
+  def init() {
+    self.tab = Map.new()
+    self.n = Box.new(0)
+  }
+
+  // The names stay clear of `push`/`get`/`length`: a receiver the IR
+  // lost the type of dispatches those to the builtin shape tests
+  // (CHECK.md), and a Pack instance is none of their shapes.
+  def add(b Int64) Void {
+    const k = self.n.read() / 4096
+    if self.tab.has(k) {
+      const c = self.tab.get(k)
+      c.set(self.n.read() % 4096, b)
+    } else {
+      const c = Bytes.new(4096)
+      c.set(self.n.read() % 4096, b)
+      self.tab.set(k, c)
+    }
+    self.n.replace(self.n.read() + 1)
+  }
+
+  def count() Int64 {
+    return self.n.read()
+  }
+
+  def byte(i Int64) Int64 {
+    const c = self.tab.get(i / 4096)
+    return c.get(i % 4096)
+  }
 }
 
 // The chain-table hash of the three bytes at i, folded to 32768 slots.
-def bhash(data Array[Int64], i Int64) Int64 {
-  return (data[i] * 65536 + data[i + 1] * 256 + data[i + 2]) % 32768
+def bhash(data Pack, i Int64) Int64 {
+  return (data.byte(i) * 65536 + data.byte(i + 1) * 256 + data.byte(i + 2)) % 32768
 }
 
 // nb bits of v into the shared accumulator, flushing whole bytes into
 // out as they fill: Huffman codes go out MSB first, the extra bits LSB
 // first. Answers (acc, cnt); out is the same builder the caller holds.
+// The bit at k comes out by dividing by the running power of two — v
+// is often a byte read back from the stream, and the dynamic world
+// refuses the bitwise operators (the term renderer's arithmetic rule).
 def put_bits(out ArrayBuilder, acc Int64, cnt Int64, v Int64, nb Int64, msb Bool) (Int64, Int64) {
   var a = acc
   var c = cnt
-  var k = 0
+  var left = nb
+  var k2 = 1
   if msb {
-    k = nb - 1
+    var t = 1
+    var j = 1
+    while j < nb {
+      t = t * 2
+      j = j + 1
+    }
+    k2 = t
   }
-  while k >= 0 && k < nb {
-    a = a + ((v >> k) % 2) * (1 << c)
+  while left > 0 {
+    a = a + ((v / k2) % 2) * (1 << c)
     c = c + 1
     if c == 8 {
       out.push(a)
@@ -41,11 +113,12 @@ def put_bits(out ArrayBuilder, acc Int64, cnt Int64, v Int64, nb Int64, msb Bool
       c = 0
     }
     if msb {
-      k = k - 1
+      k2 = k2 / 2
     }
     if !msb {
-      k = k + 1
+      k2 = k2 * 2
     }
+    left = left - 1
   }
   return (a, c)
 }
@@ -105,26 +178,26 @@ def dist_code(d Int64) (Int64, Int64, Int64) {
   return (c, dw - base, nb)
 }
 
-// The DEFLATE stream for the bytes: one fixed-Huffman block, greedy
-// LZ77 over hash chains — the three bytes at a position hash to a
-// bucket in head, earlier positions with the same bucket threaded
-// through prev, both tables mutable Bytes three little-endian bytes a
-// slot, 16777215 meaning none. A match of four or more bytes wins over
-// literals; up to sixteen candidates are tried within the 32768-byte
-// window, and every position covered is chained for the matches after.
-def deflate(data Array[Int64]) Array[Int64] {
+// The DEFLATE stream for the bytes of the stream: one fixed-Huffman
+// block, greedy LZ77 over hash chains — the three bytes at a position
+// hash to a bucket in head, earlier positions with the same bucket
+// threaded through prev, both `Chain` tables, 16777215 meaning none. A
+// match of four or more bytes wins over literals; up to four
+// candidates are tried within the 32768-byte window, and every
+// position covered is chained for the matches after.
+def deflate(data Pack) Array[Int64] {
   const out = ArrayBuilder.new()
   var acc = 0
   var cnt = 0
-  const n = data.length()
+  const n = data.count()
   const none = 16777215
-  const head = Bytes.new(32768 * 3)
-  const prev = Bytes.new(n * 3 + 3)
-  // The tables are zero-filled and position 0 is real, so the empty
-  // slots have to say none before the first walk.
+  const head = Chain.new(32768)
+  const prev = Chain.new(n)
+  // Position 0 is real, so the empty slots have to say none before the
+  // first walk.
   var s = 0
   while s < 32768 {
-    set3(head, s, none)
+    head.set_slot(s, none)
     s = s + 1
   }
   // The one block: BFINAL 1, BTYPE 01 fixed Huffman.
@@ -137,7 +210,7 @@ def deflate(data Array[Int64]) Array[Int64] {
     var mdist = 0
     if pos + 2 < n {
       const h = bhash(data, pos)
-      var cand = get3(head, h)
+      var cand = head.slot(h)
       var chain = 0
       while cand != none && chain < 16 && pos - cand <= 32768 {
         var cap = n - pos
@@ -145,14 +218,14 @@ def deflate(data Array[Int64]) Array[Int64] {
           cap = 258
         }
         var l = 0
-        while l < cap && data[cand + l] == data[pos + l] {
+        while l < cap && data.byte(cand + l) == data.byte(pos + l) {
           l = l + 1
         }
         if l > mlen {
           mlen = l
           mdist = pos - cand
         }
-        cand = get3(prev, cand)
+        cand = prev.slot(cand)
         chain = chain + 1
       }
       if mlen < 4 {
@@ -183,22 +256,22 @@ def deflate(data Array[Int64]) Array[Int64] {
       while k < pos + mlen {
         if k + 2 < n {
           const hk = bhash(data, k)
-          set3(prev, k, get3(head, hk))
-          set3(head, hk, k)
+          prev.set_slot(k, head.slot(hk))
+          head.set_slot(hk, k)
         }
         k = k + 1
       }
       pos = pos + mlen
     }
     if mlen == 0 {
-      const w = lit_code(data[pos])
+      const w = lit_code(data.byte(pos))
       r = put_bits(out, acc, cnt, w[0], w[1], true)
       acc = r[0]
       cnt = r[1]
       if pos + 2 < n {
         const hk = bhash(data, pos)
-        set3(prev, pos, get3(head, hk))
-        set3(head, hk, pos)
+        prev.set_slot(pos, head.slot(hk))
+        head.set_slot(hk, pos)
       }
       pos = pos + 1
     }
@@ -250,13 +323,13 @@ def crc32(data Array[Int64]) Int64 {
   return 4294967295 - crc_push(4294967295, crc_table(), data)
 }
 
-// The Adler-32 of the bytes: two sums mod 65521, the low one seeded
-// at 1, packed high word first.
-def adler32(data Array[Int64]) Int64 {
+// The Adler-32 of the bytes of the stream: two sums mod 65521, the low
+// one seeded at 1, packed high word first.
+def adler32(data Pack) Int64 {
   var a = 1
   var b = 0
-  for var i = 0; i < data.length(); i = i + 1 {
-    a = (a + data[i]) % 65521
+  for var i = 0; i < data.count(); i = i + 1 {
+    a = (a + data.byte(i)) % 65521
     b = (b + a) % 65521
   }
   return b * 65536 + a
@@ -264,7 +337,7 @@ def adler32(data Array[Int64]) Int64 {
 
 // The zlib stream for the bytes: the 120, 156 header, the DEFLATE
 // data, the Adler-32 big-endian.
-def zlib_stream(data Array[Int64]) Array[Int64] {
+def zlib_stream(data Pack) Array[Int64] {
   const out = ArrayBuilder.new()
   out.push(120)
   out.push(156)
@@ -308,7 +381,7 @@ def chunk(kind Array[Int64], data Array[Int64]) Array[Int64] {
 // The PNG file for the filtered scanlines raw — each row a filter byte
 // of 0 then width RGB triples: the signature, IHDR (8-bit truecolor),
 // IDAT, IEND.
-def png_file(width Int64, height Int64, raw Array[Int64]) Array[Int64] {
+def png_file(width Int64, height Int64, raw Pack) Array[Int64] {
   const out = ArrayBuilder.new()
   const sig = [137, 80, 78, 71, 13, 10, 26, 10]
   for var i = 0; i < 8; i = i + 1 {
@@ -379,14 +452,22 @@ def dash_on(pattern Array[Float64], travelled Float64) Bool {
   return i % 2 == 0
 }
 
-// The raster backend: the display list drawn onto an RGB sample grid at
-// 2 × supersampling — every pixel is 2 × 2 samples, and the average of
-// the four is the antialiased pixel. Fills are scanlines (a rect's
-// spans, a circle's chord per row, a polygon's even-odd crossings), a
-// line is a Bresenham walk in sample space with a square pen as wide
-// as the stroke and the dash pattern paced along the walk. The paper
-// fills the grid at construction; drawing over it mixes at the pixel,
-// not the sample.
+// The raster backend: the display list drawn onto a sample grid at 2 ×
+// supersampling — every pixel is 2 × 2 samples, and the average of the
+// four is the antialiased pixel. Fills are scanlines (a rect's spans, a
+// circle's chord per row, a polygon's even-odd crossings), a line is a
+// Bresenham walk in sample space with a square pen as wide as the
+// stroke and the dash pattern paced along the walk. The paper fills the
+// grid at construction; drawing over it mixes at the pixel, not the
+// sample.
+//
+// The grid stores one color index a sample, one `Bytes` row a sample
+// row in a Map: a write rebinds that one row, where a single flat
+// `Bytes` would have the beam target's set copy its whole backing
+// binary every time — a PNG-sized grid under it is minutes. The index
+// runs the renderer's own color table: every drawn color is checked,
+// then keyed to the next slot, so a row byte is the lookup, not the
+// triple.
 class PngRenderer {
   def init(width Float64, height Float64, paper (Int64, Int64, Int64)) {
     checked(paper)
@@ -394,21 +475,46 @@ class PngRenderer {
     self.h = height.ceil().to_int64()
     self.sw = self.w * 2
     self.sh = self.h * 2
-    self.px = Bytes.new(self.sw * self.sh * 3)
-    const n = self.sw * self.sh
-    for var i = 0; i < n; i = i + 1 {
-      self.px.set(i * 3, paper[0])
-      self.px.set(i * 3 + 1, paper[1])
-      self.px.set(i * 3 + 2, paper[2])
+    // The table locals are the pinned builders the fields inherit: a
+    // field born from a bare `ArrayBuilder.new()` stays element-typed
+    // Unknown, and its `to_array` answers values nothing may index.
+    const t = ArrayBuilder.new()
+    const m = Map.new()
+    t.push(paper[0])
+    t.push(paper[1])
+    t.push(paper[2])
+    m.set(paper[0] * 65536 + paper[1] * 256 + paper[2], 0)
+    self.tab = m
+    self.rgb = t
+    self.rows = Map.new()
+    var sy = 0
+    while sy < self.sh {
+      self.rows.set(sy, Bytes.new(self.sw))
+      sy = sy + 1
     }
+  }
+
+  // The table slot of a checked color, the slot born with its first use.
+  def color_index(c (Int64, Int64, Int64)) Int64 {
+    checked(c)
+    const k = c[0] * 65536 + c[1] * 256 + c[2]
+    if self.tab.has(k) {
+      const found = self.tab.get(k)
+      return found
+    }
+    const at = self.rgb.length() / 3
+    self.rgb.push(c[0])
+    self.rgb.push(c[1])
+    self.rgb.push(c[2])
+    self.tab.set(k, at)
+    return at
   }
 
   def put(sx Int64, sy Int64, c (Int64, Int64, Int64)) Void {
     if sx >= 0 && sy >= 0 && sx < self.sw && sy < self.sh {
-      const at = (sy * self.sw + sx) * 3
-      self.px.set(at, c[0])
-      self.px.set(at + 1, c[1])
-      self.px.set(at + 2, c[2])
+      const ci = self.color_index(c)
+      const row = self.rows.get(sy)
+      row.set(sx, ci)
     }
   }
 
@@ -423,11 +529,12 @@ class PngRenderer {
       if b > self.sw {
         b = self.sw
       }
-      for var sx = a; sx < b; sx = sx + 1 {
-        const at = (sy * self.sw + sx) * 3
-        self.px.set(at, c[0])
-        self.px.set(at + 1, c[1])
-        self.px.set(at + 2, c[2])
+      if a < b {
+        const ci = self.color_index(c)
+        const row = self.rows.get(sy)
+        for var sx = a; sx < b; sx = sx + 1 {
+          row.set(sx, ci)
+        }
       }
     }
   }
@@ -628,20 +735,23 @@ class PngRenderer {
   // which rounds to nearest — each row out under a filter byte of 0,
   // and the file is framed.
   def finish() Bytes {
-    const raw = ArrayBuilder.new()
+    const tab = self.rgb.to_array()
+    const raw = Pack.new()
     for var row = 0; row < self.h; row = row + 1 {
-      raw.push(0)
+      raw.add(0)
+      const top = self.rows.get(row * 2)
+      const bot = self.rows.get(row * 2 + 1)
       for var col = 0; col < self.w; col = col + 1 {
-        const a = (row * 2 * self.sw + col * 2) * 3
-        const b = a + 3
-        const c = a + self.sw * 3
-        const d = c + 3
-        raw.push((self.px.get(a) + self.px.get(b) + self.px.get(c) + self.px.get(d) + 2) / 4)
-        raw.push((self.px.get(a + 1) + self.px.get(b + 1) + self.px.get(c + 1) + self.px.get(d + 1) + 2) / 4)
-        raw.push((self.px.get(a + 2) + self.px.get(b + 2) + self.px.get(c + 2) + self.px.get(d + 2) + 2) / 4)
+        const s0 = top.get(col * 2) * 3
+        const s1 = top.get(col * 2 + 1) * 3
+        const s2 = bot.get(col * 2) * 3
+        const s3 = bot.get(col * 2 + 1) * 3
+        raw.add((tab[s0] + tab[s1] + tab[s2] + tab[s3] + 2) / 4)
+        raw.add((tab[s0 + 1] + tab[s1 + 1] + tab[s2 + 1] + tab[s3 + 1] + 2) / 4)
+        raw.add((tab[s0 + 2] + tab[s1 + 2] + tab[s2 + 2] + tab[s3 + 2] + 2) / 4)
       }
     }
-    const file = png_file(self.w, self.h, raw.to_array())
+    const file = png_file(self.w, self.h, raw)
     const out = Bytes.new(file.length())
     for var i = 0; i < file.length(); i = i + 1 {
       out.set(i, file[i])

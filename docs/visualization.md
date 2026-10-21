@@ -148,7 +148,7 @@ interface Renderer {
   def stroke(s Style) Void
   def fill(s Style) Void
   def text(x Float64, y Float64, body String, s Style) Void
-  def finish() String
+  def finish() Bytes
 }
 ```
 
@@ -158,8 +158,14 @@ terminal renderer (braille/block characters, in the spirit of
 same interface — the terminal one landed in Step 44 (2026-10-20) as
 `internal.term.TermRenderer`: braille cells for the marks and the
 frame, the labels in the grid's own characters, every color inked by
-its luminance contrast against the figure background, and `svg` and
-`terminal` walking one figure through one renderer-agnostic `render`.
+its luminance contrast against the figure background — and the PNG one
+landed in Step 45 (2026-10-21) as `internal.png.PngRenderer`: 2 ×
+supersampled RGB samples averaged into each pixel, scanline fills, a
+Bresenham line with a square pen, the Hershey Simplex stroke font, and
+the package's own DEFLATE, CRC-32, and Adler-32 behind the file —
+`finish()` answers `Bytes` for every renderer, the text formats being
+their UTF-8 bytes. `svg`, `terminal`, and `png` walk one figure through
+one renderer-agnostic `render`.
 `Renderer` is a plotting-side abstraction, not an Emo
 target: Emo's build targets are `c`/`ocaml`/`typescript`/`browser`/
 `wasm`/`beam`/`riscv64` (the interpreter runs a program directly and

@@ -1798,7 +1798,33 @@ from the same value graph, with no host image library.
       line — read back as an image, the strokes legible and the anchors
       placed, and byte-identical across the six paths (`dune test`
       green).
-- [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
+- [x] **T45.5** — `plot.png(fig)`, its demo, and goldens. `plot.png`
+      joins `svg` and `terminal` at the root: one `render` walk, the
+      `PngRenderer` behind it, the answer `Bytes` — a PNG is binary and
+      a `String` cannot carry it on `typescript`. `examples/png_demo`
+      prints two small figures both ways, the terminal rendering that
+      pins the value graph and the PNG's byte length and 33-byte head —
+      signature, dimensions, bit depth — that pins the file, and the
+      golden rides all five target lists (`c`, `wasm`, and `beam` in
+      `emo_cli_test`, the ocaml bootstrap, and the `typescript` list in
+      `emo_project_test`), byte-for-byte with the interpreter, beside
+      `plot_demo`'s standing six-path golden. `docs/stdlib/plot.md`
+      (and its `zh-CN` mirror) gained `png` in the surface, the PNG
+      paragraph under Output, and the landed list's third renderer;
+      `docs/visualization.md`'s Layer 0 records the landing with
+      `finish()` at `Bytes`; `plan/README.md` marks Step 45 done.
+      Step 45's exit holds: `plot.png(fig)` emits a valid PNG on all
+      five targets, from the same value graph, with no host image
+      library. The goldens surfaced two more target walls, both
+      recorded in `CHECK.md` and both dodged by representation: beam
+      indexes an `Array` by walking its underlying list (the
+      230,640-byte deflate stream ran 19 minutes until the bytes moved
+      into chunked stores — `Pack` for the stream, one `Bytes` row a
+      sample row in a `Map` for the grid — 4 seconds after, byte for
+      byte the same file), and a class method named like a builtin
+      dispatches to the shape tests on `beam` when the IR loses a
+      constructor's type, so `Chain` answers `slot`/`set_slot` and
+      `Pack` answers `add`/`byte`/`count`.
 
 ---
 

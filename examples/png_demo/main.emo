@@ -1,0 +1,33 @@
+// plot.png: the same figure values the SVG and terminal renderers
+// answer, framed as a PNG file by the package's own byte level — no
+// host image library. The file comes back as Bytes (a String cannot
+// carry a PNG on typescript), and the demo prints what pins it on
+// every target: the terminal rendering of the figure, then the PNG's
+// byte length and its 33-byte head — signature, dimensions, bit depth.
+//
+//   emo run main.emo
+
+require "plot"
+
+def show_png(name String, data Bytes) Void {
+  println("-- ${name}.png ${data.length()} bytes")
+  var head = ""
+  for var i = 0; i < 33; i = i + 1 {
+    head = head + data.get(i).to_string() + " "
+  }
+  println(head)
+}
+
+const months = ["Jan", "Feb", "Mar"]
+const sales = [12.0, 18.0, 15.0]
+const bar_ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
+const bar = plot.figure().with_title("Monthly sales").with_size(320.0, 240.0).with_axes([bar_ax])
+println(plot.terminal(bar))
+show_png("bar", plot.png(bar))
+
+const years = [2022.0, 2023.0, 2024.0, 2025.0]
+const revenue = [42.0, 51.0, 47.0, 62.0]
+const line_ax = plot.axes().with_x_label("Year").with_y_label("Revenue").with_marks([plot.mark.line(years, revenue).with_style(plot.mark.line_style().with_dash(plot.mark.Dash.dashed).with_marker(plot.mark.Marker.circle))])
+const line = plot.figure().with_title("Revenue by year").with_size(320.0, 240.0).with_axes([line_ax])
+println(plot.terminal(line))
+show_png("line", plot.png(line))

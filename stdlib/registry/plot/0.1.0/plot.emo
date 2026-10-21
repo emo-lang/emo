@@ -2324,3 +2324,15 @@ def terminal(fig Figure) String {
   const bytes = r.finish()
   return bytes.to_string()
 }
+
+// The figure as a PNG file: the same value graph the SVG and terminal
+// renderers answer, rasterized onto 2 × 2 samples a pixel and framed by
+// the package's own byte level — DEFLATE, the checksums, the chunks —
+// no host image library. The answer is Bytes because a PNG is binary
+// and a String cannot carry it on typescript (the codec's U+FFFD rule);
+// the native targets write it out with `file.write`.
+def png(fig Figure) Bytes {
+  const r = internal.png.PngRenderer.new(fig.width, fig.height, fig.theme.background)
+  render(r, fig)
+  return r.finish()
+}

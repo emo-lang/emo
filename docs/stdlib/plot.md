@@ -1,10 +1,10 @@
 # The `plot` Package
 
 The declarative 2D charting package. A figure is a value — a `Figure`
-holding `Axes`, each holding marks — and one call renders it to SVG, or
-to a block of braille text for a terminal, through the same value graph.
-Everything is pure Emo over the shared runtimes, so the five hosted
-targets the package declares answer byte-for-byte.
+holding `Axes`, each holding marks — and one call renders it to SVG, to
+a block of braille text for a terminal, or to a PNG file, through the
+same value graph. Everything is pure Emo over the shared runtimes, so
+the five hosted targets the package declares answer byte-for-byte.
 
 ## Using the package
 
@@ -26,6 +26,7 @@ def figure() Figure
 def axes() Axes
 def svg(fig Figure) String
 def terminal(fig Figure) String
+def png(fig Figure) Bytes
 
 // Figure
 def with_title(t String) Figure
@@ -55,7 +56,8 @@ def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
 Classes are immutable, so every `with_*` answers a new value; the whole
 figure is a plain value graph. `svg(fig)` walks it and returns the SVG
 document as a `String`; `terminal(fig)` walks the same graph and returns
-its rendering for a terminal (see Output).
+its rendering for a terminal; `png(fig)` walks it once more and frames
+the rasterized pixels as a PNG file (see Output).
 
 ```emo
 enum Scale { linear, log }
@@ -623,6 +625,20 @@ characters at their anchors, over the dots; text size and weight do not
 render, and a line is always one dot wide. The output is byte-identical
 on every target, like the SVG.
 
+`png` hands back the same figure as a PNG file — 8-bit truecolor,
+filtered scanlines, the package's own DEFLATE, CRC-32, and Adler-32, no
+host image library. The rasterizer draws every mark onto a grid at 2 ×
+supersampling — each pixel the average of its 2 × 2 samples — with
+scanline fills for the rects, circles, and polygons, a Bresenham line
+as wide as the stroke for edges, and text set in the Hershey Simplex
+stroke font (the 95 printable ASCII glyphs; a code outside the
+printable band falls to the space), scaled so the cap height is 0.7 of
+the size and laid out from each label's anchor. The answer is `Bytes`
+rather than a `String` because a PNG is binary and a `String` cannot
+carry it on `typescript` — write it with `file.write` on a native
+target. The output is byte-identical on every target, like the SVG and
+the terminal.
+
 ## Targets and what is landed
 
 Targets: the five hosted targets the package declares — `c`, `ocaml`,
@@ -644,8 +660,8 @@ regression chart — the distribution charts — `hist`, `kde`, `ecdf`,
 `plot.mark` — the categorical charts — `bar`, `count`, `strip`, and
 `point`, with the `strip` and `point` marks joining `plot.mark` — the
 matrix charts — `heatmap` and `clustermap`, with the `heatmap` mark
-and the categorical y face joining `plot.mark` — SVG output, and
-terminal output. Both
+and the categorical y face joining `plot.mark` — SVG output, terminal
+output, and PNG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. Faceting rides every chart: a facet channel's
@@ -653,10 +669,11 @@ sorted levels split it into panels on one shared domain, each titled
 from its level, with one legend for the figure. The marks and the axes
 draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the
-concrete SVG class — and the terminal renderer is its second
-implementation: `svg` and `terminal` walk one figure through one
-`render`, differing only in the renderer they construct, so a raster
-backend joins the same way without disturbing the figure or the marks.
+concrete SVG class — and the terminal and PNG renderers are its second
+and third implementations: `svg`, `terminal`, and `png` walk one figure
+through one `render`, differing only in the renderer they construct, so
+another backend joins the same way without disturbing the figure or the
+marks.
 
-See also: `examples/plot_demo`, and the design note
+See also: `examples/plot_demo`, `examples/png_demo`, and the design note
 [`docs/visualization.md`](../visualization.md).

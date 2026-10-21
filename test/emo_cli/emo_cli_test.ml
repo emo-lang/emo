@@ -353,6 +353,7 @@ let wasm_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     "sql_demo";
     "sql_edge";
   ]
@@ -405,6 +406,7 @@ let beam_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     "sql_demo";
     "sql_edge";
   ]
@@ -612,6 +614,7 @@ let c_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
        package-carried C shim do the whole native link — the build here
        passes cclibs:[] on purpose *)

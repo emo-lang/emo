@@ -788,7 +788,26 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
       笔画加倍,可打印区之外的码落回空格。验证用一幅画出来的探针
       ——粗体居中标题、start 与 end 锚点的标签、数字加标点行——读回
       图像,笔画清晰、锚点到位,六路逐字节一致(`dune test` 绿)。
-- [ ] **T45.5** — `plot.png(fig)`、其示例与金测。
+- [x] **T45.5** — `plot.png(fig)`、其示例与金测。`plot.png` 在根上加入
+      `svg` 与 `terminal`:同一次 `render` 遍历,身后是
+      `PngRenderer`,返回 `Bytes`——PNG 是二进制而 `String` 在
+      `typescript` 上装不下它。`examples/png_demo` 把两张小图双向打印
+      ——钉住值图的终端渲染,与钉住文件的 PNG 字节长度及 33 字节头
+      (签名、尺寸、位深)——金测进全部五个名单(`emo_cli_test` 的
+      `c`、`wasm`、`beam`,`emo_project_test` 的 ocaml bootstrap 与
+      `typescript` 名单),与解释器逐字节一致,伴着 `plot_demo` 既有
+      的六路金测。`docs/stdlib/plot.md`(及 `zh-CN` 镜像)在表面加入
+      `png`、「输出」下新增 PNG 一段、已落地清单记入第三个渲染器;
+      `docs/visualization.md` 的第 0 层记录落地并把 `finish()` 改为
+      `Bytes`;`plan/README.md` 标记 Step 45 完成。Step 45 的完成标准
+      成立:`plot.png(fig)` 在全部五个 target 上从同一份值图产出合法
+      PNG,不依赖宿主图像库。金测又顶出两面 target 墙,均已记入
+      `CHECK.md` 并以改表示的方式绕开:beam 对 `Array` 的索引是走其
+      底层 list(230,640 字节的 deflate 流跑了 19 分钟,字节搬进分块
+      存储后 4 秒——流走 `Pack`,网格每样本行一块 `Bytes` 存于
+      `Map`——且逐字节同一文件);类方法名与内建同名时,IR 丢失构造器
+      类型就会分派到形状测试,故 `Chain` 应答 `slot`/`set_slot`,
+      `Pack` 应答 `add`/`byte`/`count`。
 
 ---
 

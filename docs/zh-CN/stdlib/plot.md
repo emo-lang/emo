@@ -1,6 +1,6 @@
 # `plot` 包
 
-声明式二维绘图包。一张图就是一个值——`Figure` 持有 `Axes`,每个 `Axes` 持有 mark——一次调用即渲染成 SVG,或经同一份值图渲染成一块给终端看的盲文文本。全部是纯 Emo,写在共享运行时之上,所以包所声明的那五个托管目标逐字节相同。
+声明式二维绘图包。一张图就是一个值——`Figure` 持有 `Axes`,每个 `Axes` 持有 mark——一次调用即渲染成 SVG、一块给终端看的盲文文本,或一个 PNG 文件,走的都是同一份值图。全部是纯 Emo,写在共享运行时之上,所以包所声明的那五个托管目标逐字节相同。
 
 ## 使用这个包
 
@@ -19,6 +19,7 @@ def figure() Figure
 def axes() Axes
 def svg(fig Figure) String
 def terminal(fig Figure) String
+def png(fig Figure) Bytes
 
 // Figure
 def with_title(t String) Figure
@@ -44,7 +45,7 @@ def grid_style() GridStyle
 def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
 ```
 
-`figure()` 与 `axes()` 建出默认值,`with_*` 细化一个值。类是不可变的,所以每个 `with_*` 返回一个新值;整张图就是一个普通的值图。`svg(fig)` 遍历它,返回 SVG 文档(`String`);`terminal(fig)` 遍历同一份值图,返回它在终端上的渲染(见「输出」)。
+`figure()` 与 `axes()` 建出默认值,`with_*` 细化一个值。类是不可变的,所以每个 `with_*` 返回一个新值;整张图就是一个普通的值图。`svg(fig)` 遍历它,返回 SVG 文档(`String`);`terminal(fig)` 遍历同一份值图,返回它在终端上的渲染;`png(fig)` 再遍历一次,把栅格化后的像素装帧成 PNG 文件(见「输出」)。
 
 ```emo
 enum Scale { linear, log }
@@ -342,10 +343,12 @@ println(plot.terminal(chart))
 
 `terminal` 把同一张图交成给终端看的文本——一行行盲文格子与字符,每行以换行结束——于是一张图用 `println` 就能出现在 CI 日志或命令行里。图的像素空间映射到字符网格上:四个像素宽为一列、八个像素高为一行,所以每格是两个盲文点宽、四个点高,具有终端字形的长宽比,默认的 640 × 480 图打印为 160 列 × 60 行;`with_size` 可以改尺寸——`with_size(320.0, 240.0)` 正好放进 80 列的终端。颜色只有一种墨:每个颜色按它对主题背景色的亮度对比变成 0 到 8 的墨级——一格八点中点亮多少点——于是填充的 mark 按墨级半色调着墨(heatmap 读起来是深浅不同的色阶),纸色填充就是涂纸,线按同一墨级画成实线、稀疏点线或不画;虚线三点亮两点灭。标签用网格自身的字符按锚点排在点之上;文字的字号与字重不渲染,线永远一点宽。输出与 SVG 一样在每个目标上逐字节相同。
 
+`png` 把同一张图交成一个 PNG 文件——8 位真彩、过滤扫描线、包自带的 DEFLATE、CRC-32 与 Adler-32,不依赖任何宿主图像库。栅格化器把每个 mark 画到 2 倍超采样的网格上——每像素取其 2 × 2 样本的平均——矩形、圆与多边形走扫描线填充,边与线是与线宽同宽的 Bresenham 线,文字用 Hershey Simplex 笔画字体排出(95 个可打印 ASCII 字形;可打印区之外的码落回空格),按大写高为字号 0.7 缩放、按每个标签的锚点排布。返回的是 `Bytes` 而非 `String`,因为 PNG 是二进制而 `String` 在 `typescript` 上装不下它——原生目标用 `file.write` 写出。输出与 SVG、终端一样在每个目标上逐字节相同。
+
 ## 目标与已落地部分
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出与终端输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。分面随每张图:一个分面通道的排序水平把它拆成共享域上的多面板,各自从水平获得标题,整图一份图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——终端渲染器就是它的第二个实现:`svg` 与 `terminal` 经同一个 `render` 遍历同一张图,只差构造的渲染器,所以栅格后端也能以同样的方式接上,不扰动图与 mark。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出、终端输出与 PNG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。分面随每张图:一个分面通道的排序水平把它拆成共享域上的多面板,各自从水平获得标题,整图一份图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——终端与 PNG 渲染器就是它的第二、第三个实现:`svg`、`terminal` 与 `png` 经同一个 `render` 遍历同一张图,只差构造的渲染器,所以别的后端也能以同样的方式接上,不扰动图与 mark。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

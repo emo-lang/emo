@@ -117,7 +117,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 42 | Table and channels | planned |
 | 43 | T1 dataset charts | planned |
 | 44 | Terminal renderer | done — `internal.term.TermRenderer` is the second `Renderer` behind the internal interface (braille cells, ink levels from luminance contrast against the figure background, halftoned fills); `svg` and the new `plot.terminal` walk one figure through one `render`, and `plot_demo` prints four of its figure values both ways, byte-identical on all six paths |
-| 45 | PNG renderer | planned |
+| 45 | PNG renderer | done — `internal.png.PngRenderer` is the third `Renderer` (2 × supersampled scanline rasterizer, the Hershey Simplex stroke font, the package's own DEFLATE, CRC-32, and Adler-32, no host image library); `plot.png(fig)` answers `Bytes` — a `String` cannot carry a PNG on typescript — and `png_demo` pins the file on all six paths |
 | 46 | Unit test framework: `emo test` and the `expect_*` builtins | done |
 | 47 | The standard library: `csv` | done |
 | 48 | EmoUI | done — T48.1–T48.13 landed (portable core, Elm loop, debug, TUI, SSR, macOS and GTK 4 backends, the `term` stdlib package, the native packaging fields, the browser runtime path, its DOM backend, the convergence corpus, and the documentation pass); the settled design is in `README.md`, the evidence in `docs/emo-ui.md`, and the package references under `projects/emo-ui/docs/` |
