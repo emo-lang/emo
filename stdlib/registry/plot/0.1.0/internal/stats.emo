@@ -1,0 +1,690 @@
+// The statistics sublayer: what the dataset charts read before they
+// draw. Everything here is pure arithmetic over plain arrays, so the
+// answers are byte-identical on every target. The numeric helpers the
+// layer needs that the `math` package would otherwise supply (the
+// exponential behind the KDE and the normal curve, the normal
+// functions themselves) are carried here, internal, by the same
+// precedent as `scale.log10` — `plot` stays dependency-free. The
+// module references nothing from the package root — reading a column
+// through its presence is the root's `plot.observed` — so the root
+// may call in freely: one direction is all a module graph may bend.
+
+// ---- sorting and quantiles ----
+
+// An ascending bottom-up merge sort: stable, no recursion, linear
+// merges through the ArrayBuilder's amortized append.
+def sort(xs Array[Float64]) Array[Float64] {
+  const n = xs.length()
+  var src = xs
+  var width = 1
+  while width < n {
+    const b = ArrayBuilder.new()
+    var i = 0
+    while i < n {
+      var l = i
+      var mid = i + width
+      if mid > n {
+        mid = n
+      }
+      var r = mid
+      var end = i + width * 2
+      if end > n {
+        end = n
+      }
+      while l < mid && r < end {
+        if src[r] < src[l] {
+          b.push(src[r])
+          r = r + 1
+        } else {
+          b.push(src[l])
+          l = l + 1
+        }
+      }
+      while l < mid {
+        b.push(src[l])
+        l = l + 1
+      }
+      while r < end {
+        b.push(src[r])
+        r = r + 1
+      }
+      i = i + width * 2
+    }
+    src = b.to_array()
+    width = width * 2
+  }
+  return src
+}
+
+// The p-quantile of an ascending array: the position p·(n−1) read
+// linearly between the bracketing order statistics.
+def quantile_sorted(sorted Array[Float64], p Float64) Float64 {
+  const n = sorted.length()
+  const pos = p * (n - 1).to_float64()
+  var lo = pos.floor().to_int64()
+  if lo < 0 {
+    lo = 0
+  }
+  if lo > n - 1 {
+    lo = n - 1
+  }
+  const rest = pos - pos.floor()
+  if lo >= n - 1 {
+    return sorted[lo]
+  }
+  return sorted[lo] + rest * (sorted[lo + 1] - sorted[lo])
+}
+
+// The p-quantile of a column: sorted first, then interpolated.
+def quantile(xs Array[Float64], p Float64) Float64 {
+  if xs.length() < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  if p < 0.0 || p > 1.0 {
+    raise Exception.new(message: "plot: the quantile level lives in 0.0 to 1.0, got ${p}")
+  }
+  return quantile_sorted(sort(xs), p)
+}
+
+// ---- descriptives ----
+
+// The summary the descriptive charts print: the count, the mean, the
+// sample standard deviation, and the five-number quantile summary.
+class Describe {
+  def init(n Int64, mean Float64, std Float64, min Float64, q1 Float64, median Float64, q3 Float64, max Float64) {
+    self.n = n
+    self.mean = mean
+    self.std = std
+    self.min = min
+    self.q1 = q1
+    self.median = median
+    self.q3 = q3
+    self.max = max
+  }
+}
+
+def describe(xs Array[Float64]) Describe {
+  const n = xs.length()
+  if n < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  var sum = 0.0
+  for var i = 0; i < n; i = i + 1 {
+    sum = sum + xs[i]
+  }
+  const mean = sum / n.to_float64()
+  var sq = 0.0
+  for var i = 0; i < n; i = i + 1 {
+    const d = xs[i] - mean
+    sq = sq + d * d
+  }
+  var std = 0.0
+  if n >= 2 {
+    std = (sq / (n - 1).to_float64()).sqrt()
+  }
+  const sorted = sort(xs)
+  return Describe.new(n: n, mean: mean, std: std, min: sorted[0],
+    q1: quantile_sorted(sorted, 0.25), median: quantile_sorted(sorted, 0.5),
+    q3: quantile_sorted(sorted, 0.75), max: sorted[n - 1])
+}
+
+// ---- binning ----
+
+// A histogram's binning: even widths across the values' own span. The
+// rule and the error are the `hist` mark's — `mark.bin_index` is the
+// one bin counter — so a column and a mark built from it always agree.
+class Bins {
+  def init(lo Float64, width Float64, counts Array[Float64]) {
+    self.lo = lo
+    self.width = width
+    self.counts = counts
+  }
+}
+
+def histogram_bins(xs Array[Float64], bins Int64) Bins {
+  if bins < 1 {
+    raise Exception.new(message: "plot: a histogram needs at least one bin, got ${bins}")
+  }
+  if xs.length() < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  var lo = xs[0]
+  var hi = xs[0]
+  for var i = 1; i < xs.length(); i = i + 1 {
+    if xs[i] < lo {
+      lo = xs[i]
+    }
+    if xs[i] > hi {
+      hi = xs[i]
+    }
+  }
+  const span = hi - lo
+  var first = 0.0
+  for var j = 0; j < xs.length(); j = j + 1 {
+    if mark.bin_index(xs[j], lo, span, bins) == 0 {
+      first = first + 1.0
+    }
+  }
+  var counts = [first]
+  for var i = 1; i < bins; i = i + 1 {
+    var c = 0.0
+    for var j = 0; j < xs.length(); j = j + 1 {
+      if mark.bin_index(xs[j], lo, span, bins) == i {
+        c = c + 1.0
+      }
+    }
+    counts = counts.append(c)
+  }
+  return Bins.new(lo: lo, width: span / bins.to_float64(), counts: counts)
+}
+
+// ---- the empirical CDF ----
+
+// The ECDF as two parallel arrays: the ascending values and the
+// cumulative proportion i/n each one reaches.
+class Ecdf {
+  def init(xs Array[Float64], ps Array[Float64]) {
+    self.xs = xs
+    self.ps = ps
+  }
+}
+
+def ecdf(xs Array[Float64]) Ecdf {
+  const n = xs.length()
+  if n < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  const sorted = sort(xs)
+  var ps = []
+  for var i = 0; i < n; i = i + 1 {
+    ps = ps.append((i + 1).to_float64() / n.to_float64())
+  }
+  return Ecdf.new(xs: sorted, ps: ps)
+}
+
+// ---- box statistics ----
+
+// The box plot's numbers: the quartiles, the whiskers at the most
+// extreme values still inside 1.5·IQR of the quartiles, and the points
+// beyond them (the fliers).
+class BoxStats {
+  def init(lo Float64, q1 Float64, median Float64, q3 Float64, hi Float64, mean Float64, fliers Array[Float64]) {
+    self.lo = lo
+    self.q1 = q1
+    self.median = median
+    self.q3 = q3
+    self.hi = hi
+    self.mean = mean
+    self.fliers = fliers
+  }
+}
+
+def box_stats(xs Array[Float64]) BoxStats {
+  const d = describe(xs)
+  const iqr = d.q3 - d.q1
+  const lower = d.q1 - iqr * 1.5
+  const upper = d.q3 + iqr * 1.5
+  const sorted = sort(xs)
+  var lo = d.median
+  var hi = d.median
+  var fliers = []
+  for var i = 0; i < sorted.length(); i = i + 1 {
+    const v = sorted[i]
+    if v < lower {
+      fliers = fliers.append(v)
+    }
+    if v > upper {
+      fliers = fliers.append(v)
+    }
+    if v >= lower {
+      if v <= upper {
+        if v < lo {
+          lo = v
+        }
+        if v > hi {
+          hi = v
+        }
+      }
+    }
+  }
+  return BoxStats.new(lo: lo, q1: d.q1, median: d.median, q3: d.q3, hi: hi, mean: d.mean, fliers: fliers)
+}
+
+// ---- clustering ----
+
+// The average-linkage merge order of `count` vectors of length `size`,
+// stored row-major in `values`: the leaf order a clustermap draws its
+// rows and columns in. Each merge orders its halves by their smallest
+// leaf, so the order is deterministic for any distance pattern.
+def cluster_order(values Array[Float64], count Int64, size Int64) Array[Int64] {
+  var only = []
+  if count < 2 {
+    for var i = 0; i < count; i = i + 1 {
+      only = only.append(i)
+    }
+    return only
+  }
+  var dist = []
+  for var i = 0; i < count; i = i + 1 {
+    for var j = 0; j < count; j = j + 1 {
+      var acc = 0.0
+      for var k = 0; k < size; k = k + 1 {
+        const d = values[i * size + k] - values[j * size + k]
+        acc = acc + d * d
+      }
+      dist = dist.append(acc.sqrt())
+    }
+  }
+  var clusters = []
+  var dead = {}
+  for var i = 0; i < count; i = i + 1 {
+    var leaf = []
+    leaf = leaf.append(i)
+    clusters = clusters.append(leaf)
+    dead.set(i, 0)
+  }
+  var alive = count
+  var order = []
+  while alive > 1 {
+    var ba = 0 - 1
+    var bb = 0 - 1
+    var best = 0.0
+    for var a = 0; a < clusters.length(); a = a + 1 {
+      if dead.get(a) == 0 {
+        for var b = a + 1; b < clusters.length(); b = b + 1 {
+          if dead.get(b) == 0 {
+            var sum = 0.0
+            for var i = 0; i < clusters[a].length(); i = i + 1 {
+              for var j = 0; j < clusters[b].length(); j = j + 1 {
+                sum = sum + dist[clusters[a][i] * count + clusters[b][j]]
+              }
+            }
+            const avg = sum / (clusters[a].length() * clusters[b].length()).to_float64()
+            if ba < 0 {
+              best = avg
+              ba = a
+              bb = b
+            } else {
+              if avg < best {
+                best = avg
+                ba = a
+                bb = b
+              }
+            }
+          }
+        }
+      }
+    }
+    order = []
+    if clusters[ba][0] < clusters[bb][0] {
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+    } else {
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+    }
+    clusters = clusters.append(order)
+    dead.set(ba, 1)
+    dead.set(bb, 1)
+    dead.set(clusters.length() - 1, 0)
+    alive = alive - 1
+  }
+  return order
+}
+
+// ---- least squares ----
+
+// ---- densities ----
+
+// Silverman's rule of thumb: the KDE bandwidth the distribution charts
+// read their grid through — 0.9 times the smaller of the standard
+// deviation and the IQR-scaled spread, shrunk by the fifth root of n.
+def silverman(xs Array[Float64]) Float64 {
+  const n = xs.length()
+  if n < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  const d = describe(xs)
+  const iqr_h = (d.q3 - d.q1) / 1.34
+  const s = if iqr_h < d.std { iqr_h } else { d.std }
+  if s <= 0.0 {
+    raise Exception.new(message: "plot: the density needs the values to spread, they are all ${d.mean}")
+  }
+  const ln_n = internal.scale.log10(n.to_float64()) * 2.302585092994046
+  return 0.9 * s * exp((0.0 - ln_n) / 5.0)
+}
+
+// ---- clustering ----
+
+// The average-linkage merge order of `count` vectors of length `size`,
+// stored row-major in `values`: the leaf order a clustermap draws its
+// rows and columns in. Each merge orders its halves by their smallest
+// leaf, so the order is deterministic for any distance pattern.
+def cluster_order(values Array[Float64], count Int64, size Int64) Array[Int64] {
+  var only = []
+  if count < 2 {
+    for var i = 0; i < count; i = i + 1 {
+      only = only.append(i)
+    }
+    return only
+  }
+  var dist = []
+  for var i = 0; i < count; i = i + 1 {
+    for var j = 0; j < count; j = j + 1 {
+      var acc = 0.0
+      for var k = 0; k < size; k = k + 1 {
+        const d = values[i * size + k] - values[j * size + k]
+        acc = acc + d * d
+      }
+      dist = dist.append(acc.sqrt())
+    }
+  }
+  var clusters = []
+  var dead = {}
+  for var i = 0; i < count; i = i + 1 {
+    var leaf = []
+    leaf = leaf.append(i)
+    clusters = clusters.append(leaf)
+    dead.set(i, 0)
+  }
+  var alive = count
+  var order = []
+  while alive > 1 {
+    var ba = 0 - 1
+    var bb = 0 - 1
+    var best = 0.0
+    for var a = 0; a < clusters.length(); a = a + 1 {
+      if dead.get(a) == 0 {
+        for var b = a + 1; b < clusters.length(); b = b + 1 {
+          if dead.get(b) == 0 {
+            var sum = 0.0
+            for var i = 0; i < clusters[a].length(); i = i + 1 {
+              for var j = 0; j < clusters[b].length(); j = j + 1 {
+                sum = sum + dist[clusters[a][i] * count + clusters[b][j]]
+              }
+            }
+            const avg = sum / (clusters[a].length() * clusters[b].length()).to_float64()
+            if ba < 0 {
+              best = avg
+              ba = a
+              bb = b
+            } else {
+              if avg < best {
+                best = avg
+                ba = a
+                bb = b
+              }
+            }
+          }
+        }
+      }
+    }
+    order = []
+    if clusters[ba][0] < clusters[bb][0] {
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+    } else {
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+    }
+    clusters = clusters.append(order)
+    dead.set(ba, 1)
+    dead.set(bb, 1)
+    dead.set(clusters.length() - 1, 0)
+    alive = alive - 1
+  }
+  return order
+}
+
+// ---- least squares ----
+
+// The OLS fit of y on x: the line, the residual spread, the standard
+// errors of both coefficients, and the share of variance the line
+// explains. The confidence band reads through `ols_band`.
+class Ols {
+  def init(slope Float64, intercept Float64, n Int64, s Float64, se_slope Float64, se_intercept Float64, r2 Float64, x_mean Float64, sxx Float64) {
+    self.slope = slope
+    self.intercept = intercept
+    self.n = n
+    self.s = s
+    self.se_slope = se_slope
+    self.se_intercept = se_intercept
+    self.r2 = r2
+    self.x_mean = x_mean
+    self.sxx = sxx
+  }
+}
+
+def ols(x Array[Float64], y Array[Float64]) Ols {
+  const n = x.length()
+  if n != y.length() {
+    raise Exception.new(message: "plot: ols needs the same number of x and y values, got ${n} and ${y.length()}")
+  }
+  if n < 2 {
+    raise Exception.new(message: "plot: ols needs at least two points, got ${n}")
+  }
+  var sx = 0.0
+  var sy = 0.0
+  for var i = 0; i < n; i = i + 1 {
+    sx = sx + x[i]
+    sy = sy + y[i]
+  }
+  const x_mean = sx / n.to_float64()
+  const y_mean = sy / n.to_float64()
+  var sxx = 0.0
+  var sxy = 0.0
+  var syy = 0.0
+  for var i = 0; i < n; i = i + 1 {
+    const dx = x[i] - x_mean
+    const dy = y[i] - y_mean
+    sxx = sxx + dx * dx
+    sxy = sxy + dx * dy
+    syy = syy + dy * dy
+  }
+  if sxx == 0.0 {
+    raise Exception.new(message: "plot: ols needs the x values to spread, they are all ${x_mean}")
+  }
+  const slope = sxy / sxx
+  const intercept = y_mean - slope * x_mean
+  var ss_res = 0.0
+  for var i = 0; i < n; i = i + 1 {
+    const e = y[i] - (slope * x[i] + intercept)
+    ss_res = ss_res + e * e
+  }
+  // A constant y column is explained exactly by its own mean line.
+  var r2 = 1.0
+  if syy > 0.0 {
+    r2 = 1.0 - ss_res / syy
+  }
+  var s = 0.0
+  if n > 2 {
+    s = (ss_res / (n - 2).to_float64()).sqrt()
+  }
+  return Ols.new(slope: slope, intercept: intercept, n: n, s: s,
+    se_slope: s / sxx.sqrt(),
+    se_intercept: s * (1.0 / n.to_float64() + x_mean * x_mean / sxx).sqrt(),
+    r2: r2, x_mean: x_mean, sxx: sxx)
+}
+
+// The confidence band for the mean response at `x0`: the fitted value
+// and the level's ends around it, the level a probability (0.95 the
+// usual). The critical value is the normal quantile — the band is the
+// large-sample one, no t table.
+def ols_band(fit Ols, x0 Float64, level Float64) (Float64, Float64, Float64) {
+  if level <= 0.0 || level >= 1.0 {
+    raise Exception.new(message: "plot: the confidence level lives in 0.0 to 1.0, got ${level}")
+  }
+  const z = normal_quantile((1.0 + level) / 2.0)
+  const fitted = fit.slope * x0 + fit.intercept
+  const dx = x0 - fit.x_mean
+  const se = fit.s * (1.0 / fit.n.to_float64() + dx * dx / fit.sxx).sqrt()
+  const half = z * se
+  return (fitted - half, fitted, fitted + half)
+}
+
+// ---- the normal functions ----
+
+// Φ(x), the standard normal CDF, by the Zelen–Severo rational
+// approximation of the tail — worst case off by about 7.5e-8, far
+// inside what a drawn band can show.
+def normal_cdf(x Float64) Float64 {
+  var t = x
+  if t < 0.0 {
+    t = 0.0 - t
+  }
+  const k = 1.0 / (1.0 + 0.2316419 * t)
+  const dens = exp(0.0 - t * t / 2.0) * 0.3989422804014327
+  const poly = k * (0.319381530 + k * ((0.0 - 0.356563782) + k * (1.781477937 + k * ((0.0 - 1.821255978) + k * 1.330274429))))
+  const tail = dens * poly
+  if x < 0.0 {
+    return tail
+  }
+  return 1.0 - tail
+}
+
+// The inverse of `normal_cdf` — the critical value a confidence level
+// needs — by the Acklam rational approximation over the central and
+// the two tail regions (relative error under 1.2e-9). The logarithm
+// rides `internal.scale.log10`, the package's own.
+def normal_quantile(p Float64) Float64 {
+  if p <= 0.0 || p >= 1.0 {
+    raise Exception.new(message: "plot: the quantile level lives in 0.0 to 1.0, got ${p}")
+  }
+  const c1 = 0.0 - 0.007784894002430293
+  const c2 = 0.0 - 0.3223964580411365
+  const c3 = 0.0 - 2.400758277161838
+  const c4 = 0.0 - 2.549732539343734
+  const c5 = 4.374664141464968
+  const c6 = 2.938163982698783
+  const d1 = 0.007784695709041462
+  const d2 = 0.3224671290700398
+  const d3 = 2.445134137142996
+  const d4 = 3.754408661907416
+  if p < 0.02425 {
+    const q = (0.0 - 2.0 * internal.scale.log10(p) * 2.302585092994046).sqrt()
+    const num = ((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6
+    const den = ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0)
+    return num / den
+  }
+  if p > 0.97575 {
+    const q = (0.0 - 2.0 * internal.scale.log10(1.0 - p) * 2.302585092994046).sqrt()
+    const num = ((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6
+    const den = ((((d1 * q + d2) * q + d3) * q + d4) * q + 1.0)
+    return 0.0 - num / den
+  }
+  const a1 = 0.0 - 39.69683028665376
+  const a2 = 220.9460984245205
+  const a3 = 0.0 - 275.9285104469687
+  const a4 = 138.3577518672690
+  const a5 = 0.0 - 30.66479806614716
+  const a6 = 2.506628277459239
+  const b1 = 0.0 - 54.47609879822406
+  const b2 = 161.5858368580409
+  const b3 = 0.0 - 155.6989798598866
+  const b4 = 66.80131188771972
+  const b5 = 0.0 - 13.28068155288572
+  const q = p - 0.5
+  const r = q * q
+  const num = ((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6
+  const den = ((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0
+  return num * q / den
+}
+
+// ---- the exponential ----
+
+// 2^n, written straight into the exponent field so the scaling in
+// `exp` is exact — the same helper `math.exp` reduces through.
+def pow2(n Int64) Float64 {
+  if n > 1023 {
+    raise Exception.new(message: "plot: 2^${n} overflows Float64")
+  }
+  if n < 0 - 1074 {
+    return 0.0
+  }
+  if n >= 0 - 1022 {
+    return Float64.from_bits((n + 1023) << 52)
+  }
+  // A subnormal power of two — far below any plotting range.
+  return Float64.from_bits(1 << (n + 1074))
+}
+
+// exp(x) = 2^k * exp(r), with k = round(x / ln2) and |r| <= ln2 / 2, so
+// a short Taylor series converges to full precision — the same
+// reduction `math.exp` performs, carried here so `plot` stays
+// dependency-free.
+def exp(x Float64) Float64 {
+  if x > 709.782712893384 {
+    raise Exception.new(message: "plot: exp overflow")
+  }
+  if x < 0.0 - 709.782712893384 {
+    return 0.0
+  }
+  const shifted = x * 1.4426950408889634 + 0.5
+  const k = shifted.floor()
+  const r = x - k * 0.6931471805599453
+  var term = 1.0
+  var sum = 1.0
+  for var i = 1; i <= 14; i = i + 1 {
+    term = term * r / i.to_float64()
+    sum = sum + term
+  }
+  return sum * pow2(k.to_int64())
+}
+
+// ---- the kernel density estimate ----
+
+// The Gaussian KDE over a caller's grid: at each grid point, the
+// average of the kernels the observations seed, each scaled by the
+// bandwidth the caller chose (the chart layer's bandwidth rule).
+class Kde {
+  def init(xs Array[Float64], density Array[Float64]) {
+    self.xs = xs
+    self.density = density
+  }
+}
+
+def kde(xs Array[Float64], bandwidth Float64, lo Float64, hi Float64, points Int64) Kde {
+  const n = xs.length()
+  if n < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  if bandwidth <= 0.0 {
+    raise Exception.new(message: "plot: the KDE bandwidth must be positive, got ${bandwidth}")
+  }
+  if points < 2 {
+    raise Exception.new(message: "plot: the KDE needs at least two grid points, got ${points}")
+  }
+  if hi <= lo {
+    raise Exception.new(message: "plot: the KDE grid needs lo < hi, got ${lo} to ${hi}")
+  }
+  const norm = 1.0 / (n.to_float64() * bandwidth * 2.5066282746310002)
+  var grid = []
+  var density = []
+  for var i = 0; i < points; i = i + 1 {
+    const g = lo + (hi - lo) * i.to_float64() / (points - 1).to_float64()
+    var s = 0.0
+    for var j = 0; j < n; j = j + 1 {
+      const u = (g - xs[j]) / bandwidth
+      s = s + exp(0.0 - u * u / 2.0)
+    }
+    grid = grid.append(g)
+    density = density.append(s * norm)
+  }
+  return Kde.new(xs: grid, density: density)
+}

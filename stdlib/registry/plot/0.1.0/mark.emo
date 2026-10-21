@@ -1,11 +1,21 @@
 // A mark is a value that knows how to draw itself into an axes and what
-// its data spans. `bar` is the T0 bar mark.
+// its data spans. The span is named on both axes — a continuous x and y
+// range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
+// `bands` and `x_labels` — so the axes can scale to every mark at once.
+// `bar`, `line`, `scatter`, `area`, `hist`, `band`, `box`, `violin`,
+// `strip`, and `point` are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
+  def x_min() Float64
+  def x_max() Float64
+  def y_min() Float64
   def y_max() Float64
   def bands() Int64
   def x_labels() Array[String]
+  def y_labels() Array[String]
+  def legend_label() String
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void
 }
 
 class BarStyle {
@@ -34,13 +44,10 @@ def bar_style() BarStyle {
 }
 
 class Bar {
-  def init(labels Array[String], values Array[Float64], color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+  def init(labels Array[String], values Array[Float64], style BarStyle) {
     self.labels = labels
     self.values = values
-    self.color = color
-    self.width = width
-    self.opacity = opacity
-    self.label = label
+    self.style = style
   }
 
   def draw(ctx internal.ctx.DrawContext) Void {
@@ -49,10 +56,34 @@ class Bar {
     const base = ctx.py(0.0)
     for var i = 0; i < n; i = i + 1 {
       const cx = ctx.px(i.to_float64() + 0.5)
-      const half = band * self.width / 2.0
+      const half = band * self.style.width / 2.0
       const top = ctx.py(self.values[i])
-      ctx.renderer.rect(cx - half, top, half * 2.0, base - top, self.color)
+      var y = top
+      var h = base - top
+      if h < 0.0 {
+        y = base
+        h = 0.0 - h
+      }
+      ctx.renderer.rect(cx - half, y, half * 2.0, h, self.style.color)
     }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.values.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    for var i = 0; i < self.values.length(); i = i + 1 {
+      if self.values[i] < lo {
+        lo = self.values[i]
+      }
+    }
+    return lo
   }
 
   def y_max() Float64 {
@@ -73,12 +104,1346 @@ class Bar {
     return self.labels
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
   def with_style(s BarStyle) Bar {
-    return Bar.new(labels: self.labels, values: self.values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+    return Bar.new(labels: self.labels, values: self.values, style: s)
   }
 }
 
 def bar(labels Array[String], values Array[Float64]) Bar {
-  const s = bar_style()
-  return Bar.new(labels: labels, values: values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+  return Bar.new(labels: labels, values: values, style: bar_style())
+}
+
+// The stroke vocabulary of a line: the dash pattern and the point
+// marker stamped at every data point.
+enum Dash { solid, dashed, dotted, dash_dot }
+enum Marker { none, circle, square, triangle, diamond, cross, plus }
+
+// The dash gap lengths a Dash name stands for, handed to the renderer's
+// line primitive verbatim; a solid stroke carries the empty pattern.
+def dash_array(d Dash) String {
+  var out = ""
+  if d == Dash.dashed {
+    out = "7 4"
+  }
+  if d == Dash.dotted {
+    out = "1.5 3.5"
+  }
+  if d == Dash.dash_dot {
+    out = "7 3 1.5 3"
+  }
+  return out
+}
+
+// One marker stamp in pixel space, shared by the marks that place a
+// shape at every point. A cross or plus strokes its arms at a quarter
+// of the marker size; `Marker.none` stamps nothing.
+def stamp_marker(r internal.svg.Renderer, cx Float64, cy Float64, m Marker, size Float64, color (Int64, Int64, Int64)) Void {
+  const half = size / 2.0
+  const stroke = size / 4.0
+  if m == Marker.circle {
+    r.circle(cx, cy, half, color)
+  }
+  if m == Marker.square {
+    r.rect(cx - half, cy - half, size, size, color)
+  }
+  if m == Marker.triangle {
+    r.polygon([cx, cx - half, cx + half], [cy - half, cy + half, cy + half], color)
+  }
+  if m == Marker.diamond {
+    r.polygon([cx, cx + half, cx, cx - half], [cy - half, cy, cy + half, cy], color)
+  }
+  if m == Marker.cross {
+    r.line(cx - half, cy - half, cx + half, cy + half, color, stroke, "")
+    r.line(cx + half, cy - half, cx - half, cy + half, color, stroke, "")
+  }
+  if m == Marker.plus {
+    r.line(cx - half, cy, cx + half, cy, color, stroke, "")
+    r.line(cx, cy - half, cx, cy + half, color, stroke, "")
+  }
+}
+
+class LineStyle {
+  def init(color (Int64, Int64, Int64), width Float64, dash Dash, marker Marker, marker_size Float64, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.dash = dash
+    self.marker = marker
+    self.marker_size = marker_size
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) LineStyle {
+    return LineStyle.new(color: c, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: w, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_dash(d Dash) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: d, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker(m Marker) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: m, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker_size(s Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: s, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: s)
+  }
+}
+
+def line_style() LineStyle {
+  return LineStyle.new(color: (192, 57, 43), width: 1.5, dash: Dash.solid, marker: Marker.none, marker_size: 6.0, opacity: 1.0, label: "")
+}
+
+class Line {
+  def init(x Array[Float64], y Array[Float64], style LineStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.y.length()
+    const pattern = dash_array(self.style.dash)
+    for var i = 0; i < n - 1; i = i + 1 {
+      ctx.renderer.line(ctx.px(self.x[i]), ctx.py(self.y[i]), ctx.px(self.x[i + 1]), ctx.py(self.y[i + 1]), self.style.color, self.style.width, pattern)
+    }
+    for var i = 0; i < n; i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, self.style.marker_size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var lo = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var hi = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.line(x, y, x + 18.0, y, self.style.color, self.style.width, dash_array(self.style.dash))
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.marker_size, self.style.color)
+  }
+
+  def with_style(s LineStyle) Line {
+    return Line.new(x: self.x, y: self.y, style: s)
+  }
+}
+
+def line(x Array[Float64], y Array[Float64]) Line {
+  return Line.new(x: x, y: y, style: line_style())
+}
+
+class ScatterStyle {
+  def init(color (Int64, Int64, Int64), size Float64, marker Marker, opacity Float64, label String) {
+    self.color = color
+    self.size = size
+    self.marker = marker
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) ScatterStyle {
+    return ScatterStyle.new(color: c, size: self.size, marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  def with_size(s Float64) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: s, marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker(m Marker) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: m, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: self.marker, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: self.marker, opacity: self.opacity, label: s)
+  }
+}
+
+def scatter_style() ScatterStyle {
+  return ScatterStyle.new(color: (85, 168, 104), size: 6.0, marker: Marker.circle, opacity: 1.0, label: "")
+}
+
+// A scatter carries two per-point overrides beside its style — the
+// colors and sizes the dataset charts read their `color` and `size`
+// channels through. A point past an override array's end draws the
+// style's value.
+class Scatter {
+  def init(x Array[Float64], y Array[Float64], style ScatterStyle, colors Array[(Int64, Int64, Int64)], sizes Array[Float64]) {
+    self.x = x
+    self.y = y
+    self.style = style
+    self.colors = colors
+    self.sizes = sizes
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      var color = self.style.color
+      if i < self.colors.length() {
+        color = self.colors[i]
+      }
+      var size = self.style.size
+      if i < self.sizes.length() {
+        size = self.sizes[i]
+      }
+      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, size, color)
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var lo = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var hi = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.size, self.style.color)
+  }
+
+  def with_style(s ScatterStyle) Scatter {
+    return Scatter.new(x: self.x, y: self.y, style: s, colors: self.colors, sizes: self.sizes)
+  }
+}
+
+def scatter(x Array[Float64], y Array[Float64]) Scatter {
+  return Scatter.new(x: x, y: y, style: scatter_style(), colors: [], sizes: [])
+}
+
+class AreaStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) AreaStyle {
+    return AreaStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: s)
+  }
+}
+
+def area_style() AreaStyle {
+  return AreaStyle.new(color: (148, 103, 189), edge_color: (74, 51, 95), edge_width: 0.0, opacity: 1.0, label: "")
+}
+
+class Area {
+  def init(x Array[Float64], y Array[Float64], style AreaStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.y.length()
+    if n > 0 {
+      var pxs = [ctx.px(self.x[0])]
+      var pys = [ctx.py(self.y[0])]
+      for var i = 1; i < n; i = i + 1 {
+        pxs = pxs.append(ctx.px(self.x[i]))
+        pys = pys.append(ctx.py(self.y[i]))
+      }
+      pxs = pxs.append(ctx.px(self.x[n - 1]))
+      pys = pys.append(ctx.py(0.0))
+      pxs = pxs.append(ctx.px(self.x[0]))
+      pys = pys.append(ctx.py(0.0))
+      ctx.renderer.polygon(pxs, pys, self.style.color)
+      if self.style.edge_width > 0.0 {
+        for var i = 0; i < n - 1; i = i + 1 {
+          ctx.renderer.line(ctx.px(self.x[i]), ctx.py(self.y[i]), ctx.px(self.x[i + 1]), ctx.py(self.y[i + 1]), self.style.edge_color, self.style.edge_width, "")
+        }
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s AreaStyle) Area {
+    return Area.new(x: self.x, y: self.y, style: s)
+  }
+}
+
+def area(x Array[Float64], y Array[Float64]) Area {
+  return Area.new(x: x, y: y, style: area_style())
+}
+
+class HistStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) HistStyle {
+    return HistStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: s)
+  }
+}
+
+def hist_style() HistStyle {
+  return HistStyle.new(color: (230, 145, 56), edge_color: (255, 255, 255), edge_width: 1.0, opacity: 1.0, label: "")
+}
+
+// A histogram carries the counting, not the raw values: `counts` are the
+// bin heights over the tiled extent `lo` .. `lo + counts * width`, and
+// the bars sit on the zero baseline.
+class Hist {
+  def init(counts Array[Float64], lo Float64, width Float64, style HistStyle) {
+    self.counts = counts
+    self.lo = lo
+    self.width = width
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const base = ctx.py(0.0)
+    for var i = 0; i < self.counts.length(); i = i + 1 {
+      const x0 = ctx.px(self.lo + i.to_float64() * self.width)
+      const x1 = ctx.px(self.lo + (i + 1).to_float64() * self.width)
+      const top = ctx.py(self.counts[i])
+      ctx.renderer.rect(x0, top, x1 - x0, base - top, self.style.color)
+    }
+    if self.style.edge_width > 0.0 {
+      for var i = 0; i < self.counts.length(); i = i + 1 {
+        const x0 = ctx.px(self.lo + i.to_float64() * self.width)
+        const x1 = ctx.px(self.lo + (i + 1).to_float64() * self.width)
+        const top = ctx.py(self.counts[i])
+        ctx.renderer.line(x0, base, x0, top, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x0, top, x1, top, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x1, top, x1, base, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x1, base, x0, base, self.style.edge_color, self.style.edge_width, "")
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    return self.lo
+  }
+
+  def x_max() Float64 {
+    return self.lo + self.counts.length().to_float64() * self.width
+  }
+
+  def y_min() Float64 {
+    return 0.0
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    for var i = 0; i < self.counts.length(); i = i + 1 {
+      if self.counts[i] > hi {
+        hi = self.counts[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s HistStyle) Hist {
+    return Hist.new(counts: self.counts, lo: self.lo, width: self.width, style: s)
+  }
+}
+
+// The bin a value falls into across the span [lo, lo + span]: even
+// widths, the maximum clamping into the last bin. A zero span — every
+// value identical — sends everything to the last bin.
+def bin_index(v Float64, lo Float64, span Float64, bins Int64) Int64 {
+  if span <= 0.0 {
+    return bins - 1
+  }
+  var b = ((v - lo) / span * bins.to_float64()).floor().to_int64()
+  if b < 0 {
+    b = 0
+  }
+  if b > bins - 1 {
+    b = bins - 1
+  }
+  return b
+}
+
+// Bins the values across their own span and counts them.
+def hist(values Array[Float64], bins Int64) Hist {
+  if bins < 1 {
+    raise Exception.new(message: "plot: a histogram needs at least one bin, got ${bins}")
+  }
+  var lo = 0.0
+  var hi = 0.0
+  if values.length() > 0 {
+    lo = values[0]
+    hi = values[0]
+    for var i = 1; i < values.length(); i = i + 1 {
+      if values[i] < lo {
+        lo = values[i]
+      }
+      if values[i] > hi {
+        hi = values[i]
+      }
+    }
+  }
+  const span = hi - lo
+  var first = 0.0
+  for var j = 0; j < values.length(); j = j + 1 {
+    if bin_index(values[j], lo, span, bins) == 0 {
+      first = first + 1.0
+    }
+  }
+  var counts = [first]
+  for var i = 1; i < bins; i = i + 1 {
+    var c = 0.0
+    for var j = 0; j < values.length(); j = j + 1 {
+      if bin_index(values[j], lo, span, bins) == i {
+        c = c + 1.0
+      }
+    }
+    counts = counts.append(c)
+  }
+  return Hist.new(counts: counts, lo: lo, width: span / bins.to_float64(), style: hist_style())
+}
+
+class BandStyle {
+  def init(color (Int64, Int64, Int64), opacity Float64, label String) {
+    self.color = color
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) BandStyle {
+    return BandStyle.new(color: c, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) BandStyle {
+    return BandStyle.new(color: self.color, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) BandStyle {
+    return BandStyle.new(color: self.color, opacity: self.opacity, label: s)
+  }
+}
+
+def band_style() BandStyle {
+  return BandStyle.new(color: (226, 233, 240), opacity: 1.0, label: "")
+}
+
+// A filled band between a lower and an upper curve over one shared run
+// of xs — the regression chart's confidence band. One polygon: the
+// upper curve read forward, the lower one back.
+class Band {
+  def init(xs Array[Float64], lo Array[Float64], hi Array[Float64], style BandStyle) {
+    self.xs = xs
+    self.lo = lo
+    self.hi = hi
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    var pxs = []
+    var pys = []
+    for var i = 0; i < self.xs.length(); i = i + 1 {
+      pxs = pxs.append(ctx.px(self.xs[i]))
+      pys = pys.append(ctx.py(self.hi[i]))
+    }
+    for var i = self.xs.length() - 1; i >= 0; i = i - 1 {
+      pxs = pxs.append(ctx.px(self.xs[i]))
+      pys = pys.append(ctx.py(self.lo[i]))
+    }
+    if pxs.length() > 1 {
+      ctx.renderer.polygon(pxs, pys, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    return self.xs[0]
+  }
+
+  def x_max() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    return self.xs[self.xs.length() - 1]
+  }
+
+  def y_min() Float64 {
+    if self.lo.length() == 0 {
+      return 0.0
+    }
+    var lo = self.lo[0]
+    for var i = 1; i < self.lo.length(); i = i + 1 {
+      if self.lo[i] < lo {
+        lo = self.lo[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.hi.length() == 0 {
+      return 0.0
+    }
+    var hi = self.hi[0]
+    for var i = 1; i < self.hi.length(); i = i + 1 {
+      if self.hi[i] > hi {
+        hi = self.hi[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s BandStyle) Band {
+    return Band.new(xs: self.xs, lo: self.lo, hi: self.hi, style: s)
+  }
+}
+
+// The band factory: the three arrays share one length and the xs ascend,
+// so the polygon's two curves read in one x order.
+def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band {
+  if lo.length() != xs.length() || hi.length() != xs.length() {
+    raise Exception.new(message: "plot: a band's low and high arrays must match its xs, got ${lo.length()} and ${hi.length()} for ${xs.length()}")
+  }
+  if xs.length() < 2 {
+    raise Exception.new(message: "plot: a band needs at least two xs, got ${xs.length()}")
+  }
+  for var i = 1; i < xs.length(); i = i + 1 {
+    if xs[i] <= xs[i - 1] {
+      raise Exception.new(message: "plot: a band's xs need to ascend, got ${xs[i - 1]} then ${xs[i]}")
+    }
+  }
+  return Band.new(xs: xs, lo: lo, hi: hi, style: band_style())
+}
+
+class BoxStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) BoxStyle {
+    return BoxStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_label(s String) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: s)
+  }
+}
+
+def box_style() BoxStyle {
+  return BoxStyle.new(color: (47, 111, 179), edge_color: (34, 34, 34), edge_width: 1.0, width: 0.5, opacity: 1.0, label: "")
+}
+
+// A row of boxes over the categorical face: one box per label at its
+// band center — the whiskers, the filled quartile box, the median line,
+// and the fliers stamped beyond the whiskers. The five statistics
+// arrays share the labels' length; the flier arrays share their own.
+class BoxPlot {
+  def init(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64], style BoxStyle) {
+    self.labels = labels
+    self.lows = lows
+    self.q1s = q1s
+    self.medians = medians
+    self.q3s = q3s
+    self.his = his
+    self.flier_xs = flier_xs
+    self.fliers = fliers
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.labels.length()
+    const band = ctx.plot_w / n.to_float64()
+    const half = band * self.style.width / 2.0
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(i.to_float64() + 0.5)
+      const q1y = ctx.py(self.q1s[i])
+      const q3y = ctx.py(self.q3s[i])
+      const my = ctx.py(self.medians[i])
+      ctx.renderer.line(cx, ctx.py(self.lows[i]), cx, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx, q3y, cx, ctx.py(self.his[i]), self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.rect(cx - half, q3y, half * 2.0, q1y - q3y, self.style.color)
+      ctx.renderer.line(cx - half, q3y, cx + half, q3y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, q1y, cx + half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, q3y, cx - half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx + half, q3y, cx + half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, my, cx + half, my, self.style.edge_color, self.style.edge_width, "")
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.flier_xs[k]), ctx.py(self.fliers[k]), Marker.circle, 6.0, self.style.edge_color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    var seen = false
+    for var i = 0; i < self.lows.length(); i = i + 1 {
+      if !seen {
+        lo = self.lows[i]
+        seen = true
+      } else {
+        if self.lows[i] < lo {
+          lo = self.lows[i]
+        }
+      }
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      if !seen {
+        lo = self.fliers[k]
+        seen = true
+      } else {
+        if self.fliers[k] < lo {
+          lo = self.fliers[k]
+        }
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    var seen = false
+    for var i = 0; i < self.his.length(); i = i + 1 {
+      if !seen {
+        hi = self.his[i]
+        seen = true
+      } else {
+        if self.his[i] > hi {
+          hi = self.his[i]
+        }
+      }
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      if !seen {
+        hi = self.fliers[k]
+        seen = true
+      } else {
+        if self.fliers[k] > hi {
+          hi = self.fliers[k]
+        }
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s BoxStyle) BoxPlot {
+    return BoxPlot.new(labels: self.labels, lows: self.lows, q1s: self.q1s, medians: self.medians, q3s: self.q3s, his: self.his, flier_xs: self.flier_xs, fliers: self.fliers, style: s)
+  }
+}
+
+// The box factory: the five statistics arrays share the labels' length
+// and the flier arrays share their own.
+def box(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64]) BoxPlot {
+  const n = labels.length()
+  if lows.length() != n || q1s.length() != n || medians.length() != n || q3s.length() != n || his.length() != n {
+    raise Exception.new(message: "plot: a box's statistics arrays must match its labels, got ${lows.length()} / ${q1s.length()} / ${medians.length()} / ${q3s.length()} / ${his.length()} for ${n}")
+  }
+  if flier_xs.length() != fliers.length() {
+    raise Exception.new(message: "plot: a box's flier arrays must match, got ${flier_xs.length()} positions for ${fliers.length()} fliers")
+  }
+  return BoxPlot.new(labels: labels, lows: lows, q1s: q1s, medians: medians, q3s: q3s, his: his, flier_xs: flier_xs, fliers: fliers, style: box_style())
+}
+
+class ViolinStyle {
+  def init(color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) ViolinStyle {
+    return ViolinStyle.new(color: c, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) ViolinStyle {
+    return ViolinStyle.new(color: self.color, width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_label(s String) ViolinStyle {
+    return ViolinStyle.new(color: self.color, width: self.width, opacity: self.opacity, label: s)
+  }
+}
+
+def violin_style() ViolinStyle {
+  return ViolinStyle.new(color: (85, 168, 104), width: 0.9, opacity: 1.0, label: "")
+}
+
+// A row of violins over the categorical face: one mirrored density per
+// label at its band center. The grids and the densities are flat, so
+// many points per label — `points` each — and the densities are
+// fractions of the half width, 0.0 to 1.0, normalized across the whole
+// row so the violins compare.
+class Violin {
+  def init(labels Array[String], points Int64, xs Array[Float64], density Array[Float64], style ViolinStyle) {
+    self.labels = labels
+    self.points = points
+    self.xs = xs
+    self.density = density
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.labels.length()
+    const band = ctx.plot_w / n.to_float64()
+    const half = band * self.style.width / 2.0
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(i.to_float64() + 0.5)
+      const base = i * self.points
+      var rxs = []
+      var rys = []
+      for var g = 0; g < self.points; g = g + 1 {
+        rxs = rxs.append(cx + self.density[base + g] * half)
+        rys = rys.append(ctx.py(self.xs[base + g]))
+      }
+      for var g = self.points - 1; g >= 0; g = g - 1 {
+        rxs = rxs.append(cx - self.density[base + g] * half)
+        rys = rys.append(ctx.py(self.xs[base + g]))
+      }
+      ctx.renderer.polygon(rxs, rys, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    var lo = self.xs[0]
+    for var k = 1; k < self.xs.length(); k = k + 1 {
+      if self.xs[k] < lo {
+        lo = self.xs[k]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    var hi = self.xs[0]
+    for var k = 1; k < self.xs.length(); k = k + 1 {
+      if self.xs[k] > hi {
+        hi = self.xs[k]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s ViolinStyle) Violin {
+    return Violin.new(labels: self.labels, points: self.points, xs: self.xs, density: self.density, style: s)
+  }
+}
+
+// The violin factory: the grid and the density arrays each carry one
+// run of `points` per label.
+def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin {
+  const n = labels.length()
+  if xs.length() != n * points || density.length() != n * points {
+    raise Exception.new(message: "plot: a violin's arrays must carry ${n * points} entries, got ${xs.length()} grid values and ${density.length()} densities")
+  }
+  return Violin.new(labels: labels, points: points, xs: xs, density: density, style: violin_style())
+}
+
+// A strip of points over the categorical face: the raw observations at
+// their bands' centers — a scatter that declares the bands, so the
+// axis labels its levels. The xs are band coordinates (0.5, 1.5, ...)
+// and the arrays share their length.
+class Strip {
+  def init(labels Array[String], xs Array[Float64], ys Array[Float64], style ScatterStyle) {
+    self.labels = labels
+    self.xs = xs
+    self.ys = ys
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    for var i = 0; i < self.ys.length(); i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.xs[i]), ctx.py(self.ys[i]), self.style.marker, self.style.size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var lo = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] < lo {
+        lo = self.ys[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var hi = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] > hi {
+        hi = self.ys[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.size, self.style.color)
+  }
+
+  def with_style(s ScatterStyle) Strip {
+    return Strip.new(labels: self.labels, xs: self.xs, ys: self.ys, style: s)
+  }
+}
+
+// The strip factory: the point arrays share their length.
+def strip(labels Array[String], xs Array[Float64], ys Array[Float64]) Strip {
+  if xs.length() != ys.length() {
+    raise Exception.new(message: "plot: a strip's point arrays must match, got ${xs.length()} xs for ${ys.length()} ys")
+  }
+  return Strip.new(labels: labels, xs: xs, ys: ys, style: scatter_style())
+}
+
+// Means over the categorical face: one value per label at its band
+// center, connected in band order and stamped with the style's marker —
+// a line that declares the bands, so the axis labels its levels.
+class Point {
+  def init(labels Array[String], xs Array[Float64], ys Array[Float64], style LineStyle) {
+    self.labels = labels
+    self.xs = xs
+    self.ys = ys
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.ys.length()
+    const pattern = dash_array(self.style.dash)
+    for var i = 0; i < n - 1; i = i + 1 {
+      ctx.renderer.line(ctx.px(self.xs[i]), ctx.py(self.ys[i]), ctx.px(self.xs[i + 1]), ctx.py(self.ys[i + 1]), self.style.color, self.style.width, pattern)
+    }
+    for var i = 0; i < n; i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.xs[i]), ctx.py(self.ys[i]), self.style.marker, self.style.marker_size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var lo = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] < lo {
+        lo = self.ys[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var hi = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] > hi {
+        hi = self.ys[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.line(x, y, x + 18.0, y, self.style.color, self.style.width, dash_array(self.style.dash))
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.marker_size, self.style.color)
+  }
+
+  def with_style(s LineStyle) Point {
+    return Point.new(labels: self.labels, xs: self.xs, ys: self.ys, style: s)
+  }
+}
+
+// The point factory: the arrays share their length.
+def point(labels Array[String], xs Array[Float64], ys Array[Float64]) Point {
+  if xs.length() != ys.length() || xs.length() != labels.length() {
+    raise Exception.new(message: "plot: a point's arrays must match its labels, got ${xs.length()} xs and ${ys.length()} ys for ${labels.length()}")
+  }
+  return Point.new(labels: labels, xs: xs, ys: ys, style: point_style())
+}
+
+def point_style() LineStyle {
+  return LineStyle.new(color: (47, 111, 179), width: 1.5, dash: Dash.solid, marker: Marker.circle, marker_size: 6.0, opacity: 1.0, label: "")
+}
+
+// A grid of cells: the values are row major over the column names
+// across and the row names down, each cell pre-colored by the chart
+// layer through its colormap — the mark stays dumb about scales. The
+// column names ride the categorical x face and the row names the y
+// face, so both axes label the cells instead of ticking numbers.
+class Heatmap {
+  def init(col_names Array[String], row_names Array[String], values Array[Float64], colors Array[(Int64, Int64, Int64)]) {
+    const n = col_names.length() * row_names.length()
+    if row_names.length() < 1 || col_names.length() < 1 {
+      raise Exception.new(message: "plot: a heatmap needs at least one row and one column")
+    }
+    if values.length() != n || colors.length() != n {
+      raise Exception.new(message: "plot: a heatmap's arrays must carry ${n} entries, got ${values.length()} values and ${colors.length()} colors")
+    }
+    self.col_names = col_names
+    self.row_names = row_names
+    self.values = values
+    self.colors = colors
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const nr = self.row_names.length()
+    const nc = self.col_names.length()
+    for var r = 0; r < nr; r = r + 1 {
+      for var c = 0; c < nc; c = c + 1 {
+        ctx.renderer.rect(ctx.px(c.to_float64()), ctx.py((r + 1).to_float64()), ctx.px((c + 1).to_float64()) - ctx.px(c.to_float64()), ctx.py(r.to_float64()) - ctx.py((r + 1).to_float64()), self.colors[r * nc + c])
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.col_names.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    return 0.0
+  }
+
+  def y_max() Float64 {
+    return self.row_names.length().to_float64()
+  }
+
+  def bands() Int64 {
+    return self.col_names.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.col_names
+  }
+
+  def y_labels() Array[String] {
+    return self.row_names
+  }
+
+  def legend_label() String {
+    return ""
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.colors[0])
+  }
 }

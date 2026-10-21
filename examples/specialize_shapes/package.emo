@@ -1,0 +1,7 @@
+package {
+  name = "emo/specialize_shapes"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {}
+}

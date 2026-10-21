@@ -126,14 +126,23 @@ interface Renderer {
   def stroke(s Style) Void
   def fill(s Style) Void
   def text(x Float64, y Float64, body String, s Style) Void
-  def finish() String
+  def finish() Bytes
 }
 ```
 
 T0 只交付一个实现:`SvgRenderer`。终端渲染器(盲文/方块字符,承
-`UnicodePlot` 的精神)与 PNG 光栅器是同一接口的后续实现。`Renderer`
-是绘图层自身的抽象,不是 Emo 的目标:Emo 的目标是
-`ocaml`/`c`/`typescript`/`wasm`/`beam`/`riscv64`,而 EmoUI 是跑在
+`UnicodePlot` 的精神)与 PNG 光栅器是同一接口的后续实现——终端这个
+已于 Step 44(2026-10-20)落地为 `internal.term.TermRenderer`:mark
+与边框用盲文格子,标签用网格自身的字符,每个颜色按它对图背景色的
+亮度对比着墨;PNG 这个于 Step 45(2026-10-21)落地为
+`internal.png.PngRenderer`:2 倍超采样的 RGB 样本平均成像素、扫描线
+填充、方画笔的 Bresenham 线、Hershey Simplex 笔画字体,文件背后是包
+自带的 DEFLATE、CRC-32 与 Adler-32——`finish()` 对所有渲染器应答
+`Bytes`,文本格式即其 UTF-8 字节。`svg`、`terminal` 与 `png` 经同一个
+与渲染器无关的 `render` 遍历同一张图。`Renderer`
+是绘图层自身的抽象,不是 Emo 的目标:Emo 的构建目标是
+`c`/`ocaml`/`typescript`/`browser`/`wasm`/`beam`/`riscv64`(解释器
+直接求值程序、不产生产物;见 `demo-targets.md`),而 EmoUI 是跑在
 它们之上的库,其平台后端是 OS 工具包(AppKit、GTK 4)。EmoUI 当前的
 契约是摆放控件、没有绘制动词,所以今天它不是一个绘图后端(见第 5
 层)。这就是 Matplotlib 的 Artist/Renderer 拆分。
@@ -575,8 +584,9 @@ mark 在子模块:
 - 比例尺、刻度、统计辅助、SVG 渲染器、输出缓冲都在 `internal/`。
 
 该包声明**全部五个宿主目标**(`ocaml`、`c`、`typescript`、`wasm`、
-`beam`;freestanding 的 `riscv64` 不在范围内——它拒绝 `Map`),和那些
-格式包完全一致。
+`beam`;freestanding 的 `riscv64` 不在范围内——它仍是唯一拒绝 `Map` 的
+target),和那些格式包完全一致。`Table` 所依赖的 `Map` 地基在 step 52
+(2026-10-19)到达 wasm 与 beam,五 target 的主张自此对数据集层也字面成立。
 
 ## 工作顺序
 

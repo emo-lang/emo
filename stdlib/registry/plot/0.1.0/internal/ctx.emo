@@ -1,8 +1,11 @@
 // What a mark is handed to draw itself: the renderer plus the plot
-// rectangle and the data domains it maps through.
+// rectangle and the data domains it maps through. A log axis maps
+// through log10 with the domain's ends pre-transformed; the linear
+// path is untouched arithmetic.
 class DrawContext {
-  def init(renderer internal.svg.SvgRenderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
-           x_min Float64, x_max Float64, y_min Float64, y_max Float64) {
+  def init(renderer internal.svg.Renderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
+           x_min Float64, x_max Float64, y_min Float64, y_max Float64,
+           x_log Bool, y_log Bool) {
     self.renderer = renderer
     self.x0 = x0
     self.y0 = y0
@@ -12,13 +15,41 @@ class DrawContext {
     self.x_max = x_max
     self.y_min = y_min
     self.y_max = y_max
+    self.x_log = x_log
+    self.y_log = y_log
+    self.lx0 = 0.0
+    self.lx1 = 0.0
+    self.ly0 = 0.0
+    self.ly1 = 0.0
+    if x_log {
+      self.lx0 = internal.scale.log10(x_min)
+      self.lx1 = internal.scale.log10(x_max)
+    }
+    if y_log {
+      self.ly0 = internal.scale.log10(y_min)
+      self.ly1 = internal.scale.log10(y_max)
+    }
   }
 
   def px(x Float64) Float64 {
+    if self.x_log {
+      if x <= 0.0 {
+        raise Exception.new(message: "plot: a log axis maps only positive values, got ${x}")
+      }
+      const f = (internal.scale.log10(x) - self.lx0) / (self.lx1 - self.lx0)
+      return self.x0 + f * self.plot_w
+    }
     return self.x0 + (x - self.x_min) / (self.x_max - self.x_min) * self.plot_w
   }
 
   def py(y Float64) Float64 {
+    if self.y_log {
+      if y <= 0.0 {
+        raise Exception.new(message: "plot: a log axis maps only positive values, got ${y}")
+      }
+      const f = (internal.scale.log10(y) - self.ly0) / (self.ly1 - self.ly0)
+      return self.y0 + self.plot_h - f * self.plot_h
+    }
     return self.y0 + self.plot_h - (y - self.y_min) / (self.y_max - self.y_min) * self.plot_h
   }
 }

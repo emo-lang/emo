@@ -108,7 +108,7 @@ class JsonBool {
   // The plain text, unquoted: the natural rendering of a JSON string
   // used as one — decode's error reasons print as their message.
   def to_string() String {
-    return self.value
+    return self.encode()
   }
 
   def as_bool() Bool {

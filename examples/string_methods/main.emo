@@ -1,0 +1,62 @@
+// String's method surface: length, substring, and index_of count UTF-8
+// bytes; split and starts_with match bytes; trim strips only space, tab,
+// newline, carriage return, and form feed; lower folds A–Z alone; and
+// to_int64 accepts an optional leading minus and digits, nothing else.
+// Every target answers byte-for-byte, as the interpreter does.
+//
+//   emo run main.emo
+
+const s = "é×a⣿"
+println(s.length())
+println(s.substring(0, 2))
+println(s.substring(2, 2))
+println(s.substring(4, 1))
+println(s.substring(5, 3))
+println(s.index_of("×a"))
+println(s.index_of("⣿"))
+println(s.index_of("z"))
+println(s.index_of(""))
+println("日本語テキスト".length())
+println("日本語テキスト".substring(3, 6))
+println("日本語テキスト".index_of("語"))
+println("a😀b".length())
+println("a😀b".index_of("b"))
+println("a😀b".substring(1, 4))
+println("é×a".to_bytes().length())
+
+println("a,b,,c".split(","))
+println("日本,語".split(","))
+println("abc".starts_with("ab"))
+println("日本語".starts_with("本"))
+
+// trim strips the five ASCII spaces only: a no-break space, an
+// ideographic space, and a vertical tab stay.
+const ff = Bytes.new(1)
+ff.set(0, 12)
+const vt = Bytes.new(1)
+vt.set(0, 11)
+println(" \t x y \r\n".trim())
+println(" x ".trim().length())
+println("　x　".trim().length())
+println((ff.to_string() + "a" + ff.to_string()).trim().length())
+println((vt.to_string() + "a" + vt.to_string()).trim().length())
+
+// lower folds ASCII letters only.
+println("ÉCOLE Σ İ ABC".lower())
+println("MiXeD 123 Z".lower())
+
+// to_int64: an optional leading minus, then digits, within Int64.
+println("42".to_int64())
+println("-7".to_int64())
+println("0042".to_int64())
+println("-0".to_int64())
+println("-9223372036854775808".to_int64())
+println("9223372036854775807".to_int64())
+
+// The same methods on values whose static type is not settled.
+var dyn = []
+dyn = dyn.append("  -15 ")
+dyn = dyn.append("ÀBC d")
+println(dyn[0].trim().to_int64())
+println(dyn[1].lower())
+println(dyn[1].index_of("d"))

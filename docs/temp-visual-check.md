@@ -146,22 +146,36 @@ What this fixed beyond `plot.mark`:
 
 `docs/visualization.md`'s `plot.mark` needs no revision.
 
-### R2 — checker field types stay `Unknown`
+### R2 — checker field types — resolved
 
 Typing `self.field` precisely is the natural fix for nested field reads,
 but it broke the emitters: a native-typed field read on a dynamic
 receiver is still boxed, and the emitters key their native/dynamic
 choice on the expression's static type alone. Doing it properly means
 aligning the emitters with the checker, not just changing the checker.
-Until then, marks store their style fields flat — a field of a field is
-unknown at check time, which some back ends cannot dispatch.
+
+The checker now types a field from the expression `init` first assigns to
+it (`preregister_types` walks every class's `init`, program-wide), so
+`self.width`, `r.style.color`, and another module's `ctx.plot_w` answer
+their types instead of `Unknown`; an assignment on a later path must
+store that same type (a native-typed field exactly — its reads unbox a
+word of that kind). The c emitter boxes a vtable field read to dynamic
+and unboxes it where the static type is native, which is the alignment
+that was missing; the other back ends are dynamic throughout. The plot
+package uses it: `plot.mark.Bar` carries a `BarStyle` instead of flat
+copies of its fields, and `examples/field_types` is the regression on all
+five targets.
 
 ### R3 — a class method named like a runtime method is shadowed
 
 `to_string` and `length` are emitted by name ahead of class dispatch, so
-a class method with that name would be shadowed. `to_string` is fixed
-(the class answers first on beam and wasm); `length` is not, and no
-library hits it yet.
+a class method with that name would be shadowed. Both are resolved: the
+class answers first on beam and wasm (the `to_string` arms already
+carried the instance cases, and the `length` arms now do too), and the c
+emitter pins `read`/`replace` to a `Box` receiver while its `length` arm
+no longer claims an `Unknown` one, so an instance reaches its vtable
+either directly or through `emo_dynamic_builtin`.
+`examples/length_method` is the regression on all five targets.
 
 ## 5. Checklist
 
@@ -178,7 +192,10 @@ library hits it yet.
       and the package docs.
 - [x] **R1** — resolved by fixing the compiler's package namespacing;
       `docs/visualization.md`'s `plot.mark` was right.
-- [ ] **R2** — type `self.field` precisely, with the emitters aligned.
-- [ ] **R3** — the runtime-method-vs-class-method shadowing (`length` first).
+- [x] **R2** — type `self.field` precisely, with the emitters aligned;
+      `examples/field_types` and `plot.mark.Bar`'s `BarStyle` are the
+      proof.
+- [x] **R3** — the runtime-method-vs-class-method shadowing (`length` first);
+      `examples/length_method` is the proof.
 - [ ] Then: further plot work — T1 statistics, the other mark families,
       and the terminal/PNG renderers (the design note's later steps).

@@ -418,11 +418,18 @@ emo_value emo_cell_lower(emo_value s) {
   return emo_autorelease(v);
 }
 
+/* The five bytes `trim` strips, the interpreter's set: space, tab,
+   newline, carriage return, form feed — not the vertical tab, and
+   nothing else below 0x20. */
+static int emo_trim_space(unsigned char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+}
+
 emo_value emo_cell_trim(emo_value s) {
   emo_str src = emo_str_of(s);
   int64_t lo = 0, hi = src.len;
-  while (lo < hi && (unsigned char)src.bytes[lo] <= ' ') lo++;
-  while (hi > lo && (unsigned char)src.bytes[hi - 1] <= ' ') hi--;
+  while (lo < hi && emo_trim_space((unsigned char)src.bytes[lo])) lo++;
+  while (hi > lo && emo_trim_space((unsigned char)src.bytes[hi - 1])) hi--;
   return emo_autorelease(emo_box_str((emo_str){hi - lo, src.bytes + lo}));
 }
 
@@ -992,11 +999,20 @@ emo_value emo_map_remove(emo_value m, emo_value key) {
   while (*link >= 0) {
     emo_map_entry *e = &entries[*link];
     if (e->key != 0 && emo_eq_dyn(e->key, key)) {
+      int64_t i = *link;
+      int64_t count = (int64_t)p[0];
       emo_release(e->key); /* the map drops the removed entry */
       emo_release(e->value);
-      e->key = 0;
       *link = e->next;
-      p[0] = (uintptr_t)((int64_t)p[0] - 1);
+      /* compaction keeps the array the insertion order — the entries
+         after the removed slot shift left, so the array index stays
+         the append position and a later insert cannot land on a live
+         entry */
+      memmove(&entries[i], &entries[i + 1],
+              (size_t)(count - i - 1) * sizeof(emo_map_entry));
+      memset(&entries[count - 1], 0, sizeof(emo_map_entry));
+      p[0] = (uintptr_t)(count - 1);
+      emo_map_rehash(m); /* every index after the slot shifted */
       return emo_retain(m);
     }
     link = &e->next;
@@ -3636,23 +3652,47 @@ emo_str emo_str_lower(emo_str s) {
 
 emo_str emo_str_trim(emo_str s) {
   int64_t lo = 0, hi = s.len;
-  while (lo < hi && (unsigned char)s.bytes[lo] <= ' ') lo++;
-  while (hi > lo && (unsigned char)s.bytes[hi - 1] <= ' ') hi--;
+  while (lo < hi && emo_trim_space((unsigned char)s.bytes[lo])) lo++;
+  while (hi > lo && emo_trim_space((unsigned char)s.bytes[hi - 1])) hi--;
   return emo_str_from_parts(s.bytes + lo, hi - lo);
 }
 
 int64_t emo_str_length(emo_str s) { return s.len; }
 
+/* The interpreter's parse_decimal: an optional leading '-', then one or
+   more digits and nothing else — no sign '+', no surrounding space —
+   within Int64; the digits accumulate unsigned so the magnitude check
+   can admit -9223372036854775808. */
 int64_t emo_str_to_int64(emo_str s) {
-  char *clean = (char *)emo_str_cstr(emo_str_trim(s));
-  char *end = NULL;
-  long long v = strtoll(clean, &end, 10);
-  if (end == clean || *end != '\0') {
+  int64_t i = 0;
+  int neg = 0;
+  if (s.len > 0 && s.bytes[0] == '-') {
+    neg = 1;
+    i = 1;
+  }
+  int ok = i < s.len;
+  uint64_t acc = 0;
+  for (; ok && i < s.len; i++) {
+    unsigned char c = (unsigned char)s.bytes[i];
+    if (c < '0' || c > '9') {
+      ok = 0;
+      break;
+    }
+    uint64_t d = (uint64_t)(c - '0');
+    if (acc > (UINT64_MAX - d) / 10) {
+      ok = 0;
+      break;
+    }
+    acc = acc * 10 + d;
+  }
+  uint64_t limit = neg ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
+  if (ok && acc > limit) ok = 0;
+  if (!ok) {
     fprintf(stderr, "uncaught exception: cannot parse `%.*s` as an Int64\n",
             (int)s.len, s.bytes);
     exit(70);
   }
-  return (int64_t)v;
+  return neg ? (int64_t)(0ULL - acc) : (int64_t)acc;
 }
 
 emo_value emo_str_split(emo_str s, emo_str sep) {
@@ -3690,6 +3730,27 @@ EMO_NORETURN int64_t emo_unsupported(const char *what) {
 emo_value emo_make_exception(emo_value message) {
   /* the Exception value IS the message cell; the claim passes through */
   return message;
+}
+
+emo_value emo_make_exception_data(emo_value message, emo_value data) {
+  /* A non-empty data Map renders alongside the message — the
+     interpreter's uncaught rule — and an empty one changes nothing.
+     The construction never returns, so what the crash would read is
+     exactly what renders here. One plain birth: the caller's wrapper
+     pools the claim exactly once. */
+  if (emo_map_length(data) == 0) return message;
+  emo_str m = emo_str_of(message);
+  emo_str d = emo_to_string_dyn(data);
+  int64_t len = m.len + 8 + d.len + 1; /* " (data: " then the close */
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)len;
+  memcpy(p + 1, m.bytes, (size_t)m.len);
+  memcpy((char *)(p + 1) + m.len, " (data: ", 8);
+  memcpy((char *)(p + 1) + m.len + 8, d.bytes, (size_t)d.len);
+  ((char *)(p + 1))[len - 1] = ')';
+  free((void *)d.bytes);
+  return v;
 }
 
 /* ---- The integer core ---- */

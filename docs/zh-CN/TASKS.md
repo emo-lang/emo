@@ -36,6 +36,7 @@
 | M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
 | M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
 | M18 — `c` 目标上的 TLS | 51 | 既有三个 `net` TLS 内建在默认 target 上运行:C 运行时以手写原型与按 IR 判定的条件链接落在系统 OpenSSL/LibreSSL 上(不用 TLS 的构建绝不链接 OpenSSL),ocaml 调度器的语义与 reason 约定保持一致,`http` 的 `https://` 在 `c` 上端到端可用(`CHECK.md`)。 |
+| M19 — `wasm` 与 `beam` 上的 Map | 52 | 最后两个宿主 target 用各自既有的可变种类机制实现 `Map` 内建——插入序、六种键类型、结构化 `==`、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——`send` 在 `wasm` 上送快照(新可变性使之可达的那条记录在案的遗留),`slog` 加宽到这两个 target,`Exception.new(data:)` 在除 `riscv64` 外的每个 target 上都能携带崩溃上下文,`plot` 包的 Map 形状 `Table` 与通道(Step 42)由此解除阻塞(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -58,7 +59,7 @@
 | EmoUI 原生 UI 打包(per-package 原生字段) | T48.7–T48.9 | 已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。**已于 2026-10-18 落地(T48.7)**:`pkg_config`(裸模块名;`--cflags` 进编译、`--libs` 进链接)、`frameworks`(裸名;`-framework NAME`),`.m` 与 `.c`/`.h` 一起收集并在 ARC 下编译 |
 | `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。**已于 2026-10-17 落地(T49.1–T49.4)**:工作集平坦,demo 尺度注记退役 |
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。**已于 2026-10-18 落地(T48.10–T48.11)**:打包步骤是一个构建 target(`emo build --target browser`),拆分是无宿主的 core 加 Node 与页面两个 host,`dom_*` 家族是十三个基于 Int64 句柄的调用,`emo/ui_browser` 是压在其上的 DOM 后端,一致性语料在 stub 页面里跑通 |
-| 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
+| 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。T39.3 进一步细化:在非原生目标上声明是惰性的,拒绝发生在调用处。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
 | in-tree 项目布局(`projects/`) | M15 全部 | 已定(2026-10-15)——仓库根的 `projects/<仓库名>/` 存放每个具名 Emo 项目(EmoUI、EmoOS、EmoShell),以它将来可拆分出去的仓库命名;EmoUI 仍不是标准库包(`CHECK.md`) |
 | 终端输入的位置(T48.5) | T48.5 | 已定(2026-10-15)——raw mode 是一个标准库包,形状同 `sqlite3`(包自带 `.c`/`.h`,经 `foreign def` 调用,由 `targets` 把关),不是 UI 框架侧或编译器侧的产物(`CHECK.md`、`docs/emo-ui.md`) |
@@ -649,82 +650,164 @@ Step 38 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代�
 
 T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上逐字节一致,构建在内部 `Buffer`、标度/刻度、带 `SvgRenderer` 的 `Renderer` 接口,以及声明式的 `figure`/`axes`/`mark` 值之上。数值底座与 `math` 包(sequencing A)已完成。本 milestone 完成设计的 sequencing B–E:T0 表面的其余部分、`Table` 与通道(channels)、T1 数据集图表,最后是终端与 PNG 渲染器。设计与定案记录在 `docs/visualization.md`;包当前表面在 `docs/stdlib/plot.md`;本工作触及的语言使能项在 `docs/temp-visual-check.md`。范围之外(decision 9):交互/GUI 图表、EmoUI 画布、3D、动画。每个步骤的 plan 文件在步骤启动时编写。
 
-### Step 39 — 绘图所需的编译器与语言使能项
+### Step 39 — 绘图所需的编译器与语言使能项 · `plan/step-39-plot-enablers.md`
 
 与绘图各步骤相互独立;每一项要么解除下面工作的阻塞,要么降低其风险。
 **完成标准:** 使能项自身的测试通过,且受影响的绘图代码用上它。
 
-- [ ] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
-- [ ] **T39.2** — 与运行时方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
-- [ ] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
-- [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
+- [x] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
+- [x] **T39.2** — 与运行时方法同名的类方法不被遮蔽(R3)。`length` 在每个目标上都由实例自己的方法作答;`examples/length_method` 是回归。
+- [x] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。在非原生目标上这些定义是惰性的:解释器在调用时抛 E3009,发射器拒绝调用。`examples/math_native` 是回归。
+- [x] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。原生发射器现在下降类型值、枚举成员、字段读取和 def 值(后者仅当其 def 被特化,包装函数与原生递归组同组);容器字面量退出谓词,这些函数保持动态。`examples/specialize_shapes` 是回归。
 
 ### Step 40 — T0 收尾:连续轴与其余 mark
 
 **前置:** Step 39 可选(T39.1 让样式类更好写)。
 **完成标准:** `examples/plot_demo` 增加 line/scatter/area/histogram 面板,并在全部五个 target 上逐字节一致;`dune test` 全绿。
 
-- [ ] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
-- [ ] **T40.2** — `plot.mark.line` 与 `LineStyle`。
-- [ ] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
-- [ ] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
-- [ ] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
-- [ ] **T40.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
-- [ ] **T40.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。
+- [x] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
+- [x] **T40.2** — `plot.mark.line` 与 `LineStyle`。
+- [x] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
+- [x] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
+- [x] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
+- [x] **T40.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
+- [x] **T40.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。
 
 ### Step 41 — 图形保真:标度、域、图例、网格、主题、颜色
 
 **前置:** Step 39–40。
 **完成标准:** T0 值已声明的每个字段都被渲染出来——对数标度、域、网格、图例、主题——且 `DrawContext` 按 `Renderer` 接口类型化,而非 `SvgRenderer`。
 
-- [ ] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
-- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
-- [ ] **T41.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T41.7)。
-- [ ] **T41.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。
-- [ ] **T41.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
-- [ ] **T41.6** — 调色板与 colormap(decision 21/24):在 `Float64` 中插值,`color` 通道按列的类型分派,`plot.rgb` 校验 0–255 范围。
-- [ ] **T41.7** — 分面(faceting,decision 23):排序后的水平、行 × 列、默认 `Share.all`、一份图例、逐面板标签、水平不匹配处留空格。
-- [ ] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
+- [x] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
+- [x] **T41.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
+- [x] **T41.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T41.7)。
+- [x] **T41.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。
+- [x] **T41.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
+- [x] **T41.6** — `plot.rgb` 校验 0–255 范围,裸三元组在绘制时校验(decision 21),叠在 T41.5 colormap 的 `Float64` 插值之上;`color` 通道按列类型分派随 T42.3 的通道落地(decision 24)。
+- [x] **T41.7** — 分面(faceting,decision 23)的图这一半:`rows × cols` 面板网格、主题间距分隔、多出的格子留空、`Share.all` 让每个面板画在并集域上、图题居网格上方;排序水平、逐面板水平标注、单份共享图例随图表层落地(T43.6,经 T42.3 的 `facet_*` 通道)。
+- [x] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
 
 ### Step 42 — Table 与通道
 
 **前置:** Step 40。
 **完成标准:** `plot.table` / `plot.table_missing` 构建出经校验的 `Table`,图表层通过词表解析通道。
 
-- [ ] **T42.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。
-- [ ] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。
-- [ ] **T42.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道。
+- [x] **T42.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。类型公开在 `plot` 根上;数值列经 `plot.observed` 读取,丢掉 `absent` 条目,presence 数组与值不等长时 raise。已验证六条路径——interp、c、ocaml、ts、wasm、beam——跳过与不匹配抛错逐字节一致。(`observed` 落地时是 `internal.stats.observed`;2026-10-20 的重构把它挪到根上,让统计模块不再引用包根——根调用进来,模块图只能弯一次。)
+- [x] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。两个构造器共享同一套形状检查——没有名字被两种列同时认领、所有列同一个长度、每个数值列旁边各有一条 presence 列且无游离项——访问器按列的种类受查(`number` / `presence` / `label`,旁边是 `rows` 行数)。已在六条路径上验证——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增加了表一节),八个形状违例在每条路径上抛出同一条消息。打印 presence 列暴露了枚举 `to_str` 的缺口:`ts` 渲染全限定名,`wasm`/`beam` 干脆没有渲染;三者现在都渲染裸成员——解释器的规则——金测逐字节成立。
+- [x] **T42.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道——并接手 T41.6 的按列类型 `color` 分派(经主题的 palette 与 colormap,decision 24)。检查落在 `internal/channels.emo`——词表与逐族读取(关系图全套;分布图与类别图不带点样式通道;矩阵图只读分面),外加字节序比较与 `sorted_levels`(类别列取 palette 色所经的排序,因为 `String` 只答 `==`、不答 `<`)。分派以 `plot.channel_colors(table, name, theme)` 公开在根上:类别列按水平的排序位置经 palette 取色,数值列把在场值在跨度上归一化后经 colormap 取色(常数列落在低端),缺席槽位同样以低端占位。六路验证——interp、c、ocaml、ts、wasm、beam——happy 输出与五条 raise 消息逐字节一致:未知通道、两例族违约、未知列、全缺席的 color 列。demo 增设通道段;接收映射的图表函数随 Step 43 到来。(2026-10-20 的图表层把逐族读取换成了逐图检查——每张图自带支持清单,因为同族各图读的美学通道不同——四个族包装随之删除,不支持的通道报错时点名具体的图。)
 
 ### Step 43 — T1 数据集图表
 
 **前置:** Step 41–42。
 **完成标准:** decision 17 里的每个 `plot.*` 图表都在 T0 mark 上实现,fixture 在全部五个 target 上逐字节一致。
 
-- [ ] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。
-- [ ] **T43.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。
-- [ ] **T43.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。
-- [ ] **T43.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。
-- [ ] **T43.5** — 矩阵型:`plot.heatmap`、`plot.clustermap`。
-- [ ] **T43.6** — 在图表层应用分面、调色板与主题;示例与逐字节金测。
+- [x] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。落在 `internal/stats.emo`:`sort`(ArrayBuilder 上的自底向上归并排序)、`quantile`、`describe`、`histogram_bins`(复用 `hist` mark 的 `bin_index`,列与 mark 的分箱恒一致)、`ecdf`、`box_stats`(Tukey 须与离群点)、`ols` 与 `ols_band`(大样本置信带,临界值来自 Acklam 的 `normal_quantile`)、`normal_cdf`(Zelen–Severo),以及 KDE 背后的 `exp`——按 `scale.log10` 的先例内化,`plot` 保持零依赖。已验证六条路径——interp、c、ocaml、ts、wasm、beam——手算核对值与抛错路径逐字节一致。
+- [x] **T43.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。每个图把表经通道映射读取,应答一整个 `Figure`——一个 axes,用通道的列名做标签,装着映射建出的 mark。`x` 与 `y` 必备且为数值;任一列缺席的行剔除,剔完没有可画的行直接 raise。读取按图而定——scatter `color`/`size`/`marker`,line `color`/`marker`/`dash`,reg 只读那一对——图不读的通道直接 raise。`color` 分派承接 T42.3 的:类别列把行拆成每个排序水平一条系列(palette 取色,图例以水平命名,两个分组通道共享的水平只命名一次),数值列经 colormap 给散点逐点取色——这让 `Scatter` mark 长出逐点颜色与尺寸覆盖,`size` 通道的跨度归一化读法与之相同(样式尺寸的一半到一倍半)。分组通道读类别列,按水平挑选 marker(六种形状绕环)与 dash(四种线型);组按各通道水平的组合成形、按排序位置排列。折线按行自身顺序画每条系列——行序即意图。`reg` 画点、OLS 直线(`fit`),以及先画的 95% 置信带,经 `ols_band` 在保留跨度上取五十个网格点——这给 `plot.mark` 带来第六个 mark `band`(一个多边形,上曲线正向、下曲线反向,工厂检查等长与升序)。分面通道通过检查、但在图表层的面板拆分落地之前直接 raise。已验证六条路径——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增设关系型一节:带 size 通道的分组散点、双水平带 dash 的折线、带置信带的 reg),十三条 raise 消息逐字节一致。落地 demo 暴露并连带修复两个 beam 运行时缺陷:`emo_g6_sci` 用 `string:trim(二进制, trailing, 二进制)` 做裁剪——第三参应是字符列表,凡 %g 形态需要科学计数法的浮点一律 function_clause(KDE 的小密度值是第一批画出的这类数);%g 小数尾巴保留了 Erlang `compact` 的末尾 `.0`,而解释器的 %g 说 `204`,已剥离。
+- [x] **T43.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。前三个读一个数值列——经新的单 `x` 读取必备——并经 T43.2 的分组按 `color` 水平各画一个 mark、水平按排序排列:`hist` 数进横跨保留值共同范围的等宽箱、箱数取计数的平方根、各水平共享一套网格;`kde` 每水平一条密度曲线,带宽由 Silverman 经验法则给出(新 `internal.stats.silverman`:0.9 × min(σ, IQR/1.34) × n^(−1/5),五次方根走内化的 `exp` 与 `scale.log10`,值不铺开的列直接 raise);`ecdf` 画阶梯线,每个值的累积比例在值处抬升。`box` 与 `violin` 落在 `x` 列的水平上——那里给数值列直接 raise——把每个水平的 `y` 经 Tukey 统计概括:`box` 画须、四分位箱、中位线与离群点,`violin` 每水平一条镜像密度、带宽与网格形状同 Silverman、密度按整行归一化——值不铺开的水平 raise 时点名水平。两者给 `plot.mark` 带来两个 mark:`BoxPlot`(因语言的 `Box` 容器而改名)与 `Violin`,类别面上的扁平平行数组,工厂检查等长。`box` 与 `violin` 目前不读 `color` 通道。已验证六条路径——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增设分布型一节:双班分数表过全部五图),十条 raise 消息逐字节一致。
+- [x] **T43.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。四者都落在 `x` 列的水平上——那里给数值列直接 raise。`bar` 与 `point` 需要 `y` 通道,把每个水平的在场值按均值聚合——每水平一根柱;point 是沿 band 排序顺序行走、逐个盖章的均值连线。`count` 完全不需要 `y`:每水平一根柱,高度是该水平的行数。`strip` 在各 band 中心画原始点,经 T43.2 分组按 `color` 水平各一条系列——点不抖动、按行自身顺序,重叠的点就是数据。两个 mark 加入 `plot.mark`:`Strip`(声明 band 的散点,用既有 `ScatterStyle`)与 `Point`(连线均值行,用既有 `LineStyle` 加 `point_style` 默认)——即两个 T0 mark 的类别面,轴因此为它们标注水平。`bar`、`count`、`point` 目前不读 `color` 通道。已验证六条路径——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增设分类型一节:双区销售表过全部四图),八条 raise 消息逐字节一致。
+- [x] **T43.5** — 矩阵型:`plot.heatmap`、`plot.clustermap`。两者把整张表当矩阵读——数值列是单元格的列、行是单元格的行,恰好一个类别列给行命名(没有或多个则按 1 起编号)——映射只认分面通道,通常为空。每格按值在全部单元格跨度上的位置经主题 colormap 取色,常数矩阵落低端。`clustermap` 按欧氏距离做平均联接聚类重排行与列(新 `internal.stats.cluster_order`:先算基础距离矩阵,再反复合并平均成对距离最近的存活簇对,每次合并按最小叶排序两半,dead 标志用 `Map`——数组不能下标赋值);树不画,顺序即聚类。`Heatmap` mark 加入 `plot.mark`——预着色单元格行主序、无样式、不进图例——`Mark` 接口长出 `y_labels` 即类别 y 面:`draw_axes` 让携带行名的 mark 在其 band 中心接管 y 轴标注,与 `x_labels` 接管 x 轴同理,heatmap 因此两轴都标名字,其他 mark 一律答空列表。图把轴域经 `with_x_domain`/`with_y_domain` 钉到精确的格数,不留 nice ceiling 的死带。已验证六条路径——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增设矩阵一节:4 × 4 相关矩阵的 heatmap 与 clustermap),五条 raise 消息逐字节一致。
+- [x] **T43.6** — 在图表层应用分面、调色板与主题;示例与逐字节金测——并接手 T41.7 的水平拆分、逐面板水平标注与单份共享图例。现在每个图都读 `facet_row` 与 `facet_col`:各自指一个类别列,排序后的水平把图拆成面板——行 × 列,单通道即条带——每格画它所持有那些行上的图,水平组合没有行的格子留白,分面列也不进 heatmap 的行命名规则。面板之间可比:图保持 `Share.all`、空白格不进并集(矩阵图在 `Share.none` 下保持各自的格子网格);每格从水平获得标题——`time = Lunch`,双分面用逗号连接——经新的 `Axes.title`(`with_title`);轴标签只在外缘;面板图例让位给整图右侧的一份图例、逐标签去重,经新的 `Figure.shared_legend`(`with_shared_legend`),并从网格宽度里让出那一列。图表层的 palette 与 colormap 解析不变——分组色按水平排序位置经主题 palette、数值色经 colormap 在构建时解析,同一水平在每格都是同一个颜色。每张图还以 `<chart>_axes` 应答单面板形态——十四个公开核,分面装配器经 `panel_axes` 按类名分派——格子画的子表由 `rows_of` 给出。落地暴露并连带修复又一个 beam 缺口:对静态类型为动态的值(以裸 `[]` 起步的数组)做 `[k]` 下标,即便值是元组也落 `lists:nth`——`emo_index` 现按 `is_tuple` 运行时分派。`refuse_facets` 已删除。已验证六条路径——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增设三张分面图:带共享图例的 1 × 2 散点、含空白格的 2 × 2、2 × 1 直方图),五条探针应答逐字节一致。
 
 ### Step 44 — 终端渲染器
 
 **前置:** Step 41(T41.8 的 `Renderer` 解耦)。
 **完成标准:** 同一张图经同一份 Layer 0 值图渲染到终端,证明契约与格式无关。
 
-- [ ] **T44.1** — 一个 Unicode `Renderer` 实现(mark 用方块或盲文、文本标签),位于 `internal` 的 `Renderer` 接口之后。
-- [ ] **T44.2** — 经 CLI/示例路径接入,并测试同一张图既能经 SVG 也能经终端渲染。
+- [x] **T44.1** — 一个 Unicode `Renderer` 实现(mark 用方块或盲文、文本标签),位于 `internal` 的 `Renderer` 接口之后。`internal/term.emo` 的 `TermRenderer` 用与 `SvgRenderer` 相同的六个调用应答到一张盲文格子网格上:图的四个像素为一列、八个像素为一行,一格即两点宽四点高、具有终端字形的长宽比,默认的 640 × 480 图打印为 160 列 × 60 行。颜色只有一种墨——每个颜色按它对纸色(渲染器构造时传入的图背景色)的 Rec. 601 亮度对比变成 0 到 8 的墨级,即一格八点中点亮多少点,全程整数运算。填充(`rect`、`circle`、`polygon`,后者是在点中心采样的扫描线奇偶填充)按墨级经同一套分散点序半色调着墨、并清掉该墨级留暗的点,于是纸色填充就是涂纸——图例面板盖住它底下的东西、主题自身的背景矩形成为空操作;线经 Bresenham 一点宽,墨级 2 起实线、墨级 1 每四点一点、墨级 0 清除,虚线图案三点亮两点灭;文本按 UTF-8 序列拆成字符落在字形中点所在的行、从锚点铺开、永远盖在所在格的点之上;出格的一切都裁掉。整图的绘制流程从 `svg()` 抽成与渲染器无关的 `render(r, fig)`——`svg` 与新增的 `plot.terminal(fig)` 只差构造的渲染器——SVG 金测逐字节不变。暴露两个目标缺口,均在包侧化解:`c` 目标拒绝对动态字(从 `Bytes` 字段读回的字节)做位运算,格子更新因此改用算术——`(cur / bit) % 2` 判位、`cur ± bit` 翻位;`typescript` 运行时的 `String.length()` 数的是 UTF-16 码元而其余各路数的是 UTF-8 字节,`Buffer` 一旦装入三字节的盲文就越界——`Buffer.to_string` 现在累加各块编码后的字节长度,分歧本身记入 `CHECK.md`。已验证六条路径——interp、c、ocaml、ts、wasm、beam——四个探针逐字节一致(柱状图、带虚线图例项的双折线图、heatmap、暗色主题),`dune test` 全绿。
+- [x] **T44.2** — 经 CLI/示例路径接入,并测试同一张图既能经 SVG 也能经终端渲染。`examples/plot_demo` 现在把四张图作为值持有——柱状图、带虚线图例项的双折线图、带置信带与点的回归图、heatmap——照旧逐张打印成 SVG,并在末尾把同样四个值再经 `plot.terminal` 打印一遍,于是同一个 `Figure` 值进了两个渲染器、两种输出落在同一份金测里:`expected.txt` 增长了四张终端渲染(244 行)、SVG 前缀逐字节不变,既有金测套件在全部六条路径——interp 与 `c`、`ocaml`、`typescript`、`wasm`、`beam` 构建——逐字节钉住(`dune test` 全绿、0 失败)。四张图合起来覆盖渲染器应答的每一种图元:`rect` 填充与边框的线、虚线与图例面板、置信带 `polygon` 与 `circle` 标记、heatmap 跨越各墨级的单元格。`docs/stdlib/plot.md`(及 `zh-CN` 镜像)的表面加入 `terminal`,「输出」一节加终端段落——格子几何、放进 80 列终端用 `with_size(320.0, 240.0)`、着墨规则、哪些不渲染——完整例子两种都打印,已落地清单点名第二个渲染器;`docs/visualization.md` 第 0 层记录落地;`plan/README.md` 把 Step 44 标为完成。Step 44 的完成标准成立:一张图经同一份 Layer 0 值图渲染到终端,契约与格式无关。
 
 ### Step 45 — PNG 渲染器
 
 **前置:** Step 44。
 **完成标准:** `plot.png(fig)` 在全部五个 target 上从同一份值图产出合法 PNG,不依赖宿主图像库。
 
-- [ ] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。
-- [ ] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
-- [ ] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。
-- [ ] **T45.4** — 经 Hershey 笔画字体的文本。
-- [ ] **T45.5** — `plot.png(fig)`、其示例与金测。
+- [x] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。`internal/png.emo`
+      以 `deflate_stored` 开出 PNG 后端的字节层:对 `Array[Int64]`
+      字节序列产出 raw DEFLATE 流,每 65535 字节一块,块头五字节——
+      BFINAL/BTYPE、LEN 与 LEN 的反码——空输入落一个空的收尾块。
+      字节数组取 `Array[Int64]` 而非 `Bytes`:元素读取保持静态
+      Int64,后头的校验和与 Huffman 打包需要动态世界拒绝的位运算
+      (term 渲染器的算术位规则)。对外部解压器与各路同时验证:七个
+      探针——空、单字节、255 字节游程、256/65535/65541 边界、以及
+      70000 字节变体——在解释器上经 Python zlib 解压与输入逐字节
+      一致,c/ocaml/typescript/wasm/beam 五个目标构建各自打印的
+      201,640 行与解释器逐字节一致(`dune test` 绿)。
+- [x] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
+      `internal/png.emo` 长出真正的压缩器:单一 fixed-Huffman 块,贪婪
+      LZ77 走哈希链——三字节哈希投 32768 个桶,更早的位置经 `prev` 表
+      穿线,两张表都是可变 `Bytes`、每槽三字节小端(零填充的槽写
+      none,因为位置 0 是真实位置)——四字节以上的匹配胜过字面量,至多
+      试十六个候选,匹配覆盖的每个位置都入链。位层是 `put_bits` 助手,
+      builder 作参数穿透、应答 `(acc, cnt)`,Huffman 码高位在前、额外
+      位低位在前,定码全部算出(`lit_code`、`len_code`、`dist_code`)——
+      长度符号要经它的 `lit_code` 表项发出,不是符号编号。
+      `crc_table`/`crc_push`/`crc32` 承载反射多项式 0xEDB88320(常数在
+      Emo 里是十进制——手算换算错过两次,直到由 Python 生成),
+      `adler32` 是 mod 65521 的两个和,`zlib_stream`、`chunk`、
+      `png_file` 组装包裹层与文件:120, 156 头、四字节大端帧、IHDR
+      8 位真彩、IDAT、IEND,每个块对 kind 与 data 求 CRC。T45.1 的
+      stored blocks 让位——LZ77 流取而代之。第一个探针抓到的是缺了块
+      头(BFINAL、BTYPE 01),第二个是符号当码;之后真相全线成立:六个
+      探针在 Python zlib 下解压逐字节精确(最大 65800 字节、45 倍),
+      校验和等于 `zlib.crc32`/`adler32`(含 `123456789` 的
+      `0xCBF43926`),拼出的 4 × 3 PNG 逐块可解析——CRC 全对、IDAT
+      还原出精确扫描线、`file`/`sips` 认其为合法图像——五个编译目标
+      各自打印的 4191 行与解释器逐字节一致(`dune test` 绿)。顺带
+      发现并记入 `CHECK.md`:遮蔽外层 `var` 的 `const` 在各路径上没有
+      一致的语义(interp 平面改绑、`c` 块作用域、其余四路拒绝)——
+      打包器改为只声明一次、分支内仅赋值。
+- [x] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。`internal/png.emo`
+      长出 `PngRenderer`,第三个 `Renderer`:显示列表画到 2 倍超采样的
+      RGB 样本网格上——每像素 2 × 2 个样本,四样本求和加二再除四(就近
+      舍入)得抗锯齿像素。填充走扫描线:矩形按 `sample_from` 边界逐行
+      跨段,圆逐行弦段,多边形逐样本行求偶奇交点排序
+      (用 `internal.term` 的 `insert_sorted`,internal 互调);线段是
+      样本空间里的 Bresenham 游走,方画笔与线宽同宽,dash 词表
+      ("7 4"、"1.5 3.5"、"7 3 1.5 3")按游走里程配速,斜步折 0.707 px。
+      纸色在构造时铺满网格,每次绘制都以 `write_color` 的消息校验
+      颜色。又因格式是二进制,`finish()` 对所有渲染器改应答 `Bytes`——
+      文本格式即其 UTF-8 字节,`Buffer` 长出 `to_bytes`,
+      `plot.svg`/`plot.terminal` 从中取字符串——这正是 `plot.png`
+      需要的形状,`typescript` 上 String 根本装不下 PNG(编解码器的
+      U+FFFD 规则)。text 暂只校验颜色,等 T45.4。验证用一幅画出来的
+      探针——白纸上矩形、圆、三角、实对角线、虚线——逐像素对 Python
+      解码(填充精确,虚线 7–8 开 3–4 关),读回图像目视核对,六路逐
+      字节一致(`dune test` 绿)。路上撞出两条目标事实,均已记入
+      `CHECK.md`:解释器上内建方法直接链在用户类方法调用结果上会误读
+      其接收者(`b.to_bytes().length()` 得 0,先存 const 再调得 8)
+      ——`finish()` 改字节的那一刻它清空了所有 SVG,包侧一律先绑定再
+      调用;而名为 `to_bytes` 的类方法在 `wasm` 上无论接收者是谁都会
+      被分派给 String 内建,故 buffer 的字节侧叫 `join()`。
+- [x] **T45.4** — 经 Hershey 笔画字体的文本。`internal/font.emo` 承载
+      Hershey Simplex 全部 95 个可打印 ASCII 字形——公有领域,
+      A. V. Hershey 为美国国家标准局所作——为三张平面表:每个字形的
+      步进、编码在表中的起点、以及编码本体,笔画数、点数、点列,x
+      向右、y 自基线 0 向上,大写高 21(绑定名小写:大写开头是类型
+      名)。`PngRenderer.text` 把每个字形的笔画经线段路径画出,按大写
+      高为字号 0.7 缩放,按步进之和从锚点排布,调用的 y 即基线,粗体
+      笔画加倍,可打印区之外的码落回空格。验证用一幅画出来的探针
+      ——粗体居中标题、start 与 end 锚点的标签、数字加标点行——读回
+      图像,笔画清晰、锚点到位,六路逐字节一致(`dune test` 绿)。
+- [x] **T45.5** — `plot.png(fig)`、其示例与金测。`plot.png` 在根上加入
+      `svg` 与 `terminal`:同一次 `render` 遍历,身后是
+      `PngRenderer`,返回 `Bytes`——PNG 是二进制而 `String` 在
+      `typescript` 上装不下它。`examples/png_demo` 把两张小图双向打印
+      ——钉住值图的终端渲染,与钉住文件的 PNG 字节长度及 33 字节头
+      (签名、尺寸、位深)——金测进全部五个名单(`emo_cli_test` 的
+      `c`、`wasm`、`beam`,`emo_project_test` 的 ocaml bootstrap 与
+      `typescript` 名单),与解释器逐字节一致,伴着 `plot_demo` 既有
+      的六路金测。`docs/stdlib/plot.md`(及 `zh-CN` 镜像)在表面加入
+      `png`、「输出」下新增 PNG 一段、已落地清单记入第三个渲染器;
+      `docs/visualization.md` 的第 0 层记录落地并把 `finish()` 改为
+      `Bytes`;`plan/README.md` 标记 Step 45 完成。Step 45 的完成标准
+      成立:`plot.png(fig)` 在全部五个 target 上从同一份值图产出合法
+      PNG,不依赖宿主图像库。金测又顶出两面 target 墙,均已记入
+      `CHECK.md` 并以改表示的方式绕开:beam 对 `Array` 的索引是走其
+      底层 list(230,640 字节的 deflate 流跑了 19 分钟,字节搬进分块
+      存储后 4 秒——流走 `Pack`,网格每样本行一块 `Bytes` 存于
+      `Map`——且逐字节同一文件);类方法名与内建同名时,IR 丢失构造器
+      类型就会分派到形状测试,故 `Chain` 应答 `slot`/`set_slot`,
+      `Pack` 应答 `add`/`byte`/`count`。
 
 ---
 
@@ -849,3 +932,23 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 - [x] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
 - [x] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
 - [x] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。
+
+---
+
+## M19 — `wasm` 与 `beam` 上的 Map
+
+`Map` 是仅剩的两个宿主 target 都拒绝的唯一能力内建:解释器、`c`、`ocaml` 与 `typescript` 都实现了它,而 `wasm` 与 `beam` 在降级阶段就拒绝 map 字面量(`the wasm/beam target does not support Map yet`,这条拒绝从 T16–T18 两个运行时诞生起就在)。它如今已经承重:`plot` 包的 `Table` 与通道词表是 Map 形状的(decision 4/10/16,Step 42 因此阻塞),`slog` 的 manifest 在缺口合上之前主动收窄自己,而 `Exception.new(data:)`——一个 Map——在这两个 target 上无法携带崩溃上下文(`CHECK.md` 记有常设注记)。机制在两边都已有蓝本:`wasm` 用 WasmGC 结构体降级可变的 `List`(`$vlist` 叠 `$lnode` 节点,运行时函数 61–67),`beam` 用新 ref 作键的进程字典(`emo_list_new`,`{'emo_list', K}` 标签),两者的方法面形状正是 Map 需要的。M19 沿这两个先例落地 Map——插入序、六种键类型、结构化 `==`(内容相等、与插入序无关,解释器的规则)、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——并顺手关掉新可变性使之可达的那条 `wasm` send 快照遗留(`CHECK.md`,step 50)。可变种类在 `beam` 上保持进程内(这是 `List` 的先例——标签跨进程发送后,首次使用时响亮报错,今天是 `emo_no_list`,`emo_no_map` 与之并列);`riscv64` 仍是唯一的拒绝,能力层维持冻结。
+
+### 步骤 52 — `wasm` 与 `beam` 上的 Map
+
+**前置:** 无(解释器与 `c`/`typescript` 的实现是语义基准)。
+**完成标准:** 一个 map 程序——字面量、`Map.new`、七个方法、结构化 `==`、`{key: value}` 打印、双绑定上的别名——在全部六条路径(interp、c、ocaml、ts、wasm、beam)上逐字节一致;`Exception.new(data:)` 在 `wasm` 与 `beam` 上携带 data;`send` 在 `wasm` 上送快照;`slog` 声明这两个 target、其金测进入两个名单;每个 target 上既有的金测逐字节不变;文档把故事讲全。
+
+- [x] **T52.1** — wasm 运行时的 map 结构:`$vmap`——键数组、值数组、计数,采用 `$vbuilder` 倍增缓冲的形状,线性扫描查找(plot 尺度的 map 很小,而数组顺序*就是*插入序)——加运行时函数 `map_new`、`map_get`(未命中报 E3004 `no key ... in this Map`,解释器的错误)、`map_set`(已存在的键保留首次插入的位置)、`map_has`、`map_remove`(压缩时保持相对顺序)、`map_len`、`map_keys`、`map_values`、`map_str`(按插入序渲染 `{key: value}`,键与值都走共享的 `to_str`),以及装箱原始值的键相等助手;追加在数组/builder 渲染之后,索引表与 `runtime_count` 机械更新(main 保持 60,List 保持 61–67,map 操作随后)。
+- [x] **T52.2** — wasm 降级:`Map_lit` 经 `map_new` 构建(emitter 负责把 `Map.new` 的变长 pairs 打包),七个方法按接收者的 `MapType` 分派,结构化 `==` 与 `to_string` 接线;`emo_wasm.ml` 里两处 `Lower_error` 拒绝(`Map_lit` 臂与 `MapType` 方法臂)删除,过时的 `Make_exception` 注记更新,`Exception.new(data:)` 得以降级。
+- [x] **T52.3** — wasm 的 send 快照:`rt_send` 在消息进信箱前深拷贝——Map、Box、List、ArrayBuilder 重建(map 副本保持插入序),不可变种类与 `Pid` 原样通过——即 `c` 运行时 `emo_deep_copy` 的规则,关掉记录在案的一致性遗留(`CHECK.md`,step 50);`cross_target` 语料在 `wasm` 上钉住它。
+- [x] **T52.4** — beam 运行时的 map 助手,走 `emo_list_new` 的纪律:`emo_map_new/1` 铸新 ref,把 `{Order, Pairs}`——插入序键表与 Erlang map 键→值——存进进程字典,标签 `{'emo_map', K}`;`emo_map_get/2`(未命中报解释器的 E3004 消息)、`emo_map_set/3`(已存在的键保留首次插入位置)、`emo_map_has/2`、`emo_map_remove/2`(过滤顺序表)、`emo_map_length/1`、`emo_map_keys/1`、`emo_map_values/1`、`emo_map_str/1`,以及 `emo_map_equal/2`(同尺寸、逐键值相等、与顺序无关);键限于六种可哈希原始类型、以 `=:=` 比较,`1` 与 `1.0` 保持不同。
+- [x] **T52.5** — beam 降级:`Map_lit` → `emo_map_new`,方法臂在名字服务多个类型处按 `{'emo_map', K}` 标签分派(`get`、`length`、`to_string`——bytes 的先例),结构化 `==` 经 `emo_map_equal`,过时的 `Make_exception` 注记更新,`Exception.new(data:)` 在 `beam` 上携带 data。
+- [x] **T52.6** — 金测:`examples/map_demo`——字面量、`Map.new(pairs)`、七个方法、经 `keys()`/`values()` 看插入序、首次插入位置、删除、别名、`==`(同内容不同插入序相等、不等的 map 不等)、`{key: value}` 打印,以及一个携带 `data` 的 `Exception.new`——`expected.txt` 取自解释器,在全部五个金测名单里逐字节一致;检查期键类型钉子(E4020)走既有的诊断测试。
+- [x] **T52.7** — 标准库加宽:`slog` 的 manifest 增至 `wasm` 与 `beam`(它收口时记下的条件——今天声明能跑的 target,缺口合上时加宽),`slog_demo` 进入 wasm 与 beam 金测名单,逐字节一致。
+- [x] **T52.8** — 文档:`docs/demo-targets.md` 的能力故事(`wasm`/`beam` 的 Map 拒绝退场;`riscv64` 仍是唯一)、`docs/stdlib.md` 的 slog 行、`docs/visualization.md` 的五 target Table 主张就此字面为真、`CHECK.md` 的 T16.5 注记(`slog` 等待 `Map`)记录其解决、zh-CN 镜像,以及 `plan/README.md` 的状态表。

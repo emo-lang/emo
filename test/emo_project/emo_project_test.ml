@@ -2398,7 +2398,7 @@ println(sqrt(2.0))|}
         Alcotest.(check bool)
           "sqrt(2.0)" true
           (String.length second >= 6 && String.sub second 0 6 = "1.4142"));
-    tc "the interpreter refuses foreign defs with E3009" (fun () ->
+    tc "the interpreter refuses a foreign call with E3009" (fun () ->
         use_workspace_registry () |> ignore;
         let entry =
           with_project
@@ -2414,12 +2414,14 @@ println(sqrt(4.0))|}
           Emo_project.run_entry ~entry_file:entry ~check:true
             ~sched:Emo_project.Own ()
         with
-        | _ -> Alcotest.fail "expected the interpreter to refuse foreign defs"
+        | _ -> Alcotest.fail "expected the interpreter to refuse the call"
         | exception Emo_eval.Error d ->
             Alcotest.(check (option string))
               "code" (Some "E3009") d.Emo_support.Diagnostic.code;
+            (* The declaration on line 1 is inert; the call on line 2 is
+               the mistake. *)
             Alcotest.(check int)
-              "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
+              "line" 2 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
 (* ---- Step 46: the `emo test` runner core ----
@@ -2902,10 +2904,24 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "array_builder")
           "array_builder" "main.emo");
+    tc "map compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "map")
+          "map" "main.emo");
     tc "loops compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "loops")
           "loops" "main.emo");
+    tc "field_types compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "field_types")
+          "field_types" "main.emo");
+    tc "length_method compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "length_method")
+          "length_method" "main.emo");
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -3000,6 +3016,21 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "sync_demo")
           "sync_demo" "main.emo");
+    tc "plot_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "plot_demo")
+          "plot_demo" "main.emo");
+    tc "string_methods compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "string_methods")
+          "string_methods" "main.emo");
+    tc "png_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "png_demo")
+          "png_demo" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 17) ----
@@ -3038,6 +3069,8 @@ let ts_golden_tests =
       ("hello_world", "main.emo");
       ("fib", "main.emo");
       ("objects", "main.emo");
+      ("field_types", "main.emo");
+      ("length_method", "main.emo");
       ("language_tour", "main.emo");
       ("shop", "main.emo");
       ("pipeline", "main.emo");
@@ -3057,6 +3090,9 @@ let ts_golden_tests =
       ("slog_demo", "main.emo");
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");
+      ("plot_demo", "main.emo");
+      ("string_methods", "main.emo");
+      ("png_demo", "main.emo");
       ("loops", "main.emo");
       ("tcp_echo", "main.emo");
       ("http_roundtrip", "main.emo");

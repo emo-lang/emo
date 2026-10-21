@@ -36,6 +36,9 @@ language's design, not just its features.
 - **[`error_matching/`](error_matching/)** — the built-in `R` pair
   matched in `case`, the errors example's matching half, golden
   byte-for-byte on all six targets.
+- **[`specialize_shapes/`](specialize_shapes/)** — the shapes Stage B's
+  native body lowers unchanged: an enum `case`, a type value, and a def
+  taken as a value. A container literal stays dynamic instead.
 - **[`errors/`](errors/)** — the README's error-handling snippets run
   verbatim: ok/error matching, the assert-match binding, and a
   violation raising (one program each; the raise ends the process with

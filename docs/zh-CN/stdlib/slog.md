@@ -15,10 +15,9 @@
 require "slog"
 ```
 
-标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "slog"` 需要在 manifest 的 `deps` 块里钉上 `"slog" = "0.1.0"`。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "slog"` 需要在 manifest 的 `deps` 块里钉上 `"slog" = "0.1.0"`。本包声明全部五个宿主目标:`ocaml`、`c`、`typescript`、`wasm`、`beam`。
 
-声明的目标就是今天可用的目标:wasm 和 beam 运行时尚未实现 `Map`,
-而 attrs 是一个 `Map`。它们落地之日,清单随之加宽。
+收口时立下的规则是:声明今天可用的目标,缺口合上时加宽。`Map`——也就是 attrs 的类型——在 step 52(2026-10-19)到达 wasm 与 beam 运行时,清单随之加宽;示例的 golden 在 wasm 与 beam 两份名单上逐字节一致。
 
 ## 接口
 

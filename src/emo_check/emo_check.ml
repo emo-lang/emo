@@ -119,6 +119,11 @@ type ctx = {
       (* the program's module const/var types: (module path, name) →
          the initializer's type, so `lib.answer` reads as more than
          Unknown; empty when checking a lone file *)
+  field_types : (string * string, t) Hashtbl.t;
+      (* the program's class field types: (qualified class, field) →
+         the type `init` first assigns the field, so `self.width` and
+         `ctx.plot_w` read as more than Unknown; a field no `init`
+         assigns stays Unknown; empty when checking a lone file *)
   pgroups :
     ( string,
       (string * (string * t) list * t) list * (string * t) list )
@@ -674,6 +679,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       types = Hashtbl.create 64;
       pdefs = Hashtbl.create 0;
       pvalues = Hashtbl.create 0;
+      field_types = Hashtbl.create 0;
       pgroups = Hashtbl.create 0;
       program_checked = false;
       target = "c";
@@ -1572,7 +1578,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                       match rt with
                       | ClassType c -> (
                           match Hashtbl.find_opt ctx.classes c with
-                          | Some info when List.mem name info.cfields -> Unknown
+                          | Some info when List.mem name info.cfields -> (
+                              (* the type `init` first assigns the field
+                                 (recorded program-wide before any module
+                                 is checked); a field no `init` typed
+                                 stays dynamic *)
+                              match Hashtbl.find_opt ctx.field_types (c, name)
+                              with
+                              | Some t -> t
+                              | None -> Unknown)
                           | Some info ->
                               report ctx span "E4001"
                                 (Printf.sprintf "`%s` has no field `%s`" c name);
@@ -2830,7 +2844,37 @@ and check_stmt ctx env (s : Ast.stmt) : env =
               report ctx span "E4003"
                 (Printf.sprintf "`%s` is not defined" name);
               env)
-      | _ -> env (* field assignment: constructor-only, parser-checked *))
+      | Ast.Member ({ Ast.desc = Ast.Self; _ }, field) ->
+          (* A field assignment (constructor-only, parser-checked). The
+             field is born with the type of its first assignment; a
+             later assignment on another path must store the same type,
+             so every class-typed read — `self.width`, another module's
+             `ctx.plot_w` — answers one type. A native-typed field is
+             exact: its reads unbox the stored word by kind, and only a
+             value boxed as that kind reads back (an Int64 widened to
+             Float64 would store an Int64 word a Float64 read cannot
+             unbox). A dynamic-typed field takes any conforming value. *)
+          (match lookup_env env "self" with
+          | Some { vtype = ClassType q; _ } -> (
+              match Hashtbl.find_opt ctx.field_types (q, field) with
+              | None -> Hashtbl.replace ctx.field_types (q, field) vt
+              | Some declared ->
+                  let stores =
+                    match declared with
+                    | Int64 | Float64 | Bool | Char | Byte | Pid | TcpConn
+                    | TcpListener | UdpSocket ->
+                        vt = declared
+                    | _ -> conforms ctx vt declared
+                  in
+                  if not stores then
+                    report ctx span "E4004"
+                      (Printf.sprintf
+                         "cannot assign %s to the field `%s`, which `init` \
+                          first assigns %s"
+                         (to_string vt) field (to_string declared)))
+          | _ -> ());
+          env
+      | _ -> env)
   | Ast.Return None ->
       if env.in_void then
         report ctx span "E4016"
@@ -3384,6 +3428,8 @@ type program_types = {
          declared parameter and return type declarations *)
   pvalues : (string list * string, t) Hashtbl.t;
       (* module path and name → a top-level const/var's type *)
+  pfield_types : (string * string, t) Hashtbl.t;
+      (* qualified class and field → the type `init` first assigns it *)
   pgroups :
     ( string,
       (string * (string * t) list * t) list * (string * t) list )
@@ -3418,6 +3464,7 @@ let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
     types = Hashtbl.create 0;
     pdefs = tables.pdefs;
     pvalues = tables.pvalues;
+    field_types = tables.pfield_types;
     pgroups = tables.pgroups;
     program_checked = false;
     target = "c";
@@ -3441,6 +3488,7 @@ let preregister_types ~(packages : string list list)
       penums = Hashtbl.create 16;
       pdefs = Hashtbl.create 16;
       pvalues = Hashtbl.create 16;
+      pfield_types = Hashtbl.create 16;
       pgroups = Hashtbl.create 16;
     }
   in
@@ -3612,6 +3660,27 @@ let preregister_types ~(packages : string list list)
                  in
                  Hashtbl.replace tables.pgroups g.Ast.group_name (gdefs, gconsts);
                  env
+             | Ast.Item_class c ->
+                 (* The class's field types: `init` checks under its own
+                    signature with `self` bound, so each `self.<field> = v`
+                    records the field's type program-wide (the Assign
+                    rule). The diagnostics drop like the initializers' —
+                    the class's own module re-reports them. *)
+                 (match c.Ast.class_init with
+                 | Some init ->
+                     let q = qualify_path ctx.current c.Ast.class_name in
+                     let prebound_methods =
+                       match Hashtbl.find_opt ctx.classes q with
+                       | Some info ->
+                           List.map
+                             (fun (n, mi) -> (n, FuncType (mi.mparams, mi.mret)))
+                             info.cmethods
+                       | None -> []
+                     in
+                     check_fun_def ctx env ~self:("self", ClassType q)
+                       ~prebound:prebound_methods init
+                 | None -> ());
+                 env
              | _ -> env)
            prebound items))
     units;
@@ -3669,6 +3738,10 @@ let check_module_typed ~(modules : string list list)
         (match program with
         | Some p -> Hashtbl.copy p.pvalues
         | None -> Hashtbl.create 0);
+      field_types =
+        (match program with
+        | Some p -> Hashtbl.copy p.pfield_types
+        | None -> Hashtbl.create 8);
       pgroups =
         (match program with
         | Some p -> Hashtbl.copy p.pgroups

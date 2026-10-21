@@ -1,4 +1,5 @@
-// The plot package: a declarative figure and a bar mark, rendered to SVG.
+// The plot package: one declarative figure per mark, rendered to SVG,
+// then the same figure values again as braille text for a terminal.
 //
 //   emo run main.emo
 
@@ -7,7 +8,178 @@ require "plot"
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 
-const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
-const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
+const bar_ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
+const bar_fig = plot.figure().with_title("Monthly sales").with_axes([bar_ax])
+println(plot.svg(bar_fig))
 
-println(plot.svg(chart))
+const line_ax = plot.axes().with_x_label("Year").with_y_label("Revenue").with_marks([
+  plot.mark.line([2020.0, 2021.0, 2022.0, 2023.0, 2024.0], [42.0, 51.0, 47.0, 62.0, 71.0]).with_style(
+    plot.mark.line_style().with_marker(plot.mark.Marker.circle))
+])
+println(plot.svg(plot.figure().with_title("Revenue by year").with_axes([line_ax])))
+
+const scatter_ax = plot.axes().with_x_label("Temperature").with_y_label("Ice cream").with_marks([
+  plot.mark.scatter([14.0, 16.0, 18.0, 21.0, 24.0, 27.0, 30.0], [8.0, 12.0, 14.0, 19.0, 26.0, 31.0, 38.0])
+])
+println(plot.svg(plot.figure().with_title("Ice cream vs temperature").with_axes([scatter_ax])))
+
+const area_ax = plot.axes().with_x_label("Hour").with_y_label("Requests").with_marks([
+  plot.mark.area([0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0], [120.0, 80.0, 60.0, 210.0, 480.0, 350.0, 190.0, 90.0])
+])
+println(plot.svg(plot.figure().with_title("Requests through the day").with_axes([area_ax])))
+
+const scores = [62.0, 70.0, 75.0, 81.0, 88.0, 94.0, 58.0, 66.0, 73.0, 79.0, 85.0, 91.0, 55.0, 68.0, 77.0, 83.0, 90.0, 97.0, 61.0, 72.0]
+const hist_ax = plot.axes().with_x_label("Score").with_y_label("Students").with_marks([plot.mark.hist(scores, 5)])
+println(plot.svg(plot.figure().with_title("Exam score distribution").with_axes([hist_ax])))
+
+const views_ax = plot.axes().with_x_label("Day").with_y_label("Views").with_y_scale(plot.Scale.log).with_marks([
+  plot.mark.line([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [10.0, 120.0, 900.0, 8500.0, 91000.0, 1200000.0]).with_style(
+    plot.mark.line_style().with_marker(plot.mark.Marker.circle))
+])
+println(plot.svg(plot.figure().with_title("Views in the first week").with_axes([views_ax])))
+
+const fixed_ax = plot.axes().with_x_label("Year").with_y_label("Revenue").with_y_domain(40.0, 80.0).with_marks([
+  plot.mark.line([2020.0, 2021.0, 2022.0, 2023.0, 2024.0], [42.0, 51.0, 47.0, 62.0, 71.0]).with_style(
+    plot.mark.line_style().with_marker(plot.mark.Marker.circle))
+])
+println(plot.svg(plot.figure().with_title("Revenue, fixed domain").with_axes([fixed_ax])))
+
+const plan_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_marks([
+  plot.mark.line([1.0, 2.0, 3.0, 4.0], [20.0, 28.0, 26.0, 34.0]).with_style(
+    plot.mark.line_style().with_label("plan")),
+  plot.mark.line([1.0, 2.0, 3.0, 4.0], [18.0, 30.0, 24.0, 37.0]).with_style(
+    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color(plot.rgb(47, 111, 179)))
+])
+const plan_fig = plot.figure().with_title("Plan vs actual").with_axes([plan_ax])
+println(plot.svg(plan_fig))
+
+const dark_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_marks([
+  plot.mark.line([1.0, 2.0, 3.0, 4.0], [20.0, 28.0, 26.0, 34.0]).with_style(
+    plot.mark.line_style().with_label("plan")),
+  plot.mark.line([1.0, 2.0, 3.0, 4.0], [18.0, 30.0, 24.0, 37.0]).with_style(
+    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color(plot.rgb(233, 196, 106)))
+])
+println(plot.svg(plot.figure().with_title("Plan vs actual, dark").with_theme(plot.dark_theme()).with_axes([dark_ax])))
+
+const quarters = ["Q1", "Q2", "Q3", "Q4"]
+const units_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_marks([plot.mark.bar(quarters, [20.0, 28.0, 26.0, 34.0])])
+const revenue_ax = plot.axes().with_x_label("Quarter").with_y_label("Revenue").with_marks([plot.mark.bar(quarters, [180.0, 220.0, 190.0, 260.0])])
+const costs_ax = plot.axes().with_x_label("Quarter").with_y_label("Costs").with_marks([plot.mark.bar(quarters, [120.0, 160.0, 140.0, 190.0])])
+println(plot.svg(plot.figure().with_title("Quarterly review").with_grid(2, 2).with_axes([units_ax, revenue_ax, costs_ax])))
+
+// The dataset layer: a table is the value the chart functions read —
+// numeric columns, categorical columns, one shared row count — and the
+// builders validate the shape.
+const tips = plot.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+println(tips.rows)
+println(tips.number("total_bill"))
+println(tips.presence("tip"))
+println(tips.label("time"))
+
+const rainfall = plot.table_missing(
+  { "mm": [0.0, 2.5, 11.2, 4.0] },
+  { "mm": [plot.Presence.present, plot.Presence.absent, plot.Presence.present, plot.Presence.present] },
+  { "city": ["Lisbon", "Oslo", "Kyoto", "Lima"] }
+)
+println(rainfall.rows)
+println(rainfall.presence("mm"))
+println(rainfall.number("mm"))
+
+// The color channel resolves a column through the theme: a label column
+// by its levels' sorted position in the palette, a number column
+// normalized over its observed span and read through the colormap.
+println(plot.channel_colors(tips, "time", plot.theme()))
+println(plot.channel_colors(tips, "total_bill", plot.theme()))
+println(plot.channel_colors(rainfall, "mm", plot.theme()))
+
+// The relational charts: each reads a table through a channel mapping
+// and answers a figure. A label color column splits the points into one
+// series per level — the legend names the levels; the size channel
+// scales every point over its column's observed span.
+const meals = plot.table(
+  { "bill": [16.99, 10.34, 21.01, 23.68, 24.59, 8.77, 26.88, 15.04],
+    "tip": [1.01, 1.66, 3.50, 3.31, 3.61, 2.00, 5.00, 3.42],
+    "party": [2.0, 3.0, 2.0, 4.0, 2.0, 2.0, 3.0, 2.0] },
+  { "day": ["Sun", "Sat", "Sun", "Sat", "Sun", "Sat", "Sun", "Sat"],
+    "time": ["Dinner", "Dinner", "Lunch", "Dinner", "Lunch", "Dinner", "Dinner", "Dinner"] }
+)
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": "party" })))
+
+// The line chart draws one stroked series per level, the rows' own
+// order kept; a level's dash comes from the same sorted positions.
+const regions = plot.table(
+  { "quarter": [1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0],
+    "revenue": [12.0, 18.0, 15.0, 24.0, 9.0, 11.0, 16.0, 14.0] },
+  { "region": ["west", "west", "west", "west", "east", "east", "east", "east"] }
+)
+println(plot.svg(plot.line(regions, { "x": "quarter", "y": "revenue", "color": "region", "dash": "region" })))
+
+// The reg chart fits the least-squares line over the points and draws
+// the 95% confidence band for the mean response under them.
+const study = plot.table(
+  { "hours": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+    "score": [52.0, 55.0, 61.0, 64.0, 66.0, 71.0, 74.0, 77.0, 83.0, 86.0] },
+  {}
+)
+const reg_fig = plot.reg(study, { "x": "hours", "y": "score" })
+println(plot.svg(reg_fig))
+
+// The distribution charts: hist, kde, and ecdf read one numeric column
+// and draw one mark per color level; box and violin group the column by
+// a label one.
+const exam = plot.table(
+  { "score": [62.0, 70.0, 75.0, 81.0, 88.0, 94.0, 58.0, 66.0, 73.0, 79.0, 55.0, 68.0, 77.0, 83.0, 90.0, 61.0, 72.0, 85.0, 64.0, 91.0, 57.0, 76.0, 82.0, 69.0] },
+  { "class": ["A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "A", "B", "B", "B", "B", "B", "B", "B", "B", "B", "B", "B", "B"] }
+)
+println(plot.svg(plot.hist(exam, { "x": "score", "color": "class" })))
+println(plot.svg(plot.kde(exam, { "x": "score", "color": "class" })))
+println(plot.svg(plot.ecdf(exam, { "x": "score", "color": "class" })))
+println(plot.svg(plot.box(exam, { "x": "class", "y": "score" })))
+println(plot.svg(plot.violin(exam, { "x": "class", "y": "score" })))
+
+// The categorical charts: bar and point aggregate each level's y by its
+// mean, count draws the row counts, strip the raw points per level.
+const regions_t = plot.table(
+  { "revenue": [12.0, 9.0, 18.0, 11.0, 15.0, 16.0, 24.0, 14.0] },
+  { "region": ["west", "east", "west", "east", "west", "east", "west", "east"],
+    "kind": ["store", "store", "online", "online", "store", "online", "online", "store"] }
+)
+println(plot.svg(plot.bar(regions_t, { "x": "region", "y": "revenue" })))
+println(plot.svg(plot.count(regions_t, { "x": "region" })))
+println(plot.svg(plot.strip(regions_t, { "x": "region", "y": "revenue", "color": "kind" })))
+println(plot.svg(plot.point(regions_t, { "x": "region", "y": "revenue" })))
+
+// The matrix charts: the numeric columns are the cells' columns and the
+// rows the cells' rows, one label column naming the rows; clustermap
+// reorders rows and columns by their average-linkage distances.
+const corr = plot.table(
+  { "alpha": [1.00, 0.41, 0.18, -0.12],
+    "beta": [0.41, 1.00, 0.55, 0.02],
+    "gamma": [0.18, 0.55, 1.00, 0.33],
+    "delta": [-0.12, 0.02, 0.33, 1.00] },
+  { "row": ["alpha", "beta", "gamma", "delta"] }
+)
+const heat_fig = plot.heatmap(corr, {})
+println(plot.svg(heat_fig))
+println(plot.svg(plot.clustermap(corr, {})))
+
+// Faceting: a facet channel's levels split a chart into panels on one
+// shared domain, each labelled from its level, with one legend for the
+// whole figure at the right; a combination with no rows stays blank.
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "facet_col": "time" })))
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "facet_row": "day", "facet_col": "time" })))
+println(plot.svg(plot.hist(exam, { "x": "score", "facet_row": "class" })))
+
+// The terminal renderer: the same figure values, drawn through the same
+// value graph, onto braille cells and text instead of SVG — four pixels
+// of figure width to a column and eight of height to a row, every color
+// inked by its contrast against the theme background. The bar figure,
+// the dashed legend, the regression band with its points, and the
+// heatmap's shades cover every primitive the renderers answer.
+println(plot.terminal(bar_fig))
+println(plot.terminal(plan_fig))
+println(plot.terminal(reg_fig))
+println(plot.terminal(heat_fig))

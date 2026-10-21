@@ -1,6 +1,6 @@
 # `math` 包
 
-标准库其余部分所依赖的初等浮点函数,没有任何包依赖。全部是纯 Emo,写在五个宿主目标共享的标量运算之上,所以每个函数都逐字节相同:超越函数用固定顺序的级数与范围归约,同样的运算、同样的顺序在每个目标上产出同样的位——这正是绘图 golden 所依赖的性质。
+标准库其余部分所依赖的初等浮点函数,没有任何包依赖。普通函数全是纯 Emo,写在五个宿主目标共享的标量运算之上,所以每个函数都逐字节相同:超越函数用固定顺序的级数与范围归约,同样的运算、同样的顺序在每个目标上产出同样的位——这正是绘图 golden 所依赖的性质。另有一条需要显式选择的 `*_native` 路径,直接调用宿主 `libm`,只钉在 `c` 和 `ocaml` 上。
 
 ## 使用这个包
 
@@ -29,6 +29,10 @@ def exp(x Float64) Float64
 def log(x Float64) Float64
 def log10(x Float64) Float64
 def pow(base Float64, exponent Float64) Float64
+foreign def exp_native(x Float64) Float64 = "exp"
+foreign def log_native(x Float64) Float64 = "log"
+foreign def log10_native(x Float64) Float64 = "log10"
+foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"
 ```
 
 `abs` 给出绝对值;`min`/`max` 给出两值中的较小/较大者(`NaN` 比较为 false,所以 `min`/`max` 返回第二个参数);`clamp(x, lo, hi)` 把 `x` 限到 `[lo, hi]`。`sqrt` 是核心方法 `x.sqrt()` 的函数形态。
@@ -38,6 +42,12 @@ def pow(base Float64, exponent Float64) Float64
 `exp` 先把参数归约成 `2^k * exp(r)`——`k` 是 `x / ln2` 的最近整数,`|r| <= ln2 / 2`——然后用一个短 Taylor 级数求 `exp(r)`,再乘以一个精确的 2 的幂(直接写进指数位)。
 
 `log` 把参数拆成 `x = m * 2^e`,`m` 落在 `[sqrt(1/2), sqrt(2))`,再用 atanh 级数 `2 * (z + z^3/3 + z^5/5 + ...)`(`z = (m-1)/(m+1)`)求 `log(m)`。`log10` 用 `log` 乘以 `1 / ln10`。`pow(base, exponent)` 即 `exp(exponent * log(base))`。
+
+## 原生快路径
+
+`exp_native`、`log_native`、`log10_native`、`pow_native` 经 `foreign def` 绑定宿主 C 库的 `exp`、`log`、`log10`、`pow`,只钉在能绑定宿主符号的 `c` 和 `ocaml` 两个目标上;它们的结果跟随宿主 `libm`,因此不跨平台逐字节相同。
+
+在其他目标上这些定义是惰性的,而不是加载期错误,所以 `require "math"` 照常可用:解释器绑定一个调用时才抛 E3009 的值,`typescript`、`wasm`、`beam`、`riscv64` 发射器跳过该绑定,只在调用它时拒绝。名字特意与纯函数区分开——调用点一眼就能看出选的是哪一套实现。
 
 ## 域外参数是契约违反
 
@@ -53,6 +63,6 @@ def pow(base Float64, exponent Float64) Float64
 
 目标:全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。
 
-这个包刻意不带原生快路径。经 `foreign def` 调宿主 `libm` 会拒绝 wasm/typescript/beam 目标,并把输出钉在某个平台上——而这恰恰是这个包要避免的。若确实需要原生路径,它应当独立成一个仅原生目标的包,并用不同的 `*_native` 名字,好让选择在调用点可见。
+普通函数在所有目标上都能运行。`*_native` 函数只在 `c` 和 `ocaml` 上可运行;在其他目标上它们能正常声明,只有被调用时才拒绝,所以导入这个包在用到原生函数之前没有代价。
 
-另见:`examples/math_demo`。
+另见:`examples/math_demo`(纯函数)与 `examples/math_native`(原生路径)。

@@ -4,24 +4,43 @@ println(ages)
 println(ages.get("alice"))
 
 // set inserts or replaces and returns the map; a replacement keeps
-// the key's position.
+// the key's first-insert position.
 ages.set("bob", 26)
 println(ages.set("carl", 41))
+println(ages.set("bob", 27))
 println(ages.has("bob"))
 println(ages.remove("alice"))
 println(ages.length())
 
-// Map.new builds from (key, value) pairs.
+// Aliases see one shared table: a change through one binding is
+// visible through the other.
+const same = ages
+same.set("dora", 18)
+println(ages)
+println(ages.length())
+
+// Map.new builds from (key, value) pairs; keys()/values() read in
+// the insertion order.
 const scores = Map.new(("verbal", 700), ("math", 780))
 println(scores)
 println(scores.keys())
 println(scores.values())
 
-// Equality compares entries, not order.
+// Equality compares entries, not order; different entries differ.
 println({ "a": 1, "b": 2 } == Map.new(("b", 2), ("a", 1)))
+println({ "a": 1 } == { "a": 2 })
+println({ "a": 1 } != { "b": 1 })
 
 // Maps declare their types like any value.
 def size(m Map[String, Int64]) Int64 {
   return m.length()
 }
 println(size({ "tea": 3, "coffee": 4 }))
+
+// The data-carrying construction compiles on every target — the beam
+// one refused the shape before Map landed — while the crash rendering
+// itself stays the interpreter's uncaught-exception diagnostic, so no
+// target here raises.
+def detonate(data Map[String, Int64]) {
+  raise Exception.new("the launch code was wrong", data)
+}

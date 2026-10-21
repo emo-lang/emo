@@ -1,0 +1,21 @@
+// A class whose fields another module reads: `p.x` in main resolves
+// against this module's `init`, program-wide.
+
+class Point {
+  def init(x Float64, y Float64) {
+    self.x = x
+    self.y = y
+  }
+
+  def norm2() Float64 {
+    return self.x * self.x + self.y * self.y
+  }
+}
+
+def point(x Float64, y Float64) Point {
+  return Point.new(x: x, y: y)
+}
+
+def norm2(p Point) Float64 {
+  return p.x * p.x + p.y * p.y
+}

@@ -19,12 +19,13 @@ require "slog"
 
 The standard library ships with the compiler, but its packages are
 versioned like any other: `require "slog"` needs `"slog" = "0.1.0"` in
-the manifest's `deps` block. The package declares the `ocaml`, `c`, and
-`typescript` targets.
+the manifest's `deps` block. The package declares all five hosted
+targets: `ocaml`, `c`, `typescript`, `wasm`, and `beam`.
 
-The declared targets are the ones that work today: the wasm and beam
-runtimes do not implement `Map` yet, and attrs are a `Map`. The
-manifest widens when they land.
+The close-out's rule was to declare the targets that work today and
+widen when a gap closes. `Map` — attrs' type — reached the `wasm` and
+`beam` runtimes in step 52 (2026-10-19), and the manifest widened with
+it; the demo's golden rides the wasm and beam lists byte-for-byte.
 
 ## The surface
 

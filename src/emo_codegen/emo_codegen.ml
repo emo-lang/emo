@@ -31,6 +31,11 @@ let float_lit (f : float) : string =
 (* The current program's specialized functions; set by [emit]. *)
 let specializables : Emo_ir.func list ref = ref []
 
+(* The current program's const thunks (mangled names); set by [emit].
+   A const thunk's body memoizes: the initializer runs once, every read
+   returns the same value. *)
+let const_thunks : string list ref = ref []
+
 let keywordish name =
   (* Emo locals that would collide with OCaml words get a prefix anyway;
      every local carries [v_] so this is belt and braces. *)
@@ -703,6 +708,18 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Var name ->
       let n = local name in
       if List.mem n env.nrefs then "!" ^ n else n
+  | Emo_ir.Type_ref name -> Printf.sprintf "Emo_eval.TypeValue %S" name
+  | Emo_ir.Global g ->
+      (* A def used as a value: its dynamic wrapper, as in the dynamic
+         emitter. *)
+      Printf.sprintf
+        "(Emo_eval.CompiledFn { Emo_eval.fdesc = %S; farity = -1; fapply = %s \
+         })"
+        g g
+  | Emo_ir.Make_enum { enum_name; member } ->
+      Printf.sprintf "Emo_eval.EnumMember (%S, %S)" enum_name member
+  | Emo_ir.Field_read { obj; name } ->
+      Printf.sprintf "(Emo_runtime.field (%s) %S)" (emit_expr env obj) name
   | Emo_ir.Binary (op, l, r) ->
       (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
          operations are Int64 unless an operand is Float64, and `+` on
@@ -782,13 +799,14 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
           let parts =
             List.map2
               (fun part v ->
-                Printf.sprintf "Emo_eval.%s"
-                  (match part.Emo_ir.ety with
-                  | Emo_check.Int64 -> Printf.sprintf "Int64 (%s)" v
-                  | Emo_check.Float64 -> Printf.sprintf "Float (%s)" v
-                  | Emo_check.String -> Printf.sprintf "String (%s)" v
-                  | Emo_check.Bool -> Printf.sprintf "Bool (%s)" v
-                  | _ -> Printf.sprintf "String (Emo_runtime.to_string %s)" v))
+                (* A native part is raw and gets the matching box; any
+                   other part is already an Emo_eval.value. *)
+                match part.Emo_ir.ety with
+                | Emo_check.Int64 -> Printf.sprintf "Emo_eval.Int64 (%s)" v
+                | Emo_check.Float64 -> Printf.sprintf "Emo_eval.Float (%s)" v
+                | Emo_check.String -> Printf.sprintf "Emo_eval.String (%s)" v
+                | Emo_check.Bool -> Printf.sprintf "Emo_eval.Bool (%s)" v
+                | _ -> v)
               es vs
           in
           Printf.sprintf
@@ -1110,15 +1128,38 @@ and emit_func env (f : Emo_ir.func) : string =
   let body = emit_stmts env f.Emo_ir.fbody ~tail:true in
   env.refs <- fst saved;
   env.immutables <- snd saved;
-  Printf.sprintf
-    "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
-    \  match args with\n\
-    \  | [ %s ] ->\n\
-    \    (try\n\
-     %s\n\
-     with Emo_runtime.Return_signal v -> v)\n\
-    \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
-    f.Emo_ir.fname params_pattern (indented body) f.Emo_ir.fname arity
+  if f.Emo_ir.fparams = [] && List.mem f.Emo_ir.fname !const_thunks then
+    (* A const thunk: the initializer runs once, and the memo slot's
+       value serves every later read — the identity an allocating
+       initializer hands out survives across reads, as in the
+       interpreter. *)
+    Printf.sprintf
+      "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
+      \  match args with\n\
+      \  | [] ->\n\
+      \    if !%s'emo_done then !%s'emo_val\n\
+      \    else\n\
+      \      let __emo_v =\n\
+      \        (try\n\
+       %s\n\
+       with Emo_runtime.Return_signal v -> v)\n\
+      \      in\n\
+      \      %s'emo_val := __emo_v;\n\
+      \      %s'emo_done := true;\n\
+      \      __emo_v\n\
+      \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
+      f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname (indented body)
+      f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname arity
+  else
+    Printf.sprintf
+      "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
+      \  match args with\n\
+      \  | [ %s ] ->\n\
+      \    (try\n\
+       %s\n\
+       with Emo_runtime.Return_signal v -> v)\n\
+      \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
+      f.Emo_ir.fname params_pattern (indented body) f.Emo_ir.fname arity
 
 and emit_specialized_func (f : Emo_ir.func) : string =
   let env =
@@ -1249,6 +1290,7 @@ let ffi_stubs (program : Emo_ir.program) : string =
 let emit ~(specialize : bool) (program : Emo_ir.program) : string =
   specializables :=
     List.filter (fun f -> f.Emo_ir.fspecializable) program.Emo_ir.pfuncs;
+  const_thunks := program.Emo_ir.pconsts;
   let env =
     {
       buf = Buffer.create 4096;
@@ -1272,68 +1314,58 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
         c.Emo_ir.cname)
     program.Emo_ir.pclasses;
 
-  (* Specialized functions first (their own rec group). *)
+  (* Specialized functions and their dynamic wrappers form one rec group:
+     a native body that takes a def as a value names the def's wrapper,
+     which belongs to whichever specialized function it refers to. *)
   if env.specialize then begin
     put env "\n";
     let specialized =
       List.filter (fun f -> f.Emo_ir.fspecializable) program.Emo_ir.pfuncs
     in
-    List.iteri
-      (fun i f ->
-        let code = emit_specialized_func f in
-        let code =
-          if i = 0 then code
-          else
-            match String.index_opt code ' ' with
-            | Some j ->
-                String.sub code 0 j ^ " "
-                ^ String.sub code (j + 1) (String.length code - j - 1)
-            | None -> code
-        in
-        put env "%s%s\n\n" (if i = 0 then "let rec " else "and ") code)
-      specialized;
     (* Every specialized function keeps its dynamic wrapper: call sites
        without type declarations and first-class references go through
        it. *)
-    List.iter
-      (fun f ->
-        env.refs <- [];
-        let params_pattern =
-          String.concat "; " (List.map (fun (p, _) -> local p) f.Emo_ir.fparams)
-        in
-        (* The specialized body carries native types as OCaml natives —
-           Int64 as int64, Float64 as float, Bool as bool — while the
-           value world is boxed Emo_eval.value; the bridge converts at
-           the boundary. *)
-        let bridge_in (p, t) =
-          let v = local p in
-          match t with
-          | Emo_check.Int64 -> Printf.sprintf "(Emo_runtime.unbox_int64 %s)" v
-          | _ ->
-              Printf.sprintf "(Emo_runtime.unbox_%s %s)"
-                (String.lowercase_ascii (Emo_check.to_string t))
-                v
-        in
-        let unboxes = String.concat " " (List.map bridge_in f.Emo_ir.fparams) in
-        let call = sp_apply f.Emo_ir.fname unboxes in
-        let box_out =
-          match f.Emo_ir.fresult with
-          | Emo_check.Int64 ->
-              Printf.sprintf "(Emo_runtime.box_int64 (%s))" call
-          | _ ->
-              Printf.sprintf "(Emo_runtime.box_%s (%s))"
-                (String.lowercase_ascii (Emo_check.to_string f.Emo_ir.fresult))
-                call
-        in
-        put env
-          "let %s (args : Emo_eval.value list) : Emo_eval.value =\n\
-          \  match args with\n\
-          \  | [ %s ] ->\n\
-          \    %s\n\
-          \  | _ -> Emo_runtime.arity_error %S %d (List.length args)\n\n"
-          f.Emo_ir.fname params_pattern box_out f.Emo_ir.fname
-          (List.length f.Emo_ir.fparams))
-      specialized
+    let wrapper (f : Emo_ir.func) =
+      env.refs <- [];
+      let params_pattern =
+        String.concat "; " (List.map (fun (p, _) -> local p) f.Emo_ir.fparams)
+      in
+      (* The specialized body carries native types as OCaml natives —
+         Int64 as int64, Float64 as float, Bool as bool — while the
+         value world is boxed Emo_eval.value; the bridge converts at
+         the boundary. *)
+      let bridge_in (p, t) =
+        let v = local p in
+        match t with
+        | Emo_check.Int64 -> Printf.sprintf "(Emo_runtime.unbox_int64 %s)" v
+        | _ ->
+            Printf.sprintf "(Emo_runtime.unbox_%s %s)"
+              (String.lowercase_ascii (Emo_check.to_string t))
+              v
+      in
+      let unboxes = String.concat " " (List.map bridge_in f.Emo_ir.fparams) in
+      let call = sp_apply f.Emo_ir.fname unboxes in
+      let box_out =
+        match f.Emo_ir.fresult with
+        | Emo_check.Int64 -> Printf.sprintf "(Emo_runtime.box_int64 (%s))" call
+        | _ ->
+            Printf.sprintf "(Emo_runtime.box_%s (%s))"
+              (String.lowercase_ascii (Emo_check.to_string f.Emo_ir.fresult))
+              call
+      in
+      Printf.sprintf
+        "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
+        \  match args with\n\
+        \  | [ %s ] ->\n\
+        \    %s\n\
+        \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
+        f.Emo_ir.fname params_pattern box_out f.Emo_ir.fname
+        (List.length f.Emo_ir.fparams)
+    in
+    List.iteri
+      (fun i binding ->
+        put env "%s%s\n\n" (if i = 0 then "let rec " else "and ") binding)
+      (List.map emit_specialized_func specialized @ List.map wrapper specialized)
   end;
   (* Foreign bindings: the external binds to the compiled C wrapper
      (ffi_stubs); the dynamic wrapper unboxes and reboxes around it. *)
@@ -1382,6 +1414,16 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
   List.iter
     (fun (g, _) -> put env "let %s = ref (Emo_eval.Void)\n" g)
     program.Emo_ir.pglobals;
+  (* Module-level `const`s: a memo slot each — a value cell plus a done
+     flag (the prime suffix is no Emo identifier, so neither collides
+     with a mangled name). The thunk runs its initializer exactly once —
+     the interpreter's rule — and every read after the first returns the
+     same value, so an allocating initializer keeps its identity. *)
+  List.iter
+    (fun c ->
+      put env "let %s'emo_val = ref (Emo_eval.Void)\n" c;
+      put env "let %s'emo_done = ref false\n" c)
+    program.Emo_ir.pconsts;
   (* Dynamic functions: one rec group. *)
   put env "\n";
   let dynamic =

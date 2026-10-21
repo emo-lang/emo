@@ -148,16 +148,29 @@ interface Renderer {
   def stroke(s Style) Void
   def fill(s Style) Void
   def text(x Float64, y Float64, body String, s Style) Void
-  def finish() String
+  def finish() Bytes
 }
 ```
 
 The `SvgRenderer` is the only shipped implementation in T0. A
 terminal renderer (braille/block characters, in the spirit of
 `UnicodePlot`) and a PNG rasterizer are later implementations of the
-same interface. `Renderer` is a plotting-side abstraction, not an Emo
-target: Emo's targets are `ocaml`/`c`/`typescript`/`wasm`/`beam`/
-`riscv64`, while EmoUI is a library over them whose platform backends
+same interface — the terminal one landed in Step 44 (2026-10-20) as
+`internal.term.TermRenderer`: braille cells for the marks and the
+frame, the labels in the grid's own characters, every color inked by
+its luminance contrast against the figure background — and the PNG one
+landed in Step 45 (2026-10-21) as `internal.png.PngRenderer`: 2 ×
+supersampled RGB samples averaged into each pixel, scanline fills, a
+Bresenham line with a square pen, the Hershey Simplex stroke font, and
+the package's own DEFLATE, CRC-32, and Adler-32 behind the file —
+`finish()` answers `Bytes` for every renderer, the text formats being
+their UTF-8 bytes. `svg`, `terminal`, and `png` walk one figure through
+one renderer-agnostic `render`.
+`Renderer` is a plotting-side abstraction, not an Emo
+target: Emo's build targets are `c`/`ocaml`/`typescript`/`browser`/
+`wasm`/`beam`/`riscv64` (the interpreter runs a program directly and
+produces no artifact; see `docs/demo-targets.md`), while EmoUI is a
+library over them whose platform backends
 are OS toolkits (AppKit, GTK 4). EmoUI's current contract places
 widgets and has no drawing verb, so it is not a plotting backend
 today (see Layer 5). This split is Matplotlib's Artist/Renderer.
@@ -653,7 +666,10 @@ root and the low-level marks in a submodule:
 
 The package declares **all five hosted targets** (`ocaml`, `c`,
 `typescript`, `wasm`, `beam`; the freestanding `riscv64` target is out
-of scope — it refuses `Map`), exactly as the format packages do.
+of scope — it stays the one target that refuses `Map`), exactly as the
+format packages do. The `Map` substrate the `Table` rests on reached
+`wasm` and `beam` in step 52 (2026-10-19), which makes the five-target
+claim literal for the dataset layer too.
 
 ## Sequencing
 

@@ -108,7 +108,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 33 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
 | 34 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
 | 35 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
-| 36 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
+| 36 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam waited on `Map` support (attrs are a Map) — the wall fell in step 52 (2026-10-19) and the manifest widened to all five; loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
 | 37 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
 | 38 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |
 | 39 | Compiler and language enablers for plotting | planned |
@@ -116,13 +116,14 @@ incrementally shippable steps — one file per step, executed in order.
 | 41 | Figure fidelity: scales, domains, legend, grid, themes, color | planned |
 | 42 | Table and channels | planned |
 | 43 | T1 dataset charts | planned |
-| 44 | Terminal renderer | planned |
-| 45 | PNG renderer | planned |
+| 44 | Terminal renderer | done — `internal.term.TermRenderer` is the second `Renderer` behind the internal interface (braille cells, ink levels from luminance contrast against the figure background, halftoned fills); `svg` and the new `plot.terminal` walk one figure through one `render`, and `plot_demo` prints four of its figure values both ways, byte-identical on all six paths |
+| 45 | PNG renderer | done — `internal.png.PngRenderer` is the third `Renderer` (2 × supersampled scanline rasterizer, the Hershey Simplex stroke font, the package's own DEFLATE, CRC-32, and Adler-32, no host image library); `plot.png(fig)` answers `Bytes` — a `String` cannot carry a PNG on typescript — and `png_demo` pins the file on all six paths |
 | 46 | Unit test framework: `emo test` and the `expect_*` builtins | done |
 | 47 | The standard library: `csv` | done |
 | 48 | EmoUI | done — T48.1–T48.13 landed (portable core, Elm loop, debug, TUI, SSR, macOS and GTK 4 backends, the `term` stdlib package, the native packaging fields, the browser runtime path, its DOM backend, the convergence corpus, and the documentation pass); the settled design is in `README.md`, the evidence in `docs/emo-ui.md`, and the package references under `projects/emo-ui/docs/` |
 | 49 | Value-family reclamation | in progress — T49.3 landed (`ArrayBuilder`); T49.1, T49.2, T49.4, and T49.5 open (`spike/arena-scope`, `CHECK.md`) |
 | 50 | Cross-target conformance | done — `foreign def` refusal, snapshot `send`, and the raising child process settled (`CHECK.md`) |
 | 51 | TLS on the `c` target | done — the three `net` TLS builtins run on the C runtime against the machine's OpenSSL/LibreSSL behind `EMO_HAS_TLS` conditional linkage; `https_roundtrip` byte-identical interp-to-c; the macOS-linkage premise the settle predates corrected in `CHECK.md` |
+| 52 | `Map` on `wasm` and `beam` (M19) | done — the wasm `$vmap` and the beam pdict-backed map helpers land with their lowerings and the send snapshot; `examples/map` and `slog_demo` ride the goldens on all five targets, and `slog`'s manifest widens to all five; `riscv64` stays the one target that refuses `Map` |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

@@ -1,0 +1,9 @@
+package {
+  name = "emo/math_native"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "math" = "0.1.0"
+  }
+}

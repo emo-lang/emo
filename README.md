@@ -10,7 +10,7 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 
 - **Highly expressive syntax.** Code should read naturally and say what it means.
 - **Principle of least surprise.** The language rules should match programmer intuition; things should work the way you expect them to.
-- **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the `riscv64` target — see EmoOS).
+- **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to browser-ready bundles, to the BEAM virtual machine, and to bare metal (the `riscv64` target — see EmoOS). The interpreter runs a program directly, no artifact needed; [`docs/demo-targets.md`](docs/demo-targets.md) walks one project through all seven build targets.
 
 ## Install
 
@@ -79,7 +79,7 @@ The framework is settled design:
 - **Typed styles.** `ui.Style` is a typed value built by `ui.style()` and copied with `with_padding`, `with_gap`, `with_align`, `with_grow`, `with_width` and `with_height` — no stringly map and no default parameters. Its properties are the portable layout vocabulary each backend maps onto its platform's own layout engine.
 - **Elm state.** An application is a model, a pure `update`, a pure `view`, and a backend: `ui.run(view, update, model, backend)`. `view` receives the loop's `Registry`, registers each typed message with `reg.on(msg)`, and gets back the `Int64` tag the backend delivers — the application's types never cross the backend seam.
 - **One backend seam.** A backend implements `ui.Backend` — `mount(root, events)`, `patch(old, new)`, `run()` — and knows an event as one integer. The backend packages are `ui_tui`, `ui_ssr`, `ui_macos`, `ui_gtk` and `ui_browser`, plus the headless `ui.debug`.
-- **One app, every backend.** `emo/ui_corpus` is a shared application the gates run unchanged on every backend; its debug and SSR entries produce identical bytes on all five hosted compilation targets.
+- **One app, every backend.** `emo/ui_corpus` is a shared application the gates run unchanged on every backend; its debug and SSR entries produce identical bytes on the five hosted targets `c`, `ocaml`, `typescript`, `wasm`, and `beam`.
 
 EmoUI is a project of its own under [`projects/emo-ui/`](projects/emo-ui), not a standard-library package, because its native backends carry per-platform shims and manifest fields (`.m`, `frameworks`, `pkg_config`) the standard library does not use. The package references live there: [`ui`](projects/emo-ui/docs/ui.md), [`debug`](projects/emo-ui/docs/debug.md), [`ui_tui`](projects/emo-ui/docs/ui_tui.md), [`ui_ssr`](projects/emo-ui/docs/ui_ssr.md), [`ui_macos`](projects/emo-ui/docs/ui_macos.md), [`ui_gtk`](projects/emo-ui/docs/ui_gtk.md), [`ui_browser`](projects/emo-ui/docs/ui_browser.md), [`ui_corpus`](projects/emo-ui/docs/ui_corpus.md).
 

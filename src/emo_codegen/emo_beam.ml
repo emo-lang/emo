@@ -27,6 +27,8 @@ type env = {
   mutable iface_classes : (string * string list) list;
   mutable class_field : (string * (string * int) list) list;
   mutable current_class : string option;
+  mutable fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
 }
 
 (* The class-member name behind a mangled method fname: the mangled
@@ -57,6 +59,13 @@ let class_fields (c : Emo_ir.class_) : string list =
         (fun (st : Emo_ir.stmt) ->
           match st with Emo_ir.Set_field { name; _ } -> Some name | _ -> None)
         init.Emo_ir.fbody
+
+(* The emitter's own statement-local scratch names. Their `let`s
+   close within the statement that mints them, so they never thread
+   through loop functions or continuations — only real source
+   bindings do. *)
+let beam_temps =
+  [ "__recv"; "__thread"; "_spawnarg"; "_spawnpid"; "_spawnself"; "case" ]
 
 let fresh_var env name =
   env.fresh <- env.fresh + 1;
@@ -145,6 +154,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | Some v -> put env v
       | None -> failwith ("beam: unbound local " ^ name ^ " in " ^ env.fname))
   | Global name -> (
+      if List.mem name env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support taking the value of the \
+                 foreign definition `%s`"
+                name));
       (* A first-class def: a local closure over its function. The whole
          program lowers into one BEAM module and a def is not exported,
          so `fun 'mod':'name'/a` names a function the module does not
@@ -166,6 +182,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
                a args)
       | None -> failwith ("beam: unbound global " ^ name))
   | Call { func; args } -> (
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       match List.assoc_opt func env.funcs with
       | Some a ->
           put env
@@ -307,24 +330,40 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env e)
         es;
       put env "]"
-  | Map_lit _ ->
-      raise (Emo_ir.Lower_error "the beam target does not support Map yet")
+  | Map_lit pairs ->
+      (* the pairs lower as Erlang 2-tuples in the literal's order —
+         the insertion order emo_map_new records *)
+      put env "apply 'emo_map_new'/1 ([";
+      List.iteri
+        (fun i e ->
+          if i > 0 then put env ", ";
+          expr env e)
+        pairs;
+      put env "])"
   | Index (b, i) ->
       (* a tuple is an Erlang tuple and answers element/2; a list (an
-         array literal) is 1-based and answers lists:nth *)
-      if match b.Emo_ir.ety with Emo_check.TupleType _ -> true | _ -> false
-      then (
-        put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
-        expr env i;
-        put env "), ";
-        expr env b;
-        put env ")")
-      else (
-        put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
-        expr env i;
-        put env "), ";
-        expr env b;
-        put env ")")
+         array literal) is 1-based and answers lists:nth; a value whose
+         static type is dynamic — an element of an array that started
+         out as a bare `[]` — asks the runtime which it is *)
+      (match b.Emo_ir.ety with
+      | Emo_check.TupleType _ ->
+          put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
+          expr env i;
+          put env "), ";
+          expr env b;
+          put env ")"
+      | Emo_check.ArrayType _ ->
+          put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
+          expr env i;
+          put env "), ";
+          expr env b;
+          put env ")"
+      | _ ->
+          put env "apply 'emo_index'/2 (";
+          expr env b;
+          put env ", ";
+          expr env i;
+          put env ")")
   | Field_read { obj; name } -> (
       (* a module reference: the alias's runtime value is never used —
          qualified calls resolve statically — so the qualified path as
@@ -380,6 +419,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       (* the arguments evaluate in the spawner; the fun closes over
          them lexically. The wrapper turns a `halt` into a clean
          process end. *)
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       match List.assoc_opt func env.funcs with
       | Some a ->
           let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
@@ -415,9 +461,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Make_exception { message; data } ->
       (* Exception.new's object is its message, and the construction
          never returns — the throw happens right here, so a Raise
-         wrapping this never reaches its own wrapper. The data element
-         lowers only to refuse: the beam target does not support Map
-         yet, so any data expression errors before this tuple closes. *)
+         wrapping this never reaches its own wrapper. The data, when
+         present, lowers like any expression — a Map literal goes
+         through emo_map_new — and rides the throw tuple. *)
       put env "call 'erlang':'throw'({'emo_raise', ";
       expr env message;
       Option.iter
@@ -438,12 +484,12 @@ and method_call env self_ name args =
   in
   match (name, args) with
   | "get", [ i ] ->
-      (* `get` names both the Bytes accessor and a class method (the
-         format packages' object types, say). The interpreter checks
-         the receiver's class first, so dispatch at runtime: a Bytes
-         receiver takes the builtin and every instance takes its
-         class's method. When no class defines `get`, the builtin is
-         the whole call. *)
+      (* `get` names the Bytes accessor, the Builder accessor, Map's
+         lookup, and a class method (the format packages' object types,
+         say). The interpreter checks the receiver's class first, so
+         dispatch at runtime: a Bytes, Builder, or Map receiver takes
+         its builtin and every instance takes its class's method. When
+         no class defines `get`, the builtins are the whole call. *)
       let candidates =
         List.filter_map
           (fun (c : Emo_ir.class_) ->
@@ -479,12 +525,39 @@ and method_call env self_ name args =
            recv);
       expr env i;
       put env ")\n";
+      put env
+        (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n    apply 'emo_map_get'/2 (%s, "
+           recv);
+      expr env i;
+      put env ")\n";
       put env "  <_> when 'true' ->\n    apply 'emo_bytes_get'/2 (";
       put env recv;
       put env ", ";
       expr env i;
       put env ")\nend"
-  | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
+  | "set", [ k; v ] ->
+      (* `set` names both the Bytes writer and Map's insert; the tag
+         picks at run time *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
+      expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      put env
+        "  <{'emo_bytes', _k}> when 'true' ->\n    apply 'emo_bytes_set'/3 (";
+      put env recv;
+      put env ", ";
+      expr env k;
+      put env ", ";
+      expr env v;
+      put env ")\n";
+      put env "  <{'emo_map', _k}> when 'true' ->\n    apply 'emo_map_set'/3 (";
+      put env recv;
+      put env ", ";
+      expr env k;
+      put env ", ";
+      expr env v;
+      put env ")\nend"
   | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
   | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
   | "get_u64_le", [ _ ] -> bytes_only 2 "emo_bytes_u64_get"
@@ -496,31 +569,66 @@ and method_call env self_ name args =
   | "push_back", [ _ ] -> bytes_only 2 "emo_list_push_back"
   | "pop_front", [] -> bytes_only 1 "emo_list_pop_front"
   | "pop_back", [] -> bytes_only 1 "emo_list_pop_back"
+  | "has", [ _ ] -> bytes_only 2 "emo_map_has"
+  | "remove", [ _ ] -> bytes_only 2 "emo_map_remove"
+  | "keys", [] -> bytes_only 1 "emo_map_keys"
+  | "values", [] -> bytes_only 1 "emo_map_values"
   | "push", [ _ ] -> bytes_only 2 "emo_builder_push"
   | "to_array", [] -> bytes_only 1 "emo_builder_to_array"
   | "length", [] ->
-      put env "case ";
+      (* Instances answer their own `length` first — the interpreter's
+         rule; the builtin length answers only when no class carries the
+         name. The receiver is bound once, so a chained, side-effecting
+         receiver is not re-evaluated. *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
       expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      let method_arms =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "length"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              Some
+                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
+                   (instance_pattern env.classes c.Emo_ir.cname)
+                   (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__length"))
+                   recv)
+            else None)
+          env.classes
+      in
+      put env (String.concat "" method_arms);
       put env
-        " of\n\
-        \  <{'emo_bytes', _k}> when 'true' ->\n\
-        \    apply 'emo_bytes_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_bytes', _k}> when 'true' ->\n\
+           \    apply 'emo_bytes_len'/1 (%s)\n"
+           recv);
       put env
-        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_list', _k}> when 'true' ->\n\
+           \    apply 'emo_list_len'/1 (%s)\n"
+           recv);
       put env
-        "\n\
-        \  <{'emo_builder', _k}> when 'true' ->\n\
-        \    apply 'emo_builder_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n\
+           \    apply 'emo_map_length'/1 (%s)\n"
+           recv);
       put env
-        "\n\
-        \  <_str> when call 'erlang':'is_binary'(_str) ->\n\
-        \    call 'erlang':'byte_size'(_str)";
-      put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
-      expr env self_;
-      put env ")\nend"
+        (Printf.sprintf
+           "  <{'emo_builder', _k}> when 'true' ->\n\
+           \    apply 'emo_builder_len'/1 (%s)\n"
+           recv);
+      put env
+        "  <_str> when call 'erlang':'is_binary'(_str) ->\n\
+        \    call 'erlang':'byte_size'(_str)\n";
+      put env
+        (Printf.sprintf
+           "  <_> when 'true' ->\n    call 'erlang':'length'(%s)\nend" recv)
   | "to_string", [] ->
       (* Instances answer their own `to_string` first — the interpreter's
          rule; the builtin conversion answers only when no class carries
@@ -561,6 +669,11 @@ and method_call env self_ name args =
            recv);
       put env
         (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n\
+           \    apply 'emo_map_str'/1 (%s)\n"
+           recv);
+      put env
+        (Printf.sprintf
            "  <_> when 'true' ->\n    apply 'emo_to_str'/1 (%s)\nend" recv)
   (* The fixed-width conversions. Int64 and Byte are both plain Erlang
      integers here, so `to_int64` is the identity and the static constructors
@@ -591,7 +704,18 @@ and method_call env self_ name args =
       put env "call 'erlang':'trunc'(";
       expr env self_;
       put env ")"
-  | "to_int64", [] -> expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
+      put env "apply 'emo_str_to_int64'/1 ";
+      args_list env [ self_ ]
+  | "to_int64", []
+    when self_.Emo_ir.ety = Emo_check.Int64 || self_.Emo_ir.ety = Emo_check.Byte
+    ->
+      expr env self_
+  | "to_int64", [] ->
+      (* the static type did not settle it: the runtime tells a binary
+         (parsed), a float (truncated), and an integer (kept) apart *)
+      put env "apply 'emo_to_int64'/1 ";
+      args_list env [ self_ ]
   | "to_byte", [] ->
       put env "apply 'emo_to_byte'/1 ";
       args_list env [ self_ ]
@@ -606,6 +730,21 @@ and method_call env self_ name args =
       | "substring", [ start; len ] ->
           put env "apply 'emo_str_substring'/3 ";
           args_list env [ self_; start; len ]
+      | "starts_with", [ prefix ] ->
+          put env "apply 'emo_str_starts_with'/2 ";
+          args_list env [ self_; prefix ]
+      | "index_of", [ needle ] ->
+          put env "apply 'emo_str_index_of'/2 ";
+          args_list env [ self_; needle ]
+      | "trim", [] ->
+          put env "apply 'emo_str_trim'/1 ";
+          args_list env [ self_ ]
+      | "lower", [] ->
+          put env "apply 'emo_str_lower'/1 ";
+          args_list env [ self_ ]
+      | "split", [ sep ] ->
+          put env "apply 'emo_str_split'/2 ";
+          args_list env [ self_; sep ]
       | "read", [] ->
           put env "call 'erlang':'get'(";
           expr env self_;
@@ -843,7 +982,7 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       (* a loop rebinds its threaded bindings over the rest of the
          chain, so it consumes the rest like a let *)
       emit_loop env ~tail:false loop rest ~leaf:(fun () -> put env "'ok'")
-  | [ s ] -> stmt env s
+  | [ s ] -> emit_scoped_stmt env s (fun () -> stmt env s)
   | Emo_ir.Let { name; init; _ } :: rest ->
       (* a let scopes over everything after it *)
       let v = fresh_var env name in
@@ -900,9 +1039,24 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       stmts env rest
   | s :: rest ->
       put env "do\n";
-      stmt env s;
+      emit_scoped_stmt env s (fun () -> stmt env s);
       put env "\n";
       stmts env rest
+
+(* An `if`/`case` statement's branch bindings die with their arms: the
+   arms' Core lets close inside the `case`, so the names must leave the
+   map with them — a later loop lifts with every map entry as a
+   threaded parameter, and a dead name would be read at its call site
+   after its let has closed. Names that existed before the statement
+   stay (a rebinding `if` never reaches here; it threads through the
+   assigned-names path above). *)
+and emit_scoped_stmt env s k =
+  match s with
+  | Emo_ir.If _ | Emo_ir.Case _ ->
+      let pre = List.map fst env.local_map in
+      k ();
+      env.local_map <- List.filter (fun (n, _) -> List.mem n pre) env.local_map
+  | _ -> k ()
 
 (* A branch body of a threaded `if`/`case`: run it, then answer the
    tuple of the threaded bindings' final values. The branch's own
@@ -1331,15 +1485,79 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       (* Outside a loop body the last statement's own value is the
          list's value; the tail chain's leaf does not follow it. *)
       stmt env s
-  | Emo_ir.If { cond; then_; else_; _ } :: rest ->
+  | Emo_ir.If { cond; then_; else_ } :: rest when rest <> [] ->
+      (* The branches join before the rest: the rest becomes a shared
+         continuation that each branch tail-calls with every binding
+         live at the join — nested joins and the enclosing loop's
+         fall-through all read current values through the parameters,
+         and the enclosing loop threads them (see `emit_loop`). One
+         copy of the rest instead of one per branch, which a chain of
+         ifs would otherwise multiply 2^ifs times. Emitter temporaries
+         never thread: their lets close within their statement. *)
+      let rec live_uniq acc = function
+        | [] -> List.rev acc
+        | name :: tl ->
+            if
+              List.mem name acc
+              || List.mem name beam_temps
+              || List.mem name tl
+            then live_uniq acc tl
+            else live_uniq (name :: acc) tl
+      in
+      let live = live_uniq [] (List.map fst env.local_map) in
+      let n2 = env.fresh + 1 in
+      env.fresh <- n2;
+      let cname = Printf.sprintf "'__cont_%d'" n2 in
+      let saved_map = env.local_map in
+      let saved_loops = env.loops in
+      let before = Buffer.length env.buf in
+      let param_of =
+        List.map (fun name -> (name, fresh_var env name)) live
+      in
+      put env
+        (Printf.sprintf "%s/%d =\n    fun (%s) ->\n" cname
+           (List.length param_of)
+           (String.concat ", " (List.map snd param_of)));
+      env.local_map <- param_of;
+      emit_loop_body env ~tail rest ~leaf;
+      env.local_map <- saved_map;
+      env.loops <- saved_loops;
+      let slice = Buffer.sub env.buf before (Buffer.length env.buf - before) in
+      Buffer.truncate env.buf before;
+      Buffer.add_string env.loops_buf slice;
+      Buffer.add_string env.loops_buf "\n\n";
+      let emit_branch (branch_body : Emo_ir.stmt list) =
+        let saved = env.local_map in
+        emit_loop_body env ~tail:true branch_body ~leaf:(fun () ->
+            put env
+              (Printf.sprintf "apply %s/%d (%s)" cname
+                 (List.length param_of)
+                 (String.concat ", "
+                    (List.map
+                       (fun (name, _) ->
+                         match List.assoc_opt name env.local_map with
+                         | Some v -> v
+                         | None ->
+                             failwith ("beam: unbound cont var " ^ name))
+                       param_of))));
+        env.local_map <- saved
+      in
+      put env "\t\tcase ";
+      expr env cond;
+      put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
+      emit_branch then_;
+      put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
+      emit_branch else_;
+      put env "\n\t\tend"
+  | Emo_ir.If { cond; then_; else_ } :: rest ->
       put env "\t\tcase ";
       expr env cond;
       put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
       let saved = env.local_map in
-      emit_loop_body env ~tail (then_ @ rest) ~leaf;
+      emit_loop_body env ~tail (then_ @ []) ~leaf;
       env.local_map <- saved;
       put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
-      emit_loop_body env ~tail (else_ @ rest) ~leaf;
+      emit_loop_body env ~tail (else_ @ []) ~leaf;
       env.local_map <- saved;
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
@@ -1451,7 +1669,24 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
         && match header with Some h -> n <> h | None -> true)
       frees
   in
-  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees in
+  (* Every live binding threads, not just the loop's own reads: a join
+     inside the body may need a binding the loop never reads (one that
+     only the code after the loop uses), and the loop function's def is
+     self-contained — whatever the body's continuations reference must
+     ride the parameters. *)
+  let rec live_uniq acc = function
+    | [] -> List.rev acc
+    | name :: tl ->
+        if
+          List.mem name acc
+          || List.mem name beam_temps
+          || List.mem name frees
+          || (match header with Some h -> name = h | None -> false)
+        then live_uniq acc tl
+        else live_uniq (name :: acc) tl
+  in
+  let live_names = live_uniq [] (List.map fst env.local_map) in
+  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees @ live_names in
   let n = env.fresh + 1 in
   env.fresh <- n;
   let lname = Printf.sprintf "'__loop_%d'" n in
@@ -1466,7 +1701,7 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
   in
   env.loops <- (lname, var_names, post) :: env.loops;
   let exit_value =
-    match frees with
+    match var_names with
     | [] -> "'ok'"
     | ws ->
         "{"
@@ -1551,11 +1786,11 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
         match List.assoc_opt name env.local_map with
         | Some v -> put env v
         | None -> failwith ("beam: unbound loop var " ^ name))
-      frees;
+      (match header with Some _ -> List.tl var_names | None -> var_names);
     comma ();
     put env "'false')"
   in
-  if frees = [] then (
+  if var_names = [] then (
     put env "do\n";
     emit_initial_call ();
     put env "\n";
@@ -1565,7 +1800,7 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     emit_initial_call ();
     put env " of\n\t  <{";
     let saved_site = env.local_map in
-    let rebound = List.map (fun name -> fresh_var env name) frees in
+    let rebound = List.map (fun name -> fresh_var env name) var_names in
     put env (String.concat "," rebound);
     put env "}> when 'true' ->\n";
     if rest = [] then leaf () else emit_loop_body env ~tail rest ~leaf;
@@ -1718,6 +1953,12 @@ let rt_source =
 	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
 	  <{'emo_builder', _k}> when 'true' ->
 	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_map_str'/1 ({'emo_map', _k})
+	  <{'emo_enum', _n, _m}> when 'true' ->
+	      call 'erlang':'atom_to_binary'(_m, 'utf8')
+	  <_t> when call 'erlang':'is_tuple'(_t) ->
+	      apply 'emo_tuple_to_str'/1 (_t)
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
@@ -1751,15 +1992,29 @@ let rt_source =
 		      <'true'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
 		      <'false'> when 'true' ->
 			  case call 'erlang':'<'(_e, 6) of
-			    <'true'> when 'true' ->
-				call 'erlang':'float_to_binary'(_x, [{'decimals', call 'erlang':'-'(5, _e)}, 'compact'])
+			    <'true'> when 'true' -> apply 'emo_g6_dec'/2 (_x, _e)
 			    <'false'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
 			  end
 		    end
 
+%% The %g decimal tail: 'compact' keeps one decimal digit, so a value
+%%   rounding to an integer at six significant digits answers "204.0"
+%%   where %g says "204" — strip that pair.
+'emo_g6_dec'/2 =
+    fun (_x, _e) ->
+	let <_s> = call 'erlang':'float_to_binary'(_x, [{'decimals', call 'erlang':'-'(5, _e)}, 'compact'])
+	in case call 'erlang':'=<'(2, call 'erlang':'byte_size'(_s)) of
+	     <'true'> when 'true' ->
+		 case call 'erlang':'=='(call 'binary':'part'(_s, call 'erlang':'-'(call 'erlang':'byte_size'(_s), 2), 2), #{#<46>(8,1,'integer',['unsigned'|['big']]),#<48>(8,1,'integer',['unsigned'|['big']])}#) of
+		   <'true'> when 'true' -> call 'binary':'part'(_s, 0, call 'erlang':'-'(call 'erlang':'byte_size'(_s), 2))
+		   <'false'> when 'true' -> _s
+		 end
+	     <'false'> when 'true' -> _s
+	   end
+
 'emo_g6_sci'/2 =
     fun (_m, _e) ->
-	let <_t> = call 'string':'trim'(_m, 'trailing', #{#<48>(8,1,'integer',['unsigned'|['big']])}#)
+	let <_t> = call 'string':'trim'(_m, 'trailing', [48])
 	in let <_mt> =
 	       case call 'binary':'last'(_t) of
 		 <_c> when call 'erlang':'=='(_c, 46) ->
@@ -2102,6 +2357,15 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_other, _other)
 	end
 
+%% A dynamic value indexed with [k]: a tuple answers element/2, a list
+%%   (an array) is 1-based and answers lists:nth.
+'emo_index'/2 =
+    fun (_b, _i) ->
+	case call 'erlang':'is_tuple'(_b) of
+	  <'true'> when 'true' -> call 'erlang':'element'(call 'erlang':'+'(1, _i), _b)
+	  <'false'> when 'true' -> call 'lists':'nth'(call 'erlang':'+'(1, _i), _b)
+	end
+
 'emo_cmp'/2 =
     fun (_a, _b) ->
 	case _a of
@@ -2299,6 +2563,158 @@ let rt_source =
 		      <'false'> when 'true' ->
 			  call 'erlang':'error'({'emo_bad_substring', _start, _len})
 		    end
+	      end
+	end
+
+'emo_str_starts_with'/2 =
+    fun (_s, _p) ->
+	case call 'erlang':'>='(call 'erlang':'byte_size'(_s), call 'erlang':'byte_size'(_p)) of
+	  <'false'> when 'true' -> 'false'
+	  <'true'> when 'true' ->
+	      call 'erlang':'=:='(call 'binary':'part'(_s, 0, call 'erlang':'byte_size'(_p)), _p)
+	end
+
+'emo_str_split'/2 =
+    fun (_s, _sep) ->
+	case _sep of
+	  <_e> when call 'erlang':'=='(call 'erlang':'byte_size'(_e), 0) ->
+	      call 'erlang':'error'
+		({'emo_empty_sep',
+		  call 'erlang':'iolist_to_binary'([116, 104, 101, 32, 115, 101, 112, 97, 114, 97, 116, 111, 114, 32, 109, 117, 115, 116, 32, 110, 111, 116, 32, 98, 101, 32, 101, 109, 112, 116, 121])})
+	  <_other> when 'true' ->
+	      call 'binary':'split'(_s, _sep, ['global'])
+	end
+
+'emo_str_index_of'/2 =
+    fun (_s, _n) ->
+	case call 'erlang':'byte_size'(_n) of
+	  <0> when 'true' -> 0
+	  <_nlen> when 'true' ->
+	      case call 'binary':'match'(_s, _n) of
+		<'nomatch'> when 'true' -> call 'erlang':'-'(0, 1)
+		<{_pos, _mlen}> when 'true' -> _pos
+	      end
+	end
+
+'emo_trim_space'/1 =
+    fun (_c) ->
+	case _c of
+	  <32> when 'true' -> 'true'
+	  <9> when 'true' -> 'true'
+	  <10> when 'true' -> 'true'
+	  <13> when 'true' -> 'true'
+	  <12> when 'true' -> 'true'
+	  <_o> when 'true' -> 'false'
+	end
+
+'emo_trim_lo'/3 =
+    fun (_s, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'false'> when 'true' -> _i
+	  <'true'> when 'true' ->
+	      case apply 'emo_trim_space'/1 (call 'binary':'at'(_s, _i)) of
+		<'true'> when 'true' -> apply 'emo_trim_lo'/3 (_s, call 'erlang':'+'(_i, 1), _n)
+		<'false'> when 'true' -> _i
+	      end
+	end
+
+'emo_trim_hi'/3 =
+    fun (_s, _lo, _hi) ->
+	case call 'erlang':'>'(_hi, _lo) of
+	  <'false'> when 'true' -> _hi
+	  <'true'> when 'true' ->
+	      case apply 'emo_trim_space'/1 (call 'binary':'at'(_s, call 'erlang':'-'(_hi, 1))) of
+		<'true'> when 'true' -> apply 'emo_trim_hi'/3 (_s, _lo, call 'erlang':'-'(_hi, 1))
+		<'false'> when 'true' -> _hi
+	      end
+	end
+
+'emo_str_trim'/1 =
+    fun (_s) ->
+	let <_n> = call 'erlang':'byte_size'(_s) in
+	let <_lo> = apply 'emo_trim_lo'/3 (_s, 0, _n) in
+	let <_hi> = apply 'emo_trim_hi'/3 (_s, _lo, _n) in
+	  call 'binary':'part'(_s, _lo, call 'erlang':'-'(_hi, _lo))
+
+'emo_lower_byte'/1 =
+    fun (_c) ->
+	case call 'erlang':'>='(_c, 65) of
+	  <'false'> when 'true' -> _c
+	  <'true'> when 'true' ->
+	      case call 'erlang':'=<'(_c, 90) of
+		<'true'> when 'true' -> call 'erlang':'+'(_c, 32)
+		<'false'> when 'true' -> _c
+	      end
+	end
+
+'emo_str_lower'/1 =
+    fun (_s) ->
+	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_lower_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
+
+'emo_digits_ok'/3 =
+    fun (_s, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'false'> when 'true' -> 'true'
+	  <'true'> when 'true' ->
+	      let <_c> = call 'binary':'at'(_s, _i) in
+		case call 'erlang':'>='(_c, 48) of
+		  <'false'> when 'true' -> 'false'
+		  <'true'> when 'true' ->
+		      case call 'erlang':'=<'(_c, 57) of
+			<'false'> when 'true' -> 'false'
+			<'true'> when 'true' -> apply 'emo_digits_ok'/3 (_s, call 'erlang':'+'(_i, 1), _n)
+		      end
+		end
+	end
+
+'emo_decimal_ok'/1 =
+    fun (_s) ->
+	let <_n> = call 'erlang':'byte_size'(_s) in
+	let <_start> =
+	    case _n of
+	      <0> when 'true' -> 0
+	      <_k> when 'true' ->
+		  case call 'binary':'at'(_s, 0) of
+		    <45> when 'true' -> 1
+		    <_c> when 'true' -> 0
+		  end
+	    end
+	in
+	  case call 'erlang':'<'(_start, _n) of
+	    <'false'> when 'true' -> 'false'
+	    <'true'> when 'true' -> apply 'emo_digits_ok'/3 (_s, _start, _n)
+	  end
+
+'emo_bad_int64'/1 =
+    fun (_s) ->
+	call 'erlang':'error'
+	    ({'emo_bad_int64',
+	      call 'erlang':'iolist_to_binary'([99, 97, 110, 110, 111, 116, 32, 112, 97, 114, 115, 101, 32, 96, _s, 96, 32, 97, 115, 32, 97, 110, 32, 73, 110, 116, 54, 52])})
+
+'emo_str_to_int64'/1 =
+    fun (_s) ->
+	case apply 'emo_decimal_ok'/1 (_s) of
+	  <'false'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+	  <'true'> when 'true' ->
+	      let <_v> = call 'erlang':'binary_to_integer'(_s) in
+		case call 'erlang':'<'(_v, call 'erlang':'-'(0, 9223372036854775808)) of
+		  <'true'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+		  <'false'> when 'true' ->
+		      case call 'erlang':'>'(_v, 9223372036854775807) of
+			<'true'> when 'true' -> apply 'emo_bad_int64'/1 (_s)
+			<'false'> when 'true' -> _v
+		      end
+		end
+	end
+
+'emo_to_int64'/1 =
+    fun (_v) ->
+	case call 'erlang':'is_binary'(_v) of
+	  <'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
+	  <'false'> when 'true' ->
+	      case call 'erlang':'is_float'(_v) of
+		<'true'> when 'true' -> call 'erlang':'trunc'(_v)
+		<'false'> when 'true' -> _v
 	      end
 	end
 
@@ -2530,6 +2946,29 @@ let rt_source =
 	      end
 	end
 
+'emo_tuple_to_str'/1 =
+    fun (_t) ->
+	call 'erlang':'iolist_to_binary'
+	    (apply 'emo_tuple_join'/2 (call 'erlang':'tuple_to_list'(_t), 1))
+
+'emo_tuple_join'/2 =
+    fun (_elems, _first) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      let <_piece> = apply 'emo_to_str'/1 (_e)
+	      in case _first of
+		   <1> when 'true' ->
+		       [[40], _piece | apply 'emo_tuple_join'/2 (_rest, 0)]
+		   <_> when 'true' ->
+		       [[44, 32], _piece | apply 'emo_tuple_join'/2 (_rest, 0)]
+		 end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [40, 41]
+		<_> when 'true' -> [41]
+	      end
+	end
+
 'emo_array_to_str'/1 =
     fun (_a) ->
 	call 'erlang':'iolist_to_binary'
@@ -2593,11 +3032,285 @@ let rt_source =
 		    call 'erlang':'=:='(apply 'emo_builder_elems'/1 (_a), apply 'emo_builder_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    apply 'emo_map_equal'/2 (_a, _b)
+		<_other> when 'true' -> 'false'
+	      end
 	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)
 	end
 
 'emo_ne'/2 =
-    fun (_a, _b) -> call 'erlang':'=/='(_a, _b)
+    fun (_a, _b) -> apply 'emo_not'/1 (apply 'emo_eq'/2 (_a, _b))
+
+%% ---- Map ----
+%%
+%%   The Map is a {'emo_map', Key} tag over a per-process {Order, Pairs}
+%%   pair in the process dictionary — the same mechanism emo_list_new
+%%   uses. Order is the insertion-order key list; Pairs an Erlang map
+%%   key→value. An existing key replaces in place and keeps its first
+%%   position. Keys are the six hashable primitives, compared with =:=,
+%%   so 1 and 1.0 stay distinct.
+
+'emo_map_new'/1 =
+    fun (_pairs) ->
+	apply 'emo_map_new_walk'/3 (_pairs, call 'maps':'from_list'([]), [])
+
+'emo_map_new_walk'/3 =
+    fun (_pairs, _m, _order) ->
+	case _pairs of
+	  <[{_k, _v} | _rest]> when 'true' ->
+	      case call 'maps':'is_key'(_k, _m) of
+		<'true'> when 'true' ->
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), _order)
+		<'false'> when 'true' ->
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), call 'erlang':'++'(_order, [_k]))
+	      end
+	  <[]> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do call 'erlang':'put'(_k, {_order, _m})
+		 {'emo_map', _k}
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_map_pairs', _other})
+	end
+
+'emo_map_get'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'find'(_k, _pairs) of
+		      <{'ok', _v}> when 'true' -> _v
+		      <'error'> when 'true' ->
+			  call 'erlang':'error'
+			    ({'emo_no_key',
+			      call 'erlang':'iolist_to_binary'
+				([110, 111, 32, 107, 101, 121, 32,
+				  apply 'emo_map_dbg'/1 (_k),
+				  32, 105, 110, 32, 116, 104, 105, 115, 32, 77, 97, 112])})
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_set'/3 =
+    fun (_m, _k, _v) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'is_key'(_k, _pairs) of
+		      <'true'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(_k, _v, _pairs)})
+			     _m
+		      <'false'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(_k, _v, _pairs)})
+			     _m
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_has'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'maps':'is_key'(_k, _pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_remove'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'is_key'(_k, _pairs) of
+		      <'true'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(_k, _pairs)})
+			     _m
+		      <'false'> when 'true' -> _m
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_order_drop'/2 =
+    fun (_keys, _k) ->
+	case _keys of
+	  <[_h | _t]> when 'true' ->
+	      case call 'erlang':'=:='(_h, _k) of
+		<'true'> when 'true' -> _t
+		<'false'> when 'true' ->
+		    [_h | apply 'emo_map_order_drop'/2 (_t, _k)]
+	      end
+	  <[]> when 'true' -> []
+	end
+
+'emo_map_length'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'maps':'size'(_pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_keys'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' -> _order
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_values'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    apply 'emo_map_values_walk'/2 (_order, _pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_values_walk'/2 =
+    fun (_keys, _pairs) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      [call 'maps':'get'(_k, _pairs)
+	       | apply 'emo_map_values_walk'/2 (_rest, _pairs)]
+	  <[]> when 'true' -> []
+	end
+
+'emo_map_str'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'erlang':'iolist_to_binary'
+		      (apply 'emo_map_str_walk'/3 (_order, _pairs, 1))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_str_walk'/3 =
+    fun (_keys, _pairs, _first) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      let <_kd> = apply 'emo_map_dbg'/1 (_k)
+	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(_k, _pairs))
+		 in case _first of
+		      <1> when 'true' ->
+			  [123, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
+		      <_> when 'true' ->
+			  [44, 32, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
+		    end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [123, 125]
+		<_> when 'true' -> [125]
+	      end
+	end
+
+'emo_map_equal'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    case call 'erlang':'get'(_ka) of
+		      <{_oa, _pa}> when 'true' ->
+			  case call 'erlang':'get'(_kb) of
+			    <{_ob, _pb}> when 'true' ->
+				case call 'erlang':'=:='(call 'maps':'size'(_pa), call 'maps':'size'(_pb)) of
+				  <'false'> when 'true' -> 'false'
+				  <'true'> when 'true' ->
+				      apply 'emo_map_equal_walk'/3 (_oa, _pa, _pb)
+				end
+			  end
+		    end
+		<_other> when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _a})
+	end
+
+'emo_map_equal_walk'/3 =
+    fun (_keys, _pa, _pb) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      case call 'maps':'is_key'(_k, _pb) of
+		<'false'> when 'true' -> 'false'
+		<'true'> when 'true' ->
+		    case apply 'emo_eq'/2 (call 'maps':'get'(_k, _pa), call 'maps':'get'(_k, _pb)) of
+		      <'false'> when 'true' -> 'false'
+		      <'true'> when 'true' ->
+			  apply 'emo_map_equal_walk'/3 (_rest, _pa, _pb)
+		    end
+	      end
+	  <[]> when 'true' -> 'true'
+	end
+
+%% Inside a Map's rendering and its get-miss message, a string shows
+%% quoted — the interpreter's debug form; everything else goes through
+%% the shared to_str. On this target a string is a raw binary (a Char
+%% is a one-byte one), so the quote walk is what draws the line.
+
+'emo_map_dbg'/1 =
+    fun (_v) ->
+	case call 'erlang':'is_binary'(_v) of
+	  <'true'> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		(apply 'emo_map_quote'/1 (_v))
+	  <'false'> when 'true' ->
+	      apply 'emo_to_str'/1 (_v)
+	end
+
+'emo_map_quote'/1 =
+    fun (_s) -> [34 | apply 'emo_map_quote_walk'/2 (_s, 0)]
+
+'emo_map_quote_walk'/2 =
+    fun (_s, _i) ->
+	case call 'erlang':'>='(_i, call 'erlang':'byte_size'(_s)) of
+	  <'true'> when 'true' -> [34]
+	  <'false'> when 'true' ->
+	      case call 'binary':'at'(_s, _i) of
+		<34> when 'true' ->
+		    [92, 34 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<92> when 'true' ->
+		    [92, 92 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<10> when 'true' ->
+		    [92, 110 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<9> when 'true' ->
+		    [92, 116 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<13> when 'true' ->
+		    [92, 114 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<_c> when 'true' ->
+		    [_c | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+	      end
+	end
 
 %% ---- printf ----
 %% 
@@ -3350,6 +4063,11 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
       class_field = [];
       iface_classes = [];
       current_class = None;
+      fforeigns =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            if f.Emo_ir.fforeign <> None then Some f.Emo_ir.fname else None)
+          program.Emo_ir.pfuncs;
     }
   in
   let class_fields_assoc =
@@ -3416,7 +4134,32 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
     stmts env body;
     let body_text = Buffer.sub buf before (Buffer.length buf - before) in
     Buffer.truncate buf before;
-    put env (body_wrapper body_text);
+    let inner = body_wrapper body_text in
+    (* A const thunk memoizes in persistent_term: the initializer runs
+       once per node, and every later read returns the same value — the
+       identity an allocating initializer hands out survives, as in the
+       interpreter. 'undefined' is the sentinel: no Emo value is ever
+       the bare undefined atom (bools are 'true'/'false', instances are
+       tagged tuples). The key carries the module name, so two programs
+       on one node keep separate slots. *)
+    let memo name text =
+      let key = Printf.sprintf "{%s, %s}" (atom module_name) (atom name) in
+      Printf.sprintf
+        "case call 'persistent_term':'get'(%s, 'undefined') of\n\
+        \  <'undefined'> when 'true' ->\n\
+        \      let <_emo_const_v> = %s\n\
+        \      in case call 'persistent_term':'put'(%s, _emo_const_v) of\n\
+        \           <_emo_ignored> when 'true' -> _emo_const_v\n\
+        \         end\n\
+        \  <_emo_cached> when 'true' -> _emo_cached\nend"
+        key text key
+    in
+    let inner =
+      if params = [] && List.mem fname program.Emo_ir.pconsts then
+        memo name inner
+      else inner
+    in
+    put env inner;
     put env "\n\n";
     env.local_map <- [];
     env.current_class <- None
@@ -3491,16 +4234,13 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
     program.Emo_ir.pclasses;
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.Emo_ir.fforeign <> None then
-        raise
-          (Emo_ir.Lower_error
-             "the beam target does not support `foreign def` yet");
-      emit_def ~cc:None
-        ~params:
-          (List.mapi
-             (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
-             f.Emo_ir.fparams)
-        ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
+      if f.Emo_ir.fforeign = None then
+        emit_def ~cc:None
+          ~params:
+            (List.mapi
+               (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
+               f.Emo_ir.fparams)
+          ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
     program.Emo_ir.pfuncs;
   env.fname <- "main";
   env.local_map <- [];

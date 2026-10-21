@@ -1,0 +1,6 @@
+require "math"
+
+println(math.exp_native(1.0))
+println(math.log_native(math.e))
+println(math.log10_native(1000.0))
+println(math.pow_native(2.0, 10.0))

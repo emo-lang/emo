@@ -1,11 +1,16 @@
 {"alice": 30, "bob": 25}
 30
 {"alice": 30, "bob": 26, "carl": 41}
+{"alice": 30, "bob": 27, "carl": 41}
 true
-{"bob": 26, "carl": 41}
+{"bob": 27, "carl": 41}
 2
+{"bob": 27, "carl": 41, "dora": 18}
+3
 {"verbal": 700, "math": 780}
 [verbal, math]
 [700, 780]
+true
+false
 true
 2

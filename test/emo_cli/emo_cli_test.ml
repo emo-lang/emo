@@ -327,6 +327,8 @@ let wasm_goldens =
     "if_expr";
     "fib";
     "objects";
+    "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "pipeline";
@@ -336,18 +338,22 @@ let wasm_goldens =
     "fixed_width";
     "list";
     "array_builder";
+    "map";
     "base64_demo";
     "csv_demo";
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "slog_demo";
     "sync_demo";
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     "sql_demo";
     "sql_edge";
   ]
@@ -373,6 +379,8 @@ let beam_goldens =
     "if_expr";
     "fib";
     "objects";
+    "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "pipeline";
@@ -382,19 +390,23 @@ let beam_goldens =
     "fixed_width";
     "list";
     "array_builder";
+    "map";
     "base64_demo";
     "csv_demo";
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "slog_demo";
     "sync_demo";
     "printf_demo";
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     "sql_demo";
     "sql_edge";
   ]
@@ -567,6 +579,8 @@ let c_goldens =
     "hello_world";
     "if_expr";
     "objects";
+    "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "function_group";
@@ -584,6 +598,7 @@ let c_goldens =
     "array_builder";
     "os_demo";
     "base64_demo";
+    "math_native";
     "csv_demo";
     "json_demo";
     "yaml_demo";
@@ -595,9 +610,11 @@ let c_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "string_methods";
     "math_demo";
     "branch_var";
     "plot_demo";
+    "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
        package-carried C shim do the whole native link — the build here
        passes cclibs:[] on purpose *)
@@ -3050,26 +3067,43 @@ do work()|},
           ]);
   ]
 
-(* `foreign def` on a backend that has no emitter for it (M17): the
-   checker admits the declaration — its FFI types are legal on every
-   target — so the refusal rides the emitter's own Lower_error and the
-   CLI renders it as exit 65, the shape riscv64's refusals above take. *)
-let foreign_def_source =
+(* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other
+   targets the definition is inert: the checker admits the declaration —
+   its FFI types are legal on every target — the emitter skips the
+   binding, and only a call to it refuses through the emitter's own
+   Lower_error, which the CLI renders as exit 65 (the shape riscv64's
+   refusals above take). *)
+let foreign_decl_source =
+  {|
+foreign def host_floor(x Float64) Float64 = "floor"
+
+println("ok")
+|}
+
+let foreign_call_source =
   {|
 foreign def host_floor(x Float64) Float64 = "floor"
 
 println(host_floor(2.5))
 |}
 
-let foreign_refusal_tests =
-  let build target =
-    let entry = scratch_entry ("foreign-def-" ^ target) foreign_def_source in
-    build_entry ~target entry (Filename.concat (Filename.dirname entry) "out")
+let foreign_value_source =
+  {|
+foreign def host_floor(x Float64) Float64 = "floor"
+
+const f = host_floor
+
+println("ok")
+|}
+
+let foreign_tests =
+  let build source target suffix =
+    let entry = scratch_entry ("foreign-" ^ suffix ^ "-" ^ target) source in
+    build_entry ~target entry (Filename.concat (Filename.dirname entry) suffix)
   in
-  let refusal target emit =
+  let refusal target source emit =
     let items, parse_diags =
-      Emo_parser.parse_program_with_diagnostics ~file:"main.emo"
-        ~source:foreign_def_source
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
     in
     (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
     let diags, _refs, _requires, types =
@@ -3093,28 +3127,17 @@ let foreign_refusal_tests =
         with Emo_ir.Lower_error message -> Some message)
   in
   [
-    (* The bug the refusal closed was a silent stub, not a missing
-       symbol: `foreign def` reaches an emitter as an ordinary `func`
-       record with an empty body, so a target that never reads `fforeign`
-       emits a real function and the build succeeds. The rule is therefore
-       a disjunction over the whole matrix — refuse by name, or honor the
-       declaration and really call through — not a list of the targets
-       known to have been broken. *)
-    tc "a `foreign def` is refused by name or really called, never stubbed"
-      (fun () ->
-        if not (Lazy.force cc_available) then Alcotest.skip ();
-        let entry = scratch_entry "foreign-def-honored" foreign_def_source in
-        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
-        Alcotest.(check int)
-          "c build exit" 0
-          (build_entry ~target:"c" entry bin);
-        check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
+    (* A declaration reaches an emitter as an ordinary `func` record
+       with an empty body. Emitting a real function for it would be a
+       silent stub, so the target must either bind the host symbol or
+       leave the name unbound — and only a call may refuse. *)
+    tc "a foreign declaration alone is inert off the native targets" (fun () ->
         List.iter
           (fun (target, emit) ->
-            Alcotest.(check int) (target ^ " build exit") 65 (build target);
-            match refusal target emit with
-            | None -> Alcotest.fail (target ^ ": expected a refusal")
-            | Some _ -> ())
+            match refusal target foreign_decl_source emit with
+            | None -> ()
+            | Some message ->
+                Alcotest.fail (target ^ ": unexpected refusal: " ^ message))
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
             ( "beam",
@@ -3123,29 +3146,121 @@ let foreign_refusal_tests =
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
             ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
           ]);
-    tc "`foreign def` refuses on wasm and beam" (fun () ->
+    tc "the c and ocaml targets build a declaration-only program" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        List.iter
+          (fun target ->
+            Alcotest.(check int)
+              (target ^ " build exit") 0
+              (build foreign_decl_source target "main-decl"))
+          [ "c"; "ocaml" ]);
+    tc "a call to a foreign definition refuses off the native targets"
+      (fun () ->
+        let build_call target = build foreign_call_source target "main-call" in
         List.iter
           (fun (target, emit) ->
-            Alcotest.(check int) (target ^ " build exit") 65 (build target);
-            match refusal target emit with
+            Alcotest.(check int) (target ^ " build exit") 65 (build_call target);
+            match refusal target foreign_call_source emit with
             | None -> Alcotest.fail (target ^ ": expected a refusal")
             | Some message ->
                 Alcotest.(check bool)
                   target true
                   (contains message "does not support"
-                  && contains message "foreign def"))
+                  && contains message "foreign def"
+                  && contains message "host_floor"))
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
             ( "beam",
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
+            ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
+            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
           ]);
-    tc "the c and ocaml targets still build the same program" (fun () ->
-        if not (Lazy.force cc_available) then Alcotest.skip ();
+    tc "taking a foreign definition's value refuses off the native targets"
+      (fun () ->
         List.iter
           (fun target ->
-            Alcotest.(check int) (target ^ " build exit") 0 (build target))
-          [ "c"; "ocaml" ]);
+            Alcotest.(check int)
+              (target ^ " build exit") 65
+              (build foreign_value_source target "main-value"))
+          [ "wasm"; "beam"; "typescript"; "riscv64" ]);
+    tc "the c and ocaml targets really call through" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "foreign-call-c" foreign_call_source in
+        let bin = Filename.concat (Filename.dirname entry) "main-call" in
+        Alcotest.(check int)
+          "c build exit" 0
+          (build_entry ~target:"c" entry bin);
+        check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
+        Alcotest.(check int)
+          "ocaml build exit" 0
+          (build foreign_call_source "ocaml" "main-call"));
+  ]
+
+(* Stage B's native emitter lowers an enum `case`'s member and a def
+   taken as a value; a body it cannot model — container literals, or a
+   value of a def that stays dynamic — keeps its dynamic lowerer instead
+   of refusing at emit time. `examples/specialize_shapes` carries the
+   shapes on the ocaml target; the interpreter half runs through the
+   ordinary examples suite. *)
+let specialization_tests =
+  [
+    tc "the shapes example specializes and runs on the ocaml target" (fun () ->
+        let expected =
+          read_file
+            (Filename.concat examples_dir "specialize_shapes/expected.txt")
+        in
+        let bin = Filename.concat scratch "specialize-shapes-bin" in
+        let exit_code =
+          in_example "specialize_shapes" (fun () ->
+              Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
+                ~cclibs:[] ~native:Emo_project.no_native_inputs
+                ~target:"ocaml")
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
+    tc "a body with container literals stays dynamic and runs" (fun () ->
+        let entry =
+          scratch_entry "specialize-containers"
+            {|def pair(n Int64) Int64 {
+  const p = (n, n + 1)
+  return n
+}
+
+def arr(n Int64) Int64 {
+  const a = [n, n]
+  return n
+}
+
+println(pair(7))
+println(arr(8))
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" ~specialize:true entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "7\n8\n");
+    tc "a value of a dynamic def keeps the body dynamic" (fun () ->
+        let entry =
+          scratch_entry "specialize-dynamic-value"
+            {|def apply_it(f Block, n Int64) Int64 {
+  return n
+}
+
+def keep(n Int64) Int64 {
+  const f = apply_it
+  return n
+}
+
+println(keep(5))
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" ~specialize:true entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "5\n");
   ]
 
 (* ---- HTTP registry pull: `registry = "..."` in the manifest ----
@@ -4136,9 +4251,10 @@ let manifest_entry_tests =
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
    typescript arrives as a snapshot, an Int64 pattern literal compares as
-   a big integer, a `for` loop in a class `init` keeps its value on beam,
-   a module-level `var` is refused cleanly where it is not implemented,
-   and `ocaml` evaluates operands in source order. *)
+   a big integer, a String on typescript is counted in UTF-8 bytes, a
+   `for` loop in a class `init` keeps its value on beam, a module-level
+   `var` is refused cleanly where it is not implemented, and `ocaml`
+   evaluates operands in source order. *)
 let cross_target_tests =
   [
     tc "a message on typescript arrives as a snapshot" (fun () ->
@@ -4151,6 +4267,98 @@ let cross_target_tests =
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "1\n99\n");
+    tc "a message on wasm arrives as a snapshot" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the wasm twin of the send above: the receive parks the entry,
+           so it trails the body and the sender's side prints first *)
+        let entry =
+          scratch_entry "cross-wasm-send"
+            {|
+def reader(reply_to Pid) {
+  receive {
+    b -> {
+      reply_to <- b.read()
+      halt()
+    }
+  }
+}
+
+const box = Box.new(1)
+const r = do reader(self_pid())
+r <- box
+box.replace(99)
+println(box.read())
+receive {
+  v -> { println(v) }
+}
+|}
+        in
+        let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "99\n1\n");
+    tc "every mutable kind in a message on wasm arrives rebuilt" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the snapshot reaches inside the Map: the sender's post-send
+           writes — the replaced key in place, the new key, the list
+           push, the builder push, the byte set — stay on its side, and
+           the echoed copy keeps its insertion order *)
+        let entry =
+          scratch_entry "cross-wasm-send-kinds"
+            {|
+def echo(reply_to Pid) {
+  receive {
+    msg -> {
+      reply_to <- msg
+      halt()
+    }
+  }
+}
+
+const m = { "a": 1, "b": 2, "c": 3 }
+const l = List.new([10, 20])
+const b = ArrayBuilder.new()
+b.push(30)
+const bytes = Bytes.new(3)
+bytes.set(0, 65)
+const msg = { "m": m, "l": l, "b": b, "bytes": bytes }
+const r = do echo(self_pid())
+r <- msg
+m.set("a", 99)
+m.set("d", 4)
+l.push_front(11)
+b.push(31)
+bytes.set(0, 66)
+println(m.get("a"))
+println(m.get("d"))
+println(l.pop_front())
+println(b.length())
+receive {
+  v -> { println(v) }
+}
+|}
+        in
+        let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "99\n\
+           4\n\
+           11\n\
+           2\n\
+           {\"m\": {\"a\": 1, \"b\": 2, \"c\": 3}, \"l\": List[10, 20], \"b\": \
+           ArrayBuilder[30], \"bytes\": Bytes[3]}\n");
     tc "typescript compares Int64 case patterns as big integers" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
         let entry =
@@ -4180,6 +4388,34 @@ main()
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "60\n");
+    tc "typescript counts a String in UTF-8 bytes" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the interpreter's answers: é and × are two bytes each, the
+           braille cell three, the emoji four — `length`, `substring`,
+           and `index_of` all index the encoding, never JS code units *)
+        let entry =
+          scratch_entry "cross-ts-utf8-string"
+            {|const s = "é×a⣿"
+println(s.length())
+println(s.substring(0, 2))
+println(s.substring(2, 2))
+println(s.substring(5, 3))
+println(s.index_of("×a"))
+println(s.index_of("⣿"))
+println(s.index_of("z"))
+println("日本語テキスト".length())
+println("日本語テキスト".substring(3, 6))
+println("a😀b".index_of("b"))
+println("abc".substring(1, 2))
+|}
+        in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "8\né\n×\n⣿\n2\n5\n-1\n21\n本語\n5\nbc\n");
     tc "a direct builtin net call resolves on typescript" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
         let entry =
@@ -4509,6 +4745,90 @@ main()
            key true\n");
   ]
 
+(* T48.2 and T48.3's shared invariant: a program the interpreter runs has
+   one answer on every hosted target. `check_hosted` builds the same entry
+   for each of them, runs what the build produced, and holds the bytes
+   against the interpreter's line; a target whose host is missing is
+   skipped rather than failed. *)
+let check_hosted ?(files = []) name source expected =
+  let entry = scratch_entry name source in
+  let dir = Filename.dirname entry in
+  List.iter
+    (fun (file, text) -> write_file (Filename.concat dir file) text)
+    files;
+  let target which output run =
+    match build_entry ~target:which entry (Filename.concat dir output) with
+    | 0 -> check_run which (run ()) expected
+    | n -> Alcotest.fail (Printf.sprintf "%s build exited %d" which n)
+  in
+  target "ocaml" "app-ocaml" (fun () ->
+      run_cmd (Filename.quote (Filename.concat dir "app-ocaml")));
+  if Lazy.force cc_available then
+    target "c" "app-c" (fun () ->
+        run_cmd (Filename.quote (Filename.concat dir "app-c")));
+  if Lazy.force node_available then begin
+    target "typescript" "app-ts" (fun () ->
+        run_cmd ("node " ^ Filename.quote (Filename.concat dir "app-ts.ts")));
+    target "wasm" "app.wasm" (fun () ->
+        run_cmd
+          (Printf.sprintf "node %s %s"
+             (Filename.quote (Lazy.force wasm_runner_path))
+             (Filename.quote (Filename.concat dir "app.wasm"))))
+  end;
+  if Lazy.force erl_available then
+    target "beam" "app" (fun () ->
+        run_cmd
+          (Printf.sprintf
+             "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+             (Filename.quote dir)))
+
+let hosted_bindings_tests =
+  [
+    tc "a module-level const keeps its identity on every hosted target"
+      (fun () ->
+        check_hosted "hosted-const-identity"
+          ~files:
+            [
+              ( "lib.emo",
+                {|const b = Box.new(0)
+
+def bump() Int64 {
+  b.replace(b.read() + 1)
+  return b.read()
+}
+|}
+              );
+            ]
+          {|const greeting = "hi"
+
+def say() String {
+  return greeting
+}
+
+println(say())
+println(lib.bump())
+println(lib.bump())
+println(lib.bump())
+|}
+          "hi\n1\n2\n3\n");
+    tc "an enum interpolates as its bare tag on every hosted target" (fun () ->
+        check_hosted "hosted-enum-display"
+          {|enum Color { red, green }
+
+def slot() (R, Float64) {
+  return (R.ok, 12.5)
+}
+
+def main() {
+  const s = slot()
+  println("${Color.red} ${s}")
+}
+
+main()
+|}
+          "red (ok, 12.5)\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4527,6 +4847,7 @@ let () =
       ("root_end", root_end_tests);
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
+      ("hosted_bindings", hosted_bindings_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
@@ -4538,7 +4859,8 @@ let () =
       ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
-      ("foreign_refusal", foreign_refusal_tests);
+      ("foreign", foreign_tests);
+      ("specialization", specialization_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("http_pull", http_pull_tests);

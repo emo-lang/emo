@@ -43,6 +43,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M16 — Value-family reclamation | 49 | The `c` target reclaims the value-semantic kinds, not only the identity cells: a long-running program's arena bytes and identity liveness stay flat across renders instead of rising per event, array growth is linear rather than quadratic, and every existing golden on every target stays byte-identical (`spike/arena-scope`, `CHECK.md`). |
 | M17 — Cross-target conformance | 50 | Conformance to promises already made, not new design: a spawned `c`-target process that raises dies alone, `send` delivers a snapshot, and `foreign def` refuses by name on `wasm` and `beam`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
+| M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
 
 ## Design gates
 
@@ -66,7 +67,7 @@ before starting the gated work:
 | EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10–T48.11)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, the `dom_*` family is thirteen calls over Int64 handles, and `emo/ui_browser` is the DOM backend over them, with the convergence corpus running in a stub page |
-| Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
+| Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). Refined by T39.3: the declaration is inert off the native targets, and the refusal is at the call. The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
 | Terminal input's placement (T48.5) | T48.5 | settled 2026-10-15 — raw mode is a standard-library package in the `sqlite3` shape (package-carried `.c`/`.h` reached through `foreign def`, gated by `targets`), not a UI-framework or compiler-side artifact (`CHECK.md`, `docs/emo-ui.md`) |
@@ -1323,27 +1324,35 @@ work touches in `docs/temp-visual-check.md`. Out of scope (decision 9):
 interactive/GUI charts, an EmoUI canvas, 3D, animation. Each step's plan
 file is written when the step starts.
 
-### Step 39 — Compiler and language enablers for plotting
+### Step 39 — Compiler and language enablers for plotting · `plan/step-39-plot-enablers.md`
 
 Independent of the plot steps; each unblocks or de-risks work below.
 **Done when:** the enabler's own tests pass and the affected plot code
 uses it.
 
-- [ ] **T39.1** — Type `self.field` precisely (R2 in
+- [x] **T39.1** — Type `self.field` precisely (R2 in
       `docs/temp-visual-check.md`) with the emitters aligned, so a mark's
       style fields need not be stored flat. Today a native-typed field
       read on a dynamic receiver is still boxed, and the emitters key
       their native/dynamic choice on the expression's static type alone.
-- [ ] **T39.2** — A class method named like a runtime method is not
-      shadowed (R3). `to_string` is fixed; `length` is not.
-- [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
+- [x] **T39.2** — A class method named like a runtime method is not
+      shadowed (R3). `length` answers its own method on every target;
+      `examples/length_method` is the regression.
+- [x] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
       byte-identical, `math.exp_native` the pinned fast path; decision
-      15), documented as target-pinned.
-- [ ] **T39.4** — File and fix the `ocaml` specialization defect the
+      15), documented as target-pinned. Off the native targets the
+      definitions are inert: the interpreter raises E3009 at the call
+      and the emitters refuse the call.
+      `examples/math_native` is the regression.
+- [x] **T39.4** — File and fix the `ocaml` specialization defect the
       plot spike hit (`non-native expression in specialized body`,
       `Type_ref`), so specialized native bodies lower the same as the
-      interpreter.
+      interpreter. The native emitter lowers type values, enum members,
+      field reads, and def values (the last when its def specializes,
+      with the wrappers in the native rec group); container literals
+      leave the predicate, so those bodies stay dynamic.
+      `examples/specialize_shapes` is the regression.
 
 ### Step 40 — T0 completion: continuous axes and the remaining marks
 
@@ -1351,18 +1360,18 @@ uses it.
 **Done when:** `examples/plot_demo` grows line/scatter/area/histogram
 panels and stays byte-identical on all five targets; `dune test` green.
 
-- [ ] **T40.1** — Extend the `Mark` interface beyond the categorical
+- [x] **T40.1** — Extend the `Mark` interface beyond the categorical
       `y_max`/`bands`/`x_labels` (continuous x and y ranges, `y_min`, the
       point/line primitives a `DrawContext` needs), keeping `Bar` as its
       first implementation.
-- [ ] **T40.2** — `plot.mark.line` and `LineStyle`.
-- [ ] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
-- [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
-- [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
-- [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain
+- [x] **T40.2** — `plot.mark.line` and `LineStyle`.
+- [x] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
+- [x] **T40.4** — `plot.mark.area` and `AreaStyle`.
+- [x] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
+- [x] **T40.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing
       today's bar-only `first_labels`/`bands` path).
-- [ ] **T40.7** — Demos and goldens: one figure per new mark, all five
+- [x] **T40.7** — Demos and goldens: one figure per new mark, all five
       targets byte-for-byte.
 
 ### Step 41 — Figure fidelity: scales, domains, legend, grid, themes, color
@@ -1372,25 +1381,29 @@ panels and stays byte-identical on all five targets; `dune test` green.
 log scales, domains, grid, legend, theme — and `DrawContext` is typed
 against the `Renderer` interface, not `SvgRenderer`.
 
-- [ ] **T41.1** — `Scale.log`: log axes with correct tick placement and
+- [x] **T41.1** — `Scale.log`: log axes with correct tick placement and
       formatting.
-- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
+- [x] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).
-- [ ] **T41.3** — Legend rendering for `with_legend` (decision 20's
+- [x] **T41.3** — Legend rendering for `with_legend` (decision 20's
       draw-order rule; one shared legend under faceting, T41.7).
-- [ ] **T41.4** — Grid rendering from `Figure.grid`, driven by the
+- [x] **T41.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.
-- [ ] **T41.5** — `Theme` as a value on `Figure` (background and
+- [x] **T41.5** — `Theme` as a value on `Figure` (background and
       foreground, the grid/axis/title/label styles, a palette, a
       colormap, spacing, the default size; decision 24) with
       `with_theme`.
-- [ ] **T41.6** — Palettes and colormaps (decision 21/24): interpolation
-      in `Float64`, the `color` channel dispatching on the column's kind,
-      and `plot.rgb` validating the 0–255 range.
-- [ ] **T41.7** — Faceting (decision 23): sorted levels, rows × cols,
-      `Share.all` by default, one legend, per-panel labels, blank cells
-      for mismatched levels.
-- [ ] **T41.8** — Decouple `DrawContext` from the concrete
+- [x] **T41.6** — `plot.rgb` validating the 0–255 range and draw-time
+      validation of raw triples (decision 21), on the T41.5 colormaps'
+      `Float64` interpolation; the `color` channel's column-kind
+      dispatch rides T42.3's channels (decision 24).
+- [x] **T41.7** — The figure half of faceting (decision 23): the
+      `rows × cols` panel grid separated by the theme spacing, blank
+      cells for the missing tail, `Share.all` drawing every panel on
+      the union domain, and the title above the grid; sorted levels,
+      per-panel level labels, and the one shared legend ride the chart
+      layer (T43.6, through T42.3's `facet_*` channels).
+- [x] **T41.8** — Decouple `DrawContext` from the concrete
       `SvgRenderer`: type it against the `internal` `Renderer` interface
       so a terminal or raster renderer can join (the prerequisite for
       Steps 44–45).
@@ -1401,16 +1414,56 @@ against the `Renderer` interface, not `SvgRenderer`.
 **Done when:** `plot.table` / `plot.table_missing` build a validated
 `Table`, and the chart layer resolves channels through the vocabulary.
 
-- [ ] **T42.1** — `enum Presence { present, absent }` and the parallel
+- [x] **T42.1** — `enum Presence { present, absent }` and the parallel
       `Map[String, Array[Presence]]` for missing numbers, with the
-      statistics skipping `absent` entries (decision 25).
-- [ ] **T42.2** — `plot.table(numbers, labels)` and
+      statistics skipping `absent` entries (decision 25). The type is
+      public at the `plot` root; a numeric column is read through
+      `plot.observed`, which drops the `absent`
+      entries and raises when a presence array disagrees with its
+      values. Verified on all six paths — interp, c, ocaml, ts, wasm,
+      beam — with the skip and the mismatch raise byte-identical.
+      (`observed` landed as `internal.stats.observed`; the 2026-10-20
+      refactor moved it to the root so the statistics module references
+      nothing from the package root — the root calls in, and one
+      direction is all a module graph may bend.)
+- [x] **T42.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
-      `Table`, shape violations raising (decision 4/10).
-- [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
+      `Table`, shape violations raising (decision 4/10). The builders
+      share one shape check — no name claimed by both kinds, one length
+      across every column, a presence column beside each numeric column
+      with no strays — and the accessors check the column's kind
+      (`number` / `presence` / `label`, beside the `rows` count).
+      Verified on all six paths — interp, c, ocaml, ts, wasm, beam —
+      with the demo golden byte-identical (`plot_demo` grew a table
+      section) and eight shape violations raising the same message on
+      every path. Printing the presence columns exposed enum `to_str`
+      rendering the qualified name on `ts` and having no rendering at
+      all on `wasm`/`beam`; all three now render the bare member — the
+      interpreter's rule — so the golden holds byte-for-byte.
+- [x] **T42.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it
-      supports.
+      supports — carrying T41.6's column-kind `color` dispatch through
+      the theme's palette and colormap (decision 24). The checks live in
+      `internal/channels.emo` — the vocabulary and the per-family reads
+      (relational full set; distributions and categorical without the
+      point aesthetics; matrix facets only), plus the byte-order
+      comparison and `sorted_levels` the categorical color reads the
+      palette through, since a `String` answers `==` but not `<`. The
+      dispatch is public at the root as `plot.channel_colors(table,
+      name, theme)`: a label column through the palette by the level's
+      sorted position, a number column normalized over its observed span
+      through the colormap (a constant column at the low end), absent
+      slots keeping their place at the low end. Verified on all six
+      paths — interp, c, ocaml, ts, wasm, beam — with the happy outputs
+      and five raise messages byte-identical: unknown channel, two family
+      violations, unknown column, all-absent color column. The demo grew
+      a channels section; the chart functions that take the mapping
+      arrive with Step 43. (The 2026-10-20 chart layer replaced the
+      per-family reads with a per-chart check — each chart carries its
+      own supported list, since the charts of one family read different
+      aesthetics — so the four family wrappers are gone and the
+      unsupported-channel message names the chart.)
 
 ### Step 43 — T1 dataset charts
 
@@ -1418,17 +1471,162 @@ against the `Renderer` interface, not `SvgRenderer`.
 **Done when:** every `plot.*` chart in decision 17 is implemented on the
 T0 marks, with fixtures byte-identical on all five targets.
 
-- [ ] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
+- [x] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
       statistics, and OLS with a confidence band; `normal_quantile` and
-      `normal_cdf` internal to `plot` (decision 13).
-- [ ] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
-- [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
-      `plot.box`, `plot.violin`.
-- [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
-      `plot.point`.
-- [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
-- [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
-      layer; demos and byte-identical goldens.
+      `normal_cdf` internal to `plot` (decision 13). Landed in
+      `internal/stats.emo`: `sort` (a bottom-up merge sort through the
+      ArrayBuilder), `quantile`, `describe`, `histogram_bins` (the
+      `hist` mark's own `bin_index`, so a column and a mark built from
+      it always agree), `ecdf`, `box_stats` (Tukey whiskers and fliers),
+      `ols` with `ols_band` (the large-sample band, its critical value
+      the Acklam `normal_quantile`), `normal_cdf` (Zelen–Severo), and
+      the `exp` behind the KDE, carried internal by the
+      `scale.log10` precedent so `plot` stays dependency-free. Verified
+      on all six paths — interp, c, ocaml, ts, wasm, beam — with
+      hand-checked values and the raise paths byte-identical.
+- [x] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
+      Each chart reads a `Table` through the channel mapping and answers
+      a whole `Figure` — one axes, labelled from the channel's column
+      names, carrying the marks the mapping builds. `x` and `y` are
+      required and numeric; rows where either is absent drop out, and a
+      chart with no drawable row raises. The reads are per chart —
+      scatter `color`/`size`/`marker`, line `color`/`marker`/`dash`, reg
+      only the pair — and a channel the chart does not read raises. The
+      `color` dispatch rides T42.3's: a label column splits the rows
+      into one series per sorted level (palette color, the level in the
+      legend, a level two grouping channels share named once), a number
+      column colors a scatter's points through the colormap — which
+      grew the `Scatter` mark per-point color and size overrides, the
+      `size` channel's span normalization reading the same way (half to
+      one and a half times the style's size). Grouping channels read
+      label columns and pick each level's marker (the six shapes,
+      wrapping) and dash (the four patterns); groups form over the
+      channels' combined levels, ordered by their sorted positions. The
+      line draws each series in the rows' own order — row order is
+      intent. `reg` draws the points, the OLS line (`fit`), and the 95%
+      confidence band under them first, sampled over the kept span at
+      fifty grid points through `ols_band` — which gave `plot.mark` its
+      sixth mark, `band` (one polygon, upper curve forward and lower
+      back, the factory checking matched lengths and ascending xs). The
+      facet channels pass the check and raise until the chart layer's
+      panel splitting lands. Verified on all six paths — interp, c,
+      ocaml, ts, wasm, beam — with the demo golden byte-identical
+      (`plot_demo` grew a relational section: a grouped scatter with the
+      size channel, a two-level line with the dash channel, a reg with
+      its band) and thirteen raise messages byte-identical.
+- [x] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
+      `plot.box`, `plot.violin`. The first three read one numeric
+      column — required through the new single-`x` read — and draw one
+      mark per `color` level through the T43.2 grouping, the levels in
+      their sorted order: `hist` counts into equal-width bins spanning
+      the kept values' shared range, the square root of the count of
+      them, so the levels compare on one grid; `kde` draws one density
+      curve per level, the bandwidth Silverman's rule answers (new
+      `internal.stats.silverman`: 0.9 × min(σ, IQR/1.34) × n^(−1/5),
+      the fifth root through the carried `exp` and `scale.log10`, a
+      column whose values do not spread raising); `ecdf` draws the
+      staircase, each value's cumulative proportion stepping at the
+      value. `box` and `violin` sit on the `x` column's levels — a
+      number column there raises — and summarize each level's `y`
+      through the Tukey statistics: `box` draws the whiskers, the
+      quartile box, the median line, and the fliers, `violin` a
+      mirrored density per level over the same Silverman bandwidth and
+      grid shape, the densities normalized across the row — a level
+      whose values do not spread raises naming the level. Both gave
+      `plot.mark` two marks: `BoxPlot` (named for the language's `Box`)
+      and `Violin`, flat parallel arrays over the categorical face, the
+      factories checking matched lengths. The `color` channel is not
+      read by `box` or `violin` yet. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew a distribution section: a
+      two-class score table through all five charts) and ten raise
+      messages byte-identical. Landing the demo exposed two beam
+      runtime bugs, both fixed in the same commit: `emo_g6_sci` trimmed
+      with `string:trim(binary, trailing, binary)` — the third argument
+      is a character list, so any float whose %g form needs scientific
+      notation died in a function_clause (the KDE's small densities are
+      the first figures to draw one) — and the %g decimal tail kept
+      Erlang `compact`'s final `.0` where the interpreter's %g says
+      `204`, now stripped.
+- [x] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
+      `plot.point`. All four sit on the `x` column's levels — a number
+      column there raises. `bar` and `point` need the `y` channel and
+      aggregate each level's observed values by their mean — one bar
+      per level, and one stamped, connected mean walking the bands in
+      their sorted order. `count` needs no `y` at all: one bar per
+      level, its height the number of rows the level carries. `strip`
+      draws the raw points at their bands' centers, one mark per
+      `color` level through the T43.2 grouping — the points unjittered
+      and in the rows' own order, so overlapping points are the data.
+      Two marks joined `plot.mark`: `Strip` (a scatter that declares
+      the bands, styled with the existing `ScatterStyle`) and `Point`
+      (a connected mean row, styled with the existing `LineStyle` plus
+      a `point_style` default) — the categorical faces of the two T0
+      marks, so the axis labels the levels they draw on. `bar`, `count`,
+      and `point` do not read the `color` channel yet. Verified on all
+      six paths — interp, c, ocaml, ts, wasm, beam — with the demo
+      golden byte-identical (`plot_demo` grew a categorical section: a
+      two-region sales table through all four charts) and eight raise
+      messages byte-identical.
+- [x] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`. Both read
+      the whole table as a matrix — the numeric columns the cells'
+      columns, the rows the cells' rows, exactly one label column
+      naming the rows (none or several number them from 1) — and the
+      mapping carries only the facet channels, so it is normally empty.
+      Each cell takes its color where its value sits on the cells' own
+      span through the theme colormap, a constant matrix at the low end.
+      `clustermap` reorders the rows and the columns by average-linkage
+      clustering over their euclidean distances (new
+      `internal.stats.cluster_order`: the base distance matrix, then
+      merges of the closest alive pair by mean pairwise distance, each
+      merge ordering its halves by their smallest leaf, the dead flags
+      a `Map` since arrays do not index-assign); the trees are not
+      drawn, the order is the clustering. The `Heatmap` mark joined
+      `plot.mark` — pre-colored cells row major, no style, out of the
+      legend — and the `Mark` interface grew `y_labels`, the categorical
+      y face: `draw_axes` lets a mark carrying row names own the y
+      annotation at its band centers, the way `x_labels` owns the x
+      one, so a heatmap ticks names on both axes while every other mark
+      answers an empty list. The charts pin the axes domains to the
+      exact cell counts through `with_x_domain`/`with_y_domain`, so no
+      nice ceiling leaves a dead band. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew a matrix section: a 4 × 4
+      correlation table as heatmap and clustermap) and five raise
+      messages byte-identical.
+- [x] **T43.6** — Apply faceting, palettes, and themes at the chart
+      layer; demos and byte-identical goldens — carrying T41.7's level
+      splitting, per-panel level labels, and the one shared legend.
+      Every chart now reads the `facet_row` and `facet_col` channels:
+      each names a label column, and its sorted levels split the chart
+      into panels — rows × cols, one channel alone a strip — every cell
+      drawing the chart over the rows it holds, so a level combination
+      with no rows stays blank, and the facet columns stay out of a
+      heatmap's row-name rule. The panels compare: the figure keeps
+      `Share.all` with blank cells out of the union (the matrix charts
+      keep their own cell grids under `Share.none`); each panel is
+      titled from its levels — `time = Lunch`, both facets joined —
+      through the new `Axes.title` (`with_title`); the axis labels sit
+      at the outer edge only; and the panels' legends give way to one
+      legend for the whole figure at its right, once by label, through
+      the new `Figure.shared_legend` (`with_shared_legend`), which also
+      takes that column out of the grid's width. The chart layer's
+      palette and colormap resolution is unchanged — group colors
+      resolve through the theme palette by the level's sorted position
+      and numeric colors through the colormap at build time, so the
+      same level is the same color in every panel. Each chart also
+      answers its single-panel form as `<chart>_axes` — fourteen public
+      cores over a `panel_axes` kind dispatch the faceted assembler
+      loops through — with `rows_of` the sub-table a cell draws. The
+      landing exposed one more beam gap, fixed in the same commit:
+      indexing a value whose static type is dynamic (an array that
+      started as a bare `[]`) fell to `lists:nth` even when the value
+      was a tuple — `emo_index` now dispatches on `is_tuple` at
+      runtime. `refuse_facets` is gone. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew three faceted figures: a 1 × 2
+      scatter with the shared legend, a 2 × 2 with a blank cell, and a
+      2 × 1 histogram) and five probe answers byte-identical.
 
 ### Step 44 — Terminal renderer
 
@@ -1436,11 +1634,66 @@ T0 marks, with fixtures byte-identical on all five targets.
 **Done when:** a figure renders to a terminal through the same Layer 0
 value graph, proving the contract is format-agnostic.
 
-- [ ] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
+- [x] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
       for marks, text labels) behind the `internal` `Renderer`
-      interface.
-- [ ] **T44.2** — Wire it through a CLI/demo path and test that the same
-      figure renders through SVG and the terminal.
+      interface. `internal/term.emo`'s `TermRenderer` answers the same
+      six calls as `SvgRenderer` onto a grid of braille cells: four
+      figure pixels make a column and eight a row, so a cell is two dots
+      by four with a terminal glyph's aspect, and the default 640 × 480
+      figure prints as 160 columns by 60 rows. Color is one ink — every
+      color becomes a level from 0 to 8, how many of a cell's eight dots
+      it lights, from its Rec. 601 luminance contrast against the paper,
+      the figure background the renderer is built with, all in integer
+      arithmetic. The fills (`rect`, `circle`, and `polygon`, the last a
+      scanline even-odd fill sampled at the dot centers) halftone at
+      their level through one dispersed dot order and clear the dots the
+      level leaves dark, so a paper-colored fill paints paper — a legend
+      panel covers what is under it, and the theme's own background rect
+      is a no-op; a line is one dot wide through Bresenham, solid from
+      level 2, every fourth dot at level 1, cleared at level 0, with a
+      dash pattern three dots on and two off; text lands as characters
+      on the row holding the middle of its glyphs, from its anchor,
+      always over the dots in its cells, split by UTF-8 sequence; and
+      anything off the grid is clipped. The figure walk left `svg()` for
+      a renderer-agnostic `render(r, fig)` — `svg` and the new
+      `plot.terminal(fig)` differ only in the renderer they construct —
+      and the SVG goldens stayed byte-identical. Two target gaps
+      surfaced and were cleared on the package side: the `c` target
+      refuses the bitwise operators on a dynamic word (a byte read back
+      from a `Bytes` field), so the cell update is arithmetic —
+      `(cur / bit) % 2` tests the bit and `cur ± bit` flips it; and the
+      `typescript` runtime's `String.length()` counts UTF-16 code units
+      where every other path counts UTF-8 bytes, which overran the
+      `Buffer` the moment it carried three-byte braille — `Buffer.to_string`
+      now sums the encoded chunks' byte lengths, and the divergence
+      itself is recorded in `CHECK.md`. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with four probes byte-identical
+      (a bar figure, a two-line figure with a dashed legend entry, the
+      heatmap, and the dark theme), and `dune test` green.
+- [x] **T44.2** — Wire it through a CLI/demo path and test that the same
+      figure renders through SVG and the terminal. `examples/plot_demo`
+      now holds four of its figures as values — the bar figure, the
+      two-line figure with its dashed legend entry, the regression chart
+      with its band and points, and the heatmap — prints each as SVG
+      where it always did, and prints the same four values again through
+      `plot.terminal` at the end, so one `Figure` value reaches both
+      renderers and both outputs sit in one golden: `expected.txt` grew
+      by the four terminal renders (244 lines) with its SVG prefix
+      byte-identical, and the standing golden suites pin it on all six
+      paths — interp and the `c`, `ocaml`, `typescript`, `wasm`, and
+      `beam` builds — byte-for-byte (`dune test` green, 0 failures). The
+      four figures between them exercise every primitive the renderers
+      answer: `rect` fills and the frame's lines, the dashed line and the
+      legend panel, the band `polygon` with `circle` markers, and the
+      heatmap's cells across the ink levels. `docs/stdlib/plot.md` (and
+      its `zh-CN` mirror) gained `terminal` in the surface, a terminal
+      paragraph under Output — the cell geometry, `with_size(320.0, 240.0)`
+      for an 80-column terminal, the ink rule, what does not render — the
+      worked example printing both, and the landed list naming the second
+      renderer; `docs/visualization.md`'s Layer 0 records the landing;
+      `plan/README.md` marks Step 44 done. Step 44's exit holds: a figure
+      renders to a terminal through the same Layer 0 value graph, and the
+      contract is format-agnostic.
 
 ### Step 45 — PNG renderer
 
@@ -1448,11 +1701,130 @@ value graph, proving the contract is format-agnostic.
 **Done when:** `plot.png(fig)` emits a valid PNG on all five targets,
 from the same value graph, with no host image library.
 
-- [ ] **T45.1** — Pure-Emo DEFLATE with stored blocks.
-- [ ] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
-- [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
-- [ ] **T45.4** — Text through the Hershey stroke font.
-- [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
+- [x] **T45.1** — Pure-Emo DEFLATE with stored blocks. `internal/png.emo`
+      opens the PNG backend's byte level with `deflate_stored`: the raw
+      DEFLATE stream over an `Array[Int64]` of bytes, one block per 65535
+      bytes behind its five-byte header — BFINAL/BTYPE, LEN, and the
+      one's complement of LEN — and a single empty final block for empty
+      input. The byte arrays are `Array[Int64]` rather than `Bytes`: an
+      element read stays a static Int64, and the checksums and the
+      Huffman packer ahead need bitwise work the dynamic world refuses
+      (the term renderer's arithmetic-bit rule). Verified against an
+      external decompressor and across the paths at once: seven probes —
+      empty, one byte, a 255-byte run, the 256, 65535, and 65541
+      boundaries, and a varied 70000 — decompress byte-identical to
+      their inputs under Python's zlib on the interpreter, and the c,
+      ocaml, typescript, wasm, and beam builds print the probe's 201,640
+      lines byte-identical to it (`dune test` green).
+- [x] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+      `internal/png.emo` grows the real compressor: one fixed-Huffman
+      block behind greedy LZ77 over hash chains — a three-byte hash
+      into 32768 buckets, earlier positions threaded through a `prev`
+      table, both mutable `Bytes` three little-endian bytes a slot
+      (zero-filled slots say none, because position 0 is real) — a
+      match of four or more winning over literals, sixteen candidates a
+      walk, every covered position chained. The bit layer is a
+      `put_bits` helper answering `(acc, cnt)` with the builder passed
+      through, Huffman codes MSB first and the extra bits LSB first,
+      the fixed codes computed (`lit_code`, `len_code`, `dist_code`) —
+      the length symbol goes out through its `lit_code` entry, not as
+      the symbol number. `crc_table`/`crc_push`/`crc32` carry the
+      reflected 0xEDB88320 polynomial (the constant is decimal in Emo —
+      a hand conversion was wrong twice until Python generated it),
+      `adler32` the two sums mod 65521, and `zlib_stream`, `chunk`, and
+      `png_file` assemble the wrapper and the file: the 120, 156
+      header, the four-byte big-endian frames, IHDR 8-bit truecolor,
+      IDAT, IEND, every chunk CRC'd over kind and data. The stored
+      blocks of T45.1 gave way — the LZ77 stream replaces them. The
+      missing block header (BFINAL, BTYPE 01) was the first probe's
+      finding, the symbol-for-code bug the second; then the ground
+      truth held everywhere at once: six probes decompress byte-exact
+      under Python's zlib (up to 65800 bytes at 45×), the checksums
+      equal `zlib.crc32`/`adler32` (including `0xCBF43926` for
+      `123456789`), and the assembled 4 × 3 PNG parses chunk by chunk —
+      CRCs good, IDAT back to the exact scanlines, `file`/`sips`
+      calling it a valid image — with all five compiled targets
+      printing the probe's 4191 lines byte-identical (`dune test`
+      green). Found along the way, recorded in `CHECK.md`: a `const`
+      shadowing an outer `var` has no semantics the paths agree on
+      (interp rebinds flat, `c` scopes, the other four refuse) — the
+      packer declares once and assigns in branches.
+- [x] **T45.3** — A scanline polygon/line rasterizer with supersampling.
+      `internal/png.emo` grows `PngRenderer`, the third `Renderer`: the
+      display list drawn onto an RGB sample grid at 2 × supersampling —
+      every pixel 2 × 2 samples, the four averaged (+2, over 4, which
+      rounds to nearest) into the antialiased pixel. Fills are
+      scanlines: a rect's spans and a circle's chord per row between
+      `sample_from` edges, a polygon's even-odd crossings sorted per
+      sample row (`internal.term`'s `insert_sorted`, one internal
+      module reading another); a line is a Bresenham walk in sample
+      space with a square pen as wide as the stroke, the dash
+      vocabulary ("7 4", "1.5 3.5", "7 3 1.5 3") paced along the walk
+      by the distance travelled, a diagonal step worth 0.707 px. The
+      paper fills the grid at construction and every draw checks its
+      color with `write_color`'s message. And because the format is
+      binary, `finish()` now answers `Bytes` for every renderer — the
+      text formats are their UTF-8 bytes, `Buffer` grew `to_bytes`, and
+      `plot.svg`/`plot.terminal` take the string from it — the shape
+      `plot.png` needs, since a String cannot carry a PNG on
+      `typescript` at all (the codec's U+FFFD rule). Text checks its
+      color and waits for T45.4. Verified with a drawn probe — rect,
+      circle, triangle, a solid diagonal, a dashed stroke on white —
+      decoded pixel by pixel against Python (fills exact, the dash
+      running 7–8 on and 3–4 off), read back as an image, and
+      byte-identical across the six paths (`dune test` green). Two
+      target facts surfaced on the way, both recorded in `CHECK.md`: a
+      builtin method chained on a user-class method call mis-reads its
+      receiver on the interpreter (`b.to_bytes().length()` answers 0
+      where the const-bound form answers 8) — it emptied every SVG the
+      moment `finish()` went to bytes, so the package binds first and
+      calls after — and a class method named `to_bytes` is dispatched
+      to the String builtin on `wasm` whatever the receiver, so the
+      buffer's byte side is `join()`.
+- [x] **T45.4** — Text through the Hershey stroke font.
+      `internal/font.emo` carries the 95 printable ASCII glyphs of the
+      Hershey Simplex set — public domain, Dr. A. V. Hershey's
+      lettering for the National Bureau of Standards — as three flat
+      tables: each glyph's advance, where its encoding starts, and the
+      encoding itself, stroke count then point count then points, x
+      right and y up from a baseline of 0 under a cap height of 21
+      (bindings lower-case: a capital names a type). `PngRenderer.text`
+      draws each glyph's strokes through the line path, scaled so the
+      cap is 0.7 of the size, laid from the anchor over the summed
+      advances, the call's y the baseline, bold double the stroke
+      width, and a code outside the printable band falling to the
+      space. Verified with a drawn probe — a bold centered title, a
+      start-anchored and an end-anchored label, a digits-and-punctuation
+      line — read back as an image, the strokes legible and the anchors
+      placed, and byte-identical across the six paths (`dune test`
+      green).
+- [x] **T45.5** — `plot.png(fig)`, its demo, and goldens. `plot.png`
+      joins `svg` and `terminal` at the root: one `render` walk, the
+      `PngRenderer` behind it, the answer `Bytes` — a PNG is binary and
+      a `String` cannot carry it on `typescript`. `examples/png_demo`
+      prints two small figures both ways, the terminal rendering that
+      pins the value graph and the PNG's byte length and 33-byte head —
+      signature, dimensions, bit depth — that pins the file, and the
+      golden rides all five target lists (`c`, `wasm`, and `beam` in
+      `emo_cli_test`, the ocaml bootstrap, and the `typescript` list in
+      `emo_project_test`), byte-for-byte with the interpreter, beside
+      `plot_demo`'s standing six-path golden. `docs/stdlib/plot.md`
+      (and its `zh-CN` mirror) gained `png` in the surface, the PNG
+      paragraph under Output, and the landed list's third renderer;
+      `docs/visualization.md`'s Layer 0 records the landing with
+      `finish()` at `Bytes`; `plan/README.md` marks Step 45 done.
+      Step 45's exit holds: `plot.png(fig)` emits a valid PNG on all
+      five targets, from the same value graph, with no host image
+      library. The goldens surfaced two more target walls, both
+      recorded in `CHECK.md` and both dodged by representation: beam
+      indexes an `Array` by walking its underlying list (the
+      230,640-byte deflate stream ran 19 minutes until the bytes moved
+      into chunked stores — `Pack` for the stream, one `Bytes` row a
+      sample row in a `Map` for the grid — 4 seconds after, byte for
+      byte the same file), and a class method named like a builtin
+      dispatches to the shape tests on `beam` when the IR loses a
+      constructor's type, so `Chain` answers `slot`/`set_slot` and
+      `Pack` answers `add`/`byte`/`count`.
 
 ---
 
@@ -2064,7 +2436,8 @@ byte-identical; and `CHECK.md` records all three as settled with the
       symbol") resolved to the second: the IR carries the symbol on an
       otherwise ordinary `func` record with an empty body, so both
       emitters were emitting a real function for a declaration that has
-      no Emo body.
+      no Emo body. Refined by T39.3: the declaration now imports cleanly
+      on every target, and the refusal moved to the call.
 - [x] **T50.2** — The `c` target's `raise` ends the logical process:
       `emo_raise` drains the current fiber's frame chain and halts it
       when it is not the root, keeping the render-and-`exit(1)` path for
@@ -2160,3 +2533,105 @@ the zh-CN mirrors).
       `docs/stdlib/http.md`'s "`https` needs TLS, which `c` refuses"
       retired, the zh-CN mirrors, the gates table and
       `plan/README.md`'s status table updated.
+
+## M19 — Map on `wasm` and `beam`
+
+`Map` is the one capability builtin the two remaining hosted targets
+refuse: the interpreter, `c`, `ocaml`, and `typescript` implement it,
+while `wasm` and `beam` reject a map literal at lowering (`the
+wasm/beam target does not support Map yet`, a refusal dating from when
+the two runtimes shipped in T16–T18). The refusal has grown
+load-bearing: the `plot` package's `Table` and channel vocabulary are
+Map-shaped (decision 4/10/16, Step 42 blocked on it), `slog`'s manifest
+narrows itself while the gap stands, and `Exception.new(data:)` — a
+Map — cannot carry crash context on either target (`CHECK.md` records
+the standing note). The mechanism exists on both sides already: `wasm`
+lowers the mutable `List` through WasmGC structs (`$vlist` over `$lnode`
+nodes, runtime functions 61–67) and `beam` through the process
+dictionary keyed by a fresh ref (`emo_list_new`, the `{'emo_list', K}`
+tag), each with the same shape of method surface Map needs. M19 lands
+Map through those precedents — the insertion order, the six key kinds,
+structural `==` (content equality, insertion order irrelevant, the
+interpreter's rule), and the `{key: value}` rendering byte-identical
+with the four targets that have it — and closes the recorded `wasm`
+send-snapshot remainder that the new mutability makes reachable
+(`CHECK.md`, step 50). Mutable kinds stay process-local on `beam` (the
+`List` precedent — a tag sent across processes fails loudly at first
+use, `emo_no_list` today, `emo_no_map` beside it); `riscv64` stays the
+one refusal, the capability tier frozen.
+
+### Step 52 — Map on `wasm` and `beam`
+
+**Prereq:** none (the interpreter and the `c`/`typescript`
+implementations are the semantic reference).
+**Done when:** a map program — literals, `Map.new`, the seven methods,
+structural `==`, the `{key: value}` print, aliasing through two
+bindings — runs byte-identical on all six paths (interp, c, ocaml, ts,
+wasm, beam); `Exception.new(data:)` carries data on `wasm` and `beam`;
+`send` delivers a snapshot on `wasm`; `slog` declares the two targets
+and its golden joins their lists; every existing golden on every target
+stays byte-identical; the docs carry the story.
+
+- [x] **T52.1** — The wasm runtime's map structures: a `$vmap` — key
+      array, value array, count, in the `$vbuilder` doubling-buffer
+      shape, linear-scan lookup (plot-scale maps are small, and the
+      array order *is* the insertion order) — with the runtime
+      functions `map_new`, `map_get` (E3004
+      `no key ... in this Map` on a miss, the interpreter's error),
+      `map_set` (an existing key keeps its first-insert position),
+      `map_has`, `map_remove` (compaction preserving relative order),
+      `map_len`, `map_keys`, `map_values`, `map_str` (the
+      `{key: value}` rendering in insertion order, elements and keys
+      through the shared `to_str`), and the boxed-primitive key
+      equality helper; appended after the array/builder renderings with
+      the index table and `runtime_count` updated (main stays at 60,
+      List at 61–67, the map ops following).
+- [x] **T52.2** — The wasm lowering: `Map_lit` builds through
+      `map_new` (the emitter packs `Map.new`'s variadic pairs), the
+      seven methods dispatched on the receiver's `MapType`, structural
+      `==`, and `to_string` wired; the two `Lower_error` refusals in
+      `emo_wasm.ml` (the `Map_lit` arm and the `MapType` method arm)
+      deleted, and the stale `Make_exception` comment updated so
+      `Exception.new(data:)` lowers.
+- [x] **T52.3** — The wasm send snapshot: `rt_send` deep-copies the
+      message before it joins the mailbox — Map, Box, List, and
+      ArrayBuilder rebuilt (a map copy preserving insertion order), the
+      immutable kinds and `Pid` passing through — the `c` runtime's
+      `emo_deep_copy` rule, closing the recorded conformance remainder
+      (`CHECK.md`, step 50); the `cross_target` corpus pins it on
+      `wasm`.
+- [x] **T52.4** — The beam runtime's map helpers under the
+      `emo_list_new` discipline: `emo_map_new/1` mints a fresh ref and
+      stores `{Order, Pairs}` — the insertion-order key list and an
+      Erlang map key→value — in the process dictionary behind
+      `{'emo_map', K}`; `emo_map_get/2` (the interpreter's E3004
+      message on a miss), `emo_map_set/3` (first-insert position kept),
+      `emo_map_has/2`, `emo_map_remove/2` (the order list filtered),
+      `emo_map_length/1`, `emo_map_keys/1`, `emo_map_values/1`,
+      `emo_map_str/1`, and `emo_map_equal/2` (same size, per-key value
+      equality, order irrelevant); keys are the six hashable primitives
+      compared with `=:=`, so `1` and `1.0` stay distinct.
+- [x] **T52.5** — The beam lowering: `Map_lit` → `emo_map_new`, the
+      method arms splitting on the `{'emo_map', K}` tag where a name
+      serves several types (`get`, `length`, `to_string` — the bytes
+      precedent), structural `==` through `emo_map_equal`, and the
+      stale `Make_exception` comment updated so `Exception.new(data:)`
+      carries data on `beam`.
+- [x] **T52.6** — The golden: `examples/map_demo` — a literal,
+      `Map.new(pairs)`, the seven methods, insertion order through
+      `keys()`/`values()`, first-insert positions, removal, aliasing,
+      `==` (equal content in different insertion order, and unequal
+      maps), the `{key: value}` print, and an `Exception.new` carrying
+      `data` — `expected.txt` taken from the interpreter and
+      byte-identical in all five golden lists; the check-time key-kind
+      pin (E4020) rides the existing diagnostics tests.
+- [x] **T52.7** — The stdlib widening: `slog`'s manifest gains `wasm`
+      and `beam` (its close-out's recorded condition — declares the
+      targets that work today, widens when the gap closes), and
+      `slog_demo` joins the wasm and beam golden lists byte-for-byte.
+- [x] **T52.8** — The docs: `docs/demo-targets.md`'s capability story
+      (the `wasm`/`beam` Map refusals retire; `riscv64` stays the one),
+      `docs/stdlib.md`'s slog row, `docs/visualization.md`'s
+      five-target Table claim now literally true, `CHECK.md`'s T16.5
+      note (`slog` waits on `Map`) recording its resolution, the zh-CN
+      mirrors, and `plan/README.md`'s status table.

@@ -62,10 +62,17 @@ The packages:
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars and elementary functions | all five |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
-| [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
+| [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
+
+"all five" names the hosted targets those packages declare — `c`,
+`ocaml`, `typescript`, `wasm`, and `beam`. It is the package's list, not
+the language's: the interpreter evaluates a program without producing an
+artifact, and the full build-target set — `c`, `ocaml`, `typescript`,
+`browser`, `wasm`, `beam`, `riscv64` — is walked end to end in
+[`docs/demo-targets.md`](demo-targets.md).
 
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
@@ -559,12 +566,14 @@ uses `log(x) = e*ln2 + log(m)` with the atanh series. Out-of-domain
 arguments are contract violations, not values — `log` of a non-positive
 number and `exp`'s overflow raise, because the beam target's Erlang
 floats cannot represent NaN or infinity at all, so returning one is not
-an option. A native fast path (the host libm through `foreign def`) is
-deliberately absent: it would refuse the wasm/typescript/beam targets
-and pin the output to a platform.
+an option. The opt-in native fast path lives under distinct `*_native`
+names (`exp_native`, `log_native`, `log10_native`, `pow_native`) and is
+pinned to `c`/`ocaml`; off those targets the definitions are inert and
+only a call refuses, so the package still imports everywhere.
 
-Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
-Demo: `examples/math_demo`.
+Targets: all five for the plain functions; the `*_native` functions run
+on `c` and `ocaml`. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
+Demos: `examples/math_demo`, `examples/math_native`.
 
 ## The `plot` package
 
@@ -651,7 +660,7 @@ Attrs are a `Map[String, String]`; keys are ASCII letters, digits,
 before filtering — a bad key is a mistake even when the record would
 not have printed.
 
-Targets: `["ocaml", "c", "typescript"]`. Reference:
+Targets: all five. Reference:
 [`docs/stdlib/slog.md`](stdlib/slog.md) · Demo: `examples/slog_demo`.
 
 ## The `sync` package

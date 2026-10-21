@@ -1,5 +1,8 @@
 // The backend contract: a small display list any output format can
-// answer. `SvgRenderer` is the only implementation in T0.
+// answer, finished into the format's bytes — UTF-8 text for the SVG
+// document and the terminal's braille, the file itself for PNG.
+// `SvgRenderer` answers it here; `internal.term` and `internal.png`
+// answer the same calls.
 
 enum Anchor { start, middle, end }
 enum Weight { regular, bold }
@@ -7,9 +10,10 @@ enum Weight { regular, bold }
 interface Renderer {
   def rect(x Float64, y Float64, w Float64, h Float64, fill (Int64, Int64, Int64)) Void
   def circle(cx Float64, cy Float64, r Float64, fill (Int64, Int64, Int64)) Void
-  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64) Void
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64, pattern String) Void
+  def polygon(xs Array[Float64], ys Array[Float64], fill (Int64, Int64, Int64)) Void
   def text(x Float64, y Float64, body String, size Float64, anchor Anchor, weight Weight, fill (Int64, Int64, Int64)) Void
-  def finish() String
+  def finish() Bytes
 }
 
 class SvgRenderer {
@@ -43,13 +47,30 @@ class SvgRenderer {
     self.buf.write("\"/>\n")
   }
 
-  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64) Void {
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64, pattern String) Void {
     self.buf.write("<line x1=\"").write_f64(x1)
     self.buf.write("\" y1=\"").write_f64(y1)
     self.buf.write("\" x2=\"").write_f64(x2)
     self.buf.write("\" y2=\"").write_f64(y2)
     self.buf.write("\" stroke=\"").write_color(stroke)
     self.buf.write("\" stroke-width=\"").write_f64(width)
+    if pattern != "" {
+      self.buf.write("\" stroke-dasharray=\"").write(pattern)
+    }
+    self.buf.write("\"/>\n")
+  }
+
+  def polygon(xs Array[Float64], ys Array[Float64], fill (Int64, Int64, Int64)) Void {
+    self.buf.write("<polygon points=\"")
+    for var i = 0; i < xs.length(); i = i + 1 {
+      if i > 0 {
+        self.buf.write(" ")
+      }
+      self.buf.write_f64(xs[i])
+      self.buf.write(",")
+      self.buf.write_f64(ys[i])
+    }
+    self.buf.write("\" fill=\"").write_color(fill)
     self.buf.write("\"/>\n")
   }
 
@@ -74,8 +95,8 @@ class SvgRenderer {
     self.buf.write("</text>\n")
   }
 
-  def finish() String {
+  def finish() Bytes {
     self.buf.write("</svg>\n")
-    return self.buf.to_string()
+    return self.buf.join()
   }
 }

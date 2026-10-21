@@ -1,17 +1,15 @@
-// The output buffer the SVG renderer writes through. Chunked (a deque of
-// pieces plus a byte count), so writing is linear and `to_string` joins
-// once — the same shape `bufio.BytesSink` uses, kept private here because
-// `plot` rides all five targets and `bufio` is native-only.
+// The output buffer the renderers write through. Chunked (a deque of
+// pieces), so writing is linear and `to_string` joins once — the same
+// shape `bufio.BytesSink` uses, kept private here because `plot` rides
+// all five targets and `bufio` is native-only.
 class Buffer {
   def init() {
     self.chunks = List.new([])
-    self.size = Box.new(0)
   }
 
   def write(s String) Buffer {
     if s != "" {
       self.chunks.push_back(s)
-      self.size.replace(self.size.read() + s.length())
     }
     return self
   }
@@ -25,26 +23,60 @@ class Buffer {
   }
 
   def write_color(c (Int64, Int64, Int64)) Buffer {
+    if c[0] < 0 || c[0] > 255 || c[1] < 0 || c[1] > 255 || c[2] < 0 || c[2] > 255 {
+      raise Exception.new(message: "plot: a color's channels live in 0 to 255, got (${c[0]}, ${c[1]}, ${c[2]})")
+    }
     return self.write("rgb(" + c[0].to_string() + "," + c[1].to_string() + "," + c[2].to_string() + ")")
   }
 
-  def length() Int64 {
-    return self.size.read()
-  }
-
-  // Terminal: the buffer is done once its string is taken.
+  // Terminal: the buffer is done once its string is taken. Every chunk
+  // is encoded once and the byte lengths summed before the copy — the
+  // byte count is the encoding's, not the chunk's character count.
   def to_string() String {
-    const out = Bytes.new(self.size.read())
     const n = self.chunks.length()
-    var at = 0
+    const parts = List.new([])
+    var total = 0
     for var i = 0; i < n; i = i + 1 {
       const chunk = self.chunks.pop_front()
       const data = chunk.to_bytes()
+      total = total + data.length()
+      parts.push_back(data)
+    }
+    const out = Bytes.new(total)
+    var at = 0
+    for var i = 0; i < n; i = i + 1 {
+      const data = parts.pop_front()
       for var j = 0; j < data.length(); j = j + 1 {
         out.set(at, data.get(j))
         at = at + 1
       }
     }
     return out.to_string()
+  }
+
+  // The same assembly answering bytes — the name stays clear of
+  // `to_bytes`, which the wasm target dispatches to the String builtin
+  // whatever the receiver (CHECK.md). The body is to_string's, by the
+  // same hand: a class method's result must not be chained on.
+  def join() Bytes {
+    const n = self.chunks.length()
+    const parts = List.new([])
+    var total = 0
+    for var i = 0; i < n; i = i + 1 {
+      const chunk = self.chunks.pop_front()
+      const data = chunk.to_bytes()
+      total = total + data.length()
+      parts.push_back(data)
+    }
+    const out = Bytes.new(total)
+    var at = 0
+    for var i = 0; i < n; i = i + 1 {
+      const data = parts.pop_front()
+      for var j = 0; j < data.length(); j = j + 1 {
+        out.set(at, data.get(j))
+        at = at + 1
+      }
+    }
+    return out
   }
 }

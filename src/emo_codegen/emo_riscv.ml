@@ -73,6 +73,8 @@ type env = {
       (* each enclosing loop's (exit label, continue label), innermost
          first: break jumps to the exit, continue to the head — or to
          the post label, on a `for`, so the post runs first *)
+  fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -121,6 +123,11 @@ let fresh_label env base =
   Printf.sprintf ".L%s_%d" base env.labels
 
 let func_label (fname : string) : string = "emo_" ^ fname
+
+(* The current program's const thunks (mangled names); set by [emit].
+   Each memoizes into a .data flag/value pair (see
+   [emit_const_function]). *)
+let const_thunks : string list ref = ref []
 
 (* ---- Class metadata ---- *)
 
@@ -418,6 +425,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       emit_expr env d e;
       put env "%s:\n" l_end
   | Call { func; args } ->
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the riscv64 target does not support a call to the foreign \
+                 definition `%s` yet"
+                func));
       emit_args env d args;
       put env "    call %s\n" (func_label func)
   | Call_value { f; args } ->
@@ -1212,6 +1226,59 @@ and describe_expr (e : Emo_ir.expr) : string =
   | _ -> "this expression"
 
 (* ---- Function emission ---- *)
+
+(* A const thunk: a flag/value word pair in .data memoizes the
+   initializer's result. The first call stores a0 into the value slot
+   and flips the flag; every later call returns the stored word — an
+   allocating initializer keeps its identity, as in the interpreter.
+   The body is one `return <expr>`; its jump lands on the store block,
+   which the fall-off path shares. *)
+let emit_const_function env (f : Emo_ir.func) : unit =
+  let n = Emo_ir.sanitize_ident f.Emo_ir.fname in
+  let done_label = Printf.sprintf "emo_const_done_%s" n in
+  let val_label = Printf.sprintf "emo_const_val_%s" n in
+  let store = fresh_label env "const_store" in
+  let hit = fresh_label env "const_hit" in
+  let frm =
+    {
+      fbuf = Buffer.create 512;
+      slots = [];
+      named = 0;
+      temps = 0;
+      ret = store;
+      size = 0;
+    }
+  in
+  env.cur <- Some frm;
+  collect_stmts frm f.Emo_ir.fbody;
+  frm.temps <- stmts_depth f.Emo_ir.fbody + 2;
+  frm.size <- (8 + (8 * (frm.named + frm.temps)) + 15) / 16 * 16;
+  gput env "%s:\n" (func_label f.Emo_ir.fname);
+  gput env "    addi sp, sp, -%d\n" frm.size;
+  gput env "    sd ra, 0(sp)\n";
+  gput env "    la t0, %s\n" done_label;
+  gput env "    ld t1, 0(t0)\n";
+  gput env "    bnez t1, %s\n" hit;
+  (* The body writes into [frm.fbuf] through [put]; its `return` jumps
+     to the store label, so the value is in a0 when the store block
+     runs. Everything after the prologue shares the frame buffer, and
+     the whole function is appended to the module in one place — the
+     order [emit_function] keeps. *)
+  List.iter (emit_stmt env) f.Emo_ir.fbody;
+  put env "%s:\n" store;
+  put env "    la t2, %s\n" val_label;
+  put env "    sd a0, 0(t2)\n";
+  put env "    li t1, 1\n";
+  put env "    la t0, %s\n" done_label;
+  put env "    sd t1, 0(t0)\n";
+  put env "%s:\n" hit;
+  put env "    la t0, %s\n" val_label;
+  put env "    ld a0, 0(t0)\n";
+  put env "    ld ra, 0(sp)\n";
+  put env "    addi sp, sp, %d\n" frm.size;
+  put env "    ret\n";
+  Buffer.add_buffer env.buf frm.fbuf;
+  env.cur <- None
 
 (* One function: label, prologue (ra + the param/capture spill), body,
    epilogue. A closure body takes its record in t0 and spills the
@@ -3071,6 +3138,7 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
 
 let emit (program : Emo_ir.program) : string =
   if program.pglobals <> [] then refuse "module-level `var`";
+  const_thunks := program.Emo_ir.pconsts;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
   let classes =
     List.mapi
@@ -3123,6 +3191,11 @@ let emit (program : Emo_ir.program) : string =
       ifaces = program.pinterfaces;
       enums = [];
       loops = [];
+      fforeigns =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            if f.fforeign <> None then Some f.fname else None)
+          program.pfuncs;
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -3142,10 +3215,14 @@ let emit (program : Emo_ir.program) : string =
   gput env "\n    .section .text\n";
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.fforeign <> None then refuse "`foreign def`";
-      emit_function env
-        ~label:(func_label f.Emo_ir.fname)
-        ~params:f.fparams ~captures:[] ~body:f.fbody)
+      if f.fforeign = None then begin
+        if f.fparams = [] && List.mem f.fname !const_thunks then
+          emit_const_function env f
+        else
+          emit_function env
+            ~label:(func_label f.Emo_ir.fname)
+            ~params:f.fparams ~captures:[] ~body:f.fbody
+      end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
   List.iter
@@ -3209,6 +3286,20 @@ let emit (program : Emo_ir.program) : string =
             | None -> gput env "    .dword 0\n")
           program.pclasses)
       program.pinterfaces
+  end;
+  (* The const thunks' memo slots: one flag/value word pair each, in
+     .data, read by [emit_const_function]. *)
+  if !const_thunks <> [] then begin
+    gput env "\n# ---- Const memo slots ----\n\n";
+    gput env "    .section .data\n    .align 3\n";
+    List.iter
+      (fun name ->
+        let n = Emo_ir.sanitize_ident name in
+        gput env "emo_const_done_%s:\n" n;
+        gput env "    .dword 0\n";
+        gput env "emo_const_val_%s:\n" n;
+        gput env "    .dword 0\n")
+      !const_thunks
   end;
   (* The per-class tables and the two id-indexed pointer tables. The
      pointer tables always exist: the runtime's dynamic helpers
