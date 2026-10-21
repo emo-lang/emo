@@ -1983,13 +1983,25 @@ module Publish = struct
      identifier can spell it), and dash-free segments keep the archive
      filename's single-dash joins unambiguous. Plain (stdlib-style) names
      are not publishable. *)
-  let valid_name_part (s : string) : bool =
-    String.length s >= 1
-    && String.length s <= 64
-    && (match s.[0] with 'a' .. 'z' -> true | _ -> false)
-    && String.for_all
-         (fun c -> (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_')
-         s
+  let name_part_problem (s : string) : string option =
+    let ident_char c =
+      (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_'
+    in
+    let rec first_bad i =
+      if i >= String.length s then None
+      else if ident_char s.[i] then first_bad (i + 1)
+      else Some s.[i]
+    in
+    if s = "" then Some "it is empty"
+    else if String.length s > 64 then Some "it is longer than 64 characters"
+    else if not (match s.[0] with 'a' .. 'z' -> true | _ -> false) then
+      Some (Printf.sprintf "`%c` is not a lowercase letter" s.[0])
+    else
+      match first_bad 0 with
+      | Some c -> Some (Printf.sprintf "`%c` is not a letter, a digit or `_`" c)
+      | None -> None
+
+  let valid_name_part (s : string) : bool = name_part_problem s = None
 
   let validate_name (name : string) : (string * string, string) result =
     match String.split_on_char '/' name with

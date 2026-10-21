@@ -2098,60 +2098,87 @@ let doctor_cmd =
 
 (* `emo new <name>`: the project scaffold — package.emo, a hello-world
    main.emo with its test under test/, and .gitignore (T24.3). Strictness
-   holds: an existing
-   directory or clashing files refuse; nothing is ever overwritten. The
-   manifest carries the plain name when no owner is given — running,
-   checking, and building work at once, and `emo emoji publish` names the
-   owner/name rule when the package is published. *)
+   holds: the name is refused unless every part is a lowercase identifier
+   (a `-` can never be required, so it is refused here rather than at
+   publish time), an existing directory or clashing files refuse, and
+   nothing is ever overwritten. The manifest carries the plain name when
+   no owner is given — running, checking, and building work at once, and
+   `emo emoji publish` names the owner/name rule when the package is
+   published. *)
 let scaffold ~(path : string) : int =
   let leaf = Filename.basename path in
+  (* The manifest name: an `owner/name` argument is taken as given;
+     anything else is the leaf name — running and building work at once,
+     and `emo emoji publish` names the owner/name rule when it is time to
+     publish. *)
+  let stripped =
+    let n = String.length path in
+    if n > 1 && path.[n - 1] = '/' then String.sub path 0 (n - 1) else path
+  in
+  let slashes =
+    String.fold_left (fun acc c -> if c = '/' then acc + 1 else acc) 0 stripped
+  in
+  let package_name =
+    if slashes = 1 && stripped.[0] <> '/' then stripped else leaf
+  in
+  (* Every part is held to the registry's segment rule: the short name is
+     what `require` binds, so it must spell an identifier, and the owner
+     follows the same rule. *)
+  let offending =
+    List.find_map
+      (fun part ->
+        match Emo_pkg.Publish.name_part_problem part with
+        | Some problem -> Some (part, problem)
+        | None -> None)
+      (String.split_on_char '/' package_name)
+  in
   if leaf = "." || leaf = ".." || leaf = "" || leaf = "/" then begin
     prerr_endline (Printf.sprintf "emo new: `%s` is not a project name" path);
     65
   end
-  else if Sys.file_exists path then begin
-    prerr_endline
-      (Printf.sprintf "emo new: refusing to overwrite — `%s` already exists"
-         path);
-    65
-  end
-  else begin
-    (* The manifest name: an `owner/name` argument is taken as given;
-       anything else is the leaf name — running and building work at
-       once, and `emo emoji publish` names the owner/name rule when it is
-       time to publish. *)
-    let stripped =
-      let n = String.length path in
-      if n > 1 && path.[n - 1] = '/' then String.sub path 0 (n - 1) else path
-    in
-    let slashes =
-      String.fold_left
-        (fun acc c -> if c = '/' then acc + 1 else acc)
-        0 stripped
-    in
-    let package_name =
-      if slashes = 1 && stripped.[0] <> '/' then stripped else leaf
-    in
-    let make_dirs dir =
-      let rec go d =
-        if not (Sys.file_exists d) then begin
-          go (Filename.dirname d);
-          Unix.mkdir d 0o755
+  else
+    match offending with
+    | Some (part, problem) ->
+        let rule =
+          "each part is a lowercase identifier: a letter, then letters, digits \
+           or `_`"
+        in
+        prerr_endline
+          (if part = package_name then
+             Printf.sprintf "emo new: `%s` is not a package name: %s — %s"
+               package_name problem rule
+           else
+             Printf.sprintf "emo new: `%s` is not a package name: `%s` — %s; %s"
+               package_name part problem rule);
+        65
+    | None ->
+        if Sys.file_exists path then begin
+          prerr_endline
+            (Printf.sprintf
+               "emo new: refusing to overwrite — `%s` already exists" path);
+          65
         end
-      in
-      go dir
-    in
-    let write name contents =
-      let oc = open_out_bin (Filename.concat path name) in
-      output_string oc contents;
-      close_out oc
-    in
-    make_dirs (Filename.dirname path);
-    Unix.mkdir path 0o755;
-    Unix.mkdir (Filename.concat path "test") 0o755;
-    write "package.emo"
-      (Printf.sprintf
-         {|package {
+        else begin
+          let make_dirs dir =
+            let rec go d =
+              if not (Sys.file_exists d) then begin
+                go (Filename.dirname d);
+                Unix.mkdir d 0o755
+              end
+            in
+            go dir
+          in
+          let write name contents =
+            let oc = open_out_bin (Filename.concat path name) in
+            output_string oc contents;
+            close_out oc
+          in
+          make_dirs (Filename.dirname path);
+          Unix.mkdir path 0o755;
+          Unix.mkdir (Filename.concat path "test") 0o755;
+          write "package.emo"
+            (Printf.sprintf
+               {|package {
   // The package name. A plain name works while the project stays local;
   // publishing (`emo emoji publish`) asks for the owner/name form,
   // e.g. "acme/hello".
@@ -2181,10 +2208,10 @@ let scaffold ~(path : string) : int =
   // the lockfile silently.
 }
 |}
-         package_name);
-    write "main.emo"
-      (Printf.sprintf
-         {|// %s, scaffolded by `emo new` — run it with `emo run main.emo`.
+               package_name);
+          write "main.emo"
+            (Printf.sprintf
+               {|// %s, scaffolded by `emo new` — run it with `emo run main.emo`.
 
 def greet(whom String) String {
   return "Hello, ${whom}!"
@@ -2192,23 +2219,25 @@ def greet(whom String) String {
 
 println(greet("world"))
 |}
-         leaf);
-    write "test/greet.emo"
-      {|// Tests for main.emo's greet — run them with `emo test`.
+               leaf);
+          write "test/greet.emo"
+            {|// Tests for main.emo's greet — run them with `emo test`.
 
 def test_greet() {
   expect_equal("Hello, world!", main.greet("world"))
 }
 |};
-    write ".gitignore" ".emo-build/\n";
-    let next = Printf.sprintf "cd %s && emo run main.emo, or emo test" path in
-    let next =
-      Emo_support.Render.styled (Unix.isatty Unix.stdout) "38;2;239;191;107"
-        next
-    in
-    Printf.printf "created %s — next: %s\n" path next;
-    0
-  end
+          write ".gitignore" ".emo-build/\n";
+          let next =
+            Printf.sprintf "cd %s && emo run main.emo, or emo test" path
+          in
+          let next =
+            Emo_support.Render.styled (Unix.isatty Unix.stdout)
+              "38;2;239;191;107" next
+          in
+          Printf.printf "created %s — next: %s\n" path next;
+          0
+        end
 
 let new_cmd =
   let path =
@@ -2218,7 +2247,8 @@ let new_cmd =
       & info [] ~docv:"NAME"
           ~doc:
             "The project directory, and the package name unless an owner/name \
-             form is given.")
+             form is given. Each part is a lowercase identifier — a letter, \
+             then letters, digits or `_` — the form a `require` can name.")
   in
   Cmd.v
     (Cmd.info "new" ~doc:"Scaffold a new Emo project.")

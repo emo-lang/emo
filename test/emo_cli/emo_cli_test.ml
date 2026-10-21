@@ -3694,7 +3694,7 @@ let deps_add_tests =
 let new_tests =
   [
     tc "the scaffold is green the moment it exists" (fun () ->
-        let dir = Filename.concat scratch "scaffold-hello" in
+        let dir = Filename.concat scratch "scaffoldhello" in
         if Sys.file_exists dir then Emo_project.remove_tree dir
         else if Sys.file_exists scratch then ()
         else Unix.mkdir scratch 0o755;
@@ -3702,7 +3702,7 @@ let new_tests =
         let manifest = read_file (Filename.concat dir "package.emo") in
         Alcotest.(check bool)
           "manifest names the package" true
-          (contains manifest {|name = "scaffold-hello"|});
+          (contains manifest {|name = "scaffoldhello"|});
         Alcotest.(check bool)
           "manifest declares the default targets" true
           (contains manifest {|targets = ["ocaml", "c"]|});
@@ -3740,9 +3740,36 @@ let new_tests =
               (contains manifest {|name = "acme/owned"|});
             Emo_project.remove_tree "acme"));
     tc "an existing directory refuses" (fun () ->
-        let dir = Filename.concat scratch "scaffold-clash" in
+        let dir = Filename.concat scratch "scaffoldclash" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
         Alcotest.(check int) "exit" 65 (Emo_cli.scaffold ~path:dir));
+    tc "a dashed name refuses, creating nothing" (fun () ->
+        let old_cwd = Sys.getcwd () in
+        Sys.chdir scratch;
+        Fun.protect
+          ~finally:(fun () -> Sys.chdir old_cwd)
+          (fun () ->
+            Alcotest.(check int)
+              "owner/name exit" 65
+              (Emo_cli.scaffold ~path:"acme/bar-buzz");
+            Alcotest.(check bool)
+              "no directory is created" false
+              (Sys.file_exists "acme/bar-buzz");
+            Alcotest.(check int)
+              "plain exit" 65
+              (Emo_cli.scaffold ~path:"bar-buzz");
+            Alcotest.(check bool)
+              "no directory is created" false
+              (Sys.file_exists "bar-buzz")));
+    tc "the refusal names the offending character" (fun () ->
+        (match Emo_pkg.Publish.name_part_problem "bar-buzz" with
+        | Some problem ->
+            Alcotest.(check bool)
+              "the dash is named" true (contains problem "`-`")
+        | None -> Alcotest.fail "a dashed part must be refused");
+        Alcotest.(check (option string))
+          "an identifier part passes" None
+          (Emo_pkg.Publish.name_part_problem "bar_buzz2"));
   ]
 
 (* ---- emoji: the shared-package lifecycle ---- *)
@@ -3780,11 +3807,11 @@ let emoji_tests =
             in
             Alcotest.(check int) "exit" 65 exit_code));
     tc "emoji new refuses an existing directory" (fun () ->
-        let dir = Filename.concat scratch "emoji-clash" in
+        let dir = Filename.concat scratch "emojiclash" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
         Alcotest.(check int)
           "exit" 65
-          (Emo_cli.scaffold_package ~name:"acme/emoji-clash" ~path:dir));
+          (Emo_cli.scaffold_package ~name:"acme/emojiclash" ~path:dir));
     tc "emoji build passes the scaffolded package" (fun () ->
         let old_cwd = Sys.getcwd () in
         let dir = Filename.concat scratch "emojihello" in
@@ -4150,7 +4177,7 @@ let test_cmd_tests =
           (in_dir dir (fun () ->
                Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
     tc "the scaffold's own test passes" (fun () ->
-        let dir = Filename.concat scratch "scaffold-tested" in
+        let dir = Filename.concat scratch "scaffold_test" in
         if Sys.file_exists dir then Emo_project.remove_tree dir;
         Alcotest.(check int) "scaffold" 0 (Emo_cli.scaffold ~path:dir);
         Alcotest.(check bool)
