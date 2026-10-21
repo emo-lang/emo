@@ -721,7 +721,17 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **前置:** Step 44。
 **完成标准:** `plot.png(fig)` 在全部五个 target 上从同一份值图产出合法 PNG,不依赖宿主图像库。
 
-- [ ] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。
+- [x] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。`internal/png.emo`
+      以 `deflate_stored` 开出 PNG 后端的字节层:对 `Array[Int64]`
+      字节序列产出 raw DEFLATE 流,每 65535 字节一块,块头五字节——
+      BFINAL/BTYPE、LEN 与 LEN 的反码——空输入落一个空的收尾块。
+      字节数组取 `Array[Int64]` 而非 `Bytes`:元素读取保持静态
+      Int64,后头的校验和与 Huffman 打包需要动态世界拒绝的位运算
+      (term 渲染器的算术位规则)。对外部解压器与各路同时验证:七个
+      探针——空、单字节、255 字节游程、256/65535/65541 边界、以及
+      70000 字节变体——在解释器上经 Python zlib 解压与输入逐字节
+      一致,c/ocaml/typescript/wasm/beam 五个目标构建各自打印的
+      201,640 行与解释器逐字节一致(`dune test` 绿)。
 - [ ] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
 - [ ] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。
 - [ ] **T45.4** — 经 Hershey 笔画字体的文本。

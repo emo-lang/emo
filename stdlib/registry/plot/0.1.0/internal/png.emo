@@ -1,0 +1,41 @@
+// The PNG backend's byte level: the DEFLATE stream, the zlib wrapper,
+// the chunk frames, and the file itself, every byte computed here — no
+// host image library. The byte arrays are Array[Int64] rather than
+// Bytes: an element read stays a static Int64, and the checksums and
+// the Huffman packer need bitwise work that the dynamic world refuses.
+
+// The raw DEFLATE stream for the bytes, stored blocks: each block
+// carries up to 65535 bytes verbatim behind its five-byte header —
+// BFINAL/BTYPE, LEN, and the one's complement of LEN.
+def deflate_stored(data Array[Int64]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  const n = data.length()
+  var at = 0
+  while at < n {
+    var size = n - at
+    if size > 65535 {
+      size = 65535
+    }
+    var head = 0
+    if at + size == n {
+      head = 1
+    }
+    out.push(head)
+    out.push(size % 256)
+    out.push(size / 256)
+    out.push(255 - size % 256)
+    out.push(255 - size / 256)
+    for var i = 0; i < size; i = i + 1 {
+      out.push(data[at + i])
+    }
+    at = at + size
+  }
+  if n == 0 {
+    out.push(1)
+    out.push(0)
+    out.push(0)
+    out.push(255)
+    out.push(255)
+  }
+  return out.to_array()
+}

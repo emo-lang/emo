@@ -1701,7 +1701,21 @@ value graph, proving the contract is format-agnostic.
 **Done when:** `plot.png(fig)` emits a valid PNG on all five targets,
 from the same value graph, with no host image library.
 
-- [ ] **T45.1** — Pure-Emo DEFLATE with stored blocks.
+- [x] **T45.1** — Pure-Emo DEFLATE with stored blocks. `internal/png.emo`
+      opens the PNG backend's byte level with `deflate_stored`: the raw
+      DEFLATE stream over an `Array[Int64]` of bytes, one block per 65535
+      bytes behind its five-byte header — BFINAL/BTYPE, LEN, and the
+      one's complement of LEN — and a single empty final block for empty
+      input. The byte arrays are `Array[Int64]` rather than `Bytes`: an
+      element read stays a static Int64, and the checksums and the
+      Huffman packer ahead need bitwise work the dynamic world refuses
+      (the term renderer's arithmetic-bit rule). Verified against an
+      external decompressor and across the paths at once: seven probes —
+      empty, one byte, a 255-byte run, the 256, 65535, and 65541
+      boundaries, and a varied 70000 — decompress byte-identical to
+      their inputs under Python's zlib on the interpreter, and the c,
+      ocaml, typescript, wasm, and beam builds print the probe's 201,640
+      lines byte-identical to it (`dune test` green).
 - [ ] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
 - [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
 - [ ] **T45.4** — Text through the Hershey stroke font.
