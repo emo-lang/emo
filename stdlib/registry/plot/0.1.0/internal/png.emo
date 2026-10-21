@@ -329,3 +329,261 @@ def png_file(width Int64, height Int64, raw Array[Int64]) Array[Int64] {
   }
   return out.to_array()
 }
+
+// The color check behind every draw call, the message
+// `internal.buffer`'s write_color raises.
+def checked(c (Int64, Int64, Int64)) Void {
+  if c[0] < 0 || c[0] > 255 || c[1] < 0 || c[1] > 255 || c[2] < 0 || c[2] > 255 {
+    raise Exception.new(message: "plot: a color's channels live in 0 to 255, got (${c[0]}, ${c[1]}, ${c[2]})")
+  }
+}
+
+// The first sample at or past a figure coordinate: a pixel is 2 × 2
+// samples and a sample's center sits half a sample in, so the span
+// [a, b) covers the samples ceil(a - 0.5) through ceil(b - 0.5) - 1.
+def sample_from(v Float64) Int64 {
+  return (v * 2.0 - 0.5).ceil().to_int64()
+}
+
+// The dash vocabulary of the marks, px lengths alternating on and off;
+// solid is no pattern at all.
+def dashes(pattern String) Array[Float64] {
+  if pattern == "7 4" {
+    return [7.0, 4.0]
+  }
+  if pattern == "1.5 3.5" {
+    return [1.5, 3.5]
+  }
+  if pattern == "7 3 1.5 3" {
+    return [7.0, 3.0, 1.5, 3.0]
+  }
+  return []
+}
+
+// Whether the pen is down at a distance along the stroke.
+def dash_on(pattern Array[Float64], travelled Float64) Bool {
+  if pattern.length() == 0 {
+    return true
+  }
+  var period = 0.0
+  for var i = 0; i < pattern.length(); i = i + 1 {
+    period = period + pattern[i]
+  }
+  var t = travelled - (travelled / period).floor() * period
+  var i = 0
+  var acc = pattern[0]
+  while t >= acc && i + 1 < pattern.length() {
+    i = i + 1
+    acc = acc + pattern[i]
+  }
+  return i % 2 == 0
+}
+
+// The raster backend: the display list drawn onto an RGB sample grid at
+// 2 × supersampling — every pixel is 2 × 2 samples, and the average of
+// the four is the antialiased pixel. Fills are scanlines (a rect's
+// spans, a circle's chord per row, a polygon's even-odd crossings), a
+// line is a Bresenham walk in sample space with a square pen as wide
+// as the stroke and the dash pattern paced along the walk. The paper
+// fills the grid at construction; drawing over it mixes at the pixel,
+// not the sample.
+class PngRenderer {
+  def init(width Float64, height Float64, paper (Int64, Int64, Int64)) {
+    checked(paper)
+    self.w = width.ceil().to_int64()
+    self.h = height.ceil().to_int64()
+    self.sw = self.w * 2
+    self.sh = self.h * 2
+    self.px = Bytes.new(self.sw * self.sh * 3)
+    const n = self.sw * self.sh
+    for var i = 0; i < n; i = i + 1 {
+      self.px.set(i * 3, paper[0])
+      self.px.set(i * 3 + 1, paper[1])
+      self.px.set(i * 3 + 2, paper[2])
+    }
+  }
+
+  def put(sx Int64, sy Int64, c (Int64, Int64, Int64)) Void {
+    if sx >= 0 && sy >= 0 && sx < self.sw && sy < self.sh {
+      const at = (sy * self.sw + sx) * 3
+      self.px.set(at, c[0])
+      self.px.set(at + 1, c[1])
+      self.px.set(at + 2, c[2])
+    }
+  }
+
+  // One filled span on one sample row, clipped to the grid.
+  def span(sy Int64, x0 Int64, x1 Int64, c (Int64, Int64, Int64)) Void {
+    if sy >= 0 && sy < self.sh {
+      var a = x0
+      if a < 0 {
+        a = 0
+      }
+      var b = x1
+      if b > self.sw {
+        b = self.sw
+      }
+      for var sx = a; sx < b; sx = sx + 1 {
+        const at = (sy * self.sw + sx) * 3
+        self.px.set(at, c[0])
+        self.px.set(at + 1, c[1])
+        self.px.set(at + 2, c[2])
+      }
+    }
+  }
+
+  def rect(x Float64, y Float64, w Float64, h Float64, fill (Int64, Int64, Int64)) Void {
+    checked(fill)
+    const x0 = sample_from(x)
+    const x1 = sample_from(x + w)
+    const y0 = sample_from(y)
+    const y1 = sample_from(y + h)
+    for var sy = y0; sy < y1; sy = sy + 1 {
+      self.span(sy, x0, x1, fill)
+    }
+  }
+
+  def circle(cx Float64, cy Float64, r Float64, fill (Int64, Int64, Int64)) Void {
+    checked(fill)
+    const y0 = sample_from(cy - r)
+    const y1 = sample_from(cy + r)
+    for var sy = y0; sy < y1; sy = sy + 1 {
+      const ey = (sy.to_float64() + 0.5) / 2.0 - cy
+      const d = r * r - ey * ey
+      if d > 0.0 {
+        const hw = d.sqrt()
+        self.span(sy, sample_from(cx - hw), sample_from(cx + hw), fill)
+      }
+    }
+  }
+
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64, pattern String) Void {
+    checked(stroke)
+    const seg = dashes(pattern)
+    var pen = (width * 2.0 + 0.5).floor().to_int64()
+    if pen < 1 {
+      pen = 1
+    }
+    const half = pen / 2
+    var x = (x1 * 2.0).floor().to_int64()
+    var y = (y1 * 2.0).floor().to_int64()
+    const bx = (x2 * 2.0).floor().to_int64()
+    const by = (y2 * 2.0).floor().to_int64()
+    var dx = bx - x
+    if dx < 0 {
+      dx = 0 - dx
+    }
+    var dy = by - y
+    if dy > 0 {
+      dy = 0 - dy
+    }
+    var sx = 1
+    if bx < x {
+      sx = -1
+    }
+    var sy = 1
+    if by < y {
+      sy = -1
+    }
+    var err = dx + dy
+    var travelled = 0.0
+    var done = false
+    while !done {
+      if dash_on(seg, travelled) {
+        for var py = 0; py < pen; py = py + 1 {
+          for var qx = 0; qx < pen; qx = qx + 1 {
+            self.put(x - half + qx, y - half + py, stroke)
+          }
+        }
+      }
+      if x == bx && y == by {
+        done = true
+      } else {
+        var both = 0
+        const e2 = 2 * err
+        if e2 >= dy {
+          err = err + dy
+          x = x + sx
+          both = both + 1
+        }
+        if e2 <= dx {
+          err = err + dx
+          y = y + sy
+          both = both + 1
+        }
+        var step = 0.5
+        if both == 2 {
+          step = 0.7071067811865476
+        }
+        travelled = travelled + step
+      }
+    }
+  }
+
+  // Scanline fill under the even-odd rule, sampled at the sample-row
+  // centers, spans between sorted crossings.
+  def polygon(xs Array[Float64], ys Array[Float64], fill (Int64, Int64, Int64)) Void {
+    const n = xs.length()
+    if n >= 3 {
+      checked(fill)
+      var ylo = ys[0]
+      var yhi = ys[0]
+      for var i = 1; i < n; i = i + 1 {
+        if ys[i] < ylo {
+          ylo = ys[i]
+        }
+        if ys[i] > yhi {
+          yhi = ys[i]
+        }
+      }
+      const r0 = sample_from(ylo)
+      const r1 = sample_from(yhi)
+      for var sy = r0; sy < r1; sy = sy + 1 {
+        const yc = (sy.to_float64() + 0.5) / 2.0
+        var crossings = []
+        var j = n - 1
+        for var i = 0; i < n; i = i + 1 {
+          const yi = ys[i]
+          const yj = ys[j]
+          if (yi <= yc && yc < yj) || (yj <= yc && yc < yi) {
+            crossings = internal.term.insert_sorted(crossings, xs[i] + (yc - yi) * (xs[j] - xs[i]) / (yj - yi))
+          }
+          j = i
+        }
+        for var k = 0; k + 1 < crossings.length(); k = k + 2 {
+          self.span(sy, sample_from(crossings[k]), sample_from(crossings[k + 1]), fill)
+        }
+      }
+    }
+  }
+
+  // The stroke font lands with T45.4; the color is still checked.
+  def text(x Float64, y Float64, body String, size Float64, anchor internal.svg.Anchor, weight internal.svg.Weight, fill (Int64, Int64, Int64)) Void {
+    checked(fill)
+  }
+
+  // The samples average into the pixel — the four summed, +2, over 4,
+  // which rounds to nearest — each row out under a filter byte of 0,
+  // and the file is framed.
+  def finish() Bytes {
+    const raw = ArrayBuilder.new()
+    for var row = 0; row < self.h; row = row + 1 {
+      raw.push(0)
+      for var col = 0; col < self.w; col = col + 1 {
+        const a = (row * 2 * self.sw + col * 2) * 3
+        const b = a + 3
+        const c = a + self.sw * 3
+        const d = c + 3
+        raw.push((self.px.get(a) + self.px.get(b) + self.px.get(c) + self.px.get(d) + 2) / 4)
+        raw.push((self.px.get(a + 1) + self.px.get(b + 1) + self.px.get(c + 1) + self.px.get(d + 1) + 2) / 4)
+        raw.push((self.px.get(a + 2) + self.px.get(b + 2) + self.px.get(c + 2) + self.px.get(d + 2) + 2) / 4)
+      }
+    }
+    const file = png_file(self.w, self.h, raw.to_array())
+    const out = Bytes.new(file.length())
+    for var i = 0; i < file.length(); i = i + 1 {
+      out.set(i, file[i])
+    }
+    return out
+  }
+}

@@ -2309,7 +2309,8 @@ def render(r internal.svg.Renderer, fig Figure) Void {
 def svg(fig Figure) String {
   const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
   render(r, fig)
-  return r.finish()
+  const bytes = r.finish()
+  return bytes.to_string()
 }
 
 // The same figure as a block of text for a terminal: braille cells for
@@ -2320,5 +2321,6 @@ def svg(fig Figure) String {
 def terminal(fig Figure) String {
   const r = internal.term.TermRenderer.new(fig.width, fig.height, fig.theme.background)
   render(r, fig)
-  return r.finish()
+  const bytes = r.finish()
+  return bytes.to_string()
 }

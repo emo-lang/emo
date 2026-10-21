@@ -1749,7 +1749,38 @@ from the same value graph, with no host image library.
       shadowing an outer `var` has no semantics the paths agree on
       (interp rebinds flat, `c` scopes, the other four refuse) — the
       packer declares once and assigns in branches.
-- [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
+- [x] **T45.3** — A scanline polygon/line rasterizer with supersampling.
+      `internal/png.emo` grows `PngRenderer`, the third `Renderer`: the
+      display list drawn onto an RGB sample grid at 2 × supersampling —
+      every pixel 2 × 2 samples, the four averaged (+2, over 4, which
+      rounds to nearest) into the antialiased pixel. Fills are
+      scanlines: a rect's spans and a circle's chord per row between
+      `sample_from` edges, a polygon's even-odd crossings sorted per
+      sample row (`internal.term`'s `insert_sorted`, one internal
+      module reading another); a line is a Bresenham walk in sample
+      space with a square pen as wide as the stroke, the dash
+      vocabulary ("7 4", "1.5 3.5", "7 3 1.5 3") paced along the walk
+      by the distance travelled, a diagonal step worth 0.707 px. The
+      paper fills the grid at construction and every draw checks its
+      color with `write_color`'s message. And because the format is
+      binary, `finish()` now answers `Bytes` for every renderer — the
+      text formats are their UTF-8 bytes, `Buffer` grew `to_bytes`, and
+      `plot.svg`/`plot.terminal` take the string from it — the shape
+      `plot.png` needs, since a String cannot carry a PNG on
+      `typescript` at all (the codec's U+FFFD rule). Text checks its
+      color and waits for T45.4. Verified with a drawn probe — rect,
+      circle, triangle, a solid diagonal, a dashed stroke on white —
+      decoded pixel by pixel against Python (fills exact, the dash
+      running 7–8 on and 3–4 off), read back as an image, and
+      byte-identical across the six paths (`dune test` green). Two
+      target facts surfaced on the way, both recorded in `CHECK.md`: a
+      builtin method chained on a user-class method call mis-reads its
+      receiver on the interpreter (`b.to_bytes().length()` answers 0
+      where the const-bound form answers 8) — it emptied every SVG the
+      moment `finish()` went to bytes, so the package binds first and
+      calls after — and a class method named `to_bytes` is dispatched
+      to the String builtin on `wasm` whatever the receiver, so the
+      buffer's byte side is `join()`.
 - [ ] **T45.4** — Text through the Hershey stroke font.
 - [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
 

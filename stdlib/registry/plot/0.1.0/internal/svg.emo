@@ -1,6 +1,8 @@
 // The backend contract: a small display list any output format can
-// answer. `SvgRenderer` answers it with an SVG document; the terminal
-// renderer in `internal.term` answers the same calls with braille text.
+// answer, finished into the format's bytes — UTF-8 text for the SVG
+// document and the terminal's braille, the file itself for PNG.
+// `SvgRenderer` answers it here; `internal.term` and `internal.png`
+// answer the same calls.
 
 enum Anchor { start, middle, end }
 enum Weight { regular, bold }
@@ -11,7 +13,7 @@ interface Renderer {
   def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64, pattern String) Void
   def polygon(xs Array[Float64], ys Array[Float64], fill (Int64, Int64, Int64)) Void
   def text(x Float64, y Float64, body String, size Float64, anchor Anchor, weight Weight, fill (Int64, Int64, Int64)) Void
-  def finish() String
+  def finish() Bytes
 }
 
 class SvgRenderer {
@@ -93,8 +95,8 @@ class SvgRenderer {
     self.buf.write("</text>\n")
   }
 
-  def finish() String {
+  def finish() Bytes {
     self.buf.write("</svg>\n")
-    return self.buf.to_string()
+    return self.buf.join()
   }
 }

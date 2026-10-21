@@ -333,7 +333,7 @@ class TermRenderer {
 
   // The rows top to bottom, each cut after its last glyph or lit cell,
   // every row newline-terminated.
-  def finish() String {
+  def finish() Bytes {
     const out = internal.buffer.Buffer.new()
     for var row = 0; row < self.rows; row = row + 1 {
       var last = -1
@@ -353,6 +353,6 @@ class TermRenderer {
       }
       out.write("\n")
     }
-    return out.to_string()
+    return out.join()
   }
 }

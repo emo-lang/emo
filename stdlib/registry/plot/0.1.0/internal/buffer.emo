@@ -53,4 +53,30 @@ class Buffer {
     }
     return out.to_string()
   }
+
+  // The same assembly answering bytes — the name stays clear of
+  // `to_bytes`, which the wasm target dispatches to the String builtin
+  // whatever the receiver (CHECK.md). The body is to_string's, by the
+  // same hand: a class method's result must not be chained on.
+  def join() Bytes {
+    const n = self.chunks.length()
+    const parts = List.new([])
+    var total = 0
+    for var i = 0; i < n; i = i + 1 {
+      const chunk = self.chunks.pop_front()
+      const data = chunk.to_bytes()
+      total = total + data.length()
+      parts.push_back(data)
+    }
+    const out = Bytes.new(total)
+    var at = 0
+    for var i = 0; i < n; i = i + 1 {
+      const data = parts.pop_front()
+      for var j = 0; j < data.length(); j = j + 1 {
+        out.set(at, data.get(j))
+        at = at + 1
+      }
+    }
+    return out
+  }
 }
