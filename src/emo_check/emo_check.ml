@@ -142,10 +142,10 @@ type ctx = {
          Float64/String/Bool through generated stubs *)
 }
 
-let report ctx span code message =
+let report ?hint ctx span code message =
   ctx.diagnostics :=
     Emo_support.Diagnostic.
-      { severity = Error; code = Some code; message; span; hint = None }
+      { severity = Error; code = Some code; message; span; hint }
     :: !(ctx.diagnostics)
 
 (* The internal rule is a path rule: a type declared in an
@@ -357,22 +357,80 @@ let rec decl_to_type ?(lenient = false) ctx
 (* The checker's view of one class declaration: init parameters, method
    signatures, field names. Shared by module collection and the program's
    type pre-registration. *)
+
+(* The language protocol names carry their contracts into any class or
+   interface body — the registry entries dispatch on them, so a
+   signature drift would be a silent non-satisfaction (a same-named
+   method that never answers). Elsewhere the names are ordinary. *)
+let protocol_contract (name : string) : (t * string) option =
+  match name with
+  | "to_string" -> Some (String, "def to_string() String")
+  | "length" -> Some (Int64, "def length() Int64")
+  | _ -> None
+
+let check_protocol_def ctx span name (params : int) (ret : t) =
+  match protocol_contract name with
+  | Some (want, contract) ->
+      if params <> 0 || ret <> want then
+        report ctx span "E4026"
+          (Printf.sprintf
+             "`%s` is a language protocol (emo.%s): the contract is `%s`" name
+             name contract)
+  | None -> ()
+
+(* One suggestion for a misspelled member: the closest declared name
+   within two edits — `to_str` for `to_string`, `lenght` for `length`. *)
+let near_miss (name : string) (declared : string list) : string option =
+  let levenshtein a b =
+    let n = String.length a and m = String.length b in
+    let prev = Array.make (m + 1) 0 and cur = Array.make (m + 1) 0 in
+    Array.iteri (fun j v -> prev.(j) <- j) prev;
+    for i = 1 to n do
+      cur.(0) <- i;
+      for j = 1 to m do
+        let cost = if a.[i - 1] = b.[j - 1] then 0 else 1 in
+        cur.(j) <-
+          min (min (cur.(j - 1) + 1) (prev.(j) + 1)) (prev.(j - 1) + cost)
+      done;
+      Array.blit cur 0 prev 0 (m + 1)
+    done;
+    prev.(m)
+  in
+  let rec best acc = function
+    | [] -> acc
+    | d :: rest ->
+        if String.equal d name then best acc rest
+        else
+          let dist = levenshtein name d in
+          if dist <= 2 then
+            match acc with
+            | Some (_, da) when da <= dist -> best acc rest
+            | _ -> best (Some (d, dist)) rest
+          else best acc rest
+  in
+  match best None declared with Some (d, _) -> Some d | None -> None
+
 let class_info_of ctx (c : Ast.class_def) : class_info =
   let methods =
     List.map
       (fun d ->
+        let mret =
+          match d.Ast.def_return with
+          | Some r -> decl_to_type ctx r
+          | None ->
+              if String.equal d.Ast.def_name "init" then Unknown
+              else Void (* a method with no type declaration *)
+        in
+        check_protocol_def ctx d.Ast.def_span d.Ast.def_name
+          (List.length d.Ast.def_params)
+          mret;
         ( d.Ast.def_name,
           {
             mparams =
               List.map
                 (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
                 d.Ast.def_params;
-            mret =
-              (match d.Ast.def_return with
-              | Some r -> decl_to_type ctx r
-              | None ->
-                  if String.equal d.Ast.def_name "init" then Unknown
-                  else Void (* a method with no type declaration *));
+            mret;
             mdef = d;
           } ))
       c.Ast.class_methods
@@ -396,11 +454,15 @@ let interface_sigs_of ctx (i : Ast.interface_def) :
     (string * (string * t) list * t) list =
   List.map
     (fun s ->
+      let ret = decl_to_type ctx s.Ast.sig_return in
+      check_protocol_def ctx s.Ast.sig_span s.Ast.sig_name
+        (List.length s.Ast.sig_params)
+        ret;
       ( s.Ast.sig_name,
         List.map
           (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
           s.Ast.sig_params,
-        decl_to_type ctx s.Ast.sig_return ))
+        ret ))
     i.Ast.interface_methods
 
 (* Pass one: gather every declaration the checker reasons about. *)
@@ -2196,6 +2258,10 @@ and check_method_call ctx env span recv mname args : t =
                   args
             | None ->
                 report ctx span "E4001"
+                  ?hint:
+                    (Option.map
+                       (fun d -> Printf.sprintf "did you mean `%s`?" d)
+                       (near_miss mname (List.map fst info.cmethods)))
                   (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c
                      mname);
                 Unknown)
@@ -2215,6 +2281,10 @@ and check_method_call ctx env span recv mname args : t =
                   args
             | None ->
                 report ctx span "E4001"
+                  ?hint:
+                    (Option.map
+                       (fun d -> Printf.sprintf "did you mean `%s`?" d)
+                       (near_miss mname (List.map (fun (n, _, _) -> n) sigs)))
                   (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i
                      mname);
                 Unknown)

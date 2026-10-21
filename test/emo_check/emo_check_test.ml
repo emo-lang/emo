@@ -2274,6 +2274,88 @@ raise Ink.new()|}
         Alcotest.(check bool)
           "emoji is fine" false
           (has_code diagnostics "E4025"));
+    tc "protocol names carry their contracts in class and interface bodies"
+      (fun () ->
+        let wrong =
+          [
+            {|class Rep {
+  def init() {
+  }
+
+  def to_string(indent Int64) String {
+    return "x"
+  }
+}|};
+            {|class Rep {
+  def init() {
+  }
+
+  def to_string() {
+  }
+}|};
+            {|class Rep {
+  def init() {
+  }
+
+  def length() String {
+    return "x"
+  }
+}|};
+            {|interface Sized { def to_string(i Int64) String }|};
+            {|interface Sized { def length() String }|};
+          ]
+        in
+        List.iter
+          (fun source ->
+            let diagnostics = check source in
+            Alcotest.(check bool)
+              ("E4026 of " ^ source) true
+              (has_code diagnostics "E4026"))
+          wrong;
+        (* the contract holds: a matching definition and an ordinary
+           same-named top-level def both pass *)
+        Alcotest.(check int)
+          "matching contract" 0
+          (List.length
+             (check
+                {|class Rep {
+  def init() {
+  }
+
+  def to_string() String {
+    return "r"
+  }
+
+  def length() Int64 {
+    return 7
+  }
+}|}));
+        Alcotest.(check int)
+          "top-level to_string is ordinary" 0
+          (List.length (check {|def to_string(v Int64) String { return "x" }|}));
+        Alcotest.(check int)
+          "a matching interface contract" 0
+          (List.length (check {|interface Sized { def length() Int64 }|})));
+    tc "a misspelled member answers with its near miss" (fun () ->
+        let diagnostics =
+          check
+            {|class Rep {
+  def init() {
+  }
+
+  def lenght() Int64 {
+    return 1
+  }
+}
+println(Rep.new().length())|}
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001");
+        let hint =
+          List.find_map (fun d -> d.Emo_support.Diagnostic.hint) diagnostics
+        in
+        Alcotest.(check string)
+          "hint" "did you mean `lenght`?"
+          (match hint with Some h -> h | None -> ""));
   ]
 
 let () =
