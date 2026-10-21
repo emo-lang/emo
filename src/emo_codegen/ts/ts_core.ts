@@ -22,6 +22,11 @@ interface EHost {
   runtimeImpl(name: string, args: any[]): any;
 }
 let _host: EHost;
+
+// The builtin-method arms inside [method] await the async rendering —
+// `to_string` on a container dispatches through its elements' own
+// `to_string` — so [method] itself is async; every call site already
+// awaits it.
 const _hostMethodMiss = Symbol("host method miss");
 
 const _mailboxes = new Map<number, any[]>();
@@ -583,12 +588,9 @@ function deepEq(a: any, b: any): boolean {
 
 // Inside a map's rendering, strings show quoted — the debug form the
 // interpreter's Map rendering uses.
-function toStrDbg(v: any): string {
-  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
-}
-
-// The one stringification rule: interpolation and `.to_string()` share
-// it, exactly like the interpreter.
+// The synchronous rendering, for the paths that cannot await (error
+// messages, NoMethodError, the host's crash report). Instances fall
+// back to the class name here; the value protocol runs through toStrA.
 function toStr(v: any): string {
   if (typeof v === "number") return String(v);
   if (typeof v === "bigint") return v.toString();
@@ -627,8 +629,122 @@ function toStr(v: any): string {
   return String(v);
 }
 
+function toStrDbg(v: any): string {
+  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
+}
+
+// The entry module renders bare — the interpreter names the entry
+// file's module nothing, so "main.Local" renders as "#Local(...)";
+// a class in a main/ subdirectory keeps its full path.
+function classDisplayName(full: string): string {
+  return full.startsWith("main.") && !full.slice(5).includes(".")
+    ? full.slice(5)
+    : full;
+}
+
+// The one stringification rule, as the value protocol needs it:
+// interpolation, println, and `.to_string()` share it. It is async
+// because an instance's own `to_string` — the `emo.to_string`
+// protocol entry — is a method call on this target; the structure
+// dump is the defined default.
+//
+// The rule stays synchronous unless an instance's own `to_string` is
+// actually on the path: a plain value answers a string with no
+// promise, so the emitted `instanceof Promise ? await : ...` keeps the
+// scheduler's turn order byte-for-byte where no protocol rides. A
+// protocol value answers a promise, and only then does the caller
+// yield its turn.
+function joinP(
+  parts: (string | Promise<string>)[],
+  open: string,
+  sep: string,
+  close: string,
+): string | Promise<string> {
+  if (parts.every((p) => typeof p === "string"))
+    return open + parts.join(sep) + close;
+  return Promise.all(parts).then(
+    (ps: string[]) => open + ps.join(sep) + close,
+  );
+}
+
+function toStrP(v: any): string | Promise<string> {
+  if (typeof v === "number") return String(v);
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (v === null || v === undefined) return "nil";
+  if (isFloat(v)) return floatStr(v.v);
+  if (isChar(v)) return v.c;
+  if (v instanceof EBox) return toStrP(v.v);
+  if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
+  if (v instanceof EList) {
+    const items: (string | Promise<string>)[] = [];
+    for (let n = v.head; n; n = n.next) items.push(toStrP(n.v));
+    return joinP(items, "List[", ", ", "]");
+  }
+  if (v instanceof EBuilder) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "ArrayBuilder[", ", ", "]");
+  }
+  if (v instanceof ETuple) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "(", ", ", ")");
+  }
+  if (v instanceof EArray) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "[", ", ", "]");
+  }
+  if (v instanceof EMap) {
+    const items: (string | Promise<string>)[] = [];
+    for (const kv of [...v.entries.values()])
+      items.push(joinP([toStrDbgP(kv[0]), toStrDbgP(kv[1])], "", ": ", ""));
+    return joinP(items, "{", ", ", "}");
+  }
+  // The bare tag — the interpreter's form, and every other target's
+  // (CHECK.md, the enum display entry): the qualified spelling is the
+  // vocabulary's written form, not a value's.
+  if (v instanceof EEnum) return v.member;
+  if (v instanceof EPid) return "<pid " + v.id + ">";
+  if (v instanceof EEmoException) return toStrP(v.messageValue);
+  if (v && typeof v === "object" && v.constructor && v.constructor.__emo) {
+    if (typeof v.to_string === "function") {
+      // the one async branch: an instance's own to_string is a method
+      // call, and its answer rides a promise
+      return Promise.resolve(v.to_string()).then((r: any) => {
+        if (typeof r !== "string")
+          throw new Error("`to_string` must answer a String (E3015)");
+        return r;
+      });
+    }
+    const fields: string[] = v.constructor.__emoFields ?? [];
+    const items: (string | Promise<string>)[] = [];
+    for (const n of fields)
+      items.push(joinP([n + ": ", toStrDbgP(v[n])], "", "", ""));
+    return joinP(
+      items,
+      "#" + classDisplayName(v.constructor.__emo) + "(",
+      ", ",
+      ")",
+    );
+  }
+  return String(v);
+}
+
+function toStrDbgP(v: any): string | Promise<string> {
+  return typeof v === "string" ? JSON.stringify(v) : toStrP(v);
+}
+
 function println(v: any): void {
   _host.write(toStr(v) + "\n");
+}
+
+function printlnP(v: any): void | Promise<void> {
+  const r = toStrP(v);
+  if (typeof r === "string") _host.write(r + "\n");
+  else return r.then((s: string) => _host.write(s + "\n"));
 }
 
 // ---- printf ----
@@ -1169,14 +1285,19 @@ const E: any = {
   eq: deepEq,
   ne: (a: any, b: any) => !deepEq(a, b),
   truthy: (b: any) => b === true,
-  println,
+  // The value protocol stays synchronous unless an instance's own
+  // `to_string` actually rides the path: these answer a plain value
+  // then, and the emitter's conditional await (against E._r) yields a
+  // turn only when the answer is a promise.
+  _r: null as any,
+  println: printlnP,
   printf,
   builtin(name: string, _args: any[]): never {
     throw new Error(
       "builtin `" + name + "` is not available on the typescript target",
     );
   },
-  interpolate: (items: any[]) => items.map(toStr).join(""),
+  interpolate: (items: any[]) => joinP(items.map(toStrP), "", "", ""),
   toStr,
 
   // The Map's constructor: (key, value) tuple pairs, in insertion
@@ -1332,7 +1453,7 @@ const E: any = {
 
   // Method dispatch: instances by property, builtins by shape — one
   // table, like the native runtime's method_call.
-  method(recv: any, name: string, args: any[]): any {
+  async method(recv: any, name: string, args: any[]): Promise<any> {
     if (recv && typeof recv === "object") {
       const direct = recv[name] ?? recv[sanitize(name)];
       if (typeof direct === "function") return direct.apply(recv, args);
@@ -1432,7 +1553,7 @@ const E: any = {
         if (name === "pop_front") return listPopFront(recv);
         if (name === "pop_back") return listPopBack(recv);
         if (name === "length") return BigInt(recv.size);
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       if (recv instanceof EBuilder) {
         if (name === "push") {
@@ -1453,7 +1574,7 @@ const E: any = {
         }
         if (name === "to_array") return new EArray(recv.items.slice());
         if (name === "length") return BigInt(recv.items.length);
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       if (name === "length" && recv instanceof EArray)
         return BigInt(recv.items.length);
@@ -1487,7 +1608,7 @@ const E: any = {
           return new EArray(
             [...recv.entries.values()].map((kv: [any, any]) => kv[1])
           );
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       // The host's own receivers — connections, listeners, datagram
       // sockets on Node; DOM handles on the browser.

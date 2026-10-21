@@ -1,0 +1,44 @@
+// The to_string protocol: a class that defines `def to_string() String`
+// supplies the rendering everywhere a value becomes text — println,
+// interpolation, and containers rendering their elements. A class
+// without one renders as its structure dump, the defined default —
+// strings quoted inside, byte-identical on every target.
+
+class Local {
+  def init(n Int64) {
+    self.n = n
+  }
+}
+
+class Named {
+  def init(name String) {
+    self.name = name
+  }
+}
+
+class Pretty {
+  def init(n Int64) {
+    self.n = n
+  }
+
+  def to_string() String {
+    return "Local(${self.n})"
+  }
+}
+
+println(Pretty.new(1))
+println("at ${Pretty.new(2)}")
+println([Pretty.new(3), Local.new(4)])
+println({"key": Pretty.new(5)})
+println("${(Pretty.new(6), 7)}")
+
+println(Local.new(8))
+println(Named.new("plain"))
+println([[Named.new("x")]])
+
+println(internal.remote.Remote.new(9))
+println(internal.remote.Pretty.new(10))
+
+const held = Box.new(Pretty.new(11))
+println(held.read())
+println(held.read().to_string())

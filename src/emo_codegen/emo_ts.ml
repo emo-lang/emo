@@ -217,7 +217,11 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Make_enum { enum_name; member } ->
       Printf.sprintf "E.enum_(%S, %S)" enum_name member
   | Interpolate es ->
-      Printf.sprintf "E.interpolate([%s])"
+      (* the conditional await keeps the turn order where no protocol
+         rides: a plain value answers a string with no promise *)
+      Printf.sprintf
+        "(E._r = E.interpolate([%s]), (E._r instanceof Promise) ? (await E._r) \
+         : E._r)"
         (String.concat ", " (List.map (expr env) es))
   | Unary (Ast.Neg, x) -> (
       match e.Emo_ir.ety with
@@ -290,7 +294,14 @@ let rec expr env (e : Emo_ir.expr) : string =
         (String.concat ", " (List.map (expr env) args))
   | Builtin { name; args } ->
       let args_code = String.concat ", " (List.map (expr env) args) in
-      if name = "println" then Printf.sprintf "E.println(%s)" args_code
+      if name = "println" then
+        (* a bare comma expression, not a parenthesized one: several
+           statement emitters leave the previous line without a `;`, and
+           a leading `(` would glue into a call *)
+        Printf.sprintf
+          "E._r = E.println(%s), (E._r instanceof Promise) ? (await E._r) : \
+           E._r"
+          args_code
       else if name = "printf" then Printf.sprintf "E.printf(%s)" args_code
       else if name = "self_pid" then "E.self()"
       else if name = "halt" then "E.halt()"
@@ -637,8 +648,12 @@ let emit_func env (f : Emo_ir.func) : string =
     Printf.sprintf
       "async function %s() {\n\
       \  if (%s__emo_cache === undefined) {\n\
-      \    %s__emo_cache = await (async () => {\n%s\n    })();\n  }\n\
-      \  return %s__emo_cache;\n}"
+      \    %s__emo_cache = await (async () => {\n\
+       %s\n\
+      \    })();\n\
+      \  }\n\
+      \  return %s__emo_cache;\n\
+       }"
       f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname body f.Emo_ir.fname
   else if tramp then
     Printf.sprintf
@@ -747,8 +762,15 @@ let emit_class env (c : Emo_ir.class_) : string =
              params_code self_param body)
          c.Emo_ir.cmethods)
   in
-  Printf.sprintf "class %s {\n  static __emo = %S;\n%s%s%s%s\n}\n"
-    c.Emo_ir.cname c.Emo_ir.cdisplay ctor init_method eq_method methods
+  Printf.sprintf
+    "class %s {\n\
+    \  static __emo = %S;\n\
+    \  static __emoFields = [%s];\n\
+     %s%s%s%s\n\
+     }\n"
+    c.Emo_ir.cname c.Emo_ir.cdisplay
+    (String.concat ", " (List.map (fun f -> Printf.sprintf "%S" f) fields))
+    ctor init_method eq_method methods
 
 (* ---- The program ---- *)
 
@@ -798,9 +820,7 @@ let emit_program ~(browser : bool) ~(prelude : string)
     program.Emo_ir.pclasses;
   (* A const thunk's module-level cache: declared before the functions
      that read and fill it. *)
-  List.iter
-    (fun c -> put env "let %s__emo_cache;\n" c)
-    program.Emo_ir.pconsts;
+  List.iter (fun c -> put env "let %s__emo_cache;\n" c) program.Emo_ir.pconsts;
   List.iter
     (fun (f : Emo_ir.func) ->
       if f.Emo_ir.fforeign = None then put env "%s\n" (emit_func env f))

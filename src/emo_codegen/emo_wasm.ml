@@ -2526,6 +2526,115 @@ let rt_instance_str : W.func_type =
       ];
   }
 
+(* The entry module renders bare — the interpreter names the entry
+   file's module nothing — and a main/ subdirectory keeps its full
+   path. *)
+let entry_bare (display : string) : string =
+  let drop = "main." in
+  if
+    String.starts_with ~prefix:drop display
+    && not
+         (String.contains
+            (String.sub display 5 (String.length display - 5))
+            '.')
+  then String.sub display 5 (String.length display - 5)
+  else display
+
+(* instance_str(v) over a whole program: an instance answers its own
+   `to_string` first — the `emo.to_string` protocol entry — and a class
+   without one renders as its structure dump, the interpreter's rule.
+   One ref.test per class; the fixed runtime's abort body stays as the
+   fallthrough for a value no class claims. Filled in at assembly, when
+   the class types, the method functions, and the string pool are all
+   live. *)
+let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
+    =
+  let cat str =
+    (* [str] onto the accumulator in local 1, as $bytes for strcat *)
+    capturing env (fun () -> string_const env str)
+    @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+  in
+  let arms =
+    List.filter_map
+      (fun (c : Emo_ir.class_) ->
+        match List.assoc_opt c.Emo_ir.cname env.class_type with
+        | None -> None
+        | Some tidx ->
+            let ts_fidx =
+              if
+                List.exists
+                  (fun (m : Emo_ir.func) ->
+                    String.equal (member_name c m) "to_string"
+                    && List.length m.Emo_ir.fparams - 1 = 0)
+                  c.Emo_ir.cmethods
+              then List.assoc_opt (c.Emo_ir.cname ^ "__to_string") env.funcs
+              else None
+            in
+            let arm =
+              match ts_fidx with
+              | Some fidx -> [ W.Local_get 0; W.Ref_cast tidx; W.Call fidx ]
+              | None ->
+                  (* "#Display(f: dbg, ...)" — fields through the debug
+                     form: strings quoted, everything else to_str. Every
+                     literal rides the string pool; bytes_const would
+                     need its own scratch local. *)
+                  let fields =
+                    match List.assoc_opt c.Emo_ir.cname env.class_field with
+                    | Some fs -> fs
+                    | None -> []
+                  in
+                  let open_ = cat ("#" ^ entry_bare c.Emo_ir.cdisplay ^ "(") in
+                  let body =
+                    List.concat_map
+                      (fun (i, (fname, fidx)) ->
+                        (if i > 0 then
+                           (W.Local_get 1 :: cat ", ")
+                           @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                         else [])
+                        @ (W.Local_get 1 :: cat fname)
+                        @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                        @ (W.Local_get 1 :: cat ": ")
+                        @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                        @ [
+                            W.Local_get 1;
+                            W.Local_get 0;
+                            W.Ref_cast tidx;
+                            W.Struct_get (tidx, fidx);
+                            W.Call (rt "map_dbg");
+                            W.Ref_cast t_vstring;
+                            W.Struct_get (t_vstring, 0);
+                            W.Call (rt "strcat");
+                            W.Local_set 1;
+                          ])
+                      (List.mapi (fun i f -> (i, f)) fields)
+                  in
+                  let close =
+                    (W.Local_get 1 :: cat ")")
+                    @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ]
+                  in
+                  open_ @ [ W.Local_set 1 ] @ body @ close
+            in
+            Some (tidx, arm))
+      program.Emo_ir.pclasses
+  in
+  let rec chain = function
+    | [] -> rt_instance_str.W.fbody
+    | (tidx, arm) :: rest ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get 0; W.Ref_test tidx ],
+              arm,
+              chain rest );
+        ]
+  in
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [ (1, W.RefNull t_bytes) ];
+    fbody = chain arms;
+  }
+
 (* bytes_from_mem(ptr, len) -> (ref null $bytes). Locals: 2 array, 3
    i. *)
 let rt_bytes_from_mem : W.func_type =
@@ -7175,7 +7284,11 @@ let assemble (program : Emo_ir.program) : W.module_ =
       rt_int_str;
       rt_bool_str;
       rt_char_str;
-      rt_instance_str;
+      (* the program's own instance rendering — its class dispatches
+         and dumps fill this slot; the abort body answers when no class
+         claims the value *)
+      (if program.Emo_ir.pclasses = [] then rt_instance_str
+       else generated_instance_str env program);
       rt_write_bytes;
       rt_bytes_from_mem;
       rt_str_eq;

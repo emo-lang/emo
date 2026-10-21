@@ -595,6 +595,14 @@ module Emo_eval = struct
 
   let set_output f = output := f
 
+  (* The entry module renders bare — the interpreter names the entry
+     file's module nothing, so `main.Local` renders as `#Local(...)`;
+     a class in a `main/` subdirectory keeps its full path. *)
+  let class_display (name : string) : string =
+    if String.starts_with ~prefix:"main." name && not (String.contains (String.sub name 5 (String.length name - 5)) '.')
+    then String.sub name 5 (String.length name - 5)
+    else name
+
   (* The one stringification rule: interpolation and `.to_string()` share
      it. *)
   let rec to_string v =
@@ -634,12 +642,21 @@ module Emo_eval = struct
     | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
     | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
     | UdpSocket u -> Printf.sprintf "<udp %s>" u.udesc
-    | Obj o ->
-        let fields =
-          String.concat ", "
-            (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) o.ofields)
-        in
-        "#" ^ o.ocname ^ "(" ^ fields ^ ")"
+    | Obj o -> (
+      (* A class's own `to_string` answers first — the `emo.to_string`
+         protocol entry — and the structure dump below is the defined
+         default. Method tables take the receiver first. *)
+      match Hashtbl.find_opt o.omethods "to_string" with
+      | Some (0, f) -> (
+          match f [ Obj o ] with
+          | String s -> s
+          | _ -> error "E3015" "`to_string` must answer a String")
+      | _ ->
+          let fields =
+            String.concat ", "
+              (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) o.ofields)
+          in
+          "#" ^ class_display o.ocname ^ "(" ^ fields ^ ")")
     | CompiledFn f -> Printf.sprintf "<block %s>" f.fdesc
     | ClassDef c -> c.cname
     | Instance i ->

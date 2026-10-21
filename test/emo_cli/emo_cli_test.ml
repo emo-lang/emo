@@ -353,6 +353,7 @@ let wasm_goldens =
     "math_demo";
     "branch_var";
     "builtin_names";
+    "to_string_render";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -407,6 +408,7 @@ let beam_goldens =
     "math_demo";
     "branch_var";
     "builtin_names";
+    "to_string_render";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -616,6 +618,7 @@ let c_goldens =
     "math_demo";
     "branch_var";
     "builtin_names";
+    "to_string_render";
     "plot_demo";
     "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its

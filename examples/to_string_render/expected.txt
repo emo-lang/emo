@@ -1,0 +1,12 @@
+Local(1)
+at Local(2)
+[Local(3), #Local(n: 4)]
+{"key": Local(5)}
+(Local(6), 7)
+#Local(n: 8)
+#Named(name: "plain")
+[[#Named(name: "x")]]
+#internal.remote.Remote(n: 9)
+Remote(10)
+Local(11)
+Local(11)

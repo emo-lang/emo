@@ -195,6 +195,53 @@ let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
 
 let put env s = Buffer.add_string env.buf s
 
+(* 'emo_inst_str'/1 over a whole program: an instance answers its own
+   `to_string` first — the `emo.to_string` protocol entry — and a class
+   without one renders as its structure dump. The display name and the
+   field names ride into the dump as literals; the class's method,
+   when present, is applied directly. The caller — emo_to_str's tuple
+   arm — has already established the instance shape. *)
+let inst_str_source (program : Emo_ir.program) : string =
+  let entry_bare (d : string) =
+    let drop = "main." in
+    if
+      String.starts_with ~prefix:drop d
+      && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
+    then String.sub d 5 (String.length d - 5)
+    else d
+  in
+  let arms =
+    String.concat ""
+      (List.map
+         (fun (c : Emo_ir.class_) ->
+           let body =
+             if
+               List.exists
+                 (fun (m : Emo_ir.func) ->
+                   String.equal (member_name c m) "to_string"
+                   && List.length m.Emo_ir.fparams - 1 = 0)
+                 c.Emo_ir.cmethods
+             then
+               Printf.sprintf "apply 'emo_ts_answer'/1 (apply '%s'/1 (_v))"
+                 (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__to_string"))
+             else
+               Printf.sprintf "apply 'emo_inst_dump'/3 (%s, [%s], _v)"
+                 (binary_lit (entry_bare c.Emo_ir.cdisplay))
+                 (String.concat ", " (List.map binary_lit (class_fields c)))
+           in
+           Printf.sprintf "\t\t<%s> when 'true' ->\n\t\t    %s\n"
+             (atom c.Emo_ir.cname) body)
+         program.Emo_ir.pclasses)
+  in
+  Printf.sprintf
+    "'emo_inst_str'/1 =\n\
+    \    fun (_v) ->\n\
+    \  case call 'erlang':'element'(2, _v) of\n\
+     %s    <_c> when 'true' ->\n\
+    \      call 'erlang':'error'({'emo_no_inst', _c})\n\
+    \  end\n"
+    arms
+
 (* ---- Expressions ---- *)
 
 let rec expr env (x : Emo_ir.expr) : unit =
@@ -2089,12 +2136,59 @@ let rt_source =
 	  <{'emo_enum', _n, _m}> when 'true' ->
 	      call 'erlang':'atom_to_binary'(_m, 'utf8')
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
-	      apply 'emo_tuple_to_str'/1 (_t)
+	      %% an instance is a tagged tuple: it reaches the per-program
+	      %% dispatch — its own `to_string` or the structure dump
+	      case call 'erlang':'tuple_size'(_t) of
+		<0> when 'true' -> apply 'emo_tuple_to_str'/1 (_t)
+		<_> when 'true' ->
+		    case call 'erlang':'element'(1, _t) of
+		      <'emo_inst'> when 'true' -> apply 'emo_inst_str'/1 (_t)
+		      <_> when 'true' -> apply 'emo_tuple_to_str'/1 (_t)
+		    end
+	      end
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
+	end
+
+%% A class's `to_string` must answer a String — the same E3015 the
+%% interpreter raises.
+'emo_ts_answer'/1 =
+    fun (_r) ->
+	case call 'erlang':'is_binary'(_r) of
+	  <'true'> when 'true' -> _r
+	  <'false'> when 'true' ->
+	      call 'erlang':'error'({'emo_to_string_not_a_string'})
+	end
+
+%% The structure dump — the defined default when a class carries no
+%% `to_string`: "#Name(field: value, ...)" with field values in the
+%% debug form (strings quoted). The display name and the field names
+%% ride in as literals from the per-program dispatch; the fields read
+%% by index from the instance tuple (fields start at element 3).
+'emo_inst_dump'/3 =
+    fun (_name, _names, _v) ->
+	call 'erlang':'iolist_to_binary'
+	  ([35, _name, 40
+	    | apply 'emo_inst_dump_walk'/4 (_names, _v, 3, 1)])
+
+'emo_inst_dump_walk'/4 =
+    fun (_names, _v, _i, _first) ->
+	case _names of
+	  <[_n | _rest]> when 'true' ->
+	      let <_sep> = case _first of
+			  <1> when 'true' -> []
+			  <_> when 'true' -> [44, 32]
+			end
+	      in let <_fld> =
+		     apply 'emo_map_dbg'/1 (call 'erlang':'element'(_i, _v))
+		 in [_sep, _n, 58, 32, _fld
+		     | apply 'emo_inst_dump_walk'/4
+			 (_rest, _v, call 'erlang':'+'(_i, 1), 0)]
+	  <[]> when 'true' ->
+	      [41]
 	end
 
 %% Emo prints a float the way OCaml's `%g` does — six significant digits,
@@ -4250,6 +4344,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env (Printf.sprintf "module '%s' ['main'/0]\n" module_name);
   put env "    attributes []\n";
   put env rt_source;
+  put env (inst_str_source program);
   (* a def emitter shared by program functions and class methods *)
   let emit_def ~(cc : string option) ~(params : (string * string) list)
       ~(fname : string) ~(body : Emo_ir.stmt list) : unit =

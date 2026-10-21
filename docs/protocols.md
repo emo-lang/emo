@@ -26,7 +26,7 @@ The keyword does double duty: `emo Name { ... }` declares a function group, and 
 - `println(value)` writes `emo.to_string(value)` plus a newline.
 - Interpolation renders each `${...}` part with `emo.to_string`.
 - A container renders its elements with the same entry — `[Point.new(1, 2)]` prints `[(1, 2)]`.
-- A class without `to_string` renders as its structure dump — `#Point(x: 1, y: 2)`, strings quoted inside, byte-identical on every target. This is a defined default, not a silent fallback: every value answers `to_string()`.
+- A class without `to_string` renders as its structure dump — `#Point(x: 1, y: 2)`, strings quoted inside, byte-identical on every target. This is a defined default, not a silent fallback: every value answers `to_string()`. (A target that cannot render an instance at all refuses loudly, the freestanding target's standing shape.)
 
 What stays out of rendering: `printf("%s", ...)` takes a `String` — convert explicitly with `emo.to_string(x)`; `+` never concatenates a non-`String` — interpolation is the join.
 

@@ -1904,6 +1904,15 @@ bool emo_le_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b) <= 0; }
    debug_value. */
 static void emo_debug_dyn(emo_value v, FILE *out);
 
+/* The entry module renders bare — the interpreter names the entry
+   file's module nothing, so `main.Local` renders as `#Local(...)`; a
+   class in a `main/` subdirectory keeps its full path. */
+static const char *emo_class_display(const emo_vtable *vt) {
+  const char *n = vt->class_name;
+  if (strncmp(n, "main.", 5) == 0 && strchr(n + 5, '.') == NULL) return n + 5;
+  return n;
+}
+
 static void emo_render_dyn(emo_value v, FILE *out) {
   if ((v & 7) == 0b001) {
     fputs((v >> 3) ? "true" : "false", out);
@@ -1975,7 +1984,21 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   }
   case EMO_INSTANCE: {
     const emo_vtable *vt = (const emo_vtable *)*emo_payload(v);
-    fprintf(out, "#%s(", vt->class_name);
+    /* A class's own `to_string` answers first — the `emo.to_string`
+       protocol entry — and the structure dump below is the defined
+       default. */
+    for (int64_t i = 0; i < vt->method_count; i++) {
+      if (vt->methods[i].method_arity == 0 &&
+          strcmp(vt->methods[i].method_name, "to_string") == 0) {
+        emo_value s = vt->methods[i].thunk(v, NULL);
+        if ((s & 7) != 0 || emo_cell_kind(s) != EMO_STRING)
+          emo_fatal("`to_string` must answer a String (E3015)");
+        emo_str str = emo_str_of(s);
+        fwrite(str.bytes, 1, (size_t)str.len, out);
+        return;
+      }
+    }
+    fprintf(out, "#%s(", emo_class_display(vt));
     for (int64_t i = 0; i < vt->field_count; i++) {
       if (i > 0) fputs(", ", out);
       fprintf(out, "%s: ", vt->field_names[i]);
