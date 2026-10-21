@@ -38,6 +38,7 @@ Each area of the design has its own document:
 - [`docs/intro/syntax.md`](docs/intro/syntax.md) — the language syntax: calls and their trailing blocks, `def` and bindings, control flow, values, and the type-definition constructs.
 - [`docs/reserved_words.md`](docs/reserved_words.md) — the complete list of reserved words, reserved literals, and built-in names the compiler holds back.
 - [`docs/intro/type-system.md`](docs/intro/type-system.md) — gradual typing, width-explicit numeric types, structural narrowing.
+- [`docs/protocols.md`](docs/protocols.md) — the language protocol registry: `emo.to_string` and `emo.length`, contract enforcement at the definition, and what earns an entry.
 - [`docs/intro/modules-and-visibility.md`](docs/intro/modules-and-visibility.md) — the directory tree as the module tree, `internal/` privacy, explicit dependencies.
 - [`docs/intro/package-management.md`](docs/intro/package-management.md) — packages as module prefixes, exact versions resolved by MVS, publishing.
 - [`docs/intro/concurrency.md`](docs/intro/concurrency.md) — processes and message passing: `do`, `<-`, `receive`.
