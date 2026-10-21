@@ -1781,7 +1781,23 @@ from the same value graph, with no host image library.
       calls after — and a class method named `to_bytes` is dispatched
       to the String builtin on `wasm` whatever the receiver, so the
       buffer's byte side is `join()`.
-- [ ] **T45.4** — Text through the Hershey stroke font.
+- [x] **T45.4** — Text through the Hershey stroke font.
+      `internal/font.emo` carries the 95 printable ASCII glyphs of the
+      Hershey Simplex set — public domain, Dr. A. V. Hershey's
+      lettering for the National Bureau of Standards — as three flat
+      tables: each glyph's advance, where its encoding starts, and the
+      encoding itself, stroke count then point count then points, x
+      right and y up from a baseline of 0 under a cap height of 21
+      (bindings lower-case: a capital names a type). `PngRenderer.text`
+      draws each glyph's strokes through the line path, scaled so the
+      cap is 0.7 of the size, laid from the anchor over the summed
+      advances, the call's y the baseline, bold double the stroke
+      width, and a code outside the printable band falling to the
+      space. Verified with a drawn probe — a bold centered title, a
+      start-anchored and an end-anchored label, a digits-and-punctuation
+      line — read back as an image, the strokes legible and the anchors
+      placed, and byte-identical across the six paths (`dune test`
+      green).
 - [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
 
 ---

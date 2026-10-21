@@ -557,9 +557,71 @@ class PngRenderer {
     }
   }
 
-  // The stroke font lands with T45.4; the color is still checked.
+  // The body set in the Hershey stroke font: every glyph's strokes
+  // drawn through the line path, scaled so the cap height is 0.7 of
+  // the size and laid from the anchor over the summed advances — the
+  // y of the call is the baseline, and the font's y runs up. A code
+  // outside the printable band falls to the space. Bold doubles the
+  // stroke width.
   def text(x Float64, y Float64, body String, size Float64, anchor internal.svg.Anchor, weight internal.svg.Weight, fill (Int64, Int64, Int64)) Void {
     checked(fill)
+    const chars = internal.term.glyphs_of(body)
+    const n = chars.length()
+    if n > 0 {
+      const k = size * 0.7 / 21.0
+      var pen = k * 1.6
+      if weight == internal.svg.Weight.bold {
+        pen = pen * 2.0
+      }
+      var w = 0.0
+      for var i = 0; i < n; i = i + 1 {
+        const g = chars[i]
+        const b = g.to_bytes()
+        var code = 0
+        if b.length() == 1 {
+          code = b.get(0)
+        }
+        const adv = internal.font.font_adv[internal.font.glyph_index(code)]
+        w = w + adv.to_float64() * k
+      }
+      var cx = x
+      if anchor == internal.svg.Anchor.middle {
+        cx = x - w / 2.0
+      }
+      if anchor == internal.svg.Anchor.end {
+        cx = x - w
+      }
+      for var i = 0; i < n; i = i + 1 {
+        const g = chars[i]
+        const b = g.to_bytes()
+        var code = 0
+        if b.length() == 1 {
+          code = b.get(0)
+        }
+        const gi = internal.font.glyph_index(code)
+        var at = internal.font.font_off[gi]
+        const ns = internal.font.font_glyph[at]
+        at = at + 1
+        for var s = 0; s < ns; s = s + 1 {
+          const np = internal.font.font_glyph[at]
+          at = at + 1
+          for var p = 0; p + 1 < np; p = p + 1 {
+            const gx = internal.font.font_glyph[at + p * 2]
+            const gy = internal.font.font_glyph[at + p * 2 + 1]
+            const gx2 = internal.font.font_glyph[at + p * 2 + 2]
+            const gy2 = internal.font.font_glyph[at + p * 2 + 3]
+            const x0 = cx + gx.to_float64() * k
+            const y0 = y - gy.to_float64() * k
+            const x1 = cx + gx2.to_float64() * k
+            const y1 = y - gy2.to_float64() * k
+            self.line(x0, y0, x1, y1, fill, pen, "")
+          }
+          at = at + np * 2
+        }
+        const adv = internal.font.font_adv[gi]
+        cx = cx + adv.to_float64() * k
+      }
+    }
   }
 
   // The samples average into the pixel — the four summed, +2, over 4,
