@@ -1,0 +1,37 @@
+// A class whose methods carry names the builtins also use — `length`,
+// `get`, `set`, `push`, `to_string`. An instance answers its own
+// method on every target, whatever the name, whether the receiver's
+// class is known statically or only at run time.
+class Chain {
+  def init(n Int64) {
+    self.n = n
+  }
+
+  def length() Int64 {
+    return self.n
+  }
+
+  def get(i Int64) Int64 {
+    return i + self.n
+  }
+
+  def set(i Int64, v Int64) Int64 {
+    return v
+  }
+
+  def push(v Int64) Int64 {
+    return v
+  }
+
+  def to_string() String {
+    return "Chain(${self.n})"
+  }
+
+  def normal() Int64 {
+    return self.n * 2
+  }
+}
+
+def make(n Int64) Chain {
+  return Chain.new(n)
+}

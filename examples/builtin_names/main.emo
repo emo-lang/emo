@@ -1,0 +1,20 @@
+// The static receiver: the class is named, the method is called
+// directly — a builtin-named method must still reach the class.
+const direct = internal.coll.make(3)
+println(direct.length())
+println(direct.get(1))
+println(direct.set(0, 9))
+println(direct.push(4))
+println(direct.to_string())
+println(direct.normal())
+
+// The run-time receiver: a Box read leaves the type open, so the
+// dispatch tests the classes carrying the name and falls to the
+// builtin only when none matches.
+const held = Box.new(internal.coll.make(7))
+println(held.read().length())
+println(held.read().get(2))
+println(held.read().set(0, 9))
+println(held.read().push(4))
+println(held.read().to_string())
+println(held.read().normal())
