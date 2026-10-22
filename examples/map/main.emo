@@ -31,6 +31,17 @@ println({ "a": 1, "b": 2 } == Map.new(("b", 2), ("a", 1)))
 println({ "a": 1 } == { "a": 2 })
 println({ "a": 1 } != { "b": 1 })
 
+// A negative zero and its positive twin are one key — the way ==
+// answers them — whichever of the two was inserted first.
+const temps = Map.new((0.0, "plus"))
+println(temps.has(0.0 * (0.0 - 1.0)))
+println(temps.get(0.0 * (0.0 - 1.0)))
+const lows = Map.new((0.0 * (0.0 - 1.0), "minus"))
+println(lows)
+println(lows.get(0.0))
+println(0.0 == 0.0 * (0.0 - 1.0))
+println(lows == Map.new((0.0, "minus")))
+
 // Maps declare their types like any value.
 def size(m Map[String, Int64]) Int64 {
   return m.length()

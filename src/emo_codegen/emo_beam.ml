@@ -2051,8 +2051,8 @@ and guard_expr env (x : Emo_ir.expr) : unit =
         | Emo_ast.Le -> "'=<'"
         | Emo_ast.Gt -> "'>'"
         | Emo_ast.Ge -> "'>='"
-        | Emo_ast.Eq -> "'=:='"
-        | Emo_ast.Ne -> "'=/='"
+        | Emo_ast.Eq -> "'=='"
+        | Emo_ast.Ne -> "'/='"
         | Emo_ast.And -> "'andalso'"
         | Emo_ast.Or -> "'orelse'"
         | Emo_ast.Add -> "'+'"
@@ -3247,14 +3247,14 @@ let rt_source =
 	      end
 	  <{'emo_list', _ka}> when 'true' ->
 	      case _b of
-		<{'emo_list', _kb}> when 'true' ->
-		    call 'erlang':'=:='(apply 'emo_list_elems'/1 (_a), apply 'emo_list_elems'/1 (_b))
+		  <{'emo_list', _kb}> when 'true' ->
+		      call 'erlang':'=='(apply 'emo_list_elems'/1 (_a), apply 'emo_list_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
 	  <{'emo_builder', _ka}> when 'true' ->
 	      case _b of
-		<{'emo_builder', _kb}> when 'true' ->
-		    call 'erlang':'=:='(apply 'emo_builder_elems'/1 (_a), apply 'emo_builder_elems'/1 (_b))
+		  <{'emo_builder', _kb}> when 'true' ->
+		      call 'erlang':'=='(apply 'emo_builder_elems'/1 (_a), apply 'emo_builder_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
 	  <{'emo_map', _ka}> when 'true' ->
@@ -3263,7 +3263,19 @@ let rt_source =
 		    apply 'emo_map_equal'/2 (_a, _b)
 		<_other> when 'true' -> 'false'
 	      end
-	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)
+	  <_other> when 'true' ->
+	      case call 'erlang':'is_float'(_a) of
+		<'true'> when 'true' ->
+		    case call 'erlang':'is_float'(_b) of
+		      <'true'> when 'true' -> call 'erlang':'=='(_a, _b)
+		      <'false'> when 'true' -> 'false'
+		    end
+		<'false'> when 'true' ->
+		    case call 'erlang':'is_float'(_b) of
+		      <'true'> when 'true' -> 'false'
+		      <'false'> when 'true' -> call 'erlang':'=='(_a, _b)
+		    end
+	      end
 	end
 
 'emo_ne'/2 =
@@ -3275,8 +3287,16 @@ let rt_source =
 %%   pair in the process dictionary — the same mechanism emo_list_new
 %%   uses. Order is the insertion-order key list; Pairs an Erlang map
 %%   key→value. An existing key replaces in place and keeps its first
-%%   position. Keys are the six hashable primitives, compared with =:=,
-%%   so 1 and 1.0 stay distinct.
+%%   position. Keys are the six hashable primitives; a float key
+%%   reaches the pairs map through one normalization (`-0.0 + 0.0`),
+%%   so -0.0 and 0.0 are one key while 1 and 1.0 stay distinct.
+
+'emo_map_key'/1 =
+    fun (_k) ->
+	case call 'erlang':'is_float'(_k) of
+	  <'true'> when 'true' -> call 'erlang':'+'(_k, 0.0)
+	  <_other> when 'true' -> _k
+	end
 
 'emo_map_new'/1 =
     fun (_pairs) ->
@@ -3286,11 +3306,11 @@ let rt_source =
     fun (_pairs, _m, _order) ->
 	case _pairs of
 	  <[{_k, _v} | _rest]> when 'true' ->
-	      case call 'maps':'is_key'(_k, _m) of
+	      case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _m) of
 		<'true'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), _order)
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), _order)
 		<'false'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), call 'erlang':'++'(_order, [_k]))
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), call 'erlang':'++'(_order, [_k]))
 	      end
 	  <[]> when 'true' ->
 	      let <_k> = call 'erlang':'make_ref'()
@@ -3306,7 +3326,7 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'find'(_k, _pairs) of
+		    case call 'maps':'find'(apply 'emo_map_key'/1 (_k), _pairs) of
 		      <{'ok', _v}> when 'true' -> _v
 		      <'error'> when 'true' ->
 			  call 'erlang':'error'
@@ -3327,12 +3347,12 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(_k, _pairs) of
+		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
 		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(_k, _v, _pairs)})
+			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
 			     _m
 		      <'false'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(_k, _v, _pairs)})
+			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
 			     _m
 		    end
 	      end
@@ -3346,7 +3366,7 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    call 'maps':'is_key'(_k, _pairs)
+		    call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs)
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_map', _other})
@@ -3358,9 +3378,9 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(_k, _pairs) of
+		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
 		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(_k, _pairs)})
+			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(apply 'emo_map_key'/1 (_k), _pairs)})
 			     _m
 		      <'false'> when 'true' -> _m
 		    end
@@ -3373,7 +3393,7 @@ let rt_source =
     fun (_keys, _k) ->
 	case _keys of
 	  <[_h | _t]> when 'true' ->
-	      case call 'erlang':'=:='(_h, _k) of
+	      case call 'erlang':'=='(_h, _k) of
 		<'true'> when 'true' -> _t
 		<'false'> when 'true' ->
 		    [_h | apply 'emo_map_order_drop'/2 (_t, _k)]
@@ -3420,7 +3440,7 @@ let rt_source =
     fun (_keys, _pairs) ->
 	case _keys of
 	  <[_k | _rest]> when 'true' ->
-	      [call 'maps':'get'(_k, _pairs)
+	      [call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs)
 	       | apply 'emo_map_values_walk'/2 (_rest, _pairs)]
 	  <[]> when 'true' -> []
 	end
@@ -3443,7 +3463,7 @@ let rt_source =
 	case _keys of
 	  <[_k | _rest]> when 'true' ->
 	      let <_kd> = apply 'emo_map_dbg'/1 (_k)
-	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(_k, _pairs))
+	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs))
 		 in case _first of
 		      <1> when 'true' ->
 			  [123, _kd, 58, 32, _vd
@@ -3486,10 +3506,11 @@ let rt_source =
     fun (_keys, _pa, _pb) ->
 	case _keys of
 	  <[_k | _rest]> when 'true' ->
-	      case call 'maps':'is_key'(_k, _pb) of
+	      let <_kn> = apply 'emo_map_key'/1 (_k)
+	      in case call 'maps':'is_key'(_kn, _pb) of
 		<'false'> when 'true' -> 'false'
 		<'true'> when 'true' ->
-		    case apply 'emo_eq'/2 (call 'maps':'get'(_k, _pa), call 'maps':'get'(_k, _pb)) of
+		    case apply 'emo_eq'/2 (call 'maps':'get'(_kn, _pa), call 'maps':'get'(_kn, _pb)) of
 		      <'false'> when 'true' -> 'false'
 		      <'true'> when 'true' ->
 			  apply 'emo_map_equal_walk'/3 (_rest, _pa, _pb)

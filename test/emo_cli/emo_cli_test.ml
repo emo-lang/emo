@@ -496,7 +496,7 @@ const g6 = (x) => {
   if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
   return s;
 };
-const floatStr = (f) => (Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
+const floatStr = (f) => (Object.is(f, -0) ? "-0.0" : Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
 const bytes = await readFile(process.argv[2]);
 let mem = null;
 const dec = new TextDecoder();

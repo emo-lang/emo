@@ -26,6 +26,5 @@ println(math.sin(1048576.0))
 println(math.cos(0.0 - 1048576.0))
 println(math.sin(0.0 - 2.5))
 println(math.cos(0.0 - 2.5))
-// A negative zero answers itself; the sign is read through the bits,
-// since float text is the one place the targets still disagree on −0.
-println(math.sin(0.0 * (0.0 - 1.0)).to_bits())
+// A negative zero answers itself, sign and all.
+println(math.sin(0.0 * (0.0 - 1.0)))

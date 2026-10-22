@@ -370,6 +370,7 @@ function g6(x: number): string {
 }
 
 function floatStr(f: number): string {
+  if (Object.is(f, -0)) return "-0.0";
   if (Number.isInteger(f) && Math.abs(f) < 1e16) return f.toFixed(1);
   return g6(f);
 }
