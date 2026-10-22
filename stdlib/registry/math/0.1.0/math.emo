@@ -7,6 +7,9 @@
 // built on the bit-level pair `Float64.to_bits` /
 // `Float64.from_bits`: the same operations in the same order on every
 // target produce the same bits, which is what the SVG goldens rely on.
+// The trigonometric pair in `internal/trig.emo` puts a split-π/2 range
+// reduction in front of its series, exact up to |x| ≤ 2^20; beyond the
+// bound the call raises.
 //
 // The opt-in native fast path lives under distinct `*_native` names and
 // is pinned to `c` and `ocaml`, the two targets that bind a host
@@ -25,6 +28,8 @@
 
 const e = 2.718281828459045
 const pi = 3.141592653589793
+
+const trig = internal.trig
 
 // ---- scalars ----
 
@@ -162,6 +167,20 @@ def pow(base Float64, exponent Float64) Float64 {
     raise Exception.new(message: "math: pow of a negative base")
   }
   return exp(exponent * log(base))
+}
+
+// ---- sin and cos ----
+
+// The trigonometric pair, computed in internal/trig.emo: a split-π/2
+// range reduction exact up to |x| ≤ 2^20 — beyond it, and for a
+// non-finite argument, the call raises — then fixed-order Taylor
+// series over the reduced pair, byte-identical on every target.
+def sin(x Float64) Float64 {
+  return trig.sin(x)
+}
+
+def cos(x Float64) Float64 {
+  return trig.cos(x)
 }
 
 // ---- native fast path (pinned to `c` and `ocaml`) ----

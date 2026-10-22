@@ -351,6 +351,7 @@ let wasm_goldens =
     "float_methods";
     "string_methods";
     "math_demo";
+    "math_trig";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -406,6 +407,7 @@ let beam_goldens =
     "float_methods";
     "string_methods";
     "math_demo";
+    "math_trig";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -616,6 +618,7 @@ let c_goldens =
     "float_methods";
     "string_methods";
     "math_demo";
+    "math_trig";
     "branch_var";
     "builtin_names";
     "to_string_render";

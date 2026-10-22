@@ -1,0 +1,31 @@
+// The math package's trigonometric pair: sin and cos across the four
+// quadrants, at multiples of π, at the reduction bound on both sides,
+// and the preserved sign of a negative zero.
+//
+//   emo run main.emo
+
+require "math"
+
+println(math.sin(0.0))
+println(math.cos(0.0))
+println(math.sin(0.5))
+println(math.cos(0.5))
+println(math.sin(1.0))
+println(math.cos(1.0))
+println(math.sin(2.0))
+println(math.cos(2.0))
+println(math.sin(math.pi))
+println(math.cos(math.pi))
+println(math.sin(10.0))
+println(math.cos(10.0))
+println(math.sin(100.0))
+println(math.cos(100.0))
+println(math.sin(1000.0))
+println(math.cos(1000.0))
+println(math.sin(1048576.0))
+println(math.cos(0.0 - 1048576.0))
+println(math.sin(0.0 - 2.5))
+println(math.cos(0.0 - 2.5))
+// A negative zero answers itself; the sign is read through the bits,
+// since float text is the one place the targets still disagree on −0.
+println(math.sin(0.0 * (0.0 - 1.0)).to_bits())

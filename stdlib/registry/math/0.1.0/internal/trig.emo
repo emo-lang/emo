@@ -1,0 +1,122 @@
+// The trigonometric pair behind `math.sin` and `math.cos`.
+//
+// The reduction writes x = n·(π/2) + r with n = round(2x/π) and |r| at
+// most π/4, a rounding hair wider. π/2 travels as three exactly
+// representable parts: `pio2_head`, the first 33 bits, so n·pio2_head
+// is exact for every n the bound allows; `pio2_tail`, the next 25
+// bits, exact for the same reason; and `pio2_last`, the remainder,
+// so small that its product's own rounding cannot reach the answer's
+// last place. The reduced argument leaves as a two-double pair
+// (y0, y1), which is what lets the series stay at full precision even
+// for an x sitting within a whisker of a zero of the function.
+//
+// The reduction is exact up to the documented bound |x| ≤ 2^20; beyond
+// it the call raises rather than answer with silently lost bits (a
+// Payne–Hanek reduction can lift the bound later). A non-finite
+// argument raises too. Every operation is IEEE binary64 in a fixed
+// order, so all five hosted targets answer byte for byte.
+
+const inv_pio2 = 0.6366197723675814
+const pio2_head = 1.5707963267341256
+const pio2_tail = 0.00000000006077100281332015
+const pio2_last = 0.0000000000000000022517417741562176
+const reduce_bound = 1048576.0
+
+// sin(r) = r − r³/3! + r⁵/5! − ..., carried through r^21; cos(r)
+// through r^20. The coefficients are the factorial reciprocals with
+// their alternating signs folded into the nested form, so the Horner
+// walk only ever subtracts.
+const sin_terms = [0.16666666666666666, 0.008333333333333333, 0.0001984126984126984, 0.0000027557319223985893, 0.00000002505210838544172, 0.00000000016059043836821613, 0.0000000000007647163731819816, 0.0000000000000028114572543455206, 0.00000000000000000822063524662433, 0.000000000000000000019572941063391263]
+const cos_terms = [0.5, 0.041666666666666664, 0.001388888888888889, 0.0000248015873015873, 0.0000002755731922398589, 0.00000000208767569878681, 0.000000000011470745597729725, 0.00000000000004779477332387385, 0.00000000000000015619206968586225, 0.0000000000000000004110317623312165]
+
+def sin_series(r Float64, e Float64) Float64 {
+  const z = r * r
+  var p = sin_terms[9]
+  for var i = 8; i >= 0; i = i - 1 {
+    p = sin_terms[i] - z * p
+  }
+  const base = r * (1.0 - z * p)
+  const corr = e * (1.0 - z * 0.5)
+  return base + corr
+}
+
+def cos_series(r Float64, e Float64) Float64 {
+  const z = r * r
+  var p = cos_terms[9]
+  for var i = 8; i >= 0; i = i - 1 {
+    p = cos_terms[i] - z * p
+  }
+  return (1.0 - z * p) - e * r
+}
+
+// The exponent field of a non-finite value: NaN and both infinities
+// raise, the one honest answer for a function of the circle. A zero
+// answers itself, keeping the sign — told by its bits, every bit but
+// the sign's zero, which is the one test that reads -0.0 and 0.0
+// alike on every target.
+def sin(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: sin of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: sin of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: sin of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const q = n & 3
+  if q == 0 {
+    return sin_series(y0, y1)
+  }
+  if q == 1 {
+    return cos_series(y0, y1)
+  }
+  if q == 2 {
+    return 0.0 - sin_series(y0, y1)
+  }
+  return 0.0 - cos_series(y0, y1)
+}
+
+def cos(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: cos of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: cos of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: cos of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const q = n & 3
+  if q == 0 {
+    return cos_series(y0, y1)
+  }
+  if q == 1 {
+    return 0.0 - sin_series(y0, y1)
+  }
+  if q == 2 {
+    return 0.0 - cos_series(y0, y1)
+  }
+  return sin_series(y0, y1)
+}

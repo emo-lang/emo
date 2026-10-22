@@ -44,6 +44,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M17 — Cross-target conformance | 50 | Conformance to promises already made, not new design: a spawned `c`-target process that raises dies alone, `send` delivers a snapshot, and `foreign def` refuses by name on `wasm` and `beam`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
 | M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
+| M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — `*_native` twins on `c`/`ocaml` and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
 
 ## Design gates
 
@@ -2635,3 +2636,193 @@ stays byte-identical; the docs carry the story.
       five-target Table claim now literally true, `CHECK.md`'s T16.5
       note (`slog` waits on `Map`) recording its resolution, the zh-CN
       mirrors, and `plan/README.md`'s status table.
+
+## M20 — The numerical library
+
+The netlib assessment (`docs/math-netlib.md`, 2026-10-22) split "a
+high-performance numerical library on netlib" into two goals that pull
+apart: netlib supplies algorithms and reference semantics, not speed,
+and the array-class performance tier sits behind the array FFI gate —
+no `Array[T]` crosses `foreign` in any position (E4200), arrays are
+boxed and value-semantic, and the `c` runtime is one OS thread. What
+the assessment found ready is everything before that gate. `math` 0.1.0
+already answers `exp`/`log`/`log10`/`pow` byte-for-byte on all five
+hosted targets through fixed-order series over
+`Float64.to_bits`/`from_bits` (the plot SVG goldens rest on it), and
+T39.3 settled the opt-in `*_native` fast path pinned to `c`/`ocaml`,
+inert elsewhere. M20 extends that machinery along the assessment's
+first two stages. Step 53 completes the pure-Emo surface — the
+trigonometric, inverse, and hyperbolic functions, `log2`/`exp2`/
+`hypot`, complex arithmetic and a radix-2 FFT after FFTPACK, BLAS1
+over value-semantic arrays, an LU solver with partial pivoting after
+LAPACK's `gesv`, and the error and gamma functions — each
+byte-identical on the five targets, with an ELEFUNT-derived battery
+printing its loss-of-bits as a golden so accuracy is a diff. Step 54
+adds the native fast lane: `*_native` twins for the new functions, and
+the `quad` package vendoring f2c-translated QUADPACK behind a
+scalar-and-callback shim — the one shape today's FFI admits — on `c`,
+its convergence failures reported through the `(R.ok, …)`/`(R.error,
+…)` split. Stage 3 — BLAS2/3 and LAPACK subsets bound natively — is
+not in this milestone; it waits on the array FFI gate as its own
+compiler step. Every task is sized for spare time: each leaves `dune
+test` green and every existing golden byte-identical. The provisional
+decisions are marked on the tasks that make them: BLAS names as the
+API vocabulary, complex values interleaved in a flat `Array[Float64]`,
+matrices as a flat row-major `Array[Float64]` with an explicit
+dimension, the range-reduction bound, and the package name `quad`.
+
+### Step 53 — The pure-Emo numerical surface
+
+**Prereq:** none (`math` 0.1.0's series discipline is the base; T39.3
+is the native pattern Step 54 follows).
+**Done when:** every new function answers byte-identical on all five
+hosted targets through the series discipline, each under a golden in
+`examples/`; the ELEFUNT-derived battery is a golden; every existing
+golden on every target stays byte-identical; `dune test` green; the
+docs carry the surface and its accuracy record.
+
+- [x] **T53.1** — `sin` and `cos`: Cody–Waite range reduction to
+      |r| ≤ π/4 against a split π/2 (a three-part constant, so the
+      reduction is exact up to a documented |x| bound — beyond it the
+      call raises rather than silently losing bits; provisional, a
+      Payne–Hanek reduction can lift the bound later), quadrant
+      selection, and a fixed-order Taylor series for each — the same
+      operations in the same order on every target.
+      `examples/math_trig` is the golden.
+- [ ] **T53.2** — `tan`: T53.1's reduction, then the quotient of the
+      two reduced series with the quadrant's sign and reciprocal
+      switch; the poles are unreachable in binary floating point, so
+      there is no domain raise, and the behaviour near π/2 is
+      documented. `examples/math_trig` grows the panel.
+- [ ] **T53.3** — `atan` and `atan2`: argument folding (|x| > 1
+      through the reciprocal identity, the tan(π/12) fold into a short
+      series range), a fixed-order odd series, and `atan2`'s quadrant
+      assembly with the axis and signed-zero cases spelled out —
+      `atan2(0.0, 0.0)` raises (provisional: the C convention returns
+      0, Emo's domain rule says there is no value). Golden
+      `examples/math_inverse_trig`.
+- [ ] **T53.4** — `asin` and `acos`: through the `atan` core
+      (`asin(x) = atan(x / sqrt(1 − x²))`, the complementary form as
+      |x| nears 1 so the root does not cancel), `acos` from `asin`;
+      |x| > 1 raises, the package's domain rule.
+      `examples/math_inverse_trig` grows.
+- [ ] **T53.5** — `sinh`, `cosh`, `tanh`: compositions over the
+      existing `exp`, a short odd series for small |x| in `sinh` and
+      `tanh` (the difference `(e^x − e^−x)/2` cancels there), `tanh`
+      saturating to ±1 before `exp` could overflow; `sinh`/`cosh`
+      overflow raise, the `exp` rule, since `beam`'s floats cannot hold
+      infinity. Golden `examples/math_hyperbolic`.
+- [ ] **T53.6** — `log2`, `exp2`, `hypot`: `log2` from the `log`
+      decomposition's exponent and mantissa, not `log(x) / ln 2`, so
+      every power of two answers exactly; `exp2` through the `exp`
+      scaling (`pow2` for the integer part, the series for the
+      fraction); `hypot` overflow- and underflow-safe through a
+      power-of-two rescale. `examples/math_demo` grows.
+- [ ] **T53.7** — Complex arithmetic (`internal/complex.emo`): add,
+      sub, mul, div (Smith's algorithm, so the naive quotient cannot
+      overflow), `abs` through `hypot`, `conj`, scaling, and
+      `from_polar(r, θ)` through T53.1's `sin`/`cos`; a value is a
+      `(re, im)` `Float64` pair on the scalar surface and interleaved
+      in a flat `Array[Float64]` where a vector is needed (provisional
+      — the FFT is the consumer). `examples/math_complex` is the
+      golden.
+- [ ] **T53.8** — The radix-2 complex FFT after FFTPACK's
+      `cfftf`/`cfftb`: iterative Cooley–Tukey over T53.7's interleaved
+      array, bit-reversal permutation, twiddles from the package's own
+      `sin`/`cos` so the table is byte-identical rather than libm's,
+      forward and inverse (`ifft` scaling by 1/n); a length that is not
+      a power of two raises — mixed radix is later work, not a silent
+      fallback. The golden `examples/math_fft` pins the result against
+      a naive O(n²) DFT computed in the same program.
+- [ ] **T53.9** — BLAS1 over `Array[Float64]`, value-semantic: `dot`,
+      `nrm2` (the reference BLAS's scaled accumulation, overflow-safe),
+      `asum`, `iamax`, and `scal`/`axpy` returning new arrays —
+      nothing writes in place, there is no in-place in Emo; mismatched
+      lengths raise. The accumulation order is fixed and documented,
+      which is what makes the five targets agree. BLAS names as the
+      vocabulary (provisional). Golden `examples/math_blas1`.
+- [ ] **T53.10** — The dense solver after LAPACK's `getrf`/`getrs`:
+      `lu(a, n)` — LU with partial pivoting over a flat row-major
+      `Array[Float64]` with an explicit dimension (provisional: no
+      nested arrays, one allocation per matrix) returning the packed
+      factors and the pivot vector as `Array[Int64]`; `solve(a, n, b)`
+      the `gesv` shape; an exactly zero pivot raises — the matrix
+      analogue of division by zero — and the threshold is documented.
+      Golden `examples/math_solve` with textbook systems, one of them
+      failing without pivoting.
+- [ ] **T53.11** — `erf` and `erfc`: the Maclaurin series below the
+      crossover, the continued fraction for `erfc` above it, each
+      fixed-order; `erfc` is its own function rather than `1 − erf` so
+      the tail does not cancel. Golden `examples/math_special`.
+- [ ] **T53.12** — `tgamma` and `lgamma`: the Lanczos approximation
+      with one fixed coefficient set written into the source
+      (byte-identical by construction), the reflection formula on the
+      negative half-line, `lgamma` covering the range `tgamma`
+      overflows; non-positive integers raise, the poles.
+      `examples/math_special` grows.
+- [ ] **T53.13** — The ELEFUNT-derived battery: Cody & Waite's identity
+      tests across the surface (`sin` against
+      `3 sin(x/3) − 4 sin³(x/3)`, `exp` against its shifted-argument
+      identity, `log` against the product form, and so on) over fixed
+      pseudo-random arguments — the package carries a small linear
+      congruential generator so the sequence is byte-identical —
+      printing the maximum and RMS loss in bits per function. A golden,
+      `examples/math_elefunt`, whose `expected.txt` is the accuracy
+      record: a regression is a diff.
+- [ ] **T53.14** — The docs: `docs/stdlib/math.md` (and the zh-CN
+      mirror) with the full surface, the domains and the raise rules,
+      the accuracy record from T53.13, and the representation decisions
+      (interleaved complex, flat row-major matrices); `docs/stdlib.md`'s
+      math row; the new goldens in the five golden lists;
+      `plan/README.md`'s status table.
+
+### Step 54 — The native fast lane
+
+**Prereq:** Step 53 (the pure twins the natives shadow; T53.13's
+battery is the acceptance).
+**Done when:** every `*_native` twin binds on `c` and `ocaml` and is
+inert elsewhere (the T39.3 discipline); the `quad` package integrates
+on `c` with QUADPACK's error flags mapped through the
+`(R.ok, …)`/`(R.error, …)` split; every existing golden on every target
+stays byte-identical; `dune test` green; the docs carry both.
+
+- [ ] **T54.1** — The `*_native` twins for Step 53's scalar functions
+      (`sin_native` through `tanh_native`, `atan2_native`,
+      `log2_native`, `exp2_native`, `hypot_native`, `erf_native`,
+      `erfc_native`, `tgamma_native`, `lgamma_native`) as `foreign def`
+      bindings to the libm symbols, pinned to `c`/`ocaml`, inert on the
+      other targets (the interpreter's E3009 at the call, the emitters'
+      lower error), documented as host-libm and not byte-identical.
+      `examples/math_native` grows.
+- [ ] **T54.2** — The battery on the natives: a `c`-only companion
+      (`examples/math_elefunt_native`, in the c golden list alone)
+      running T53.13's identities over the `*_native` twins and
+      printing each function's verdict against a stated loss budget
+      rather than the raw bits, so the golden holds across host libms —
+      the number the assessment asked for before the fast lane is
+      called accurate.
+- [ ] **T54.3** — The `quad` package (provisional name),
+      `targets = ["c"]`, after the `sqlite3` precedent: f2c-translated
+      QUADPACK `dqags` and the routines it pulls (`dqagse`, `dqk21`,
+      `dqelg`, `dqpsrt`, the `d1mach` constants rewritten as literals)
+      vendored in the package tree; a C shim owning the workspace (a
+      fixed `limit`) and exposing the one shape today's FFI admits —
+      the integrand as a single-method interface
+      (`def at(x Float64) Float64`, the callback contract), bounds and
+      tolerances as `Float64`, the `(result, abserr, neval, ier)` tuple
+      back; the Emo surface `integrate(f, a, b, epsabs, epsrel)` maps
+      `ier = 0` to `(R.ok, (value, abserr))` and QUADPACK's failure
+      codes to `(R.error, reason)` in netlib's wording — a convergence
+      failure is an expected outcome, not a violation. Golden
+      `examples/quad_demo` in the c golden list.
+- [ ] **T54.4** — The infinite ranges: `dqagi` through the same shim
+      (netlib's transformation onto (0, 1]), surfaced as an enum
+      argument naming the three ranges — from a bound to +∞, from −∞
+      to a bound, the whole line — rather than infinite `Float64`
+      bounds (provisional naming). `examples/quad_demo` grows.
+- [ ] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
+      the API, the error-code mapping, and the host-dependence note;
+      `docs/stdlib.md`'s rows (`math`'s native column, the `quad` row);
+      `docs/math-netlib.md`'s stage table marked with stages 1–2 landed
+      and stage 3 still parked, with its zh-CN mirror;
+      `plan/README.md`'s status table.
