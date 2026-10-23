@@ -1,5 +1,5 @@
-// The trigonometric functions behind `math.sin`, `math.cos`, and
-// `math.tan`.
+// The trigonometric functions behind `math.sin`, `math.cos`,
+// `math.tan`, `math.atan`, and `math.atan2`.
 //
 // The reduction writes x = n·(π/2) + r with n = round(2x/π) and |r| at
 // most π/4, a rounding hair wider. π/2 travels as three exactly
@@ -160,4 +160,120 @@ def tan(x Float64) Float64 {
     return s / c
   }
   return 0.0 - c / s
+}
+
+// ---- atan and atan2 ----
+
+// The plain constants, not the split ones above: the inverse pair
+// adds and subtracts them whole, and no quotient here can grow large
+// enough for a split to matter.
+const pi = 3.141592653589793
+const pi_over_2 = 1.5707963267948966
+const pi_over_12 = 0.2617993877991494
+const tan_pi_over_12 = 0.2679491924311227
+
+// The odd series atan(z) = z − z³/3 + z⁵/5 − ..., carried through
+// z^69 — the truncation at the top of its range, |z| ≤ tan(π/6), sits
+// below the last place. The coefficients are the odd reciprocals
+// 1/3 .. 1/69 with their alternating signs folded into the nested
+// form, so the Horner walk only ever subtracts.
+const atan_terms = [0.3333333333333333, 0.2, 0.14285714285714285, 0.1111111111111111, 0.09090909090909091, 0.07692307692307693, 0.06666666666666667, 0.058823529411764705, 0.05263157894736842, 0.047619047619047616, 0.043478260869565216, 0.04, 0.037037037037037035, 0.034482758620689655, 0.03225806451612903, 0.030303030303030304, 0.02857142857142857, 0.02702702702702703, 0.02564102564102564, 0.024390243902439025, 0.023255813953488372, 0.022222222222222223, 0.02127659574468085, 0.02040816326530612, 0.0196078431372549, 0.018867924528301886, 0.01818181818181818, 0.017543859649122806, 0.01694915254237288, 0.01639344262295082, 0.015873015873015872, 0.015384615384615385, 0.014925373134328358, 0.014492753623188406]
+
+def atan_series(z Float64) Float64 {
+  const t = z * z
+  var p = atan_terms[33]
+  for var i = 32; i >= 0; i = i - 1 {
+    p = atan_terms[i] - t * p
+  }
+  return z * (1.0 - t * p)
+}
+
+// atan(u) for u in [0, 1]: below tan(π/12) the series answers alone;
+// above, the fold atan(u) = π/12 + atan((u − t)/(1 + u·t)) moves the
+// argument into the series range — an identity exact in real
+// arithmetic, so only its two roundings show.
+def atan_unit(u Float64) Float64 {
+  if u <= tan_pi_over_12 {
+    return atan_series(u)
+  }
+  const z = (u - tan_pi_over_12) / (1.0 + tan_pi_over_12 * u)
+  return pi_over_12 + atan_series(z)
+}
+
+// atan is odd, so the work runs on |x| and the sign returns at the
+// end. |x| > 1 folds through the reciprocal identity atan(x) =
+// ±π/2 − atan(1/|x|); a zero answers itself, sign and all; a
+// non-finite argument raises.
+def atan(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  var v = 0.0
+  if a > 1.0 {
+    v = pi_over_2 - atan_unit(1.0 / a)
+  } else {
+    v = atan_unit(a)
+  }
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
+// atan2 assembles the quadrant around atan. A zero x is the y axis and
+// answers ±π/2 by the sign of y; a zero y is the x axis and travels
+// with the general cases below, which answer ±0 for x > 0 and ±π for
+// x < 0 — every signed zero keeps its sign. The origin, both arguments
+// zero, has no angle and raises: the one provisional departure from the
+// C convention, which returns a zero there. The ratio feeding atan
+// stays at most one — the larger magnitude denominates — so no
+// quotient can overflow and no subnormal denominator can send it to
+// infinity. A non-finite argument raises.
+def atan2(y Float64, x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan2 of a non-finite value")
+  }
+  if ((y.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan2 of a non-finite value")
+  }
+  if x == 0.0 {
+    if y == 0.0 {
+      raise Exception.new(message: "math: atan2 of the origin has no angle")
+    }
+    if y > 0.0 {
+      return pi_over_2
+    }
+    return 0.0 - pi_over_2
+  }
+  const ay = Float64.from_bits(y.to_bits() & 9223372036854775807)
+  const ax = Float64.from_bits(x.to_bits() & 9223372036854775807)
+  var theta = 0.0
+  if ay > ax {
+    theta = pi_over_2 - atan(ax / ay)
+  } else {
+    theta = atan(ay / ax)
+  }
+  // The sign of a zero y survives every comparison only in its bit,
+  // and the answers it takes are zeros, so the restore multiplies by
+  // −1 — subtraction would hand back a +0. The shift is arithmetic,
+  // so the mask reduces it to the bit itself.
+  const yneg = ((y.to_bits() >> 63) & 1) == 1
+  if x > 0.0 {
+    if yneg {
+      return -1.0 * theta
+    }
+    return theta
+  }
+  const base = pi - theta
+  if yneg {
+    return -1.0 * base
+  }
+  return base
 }

@@ -1,0 +1,47 @@
+// The math package's inverse trigonometric pair: atan across its whole
+// range — the reciprocal identity above 1, the tan(π/12) fold, the
+// series below — and atan2 through every quadrant, on both axes, and
+// at the signed zeros, each of which keeps its sign. The origin, both
+// arguments zero, is the one input with no angle: it raises, and so
+// has no line in this panel.
+//
+//   emo run main.emo
+
+require "math"
+
+// atan: the series range, the fold boundary, the reciprocal identity,
+// and the approach to ±π/2.
+println(math.atan(0.0))
+println(math.atan(0.0 * (0.0 - 1.0)))
+println(math.atan(0.5))
+println(math.atan(1.0))
+println(math.atan(2.0))
+println(math.atan(math.pi))
+println(math.atan(10.0))
+println(math.atan(1000.0))
+println(math.atan(10000000000.0))
+println(math.atan(1000000000000000000000000000000.0))
+println(math.atan(1048576.0))
+println(math.atan(0.2679491924311227))
+println(math.atan(0.5773502691896257))
+println(math.atan(0.0 - 2.0))
+// A negative zero answers itself, sign and all.
+println(math.atan(0.0 * (0.0 - 1.0)))
+
+// atan2: one line per quadrant, then the axes, then the signed zeros,
+// then the ratios too steep or too shallow for a quotient to survive.
+println(math.atan2(0.0, 1.0))
+println(math.atan2(1.0, 1.0))
+println(math.atan2(1.0, 0.0))
+println(math.atan2(1.0, 0.0 - 1.0))
+println(math.atan2(0.0 - 1.0, 0.0 - 1.0))
+println(math.atan2(0.0 - 1.0, 0.0))
+println(math.atan2(0.0 - 1.0, 1.0))
+println(math.atan2(2.0, 3.0))
+println(math.atan2(3.0, 2.0))
+println(math.atan2(0.0, 0.0 - 1.0))
+println(math.atan2(0.0 * (0.0 - 1.0), 0.0 - 1.0))
+println(math.atan2(0.0 * (0.0 - 1.0), 1.0))
+println(math.atan2(1000000000000000000000000000000.0, 0.000000000000000000000000000001))
+println(math.atan2(0.0 - 1000000000000000000000000000000.0, 0.000000000000000000000000000001))
+println(math.atan2(1000000000000000000000000000000.0, 0.0 - 0.000000000000000000000000000001))

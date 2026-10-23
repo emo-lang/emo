@@ -9,7 +9,9 @@
 // target produce the same bits, which is what the SVG goldens rely on.
 // The trigonometric functions in `internal/trig.emo` put a split-π/2
 // range reduction in front of their series, exact up to |x| ≤ 2^20;
-// beyond the bound the call raises.
+// beyond the bound the call raises. The inverse pair folds its
+// argument instead — the reciprocal identity above |x| = 1, the
+// tan(π/12) fold below — into the range of a fixed-order odd series.
 //
 // The opt-in native fast path lives under distinct `*_native` names and
 // is pinned to `c` and `ocaml`, the two targets that bind a host
@@ -188,6 +190,22 @@ def cos(x Float64) Float64 {
 
 def tan(x Float64) Float64 {
   return trig.tan(x)
+}
+
+// ---- atan and atan2 ----
+
+// The inverse pair, computed in internal/trig.emo: the reciprocal
+// identity above |x| = 1 and the tan(π/12) fold feed a fixed-order odd
+// series, byte-identical on every target. `atan2` assembles the
+// quadrant around `atan`; its axes are the signed zeros — each keeps
+// its sign — and the origin, both arguments zero, raises: the one
+// point where no angle exists.
+def atan(x Float64) Float64 {
+  return trig.atan(x)
+}
+
+def atan2(y Float64, x Float64) Float64 {
+  return trig.atan2(y, x)
 }
 
 // ---- native fast path (pinned to `c` and `ocaml`) ----

@@ -2694,7 +2694,7 @@ docs carry the surface and its accuracy record.
       switch; the poles are unreachable in binary floating point, so
       there is no domain raise, and the behaviour near π/2 is
       documented. `examples/math_trig` grows the panel.
-- [ ] **T53.3** — `atan` and `atan2`: argument folding (|x| > 1
+- [x] **T53.3** — `atan` and `atan2`: argument folding (|x| > 1
       through the reciprocal identity, the tan(π/12) fold into a short
       series range), a fixed-order odd series, and `atan2`'s quadrant
       assembly with the axis and signed-zero cases spelled out —
