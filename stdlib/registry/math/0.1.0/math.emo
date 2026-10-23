@@ -7,9 +7,9 @@
 // built on the bit-level pair `Float64.to_bits` /
 // `Float64.from_bits`: the same operations in the same order on every
 // target produce the same bits, which is what the SVG goldens rely on.
-// The trigonometric pair in `internal/trig.emo` puts a split-π/2 range
-// reduction in front of its series, exact up to |x| ≤ 2^20; beyond the
-// bound the call raises.
+// The trigonometric functions in `internal/trig.emo` put a split-π/2
+// range reduction in front of their series, exact up to |x| ≤ 2^20;
+// beyond the bound the call raises.
 //
 // The opt-in native fast path lives under distinct `*_native` names and
 // is pinned to `c` and `ocaml`, the two targets that bind a host
@@ -169,18 +169,25 @@ def pow(base Float64, exponent Float64) Float64 {
   return exp(exponent * log(base))
 }
 
-// ---- sin and cos ----
+// ---- sin, cos, and tan ----
 
-// The trigonometric pair, computed in internal/trig.emo: a split-π/2
-// range reduction exact up to |x| ≤ 2^20 — beyond it, and for a
-// non-finite argument, the call raises — then fixed-order Taylor
-// series over the reduced pair, byte-identical on every target.
+// The trigonometric functions, computed in internal/trig.emo: a
+// split-π/2 range reduction exact up to |x| ≤ 2^20 — beyond it, and
+// for a non-finite argument, the call raises — then fixed-order Taylor
+// series over the reduced pair, byte-identical on every target. `tan`
+// is the quotient of the two reduced series with the quadrant's sign
+// and reciprocal switch; its poles are unreachable in binary floating
+// point, so it has no domain raise.
 def sin(x Float64) Float64 {
   return trig.sin(x)
 }
 
 def cos(x Float64) Float64 {
   return trig.cos(x)
+}
+
+def tan(x Float64) Float64 {
+  return trig.tan(x)
 }
 
 // ---- native fast path (pinned to `c` and `ocaml`) ----

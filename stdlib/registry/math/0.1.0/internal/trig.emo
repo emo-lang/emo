@@ -1,4 +1,5 @@
-// The trigonometric pair behind `math.sin` and `math.cos`.
+// The trigonometric functions behind `math.sin`, `math.cos`, and
+// `math.tan`.
 //
 // The reduction writes x = n·(π/2) + r with n = round(2x/π) and |r| at
 // most π/4, a rounding hair wider. π/2 travels as three exactly
@@ -119,4 +120,44 @@ def cos(x Float64) Float64 {
     return 0.0 - cos_series(y0, y1)
   }
   return sin_series(y0, y1)
+}
+
+// tan shares the reduction, then takes the quotient of the two series:
+// the even quadrants answer sin(r)/cos(r), the odd ones the negative
+// reciprocal, −cos(r)/sin(r) — the quadrant's sign and reciprocal
+// switch. The poles sit at the odd multiples of π/2, which are
+// irrational, so no binary floating-point value lands on one and the
+// reciprocal never divides by zero; there is no domain raise. Just
+// below the closest double to π/2 the answer is about 1.6e16, just
+// above it about −6.2e15: near a pole tan is a huge finite value whose
+// sign flips across the pole, never an infinity.
+def tan(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: tan of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: tan of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: tan of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const s = sin_series(y0, y1)
+  const c = cos_series(y0, y1)
+  // tan has period π, so only the quadrant's parity matters.
+  if (n & 1) == 0 {
+    return s / c
+  }
+  return 0.0 - c / s
 }

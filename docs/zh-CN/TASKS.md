@@ -966,7 +966,7 @@ netlib 评估(`docs/math-netlib.md`,2026-10-22)把「基于 netlib 的高性能�
 **完成标准:** 每个新函数经级数纪律在全部五个宿主 target 上逐字节一致,各自在 `examples/` 下有金测;源自 ELEFUNT 的测试电池本身是一个金测;每个 target 上既有的金测逐字节不变;`dune test` 绿;文档记下表面及其精度记录。
 
 - [x] **T53.1** — `sin` 与 `cos`:Cody–Waite range reduction 到 |r| ≤ π/4,对照拆成三段的 π/2 常量(于是在一个写明的 |x| 上界内归约是精确的——超过上界的调用 raise,而不是悄悄丢位;暂定,日后可用 Payne–Hanek 归约抬高上界),象限选择,各自一个固定阶 Taylor 级数——在每个 target 上同样的运算、同样的顺序。`examples/math_trig` 是金测。
-- [ ] **T53.2** — `tan`:沿用 T53.1 的归约,然后取两个归约后级数的商,按象限切换符号与倒数;极点在二进制浮点里不可达,故没有定义域 raise,π/2 附近的行为写进文档。`examples/math_trig` 加面板。
+- [x] **T53.2** — `tan`:沿用 T53.1 的归约,然后取两个归约后级数的商,按象限切换符号与倒数;极点在二进制浮点里不可达,故没有定义域 raise,π/2 附近的行为写进文档。`examples/math_trig` 加面板。
 - [ ] **T53.3** — `atan` 与 `atan2`:参数折叠(|x| > 1 走倒数恒等式,tan(π/12) 折叠进短级数区间),固定阶奇级数,`atan2` 的象限拼装把坐标轴与带符号零的情形逐一写明——`atan2(0.0, 0.0)` raise(暂定:C 的惯例返回 0,Emo 的定义域规则说这里没有值)。金测 `examples/math_inverse_trig`。
 - [ ] **T53.4** — `asin` 与 `acos`:经 `atan` 核心(`asin(x) = atan(x / sqrt(1 − x²))`,|x| 趋近 1 时用互补形式以免根号抵消),`acos` 由 `asin` 得出;|x| > 1 raise,包的定义域规则。`examples/math_inverse_trig` 加面板。
 - [ ] **T53.5** — `sinh`、`cosh`、`tanh`:在既有 `exp` 之上组合,`sinh` 与 `tanh` 在小 |x| 处用短奇级数(差 `(e^x − e^−x)/2` 在那里抵消),`tanh` 在 `exp` 可能溢出之前饱和到 ±1;`sinh`/`cosh` 溢出 raise,即 `exp` 的规则,因为 `beam` 的浮点装不下无穷。金测 `examples/math_hyperbolic`。

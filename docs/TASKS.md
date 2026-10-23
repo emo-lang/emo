@@ -2689,7 +2689,7 @@ docs carry the surface and its accuracy record.
       selection, and a fixed-order Taylor series for each — the same
       operations in the same order on every target.
       `examples/math_trig` is the golden.
-- [ ] **T53.2** — `tan`: T53.1's reduction, then the quotient of the
+- [x] **T53.2** — `tan`: T53.1's reduction, then the quotient of the
       two reduced series with the quadrant's sign and reciprocal
       switch; the poles are unreachable in binary floating point, so
       there is no domain raise, and the behaviour near π/2 is
