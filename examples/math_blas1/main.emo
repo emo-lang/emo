@@ -1,0 +1,64 @@
+// The math package's BLAS1 kernels over Array[Float64]: dot, nrm2,
+// asum, iamax, scal, and axpy, each answer printed beside the vector it
+// came from, so the fixed front-to-back accumulation order is on
+// display and any drift between targets is a diff. The scaled nrm2
+// shows both of its extremes — a vector whose squares would overflow
+// and one whose squares would underflow into nothing — and scal and
+// axpy print their caller's arrays again untouched, the value rule
+// made visible. Mismatched lengths raise and iamax of an empty array
+// raises, so no such call appears here.
+//
+//   emo run main.emo
+
+require "math"
+
+def show(v Array[Float64]) {
+  var i = 0
+  while i < v.length() {
+    println(v[i])
+    i = i + 1
+  }
+}
+
+// dot: one product per index, summed front to back.
+const left = [1.0, 2.0, 3.0]
+const right = [4.0, 5.0, 6.0]
+println(math.dot(left, right))
+
+// nrm2: the 3-4 pair answers 5 through the scaled accumulation, and
+// the pair of powers of two answers at both ends of the exponent range
+// — where the raw squares would overflow, and where they would
+// underflow to zero and take the answer with them.
+const three_four = [3.0, 4.0]
+println(math.nrm2(three_four))
+const tall = [math.pow2(663), math.pow2(663)]
+println(math.nrm2(tall))
+const deep = [math.pow2(0 - 663), math.pow2(0 - 663)]
+println(math.nrm2(deep))
+
+// asum: magnitudes only, no sign left to cancel.
+println(math.asum([-1.5, 2.5, -3.5]))
+
+// iamax: the earliest index of the largest magnitude — the tie keeps
+// index zero.
+println(math.iamax([1.0, -5.0, 3.0]))
+println(math.iamax([2.0, -2.0]))
+
+// scal: a fresh array of a[i]·f, the caller's printed again untouched.
+const unit = [1.0, 2.0, 3.0]
+show(math.scal(unit, 2.5))
+show(unit)
+
+// axpy: a·x + y, a fresh array again, both originals surviving it.
+const x = [1.0, 2.0, 3.0]
+const y = [10.0, 20.0, 30.0]
+show(math.axpy(2.0, x, y))
+show(x)
+show(y)
+
+// The empty edges: the three accumulations answer zero on nothing at
+// all, the n = 0 convention the reference BLAS carries.
+const none = ArrayBuilder.new().to_array()
+println(math.dot(none, none))
+println(math.nrm2(none))
+println(math.asum(none))

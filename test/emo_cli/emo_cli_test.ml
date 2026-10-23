@@ -356,6 +356,7 @@ let wasm_goldens =
     "math_hyperbolic";
     "math_complex";
     "math_fft";
+    "math_blas1";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -416,6 +417,7 @@ let beam_goldens =
     "math_hyperbolic";
     "math_complex";
     "math_fft";
+    "math_blas1";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -631,6 +633,7 @@ let c_goldens =
     "math_hyperbolic";
     "math_complex";
     "math_fft";
+    "math_blas1";
     "branch_var";
     "builtin_names";
     "to_string_render";

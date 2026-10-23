@@ -2734,7 +2734,7 @@ docs carry the surface and its accuracy record.
       a power of two raises — mixed radix is later work, not a silent
       fallback. The golden `examples/math_fft` pins the result against
       a naive O(n²) DFT computed in the same program.
-- [ ] **T53.9** — BLAS1 over `Array[Float64]`, value-semantic: `dot`,
+- [x] **T53.9** — BLAS1 over `Array[Float64]`, value-semantic: `dot`,
       `nrm2` (the reference BLAS's scaled accumulation, overflow-safe),
       `asum`, `iamax`, and `scal`/`axpy` returning new arrays —
       nothing writes in place, there is no in-place in Emo; mismatched

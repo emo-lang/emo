@@ -38,6 +38,7 @@ const pi = 3.141592653589793
 const trig = internal.trig
 const real = internal.real
 const complex = internal.complex
+const blas1 = internal.blas1
 
 // ---- scalars ----
 
@@ -321,6 +322,41 @@ def fft(v Array[Float64]) Array[Float64] {
 
 def ifft(v Array[Float64]) Array[Float64] {
   return internal.fft.ifft(v)
+}
+
+// ---- blas1 ----
+
+// The BLAS1 kernels over Array[Float64], computed in internal/blas1.emo
+// after the reference BLAS: the accumulation order is fixed — every
+// kernel walks the array front to back — which is what makes the five
+// targets answer byte-for-byte. The arrays are values, so `scal` and
+// `axpy` answer fresh arrays and never write in place, and mismatched
+// lengths raise. `nrm2` carries the reference BLAS's scaled
+// accumulation, so no square can overflow; `iamax` answers the index
+// of the first element of largest magnitude, and an empty array has no
+// such index and raises.
+def dot(x Array[Float64], y Array[Float64]) Float64 {
+  return blas1.dot(x, y)
+}
+
+def nrm2(x Array[Float64]) Float64 {
+  return blas1.nrm2(x)
+}
+
+def asum(x Array[Float64]) Float64 {
+  return blas1.asum(x)
+}
+
+def iamax(x Array[Float64]) Int64 {
+  return blas1.iamax(x)
+}
+
+def scal(a Array[Float64], f Float64) Array[Float64] {
+  return blas1.scal(a, f)
+}
+
+def axpy(a Float64, x Array[Float64], y Array[Float64]) Array[Float64] {
+  return blas1.axpy(a, x, y)
 }
 
 // ---- sinh, cosh, and tanh ----
