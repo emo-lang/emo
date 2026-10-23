@@ -2712,7 +2712,7 @@ docs carry the surface and its accuracy record.
       saturating to ±1 before `exp` could overflow; `sinh`/`cosh`
       overflow raise, the `exp` rule, since `beam`'s floats cannot hold
       infinity. Golden `examples/math_hyperbolic`.
-- [ ] **T53.6** — `log2`, `exp2`, `hypot`: `log2` from the `log`
+- [x] **T53.6** — `log2`, `exp2`, `hypot`: `log2` from the `log`
       decomposition's exponent and mantissa, not `log(x) / ln 2`, so
       every power of two answers exactly; `exp2` through the `exp`
       scaling (`pow2` for the integer part, the series for the

@@ -21,8 +21,9 @@
 // host libm, so it is not byte-identical across platforms.
 //
 // The functions have domains, and an out-of-domain argument is a
-// contract violation, not a value: `log` of a non-positive number and
-// `exp`'s overflow raise `Exception`. The beam target's Erlang floats
+// contract violation, not a value: `log` of a non-positive number, and
+// the overflow of `exp`, `exp2`, `sinh`, `cosh`, and `hypot` raise
+// `Exception`. The beam target's Erlang floats
 // cannot represent NaN or infinity at all, so returning one is not an
 // option; the caller filters its data.
 
@@ -70,6 +71,38 @@ def sqrt(x Float64) Float64 {
   return x.sqrt()
 }
 
+// hypot through a power-of-two rescale: both magnitudes move down by
+// the larger's exponent, so no square can overflow and no term can
+// underflow into nothing worth keeping, and the scale rides back out
+// exactly — the same arithmetic on every target. An answer that
+// genuinely leaves the exponent range still overflows and raises.
+def hypot(a Float64, b Float64) Float64 {
+  if ((a.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot of a non-finite value")
+  }
+  if ((b.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot of a non-finite value")
+  }
+  const ax = abs(a)
+  const bx = abs(b)
+  const m = max(ax, bx)
+  const n = min(ax, bx)
+  if m == 0.0 {
+    return 0.0
+  }
+  if n == 0.0 {
+    return m
+  }
+  const e = ((m.to_bits() >> 52) & 2047) - 1023
+  const x = m * pow2(0 - e)
+  const y = n * pow2(0 - e)
+  const v = (x * x + y * y).sqrt() * pow2(e)
+  if ((v.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot overflows Float64")
+  }
+  return v
+}
+
 // ---- powers of two ----
 
 // 2^n, written straight into the exponent field so the scaling in `exp`
@@ -112,6 +145,25 @@ def exp(x Float64) Float64 {
   return sum * pow2(k.to_int64())
 }
 
+// exp2 splits its argument at the floor: pow2 carries the integer part
+// exactly, exp's series carries the fraction. Past 1024 the answer
+// leaves the exponent range and raises; below −1075 it underflows to
+// zero, the exp rule at the bottom of the range.
+def exp2(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: exp2 of a non-finite value")
+  }
+  if x >= 1024.0 {
+    raise Exception.new(message: "math: exp2 overflows Float64")
+  }
+  if x < 0.0 - 1075.0 {
+    return 0.0
+  }
+  const k = x.floor()
+  const r = x - k
+  return pow2(k.to_int64()) * exp(r * 0.6931471805599453)
+}
+
 // ---- log ----
 
 // log(x) = e*ln2 + log(m), with x = m * 2^e and m in [1, 2). The
@@ -148,6 +200,25 @@ def log(x Float64) Float64 {
 
 def log10(x Float64) Float64 {
   return log(x) * 0.4342944819032518
+}
+
+// log2 reuses log's decomposition, its exponent and mantissa, instead
+// of dividing log(x) by ln 2: the exponent part answers alone, so every
+// power of two — down through the subnormals — answers exactly.
+def log2(x Float64) Float64 {
+  if x <= 0.0 {
+    raise Exception.new(message: "math: log2 of a non-positive value")
+  }
+  if x < Float64.from_bits(4503599627370496) {
+    return log2(x * 1152921504606846976.0) - 60.0
+  }
+  const bits = x.to_bits()
+  const m = Float64.from_bits((bits & 4503599627370495) | 4607182418800017408)
+  const ex = ((bits >> 52) & 2047) - 1023
+  if m > 1.4142135623730951 {
+    return (ex + 1).to_float64() + log(m / 2.0) * 1.4426950408889634
+  }
+  return ex.to_float64() + log(m) * 1.4426950408889634
 }
 
 // ---- pow ----

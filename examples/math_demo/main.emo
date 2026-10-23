@@ -1,6 +1,6 @@
-// The math package: sqrt, the float scalars, and the transcendental
-// functions (exp, log, log10, pow), all pure Emo and byte-identical on
-// every target.
+// The math package: sqrt, hypot, the float scalars, and the
+// transcendental functions (exp, exp2, log, log2, log10, pow), all
+// pure Emo and byte-identical on every target.
 //
 //   emo run main.emo
 
@@ -11,10 +11,28 @@ println(math.abs(0.0 - 3.5))
 println(math.min(2.0, 7.0))
 println(math.max(2.0, 7.0))
 println(math.clamp(12.0, 0.0, 10.0))
+println(math.hypot(3.0, 4.0))
+println(math.hypot(5.0, 12.0))
+println(math.hypot(1e308, 1e308))
+println(math.hypot(3e-300, 4e-300))
+println(math.hypot(0.0, 0.0))
+println(math.hypot(1e-300, 0.0))
 println(math.exp(1.0))
 println(math.exp(0.0))
+println(math.exp2(0.0))
+println(math.exp2(10.0))
+println(math.exp2(0.5))
+println(math.exp2(0.0 - 1.0))
+println(math.exp2(20.0))
+println(math.exp2(0.0 - 20.0))
+println(math.exp2(1023.0))
 println(math.log(math.e))
 println(math.log(10.0))
 println(math.log10(1000.0))
+println(math.log2(8.0))
+println(math.log2(1024.0))
+println(math.log2(0.5))
+println(math.log2(1.5))
+println(math.log2(10.0))
 println(math.pow(2.0, 10.0))
 println(math.pow(9.0, 0.5))
