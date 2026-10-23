@@ -353,6 +353,7 @@ let wasm_goldens =
     "math_demo";
     "math_trig";
     "math_inverse_trig";
+    "math_hyperbolic";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -410,6 +411,7 @@ let beam_goldens =
     "math_demo";
     "math_trig";
     "math_inverse_trig";
+    "math_hyperbolic";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -622,6 +624,7 @@ let c_goldens =
     "math_demo";
     "math_trig";
     "math_inverse_trig";
+    "math_hyperbolic";
     "branch_var";
     "builtin_names";
     "to_string_render";

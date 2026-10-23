@@ -1,0 +1,48 @@
+// The math package's hyperbolic three, compositions over exp: sinh
+// with its odd series below one half, cosh adding its two terms, tanh
+// as the quotient saturating to ±1. sinh and cosh raise once e^x
+// leaves the exponent range — the exp rule — so no argument past about
+// 709.78 has a line here; tanh saturates long before that.
+//
+//   emo run main.emo
+
+require "math"
+
+// sinh: the series range, the exp composition, and the sign of a
+// negative zero preserved.
+println(math.sinh(0.0))
+println(math.sinh(0.0 * (0.0 - 1.0)))
+println(math.sinh(0.25))
+println(math.sinh(0.5))
+println(math.sinh(1.0))
+println(math.sinh(5.0))
+println(math.sinh(12.0))
+println(math.sinh(700.0))
+println(math.sinh(0.0 - 0.5))
+println(math.sinh(0.0 - 1.0))
+println(math.sinh(0.0 - 700.0))
+
+// cosh: even, so the negative arguments answer like their magnitudes;
+// zero answers exactly one.
+println(math.cosh(0.0))
+println(math.cosh(1.0))
+println(math.cosh(5.0))
+println(math.cosh(12.0))
+println(math.cosh(700.0))
+println(math.cosh(0.0 - 3.0))
+println(math.cosh(0.0 - 700.0))
+
+// tanh: the series range, the quotient, and saturation to ±1 — an
+// argument of one thousand never reaches exp's overflow.
+println(math.tanh(0.0))
+println(math.tanh(0.0 * (0.0 - 1.0)))
+println(math.tanh(0.25))
+println(math.tanh(0.5))
+println(math.tanh(1.0))
+println(math.tanh(5.0))
+println(math.tanh(20.0))
+println(math.tanh(1000.0))
+println(math.tanh(0.0 - 0.5))
+println(math.tanh(0.0 - 1.0))
+println(math.tanh(0.0 - 5.0))
+println(math.tanh(0.0 - 1000.0))

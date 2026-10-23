@@ -224,6 +224,81 @@ def acos(x Float64) Float64 {
   return trig.acos(x)
 }
 
+// ---- sinh, cosh, and tanh ----
+
+// The hyperbolic three are compositions over `exp`, so away from zero
+// their accuracy is `exp`'s, whose range reduction rounds `k·ln 2`
+// against a single-double constant and grows less exact as the
+// argument grows; the T53.13 battery records that inheritance. `sinh`
+// takes a short odd series below one half, where the difference
+// `(e^x − e^−x)/2` would cancel; `cosh` only ever adds its two terms,
+// so it needs no series. Overflow follows the `exp` rule: `sinh` and
+// `cosh` raise once `e^x` leaves the exponent range, since beam's
+// floats cannot hold infinity. `tanh` saturates to ±1 at |x| = 20 —
+// the formula's distance from one is already below half an ulp there —
+// so no argument reaches `exp`'s overflow on its way into the
+// quotient.
+def sinh(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: sinh of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  var v = 0.0
+  if a < 0.5 {
+    const t = a * a
+    var term = a
+    var sum = a
+    for var i = 3; i <= 15; i = i + 2 {
+      term = term * t / (i - 1).to_float64() / i.to_float64()
+      sum = sum + term
+    }
+    v = sum
+  } else {
+    v = (exp(a) - exp(0.0 - a)) / 2.0
+  }
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
+def cosh(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: cosh of a non-finite value")
+  }
+  return (exp(x) + exp(0.0 - x)) / 2.0
+}
+
+def tanh(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: tanh of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  if a >= 20.0 {
+    if x > 0.0 {
+      return 1.0
+    }
+    return 0.0 - 1.0
+  }
+  const v = sinh(a) / cosh(a)
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
 // ---- native fast path (pinned to `c` and `ocaml`) ----
 
 // The host libm, called directly. The names are separate from the pure

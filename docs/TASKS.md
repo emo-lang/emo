@@ -2706,7 +2706,7 @@ docs carry the surface and its accuracy record.
       |x| nears 1 so the root does not cancel), `acos` from `asin`;
       |x| > 1 raises, the package's domain rule.
       `examples/math_inverse_trig` grows.
-- [ ] **T53.5** — `sinh`, `cosh`, `tanh`: compositions over the
+- [x] **T53.5** — `sinh`, `cosh`, `tanh`: compositions over the
       existing `exp`, a short odd series for small |x| in `sinh` and
       `tanh` (the difference `(e^x − e^−x)/2` cancels there), `tanh`
       saturating to ±1 before `exp` could overflow; `sinh`/`cosh`
