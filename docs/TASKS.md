@@ -2701,7 +2701,7 @@ docs carry the surface and its accuracy record.
       `atan2(0.0, 0.0)` raises (provisional: the C convention returns
       0, Emo's domain rule says there is no value). Golden
       `examples/math_inverse_trig`.
-- [ ] **T53.4** — `asin` and `acos`: through the `atan` core
+- [x] **T53.4** — `asin` and `acos`: through the `atan` core
       (`asin(x) = atan(x / sqrt(1 − x²))`, the complementary form as
       |x| nears 1 so the root does not cancel), `acos` from `asin`;
       |x| > 1 raises, the package's domain rule.

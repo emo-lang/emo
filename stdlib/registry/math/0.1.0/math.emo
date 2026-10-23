@@ -208,6 +208,22 @@ def atan2(y Float64, x Float64) Float64 {
   return trig.atan2(y, x)
 }
 
+// ---- asin and acos ----
+
+// The inverse pair on the unit circle, computed in internal/trig.emo
+// through the same atan core: `asin(x)` is `atan(x / sqrt(1 − x²))`,
+// switching to the complementary quotient as |x| nears one so the root
+// is built from the exact factors (1 − x) and (1 + x) and does not
+// cancel; `acos` shares that core. |x| > 1 raises, the package's
+// domain rule.
+def asin(x Float64) Float64 {
+  return trig.asin(x)
+}
+
+def acos(x Float64) Float64 {
+  return trig.acos(x)
+}
+
 // ---- native fast path (pinned to `c` and `ocaml`) ----
 
 // The host libm, called directly. The names are separate from the pure

@@ -1,9 +1,11 @@
-// The math package's inverse trigonometric pair: atan across its whole
-// range — the reciprocal identity above 1, the tan(π/12) fold, the
-// series below — and atan2 through every quadrant, on both axes, and
-// at the signed zeros, each of which keeps its sign. The origin, both
-// arguments zero, is the one input with no angle: it raises, and so
-// has no line in this panel.
+// The math package's inverse trigonometric functions: atan across its
+// whole range — the reciprocal identity above 1, the tan(π/12) fold,
+// the series below — atan2 through every quadrant, on both axes, and
+// at the signed zeros, each of which keeps its sign, and the asin/acos
+// pair through the atan core, including the complementary form near
+// one. The origin, both arguments zero, is the one atan2 input with no
+// angle: it raises, and so has no line in this panel; asin and acos of
+// |x| beyond one raise the same way.
 //
 //   emo run main.emo
 
@@ -45,3 +47,32 @@ println(math.atan2(0.0 * (0.0 - 1.0), 1.0))
 println(math.atan2(1000000000000000000000000000000.0, 0.000000000000000000000000000001))
 println(math.atan2(0.0 - 1000000000000000000000000000000.0, 0.000000000000000000000000000001))
 println(math.atan2(1000000000000000000000000000000.0, 0.0 - 0.000000000000000000000000000001))
+
+// asin: the direct quotient below one half, the complementary form
+// above it — the endpoint answers exactly, and the double just under
+// one shows the root built from the exact factors instead of a
+// cancelled difference.
+println(math.asin(0.25))
+println(math.asin(0.5))
+println(math.asin(0.7071067811865476))
+println(math.asin(0.9))
+println(math.asin(1.0))
+println(math.asin(0.9999999999999999))
+println(math.asin(0.00000095367431640625))
+println(math.asin(0.0 - 0.5))
+println(math.asin(0.0 - 1.0))
+// A negative zero answers itself, sign and all.
+println(math.asin(0.0 * (0.0 - 1.0)))
+
+// acos: the same core the other way up. One answers zero, minus one
+// answers π, and near one the complementary quotient answers without
+// the subtraction that would cancel.
+println(math.acos(1.0))
+println(math.acos(0.9))
+println(math.acos(0.5))
+println(math.acos(0.00000095367431640625))
+println(math.acos(0.0))
+println(math.acos(0.0 - 0.5))
+println(math.acos(0.0 - 0.9))
+println(math.acos(0.0 - 1.0))
+println(math.acos(0.9999999999999999))

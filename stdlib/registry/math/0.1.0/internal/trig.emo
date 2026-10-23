@@ -1,5 +1,6 @@
 // The trigonometric functions behind `math.sin`, `math.cos`,
-// `math.tan`, `math.atan`, and `math.atan2`.
+// `math.tan`, `math.atan`, `math.atan2`, `math.asin`, and
+// `math.acos`.
 //
 // The reduction writes x = n·(π/2) + r with n = round(2x/π) and |r| at
 // most π/4, a rounding hair wider. π/2 travels as three exactly
@@ -276,4 +277,68 @@ def atan2(y Float64, x Float64) Float64 {
     return -1.0 * base
   }
   return base
+}
+
+// ---- asin and acos ----
+
+// The endpoint fold: above one half the factors (1 − |x|) and
+// (1 + |x|) are exact — the subtraction of two values within a factor
+// of two never rounds — so their product feeds the root with both bits
+// intact, where the written form 1 − x·x would cancel. The identity
+// sqrt(1 − x²) = sqrt((1 − x)(1 + x)) is exact in real arithmetic.
+def asin(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: asin of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  if a > 1.0 {
+    raise Exception.new(message: "math: asin of |x| beyond one")
+  }
+  var v = 0.0
+  if a > 0.5 {
+    // the complementary form: the root's argument shrinks toward the
+    // endpoint instead of vanishing, and atan answers the small
+    // quotient directly
+    const t = (1.0 - a) * (1.0 + a)
+    v = pi_over_2 - atan(t.sqrt() / a)
+  } else {
+    v = atan(a / (1.0 - a * a).sqrt())
+  }
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
+// acos shares asin's core: π/2 − asin away from the endpoints, and the
+// complementary quotient directly where that difference would cancel —
+// acos(x) is atan(sqrt(1 − x²)/x) on the positive side, π − the same
+// quotient on the negative side. The endpoints answer exactly: one
+// gives zero, minus one gives π. |x| > 1 raises, the package's domain
+// rule.
+def acos(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: acos of a non-finite value")
+  }
+  if x > 1.0 {
+    raise Exception.new(message: "math: acos of |x| beyond one")
+  }
+  if x < 0.0 - 1.0 {
+    raise Exception.new(message: "math: acos of |x| beyond one")
+  }
+  if x > 0.5 {
+    const t = (1.0 - x) * (1.0 + x)
+    return atan(t.sqrt() / x)
+  }
+  if x < 0.0 - 0.5 {
+    const t = (1.0 + x) * (1.0 - x)
+    return pi - atan(t.sqrt() / (0.0 - x))
+  }
+  return pi_over_2 - asin(x)
 }
