@@ -1,0 +1,88 @@
+// The complex arithmetic behind `math.complex`. A complex value is a
+// `(re, im)` pair of `Float64` on this scalar surface — and interleaved
+// in a flat `Array[Float64]` where a vector is needed (provisional; the
+// FFT is the consumer). Every operation is the same IEEE binary64 steps
+// in the same order on every target, so answers are byte-for-byte; the
+// transcendental pieces come from `internal.trig`, the overflow-safe
+// magnitudes from `internal.real`.
+//
+// A divisor of zero raises rather than answering an infinity: the beam
+// target's floats cannot hold one, and the package's contract turns
+// arithmetic breakdowns into exceptions.
+
+// The pair both modules start from: real.hypot carries the rescale, so
+// a magnitude never overflows or underflows on its way out.
+const real = internal.real
+
+// The trigonometric pair from the reduction: from_polar rides the same
+// sin and cos the scalar surface answers with.
+const trig = internal.trig
+
+def add(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  const (zr, zi) = z
+  const (wr, wi) = w
+  return (zr + wr, zi + wi)
+}
+
+def sub(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  const (zr, zi) = z
+  const (wr, wi) = w
+  return (zr - wr, zi - wi)
+}
+
+def mul(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  const (a, b) = z
+  const (c, d) = w
+  return (a * c - b * d, a * d + b * c)
+}
+
+// Division by Smith's algorithm: the ratio that replaces the two
+// quotient-shaped products stays within one of one, so the scaling
+// never squares a magnitude and the naive form's overflow is out of
+// reach. The branch takes the larger component for its denominator, so
+// the ratio is exact and the denominator cannot vanish — a nonzero
+// divisor answers a finite pair or raises, never an infinity.
+def div(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  const (a, b) = z
+  const (c, d) = w
+  if c == 0.0 && d == 0.0 {
+    raise Exception.new(message: "math: complex division by zero")
+  }
+  const cab = c.to_bits() & 9223372036854775807
+  const dab = d.to_bits() & 9223372036854775807
+  if cab >= dab {
+    const rat = d / c
+    const den = c + d * rat
+    return ((a + b * rat) / den, (b - a * rat) / den)
+  }
+  const rat = c / d
+  const den = c * rat + d
+  return ((a * rat + b) / den, (b * rat - a) / den)
+}
+
+// The magnitude, through the rescaled hypot: |3 + 4i| answers 5
+// exactly, and neither a huge nor a tiny pair disturbs the answer.
+def abs(z (Float64, Float64)) Float64 {
+  const (re, im) = z
+  return real.hypot(re, im)
+}
+
+def conj(z (Float64, Float64)) (Float64, Float64) {
+  const (re, im) = z
+  // The multiply negates a zero im as −0.0, where a subtraction would
+  // hand back a +0.
+  return (re, -1.0 * im)
+}
+
+// The product with a real scalar — the operation the FFT's twiddle
+// steps reduce to.
+def scale(z (Float64, Float64), f Float64) (Float64, Float64) {
+  const (re, im) = z
+  return (re * f, im * f)
+}
+
+// r·e^(iθ) through the package's own sin and cos, so a polar
+// construction lands on the same bits as the rest of the surface.
+def from_polar(r Float64, theta Float64) (Float64, Float64) {
+  return (r * trig.cos(theta), r * trig.sin(theta))
+}

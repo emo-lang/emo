@@ -2718,7 +2718,7 @@ docs carry the surface and its accuracy record.
       scaling (`pow2` for the integer part, the series for the
       fraction); `hypot` overflow- and underflow-safe through a
       power-of-two rescale. `examples/math_demo` grows.
-- [ ] **T53.7** — Complex arithmetic (`internal/complex.emo`): add,
+- [x] **T53.7** — Complex arithmetic (`internal/complex.emo`): add,
       sub, mul, div (Smith's algorithm, so the naive quotient cannot
       overflow), `abs` through `hypot`, `conj`, scaling, and
       `from_polar(r, θ)` through T53.1's `sin`/`cos`; a value is a

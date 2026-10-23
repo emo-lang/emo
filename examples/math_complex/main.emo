@@ -1,0 +1,72 @@
+// The math package's complex arithmetic: add, sub, mul, div by Smith's
+// algorithm, the magnitude through the rescaled hypot, conjugation,
+// scaling, and the polar construction. A complex value is a (re, im)
+// pair of Float64; each answer below prints as its two components.
+// Division by a zero pair raises, so no such line appears here.
+//
+//   emo run main.emo
+
+require "math"
+
+const z = (3.0, 4.0)
+const w = (1.0, 0.0 - 2.0)
+
+// The arithmetic on an exact rational pair: every component answers
+// exactly.
+const (ar, ai) = math.complex_add(z, w)
+println(ar)
+println(ai)
+const (sr, si) = math.complex_sub(z, w)
+println(sr)
+println(si)
+const (mr, mi) = math.complex_mul(z, w)
+println(mr)
+println(mi)
+const (dr, di) = math.complex_div(z, w)
+println(dr)
+println(di)
+
+// Smith's division keeps the quotient in range where the naive form
+// would square a magnitude: both pairs here sit near the exponent
+// ceiling, and the answer is still exactly (1, 1).
+const big = (1e300, 1e300)
+const tiny = (1e300, 1e-300)
+const (br, bi) = math.complex_div(big, tiny)
+println(br)
+println(bi)
+
+// The magnitude: the 3-4-5 triangle answers exactly, and a pair of
+// ones answers the square root of two.
+println(math.complex_abs(z))
+println(math.complex_abs((5.0, 12.0)))
+println(math.complex_abs((1.0, 1.0)))
+
+// Conjugation flips the imaginary component's sign, zero included.
+const (cr, ci) = math.complex_conj(z)
+println(cr)
+println(ci)
+const (zr, zi2) = math.complex_conj((3.0, 0.0))
+println(zr)
+println(zi2)
+
+// Scaling by a real factor.
+const (kr, ki) = math.complex_scale(z, 10.0)
+println(kr)
+println(ki)
+const (hr, hi) = math.complex_scale(z, 0.5)
+println(hr)
+println(hi)
+
+// The polar construction through the package's own sin and cos: angle
+// zero answers the radius exactly, pi lands on the negative real axis
+// within one reduction, and the radius rides the unit circle's
+// ordinates.
+const (p0r, p0i) = math.complex_from_polar(2.0, 0.0)
+println(p0r)
+println(p0i)
+const (p1r, p1i) = math.complex_from_polar(1.0, math.pi)
+println(p1r)
+println(p1i)
+const (p2r, p2i) = math.complex_from_polar(2.0, 1.5707963267948966)
+println(p2r)
+println(p2i)

@@ -12,6 +12,9 @@
 // beyond the bound the call raises. The inverse pair folds its
 // argument instead — the reciprocal identity above |x| = 1, the
 // tan(π/12) fold below — into the range of a fixed-order odd series.
+// The exact powers of two and the rescaled hypot live in
+// `internal/real.emo`, shared with the complex arithmetic in
+// `internal/complex.emo`.
 //
 // The opt-in native fast path lives under distinct `*_native` names and
 // is pinned to `c` and `ocaml`, the two targets that bind a host
@@ -33,6 +36,8 @@ const e = 2.718281828459045
 const pi = 3.141592653589793
 
 const trig = internal.trig
+const real = internal.real
+const complex = internal.complex
 
 // ---- scalars ----
 
@@ -71,55 +76,22 @@ def sqrt(x Float64) Float64 {
   return x.sqrt()
 }
 
-// hypot through a power-of-two rescale: both magnitudes move down by
-// the larger's exponent, so no square can overflow and no term can
-// underflow into nothing worth keeping, and the scale rides back out
-// exactly — the same arithmetic on every target. An answer that
-// genuinely leaves the exponent range still overflows and raises.
+// hypot rescales both magnitudes by the larger's exponent before any
+// squaring, so neither overflow nor underflow can disturb the answer —
+// the body lives in internal/real.emo beside the powers of two it
+// scales with.
 def hypot(a Float64, b Float64) Float64 {
-  if ((a.to_bits() >> 52) & 2047) == 2047 {
-    raise Exception.new(message: "math: hypot of a non-finite value")
-  }
-  if ((b.to_bits() >> 52) & 2047) == 2047 {
-    raise Exception.new(message: "math: hypot of a non-finite value")
-  }
-  const ax = abs(a)
-  const bx = abs(b)
-  const m = max(ax, bx)
-  const n = min(ax, bx)
-  if m == 0.0 {
-    return 0.0
-  }
-  if n == 0.0 {
-    return m
-  }
-  const e = ((m.to_bits() >> 52) & 2047) - 1023
-  const x = m * pow2(0 - e)
-  const y = n * pow2(0 - e)
-  const v = (x * x + y * y).sqrt() * pow2(e)
-  if ((v.to_bits() >> 52) & 2047) == 2047 {
-    raise Exception.new(message: "math: hypot overflows Float64")
-  }
-  return v
+  return real.hypot(a, b)
 }
 
 // ---- powers of two ----
 
 // 2^n, written straight into the exponent field so the scaling in `exp`
 // is exact and free of a multiply loop. The reachable range here is
-// [-1074, 1023] (a wider exponent is not representable).
+// [-1074, 1023] (a wider exponent is not representable). The body lives
+// in internal/real.emo, where the other modules share it.
 def pow2(n Int64) Float64 {
-  if n > 1023 {
-    raise Exception.new(message: "math: 2^${n} overflows Float64")
-  }
-  if n < 0 - 1074 {
-    return 0.0
-  }
-  if n >= 0 - 1022 {
-    return Float64.from_bits((n + 1023) << 52)
-  }
-  // A subnormal power of two — far below any plotting range.
-  return Float64.from_bits(1 << (n + 1074))
+  return real.pow2(n)
 }
 
 // ---- exp ----
@@ -293,6 +265,45 @@ def asin(x Float64) Float64 {
 
 def acos(x Float64) Float64 {
   return trig.acos(x)
+}
+
+// ---- complex ----
+
+// The complex arithmetic, computed in internal/complex.emo: a value is
+// a `(re, im)` pair of `Float64`, division goes by Smith's algorithm so
+// the quotient cannot overflow, the magnitude takes the rescaled
+// hypot, and the polar construction rides the package's own sin and
+// cos — byte-identical on every target. A zero divisor raises.
+def complex_add(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  return complex.add(z, w)
+}
+
+def complex_sub(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  return complex.sub(z, w)
+}
+
+def complex_mul(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  return complex.mul(z, w)
+}
+
+def complex_div(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64) {
+  return complex.div(z, w)
+}
+
+def complex_abs(z (Float64, Float64)) Float64 {
+  return complex.abs(z)
+}
+
+def complex_conj(z (Float64, Float64)) (Float64, Float64) {
+  return complex.conj(z)
+}
+
+def complex_scale(z (Float64, Float64), f Float64) (Float64, Float64) {
+  return complex.scale(z, f)
+}
+
+def complex_from_polar(r Float64, theta Float64) (Float64, Float64) {
+  return complex.from_polar(r, theta)
 }
 
 // ---- sinh, cosh, and tanh ----
