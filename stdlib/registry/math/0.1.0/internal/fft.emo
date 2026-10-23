@@ -1,0 +1,142 @@
+// The radix-2 complex FFT after FFTPACK's cfftf/cfftb: an iterative
+// Cooley–Tukey over the interleaved array, the bit-reversal permutation
+// in front, and the twiddle table taken from the package's own sin and
+// cos, so the table is byte-identical on every target rather than the
+// host libm's. Arrays are values, so every stage writes a fresh array
+// through a builder and the caller's vector is never touched. A length
+// that is not a power of two raises — mixed radix is later work, not a
+// silent fallback.
+
+const trig = internal.trig
+
+const two_pi = 6.283185307179586
+
+def fft(v Array[Float64]) Array[Float64] {
+  return transform(v, 0.0 - 1.0)
+}
+
+// The inverse carries the 1/n the forward leaves off, so ifft(fft(v))
+// answers v.
+def ifft(v Array[Float64]) Array[Float64] {
+  const a = transform(v, 1.0)
+  const inv = 1.0 / (v.length() / 2).to_float64()
+  const b = ArrayBuilder.new()
+  var i = 0
+  while i < a.length() {
+    b.push(a[i] * inv)
+    i = i + 1
+  }
+  return b.to_array()
+}
+
+// The shared walk: the sign picks the direction — e^(−iθ) forward,
+// e^(+iθ) inverse — and the butterflies run in index order through a
+// builder, one fresh array per stage.
+def transform(v Array[Float64], sign Float64) Array[Float64] {
+  const len = v.length()
+  if len < 2 {
+    raise Exception.new(message: "math: fft of a length that is not a power of two")
+  }
+  if len - (len / 2) * 2 != 0 {
+    raise Exception.new(message: "math: fft of a length that is not a power of two")
+  }
+  const n = len / 2
+  if (n & (n - 1)) != 0 {
+    raise Exception.new(message: "math: fft of a length that is not a power of two")
+  }
+  const tw = twiddles(n, sign)
+  var a = bit_reversed(v, n, magnitude_log2(n))
+  var size = 2
+  while size <= n {
+    const half = size / 2
+    const stride = n / size
+    const b = ArrayBuilder.new()
+    var start = 0
+    while start < n {
+      var k = 0
+      var off = 0
+      while off < half {
+        const i1 = (start + off) * 2
+        const i2 = (start + off + half) * 2
+        const wr = tw[k * 2]
+        const wi = tw[k * 2 + 1]
+        const ur = a[i1]
+        const ui = a[i1 + 1]
+        const vr = a[i2]
+        const vi = a[i2 + 1]
+        b.push(ur + (vr * wr - vi * wi))
+        b.push(ui + (vr * wi + vi * wr))
+        k = k + stride
+        off = off + 1
+      }
+      k = 0
+      off = 0
+      while off < half {
+        const i1 = (start + off) * 2
+        const i2 = (start + off + half) * 2
+        const wr = tw[k * 2]
+        const wi = tw[k * 2 + 1]
+        const ur = a[i1]
+        const ui = a[i1 + 1]
+        const vr = a[i2]
+        const vi = a[i2 + 1]
+        b.push(ur - (vr * wr - vi * wi))
+        b.push(ui - (vr * wi + vi * wr))
+        k = k + stride
+        off = off + 1
+      }
+      start = start + size
+    }
+    a = b.to_array()
+    size = size * 2
+  }
+  return a
+}
+
+// The table: e^(sign·i·2πk/n) for k below n/2, each angle a fixed
+// product answered by the package's own reduction.
+def twiddles(n Int64, sign Float64) Array[Float64] {
+  const b = ArrayBuilder.new()
+  var k = 0
+  while k < n / 2 {
+    const ang = k.to_float64() * two_pi / n.to_float64()
+    b.push(trig.cos(ang))
+    b.push(sign * trig.sin(ang))
+    k = k + 1
+  }
+  return b.to_array()
+}
+
+def bit_reversed(v Array[Float64], n Int64, bits Int64) Array[Float64] {
+  const b = ArrayBuilder.new()
+  var i = 0
+  while i < n {
+    const j = reverse_bits(i, bits)
+    b.push(v[j * 2])
+    b.push(v[j * 2 + 1])
+    i = i + 1
+  }
+  return b.to_array()
+}
+
+def reverse_bits(i Int64, bits Int64) Int64 {
+  var j = 0
+  var x = i
+  var left = bits
+  while left > 0 {
+    j = (j << 1) | (x & 1)
+    x = x >> 1
+    left = left - 1
+  }
+  return j
+}
+
+def magnitude_log2(n Int64) Int64 {
+  var k = 0
+  var m = n
+  while m > 1 {
+    m = m / 2
+    k = k + 1
+  }
+  return k
+}

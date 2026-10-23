@@ -306,6 +306,23 @@ def complex_from_polar(r Float64, theta Float64) (Float64, Float64) {
   return complex.from_polar(r, theta)
 }
 
+// ---- fft ----
+
+// The radix-2 complex FFT after FFTPACK's cfftf/cfftb, computed in
+// internal/fft.emo: an iterative Cooley–Tukey over the interleaved
+// array, the bit-reversal permutation in front, and twiddles from the
+// package's own sin and cos — the table is byte-identical rather than
+// the host libm's. `ifft` scales by 1/n, so `ifft(fft(v))` answers
+// `v`. A length that is not a power of two raises — mixed radix is
+// later work, not a silent fallback.
+def fft(v Array[Float64]) Array[Float64] {
+  return internal.fft.fft(v)
+}
+
+def ifft(v Array[Float64]) Array[Float64] {
+  return internal.fft.ifft(v)
+}
+
 // ---- sinh, cosh, and tanh ----
 
 // The hyperbolic three are compositions over `exp`, so away from zero

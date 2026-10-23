@@ -2726,7 +2726,7 @@ docs carry the surface and its accuracy record.
       in a flat `Array[Float64]` where a vector is needed (provisional
       — the FFT is the consumer). `examples/math_complex` is the
       golden.
-- [ ] **T53.8** — The radix-2 complex FFT after FFTPACK's
+- [x] **T53.8** — The radix-2 complex FFT after FFTPACK's
       `cfftf`/`cfftb`: iterative Cooley–Tukey over T53.7's interleaved
       array, bit-reversal permutation, twiddles from the package's own
       `sin`/`cos` so the table is byte-identical rather than libm's,
