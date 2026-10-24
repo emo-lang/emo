@@ -2754,7 +2754,7 @@ docs carry the surface and its accuracy record.
       crossover, the continued fraction for `erfc` above it, each
       fixed-order; `erfc` is its own function rather than `1 − erf` so
       the tail does not cancel. Golden `examples/math_special`.
-- [ ] **T53.12** — `tgamma` and `lgamma`: the Lanczos approximation
+- [x] **T53.12** — `tgamma` and `lgamma`: the Lanczos approximation
       with one fixed coefficient set written into the source
       (byte-identical by construction), the reflection formula on the
       negative half-line, `lgamma` covering the range `tgamma`

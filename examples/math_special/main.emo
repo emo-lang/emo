@@ -1,13 +1,18 @@
-// The math package's special functions: erf and erfc, the series below
-// the crossover and the continued fraction above it, each answer
-// printed so any drift between targets is a diff. The pairing of the
-// two is the point — erf rounds to one while erfc still carries the
-// tail, and the pair of prints near the end shows exactly that: the
-// subtraction `1 − erf(10)` answers zero where `erfc(10)` answers
-// forty-five orders of magnitude below one. Values straddle the
-// crossover at |x| = 2 and the underflow at x ≈ 27.7, where the tail
-// steps into the subnormals; a non-finite argument raises, so none
-// appears here.
+// The math package's special functions: erf and erfc, then tgamma and
+// lgamma. The first pair is the series below the crossover and the
+// continued fraction above it; the second is the Lanczos approximation
+// with its fixed coefficient set and the reflection formula on the
+// negative half-line. Each answer is printed so any drift between
+// targets is a diff. The pairing of erf and erfc is the point — erf
+// rounds to one while erfc still carries the tail, and the pair of
+// prints near the middle shows exactly that: the subtraction
+// `1 − erf(10)` answers zero where `erfc(10)` answers forty-five
+// orders of magnitude below one. The pairing of tgamma and lgamma is
+// the same idea at the other end — tgamma raises once Γ leaves
+// Float64's exponent range, past x ≈ 171.62, and lgamma answers there.
+// Values straddle the crossover at |x| = 2, the underflow at x ≈ 27.7,
+// where the tail steps into the subnormals, and the gamma ceiling.
+// Non-finite arguments and the gamma poles raise, so none appear here.
 //
 //   emo run main.emo
 
@@ -47,3 +52,37 @@ println(math.erfc(30.0))
 // everything, the function loses nothing.
 println(1.0 - math.erf(10.0))
 println(math.erfc(10.0))
+
+// tgamma through the Lanczos approximation: the integers walk their
+// factorials, the halves answer against √π, and the negative
+// half-line folds through the reflection. The non-positive integers
+// are the poles and raise, so none appears here; past x ≈ 171.62 the
+// answer leaves Float64 and raises too — lgamma's range below.
+println(math.tgamma(0.5))
+println(math.tgamma(1.0))
+println(math.tgamma(2.0))
+println(math.tgamma(3.0))
+println(math.tgamma(5.0))
+println(math.tgamma(6.0))
+println(math.tgamma(10.0))
+println(math.tgamma(20.0))
+println(math.tgamma(3.5))
+println(math.tgamma(0.0 - 0.5))
+println(math.tgamma(0.0 - 1.5))
+println(math.tgamma(0.0 - 2.5))
+println(math.tgamma(0.0 - 10.5))
+println(math.tgamma(171.0))
+
+// lgamma, the logarithm that keeps answering where tgamma's answer has
+// left the range: Γ(200) is some three-and-seventy orders past
+// Float64's ceiling, ln|Γ(200)| is a plain few hundred. The negative
+// half-line answers through the fold in log space.
+println(math.lgamma(0.5))
+println(math.lgamma(1.0))
+println(math.lgamma(2.0))
+println(math.lgamma(10.0))
+println(math.lgamma(0.0 - 2.5))
+println(math.lgamma(100.0))
+println(math.lgamma(200.0))
+println(math.lgamma(1000.0))
+println(math.lgamma(0.0 - 200.5))

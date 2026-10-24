@@ -24,9 +24,10 @@
 // host libm, so it is not byte-identical across platforms.
 //
 // The functions have domains, and an out-of-domain argument is a
-// contract violation, not a value: `log` of a non-positive number, and
-// the overflow of `exp`, `exp2`, `sinh`, `cosh`, and `hypot` raise
-// `Exception`. The beam target's Erlang floats
+// contract violation, not a value: `log` of a non-positive number, the
+// poles of `tgamma` and `lgamma` — the non-positive integers — and the
+// overflow of `exp`, `exp2`, `sinh`, `cosh`, `hypot`, and `tgamma`
+// raise `Exception`. The beam target's Erlang floats
 // cannot represent NaN or infinity at all, so returning one is not an
 // option; the caller filters its data.
 
@@ -530,6 +531,90 @@ def erfc(x Float64) Float64 {
     i = i - 1
   }
   return x * 0.5641895835477563 / v * exp(0.0 - s)
+}
+
+// ---- tgamma and lgamma ----
+
+// The gamma function and its logarithm, the package's own pair: the
+// Lanczos approximation with its one fixed coefficient set — g = 7,
+// nine terms — written into the source as literals, so the same
+// operations run in the same order on every target and the answers are
+// byte-identical by construction. The positive half above one half
+// runs the series directly; the negative half-line and the sliver
+// below it fold through the reflection formula
+// Γ(x) = π / (sin(πx)·Γ(1−x)) onto 1 − x, where the series lives.
+// The non-positive integers are the poles — Γ has no value there — and
+// both functions raise on them. `tgamma` answers directly only while
+// the answer fits Float64: past x ≈ 171.62 above zero, and beside the
+// poles where the magnitude passes the ceiling, it raises, the `exp`
+// rule. `lgamma` answers there — its form is the logarithm of the same
+// product, no intermediate ever leaves the range — carrying ln|Γ|, the
+// signless magnitude, in the C tradition's shape.
+def tgamma(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: tgamma of a non-finite value")
+  }
+  if x <= 0.0 && x == x.floor() {
+    raise Exception.new(message: "math: tgamma at a non-positive integer")
+  }
+  if x < 0.5 {
+    // The fold: Γ(x) = π / (sin(πx)·Γ(1−x)). The divisor shrinking
+    // past π over the Float64 ceiling is the answer leaving the range
+    // — checked before the division, which would overflow first.
+    const d = sin(pi * x) * tgamma(1.0 - x)
+    if abs(d) < pi / 1.7976931348623157e308 {
+      raise Exception.new(message: "math: tgamma overflows Float64")
+    }
+    return pi / d
+  }
+  const z = x - 1.0
+  var s = 0.99999999999980993
+  s = s + 676.5203681218851 / (z + 1.0)
+  s = s + (0.0 - 1259.1392167224028) / (z + 2.0)
+  s = s + 771.32342877765313 / (z + 3.0)
+  s = s + (0.0 - 176.61502916214059) / (z + 4.0)
+  s = s + 12.507343278686905 / (z + 5.0)
+  s = s + (0.0 - 0.13857109526572012) / (z + 6.0)
+  s = s + 9.9843695780195716e-6 / (z + 7.0)
+  s = s + 1.5056327351493116e-7 / (z + 8.0)
+  const t = z + 7.5
+  const l = (z + 0.5) * log(t) - t
+  if l + log(2.5066282746310002 * s) > 709.782712893384 {
+    raise Exception.new(message: "math: tgamma overflows Float64")
+  }
+  return exp(l) * 2.5066282746310002 * s
+}
+
+def lgamma(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: lgamma of a non-finite value")
+  }
+  if x <= 0.0 && x == x.floor() {
+    raise Exception.new(message: "math: lgamma at a non-positive integer")
+  }
+  if x == 1.0 || x == 2.0 {
+    // ln|Γ| is exactly zero at the two unit points; the series' own
+    // rounding stops a few ulps short of it.
+    return 0.0
+  }
+  if x < 0.5 {
+    // The fold in log space: ln|Γ(x)| = ln π − ln|sin(πx)| −
+    // ln|Γ(1−x)| — every piece stays inside the range even where
+    // |Γ(x)| itself would not fit.
+    return 1.1447298858494002 - log(abs(sin(pi * x))) - lgamma(1.0 - x)
+  }
+  const z = x - 1.0
+  var s = 0.99999999999980993
+  s = s + 676.5203681218851 / (z + 1.0)
+  s = s + (0.0 - 1259.1392167224028) / (z + 2.0)
+  s = s + 771.32342877765313 / (z + 3.0)
+  s = s + (0.0 - 176.61502916214059) / (z + 4.0)
+  s = s + 12.507343278686905 / (z + 5.0)
+  s = s + (0.0 - 0.13857109526572012) / (z + 6.0)
+  s = s + 9.9843695780195716e-6 / (z + 7.0)
+  s = s + 1.5056327351493116e-7 / (z + 8.0)
+  const t = z + 7.5
+  return 0.9189385332046727 + (z + 0.5) * log(t) - t + log(s)
 }
 
 // ---- native fast path (pinned to `c` and `ocaml`) ----
