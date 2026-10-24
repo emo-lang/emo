@@ -1,0 +1,562 @@
+// The ELEFUNT-derived battery on the natives: the same identities and
+// the same sample stream as `examples/math_elefunt`, run over the
+// `fastmath` package's host-libm bindings instead of `math`'s series.
+// Each row prints a verdict — whether the function's worst measured
+// loss stays inside a stated budget in bits — rather than the raw
+// number, so the golden holds across host libms: the bits are the
+// host's, the budgets are not. The budgets sit far above what any
+// reasonable host library loses on the row and far below what a broken
+// function loses, which moves its row by orders of magnitude; the
+// cancellation-dominated rows (cosh's fundamental identity, the two
+// Simpson quadratures) carry their identity's own floor.
+//
+// The loss ledger itself stays on `math`: the bookkeeping — absolute
+// value, the log of the relative error — is measurement, not part of
+// what the row tests, and keeping it on the pure package keeps the
+// measurement reproducible.
+//
+// Foreign calls do not run under the interpreter (E3009); the battery
+// is a compiled, c-only companion:
+//
+//   emo build --target c main.emo && ./main
+
+require "math"
+require "fastmath"
+
+const n_samples = 512
+
+// ---- the sample stream ----
+
+// Knuth's MMIX multiplier and increment, wrapped at 64 bits — Int64
+// arithmetic wraps in two's complement on every target, so the stream
+// is the same everywhere. Only the top fifty-three bits feed the unit
+// interval, and the seed is fixed at forty-two.
+const lcg_a = 6364136223846793005
+const lcg_c = 1442695040888963407
+const seed0 = 42
+
+def lcg(s Int64) Int64 {
+  return s * lcg_a + lcg_c
+}
+
+def unit(s Int64) Float64 {
+  return ((s >> 11) & 9007199254740991).to_float64() / 9007199254740992.0
+}
+
+def span(s Int64, lo Float64, hi Float64) Float64 {
+  return lo + unit(s) * (hi - lo)
+}
+
+// ---- the loss ledger ----
+
+// Relative error to lost bits: fifty-three is the mantissa's width, so
+// a half-ulp answer loses nothing, and a total cancellation loses all
+// of it. An exact answer loses zero.
+def eps_loss(eps Float64) Float64 {
+  if eps <= 0.0 {
+    return 0.0
+  }
+  var loss = 53.0 + math.log(eps) * 1.4426950408889634
+  if loss < 0.0 {
+    loss = 0.0
+  }
+  if loss > 53.0 {
+    loss = 53.0
+  }
+  return loss
+}
+
+def pair_loss(computed Float64, expected Float64) Float64 {
+  if computed == expected {
+    return 0.0
+  }
+  return eps_loss(math.abs(computed - expected) / math.abs(expected))
+}
+
+// The verdict: the row passes when its worst loss stays within the
+// row's budget, stated in the call.
+def verdict(name String, worst Float64, budget Int64) {
+  if worst <= budget.to_float64() {
+    println("${name} ok <= ${budget}")
+  } else {
+    println("${name} over > ${budget}")
+  }
+}
+
+// The integrand both quadrature rows share: e^(−t²), the error
+// function's own curve, by composite Simpson over an even panel count
+// — on the native `exp`, since the row under test is the native erf.
+def simpson_e(a Float64, b Float64, n Int64) Float64 {
+  const h = (b - a) / n.to_float64()
+  var sum = 0.0
+  var i = 1
+  while i < n {
+    const t = a + i.to_float64() * h
+    var w = 4.0
+    if i % 2 == 0 {
+      w = 2.0
+    }
+    sum = sum + w * fastmath.exp(0.0 - t * t)
+    i = i + 1
+  }
+  return (h / 3.0) * (fastmath.exp(0.0 - a * a) + fastmath.exp(0.0 - b * b) + sum)
+}
+
+// ---- the rows ----
+
+// The shifted-argument identity: exp(a+b) against exp(a)·exp(b). A
+// host libm loses at most a couple of bits here; the budget leaves an
+// order of magnitude of room.
+def bat_exp(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const a = span(s, 0.5, 3.0)
+    s = lcg(s)
+    const b = span(s, 0.5, 3.0)
+    const loss = pair_loss(fastmath.exp(a + b), fastmath.exp(a) * fastmath.exp(b))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("exp", worst, 8)
+  return s
+}
+
+// The half-argument identity: exp2(x) against exp2(x/2)².
+def bat_exp2(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.0 - 60.0, 60.0)
+    const half = fastmath.exp2(x / 2.0)
+    const loss = pair_loss(fastmath.exp2(x), half * half)
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("exp2", worst, 8)
+  return s
+}
+
+// The product form: log(a·b) against log(a)+log(b).
+def bat_log(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const a = span(s, 1.01, 2.0)
+    s = lcg(s)
+    const b = span(s, 1.01, 2.0)
+    const loss = pair_loss(fastmath.log(a * b), fastmath.log(a) + fastmath.log(b))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("log", worst, 8)
+  return s
+}
+
+// log2 against log through the base conversion, two different
+// decompositions of the same question.
+def bat_log2(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 1.01, 1000.0)
+    const loss = pair_loss(fastmath.log2(x), fastmath.log(x) * 1.4426950408889634)
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("log2", worst, 8)
+  return s
+}
+
+// log10 against log2 through the base conversion — the exponent
+// decomposition answering what the product form would.
+def bat_log10(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 1.01, 1000.0)
+    const loss = pair_loss(fastmath.log10(x), fastmath.log2(x) * 0.3010299956639812)
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("log10", worst, 8)
+  return s
+}
+
+// pow(x, a+b) against pow(x,a)·pow(x,b), the exponent law.
+def bat_pow(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 1.01, 2.0)
+    s = lcg(s)
+    const a = span(s, 0.05, 0.95)
+    s = lcg(s)
+    const b = span(s, 0.05, 0.95)
+    const loss = pair_loss(fastmath.pow(x, a + b), fastmath.pow(x, a) * fastmath.pow(x, b))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("pow", worst, 8)
+  return s
+}
+
+// A power-of-two rescale moves through hypot untouched, so the scaled
+// pair answers exactly twice the unscaled one — the rescale is exact,
+// so the budget guards the function's own accuracy.
+def bat_hypot(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const a = span(s, 0.5, 4.0)
+    s = lcg(s)
+    const b = span(s, 0.5, 4.0)
+    const loss = pair_loss(fastmath.hypot(2.0 * a, 2.0 * b), 2.0 * fastmath.hypot(a, b))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("hypot", worst, 4)
+  return s
+}
+
+// The triple angle: sin(x) against 3 sin(x/3) − 4 sin³(x/3). The
+// expected side crosses zero near x = π, where the composition's own
+// roundings dominate any function's — the floor sits near eight bits,
+// and the budget carries it.
+def bat_sin(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.1, 6.0)
+    const t = fastmath.sin(x / 3.0)
+    const loss = pair_loss(3.0 * t - 4.0 * t * t * t, fastmath.sin(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("sin", worst, 16)
+  return s
+}
+
+// cos against sin one quarter turn behind it.
+def bat_cos(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 1.5)
+    const loss = pair_loss(fastmath.cos(x), fastmath.sin(fastmath.pi / 2.0 - x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("cos", worst, 8)
+  return s
+}
+
+// The half angle: tan(x) against 2t/(1 − t²), t = tan(x/2), with both
+// x and 2x held inside the first quadrant.
+def bat_tan(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 0.7)
+    const t = fastmath.tan(x / 2.0)
+    const loss = pair_loss(2.0 * t / (1.0 - t * t), fastmath.tan(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("tan", worst, 8)
+  return s
+}
+
+// The addition formula: atan(a)+atan(b) against atan((a+b)/(1−ab)),
+// with the product held below one so no quadrant fold is needed.
+def bat_atan(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const a = span(s, 0.05, 0.45)
+    s = lcg(s)
+    const b = span(s, 0.05, 0.45)
+    const loss = pair_loss(fastmath.atan((a + b) / (1.0 - a * b)), fastmath.atan(a) + fastmath.atan(b))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("atan", worst, 8)
+  return s
+}
+
+// atan2's first quadrant against atan of the slope.
+def bat_atan2(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.1, 5.0)
+    s = lcg(s)
+    const y = span(s, 0.1, 5.0)
+    const loss = pair_loss(fastmath.atan2(y, x), fastmath.atan(y / x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("atan2", worst, 8)
+  return s
+}
+
+// The half angle: asin(x) against 2 asin(√((1−√(1−x²))/2)). The
+// nested half-angle roundings put the floor near seven bits, and the
+// budget carries it.
+def bat_asin(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 0.95)
+    const loss = pair_loss(fastmath.asin(x), 2.0 * fastmath.asin(((1.0 - (1.0 - x * x).sqrt()) / 2.0).sqrt()))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("asin", worst, 16)
+  return s
+}
+
+// The half angle: acos(x) against 2 acos(√((1+x)/2)). The identity's
+// own roundings put the floor near five bits; the budget carries it.
+def bat_acos(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 0.95)
+    const loss = pair_loss(fastmath.acos(x), 2.0 * fastmath.acos(((1.0 + x) / 2.0).sqrt()))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("acos", worst, 12)
+  return s
+}
+
+// The double argument: sinh(2x) against 2 sinh(x)·cosh(x).
+def bat_sinh(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 2.0)
+    const loss = pair_loss(fastmath.sinh(2.0 * x), 2.0 * fastmath.sinh(x) * fastmath.cosh(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("sinh", worst, 8)
+  return s
+}
+
+// The fundamental identity: cosh² − sinh² against one. The
+// cancellation is the identity's own — cosh²(x) reaches four digits at
+// x = 3, so the subtraction spends them even on exact functions, and
+// the budget carries that floor.
+def bat_cosh(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 3.0)
+    const loss = pair_loss(fastmath.cosh(x) * fastmath.cosh(x) - fastmath.sinh(x) * fastmath.sinh(x), 1.0)
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("cosh", worst, 12)
+  return s
+}
+
+// The double argument: tanh(2x) against 2t/(1 + t²), t = tanh(x).
+def bat_tanh(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 3.0)
+    const t = fastmath.tanh(x)
+    const loss = pair_loss(2.0 * t / (1.0 + t * t), fastmath.tanh(2.0 * x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("tanh", worst, 8)
+  return s
+}
+
+// erf against Simpson's rule over its defining integral
+// (2/√π)∫₀ˣ e^(−t²) dt — the record here carries Simpson's truncation
+// floor, not erf's own error, and the budget sits above that floor.
+def bat_erf(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.05, 1.2)
+    const quad = simpson_e(0.0, x, 256) * 1.1283791670955126
+    const loss = pair_loss(quad, fastmath.erf(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("erf", worst, 24)
+  return s
+}
+
+// erfc against the tail integral (2/√π)∫ₓ^(x+4) e^(−t²) dt, the part
+// past the window sitting tens of exponents below the answer, so the
+// truncation is invisible and the floor is Simpson's.
+def bat_erfc(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.5, 4.0)
+    const quad = simpson_e(x, x + 4.0, 512) * 1.1283791670955126
+    const loss = pair_loss(quad, fastmath.erfc(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("erfc", worst, 40)
+  return s
+}
+
+// The recurrence: Γ(x+1) against x·Γ(x), the gamma pair's own
+// functional equation, run up the half of the line where Γ fits — at
+// the top of the range the multiplication's own rounding puts the
+// floor near eight bits, and the budget carries it.
+def bat_tgamma(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 0.5, 40.0)
+    const loss = pair_loss(fastmath.tgamma(x + 1.0), x * fastmath.tgamma(x))
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("tgamma", worst, 16)
+  return s
+}
+
+// The recurrence in log space: lgamma(x+1) against lgamma(x)+log(x),
+// measured against the answer's own magnitude.
+def bat_lgamma(seed Int64) Int64 {
+  var s = seed
+  var worst = 0.0
+  var i = 0
+  while i < n_samples {
+    s = lcg(s)
+    const x = span(s, 1.01, 100.0)
+    const big = fastmath.lgamma(x + 1.0)
+    const eps = math.abs(big - fastmath.lgamma(x) - fastmath.log(x)) / math.max(1.0, math.abs(big))
+    const loss = eps_loss(eps)
+    if loss > worst {
+      worst = loss
+    }
+    i = i + 1
+  }
+  verdict("lgamma", worst, 12)
+  return s
+}
+
+// The battery, in row order: one stream, twenty-one rows — the
+// host-libm bindings — each picking up the stream where the last left
+// off. The chain runs as plain statements in one body — a row's seed
+// is a local, so no target re-derives an earlier row to answer a later
+// one.
+def battery() {
+  var s = seed0
+  s = bat_hypot(s)
+  s = bat_exp(s)
+  s = bat_exp2(s)
+  s = bat_log(s)
+  s = bat_log2(s)
+  s = bat_log10(s)
+  s = bat_pow(s)
+  s = bat_sin(s)
+  s = bat_cos(s)
+  s = bat_tan(s)
+  s = bat_atan(s)
+  s = bat_atan2(s)
+  s = bat_asin(s)
+  s = bat_acos(s)
+  s = bat_sinh(s)
+  s = bat_cosh(s)
+  s = bat_tanh(s)
+  s = bat_erf(s)
+  s = bat_erfc(s)
+  s = bat_tgamma(s)
+  bat_lgamma(s)
+}
+
+battery()

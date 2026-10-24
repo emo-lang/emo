@@ -2802,7 +2802,7 @@ stays byte-identical; `dune test` green; the docs carry both.
       `targets = ["ocaml", "c"]`: a `require` on any other target
       fails E5007 at load, and under the interpreter a call raises
       E3009. Documented as host-libm and not byte-identical.
-- [ ] **T54.2** — The battery on the natives: a `c`-only companion
+- [x] **T54.2** — The battery on the natives: a `c`-only companion
       (`examples/fastmath_elefunt`, in the c golden list alone)
       running T53.13's identities over `fastmath`'s bindings and
       printing each function's verdict against a stated loss budget
