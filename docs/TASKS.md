@@ -2760,7 +2760,7 @@ docs carry the surface and its accuracy record.
       negative half-line, `lgamma` covering the range `tgamma`
       overflows; non-positive integers raise, the poles.
       `examples/math_special` grows.
-- [ ] **T53.13** — The ELEFUNT-derived battery: Cody & Waite's identity
+- [x] **T53.13** — The ELEFUNT-derived battery: Cody & Waite's identity
       tests across the surface (`sin` against
       `3 sin(x/3) − 4 sin³(x/3)`, `exp` against its shifted-argument
       identity, `log` against the product form, and so on) over fixed

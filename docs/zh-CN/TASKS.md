@@ -977,7 +977,7 @@ netlib 评估(`docs/math-netlib.md`,2026-10-22)把「基于 netlib 的高性能�
 - [x] **T53.10** — 仿 LAPACK `getrf`/`getrs` 的稠密求解器:`lu(a, n)`——在带显式维度的扁平行主序 `Array[Float64]` 上做带部分主元的 LU(暂定:不用嵌套数组,一个矩阵一次分配),返回打包的因子与 `Array[Int64]` 主元向量;`solve(a, n, b)` 是 `gesv` 的形状;主元恰为零则 raise——矩阵版的除零——阈值写进文档。金测 `examples/math_solve` 用教科书方程组,其中一组不做主元就会失败。
 - [x] **T53.11** — `erf` 与 `erfc`:交叉点以下用 Maclaurin 级数,以上 `erfc` 用连分数,各自固定阶;`erfc` 是独立函数而不是 `1 − erf`,尾部才不会抵消。金测 `examples/math_special`。
 - [x] **T53.12** — `tgamma` 与 `lgamma`:Lanczos 近似,一组固定系数写死在源码里(构造上逐字节一致),负半轴走反射公式,`lgamma` 覆盖 `tgamma` 溢出的区间;非正整数 raise,即极点。`examples/math_special` 加面板。
-- [ ] **T53.13** — 源自 ELEFUNT 的测试电池:Cody & Waite 的恒等式测试铺满整个表面(`sin` 对照 `3 sin(x/3) − 4 sin³(x/3)`,`exp` 对照其移位参数恒等式,`log` 对照乘积形式,等等),参数取固定伪随机序列——包自带一个小线性同余生成器,序列才逐字节一致——按函数打印最大与 RMS 位损失。这是一个金测,`examples/math_elefunt`,其 `expected.txt` 就是精度记录:退化即 diff。
+- [x] **T53.13** — 源自 ELEFUNT 的测试电池:Cody & Waite 的恒等式测试铺满整个表面(`sin` 对照 `3 sin(x/3) − 4 sin³(x/3)`,`exp` 对照其移位参数恒等式,`log` 对照乘积形式,等等),参数取固定伪随机序列——包自带一个小线性同余生成器,序列才逐字节一致——按函数打印最大与 RMS 位损失。这是一个金测,`examples/math_elefunt`,其 `expected.txt` 就是精度记录:退化即 diff。
 - [ ] **T53.14** — 文档:`docs/stdlib/math.md`(含 zh-CN 镜像)写全表面、定义域与 raise 规则、T53.13 的精度记录、表示法决策(交错复数、扁平行主序矩阵);`docs/stdlib.md` 的 math 行;新金测进入五个金测名单;`plan/README.md` 的状态表。
 
 ### 步骤 54 — 原生快速通道

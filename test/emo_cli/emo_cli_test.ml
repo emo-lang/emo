@@ -359,6 +359,7 @@ let wasm_goldens =
     "math_blas1";
     "math_solve";
     "math_special";
+    "math_elefunt";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -422,6 +423,7 @@ let beam_goldens =
     "math_blas1";
     "math_solve";
     "math_special";
+    "math_elefunt";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -640,6 +642,7 @@ let c_goldens =
     "math_blas1";
     "math_solve";
     "math_special";
+    "math_elefunt";
     "branch_var";
     "builtin_names";
     "to_string_render";
