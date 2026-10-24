@@ -2809,7 +2809,7 @@ stays byte-identical; `dune test` green; the docs carry both.
       rather than the raw bits, so the golden holds across host libms —
       the number the assessment asked for before the fast lane is
       called accurate.
-- [ ] **T54.3** — The `quad` package (provisional name),
+- [x] **T54.3** — The `quad` package (provisional name),
       `targets = ["c"]`, after the `sqlite3` precedent: f2c-translated
       QUADPACK `dqags` and the routines it pulls (`dqagse`, `dqk21`,
       `dqelg`, `dqpsrt`, the `d1mach` constants rewritten as literals)

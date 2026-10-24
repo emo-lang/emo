@@ -1,0 +1,102 @@
+// The quad package: QUADPACK's adaptive quadrature behind a scalar
+// callback. Four integrands and one bad input, each printed through
+// the (R.ok, ...)/(R.error, ...) split — a convergence failure is a
+// value here, not a violation. The integrands are pure arithmetic or
+// `math`'s own byte-identical series, and the solver's walk is exact
+// IEEE-754 per operation, so this demo answers the same bits on every
+// host.
+//
+// Foreign calls do not run under the interpreter (E3009); the demo is
+// a compiled, c-only program:
+//
+//   emo build --target c main.emo && ./main
+
+require "math"
+require "quad"
+
+// The circle's quarter: 4/(1+x²) over [0, 1] answers π — the
+// integrand a plain class instance, the callback contract carrying it
+// across the C ABI with no wrapper.
+class CircleQuarter {
+  def at(x Float64) Float64 {
+    return 4.0 / (1.0 + x * x)
+  }
+}
+
+// The logarithm's endpoint singularity: ln x over [0, 1] answers −1,
+// with the integrand unbounded at the left end — the extrapolation
+// this vendored pair of routines is built for. `math.log` is the pure
+// series, so the integrand is reproducible.
+class LogX {
+  def at(x Float64) Float64 {
+    return math.log(x)
+  }
+}
+
+// A power law, the parameters riding the object: x^k over [0, 1]
+// answers 1/(k+1), here 2/9. The state crosses with the callback —
+// the shim's adapter dispatches to this instance's `at`.
+class PowerLaw {
+  def init(k Float64) {
+    self.k = k
+  }
+
+  def at(x Float64) Float64 {
+    return math.pow(x, self.k)
+  }
+}
+
+// The harmonic run: 1/x over (0, 1] diverges, and the package answers
+// the failure as a value.
+class OneOverX {
+  def at(x Float64) Float64 {
+    return 1.0 / x
+  }
+}
+
+case quad.integrate(CircleQuarter.new(), 0.0, 1.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("pi      ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("pi      failed: ${reason}")
+  }
+}
+
+case quad.integrate(LogX.new(), 0.0, 1.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("ln x    ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("ln x    failed: ${reason}")
+  }
+}
+
+case quad.integrate(PowerLaw.new(3.5), 0.0, 1.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("x^3.5   ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("x^3.5   failed: ${reason}")
+  }
+}
+
+case quad.integrate(OneOverX.new(), 0.0, 1.0, 1e-10, 1e-10) {
+  (R.ok, (value, abserr)) -> {
+    println("1/x     ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("1/x     failed: ${reason}")
+  }
+}
+
+// An unreachable tolerance: epsabs = 0 with epsrel below
+// 50·machine epsilon is invalid input, ier = 6, and the answer says so.
+case quad.integrate(CircleQuarter.new(), 0.0, 1.0, 0.0, 1e-16) {
+  (R.ok, (value, abserr)) -> {
+    println("tight   ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("tight   failed: ${reason}")
+  }
+}

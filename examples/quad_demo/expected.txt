@@ -1,0 +1,5 @@
+pi      3.14159  err 3.48787e-14
+ln x    -1  err 1.11022e-15
+x^3.5   0.222222  err 9.85837e-14
+1/x     failed: quad: the maximum number of subdivisions (500) has been reached — split the interval at the difficulty and integrate the subranges
+tight   failed: quad: the input is invalid — epsabs <= 0 and epsrel < max(50·machine epsilon, 0.5e-28)

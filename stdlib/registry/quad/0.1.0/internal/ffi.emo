@@ -1,0 +1,14 @@
+// The raw binding behind the quad package: one `foreign def` against
+// emo_quad_shim.c. Everything here is c-target only and
+// subtree-private — callers outside the package cannot reach these
+// names; the public API lives in quad.emo.
+//
+// The integrand crosses the C ABI through the callback contract: the
+// interface-typed parameter expands to the (trampoline, userdata) pair
+// the shim installs as QUADPACK's stateless function pointer. The
+// result is QUADPACK's own (result, abserr, neval, ier) tuple, crossing
+// as a struct by value; quad.emo maps the ier codes onto the
+// (R.ok, ...)/(R.error, ...) split.
+
+foreign def integrate(a Float64, b Float64, epsabs Float64, epsrel Float64,
+  f quad.Integrand) (Float64, Float64, Int64, Int64) = "emo_quad_integrate"
