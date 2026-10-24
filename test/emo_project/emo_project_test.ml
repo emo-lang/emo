@@ -2994,6 +2994,18 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "base64_demo")
           "base64_demo" "main.emo");
+    tc "math_special compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "math_special")
+          "math_special" "main.emo");
+    tc "math_elefunt compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "math_elefunt")
+          "math_elefunt" "main.emo");
     tc "slog_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -3087,6 +3099,8 @@ let ts_golden_tests =
       ("csv_demo", "main.emo");
       ("sql_demo", "main.emo");
       ("base64_demo", "main.emo");
+      ("math_special", "main.emo");
+      ("math_elefunt", "main.emo");
       ("slog_demo", "main.emo");
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");

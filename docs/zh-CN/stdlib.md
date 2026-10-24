@@ -35,7 +35,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
-| [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
+| [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
@@ -367,7 +367,7 @@ def to_text(x Float64) String
 
 ## math 包
 
-初等浮点函数:标量、`sqrt`,以及标准库其余部分所依赖的超越函数。纯 Emo 写在五个目标共享的标量运算之上,级数顺序固定,所以每个函数都逐字节相同。
+标准库其余部分所依赖的浮点函数:标量、2 的幂、超越函数、误差函数及其补函数、gamma 对、复数算术、radix-2 FFT、BLAS1 核心与稠密求解器。纯 Emo 写在五个目标共享的标量运算之上,级数顺序固定、系数写死在源码里,所以每个函数都逐字节相同。
 
 ```emo
 const e = 2.718281828459045
@@ -378,15 +378,41 @@ def min(a Float64, b Float64) Float64
 def max(a Float64, b Float64) Float64
 def clamp(x Float64, lo Float64, hi Float64) Float64
 def sqrt(x Float64) Float64
+def hypot(a Float64, b Float64) Float64
+def pow2(n Int64) Float64
 def exp(x Float64) Float64
+def exp2(x Float64) Float64
 def log(x Float64) Float64
 def log10(x Float64) Float64
+def log2(x Float64) Float64
 def pow(base Float64, exponent Float64) Float64
+def sin(x Float64) Float64
+def cos(x Float64) Float64
+def tan(x Float64) Float64
+def atan(x Float64) Float64
+def atan2(y Float64, x Float64) Float64
+def asin(x Float64) Float64
+def acos(x Float64) Float64
+def sinh(x Float64) Float64
+def cosh(x Float64) Float64
+def tanh(x Float64) Float64
+def erf(x Float64) Float64
+def erfc(x Float64) Float64
+def tgamma(x Float64) Float64
+def lgamma(x Float64) Float64
+def complex_add(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64)
+def complex_div(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64)
+def complex_abs(z (Float64, Float64)) Float64
+def fft(v Array[Float64]) Array[Float64]
+def ifft(v Array[Float64]) Array[Float64]
+def dot(x Array[Float64], y Array[Float64]) Float64
+def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64])
+def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64]
 ```
 
-`exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数。域外参数是契约违反而不是值——`log` 的非正数、`exp` 的上溢都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。可选的原生快路径放在独立的 `*_native` 名字下(`exp_native`、`log_native`、`log10_native`、`pow_native`),只钉在 `c`/`ocaml` 上;在其他目标上这些定义是惰性的,只有调用会被拒绝,所以包在任何目标上都能导入。
+`exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数;`tgamma` 与 `lgamma` 跑一组固定系数的 Lanczos 近似,负半轴经反射公式折叠。复数值是交错的 `(re, im)` 数对;矩阵是维度显式给出的扁平行主序数组。域外参数是契约违反而不是值——`log` 的非正数、三角归约界、gamma 极点(非正整数)、越过 `x ≈ 171.62` 的 `tgamma`、`lu` 的奇异矩阵——都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。`examples/math_elefunt` 里源自 ELEFUNT 的电池按固定恒等式样本打印每个函数的最大与均方根位损失;golden 的 `expected.txt` 就是精度记录。可选的原生快路径放在独立的 `*_native` 名字下(`exp_native`、`log_native`、`log10_native`、`pow_native`),只钉在 `c`/`ocaml` 上;在其他目标上这些定义是惰性的,只有调用会被拒绝,所以包在任何目标上都能导入。
 
-目标:普通函数为全部五个;`*_native` 函数运行在 `c` 和 `ocaml` 上。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`、`examples/math_native`。
+目标:普通函数为全部五个;`*_native` 函数运行在 `c` 和 `ocaml` 上。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`、`examples/math_special`、`examples/math_elefunt`、`examples/math_native`。
 
 ## plot 包
 

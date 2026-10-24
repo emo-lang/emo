@@ -2769,7 +2769,7 @@ docs carry the surface and its accuracy record.
       printing the maximum and RMS loss in bits per function. A golden,
       `examples/math_elefunt`, whose `expected.txt` is the accuracy
       record: a regression is a diff.
-- [ ] **T53.14** — The docs: `docs/stdlib/math.md` (and the zh-CN
+- [x] **T53.14** — The docs: `docs/stdlib/math.md` (and the zh-CN
       mirror) with the full surface, the domains and the raise rules,
       the accuracy record from T53.13, and the representation decisions
       (interleaved complex, flat row-major matrices); `docs/stdlib.md`'s
