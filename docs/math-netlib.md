@@ -20,13 +20,14 @@ compiler-grade gates in Emo today: no array crosses the FFI in any
 position, arrays are boxed and value-semantic, and the C runtime runs
 on a single OS thread. Meanwhile the foundation is already poured: the
 `math` package 0.1.0 is on `develop`, with five-target byte-identical
-transcendentals and an opt-in native fast path. The staged verdict:
+transcendentals, and the native fast lane is the `fastmath` package.
+The staged verdict, after steps 53 and 54:
 
-| Stage | Goal | What it costs |
-|---|---|---|
-| 1 | All-target, byte-identical correctness library — full transcendentals, a complex FFT, BLAS1, one small dense solver — netlib as algorithm and test baseline | package work only; extends the landed `math` |
-| 2 | Scalar native acceleration — QUADPACK quadrature and the special functions bound through the existing FFI | package work only; generalizes the `*_native` precedent |
-| 3 | Array-class performance — BLAS2/3 and LAPACK subsets bound natively | the array FFI gate: marshaling, mutable views, an unboxed `Float64Array`, foreign thread semantics — a compiler step, the same gate the SQL-database and industrial-software assessments hit |
+| Stage | Goal | What it costs | Status |
+|---|---|---|---|
+| 1 | All-target, byte-identical correctness library — full transcendentals, a complex FFT, BLAS1, one small dense solver — netlib as algorithm and test baseline | package work only; extends the landed `math` | **landed** — step 53 |
+| 2 | Scalar native acceleration — QUADPACK quadrature and the special functions bound through the existing FFI | package work only; generalizes the `*_native` precedent | **landed** — step 54, as the `fastmath` and `quad` packages |
+| 3 | Array-class performance — BLAS2/3 and LAPACK subsets bound natively | the array FFI gate: marshaling, mutable views, an unboxed `Float64Array`, foreign thread semantics — a compiler step, the same gate the SQL-database and industrial-software assessments hit | **parked** — waits on the array FFI gate |
 
 ## What netlib actually offers
 
@@ -155,14 +156,18 @@ The verification side is likewise ready: the golden discipline, the
 
 ## The recommended shape
 
-- **Stage 1 — the correctness library, all targets.** Complete the
+- **Stage 1 — the correctness library, all targets. Landed, step 53.**
+  Complete the
   transcendental surface (`sin`/`cos`/`tan`, the inverses, the
   hyperbolics — same series discipline), port FFTPACK's radix-2
   complex transform, write BLAS1 in pure Emo, and add one small dense
   solver (Gaussian elimination, gesv-shaped). Deliverable per step,
   byte-identical goldens throughout, netlib as algorithm and test
   baseline.
-- **Stage 2 — scalar native acceleration.** Bind QUADPACK and the
+- **Stage 2 — scalar native acceleration. Landed, step 54 — the
+  `fastmath` package carries `math`'s scalar surface as host-libm
+  bindings, and `quad` vendors QUADPACK behind the scalar callback.**
+  Bind QUADPACK and the
   special functions as opt-in `*_native` variants through the existing
   FFI, with ELEFUNT as the acceptance suite. This also measures
   whether the opt-in pattern pays on a wider surface before stage 3 is

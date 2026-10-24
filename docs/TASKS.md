@@ -2828,7 +2828,7 @@ stays byte-identical; `dune test` green; the docs carry both.
       argument naming the three ranges — from a bound to +∞, from −∞
       to a bound, the whole line — rather than infinite `Float64`
       bounds (provisional naming). `examples/quad_demo` grows.
-- [ ] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
+- [x] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
       the API, the error-code mapping, and the host-dependence note;
       `docs/stdlib.md`'s rows (`math`'s row, the `fastmath` row, the
       `quad` row); `docs/stdlib/fastmath.md` grown with the full
