@@ -2791,7 +2791,7 @@ on `c` with QUADPACK's error flags mapped through the
 `(R.ok, …)`/`(R.error, …)` split; every existing golden on every target
 stays byte-identical; `dune test` green; the docs carry both.
 
-- [ ] **T54.1** — The host-libm bindings of Step 53's scalar functions
+- [x] **T54.1** — The host-libm bindings of Step 53's scalar functions
       in `fastmath`, unsuffixed (`sin` through `tanh`, `atan2`,
       `log2`, `exp2`, `hypot`, `erf`, `erfc`, `tgamma`, `lgamma` — the
       package qualifier says native), growing the package that already

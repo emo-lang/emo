@@ -29,3 +29,36 @@ foreign def exp(x Float64) Float64 = "exp"
 foreign def log(x Float64) Float64 = "log"
 foreign def log10(x Float64) Float64 = "log10"
 foreign def pow(base Float64, exponent Float64) Float64 = "pow"
+
+// The trigonometric trio and its inverses, in `math`'s order. The
+// domains are the host's: `asin` and `acos` of |x| > 1 return the
+// host's NaN rather than raising.
+foreign def sin(x Float64) Float64 = "sin"
+foreign def cos(x Float64) Float64 = "cos"
+foreign def tan(x Float64) Float64 = "tan"
+foreign def asin(x Float64) Float64 = "asin"
+foreign def acos(x Float64) Float64 = "acos"
+foreign def atan(x Float64) Float64 = "atan"
+foreign def atan2(y Float64, x Float64) Float64 = "atan2"
+
+// The hyperbolic trio; the overflow of `sinh` and `cosh` returns the
+// host's infinity rather than raising.
+foreign def sinh(x Float64) Float64 = "sinh"
+foreign def cosh(x Float64) Float64 = "cosh"
+foreign def tanh(x Float64) Float64 = "tanh"
+
+// The base-two pair and the overflow-safe hypotenuse; powers of two
+// answer exactly.
+foreign def exp2(x Float64) Float64 = "exp2"
+foreign def log2(x Float64) Float64 = "log2"
+foreign def hypot(a Float64, b Float64) Float64 = "hypot"
+
+// The error function and its complement, each their own host symbol so
+// the tail does not cancel.
+foreign def erf(x Float64) Float64 = "erf"
+foreign def erfc(x Float64) Float64 = "erfc"
+
+// The gamma pair; the non-positive integers return the host's
+// infinity and NaN rather than raising.
+foreign def tgamma(x Float64) Float64 = "tgamma"
+foreign def lgamma(x Float64) Float64 = "lgamma"
