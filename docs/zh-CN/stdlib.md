@@ -36,6 +36,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
+| [`fastmath`](#fastmath-包) | 宿主 libm:`math` 的标量、原生速度 | `ocaml`、`c` |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
@@ -410,9 +411,15 @@ def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64])
 def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64]
 ```
 
-`exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数;`tgamma` 与 `lgamma` 跑一组固定系数的 Lanczos 近似,负半轴经反射公式折叠。复数值是交错的 `(re, im)` 数对;矩阵是维度显式给出的扁平行主序数组。域外参数是契约违反而不是值——`log` 的非正数、三角归约界、gamma 极点(非正整数)、越过 `x ≈ 171.62` 的 `tgamma`、`lu` 的奇异矩阵——都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。`examples/math_elefunt` 里源自 ELEFUNT 的电池按固定恒等式样本打印每个函数的最大与均方根位损失;golden 的 `expected.txt` 就是精度记录。可选的原生快路径放在独立的 `*_native` 名字下(`exp_native`、`log_native`、`log10_native`、`pow_native`),只钉在 `c`/`ocaml` 上;在其他目标上这些定义是惰性的,只有调用会被拒绝,所以包在任何目标上都能导入。
+`exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数;`tgamma` 与 `lgamma` 跑一组固定系数的 Lanczos 近似,负半轴经反射公式折叠。复数值是交错的 `(re, im)` 数对;矩阵是维度显式给出的扁平行主序数组。域外参数是契约违反而不是值——`log` 的非正数、三角归约界、gamma 极点(非正整数)、越过 `x ≈ 171.62` 的 `tgamma`、`lu` 的奇异矩阵——都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。`examples/math_elefunt` 里源自 ELEFUNT 的电池按固定恒等式样本打印每个函数的最大与均方根位损失;golden 的 `expected.txt` 就是精度记录。整个包是纯的:宿主侧的更快档位在独立的 `fastmath` 包里。
 
-目标:普通函数为全部五个;`*_native` 函数运行在 `c` 和 `ocaml` 上。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`、`examples/math_special`、`examples/math_elefunt`、`examples/math_native`。
+目标:全部五个。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`、`examples/math_special`、`examples/math_elefunt`。
+
+## fastmath 包
+
+直接绑定平台 `libm` 的宿主数学函数:与 `math` 同一标量表面、宿主库的速度。每次调用就是一次纯粹的逐调用 libm 绑定——不重结合、不松弛——但位跟随宿主,不跨平台逐字节相同,也没有定义域卫兵:越界参数返回宿主所返回的,而不是 raise。
+
+目标:`ocaml` 与 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/fastmath.md`](stdlib/fastmath.md) · 示例:`examples/fastmath_demo`。
 
 ## plot 包
 

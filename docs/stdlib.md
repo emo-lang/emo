@@ -61,6 +61,7 @@ The packages:
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |
+| [`fastmath`](#the-fastmath-package) | the host libm: `math`'s scalars at native speed | `ocaml`, `c` |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
@@ -602,16 +603,27 @@ they raise, because the beam target's Erlang floats cannot represent
 NaN or infinity at all, so returning one is not an option. The
 ELEFUNT-derived battery in `examples/math_elefunt` prints each
 function's maximum and rms loss in bits against a fixed identity
-sample; the golden's `expected.txt` is the accuracy record. The opt-in
-native fast path lives under distinct `*_native` names (`exp_native`,
-`log_native`, `log10_native`, `pow_native`) and is pinned to
-`c`/`ocaml`; off those targets the definitions are inert and only a
-call refuses, so the package still imports everywhere.
+sample; the golden's `expected.txt` is the accuracy record. The whole
+package is pure: the host's faster tier lives in the separate
+`fastmath` package.
 
-Targets: all five for the plain functions; the `*_native` functions run
-on `c` and `ocaml`. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
+Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
 Demos: `examples/math_demo`, `examples/math_special`,
-`examples/math_elefunt`, `examples/math_native`.
+`examples/math_elefunt`.
+
+## The `fastmath` package
+
+The host's math functions, bound directly to the platform `libm`: the
+same scalar surface as `math` at the host library's speed. Each call is
+a plain per-call `libm` binding — no reassociation, no relaxation — but
+the bits follow the host and are not byte-identical across platforms,
+and there are no domain guards: an out-of-range argument returns
+whatever the host returns, not a raise.
+
+Targets: `ocaml` and `c` (a `require` elsewhere fails E5007 at load;
+under the interpreter a call raises E3009). Reference:
+[`docs/stdlib/fastmath.md`](stdlib/fastmath.md) ·
+Demo: `examples/fastmath_demo`.
 
 ## The `plot` package
 

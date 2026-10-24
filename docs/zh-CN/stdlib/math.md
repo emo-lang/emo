@@ -2,7 +2,7 @@
 
 标准库其余部分所依赖的浮点函数,没有任何包依赖:标量、2 的幂、超越函数、误差函数及其补函数、gamma 对、复数算术、 radix-2 FFT、BLAS1 核心与稠密求解器。
 
-普通函数全是纯 Emo,写在五个宿主目标共享的标量运算之上,所以每个函数都逐字节相同:超越函数用固定顺序的级数与范围归约,系数以字面量写死在源码里,同样的运算、同样的顺序在每个目标上产出同样的位——这正是绘图 golden 所依赖的性质。另有一条需要显式选择的 `*_native` 路径,直接调用宿主 `libm`,只钉在 `c` 和 `ocaml` 上。
+普通函数全是纯 Emo,写在五个宿主目标共享的标量运算之上,所以每个函数都逐字节相同:超越函数用固定顺序的级数与范围归约,系数以字面量写死在源码里,同样的运算、同样的顺序在每个目标上产出同样的位——这正是绘图 golden 所依赖的性质。宿主侧的更快档位在独立的 `fastmath` 包里,钉在 `c` 和 `ocaml` 上;本包在全部五个目标上保持逐字节一致。
 
 ## 使用这个包
 
@@ -187,18 +187,9 @@ lgamma max 4.55075 rms 0.838315
 
 怎么读:恒等式是自洽性检查,不是外部真值,所以每行落在它恒等式自身的舍入所安放的位置。2 的幂与 `hypot` 重缩放两行量的本来就是精确算术,回答零。多数行为复合丢掉一两位——`pow` 与双曲 trio 继承 `exp` 和 `log` 的几个 ulp,而逼近函数零点的行(`sin` 近 π、`cosh² − sinh²` 的减法)诚实地放大。`erf` 与 `erfc` 两行扛着定义积分上的 Simpson 法则,它们的地板——天花板之下约十五位与三十位——是求积的,不是函数的。`tgamma` 行记录的是 Lanczos 形式自身随参数增大的变薄,是级数在大 `x` 处的继承。
 
-## 原生快路径
+## 更快的一档在 `fastmath`
 
-```emo
-foreign def exp_native(x Float64) Float64 = "exp"
-foreign def log_native(x Float64) Float64 = "log"
-foreign def log10_native(x Float64) Float64 = "log10"
-foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"
-```
-
-直接调用宿主 libm。名字特意与纯函数区分开——调用点一眼就能看出选的是哪一套实现。它们钉在能绑定宿主符号的 `c` 和 `ocaml` 两个目标上;结果跟随宿主 `libm`,因此不跨平台逐字节相同。
-
-在其他目标上这些定义是惰性的,而不是加载期错误,所以 `require "math"` 照常可用:解释器绑定一个调用时才抛 E3009 的值,`typescript`、`wasm`、`beam`、`riscv64` 发射器跳过该绑定,只在调用它时拒绝。
+宿主 libm 绑定不在这个包里。`fastmath` 包把同一标量表面直接绑到平台的 `libm` 上(`c` 和 `ocaml`)——一次调用就是一次纯粹的逐调用绑定,所以更快,但位跟随宿主,不跨平台逐字节相同。需要可复现位的程序 require `math`;需要速度的程序 require `fastmath`。
 
 ## 域外参数是契约违反
 
@@ -217,6 +208,6 @@ foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"
 
 ## 目标与性能
 
-目标:普通函数全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。`*_native` 函数只在 `c` 和 `ocaml` 上可运行;在其他目标上它们能正常声明,只有被调用时才拒绝,所以导入这个包在用到原生函数之前没有代价。
+目标:全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。整个包是纯的,在任何目标上导入都没有代价,每个答案都逐字节一致。
 
-示例:`examples/math_demo`(标量与超越函数)、`examples/math_trig`、`examples/math_inverse_trig`、`examples/math_hyperbolic`、`examples/math_complex`、`examples/math_fft`、`examples/math_blas1`、`examples/math_solve`、`examples/math_special`(`erf`/`erfc`/`tgamma`/`lgamma`)、`examples/math_elefunt`(精度电池)、`examples/math_native`(原生路径)。
+示例:`examples/math_demo`(标量与超越函数)、`examples/math_trig`、`examples/math_inverse_trig`、`examples/math_hyperbolic`、`examples/math_complex`、`examples/math_fft`、`examples/math_blas1`、`examples/math_solve`、`examples/math_special`(`erf`/`erfc`/`tgamma`/`lgamma`)、`examples/math_elefunt`(精度电池)。

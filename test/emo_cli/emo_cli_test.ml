@@ -620,7 +620,7 @@ let c_goldens =
     "array_builder";
     "os_demo";
     "base64_demo";
-    "math_native";
+    "fastmath_demo";
     "csv_demo";
     "json_demo";
     "yaml_demo";

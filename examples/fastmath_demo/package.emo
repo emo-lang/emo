@@ -1,9 +1,9 @@
 package {
-  name = "emo/math_native"
+  name = "emo/fastmath_demo"
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
   deps {
-    "math" = "0.1.0"
+    "fastmath" = "0.1.0"
   }
 }

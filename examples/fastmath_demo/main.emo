@@ -1,0 +1,6 @@
+require "fastmath"
+
+println(fastmath.exp(1.0))
+println(fastmath.log(fastmath.e))
+println(fastmath.log10(1000.0))
+println(fastmath.pow(2.0, 10.0))

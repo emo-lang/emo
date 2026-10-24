@@ -11,8 +11,9 @@ hosted targets share, so each answers byte-for-byte: the
 transcendentals use fixed-order series and range reduction with their
 coefficients written into the source as literals, and the same
 operations in the same order produce the same bits everywhere — the
-property the plotting goldens rely on. A separate, opt-in `*_native`
-path calls the host `libm` and is pinned to `c` and `ocaml`.
+property the plotting goldens rely on. The host's faster tier is the
+separate `fastmath` package, pinned to `c` and `ocaml`; everything in
+this package stays byte-identical on all five targets.
 
 ## Using the package
 
@@ -306,25 +307,14 @@ the functions'. The `tgamma` row records the Lanczos form's own
 thinning as the argument grows, the inheritance the series carries at
 large `x`.
 
-## The native fast path
+## The fast tier is `fastmath`
 
-```emo
-foreign def exp_native(x Float64) Float64 = "exp"
-foreign def log_native(x Float64) Float64 = "log"
-foreign def log10_native(x Float64) Float64 = "log10"
-foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"
-```
-
-The host libm, called directly. The names are separate from the pure
-functions so a call site shows which one it means. They are pinned to
-the `c` and `ocaml` targets, the two that can bind a host symbol; their
-results follow the host `libm`, so they are not byte-identical across
-platforms.
-
-On every other target the definitions are inert rather than a load-time
-error, so `require "math"` keeps working: the interpreter binds a value
-that raises E3009 when called, and the `typescript`, `wasm`, `beam`,
-and `riscv64` emitters skip the binding and refuse only a call to it.
+The host-libm bindings are not in this package. The `fastmath` package
+carries the same scalar surface bound directly to the platform `libm`
+on `c` and `ocaml` — a plain per-call binding, so it is faster, but the
+bits follow the host and are not byte-identical across platforms.
+Programs that need reproducible bits require `math`; programs that need
+the speed require `fastmath`.
 
 ## Domains are contract violations
 
@@ -354,14 +344,13 @@ values, and a kernel density estimate keeps its exponent in range.
 
 ## Targets and performance
 
-Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`) for the
-plain functions. The `*_native` functions run only on `c` and `ocaml`;
-elsewhere they declare cleanly and refuse when called, so importing the
-package costs nothing until one is used.
+Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`). The
+whole package is pure, so importing it costs nothing anywhere and every
+answer is byte-identical.
 
 Demos: `examples/math_demo` (scalars and transcentals),
 `examples/math_trig`, `examples/math_inverse_trig`,
 `examples/math_hyperbolic`, `examples/math_complex`, `examples/math_fft`,
 `examples/math_blas1`, `examples/math_solve`, `examples/math_special`
-(`erf`/`erfc`/`tgamma`/`lgamma`), `examples/math_elefunt` (the accuracy
-battery), and `examples/math_native` (the native path).
+(`erf`/`erfc`/`tgamma`/`lgamma`), and `examples/math_elefunt` (the
+accuracy battery).

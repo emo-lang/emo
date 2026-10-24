@@ -44,7 +44,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M17 — Cross-target conformance | 50 | Conformance to promises already made, not new design: a spawned `c`-target process that raises dies alone, `send` delivers a snapshot, and `foreign def` refuses by name on `wasm` and `beam`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
 | M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
-| M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — `*_native` twins on `c`/`ocaml` and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
+| M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — the `fastmath` package binding `math`'s scalar surface to the host libm on `c`/`ocaml`, and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
 
 ## Design gates
 
@@ -2658,8 +2658,11 @@ over value-semantic arrays, an LU solver with partial pivoting after
 LAPACK's `gesv`, and the error and gamma functions — each
 byte-identical on the five targets, with an ELEFUNT-derived battery
 printing its loss-of-bits as a golden so accuracy is a diff. Step 54
-adds the native fast lane: `*_native` twins for the new functions, and
-the `quad` package vendoring f2c-translated QUADPACK behind a
+adds the native fast lane: the `fastmath` package — `math`'s scalar
+surface as host-libm bindings on `c`/`ocaml`; the four `*_native`
+twins T39.3 landed inside `math` 0.1.0 move there unreleased, so
+`math` stays pure and byte-identical on all five targets — and the
+`quad` package vendoring f2c-translated QUADPACK behind a
 scalar-and-callback shim — the one shape today's FFI admits — on `c`,
 its convergence failures reported through the `(R.ok, …)`/`(R.error,
 …)` split. Stage 3 — BLAS2/3 and LAPACK subsets bound natively — is
@@ -2674,7 +2677,8 @@ dimension, the range-reduction bound, and the package name `quad`.
 ### Step 53 — The pure-Emo numerical surface
 
 **Prereq:** none (`math` 0.1.0's series discipline is the base; T39.3
-is the native pattern Step 54 follows).
+settled the native mechanism, superseded before Step 54 by the
+`fastmath` package).
 **Done when:** every new function answers byte-identical on all five
 hosted targets through the series discipline, each under a golden in
 `examples/`; the ELEFUNT-derived battery is a golden; every existing
@@ -2778,25 +2782,29 @@ docs carry the surface and its accuracy record.
 
 ### Step 54 — The native fast lane
 
-**Prereq:** Step 53 (the pure twins the natives shadow; T53.13's
+**Prereq:** Step 53 (the pure surface the native tier shadows; T53.13's
 battery is the acceptance).
-**Done when:** every `*_native` twin binds on `c` and `ocaml` and is
-inert elsewhere (the T39.3 discipline); the `quad` package integrates
+**Done when:** the `fastmath` package carries `math`'s scalar surface
+bound to the host libm on `c` and `ocaml`, unavailable elsewhere (a
+`require` fails E5007 at load); the `quad` package integrates
 on `c` with QUADPACK's error flags mapped through the
 `(R.ok, …)`/`(R.error, …)` split; every existing golden on every target
 stays byte-identical; `dune test` green; the docs carry both.
 
-- [ ] **T54.1** — The `*_native` twins for Step 53's scalar functions
-      (`sin_native` through `tanh_native`, `atan2_native`,
-      `log2_native`, `exp2_native`, `hypot_native`, `erf_native`,
-      `erfc_native`, `tgamma_native`, `lgamma_native`) as `foreign def`
-      bindings to the libm symbols, pinned to `c`/`ocaml`, inert on the
-      other targets (the interpreter's E3009 at the call, the emitters'
-      lower error), documented as host-libm and not byte-identical.
-      `examples/math_native` grows.
+- [ ] **T54.1** — The host-libm bindings of Step 53's scalar functions
+      in `fastmath`, unsuffixed (`sin` through `tanh`, `atan2`,
+      `log2`, `exp2`, `hypot`, `erf`, `erfc`, `tgamma`, `lgamma` — the
+      package qualifier says native), growing the package that already
+      carries the four twins moved out of `math` 0.1.0 unreleased
+      (`exp`, `log`, `log10`, `pow`, with `e`/`pi`) and
+      `examples/fastmath_demo` (renamed from `math_native`, in the c
+      golden list). The pinning is the package's
+      `targets = ["ocaml", "c"]`: a `require` on any other target
+      fails E5007 at load, and under the interpreter a call raises
+      E3009. Documented as host-libm and not byte-identical.
 - [ ] **T54.2** — The battery on the natives: a `c`-only companion
-      (`examples/math_elefunt_native`, in the c golden list alone)
-      running T53.13's identities over the `*_native` twins and
+      (`examples/fastmath_elefunt`, in the c golden list alone)
+      running T53.13's identities over `fastmath`'s bindings and
       printing each function's verdict against a stated loss budget
       rather than the raw bits, so the golden holds across host libms —
       the number the assessment asked for before the fast lane is
@@ -2822,7 +2830,10 @@ stays byte-identical; `dune test` green; the docs carry both.
       bounds (provisional naming). `examples/quad_demo` grows.
 - [ ] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
       the API, the error-code mapping, and the host-dependence note;
-      `docs/stdlib.md`'s rows (`math`'s native column, the `quad` row);
+      `docs/stdlib.md`'s rows (`math`'s row, the `fastmath` row, the
+      `quad` row); `docs/stdlib/fastmath.md` grown with the full
+      surface (the page exists with the four moved bindings and the
+      zh-CN mirror);
       `docs/math-netlib.md`'s stage table marked with stages 1–2 landed
       and stage 3 still parked, with its zh-CN mirror;
       `plan/README.md`'s status table.

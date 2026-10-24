@@ -857,7 +857,9 @@ T0 + T1.
 15. **Native math fast path — separate `*_native` names.** `math.exp`
     is the pure, byte-identical implementation; `math.exp_native` is
     the opt-in `c`/`ocaml` `foreign def` fast path, visibly different
-    at the call site.
+    at the call site. Superseded 2026-10-24, before any of it shipped:
+    the natives moved into the separate `fastmath` package,
+    unsuffixed — the package qualifier says native (Step 54).
 16. **Channel vocabulary — Emo's own words.** `x`, `y`, `color`,
     `size`, `marker`, `dash`, `facet_row`, `facet_col`; channel values
     are column names only (constants go in styles); unknown channels

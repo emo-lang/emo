@@ -1,0 +1,31 @@
+// The host's math functions, bound directly to the platform `libm`.
+//
+// This is the performance tier of the numerical surface: the same
+// signatures as `math`'s scalars, answered by the host library instead
+// of the package's own series. A call is a plain per-call `libm` call
+// — no reassociation, no relaxation — so it is fast, but the bits
+// follow the host: they are not byte-identical across platforms.
+// Programs that need reproducible bits require `math`; programs that
+// need the speed require this package.
+//
+// There are no domain guards here. `math` raises on overflow because
+// five-target byte-identity cannot produce infinity; this package
+// returns whatever the host returns — infinity, NaN, a subnormal — and
+// the caller filters its data.
+//
+// The package is pinned to `c` and `ocaml`, the two targets that bind
+// a host symbol: a `require` on any other target fails at load (E5007),
+// and under the interpreter a call raises E3009, which has no foreign
+// implementation to bind.
+
+// ---- constants ----
+
+const e = 2.718281828459045
+const pi = 3.141592653589793
+
+// ---- the host libm ----
+
+foreign def exp(x Float64) Float64 = "exp"
+foreign def log(x Float64) Float64 = "log"
+foreign def log10(x Float64) Float64 = "log10"
+foreign def pow(base Float64, exponent Float64) Float64 = "pow"
