@@ -456,6 +456,82 @@ def tanh(x Float64) Float64 {
   return v
 }
 
+// ---- erf and erfc ----
+
+// The error function and its complement, the package's own pair: a
+// fixed-order series below the crossover and a fixed-order continued
+// fraction above it, so the same operations run in the same order on
+// every target. `erf` sums the Maclaurin terms smallest first for
+// |x| < 2 — thirty of them, truncation far below an ulp at the
+// crossover — and rides `1 − erfc` beyond it, where the subtraction
+// cannot cancel because the complement is already small. `erfc` is its
+// own function rather than `1 − erf`: below the crossover it is
+// `1 − erf`'s series (the one span where its own relative accuracy
+// thins, as erf nears one), and above it the tail is carried by the
+// continued fraction for the complementary gamma — e^(−x²)·x/√π over
+// the fraction's twenty-rung denominator — which answers the tail
+// without a `1 −` in sight. Past x ≈ 27.7 the tail underflows to zero,
+// the `exp` rule at the bottom of the range; a non-finite argument
+// raises.
+def erf(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: erf of a non-finite value")
+  }
+  if x == 0.0 {
+    return x
+  }
+  var a = x
+  var sign = 1.0
+  if a < 0.0 {
+    a = 0.0 - a
+    sign = 0.0 - 1.0
+  }
+  var v = 0.0
+  if a < 2.0 {
+    const x2 = a * a
+    const terms = ArrayBuilder.new()
+    terms.push(a)
+    var t = a
+    var n = 1
+    while n <= 30 {
+      t = (0.0 - t) * x2 * (2 * n - 1).to_float64() / (n.to_float64() * (2 * n + 1).to_float64())
+      terms.push(t)
+      n = n + 1
+    }
+    const arr = terms.to_array()
+    var sum = 0.0
+    var i = arr.length() - 1
+    while i >= 0 {
+      sum = sum + arr[i]
+      i = i - 1
+    }
+    v = sum * 1.1283791670955126
+  } else {
+    v = 1.0 - erfc(a)
+  }
+  return sign * v
+}
+
+def erfc(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: erfc of a non-finite value")
+  }
+  if x < 0.0 {
+    return 2.0 - erfc(0.0 - x)
+  }
+  if x < 2.0 {
+    return 1.0 - erf(x)
+  }
+  const s = x * x
+  var v = s + 0.5 + 40.0
+  var i = 20
+  while i >= 1 {
+    v = s + 0.5 + 2.0 * (i - 1).to_float64() - (i.to_float64() * (i.to_float64() - 0.5)) / v
+    i = i - 1
+  }
+  return x * 0.5641895835477563 / v * exp(0.0 - s)
+}
+
 // ---- native fast path (pinned to `c` and `ocaml`) ----
 
 // The host libm, called directly. The names are separate from the pure

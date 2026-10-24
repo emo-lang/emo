@@ -2750,7 +2750,7 @@ docs carry the surface and its accuracy record.
       analogue of division by zero — and the threshold is documented.
       Golden `examples/math_solve` with textbook systems, one of them
       failing without pivoting.
-- [ ] **T53.11** — `erf` and `erfc`: the Maclaurin series below the
+- [x] **T53.11** — `erf` and `erfc`: the Maclaurin series below the
       crossover, the continued fraction for `erfc` above it, each
       fixed-order; `erfc` is its own function rather than `1 − erf` so
       the tail does not cancel. Golden `examples/math_special`.
