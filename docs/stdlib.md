@@ -60,7 +60,8 @@ The packages:
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
-| [`math`](#the-math-package) | float scalars and elementary functions | all five |
+| [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |
+| [`fastmath`](#the-fastmath-package) | the host libm: `math`'s scalars at native speed | `ocaml`, `c` |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
@@ -541,10 +542,12 @@ Targets: all five. Reference:
 
 ## The `math` package
 
-The elementary float functions: the scalars, `sqrt`, and the
-transcendentals the rest of the standard library builds on. Pure Emo
-over the scalar operations all five targets share, with fixed-order
-series, so each answers byte-for-byte.
+The float functions the rest of the standard library builds on: the
+scalars, the powers of two, the transcendentals, the error function and
+its complement, the gamma pair, the complex arithmetic, the radix-2
+FFT, the BLAS1 kernels, and the dense solver. Pure Emo over the scalar
+operations all five targets share, with fixed-order series and their
+coefficients written into the source, so each answers byte-for-byte.
 
 ```emo
 const e = 2.718281828459045
@@ -555,25 +558,72 @@ def min(a Float64, b Float64) Float64
 def max(a Float64, b Float64) Float64
 def clamp(x Float64, lo Float64, hi Float64) Float64
 def sqrt(x Float64) Float64
+def hypot(a Float64, b Float64) Float64
+def pow2(n Int64) Float64
 def exp(x Float64) Float64
+def exp2(x Float64) Float64
 def log(x Float64) Float64
 def log10(x Float64) Float64
+def log2(x Float64) Float64
 def pow(base Float64, exponent Float64) Float64
+def sin(x Float64) Float64
+def cos(x Float64) Float64
+def tan(x Float64) Float64
+def atan(x Float64) Float64
+def atan2(y Float64, x Float64) Float64
+def asin(x Float64) Float64
+def acos(x Float64) Float64
+def sinh(x Float64) Float64
+def cosh(x Float64) Float64
+def tanh(x Float64) Float64
+def erf(x Float64) Float64
+def erfc(x Float64) Float64
+def tgamma(x Float64) Float64
+def lgamma(x Float64) Float64
+def complex_add(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64)
+def complex_div(z (Float64, Float64), w (Float64, Float64)) (Float64, Float64)
+def complex_abs(z (Float64, Float64)) Float64
+def fft(v Array[Float64]) Array[Float64]
+def ifft(v Array[Float64]) Array[Float64]
+def dot(x Array[Float64], y Array[Float64]) Float64
+def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64])
+def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64]
 ```
 
 `exp` range-reduces to `2^k * exp(r)` with a short Taylor series; `log`
-uses `log(x) = e*ln2 + log(m)` with the atanh series. Out-of-domain
-arguments are contract violations, not values — `log` of a non-positive
-number and `exp`'s overflow raise, because the beam target's Erlang
-floats cannot represent NaN or infinity at all, so returning one is not
-an option. The opt-in native fast path lives under distinct `*_native`
-names (`exp_native`, `log_native`, `log10_native`, `pow_native`) and is
-pinned to `c`/`ocaml`; off those targets the definitions are inert and
-only a call refuses, so the package still imports everywhere.
+uses `log(x) = e*ln2 + log(m)` with the atanh series; `tgamma` and
+`lgamma` run the Lanczos approximation with its fixed coefficient set,
+folding the negative half-line through the reflection formula. A
+complex value is an interleaved `(re, im)` pair; a matrix is a flat
+row-major array with its dimension spelled out. Out-of-domain
+arguments are contract violations, not values — a non-positive
+`log`, the trigonometric reduction bound, the gamma poles (the
+non-positive integers), `tgamma` past `x ≈ 171.62`, a singular `lu` —
+they raise, because the beam target's Erlang floats cannot represent
+NaN or infinity at all, so returning one is not an option. The
+ELEFUNT-derived battery in `examples/math_elefunt` prints each
+function's maximum and rms loss in bits against a fixed identity
+sample; the golden's `expected.txt` is the accuracy record. The whole
+package is pure: the host's faster tier lives in the separate
+`fastmath` package.
 
-Targets: all five for the plain functions; the `*_native` functions run
-on `c` and `ocaml`. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
-Demos: `examples/math_demo`, `examples/math_native`.
+Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
+Demos: `examples/math_demo`, `examples/math_special`,
+`examples/math_elefunt`.
+
+## The `fastmath` package
+
+The host's math functions, bound directly to the platform `libm`: the
+same scalar surface as `math` at the host library's speed. Each call is
+a plain per-call `libm` binding — no reassociation, no relaxation — but
+the bits follow the host and are not byte-identical across platforms,
+and there are no domain guards: an out-of-range argument returns
+whatever the host returns, not a raise.
+
+Targets: `ocaml` and `c` (a `require` elsewhere fails E5007 at load;
+under the interpreter a call raises E3009). Reference:
+[`docs/stdlib/fastmath.md`](stdlib/fastmath.md) ·
+Demo: `examples/fastmath_demo`.
 
 ## The `plot` package
 

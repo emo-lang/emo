@@ -1,0 +1,344 @@
+// The trigonometric functions behind `math.sin`, `math.cos`,
+// `math.tan`, `math.atan`, `math.atan2`, `math.asin`, and
+// `math.acos`.
+//
+// The reduction writes x = n·(π/2) + r with n = round(2x/π) and |r| at
+// most π/4, a rounding hair wider. π/2 travels as three exactly
+// representable parts: `pio2_head`, the first 33 bits, so n·pio2_head
+// is exact for every n the bound allows; `pio2_tail`, the next 25
+// bits, exact for the same reason; and `pio2_last`, the remainder,
+// so small that its product's own rounding cannot reach the answer's
+// last place. The reduced argument leaves as a two-double pair
+// (y0, y1), which is what lets the series stay at full precision even
+// for an x sitting within a whisker of a zero of the function.
+//
+// The reduction is exact up to the documented bound |x| ≤ 2^20; beyond
+// it the call raises rather than answer with silently lost bits (a
+// Payne–Hanek reduction can lift the bound later). A non-finite
+// argument raises too. Every operation is IEEE binary64 in a fixed
+// order, so all five hosted targets answer byte for byte.
+
+const inv_pio2 = 0.6366197723675814
+const pio2_head = 1.5707963267341256
+const pio2_tail = 0.00000000006077100281332015
+const pio2_last = 0.0000000000000000022517417741562176
+const reduce_bound = 1048576.0
+
+// sin(r) = r − r³/3! + r⁵/5! − ..., carried through r^21; cos(r)
+// through r^20. The coefficients are the factorial reciprocals with
+// their alternating signs folded into the nested form, so the Horner
+// walk only ever subtracts.
+const sin_terms = [0.16666666666666666, 0.008333333333333333, 0.0001984126984126984, 0.0000027557319223985893, 0.00000002505210838544172, 0.00000000016059043836821613, 0.0000000000007647163731819816, 0.0000000000000028114572543455206, 0.00000000000000000822063524662433, 0.000000000000000000019572941063391263]
+const cos_terms = [0.5, 0.041666666666666664, 0.001388888888888889, 0.0000248015873015873, 0.0000002755731922398589, 0.00000000208767569878681, 0.000000000011470745597729725, 0.00000000000004779477332387385, 0.00000000000000015619206968586225, 0.0000000000000000004110317623312165]
+
+def sin_series(r Float64, e Float64) Float64 {
+  const z = r * r
+  var p = sin_terms[9]
+  for var i = 8; i >= 0; i = i - 1 {
+    p = sin_terms[i] - z * p
+  }
+  const base = r * (1.0 - z * p)
+  const corr = e * (1.0 - z * 0.5)
+  return base + corr
+}
+
+def cos_series(r Float64, e Float64) Float64 {
+  const z = r * r
+  var p = cos_terms[9]
+  for var i = 8; i >= 0; i = i - 1 {
+    p = cos_terms[i] - z * p
+  }
+  return (1.0 - z * p) - e * r
+}
+
+// The exponent field of a non-finite value: NaN and both infinities
+// raise, the one honest answer for a function of the circle. A zero
+// answers itself, keeping the sign — told by its bits, every bit but
+// the sign's zero, which is the one test that reads -0.0 and 0.0
+// alike on every target.
+def sin(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: sin of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: sin of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: sin of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const q = n & 3
+  if q == 0 {
+    return sin_series(y0, y1)
+  }
+  if q == 1 {
+    return cos_series(y0, y1)
+  }
+  if q == 2 {
+    return 0.0 - sin_series(y0, y1)
+  }
+  return 0.0 - cos_series(y0, y1)
+}
+
+def cos(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: cos of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: cos of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: cos of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const q = n & 3
+  if q == 0 {
+    return cos_series(y0, y1)
+  }
+  if q == 1 {
+    return 0.0 - sin_series(y0, y1)
+  }
+  if q == 2 {
+    return 0.0 - cos_series(y0, y1)
+  }
+  return sin_series(y0, y1)
+}
+
+// tan shares the reduction, then takes the quotient of the two series:
+// the even quadrants answer sin(r)/cos(r), the odd ones the negative
+// reciprocal, −cos(r)/sin(r) — the quadrant's sign and reciprocal
+// switch. The poles sit at the odd multiples of π/2, which are
+// irrational, so no binary floating-point value lands on one and the
+// reciprocal never divides by zero; there is no domain raise. Just
+// below the closest double to π/2 the answer is about 1.6e16, just
+// above it about −6.2e15: near a pole tan is a huge finite value whose
+// sign flips across the pole, never an infinity.
+def tan(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: tan of a non-finite value")
+  }
+  if x > reduce_bound {
+    raise Exception.new(message: "math: tan of |x| beyond the reduction bound")
+  }
+  if x < 0.0 - reduce_bound {
+    raise Exception.new(message: "math: tan of |x| beyond the reduction bound")
+  }
+  const scaled = x * inv_pio2
+  const shifted = scaled + 0.5
+  const n_real = shifted.floor()
+  const n = n_real.to_int64()
+  const r = x - n_real * pio2_head
+  const r1 = r - n_real * pio2_tail
+  const w = n_real * pio2_last
+  const y0 = r1 - w
+  const y1 = (r1 - y0) - w
+  const s = sin_series(y0, y1)
+  const c = cos_series(y0, y1)
+  // tan has period π, so only the quadrant's parity matters.
+  if (n & 1) == 0 {
+    return s / c
+  }
+  return 0.0 - c / s
+}
+
+// ---- atan and atan2 ----
+
+// The plain constants, not the split ones above: the inverse pair
+// adds and subtracts them whole, and no quotient here can grow large
+// enough for a split to matter.
+const pi = 3.141592653589793
+const pi_over_2 = 1.5707963267948966
+const pi_over_12 = 0.2617993877991494
+const tan_pi_over_12 = 0.2679491924311227
+
+// The odd series atan(z) = z − z³/3 + z⁵/5 − ..., carried through
+// z^69 — the truncation at the top of its range, |z| ≤ tan(π/6), sits
+// below the last place. The coefficients are the odd reciprocals
+// 1/3 .. 1/69 with their alternating signs folded into the nested
+// form, so the Horner walk only ever subtracts.
+const atan_terms = [0.3333333333333333, 0.2, 0.14285714285714285, 0.1111111111111111, 0.09090909090909091, 0.07692307692307693, 0.06666666666666667, 0.058823529411764705, 0.05263157894736842, 0.047619047619047616, 0.043478260869565216, 0.04, 0.037037037037037035, 0.034482758620689655, 0.03225806451612903, 0.030303030303030304, 0.02857142857142857, 0.02702702702702703, 0.02564102564102564, 0.024390243902439025, 0.023255813953488372, 0.022222222222222223, 0.02127659574468085, 0.02040816326530612, 0.0196078431372549, 0.018867924528301886, 0.01818181818181818, 0.017543859649122806, 0.01694915254237288, 0.01639344262295082, 0.015873015873015872, 0.015384615384615385, 0.014925373134328358, 0.014492753623188406]
+
+def atan_series(z Float64) Float64 {
+  const t = z * z
+  var p = atan_terms[33]
+  for var i = 32; i >= 0; i = i - 1 {
+    p = atan_terms[i] - t * p
+  }
+  return z * (1.0 - t * p)
+}
+
+// atan(u) for u in [0, 1]: below tan(π/12) the series answers alone;
+// above, the fold atan(u) = π/12 + atan((u − t)/(1 + u·t)) moves the
+// argument into the series range — an identity exact in real
+// arithmetic, so only its two roundings show.
+def atan_unit(u Float64) Float64 {
+  if u <= tan_pi_over_12 {
+    return atan_series(u)
+  }
+  const z = (u - tan_pi_over_12) / (1.0 + tan_pi_over_12 * u)
+  return pi_over_12 + atan_series(z)
+}
+
+// atan is odd, so the work runs on |x| and the sign returns at the
+// end. |x| > 1 folds through the reciprocal identity atan(x) =
+// ±π/2 − atan(1/|x|); a zero answers itself, sign and all; a
+// non-finite argument raises.
+def atan(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  var v = 0.0
+  if a > 1.0 {
+    v = pi_over_2 - atan_unit(1.0 / a)
+  } else {
+    v = atan_unit(a)
+  }
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
+// atan2 assembles the quadrant around atan. A zero x is the y axis and
+// answers ±π/2 by the sign of y; a zero y is the x axis and travels
+// with the general cases below, which answer ±0 for x > 0 and ±π for
+// x < 0 — every signed zero keeps its sign. The origin, both arguments
+// zero, has no angle and raises: the one provisional departure from the
+// C convention, which returns a zero there. The ratio feeding atan
+// stays at most one — the larger magnitude denominates — so no
+// quotient can overflow and no subnormal denominator can send it to
+// infinity. A non-finite argument raises.
+def atan2(y Float64, x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan2 of a non-finite value")
+  }
+  if ((y.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: atan2 of a non-finite value")
+  }
+  if x == 0.0 {
+    if y == 0.0 {
+      raise Exception.new(message: "math: atan2 of the origin has no angle")
+    }
+    if y > 0.0 {
+      return pi_over_2
+    }
+    return 0.0 - pi_over_2
+  }
+  const ay = Float64.from_bits(y.to_bits() & 9223372036854775807)
+  const ax = Float64.from_bits(x.to_bits() & 9223372036854775807)
+  var theta = 0.0
+  if ay > ax {
+    theta = pi_over_2 - atan(ax / ay)
+  } else {
+    theta = atan(ay / ax)
+  }
+  // The sign of a zero y survives every comparison only in its bit,
+  // and the answers it takes are zeros, so the restore multiplies by
+  // −1 — subtraction would hand back a +0. The shift is arithmetic,
+  // so the mask reduces it to the bit itself.
+  const yneg = ((y.to_bits() >> 63) & 1) == 1
+  if x > 0.0 {
+    if yneg {
+      return -1.0 * theta
+    }
+    return theta
+  }
+  const base = pi - theta
+  if yneg {
+    return -1.0 * base
+  }
+  return base
+}
+
+// ---- asin and acos ----
+
+// The endpoint fold: above one half the factors (1 − |x|) and
+// (1 + |x|) are exact — the subtraction of two values within a factor
+// of two never rounds — so their product feeds the root with both bits
+// intact, where the written form 1 − x·x would cancel. The identity
+// sqrt(1 − x²) = sqrt((1 − x)(1 + x)) is exact in real arithmetic.
+def asin(x Float64) Float64 {
+  if (x.to_bits() & 9223372036854775807) == 0 {
+    return x
+  }
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: asin of a non-finite value")
+  }
+  var a = x
+  if a < 0.0 {
+    a = 0.0 - a
+  }
+  if a > 1.0 {
+    raise Exception.new(message: "math: asin of |x| beyond one")
+  }
+  var v = 0.0
+  if a > 0.5 {
+    // the complementary form: the root's argument shrinks toward the
+    // endpoint instead of vanishing, and atan answers the small
+    // quotient directly
+    const t = (1.0 - a) * (1.0 + a)
+    v = pi_over_2 - atan(t.sqrt() / a)
+  } else {
+    v = atan(a / (1.0 - a * a).sqrt())
+  }
+  if x < 0.0 {
+    return 0.0 - v
+  }
+  return v
+}
+
+// acos shares asin's core: π/2 − asin away from the endpoints, and the
+// complementary quotient directly where that difference would cancel —
+// acos(x) is atan(sqrt(1 − x²)/x) on the positive side, π − the same
+// quotient on the negative side. The endpoints answer exactly: one
+// gives zero, minus one gives π. |x| > 1 raises, the package's domain
+// rule.
+def acos(x Float64) Float64 {
+  if ((x.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: acos of a non-finite value")
+  }
+  if x > 1.0 {
+    raise Exception.new(message: "math: acos of |x| beyond one")
+  }
+  if x < 0.0 - 1.0 {
+    raise Exception.new(message: "math: acos of |x| beyond one")
+  }
+  if x > 0.5 {
+    const t = (1.0 - x) * (1.0 + x)
+    return atan(t.sqrt() / x)
+  }
+  if x < 0.0 - 0.5 {
+    const t = (1.0 + x) * (1.0 - x)
+    return pi - atan(t.sqrt() / (0.0 - x))
+  }
+  return pi_over_2 - asin(x)
+}

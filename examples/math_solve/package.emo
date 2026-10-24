@@ -1,0 +1,9 @@
+package {
+  name = "emo/math_solve"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    "math" = "0.1.0"
+  }
+}

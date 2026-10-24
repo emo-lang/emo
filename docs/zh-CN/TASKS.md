@@ -37,6 +37,7 @@
 | M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
 | M18 — `c` 目标上的 TLS | 51 | 既有三个 `net` TLS 内建在默认 target 上运行:C 运行时以手写原型与按 IR 判定的条件链接落在系统 OpenSSL/LibreSSL 上(不用 TLS 的构建绝不链接 OpenSSL),ocaml 调度器的语义与 reason 约定保持一致,`http` 的 `https://` 在 `c` 上端到端可用(`CHECK.md`)。 |
 | M19 — `wasm` 与 `beam` 上的 Map | 52 | 最后两个宿主 target 用各自既有的可变种类机制实现 `Map` 内建——插入序、六种键类型、结构化 `==`、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——`send` 在 `wasm` 上送快照(新可变性使之可达的那条记录在案的遗留),`slog` 加宽到这两个 target,`Exception.new(data:)` 在除 `riscv64` 外的每个 target 上都能携带崩溃上下文,`plot` 包的 Map 形状 `Table` 与通道(Step 42)由此解除阻塞(`CHECK.md`)。 |
+| M20 — 数值库 | 53–54 | `math` 包长成 netlib 评估(`docs/math-netlib.md`)分阶段规划的「正确性优先」数值表面:完整的初等函数集、复数算术与 radix-2 FFT、BLAS1、LU 求解器、误差函数与伽马函数——纯 Emo,在全部五个宿主 target 上逐字节一致,以源自 ELEFUNT 的测试电池作精度记录;随后是原生快速通道——在 `c`/`ocaml` 上把 `math` 的标量表面直接绑到宿主 libm 的 `fastmath` 包,以及经现有「标量 + 回调」FFI 在 `c` 上绑定 QUADPACK 的 `quad` 包。数组级性能(BLAS2/3、LAPACK)继续挂在数组 FFI 之门后。 |
 
 ## 设计闸门
 
@@ -952,3 +953,40 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 - [x] **T52.6** — 金测:`examples/map_demo`——字面量、`Map.new(pairs)`、七个方法、经 `keys()`/`values()` 看插入序、首次插入位置、删除、别名、`==`(同内容不同插入序相等、不等的 map 不等)、`{key: value}` 打印,以及一个携带 `data` 的 `Exception.new`——`expected.txt` 取自解释器,在全部五个金测名单里逐字节一致;检查期键类型钉子(E4020)走既有的诊断测试。
 - [x] **T52.7** — 标准库加宽:`slog` 的 manifest 增至 `wasm` 与 `beam`(它收口时记下的条件——今天声明能跑的 target,缺口合上时加宽),`slog_demo` 进入 wasm 与 beam 金测名单,逐字节一致。
 - [x] **T52.8** — 文档:`docs/demo-targets.md` 的能力故事(`wasm`/`beam` 的 Map 拒绝退场;`riscv64` 仍是唯一)、`docs/stdlib.md` 的 slog 行、`docs/visualization.md` 的五 target Table 主张就此字面为真、`CHECK.md` 的 T16.5 注记(`slog` 等待 `Map`)记录其解决、zh-CN 镜像,以及 `plan/README.md` 的状态表。
+
+---
+
+## M20 — 数值库
+
+netlib 评估(`docs/math-netlib.md`,2026-10-22)把「基于 netlib 的高性能数值库」拆成两个互相拉开的目标:netlib 提供的是算法与参考语义,不是速度;而数组级的性能档位横在数组 FFI 之门后面——`Array[T]` 在任何位置都过不了 `foreign`(E4200),数组是装箱且值语义的,`c` 运行时只有一条 OS 线程。评估发现已经就绪的,是这扇门之前的一切。`math` 0.1.0 已经用建在 `Float64.to_bits`/`from_bits` 之上的固定阶级数,让 `exp`/`log`/`log10`/`pow` 在全部五个宿主 target 上逐字节一致(plot 的 SVG 金测正立足于此);T39.3 定下了钉在 `c`/`ocaml`、其余 target 惰性的 opt-in `*_native` 快速通道。M20 沿评估的前两个阶段延伸这套机制。步骤 53 补全纯 Emo 表面——三角、反三角与双曲函数,`log2`/`exp2`/`hypot`,复数算术与仿 FFTPACK 的 radix-2 FFT,值语义数组上的 BLAS1,仿 LAPACK `gesv` 的带部分主元 LU 求解器,以及误差函数与伽马函数——每一项在五个 target 上逐字节一致,并有一套源自 ELEFUNT 的测试电池把位损失打印成金测,让精度成为一次 diff。步骤 54 加上原生快速通道:`fastmath` 包——把 `math` 的标量表面作为宿主 libm 绑定落在 `c`/`ocaml` 上;T39.3 放进 `math` 0.1.0 的四个 `*_native` 孪生在未发布状态迁入,`math` 在全部五个 target 上保持纯 Emo、逐字节一致——以及 `quad` 包——把 f2c 转译的 QUADPACK 收在一个「标量 + 回调」的 shim 之后(今天的 FFI 唯一放行的形状),仅在 `c` 上,收敛失败经 `(R.ok, …)`/`(R.error, …)` 二分上报。阶段 3——BLAS2/3 与 LAPACK 子集的原生绑定——不在本里程碑之内;它等待数组 FFI 之门作为独立的编译器 step 落地。每个任务都按闲余时间的尺寸切分:每一项完成后 `dune test` 保持绿、既有金测逐字节不变。暂定决策标在做出它的那条任务上:以 BLAS 名字作 API 词表、复数以交错形式放在扁平 `Array[Float64]` 里、矩阵是带显式维度的扁平行主序 `Array[Float64]`、range reduction 的上界,以及包名 `quad`。
+
+### 步骤 53 — 纯 Emo 数值表面
+
+**前置:** 无(`math` 0.1.0 的级数纪律是基底;T39.3 定下了原生机制,在步骤 54 之前被 `fastmath` 包取代)。
+**完成标准:** 每个新函数经级数纪律在全部五个宿主 target 上逐字节一致,各自在 `examples/` 下有金测;源自 ELEFUNT 的测试电池本身是一个金测;每个 target 上既有的金测逐字节不变;`dune test` 绿;文档记下表面及其精度记录。
+
+- [x] **T53.1** — `sin` 与 `cos`:Cody–Waite range reduction 到 |r| ≤ π/4,对照拆成三段的 π/2 常量(于是在一个写明的 |x| 上界内归约是精确的——超过上界的调用 raise,而不是悄悄丢位;暂定,日后可用 Payne–Hanek 归约抬高上界),象限选择,各自一个固定阶 Taylor 级数——在每个 target 上同样的运算、同样的顺序。`examples/math_trig` 是金测。
+- [x] **T53.2** — `tan`:沿用 T53.1 的归约,然后取两个归约后级数的商,按象限切换符号与倒数;极点在二进制浮点里不可达,故没有定义域 raise,π/2 附近的行为写进文档。`examples/math_trig` 加面板。
+- [x] **T53.3** — `atan` 与 `atan2`:参数折叠(|x| > 1 走倒数恒等式,tan(π/12) 折叠进短级数区间),固定阶奇级数,`atan2` 的象限拼装把坐标轴与带符号零的情形逐一写明——`atan2(0.0, 0.0)` raise(暂定:C 的惯例返回 0,Emo 的定义域规则说这里没有值)。金测 `examples/math_inverse_trig`。
+- [x] **T53.4** — `asin` 与 `acos`:经 `atan` 核心(`asin(x) = atan(x / sqrt(1 − x²))`,|x| 趋近 1 时用互补形式以免根号抵消),`acos` 由 `asin` 得出;|x| > 1 raise,包的定义域规则。`examples/math_inverse_trig` 加面板。
+- [x] **T53.5** — `sinh`、`cosh`、`tanh`:在既有 `exp` 之上组合,`sinh` 与 `tanh` 在小 |x| 处用短奇级数(差 `(e^x − e^−x)/2` 在那里抵消),`tanh` 在 `exp` 可能溢出之前饱和到 ±1;`sinh`/`cosh` 溢出 raise,即 `exp` 的规则,因为 `beam` 的浮点装不下无穷。金测 `examples/math_hyperbolic`。
+- [x] **T53.6** — `log2`、`exp2`、`hypot`:`log2` 取自 `log` 分解出的指数与尾数而不是 `log(x) / ln 2`,于是每个 2 的幂都精确作答;`exp2` 走 `exp` 的缩放(整数部分用 `pow2`,小数部分用级数);`hypot` 经 2 的幂重缩放做到既不上溢也不下溢。`examples/math_demo` 加面板。
+- [x] **T53.7** — 复数算术(`internal/complex.emo`):加、减、乘、除(Smith 算法,朴素商式不会溢出)、经 `hypot` 的 `abs`、`conj`、缩放,以及经 T53.1 的 `sin`/`cos` 的 `from_polar(r, θ)`;一个值在标量表面上是 `(re, im)` 的 `Float64` 对,需要向量时交错放进扁平 `Array[Float64]`(暂定——FFT 是消费者)。`examples/math_complex` 是金测。
+- [x] **T53.8** — 仿 FFTPACK `cfftf`/`cfftb` 的 radix-2 复数 FFT:在 T53.7 的交错数组上做迭代式 Cooley–Tukey,位反转置换,旋转因子取自包自己的 `sin`/`cos`(于是表是逐字节一致的,而非 libm 的),正变换与逆变换(`ifft` 按 1/n 缩放);长度不是 2 的幂则 raise——混合基数是日后的工作,不是静默回退。金测 `examples/math_fft` 在同一程序里用朴素 O(n²) DFT 钉住结果。
+- [x] **T53.9** — `Array[Float64]` 上的值语义 BLAS1:`dot`、`nrm2`(参考 BLAS 的缩放累加,不会溢出)、`asum`、`iamax`,以及返回新数组的 `scal`/`axpy`——没有任何原地写入,Emo 里没有原地;长度不匹配 raise。累加顺序固定并写进文档,这正是五个 target 能一致的原因。以 BLAS 名字作词表(暂定)。金测 `examples/math_blas1`。
+- [x] **T53.10** — 仿 LAPACK `getrf`/`getrs` 的稠密求解器:`lu(a, n)`——在带显式维度的扁平行主序 `Array[Float64]` 上做带部分主元的 LU(暂定:不用嵌套数组,一个矩阵一次分配),返回打包的因子与 `Array[Int64]` 主元向量;`solve(a, n, b)` 是 `gesv` 的形状;主元恰为零则 raise——矩阵版的除零——阈值写进文档。金测 `examples/math_solve` 用教科书方程组,其中一组不做主元就会失败。
+- [x] **T53.11** — `erf` 与 `erfc`:交叉点以下用 Maclaurin 级数,以上 `erfc` 用连分数,各自固定阶;`erfc` 是独立函数而不是 `1 − erf`,尾部才不会抵消。金测 `examples/math_special`。
+- [x] **T53.12** — `tgamma` 与 `lgamma`:Lanczos 近似,一组固定系数写死在源码里(构造上逐字节一致),负半轴走反射公式,`lgamma` 覆盖 `tgamma` 溢出的区间;非正整数 raise,即极点。`examples/math_special` 加面板。
+- [x] **T53.13** — 源自 ELEFUNT 的测试电池:Cody & Waite 的恒等式测试铺满整个表面(`sin` 对照 `3 sin(x/3) − 4 sin³(x/3)`,`exp` 对照其移位参数恒等式,`log` 对照乘积形式,等等),参数取固定伪随机序列——包自带一个小线性同余生成器,序列才逐字节一致——按函数打印最大与 RMS 位损失。这是一个金测,`examples/math_elefunt`,其 `expected.txt` 就是精度记录:退化即 diff。
+- [x] **T53.14** — 文档:`docs/stdlib/math.md`(含 zh-CN 镜像)写全表面、定义域与 raise 规则、T53.13 的精度记录、表示法决策(交错复数、扁平行主序矩阵);`docs/stdlib.md` 的 math 行;新金测进入五个金测名单;`plan/README.md` 的状态表。
+
+### 步骤 54 — 原生快速通道
+
+**前置:** 步骤 53(原生档遮蔽的纯表面;T53.13 的电池是验收标准)。
+**完成标准:** `fastmath` 包在 `c` 与 `ocaml` 上承载绑到宿主 libm 的 `math` 标量表面,其余 target 不可用(require 在装载期报 E5007);`quad` 包在 `c` 上完成积分,QUADPACK 的错误标志经 `(R.ok, …)`/`(R.error, …)` 二分映射;每个 target 上既有的金测逐字节不变;`dune test` 绿;文档把两者讲全。
+
+- [ ] **T54.1** — 步骤 53 标量函数的宿主 libm 绑定进 `fastmath`,不带后缀(`sin` 到 `tanh`、`atan2`、`log2`、`exp2`、`hypot`、`erf`、`erfc`、`tgamma`、`lgamma`——包限定名本身就说明是原生),扩充这个已承载四个未发布孪生的包(自 `math` 0.1.0 迁出:`exp`、`log`、`log10`、`pow`,连同 `e`/`pi` 常量)与 `examples/fastmath_demo`(自 `math_native` 更名,进 c 金测名单)。钉死机制就是包的 `targets = ["ocaml", "c"]`:其余 target 上 require 在装载期报 E5007,解释器下调用报 E3009。文档写明「跟随宿主 libm、不逐字节一致」。
+- [ ] **T54.2** — 电池跑原生版:一个仅 `c` 的伴生金测(`examples/fastmath_elefunt`,只进 c 金测名单),在 `fastmath` 的绑定上跑 T53.13 的恒等式,按函数打印「是否在写明的位损失预算内」的判定而不是原始位数,于是金测在不同宿主 libm 上都成立——这正是评估所要求的、在把快速通道称为「准确」之前要拿到的数字。
+- [ ] **T54.3** — `quad` 包(名字暂定),`targets = ["c"]`,沿 `sqlite3` 的先例:f2c 转译的 QUADPACK `dqags` 及其牵出的例程(`dqagse`、`dqk21`、`dqelg`、`dqpsrt`,`d1mach` 常量改写为字面量)vendored 进包树;一个持有工作区(固定 `limit`)的 C shim,暴露今天的 FFI 唯一放行的形状——被积函数是单方法接口(`def at(x Float64) Float64`,回调契约),界与容差是 `Float64`,回传 `(result, abserr, neval, ier)` 元组;Emo 表面 `integrate(f, a, b, epsabs, epsrel)` 把 `ier = 0` 映射为 `(R.ok, (value, abserr))`,QUADPACK 的失败码映射为带 netlib 措辞的 `(R.error, reason)`——收敛失败是预期结果,不是违规。金测 `examples/quad_demo` 进 c 金测名单。
+- [ ] **T54.4** — 无穷区间:`dqagi` 经同一个 shim(netlib 变换到 (0, 1]),以一个枚举参数命名三种区间——从某界到 +∞、从 −∞ 到某界、整条实轴——而不是用无穷的 `Float64` 界(命名暂定)。`examples/quad_demo` 加面板。
+- [ ] **T54.5** — 文档:`docs/stdlib/quad.md`(EN + zh-CN)写 API、错误码映射与宿主依赖说明;`docs/stdlib.md` 的行(`math` 行、新增 `fastmath` 行与 `quad` 行);`docs/stdlib/fastmath.md` 扩全表面(页面已存在,含四个迁入的绑定与 zh-CN 镜像);`docs/math-netlib.md` 的阶段表标注阶段 1–2 已落地、阶段 3 仍挂起,连同 zh-CN 镜像;`plan/README.md` 的状态表。

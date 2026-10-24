@@ -13,4 +13,10 @@ true
 true
 false
 true
+true
+plus
+{-0.0: "minus"}
+minus
+true
+true
 2

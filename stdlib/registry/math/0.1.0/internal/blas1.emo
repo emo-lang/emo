@@ -1,0 +1,129 @@
+// The BLAS1 kernels over Array[Float64], after the reference BLAS: the
+// names are the vocabulary — dot, nrm2, asum, iamax, scal, axpy — and
+// the arrays are values, so scal and axpy answer fresh arrays and never
+// touch the caller's. Every accumulation walks the array front to back
+// in one fixed order, which is what makes the five targets answer
+// byte-for-byte; the kernels add no precision and reorder nothing.
+// Mismatched lengths raise, and a non-finite element follows plain IEEE
+// arithmetic — the caller filters its data, as the package header says.
+
+// The inner product: one multiply and one add per index, front to back.
+// An empty pair answers zero, the n = 0 convention the reference BLAS
+// carries.
+def dot(x Array[Float64], y Array[Float64]) Float64 {
+  if x.length() != y.length() {
+    raise Exception.new(message: "math: dot of arrays of different lengths")
+  }
+  var sum = 0.0
+  var i = 0
+  while i < x.length() {
+    sum = sum + x[i] * y[i]
+    i = i + 1
+  }
+  return sum
+}
+
+// The Euclidean norm through the reference BLAS's scaled accumulation:
+// the largest magnitude comes out first, then the sum of squared
+// quotients against it, so no square can overflow and none can
+// underflow into nothing worth keeping — the rescaled hypot drawn over
+// a whole vector, with the scale riding back out through one multiply.
+def nrm2(x Array[Float64]) Float64 {
+  var scale = 0.0
+  var i = 0
+  while i < x.length() {
+    var a = x[i]
+    if a < 0.0 {
+      a = 0.0 - a
+    }
+    if a > scale {
+      scale = a
+    }
+    i = i + 1
+  }
+  if scale == 0.0 {
+    return 0.0
+  }
+  var ssq = 0.0
+  i = 0
+  while i < x.length() {
+    const t = x[i] / scale
+    ssq = ssq + t * t
+    i = i + 1
+  }
+  return scale * ssq.sqrt()
+}
+
+// The sum of magnitudes, front to back — the one BLAS1 kernel whose
+// answer for a mixed-sign vector has no cancellation to guard, so the
+// plain walk is the whole algorithm.
+def asum(x Array[Float64]) Float64 {
+  var sum = 0.0
+  var i = 0
+  while i < x.length() {
+    var a = x[i]
+    if a < 0.0 {
+      a = 0.0 - a
+    }
+    sum = sum + a
+    i = i + 1
+  }
+  return sum
+}
+
+// The index of the first element of largest magnitude. The reference
+// scan keeps strict `>` against the running best, so of equals the
+// earliest wins. An empty array has no such index and raises — the
+// package's rule that a question with no value is a violation, not a
+// number.
+def iamax(x Array[Float64]) Int64 {
+  if x.length() == 0 {
+    raise Exception.new(message: "math: iamax of an empty array")
+  }
+  var best = 0
+  var scale = x[0]
+  if scale < 0.0 {
+    scale = 0.0 - scale
+  }
+  var i = 1
+  while i < x.length() {
+    var a = x[i]
+    if a < 0.0 {
+      a = 0.0 - a
+    }
+    if a > scale {
+      scale = a
+      best = i
+    }
+    i = i + 1
+  }
+  return best
+}
+
+// The vector scaled: a fresh array of a[i]·f, the caller's array
+// untouched.
+def scal(a Array[Float64], f Float64) Array[Float64] {
+  const b = ArrayBuilder.new()
+  var i = 0
+  while i < a.length() {
+    b.push(a[i] * f)
+    i = i + 1
+  }
+  return b.to_array()
+}
+
+// a·x + y, elementwise in index order, as a fresh array — the axpy
+// letters read in the signature's order. The two arrays must share one
+// length, and a mismatched pair raises.
+def axpy(a Float64, x Array[Float64], y Array[Float64]) Array[Float64] {
+  if x.length() != y.length() {
+    raise Exception.new(message: "math: axpy of arrays of different lengths")
+  }
+  const b = ArrayBuilder.new()
+  var i = 0
+  while i < x.length() {
+    b.push(a * x[i] + y[i])
+    i = i + 1
+  }
+  return b.to_array()
+}

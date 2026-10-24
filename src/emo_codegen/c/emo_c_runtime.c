@@ -822,6 +822,7 @@ static uint64_t emo_hash_key(emo_value k) {
     double d = emo_unbox_f64(k);
     uint64_t bits;
     memcpy(&bits, &d, sizeof bits);
+    if (d == 0.0) bits = 0; /* -0.0 and 0.0 are one key; emo_eq_dyn settles them */
     return emo_hash_mix(bits ^ 0x4000ULL);
   }
   case EMO_STRING: {

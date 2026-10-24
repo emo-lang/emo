@@ -1,0 +1,50 @@
+// The math package's trigonometric functions: sin, cos, and tan across
+// the four quadrants, at multiples of π, at the reduction bound on both
+// sides, and the preserved sign of a negative zero.
+//
+//   emo run main.emo
+
+require "math"
+
+println(math.sin(0.0))
+println(math.cos(0.0))
+println(math.sin(0.5))
+println(math.cos(0.5))
+println(math.sin(1.0))
+println(math.cos(1.0))
+println(math.sin(2.0))
+println(math.cos(2.0))
+println(math.sin(math.pi))
+println(math.cos(math.pi))
+println(math.sin(10.0))
+println(math.cos(10.0))
+println(math.sin(100.0))
+println(math.cos(100.0))
+println(math.sin(1000.0))
+println(math.cos(1000.0))
+println(math.sin(1048576.0))
+println(math.cos(0.0 - 1048576.0))
+println(math.sin(0.0 - 2.5))
+println(math.cos(0.0 - 2.5))
+// A negative zero answers itself, sign and all.
+println(math.sin(0.0 * (0.0 - 1.0)))
+// tan shares the reduction and answers with the quotient of the two
+// series, the quadrant's sign and reciprocal switch. The poles sit at
+// the odd multiples of π/2, unreachable in binary floating point, so
+// both doubles straddling the closest one to π/2 answer — huge finite
+// values of opposite sign, never an infinity or a division by zero.
+println(math.tan(0.5))
+println(math.tan(1.0))
+println(math.tan(2.0))
+println(math.tan(3.0))
+println(math.tan(math.pi))
+println(math.tan(10.0))
+println(math.tan(100.0))
+println(math.tan(1000.0))
+println(math.tan(1048576.0))
+println(math.tan(0.0 - 1048576.0))
+println(math.tan(0.0 - 2.5))
+println(math.tan(1.5707963267948966))
+println(math.tan(1.5707963267948968))
+// A negative zero answers itself, sign and all.
+println(math.tan(0.0 * (0.0 - 1.0)))

@@ -1,0 +1,89 @@
+// The math package's radix-2 FFT over interleaved (re, im) arrays,
+// pinned against a naive O(n²) DFT computed in this program from the
+// same sin and cos: both answers print, so their last-digit agreement
+// is visible and any drift is a diff. A length that is not a power of
+// two raises, so no such vector appears here.
+//
+//   emo run main.emo
+
+require "math"
+
+const two_pi = 6.283185307179586
+
+// The naive sum every output is checked against.
+def dft(v Array[Float64]) Array[Float64] {
+  const n = v.length() / 2
+  const out = ArrayBuilder.new()
+  var k = 0
+  while k < n {
+    var sr = 0.0
+    var si = 0.0
+    var j = 0
+    while j < n {
+      const ang = (k * j).to_float64() * two_pi / n.to_float64()
+      const wr = math.cos(ang)
+      const wi = 0.0 - math.sin(ang)
+      sr = sr + (v[j * 2] * wr - v[j * 2 + 1] * wi)
+      si = si + (v[j * 2] * wi + v[j * 2 + 1] * wr)
+      j = j + 1
+    }
+    out.push(sr)
+    out.push(si)
+    k = k + 1
+  }
+  return out.to_array()
+}
+
+// The largest component-wise departure of a from b.
+def drift(a Array[Float64], b Array[Float64]) Float64 {
+  var d = 0.0
+  var i = 0
+  while i < a.length() {
+    var e = a[i] - b[i]
+    if e < 0.0 {
+      e = 0.0 - e
+    }
+    if e > d {
+      d = e
+    }
+    i = i + 1
+  }
+  return d
+}
+
+def show(v Array[Float64]) {
+  var i = 0
+  while i < v.length() {
+    println(v[i])
+    i = i + 1
+  }
+}
+
+// The impulse: every component answers exactly one, both ways.
+const impulse = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+show(math.fft(impulse))
+show(dft(impulse))
+
+// The ramp zero through seven: the one component with a mean, and the
+// alternating tail both transforms draw the same picture.
+const ramp = [0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 3.0, 0.0, 4.0, 0.0, 5.0, 0.0, 6.0, 0.0, 7.0, 0.0]
+show(math.fft(ramp))
+show(dft(ramp))
+
+// Two full turns of a cosine: the spectrum lands on the fourth and the
+// twelfth component, each carrying half the samples.
+const burst = ArrayBuilder.new()
+var bj = 0
+while bj < 8 {
+  burst.push(math.cos(bj.to_float64() * 1.5707963267948966))
+  burst.push(0.0)
+  bj = bj + 1
+}
+const tone = burst.to_array()
+show(math.fft(tone))
+show(dft(tone))
+
+// The round trips: the inverse of the forward answers the input to
+// within a rounding hair.
+println(drift(math.ifft(math.fft(ramp)), ramp))
+println(drift(math.ifft(math.fft(tone)), tone))

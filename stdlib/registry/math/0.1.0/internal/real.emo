@@ -1,0 +1,62 @@
+// The real-line machinery the other modules share: exact powers of two
+// and the overflow-safe hypot, both written straight against the bit
+// operations every hosted target answers identically.
+
+// 2^n, written straight into the exponent field so the scaling in `exp`
+// is exact and free of a multiply loop. The reachable range here is
+// [-1074, 1023] (a wider exponent is not representable).
+def pow2(n Int64) Float64 {
+  if n > 1023 {
+    raise Exception.new(message: "math: 2^${n} overflows Float64")
+  }
+  if n < 0 - 1074 {
+    return 0.0
+  }
+  if n >= 0 - 1022 {
+    return Float64.from_bits((n + 1023) << 52)
+  }
+  // A subnormal power of two — far below any plotting range.
+  return Float64.from_bits(1 << (n + 1074))
+}
+
+// hypot through a power-of-two rescale: both magnitudes move down by
+// the larger's exponent, so no square can overflow and no term can
+// underflow into nothing worth keeping, and the scale rides back out
+// exactly — the same arithmetic on every target. An answer that
+// genuinely leaves the exponent range still overflows and raises.
+def hypot(a Float64, b Float64) Float64 {
+  if ((a.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot of a non-finite value")
+  }
+  if ((b.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot of a non-finite value")
+  }
+  var ax = a
+  if ax < 0.0 {
+    ax = 0.0 - ax
+  }
+  var bx = b
+  if bx < 0.0 {
+    bx = 0.0 - bx
+  }
+  var m = ax
+  var n = bx
+  if n > m {
+    m = bx
+    n = ax
+  }
+  if m == 0.0 {
+    return 0.0
+  }
+  if n == 0.0 {
+    return m
+  }
+  const e = ((m.to_bits() >> 52) & 2047) - 1023
+  const x = m * pow2(0 - e)
+  const y = n * pow2(0 - e)
+  const v = (x * x + y * y).sqrt() * pow2(e)
+  if ((v.to_bits() >> 52) & 2047) == 2047 {
+    raise Exception.new(message: "math: hypot overflows Float64")
+  }
+  return v
+}

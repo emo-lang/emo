@@ -60,6 +60,9 @@ it touches, and the plot package uses the one that changes its shape
   the binding and refuse only a call to it — so `require "math"`
   keeps working everywhere and the native name is visibly different
   at the call site (decision 15).
+  Superseded 2026-10-24, before any of it shipped: the natives moved
+  out of `math` into the separate `fastmath` package — unsuffixed, the
+  package qualifier says native (Step 54).
 - **The ocaml specializer and its predicate agree.** `expr_native`
   admits `Type_ref`, `Make_enum`, `Field_read`, and `Global` — the
   last when the referenced def is itself specialized, because a def
