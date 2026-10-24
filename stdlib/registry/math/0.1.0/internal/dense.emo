@@ -1,0 +1,179 @@
+// The dense solver after LAPACK's getrf/getrs: LU with partial
+// pivoting over a flat row-major matrix whose dimension travels beside
+// it, and the gesv-shaped solve on top of the factors. The factors are
+// packed the LAPACK way — the multipliers below the diagonal (L's unit
+// diagonal never stored) and U from the diagonal up — and the pivot
+// vector records the swaps, piv[k] the row exchanged with row k at
+// step k, zero-based. Arrays are values with no element assignment, so
+// every elimination step and every substitution walks a fresh array
+// through a builder, the caller's matrix untouched. A pivot that is
+// exactly zero raises — the matrix analogue of division by zero; the
+// threshold is exact zero, no tolerance, because a matrix worth
+// solving has a pivot worth distinguishing from none.
+
+// One element appended, the rest carried over — the substitution's
+// growing answer, built the only way values allow.
+def added(v Array[Float64], x Float64) Array[Float64] {
+  const b = ArrayBuilder.new()
+  var i = 0
+  while i < v.length() {
+    b.push(v[i])
+    i = i + 1
+  }
+  b.push(x)
+  return b.to_array()
+}
+
+// The packed factors and the pivot vector. Each step searches the
+// column below the diagonal for the largest magnitude — strict `>`, so
+// of equals the earliest row wins, the iamax rule — swaps its row into
+// the pivot position through the copy the step is already making, and
+// eliminates below with the multipliers stored where the zeros would
+// be. An exactly zero pivot — no column entry left to divide by —
+// raises.
+def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64]) {
+  if n < 0 {
+    raise Exception.new(message: "math: lu of a negative dimension")
+  }
+  if a.length() != n * n {
+    raise Exception.new(message: "math: lu of a matrix that is not n by n")
+  }
+  var m = a
+  const piv = ArrayBuilder.new()
+  var k = 0
+  while k < n {
+    var p = k
+    var best = m[k * n + k]
+    if best < 0.0 {
+      best = 0.0 - best
+    }
+    var i = k + 1
+    while i < n {
+      var cand = m[i * n + k]
+      if cand < 0.0 {
+        cand = 0.0 - cand
+      }
+      if cand > best {
+        best = cand
+        p = i
+      }
+      i = i + 1
+    }
+    if best == 0.0 {
+      raise Exception.new(message: "math: lu of a singular matrix")
+    }
+    piv.push(p)
+    const pv = m[p * n + k]
+    const next = ArrayBuilder.new()
+    var r = 0
+    while r < n {
+      var src = r
+      var elim = false
+      if r == k {
+        src = p
+      } else {
+        if r > k {
+          elim = true
+          if r == p {
+            // The row the pivot displaced lands here and is eliminated
+            // like any other: its own values come from the old row k.
+            src = k
+          }
+        }
+      }
+      if elim == false {
+        var c = 0
+        while c < n {
+          next.push(m[src * n + c])
+          c = c + 1
+        }
+      } else {
+        const mult = m[src * n + k] / pv
+        var c = 0
+        while c < n {
+          if c < k {
+            next.push(m[src * n + c])
+          } else {
+            if c == k {
+              next.push(mult)
+            } else {
+              next.push(m[src * n + c] - mult * m[p * n + c])
+            }
+          }
+          c = c + 1
+        }
+      }
+      r = r + 1
+    }
+    m = next.to_array()
+    k = k + 1
+  }
+  return (m, piv.to_array())
+}
+
+// The gesv shape: factor once, permute the right-hand side by the same
+// swaps, forward-substitute the unit lower factor, back-substitute the
+// upper. The answer is a fresh array; `a` and `b` are never touched.
+// A singular matrix raises out of `lu`, and the back substitution
+// divides only by diagonals the factorization has already certified
+// nonzero.
+def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64] {
+  if b.length() != n {
+    raise Exception.new(message: "math: solve of a right-hand side that is not n long")
+  }
+  const (m, piv) = lu(a, n)
+  var bx = b
+  var k = 0
+  while k < n {
+    const p = piv[k]
+    if p != k {
+      const nb = ArrayBuilder.new()
+      var i = 0
+      while i < n {
+        if i == k {
+          nb.push(bx[p])
+        } else {
+          if i == p {
+            nb.push(bx[k])
+          } else {
+            nb.push(bx[i])
+          }
+        }
+        i = i + 1
+      }
+      bx = nb.to_array()
+    }
+    k = k + 1
+  }
+  var y = ArrayBuilder.new().to_array()
+  var i = 0
+  while i < n {
+    var sum = 0.0
+    var j = 0
+    while j < i {
+      sum = sum + m[i * n + j] * y[j]
+      j = j + 1
+    }
+    y = added(y, bx[i] - sum)
+    i = i + 1
+  }
+  var z = ArrayBuilder.new().to_array()
+  i = n - 1
+  while i >= 0 {
+    var sum = 0.0
+    var t = 0
+    while t < z.length() {
+      sum = sum + m[i * n + (n - 1 - t)] * z[t]
+      t = t + 1
+    }
+    z = added(z, (y[i] - sum) / m[i * n + i])
+    i = i - 1
+  }
+  const x = ArrayBuilder.new()
+  var t = z.length() - 1
+  while t >= 0 {
+    x.push(z[t])
+    t = t - 1
+  }
+  return x.to_array()
+}

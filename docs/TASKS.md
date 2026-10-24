@@ -2741,7 +2741,7 @@ docs carry the surface and its accuracy record.
       lengths raise. The accumulation order is fixed and documented,
       which is what makes the five targets agree. BLAS names as the
       vocabulary (provisional). Golden `examples/math_blas1`.
-- [ ] **T53.10** — The dense solver after LAPACK's `getrf`/`getrs`:
+- [x] **T53.10** — The dense solver after LAPACK's `getrf`/`getrs`:
       `lu(a, n)` — LU with partial pivoting over a flat row-major
       `Array[Float64]` with an explicit dimension (provisional: no
       nested arrays, one allocation per matrix) returning the packed

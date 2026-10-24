@@ -39,6 +39,7 @@ const trig = internal.trig
 const real = internal.real
 const complex = internal.complex
 const blas1 = internal.blas1
+const dense = internal.dense
 
 // ---- scalars ----
 
@@ -357,6 +358,27 @@ def scal(a Array[Float64], f Float64) Array[Float64] {
 
 def axpy(a Float64, x Array[Float64], y Array[Float64]) Array[Float64] {
   return blas1.axpy(a, x, y)
+}
+
+// ---- dense solver ----
+
+// The dense solver after LAPACK's getrf/getrs, computed in
+// internal/dense.emo over a flat row-major matrix with its dimension
+// spelled out. `lu` answers the packed factors — the L multipliers
+// below the diagonal (L's unit diagonal never stored), U from the
+// diagonal up — and the pivot vector, each entry the row swapped into
+// that step's pivot position, zero-based. An exactly zero pivot
+// raises, the matrix analogue of division by zero; the threshold is
+// exact zero, no tolerance. `solve` is the gesv shape: factor, permute
+// the right-hand side by the same swaps, then substitute through the
+// two factors. Neither call writes in place; the arrays are values,
+// and the answers are fresh.
+def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64]) {
+  return dense.lu(a, n)
+}
+
+def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64] {
+  return dense.solve(a, n, b)
 }
 
 // ---- sinh, cosh, and tanh ----
