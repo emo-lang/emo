@@ -68,3 +68,38 @@ emo_shape1 emo_quad_integrate(double a, double b, double epsabs,
   out.__f3 = ier;
   return out;
 }
+
+/* The infinite-range entry: the same workspace, the same integrand
+   slot, dqagi's (bound, inf) pair — inf is netlib's own code, 1 for
+   [bound, +∞), -1 for (−∞, bound], 2 for the whole line. */
+
+emo_shape1 emo_quad_integrate_infinite(double bound, int64_t inf,
+                                       double epsabs, double epsrel,
+                                       double (*at_cb)(double, void *),
+                                       void *at_data) {
+  emo_shape1 out;
+  integer iwork[EMO_QUAD_LIMIT];
+  doublereal work[EMO_QUAD_LIMIT * 4];
+  integer limit = EMO_QUAD_LIMIT;
+  integer lenw = EMO_QUAD_LIMIT * 4;
+  integer last;
+  integer neval;
+  integer ier;
+  integer code = (integer)inf;
+  if (g_inside) {
+    out.__f0 = 0.0;
+    out.__f1 = 0.0;
+    out.__f2 = 0;
+    out.__f3 = 7;
+    return out;
+  }
+  g_inside = 1;
+  g_at_cb = at_cb;
+  g_at_data = at_data;
+  dqagi_(emo_quad_integrand, &bound, &code, &epsabs, &epsrel, &out.__f0,
+         &out.__f1, &neval, &ier, &limit, &lenw, &last, iwork, work);
+  g_inside = 0;
+  out.__f2 = neval;
+  out.__f3 = ier;
+  return out;
+}

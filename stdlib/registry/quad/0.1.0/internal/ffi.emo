@@ -1,5 +1,5 @@
-// The raw binding behind the quad package: one `foreign def` against
-// emo_quad_shim.c. Everything here is c-target only and
+// The raw bindings behind the quad package: one `foreign def` per shim
+// entry in emo_quad_shim.c. Everything here is c-target only and
 // subtree-private — callers outside the package cannot reach these
 // names; the public API lives in quad.emo.
 //
@@ -9,6 +9,48 @@
 // result is QUADPACK's own (result, abserr, neval, ier) tuple, crossing
 // as a struct by value; quad.emo maps the ier codes onto the
 // (R.ok, ...)/(R.error, ...) split.
+//
+// `inf` is QUADPACK's own interval code: 1 integrates [bound, +∞), -1
+// integrates (−∞, bound], 2 integrates (−∞, +∞) and ignores bound.
 
 foreign def integrate(a Float64, b Float64, epsabs Float64, epsrel Float64,
   f quad.Integrand) (Float64, Float64, Int64, Int64) = "emo_quad_integrate"
+
+foreign def integrate_infinite(bound Float64, inf Int64, epsabs Float64,
+  epsrel Float64, f quad.Integrand) (Float64, Float64, Int64, Int64) =
+  "emo_quad_integrate_infinite"
+
+// The ier codes worded into the package's answer: 0 is
+// `(R.ok, (result, abserr))`, everything else `(R.error, reason)` in
+// netlib's own wording. Both public entry points map through this, so
+// the wording lives in one place. Code 7 is the shim's own — a nested
+// integrate, refused before it could corrupt the integrand slot.
+def report(result Float64, abserr Float64, neval Int64,
+  ier Int64) (R, (Float64, Float64)) {
+  if ier == 0 {
+    return (R.ok, (result, abserr))
+  }
+  if ier == 1 {
+    return (R.error, "quad: the maximum number of subdivisions (500) has been reached — split the interval at the difficulty and integrate the subranges")
+  }
+  if ier == 2 {
+    return (R.error, "quad: roundoff error prevented the requested tolerance from being reached; the error may be underestimated")
+  }
+  if ier == 3 {
+    return (R.error, "quad: extremely bad integrand behaviour at interior points of the integration interval")
+  }
+  if ier == 4 {
+    return (R.error, "quad: the algorithm does not converge — roundoff error was detected in the extrapolation table, and the returned result is the best obtainable")
+  }
+  if ier == 5 {
+    return (R.error, "quad: the integral is probably divergent, or slowly convergent")
+  }
+  if ier == 7 {
+    return (R.error, "quad: an integrand called integrate again — nested integration is not supported")
+  }
+  return (R.error, "quad: the input is invalid — epsabs <= 0 and epsrel < max(50·machine epsilon, 0.5e-28)")
+}
+
+foreign def integrate_infinite(bound Float64, inf Int64, epsabs Float64,
+  epsrel Float64, f quad.Integrand) (Float64, Float64, Int64, Int64) =
+  "emo_quad_integrate_infinite"

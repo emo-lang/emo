@@ -30,5 +30,9 @@ int dqags_(D_fp f, doublereal *a, doublereal *b, doublereal *epsabs,
            doublereal *epsrel, doublereal *result, doublereal *abserr,
            integer *neval, integer *ier, integer *limit, integer *lenw,
            integer *last, integer *iwork, doublereal *work);
+int dqagi_(D_fp f, doublereal *bound, integer *inf, doublereal *epsabs,
+           doublereal *epsrel, doublereal *result, doublereal *abserr,
+           integer *neval, integer *ier, integer *limit, integer *lenw,
+           integer *last, integer *iwork, doublereal *work);
 
 #endif

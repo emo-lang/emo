@@ -54,6 +54,29 @@ class OneOverX {
   }
 }
 
+// The infinite ranges. 1/x² from one out to +∞ answers 1; e^x in from
+// −∞ up to zero answers 1 — `math.exp` underflows to zero, so the far
+// tail is free; the bell e^(−x²) over the whole real line answers the
+// √π — the transformed 15-point rule carrying each range onto (0, 1]
+// before the adaptive machinery takes over.
+class InvSq {
+  def at(x Float64) Float64 {
+    return 1.0 / (x * x)
+  }
+}
+
+class ExpX {
+  def at(x Float64) Float64 {
+    return math.exp(x)
+  }
+}
+
+class Gauss {
+  def at(x Float64) Float64 {
+    return math.exp(0.0 - x * x)
+  }
+}
+
 case quad.integrate(CircleQuarter.new(), 0.0, 1.0, 1e-12, 1e-12) {
   (R.ok, (value, abserr)) -> {
     println("pi      ${value}  err ${abserr}")
@@ -98,5 +121,42 @@ case quad.integrate(CircleQuarter.new(), 0.0, 1.0, 0.0, 1e-16) {
   }
   (R.error, reason) -> {
     println("tight   failed: ${reason}")
+  }
+}
+
+case quad.integrate_infinite(InvSq.new(), quad.InfiniteRange.from_bound, 1.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("1/x^2   ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("1/x^2   failed: ${reason}")
+  }
+}
+
+case quad.integrate_infinite(ExpX.new(), quad.InfiniteRange.to_bound, 0.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("e^x     ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("e^x     failed: ${reason}")
+  }
+}
+
+case quad.integrate_infinite(Gauss.new(), quad.InfiniteRange.whole_line, 0.0, 1e-12, 1e-12) {
+  (R.ok, (value, abserr)) -> {
+    println("bell    ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("bell    failed: ${reason}")
+  }
+}
+
+// The divergent tail again, out to +∞: the failure is the value.
+case quad.integrate_infinite(OneOverX.new(), quad.InfiniteRange.from_bound, 1.0, 1e-10, 1e-10) {
+  (R.ok, (value, abserr)) -> {
+    println("1/x     ${value}  err ${abserr}")
+  }
+  (R.error, reason) -> {
+    println("1/x     failed: ${reason}")
   }
 }

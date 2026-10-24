@@ -2823,7 +2823,7 @@ stays byte-identical; `dune test` green; the docs carry both.
       codes to `(R.error, reason)` in netlib's wording — a convergence
       failure is an expected outcome, not a violation. Golden
       `examples/quad_demo` in the c golden list.
-- [ ] **T54.4** — The infinite ranges: `dqagi` through the same shim
+- [x] **T54.4** — The infinite ranges: `dqagi` through the same shim
       (netlib's transformation onto (0, 1]), surfaced as an enum
       argument naming the three ranges — from a bound to +∞, from −∞
       to a bound, the whole line — rather than infinite `Float64`
