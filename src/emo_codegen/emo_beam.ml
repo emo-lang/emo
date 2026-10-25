@@ -2115,12 +2115,17 @@ and guard_expr env (x : Emo_ir.expr) : unit =
 
 let rt_source =
   {|
+%% The Int64 wrap: the low 64 bits of the bignum (band works in two's
+%% complement at any width, so an underflow below the minimum wraps as
+%% surely as an overflow above the maximum), read back as signed.
 'emo_mask'/1 =
     fun (_v) ->
-	call 'erlang':'-'
-	    (call 'erlang':'rem'
-		 (call 'erlang':'+'(_v, 9223372036854775808), 18446744073709551616),
-	     9223372036854775808)
+	let <_u> = call 'erlang':'band'(_v, 18446744073709551615)
+	in case call 'erlang':'<'(_u, 9223372036854775808) of
+	     <'true'> when 'true' -> _u
+	     <'false'> when 'true' ->
+		 call 'erlang':'-'(_u, 18446744073709551616)
+	   end
 
 'emo_strcat'/2 =
     fun (_a, _b) ->

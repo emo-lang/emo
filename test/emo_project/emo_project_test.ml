@@ -3043,6 +3043,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "png_demo")
           "png_demo" "main.emo");
+    tc "atomic_cell compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "atomic_cell")
+          "atomic_cell" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 17) ----
@@ -3110,6 +3115,7 @@ let ts_golden_tests =
       ("loops", "main.emo");
       ("tcp_echo", "main.emo");
       ("http_roundtrip", "main.emo");
+      ("atomic_cell", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the

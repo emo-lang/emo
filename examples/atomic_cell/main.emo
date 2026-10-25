@@ -1,0 +1,96 @@
+// Atomics — Box's synchronized sibling: one cell whose every operation
+// is atomic, answering the same bytes on every target that admits it.
+//
+//   emo run main.emo
+//
+// The cell is sequentially consistent and that is the only order; every
+// read-modify-write answers the value the cell held before it, and a
+// compare_exchange mismatch is a value, not an error. docs/atomics.md
+// is the design note.
+
+// ---- 1 · The Int64 cell: the nine operations ----
+const served = Atomic.new(0)
+served.store(5)
+const before = served.exchange(7)
+served.fetch_add(3)
+const swapped = served.compare_exchange(10, 100)
+served.fetch_sub(58)
+served.fetch_and(126)
+served.fetch_or(1)
+served.fetch_xor(1)
+fence()
+println(before)
+println(swapped[0])
+println(swapped[1])
+println(served.load())
+
+// ---- 2 · The Bool cell: the logical family ----
+const flag = Atomic.new(true)
+println(flag.fetch_and(false))
+println(flag.load())
+println(flag.fetch_or(true))
+println(flag.load())
+println(flag.fetch_xor(true))
+println(flag.load())
+
+// ---- 3 · A cell handed on is the same cell ----
+def reader(cell Atomic) Int64 {
+  cell.fetch_add(10)
+  println(cell.load())
+  const missed = cell.compare_exchange(999, 0)
+  println(missed[0])
+  println(missed[1])
+  cell.fetch_sub(10)
+  println(cell.load())
+  println(cell == cell)
+  println(cell == Atomic.new(42))
+  println(cell == Atomic.new(1))
+  println(cell)
+  return cell.load()
+}
+
+const final = reader(served)
+println(final)
+
+// ---- 4 · A cell behind a field, reached where its type is open ----
+class Counter {
+  def init(cell Atomic) {
+    self.cell = cell
+  }
+
+  def bump() Int64 {
+    return self.cell.fetch_add(1)
+  }
+
+  def flip(next Bool) Bool {
+    return self.cell.exchange(next)
+  }
+
+  def swap(expected Int64, fresh Int64) Bool {
+    const outcome = self.cell.compare_exchange(expected, fresh)
+    return outcome[0]
+  }
+
+  def show() String {
+    return self.cell.to_string()
+  }
+}
+
+const counter = Counter.new(cell: Atomic.new(100))
+println(counter.bump())
+println(counter.bump())
+println(counter.swap(102, 7))
+println(counter.swap(102, 8))
+println(counter.bump())
+println(counter.show())
+
+const toggle = Counter.new(cell: Atomic.new(false))
+println(toggle.flip(true))
+println(toggle.flip(false))
+
+// ---- 5 · fetch_add and fetch_sub wrap by the Int64 rule ----
+const edge = Atomic.new(9223372036854775807)
+println(edge.fetch_add(1))
+println(edge.load())
+println(edge.fetch_sub(1))
+println(edge.load())

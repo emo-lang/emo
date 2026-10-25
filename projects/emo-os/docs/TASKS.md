@@ -54,7 +54,8 @@ Pure compiler work; no OS code. Design settles before any emitter moves.
 - [x] **T1.4** — Hosted targets: the interpreter (exact no-op), `c` (`__atomic` builtins), `ocaml` (the `Atomic` module; CAS-loop fallbacks for `fetch_and`/`fetch_or`/`fetch_xor`).
 - [x] **T1.5** — Managed targets: `ts` and `wasm` as exact no-ops under the cooperative scheduler; `beam` via the runtime's `atomics` array (the full set; the bitwise `fetch_*` as compare-exchange loops — `docs/atomics.md` supersedes the earlier `counters` line).
 - [x] **T1.6** — `riscv64`: `amoswap` / LR-SC / `fence` full set as runtime helpers in the generated image.
-- [ ] **T1.7** — Goldens: one cross-target corpus answered byte-for-byte on every target that admits the ops; refusal goldens for BEAM's CAS and every non-scalar payload; a riscv64 golden under QEMU.
+- [x] **T1.7** — Goldens: one cross-target corpus answered byte-for-byte on every target that admits the ops (`examples/atomic_cell`, all seven); refusal goldens for every non-scalar payload, through the type position and the constructor (BEAM's CAS needs none — the `atomics` array serves it, per T1.5); a riscv64 golden under QEMU.
+- [ ] **T1.8** — `peek`/`poke`: the volatile raw-memory builtins `CHECK.md` defines (T1.2) have no implementation yet — no checker surface, no lowering on any target — while S1's exit criteria and T2.3 both assume them. Their surface (the access widths a 16550 needs byte access for, the address type, what `poke` answers) is settled in a design note first; then every target that reaches raw memory lowers them with the volatile ordering kept through emission, the rest refuse by name, and goldens pin both.
 
 ## Step 2 — riscv64 Stage B (S2)
 

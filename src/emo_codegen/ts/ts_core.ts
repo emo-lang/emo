@@ -1490,6 +1490,7 @@ const E: any = {
         return args[0];
       }
       if (name === "load" && recv instanceof EAtomic) return recv.v;
+      if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
       if (name === "store" && recv instanceof EAtomic) {
         recv.v = args[0];
         return undefined;
@@ -1517,11 +1518,15 @@ const E: any = {
         // refuses what a gradual call could still reach.
         const old = recv.v;
         if (typeof old === "bigint" && typeof args[0] === "bigint") {
-          recv.v = name === "fetch_add" ? old + (args[0] as bigint)
-            : name === "fetch_sub" ? old - (args[0] as bigint)
-            : name === "fetch_and" ? old & (args[0] as bigint)
-            : name === "fetch_or" ? old | (args[0] as bigint)
-            : old ^ (args[0] as bigint);
+          // the Int64 rule: fetch_add and fetch_sub wrap at 64 bits
+          recv.v = BigInt.asIntN(
+            64,
+            name === "fetch_add" ? old + (args[0] as bigint)
+              : name === "fetch_sub" ? old - (args[0] as bigint)
+              : name === "fetch_and" ? old & (args[0] as bigint)
+              : name === "fetch_or" ? old | (args[0] as bigint)
+              : old ^ (args[0] as bigint),
+          );
         } else if (typeof old === "boolean" && typeof args[0] === "boolean") {
           if (name === "fetch_add" || name === "fetch_sub")
             throw new Error("`" + name + "` expects an Int64");

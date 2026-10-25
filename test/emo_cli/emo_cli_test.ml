@@ -367,6 +367,7 @@ let wasm_goldens =
     "png_demo";
     "sql_demo";
     "sql_edge";
+    "atomic_cell";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -431,6 +432,7 @@ let beam_goldens =
     "png_demo";
     "sql_demo";
     "sql_edge";
+    "atomic_cell";
   ]
 
 let erl_available =
@@ -659,6 +661,7 @@ let c_goldens =
     "sql_demo";
     "sql_edge";
     "term_demo";
+    "atomic_cell";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -3021,6 +3024,7 @@ let riscv64_examples_tests =
       "loops";
       "error_matching";
       "floats";
+      "atomic_cell";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -5205,6 +5209,202 @@ let atomic_riscv64_tests =
            true\n");
   ]
 
+(* The refusal goldens (T1.7): every payload outside Int64 and Bool
+   refuses at check time, by name, with one diagnostic on every target —
+   through both spellings, the type position and the constructor. The
+   signature pass runs before the bodies and a signature refusal gates
+   them, so the two spellings carry separate programs. The messages are
+   pinned whole: the type the program wrote is the type the refusal
+   names. *)
+let atomic_refusal_type_source =
+  {|
+class Point {
+  def init(x Int64) {
+    self.x = x
+  }
+}
+
+interface Shape {
+  def area() Int64
+}
+
+enum Color { red, green }
+
+def a(c Atomic[Float64]) Int64 { return 0 }
+def b(c Atomic[String]) Int64 { return 0 }
+def c(c Atomic[Char]) Int64 { return 0 }
+def d(c Atomic[Byte]) Int64 { return 0 }
+def e(c Atomic[Array[Int64]]) Int64 { return 0 }
+def f(c Atomic[(Int64, Bool)]) Int64 { return 0 }
+def g(c Atomic[Map[String, Int64]]) Int64 { return 0 }
+def h(c Atomic[List[Int64]]) Int64 { return 0 }
+def i(c Atomic[Bytes]) Int64 { return 0 }
+def j(c Atomic[Box[Int64]]) Int64 { return 0 }
+def k(c Atomic[Atomic[Int64]]) Int64 { return 0 }
+def l(c Atomic[Point]) Int64 { return 0 }
+def m(c Atomic[Shape]) Int64 { return 0 }
+def n(c Atomic[Color]) Int64 { return 0 }
+def o(c Atomic[Pid]) Int64 { return 0 }
+|}
+
+let atomic_refusal_type_expected =
+  List.map
+    (fun got ->
+      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+    [
+      "Float64";
+      "String";
+      "Char";
+      "Byte";
+      "Array[Int64]";
+      "(Int64, Bool)";
+      "Map[String, Int64]";
+      "List[Int64]";
+      "Bytes";
+      "Box[Int64]";
+      "Atomic[Int64]";
+      "Point";
+      "Shape";
+      "Color";
+      "Pid";
+    ]
+
+let atomic_refusal_new_source =
+  {|
+class Point {
+  def init(x Int64) {
+    self.x = x
+  }
+}
+
+enum Color { red, green }
+
+const a = Atomic.new(1.5)
+const b = Atomic.new("text")
+const c = Atomic.new('a')
+const d = Atomic.new([1, 2])
+const e = Atomic.new((1, true))
+const f = Atomic.new({"a": 1})
+const g = Atomic.new(List.new([1]))
+const h = Atomic.new(Box.new(1))
+const i = Atomic.new(Atomic.new(1))
+const j = Atomic.new(Point.new(x: 1))
+const k = Atomic.new(Color.red)
+const l = Atomic.new(Color)
+const m = Atomic.new(Exception.new("boom"))
+const n = Atomic.new(-> (x Int64) { return x })
+|}
+
+(* `Atomic.new(Bytes.new(4))` is absent above: `Bytes.new` has no
+   constructor rule in the checker, so its result is Unknown and the
+   payload scope cannot see it (CHECK.md records the gap); the type
+   position pins the Bytes refusal. *)
+let atomic_refusal_new_expected =
+  List.map
+    (fun got ->
+      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+    [
+      "Float64";
+      "String";
+      "Char";
+      "Array[Int64]";
+      "(Int64, Bool)";
+      "Map[String, Int64]";
+      "List[Int64]";
+      "Box[Int64]";
+      "Atomic[Int64]";
+      "Point";
+      "Color";
+      "Color";
+      "Exception";
+      "(x: Int64) -> Int64";
+    ]
+
+(* The op-level refusals beside the payload scope: arithmetic on a Bool
+   cell, a value of the wrong payload, the constructor's arity. *)
+let atomic_refusal_ops_source =
+  {|
+const flag = Atomic.new(false)
+flag.fetch_add(1)
+flag.fetch_sub(1)
+const served = Atomic.new(0)
+served.store("text")
+served.compare_exchange(0, "text")
+Atomic.new(1, 2)
+|}
+
+let atomic_refusal_ops_expected =
+  [
+    ("E4004", "`fetch_add` expects an `Atomic[Int64]`, got `Atomic[Bool]`");
+    ("E4004", "`fetch_sub` expects an `Atomic[Int64]`, got `Atomic[Bool]`");
+    ("E4004", "`store` expects Int64, got String");
+    ("E4004", "`compare_exchange` expects Int64 as the new value, got String");
+    ("E4009", "`Atomic.new` expects 1 argument, got 2");
+  ]
+
+let atomic_refusal_tests =
+  (* the six compiled targets; `emo check` and `emo run` check as `c` *)
+  let every_target =
+    [ "ocaml"; "c"; "typescript"; "wasm"; "beam"; "riscv64" ]
+  in
+  (* The checker's answer for one program on one target: (code, message)
+     per diagnostic, in source order. *)
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  let pin_e4027 what source expected =
+    List.iter
+      (fun target ->
+        let got = diagnostics target source in
+        Alcotest.(check (list string))
+          (Printf.sprintf "%s: the %s refusals name the payload" target what)
+          expected (List.map snd got);
+        Alcotest.(check (list string))
+          (Printf.sprintf "%s: every %s refusal is E4027" target what)
+          (List.map (fun _ -> "E4027") expected)
+          (List.map fst got))
+      every_target
+  in
+  [
+    tc "every non-scalar payload refuses by name in a type position" (fun () ->
+        pin_e4027 "type-position" atomic_refusal_type_source
+          atomic_refusal_type_expected);
+    tc "every non-scalar payload refuses by name at the constructor" (fun () ->
+        pin_e4027 "constructor" atomic_refusal_new_source
+          atomic_refusal_new_expected);
+    tc "the op-level refusals name the operation and the payload" (fun () ->
+        List.iter
+          (fun target ->
+            Alcotest.(check (list (pair string string)))
+              (target ^ ": op refusals") atomic_refusal_ops_expected
+              (diagnostics target atomic_refusal_ops_source))
+          every_target);
+    tc "emo check answers the refusals with exit 65" (fun () ->
+        List.iter
+          (fun (name, source) ->
+            let entry = scratch_entry name source in
+            Alcotest.(check int)
+              (name ^ " exit") 65
+              (in_dir (Filename.dirname entry) (fun () ->
+                   Emo_cli.check_file ~file:entry ~color:false ~error_limit:40)))
+          [
+            ("atomic-refuse-type", atomic_refusal_type_source);
+            ("atomic-refuse-new", atomic_refusal_new_source);
+            ("atomic-refuse-ops", atomic_refusal_ops_source);
+          ]);
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -5227,6 +5427,7 @@ let () =
       ("atomic_surface", atomic_surface_tests);
       ("atomic_wasm", atomic_wasm_tests);
       ("atomic_riscv64", atomic_riscv64_tests);
+      ("atomic_refusal", atomic_refusal_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
