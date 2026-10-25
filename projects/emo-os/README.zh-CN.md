@@ -38,7 +38,7 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 
 - **`Atomic`——Box 的同步兄弟——住在 `core`**。只有顺序一致性；不暴露 memory order 参数。第一刀只覆盖 `Int64` 与 `Bool`：`load`、`store`、`exchange`、`compare_exchange`（返回 `(Bool, Int64)`）、`fetch_*` 家族，外加 `fence()`。对标量之外的类型原子操作直接拒绝。设计笔记：[`docs/atomics.md`](../../docs/atomics.md)。
 - **每目标诚实**。解释器与 TypeScript / wasm 目标是精确空操作（协作单线程——顺序一致性平凡成立）；`c` 落到 `__atomic` 内建；`ocaml` 用它的 `Atomic` 模块、位运算以 CAS 环补足；BEAM 落到运行时的 `atomics` 数组——全集，按位 `fetch_*` 以比较并交换环补足；`riscv64` 是真主场——`amoswap`、LR/SC、`fence`。
-- **`peek`/`poke` 定义上就是 volatile**——永不消除、互不重排。没有这条规则，UART 状态轮询循环就是优化器的经典受害者。
+- **`peek8`/`poke8`/`peek64`/`poke64` 定义上就是 volatile**——永不消除、互不重排。字节线骑在 `Byte` 上（无符号，0–255），字线用 `Int64`；`poke` 不回答值。`riscv64` 准入——程序拥有地址空间——其余托管目标按名拒绝（E4028）。设计笔记：[`docs/raw-memory.md`](../../docs/raw-memory.md)。
 - **riscv64 Stage B 是前置条件，不是优化**。动态值模型下每个 `Int64` 都是装箱的堆单元：一次 MMIO 读分配一个永远无人回收的 cell，轮询循环会烧穿堆。类型特化让 `Int64` 走寄存器，只在逃逸点装箱（容器元素、字段、闭包捕获、消息、动态调用边界）。
 - **ISR 纪律：中断体内零分配**。预分配环形缓冲走裸内存；ISR 只做 ack、入队、唤醒——排水是进程的事。
 
@@ -65,7 +65,7 @@ $ ./run.sh
 | 里程碑 | 范围 | 状态 |
 | --- | --- | --- |
 | M1 — 裸机 bring-up | freestanding 镜像启动、经 SBI 控制台打印 | 完成 |
-| S1 — 内存原语 | atomics + volatile `peek`/`poke` + `fence`，全目标 | 下一步 |
+| S1 — 内存原语 | atomics + volatile `peek`/`poke` + `fence`，全目标 | 完成 |
 | S2 — riscv64 Stage B | 类型化调用约定、逃逸点装箱 | — |
 | M2 — 协作内核 | 金属上的进程、调度器、中断驱动 UART | — |
 | M3 — 用户态 | U-mode、ecall 门、用户 ELF、syscall stub | — |

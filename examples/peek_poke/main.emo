@@ -1,0 +1,76 @@
+// Raw memory — the volatile peek/poke lanes (docs/raw-memory.md).
+//
+//   emo build main.emo --target riscv64
+//
+// The lanes refuse on every hosted target; this corpus runs on the
+// freestanding image under QEMU alone. The playground is RAM well above
+// the image's 64 MiB heap (QEMU virt's default 128 MiB spans
+// 0x80000000..0x88000000, the heap ends near 0x84300000), and the last
+// read is the 16550A's line-status register at 0x10000005, byte-wide —
+// after boot the transmitter sits idle and the register reads 0x60.
+
+const page = 0x87000000
+
+// ---- 1 · The word lane: a roundtrip and its little-endian bytes ----
+poke64(page, 0x123456789ABCDEF0)
+println(peek64(page) == 0x123456789ABCDEF0)
+poke64(page + 8, 15)
+println(peek64(page + 8) == 15)
+println(peek8(page) == 240B)
+println(peek8(page + 7) == 18B)
+poke64(page + 8, 0)
+println(peek64(page + 8) == 0)
+
+// ---- 2 · The byte lane: stores hold their own byte ----
+poke8(page + 16, 200B)
+poke8(page + 17, 55B)
+println(peek8(page + 16) == 200B)
+println(peek8(page + 17) == 55B)
+println(peek64(page + 16) == 14280)
+poke64(page + 16, 0)
+poke8(page + 24, 123B)
+println(peek8(page + 24))
+poke8(page + 24, 0B)
+poke64(page + 24, 305419896)
+println(peek8(page + 24) == 120B)
+poke64(page + 24, 0)
+
+// ---- 3 · Byte arithmetic wraps modulo 256, unsigned ----
+println(200B + 100B)
+println(1B - 2B)
+println(200B * 3B)
+println(200B / 7B)
+println(200B % 7B)
+println(200B & 15B)
+println(200B | 1B)
+println(200B ^ 255B)
+println(~200B)
+println(200B << 1B)
+println(200B << 8B)
+println(200B >> 3B)
+println(200B > 32B)
+println(200B <= 200B)
+println(32B == 32B)
+println(32B != 255B)
+
+// ---- 4 · The explicit crossings ----
+println(Byte.from_int64(7))
+println((0 - 1).to_byte())
+
+def crossings(b Byte, n Int64) Int64 {
+  return b.to_int64() + n.to_byte().to_int64()
+}
+
+println(crossings(7B, 258))
+println(crossings((0 - 1).to_byte(), 255))
+
+def twice(b Byte) Byte {
+  return b + b
+}
+
+println(twice(200B))
+println([200B, 100B] == [200B, 100B])
+println("${55B}!")
+
+// ---- 5 · The 16550A's line-status register, byte-wide ----
+println(peek8(0x10000005))

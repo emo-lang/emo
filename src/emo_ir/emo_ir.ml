@@ -163,7 +163,8 @@ type env = {
    registered in every frame. *)
 let is_builtin = function
   | "println" | "printf" | "self_pid" | "halt" | "fence" | "expect_equal"
-  | "expect_true" | "expect_false" | "expect_fail" ->
+  | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
+  | "peek64" | "poke64" ->
       true
   | _ -> false
 

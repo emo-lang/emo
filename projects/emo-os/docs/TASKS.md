@@ -28,7 +28,7 @@ with its own ground rules, but every task is tracked here.
 | Milestone | Steps | Exit criteria | Status |
 | --- | --- | --- | --- |
 | M1 — Bare-metal bring-up | 0 | The freestanding image boots under QEMU and prints through the SBI console; the `run.sh` smoke is green. | complete |
-| S1 — Memory primitives | 1 | Atomics + volatile `peek`/`poke` + `fence()` on every target that admits them, loud refusals elsewhere, goldens green. | next |
+| S1 — Memory primitives | 1 | Atomics + volatile `peek`/`poke` + `fence()` on every target that admits them, loud refusals elsewhere, goldens green. | complete |
 | S2 — riscv64 Stage B | 2 | Typed bodies keep `Int64` in registers; boxing only at escape points; an MMIO read allocates nothing; every existing riscv64 golden byte-identical. | — |
 | M2 — Cooperative kernel | 3 | `spawn`/`send`/`receive` on metal, the round-robin scheduler, the interrupt-driven UART console, and the dual-run parity harness. | — |
 | M3 — User mode | 4 | U-mode user ELFs behind the ecall gate, the syscall stub package, a user program runs — and fails alone. | — |
@@ -55,7 +55,7 @@ Pure compiler work; no OS code. Design settles before any emitter moves.
 - [x] **T1.5** — Managed targets: `ts` and `wasm` as exact no-ops under the cooperative scheduler; `beam` via the runtime's `atomics` array (the full set; the bitwise `fetch_*` as compare-exchange loops — `docs/atomics.md` supersedes the earlier `counters` line).
 - [x] **T1.6** — `riscv64`: `amoswap` / LR-SC / `fence` full set as runtime helpers in the generated image.
 - [x] **T1.7** — Goldens: one cross-target corpus answered byte-for-byte on every target that admits the ops (`examples/atomic_cell`, all seven); refusal goldens for every non-scalar payload, through the type position and the constructor (BEAM's CAS needs none — the `atomics` array serves it, per T1.5); a riscv64 golden under QEMU.
-- [ ] **T1.8** — `peek`/`poke`: the volatile raw-memory builtins `CHECK.md` defines (T1.2) have no implementation yet — no checker surface, no lowering on any target — while S1's exit criteria and T2.3 both assume them. Their surface (the access widths a 16550 needs byte access for, the address type, what `poke` answers) is settled in a design note first; then every target that reaches raw memory lowers them with the volatile ordering kept through emission, the rest refuse by name, and goldens pin both.
+- [x] **T1.8** — `peek`/`poke`: the volatile raw-memory builtins `CHECK.md` defines (T1.2), with the surface settled in [`docs/raw-memory.md`](../../../../docs/raw-memory.md) — `peek8`/`poke8` over `Byte` (the byte lane, unsigned 0–255), `peek64`/`poke64` over `Int64`, addresses `Int64`, `poke` answering `Void`, the width set `{8, 64}` (the 32-bit lane waits for `Int32`). `riscv64` lowers them as volatile `lbu`/`ld`/`sb`/`sd` runtime helpers — landing the `Byte` immediate in the value model beside them — the six hosted targets refuse by name at check time (E4028; a target admits them iff the program owns the address space), and goldens pin both: RAM roundtrips on both widths plus the 16550's line-status register under QEMU, and a refusal golden per hosted target.
 
 ## Step 2 — riscv64 Stage B (S2)
 
@@ -65,7 +65,7 @@ exhausts the heap. Unboxing is a prerequisite of the kernel primitives.
 
 - [ ] **T2.1** — The typed calling convention: a fully typed signature gets raw-register params and results (`Int64` in a register, `Float64` in an f-register); boxing adapters at typed↔dynamic call boundaries.
 - [ ] **T2.2** — Escape-point boxing: locals and arithmetic stay unboxed; a value boxes only where it escapes (container element, field, closure capture, message, dynamic-call boundary).
-- [ ] **T2.3** — `peek`/`poke` lowered to unboxed raw `Int64` — an MMIO read allocates nothing — with the volatile ordering preserved through emission.
+- [ ] **T2.3** — `peek`/`poke` lowered to unboxed raw `Byte`/`Int64` — an MMIO read allocates nothing — with the volatile ordering preserved through emission.
 - [ ] **T2.4** — Re-verification: every existing riscv64 golden byte-identical; a before/after instruction count for a hot-loop corpus (`count_down`-style) recorded in the step trail.
 
 ## Step 3 — The cooperative kernel (M2)

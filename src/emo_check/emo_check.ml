@@ -1223,6 +1223,48 @@ let empty_env =
     loop_depth = 0;
   }
 
+(* The raw-memory builtins (docs/raw-memory.md): admitted only where the
+   program owns the address space. Registered on the riscv64 target
+   alone — on every hosted target a reference to the names is refused
+   by name at the identifier (E4028): the atomics no-op precedent
+   cannot carry a peek, which would have to invent a value. *)
+let raw_mem_bindings =
+  [
+    ( "peek8",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Byte);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke8",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Byte) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "peek64",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke64",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+  ]
+
+let raw_mem_builtin = function
+  | "peek8" | "poke8" | "peek64" | "poke64" -> true
+  | _ -> false
+
+let base_env target =
+  if target = "riscv64" then
+    { empty_env with bindings = raw_mem_bindings @ empty_env.bindings }
+  else empty_env
+
 let lookup_env env name = List.assoc_opt name env.bindings
 
 (* Whether a name is bound locally (a var, const, def, or parameter).
@@ -1521,7 +1563,13 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               ctx.refs := name_path :: !(ctx.refs);
               Unknown
           | None ->
-              if out_of_scope ctx name then
+              if raw_mem_builtin name then
+                report ctx span "E4028"
+                  (Printf.sprintf
+                     "`%s` reaches raw memory: only the `riscv64` target \
+                      admits it, not `%s`"
+                     name ctx.target)
+              else if out_of_scope ctx name then
                 report ctx span "E5008"
                   (Printf.sprintf "%s does not declare `%s` in its deps"
                      (package_label ctx) name)
@@ -3540,7 +3588,7 @@ let check_items ctx (items : Ast.item list) : unit =
                 depth = env.depth;
               }
         | _ -> env)
-      empty_env items
+      (base_env ctx.target) items
   in
   ignore
     (List.fold_left
@@ -3796,7 +3844,7 @@ let preregister_types ~(packages : string list list)
                     depth = 0;
                   }
             | _ -> env)
-          empty_env items
+          (base_env ctx.target) items
       in
       ignore
         (List.fold_left

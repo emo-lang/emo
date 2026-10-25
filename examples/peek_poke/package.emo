@@ -1,0 +1,7 @@
+package {
+  name = "emo/peek_poke"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}

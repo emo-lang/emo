@@ -20,9 +20,10 @@
      Closure        [header][code][captures...]
      Instance       [header][class id][fields...]
 
-   Bool, Char, and enum members are immediates (bit 0 set; kind in
-   bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
-   member id above bit 3), so an immediate is never a valid pointer.
+  Bool, Char, Byte, and enum members are immediates (bit 0 set; kind in
+  bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
+  member id above bit 3 — 3 Byte, the eight bits in bits 11:4), so an
+  immediate is never a valid pointer.
    Int64/Float64 are boxed: the decided wrap-around semantics need all
    2⁶⁴ bit patterns — a numeric literal is a static read-only cell in
    .rodata, so the heap holds computed values only. Equality is content
@@ -110,6 +111,10 @@ let tag_atomic = 16
 let bool_false = 1 (* immediate: kind 0 in bits 3:1, payload bit 4 = 0 *)
 let bool_true = 17 (* kind 0 in bits 3:1, payload bit 4 *)
 let char_imm (c : char) : int = (Char.code c lsl 4) lor 0b0011
+
+(* Bytes: kind 3 in bits 3:1, the eight bits in bits 11:4 — the lane
+   `peek8` reads and `poke8` writes (docs/raw-memory.md). *)
+let byte_imm (n : int) : int = (n lsl 4) lor 0b0111
 
 (* Enum members: kind 2 in bits 3:1, the member id above bit 3. *)
 let enum_imm env enum_name member =
@@ -419,6 +424,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Const (Emo_ast.L_bool b) ->
       put env "    li a0, %d\n" (if b then bool_true else bool_false)
   | Const (Emo_ast.L_char c) -> put env "    li a0, %d\n" (char_imm c)
+  | Const (Emo_ast.L_byte n) -> put env "    li a0, %d\n" (byte_imm n)
   | Const (Emo_ast.L_float f) ->
       put env "    la a0, %s\n"
         (cell_label env (Int64.bits_of_float f) tag_float64);
@@ -428,7 +434,6 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    la a0, %s\n" label;
       put env "    li a1, %d\n" (String.length s);
       call_runtime env "emo_string_lit"
-  | Const _ -> refuse "this literal kind"
   | Var name -> put env "    ld a0, %d(sp)\n" (slot_offset env name)
   | Binary (op, l, r) -> emit_binary env d e.Emo_ir.ety op l r
   | Unary (op, x) -> emit_unary env d e.Emo_ir.ety op x
@@ -508,6 +513,28 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       (* the full sequential-consistency barrier, ordinary and volatile
          accesses alike; `fence` answers nothing, like `halt` *)
       put env "    fence rw, rw\n"
+  | Builtin { name = "peek8"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      call_runtime env "emo_peek8"
+  | Builtin { name = "peek64"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      call_runtime env "emo_peek64"
+  | Builtin { name = "poke8"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      put env "    sd a0, %d(sp)\n" addr_slot;
+      emit_expr env (d + 1) value;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" addr_slot;
+      call_runtime env "emo_poke8"
+  | Builtin { name = "poke64"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      put env "    sd a0, %d(sp)\n" addr_slot;
+      emit_expr env (d + 1) value;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" addr_slot;
+      call_runtime env "emo_poke64"
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
@@ -645,6 +672,43 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
         put env "    call emo_box_i64\n"
+    | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
+        | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
+        Emo_check.Byte ) ->
+        (* the byte lane: in-type, wrapping modulo 256 — Byte is
+           unsigned, the family rule the hosted targets already run.
+           Operands are immediates: decode, op, re-encode *)
+        emit_byte_pair env d l r;
+        let mnemonic =
+          match op with
+          | Emo_ast.Add -> "add"
+          | Emo_ast.Sub -> "sub"
+          | Emo_ast.Mul -> "mul"
+          | Emo_ast.Bit_and -> "and"
+          | Emo_ast.Bit_or -> "or"
+          | Emo_ast.Bit_xor -> "xor"
+          | _ -> assert false
+        in
+        put env "    %s t0, t0, t1\n" mnemonic;
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+    | (Emo_ast.Shl | Emo_ast.Shr), Emo_check.Byte ->
+        (* a count of eight or more saturates at the width: the Byte
+           answers 0, the same rule every hosted target runs *)
+        emit_byte_pair env d l r;
+        let saturated = fresh_label env "bshift" in
+        put env "    li t2, 8\n";
+        put env "    bgeu t1, t2, %s\n" saturated;
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Shl then "sll" else "srl");
+        put env "    j 1f\n";
+        put env "%s:\n" saturated;
+        put env "    li t0, 0\n";
+        put env "1:\n";
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
     | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Int64 ->
         (* the divisor is checked first: RISC-V's div/rem define x/0
            instead of trapping, and the language raises. INT64_MIN / -1
@@ -660,6 +724,19 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
           (if op = Emo_ast.Div then "div" else "rem");
         put env "    mv a0, t0\n";
         put env "    call emo_box_i64\n"
+    | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Byte ->
+        (* unsigned, and the divisor is checked first — the Int64 arm's
+           discipline *)
+        emit_byte_pair env d l r;
+        put env "    bnez t1, 1f\n";
+        put env "    la a0, msg_divzero\n";
+        put env "    la a1, msg_divzero_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Div then "divu" else "remu");
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
     | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
       ->
         emit_float_pair env d l r;
@@ -696,7 +773,8 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env "emo_string_eq"
     | ( (Emo_ast.Eq | Emo_ast.Ne),
-        (Emo_check.Bool | Emo_check.Char | Emo_check.EnumType _) ) ->
+        (Emo_check.Bool | Emo_check.Char | Emo_check.Byte | Emo_check.EnumType _)
+      ) ->
         (* immediates: equal iff the words are identical *)
         emit_expr env (d + 1) l;
         let spill = temp_offset env d in
@@ -719,6 +797,20 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         if op = Emo_ast.Ne then put env "    xori a0, a0, 16\n"
     | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Int64 ->
         emit_int_pair env d l r;
+        (match op with
+        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
+        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Le ->
+            put env "    slt t0, t1, t0\n";
+            put env "    xori t0, t0, 1\n"
+        | Emo_ast.Ge ->
+            put env "    slt t0, t0, t1\n";
+            put env "    xori t0, t0, 1\n"
+        | _ -> assert false);
+        bool_of_t0 ()
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Byte ->
+        (* unsigned bytes, so the decoded pair compares as plain ints *)
+        emit_byte_pair env d l r;
         (match op with
         | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
         | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
@@ -767,6 +859,17 @@ and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   put env "    ld t1, 8(a0)\n";
   put env "    ld t0, %d(sp)\n" spill
 
+(* The Byte twin: immediates both, so decoding is a shift. Leaves the
+   payloads in t0 (left) and t1 (right). *)
+and emit_byte_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
+  let spill = temp_offset env d in
+  emit_expr env (d + 1) l;
+  put env "    srli t0, a0, 4\n";
+  put env "    sd t0, %d(sp)\n" spill;
+  emit_expr env (d + 1) r;
+  put env "    srli t1, a0, 4\n";
+  put env "    ld t0, %d(sp)\n" spill
+
 (* The Float64 twin: payloads ride fa0/fa1. Field reads untag first —
    every heap access runs on the untagged pointer (Int64's tag is 0 and
    hides any slip, so the discipline is checked on the float paths). *)
@@ -804,6 +907,13 @@ and emit_unary env d (ty : Emo_check.t) (op : Emo_ast.unop) (x : Emo_ir.expr) :
       put env "    not t0, t0\n";
       put env "    mv a0, t0\n";
       put env "    call emo_box_i64\n"
+  | Emo_ast.Bit_not, Emo_check.Byte ->
+      emit_expr env d x;
+      put env "    srli t0, a0, 4\n";
+      put env "    not t0, t0\n";
+      put env "    andi t0, t0, 255\n";
+      put env "    slli a0, t0, 4\n";
+      put env "    ori a0, a0, 7\n"
   | Emo_ast.Not, _ ->
       emit_expr env d x;
       put env "    xori a0, a0, 16\n"
@@ -897,13 +1007,51 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    xori t0, t0, 1\n";
               put env "    slli t0, t0, 4\n    addi t0, t0, 1\n    mv a0, t0\n"
           | None -> refuse (Printf.sprintf "`is(%s)`" target)))
+  | "from_int64", [ x ]
+    when match self_.Emo_ir.desc with
+         | Emo_ir.Type_ref "Byte" -> true
+         | _ -> false ->
+      (* the conversion the checker admits statically, the interpreter
+         runs loudly: 0–255 or the named failure — the mask the c
+         target applies silently is not the rule here *)
+      emit_expr env (d + 1) x;
+      put env "    andi a0, a0, -32\n";
+      put env "    ld t0, 8(a0)\n";
+      put env "    li t1, -256\n";
+      put env "    and t1, t0, t1\n";
+      put env "    beqz t1, 1f\n";
+      put env "    la a0, msg_byte_range\n";
+      put env "    la a1, msg_byte_range_end\n";
+      put env "    call emo_fail\n";
+      put env "1:\n";
+      put env "    slli a0, t0, 4\n";
+      put env "    ori a0, a0, 7\n"
   | _ -> (
       match self_.Emo_ir.ety with
+      | Emo_check.Byte -> (
+          match (name, args) with
+          | "to_int64", [] ->
+              emit_expr env d self_;
+              put env "    srli a0, a0, 4\n";
+              put env "    andi a0, a0, 255\n";
+              put env "    call emo_box_i64\n"
+          | "to_string", [] ->
+              emit_expr env d self_;
+              call_runtime env "emo_to_string"
+          | _ -> refuse (Printf.sprintf "the Byte method `%s`" name))
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
           put env "    andi a0, a0, -32\n";
           put env "    ld a0, 8(a0)\n";
           call_runtime env "emo_i64_to_string"
+      | Emo_check.Int64 when name = "to_byte" && args = [] ->
+          (* the low eight bits, the family's rule *)
+          emit_expr env d self_;
+          put env "    andi a0, a0, -32\n";
+          put env "    ld t0, 8(a0)\n";
+          put env "    andi t0, t0, 255\n";
+          put env "    slli a0, t0, 4\n";
+          put env "    ori a0, a0, 7\n"
       | Emo_check.BoxType _ -> (
           match (name, args) with
           | "read", [] ->
@@ -1851,6 +1999,56 @@ emo_instance_new:
     addi sp, sp, 32
     ret
 
+# ---- Raw memory ----
+#
+# The volatile lanes (docs/raw-memory.md): peek8/poke8 over Byte,
+# peek64/poke64 over Int64. Each is one load or store where the program
+# put it — never elided, never reordered against its siblings. The
+# address is exactly what the program named; a bad one traps.
+
+# emo_peek8: a0 = the address (an Int64 cell); a0 = the byte, a Byte
+# immediate, read unsigned.
+    .globl emo_peek8
+emo_peek8:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    lbu t0, 0(t0)
+    slli a0, t0, 4
+    ori a0, a0, 7
+    ret
+
+# emo_poke8: a0 = the address, a1 = the Byte immediate.
+    .globl emo_poke8
+emo_poke8:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    srli t1, a1, 4
+    sb t1, 0(t0)
+    ret
+
+# emo_peek64: a0 = the address; a0 = the word, a boxed Int64.
+    .globl emo_peek64
+emo_peek64:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    ld a0, 0(t0)
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_poke64: a0 = the address, a1 = a boxed Int64.
+    .globl emo_poke64
+emo_poke64:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    andi a1, a1, -32
+    ld t1, 8(a1)
+    sd t1, 0(t0)
+    ret
+
 # ---- Strings ----
 #
 # Block layout: [header][length][bytes padded to 8]. Field access runs
@@ -2687,9 +2885,16 @@ emo_to_string:
     beqz t1, .Lts_bool
     li t2, 1
     beq t1, t2, .Lts_char
+    li t2, 3
+    beq t1, t2, .Lts_byte
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
+.Lts_byte:
+    srli a0, a0, 4
+    andi a0, a0, 255
+    call emo_i64_to_string
+    j .Lts_done
 .Lts_bool:
     andi t0, a0, 16
     beqz t0, .Lts_false
@@ -3217,6 +3422,9 @@ msg_atomic:
 msg_atomic_kind:
     .ascii "an atomic operation on a value of this kind"
 msg_atomic_kind_end:
+msg_byte_range:
+    .ascii "`Byte.from_int64` needs a value in 0-255"
+msg_byte_range_end:
 name_to_string:
     .ascii "to_string"
 name_length:

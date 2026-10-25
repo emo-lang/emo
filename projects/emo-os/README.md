@@ -38,7 +38,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 
 - **`Atomic` — Box's synchronized sibling — lives in `core`.** Sequential consistency only; no memory-order parameter. The first cut covers `Int64` and `Bool`: `load`, `store`, `exchange`, `compare_exchange` (returning `(Bool, Int64)`), the `fetch_*` family, and `fence()`. Atomics on non-scalars refuse. The design note: [`docs/atomics.md`](../../docs/atomics.md).
 - **Per-target honesty.** The interpreter and the TypeScript / wasm targets run exact no-ops (cooperative single threads — sequential consistency holds vacuously); `c` lowers to `__atomic` builtins; `ocaml` uses its `Atomic` module with CAS-loop fallbacks for the bitwise ops; BEAM lowers to the runtime's `atomics` array — the full set, the bitwise `fetch_*` as compare-exchange loops; `riscv64` is the real one — `amoswap`, LR/SC, `fence`.
-- **`peek`/`poke` are volatile by definition** — never elided, never reordered against each other. The UART status loop is the classic victim of an optimizer without this rule.
+- **`peek8`/`poke8`/`peek64`/`poke64` are volatile by definition** — never elided, never reordered against each other. The byte lane rides `Byte` (unsigned, 0–255), the word lane `Int64`; `poke` answers nothing. `riscv64` admits them — the program owns the address space — and every hosted target refuses by name (E4028). The design note: [`docs/raw-memory.md`](../../docs/raw-memory.md).
 - **riscv64 Stage B is a prerequisite, not an optimization.** In the dynamic value model every `Int64` is a boxed heap cell: one MMIO read allocates a cell that no collector will ever reclaim, so a polling loop exhausts the heap. Typed specialization keeps `Int64` in a register and boxes only at escape points (container elements, fields, closure captures, messages, dynamic-call boundaries).
 - **ISR discipline: no allocation in an interrupt body.** Preallocated ring buffers in raw memory; an ISR acks, enqueues, and wakes — the drain is a process.
 
@@ -65,7 +65,7 @@ $ ./run.sh
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | M1 — Bare-metal bring-up | freestanding image boots, prints through the SBI console | complete |
-| S1 — Memory primitives | atomics + volatile `peek`/`poke` + `fence`, all targets | next |
+| S1 — Memory primitives | atomics + volatile `peek`/`poke` + `fence`, all targets | complete |
 | S2 — riscv64 Stage B | typed calling convention, escape-point boxing | — |
 | M2 — Cooperative kernel | processes on metal, scheduler, interrupt-driven UART | — |
 | M3 — User mode | U-mode, ecall gate, user ELF, syscall stubs | — |

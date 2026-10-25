@@ -202,7 +202,8 @@ let requires_nothing source =
    the C math library, `file_read` writes and reads a file, and
    `pipeline` runs four processes. Each runs end to end in test/emo_project
    instead, compiled and interpreted. *)
-let beyond_the_interpreter = [ "numerics"; "file_read"; "pipeline" ]
+let beyond_the_interpreter =
+  [ "numerics"; "file_read"; "pipeline"; "peek_poke" ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
    end through the bare interpreter and prints its expected.txt. A
@@ -3025,6 +3026,7 @@ let riscv64_examples_tests =
       "error_matching";
       "floats";
       "atomic_cell";
+      "peek_poke";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -5405,6 +5407,73 @@ let atomic_refusal_tests =
           ]);
   ]
 
+(* The raw-memory lanes (docs/raw-memory.md, EmoOS T1.8): riscv64
+   admits them, every hosted target refuses by name — E4028 at the
+   reference site, the atomics no-op precedent deliberately not
+   carried. *)
+let peek_refusal_source =
+  {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)
+|}
+
+let peek_refusal_expected target =
+  List.map
+    (fun name ->
+      Printf.sprintf
+        "`%s` reaches raw memory: only the `riscv64` target admits it, not `%s`"
+        name target)
+    [ "peek8"; "poke8"; "peek64"; "poke64" ]
+
+let peek_refusal_tests =
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  [
+    tc "every hosted target refuses the lanes by name" (fun () ->
+        List.iter
+          (fun target ->
+            let expected = peek_refusal_expected target in
+            let got = diagnostics target peek_refusal_source in
+            Alcotest.(check (list string))
+              (target ^ ": the refusals name the lane")
+              expected (List.map snd got);
+            Alcotest.(check (list string))
+              (target ^ ": every refusal is E4028")
+              (List.map (fun _ -> "E4028") expected)
+              (List.map fst got))
+          [ "ocaml"; "c"; "typescript"; "wasm"; "beam" ]);
+    tc "riscv64 admits the lanes and checks them" (fun () ->
+        Alcotest.(check (list (pair string string)))
+          "riscv64: the lanes check clean" []
+          (diagnostics "riscv64" peek_refusal_source));
+    tc "riscv64 still checks the lanes' payloads and arities" (fun () ->
+        let got =
+          diagnostics "riscv64"
+            {|
+peek8("text")
+poke8(0)
+poke8(0, 12)
+peek64()
+|}
+        in
+        Alcotest.(check int) "four refusals" 4 (List.length got));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -5428,6 +5497,7 @@ let () =
       ("atomic_wasm", atomic_wasm_tests);
       ("atomic_riscv64", atomic_riscv64_tests);
       ("atomic_refusal", atomic_refusal_tests);
+      ("peek_refusal", peek_refusal_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

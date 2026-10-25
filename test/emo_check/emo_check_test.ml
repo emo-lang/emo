@@ -1463,6 +1463,58 @@ served.nope()|}
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
   ]
 
+(* The raw-memory lanes (docs/raw-memory.md): the default check target
+   is `c`, so every reference refuses E4028; the riscv64 target admits
+   the four and still checks payloads and arities. *)
+let raw_memory_tests =
+  let check_on target source =
+    match Emo_parser.parse_program ~file:"test.emo" ~source with
+    | items ->
+        let diagnostics, _, _, _ =
+          Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+        in
+        diagnostics
+    | exception Emo_parser.Error d ->
+        Alcotest.fail ("parse failed: " ^ d.Diagnostic.message)
+  in
+  [
+    tc "a hosted target refuses every lane by name" (fun () ->
+        let diagnostics =
+          check
+            {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)|}
+        in
+        Alcotest.(check int)
+          "four E4028s" 4
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4028")
+                diagnostics)));
+    tc "riscv64 admits the lanes and checks their payloads" (fun () ->
+        let clean =
+          check_on "riscv64"
+            {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)|}
+        in
+        Alcotest.(check int) "clean on riscv64" 0 (List.length clean);
+        let diagnostics =
+          check_on "riscv64" {|
+peek8("text")
+poke8(0)
+poke8(0, 12)
+peek64()|}
+        in
+        Alcotest.(check int) "four refusals" 4 (List.length diagnostics));
+  ]
+
 let cross_module_tests =
   [
     tc "a type declaration names another module's type" (fun () ->
@@ -2510,6 +2562,7 @@ let () =
       ("expect", expect_tests);
       ("box", box_tests);
       ("atomic", atomic_tests);
+      ("raw_memory", raw_memory_tests);
       ("array_builder", array_builder_tests);
       ("member_signature", member_signature_tests);
       ("field_type", field_type_tests);
