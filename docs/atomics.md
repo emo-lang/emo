@@ -155,10 +155,16 @@ The honesty notes behind the rows:
   v` wraps back to the truth. Only the bitwise family lowers to
   compare-exchange loops, the same fallback the `ocaml` row already carries.
   An `Atomic[Bool]` maps to 0/1 in the cell.
-- **`riscv64` is the real one.** `amoswap` for `exchange`, the AMO set for
-  the `fetch_*` family, LR/SC for `compare_exchange`, the `aq`/`rl` bits and
-  `fence rw, rw` composing the sequential-consistency mapping — as runtime
-  helpers in the generated image, landing with T1.6.
+- **`riscv64` is the real one.** `amoswap.d.aqrl` for `store` and
+  `exchange`, the fence-bracketed load (`fence rw,rw; ld; fence r,rw`) for
+  `load`, LR/SC (`lr.d.aqrl`/`sc.d.rl`) for `compare_exchange` — and, while
+  the cell's word is a boxed value in the dynamic model, for the `fetch_*`
+  family as well: the loop decodes the word, computes under the wrap rule,
+  boxes, and swaps against the exact word it read, re-reading when the cell
+  moved meanwhile. `fence()` is the `fence rw, rw` instruction. These are
+  runtime helpers in the generated image (landed with T1.6); the AMO
+  arithmetic (`amoadd` and its family) is the direct form the moment Stage
+  B (S2) gives the cell a raw `Int64` word.
 
 ## Data races — what is defined, what is not
 

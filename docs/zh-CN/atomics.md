@@ -133,9 +133,14 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
   回绕规则下能精确还原旧值——`previous = new − v` 回绕回去就是真值。只有
   按位家族降到比较并交换环，与 `ocaml` 行已有的兜底同款。`Atomic[Bool]`
   在 cell 里映射为 0/1。
-- **`riscv64` 是真主场。** `exchange` 走 `amoswap`，`fetch_*` 家族走 AMO
-  一套，`compare_exchange` 走 LR/SC，`aq`/`rl` 位与 `fence rw, rw` 合成
-  顺序一致性映射——以运行时助手落在生成的镜像里，随 T1.6 到位。
+- **`riscv64` 是真主场。** `store` 与 `exchange` 走 `amoswap.d.aqrl`，
+  `load` 走栅栏夹持的加载（`fence rw,rw; ld; fence r,rw`），
+  `compare_exchange` 走 LR/SC（`lr.d.aqrl`/`sc.d.rl`）——在动态模型里 cell
+  的字还是装箱值的期间，`fetch_*` 家族也走 LR/SC：环内解码该字、按回绕规则
+  计算、装箱，再对着读到的那个字原样交换，cell 中途被挪动就重读。`fence()`
+  就是 `fence rw, rw` 指令。这些以运行时助手落在生成的镜像里（随 T1.6 到位）；
+  Stage B（S2）让 cell 持有裸 `Int64` 字的那一刻，AMO 算术（`amoadd` 一族）
+  就是直接形式。
 
 ## 数据竞争——什么是定义的，什么不是
 

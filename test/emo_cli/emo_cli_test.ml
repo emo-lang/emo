@@ -5078,6 +5078,26 @@ const final = reader(served)
 println(final)
 |}
 
+(* Program B's bytes — the same on every target that runs it. *)
+let atomic_direct_expected =
+  "5\n\
+   true\n\
+   10\n\
+   42\n\
+   true\n\
+   false\n\
+   false\n\
+   true\n\
+   52\n\
+   false\n\
+   52\n\
+   42\n\
+   true\n\
+   true\n\
+   false\n\
+   <atomic>\n\
+   42\n"
+
 let atomic_wasm_tests =
   [
     tc "the atomic surface answers identically on wasm through a direct call"
@@ -5093,23 +5113,96 @@ let atomic_wasm_tests =
              (Printf.sprintf "node %s %s"
                 (Filename.quote (Lazy.force wasm_runner_path))
                 (Filename.quote (Filename.concat dir "app.wasm"))))
-          "5\n\
-           true\n\
-           10\n\
-           42\n\
+          atomic_direct_expected);
+  ]
+
+(* The riscv64 leg (T1.6): the real lowering — amoswap, LR/SC, fence —
+   as runtime helpers in the freestanding image, booted under QEMU and
+   read back through the serial transport the riscv64 goldens use. The
+   second program reaches the cells through class fields, where the
+   emitter loses the static type and the runtime dispatches by name,
+   and crosses Int64's upper bound under the wrap rule. *)
+let atomic_riscv64_dynamic_source =
+  {|
+class Counter {
+  def init(cell Atomic) {
+    self.cell = cell
+  }
+
+  def bump() Int64 {
+    return self.cell.fetch_add(1)
+  }
+
+  def flip(flag Bool) Bool {
+    return self.cell.exchange(flag)
+  }
+
+  def swap(expected Int64, fresh Int64) Bool {
+    const outcome = self.cell.compare_exchange(expected, fresh)
+    return outcome[0]
+  }
+
+  def show() String {
+    return self.cell.to_string()
+  }
+}
+
+const counter = Counter.new(cell: Atomic.new(100))
+println(counter.bump())
+println(counter.bump())
+println(counter.swap(102, 7))
+println(counter.swap(102, 8))
+println(counter.bump())
+println(counter.show())
+const wrapped = Atomic.new(9223372036854775807)
+println(wrapped.fetch_add(1))
+println(wrapped.load())
+println(wrapped.fetch_sub(1))
+println(wrapped.load())
+const toggle = Counter.new(cell: Atomic.new(false))
+println(toggle.flip(true))
+println(toggle.flip(false))
+|}
+
+let atomic_riscv64_tests =
+  let boot entry elf expected =
+    Alcotest.(check int)
+      "riscv64 build" 0
+      (build_entry ~target:"riscv64" entry elf);
+    let serial, err, status =
+      run_cmd
+        (Printf.sprintf
+           "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+           (Filename.quote elf))
+    in
+    check_run "riscv64" (riscv64_payload serial, err, status) expected
+  in
+  [
+    tc "the atomic surface answers identically on riscv64 under QEMU" (fun () ->
+        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        let entry = scratch_entry "atomic-riscv64" atomic_wasm_source in
+        boot entry
+          (Filename.concat (Filename.dirname entry) "app.elf")
+          atomic_direct_expected);
+    tc "a dynamic Atomic receiver dispatches by name on riscv64" (fun () ->
+        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "atomic-riscv64-dyn" atomic_riscv64_dynamic_source
+        in
+        boot entry
+          (Filename.concat (Filename.dirname entry) "app.elf")
+          "100\n\
+           101\n\
            true\n\
            false\n\
-           false\n\
-           true\n\
-           52\n\
-           false\n\
-           52\n\
-           42\n\
-           true\n\
-           true\n\
-           false\n\
+           7\n\
            <atomic>\n\
-           42\n");
+           9223372036854775807\n\
+           -9223372036854775808\n\
+           -9223372036854775808\n\
+           9223372036854775807\n\
+           false\n\
+           true\n");
   ]
 
 let () =
@@ -5133,6 +5226,7 @@ let () =
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);
       ("atomic_wasm", atomic_wasm_tests);
+      ("atomic_riscv64", atomic_riscv64_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

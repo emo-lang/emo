@@ -7,15 +7,16 @@
    runtime's whole IO.
 
    The value model (T19.2/T19.3): a dynamic value is one tagged machine
-   word. Heap pointers carry their kind in the low three bits — 0
+   word. Heap pointers carry their kind in bits 4:1 (bit 0 clear) — 0
    Int64 cell, 1 Float64 cell, 2 String, 3 Tuple, 4 Array, 5 Box,
-   6 Closure, 7 Instance — and every block is [header word][payload],
+   6 Closure, 7 Instance, 8 Atomic — so every block is 32-byte aligned
+   and the five low bits are free; every block is [header word][payload],
    the header naming the payload size for a future precise GC:
 
      Int64/Float64  [header][bits]
      String         [header][length][bytes padded to 8]
      Tuple/Array    [header][length][elements...]
-     Box            [header][value]
+     Box/Atomic     [header][value]
      Closure        [header][code][captures...]
      Instance       [header][class id][fields...]
 
@@ -23,7 +24,9 @@
    bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
    member id above bit 3), so an immediate is never a valid pointer.
    Int64/Float64 are boxed: the decided wrap-around semantics need all
-   2⁶⁴ bit patterns. Equality is content equality (emo_eq_deep).
+   2⁶⁴ bit patterns — a numeric literal is a static read-only cell in
+   .rodata, so the heap holds computed values only. Equality is content
+   equality (emo_eq_deep).
    Method dispatch: a class-typed receiver calls its mangled method
    directly; an interface-typed receiver goes through a static
    per-interface table indexed by class id; `is` compares class ids or
@@ -35,7 +38,7 @@
    convention (params a0–a7, result a0; a closure's record rides in
    t0), and a call in return position lowers to `tail`/`jalr x0` after
    restoring sp — the guaranteed tail call. Expression temporaries are
-   depth-indexed slots; field access always untags first (andi -8).
+   depth-indexed slots; field access always untags first (andi -32).
    Stage B specialization (raw Int64/Float64 registers) is a later
    task; every body emits dynamic for now. *)
 
@@ -59,6 +62,9 @@ type env = {
   buf : Buffer.t;
   mutable fresh : int; (* the string-literal counter *)
   mutable strs : (string * string) list; (* label, bytes — newest first *)
+  mutable cells : (int64 * int * string) list;
+      (* the numeric literal cells: bits, tag, label — newest first; one
+         static read-only cell per distinct literal *)
   mutable labels : int; (* the fresh-label counter *)
   mutable cur : frame option;
   mutable fclass : string option; (* the class whose method is emitting *)
@@ -100,6 +106,7 @@ let tag_array = 8
 let tag_box = 10
 let tag_closure = 12
 let tag_instance = 14
+let tag_atomic = 16
 let bool_false = 1 (* immediate: kind 0 in bits 3:1, payload bit 4 = 0 *)
 let bool_true = 17 (* kind 0 in bits 3:1, payload bit 4 *)
 let char_imm (c : char) : int = (Char.code c lsl 4) lor 0b0011
@@ -117,6 +124,20 @@ let string_label env (s : string) : string =
   env.fresh <- env.fresh + 1;
   env.strs <- (label, s) :: env.strs;
   label
+
+(* An Int64 or Float64 literal is an immutable cell, so it lives once in
+   .rodata — [header][bits], 32-byte aligned like every block — and an
+   evaluation is its address, not an allocation. The heap is spent on
+   computed values only. *)
+let cell_label env (bits : int64) (tag : int) : string =
+  match
+    List.find_opt (fun (b, t, _) -> Int64.equal b bits && t = tag) env.cells
+  with
+  | Some (_, _, label) -> label
+  | None ->
+      let label = Printf.sprintf "emo_cell_%d" (List.length env.cells) in
+      env.cells <- (bits, tag, label) :: env.cells;
+      label
 
 let fresh_label env base =
   env.labels <- env.labels + 1;
@@ -394,16 +415,14 @@ let call_runtime env name = put env "    call %s\n" name
 
 let rec emit_expr env d (e : Emo_ir.expr) : unit =
   match e.Emo_ir.desc with
-  | Const (Emo_ast.L_int i) ->
-      put env "    li a0, %Ld\n" i;
-      put env "    call emo_box_i64\n"
+  | Const (Emo_ast.L_int i) -> put env "    la a0, %s\n" (cell_label env i 0)
   | Const (Emo_ast.L_bool b) ->
       put env "    li a0, %d\n" (if b then bool_true else bool_false)
   | Const (Emo_ast.L_char c) -> put env "    li a0, %d\n" (char_imm c)
   | Const (Emo_ast.L_float f) ->
-      put env "    li t0, %Ld\n" (Int64.bits_of_float f);
-      put env "    fmv.d.x fa0, t0\n";
-      put env "    call emo_box_f64\n"
+      put env "    la a0, %s\n"
+        (cell_label env (Int64.bits_of_float f) tag_float64);
+      put env "    ori a0, a0, %d\n" tag_float64
   | Const (Emo_ast.L_string s) ->
       let label = string_label env s in
       put env "    la a0, %s\n" label;
@@ -440,7 +459,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    sd a0, %d(sp)\n" fslot;
       emit_args_from env (d + 1) ~from:0 args;
       put env "    ld t0, %d(sp)\n" fslot;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
       put env "    jalr t2\n"
   | Closure { cparams; cbody } -> emit_closure_creation env d cparams cbody
@@ -452,7 +471,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       match obj.Emo_ir.ety with
       | Emo_check.ClassType _ ->
           emit_expr env d obj;
-          put env "    andi a0, a0, -16\n";
+          put env "    andi a0, a0, -32\n";
           let idx = field_index env obj.Emo_ir.ety name in
           put env "    ld a0, %d(a0)\n" (16 + (8 * idx))
       | _ ->
@@ -460,7 +479,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
              class's field table (the c target's emo_field_by_name) *)
           let spill = temp_offset env d in
           emit_expr env (d + 1) obj;
-          put env "    andi a0, a0, -16\n";
+          put env "    andi a0, a0, -32\n";
           put env "    sd a0, %d(sp)\n" spill;
           put env "    ld t0, 8(a0)\n";
           let nlabel = string_label env name in
@@ -478,11 +497,17 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Box_new arg ->
       emit_expr env (d + 1) arg;
       call_runtime env "emo_box_new"
-  | Atomic_new _ -> refuse "`Atomic`"
+  | Atomic_new arg ->
+      emit_expr env (d + 1) arg;
+      call_runtime env "emo_atomic_new"
   | Builtin { name = "println"; args = [ arg ] } ->
       emit_expr env d arg;
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
+  | Builtin { name = "fence"; args = [] } ->
+      (* the full sequential-consistency barrier, ordinary and volatile
+         accesses alike; `fence` answers nothing, like `halt` *)
+      put env "    fence rw, rw\n"
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
@@ -530,10 +555,10 @@ and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
 and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) b;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    sd a0, %d(sp)\n" spill;
   emit_expr env (d + 1) i;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    ld t2, 8(a0)\n";
   put env "    ld t0, %d(sp)\n" spill;
   put env "    ld t1, 8(t0)\n";
@@ -734,11 +759,11 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
 and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    ld t0, 8(a0)\n";
   put env "    sd t0, %d(sp)\n" spill;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    ld t1, 8(a0)\n";
   put env "    ld t0, %d(sp)\n" spill
 
@@ -748,11 +773,11 @@ and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
 and emit_float_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    fld fa0, 8(a0)\n";
   put env "    fsd fa0, %d(sp)\n" spill;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    fld fa1, 8(a0)\n";
   put env "    fld fa0, %d(sp)\n" spill
 
@@ -761,20 +786,20 @@ and emit_unary env d (ty : Emo_check.t) (op : Emo_ast.unop) (x : Emo_ir.expr) :
   match (op, ty) with
   | Emo_ast.Neg, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
+      put env "    andi a0, a0, -32\n";
       put env "    ld t0, 8(a0)\n";
       put env "    sub t0, x0, t0\n";
       put env "    mv a0, t0\n";
       put env "    call emo_box_i64\n"
   | Emo_ast.Neg, Emo_check.Float64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
+      put env "    andi a0, a0, -32\n";
       put env "    fld fa0, 8(a0)\n";
       put env "    fneg.d fa0, fa0\n";
       put env "    call emo_box_f64\n"
   | Emo_ast.Bit_not, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
+      put env "    andi a0, a0, -32\n";
       put env "    ld t0, 8(a0)\n";
       put env "    not t0, t0\n";
       put env "    mv a0, t0\n";
@@ -798,7 +823,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   List.iteri
     (fun i _ ->
       put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t1, 8(t0)\n";
       put env "    add t2, t2, t1\n")
     parts;
@@ -807,7 +832,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   let block_slot = temp_offset env (d + k) in
   let cursor_slot = temp_offset env (d + k + 1) in
   put env "    sd a0, %d(sp)\n" block_slot;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    addi a0, a0, 16\n";
   List.iteri
     (fun i _ ->
@@ -853,7 +878,7 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
   match (name, args) with
   | "is", [ { Emo_ir.desc = Type_ref target; _ } ] -> (
       emit_expr env d self_;
-      put env "    andi a0, a0, -16\n";
+      put env "    andi a0, a0, -32\n";
       put env "    ld t0, 8(a0)\n";
       match List.assoc_opt target env.classes with
       | Some c ->
@@ -876,14 +901,14 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
       match self_.Emo_ir.ety with
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
-          put env "    andi a0, a0, -16\n";
+          put env "    andi a0, a0, -32\n";
           put env "    ld a0, 8(a0)\n";
           call_runtime env "emo_i64_to_string"
       | Emo_check.BoxType _ -> (
           match (name, args) with
           | "read", [] ->
               emit_expr env d self_;
-              put env "    andi a0, a0, -16\n";
+              put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n"
           | "replace", [ v ] ->
               let self_slot = temp_offset env d in
@@ -891,15 +916,42 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) v;
               put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -16\n";
+              put env "    andi t0, t0, -32\n";
               put env "    sd a0, 8(t0)\n";
               put env "    ld a0, %d(sp)\n" self_slot
           | _ -> refuse (Printf.sprintf "the Box method `%s`" name))
+      | Emo_check.AtomicType _ -> (
+          (* Box's synchronized sibling: every access is a runtime
+             helper over the cell's word (the psABI: a0 = cell, a1.. =
+             the args), so the static and the dynamic paths share one
+             implementation *)
+          let helper =
+            match (name, args) with
+            | "load", [] -> Some "emo_atomic_load"
+            | "store", [ _ ] -> Some "emo_atomic_store"
+            | "exchange", [ _ ] -> Some "emo_atomic_exchange"
+            | "compare_exchange", [ _; _ ] -> Some "emo_atomic_compare_exchange"
+            | ( ( "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or"
+                | "fetch_xor" ),
+                [ _ ] ) ->
+                Some ("emo_atomic_" ^ name)
+            | "to_string", [] -> Some "emo_to_string"
+            | _ -> None
+          in
+          match helper with
+          | Some helper ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_args_from env (d + 1) ~from:1 args;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env helper
+          | None -> refuse (Printf.sprintf "the Atomic method `%s`" name))
       | Emo_check.ArrayType _ -> (
           match (name, args) with
           | "length", [] ->
               emit_expr env d self_;
-              put env "    andi a0, a0, -16\n";
+              put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
               put env "    call emo_box_i64\n"
           | "append", [ x ] ->
@@ -935,7 +987,7 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
               put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -16\n";
+              put env "    andi t0, t0, -32\n";
               put env "    ld t1, 8(t0)\n";
               put env "    la t2, emo_iface_%s\n"
                 (Emo_ir.sanitize_ident display);
@@ -1003,7 +1055,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       put env "    sd a0, %d(sp)\n" fslot;
       emit_args_from env 1 ~from:0 args;
       put env "    ld t0, %d(sp)\n" fslot;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
       put env "    ld ra, 0(sp)\n";
       put env "    addi sp, sp, %d\n" ff.size;
@@ -1024,9 +1076,9 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
       put env "    bne t0, t1, %s\n" l_next
   | Emo_ast.Pattern_literal (Emo_ast.L_int n) ->
       put env "    ld t0, %d(sp)\n" slot_off;
-      put env "    andi t1, t0, 15\n";
+      put env "    andi t1, t0, 31\n";
       put env "    bnez t1, %s\n" l_next;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t0, 8(t0)\n";
       put env "    li t1, %Ld\n" n;
       put env "    bne t0, t1, %s\n" l_next
@@ -1054,10 +1106,10 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
   | Emo_ast.Pattern_literal (Emo_ast.L_byte _) -> refuse "a Byte pattern"
   | Emo_ast.Tuple_pattern ps ->
       put env "    ld t0, %d(sp)\n" slot_off;
-      put env "    andi t1, t0, 15\n";
+      put env "    andi t1, t0, 31\n";
       put env "    li t2, %d\n" tag_tuple;
       put env "    bne t1, t2, %s\n" l_next;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t1, 8(t0)\n";
       put env "    li t2, %d\n" (List.length ps);
       put env "    bne t1, t2, %s\n" l_next;
@@ -1065,7 +1117,7 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
         (fun i sub ->
           let elem_slot = temp_offset env 1 in
           put env "    ld t0, %d(sp)\n" slot_off;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    ld t0, %d(t0)\n" (16 + (8 * i));
           put env "    sd t0, %d(sp)\n" elem_slot;
           emit_pattern_test env elem_slot sub l_next)
@@ -1084,7 +1136,7 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
       List.iteri
         (fun i sub ->
           put env "    ld t0, %d(sp)\n" src_off;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    ld t0, %d(t0)\n" (16 + (8 * i));
           put env "    sd t0, %d(sp)\n" (temp_offset env 1);
           rec_pattern_bind env (temp_offset env 1) sub)
@@ -1157,14 +1209,14 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
           put env "    sd a0, %d(t0)\n" (16 + (8 * idx))
       | _ ->
-          put env "    andi a0, t0, -16\n";
+          put env "    andi a0, t0, -32\n";
           put env "    ld t1, 8(a0)\n";
           let nlabel = string_label env name in
           put env "    la a1, %s\n" nlabel;
           put env "    li a2, %d\n" (String.length name);
           call_runtime env "emo_field_index";
           put env "    ld t0, %d(sp)\n" self_slot;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    slli t1, a0, 3\n";
           put env "    add t0, t0, t1\n";
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
@@ -1430,8 +1482,8 @@ emo_runtime_init:
 emo_alloc:
     addi t0, a0, 1
     slli t0, t0, 3
-    addi t0, t0, 15
-    andi t0, t0, -16
+    addi t0, t0, 31
+    andi t0, t0, -32
     la t1, emo_heap_cursor
     ld t2, 0(t1)
     add t3, t2, t0
@@ -1532,6 +1584,247 @@ emo_box_new:
     addi sp, sp, 16
     ret
 
+# ---- Atomics ----
+#
+# The Atomic cell: Box's synchronized sibling (docs/atomics.md) —
+# [header][word], tag 16, the word a tagged dynamic value (a boxed
+# Int64 or a Bool immediate), the shape the c runtime keeps. Sequential
+# consistency by the ISA's recommended mapping: a load is
+# fence rw,rw; ld; fence r,rw — a store or an exchange is
+# amoswap.d.aqrl — and compare_exchange and the fetch_* family are
+# LR/SC loops over the word. The payload is a boxed pointer, so the
+# arithmetic decodes, computes under the Int64 wrap rule, boxes, and
+# swaps the word in against the exact word it read; a cell that moved
+# meanwhile is read again. The AMO arithmetic (amoadd and its family)
+# lands when Stage B gives the cell a raw word. Every helper takes the
+# psABI (a0 = cell, a1 = v, a2 = fresh) so the dynamic dispatch jumps
+# to it directly.
+
+# emo_atomic_new: a0 = any value; a0 = a fresh Atomic holding it. The
+# initial word is published with the sequential-consistency store.
+    .globl emo_atomic_new
+emo_atomic_new:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    li a0, 1
+    call emo_alloc
+    ld t0, 8(sp)
+    fence rw, w
+    sd t0, 8(a0)
+    fence rw, rw
+    ori a0, a0, 16
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_atomic_load: a0 = cell; a0 = the value the cell holds.
+    .globl emo_atomic_load
+emo_atomic_load:
+    andi t0, a0, -32
+    fence rw, rw
+    ld a0, 8(t0)
+    fence r, rw
+    ret
+
+# emo_atomic_store: a0 = cell, a1 = v; the cell holds v. `store`
+# answers nothing; a0 keeps the cell for the statement to discard.
+    .globl emo_atomic_store
+emo_atomic_store:
+    andi t0, a0, -32
+    addi t0, t0, 8
+    amoswap.d.aqrl zero, a1, (t0)
+    ret
+
+# emo_atomic_exchange: a0 = cell, a1 = v; a0 = the previous value.
+    .globl emo_atomic_exchange
+emo_atomic_exchange:
+    andi t0, a0, -32
+    addi t0, t0, 8
+    amoswap.d.aqrl a0, a1, (t0)
+    ret
+
+# emo_atomic_compare_exchange: a0 = cell, a1 = expected, a2 = fresh;
+# a0 = the tuple (swapped, the value the cell held before). The
+# comparison is content equality on the word read (emo_eq_deep: two
+# boxed Int64 holding the same bits are equal), then the swap is an
+# LR/SC against that exact word — the reservation covers only the
+# instructions between lr and sc, so the deep compare runs outside it
+# and a word that moved meanwhile sends the read around again. A
+# mismatch answers (false, actual); nothing raises.
+    .globl emo_atomic_compare_exchange
+emo_atomic_compare_exchange:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    andi s0, a0, -32
+    addi s0, s0, 8
+    mv s1, a1
+    mv s2, a2
+.Lcas_read:
+    fence rw, rw
+    ld s3, 0(s0)
+    fence r, rw
+    mv a0, s3
+    mv a1, s1
+    call emo_eq_deep
+    andi t0, a0, 16
+    beqz t0, .Lcas_miss
+.Lcas_try:
+    lr.d.aqrl t1, (s0)
+    bne t1, s3, .Lcas_read
+    sc.d.rl t2, s2, (s0)
+    bnez t2, .Lcas_try
+    li t0, 1
+    j .Lcas_pack
+.Lcas_miss:
+    li t0, 0
+.Lcas_pack:
+    sd t0, 40(sp)
+    li a0, 3
+    call emo_alloc
+    li t0, 2
+    sd t0, 8(a0)
+    ld t0, 40(sp)
+    slli t0, t0, 4
+    addi t0, t0, 1
+    sd t0, 16(a0)
+    sd s3, 24(a0)
+    ori a0, a0, 6
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+
+# The fetch_* family: a0 = cell, a1 = v; a0 = the value the cell held
+# before. t6 selects the operation (0 add, 1 sub, 2 and, 3 or, 4 xor)
+# on the way into the shared body. An Int64 word decodes both cells,
+# computes in the wrap rule, and boxes the result; a Bool word takes
+# the logical family on the immediates and allocates nothing. Any other
+# word, or an operand of the wrong shape, is a loud failure — the
+# checker refuses these statically; a dynamic receiver reaches here.
+    .globl emo_atomic_fetch_add
+emo_atomic_fetch_add:
+    li t6, 0
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_sub
+emo_atomic_fetch_sub:
+    li t6, 1
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_and
+emo_atomic_fetch_and:
+    li t6, 2
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_or
+emo_atomic_fetch_or:
+    li t6, 3
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_xor
+emo_atomic_fetch_xor:
+    li t6, 4
+    j emo_atomic_rmw
+
+emo_atomic_rmw:
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    andi s0, a0, -32
+    addi s0, s0, 8
+    mv s1, a1
+    mv s4, t6
+.Lrmw_read:
+    fence rw, rw
+    ld s2, 0(s0)
+    fence r, rw
+    andi t0, s2, 1
+    bnez t0, .Lrmw_bool
+    andi t0, s2, 31
+    bnez t0, .Lrmw_kind
+    andi t0, s1, 31
+    bnez t0, .Lrmw_kind
+    ld t0, 8(s2)
+    ld t1, 8(s1)
+    beqz s4, .Lrmw_add
+    li t2, 1
+    beq s4, t2, .Lrmw_sub
+    li t2, 2
+    beq s4, t2, .Lrmw_and
+    li t2, 3
+    beq s4, t2, .Lrmw_or
+    xor a0, t0, t1
+    j .Lrmw_box
+.Lrmw_add:
+    add a0, t0, t1
+    j .Lrmw_box
+.Lrmw_sub:
+    sub a0, t0, t1
+    j .Lrmw_box
+.Lrmw_and:
+    and a0, t0, t1
+    j .Lrmw_box
+.Lrmw_or:
+    or a0, t0, t1
+.Lrmw_box:
+    call emo_box_i64
+    mv s3, a0
+    j .Lrmw_try
+.Lrmw_bool:
+    andi t0, s2, 15
+    li t1, 1
+    bne t0, t1, .Lrmw_kind
+    andi t0, s1, 15
+    bne t0, t1, .Lrmw_kind
+    srli t0, s2, 4
+    andi t0, t0, 1
+    srli t1, s1, 4
+    andi t1, t1, 1
+    li t2, 2
+    beq s4, t2, .Lrmw_band
+    li t2, 3
+    beq s4, t2, .Lrmw_bor
+    li t2, 4
+    beq s4, t2, .Lrmw_bxor
+    j .Lrmw_kind
+.Lrmw_band:
+    and t0, t0, t1
+    j .Lrmw_bpack
+.Lrmw_bor:
+    or t0, t0, t1
+    j .Lrmw_bpack
+.Lrmw_bxor:
+    xor t0, t0, t1
+.Lrmw_bpack:
+    slli t0, t0, 4
+    addi s3, t0, 1
+.Lrmw_try:
+    lr.d.aqrl t1, (s0)
+    bne t1, s2, .Lrmw_read
+    sc.d.rl t2, s3, (s0)
+    bnez t2, .Lrmw_try
+    mv a0, s2
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    addi sp, sp, 64
+    ret
+.Lrmw_kind:
+    la a0, msg_atomic_kind
+    la a1, msg_atomic_kind_end
+    call emo_fail
+
 # emo_instance_new: a0 = class id, a1 = field count; a0 = the tagged
 # instance with zeroed fields.
     .globl emo_instance_new
@@ -1615,7 +1908,7 @@ emo_alloc_string:
 # emo_blit: a0 = raw destination cursor, a1 = String; a0 = past the copy.
     .globl emo_blit
 emo_blit:
-    andi a1, a1, -16
+    andi a1, a1, -32
     ld t0, 8(a1)
     beqz t0, .Lbl_done
     addi t1, a1, 16
@@ -1637,14 +1930,14 @@ emo_string_concat:
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
+    andi s0, a0, -32
+    andi s1, a1, -32
     ld t0, 8(s0)
     ld t1, 8(s1)
     add s2, t0, t1
     mv a0, s2
     call emo_alloc_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     addi t2, t0, 16
     ld t3, 8(s0)
     addi t4, s0, 16
@@ -1703,8 +1996,8 @@ emo_str_content:
 # emo_string_eq: a0 = a1 = Strings; a0 = a Bool immediate (content).
     .globl emo_string_eq
 emo_string_eq:
-    andi a0, a0, -16
-    andi a1, a1, -16
+    andi a0, a0, -32
+    andi a1, a1, -32
     tail emo_str_content
 
 # ---- Arrays ----
@@ -1718,7 +2011,7 @@ emo_array_append:
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
-    andi s0, a0, -16
+    andi s0, a0, -32
     mv s1, a1
     ld s2, 8(s0)
     addi a0, s2, 2
@@ -1766,12 +2059,12 @@ emo_eq_deep:
     andi t1, a1, 1
     xor t2, t0, t1
     bnez t2, .Leq_no
-    andi t2, a0, 15
-    andi t3, a1, 15
+    andi t2, a0, 31
+    andi t3, a1, 31
     bne t2, t3, .Leq_no
     bnez t0, .Leq_no
-    andi s0, a0, -16
-    andi s1, a1, -16
+    andi s0, a0, -32
+    andi s1, a1, -32
     beqz t2, .Leq_cell
     li t0, 2
     beq t2, t0, .Leq_cell
@@ -1785,6 +2078,8 @@ emo_eq_deep:
     beq t2, t0, .Leq_box
     li t0, 12
     beq t2, t0, .Leq_no
+    li t0, 16
+    beq t2, t0, .Leq_atomic
     j .Leq_inst
 .Leq_cell:
     ld t0, 8(s0)
@@ -1819,6 +2114,14 @@ emo_eq_deep:
 .Leq_box:
     ld a0, 8(s0)
     ld a1, 8(s1)
+    call emo_eq_deep
+    j .Leq_raw
+.Leq_atomic:
+    # the values the cells hold now, each an atomic load
+    fence rw, rw
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    fence r, rw
     call emo_eq_deep
     j .Leq_raw
 .Leq_inst:
@@ -1924,7 +2227,7 @@ emo_dyn_method:
     mv s1, t1
     andi t2, a0, 1
     bnez t2, .Ldm_imm
-    andi t2, a0, 15
+    andi t2, a0, 31
     beqz t2, .Ldm_scalar
     li t3, 2
     beq t2, t3, .Ldm_scalar
@@ -1934,6 +2237,8 @@ emo_dyn_method:
     beq t2, t3, .Ldm_scalar
     li t3, 10
     beq t2, t3, .Ldm_scalar
+    li t3, 16
+    beq t2, t3, .Ldm_atomic
     li t3, 14
     bne t2, t3, .Ldm_fail
     # an instance: the class's method table first
@@ -2008,7 +2313,7 @@ emo_dyn_method:
     la t6, .Ldm_do_repl
     j .Ldm_namecmp
 .Ldm_do_read:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -2017,7 +2322,7 @@ emo_dyn_method:
     addi sp, sp, 32
     ret
 .Ldm_do_repl:
-    andi t0, a0, -16
+    andi t0, a0, -32
     sd a1, 8(t0)
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -2048,6 +2353,32 @@ emo_dyn_method:
     li t2, 6
     beq t1, t2, .Ldm_sc_len
     j .Ldm_fail
+.Ldm_atomic:
+    # an Atomic cell: the op set and to_string, by name through
+    # emo_atomic_mtbl ([name][length][impl], zero-terminated); the impl
+    # takes a0.. as they stand
+    la s2, emo_atomic_mtbl
+.Ldm_at_loop:
+    ld t3, 0(s2)
+    beqz t3, .Ldm_fail
+    ld t4, 8(s2)
+    bne t4, s1, .Ldm_at_next
+    mv t2, s1
+.Ldm_at_cmp:
+    beqz t2, .Ldm_at_hit
+    addi t2, t2, -1
+    add t5, t3, t2
+    add t6, s0, t2
+    lbu t5, 0(t5)
+    lbu t6, 0(t6)
+    bne t5, t6, .Ldm_at_next
+    j .Ldm_at_cmp
+.Ldm_at_hit:
+    ld t2, 16(s2)
+    j .Ldm_go
+.Ldm_at_next:
+    addi s2, s2, 24
+    j .Ldm_at_loop
 .Ldm_namecmp:
     mv t2, s1
 .Ldm_nloop:
@@ -2070,7 +2401,7 @@ emo_dyn_method:
     addi sp, sp, 32
     jr t2
 .Ldm_length:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     call emo_box_i64
     ld ra, 0(sp)
@@ -2103,10 +2434,10 @@ emo_add_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lad_int
     li t2, 2
@@ -2146,10 +2477,10 @@ emo_sub_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lsb_int
     li t2, 2
@@ -2174,10 +2505,10 @@ emo_mul_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lmu_int
     li t2, 2
@@ -2202,10 +2533,10 @@ emo_lt_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Llt_int
     li t2, 2
@@ -2228,10 +2559,10 @@ emo_le_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lle_int
     li t2, 2
@@ -2299,7 +2630,7 @@ emo_i64_to_string:
     sd t3, 64(sp)
     mv a0, t3
     call emo_alloc_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     addi t0, t0, 16
     ld t1, 56(sp)
     ld t2, 64(sp)
@@ -2324,24 +2655,31 @@ emo_to_string:
     sd ra, 0(sp)
     andi t0, a0, 1
     bnez t0, .Lts_imm
-    andi t0, a0, 15
+    andi t0, a0, 31
     beqz t0, .Lts_i64
     li t1, 4
     beq t0, t1, .Lts_done
     li t1, 2
     beq t0, t1, .Lts_f64
+    li t1, 16
+    beq t0, t1, .Lts_atomic
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
 .Lts_i64:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     call emo_i64_to_string
     j .Lts_done
 .Lts_f64:
-    andi t0, a0, -16
+    andi t0, a0, -32
     fld fa0, 8(t0)
     call emo_f64_to_string
+    j .Lts_done
+.Lts_atomic:
+    la a0, msg_atomic
+    li a1, 8
+    call emo_string_lit
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -2371,7 +2709,7 @@ emo_to_string:
     li a0, 1
     call emo_alloc_string
     ld t0, 8(sp)
-    andi t1, a0, -16
+    andi t1, a0, -32
     sb t0, 16(t1)
     j .Lts_done
 .Lts_done:
@@ -2423,13 +2761,13 @@ emo_f64_to_string:
     beqz t2, .Lfs_g6
     # the integer, then ".0" appended to a fresh block
     call emo_i64_to_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     ld t1, 8(t0)
     sd t0, 56(sp)
     sd t1, 64(sp)
     addi a0, t1, 2
     call emo_alloc_string
-    andi t2, a0, -16
+    andi t2, a0, -32
     addi t2, t2, 16
     ld t0, 56(sp)
     ld t1, 64(sp)
@@ -2795,7 +3133,7 @@ emo_f64_to_string:
     sd t1, 64(sp)
     mv a0, t1
     call emo_alloc_string
-    andi t2, a0, -16
+    andi t2, a0, -32
     addi t2, t2, 16
     ld t0, 56(sp)
     ld t1, 64(sp)
@@ -2822,7 +3160,7 @@ emo_println:
     addi sp, sp, -16
     sd ra, 0(sp)
     call emo_to_string
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a1, 8(a0)
     addi a0, a0, 16
     add a1, a0, a1
@@ -2874,6 +3212,11 @@ msg_arith_end:
 msg_divzero:
     .ascii "division by zero"
 msg_divzero_end:
+msg_atomic:
+    .ascii "<atomic>"
+msg_atomic_kind:
+    .ascii "an atomic operation on a value of this kind"
+msg_atomic_kind_end:
 name_to_string:
     .ascii "to_string"
 name_length:
@@ -2884,6 +3227,40 @@ name_read:
     .ascii "read"
 name_replace:
     .ascii "replace"
+name_load:
+    .ascii "load"
+name_store:
+    .ascii "store"
+name_exchange:
+    .ascii "exchange"
+name_compare_exchange:
+    .ascii "compare_exchange"
+name_fetch_add:
+    .ascii "fetch_add"
+name_fetch_sub:
+    .ascii "fetch_sub"
+name_fetch_and:
+    .ascii "fetch_and"
+name_fetch_or:
+    .ascii "fetch_or"
+name_fetch_xor:
+    .ascii "fetch_xor"
+
+# The Atomic cell's dynamic method table: [name][length][impl], the
+# impl taking the psABI registers as emo_dyn_method received them.
+    .align 3
+emo_atomic_mtbl:
+    .quad name_load, 4, emo_atomic_load
+    .quad name_store, 5, emo_atomic_store
+    .quad name_exchange, 8, emo_atomic_exchange
+    .quad name_compare_exchange, 16, emo_atomic_compare_exchange
+    .quad name_fetch_add, 9, emo_atomic_fetch_add
+    .quad name_fetch_sub, 9, emo_atomic_fetch_sub
+    .quad name_fetch_and, 9, emo_atomic_fetch_and
+    .quad name_fetch_or, 8, emo_atomic_fetch_or
+    .quad name_fetch_xor, 9, emo_atomic_fetch_xor
+    .quad name_to_string, 9, emo_to_string
+    .quad 0, 0, 0
 |asm}
 
 (* One whole-program artifact at 0x80200000, the profile A entry
@@ -3184,6 +3561,7 @@ let emit (program : Emo_ir.program) : string =
       buf = Buffer.create 32768;
       fresh = 0;
       strs = [];
+      cells = [];
       labels = 0;
       cur = None;
       fclass = None;
@@ -3397,6 +3775,13 @@ let emit (program : Emo_ir.program) : string =
         gput env "%s_end:\n" label;
         gput env "    .size %s, . - %s\n" label label)
       (List.rev env.strs)
+  end;
+  if env.cells <> [] then begin
+    gput env "\n# ---- Numeric literal cells ----\n\n    .section .rodata\n";
+    List.iter
+      (fun (bits, _, label) ->
+        gput env "    .balign 32\n%s:\n    .quad 1\n    .quad %Ld\n" label bits)
+      (List.rev env.cells)
   end;
   gput env "%s" stack_asm;
   Buffer.contents env.buf
