@@ -36,8 +36,8 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 
 ## 内核所踩的语言原语
 
-- **`Atomic`——Box 的同步兄弟——住在 `core`**。只有顺序一致性；不暴露 memory order 参数。第一刀只覆盖 `Int64` 与 `Bool`：`load`、`store`、`exchange`、`compare_exchange`（返回 `(Bool, Int64)`）、`fetch_*` 家族，外加 `fence()`。对标量之外的类型原子操作直接拒绝。
-- **每目标诚实**。解释器与 TypeScript / wasm 目标是精确空操作（协作单线程——顺序一致性平凡成立）；`c` 落到 `__atomic` 内建；`ocaml` 用它的 `Atomic` 模块、位运算以 CAS 环补足；BEAM 提供 `counters` 子集（`load`/`store`/`add`）并拒绝其余；`riscv64` 是真主场——`amoswap`、LR/SC、`fence`。
+- **`Atomic`——Box 的同步兄弟——住在 `core`**。只有顺序一致性；不暴露 memory order 参数。第一刀只覆盖 `Int64` 与 `Bool`：`load`、`store`、`exchange`、`compare_exchange`（返回 `(Bool, Int64)`）、`fetch_*` 家族，外加 `fence()`。对标量之外的类型原子操作直接拒绝。设计笔记：[`docs/atomics.md`](../../docs/atomics.md)。
+- **每目标诚实**。解释器与 TypeScript / wasm 目标是精确空操作（协作单线程——顺序一致性平凡成立）；`c` 落到 `__atomic` 内建；`ocaml` 用它的 `Atomic` 模块、位运算以 CAS 环补足；BEAM 落到运行时的 `atomics` 数组——全集，按位 `fetch_*` 以比较并交换环补足；`riscv64` 是真主场——`amoswap`、LR/SC、`fence`。
 - **`peek`/`poke` 定义上就是 volatile**——永不消除、互不重排。没有这条规则，UART 状态轮询循环就是优化器的经典受害者。
 - **riscv64 Stage B 是前置条件，不是优化**。动态值模型下每个 `Int64` 都是装箱的堆单元：一次 MMIO 读分配一个永远无人回收的 cell，轮询循环会烧穿堆。类型特化让 `Int64` 走寄存器，只在逃逸点装箱（容器元素、字段、闭包捕获、消息、动态调用边界）。
 - **ISR 纪律：中断体内零分配**。预分配环形缓冲走裸内存；ISR 只做 ack、入队、唤醒——排水是进程的事。
@@ -77,6 +77,7 @@ $ ./run.sh
 
 ## 相关文档
 
+- [`docs/atomics.md`](../../docs/atomics.md) — 原子内存模型：只有顺序一致性、操作集、每目标矩阵、数据竞争语义。
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — 实时边界分析（Emo 主树）。
 - [`docs/xv6.md`](../../docs/xv6.md) — xv6 量级可行性评估：Emo 替换什么、什么留在汇编。
 - [`docs/runtime-and-freestanding.md`](../../docs/runtime-and-freestanding.md) — freestanding 目标拥有什么。

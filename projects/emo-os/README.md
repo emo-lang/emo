@@ -36,8 +36,8 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 
 ## Language primitives the kernel stands on
 
-- **`Atomic` — Box's synchronized sibling — lives in `core`.** Sequential consistency only; no memory-order parameter. The first cut covers `Int64` and `Bool`: `load`, `store`, `exchange`, `compare_exchange` (returning `(Bool, Int64)`), the `fetch_*` family, and `fence()`. Atomics on non-scalars refuse.
-- **Per-target honesty.** The interpreter and the TypeScript / wasm targets run exact no-ops (cooperative single threads — sequential consistency holds vacuously); `c` lowers to `__atomic` builtins; `ocaml` uses its `Atomic` module with CAS-loop fallbacks for the bitwise ops; BEAM offers the `counters` subset (`load`/`store`/`add`) and refuses the rest; `riscv64` is the real one — `amoswap`, LR/SC, `fence`.
+- **`Atomic` — Box's synchronized sibling — lives in `core`.** Sequential consistency only; no memory-order parameter. The first cut covers `Int64` and `Bool`: `load`, `store`, `exchange`, `compare_exchange` (returning `(Bool, Int64)`), the `fetch_*` family, and `fence()`. Atomics on non-scalars refuse. The design note: [`docs/atomics.md`](../../docs/atomics.md).
+- **Per-target honesty.** The interpreter and the TypeScript / wasm targets run exact no-ops (cooperative single threads — sequential consistency holds vacuously); `c` lowers to `__atomic` builtins; `ocaml` uses its `Atomic` module with CAS-loop fallbacks for the bitwise ops; BEAM lowers to the runtime's `atomics` array — the full set, the bitwise `fetch_*` as compare-exchange loops; `riscv64` is the real one — `amoswap`, LR/SC, `fence`.
 - **`peek`/`poke` are volatile by definition** — never elided, never reordered against each other. The UART status loop is the classic victim of an optimizer without this rule.
 - **riscv64 Stage B is a prerequisite, not an optimization.** In the dynamic value model every `Int64` is a boxed heap cell: one MMIO read allocates a cell that no collector will ever reclaim, so a polling loop exhausts the heap. Typed specialization keeps `Int64` in a register and boxes only at escape points (container elements, fields, closure captures, messages, dynamic-call boundaries).
 - **ISR discipline: no allocation in an interrupt body.** Preallocated ring buffers in raw memory; an ISR acks, enqueues, and wakes — the drain is a process.
@@ -77,6 +77,7 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 
 ## Related documents
 
+- [`docs/atomics.md`](../../docs/atomics.md) — the atomic memory model: sequential consistency only, the op set, the per-target matrix, the data-race semantics.
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — the real-time boundary, in the Emo tree.
 - [`docs/xv6.md`](../../docs/xv6.md) — the xv6-class feasibility assessment: what Emo replaces, what stays assembly.
 - [`docs/runtime-and-freestanding.md`](../../docs/runtime-and-freestanding.md) — what a freestanding target owns.
