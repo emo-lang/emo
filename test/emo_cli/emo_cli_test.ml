@@ -4991,14 +4991,17 @@ println(served)
         Alcotest.(check int) "interpreter exit" 0 run_exit;
         Alcotest.(check string)
           "interpreter output" expected (Buffer.contents out);
-        (* ocaml *)
+        (* Four compiled targets pin the same bytes — the availability
+           gates mirror check_hosted's. The wasm leg runs program B
+           below: the receive-handler lowering cannot see a module const
+           yet (the pre-existing gap CHECK.md records), so program A's
+           cross-process sharing pins on these four. *)
         Alcotest.(check int)
           "ocaml build" 0
           (build_entry ~target:"ocaml" entry (Filename.concat dir "app-ocaml"));
         check_run "ocaml"
           (run_cmd (Filename.quote (Filename.concat dir "app-ocaml")))
           expected;
-        (* c *)
         if Lazy.force cc_available then begin
           Alcotest.(check int)
             "c build" 0
@@ -5006,7 +5009,107 @@ println(served)
           check_run "c"
             (run_cmd (Filename.quote (Filename.concat dir "app-c")))
             expected
+        end;
+        if Lazy.force node_available then begin
+          Alcotest.(check int)
+            "typescript build" 0
+            (build_entry ~target:"typescript" entry
+               (Filename.concat dir "app-ts"));
+          check_run "typescript"
+            (run_cmd
+               ("node " ^ Filename.quote (Filename.concat dir "app-ts.ts")))
+            expected
+        end;
+        if Lazy.force erl_available then begin
+          Alcotest.(check int)
+            "beam build" 0
+            (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+          check_run "beam"
+            (run_cmd
+               (Printf.sprintf
+                  "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                  (Filename.quote dir)))
+            expected
         end);
+  ]
+
+(* The wasm leg's program: the same assertions through a direct call —
+   no receive, no module-const read inside one. The bytes match program
+   A's on every target. *)
+let atomic_wasm_source =
+  {|
+def reader(cell Atomic) Int64 {
+  cell.fetch_add(10)
+  println(cell.load())
+  const missed = cell.compare_exchange(999, 0)
+  println(missed[0])
+  println(missed[1])
+  cell.fetch_sub(10)
+  println(cell.load())
+  println(cell == cell)
+  println(cell == Atomic.new(42))
+  println(cell == Atomic.new(1))
+  println(cell)
+  return cell.load()
+}
+
+const served = Atomic.new(0)
+served.store(5)
+const before = served.exchange(7)
+served.fetch_add(3)
+const swapped = served.compare_exchange(10, 100)
+served.fetch_sub(58)
+served.fetch_and(126)
+served.fetch_or(1)
+served.fetch_xor(1)
+fence()
+println(before)
+println(swapped[0])
+println(swapped[1])
+println(served.load())
+
+const flag = Atomic.new(true)
+println(flag.fetch_and(false))
+println(flag.load())
+println(flag.fetch_or(true))
+println(flag.load())
+
+const final = reader(served)
+println(final)
+|}
+
+let atomic_wasm_tests =
+  [
+    tc "the atomic surface answers identically on wasm through a direct call"
+      (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "atomic-wasm" atomic_wasm_source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "wasm build" 0
+          (build_entry ~target:"wasm" entry (Filename.concat dir "app.wasm"));
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote (Filename.concat dir "app.wasm"))))
+          "5\n\
+           true\n\
+           10\n\
+           42\n\
+           true\n\
+           false\n\
+           false\n\
+           true\n\
+           52\n\
+           false\n\
+           52\n\
+           42\n\
+           true\n\
+           true\n\
+           false\n\
+           <atomic>\n\
+           42\n");
   ]
 
 let () =
@@ -5029,6 +5132,7 @@ let () =
       ("cross_target", cross_target_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);
+      ("atomic_wasm", atomic_wasm_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

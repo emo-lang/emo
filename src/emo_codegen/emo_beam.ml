@@ -515,8 +515,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "do call 'erlang':'put'(_boxref, ";
       expr env v;
       put env ") _boxref"
-  | Atomic_new _ ->
-      raise (Emo_ir.Lower_error "the beam target does not support `Atomic` yet")
+  | Atomic_new v ->
+      put env "apply 'emo_atomic_new'/1 ";
+      args_list env [ v ]
   | Bytes_new v ->
       put env "apply 'emo_bytes_new'/1 ";
       args_list env [ v ]
@@ -939,6 +940,23 @@ and builtin_method_call env self_ name args =
       | "replace", [ v ] ->
           put env "apply 'emo_box_replace'/2 ";
           args_list env [ self_; v ]
+      | "load", [] ->
+          put env "apply 'emo_atomic_load'/1 ";
+          args_list env [ self_ ]
+      | "store", [ v ] ->
+          put env "apply 'emo_atomic_store'/2 ";
+          args_list env [ self_; v ]
+      | "exchange", [ v ] ->
+          put env "apply 'emo_atomic_exchange'/2 ";
+          args_list env [ self_; v ]
+      | "compare_exchange", [ expected; fresh ] ->
+          put env "apply 'emo_atomic_compare_exchange'/3 ";
+          args_list env [ self_; expected; fresh ]
+      | ( (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor")
+           as mname),
+          [ v ] ) ->
+          put env (Printf.sprintf "apply 'emo_atomic_%s'/2 " mname);
+          args_list env [ self_; v ]
       | "is", [ target ] -> (
           let tname =
             match target.Emo_ir.desc with
@@ -1061,6 +1079,9 @@ and builtin env name args =
       put env ")"
   | "self_pid", [] -> put env "call 'erlang':'self'()"
   | "halt", [] -> put env "call 'erlang':'throw'('emo_halt')"
+  (* the exact no-op: a literal keeps the statement chain's `do` pair
+     well-formed *)
+  | "fence", [] -> put env "'ok'"
   | _ ->
       raise
         (Emo_ir.Lower_error
@@ -2128,6 +2149,15 @@ let rt_source =
 		#<108>(8,1,'integer',['unsigned'|['big']]),
 		#<115>(8,1,'integer',['unsigned'|['big']]),
 		#<101>(8,1,'integer',['unsigned'|['big']])}#
+	  <{'emo_atomic', _r}> when 'true' ->
+	      #{#<60>(8,1,'integer',['unsigned'|['big']]),
+		#<97>(8,1,'integer',['unsigned'|['big']]),
+		#<116>(8,1,'integer',['unsigned'|['big']]),
+		#<111>(8,1,'integer',['unsigned'|['big']]),
+		#<109>(8,1,'integer',['unsigned'|['big']]),
+		#<105>(8,1,'integer',['unsigned'|['big']]),
+		#<99>(8,1,'integer',['unsigned'|['big']]),
+		#<62>(8,1,'integer',['unsigned'|['big']])}#
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
 	  <{'emo_list', _k}> when 'true' ->
@@ -2638,6 +2668,223 @@ let rt_source =
 
 'emo_array_append'/2 =
     fun (_xs, _x) -> call 'lists':'append'(_xs, [_x])
+
+
+%% ---- The Atomic cell ----
+%%
+%% Box's synchronized sibling (CHECK.md, the atomic memory model). The
+%% cell is an `atomics` array of two slots: slot 1 pins the payload's
+%% kind (1 Int64, 2 Bool) and slot 2 holds the encoded value — the
+%% raw integer, or 0/1 for a Bool — so a Bool cell decodes to the
+%% atoms, never to an integer. The ref crosses a process boundary as
+%% the handle to the same array: BEAM's term copy shares the cell by
+%% construction. The BEAM preempts, which is why every access is an
+%% `atomics` call: the module documents them as mutually ordered
+%% (sequentially consistent).
+
+'emo_atomic_new'/1 =
+    fun (_v) ->
+	case _v of
+	  <_i> when call 'erlang':'is_integer'(_i) ->
+	      apply 'emo_atomic_make'/2 (_i, 1)
+	  <'true'> when 'true' -> apply 'emo_atomic_make'/2 (1, 2)
+	  <'false'> when 'true' -> apply 'emo_atomic_make'/2 (0, 2)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
+	end
+
+'emo_atomic_make'/2 =
+    fun (_v, _kind) ->
+	let <_r> = call 'atomics':'new'(2, [{'signed', 'true'}])
+	in do
+	       call 'atomics':'put'(_r, 1, _kind)
+	       do
+		   call 'atomics':'put'(_r, 2, _v)
+		   {'emo_atomic', _r}
+
+'emo_atomic_load'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_atomic', _r}> when 'true' ->
+	      apply 'emo_atomic_decode'/2
+		  (call 'atomics':'get'(_r, 2), call 'atomics':'get'(_r, 1))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
+	end
+
+'emo_atomic_store'/2 =
+    fun (_a, _v) ->
+	case _a of
+	  <{'emo_atomic', _r}> when 'true' ->
+	      let <_kind> = call 'atomics':'get'(_r, 1)
+	      in do
+		     call 'atomics':'put'
+			 (_r, 2, apply 'emo_atomic_encode'/2 (_v, _kind))
+		     _a
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
+	end
+
+'emo_atomic_encode'/2 =
+    fun (_v, _kind) ->
+	case _kind of
+	  <1> when 'true' ->
+	      case _v of
+		<_i> when call 'erlang':'is_integer'(_i) -> _i
+		<_other> when 'true' ->
+		    call 'erlang':'error'({'emo_no_atomic', _other})
+	      end
+	  <2> when 'true' ->
+	      case _v of
+		<'true'> when 'true' -> 1
+		<'false'> when 'true' -> 0
+		<_other> when 'true' ->
+		    call 'erlang':'error'({'emo_no_atomic', _other})
+	      end
+	end
+
+'emo_atomic_decode'/2 =
+    fun (_raw, _kind) ->
+	case _kind of
+	  <1> when 'true' -> _raw
+	  <2> when 'true' ->
+	      case _raw of
+		<1> when 'true' -> 'true'
+		<0> when 'true' -> 'false'
+	      end
+	end
+
+'emo_atomic_exchange'/2 =
+    fun (_a, _v) ->
+	case _a of
+	  <{'emo_atomic', _r}> when 'true' ->
+	      let <_kind> = call 'atomics':'get'(_r, 1)
+	      in let <_old> = call 'atomics':'get'(_r, 2)
+		 in do
+		     call 'atomics':'put'
+			 (_r, 2, apply 'emo_atomic_encode'/2 (_v, _kind))
+		     apply 'emo_atomic_decode'/2 (_old, _kind)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
+	end
+
+'emo_atomic_compare_exchange'/3 =
+    fun (_a, _expected, _fresh) ->
+	case _a of
+	  <{'emo_atomic', _r}> when 'true' ->
+	      let <_kind> = call 'atomics':'get'(_r, 1)
+	      in let <_old> = call 'atomics':'get'(_r, 2)
+		 in let <_oldv> = apply 'emo_atomic_decode'/2 (_old, _kind)
+		    in let <_swapped> = call 'erlang':'=:='(_oldv, _expected)
+		       in do
+			   case _swapped of
+			     <'true'> when 'true' ->
+				 call 'atomics':'put'
+				     (_r, 2,
+				      apply 'emo_atomic_encode'/2
+					  (_fresh, _kind))
+			     <'false'> when 'true' -> _a
+			   end
+			   {_swapped, _oldv}
+	end
+
+%% The fetch family: a compare-exchange loop over the encoded value —
+%% the arithmetic on the raw integers goes through 'emo_mask''s wrap,
+%% the Bool family through the 0/1 encodings, and fetch_add/sub on a
+%% Bool cell has no arm, the checker's own refusal backed by a
+%% case_clause at run time.
+
+'emo_atomic_fetch_add'/2 =
+    fun (_a, _v) -> apply 'emo_atomic_fetch'/3 (_a, _v, 'add')
+
+'emo_atomic_fetch_sub'/2 =
+    fun (_a, _v) -> apply 'emo_atomic_fetch'/3 (_a, _v, 'sub')
+
+'emo_atomic_fetch_and'/2 =
+    fun (_a, _v) -> apply 'emo_atomic_fetch'/3 (_a, _v, 'and')
+
+'emo_atomic_fetch_or'/2 =
+    fun (_a, _v) -> apply 'emo_atomic_fetch'/3 (_a, _v, 'or')
+
+'emo_atomic_fetch_xor'/2 =
+    fun (_a, _v) -> apply 'emo_atomic_fetch'/3 (_a, _v, 'xor')
+
+'emo_atomic_fetch'/3 =
+    fun (_a, _v, _op) ->
+	case _a of
+	  <{'emo_atomic', _r}> when 'true' ->
+	      let <_kind> = call 'atomics':'get'(_r, 1)
+	      in let <_old> = call 'atomics':'get'(_r, 2)
+		 in let <_enc> = apply 'emo_atomic_encode'/2 (_v, _kind)
+		    in let <_computed> =
+			   case _kind of
+			     <1> when 'true' ->
+				 case _op of
+				   <'add'> when 'true' ->
+				       apply 'emo_mask'/1
+					   (call 'erlang':'+'(_old, _enc))
+				   <'sub'> when 'true' ->
+				       apply 'emo_mask'/1
+					   (call 'erlang':'-'(_old, _enc))
+				   <'and'> when 'true' ->
+				       call 'erlang':'band'(_old, _enc)
+				   <'or'> when 'true' ->
+				       call 'erlang':'bor'(_old, _enc)
+				   <'xor'> when 'true' ->
+				       call 'erlang':'bxor'(_old, _enc)
+				 end
+			     <2> when 'true' ->
+				 case _op of
+				   <'and'> when 'true' ->
+				       call 'erlang':'band'(_old, _enc)
+				   <'or'> when 'true' ->
+				       call 'erlang':'bor'(_old, _enc)
+				   <'xor'> when 'true' ->
+				       call 'erlang':'bxor'(_old, _enc)
+				 end
+			   end
+		       in case call 'atomics':'compare_exchange'
+				 (_r, 2, _old, _computed)
+			  of
+			    <'ok'> when 'true' ->
+				apply 'emo_atomic_decode'/2 (_old, _kind)
+			    <_actual> when 'true' ->
+				apply 'emo_atomic_fetch_loop'/4
+				    (_r, _actual, _enc, _op)
+			  end
+	end
+
+'emo_atomic_fetch_loop'/4 =
+    fun (_r, _old, _enc, _op) ->
+	let <_kind> = call 'atomics':'get'(_r, 1)
+	in let <_computed> =
+	       case _kind of
+		 <1> when 'true' ->
+		     case _op of
+		       <'add'> when 'true' ->
+			   apply 'emo_mask'/1 (call 'erlang':'+'(_old, _enc))
+		       <'sub'> when 'true' ->
+			   apply 'emo_mask'/1 (call 'erlang':'-'(_old, _enc))
+		       <'and'> when 'true' ->
+			   call 'erlang':'band'(_old, _enc)
+		       <'or'> when 'true' ->
+			   call 'erlang':'bor'(_old, _enc)
+		       <'xor'> when 'true' ->
+			   call 'erlang':'bxor'(_old, _enc)
+		     end
+		 <2> when 'true' ->
+		     case _op of
+		       <'and'> when 'true' -> call 'erlang':'band'(_old, _enc)
+		       <'or'> when 'true' -> call 'erlang':'bor'(_old, _enc)
+		       <'xor'> when 'true' -> call 'erlang':'bxor'(_old, _enc)
+		     end
+	       end
+	   in case call 'atomics':'compare_exchange'(_r, 2, _old, _computed) of
+		<'ok'> when 'true' ->
+		    apply 'emo_atomic_decode'/2 (_old, _kind)
+		<_actual> when 'true' ->
+		    apply 'emo_atomic_fetch_loop'/4 (_r, _actual, _enc, _op)
+	      end
 
 'emo_box_replace'/2 =
     fun (_k, _v) ->
@@ -3242,6 +3489,13 @@ let rt_source =
 'emo_eq'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_atomic', _ra}> when 'true' ->
+	      case _b of
+		<{'emo_atomic', _rb}> when 'true' ->
+		    call 'erlang':'=:='(apply 'emo_atomic_load'/1 (_a),
+					apply 'emo_atomic_load'/1 (_b))
+		<_other> when 'true' -> 'false'
+	      end
 	  <{'emo_bytes', _ka}> when 'true' ->
 	      case _b of
 		<{'emo_bytes', _kb}> when 'true' ->
