@@ -62,6 +62,7 @@ The packages:
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |
 | [`fastmath`](#the-fastmath-package) | the host libm: `math`'s scalars at native speed | `ocaml`, `c` |
+| [`quad`](#the-quad-package) | QUADPACK adaptive quadrature behind a scalar callback | `c` |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
@@ -623,7 +624,41 @@ whatever the host returns, not a raise.
 Targets: `ocaml` and `c` (a `require` elsewhere fails E5007 at load;
 under the interpreter a call raises E3009). Reference:
 [`docs/stdlib/fastmath.md`](stdlib/fastmath.md) ·
-Demo: `examples/fastmath_demo`.
+Demos: `examples/fastmath_demo`, `examples/fastmath_elefunt`.
+
+## The `quad` package
+
+QUADPACK's adaptive quadrature, vendored from netlib (f2c-translated
+into the package tree, `d1mach` as literals, no libf2c) behind the one
+shape today's FFI admits — a scalar callback:
+
+```emo
+interface Integrand {
+  def at(x Float64) Float64
+}
+
+enum InfiniteRange { from_bound, to_bound, whole_line }
+
+def integrate(f Integrand, a Float64, b Float64, epsabs Float64,
+  epsrel Float64) (R, (Float64, Float64))
+def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
+  epsabs Float64, epsrel Float64) (R, (Float64, Float64))
+```
+
+A class with an `at` method integrates directly, any state riding the
+callback. `integrate` runs `dqags`'s globally adaptive 21-point
+Gauss–Kronrod rule with the ε-algorithm over a finite range;
+`integrate_infinite` runs the transformed 15-point rule over the three
+infinite ranges the enum names. Success answers `(R.ok, (value,
+abserr))`; every QUADPACK failure code answers `(R.error, reason)` in
+netlib's own wording — a convergence failure is a value, not a
+violation, and the whole mapping is in
+[`docs/stdlib/quad.md`](stdlib/quad.md).
+
+Targets: `c` (a `require` elsewhere fails E5007 at load; under the
+interpreter a call raises E3009). Reference:
+[`docs/stdlib/quad.md`](stdlib/quad.md) ·
+Demo: `examples/quad_demo`.
 
 ## The `plot` package
 

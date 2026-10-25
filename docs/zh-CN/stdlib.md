@@ -37,6 +37,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
 | [`fastmath`](#fastmath-包) | 宿主 libm:`math` 的标量、原生速度 | `ocaml`、`c` |
+| [`quad`](#quad-包) | 标量回调之后的 QUADPACK 自适应求积 | `c` |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
@@ -419,7 +420,28 @@ def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64]
 
 直接绑定平台 `libm` 的宿主数学函数:与 `math` 同一标量表面、宿主库的速度。每次调用就是一次纯粹的逐调用 libm 绑定——不重结合、不松弛——但位跟随宿主,不跨平台逐字节相同,也没有定义域卫兵:越界参数返回宿主所返回的,而不是 raise。
 
-目标:`ocaml` 与 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/fastmath.md`](stdlib/fastmath.md) · 示例:`examples/fastmath_demo`。
+目标:`ocaml` 与 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/fastmath.md`](stdlib/fastmath.md) · 示例:`examples/fastmath_demo`、`examples/fastmath_elefunt`。
+
+## quad 包
+
+netlib 的 QUADPACK 自适应求积,vendored 进包树(f2c 转译,`d1mach` 为字面量,无 libf2c),收在今天 FFI 唯一放行的形状之后——一个标量回调:
+
+```emo
+interface Integrand {
+  def at(x Float64) Float64
+}
+
+enum InfiniteRange { from_bound, to_bound, whole_line }
+
+def integrate(f Integrand, a Float64, b Float64, epsabs Float64,
+  epsrel Float64) (R, (Float64, Float64))
+def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
+  epsabs Float64, epsrel Float64) (R, (Float64, Float64))
+```
+
+带 `at` 方法的类直接可积,状态随回调同行。`integrate` 在有限区间上跑 `dqags` 的全局自适应 21 点 Gauss–Kronrod 规则加 ε-算法;`integrate_infinite` 在枚举命名的三种无穷区间上跑变换后的 15 点规则。成功回答 `(R.ok, (value, abserr))`;QUADPACK 的每个失败码都以 netlib 自己的措辞回答 `(R.error, reason)`——收敛失败是值,不是违规,完整映射在 [`docs/zh-CN/stdlib/quad.md`](stdlib/quad.md)。
+
+目标:仅 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/quad.md`](stdlib/quad.md) · 示例:`examples/quad_demo`。
 
 ## plot 包
 

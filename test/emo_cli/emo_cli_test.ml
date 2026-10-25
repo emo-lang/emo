@@ -621,6 +621,10 @@ let c_goldens =
     "os_demo";
     "base64_demo";
     "fastmath_demo";
+    (* fastmath_elefunt: the natives' battery — foreign calls cannot run
+       under the interpreter, so this golden is c-only *)
+    "fastmath_elefunt";
+    "quad_demo";
     "csv_demo";
     "json_demo";
     "yaml_demo";

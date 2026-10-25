@@ -2791,7 +2791,7 @@ on `c` with QUADPACK's error flags mapped through the
 `(R.ok, …)`/`(R.error, …)` split; every existing golden on every target
 stays byte-identical; `dune test` green; the docs carry both.
 
-- [ ] **T54.1** — The host-libm bindings of Step 53's scalar functions
+- [x] **T54.1** — The host-libm bindings of Step 53's scalar functions
       in `fastmath`, unsuffixed (`sin` through `tanh`, `atan2`,
       `log2`, `exp2`, `hypot`, `erf`, `erfc`, `tgamma`, `lgamma` — the
       package qualifier says native), growing the package that already
@@ -2802,14 +2802,14 @@ stays byte-identical; `dune test` green; the docs carry both.
       `targets = ["ocaml", "c"]`: a `require` on any other target
       fails E5007 at load, and under the interpreter a call raises
       E3009. Documented as host-libm and not byte-identical.
-- [ ] **T54.2** — The battery on the natives: a `c`-only companion
+- [x] **T54.2** — The battery on the natives: a `c`-only companion
       (`examples/fastmath_elefunt`, in the c golden list alone)
       running T53.13's identities over `fastmath`'s bindings and
       printing each function's verdict against a stated loss budget
       rather than the raw bits, so the golden holds across host libms —
       the number the assessment asked for before the fast lane is
       called accurate.
-- [ ] **T54.3** — The `quad` package (provisional name),
+- [x] **T54.3** — The `quad` package (provisional name),
       `targets = ["c"]`, after the `sqlite3` precedent: f2c-translated
       QUADPACK `dqags` and the routines it pulls (`dqagse`, `dqk21`,
       `dqelg`, `dqpsrt`, the `d1mach` constants rewritten as literals)
@@ -2823,12 +2823,12 @@ stays byte-identical; `dune test` green; the docs carry both.
       codes to `(R.error, reason)` in netlib's wording — a convergence
       failure is an expected outcome, not a violation. Golden
       `examples/quad_demo` in the c golden list.
-- [ ] **T54.4** — The infinite ranges: `dqagi` through the same shim
+- [x] **T54.4** — The infinite ranges: `dqagi` through the same shim
       (netlib's transformation onto (0, 1]), surfaced as an enum
       argument naming the three ranges — from a bound to +∞, from −∞
       to a bound, the whole line — rather than infinite `Float64`
       bounds (provisional naming). `examples/quad_demo` grows.
-- [ ] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
+- [x] **T54.5** — The docs: `docs/stdlib/quad.md` (EN + zh-CN) with
       the API, the error-code mapping, and the host-dependence note;
       `docs/stdlib.md`'s rows (`math`'s row, the `fastmath` row, the
       `quad` row); `docs/stdlib/fastmath.md` grown with the full

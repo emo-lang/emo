@@ -1,6 +1,34 @@
+// The fastmath package's host-libm surface: the same scalar calls as
+// `math`'s demo, answered by the platform libm instead of the series.
+// The points are ordinary ones whose six-significant-digit rendering
+// holds across host libms — the bits themselves are the host's, and
+// the package is documented as not byte-identical. Foreign calls do
+// not run under the interpreter (E3009): build and run compiled.
+//
+//   emo build --target c main.emo && ./main
+
 require "fastmath"
 
+println(fastmath.pi)
+println(fastmath.e)
 println(fastmath.exp(1.0))
 println(fastmath.log(fastmath.e))
 println(fastmath.log10(1000.0))
 println(fastmath.pow(2.0, 10.0))
+println(fastmath.sin(fastmath.pi / 6.0))
+println(fastmath.cos(fastmath.pi / 3.0))
+println(fastmath.tan(0.5))
+println(fastmath.asin(0.5))
+println(fastmath.acos(0.5))
+println(fastmath.atan(2.0))
+println(fastmath.atan2(1.0, 2.0))
+println(fastmath.sinh(1.0))
+println(fastmath.cosh(1.0))
+println(fastmath.tanh(1.0))
+println(fastmath.exp2(10.0))
+println(fastmath.log2(8.0))
+println(fastmath.hypot(3.0, 4.0))
+println(fastmath.erf(1.0))
+println(fastmath.erfc(1.0))
+println(fastmath.tgamma(4.5))
+println(fastmath.lgamma(4.5))

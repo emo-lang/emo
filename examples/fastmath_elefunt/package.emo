@@ -1,0 +1,10 @@
+package {
+  name = "emo/fastmath_elefunt"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "fastmath" = "0.1.0"
+    "math" = "0.1.0"
+  }
+}

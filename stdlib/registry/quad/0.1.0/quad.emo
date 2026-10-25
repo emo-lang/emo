@@ -1,0 +1,73 @@
+// The QUADPACK integrator: globally adaptive quadrature with
+// extrapolation, vendored from netlib (f2c-translated, in `native/`)
+// behind the one shape today's FFI admits — a scalar callback. The
+// integrand is a single-method interface, so a class with an `at`
+// method integrates directly, no wrapper: the callback contract carries
+// it across the C ABI, the C shim owns the workspace (a fixed limit of
+// 500 subintervals) and QUADPACK's stateless function pointer, and the
+// raw (result, abserr, neval, ier) tuple comes back across the FFI.
+//
+// A convergence failure is a value, not a violation: success is
+// `(R.ok, (value, abserr))` — the estimate and its error bound — and
+// QUADPACK's failure codes answer `(R.error, reason)` in netlib's own
+// wording, each reason saying what failed and what to try. A broken
+// tolerance on a hard integral is an expected outcome of integration;
+// the caller matches on the split and decides.
+//
+// The package is c-target only: the vendored Fortran translation and
+// the shim are native code the build compiles and links, and the
+// interpreter refuses foreign code (E3009), so `emo run` cannot execute
+// a program that touches this package — build it with
+// `emo build --target c`.
+//
+// The solver's own arithmetic is exact IEEE-754 per operation (the
+// build compiles with `-ffp-contract=off`, the vendored code uses no
+// transcendental function), so the subdivision walk lands on the same
+// intervals on every host; the bits of an answer are the integrand's
+// own arithmetic plus that walk. An integrand calling libm makes the
+// answer host's — the same rule `fastmath` states.
+
+// The integrand: the shape the callback contract carries across the
+// C ABI. One method, one double in, one double out — a plain function,
+// or a class instance carrying the parameters an `at` needs.
+interface Integrand {
+  def at(x Float64) Float64
+}
+
+// The three ranges an integral can span past the finite: from a bound
+// out to +∞, in from −∞ up to a bound, and the whole line. The bound
+// the caller names is the finite end the two one-sided ranges share;
+// `whole_line` takes no end at all, and the bound it is handed is
+// QUADPACK's own ignored one (pass 0.0).
+enum InfiniteRange { from_bound, to_bound, whole_line }
+
+// Integrates `f` over [a, b] to `max(epsabs, epsrel·|i|)` accuracy,
+// QUADPACK's adaptive 21-point Gauss–Kronrod rule with the
+// ε-algorithm extrapolating the error. The limit is the package's own
+// fixed 500 subintervals; a harder integral answers its failure as a
+// value instead of growing the workspace.
+def integrate(f Integrand, a Float64, b Float64, epsabs Float64,
+  epsrel Float64) (R, (Float64, Float64)) {
+  const (result, abserr, neval, ier) = internal.ffi.integrate(a, b, epsabs,
+    epsrel, f)
+  return internal.ffi.report(result, abserr, neval, ier)
+}
+
+// Integrates `f` over one of the three infinite ranges: `from_bound`
+// over [bound, +∞), `to_bound` over (−∞, bound], `whole_line` over the
+// whole real line — QUADPACK's transformed 15-point Gauss–Kronrod rule
+// mapping the range onto (0, 1] before the same adaptive machinery
+// takes over. The bound is the finite end the two one-sided ranges
+// name; `whole_line` ignores it (pass 0.0).
+def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
+  epsabs Float64, epsrel Float64) (R, (Float64, Float64)) {
+  var code = 0
+  case range {
+    InfiniteRange.from_bound -> { code = 1 }
+    InfiniteRange.to_bound   -> { code = -1 }
+    InfiniteRange.whole_line -> { code = 2 }
+  }
+  const (result, abserr, neval, ier) = internal.ffi.integrate_infinite(bound,
+    code, epsabs, epsrel, f)
+  return internal.ffi.report(result, abserr, neval, ier)
+}

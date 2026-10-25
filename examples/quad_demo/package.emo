@@ -1,0 +1,10 @@
+package {
+  name = "emo/quad_demo"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "math" = "0.1.0"
+    "quad" = "0.1.0"
+  }
+}
