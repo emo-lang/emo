@@ -236,13 +236,11 @@ let c_type (t : Emo_check.t) : string option =
       Some "int64_t"
   | Emo_check.String -> Some "emo_value"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.AtomicType _
+  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
+  | Emo_check.Bytes ->
       Some "emo_value"
-  (* The atomic cell has no representation here until the memory-primitives
-     step lands its lowering; the signature refuse names the type. *)
-  | Emo_check.AtomicType _ -> None
   | Emo_check.Void -> Some "void"
 
 (* Whether a type lives in the dynamic world (the tagged word) or the
@@ -815,6 +813,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
          (this arm) only arises through a value use, which refuses *)
       refuse "halt in a value position"
   | Builtin { name = "printf"; args } -> emit_printf env args
+  | Builtin { name = "fence"; _ } ->
+      (* the exact barrier, sequential consistency; the statement path
+         emits it, a value use refuses like `halt` *)
+      refuse "`fence` in a value position"
   | Builtin { name; _ } -> emit_builtin_unsupported name
   | Runtime_impl { name; args } ->
       let v = emit_runtime_impl env e.Emo_ir.ety name args in
@@ -890,7 +892,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Box_new arg ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_box_new(%s)" (as_dyn env arg))
-  | Atomic_new _ -> refuse "`Atomic`"
+  | Atomic_new arg ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_atomic_new(%s)" (as_dyn env arg))
   | Bytes_new n ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64))
@@ -1066,6 +1070,44 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              | _ -> false ->
           finish_claim
             (Printf.sprintf "emo_box_replace(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
+      (* The Atomic cell: Box's synchronized sibling — every access
+         through the runtime's __atomic helpers, sequential consistency. *)
+      | "load", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.AtomicType _ -> true
+             | _ -> false ->
+          finish_claim (Printf.sprintf "emo_atomic_load(%s)" (as_dyn env self_))
+      | "store", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.AtomicType _ -> true
+             | _ -> false ->
+          (* `store` answers nothing: the statement discards the call,
+             and a value use fails at cc, as every Void method does *)
+          Printf.sprintf "emo_atomic_store(%s, %s)" (as_dyn env self_)
+            (as_dyn env v)
+      | "exchange", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.AtomicType _ -> true
+             | _ -> false ->
+          finish_claim
+            (Printf.sprintf "emo_atomic_exchange(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
+      | "compare_exchange", [ expected; fresh ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.AtomicType _ -> true
+             | _ -> false ->
+          finish_claim
+            (Printf.sprintf "emo_atomic_compare_exchange(%s, %s, %s)"
+               (as_dyn env self_) (as_dyn env expected) (as_dyn env fresh))
+      | ( (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor")
+           as mname),
+          [ v ] )
+        when match self_.Emo_ir.ety with
+             | Emo_check.AtomicType _ -> true
+             | _ -> false ->
+          finish_claim
+            (Printf.sprintf "emo_atomic_%s(%s, %s)" mname (as_dyn env self_)
                (as_dyn env v))
       (* The List deque: O(1) push and pop at both ends. Push returns the
          list itself; pop yields the element (a static element type
@@ -1910,6 +1952,8 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
   | "printf", args -> put env "  (void)(%s);\n" (emit_printf env args)
   | "halt", [] -> put env "  emo_process_halt_current();\n"
   | "self_pid", [] -> put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
+  | "fence", [] -> put env "  emo_atomic_fence();\n"
+  | "fence", _ -> refuse "`fence` with arguments"
   | name, _ -> put env "  (void)(%s);\n" (emit_builtin_unsupported name)
 
 (* A tail call becomes a parameter rebind and a jump: the arguments
@@ -2254,6 +2298,9 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       | Builtin { name = "halt"; _ } ->
           (* `return halt()`: the process never resumes *)
           put env "  emo_process_halt_current();\n";
+          ()
+      | Builtin { name = "fence"; _ } ->
+          put env "  emo_atomic_fence();\n";
           ()
       | _ -> (
           match tail_callee with
@@ -2818,14 +2865,13 @@ let rec emit_const_thunk env0 (f : Emo_ir.func) : unit =
    (a zero-param def named in [pconsts]) memoizes instead. *)
 and emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
   if
-    fclass = None
-    && f.Emo_ir.fparams = []
+    fclass = None && f.Emo_ir.fparams = []
     && List.mem f.Emo_ir.fname !const_thunks
   then emit_const_thunk env0 f
   else emit_single_body env0 ~fclass f
 
-and emit_single_body env0 ?(fclass : string option = None)
-    (f : Emo_ir.func) : unit =
+and emit_single_body env0 ?(fclass : string option = None) (f : Emo_ir.func) :
+    unit =
   let ret, params = signature f in
   let self_tail = List.mem f.Emo_ir.fname (tail_callees f.Emo_ir.fbody) in
   let env =
@@ -3181,8 +3227,7 @@ let globals_as_values (program : Emo_ir.program) : string list =
     | Global g -> add g
     | Const _ | Type_ref _ | Var _ | Global_var _ | Builder_new | Make_enum _ ->
         ()
-    | Unary (_, x) | Box_new x | Atomic_new x | Bytes_new x | List_new x ->
-        ex x
+    | Unary (_, x) | Box_new x | Atomic_new x | Bytes_new x | List_new x -> ex x
     | Binary (_, l, r) ->
         ex l;
         ex r
@@ -3253,7 +3298,9 @@ let globals_as_values (program : Emo_ir.program) : string list =
   in
   List.iter st program.Emo_ir.pinit;
   List.iter (fun (_, e) -> ex e) program.Emo_ir.pglobals;
-  List.iter (fun (f : Emo_ir.func) -> List.iter st f.Emo_ir.fbody) program.pfuncs;
+  List.iter
+    (fun (f : Emo_ir.func) -> List.iter st f.Emo_ir.fbody)
+    program.pfuncs;
   List.iter
     (fun (c : Emo_ir.class_) ->
       Option.iter

@@ -51,7 +51,7 @@ Pure compiler work; no OS code. Design settles before any emitter moves.
 - [x] **T1.1** — The atomic memory-model design note in the Emo tree (`docs/atomics.md` + `docs/zh-CN/` mirror): sequential consistency only, the op set, `Atomic` as Box's synchronized sibling in `core`, the `Int64`/`Bool` scope, `compare_exchange` returning `(Bool, Int64)`, the per-target support matrix, and the data-race semantics (unsynchronized cross-context sharing of a Box field is undefined).
 - [x] **T1.2** — `CHECK.md` decisions recorded: the atomic semantics; `peek`/`poke` defined as volatile (never elided, never reordered against each other); `fence()`.
 - [x] **T1.3** — The language surface: `Atomic` in `core` with the op set and `fence()`; the checker accepts `Int64`/`Bool` payloads and refuses everything else by name; parser/checker tests.
-- [ ] **T1.4** — Hosted targets: the interpreter (exact no-op), `c` (`__atomic` builtins), `ocaml` (the `Atomic` module; CAS-loop fallbacks for `fetch_and`/`fetch_or`/`fetch_xor`).
+- [x] **T1.4** — Hosted targets: the interpreter (exact no-op), `c` (`__atomic` builtins), `ocaml` (the `Atomic` module; CAS-loop fallbacks for `fetch_and`/`fetch_or`/`fetch_xor`).
 - [ ] **T1.5** — Managed targets: `ts` and `wasm` as exact no-ops under the cooperative scheduler; `beam` via the runtime's `atomics` array (the full set; the bitwise `fetch_*` as compare-exchange loops — `docs/atomics.md` supersedes the earlier `counters` line).
 - [ ] **T1.6** — `riscv64`: `amoswap` / LR-SC / `fence` full set as runtime helpers in the generated image.
 - [ ] **T1.7** — Goldens: one cross-target corpus answered byte-for-byte on every target that admits the ops; refusal goldens for BEAM's CAS and every non-scalar payload; a riscv64 golden under QEMU.

@@ -589,6 +589,167 @@ emo_value emo_box_replace(emo_value box, emo_value v) {
   return emo_retain(v); /* replace answers the new value, like every target */
 }
 
+/* ---- The Atomic cell ----
+
+   Box's synchronized sibling (CHECK.md, the atomic memory model): the
+   same one-payload cell shape, every access through the __atomic
+   builtins at sequential consistency. The dynamic layer boxes Int64,
+   so the read-modify-write family is a compare-exchange loop over the
+   cell's word — decode, compute, re-box, retry — the shape the ocaml
+   target's bitwise family takes. Copying an Atomic shares the cell:
+   emo_deep_copy passes it through like a Pid. */
+
+emo_value emo_atomic_new(emo_value v) {
+  emo_value cell = emo_cell_new(EMO_ATOMIC, 1);
+  emo_retain(v); /* the cell owns its contents */
+  __atomic_store_n(emo_payload(cell), (uintptr_t)v, __ATOMIC_SEQ_CST);
+  return cell;
+}
+
+emo_value emo_atomic_load(emo_value cell) {
+  cell = emo_expect_kind(cell, EMO_ATOMIC);
+  emo_value v =
+      (emo_value)__atomic_load_n(emo_payload(cell), __ATOMIC_SEQ_CST);
+  return emo_retain(v); /* the read hands the caller its own claim */
+}
+
+emo_value emo_atomic_store(emo_value cell, emo_value v) {
+  cell = emo_expect_kind(cell, EMO_ATOMIC);
+  emo_retain(v); /* the cell owns the new value and drops the old */
+  uintptr_t old =
+      __atomic_exchange_n(emo_payload(cell), (uintptr_t)v, __ATOMIC_SEQ_CST);
+  emo_release((emo_value)old);
+  return cell; /* `store` answers nothing; a value use refuses at emit */
+}
+
+emo_value emo_atomic_exchange(emo_value cell, emo_value v) {
+  cell = emo_expect_kind(cell, EMO_ATOMIC);
+  emo_retain(v); /* the cell owns the new value */
+  uintptr_t old =
+      __atomic_exchange_n(emo_payload(cell), (uintptr_t)v, __ATOMIC_SEQ_CST);
+  /* the cell's claim on the old value rides to the caller: exchange
+     answers the previous value, like every target */
+  return (emo_value)old;
+}
+
+/* The one atomic compare-and-swap: the pair (Bool, previous) is the
+   method's whole answer, and the previous value rides to the tuple with
+   the claim emo_tuple_new takes for it. A mismatch is a value, not an
+   error — the caller decides. */
+emo_value emo_atomic_compare_exchange(emo_value cell, emo_value expected,
+                                      emo_value fresh) {
+  cell = emo_expect_kind(cell, EMO_ATOMIC);
+  uintptr_t *p = emo_payload(cell);
+  uintptr_t cur = __atomic_load_n(p, __ATOMIC_SEQ_CST);
+  bool swapped = false;
+  for (;;) {
+    if (!emo_eq_dyn((emo_value)cur, expected)) break;
+    emo_retain(fresh); /* on success the cell owns the new value */
+    uintptr_t prev = cur;
+    if (__atomic_compare_exchange_n(p, &prev, (uintptr_t)fresh, false,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+      swapped = true;
+      emo_release((emo_value)cur); /* the cell drops the old */
+      break;
+    }
+    emo_release(fresh); /* the cell moved under us; retry against it */
+    cur = prev;
+  }
+  emo_value elems[2] = {emo_vbool(swapped), (emo_value)cur};
+  return emo_tuple_new(2, elems);
+}
+
+/* The read-modify-write family: decode the current value, compute in
+   uint64_t (the Int64 wrap rule), re-box, retry the swap. The answer is
+   the value the cell held before the operation, freshly boxed for the
+   caller. */
+enum { EMO_RMW_ADD, EMO_RMW_SUB, EMO_RMW_AND, EMO_RMW_OR, EMO_RMW_XOR };
+
+static emo_value emo_atomic_rmw(emo_value cell, emo_value v, int op) {
+  cell = emo_expect_kind(cell, EMO_ATOMIC);
+  uintptr_t *p = emo_payload(cell);
+  uintptr_t cur = __atomic_load_n(p, __ATOMIC_SEQ_CST);
+  bool answer_is_bool = false;
+  bool answer_bool = false;
+  int64_t answer_i64 = 0;
+  for (;;) {
+    emo_value curv = (emo_value)cur;
+    if (emo_cell_kind(curv) == EMO_INT64) {
+      int64_t old = emo_unbox_i64(curv);
+      int64_t operand = emo_unbox_i64(v);
+      uint64_t wrapped = (uint64_t)old;
+      switch (op) {
+      case EMO_RMW_ADD:
+        wrapped += (uint64_t)operand;
+        break;
+      case EMO_RMW_SUB:
+        wrapped -= (uint64_t)operand;
+        break;
+      case EMO_RMW_AND:
+        wrapped &= (uint64_t)operand;
+        break;
+      case EMO_RMW_OR:
+        wrapped |= (uint64_t)operand;
+        break;
+      default:
+        wrapped ^= (uint64_t)operand;
+        break;
+      }
+      answer_is_bool = false;
+      answer_i64 = old;
+      emo_value fresh = emo_box_i64((int64_t)wrapped);
+      emo_retain(fresh); /* on success the cell owns the new value */
+      uintptr_t prev = cur;
+      if (__atomic_compare_exchange_n(p, &prev, (uintptr_t)fresh, false,
+                                      __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        emo_release(curv); /* the cell drops the old */
+        break;
+      }
+      emo_release(fresh);
+      cur = prev;
+    } else if ((cur & 7) == 0b001) { /* the Bool immediate */
+      bool old = emo_bool_of(curv);
+      bool operand = emo_bool_of(v);
+      bool next = op == EMO_RMW_AND  ? (old && operand)
+                  : op == EMO_RMW_OR ? (old || operand)
+                                     : (old != operand);
+      answer_is_bool = true;
+      answer_bool = old;
+      uintptr_t prev = cur;
+      if (__atomic_compare_exchange_n(p, &prev, (uintptr_t)emo_vbool(next),
+                                      false, __ATOMIC_SEQ_CST,
+                                      __ATOMIC_SEQ_CST))
+        break;
+      cur = prev;
+    } else {
+      emo_fatal(emo_wrong_type);
+    }
+  }
+  return answer_is_bool ? emo_vbool(answer_bool) : emo_box_i64(answer_i64);
+}
+
+emo_value emo_atomic_fetch_add(emo_value cell, emo_value v) {
+  return emo_atomic_rmw(cell, v, EMO_RMW_ADD);
+}
+
+emo_value emo_atomic_fetch_sub(emo_value cell, emo_value v) {
+  return emo_atomic_rmw(cell, v, EMO_RMW_SUB);
+}
+
+emo_value emo_atomic_fetch_and(emo_value cell, emo_value v) {
+  return emo_atomic_rmw(cell, v, EMO_RMW_AND);
+}
+
+emo_value emo_atomic_fetch_or(emo_value cell, emo_value v) {
+  return emo_atomic_rmw(cell, v, EMO_RMW_OR);
+}
+
+emo_value emo_atomic_fetch_xor(emo_value cell, emo_value v) {
+  return emo_atomic_rmw(cell, v, EMO_RMW_XOR);
+}
+
+void emo_atomic_fence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+
 /* ---- The List deque ----
 
    A List is an identity, like a Box: [header][emo_list *], the struct
@@ -1122,6 +1283,11 @@ void emo_release(emo_value v) {
     /* [header][payload] */
     emo_release((emo_value)p[0]);
     break;
+  case EMO_ATOMIC:
+    /* [header][payload] — the cell owns its contents, as a Box does */
+    emo_release(
+        (emo_value)__atomic_load_n(p, __ATOMIC_SEQ_CST));
+    break;
   default:
     break; /* String, Bytes, Enum, Int64, Float64, Pid */
   }
@@ -1420,6 +1586,7 @@ static const char *emo_printf_kind_name(emo_value v) {
     case EMO_TUPLE: return "Tuple";
     case EMO_ARRAY: return "Array";
     case EMO_BOX: return "Box";
+    case EMO_ATOMIC: return "Atomic";
     case EMO_BYTES: return "Bytes";
     case EMO_LIST: return "List";
     case EMO_PID: return "Pid";
@@ -1805,6 +1972,16 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     /* the contents borrow their owners' claims; no handout here */
     return emo_eq_dyn((emo_value)*emo_payload(a), (emo_value)*emo_payload(b));
   }
+  case EMO_ATOMIC: {
+    /* `==` compares the values the cells hold now, each operand an
+       atomic load; the loads' claims end here */
+    emo_value av = emo_atomic_load(a);
+    emo_value bv = emo_atomic_load(b);
+    bool eq = emo_eq_dyn(av, bv);
+    emo_release(av);
+    emo_release(bv);
+    return eq;
+  }
   case EMO_LIST: {
     /* element-wise, front to back — the Box rule generalized */
     emo_list *la = (emo_list *)*emo_payload(a);
@@ -1953,6 +2130,9 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   }
   case EMO_BOX:
     fputs("<box>", out);
+    return;
+  case EMO_ATOMIC:
+    fputs("<atomic>", out);
     return;
   case EMO_LIST: {
     emo_list *list = (emo_list *)*emo_payload(v);
@@ -2397,6 +2577,10 @@ static emo_value emo_deep_copy(emo_value v) {
     emo_release(inner);
     return copy;
   }
+  case EMO_ATOMIC:
+    /* the one declared exception (CHECK.md, the atomic memory model):
+       the copy is the handle to the same cell */
+    return emo_retain(v);
   case EMO_BYTES: {
     /* [header][len][bytes...] */
     int64_t len = (int64_t)emo_payload(v)[0];
@@ -4277,6 +4461,52 @@ static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
   return emo_to_string_cell(recv); /* the answer is a cell */
 }
 
+/* The atomic family: the receiver's own kind guards every arm. */
+static emo_value emo_bm_atomic_load(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_atomic_load(recv);
+}
+
+static emo_value emo_bm_atomic_store(emo_value recv, const emo_value *args) {
+  emo_value r = emo_atomic_store(recv, args[0]);
+  return emo_retain(r); /* the table's contract: every arm hands a claim */
+}
+
+static emo_value emo_bm_atomic_exchange(emo_value recv,
+                                        const emo_value *args) {
+  return emo_atomic_exchange(recv, args[0]);
+}
+
+static emo_value emo_bm_atomic_compare_exchange(emo_value recv,
+                                                const emo_value *args) {
+  return emo_atomic_compare_exchange(recv, args[0], args[1]);
+}
+
+static emo_value emo_bm_atomic_fetch_add(emo_value recv,
+                                         const emo_value *args) {
+  return emo_atomic_fetch_add(recv, args[0]);
+}
+
+static emo_value emo_bm_atomic_fetch_sub(emo_value recv,
+                                         const emo_value *args) {
+  return emo_atomic_fetch_sub(recv, args[0]);
+}
+
+static emo_value emo_bm_atomic_fetch_and(emo_value recv,
+                                         const emo_value *args) {
+  return emo_atomic_fetch_and(recv, args[0]);
+}
+
+static emo_value emo_bm_atomic_fetch_or(emo_value recv,
+                                        const emo_value *args) {
+  return emo_atomic_fetch_or(recv, args[0]);
+}
+
+static emo_value emo_bm_atomic_fetch_xor(emo_value recv,
+                                         const emo_value *args) {
+  return emo_atomic_fetch_xor(recv, args[0]);
+}
+
 /* The gradual call sites dispatch through the name/arity table when the
    checker could not pin the receiver; the payload's own kind picks the
    family — a Map and Bytes share the `get`/`set` spellings but not the
@@ -4426,6 +4656,15 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"to_array", 0, emo_bm_to_array},
     {"length", 0, emo_bm_length},
     {"to_string", 0, emo_bm_to_string},
+    {"load", 0, emo_bm_atomic_load},
+    {"store", 1, emo_bm_atomic_store},
+    {"exchange", 1, emo_bm_atomic_exchange},
+    {"compare_exchange", 2, emo_bm_atomic_compare_exchange},
+    {"fetch_add", 1, emo_bm_atomic_fetch_add},
+    {"fetch_sub", 1, emo_bm_atomic_fetch_sub},
+    {"fetch_and", 1, emo_bm_atomic_fetch_and},
+    {"fetch_or", 1, emo_bm_atomic_fetch_or},
+    {"fetch_xor", 1, emo_bm_atomic_fetch_xor},
     {"get", 1, emo_bm_get},
     {"set", 2, emo_bm_set},
     {"get_u16_le", 1, emo_bm_get_u16_le},

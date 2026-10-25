@@ -1403,45 +1403,60 @@ def h(c Atomic[Atomic[Int64]]) Int64 {
   return 0
 }|}
         in
-        Alcotest.(check int) "four E4027s" 4
+        Alcotest.(check int)
+          "four E4027s" 4
           (List.length
-             (List.filter (fun d -> d.Diagnostic.code = Some "E4027")
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4027")
                 diagnostics)));
     tc "Atomic.new refuses a non-scalar payload by name" (fun () ->
         let diagnostics = check {|const c = Atomic.new("text")|} in
         Alcotest.(check bool) "E4027" true (has_code diagnostics "E4027"));
     tc "Atomic.new arity and named arguments are checked" (fun () ->
-        let diagnostics = check {|Atomic.new()
+        let diagnostics =
+          check {|Atomic.new()
 Atomic.new(1, 2)
-Atomic.new(x: 1)|} in
-        Alcotest.(check int) "three E4009s" 3
+Atomic.new(x: 1)|}
+        in
+        Alcotest.(check int)
+          "three E4009s" 3
           (List.length
-             (List.filter (fun d -> d.Diagnostic.code = Some "E4009")
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4009")
                 diagnostics)));
     tc "the arithmetic fetch family refuses on a Bool cell" (fun () ->
         let diagnostics =
-          check {|const flag = Atomic.new(false)
+          check
+            {|const flag = Atomic.new(false)
 flag.fetch_add(1)
 flag.fetch_sub(1)|}
         in
-        Alcotest.(check int) "two E4004s" 2
+        Alcotest.(check int)
+          "two E4004s" 2
           (List.length
-             (List.filter (fun d -> d.Diagnostic.code = Some "E4004")
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4004")
                 diagnostics)));
-    tc "store, exchange, and compare_exchange check against the payload" (fun () ->
+    tc "store, exchange, and compare_exchange check against the payload"
+      (fun () ->
         let diagnostics =
-          check {|const served = Atomic.new(0)
+          check
+            {|const served = Atomic.new(0)
 served.store("text")
 served.exchange("text")
 served.compare_exchange(0, "text")|}
         in
-        Alcotest.(check int) "three E4004s" 3
+        Alcotest.(check int)
+          "three E4004s" 3
           (List.length
-             (List.filter (fun d -> d.Diagnostic.code = Some "E4004")
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4004")
                 diagnostics)));
     tc "an unknown method on an atomic is refused" (fun () ->
-        let diagnostics = check {|const served = Atomic.new(0)
-served.nope()|} in
+        let diagnostics =
+          check {|const served = Atomic.new(0)
+served.nope()|}
+        in
         Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
     tc "fence takes no arguments" (fun () ->
         let diagnostics = check {|fence(1)|} in

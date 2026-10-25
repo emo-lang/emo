@@ -27,6 +27,7 @@ type value =
   | Builder of emo_builder
   | Map of emo_map
   | Box of value ref
+  | Atomic of value ref (* the synchronized cell: a handle, never copied *)
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | TcpConn of conn
   | TcpListener of listener
@@ -194,6 +195,7 @@ let type_name = function
   | Builder _ -> "ArrayBuilder"
   | Map _ -> "Map"
   | Box _ -> "Box"
+  | Atomic _ -> "Atomic"
   | Pid _ -> "Pid"
   | TcpConn _ -> "TcpConn"
   | TcpListener _ -> "TcpListener"
@@ -256,6 +258,7 @@ let rec equal_value a b =
              | None -> false)
            (map_keys x)
   | Box x, Box y -> equal_value !x !y
+  | Atomic x, Atomic y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
   | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
@@ -615,6 +618,7 @@ let rec to_string v =
              (map_keys m))
       ^ "}"
   | Box _ -> "<box>"
+  | Atomic _ -> "<atomic>"
   | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
@@ -1091,6 +1095,10 @@ let find_process span pid =
 let rec snapshot (v : value) : value =
   match v with
   | Box r -> Box (ref (snapshot !r))
+  (* The one declared exception (CHECK.md, the atomic memory model): an
+     Atomic copies as the handle to the same cell — every operation on
+     the cell is synchronized, so the sharing is safe by construction. *)
+  | Atomic _ -> v
   | Bytes b -> Bytes (Bytes.copy b)
   | Tuple vs -> Tuple (List.map snapshot vs)
   | Array xs -> Array (Array.map snapshot xs)
@@ -1698,12 +1706,13 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
-      | TypeValue "Atomic", ("new" as m) ->
-          (* The synchronized cell lands with the memory-primitives step;
-             the surface checks today, every target refuses until then. *)
-          error span "E3016"
-            (Printf.sprintf
-               "`Atomic.%s` is not supported by the interpreter yet" m)
+      | TypeValue "Atomic", "new" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] -> Atomic (ref v)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Atomic.new` expects 1 argument, got %d" argc))
       | TypeValue "Byte", "from_int64" -> (
           let args = eval_args () in
           match args with
@@ -1838,6 +1847,78 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | Atomic cell, "load" ->
+          none_expected "load";
+          !cell
+      | Atomic cell, "store" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] ->
+              cell := v;
+              Void
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`store` expects 1 argument, got %d" argc))
+      | Atomic cell, "exchange" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] ->
+              let old = !cell in
+              cell := v;
+              old
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`exchange` expects 1 argument, got %d" argc))
+      | Atomic cell, "compare_exchange" -> (
+          let args = eval_args () in
+          match args with
+          | [ expected; fresh ] ->
+              let old = !cell in
+              let swapped = equal_value old expected in
+              if swapped then cell := fresh;
+              Tuple [ Bool swapped; old ]
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+                   argc))
+      | ( Atomic cell,
+          (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor")
+           as mname) ) -> (
+          (* The payload dispatches on the value the cell holds: the
+             arithmetic pair is Int64's, the bitwise family is Int64's and
+             Bool's — the checker refuses the rest by name, and the
+             runtime refuses what a gradual call could still reach. *)
+          let args = eval_args () in
+          match (mname, args, !cell) with
+          | _, [ Int64 v ], Int64 old ->
+              let computed =
+                match mname with
+                | "fetch_add" -> Int64 (Int64.add old v)
+                | "fetch_sub" -> Int64 (Int64.sub old v)
+                | "fetch_and" -> Int64 (Int64.logand old v)
+                | "fetch_or" -> Int64 (Int64.logor old v)
+                | _ -> Int64 (Int64.logxor old v)
+              in
+              cell := computed;
+              Int64 old
+          | ("fetch_and" | "fetch_or" | "fetch_xor"), [ Bool y ], Bool b ->
+              let computed =
+                match mname with
+                | "fetch_and" -> Bool (b && y)
+                | "fetch_or" -> Bool (b || y)
+                | _ -> Bool (b <> y)
+              in
+              cell := computed;
+              Bool b
+          | _, [ v ], (Int64 _ | Bool _) ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects %s, got %s" mname
+                   (match !cell with Bool _ -> "a Bool" | _ -> "an Int64")
+                   (type_name v))
+          | _, _, other ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int64 or Bool cell, got %s"
+                   mname (type_name other)))
       | List l, "push_front" -> (
           match eval_args () with
           | [ v ] ->
@@ -2792,14 +2873,15 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | "fence", [] ->
+      (* The exact no-op (CHECK.md, the atomic memory model): every Emo
+         process here cooperates on one OS thread and switches only at
+         defined points, so sequential consistency holds vacuously and
+         the barrier is a correct lowering of nothing to do. *)
+      Void
   | "fence", vs ->
-      (* The memory barrier lands with the memory-primitives step; the
-         surface checks today, every target refuses until then. *)
-      error span "E3016"
-        (Printf.sprintf "`fence` is not supported by the interpreter yet (%d \
-                         argument%s)"
-           (List.length vs)
-           (if List.length vs = 1 then "" else "s"))
+      error span "E3007"
+        (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own

@@ -350,12 +350,12 @@ let rec decl_to_type ?(lenient = false) ctx
       Unknown
   | Ast.Applied_type ("Box", [ elem ]) ->
       BoxType (decl_to_type ~lenient ctx elem)
-  | Ast.Applied_type ("Atomic", [ elem ]) -> (
+  | Ast.Applied_type ("Atomic", [ elem ]) ->
       let payload = decl_to_type ~lenient ctx elem in
       if atomic_payload_ok payload then AtomicType payload
       else (
         refuse_atomic_payload ctx span payload;
-        AtomicType Unknown))
+        AtomicType Unknown)
   | Ast.Applied_type ("Atomic", _) ->
       report ctx span "E4005" "`Atomic` takes one type argument: Atomic[T]";
       AtomicType Unknown
@@ -2574,8 +2574,7 @@ and check_method_call ctx env span recv mname args : t =
         | [ v ] ->
             if not (conforms ctx v Int64) then
               report ctx span "E4004"
-                (Printf.sprintf "`%s` expects Int64, got %s" mname
-                   (to_string v));
+                (Printf.sprintf "`%s` expects Int64, got %s" mname (to_string v));
             elem
         | _ ->
             report ctx span "E4009"
@@ -2587,8 +2586,8 @@ and check_method_call ctx env span recv mname args : t =
         | [ v ] ->
             if not (conforms ctx v elem) then
               report ctx span "E4004"
-                (Printf.sprintf "`%s` expects %s, got %s" mname
-                   (to_string elem) (to_string v));
+                (Printf.sprintf "`%s` expects %s, got %s" mname (to_string elem)
+                   (to_string v));
             elem
         | _ ->
             report ctx span "E4009"

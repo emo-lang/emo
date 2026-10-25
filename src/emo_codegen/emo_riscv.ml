@@ -3064,8 +3064,7 @@ let rec walk_expr_enum env (e : Emo_ir.expr) : unit =
       List.iter (walk_expr_enum env) args
   | Builtin { args; _ } | Runtime_impl { args; _ } ->
       List.iter (walk_expr_enum env) args
-  | Box_new x | Atomic_new x | Bytes_new x | List_new x ->
-      walk_expr_enum env x
+  | Box_new x | Atomic_new x | Bytes_new x | List_new x -> walk_expr_enum env x
   | Builder_new -> ()
   | Make_exception { message; data } ->
       walk_expr_enum env message;
@@ -3217,14 +3216,14 @@ let emit (program : Emo_ir.program) : string =
   gput env "\n    .section .text\n";
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.fforeign = None then begin
-        if f.fparams = [] && List.mem f.fname !const_thunks then
+      if f.fforeign = None then
+        begin if f.fparams = [] && List.mem f.fname !const_thunks then
           emit_const_function env f
         else
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
             ~params:f.fparams ~captures:[] ~body:f.fbody
-      end)
+        end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
   List.iter

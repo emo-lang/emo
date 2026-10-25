@@ -498,16 +498,13 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc source;
               close_out oc;
               let strip =
-                "const {stripTypeScriptTypes}=require(\"node:module\");\
-                 const fs=require(\"node:fs\");\
-                 fs.writeFileSync(process.argv[2],\
-                 stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
+                "const {stripTypeScriptTypes}=require(\"node:module\");const \
+                 fs=require(\"node:fs\");fs.writeFileSync(process.argv[2],stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
               in
               let rc =
                 Emo_tool.run_status
                   (Printf.sprintf "node --no-warnings -e %s %s %s"
-                     (Filename.quote strip)
-                     (Filename.quote ts_file)
+                     (Filename.quote strip) (Filename.quote ts_file)
                      (Filename.quote cache_file))
               in
               if rc <> 0 then begin

@@ -604,9 +604,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
             (String.concat "; " vs))
   | Emo_ir.Box_new e ->
       Printf.sprintf "(Emo_runtime.box_new (%s))" (emit_expr env e)
-  | Emo_ir.Atomic_new _ ->
-      raise
-        (Emo_ir.Lower_error "the ocaml target does not support `Atomic` yet")
+  | Emo_ir.Atomic_new e ->
+      Printf.sprintf "(Emo_runtime.atomic_new (%s))" (emit_expr env e)
   | Emo_ir.Bytes_new e ->
       Printf.sprintf "(Emo_runtime.bytes_new (%s))" (emit_expr env e)
   | Emo_ir.List_new e ->

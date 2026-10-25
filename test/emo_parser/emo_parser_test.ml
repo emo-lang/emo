@@ -1622,14 +1622,13 @@ let loop_tests =
 let atomic_tests =
   [
     tc "an Atomic payload annotation parses as an applied type" (fun () ->
-        match
-          parse_program "def f(c Atomic[Int64]) Int64 {\n  return 0\n}"
-        with
+        match parse_program "def f(c Atomic[Int64]) Int64 {\n  return 0\n}" with
         | [ { Emo_ast.item_desc = Emo_ast.Item_def d; _ } ] -> (
             match d.Emo_ast.def_params with
             | [ { Emo_ast.param_type; _ } ] ->
                 Alcotest.(check string)
-                  "shape" "Atomic[Int64]" (render pp_type_ann param_type)
+                  "shape" "Atomic[Int64]"
+                  (render pp_type_ann param_type)
             | ps ->
                 Alcotest.fail
                   (Printf.sprintf "expected 1 param, got %d" (List.length ps)))
@@ -1642,7 +1641,8 @@ let atomic_tests =
             match d.Emo_ast.def_params with
             | [ { Emo_ast.param_type; _ } ] ->
                 Alcotest.(check string)
-                  "shape" "Atomic" (render pp_type_ann param_type)
+                  "shape" "Atomic"
+                  (render pp_type_ann param_type)
             | ps ->
                 Alcotest.fail
                   (Printf.sprintf "expected 1 param, got %d" (List.length ps)))

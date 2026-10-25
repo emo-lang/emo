@@ -516,8 +516,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env v;
       put env ") _boxref"
   | Atomic_new _ ->
-      raise
-        (Emo_ir.Lower_error "the beam target does not support `Atomic` yet")
+      raise (Emo_ir.Lower_error "the beam target does not support `Atomic` yet")
   | Bytes_new v ->
       put env "apply 'emo_bytes_new'/1 ";
       args_list env [ v ]

@@ -380,7 +380,7 @@ let node_strip_available =
        "node --no-warnings -e 'process.exit(typeof \
         require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
         1)' >/dev/null 2>&1"
-     = 0)
+    = 0)
 
 (* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
    run under `erl -noshell`. Skips when Erlang is absent. *)
@@ -3251,8 +3251,7 @@ let specialization_tests =
         let exit_code =
           in_example "specialize_shapes" (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
-                ~cclibs:[] ~native:Emo_project.no_native_inputs
-                ~target:"ocaml")
+                ~cclibs:[] ~native:Emo_project.no_native_inputs ~target:"ocaml")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
@@ -4025,10 +4024,11 @@ let browser_emit_refusal source emit =
   in
   (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
   let diags, _refs, _requires, types =
-    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser"
-      items
+    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser" items
   in
-  (match diags with _ :: _ -> Alcotest.fail "unexpected check errors" | [] -> ());
+  (match diags with
+  | _ :: _ -> Alcotest.fail "unexpected check errors"
+  | [] -> ());
   let program =
     Emo_ir.lower
       {
@@ -4045,8 +4045,7 @@ let browser_emit_refusal source emit =
 
 let browser_tests =
   [
-    tc "browser: one bundle with no host imports, run against a page"
-      (fun () ->
+    tc "browser: one bundle with no host imports, run against a page" (fun () ->
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
         let entry =
           scratch_entry "browser-page"
@@ -4067,13 +4066,12 @@ println("ready")
         List.iter
           (fun marker ->
             Alcotest.(check bool)
-              ("bundle contains no `" ^ marker ^ "`") false
-              (contains text marker))
+              ("bundle contains no `" ^ marker ^ "`")
+              false (contains text marker))
           [ "require("; "from \"node:"; "process."; "_als" ];
         write_file (Filename.concat dir "run.js") browser_page_harness;
         check_run "browser"
-          (run_cmd
-             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          (run_cmd ("node " ^ Filename.quote (Filename.concat dir "run.js")))
           "ready\ntitle=Page title children=hello\n");
     tc "browser: an event reaches the sink with its tag" (fun () ->
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
@@ -4093,13 +4091,11 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
           (build_entry ~target:"browser" entry (Filename.concat dir "app"));
         write_file (Filename.concat dir "run.js") browser_event_harness;
         check_run "browser event"
-          (run_cmd
-             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          (run_cmd ("node " ^ Filename.quote (Filename.concat dir "run.js")))
           "event 7\nfired\n");
     tc "browser refuses Node's runtime capabilities by name" (fun () ->
         match
-          browser_emit_refusal
-            "const x = file_read(\"a\")\nprintln(x)\n"
+          browser_emit_refusal "const x = file_read(\"a\")\nprintln(x)\n"
             Emo_codegen.Ts.emit_browser
         with
         | None -> Alcotest.fail "expected a refusal"
@@ -4111,7 +4107,8 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
                   browser target"));
     tc "typescript refuses the DOM capabilities by name" (fun () ->
         match
-          browser_emit_refusal "const root = dom_root()\n" Emo_codegen.Ts.emit_ts
+          browser_emit_refusal "const root = dom_root()\n"
+            Emo_codegen.Ts.emit_ts
         with
         | None -> Alcotest.fail "expected a refusal"
         | Some message ->
@@ -4122,8 +4119,7 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
                   typescript target; build for the browser target"));
     tc "browser refuses a spawned process by name" (fun () ->
         match
-          browser_emit_refusal
-            {|def worker() {
+          browser_emit_refusal {|def worker() {
   println("w")
 }
 do worker()
@@ -4893,6 +4889,126 @@ main()
           "red (ok, 12.5)\n");
   ]
 
+(* The atomic surface (CHECK.md, the atomic memory model): the cell ops
+   answer identically on the interpreter and the compiled hosted targets,
+   the copy-as-handle rule shares one cell across a process boundary, and
+   `==` compares the values the cells hold. The managed targets join when
+   their exact no-ops land (T1.5). *)
+let atomic_surface_tests =
+  let source =
+    {|
+def reader(reply_to Pid, cell Atomic) {
+  cell.fetch_add(10)
+  reply_to <- cell.load()
+  halt()
+}
+
+const served = Atomic.new(0)
+served.store(5)
+const before = served.exchange(7)
+served.fetch_add(3)
+const swapped = served.compare_exchange(10, 100)
+served.fetch_sub(58)
+served.fetch_and(126)
+served.fetch_or(1)
+served.fetch_xor(1)
+fence()
+println(before)
+println(swapped[0])
+println(swapped[1])
+println(served.load())
+
+const flag = Atomic.new(true)
+println(flag.fetch_and(false))
+println(flag.load())
+println(flag.fetch_or(true))
+println(flag.load())
+
+const r = do reader(self_pid(), served)
+receive {
+  v -> { println(v) }
+}
+println(served.load())
+
+const missed = served.compare_exchange(999, 0)
+println(missed[0])
+println(missed[1])
+served.fetch_sub(10)
+println(served.load())
+println(served == served)
+println(served == Atomic.new(42))
+println(served == Atomic.new(1))
+println(served)
+|}
+  in
+  let expected =
+    "5\n\
+     true\n\
+     10\n\
+     42\n\
+     true\n\
+     false\n\
+     false\n\
+     true\n\
+     52\n\
+     52\n\
+     false\n\
+     52\n\
+     42\n\
+     true\n\
+     true\n\
+     false\n\
+     <atomic>\n"
+  in
+  [
+    tc "the atomic surface answers identically on the interpreter, ocaml, and c"
+      (fun () ->
+        let entry = scratch_entry "atomic-surface" source in
+        let dir = Filename.dirname entry in
+        write_file
+          (Filename.concat dir "package.emo")
+          {|package {
+  name = "local/scratch"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|};
+        (* the interpreter *)
+        let out = Buffer.create 256 in
+        Emo_eval.set_output (Buffer.add_string out);
+        let run_exit =
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              in_dir dir (fun () ->
+                  Emo_cli.run_file ~file:"main.emo" ~color:false ~error_limit:20))
+        in
+        Alcotest.(check int) "interpreter exit" 0 run_exit;
+        Alcotest.(check string)
+          "interpreter output" expected (Buffer.contents out);
+        (* ocaml *)
+        Alcotest.(check int)
+          "ocaml build" 0
+          (build_entry ~target:"ocaml" entry (Filename.concat dir "app-ocaml"));
+        check_run "ocaml"
+          (run_cmd (Filename.quote (Filename.concat dir "app-ocaml")))
+          expected;
+        (* c *)
+        if Lazy.force cc_available then begin
+          Alcotest.(check int)
+            "c build" 0
+            (build_entry ~target:"c" entry (Filename.concat dir "app-c"));
+          check_run "c"
+            (run_cmd (Filename.quote (Filename.concat dir "app-c")))
+            expected
+        end);
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4912,6 +5028,7 @@ let () =
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
       ("hosted_bindings", hosted_bindings_tests);
+      ("atomic_surface", atomic_surface_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
