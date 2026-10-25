@@ -14,12 +14,12 @@
 #   just release-image arm64
 #   just release-image amd64
 #
-# EMO_OCAML_SWITCH overrides the host opam switch (default 5.5.0).
+# EMO_OCAML_SWITCH overrides the host opam switch (default 5.5.2).
 set -e
 
 tag=$1
 dist=${2:-dist}
-switch=${EMO_OCAML_SWITCH:-5.5.0}
+switch=${EMO_OCAML_SWITCH:-5.5.2}
 if [ -z "$tag" ]; then
   echo "usage: build-release.sh <tag> [dist-dir]" >&2
   exit 64

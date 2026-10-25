@@ -13,7 +13,7 @@ FROM ocaml/opam:ubuntu-22.04
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends libssl-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/* && \
-    opam switch create 5.5.0 && \
+    opam switch create 5.5.2 && \
     opam install -y dune cmdliner alcotest eio_main ssl yojson digestif && \
     opam clean
 
