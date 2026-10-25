@@ -209,7 +209,7 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
         ex self_;
         List.iter ex args
     | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
-    | Box_new x | Bytes_new x | List_new x -> ex x
+    | Box_new x | Atomic_new x | Bytes_new x | List_new x -> ex x
     | Builder_new -> ()
     | Make_exception { message; data } ->
         ex message;
@@ -307,7 +307,7 @@ let rec expr_depth (e : Emo_ir.expr) : int =
   | Method { self_; args; _ } ->
       1 + List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (self_ :: args)
-  | Box_new x -> 1 + expr_depth x
+  | Box_new x | Atomic_new x -> 1 + expr_depth x
   | _ -> 0
 
 (* The names a pattern binds, in binding order. *)
@@ -478,6 +478,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Box_new arg ->
       emit_expr env (d + 1) arg;
       call_runtime env "emo_box_new"
+  | Atomic_new _ -> refuse "`Atomic`"
   | Builtin { name = "println"; args = [ arg ] } ->
       emit_expr env d arg;
       call_runtime env "emo_println"
@@ -3063,7 +3064,8 @@ let rec walk_expr_enum env (e : Emo_ir.expr) : unit =
       List.iter (walk_expr_enum env) args
   | Builtin { args; _ } | Runtime_impl { args; _ } ->
       List.iter (walk_expr_enum env) args
-  | Box_new x | Bytes_new x | List_new x -> walk_expr_enum env x
+  | Box_new x | Atomic_new x | Bytes_new x | List_new x ->
+      walk_expr_enum env x
   | Builder_new -> ()
   | Make_exception { message; data } ->
       walk_expr_enum env message;

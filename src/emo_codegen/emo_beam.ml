@@ -515,6 +515,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "do call 'erlang':'put'(_boxref, ";
       expr env v;
       put env ") _boxref"
+  | Atomic_new _ ->
+      raise
+        (Emo_ir.Lower_error "the beam target does not support `Atomic` yet")
   | Bytes_new v ->
       put env "apply 'emo_bytes_new'/1 ";
       args_list env [ v ]
@@ -1525,6 +1528,7 @@ and free_expr env (e : Emo_ir.expr) (acc : string list) : string list =
   | Emo_ir.Var name -> add name acc
   | Emo_ir.Unary (_, x)
   | Emo_ir.Box_new x
+  | Emo_ir.Atomic_new x
   | Emo_ir.Bytes_new x
   | Emo_ir.List_new x ->
       free_expr env x acc

@@ -27,6 +27,7 @@ type t =
   | MapType of t * t
   | TupleType of t list
   | BoxType of t
+  | AtomicType of t (* the payload: Int64 or Bool, Unknown until pinned *)
   | ListType of t (* the List deque's element type *)
   | BuilderType of
       t (* ArrayBuilder's element type; Unknown until a push pins it *)
@@ -52,6 +53,7 @@ let rec to_string = function
   | ArrayType e -> "Array[" ^ to_string e ^ "]"
   | MapType (k, v) -> "Map[" ^ to_string k ^ ", " ^ to_string v ^ "]"
   | BoxType e -> "Box[" ^ to_string e ^ "]"
+  | AtomicType e -> "Atomic[" ^ to_string e ^ "]"
   | ListType e -> "List[" ^ to_string e ^ "]"
   | BuilderType e -> "ArrayBuilder[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
@@ -300,6 +302,16 @@ let resolve_type_ref ctx span (ref_ : string) : t option =
    module may name a type from the library consuming the block, and
    cross-module types stay unchecked this step — so it narrows to Unknown
    instead of reporting E4005. Definitions stay strict. *)
+(* The atomic payload scope (CHECK.md, the atomic memory model): the two
+   scalars the op set covers. Unknown stays silent — inference has not
+   pinned the cell yet. *)
+let atomic_payload_ok = function Int64 | Bool | Unknown -> true | _ -> false
+
+let refuse_atomic_payload ctx span (payload : t) =
+  report ctx span "E4027"
+    (Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`"
+       (to_string payload))
+
 let rec decl_to_type ?(lenient = false) ctx
     ({ Ast.type_span = span; type_desc; _ } : Ast.type_decl) =
   match type_desc with
@@ -317,6 +329,7 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "Void" -> Void
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
+  | Ast.Named_type "Atomic" -> AtomicType Unknown
   | Ast.Named_type "List" -> ListType Unknown
   | Ast.Named_type "ArrayBuilder" -> BuilderType Unknown
   | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
@@ -337,6 +350,15 @@ let rec decl_to_type ?(lenient = false) ctx
       Unknown
   | Ast.Applied_type ("Box", [ elem ]) ->
       BoxType (decl_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("Atomic", [ elem ]) -> (
+      let payload = decl_to_type ~lenient ctx elem in
+      if atomic_payload_ok payload then AtomicType payload
+      else (
+        refuse_atomic_payload ctx span payload;
+        AtomicType Unknown))
+  | Ast.Applied_type ("Atomic", _) ->
+      report ctx span "E4005" "`Atomic` takes one type argument: Atomic[T]";
+      AtomicType Unknown
   | Ast.Applied_type ("List", [ elem ]) ->
       ListType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("List", _) ->
@@ -803,6 +825,7 @@ let empty_env =
           } );
         ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
         ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
+        ("fence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
         ( "expect_equal",
           {
             vtype =
@@ -830,6 +853,7 @@ let empty_env =
           } );
         (* The capability types: the language's own, import-free names. *)
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Atomic", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
         ("List", { vtype = Unknown; is_var = false; depth = 0 });
         ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
@@ -1245,6 +1269,7 @@ and conforms ctx actual expected =
   | MapType (ka, va), MapType (kb, vb) ->
       conforms ctx ka kb && conforms ctx va vb
   | BoxType a, BoxType b -> conforms ctx a b
+  | AtomicType a, AtomicType b -> conforms ctx a b
   | ListType a, ListType b -> conforms ctx a b
   | BuilderType a, BuilderType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
@@ -1519,6 +1544,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                 "Byte";
                 "Float64";
                 "Box";
+                "Atomic";
                 "Bytes";
                 "List";
                 "ArrayBuilder";
@@ -2114,6 +2140,35 @@ and check_method_call ctx env span recv mname args : t =
         BoxType Unknown)
   else if
     match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Atomic", "new" -> true
+    | _ -> false
+  then (
+    (* Atomic.new(v) — the synchronized cell's constructor. The argument's
+       type is the payload, and the payload scope is the two scalars: an
+       Int64 or Bool cell checks, anything else refuses by name (the
+       annotation form refuses through decl_to_type). *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    match arg_values with
+    | [ (None, vt) ] ->
+        if atomic_payload_ok vt then AtomicType vt
+        else (
+          refuse_atomic_payload ctx span vt;
+          AtomicType Unknown)
+    | [ (Some n, _) ] ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Atomic.new` takes a positional value, got `%s`" n);
+        AtomicType Unknown
+    | _ ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Atomic.new` expects 1 argument, got %d"
+             (List.length arg_values));
+        AtomicType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
     | Ast.Type_ident "ArrayBuilder", "new" -> true
     | _ -> false
   then (
@@ -2460,6 +2515,84 @@ and check_method_call ctx env span recv mname args : t =
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`replace` expects 1 argument, got %d"
+                 (List.length args));
+            elem)
+    | AtomicType elem, "load" -> none_expected elem
+    | AtomicType elem, "store" -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`store` expects %s, got %s" (to_string elem)
+                   (to_string v));
+            Void
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`store` expects 1 argument, got %d"
+                 (List.length args));
+            Void)
+    | AtomicType elem, "exchange" -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`exchange` expects %s, got %s" (to_string elem)
+                   (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`exchange` expects 1 argument, got %d"
+                 (List.length args));
+            elem)
+    | AtomicType elem, "compare_exchange" -> (
+        match List.map snd arg_values with
+        | [ expected; fresh ] ->
+            if not (conforms ctx expected elem) then
+              report ctx span "E4004"
+                (Printf.sprintf
+                   "`compare_exchange` expects %s as the expected value, got %s"
+                   (to_string elem) (to_string expected));
+            if not (conforms ctx fresh elem) then
+              report ctx span "E4004"
+                (Printf.sprintf
+                   "`compare_exchange` expects %s as the new value, got %s"
+                   (to_string elem) (to_string fresh));
+            TupleType [ Bool; elem ]
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+                 (List.length args));
+            TupleType [ Bool; elem ])
+    | AtomicType Bool, (("fetch_add" | "fetch_sub") as mname) ->
+        (* Arithmetic is not Bool's vocabulary; the bitwise family is. *)
+        report ctx span "E4004"
+          (Printf.sprintf "`%s` expects an `Atomic[Int64]`, got `Atomic[Bool]`"
+             mname);
+        Bool
+    | AtomicType elem, (("fetch_add" | "fetch_sub") as mname) -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v Int64) then
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects Int64, got %s" mname
+                   (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                 (List.length args));
+            elem)
+    | AtomicType elem, (("fetch_and" | "fetch_or" | "fetch_xor") as mname) -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects %s, got %s" mname
+                   (to_string elem) (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
                  (List.length args));
             elem)
     | ListType elem, (("push_front" | "push_back") as mname) -> (

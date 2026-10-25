@@ -326,6 +326,10 @@ let rec expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(await E.runtimeImpl(%S, [%s]))" name
         (String.concat ", " (List.map (expr env) args))
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
+  | Atomic_new _ ->
+      raise
+        (Emo_ir.Lower_error
+           "the typescript target does not support `Atomic` yet")
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)
   | List_new e -> Printf.sprintf "E.listNew(%s)" (expr env e)
   | Builder_new -> "E.builderNew()"

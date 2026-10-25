@@ -306,6 +306,8 @@ let global_env () =
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
+  Hashtbl.replace env.frame "fence"
+    { bound = BuiltinFn "fence"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -322,6 +324,8 @@ let global_env () =
   Hashtbl.replace env.frame "Float64"
     { bound = TypeValue "Float64"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  Hashtbl.replace env.frame "Atomic"
+    { bound = TypeValue "Atomic"; mutable_ = false };
   Hashtbl.replace env.frame "Bytes"
     { bound = TypeValue "Bytes"; mutable_ = false };
   Hashtbl.replace env.frame "List"
@@ -1694,6 +1698,12 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue "Atomic", ("new" as m) ->
+          (* The synchronized cell lands with the memory-primitives step;
+             the surface checks today, every target refuses until then. *)
+          error span "E3016"
+            (Printf.sprintf
+               "`Atomic.%s` is not supported by the interpreter yet" m)
       | TypeValue "Byte", "from_int64" -> (
           let args = eval_args () in
           match args with
@@ -2782,6 +2792,14 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | "fence", vs ->
+      (* The memory barrier lands with the memory-primitives step; the
+         surface checks today, every target refuses until then. *)
+      error span "E3016"
+        (Printf.sprintf "`fence` is not supported by the interpreter yet (%d \
+                         argument%s)"
+           (List.length vs)
+           (if List.length vs = 1 then "" else "s"))
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own

@@ -240,6 +240,9 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
   | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
       Some "emo_value"
+  (* The atomic cell has no representation here until the memory-primitives
+     step lands its lowering; the signature refuse names the type. *)
+  | Emo_check.AtomicType _ -> None
   | Emo_check.Void -> Some "void"
 
 (* Whether a type lives in the dynamic world (the tagged word) or the
@@ -248,9 +251,9 @@ let is_dyn (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.String | Emo_check.TupleType _
   | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
-  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
-  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
-  | Emo_check.Bytes ->
+  | Emo_check.AtomicType _ | Emo_check.ListType _ | Emo_check.BuilderType _
+  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
+  | Emo_check.FuncType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -417,9 +420,9 @@ let may_own (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.String | Emo_check.TupleType _
   | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
-  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
-  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
-  | Emo_check.Bytes ->
+  | Emo_check.AtomicType _ | Emo_check.ListType _ | Emo_check.BuilderType _
+  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
+  | Emo_check.FuncType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -887,6 +890,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Box_new arg ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_box_new(%s)" (as_dyn env arg))
+  | Atomic_new _ -> refuse "`Atomic`"
   | Bytes_new n ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64))
@@ -955,6 +959,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Builtin _ -> "Builtin"
            | Emo_ir.Runtime_impl _ -> "Runtime_impl"
            | Emo_ir.Box_new _ -> "Box_new"
+           | Emo_ir.Atomic_new _ -> "Atomic_new"
            | Emo_ir.Global_var _ -> "Global_var"
            | Emo_ir.Bytes_new _ -> "Bytes_new"
            | Emo_ir.List_new _ -> "List_new"
@@ -1517,7 +1522,7 @@ and closure_free env (cparams : (string * Emo_check.t) list)
         ex self_;
         List.iter ex args
     | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
-    | Box_new x | Bytes_new x -> ex x
+    | Box_new x | Atomic_new x | Bytes_new x -> ex x
     | Make_exception { message; data } ->
         ex message;
         Option.iter ex data
@@ -3176,7 +3181,8 @@ let globals_as_values (program : Emo_ir.program) : string list =
     | Global g -> add g
     | Const _ | Type_ref _ | Var _ | Global_var _ | Builder_new | Make_enum _ ->
         ()
-    | Unary (_, x) | Box_new x | Bytes_new x | List_new x -> ex x
+    | Unary (_, x) | Box_new x | Atomic_new x | Bytes_new x | List_new x ->
+        ex x
     | Binary (_, l, r) ->
         ex l;
         ex r
@@ -3356,7 +3362,7 @@ let emit (program : Emo_ir.program) : string * string * bool =
           if List.mem name tls_names then flag := true;
           List.iter ex args
       | Builtin { args; _ } -> List.iter ex args
-      | Box_new x | Bytes_new x | List_new x -> ex x
+      | Box_new x | Atomic_new x | Bytes_new x | List_new x -> ex x
       | Make_exception { message; data } ->
           ex message;
           Option.iter ex data

@@ -765,6 +765,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Box_new v ->
       expr env v;
       e env (W.Call (rt "box"))
+  | Atomic_new _ ->
+      raise
+        (Emo_ir.Lower_error "the wasm target does not support `Atomic` yet")
   | Bytes_new v ->
       expr env v;
       e env (W.Call (rt "bytes_new"))

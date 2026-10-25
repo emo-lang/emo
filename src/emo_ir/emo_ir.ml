@@ -33,6 +33,7 @@ and expr_desc =
   | Builtin of { name : string; args : expr list }
   | Runtime_impl of { name : string; args : expr list }
   | Box_new of expr
+  | Atomic_new of expr (* Atomic.new(v) — the synchronized cell *)
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
   | List_new of expr (* List.new(array) — a fresh deque over the elements *)
@@ -161,8 +162,8 @@ type env = {
 (* The language's own built-ins: bare names, no declaration and no import,
    registered in every frame. *)
 let is_builtin = function
-  | "println" | "printf" | "self_pid" | "halt" | "expect_equal" | "expect_true"
-  | "expect_false" | "expect_fail" ->
+  | "println" | "printf" | "self_pid" | "halt" | "fence" | "expect_equal"
+  | "expect_true" | "expect_false" | "expect_fail" ->
       true
   | _ -> false
 
@@ -530,6 +531,14 @@ and lower_call env span callee args =
                         desc = Box_new (lower_expr env arg_value);
                       }
                   | _ -> raise (Lower_error "`Box.new` takes one argument"))
+              | Ast.Type_ident "Atomic" when name = "new" -> (
+                  match args with
+                  | [ { Ast.arg_name = None; arg_value } ] ->
+                      {
+                        ety = Emo_check.Unknown;
+                        desc = Atomic_new (lower_expr env arg_value);
+                      }
+                  | _ -> raise (Lower_error "`Atomic.new` takes one argument"))
               | Ast.Type_ident "Bytes" when name = "new" -> (
                   match args with
                   | [ { Ast.arg_name = None; arg_value } ] ->
@@ -906,8 +915,8 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
   | Call_value _ | Method _ | Builtin _ | Runtime_impl _ | Box_new _
-  | Bytes_new _ | List_new _ | Builder_new | Make_exception _ | Do_spawn _
-  | Spawn_value _ | Closure _ | Global_var _ ->
+  | Atomic_new _ | Bytes_new _ | List_new _ | Builder_new | Make_exception _
+  | Do_spawn _ | Spawn_value _ | Closure _ | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 
 and stmts_native special (stmts : stmt list) : bool =
