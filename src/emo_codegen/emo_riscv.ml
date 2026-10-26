@@ -149,6 +149,14 @@ type class_info = {
   cls_methods : (string * string) list; (* display name -> mangled fname *)
 }
 
+(* What a spawned process runs (T3.3): a def — mangled name and its
+   calling convention, so the thunk hands over the psABI registers —
+   or a closure value, the spawn's first argument, called like any
+   first-class block. *)
+type spawn_callee =
+  | Spawn_def of string * conv
+  | Spawn_closure of int (* the argument count after the closure word *)
+
 type env = {
   buf : Buffer.t;
   mutable fresh : int; (* the string-literal counter *)
@@ -182,6 +190,9 @@ type env = {
          everything else the tagged word — and boxing happens only at
          the escape points. Outside, the dynamic rule holds: everything
          tagged in a0. *)
+  mutable spawns : (string * spawn_callee) list;
+      (* the spawn entry thunks queued for emission (T3.3): label,
+         callee — newest first *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -371,7 +382,14 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
             Option.iter ex b.Emo_ir.guard;
             List.iter st b.Emo_ir.body)
           branches
-    | Receive _ | Send _ | Raise _ -> ()
+    | Receive { branches } ->
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            Option.iter ex b.Emo_ir.guard;
+            List.iter st b.Emo_ir.body)
+          branches
+    | Send { target; message } -> ex target; ex message
+    | Raise _ -> ()
     | Return_stmt e -> ex e
     | While { cond; body; _ } ->
         ex cond;
@@ -434,6 +452,12 @@ let rec expr_depth (e : Emo_ir.expr) : int =
       1 + List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (self_ :: args)
   | Box_new x | Atomic_new x -> 1 + expr_depth x
+  | Do_spawn { args; _ } ->
+      List.length args
+      + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 args
+  | Spawn_value { f; args } ->
+      1 + List.length args
+      + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (f :: args)
   | _ -> 0
 
 (* The names a pattern binds, in binding order. *)
@@ -471,6 +495,20 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
         | While { cond; body; _ } -> max (expr_depth cond) (stmts_depth body)
         | For { init; cond; post; body; _ } ->
             max (expr_depth cond) (stmts_depth (init :: post :: body))
+        | Send { target; message } ->
+            1 + max (expr_depth target) (expr_depth message)
+        | Receive { branches } ->
+            (* the scan keeps its index in s0; the pattern machinery
+               owns slots 0-2 and guards evaluate at depth 3 *)
+            3
+            + List.fold_left
+                (fun acc (b : Emo_ir.branch) ->
+                  max acc
+                    (match b.Emo_ir.guard with
+                    | Some g ->
+                        max (expr_depth g) (stmts_depth b.Emo_ir.body)
+                    | None -> stmts_depth b.Emo_ir.body))
+                0 branches
         | Break | Continue -> 0
         | _ -> 0))
     0 stmts
@@ -489,6 +527,18 @@ let rec collect_stmt (f : frame) (s : Emo_ir.stmt) : unit =
       collect_stmts f then_;
       collect_stmts f else_
   | Case { branches; _ } ->
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          List.iter
+            (fun n ->
+              if not (List.mem_assoc n f.slots) then begin
+                f.slots <- (n, List.length f.slots) :: f.slots;
+                f.named <- f.named + 1
+              end)
+            (pattern_bindings b.Emo_ir.pattern);
+          collect_stmts f b.Emo_ir.body)
+        branches
+  | Receive { branches } ->
       List.iter
         (fun (b : Emo_ir.branch) ->
           List.iter
@@ -635,6 +685,48 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    ld t2, 8(t0)\n";
       put env "    jalr t2\n";
       unbox_if_numeric env e.Emo_ir.ety
+  | Spawn_value { f; args } ->
+      (* `do f(...)` as a value: the closure word and the tagged
+         arguments spill consecutively, and the thunk (queued below)
+         calls the closure on the child's stack *)
+      let fslot = temp_offset env d in
+      emit_expr env (d + 1) f;
+      put env "    sd a0, %d(sp)\n" fslot;
+      List.iteri
+        (fun i arg ->
+          emit_expr env (d + 1 + List.length args) arg;
+          box_if_numeric env arg.Emo_ir.ety;
+          put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
+        args;
+      let label = fresh_label env "spawn_thunk" in
+      env.spawns <- (label, Spawn_closure (List.length args)) :: env.spawns;
+      put env "    la a0, %s\n" label;
+      put env "    li a1, %d\n" (List.length args + 1);
+      put env "    addi a2, sp, %d\n" fslot;
+      call_runtime env "emo_spawn"
+  | Do_spawn { func; args } ->
+      (* `do f(...)`: the arguments evaluate eagerly in the spawning
+         process (the escape point boxes them), the thunk delivers them
+         through the child's psABI registers or the dynamic words, and
+         the answer is the child's Pid *)
+      let n = List.length args in
+      List.iteri
+        (fun i arg ->
+          emit_expr env (d + n) arg;
+          box_if_numeric env arg.Emo_ir.ety;
+          put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
+        args;
+      let conv =
+        match List.assoc_opt func env.fsigs with
+        | Some conv -> conv
+        | None -> dynamic_conv n
+      in
+      let label = fresh_label env "spawn_thunk" in
+      env.spawns <- (label, Spawn_def (func, conv)) :: env.spawns;
+      put env "    la a0, %s\n" label;
+      put env "    li a1, %d\n" n;
+      put env "    addi a2, sp, %d\n" (temp_offset env d);
+      call_runtime env "emo_spawn"
   | Closure { cparams; cbody } -> emit_closure_creation env d cparams cbody
   | Interpolate parts -> emit_interpolate env d parts
   | Tuple es -> emit_seq env d es tag_tuple
@@ -680,6 +772,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
+  | Builtin { name = "self_pid"; args = [] } ->
+      call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
          accesses alike; `fence` answers nothing, like `halt` *)
@@ -1803,8 +1897,61 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
           put env "    sd a0, 16(t0)\n")
   | Set_global_var _ -> refuse "module-level `var` assignment"
-  | Send _ -> refuse "send"
-  | Receive _ -> refuse "receive"
+  | Send { target; message } ->
+      (* the send boundary: the message snapshots in emo_send and the
+         sender yields — the call returns when this process is next
+         scheduled *)
+      emit_expr env 0 target;
+      put env "    sd a0, %d(sp)\n" (temp_offset env 0);
+      emit_expr env 1 message;
+      box_if_numeric env message.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" (temp_offset env 0);
+      call_runtime env "emo_send"
+  | Receive { branches } ->
+      (* the mailbox scan (T3.3): the index rides s0 — every helper is
+         ABI-clean and the switch saves the callee-saved set — the
+         candidate message stages in temp slot 0, the pattern machinery
+         uses slots 1 and 2, and guards evaluate at depth 3. The first
+         message a pattern and its guard accept dequeues; nothing
+         accepting anywhere parks the process and the scan restarts
+         from the oldest message on waking. *)
+      let msg_slot = temp_offset env 0 in
+      let l_test = fresh_label env "recv_scan" in
+      let l_park = fresh_label env "recv_park" in
+      let l_end = fresh_label env "recv_end" in
+      put env "    li s0, 0\n";
+      put env "%s:\n" l_test;
+      call_runtime env "emo_mb_count";
+      put env "    bgeu s0, a0, %s\n" l_park;
+      put env "    mv a0, s0\n";
+      call_runtime env "emo_mb_at";
+      put env "    sd a0, %d(sp)\n" msg_slot;
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          let l_next = fresh_label env "skip" in
+          emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
+          rec_pattern_bind env msg_slot b.Emo_ir.pattern;
+          (match b.Emo_ir.guard with
+          | Some g ->
+              emit_expr env 3 g;
+              put env "    andi t0, a0, 16\n";
+              put env "    beqz t0, %s\n" l_next
+          | None -> ());
+          (* accepted: the message leaves the mailbox, the body runs *)
+          put env "    mv a0, s0\n";
+          call_runtime env "emo_mb_remove";
+          List.iter (emit_stmt env) b.Emo_ir.body;
+          put env "    j %s\n" l_end;
+          put env "%s:\n" l_next)
+        branches;
+      put env "    addi s0, s0, 1\n";
+      put env "    j %s\n" l_test;
+      put env "%s:\n" l_park;
+      call_runtime env "emo_park_receive";
+      put env "    li s0, 0\n";
+      put env "    j %s\n" l_test;
+      put env "%s:\n" l_end
   | Raise _ -> refuse "raise"
   | While { cond; body; _ } ->
       let head = fresh_label env "loop" in
@@ -1856,7 +2003,6 @@ and describe_expr (e : Emo_ir.expr) : string =
   | List_new _ -> "List"
   | Builder_new -> "ArrayBuilder"
   | Make_exception _ -> "exceptions"
-  | Do_spawn _ | Spawn_value _ -> "processes (`spawn`)"
   | _ -> "this expression"
 
 (* ---- Function emission ---- *)
@@ -2156,6 +2302,17 @@ emo_runtime_init:
     la t0, emo_heap_start
     la t1, emo_heap_cursor
     sd t0, 0(t1)
+    # the process world (EmoOS T3.3): pid 1 is the root, running now on
+    # the boot stack; every other slot is free, the run queue empty
+    la t0, emo_pid_counter
+    li t1, 1
+    sd t1, 0(t0)
+    la t0, emo_cur_slot
+    la t1, emo_procs
+    sd t1, 0(t0)
+    li t2, 1
+    sd t2, 8(t1)            # the root's pid
+    sd t2, 16(t1)           # alive
     ret
 
     .globl emo_alloc
@@ -2810,6 +2967,8 @@ emo_eq_deep:
     beq t2, t0, .Leq_no
     li t0, 16
     beq t2, t0, .Leq_atomic
+    li t0, 18
+    beq t2, t0, .Leq_no
     j .Leq_inst
 .Leq_cell:
     ld t0, 8(s0)
@@ -3393,6 +3552,8 @@ emo_to_string:
     beq t0, t1, .Lts_f64
     li t1, 16
     beq t0, t1, .Lts_atomic
+    li t1, 18
+    beq t0, t1, .Lts_pid
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
@@ -3410,6 +3571,51 @@ emo_to_string:
     la a0, msg_atomic
     li a1, 8
     call emo_string_lit
+    j .Lts_done
+.Lts_pid:
+    # "<pid N>" — the hosted rendering
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_i64_to_string
+    andi t1, a0, -32
+    ld t2, 8(t1)            # the digits' length
+    addi sp, sp, -16
+    sd a0, 0(sp)
+    addi a0, t2, 6
+    call emo_alloc_string
+    ld t1, 0(sp)
+    addi sp, sp, 16
+    andi t0, a0, -32
+    andi t1, t1, -32
+    ld t2, 8(t1)
+    addi t3, t1, 16
+    addi t4, t0, 16
+    li t5, 60
+    sb t5, 0(t4)
+    li t5, 112
+    sb t5, 1(t4)
+    li t5, 105
+    sb t5, 2(t4)
+    li t5, 100
+    sb t5, 3(t4)
+    li t5, 32
+    sb t5, 4(t4)
+    addi t4, t4, 5
+.Lts_pid_copy:
+    beqz t2, .Lts_pid_tail
+    lbu t5, 0(t3)
+    sb t5, 0(t4)
+    addi t3, t3, 1
+    addi t4, t4, 1
+    addi t2, t2, -1
+    j .Lts_pid_copy
+.Lts_pid_tail:
+    li t5, 62
+    sb t5, 0(t4)
+    ld ra, 0(sp)            # this arm's own frame — .Lts_done pops only
+    addi sp, sp, 16         # the entry frame, so restore ours first
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -3924,6 +4130,18 @@ msg_false_end:
 msg_heap:
     .ascii "the value heap is exhausted"
 msg_heap_end:
+msg_blocked:
+    .ascii "all processes are blocked; no message will ever arrive"
+msg_blocked_end:
+msg_procs:
+    .ascii "the process table is exhausted"
+msg_procs_end:
+msg_noproc:
+    .ascii "a message was sent to a process that does not exist"
+msg_noproc_end:
+msg_mbox:
+    .ascii "a process mailbox is full"
+msg_mbox_end:
 msg_nan:
     .ascii "nan"
 msg_inf:
@@ -4001,6 +4219,466 @@ emo_atomic_mtbl:
     .quad name_fetch_xor, 9, emo_atomic_fetch_xor
     .quad name_to_string, 9, emo_to_string
     .quad 0, 0, 0
+
+# ---- Processes: green threads on the boot hart (EmoOS T3.3) ----
+#
+# The root process runs emo_program on the boot stack; every spawned
+# process owns one slot in emo_procs — its saved context, its pid, its
+# state word, and its bounded mailbox — and one stack in emo_pstacks.
+# The discipline is the hosted scheduler's: spawn does not yield; send
+# snapshots the message (the copy-on-send boundary), wakes a receiver
+# parked on it, and yields the sender; receive scans the mailbox
+# oldest-first, dequeues the first message its patterns accept, and
+# parks on no match; the root exiting ends the program; a switch with
+# nobody runnable is the loud deadlock.
+#
+# Slot layout (stride 40 words = 320 bytes): 0 the saved sp, 8 the pid,
+# 16 the state (0 free, 1 alive, 2 receiving, 3 done), 24 the mailbox
+# head, 32 the mailbox length, 40.. the 32-word mailbox ring. A slot
+# never returns to free — a pid is unique for the whole run, so a send
+# to a dead pid is dropped, never redirected to a new occupant.
+
+    .section .text
+
+# emo_runq_push: a0 = the slot; appends it to the run-queue ring.
+    .globl emo_runq_push
+emo_runq_push:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_runq_len
+    ld t1, 0(t0)
+    la t2, emo_runq_head
+    ld t3, 0(t2)
+    add t4, t3, t1
+    andi t4, t4, 63
+    slli t4, t4, 3
+    la t5, emo_runq
+    add t4, t4, t5
+    sd a0, 0(t4)
+    addi t1, t1, 1
+    sd t1, 0(t0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_schedule: the caller's slot state and the run queue are already
+# set (park = receiving and unqueued; yield = alive and enqueued). This
+# saves the current context into the current slot, picks the next
+# runnable, and switches. An empty queue is the loud deadlock — a wake
+# happens only in a send, whose sender stays runnable, so nobody can
+# ever arrive.
+    .globl emo_schedule
+emo_schedule:
+    addi sp, sp, -208
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    sd s6, 56(sp)
+    sd s7, 64(sp)
+    sd s8, 72(sp)
+    sd s9, 80(sp)
+    sd s10, 88(sp)
+    sd s11, 96(sp)
+    fsd fs0, 104(sp)
+    fsd fs1, 112(sp)
+    fsd fs2, 120(sp)
+    fsd fs3, 128(sp)
+    fsd fs4, 136(sp)
+    fsd fs5, 144(sp)
+    fsd fs6, 152(sp)
+    fsd fs7, 160(sp)
+    fsd fs8, 168(sp)
+    fsd fs9, 176(sp)
+    fsd fs10, 184(sp)
+    fsd fs11, 192(sp)
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    sd sp, 0(t1)
+    la t2, emo_runq_len
+    ld t3, 0(t2)
+    beqz t3, emo_deadlock
+    la t4, emo_runq_head
+    ld t5, 0(t4)
+    slli t6, t5, 3
+    la a0, emo_runq
+    add t6, t6, a0
+    ld a1, 0(t6)
+    addi t5, t5, 1
+    andi t5, t5, 63
+    sd t5, 0(t4)
+    addi t3, t3, -1
+    sd t3, 0(t2)
+    sd a1, 0(t0)
+    ld sp, 0(a1)
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    ld s6, 56(sp)
+    ld s7, 64(sp)
+    ld s8, 72(sp)
+    ld s9, 80(sp)
+    ld s10, 88(sp)
+    ld s11, 96(sp)
+    fld fs0, 104(sp)
+    fld fs1, 112(sp)
+    fld fs2, 120(sp)
+    fld fs3, 128(sp)
+    fld fs4, 136(sp)
+    fld fs5, 144(sp)
+    fld fs6, 152(sp)
+    fld fs7, 160(sp)
+    fld fs8, 168(sp)
+    fld fs9, 176(sp)
+    fld fs10, 184(sp)
+    fld fs11, 192(sp)
+    addi sp, sp, 208
+    ret
+emo_deadlock:
+    la a0, msg_blocked
+    la a1, msg_blocked_end
+    call emo_fail
+
+# emo_yield: the current process re-joins the run queue and gives the
+# hart away; it resumes here when the scheduler picks it again.
+    .globl emo_yield
+emo_yield:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld a0, 0(t0)
+    call emo_runq_push
+    call emo_schedule
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_park_receive: the current process waits for its mailbox; it
+# leaves the run queue, so only a send can put it back.
+    .globl emo_park_receive
+emo_park_receive:
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 2
+    sd t2, 16(t1)
+    j emo_schedule
+
+# emo_process_done: the entry thunk's return address — a spawned
+# process that falls off its body lands here and never comes back. The
+# root never does: its return goes to the boot stub, and the program
+# ends with it, the hosted semantics.
+    .globl emo_process_done
+emo_process_done:
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 3
+    sd t2, 16(t1)
+    j emo_schedule
+
+# emo_spawn: a0 = the entry thunk, a1 = the argument count, a2 = the
+# arguments (tagged words, copied into the child's fresh stack). The
+# child's first schedule "returns" into the thunk; the thunk jumps to
+# the body with ra = emo_process_done, so a returning body ends the
+# process. Answers the child's Pid.
+    .globl emo_spawn
+emo_spawn:
+    addi sp, sp, -40
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the entry thunk
+    sd a1, 16(sp)           # the argument count
+    sd a2, 24(sp)           # the arguments
+    # a free slot: state 0, never reused once used
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lspawn_scan:
+    bgeu t1, t2, .Lspawn_exhausted
+    li t3, 320
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    beqz t5, .Lspawn_found
+    addi t1, t1, 1
+    j .Lspawn_scan
+.Lspawn_exhausted:
+    la a0, msg_procs
+    la a1, msg_procs_end
+    call emo_fail
+.Lspawn_found:
+    mv t3, t4               # the slot; t3 keeps it through the bookkeeping
+    la t5, emo_pid_counter
+    ld t6, 0(t5)
+    addi t6, t6, 1
+    sd t6, 0(t5)
+    sd t6, 8(t3)            # the slot's pid
+    sd t6, 32(sp)           # it must survive the helper calls below
+    li t5, 1
+    sd t5, 16(t3)           # alive
+    # the child's stack: one switch-shaped frame whose ra is the entry
+    # thunk, the arguments just above it
+    addi t5, t1, 1
+    slli t5, t5, 16
+    la t6, emo_pstacks
+    add t5, t5, t6
+    addi t4, t5, -208
+    ld t0, 8(sp)
+    sd t0, 0(t4)            # ra = the entry thunk
+    sd t4, 0(t3)            # the slot's saved sp
+    # copy the arguments
+    ld t0, 16(sp)           # argc
+    ld t1, 24(sp)           # src
+    mv t2, t5               # dst
+    beqz t0, .Lspawn_copied
+.Lspawn_copy:
+    ld t6, 0(t1)
+    sd t6, 0(t2)
+    addi t0, t0, -1
+    addi t1, t1, 8
+    addi t2, t2, 8
+    bnez t0, .Lspawn_copy
+.Lspawn_copied:
+    mv a0, t3
+    call emo_runq_push
+    # the answer: [header][pid], the pointer tagged kind 9
+    li a0, 1
+    call emo_alloc
+    ld t1, 32(sp)
+    sd t1, 8(a0)
+    ori a0, a0, 18
+    ld ra, 0(sp)
+    addi sp, sp, 40
+    ret
+
+# emo_send: a0 = the target's Pid word, a1 = the message. The message
+# snapshots at the boundary (the copy-on-send rule; an Atomic shares
+# its cell), a full mailbox or an unknown pid is loud, a receiver gets
+# woken, and the sender yields — a send never runs on into the next
+# statement, the hosted discipline.
+    .globl emo_send
+emo_send:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the target word
+    sd a1, 16(sp)           # the message word
+    andi t0, a0, -32
+    ld t0, 8(t0)            # the pid number
+    la t1, emo_procs
+    li t2, 0
+    li t3, 64
+.Lsend_scan:
+    bgeu t2, t3, .Lsend_noproc
+    li t4, 320
+    mul t5, t2, t4
+    add t5, t1, t5
+    ld t6, 8(t5)
+    beq t6, t0, .Lsend_found
+    addi t2, t2, 1
+    j .Lsend_scan
+.Lsend_noproc:
+    la a0, msg_noproc
+    la a1, msg_noproc_end
+    call emo_fail
+.Lsend_found:
+    sd t5, 24(sp)           # the target slot
+    ld t5, 16(t5)
+    li t6, 3
+    beq t5, t6, .Lsend_drop
+    # snapshot the message at the boundary
+    ld a0, 16(sp)
+    call emo_copy_deep
+    sd a0, 32(sp)           # the copy
+    ld t4, 24(sp)           # the target slot
+    # into the target's mailbox ring: 32 words, oldest first
+    ld t0, 24(t4)           # head
+    ld t1, 32(t4)           # length
+    li t2, 32
+    bge t1, t2, .Lsend_full
+    add t3, t0, t1
+    andi t3, t3, 31
+    slli t3, t3, 3
+    addi t3, t3, 40
+    add t3, t4, t3
+    ld t5, 32(sp)
+    sd t5, 0(t3)
+    addi t1, t1, 1
+    sd t1, 32(t4)
+    # wake a receiver; a live-but-running target needs nothing
+    ld t5, 16(t4)
+    li t6, 2
+    bne t5, t6, .Lsend_drop
+    li t5, 1
+    sd t5, 16(t4)
+    mv a0, t4
+    call emo_runq_push
+.Lsend_drop:
+    # the yield: this process re-joins the run queue and the scheduler
+    # switches away — the call returns when the process is next
+    # scheduled, with its own frame still beneath the restored one
+    la t0, emo_cur_slot
+    ld a0, 0(t0)
+    call emo_runq_push
+    call emo_schedule
+    ld ra, 0(sp)
+    addi sp, sp, 48
+    ret
+.Lsend_full:
+    la a0, msg_mbox
+    la a1, msg_mbox_end
+    call emo_fail
+
+# The mailbox reads, on the current slot's ring. [0] is the oldest.
+    .globl emo_mb_count
+emo_mb_count:
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 32(t0)
+    ret
+
+    .globl emo_mb_at
+emo_mb_at:                      # a0 = the scan index; a0 = the word
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a0
+    andi t1, t1, 31
+    slli t1, t1, 3
+    addi t1, t1, 40
+    add t0, t0, t1
+    ld a0, 0(t0)
+    ret
+
+    .globl emo_mb_remove
+emo_mb_remove:                  # a0 = the scan index; removes it, shifts down
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a0
+    andi t1, t1, 31             # the position being removed
+    ld t3, 32(t0)
+    mv t2, a0
+.Lmb_rm_loop:
+    addi t4, t3, -1
+    bgeu t2, t4, .Lmb_rm_done
+    addi t5, t1, 1
+    andi t5, t5, 31             # the position after it
+    slli a1, t5, 3
+    addi a1, a1, 40
+    add a1, t0, a1
+    ld a2, 0(a1)                # ring[next]
+    slli a1, t1, 3
+    addi a1, a1, 40
+    add a1, t0, a1
+    sd a2, 0(a1)                # ring[j] = ring[next]
+    mv t1, t5
+    addi t2, t2, 1
+    j .Lmb_rm_loop
+.Lmb_rm_done:
+    ld t3, 32(t0)
+    addi t3, t3, -1
+    sd t3, 32(t0)
+    ret
+
+# emo_self_pid: a0 = the current process's Pid word.
+    .globl emo_self_pid
+emo_self_pid:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a1, 8(t0)                # a1 rides emo_alloc untouched
+    li a0, 1
+    call emo_alloc
+    sd a1, 8(a0)
+    ori a0, a0, 18
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_copy_deep: a0 = a dynamic value; a0 = the deep copy. The
+# copy-on-send boundary: a Box, a Tuple, an Array, or an instance
+# arrives as a fresh block with every nested value copied; an Atomic
+# shares its cell (the declared exception); an Int64 or Float64 cell,
+# a String, a closure, and a Pid pass as-is — immutable data or
+# identity, exactly the hosted snapshot's rule.
+    .globl emo_copy_deep
+emo_copy_deep:
+    addi sp, sp, -64
+    sd ra, 0(sp)                # 0 ra
+    sd a0, 8(sp)                # 8 the word
+    andi t0, a0, 1
+    bnez t0, .Lcd_asis
+    andi t0, a0, 31
+    sd t0, 48(sp)               # 48 the tag, back onto the fresh block
+    beqz t0, .Lcd_asis          # the Int64 cell
+    li t1, 2
+    beq t0, t1, .Lcd_asis       # the Float64 cell
+    li t1, 4
+    beq t0, t1, .Lcd_asis       # a String
+    li t1, 12
+    beq t0, t1, .Lcd_asis       # a closure
+    li t1, 16
+    beq t0, t1, .Lcd_asis       # an Atomic (the shared cell)
+    li t1, 18
+    beq t0, t1, .Lcd_asis       # a Pid (identity)
+    li t1, 10
+    beq t0, t1, .Lcd_box
+    # 6 Tuple, 8 Array, 14 instance: a fresh block, verbatim header and
+    # length/class word, every element or field copied
+    andi t2, a0, -32
+    sd t2, 24(sp)               # 24 the source block
+    ld t3, 0(t2)
+    sd t3, 32(sp)               # 32 the payload word count
+    mv a0, t3
+    call emo_alloc
+    sd a0, 16(sp)               # 16 the new word
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 0(t2)
+    sd t5, 0(t4)                # the header, verbatim
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the length or class id, verbatim
+    li t6, 2
+    sd t6, 40(sp)               # 40 the word index
+.Lcd_loop:
+    ld t2, 24(sp)
+    ld t3, 32(sp)
+    ld t6, 40(sp)
+    bgeu t6, t3, .Lcd_wrap
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a0, 0(t5)
+    call emo_copy_deep
+    ld t4, 16(sp)
+    andi t4, t4, -32
+    ld t6, 40(sp)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a0, 0(t5)
+    addi t6, t6, 1
+    sd t6, 40(sp)
+    j .Lcd_loop
+.Lcd_wrap:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2               # the fresh block wears the original's tag
+    j .Lcd_out
+.Lcd_box:
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_copy_deep
+    call emo_box_new
+.Lcd_asis:
+.Lcd_out:
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    ret
 |asm}
 
 (* One whole-program artifact at 0x80200000, the profile A entry
@@ -4066,6 +4744,31 @@ emo_heap_start:
 emo_heap_end:
     .globl emo_heap_cursor
 emo_heap_cursor:
+    .zero 8
+
+# ---- The process world (EmoOS T3.3): the slot table, the per-process
+# ---- stacks, and the run queue ----
+#
+# 64 slots at 320 bytes (context word, pid, state, mailbox head and
+# length, a 32-word mailbox ring), one 64 KiB stack per slot, and the
+# run-queue ring. A slot never returns to free — pids stay unique for
+# the whole run — so 64 is the bound on spawns ever taken, loud at the
+# ceiling. Everything here is NOBITS: the image carries none of it.
+
+    .align 8
+emo_procs:
+    .zero 20480
+emo_pstacks:
+    .zero 4194304
+emo_runq:
+    .zero 512
+emo_runq_head:
+    .zero 8
+emo_runq_len:
+    .zero 8
+emo_pid_counter:
+    .zero 8
+emo_cur_slot:
     .zero 8
 |asm}
 
@@ -4224,9 +4927,15 @@ and walk_stmt_enum env (s : Emo_ir.stmt) : unit =
           walk_pattern_enum env b.Emo_ir.pattern;
           walk_stmts_enum env b.Emo_ir.body)
         branches
-  (* Receive refuses at emission, so its branches never carry enum
-     members the program needs; the walk skips them. *)
-  | Receive _ -> ()
+  | Receive { branches } ->
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          (match b.Emo_ir.guard with
+          | Some g -> walk_expr_enum env g
+          | None -> ());
+          walk_pattern_enum env b.Emo_ir.pattern;
+          walk_stmts_enum env b.Emo_ir.body)
+        branches
   | Send { target; message } ->
       walk_expr_enum env target;
       walk_expr_enum env message
@@ -4334,6 +5043,7 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
             | None -> None)
           program.pfuncs;
       native = false;
+      spawns = [];
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -4404,6 +5114,46 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
         drain ()
   in
   drain ();
+  (* The spawn entry thunks (T3.3): the child's first schedule returns
+     into one; it hands the tagged words from the child's stack to the
+     callee — the psABI registers for a typed def, the dynamic words
+     with the closure record in t0 for a first-class block — and sets
+     ra so a returning body ends the process. *)
+  let emit_spawn_thunk (label, callee) =
+    gput env "%s:\n" label;
+    match callee with
+    | Spawn_def (fname, conv) ->
+        List.iteri
+          (fun i (k, reg) ->
+            let off = 8 * i in
+            match k with
+            | P_int64 ->
+                gput env "    ld a%d, %d(sp)\n" reg off;
+                gput env "    andi a%d, a%d, -32\n" reg reg;
+                gput env "    ld a%d, 8(a%d)\n" reg reg
+            | P_float64 ->
+                gput env "    ld t0, %d(sp)\n" off;
+                gput env "    andi t0, t0, -32\n";
+                gput env "    fld fa%d, 8(t0)\n" reg
+            | P_word -> gput env "    ld a%d, %d(sp)\n" reg off)
+          (bank_assign conv.cparams);
+        gput env "    la ra, emo_process_done\n";
+        gput env "    j %s\n" (func_label fname)
+    | Spawn_closure argc ->
+        gput env "    ld t0, 0(sp)\n";
+        gput env "    andi t0, t0, -32\n";
+        let rec go i =
+          if i <= argc then begin
+            gput env "    ld a%d, %d(sp)\n" (i - 1) (8 * i);
+            go (i + 1)
+          end
+        in
+        go 1;
+        gput env "    ld t2, 8(t0)\n";
+        gput env "    la ra, emo_process_done\n";
+        gput env "    jalr t2"
+  in
+  List.iter emit_spawn_thunk (List.rev env.spawns);
   (* Dispatch tables in .data: per-interface vtables (one slot per
      class), per-class field-name and method-name tables for the
      dynamic paths, and the per-class pointer tables the runtime

@@ -1,0 +1,8 @@
+42
+30
+5
+1
+bye got
+fresh got
+<pid 6>
+done

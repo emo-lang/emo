@@ -203,7 +203,14 @@ let requires_nothing source =
    `pipeline` runs four processes. Each runs end to end in test/emo_project
    instead, compiled and interpreted. *)
 let beyond_the_interpreter =
-  [ "numerics"; "file_read"; "pipeline"; "peek_poke"; "native_image" ]
+  [
+    "numerics";
+    "file_read";
+    "pipeline";
+    "peek_poke";
+    "native_image";
+    "processes";
+  ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
    end through the bare interpreter and prints its expected.txt. A
@@ -3032,29 +3039,18 @@ let riscv64_examples_tests =
       "peek_poke";
       "typed_calls";
       "native_image";
+      "processes";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that
    names the construct — the check itself rides the emitter's
-   Lower_error, so the text is asserted directly. *)
+   Lower_error, so the text is asserted directly. Processes left this
+   list at T3.3: spawn/send/receive lower to the green threads. *)
 let riscv64_refusal_tests =
   [
     tc "a map literal refuses with a clear diagnostic" (fun () ->
         let entry = scratch_entry "riscv-map" {|println({ "a": 1 })|} in
-        Alcotest.(check int)
-          "exit" 65
-          (build_entry ~target:"riscv64" entry
-             (Filename.concat (Filename.dirname entry) "out")));
-    tc "spawn refuses with a clear diagnostic" (fun () ->
-        let entry =
-          scratch_entry "riscv-spawn"
-            {|
-def work() {
-  println("nope")
-}
-do work()|}
-        in
         Alcotest.(check int)
           "exit" 65
           (build_entry ~target:"riscv64" entry
@@ -3104,12 +3100,6 @@ do work()|}
                   (contains message "does not support"
                   && contains message fragment))
           [
-            ( "processes",
-              {|def work() {
-  println("nope")
-}
-do work()|},
-              "spawn" );
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
           ]);
