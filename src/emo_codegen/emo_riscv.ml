@@ -135,6 +135,11 @@ type frame = {
   ret : string; (* the epilogue label *)
   mutable size : int; (* the frame size in bytes *)
   fconv : conv; (* this function's calling convention (T2.1) *)
+  mutable raw : (string * Emo_check.t) list;
+      (* in a native body (T2.2): the locals whose slots hold raw
+         Int64/Float64 payloads instead of tagged cells — typed params
+         and numeric-typed bindings; a pattern binding holds the tagged
+         scrutinee word and drops any name it rebinds *)
 }
 
 type class_info = {
@@ -171,6 +176,12 @@ type env = {
       (* mangled def name -> its typed calling convention; a name absent
          here (a method, a constructor, a closure, a dynamic-signature
          def) uses the dynamic convention (T2.1) *)
+  mutable native : bool;
+      (* emitting a typed body right now (T2.2): expressions follow the
+         representation rule — Int64 raw in a0, Float64 raw in fa0,
+         everything else the tagged word — and boxing happens only at
+         the escape points. Outside, the dynamic rule holds: everything
+         tagged in a0. *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -507,25 +518,86 @@ and collect_stmts (f : frame) (stmts : Emo_ir.stmt list) : unit =
 
 let call_runtime env name = put env "    call %s\n" name
 
+(* ---- The escape-point adapters (T2.2) ---- *)
+
+(* Typed → dynamic: a raw numeric value boxes into the tagged cell the
+   dynamic consumer reads. A no-op outside native bodies (where values
+   are tagged already) and on every other type (whose tagged word is
+   the value). Clobbers t0/ra through the helper — insert before the
+   spill, never over a live t0. *)
+let box_if_numeric env (t : Emo_check.t) : unit =
+  if env.native then
+    match t with
+    | Emo_check.Int64 -> call_runtime env "emo_box_i64"
+    | Emo_check.Float64 -> call_runtime env "emo_box_f64"
+    | _ -> ()
+
+(* Dynamic → typed: a dynamic producer left the tagged word in a0; the
+   raw numeric consumer reads the payload. *)
+let unbox_if_numeric env (t : Emo_check.t) : unit =
+  if env.native then
+    match t with
+    | Emo_check.Int64 ->
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n"
+    | Emo_check.Float64 ->
+        put env "    andi t0, a0, -32\n";
+        put env "    fld fa0, 8(t0)\n"
+    | _ -> ()
+
 let rec emit_expr env d (e : Emo_ir.expr) : unit =
   match e.Emo_ir.desc with
-  | Const (Emo_ast.L_int i) -> put env "    la a0, %s\n" (cell_label env i 0)
+  | Const (Emo_ast.L_int i) ->
+      (* native: the raw payload; dynamic: the static read-only cell *)
+      if env.native then put env "    li a0, %Ld\n" i
+      else put env "    la a0, %s\n" (cell_label env i 0)
   | Const (Emo_ast.L_bool b) ->
       put env "    li a0, %d\n" (if b then bool_true else bool_false)
   | Const (Emo_ast.L_char c) -> put env "    li a0, %d\n" (char_imm c)
   | Const (Emo_ast.L_byte n) -> put env "    li a0, %d\n" (byte_imm n)
   | Const (Emo_ast.L_float f) ->
-      put env "    la a0, %s\n"
-        (cell_label env (Int64.bits_of_float f) tag_float64);
-      put env "    ori a0, a0, %d\n" tag_float64
+      let cell = cell_label env (Int64.bits_of_float f) tag_float64 in
+      if env.native then begin
+        (* the raw bits into fa0, straight out of the read-only cell *)
+        put env "    la t0, %s\n" cell;
+        put env "    ld t0, 8(t0)\n";
+        put env "    fmv.d.x fa0, t0\n"
+      end
+      else begin
+        put env "    la a0, %s\n" cell;
+        put env "    ori a0, a0, %d\n" tag_float64
+      end
   | Const (Emo_ast.L_string s) ->
       let label = string_label env s in
       put env "    la a0, %s\n" label;
       put env "    li a1, %d\n" (String.length s);
       call_runtime env "emo_string_lit"
-  | Var name -> put env "    ld a0, %d(sp)\n" (slot_offset env name)
-  | Binary (op, l, r) -> emit_binary env d e.Emo_ir.ety op l r
-  | Unary (op, x) -> emit_unary env d e.Emo_ir.ety op x
+  | Var name -> (
+      let slot = slot_offset env name in
+      match env.cur with
+      (* Native bodies honor the representation rule on every read: a
+         raw local loads its payload; a tagged one — a pattern binding
+         holds the boxed scrutinee — unboxes here, so a raw Int64/Float64
+         reaches every consumer that trusts the rule. *)
+      | Some f when env.native ->
+          if List.mem_assoc name f.raw then
+            match List.assoc name f.raw with
+            | Emo_check.Float64 -> put env "    fld fa0, %d(sp)\n" slot
+            | _ -> put env "    ld a0, %d(sp)\n" slot
+          else (
+            match e.Emo_ir.ety with
+            | Emo_check.Int64 ->
+                put env "    ld a0, %d(sp)\n" slot;
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+            | Emo_check.Float64 ->
+                put env "    ld a0, %d(sp)\n" slot;
+                put env "    andi t0, a0, -32\n";
+                put env "    fld fa0, 8(t0)\n"
+            | _ -> put env "    ld a0, %d(sp)\n" slot)
+      | _ -> put env "    ld a0, %d(sp)\n" slot)
+  | Binary (op, l, r) -> emit_binary env d e.Emo_ir.ety ~boxed:(not env.native) op l r
+  | Unary (op, x) -> emit_unary env d e.Emo_ir.ety ~boxed:(not env.native) op x
   | Cond { c; t; e } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
@@ -549,7 +621,10 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       | Some conv -> emit_typed_call env d func conv args
       | None ->
           emit_args env d args;
-          put env "    call %s\n" (func_label func))
+          put env "    call %s\n" (func_label func);
+          (* a dynamic callee answers the tagged word; a raw numeric
+             consumer reads the payload *)
+          unbox_if_numeric env e.Emo_ir.ety)
   | Call_value { f; args } ->
       let fslot = temp_offset env d in
       emit_expr env (d + 1) f;
@@ -558,7 +633,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    ld t0, %d(sp)\n" fslot;
       put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
-      put env "    jalr t2\n"
+      put env "    jalr t2\n";
+      unbox_if_numeric env e.Emo_ir.ety
   | Closure { cparams; cbody } -> emit_closure_creation env d cparams cbody
   | Interpolate parts -> emit_interpolate env d parts
   | Tuple es -> emit_seq env d es tag_tuple
@@ -588,17 +664,20 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
           put env "    add t0, t0, t1\n";
           put env "    ld a0, 16(t0)\n")
   | Method { self_; name; args } ->
-      emit_method env d e.Emo_ir.ety self_ name args
+      emit_method env d e.Emo_ir.ety ~boxed:(not env.native) self_ name args
   | Make_enum { enum_name; member } ->
       put env "    li a0, %d\n" (enum_imm env enum_name member)
   | Box_new arg ->
       emit_expr env (d + 1) arg;
+      box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_box_new"
   | Atomic_new arg ->
       emit_expr env (d + 1) arg;
+      box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_atomic_new"
   | Builtin { name = "println"; args = [ arg ] } ->
       emit_expr env d arg;
+      box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
   | Builtin { name = "fence"; args = [] } ->
@@ -607,23 +686,31 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    fence rw, rw\n"
   | Builtin { name = "peek8"; args = [ addr ] } ->
       emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
       call_runtime env "emo_peek8"
   | Builtin { name = "peek64"; args = [ addr ] } ->
       emit_expr env (d + 1) addr;
-      call_runtime env "emo_peek64"
+      box_if_numeric env addr.Emo_ir.ety;
+      call_runtime env "emo_peek64";
+      (* the helper answers a boxed cell until T2.3 inlines the load *)
+      unbox_if_numeric env e.Emo_ir.ety
   | Builtin { name = "poke8"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
       emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" addr_slot;
       emit_expr env (d + 1) value;
+      box_if_numeric env value.Emo_ir.ety;
       put env "    mv a1, a0\n";
       put env "    ld a0, %d(sp)\n" addr_slot;
       call_runtime env "emo_poke8"
   | Builtin { name = "poke64"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
       emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" addr_slot;
       emit_expr env (d + 1) value;
+      box_if_numeric env value.Emo_ir.ety;
       put env "    mv a1, a0\n";
       put env "    ld a0, %d(sp)\n" addr_slot;
       call_runtime env "emo_poke64"
@@ -633,7 +720,9 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | _ -> refuse (describe_expr e)
 
 (* Evaluate the args, each spilled to its own slot first — later args
-   may call over earlier results — then load them into a[from].. *)
+   may call over earlier results — then load them into a[from].. A raw
+   numeric arg boxes first: these registers feed dynamic callees, whose
+   tagged-word contract is the escape point. *)
 and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
   if from + List.length args > 8 then
     refuse "a call with more than eight arguments";
@@ -641,6 +730,7 @@ and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
     (fun i arg ->
       let spill = temp_offset env (d + i) in
       emit_expr env (d + List.length args) arg;
+      box_if_numeric env arg.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" spill)
     args;
   List.iteri
@@ -653,11 +743,15 @@ and emit_args env d (args : Emo_ir.expr list) : unit =
 
 (* ---- The typed-convention adapters (T2.1) ----
 
-   The caller side: args evaluate left to right as tagged words, each
-   spilled to its own temp slot (later args may call over earlier
-   results), then the registers fill from the slots — an Int64 or
-   Float64 arg unboxes into its bank register, every other arg loads
-   its tagged word — and a raw result boxes back into a0. *)
+   The caller side. Dynamic context: args evaluate left to right as
+   tagged words, each spilled to its own temp slot (later args may call
+   over earlier results), then the registers fill from the slots — an
+   Int64 or Float64 arg unboxes into its bank register, every other arg
+   loads its tagged word — and a raw result boxes back into a0.
+   Native context (T2.2): the args already hold their rule-1
+   representations (raw Int64 in a0, raw Float64 in fa0, tagged
+   otherwise), so spill and fill are plain moves — the boundary
+   disappears. *)
 
 and emit_typed_regs env d (kinds : param_kind list) : unit =
   List.iteri
@@ -675,6 +769,15 @@ and emit_typed_regs env d (kinds : param_kind list) : unit =
           put env "    fld fa%d, 8(t0)\n" reg)
     (bank_assign kinds)
 
+and emit_typed_regs_native env d (kinds : param_kind list) : unit =
+  List.iteri
+    (fun i (k, reg) ->
+      let spill = temp_offset env (d + i) in
+      match k with
+      | P_float64 -> put env "    fld fa%d, %d(sp)\n" reg spill
+      | _ -> put env "    ld a%d, %d(sp)\n" reg spill)
+    (bank_assign kinds)
+
 and emit_box_result env (r : result_kind) : unit =
   match r with
   | R_int64 -> call_runtime env "emo_box_i64"
@@ -682,7 +785,9 @@ and emit_box_result env (r : result_kind) : unit =
   | R_word | R_void -> ()
 
 (* The callee side, at the return label: the dynamic body leaves the
-   tagged result in a0; a typed result unboxes to its raw register. *)
+   tagged result in a0; a typed result unboxes to its raw register.
+   Only dynamic bodies run this — a native body already holds the rule-1
+   representation. *)
 and emit_unbox_result env (r : result_kind) : unit =
   match r with
   | R_int64 ->
@@ -697,23 +802,39 @@ and emit_typed_call env d (func : string) (conv : conv)
     (args : Emo_ir.expr list) : unit =
   if List.length args > 8 then refuse "a call with more than eight arguments";
   let n = List.length args in
-  List.iteri
-    (fun i arg ->
-      let spill = temp_offset env (d + i) in
-      emit_expr env (d + n) arg;
-      put env "    sd a0, %d(sp)\n" spill)
-    args;
-  emit_typed_regs env d conv.cparams;
-  put env "    call %s\n" (func_label func);
-  emit_box_result env conv.cresult
+  if env.native then begin
+    List.iteri
+      (fun i arg ->
+        let spill = temp_offset env (d + i) in
+        emit_expr env (d + n) arg;
+        match arg.Emo_ir.ety with
+        | Emo_check.Float64 -> put env "    fsd fa0, %d(sp)\n" spill
+        | _ -> put env "    sd a0, %d(sp)\n" spill)
+      args;
+    emit_typed_regs_native env d conv.cparams;
+    put env "    call %s\n" (func_label func)
+  end
+  else begin
+    List.iteri
+      (fun i arg ->
+        let spill = temp_offset env (d + i) in
+        emit_expr env (d + n) arg;
+        put env "    sd a0, %d(sp)\n" spill)
+      args;
+    emit_typed_regs env d conv.cparams;
+    put env "    call %s\n" (func_label func);
+    emit_box_result env conv.cresult
+  end
 
-(* A Tuple or Array literal: the elements evaluate first (each spilled),
-   then one block is allocated and filled. *)
+(* A Tuple or Array literal: the elements evaluate first (each spilled —
+   boxed at the container boundary first), then one block is allocated
+   and filled. *)
 and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
   let n = List.length es in
   List.iteri
     (fun i el ->
       emit_expr env (d + n) el;
+      box_if_numeric env el.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     es;
   put env "    li a0, %d\n" (n + 1);
@@ -733,6 +854,7 @@ and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   put env "    andi a0, a0, -32\n";
   put env "    sd a0, %d(sp)\n" spill;
   emit_expr env (d + 1) i;
+  box_if_numeric env i.Emo_ir.ety;
   put env "    andi a0, a0, -32\n";
   put env "    ld t2, 8(a0)\n";
   put env "    ld t0, %d(sp)\n" spill;
@@ -751,30 +873,35 @@ and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   call_runtime env "emo_fail";
   put env "%s:\n" l_ok
 
-and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
-    (r : Emo_ir.expr) : unit =
+and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
+    (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let bool_of_t0 () =
     put env "    slli t0, t0, 4\n    addi t0, t0, 1\n    mv a0, t0\n"
   in
   (* Comparisons key on the operand type (their own result is Bool). *)
   let ty = if ty = Emo_check.Bool then l.Emo_ir.ety else ty in
   (* A dynamic operand: the runtime dispatches on the values (the c
-     target's emo_*_dyn family). *)
+     target's emo_*_dyn family). A raw numeric operand boxes at the
+     dynamic boundary — the helper reads tagged words. *)
   if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then
     match op with
     | Emo_ast.Eq | Emo_ast.Ne ->
         emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    ld a1, %d(sp)\n" spill;
         call_runtime env "emo_eq_deep";
         if op = Emo_ast.Ne then put env "    xori a0, a0, 16\n"
     | Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul ->
         emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         let helper =
@@ -790,9 +917,11 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
           if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
         in
         emit_expr env (d + 1) a;
+        box_if_numeric env a.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) b;
+        box_if_numeric env b.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env
@@ -819,7 +948,7 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         in
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        if boxed then put env "    call emo_box_i64\n"
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
         Emo_check.Byte ) ->
@@ -871,7 +1000,7 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    %s t0, t0, t1\n"
           (if op = Emo_ast.Div then "div" else "rem");
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        if boxed then put env "    call emo_box_i64\n"
     | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Byte ->
         (* unsigned, and the divisor is checked first — the Int64 arm's
            discipline *)
@@ -897,7 +1026,7 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
           | _ -> assert false
         in
         put env "    %s fa0, fa0, fa1\n" mnemonic;
-        put env "    call emo_box_f64\n"
+        if boxed then put env "    call emo_box_f64\n"
     | Emo_ast.Add, Emo_check.String ->
         emit_expr env (d + 1) l;
         let spill = temp_offset env d in
@@ -995,17 +1124,27 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
 
 (* Unbox both operands of an Int64 binary: the left payload spills to
    this depth's slot while the right evaluates one deeper. Leaves the
-   payloads in t0 (left) and t1 (right). *)
+   payloads in t0 (left) and t1 (right). A native body's operands are
+   raw already — the pair is plain moves. *)
 and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -32\n";
-  put env "    ld t0, 8(a0)\n";
-  put env "    sd t0, %d(sp)\n" spill;
+  if env.native then put env "    sd a0, %d(sp)\n" spill
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    ld t0, 8(a0)\n";
+    put env "    sd t0, %d(sp)\n" spill
+  end;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -32\n";
-  put env "    ld t1, 8(a0)\n";
-  put env "    ld t0, %d(sp)\n" spill
+  if env.native then begin
+    put env "    mv t1, a0\n";
+    put env "    ld t0, %d(sp)\n" spill
+  end
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    ld t1, 8(a0)\n";
+    put env "    ld t0, %d(sp)\n" spill
+  end
 
 (* The Byte twin: immediates both, so decoding is a shift. Leaves the
    payloads in t0 (left) and t1 (right). *)
@@ -1020,41 +1159,61 @@ and emit_byte_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
 
 (* The Float64 twin: payloads ride fa0/fa1. Field reads untag first —
    every heap access runs on the untagged pointer (Int64's tag is 0 and
-   hides any slip, so the discipline is checked on the float paths). *)
+   hides any slip, so the discipline is checked on the float paths).
+   Native: the operands are raw in fa0 already, so the left spill is an
+   fsd and the right lands in fa0 via a register move. *)
 and emit_float_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -32\n";
-  put env "    fld fa0, 8(a0)\n";
-  put env "    fsd fa0, %d(sp)\n" spill;
+  if env.native then put env "    fsd fa0, %d(sp)\n" spill
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    fld fa0, 8(a0)\n";
+    put env "    fsd fa0, %d(sp)\n" spill
+  end;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -32\n";
-  put env "    fld fa1, 8(a0)\n";
-  put env "    fld fa0, %d(sp)\n" spill
+  if env.native then begin
+    put env "    fmv.d fa1, fa0\n";
+    put env "    fld fa0, %d(sp)\n" spill
+  end
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    fld fa1, 8(a0)\n";
+    put env "    fld fa0, %d(sp)\n" spill
+  end
 
-and emit_unary env d (ty : Emo_check.t) (op : Emo_ast.unop) (x : Emo_ir.expr) :
-    unit =
+and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
+    (x : Emo_ir.expr) : unit =
   match (op, ty) with
   | Emo_ast.Neg, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -32\n";
-      put env "    ld t0, 8(a0)\n";
-      put env "    sub t0, x0, t0\n";
-      put env "    mv a0, t0\n";
-      put env "    call emo_box_i64\n"
+      if not boxed then put env "    sub a0, x0, a0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t0, 8(a0)\n";
+        put env "    sub t0, x0, t0\n";
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+      end
   | Emo_ast.Neg, Emo_check.Float64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -32\n";
-      put env "    fld fa0, 8(a0)\n";
-      put env "    fneg.d fa0, fa0\n";
-      put env "    call emo_box_f64\n"
+      if not boxed then put env "    fneg.d fa0, fa0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    fld fa0, 8(a0)\n";
+        put env "    fneg.d fa0, fa0\n";
+        put env "    call emo_box_f64\n"
+      end
   | Emo_ast.Bit_not, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -32\n";
-      put env "    ld t0, 8(a0)\n";
-      put env "    not t0, t0\n";
-      put env "    mv a0, t0\n";
-      put env "    call emo_box_i64\n"
+      if not boxed then put env "    not a0, a0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t0, 8(a0)\n";
+        put env "    not t0, t0\n";
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+      end
   | Emo_ast.Bit_not, Emo_check.Byte ->
       emit_expr env d x;
       put env "    srli t0, a0, 4\n";
@@ -1074,6 +1233,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   List.iteri
     (fun i part ->
       emit_expr env (d + k) part;
+      box_if_numeric env part.Emo_ir.ety;
       call_runtime env "emo_to_string";
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     parts;
@@ -1110,6 +1270,14 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
   List.iteri
     (fun i name ->
       put env "    ld a0, %d(sp)\n" (slot_offset env name);
+      (* the record holds tagged words: a captured raw local boxes at
+         the capture — the closure boundary is an escape point *)
+      (match env.cur with
+      | Some f when env.native -> (
+          match List.assoc_opt name f.raw with
+          | Some t -> box_if_numeric env t
+          | None -> ())
+      | _ -> ());
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     caps;
   put env "    li a0, %d\n" (1 + k);
@@ -1130,8 +1298,8 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
 
 (* ---- Method dispatch ---- *)
 
-and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
-    (args : Emo_ir.expr list) : unit =
+and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
+    (name : string) (args : Emo_ir.expr list) : unit =
   (* `is` takes a type reference, not a value. *)
   match (name, args) with
   | "is", [ { Emo_ir.desc = Type_ref target; _ } ] -> (
@@ -1163,6 +1331,7 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
          runs loudly: 0–255 or the named failure — the mask the c
          target applies silently is not the rule here *)
       emit_expr env (d + 1) x;
+      box_if_numeric env x.Emo_ir.ety;
       put env "    andi a0, a0, -32\n";
       put env "    ld t0, 8(a0)\n";
       put env "    li t1, -256\n";
@@ -1182,22 +1351,28 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               emit_expr env d self_;
               put env "    srli a0, a0, 4\n";
               put env "    andi a0, a0, 255\n";
-              put env "    call emo_box_i64\n"
+              if boxed then put env "    call emo_box_i64\n"
           | "to_string", [] ->
               emit_expr env d self_;
               call_runtime env "emo_to_string"
           | _ -> refuse (Printf.sprintf "the Byte method `%s`" name))
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
-          put env "    andi a0, a0, -32\n";
-          put env "    ld a0, 8(a0)\n";
+          if not boxed then ()
+          else begin
+            put env "    andi a0, a0, -32\n";
+            put env "    ld a0, 8(a0)\n"
+          end;
           call_runtime env "emo_i64_to_string"
       | Emo_check.Int64 when name = "to_byte" && args = [] ->
           (* the low eight bits, the family's rule *)
           emit_expr env d self_;
-          put env "    andi a0, a0, -32\n";
-          put env "    ld t0, 8(a0)\n";
-          put env "    andi t0, t0, 255\n";
+          if boxed then begin
+            put env "    andi a0, a0, -32\n";
+            put env "    ld t0, 8(a0)\n";
+            put env "    andi t0, t0, 255\n"
+          end
+          else put env "    andi t0, a0, 255\n";
           put env "    slli a0, t0, 4\n";
           put env "    ori a0, a0, 7\n"
       | Emo_check.BoxType _ -> (
@@ -1205,12 +1380,16 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
           | "read", [] ->
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
-              put env "    ld a0, 8(a0)\n"
+              put env "    ld a0, 8(a0)\n";
+              (* the cell holds the tagged word; a raw numeric consumer
+                 reads the payload *)
+              if not boxed then unbox_if_numeric env ty
           | "replace", [ v ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) v;
+              box_if_numeric env v.Emo_ir.ety;
               put env "    ld t0, %d(sp)\n" self_slot;
               put env "    andi t0, t0, -32\n";
               put env "    sd a0, 8(t0)\n";
@@ -1241,7 +1420,8 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
-              call_runtime env helper
+              call_runtime env helper;
+              if not boxed then unbox_if_numeric env ty
           | None -> refuse (Printf.sprintf "the Atomic method `%s`" name))
       | Emo_check.ArrayType _ -> (
           match (name, args) with
@@ -1249,12 +1429,14 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
-              put env "    call emo_box_i64\n"
+              if boxed then put env "    call emo_box_i64\n"
           | "append", [ x ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) x;
+              box_if_numeric env x.Emo_ir.ety;
+              put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1));
               put env "    ld a1, %d(sp)\n" (temp_offset env (d + 1));
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_array_append"
@@ -1268,7 +1450,10 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
-              put env "    call %s\n" (func_label mangled)
+              put env "    call %s\n" (func_label mangled);
+              (* the callee is a dynamic-convention body: its tagged
+                 result crosses back through the boundary *)
+              if not boxed then unbox_if_numeric env ty
           | None ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display))
       | Emo_check.InterfaceType display -> (
@@ -1290,7 +1475,8 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    slli t1, t1, 3\n";
               put env "    add t2, t2, t1\n";
               put env "    ld t2, 0(t2)\n";
-              put env "    jalr t2\n"
+              put env "    jalr t2\n";
+              if not boxed then unbox_if_numeric env ty
           | Some _ ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display)
           | None -> refuse (Printf.sprintf "the interface `%s`" display))
@@ -1312,6 +1498,7 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
           List.iteri
             (fun i arg ->
               emit_expr env (d + 1 + List.length args) arg;
+              box_if_numeric env arg.Emo_ir.ety;
               put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
             args;
           put env "    ld a0, %d(sp)\n" self_slot;
@@ -1351,9 +1538,14 @@ and emit_tail env (e : Emo_ir.expr) : bool =
             (fun i arg ->
               let spill = temp_offset env i in
               emit_expr env n arg;
-              put env "    sd a0, %d(sp)\n" spill)
+              if env.native then
+                match arg.Emo_ir.ety with
+                | Emo_check.Float64 -> put env "    fsd fa0, %d(sp)\n" spill
+                | _ -> put env "    sd a0, %d(sp)\n" spill
+              else put env "    sd a0, %d(sp)\n" spill)
             args;
-          emit_typed_regs env 0 conv.cparams;
+          if env.native then emit_typed_regs_native env 0 conv.cparams
+          else emit_typed_regs env 0 conv.cparams;
           let f = frame () in
           put env "    ld ra, 0(sp)\n";
           put env "    addi sp, sp, %d\n" f.size;
@@ -1450,6 +1642,11 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
   match p.Emo_ast.pattern_desc with
   | Emo_ast.Wildcard | Emo_ast.Pattern_literal _ | Emo_ast.Enum_member _ -> ()
   | Emo_ast.Pattern_binding n ->
+      (* the bound word is tagged (the scrutinee boxed at the case); a
+         native body must not read the name as a raw numeric local *)
+      (match env.cur with
+      | Some f when env.native -> f.raw <- List.remove_assoc n f.raw
+      | _ -> ());
       put env "    ld t0, %d(sp)\n" src_off;
       put env "    sd t0, %d(sp)\n" (slot_offset env n)
   | Emo_ast.Tuple_pattern ps ->
@@ -1467,10 +1664,34 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Effect e -> emit_expr env 0 e
   | Let { name; init; _ } ->
       emit_expr env 0 init;
-      put env "    sd a0, %d(sp)\n" (slot_offset env name)
+      (match env.cur with
+      | Some f when env.native -> (
+          match init.Emo_ir.ety with
+          | Emo_check.Float64 ->
+              f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
+              put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
+          | Emo_check.Int64 ->
+              f.raw <- (name, Emo_check.Int64) :: List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+          | _ ->
+              f.raw <- List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
   | Assign_var { name; value } ->
       emit_expr env 0 value;
-      put env "    sd a0, %d(sp)\n" (slot_offset env name)
+      (match env.cur with
+      | Some f when env.native -> (
+          match value.Emo_ir.ety with
+          | Emo_check.Float64 ->
+              f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
+              put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
+          | Emo_check.Int64 ->
+              f.raw <- (name, Emo_check.Int64) :: List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+          | _ ->
+              f.raw <- List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
   | If { cond; then_; else_ } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
@@ -1485,6 +1706,10 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Case { scrutinee; branches } ->
       let scrut_slot = temp_offset env 0 in
       emit_expr env 3 scrutinee;
+      (* the pattern tests read the tagged word: a raw numeric
+         scrutinee boxes at the case boundary, and any binding the
+         patterns make holds tagged words *)
+      box_if_numeric env scrutinee.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" scrut_slot;
       let l_end = fresh_label env "case_end" in
       List.iter
@@ -1521,6 +1746,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_expr env 1 self_;
       put env "    sd a0, %d(sp)\n" self_slot;
       emit_expr env 1 value;
+      box_if_numeric env value.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" (temp_offset env 1);
       put env "    ld t0, %d(sp)\n" self_slot;
       match self_.Emo_ir.ety with
@@ -1614,8 +1840,11 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   let hit = fresh_label env "const_hit" in
   (* a const thunk adopts its signature's convention (T2.1): the memo
      slot holds the raw result, and every reader — a call site keyed on
-     the thunk's signature — boxes it back *)
+     the thunk's signature — boxes it back. A fully typed thunk's body
+     is native (T2.2): the initializer computes the raw result
+     directly. *)
   let conv = match conv_of f with Some c -> c | None -> dynamic_conv 0 in
+  let native = match conv_of f with Some _ -> true | None -> false in
   let frm =
     {
       fbuf = Buffer.create 512;
@@ -1625,9 +1854,11 @@ let emit_const_function env (f : Emo_ir.func) : unit =
       ret = store;
       size = 0;
       fconv = conv;
+      raw = [];
     }
   in
   env.cur <- Some frm;
+  env.native <- native;
   collect_stmts frm f.Emo_ir.fbody;
   frm.temps <- stmts_depth f.Emo_ir.fbody + 2;
   frm.size <- (8 + (8 * (frm.named + frm.temps)) + 15) / 16 * 16;
@@ -1647,13 +1878,19 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   put env "    la t2, %s\n" val_label;
   (match conv.cresult with
   | R_int64 ->
-      put env "    andi a0, a0, -32\n";
-      put env "    ld a0, 8(a0)\n";
-      put env "    sd a0, 0(t2)\n"
+      if native then put env "    sd a0, 0(t2)\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n";
+        put env "    sd a0, 0(t2)\n"
+      end
   | R_float64 ->
-      put env "    andi t0, a0, -32\n";
-      put env "    fld fa0, 8(t0)\n";
-      put env "    fsd fa0, 0(t2)\n"
+      if native then put env "    fsd fa0, 0(t2)\n"
+      else begin
+        put env "    andi t0, a0, -32\n";
+        put env "    fld fa0, 8(t0)\n";
+        put env "    fsd fa0, 0(t2)\n"
+      end
   | R_word | R_void -> put env "    sd a0, 0(t2)\n");
   put env "    li t1, 1\n";
   put env "    la t0, %s\n" done_label;
@@ -1675,12 +1912,16 @@ let emit_const_function env (f : Emo_ir.func) : unit =
    captures into its own slots at entry. The convention (T2.1) drives
    the prologue and epilogue: a dynamic conv is all P_word/R_word, so
    it emits exactly the old shape; a typed conv spills each raw param
-   to its slot, then — after the captures, whose record rides in t0 —
-   boxes the Int64/Float64 params in place for the dynamic body, and
-   unboxes the tagged result at the return label. *)
+   to its slot. A native body (T2.2 — a fully typed def) stops there:
+   the params stay raw, the locals and arithmetic stay raw, and the
+   result answers in its rule-1 representation — no adapters at all. A
+   dynamic body boxes its raw numeric params in place (after the
+   captures, whose record rides in t0 — the boxing calls clobber the
+   argument registers) and unboxes the tagged result at the return
+   label. *)
 let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
-    ~(captures : string list) ~(conv : conv) ~(body : Emo_ir.stmt list) : unit
-    =
+    ~(captures : string list) ~(conv : conv) ~(native : bool)
+    ~(body : Emo_ir.stmt list) : unit =
   if List.length params > 8 then refuse "a def with more than eight parameters";
   let f =
     {
@@ -1691,6 +1932,7 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       ret = fresh_label env "ret";
       size = 0;
       fconv = conv;
+      raw = [];
     }
   in
   let nparams = List.length params in
@@ -1698,7 +1940,17 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
     List.mapi (fun i (n, _) -> (n, i)) params
     @ List.mapi (fun i n -> (n, nparams + i)) captures;
   f.named <- nparams + List.length captures;
+  (* a native body's typed numeric params hold raw payloads *)
+  if native then
+    f.raw <-
+      List.filter_map
+        (fun (n, t) ->
+          match t with
+          | Emo_check.Int64 | Emo_check.Float64 -> Some (n, t)
+          | _ -> None)
+        params;
   env.cur <- Some f;
+  env.native <- native;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
   f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
@@ -1719,27 +1971,29 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       gput env "    ld t1, %d(t0)\n" (16 + (8 * i));
       gput env "    sd t1, %d(sp)\n" (8 + (8 * (nparams + i))))
     captures;
-  (* the boundary adapter's entry half: box each raw numeric param into
-     the cell the dynamic body reads *)
-  List.iteri
-    (fun i k ->
-      let off = 8 + (8 * i) in
-      match k with
-      | P_int64 ->
-          gput env "    ld a0, %d(sp)\n" off;
-          gput env "    call emo_box_i64\n";
-          gput env "    sd a0, %d(sp)\n" off
-      | P_float64 ->
-          gput env "    fld fa0, %d(sp)\n" off;
-          gput env "    call emo_box_f64\n";
-          gput env "    sd a0, %d(sp)\n" off
-      | P_word -> ())
-    conv.cparams;
+  (* the dynamic body's entry adapter: box each raw numeric param into
+     the cell the body reads *)
+  if not native then
+    List.iteri
+      (fun i k ->
+        let off = 8 + (8 * i) in
+        match k with
+        | P_int64 ->
+            gput env "    ld a0, %d(sp)\n" off;
+            gput env "    call emo_box_i64\n";
+            gput env "    sd a0, %d(sp)\n" off
+        | P_float64 ->
+            gput env "    fld fa0, %d(sp)\n" off;
+            gput env "    call emo_box_f64\n";
+            gput env "    sd a0, %d(sp)\n" off
+        | P_word -> ())
+      conv.cparams;
   List.iter (emit_stmt env) body;
   (* Fall-off: the statement walk already left a final expression
-     statement's value in a0; a Void body just returns. *)
+     statement's value in a0 (fa0 for a Float64-typed fall-off in a
+     native body); a Void body just returns. *)
   put env "%s:\n" f.ret;
-  emit_unbox_result env conv.cresult;
+  if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   put env "    addi sp, sp, %d\n" f.size;
   put env "    ret\n";
@@ -1770,6 +2024,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
       ret = fresh_label env "ret";
       size = 0;
       fconv = dynamic_conv (List.length real_params + 1);
+      raw = [];
     }
   in
   let nparams = List.length real_params in
@@ -1777,6 +2032,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
     List.mapi (fun i (n, _) -> (n, i)) real_params @ [ ("self", nparams) ];
   f.named <- nparams + 1;
   env.cur <- Some f;
+  env.native <- false;
   env.fclass <- Some c.Emo_ir.cdisplay;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
@@ -3731,13 +3987,14 @@ SECTIONS
 
 (* The stack (1 MiB) and the value heap live in .bss — NOBITS, so
    neither weighs on the image; the entry stub clears the region
-   before first use, and the heap cursor sits past the heap's end. The
-   heap is 96 MiB (EmoOS T2.1): the typed calling convention's
-   boundary adapters allocate — an entry box per Int64/Float64 param,
-   a box per raw result — until T2.2's typed bodies melt them away,
-   and `examples/fib`'s `count_down(1000000)` rides ~61 MiB of them on
-   top of fib's own cells, past the old 64 MiB end. QEMU virt's
-   default 128 MiB still holds it all with room to spare. *)
+   before first use, and the heap cursor sits past the heap's end.
+   The heap is 96 MiB: T2.1's boundary adapters forced the growth from
+   64 (a typed call in a dynamic body allocated on both sides), and
+   T2.2's native bodies closed that window — `examples/fib`'s
+   `count_down(1000000)` now runs its recursion allocation-free — but
+   the headroom stays: dynamic bodies still box per operation, and the
+   bump's exhaustion is loud by design. QEMU virt's default 128 MiB
+   holds it all with room to spare. *)
 let stack_asm =
   {asm|
 # ---- The stack and the value heap: .bss, cleared by the entry stub ----
@@ -4018,6 +4275,7 @@ let emit (program : Emo_ir.program) : string =
             | Some conv -> Some (f.Emo_ir.fname, conv)
             | None -> None)
           program.pfuncs;
+      native = false;
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -4041,6 +4299,7 @@ let emit (program : Emo_ir.program) : string =
         begin if f.fparams = [] && List.mem f.fname !const_thunks then
           emit_const_function env f
         else
+          let native = match conv_of f with Some _ -> true | None -> false in
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
             ~params:f.fparams ~captures:[]
@@ -4048,7 +4307,7 @@ let emit (program : Emo_ir.program) : string =
               (match conv_of f with
               | Some conv -> conv
               | None -> dynamic_conv (List.length f.fparams))
-            ~body:f.fbody
+            ~native ~body:f.fbody
         end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
@@ -4063,13 +4322,13 @@ let emit (program : Emo_ir.program) : string =
             ~label:(func_label m.Emo_ir.fname)
             ~params:m.Emo_ir.fparams ~captures:[]
             ~conv:(dynamic_conv (List.length m.Emo_ir.fparams))
-            ~body:m.Emo_ir.fbody;
+            ~native:false ~body:m.Emo_ir.fbody;
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
   emit_function env ~label:"emo_program"
     ~params:([] : (string * Emo_check.t) list)
-    ~captures:[] ~conv:(dynamic_conv 0) ~body:program.pinit;
+    ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~body:program.pinit;
   (* Closure bodies queued during emission may queue more. *)
   let rec drain () =
     match env.deferred with
@@ -4078,7 +4337,7 @@ let emit (program : Emo_ir.program) : string =
         env.deferred <- rest;
         emit_function env ~label ~params:cparams ~captures:caps
           ~conv:(dynamic_conv (List.length cparams))
-          ~body:cbody;
+          ~native:false ~body:cbody;
         drain ()
   in
   drain ();

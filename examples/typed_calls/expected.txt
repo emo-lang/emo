@@ -17,4 +17,7 @@ n=42
 12
 22
 25
+zero
+one
+many:42
 hi, emo

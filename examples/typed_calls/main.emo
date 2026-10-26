@@ -104,6 +104,21 @@ def bumped(c Counter) Int64 {
 
 println(bumped(c))
 
+// a case inside a native body: the scrutinee boxes at the case, the
+// binding holds the tagged word, and its read unboxes — the shape that
+// once double-boxed and printed a pointer
+def verdict(n Int64) String {
+  case n {
+    0 -> { return "zero" }
+    1 -> { return "one" }
+    m -> { return "many:${m}" }
+  }
+}
+
+println(verdict(0))
+println(verdict(1))
+println(verdict(42))
+
 const greet = -> (name String) {
   return "hi, ${name}"
 }
