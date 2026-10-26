@@ -66,7 +66,7 @@ $ ./run.sh
 | --- | --- | --- |
 | M1 — Bare-metal bring-up | freestanding image boots, prints through the SBI console | complete |
 | S1 — Memory primitives | atomics + volatile `peek`/`poke` + `fence`, all targets | complete |
-| S2 — riscv64 Stage B | typed calling convention, escape-point boxing | — |
+| S2 — riscv64 Stage B | typed calling convention, escape-point boxing | complete |
 | M2 — Cooperative kernel | processes on metal, scheduler, interrupt-driven UART | — |
 | M3 — User mode | U-mode, ecall gate, user ELF, syscall stubs | — |
 | M4 — Process memory | arenas, quotas, reclaim on death, frame allocator | — |

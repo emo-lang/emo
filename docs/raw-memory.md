@@ -70,9 +70,9 @@ lane has no consumer on the roadmap and is not built speculatively.
   ordinary and volatile accesses alike (the atomics note's contract).
   Nothing makes a `peek`-then-`poke` pair atomic.
 - On `riscv64` each builtin is one load/store instruction (`lbu`, `ld`,
-  `sb`, `sd`) inside a runtime helper, emitted in program order — a
-  backend with no optimizer keeps the rule by construction today, and
-  Stage B keeps it when the ops inline into typed bodies (EmoOS T2.3).
+  `sb`, `sd`) — in a runtime helper for dynamic bodies, inline at the
+  raw address in a typed body since EmoOS T2.3 — emitted in program
+  order. A backend with no optimizer keeps the rule by construction.
 
 ## The per-target matrix
 
@@ -113,10 +113,15 @@ Gaps that stay named rather than hidden:
 - `Bytes` buffers remain refused on riscv64: no consumer yet, separate
   work.
 
-And one scheduled cost, not a gap: in the dynamic value model each
-`peek` allocates a boxed cell — the exact cost Stage B exists to remove
-(EmoOS T2.3 unboxes the lanes). Until then a polling loop is a heap
-burner by construction, and the goldens stay away from one.
+And the scheduled cost, paid off: in the dynamic value model each
+`peek` allocated a boxed cell — the exact cost Stage B existed to
+remove, and EmoOS T2.3 removed it. A fully typed body (the kernel's
+shape) lowers each access to its one inline volatile instruction: an
+MMIO read allocates nothing, and a polling loop burns registers, not
+heap. Dynamic bodies keep the helpers and their per-read cell. The
+goldens: `examples/peek_poke`'s `burn` def reads one byte four million
+times — 128 MiB of cells if a read still boxed, past the 96 MiB heap —
+and prints the checksum.
 
 ## What this closes
 

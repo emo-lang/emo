@@ -686,34 +686,69 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    fence rw, rw\n"
   | Builtin { name = "peek8"; args = [ addr ] } ->
       emit_expr env (d + 1) addr;
-      box_if_numeric env addr.Emo_ir.ety;
-      call_runtime env "emo_peek8"
+      if env.native then begin
+        (* the volatile byte load, inline: the raw address is already in
+           a0, the answer is the Byte immediate — one instruction, in
+           program order, nothing allocated (T2.3) *)
+        put env "    lbu t0, 0(a0)\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek8"
+      end
   | Builtin { name = "peek64"; args = [ addr ] } ->
       emit_expr env (d + 1) addr;
-      box_if_numeric env addr.Emo_ir.ety;
-      call_runtime env "emo_peek64";
-      (* the helper answers a boxed cell until T2.3 inlines the load *)
-      unbox_if_numeric env e.Emo_ir.ety
+      if env.native then
+        (* the volatile word load, inline: raw address in, raw payload
+           out — an MMIO read allocates nothing *)
+        put env "    ld a0, 0(a0)\n"
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek64";
+        unbox_if_numeric env e.Emo_ir.ety
+      end
   | Builtin { name = "poke8"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
       emit_expr env (d + 1) addr;
-      box_if_numeric env addr.Emo_ir.ety;
-      put env "    sd a0, %d(sp)\n" addr_slot;
-      emit_expr env (d + 1) value;
-      box_if_numeric env value.Emo_ir.ety;
-      put env "    mv a1, a0\n";
-      put env "    ld a0, %d(sp)\n" addr_slot;
-      call_runtime env "emo_poke8"
+      if env.native then begin
+        (* the volatile byte store, inline: raw address, the value's
+           Byte immediate decodes with the shift *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    srli t1, a0, 4\n";
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sb t1, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke8"
+      end
   | Builtin { name = "poke64"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
       emit_expr env (d + 1) addr;
-      box_if_numeric env addr.Emo_ir.ety;
-      put env "    sd a0, %d(sp)\n" addr_slot;
-      emit_expr env (d + 1) value;
-      box_if_numeric env value.Emo_ir.ety;
-      put env "    mv a1, a0\n";
-      put env "    ld a0, %d(sp)\n" addr_slot;
-      call_runtime env "emo_poke64"
+      if env.native then begin
+        (* the volatile word store, inline: raw address, raw payload *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sd a0, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke64"
+      end
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)

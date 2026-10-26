@@ -74,3 +74,30 @@ println("${55B}!")
 
 // ---- 5 · The 16550A's line-status register, byte-wide ----
 println(peek8(0x10000005))
+
+// ---- 6 · The unboxed lanes (EmoOS T2.3): an MMIO read allocates nothing ----
+//
+// Both defs are fully typed, so their bodies are native: each peek is
+// one inline volatile load. Four million reads at 32 bytes apiece would
+// need 128 MiB — past the image's 96 MiB heap — if a read still boxed;
+// the checksum below is the proof it does not.
+
+def burn(addr Int64, n Int64) Int64 {
+  var sum = 0
+  var i = 0
+  while i < n {
+    sum = sum + peek8(addr).to_int64()
+    i = i + 1
+  }
+  return sum
+}
+
+def word_at(addr Int64) Int64 {
+  return peek64(addr)
+}
+
+poke64(page + 32, 0)
+poke8(page + 32, 42B)
+println(burn(page + 32, 4000000))
+poke64(page + 40, 305419896)
+println(word_at(page + 40))

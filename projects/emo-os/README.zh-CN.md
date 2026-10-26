@@ -66,7 +66,7 @@ $ ./run.sh
 | --- | --- | --- |
 | M1 — 裸机 bring-up | freestanding 镜像启动、经 SBI 控制台打印 | 完成 |
 | S1 — 内存原语 | atomics + volatile `peek`/`poke` + `fence`，全目标 | 完成 |
-| S2 — riscv64 Stage B | 类型化调用约定、逃逸点装箱 | — |
+| S2 — riscv64 Stage B | 类型化调用约定、逃逸点装箱 | complete |
 | M2 — 协作内核 | 金属上的进程、调度器、中断驱动 UART | — |
 | M3 — 用户态 | U-mode、ecall 门、用户 ELF、syscall stub | — |
 | M4 — 进程内存 | arena、配额、死亡即回收、帧分配器 | — |
