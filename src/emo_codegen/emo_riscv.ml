@@ -4224,19 +4224,37 @@ emo_atomic_mtbl:
 #
 # The root process runs emo_program on the boot stack; every spawned
 # process owns one slot in emo_procs — its saved context, its pid, its
-# state word, and its bounded mailbox — and one stack in emo_pstacks.
-# The discipline is the hosted scheduler's: spawn does not yield; send
-# snapshots the message (the copy-on-send boundary), wakes a receiver
-# parked on it, and yields the sender; receive scans the mailbox
-# oldest-first, dequeues the first message its patterns accept, and
-# parks on no match; the root exiting ends the program; a switch with
-# nobody runnable is the loud deadlock.
+# state word, the scheduler's policy fields, and its bounded mailbox —
+# and one stack in emo_pstacks. The discipline is the hosted
+# scheduler's: spawn does not yield; send snapshots the message (the
+# copy-on-send boundary), wakes a receiver parked on it, and yields the
+# sender; receive scans the mailbox oldest-first, dequeues the first
+# message its patterns accept, and parks on no match; the root exiting
+# ends the program; a switch with nobody runnable is the loud deadlock.
 #
-# Slot layout (stride 40 words = 320 bytes): 0 the saved sp, 8 the pid,
+# Slot layout (stride 72 words = 576 bytes): 0 the saved sp, 8 the pid,
 # 16 the state (0 free, 1 alive, 2 receiving, 3 done), 24 the mailbox
-# head, 32 the mailbox length, 40.. the 32-word mailbox ring. A slot
-# never returns to free — a pid is unique for the whole run, so a send
-# to a dead pid is dropped, never redirected to a new occupant.
+# head, 32 the mailbox length, 40 the process's own priority, 48 its
+# effective priority, 56 its CPU quota, 64.. the 32-word message ring,
+# 320.. the 32-word ring of the priorities the messages carry (entry i
+# of each ring belongs to the same message). A slot never returns to
+# free — a pid is unique for the whole run, so a send to a dead pid is
+# dropped, never redirected to a new occupant.
+#
+# The scheduler's policy (EmoOS T3.4): dispatch is round-robin — the
+# run queue is a FIFO ring and emo_schedule pops its head. The priority
+# and quota words are present and maintained, read by nothing yet: no
+# surface sets a priority, so every one is 0 and the policy below is
+# dormant until one does. A child inherits its spawner's own priority
+# and quota. A message carries its sender's effective priority, and a
+# process's effective priority is the maximum of its own and the
+# priorities its queued messages carry — the asynchronous form of
+# "the priorities of the processes waiting on it": raised at enqueue
+# (the send-time donation), re-formed from the remaining messages at
+# dequeue, so it is always a function of the wait graph the slots hold
+# and never a stale residue. The quota is the CPU slice budget in
+# ticks; the tick (T3.6) consumes it, and 0 is the unassigned value
+# until then.
 
     .section .text
 
@@ -4400,7 +4418,7 @@ emo_spawn:
     li t2, 64
 .Lspawn_scan:
     bgeu t1, t2, .Lspawn_exhausted
-    li t3, 320
+    li t3, 576
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4421,6 +4439,16 @@ emo_spawn:
     sd t6, 32(sp)           # it must survive the helper calls below
     li t5, 1
     sd t5, 16(t3)           # alive
+    # the policy fields: the child inherits the spawner's own priority
+    # and quota, and its effective priority starts at its own — its
+    # mailbox is empty
+    la t4, emo_cur_slot
+    ld t4, 0(t4)
+    ld t0, 40(t4)
+    sd t0, 40(t3)
+    sd t0, 48(t3)
+    ld t0, 56(t4)
+    sd t0, 56(t3)
     # the child's stack: one switch-shaped frame whose ra is the entry
     # thunk, the arguments just above it
     addi t5, t1, 1
@@ -4458,9 +4486,10 @@ emo_spawn:
 
 # emo_send: a0 = the target's Pid word, a1 = the message. The message
 # snapshots at the boundary (the copy-on-send rule; an Atomic shares
-# its cell), a full mailbox or an unknown pid is loud, a receiver gets
-# woken, and the sender yields — a send never runs on into the next
-# statement, the hosted discipline.
+# its cell), a full mailbox or an unknown pid is loud, the message
+# carries the sender's effective priority and donates it to the target,
+# a receiver gets woken, and the sender yields — a send never runs on
+# into the next statement, the hosted discipline.
     .globl emo_send
 emo_send:
     addi sp, sp, -48
@@ -4474,7 +4503,7 @@ emo_send:
     li t3, 64
 .Lsend_scan:
     bgeu t2, t3, .Lsend_noproc
-    li t4, 320
+    li t4, 576
     mul t5, t2, t4
     add t5, t1, t5
     ld t6, 8(t5)
@@ -4495,20 +4524,33 @@ emo_send:
     call emo_copy_deep
     sd a0, 32(sp)           # the copy
     ld t4, 24(sp)           # the target slot
-    # into the target's mailbox ring: 32 words, oldest first
+    # into the target's mailbox: 32 entries, oldest first — the message
+    # word in one ring, the priority it carries in the other
     ld t0, 24(t4)           # head
     ld t1, 32(t4)           # length
     li t2, 32
     bge t1, t2, .Lsend_full
     add t3, t0, t1
-    andi t3, t3, 31
+    andi t3, t3, 31         # the entry
     slli t3, t3, 3
-    addi t3, t3, 40
-    add t3, t4, t3
+    addi t6, t3, 64
+    add t6, t4, t6
     ld t5, 32(sp)
-    sd t5, 0(t3)
+    sd t5, 0(t6)            # the message
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    ld t5, 48(t5)           # the sender's effective priority
+    addi t6, t3, 320
+    add t6, t4, t6
+    sd t5, 0(t6)            # rides with the message
     addi t1, t1, 1
     sd t1, 32(t4)
+    # the donation: the target's effective priority rises to the
+    # sender's when the sender outranks it
+    ld t6, 48(t4)
+    bge t6, t5, .Lsend_wake
+    sd t5, 48(t4)
+.Lsend_wake:
     # wake a receiver; a live-but-running target needs nothing
     ld t5, 16(t4)
     li t6, 2
@@ -4533,7 +4575,7 @@ emo_send:
     la a1, msg_mbox_end
     call emo_fail
 
-# The mailbox reads, on the current slot's ring. [0] is the oldest.
+# The mailbox reads, on the current slot's rings. [0] is the oldest.
     .globl emo_mb_count
 emo_mb_count:
     la t0, emo_cur_slot
@@ -4549,13 +4591,17 @@ emo_mb_at:                      # a0 = the scan index; a0 = the word
     add t1, t1, a0
     andi t1, t1, 31
     slli t1, t1, 3
-    addi t1, t1, 40
+    addi t1, t1, 64
     add t0, t0, t1
     ld a0, 0(t0)
     ret
 
+# emo_mb_remove: a0 = the scan index; the message leaves both rings —
+# the entries after it shift down together — and the effective
+# priority re-forms from what remains: the process's own, or the
+# highest priority a queued message still carries.
     .globl emo_mb_remove
-emo_mb_remove:                  # a0 = the scan index; removes it, shifts down
+emo_mb_remove:
     la t0, emo_cur_slot
     ld t0, 0(t0)
     ld t1, 24(t0)
@@ -4569,13 +4615,13 @@ emo_mb_remove:                  # a0 = the scan index; removes it, shifts down
     addi t5, t1, 1
     andi t5, t5, 31             # the position after it
     slli a1, t5, 3
-    addi a1, a1, 40
     add a1, t0, a1
-    ld a2, 0(a1)                # ring[next]
+    ld a2, 64(a1)               # the next message
+    ld a3, 320(a1)              # and the priority it carries
     slli a1, t1, 3
-    addi a1, a1, 40
     add a1, t0, a1
-    sd a2, 0(a1)                # ring[j] = ring[next]
+    sd a2, 64(a1)               # both move down one
+    sd a3, 320(a1)
     mv t1, t5
     addi t2, t2, 1
     j .Lmb_rm_loop
@@ -4583,6 +4629,23 @@ emo_mb_remove:                  # a0 = the scan index; removes it, shifts down
     ld t3, 32(t0)
     addi t3, t3, -1
     sd t3, 32(t0)
+    ld t4, 40(t0)               # the floor: the process's own priority
+    beqz t3, .Lmb_rm_eff
+    ld t1, 24(t0)               # head
+    mv t2, t3                   # the remaining messages, newest down
+.Lmb_rm_scan:
+    addi t2, t2, -1
+    add a1, t1, t2
+    andi a1, a1, 31
+    slli a1, a1, 3
+    add a1, t0, a1
+    ld a2, 320(a1)
+    bge t4, a2, .Lmb_rm_next
+    mv t4, a2
+.Lmb_rm_next:
+    bnez t2, .Lmb_rm_scan
+.Lmb_rm_eff:
+    sd t4, 48(t0)
     ret
 
 # emo_self_pid: a0 = the current process's Pid word.
@@ -4751,15 +4814,17 @@ emo_heap_cursor:
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
 #
-# 64 slots at 320 bytes (context word, pid, state, mailbox head and
-# length, a 32-word mailbox ring), one 64 KiB stack per slot, and the
-# run-queue ring. A slot never returns to free — pids stay unique for
-# the whole run — so 64 is the bound on spawns ever taken, loud at the
-# ceiling. Everything here is NOBITS: the image carries none of it.
+# 64 slots at 576 bytes (context word, pid, state, mailbox head and
+# length, the own and effective priorities and the quota, a 32-word
+# message ring and the 32-word ring of the priorities the messages
+# carry), one 64 KiB stack per slot, and the run-queue ring. A slot
+# never returns to free — pids stay unique for the whole run — so 64 is
+# the bound on spawns ever taken, loud at the ceiling. Everything here
+# is NOBITS: the image carries none of it.
 
     .align 8
 emo_procs:
-    .zero 20480
+    .zero 36864
 emo_pstacks:
     .zero 4194304
 emo_runq:

@@ -43,6 +43,14 @@ def fresh(boss Pid) {
   boss <- "fresh"
 }
 
+// Six carriers, six numbers, one mailbox: the receives below pull them
+// out in a fixed order of their own, so every dequeue lands on a
+// different position of the ring and shifts what follows it — the
+// scheduler's bookkeeping must stay aligned at every index (T3.4).
+def carry(boss Pid, n Int64) {
+  boss <- n
+}
+
 const me = self_pid()
 
 do doubler(me, 21)
@@ -81,6 +89,31 @@ do fresh(me)
 receive {
   "late" -> { println("late came back") }
   "fresh" -> { println("fresh got") }
+}
+
+do carry(me, 1)
+do carry(me, 2)
+do carry(me, 3)
+do carry(me, 4)
+do carry(me, 5)
+do carry(me, 6)
+receive {
+  n when n == 4 -> { println(n) }
+}
+receive {
+  n when n == 1 -> { println(n) }
+}
+receive {
+  n when n == 6 -> { println(n) }
+}
+receive {
+  n when n == 2 -> { println(n) }
+}
+receive {
+  n when n == 5 -> { println(n) }
+}
+receive {
+  n when n == 3 -> { println(n) }
 }
 
 println(gone)
