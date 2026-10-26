@@ -4,8 +4,8 @@
 //
 // The lanes refuse on every hosted target; this corpus runs on the
 // freestanding image under QEMU alone. The playground is RAM well above
-// the image's 64 MiB heap (QEMU virt's default 128 MiB spans
-// 0x80000000..0x88000000, the heap ends near 0x84300000), and the last
+// the image's 96 MiB heap (QEMU virt's default 128 MiB spans
+// 0x80000000..0x88000000, the heap ends near 0x86400000), and the last
 // read is the 16550A's line-status register at 0x10000005, byte-wide —
 // after boot the transmitter sits idle and the register reads 0x60.
 

@@ -364,6 +364,7 @@ let wasm_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -429,6 +430,7 @@ let beam_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -653,6 +655,7 @@ let c_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
@@ -3027,6 +3030,7 @@ let riscv64_examples_tests =
       "floats";
       "atomic_cell";
       "peek_poke";
+      "typed_calls";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

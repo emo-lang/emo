@@ -36,12 +36,96 @@
 
    Correctness first: every local lives in a stack slot (the wasm
    target's implicit stack machine), the psABI is the internal calling
-   convention (params a0–a7, result a0; a closure's record rides in
-   t0), and a call in return position lowers to `tail`/`jalr x0` after
-   restoring sp — the guaranteed tail call. Expression temporaries are
-   depth-indexed slots; field access always untags first (andi -32).
-   Stage B specialization (raw Int64/Float64 registers) is a later
-   task; every body emits dynamic for now. *)
+   convention (a closure's record rides in t0), and a call in return
+   position lowers to `tail`/`jalr x0` after restoring sp — the
+   guaranteed tail call. Expression temporaries are depth-indexed
+   slots; field access always untags first (andi -32).
+
+   The typed calling convention (EmoOS T2.1, Stage B's first half): a
+   top-level def whose signature is fully typed takes raw-register
+   params and results — Int64 as the raw payload in the integer bank
+   (a0–a7), Float64 as the raw bits in the float bank (fa0–fa7), every
+   other type the tagged word both conventions share — while bodies
+   still emit dynamic, so boxing adapters stand at every
+   typed↔dynamic boundary: the callee's entry boxes its raw params
+   into cells, its exit unboxes the tagged result, and a call site
+   unboxes its Int64/Float64 args and boxes a raw result back.
+   Methods, constructors, and closures keep the dynamic convention —
+   the runtime's name dispatch passes tagged words and cannot know a
+   signature. T2.2's typed bodies are what melt the adapters away
+   until a value truly escapes. *)
+
+(* ---- The typed calling convention (EmoOS T2.1) ----
+
+   The register classes a signature maps onto, and the conventions'
+   agreement rule: only Int64 and Float64 change representation across
+   the boundary — every other statically known type is the tagged word
+   the dynamic convention already passes. *)
+
+type param_kind =
+  | P_int64  (* the raw payload, integer bank a0.. *)
+  | P_float64  (* the raw double bits, float bank fa0.. *)
+  | P_word  (* the tagged word both conventions share, integer bank *)
+
+type result_kind =
+  | R_int64  (* the raw payload in a0 *)
+  | R_float64  (* the raw double bits in fa0 *)
+  | R_word  (* the tagged word in a0 — the dynamic convention's result *)
+  | R_void  (* nothing *)
+
+type conv = { cparams : param_kind list; cresult : result_kind }
+
+let dynamic_conv (n : int) : conv =
+  { cparams = List.init n (fun _ -> P_word); cresult = R_word }
+
+(* A def qualifies when the checker pinned every parameter type and the
+   result; an Unknown anywhere keeps the dynamic convention. *)
+let conv_of (f : Emo_ir.func) : conv option =
+  if f.Emo_ir.fforeign <> None then None
+  else if
+    List.exists (fun (_, t) -> t = Emo_check.Unknown) f.Emo_ir.fparams
+    || f.Emo_ir.fresult = Emo_check.Unknown
+  then None
+  else
+    Some
+      {
+        cparams =
+          List.map
+            (fun (_, t) ->
+              match t with
+              | Emo_check.Int64 -> P_int64
+              | Emo_check.Float64 -> P_float64
+              | _ -> P_word)
+            f.Emo_ir.fparams;
+        cresult =
+          (match f.Emo_ir.fresult with
+          | Emo_check.Int64 -> R_int64
+          | Emo_check.Float64 -> R_float64
+          | Emo_check.Void -> R_void
+          | _ -> R_word);
+      }
+
+(* Each parameter's bank register: the integer bank counts the
+   non-float parameters, the float bank the Float64 ones, each from
+   zero — the psABI's two independent banks. *)
+let bank_assign (kinds : param_kind list) : (param_kind * int) list =
+  let rec go kinds i f acc =
+    match kinds with
+    | [] -> List.rev acc
+    | k :: rest ->
+        let acc = (k, if k = P_float64 then f else i) :: acc in
+        go rest (if k = P_float64 then i else i + 1)
+          (if k = P_float64 then f + 1 else f)
+          acc
+  in
+  go kinds 0 0 []
+
+(* A tail call may replace this function's return only when the
+   callee's result representation is the one this function's own
+   caller expects; Void and the tagged word agree because nobody
+   reads the register. *)
+let result_compatible (a : result_kind) (b : result_kind) : bool =
+  a = b || (a = R_word && b = R_void) || (a = R_void && b = R_word)
 
 type frame = {
   fbuf : Buffer.t;
@@ -50,6 +134,7 @@ type frame = {
   mutable temps : int; (* the temp slot count (the expression-depth bound) *)
   ret : string; (* the epilogue label *)
   mutable size : int; (* the frame size in bytes *)
+  fconv : conv; (* this function's calling convention (T2.1) *)
 }
 
 type class_info = {
@@ -82,6 +167,10 @@ type env = {
          the post label, on a `for`, so the post runs first *)
   fforeigns : string list;
       (* `foreign def` names: the binding is skipped, a call refuses *)
+  fsigs : (string * conv) list;
+      (* mangled def name -> its typed calling convention; a name absent
+         here (a method, a constructor, a closure, a dynamic-signature
+         def) uses the dynamic convention (T2.1) *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -456,8 +545,11 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                 "the riscv64 target does not support a call to the foreign \
                  definition `%s` yet"
                 func));
-      emit_args env d args;
-      put env "    call %s\n" (func_label func)
+      (match List.assoc_opt func env.fsigs with
+      | Some conv -> emit_typed_call env d func conv args
+      | None ->
+          emit_args env d args;
+          put env "    call %s\n" (func_label func))
   | Call_value { f; args } ->
       let fslot = temp_offset env d in
       emit_expr env (d + 1) f;
@@ -558,6 +650,62 @@ and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
 
 and emit_args env d (args : Emo_ir.expr list) : unit =
   emit_args_from env d ~from:0 args
+
+(* ---- The typed-convention adapters (T2.1) ----
+
+   The caller side: args evaluate left to right as tagged words, each
+   spilled to its own temp slot (later args may call over earlier
+   results), then the registers fill from the slots — an Int64 or
+   Float64 arg unboxes into its bank register, every other arg loads
+   its tagged word — and a raw result boxes back into a0. *)
+
+and emit_typed_regs env d (kinds : param_kind list) : unit =
+  List.iteri
+    (fun i (k, reg) ->
+      let spill = temp_offset env (d + i) in
+      match k with
+      | P_int64 ->
+          put env "    ld a%d, %d(sp)\n" reg spill;
+          put env "    andi a%d, a%d, -32\n" reg reg;
+          put env "    ld a%d, 8(a%d)\n" reg reg
+      | P_word -> put env "    ld a%d, %d(sp)\n" reg spill
+      | P_float64 ->
+          put env "    ld t0, %d(sp)\n" spill;
+          put env "    andi t0, t0, -32\n";
+          put env "    fld fa%d, 8(t0)\n" reg)
+    (bank_assign kinds)
+
+and emit_box_result env (r : result_kind) : unit =
+  match r with
+  | R_int64 -> call_runtime env "emo_box_i64"
+  | R_float64 -> call_runtime env "emo_box_f64"
+  | R_word | R_void -> ()
+
+(* The callee side, at the return label: the dynamic body leaves the
+   tagged result in a0; a typed result unboxes to its raw register. *)
+and emit_unbox_result env (r : result_kind) : unit =
+  match r with
+  | R_int64 ->
+      put env "    andi a0, a0, -32\n";
+      put env "    ld a0, 8(a0)\n"
+  | R_float64 ->
+      put env "    andi t0, a0, -32\n";
+      put env "    fld fa0, 8(t0)\n"
+  | R_word | R_void -> ()
+
+and emit_typed_call env d (func : string) (conv : conv)
+    (args : Emo_ir.expr list) : unit =
+  if List.length args > 8 then refuse "a call with more than eight arguments";
+  let n = List.length args in
+  List.iteri
+    (fun i arg ->
+      let spill = temp_offset env (d + i) in
+      emit_expr env (d + n) arg;
+      put env "    sd a0, %d(sp)\n" spill)
+    args;
+  emit_typed_regs env d conv.cparams;
+  put env "    call %s\n" (func_label func);
+  emit_box_result env conv.cresult
 
 (* A Tuple or Array literal: the elements evaluate first (each spilled),
    then one block is allocated and filled. *)
@@ -1182,22 +1330,46 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
    frame is released first (nothing live rides in it — the args are
    already in registers), so the stack stays constant. `tail`/`jr`
    leave ra alone, so the original return address is loaded into ra
-   first — it rides through the whole tail chain. *)
+   first — it rides through the whole tail chain. A typed callee's
+   result must match this function's own representation — the tail
+   path bypasses the return label, so no adapter can convert a raw
+   result into the tagged word the dynamic convention promises (or the
+   reverse); a mismatching pair takes the plain call instead. *)
 and emit_tail env (e : Emo_ir.expr) : bool =
+  let frame () =
+    match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
+  in
+  let mine () = (frame ()).fconv.cresult in
   match e.Emo_ir.desc with
-  | Call { func; args } ->
-      emit_args env 0 args;
-      let f =
-        match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
-      in
-      put env "    ld ra, 0(sp)\n";
-      put env "    addi sp, sp, %d\n" f.size;
-      put env "    tail %s\n" (func_label func);
-      true
-  | Call_value { f; args } ->
-      let ff =
-        match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
-      in
+  | Call { func; args } -> (
+      match List.assoc_opt func env.fsigs with
+      | Some conv when result_compatible conv.cresult (mine ()) ->
+          if List.length args > 8 then
+            refuse "a call with more than eight arguments";
+          let n = List.length args in
+          List.iteri
+            (fun i arg ->
+              let spill = temp_offset env i in
+              emit_expr env n arg;
+              put env "    sd a0, %d(sp)\n" spill)
+            args;
+          emit_typed_regs env 0 conv.cparams;
+          let f = frame () in
+          put env "    ld ra, 0(sp)\n";
+          put env "    addi sp, sp, %d\n" f.size;
+          put env "    tail %s\n" (func_label func);
+          true
+      | Some _ -> false
+      | None when result_compatible R_word (mine ()) ->
+          emit_args env 0 args;
+          let f = frame () in
+          put env "    ld ra, 0(sp)\n";
+          put env "    addi sp, sp, %d\n" f.size;
+          put env "    tail %s\n" (func_label func);
+          true
+      | None -> false)
+  | Call_value { f; args } when result_compatible R_word (mine ()) ->
+      let ff = frame () in
       let fslot = temp_offset env 0 in
       emit_expr env 1 f;
       put env "    sd a0, %d(sp)\n" fslot;
@@ -1440,6 +1612,10 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   let val_label = Printf.sprintf "emo_const_val_%s" n in
   let store = fresh_label env "const_store" in
   let hit = fresh_label env "const_hit" in
+  (* a const thunk adopts its signature's convention (T2.1): the memo
+     slot holds the raw result, and every reader — a call site keyed on
+     the thunk's signature — boxes it back *)
+  let conv = match conv_of f with Some c -> c | None -> dynamic_conv 0 in
   let frm =
     {
       fbuf = Buffer.create 512;
@@ -1448,6 +1624,7 @@ let emit_const_function env (f : Emo_ir.func) : unit =
       temps = 0;
       ret = store;
       size = 0;
+      fconv = conv;
     }
   in
   env.cur <- Some frm;
@@ -1468,13 +1645,25 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   List.iter (emit_stmt env) f.Emo_ir.fbody;
   put env "%s:\n" store;
   put env "    la t2, %s\n" val_label;
-  put env "    sd a0, 0(t2)\n";
+  (match conv.cresult with
+  | R_int64 ->
+      put env "    andi a0, a0, -32\n";
+      put env "    ld a0, 8(a0)\n";
+      put env "    sd a0, 0(t2)\n"
+  | R_float64 ->
+      put env "    andi t0, a0, -32\n";
+      put env "    fld fa0, 8(t0)\n";
+      put env "    fsd fa0, 0(t2)\n"
+  | R_word | R_void -> put env "    sd a0, 0(t2)\n");
   put env "    li t1, 1\n";
   put env "    la t0, %s\n" done_label;
   put env "    sd t1, 0(t0)\n";
   put env "%s:\n" hit;
   put env "    la t0, %s\n" val_label;
   put env "    ld a0, 0(t0)\n";
+  (match conv.cresult with
+  | R_float64 -> put env "    fmv.d.x fa0, a0\n"
+  | R_int64 | R_word | R_void -> ());
   put env "    ld ra, 0(sp)\n";
   put env "    addi sp, sp, %d\n" frm.size;
   put env "    ret\n";
@@ -1483,9 +1672,15 @@ let emit_const_function env (f : Emo_ir.func) : unit =
 
 (* One function: label, prologue (ra + the param/capture spill), body,
    epilogue. A closure body takes its record in t0 and spills the
-   captures into its own slots at entry. *)
+   captures into its own slots at entry. The convention (T2.1) drives
+   the prologue and epilogue: a dynamic conv is all P_word/R_word, so
+   it emits exactly the old shape; a typed conv spills each raw param
+   to its slot, then — after the captures, whose record rides in t0 —
+   boxes the Int64/Float64 params in place for the dynamic body, and
+   unboxes the tagged result at the return label. *)
 let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
-    ~(captures : string list) ~(body : Emo_ir.stmt list) : unit =
+    ~(captures : string list) ~(conv : conv) ~(body : Emo_ir.stmt list) : unit
+    =
   if List.length params > 8 then refuse "a def with more than eight parameters";
   let f =
     {
@@ -1495,6 +1690,7 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       temps = 0;
       ret = fresh_label env "ret";
       size = 0;
+      fconv = conv;
     }
   in
   let nparams = List.length params in
@@ -1509,16 +1705,41 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
   gput env "%s:\n" label;
   gput env "    addi sp, sp, -%d\n" f.size;
   gput env "    sd ra, 0(sp)\n";
-  List.iteri (fun i _ -> gput env "    sd a%d, %d(sp)\n" i (8 + (8 * i))) params;
+  (* every raw param to its own slot first — the boxing calls clobber
+     the argument registers, so nothing may still ride in one *)
+  List.iteri
+    (fun i (k, reg) ->
+      let off = 8 + (8 * i) in
+      match k with
+      | P_float64 -> gput env "    fsd fa%d, %d(sp)\n" reg off
+      | _ -> gput env "    sd a%d, %d(sp)\n" reg off)
+    (bank_assign conv.cparams);
   List.iteri
     (fun i _ ->
       gput env "    ld t1, %d(t0)\n" (16 + (8 * i));
       gput env "    sd t1, %d(sp)\n" (8 + (8 * (nparams + i))))
     captures;
+  (* the boundary adapter's entry half: box each raw numeric param into
+     the cell the dynamic body reads *)
+  List.iteri
+    (fun i k ->
+      let off = 8 + (8 * i) in
+      match k with
+      | P_int64 ->
+          gput env "    ld a0, %d(sp)\n" off;
+          gput env "    call emo_box_i64\n";
+          gput env "    sd a0, %d(sp)\n" off
+      | P_float64 ->
+          gput env "    fld fa0, %d(sp)\n" off;
+          gput env "    call emo_box_f64\n";
+          gput env "    sd a0, %d(sp)\n" off
+      | P_word -> ())
+    conv.cparams;
   List.iter (emit_stmt env) body;
   (* Fall-off: the statement walk already left a final expression
      statement's value in a0; a Void body just returns. *)
   put env "%s:\n" f.ret;
+  emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   put env "    addi sp, sp, %d\n" f.size;
   put env "    ret\n";
@@ -1548,6 +1769,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
       temps = 0;
       ret = fresh_label env "ret";
       size = 0;
+      fconv = dynamic_conv (List.length real_params + 1);
     }
   in
   let nparams = List.length real_params in
@@ -3507,9 +3729,15 @@ SECTIONS
 }
 |ld}
 
-(* The stack (1 MiB) and the value heap (64 MiB) live in .bss — NOBITS,
-   so neither weighs on the image; the entry stub clears the region
-   before first use, and the heap cursor sits past the heap's end. *)
+(* The stack (1 MiB) and the value heap live in .bss — NOBITS, so
+   neither weighs on the image; the entry stub clears the region
+   before first use, and the heap cursor sits past the heap's end. The
+   heap is 96 MiB (EmoOS T2.1): the typed calling convention's
+   boundary adapters allocate — an entry box per Int64/Float64 param,
+   a box per raw result — until T2.2's typed bodies melt them away,
+   and `examples/fib`'s `count_down(1000000)` rides ~61 MiB of them on
+   top of fib's own cells, past the old 64 MiB end. QEMU virt's
+   default 128 MiB still holds it all with room to spare. *)
 let stack_asm =
   {asm|
 # ---- The stack and the value heap: .bss, cleared by the entry stub ----
@@ -3522,7 +3750,7 @@ emo_stack_bottom:
 emo_stack_top:
     .globl emo_heap_start
 emo_heap_start:
-    .zero 67108864
+    .zero 100663296
     .globl emo_heap_end
 emo_heap_end:
     .globl emo_heap_cursor
@@ -3783,6 +4011,13 @@ let emit (program : Emo_ir.program) : string =
           (fun (f : Emo_ir.func) ->
             if f.fforeign <> None then Some f.fname else None)
           program.pfuncs;
+      fsigs =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            match conv_of f with
+            | Some conv -> Some (f.Emo_ir.fname, conv)
+            | None -> None)
+          program.pfuncs;
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -3808,7 +4043,12 @@ let emit (program : Emo_ir.program) : string =
         else
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
-            ~params:f.fparams ~captures:[] ~body:f.fbody
+            ~params:f.fparams ~captures:[]
+            ~conv:
+              (match conv_of f with
+              | Some conv -> conv
+              | None -> dynamic_conv (List.length f.fparams))
+            ~body:f.fbody
         end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
@@ -3821,20 +4061,24 @@ let emit (program : Emo_ir.program) : string =
           env.fclass <- Some c.Emo_ir.cdisplay;
           emit_function env
             ~label:(func_label m.Emo_ir.fname)
-            ~params:m.Emo_ir.fparams ~captures:[] ~body:m.Emo_ir.fbody;
+            ~params:m.Emo_ir.fparams ~captures:[]
+            ~conv:(dynamic_conv (List.length m.Emo_ir.fparams))
+            ~body:m.Emo_ir.fbody;
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
   emit_function env ~label:"emo_program"
     ~params:([] : (string * Emo_check.t) list)
-    ~captures:[] ~body:program.pinit;
+    ~captures:[] ~conv:(dynamic_conv 0) ~body:program.pinit;
   (* Closure bodies queued during emission may queue more. *)
   let rec drain () =
     match env.deferred with
     | [] -> ()
     | (label, cparams, caps, cbody) :: rest ->
         env.deferred <- rest;
-        emit_function env ~label ~params:cparams ~captures:caps ~body:cbody;
+        emit_function env ~label ~params:cparams ~captures:caps
+          ~conv:(dynamic_conv (List.length cparams))
+          ~body:cbody;
         drain ()
   in
   drain ();
