@@ -1588,6 +1588,40 @@ let compile_inputs ~entry_file ~target :
                  "build the program's own entry (for example main.emo) instead";
            };
          ]);
+  (* The kernel's layering (EmoOS T3.2): the riscv64 target builds the
+     kernel, and `core` is the kernel's only library layer. A
+     standard-library require refuses here — before resolution, so the
+     layering answer preempts the pin and target gates — naming the
+     require at its own site. Scoped requires stay legal: a kernel
+     service is an ordinary package that declares the target. *)
+  if target = "riscv64" then begin
+    let kernel_offenders =
+      stdlib_requires p
+      |> List.filter (fun (name, _) -> Emo_pkg.Registry.bundled_name name)
+    in
+    match kernel_offenders with
+    | [] -> ()
+    | _ ->
+        raise
+          (Static_errors
+             (List.map
+                (fun (name, (_, span)) ->
+                  {
+                    Emo_support.Diagnostic.severity = Error;
+                    code = Some "E5014";
+                    message =
+                      Printf.sprintf
+                        "`%s` reaches the standard library: the riscv64 target \
+                         is the kernel's, and its only library layer is `core`"
+                        name;
+                    span;
+                    hint =
+                      Some
+                        "the kernel builds on `core` alone; a kernel service is \
+                         an ordinary package that declares the riscv64 target";
+                  })
+                kernel_offenders))
+  end;
   let native_deps = load_deps ~manifest ~manifest_dir:dir ~target p in
   (* The root package's own riscv64 shapes: the kernel package is a root,
      and its `.S` sources, boot stub and linker script live beside its

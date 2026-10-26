@@ -3052,6 +3052,95 @@ println(metal_tools.idle())
                        && contains_substring d.Emo_support.Diagnostic.message
                             "local/kernel")
                      ds)));
+    tc "a stdlib require refuses on the kernel target, pin or not" (fun () ->
+        let manifest pinned =
+          with_project
+            [
+              ( "package.emo",
+                if pinned then
+                  {|
+package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "json" = "0.1.0"
+  }
+}
+|}
+                else
+                  {|
+package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ( "main.emo",
+                {|require "json"
+println(1)
+|}
+              );
+            ]
+            "main.emo"
+        in
+        List.iter
+          (fun (pinned, label) ->
+            let entry = manifest pinned in
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            with
+            | _ ->
+                Alcotest.fail
+                  (Printf.sprintf "%s: expected the layering gate to refuse"
+                     label)
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  (label ^ ": E5014") true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5014"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "json"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "core")
+                     ds))
+          [ (true, "pinned"); (false, "unpinned") ]);
+    tc "an unknown unscoped require keeps its own answer" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", {|require "jsson"
+println(1)
+|});
+            ]
+            "main.emo"
+        in
+        match Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" with
+        | _ -> Alcotest.fail "expected the unknown require to refuse"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "E5009" true
+              (List.exists
+                 (fun d ->
+                   d.Emo_support.Diagnostic.code = Some "E5009"
+                   && contains_substring d.Emo_support.Diagnostic.message
+                        "jsson")
+                 ds));
   ]
 
 (* ---- Step 14 bootstrap: the examples/ suite as compiled binaries ----

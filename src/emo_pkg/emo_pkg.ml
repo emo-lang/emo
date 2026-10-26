@@ -699,7 +699,17 @@ module Registry = struct
     in
     walk []
 
-  let fetch (t : t) ~(name : string) ~(version : Version.t) :
+    (* The embedded registry publishes this unscoped name? The paths are
+       `name/version/...`, so the name is the first segment. *)
+    let bundled_name (name : string) : bool =
+      let prefix = name ^ "/" in
+      let plen = String.length prefix in
+      List.exists
+        (fun (path, _) ->
+          String.length path >= plen && String.sub path 0 plen = prefix)
+        Emo_stdlib_data.files
+
+    let fetch (t : t) ~(name : string) ~(version : Version.t) :
       (fetched, string) result =
     let files =
       match t with

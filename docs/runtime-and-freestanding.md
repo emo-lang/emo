@@ -35,7 +35,10 @@ difference is whether a firmware layer sits underneath.
 In Emo (`plan/step-19-riscv64.md`), `riscv64` is the freestanding
 target: no OS, no libc, no default runtime; the allocator, GC, and
 scheduler are replaceable components; `core` is the only library layer
-kernel code may use; `peek`/`poke` are the explicitly dangerous memory
+kernel code may use — enforced at check time since EmoOS T3.2: on the
+kernel target a standard-library require refuses (E5014), while a
+scoped require of a package that declares the target stays legal;
+`peek`/`poke` are the explicitly dangerous memory
 primitives. Its `println` does not call libc — it makes an SBI `ecall`
 into the firmware's console.
 

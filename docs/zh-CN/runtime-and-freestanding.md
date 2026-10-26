@@ -28,7 +28,9 @@ libc;profile B(`-bios none`、M-mode、自带 UART 驱动)才是真裸机。相�
 
 在 Emo 里(`plan/step-19-riscv64.md`),`riscv64` 就是那个 freestanding
 目标:无 OS、无 libc、无默认运行时;分配器、GC、调度器是可替换组件;
-`core` 是 kernel 代码唯一可用的库层;`peek`/`poke` 是显式危险的访存
+`core` 是 kernel 代码唯一可用的库层——自 EmoOS T3.2 起在检查期强制:
+内核目标上 standard library 的 require 直接拒绝(E5014),而声明了该
+目标的 scoped 依赖照常合法;`peek`/`poke` 是显式危险的访存
 原语。它的 `println` 不调用 libc——而是发一个 SBI `ecall` 到固件的
 控制台。
 
