@@ -32,6 +32,13 @@ libc;profile B(`-bios none`、M-mode、自带 UART 驱动)才是真裸机。相�
 原语。它的 `println` 不调用 libc——而是发一个 SBI `ecall` 到固件的
 控制台。
 
+这份可替换性自 EmoOS T3.1(2026-10-26)起落到实处:包可以携带自己的
+freestanding runtime——一个 `runtime.S` boot stub 和一个 `link.ld`
+链接脚本,与其它原生源码一样从包树里收集——镜像即归包所有:入口纪律
+与内存布局是包的,编译器的 runtime 主体(生成代码所调用的分配器与值
+机器)仍在其下。普通程序依旧使用默认的 stub 与脚本。内核包拥有自己的
+镜像。
+
 ## Runtime(运行时)
 
 一门语言的 **runtime** 是程序运行时支撑它的代码与数据结构——编译器

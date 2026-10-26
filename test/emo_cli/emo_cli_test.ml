@@ -203,7 +203,7 @@ let requires_nothing source =
    `pipeline` runs four processes. Each runs end to end in test/emo_project
    instead, compiled and interpreted. *)
 let beyond_the_interpreter =
-  [ "numerics"; "file_read"; "pipeline"; "peek_poke" ]
+  [ "numerics"; "file_read"; "pipeline"; "peek_poke"; "native_image" ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
    end through the bare interpreter and prints its expected.txt. A
@@ -3031,6 +3031,7 @@ let riscv64_examples_tests =
       "atomic_cell";
       "peek_poke";
       "typed_calls";
+      "native_image";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

@@ -39,6 +39,15 @@ kernel code may use; `peek`/`poke` are the explicitly dangerous memory
 primitives. Its `println` does not call libc — it makes an SBI `ecall`
 into the firmware's console.
 
+The replaceability is concrete since EmoOS T3.1 (2026-10-26): a package
+may carry its own freestanding runtime — a `runtime.S` boot stub and a
+`link.ld` linker script, collected from the package tree like any other
+native source — and the image is then the package's: its entry
+discipline and memory map, with the compiler's runtime body (the
+allocator and value machinery the generated code calls) underneath. The
+default stub and script stay for ordinary programs. A kernel package
+owns its image.
+
 ## Runtime
 
 A language's **runtime** is the code and data structures that support a

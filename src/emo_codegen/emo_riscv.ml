@@ -2094,9 +2094,21 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
 
 (* ---- The runtime ---- *)
 
-let runtime_asm =
-  {asm|    .attribute arch, "rv64gc"
+(* The assembly opens with the architecture attribute in every shape: it
+   precedes whatever code follows, the compiler's boot stub or a
+   package-provided one. *)
+let arch_directive = "    .attribute arch, \"rv64gc\"\n"
 
+(* The boot stub: the image's entry discipline. This is the one piece of
+   the runtime a package may replace (EmoOS T3.1) — a package's
+   `runtime.S` takes the image's entry over while the runtime body below
+   stays: `emo_runtime_init`, `emo_program`, the allocator, and every
+   other symbol the generated code calls remain the compiler's. The stub
+   owns the entry symbol the linker script names (the default script's
+   `ENTRY(emo_start)`) and the boot discipline — a kernel package writes
+   its own and never touches this one. *)
+let boot_stub_asm =
+  {asm|
 # ---- The freestanding runtime ----
 #
 # Boot profile A: OpenSBI enters emo_start in S-mode with a0 = hart id
@@ -2125,8 +2137,15 @@ emo_start:
 emo_park:
     wfi
     j emo_park
+|asm}
 
-# ---- The bump allocator ----
+(* The runtime body: everything the generated code calls — the heap
+   cursor's init, the bump allocator, failure, boxing, the atomic
+   helpers, the dynamic dispatch and formatting support. The compiler
+   always provides it; a package's boot stub calls into it like the
+   program does. *)
+let runtime_asm =
+  {asm|# ---- The bump allocator ----
 #
 # emo_alloc: a0 = payload words, a0 = the block (raw pointer, header
 # word first). Exhaustion is a loud failure; the tagged layout stays
@@ -4242,7 +4261,11 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
   | Emo_ast.Tuple_pattern ps -> List.iter (walk_pattern_enum env) ps
   | _ -> ()
 
-let emit (program : Emo_ir.program) : string =
+(* [boot_stub] is the compiler's own entry discipline (the default). A
+   package-provided `runtime.S` (EmoOS T3.1) replaces it: the image's
+   entry is the package's, the runtime body and the program are the
+   compiler's. *)
+let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
   if program.pglobals <> [] then refuse "module-level `var`";
   const_thunks := program.Emo_ir.pconsts;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
@@ -4323,6 +4346,8 @@ let emit (program : Emo_ir.program) : string =
       List.iter (fun m -> walk_stmts_enum env m.Emo_ir.fbody) c.Emo_ir.cmethods)
     program.pclasses;
   walk_stmts_enum env program.pinit;
+  gput env "%s" arch_directive;
+  if boot_stub then gput env "%s\n" boot_stub_asm;
   gput env "%s\n" runtime_asm;
   gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is
@@ -4361,6 +4386,9 @@ let emit (program : Emo_ir.program) : string =
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
+  (* The entry the boot stub calls — the compiler's or a package's
+     (EmoOS T3.1) — global so a stub in its own object reaches it. *)
+  gput env "\n    .section .text\n    .globl emo_program\n";
   emit_function env ~label:"emo_program"
     ~params:([] : (string * Emo_check.t) list)
     ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~body:program.pinit;

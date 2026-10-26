@@ -1243,20 +1243,126 @@ let register_package (p : project) (short : string) (dir : string) : unit =
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
-(* A package's native inputs, as the c target consumes them: the C and
-   Objective-C sources it carries (absolute paths into the materialized
-   cache dir), the system libraries and macOS frameworks its manifest
-   links, and the pkg-config modules whose cflags/libs it applies. Every
-   list is empty for a pure-Emo package. *)
+(* A package's native inputs: the C and Objective-C sources it carries
+   (absolute paths into the materialized cache dir), the system libraries
+   and macOS frameworks its manifest links, and the pkg-config modules
+   whose cflags/libs it applies — the c target's shapes. The riscv64
+   target's shapes are the `.S` sources the image assembles in, plus the
+   two image components a package may provide: a `runtime.S` (the boot
+   stub taking the image's entry over) and a `link.ld` (the linker
+   script). The component names are fixed, so the manifest stays data —
+   the tree is the package, exactly like the collected C sources. Every
+   list is empty and both options None for a pure-Emo package. *)
 type native_inputs = {
   ni_sources : string list;
   ni_link : string list;
   ni_frameworks : string list;
   ni_pkg_config : string list;
+  ni_asm : string list;
+  ni_runtime : string option;
+  ni_link_script : string option;
 }
 
 let no_native_inputs =
-  { ni_sources = []; ni_link = []; ni_frameworks = []; ni_pkg_config = [] }
+  {
+    ni_sources = [];
+    ni_link = [];
+    ni_frameworks = [];
+    ni_pkg_config = [];
+    ni_asm = [];
+    ni_runtime = None;
+    ni_link_script = None;
+  }
+
+(* The riscv64 shapes in a package's file list: every `.S` source, the
+   boot stub, and the linker script, as absolute paths. A file is a
+   component by its base name alone (`runtime.S`, `link.ld`), wherever
+   in the tree it sits. Two components of one kind in a single tree are
+   an ambiguity at the source — E5013 names the paths — and two packages
+   providing one component are the merge's own E5013. *)
+let riscv64_shape_inputs ~(dir : string) (files : (string * string) list) :
+    string list * string list * string list =
+  let sources = ref [] and stubs = ref [] and scripts = ref [] in
+  List.iter
+    (fun (rel, _) ->
+      let base = Filename.basename rel in
+      if base = "link.ld" then scripts := rel :: !scripts
+      else if base = "runtime.S" then stubs := rel :: !stubs
+      else if Filename.check_suffix rel ".S" then sources := rel :: !sources)
+    files;
+  let abs rels = List.sort compare rels |> List.map (Filename.concat dir) in
+  (abs !sources, abs !stubs, abs !scripts)
+
+(* One component kind within one package's tree: a single candidate
+   answers, two candidates in the same tree are an ambiguity at the
+   source — E5013 names the paths. *)
+let one_component ~(provider : string) ~(span_file : string) ~(what : string)
+    (rels : string list) : string option =
+  match rels with
+  | [] -> None
+  | [ one ] -> Some one
+  | _ ->
+      raise
+        (Static_errors
+           [
+             {
+               Emo_support.Diagnostic.severity = Error;
+               code = Some "E5013";
+               message =
+                 Printf.sprintf
+                   "package %s carries two candidates for the image's %s (%s) \
+                    — one tree, one %s"
+                   provider what (String.concat ", " rels) what;
+               span =
+                 Emo_support.Span.make ~file:span_file ~line:1 ~col:1 ~start:0
+                   ~stop:0;
+               hint = None;
+             };
+           ])
+
+(* One component kind merged across providers: at most one package may
+   provide the boot stub, at most one the linker script — two providers
+   cannot both own the image, and dropping either would be a silent
+   fallback. E5013 names both. *)
+let merge_component ~(what : string) ~(a_name : string) ~(b_name : string)
+    (a : string option) (b : string option) : string option =
+  match (a, b) with
+  | None, x | x, None -> x
+  | Some p, Some q ->
+      raise
+        (Static_errors
+           [
+             {
+               Emo_support.Diagnostic.severity = Error;
+               code = Some "E5013";
+               message =
+                 Printf.sprintf
+                   "two packages provide the image's %s — %s (%s) and %s (%s); \
+                    one image has one %s"
+                   what a_name p b_name q what;
+               span =
+                 Emo_support.Span.make ~file:p ~line:1 ~col:1 ~start:0 ~stop:0;
+               hint = None;
+             };
+           ])
+
+(* The native inputs of two providers, merged. Sources and libraries
+   append; the image components conflict loudly. *)
+let merge_native ~(a_name : string) ~(b_name : string)
+    (a : native_inputs) (b : native_inputs) : native_inputs =
+  {
+    ni_sources = a.ni_sources @ b.ni_sources;
+    ni_link = a.ni_link @ b.ni_link;
+    ni_frameworks = a.ni_frameworks @ b.ni_frameworks;
+    ni_pkg_config = a.ni_pkg_config @ b.ni_pkg_config;
+    ni_asm = a.ni_asm @ b.ni_asm;
+    ni_runtime =
+      merge_component ~what:"boot stub (runtime.S)" ~a_name ~b_name a.ni_runtime
+        b.ni_runtime;
+    ni_link_script =
+      merge_component ~what:"linker script (link.ld)" ~a_name ~b_name
+        a.ni_link_script b.ni_link_script;
+  }
 
 (* The native side of one resolved dependency. *)
 type native_dep = { nd_name : string; nd_inputs : native_inputs }
@@ -1267,8 +1373,9 @@ type native_dep = { nd_name : string; nd_inputs : native_inputs }
    and each fetched package's own manifest must declare the target —
    a lockfile satisfied for one target must not silently serve
    another. Returns each package's native inputs; the interpreter and
-   the non-c targets ignore them (the build's strictness gate refuses
-   a native-carrying package off the c target). *)
+   the hosted commands ignore them (the build's honesty gate refuses
+   a native-carrying package off the one target that honors each
+   shape). *)
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) (p : project) : native_dep list =
   let reg = registry ~manifest in
@@ -1346,6 +1453,9 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
         register_package p short dir;
         p.package_deps <-
           ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
+        let asm, stubs, scripts =
+          riscv64_shape_inputs ~dir f.Emo_pkg.Registry.f_files
+        in
         {
           nd_name = entry.Emo_pkg.Lockfile.dep;
           nd_inputs =
@@ -1362,6 +1472,15 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
               ni_link = pkg.Emo_pkg.link;
               ni_frameworks = pkg.Emo_pkg.frameworks;
               ni_pkg_config = pkg.Emo_pkg.pkg_config;
+              ni_asm = asm;
+              ni_runtime =
+                one_component
+                  ~provider:entry.Emo_pkg.Lockfile.dep
+                  ~span_file:dir ~what:"boot stub (runtime.S)" stubs;
+              ni_link_script =
+                one_component
+                  ~provider:entry.Emo_pkg.Lockfile.dep
+                  ~span_file:dir ~what:"linker script (link.ld)" scripts;
             };
         })
       fetched
@@ -1435,15 +1554,16 @@ let is_test_module = function "test" :: _ :: _ -> true | _ -> false
 
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
-   path and the dependencies' native inputs (C and Objective-C sources to
-   compile, libraries and frameworks to link, pkg-config modules to
-   resolve). Test modules are left out — they are not part of a compiled
+   path and the native inputs (the C and Objective-C sources to compile,
+   libraries and frameworks to link, pkg-config modules to resolve, the
+   .S sources to assemble, and the image's boot stub and linker script
+   if a package provides them — the root package's own .S shapes ride
+   in too). Test modules are left out — they are not part of a compiled
    program, and their assertions are interpreter-only. Raises
-   [Static_errors] on any diagnostic. A native-carrying package (sources,
-   `link`, `pkg_config`, or `frameworks`) is honored by the c target alone;
-   any other target
-   refuses the program outright — dropping the native inputs would be a
-   silent fallback. *)
+   [Static_errors] on any diagnostic. Each native shape is honored by
+   one target — the C shapes by c, the riscv64 shapes by riscv64 — and
+   any other target refuses the program outright — dropping the native
+   inputs would be a silent fallback. *)
 let compile_inputs ~entry_file ~target :
     Emo_ir.module_input list * string list * string list list * native_inputs =
   let p, (manifest, dir) = prepare () in
@@ -1469,41 +1589,85 @@ let compile_inputs ~entry_file ~target :
            };
          ]);
   let native_deps = load_deps ~manifest ~manifest_dir:dir ~target p in
-  let merge acc d =
+  (* The root package's own riscv64 shapes: the kernel package is a root,
+     and its `.S` sources, boot stub and linker script live beside its
+     modules. The hosted commands (check, run, test) load dependencies
+     without this gate — the tree's native files concern the builds. *)
+  let root_asm, root_stubs, root_scripts =
+    riscv64_shape_inputs ~dir:p.root (Emo_pkg.Registry.collect_files p.root)
+  in
+  let root_inputs =
     {
-      ni_sources = acc.ni_sources @ d.nd_inputs.ni_sources;
-      ni_link = acc.ni_link @ d.nd_inputs.ni_link;
-      ni_frameworks = acc.ni_frameworks @ d.nd_inputs.ni_frameworks;
-      ni_pkg_config = acc.ni_pkg_config @ d.nd_inputs.ni_pkg_config;
+      no_native_inputs with
+      ni_asm = root_asm;
+      ni_runtime =
+        one_component ~provider:manifest.Emo_pkg.name ~span_file:p.root
+          ~what:"boot stub (runtime.S)" root_stubs;
+      ni_link_script =
+        one_component ~provider:manifest.Emo_pkg.name ~span_file:p.root
+          ~what:"linker script (link.ld)" root_scripts;
     }
   in
-  let native = List.fold_left merge no_native_inputs native_deps in
-  let native_carrying =
-    List.filter (fun d -> d.nd_inputs <> no_native_inputs) native_deps
+  (* Root first, then the dependencies in resolution order; the image
+     components conflict loudly across providers. *)
+  let native =
+    List.fold_left
+      (fun (acc_name, acc) d ->
+        ( acc_name ^ ", " ^ d.nd_name,
+          merge_native ~a_name:acc_name ~b_name:d.nd_name acc d.nd_inputs ))
+      (manifest.Emo_pkg.name, root_inputs)
+      native_deps
+    |> snd
   in
-  (match native_carrying with
-  | [] -> ()
-  | ds when target = "c" -> ignore ds
-  | ds ->
-      let names = String.concat ", " (List.map (fun d -> d.nd_name) ds) in
-      raise
-        (Static_errors
-           [
-             {
-               Emo_support.Diagnostic.severity = Error;
-               code = Some "E5007";
-               message =
-                 Printf.sprintf
-                   "the %s target cannot link native dependencies (%s) — only \
-                    the c target carries a package's native sources and \
-                    libraries"
-                   target names;
-               span =
-                 Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
-                   ~stop:0;
-               hint = None;
-             };
-           ]));
+  (* The per-target honesty gate: each shape is honored by one target —
+     the C sources, libraries, frameworks and pkg-config modules by c;
+     the .S sources and the image components by riscv64 — and a shape
+     its target does not honor refuses the build outright rather than
+     being dropped silently. *)
+  let c_shaped =
+    native.ni_sources <> [] || native.ni_link <> []
+    || native.ni_frameworks <> [] || native.ni_pkg_config <> []
+  in
+  let riscv_shaped =
+    native.ni_asm <> [] || native.ni_runtime <> None
+    || native.ni_link_script <> None
+  in
+  let honored =
+    if target = "c" then not riscv_shaped
+    else if target = "riscv64" then not c_shaped
+    else not (c_shaped || riscv_shaped)
+  in
+  if not honored then begin
+    let dep_names =
+      List.filter (fun d -> d.nd_inputs <> no_native_inputs) native_deps
+      |> List.map (fun d -> d.nd_name)
+    in
+    let providers =
+      if root_inputs <> no_native_inputs then
+        manifest.Emo_pkg.name :: dep_names
+      else dep_names
+    in
+    let providers = List.sort_uniq compare providers in
+    raise
+      (Static_errors
+         [
+           {
+             Emo_support.Diagnostic.severity = Error;
+             code = Some "E5007";
+             message =
+               Printf.sprintf
+                 "the %s target cannot build with these native inputs (%s) — \
+                  the c target alone carries a package's C sources and \
+                  libraries; the riscv64 target alone carries a package's .S \
+                  sources and the image's boot stub and linker script"
+                 target (String.concat ", " providers);
+             span =
+               Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
+                 ~stop:0;
+             hint = None;
+           };
+         ]);
+  end;
   let module_paths =
     List.filter (fun path -> not (is_test_module path)) (module_paths p)
   in

@@ -338,14 +338,13 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         let inputs, entry_path, packages, dep_native =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
+        (* The caller's own inputs (the pre-publish gate's package) merge
+           with the dependencies'; a component provided on both sides
+           refuses here the way it does inside the resolution. *)
         let native =
-          {
-            Emo_project.ni_sources =
-              native.Emo_project.ni_sources @ dep_native.Emo_project.ni_sources;
-            ni_link = native.ni_link @ dep_native.ni_link;
-            ni_frameworks = native.ni_frameworks @ dep_native.ni_frameworks;
-            ni_pkg_config = native.ni_pkg_config @ dep_native.ni_pkg_config;
-          }
+          Emo_project.merge_native
+            ~a_name:"the package being built"
+            ~b_name:"its dependencies" native dep_native
         in
         let program =
           Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
@@ -842,14 +841,23 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | "riscv64" ->
             (* Emit RV64 assembly for the GNU cross binutils: one
                freestanding ELF that boots under QEMU or on the machine
-               (step 19). *)
-            let asm = Emo_codegen.Riscv.emit program in
+               (step 19). A package's native inputs ride in (EmoOS T3.1):
+               its .S sources assemble beside the program into the image,
+               its `runtime.S` replaces the compiler's boot stub, its
+               `link.ld` replaces the linker script — a kernel package
+               owns its image. *)
+            let asm =
+              Emo_codegen.Riscv.emit
+                ~boot_stub:(native.Emo_project.ni_runtime = None)
+                program
+            in
             let out =
               if Filename.check_suffix output ".elf" then output
               else output ^ ".elf"
             in
             let asm_file = Filename.concat build_dir "emo_main.s" in
             let obj_file = Filename.concat build_dir "emo_main.o" in
+            let native_obj = Filename.concat build_dir "emo_native.o" in
             let ld_file = Filename.concat build_dir "emo_link.ld" in
             let write path contents =
               let oc = open_out_bin path in
@@ -857,7 +865,13 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               close_out oc
             in
             write asm_file asm;
-            write ld_file Emo_codegen.Riscv.linker_script;
+            let script =
+              match native.Emo_project.ni_link_script with
+              | Some script -> script
+              | None ->
+                  write ld_file Emo_codegen.Riscv.linker_script;
+                  ld_file
+            in
             let prefix = riscv_binutils_prefix () in
             begin match prefix with
             | None ->
@@ -870,15 +884,47 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   Printf.sprintf "%s-as -march=rv64gc -mabi=lp64d %s -o %s"
                     prefix (Filename.quote asm_file) (Filename.quote obj_file)
                 in
-                let ld_cmd =
-                  Printf.sprintf "%s-ld -T %s %s -o %s" prefix
-                    (Filename.quote ld_file) (Filename.quote obj_file)
-                    (Filename.quote out)
-                in
                 let exit_code = Emo_tool.run_status as_cmd in
+                (* The package sources assemble as one unit beside the
+                   program — the boot stub first, then the plain sources;
+                   each file owns its section directives, the plain
+                   assembly discipline. *)
+                let package_sources =
+                  match native.Emo_project.ni_runtime with
+                  | Some stub -> stub :: native.Emo_project.ni_asm
+                  | None -> native.Emo_project.ni_asm
+                in
                 let exit_code =
                   if exit_code <> 0 then exit_code
-                  else Emo_tool.run_status ld_cmd
+                  else
+                    match package_sources with
+                    | [] -> 0
+                    | sources ->
+                        Emo_tool.run_status
+                          (Printf.sprintf
+                             "%s-as -march=rv64gc -mabi=lp64d %s -o %s"
+                             prefix
+                             (String.concat " "
+                                (List.map Filename.quote sources))
+                             (Filename.quote native_obj))
+                in
+                let objects =
+                  if package_sources = [] then Filename.quote obj_file
+                  else
+                    (* The package's object links first: OpenSBI enters at
+                       the image's load address, not the ELF entry, so the
+                       boot stub must open .text — the load order the
+                       default image lays out too. *)
+                    Filename.quote native_obj ^ " " ^ Filename.quote obj_file
+                in
+                let exit_code =
+                  if exit_code <> 0 then exit_code
+                  else
+                    Emo_tool.run_status
+                      (Printf.sprintf "%s-ld -T %s %s -o %s" prefix
+                         (Filename.quote script)
+                         objects
+                         (Filename.quote out))
                 in
                 if exit_code <> 0 then begin
                   prerr_endline
@@ -2416,11 +2462,14 @@ let emoji_build ~(dir : string) : int =
           end
         in
         (* The package's own native inputs ride the build too — the
-           pre-publish gate must link what the package's consumers will
+           pre-publish gate must build what the package's consumers will
            get: its tree's .c/.m sources, its manifest's link libraries,
-           frameworks and pkg-config modules. The dependency mechanism
-           in build_file covers a package's deps; the package itself is
-           not its own dep. *)
+           frameworks and pkg-config modules. Its riscv64 shapes (the
+           .S sources and the image's boot stub and linker script) are
+           not here: they are the root package's own, and the
+           resolution inside build_file collects them from the root
+           tree directly. The dependency mechanism in build_file covers
+           a package's deps; the package itself is not its own dep. *)
         let own_native =
           {
             Emo_project.ni_sources =
@@ -2434,6 +2483,9 @@ let emoji_build ~(dir : string) : int =
             ni_link = m.Emo_pkg.link;
             ni_frameworks = m.Emo_pkg.frameworks;
             ni_pkg_config = m.Emo_pkg.pkg_config;
+            ni_asm = [];
+            ni_runtime = None;
+            ni_link_script = None;
           }
         in
         let results =

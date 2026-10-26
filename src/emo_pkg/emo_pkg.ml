@@ -656,10 +656,12 @@ module Registry = struct
     |> Digestif.SHA256.to_hex
 
   (* Collects every package file under [dir], relative paths as keys: the
-     .emo modules plus the .c/.h/.m sources a native-binding package carries
-     (the c target compiles them into the program — CHECK.md, 2026-10-12;
-     `.m` joins them with the native packaging mechanism, T48.7). Build
-     output (.emo-build) and dune's tree (_build) are not package content. *)
+     .emo modules plus the native sources a package carries — the .c/.h/.m
+     the c target compiles into the program (CHECK.md, 2026-10-12; `.m`
+     joins them with the native packaging mechanism, T48.7) and the .S/.ld
+     the riscv64 target assembles into the image (a `runtime.S` boot stub
+     and a `link.ld` linker script, EmoOS T3.1). Build output (.emo-build)
+     and dune's tree (_build) are not package content. *)
   let collect_files (dir : string) : (string * string) list =
     let rec walk rel =
       let dir_path = Filename.concat dir (String.concat "/" rel) in
@@ -682,6 +684,8 @@ module Registry = struct
               || Filename.check_suffix entry ".c"
               || Filename.check_suffix entry ".h"
               || Filename.check_suffix entry ".m"
+              || Filename.check_suffix entry ".S"
+              || Filename.check_suffix entry ".ld"
             then
               let ic = open_in_bin path in
               let content =

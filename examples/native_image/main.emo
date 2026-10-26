@@ -1,0 +1,7 @@
+// The package owns its image: runtime.S is the boot stub, link.ld the
+// linker script, extra.S a plain source — the stub leaves three words
+// in the free RAM above the heap, and the program reads them back.
+
+println(peek64(0x87000000))
+println(peek64(peek64(0x87000008)))
+println(peek64(0x87000010))
