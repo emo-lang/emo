@@ -2,7 +2,7 @@
 
 An operating system written in Emo — kernel, shell, and user programs in one language, from power-on to prompt. EmoOS is an xv6-class research and teaching system: complete enough to run real programs on real (or simulated) RISC-V hardware, small enough to read end to end. It is the proof of Emo's single-language closure, and the hardest stress test the language undergoes.
 
-Status: pre-alpha. Bare-metal bring-up is complete — the freestanding `riscv64` image boots under QEMU and prints through the firmware console. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
+Status: pre-alpha. The kernel boots under QEMU and prints through its own polled 16550A driver; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
 
 Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
@@ -46,6 +46,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 
 - **Boot profile A, fixed for the roadmap.** OpenSBI enters the kernel in S-mode at `0x80200000` with the hart id and DTB; non-boot harts park. One hart; SMP is parked.
 - **QEMU `virt` is the development loop;** the same image runs on real RISC-V hardware. `./run.sh` boots the image and greps the serial line.
+- **The kernel owns its console.** The boot stub parks the Emo driver's putc in the runtime's one-word console hook, so every printed byte — `println`, a panic — rides the polled 16550A driver through `peek`/`poke`; SBI keeps only the poweroff ecall. The driver polls until the tick (T3.6) makes the console interrupt-driven.
 - **Dual-run development.** Hardware sits behind structural interfaces, so kernel services run under the hosted interpreter against fake devices — millisecond iteration, directly assertable — and under QEMU against real ones. The two runs must agree byte for byte.
 
 ## The project in the tree

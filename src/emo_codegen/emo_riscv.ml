@@ -4,7 +4,9 @@
    `qemu-system-riscv64 -machine virt`, OpenSBI enters the payload at
    0x80200000 in S-mode with a0 = hart id and a1 = the DTB pointer, and
    the legacy ecalls (a7 = 1 console putchar, a7 = 8 shutdown) are the
-   runtime's whole IO.
+   runtime's whole IO — the console one only until a kernel package's
+   boot stub parks a driver entry in `emo_console_hook` (EmoOS T3.5);
+   the shutdown ecall stays for every image.
 
    The value model (T19.2/T19.3): a dynamic value is one tagged machine
    word. Heap pointers carry their kind in bits 4:1 (bit 0 clear) — 0
@@ -2337,19 +2339,41 @@ emo_heap_gone:
 
 # ---- Failure ----
 
-# emo_print_bytes: a0 = start, a1 = end; every byte through the legacy
-# console ecall (a7 = 1, which the ecall leaves alone).
+# emo_console_emit: a0 = the byte. Through the console hook when one is
+# parked — a tail call, the hook answers the runtime's own caller — else
+# the legacy console ecall (a7 = 1, which the ecall leaves alone).
+emo_console_emit:
+    la t0, emo_console_hook
+    ld t0, 0(t0)
+    beqz t0, 1f
+    jr t0
+1:
+    li a7, 1
+    ecall
+    ret
+
+# emo_print_bytes: a0 = start, a1 = end; every byte through the console
+# hook or the legacy ecall. The walk rides the saved registers — the
+# hook is a call like any other.
     .globl emo_print_bytes
 emo_print_bytes:
-    mv t0, a0
-    li a7, 1
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a0
+    mv s1, a1
 .Lpb:
-    bgeu t0, a1, .Lpb_done
-    lbu a0, 0(t0)
-    ecall
-    addi t0, t0, 1
+    bgeu s0, s1, .Lpb_done
+    lbu a0, 0(s0)
+    call emo_console_emit
+    addi s0, s0, 1
     j .Lpb
 .Lpb_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
     ret
 
 # emo_fail: a0 = message start, a1 = end; announce and power off.
@@ -2366,8 +2390,7 @@ emo_fail:
     ld a1, 16(sp)
     call emo_print_bytes
     li a0, 10
-    li a7, 1
-    ecall
+    call emo_console_emit
     li a7, 8
     ecall
 .Lfail_park:
@@ -4109,8 +4132,7 @@ emo_println:
     add a1, a0, a1
     call emo_print_bytes
     li a0, 10
-    li a7, 1
-    ecall
+    call emo_console_emit
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -4837,6 +4859,19 @@ emo_pid_counter:
     .zero 8
 emo_cur_slot:
     .zero 8
+
+# ---- The console hook (EmoOS T3.5) ----
+#
+# Zero — what the entry stub's .bss clear leaves, and what the default
+# stub never touches — means the legacy SBI console ecall. A kernel
+# package's boot stub parks the raw entry of a fully typed Emo def here
+# (the psABI discipline: the byte in a0, the callee's own frame
+# discipline), and every console byte the runtime emits rides through
+# it. SBI keeps the shutdown.
+
+    .globl emo_console_hook
+emo_console_hook:
+    .zero 8
 |asm}
 
 (* The float formatter's tables: 10^k for every exponent the rule can
@@ -5137,6 +5172,10 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
           emit_const_function env f
         else
           let native = match conv_of f with Some _ -> true | None -> false in
+          (* Top-level defs are global: a package's boot stub reaches
+             one by name (the console hook of T3.5, the trap entry of
+             T3.6) — the module-prefixed labels collide with nothing. *)
+          gput env "    .globl %s\n" (func_label f.Emo_ir.fname);
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
             ~params:f.fparams ~captures:[]

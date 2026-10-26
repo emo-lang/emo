@@ -2,7 +2,7 @@
 
 一个用 Emo 写成的操作系统——内核、shell、用户程序同出一门语言，从上电走到提示符。EmoOS 是一个 xv6 量级的研究与教学系统：大到能在真实（或模拟的）RISC-V 硬件上跑真程序，小到可以通读全部源码。它是 Emo 单语言闭环的证明，也是这门语言经受的最狠试金石。
 
-状态：pre-alpha。裸机 bring-up 已完成——freestanding `riscv64` 镜像可在 QEMU 下启动并经固件控制台打印。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
+状态：pre-alpha。内核可在 QEMU 下启动，并经自己的轮询 16550A 驱动打印；固件控制台只保留关机。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
 
 English version: [`README.md`](README.md).
 
@@ -46,6 +46,7 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 
 - **Boot profile A，整个路线图期间固定**。OpenSBI 以 S-mode 在 `0x80200000` 进入内核，携带 hart id 与 DTB；非 boot hart 永久 park。单 hart；SMP 挂起。
 - **QEMU `virt` 是开发环**；同一镜像可跑在真实 RISC-V 硬件上。`./run.sh` 启动镜像并 grep 串口输出。
+- **内核拥有自己的控制台。** boot stub 把 Emo 驱动的 putc 停进运行时的单词 console hook，于是每个打印字节——`println`、panic——都走 `peek`/`poke` 之上的轮询 16550A 驱动；SBI 只保留 poweroff ecall。驱动先轮询，等 T3.6 的 tick 把控制台转成中断驱动。
 - **双运行开发**。硬件藏在结构接口后面：内核服务在 hosted 解释器 + 假设备下运行——毫秒级迭代、可直接断言——再到 QEMU 里跑真东西。两路输出必须逐字节一致。
 
 ## 项目在源码树中的位置

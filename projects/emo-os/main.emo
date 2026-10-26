@@ -1,1 +1,52 @@
+// The EmoOS kernel bring-up (T3.5): the 16550A UART at 0x10000000 on
+// `virt`, polled through the raw peek/poke lanes. The boot stub parks
+// console_put_byte's raw entry in the runtime's console hook, so every
+// console byte the runtime emits — println included — rides this
+// driver and leaves the SBI console; SBI stays for poweroff.
+//
+//   emo build main.emo --target riscv64
+
+// The registers the polling driver touches, byte-wide: the transmit
+// and receive holding registers share offset 0, the interrupt-enable
+// register sits at 1, the FIFO control at 2, the line control at 3,
+// and the line-status register at 5 — bit 5 says the transmitter is
+// empty (safe to write), bit 0 says a received byte is waiting.
+const uart = 0x10000000
+
+def console_put_byte(b Int64) Void {
+  while (peek8(uart + 5).to_int64() & 32) == 0 {
+  }
+  poke8(uart, b.to_byte())
+}
+
+def console_read_byte() Int64 {
+  while (peek8(uart + 5).to_int64() & 1) == 0 {
+  }
+  return peek8(uart).to_int64()
+}
+
+// The polling driver's one-time setup: no interrupts (the kernel polls
+// until T3.6), the divisor for a standard rate, 8N1 line control, and
+// the FIFOs enabled and cleared.
+def uart_init() Void {
+  poke8(uart + 1, 0B)
+  poke8(uart + 3, 128B)
+  poke8(uart + 0, 3B)
+  poke8(uart + 1, 0B)
+  poke8(uart + 3, 3B)
+  poke8(uart + 2, 7B)
+}
+
+// One line in, the same line out — the read lane's proof. The newline
+// that ends the line ends the program.
+def echo_line() Void {
+  var b = console_read_byte()
+  while b != 10 {
+    console_put_byte(b)
+    b = console_read_byte()
+  }
+}
+
+uart_init()
 println("Hello, EmoOS!")
+echo_line()
