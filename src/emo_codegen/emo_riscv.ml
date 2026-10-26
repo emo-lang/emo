@@ -4277,6 +4277,18 @@ emo_atomic_mtbl:
 # and never a stale residue. The quota is the CPU slice budget in
 # ticks; the tick (T3.6) consumes it, and 0 is the unassigned value
 # until then.
+#
+# Interrupt safety (T3.6): every function that mutates scheduler state
+# — the run queue, the slot words, the cur-slot swap — opens with
+# `csrci sstatus, 2` (SIE off) and, on every exit the resumed process
+# flows through, closes with `csrsi sstatus, 2`. A timer interrupt
+# therefore never lands inside a scheduler region: the trap entry
+# hardware-masks interrupts, the ISR's own helpers assume the mask, and
+# the one switch made under a mask records the mask in the context
+# frame's spare word, which the switch-in restores — a process
+# preempted or parked mid-region resumes still masked, and unmasks when
+# its own region ends. Helpers called only from masked contexts (the
+# run-queue push, the mailbox reads) toggle nothing.
 
     .section .text
 
@@ -4306,9 +4318,14 @@ emo_runq_push:
 # saves the current context into the current slot, picks the next
 # runnable, and switches. An empty queue is the loud deadlock — a wake
 # happens only in a send, whose sender stays runnable, so nobody can
-# ever arrive.
+# ever arrive. The region is masked (T3.6); the spare word at 200(sp)
+# records the mask for the switch-in, and the pick loads the incoming
+# slot's quota into the tick's slice countdown. The pick half is its
+# own entry — emo_sched_pick — for the tick's preemption path, which
+# arrives with the victim's context already built.
     .globl emo_schedule
 emo_schedule:
+    csrci sstatus, 2
     addi sp, sp, -208
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -4335,9 +4352,15 @@ emo_schedule:
     fsd fs9, 176(sp)
     fsd fs10, 184(sp)
     fsd fs11, 192(sp)
+    csrr t6, sstatus
+    andi t6, t6, 2
+    sd t6, 200(sp)
     la t0, emo_cur_slot
     ld t1, 0(t0)
     sd sp, 0(t1)
+    .globl emo_sched_pick
+emo_sched_pick:
+    la t0, emo_cur_slot
     la t2, emo_runq_len
     ld t3, 0(t2)
     beqz t3, emo_deadlock
@@ -4353,6 +4376,9 @@ emo_schedule:
     addi t3, t3, -1
     sd t3, 0(t2)
     sd a1, 0(t0)
+    ld t2, 56(a1)
+    la t3, emo_slice_left
+    sd t2, 0(t3)
     ld sp, 0(a1)
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -4379,6 +4405,13 @@ emo_schedule:
     fld fs9, 176(sp)
     fld fs10, 184(sp)
     fld fs11, 192(sp)
+    ld t0, 200(sp)
+    beqz t0, .Lsched_sie_off
+    csrsi sstatus, 2
+    j .Lsched_sie_done
+.Lsched_sie_off:
+    csrci sstatus, 2
+.Lsched_sie_done:
     addi sp, sp, 208
     ret
 emo_deadlock:
@@ -4386,29 +4419,81 @@ emo_deadlock:
     la a1, msg_blocked_end
     call emo_fail
 
+# emo_sched_tick: the kernel timer ISR's quota step (T3.6). Consumes
+# one tick of the running slice and answers a0 = 1 when the slice is
+# spent — the ISR then calls emo_sched_preempt with the trap frame —
+# and a0 = 0 when the quota is unassigned (0, the dormant case) or
+# still counting. Interrupts are already masked at a trap entry; the
+# helper allocates nothing and touches nothing the ISR does not own.
+    .globl emo_sched_tick
+emo_sched_tick:
+    la t1, emo_slice_left
+    ld t0, 0(t1)
+    beqz t0, .Ltick_dormant
+    addi t0, t0, -1
+    sd t0, 0(t1)
+    bnez t0, .Ltick_dormant
+    li a0, 1
+    ret
+.Ltick_dormant:
+    li a0, 0
+    ret
+
+# emo_sched_preempt: a0 = the trap frame's switch-section base on the
+# victim's own stack — the frame the kernel's trap shim laid down, its
+# top 208 bytes shaped exactly like the scheduler's context frame. The
+# victim's slot takes that base as its saved sp and the resume hook as
+# its ra (the frame keeps the interrupted ra below, for the resume
+# stub), the victim re-joins the run queue, and the scheduler picks the
+# next process — this call never returns to the ISR. Interrupts are
+# already masked at a trap entry; nothing here allocates.
+    .globl emo_sched_preempt
+emo_sched_preempt:
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    sd a0, 0(t0)
+    ld t1, emo_trap_resume_hook
+    sd t1, 0(a0)
+    mv a0, t0
+    call emo_runq_push
+    j emo_sched_pick
+
 # emo_yield: the current process re-joins the run queue and gives the
-# hart away; it resumes here when the scheduler picks it again.
+# hart away; it resumes here when the scheduler picks it again. The
+# region is masked; the resume unmask is this function's own exit.
     .globl emo_yield
 emo_yield:
+    csrci sstatus, 2
     addi sp, sp, -16
     sd ra, 0(sp)
     la t0, emo_cur_slot
     ld a0, 0(t0)
     call emo_runq_push
     call emo_schedule
+    csrsi sstatus, 2
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
 
 # emo_park_receive: the current process waits for its mailbox; it
-# leaves the run queue, so only a send can put it back.
+# leaves the run queue, so only a send can put it back. Masked (T3.6);
+# the switch away records the mask, and the wake resumes through this
+# call's own exit — the unmask before the ret, so the scan the receive
+# site runs next is unmasked, as the ISR expects.
     .globl emo_park_receive
 emo_park_receive:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
     la t0, emo_cur_slot
     ld t1, 0(t0)
     li t2, 2
     sd t2, 16(t1)
-    j emo_schedule
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
 
 # emo_process_done: the entry thunk's return address — a spawned
 # process that falls off its body lands here and never comes back. The
@@ -4416,6 +4501,7 @@ emo_park_receive:
 # ends with it, the hosted semantics.
     .globl emo_process_done
 emo_process_done:
+    csrci sstatus, 2
     la t0, emo_cur_slot
     ld t1, 0(t0)
     li t2, 3
@@ -4429,6 +4515,7 @@ emo_process_done:
 # process. Answers the child's Pid.
     .globl emo_spawn
 emo_spawn:
+    csrci sstatus, 2
     addi sp, sp, -40
     sd ra, 0(sp)
     sd a0, 8(sp)            # the entry thunk
@@ -4502,6 +4589,7 @@ emo_spawn:
     ld t1, 32(sp)
     sd t1, 8(a0)
     ori a0, a0, 18
+    csrsi sstatus, 2
     ld ra, 0(sp)
     addi sp, sp, 40
     ret
@@ -4514,6 +4602,7 @@ emo_spawn:
 # into the next statement, the hosted discipline.
     .globl emo_send
 emo_send:
+    csrci sstatus, 2
     addi sp, sp, -48
     sd ra, 0(sp)
     sd a0, 8(sp)            # the target word
@@ -4589,6 +4678,7 @@ emo_send:
     ld a0, 0(t0)
     call emo_runq_push
     call emo_schedule
+    csrsi sstatus, 2
     ld ra, 0(sp)
     addi sp, sp, 48
     ret
@@ -4871,6 +4961,27 @@ emo_cur_slot:
 
     .globl emo_console_hook
 emo_console_hook:
+    .zero 8
+
+# ---- The tick's scheduler side (EmoOS T3.6) ----
+#
+# emo_slice_left is the running process's slice countdown in ticks: the
+# dispatch loads it from the incoming slot's quota (0 = unassigned, the
+# dormant case), and the kernel's timer ISR consumes it through
+# `emo_sched_tick`, which answers 1 when the slice is spent — the ISR
+# then hands the interrupted context to `emo_sched_preempt`, which
+# re-queues the victim and dispatches the next process. Both answer to
+# the ISR only: the trap entry hardware-masks interrupts, so neither
+# can race the scheduler's own regions. emo_trap_resume_hook holds the
+# address a preempted process resumes at — the trap frame's other half
+# lives on the victim's own stack, and the hook (parked by the kernel's
+# boot stub) restores it and srets home.
+
+    .globl emo_slice_left
+emo_slice_left:
+    .zero 8
+    .globl emo_trap_resume_hook
+emo_trap_resume_hook:
     .zero 8
 |asm}
 

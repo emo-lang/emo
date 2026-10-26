@@ -1,5 +1,7 @@
-// The EmoOS kernel bring-up (T3.5): the 16550A UART at 0x10000000 on
-// `virt`, polled through the raw peek/poke lanes. The boot stub parks
+// The EmoOS kernel bring-up (T3.6): the 16550A UART at 0x10000000 on
+// `virt`, polled through the raw peek/poke lanes, and the tick — the
+// trap shim counts timer interrupts into a preallocated ring at its
+// fixed address while the machine runs. The boot stub parks
 // console_put_byte's raw entry in the runtime's console hook, so every
 // console byte the runtime emits — println included — rides this
 // driver and leaves the SBI console; SBI stays for poweroff.
@@ -12,6 +14,13 @@
 // and the line-status register at 5 — bit 5 says the transmitter is
 // empty (safe to write), bit 0 says a received byte is waiting.
 const uart = 0x10000000
+
+// The tick ring (T3.6): the trap shim's preallocated channel, at the
+// fixed address the kernel's linker script gives it — the producer
+// cursor (every tick, ever), the consumer cursor, the dropped count,
+// then 64 entries. The producer is the trap shim alone; this code
+// drains like it would drain any device.
+const tick_ring = 0x87000000
 
 def console_put_byte(b Int64) Void {
   while (peek8(uart + 5).to_int64() & 32) == 0 {
@@ -47,6 +56,51 @@ def echo_line() Void {
   }
 }
 
+// Ticks so far: everything the shim counted, captured or dropped.
+def ticks() Int64 {
+  return peek64(tick_ring) + peek64(tick_ring + 16)
+}
+
+// The tick's proof under load: a long raw computation — its checksum
+// is the register-file pin, because the timer fires mid-loop over and
+// over and any mis-restored register bends the sum.
+def sweep(n Int64) Int64 {
+  var sum = 0
+  var i = 0
+  while i < n {
+    sum = sum + i
+    i = i + 1
+  }
+  return sum
+}
+
+// Drain the captured ticks; answers how many came out. The consumer
+// cursor chases the snapshot of the producer's it took — later ticks
+// land in the next drain — and every entry is read through the lane
+// the ring's protocol hands this side.
+def drain() Int64 {
+  var prod = peek64(tick_ring)
+  var cons = peek64(tick_ring + 8)
+  var n = 0
+  while cons < prod {
+    var entry = peek64(tick_ring + 24 + 8 * (cons % 64))
+    cons = cons + 1
+    n = n + 1
+  }
+  poke64(tick_ring + 8, cons)
+  return n
+}
+
+def tick_proof() Void {
+  var t0 = ticks()
+  println(sweep(100000000))
+  println(ticks() > t0)
+  println(drain() > 0)
+  println(peek64(tick_ring + 8) <= peek64(tick_ring))
+}
+
 uart_init()
 println("Hello, EmoOS!")
+tick_proof()
 echo_line()
+

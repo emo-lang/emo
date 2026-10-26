@@ -4,8 +4,10 @@
 # fully typed Emo def console_put_byte (its label carries the root
 # module's prefix) is parked in the runtime's emo_console_hook, so
 # every console byte the runtime emits rides the 16550A polling driver
-# in main.emo instead of the SBI console ecalls. SBI stays for
-# poweroff.
+# in main.emo instead of the SBI console ecalls. Then the trap
+# machinery (T3.6): the resume stub's address is parked in the
+# runtime's emo_trap_resume_hook and emo_os_trap_init arms the timer
+# under the shim's vector. SBI stays for poweroff.
 
     .section .text
     .globl emo_start
@@ -23,6 +25,13 @@ emo_start:
     la t0, emo_main__console_put_byte
     la t1, emo_console_hook
     sd t0, 0(t1)
+    # the trap machinery (T3.6): the resume stub's address goes to the
+    # runtime's hook, then the init probes the timer, sets stvec, and
+    # arms the first deadline — all before the program runs
+    la t0, emo_os_trap_resume
+    la t1, emo_trap_resume_hook
+    sd t0, 0(t1)
+    call emo_os_trap_init
     call emo_runtime_init
     call emo_program
     li a7, 8
