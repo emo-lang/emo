@@ -17,6 +17,12 @@ def packer(boss Pid, n Int64) {
   boss <- Box.new(n * 10)
 }
 
+// A sender of pairs: the tuple snapshots at the send boundary and the
+// pattern binds both elements on the far side.
+def twin(boss Pid, n Int64) {
+  boss <- (n, n * n)
+}
+
 // Two senders feed one mailbox; the guard keeps only the big one, and
 // the small one stays queued for the plain binding that follows.
 def low(boss Pid) {
@@ -47,6 +53,14 @@ receive {
 do packer(me, 3)
 receive {
   box -> { println(box.read()) }
+}
+
+do twin(me, 4)
+receive {
+  (a, b) -> {
+    println(a)
+    println(b)
+  }
 }
 
 do low(me)

@@ -4635,7 +4635,9 @@ emo_copy_deep:
     sd t2, 24(sp)               # 24 the source block
     ld t3, 0(t2)
     sd t3, 32(sp)               # 32 the payload word count
-    mv a0, t3
+    addi t3, t3, 1              # the elements end at block word hdr, so the
+    sd t3, 32(sp)               #   bound is one past it (hdr counts payload
+    mv a0, t3                   #   words 1..hdr; the elements are 2..hdr)
     call emo_alloc
     sd a0, 16(sp)               # 16 the new word
     ld t2, 24(sp)
