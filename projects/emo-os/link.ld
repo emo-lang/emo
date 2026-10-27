@@ -33,5 +33,11 @@ SECTIONS
   . = 0x87000000;
   .emo_tick (NOLOAD) : { *(.emo_tick) } :tick
 
+  /* The input ring (T3.7) at its own fixed address, a page above the
+     tick ring: the trap shim fills it from the UART's receive FIFO
+     and the console process drains it through peek/poke. */
+  . = 0x87001000;
+  .emo_in (NOLOAD) : { *(.emo_in) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

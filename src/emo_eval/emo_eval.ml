@@ -323,6 +323,8 @@ let global_env () =
     { bound = BuiltinFn "peek64"; mutable_ = false };
   Hashtbl.replace env.frame "poke64"
     { bound = BuiltinFn "poke64"; mutable_ = false };
+  Hashtbl.replace env.frame "device_wait"
+    { bound = BuiltinFn "device_wait"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -2894,7 +2896,7 @@ and apply_builtin span name args =
   | "fence", vs ->
       error span "E3007"
         (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
-  | (("peek8" | "poke8" | "peek64" | "poke64") as name), _ ->
+  | (("peek8" | "poke8" | "peek64" | "poke64" | "device_wait") as name), _ ->
       error span "E4028"
         (Printf.sprintf
            "`%s` reaches raw memory: only the `riscv64` target admits it, not \

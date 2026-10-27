@@ -46,7 +46,7 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 
 - **Boot profile A，整个路线图期间固定**。OpenSBI 以 S-mode 在 `0x80200000` 进入内核，携带 hart id 与 DTB；非 boot hart 永久 park。单 hart；SMP 挂起。
 - **QEMU `virt` 是开发环**；同一镜像可跑在真实 RISC-V 硬件上。`./run.sh` 启动镜像并 grep 串口输出。
-- **内核拥有自己的控制台。** boot stub 把 Emo 驱动的 putc 停进运行时的单词 console hook，于是每个打印字节——`println`、panic——都走 `peek`/`poke` 之上的轮询 16550A 驱动；SBI 只保留 poweroff ecall。驱动先轮询，等 T3.6 的 tick 把控制台转成中断驱动。
+- **内核拥有自己的控制台。** boot stub 把 Emo 驱动的 putc 停进运行时的单词 console hook，于是每个打印字节——`println`、panic——都走 `peek`/`poke` 之上的轮询 16550A 驱动；SBI 只保留 poweroff ecall。接收侧是中断驱动的：PLIC 把 UART 的中断线送进 trap shim，shim 装满预分配的环并唤醒 console 进程；reader 阻塞在普通邮箱上。
 - **双运行开发**。硬件藏在结构接口后面：内核服务在 hosted 解释器 + 假设备下运行——毫秒级迭代、可直接断言——再到 QEMU 里跑真东西。两路输出必须逐字节一致。
 
 ## 项目在源码树中的位置

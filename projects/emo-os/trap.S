@@ -26,6 +26,7 @@
 # (the state word to 2, sepc past the failed write, sret home). The
 # probing window is the three instructions around the write; no other
 # illegal instruction can land inside it.
+    .align 2                 # stvec's low bits are the vector mode
     .globl emo_os_trap_init
 emo_os_trap_init:
     addi sp, sp, -16
@@ -48,10 +49,23 @@ emo_os_trap_init:
 .Linit_kind:
     la t1, emo_os_timer_kind
     sd t0, 0(t1)
-    li t0, 32               # sie.STIE
+    li t0, 0x220            # sie.STIE and sie.SEIE — the tick and the devices
     csrs sie, t0
     csrsi sstatus, 2        # SIE on
     call emo_os_timer_rearm
+    # the PLIC (T3.7): the UART's receive line (IRQ 10 on `virt`) into
+    # this S-mode context — a priority above the threshold, the enable
+    # bit, threshold zero (OpenSBI leaves context 1's threshold at 7 —
+    # masked — the kernel owns the context now). The device side of the
+    # receive interrupt (IER bit 0) is the driver's own `uart_init`.
+    li t0, 0x0c000028       # priority[10]
+    li t1, 1
+    sw t1, 0(t0)
+    li t0, 0x0c002080       # enable[context 1] word 0
+    li t1, 1024             # 1 << 10
+    sw t1, 0(t0)
+    li t0, 0x0c201000       # threshold[context 1]
+    sw zero, 0(t0)
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -91,6 +105,7 @@ emo_os_timer_rearm:
 # owns is saved before a bit of it is clobbered; the dispatch is
 # scause's: the supervisor timer interrupt runs the discipline, and any
 # other trap is the loud failure.
+    .align 2                 # stvec's low bits are the vector mode
     .globl emo_os_trap_shim
 emo_os_trap_shim:
     addi sp, sp, -544
@@ -168,15 +183,20 @@ emo_os_trap_shim:
     fsd fs9, 512(sp)
     fsd fs10, 520(sp)
     fsd fs11, 528(sp)
-    # dispatch on scause: the supervisor timer interrupt, the probe's
-    # illegal-instruction answer, or the loud failure for anything else
+    # dispatch on scause: the supervisor timer interrupt, the
+    # supervisor external interrupt (the devices, through the PLIC),
+    # the probe's illegal-instruction answer, or the loud failure for
+    # anything else
     ld t0, 160(sp)
     bgez t0, .Ltrap_exc      # bit 63 clear: an exception
     slli t0, t0, 1           # drop the interrupt bit
     li t1, 10                # cause 5, shifted
     beq t0, t1, .Ltrap_timer
+    li t1, 18                # cause 9, shifted
+    beq t0, t1, .Ltrap_ext
     j .Ltrap_bad
 .Ltrap_exc:
+    ld t0, 160(sp)
     li t1, 2                 # illegal instruction — the probe's answer?
     bne t0, t1, .Ltrap_bad
     la t2, emo_os_probe_state
@@ -190,9 +210,11 @@ emo_os_trap_shim:
     sd t0, 152(sp)
     addi sp, sp, 544
     j emo_os_trap_resume
+.Ltrap_ext:
+    call emo_os_console_irq
+    j .Ltrap_home
 .Ltrap_timer:
-    call emo_os_timer_rearm
-    # enqueue the tick: the ISR is the ring's only producer, the entry
+    call emo_os_timer_rearm    # enqueue the tick: the ISR is the ring's only producer, the entry
     # carries its sequence number, and the store fence orders it before
     # the producer cursor the consumer reads
     la t0, emo_os_tick_prod
@@ -226,6 +248,57 @@ emo_os_trap_shim:
 .Ltrap_home:
     addi sp, sp, 544         # sp back to the interrupted value; the
     j emo_os_trap_resume     # frame now reads through negative offsets
+
+# emo_os_console_irq: the external interrupt's handler — the ISR
+# discipline (T3.6) on the console's line (T3.7). Claim through the
+# PLIC, drain the UART's receive FIFO into the input ring — the ring's
+# backpressure is the device's own: a full ring stops the drain and
+# the line re-raises after the complete — wake the device-waiter, and
+# complete the claim. Nothing allocates; everything is fixed words.
+    .globl emo_os_console_irq
+emo_os_console_irq:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li t0, 0x0c201004        # claim[context 1]
+    lw a0, 0(t0)
+    beqz a0, .Lcons_done     # a spurious claim: nothing to complete
+    li t1, 10
+    bne a0, t1, .Lcons_bad   # a device this kernel does not know
+.Lcons_drain:
+    li t0, 0x10000005        # the line-status register
+    lbu t1, 0(t0)
+    andi t1, t1, 1           # data ready?
+    beqz t1, .Lcons_wake
+    li t0, 0x10000000        # the receive buffer; the read clears DR
+    lbu t2, 0(t0)
+    la t3, emo_os_in_prod
+    ld t4, 0(t3)
+    la t5, emo_os_in_cons
+    ld t6, 0(t5)
+    sub t1, t4, t6
+    li t0, 128
+    bgeu t1, t0, .Lcons_wake # the ring is full: the line re-raises
+    andi t1, t4, 127
+    la t5, emo_os_in_ring
+    add t5, t5, t1
+    sb t2, 0(t5)             # the entry, then the cursor behind it
+    addi t4, t4, 1
+    fence w, w
+    sd t4, 0(t3)
+    j .Lcons_drain
+.Lcons_wake:
+    call emo_sched_wake_console
+    li t0, 0x0c201004
+    li t1, 10
+    sw t1, 0(t0)             # complete the claim
+.Lcons_done:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+.Lcons_bad:
+    la a0, msg_unexpected
+    la a1, msg_unexpected_end
+    call emo_fail
 
 .Ltrap_bad:
     la a0, msg_unexpected
@@ -317,3 +390,20 @@ emo_os_tick_drops:
     .globl emo_os_tick_ring
 emo_os_tick_ring:
     .zero 512
+
+# The input ring (T3.7): the console interrupt's channel — the
+# producer cursor, the consumer cursor, then 128 one-byte entries, in
+# its own section at the fixed address the kernel's linker script
+# gives it. The trap shim is the only producer; the console process is
+# the only consumer; a full ring leaves the bytes in the UART's FIFO
+# and the line re-raises.
+    .section .emo_in, "aw", @nobits
+    .globl emo_os_in_prod
+emo_os_in_prod:
+    .zero 8
+    .globl emo_os_in_cons
+emo_os_in_cons:
+    .zero 8
+    .globl emo_os_in_ring
+emo_os_in_ring:
+    .zero 128

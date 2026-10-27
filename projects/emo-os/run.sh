@@ -11,11 +11,12 @@ if [ ! -f "$elf" ]; then
 fi
 
 # One boot: the named CPU config, the serial input on a named pipe
-# written only after the kernel is up (OpenSBI's boot takes the UART
-# first, so anything written before the payload polls is gone), the
-# -d int trace in the log for the ecall count. The assertions: the
-# greeting, the tick proof's checksum and three verdicts, the echoed
-# line, and the machine's own exit — the SBI poweroff.
+# written only after the kernel is ready — the tick proof's checksum is
+# the gate, so the reader's request beats the input and the console
+# sleeps in its device-wait before a byte exists — and the -d int trace
+# in the log for the ecall count. The assertions: the greeting, the
+# checksum, the tick verdict, the five console deliveries in order,
+# and the machine's own exit — the SBI poweroff.
 boot() {
   local cpu="$1" mode="$2" log="$3"
   local fifo
@@ -29,8 +30,8 @@ boot() {
   exec 3>"$fifo"
 
   local found=0
-  for _ in $(seq 1 100); do
-    if grep -qF -- 'Hello, EmoOS!' "$log" 2>/dev/null; then
+  for _ in $(seq 1 200); do
+    if grep -qF -- '4999999950000000' "$log" 2>/dev/null; then
       found=1
       break
     fi
@@ -39,7 +40,7 @@ boot() {
   done
 
   if [ "$found" -eq 1 ]; then
-    printf 'hi\n' >&3
+    printf 'abcde' >&3
   fi
 
   local exited=0
@@ -60,21 +61,33 @@ boot() {
   cat "$log"
 
   if [ "$found" -ne 1 ]; then
+    echo "run.sh: the tick proof's checksum never came" >&2
+    exit 1
+  fi
+  if ! grep -qF -- 'Hello, EmoOS!' "$log"; then
     echo "run.sh: expected 'Hello, EmoOS!' in the serial output" >&2
     exit 1
   fi
-  if ! grep -qF '4999999950000000' "$log"; then
-    echo "run.sh: the tick proof's checksum is wrong; a trap bent a register" >&2
+  if [ "$(grep -c 'true' "$log" || true)" -lt 1 ]; then
+    echo "run.sh: the tick verdict is missing; the tick is not running" >&2
     exit 1
   fi
-  if [ "$(grep -c 'true' "$log" || true)" -lt 3 ]; then
-    echo "run.sh: the tick proof's verdicts are missing; the tick is not running" >&2
-    exit 1
-  fi
-  if ! grep -qF 'hi' "$log"; then
-    echo "run.sh: the echo line never came back; the UART's read lane is dead" >&2
-    exit 1
-  fi
+  # The five console deliveries, in request order — the byte offsets in
+  # the log are the serial order, whatever the -d int trace wove
+  # between them.
+  local prev=0 pos line
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101'; do
+    pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
+    if [ -z "$pos" ]; then
+      echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
+      exit 1
+    fi
+    if [ "$pos" -lt "$prev" ]; then
+      echo "run.sh: '$line' arrived out of order" >&2
+      exit 1
+    fi
+    prev=$pos
+  done
   if [ "$exited" -ne 1 ]; then
     echo "run.sh: QEMU did not exit on its own; the SBI poweroff is gone" >&2
     exit 1
@@ -101,7 +114,7 @@ boot() {
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, proof, echo, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, self-exit"
 # The stimecmp transport when it does.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, proof, echo, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, proof, console, self-exit, 1 ecall"

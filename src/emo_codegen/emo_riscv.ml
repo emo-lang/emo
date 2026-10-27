@@ -774,6 +774,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
+  | Builtin { name = "device_wait"; args = [] } ->
+      (* T3.7: the kernel sleeps until the device world wakes it — the
+         park is state 4 (device-wait), the resume is this call's own
+         return, and the ISR's wake (emo_sched_wake_console) is what
+         brings the process back. A send to a device-waiter does not
+         wake it: requests queue in its mailbox for the next pump. *)
+      call_runtime env "emo_park_console"
   | Builtin { name = "self_pid"; args = [] } ->
       call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
@@ -4255,13 +4262,13 @@ emo_atomic_mtbl:
 # ends the program; a switch with nobody runnable is the loud deadlock.
 #
 # Slot layout (stride 72 words = 576 bytes): 0 the saved sp, 8 the pid,
-# 16 the state (0 free, 1 alive, 2 receiving, 3 done), 24 the mailbox
-# head, 32 the mailbox length, 40 the process's own priority, 48 its
-# effective priority, 56 its CPU quota, 64.. the 32-word message ring,
-# 320.. the 32-word ring of the priorities the messages carry (entry i
-# of each ring belongs to the same message). A slot never returns to
-# free — a pid is unique for the whole run, so a send to a dead pid is
-# dropped, never redirected to a new occupant.
+# 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
+# 24 the mailbox head, 32 the mailbox length, 40 the process's own
+# priority, 48 its effective priority, 56 its CPU quota, 64.. the
+# 32-word message ring, 320.. the 32-word ring of the priorities the
+# messages carry (entry i of each ring belongs to the same message). A
+# slot never returns to free — a pid is unique for the whole run, so a
+# send to a dead pid is dropped, never redirected to a new occupant.
 #
 # The scheduler's policy (EmoOS T3.4): dispatch is round-robin — the
 # run queue is a FIFO ring and emo_schedule pops its head. The priority
@@ -4415,6 +4422,31 @@ emo_sched_pick:
     addi sp, sp, 208
     ret
 emo_deadlock:
+    # nobody runnable: the machine may only wait when the device world
+    # can wake someone — a state-4 device-waiter (T3.7). Otherwise the
+    # classic loud deadlock: a wake happens only in a send, and no
+    # sender exists.
+    la t0, emo_procs
+    li t1, 0
+.Ldl_scan:
+    li t2, 64
+    bgeu t1, t2, emo_fail_blocked
+    li t3, 576
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    li t6, 4
+    beq t5, t6, .Ldl_idle
+    addi t1, t1, 1
+    j .Ldl_scan
+.Ldl_idle:
+    la t0, emo_slice_left
+    sd zero, 0(t0)           # the tick's quota step sleeps with the hart
+    csrsi sstatus, 2         # the timer and the devices can land
+    wfi
+    csrci sstatus, 2         # back under the region's mask
+    j emo_sched_pick         # the ISR may have queued someone
+emo_fail_blocked:
     la a0, msg_blocked
     la a1, msg_blocked_end
     call emo_fail
@@ -4495,6 +4527,63 @@ emo_park_receive:
     addi sp, sp, 16
     ret
 
+# emo_park_console: the device-wait park (T3.7) — `device_wait` in the
+# kernel's surface. The state is 4, a state only the device world
+# wakes: the ISR's emo_sched_wake_console finds a 4, flips it to 1, and
+# pushes the slot. A send does not wake a 4 — a request arriving while
+# the driver sleeps just queues in its mailbox for the next pump — so
+# the resume is exactly this call's return, no rescan, the mask
+# discipline identical to the receive park's.
+    .globl emo_park_console
+emo_park_console:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 4
+    sd t2, 16(t1)
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_sched_wake_console: the ISR's wake for the device-wait park —
+# the first state-4 slot becomes alive and re-joins the run queue.
+# Called from a trap (interrupts hardware-masked); scans at most the
+# 64 slots; a park that already ended (state not 4) is simply not
+# found, and the byte the ISR enqueued waits in the ring.
+    .globl emo_sched_wake_console
+emo_sched_wake_console:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_procs
+    li t1, 0
+.Lwake_scan:
+    li t2, 64
+    bgeu t1, t2, .Lwake_none
+    li t3, 576
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    li t6, 4
+    bne t5, t6, .Lwake_next
+    li t5, 1
+    sd t5, 16(t4)            # alive
+    mv a0, t4
+    call emo_runq_push
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+.Lwake_next:
+    addi t1, t1, 1
+    j .Lwake_scan
+.Lwake_none:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
 # emo_process_done: the entry thunk's return address — a spawned
 # process that falls off its body lands here and never comes back. The
 # root never does: its return goes to the boot stub, and the program
@@ -4559,7 +4648,10 @@ emo_spawn:
     ld t0, 56(t4)
     sd t0, 56(t3)
     # the child's stack: one switch-shaped frame whose ra is the entry
-    # thunk, the arguments just above it
+    # thunk, the arguments just above it. The spare word records the
+    # mask state the switch-in restores: the child is born outside any
+    # scheduler region — its body's own send/receive/spawn calls open
+    # and close their own — so it starts with interrupts enabled.
     addi t5, t1, 1
     slli t5, t5, 16
     la t6, emo_pstacks
@@ -4567,6 +4659,8 @@ emo_spawn:
     addi t4, t5, -208
     ld t0, 8(sp)
     sd t0, 0(t4)            # ra = the entry thunk
+    li t0, 1
+    sd t0, 200(t4)          # the spare word: SIE on at the first dispatch
     sd t4, 0(t3)            # the slot's saved sp
     # copy the arguments
     ld t0, 16(sp)           # argc
@@ -5368,7 +5462,7 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
         go 1;
         gput env "    ld t2, 8(t0)\n";
         gput env "    la ra, emo_process_done\n";
-        gput env "    jalr t2"
+        gput env "    jalr t2\n"
   in
   List.iter emit_spawn_thunk (List.rev env.spawns);
   (* Dispatch tables in .data: per-interface vtables (one slot per

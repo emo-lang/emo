@@ -46,7 +46,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 
 - **Boot profile A, fixed for the roadmap.** OpenSBI enters the kernel in S-mode at `0x80200000` with the hart id and DTB; non-boot harts park. One hart; SMP is parked.
 - **QEMU `virt` is the development loop;** the same image runs on real RISC-V hardware. `./run.sh` boots the image and greps the serial line.
-- **The kernel owns its console.** The boot stub parks the Emo driver's putc in the runtime's one-word console hook, so every printed byte — `println`, a panic — rides the polled 16550A driver through `peek`/`poke`; SBI keeps only the poweroff ecall. The driver polls until the tick (T3.6) makes the console interrupt-driven.
+- **The kernel owns its console.** The boot stub parks the Emo driver's putc in the runtime's one-word console hook, so every printed byte — `println`, a panic — rides the polled 16550A driver through `peek`/`poke`; SBI keeps only the poweroff ecall. The receive side is interrupt-driven: the PLIC lands the UART's line in the trap shim, which fills a preallocated ring and wakes the console process; readers block on ordinary mailboxes.
 - **Dual-run development.** Hardware sits behind structural interfaces, so kernel services run under the hosted interpreter against fake devices — millisecond iteration, directly assertable — and under QEMU against real ones. The two runs must agree byte for byte.
 
 ## The project in the tree
