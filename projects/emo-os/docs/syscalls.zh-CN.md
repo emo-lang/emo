@@ -48,6 +48,24 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 shutdown ecall——在用户镜像上它以动词 8 抵达门,像集合外的任何动词
 一样被拒绝。)
 
+## 用户表面
+
+用户代码不直接拼写裸 ecall。`emoos` 包——它自己的包，区别于 hosted
+的 `os`——是门的用户侧：类型化 Emo 表面，也是用户代码看见的边界的
+全部。它只准入 `riscv64` 目标；裸 `ecall` 只活在这两个函数体里，
+用户程序写不到的地方再多都没有。
+
+- `emoos.exit()`——退出动词；永不返回。
+- `emoos.write(buf, len)`——写入动词，按错误约定应答
+  `(R.ok, 字节数)` 或 `(R.error, why)`——门的拒绝原因化作指名它的
+  消息（`"outside the caller's memory"`、`"not writable"`、
+  `"bad argument"`、`"unknown verb"`）。
+
+程序像任何包一样钉住它（`deps { "emoos" = "0.1.0" }`），从内置
+registry 解析。kernel profile 把它连同标准库其余部分一起拒绝——
+内核只建在 `core` 之上，永不 require 自己的用户态；user profile 是
+普通程序，能 require 什么由各包自己的 target 声明决定。
+
 ## supervisor 检查
 
 每个指针参数都在门行动之前检查,依据是 loader 装载本镜像时停下的

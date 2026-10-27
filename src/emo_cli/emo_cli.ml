@@ -362,7 +362,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       | true -> (
           try
             let inputs, entry_path, packages, dep_native =
-              Emo_project.compile_inputs ~entry_file:entry ~target
+              Emo_project.compile_inputs ~entry_file:entry ~target ~profile
             in
             (* The caller's own inputs (the pre-publish gate's package) merge
            with the dependencies'; a component provided on both sides

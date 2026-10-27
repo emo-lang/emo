@@ -3,5 +3,7 @@ package {
   version = "0.1.0"
   targets = ["riscv64"]
 
-  deps {}
+  deps {
+    "emoos" = "0.1.0"
+  }
 }

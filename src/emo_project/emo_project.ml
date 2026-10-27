@@ -1562,7 +1562,7 @@ let is_test_module = function "test" :: _ :: _ -> true | _ -> false
    one target — the C shapes by c, the riscv64 shapes by riscv64 — and
    any other target refuses the program outright — dropping the native
    inputs would be a silent fallback. *)
-let compile_inputs ~entry_file ~target :
+let compile_inputs ~entry_file ~target ~profile :
     Emo_ir.module_input list * string list * string list list * native_inputs =
   let p, (manifest, dir) = prepare () in
   let entry = entry_module_in_project p entry_file in
@@ -1586,13 +1586,17 @@ let compile_inputs ~entry_file ~target :
                  "build the program's own entry (for example main.emo) instead";
            };
          ]);
-  (* The kernel's layering (EmoOS T3.2): the riscv64 target builds the
+  (* The kernel's layering (EmoOS T3.2): the kernel profile builds the
      kernel, and `core` is the kernel's only library layer. A
      standard-library require refuses here — before resolution, so the
      layering answer preempts the pin and target gates — naming the
      require at its own site. Scoped requires stay legal: a kernel
-     service is an ordinary package that declares the target. *)
-  if target = "riscv64" then begin
+     service is an ordinary package that declares the target. The user
+     profile (EmoOS T4.3) is an ordinary program: its packages declare
+     their own targets, and the resolution's target gate governs — the
+     standard library's hosted packages declare no riscv64 and refuse
+     there, by whose own answer. *)
+  if target = "riscv64" && profile = "kernel" then begin
     let kernel_offenders =
       stdlib_requires p
       |> List.filter (fun (name, _) -> Emo_pkg.Registry.bundled_name name)

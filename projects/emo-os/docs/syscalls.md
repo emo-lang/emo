@@ -55,6 +55,28 @@ trap entry takes it directly, before the dispatcher. (The language's
 image it reaches the gate as verb 8 and is refused like any other verb
 not in the set.)
 
+## The user surface
+
+User code does not spell the raw ecall. The `emoos` package — its own
+package, distinct from the hosted `os` — is the gate's user side: the
+typed Emo surface, and the only thing user code sees of the boundary.
+It admits the `riscv64` target alone; the raw `ecall` lives in its two
+bodies and nowhere else a user program writes.
+
+- `emoos.exit()` — the exit verb; never returns.
+- `emoos.write(buf, len)` — the write verb, answering
+  `(R.ok, the byte count)` or `(R.error, why)` by the error
+  convention — the gate's refusal reasons as the message that names
+  them (`"outside the caller's memory"`, `"not writable"`,
+  `"bad argument"`, `"unknown verb"`).
+
+Programs pin it like any package (`deps { "emoos" = "0.1.0" }`) and
+resolve it from the bundled registry. The kernel profile refuses it
+along with the rest of the standard library — the kernel builds on
+`core` alone and never requires its own userland; the user profile is
+an ordinary program, and the packages' own target declarations govern
+what it may require.
+
 ## The supervisor checks
 
 Every pointer argument is checked before the gate acts, against the

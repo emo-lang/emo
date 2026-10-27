@@ -3,13 +3,15 @@
 // SBI is unreachable from it. Two proofs ride the serial line: the
 // greeting pokes the 16550A directly — the weak-isolation window, what
 // U-mode can reach with no gate at all — and the `gate` line goes
-// through the ecall gate (T4.2): one successful write of this line's
-// own bytes, then two refusals, each printed through the same gate
-// that refused it. The exit is the stub's verb 0, which lands in the
-// kernel and never returns.
+// through the ecall gate (T4.2) by way of the `emoos` stubs (T4.3):
+// one successful write of this line's own bytes, then two refusals,
+// each printed through the same gate that refused it. The exit is the
+// stub's verb 0, which lands in the kernel and never returns.
 //
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
+
+require "emoos"
 
 const uart = 0x10000000
 
@@ -34,10 +36,26 @@ def put_num(n Int64) Void {
   put(48 + (n % 10))
 }
 
-// The gate, raw: verb 1 is write(buf, len); the answer is the byte
-// count, or the refusal's reason negated.
-def gate_write(addr Int64, len Int64) Int64 {
-  return ecall(1, addr, len, 0, 0, 0, 0)
+// The stub's refusal message, back to the ABI's reason number
+// (docs/syscalls.md) — the number the line prints.
+def reason_num(why String) Int64 {
+  if why == "not writable" {
+    return 3
+  }
+  if why == "outside the caller's memory" {
+    return 2
+  }
+  if why == "bad argument" {
+    return 4
+  }
+  return 1
+}
+
+def reason_of(answer (R, Int64)) Int64 {
+  case answer {
+    (R.error, why) -> { return reason_num(why) }
+    (R.ok, _) -> { return 0 }
+  }
 }
 
 // One byte into the scratch buffer; the cursor comes back.
@@ -73,11 +91,11 @@ while i <= 1000 {
 put_num(sum)
 put(10)
 
-// The gate proof, through the kernel: one write that answers, two that
-// refuse — the text segment with reason 3 (no permission), the
-// kernel's memory with reason 2 (out of range) — and each refusal
-// printed by the same gate that refused it. The line reads
-// `gate 500500 r3 r2`.
+// The gate proof, through the kernel by way of the stubs: one write
+// that answers, two that refuse — the text segment with reason 3 (no
+// permission), the kernel's memory with reason 2 (out of range) — and
+// each refusal printed by the same gate that refused it. The line
+// reads `gate 500500 r3 r2`.
 var pos = byte_at(0, 103) // g
 pos = byte_at(pos, 97) // a
 pos = byte_at(pos, 116) // t
@@ -86,9 +104,9 @@ pos = byte_at(pos, 32) // space
 pos = num_at(sum, pos)
 pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
-pos = num_at(-gate_write(text_seg, 4), pos)
+pos = num_at(reason_of(emoos.write(text_seg, 4)), pos)
 pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
-pos = num_at(-gate_write(kernel_mem, 4), pos)
+pos = num_at(reason_of(emoos.write(kernel_mem, 4)), pos)
 pos = byte_at(pos, 10)
-var wrote = gate_write(buf, pos)
+var wrote = emoos.write(buf, pos)

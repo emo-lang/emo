@@ -1,0 +1,7 @@
+package {
+  name = "emoos"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}

@@ -1,0 +1,36 @@
+// The gate's user side (EmoOS T4.3): the typed Emo surface over the raw
+// ecall — the only thing a user program sees of the kernel boundary.
+// This package is not the hosted `os`: it answers to the EmoOS kernel,
+// and it admits the riscv64 target alone. The contract is the kernel's
+// docs/syscalls.md — the verb in a7, six words beside it, one answer
+// back: >= 0 the payload, < 0 the refusal's reason. The raw ecall lives
+// in these two bodies and nowhere else a user program writes.
+
+// The caller's computation ends. Never returns: on the metal the
+// kernel takes the machine down on the caller's behalf (until the
+// process service exists, T4.4, that is the whole of what exit means).
+def exit() Void {
+  ecall(0, 0, 0, 0, 0, 0, 0)
+}
+
+// The len bytes at buf ride the kernel's console. The answer is
+// (R.ok, the byte count), or (R.error, why) by the error convention —
+// the gate's refusal reasons (1 an unknown verb, 2 buf's range outside
+// the caller's memory, 3 the memory there not writable, 4 len out of
+// range) as the message that names it.
+def write(buf Int64, len Int64) (R, Int64) {
+  var answer = ecall(1, buf, len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  if answer == -2 {
+    return (R.error, "outside the caller's memory")
+  }
+  if answer == -3 {
+    return (R.error, "not writable")
+  }
+  if answer == -4 {
+    return (R.error, "bad argument")
+  }
+  return (R.error, "unknown verb")
+}

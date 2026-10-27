@@ -205,6 +205,7 @@ let smoke_tests =
             "user.S";
             "gate.emo";
             "hello/package.emo";
+            "hello/package.lock";
             "hello/main.emo";
           ];
         (* The user image first: the kernel's tree embeds it, so the
