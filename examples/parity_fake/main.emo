@@ -1,0 +1,95 @@
+// The dual-run parity, hosted leg (EmoOS T3.8): the console service
+// against a fake device — an array of preloaded bytes in, a builder
+// out. The same service text runs on the metal in parity_metal; the
+// emo_os harness asserts the shared block is byte-identical and the
+// two legs' outputs match byte for byte.
+
+// ==== 8< ==== the service: byte-identical in parity_fake and
+// ==== parity_metal; the harness asserts this prefix.
+
+interface Dev {
+  def ready() Int64
+
+  def read() Int64
+
+  def send(b Int64) Int64
+}
+
+// One line of console service: the bytes up to and including the
+// newline are consumed, and every byte before the newline goes back
+// through the device's send. Answers the count consumed.
+def service_line(dev Dev) Int64 {
+  var n = 1
+  var done = 0
+  while done == 0 {
+    var b = dev.read()
+    if b == 10 {
+      done = 1
+    } else {
+      dev.send(b)
+      n = n + 1
+    }
+  }
+  return n
+}
+
+// `lines` lines drained; answers the total bytes consumed across
+// them, newlines included.
+def service_lines(dev Dev, lines Int64) Int64 {
+  var total = 0
+  var i = 0
+  while i < lines {
+    total = total + service_line(dev)
+    i = i + 1
+  }
+  return total
+}
+// ==== >8 ==== end of the shared service ====
+
+// The fake device: the input bytes preloaded, the echoed bytes
+// collected, both cursors in boxes — the protocol the metal runs over
+// peek/poke, here over plain memory.
+class FakeDev {
+  def init(bytes Array[Int64]) {
+    self.bytes = bytes
+    self.cons = Box.new(0)
+    self.out = ArrayBuilder.new()
+  }
+
+  def ready() Int64 {
+    if self.cons.read() < self.bytes.length() {
+      return 1
+    }
+    return 0
+  }
+
+  def read() Int64 {
+    var cons = self.cons.read()
+    self.cons.replace(cons + 1)
+    return self.bytes[cons]
+  }
+
+  def send(b Int64) Int64 {
+    self.out.push(b)
+    return 0
+  }
+
+  def out_count() Int64 {
+    return self.out.length()
+  }
+
+  def out_at(i Int64) Int64 {
+    return self.out.get(i)
+  }
+}
+
+println("parity")
+const input = [112, 97, 114, 105, 116, 121, 10, 114, 105, 110, 103, 10]
+const dev = FakeDev.new(input)
+var total = service_lines(dev, 2)
+println(total)
+var i = 0
+while i < dev.out_count() {
+  println(dev.out_at(i))
+  i = i + 1
+}

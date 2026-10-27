@@ -1,0 +1,26 @@
+(executable
+ (name emo_os_test)
+ (libraries
+  alcotest
+  unix
+  threads
+  emo_test_support
+  emo_cli
+  emo_project
+  emo_support
+  emo_eval
+  emo_lexer
+  emo_parser
+  emo_ir
+  emo_check
+  emo_codegen))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree ../../projects/emo-os)
+  (source_tree ../../examples/parity_fake)
+  (source_tree ../../examples/parity_metal)
+  emo_os_test.exe)
+ (action
+  (run %{exe:emo_os_test.exe})))

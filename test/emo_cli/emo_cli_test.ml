@@ -210,6 +210,7 @@ let beyond_the_interpreter =
     "peek_poke";
     "native_image";
     "processes";
+    "parity_metal";
   ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to

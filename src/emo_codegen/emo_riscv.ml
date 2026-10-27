@@ -1610,9 +1610,23 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld t1, 8(t0)\n";
               put env "    la t2, emo_iface_%s\n"
                 (Emo_ir.sanitize_ident display);
+              (* the table is one row of per-class slots, a slot per
+                 interface method in the interface's own order — the row
+                 for the receiver's class, the slot for this method *)
+              put env "    li t3, %d\n" (List.length sigs);
+              put env "    mul t1, t1, t3\n";
               put env "    slli t1, t1, 3\n";
               put env "    add t2, t2, t1\n";
-              put env "    ld t2, 0(t2)\n";
+              let idx =
+                let rec go i = function
+                  | [] -> 0
+                  | (m, _) :: rest ->
+                      if String.equal m (Emo_ir.sanitize_ident name) then i
+                      else go (i + 1) rest
+                in
+                go 0 sigs
+              in
+              put env "    ld t2, %d(t2)\n" (idx * 8);
               put env "    jalr t2\n";
               if not boxed then unbox_if_numeric env ty
           | Some _ ->
@@ -5477,27 +5491,24 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
       \    .align 3\n";
     List.iter
       (fun (name, sigs) ->
-        ignore sigs;
         gput env "    .globl emo_iface_%s\n" (Emo_ir.sanitize_ident name);
         gput env "emo_iface_%s:\n" (Emo_ir.sanitize_ident name);
+        (* one row per class, one slot per interface method in the
+           interface's own order — the dispatch multiplies the class id
+           by the row's width and reads the method's slot *)
         List.iter
           (fun (c : Emo_ir.class_) ->
-            let entry =
-              List.find_map
-                (fun (m, _) ->
-                  let info = class_of env c.Emo_ir.cdisplay in
-                  match
-                    List.find_opt
-                      (fun (d, _) -> String.equal d m)
-                      info.cls_methods
-                  with
-                  | Some (_, mangled) -> Some (func_label mangled)
-                  | None -> None)
-                sigs
-            in
-            match entry with
-            | Some label -> gput env "    .dword %s\n" label
-            | None -> gput env "    .dword 0\n")
+            let info = class_of env c.Emo_ir.cdisplay in
+            List.iter
+              (fun (m, _) ->
+                match
+                  List.find_opt
+                    (fun (d, _) -> String.equal d m)
+                    info.cls_methods
+                with
+                | Some (_, mangled) -> gput env "    .dword %s\n" (func_label mangled)
+                | None -> gput env "    .dword 0\n")
+              sigs)
           program.pclasses)
       program.pinterfaces
   end;
