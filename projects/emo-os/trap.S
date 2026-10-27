@@ -52,6 +52,13 @@ emo_os_trap_init:
     li t0, 0x220            # sie.STIE and sie.SEIE — the tick and the devices
     csrs sie, t0
     csrsi sstatus, 2        # SIE on
+    # the probe is settled: the state word goes to 3, so the shim's
+    # probe answer is only ever for a probe in flight — a stray illegal
+    # instruction (a user program's, from T4.1 on) is the loud failure
+    # it looks like
+    li t0, 3
+    la t1, emo_os_probe_state
+    sd t0, 0(t1)
     call emo_os_timer_rearm
     # the PLIC (T3.7): the UART's receive line (IRQ 10 on `virt`) into
     # this S-mode context — a priority above the threshold, the enable
@@ -185,8 +192,8 @@ emo_os_trap_shim:
     fsd fs11, 528(sp)
     # dispatch on scause: the supervisor timer interrupt, the
     # supervisor external interrupt (the devices, through the PLIC),
-    # the probe's illegal-instruction answer, or the loud failure for
-    # anything else
+    # the U-mode ecall (the gate's door), the probe's
+    # illegal-instruction answer, or the loud failure for anything else
     ld t0, 160(sp)
     bgez t0, .Ltrap_exc      # bit 63 clear: an exception
     slli t0, t0, 1           # drop the interrupt bit
@@ -197,6 +204,8 @@ emo_os_trap_shim:
     j .Ltrap_bad
 .Ltrap_exc:
     ld t0, 160(sp)
+    li t1, 8                 # environment call from U-mode
+    beq t0, t1, .Ltrap_ucall
     li t1, 2                 # illegal instruction — the probe's answer?
     bne t0, t1, .Ltrap_bad
     la t2, emo_os_probe_state
@@ -210,6 +219,22 @@ emo_os_trap_shim:
     sd t0, 152(sp)
     addi sp, sp, 544
     j emo_os_trap_resume
+.Ltrap_ucall:
+    # the gate (T4.1): the exit verb is the one the kernel answers — a7
+    # 8, the shutdown request, taken to the SBI poweroff. Any other verb
+    # is the loud failure; the syscall dispatch (T4.2) replaces this
+    # single answer with the real table.
+    ld t0, 136(sp)           # the trapped a7, saved in the frame
+    li t1, 8                 # the shutdown request
+    bne t0, t1, .Ltrap_ucall_bad
+    li a7, 8
+    ecall                    # the kernel answers: poweroff
+1:  wfi
+    j 1b
+.Ltrap_ucall_bad:
+    la a0, msg_ucall
+    la a1, msg_ucall_end
+    call emo_fail
 .Ltrap_ext:
     call emo_os_console_irq
     j .Ltrap_home
@@ -355,10 +380,37 @@ emo_os_trap_resume:
     ld t1, -512(sp)
     sret
 
+# emo_os_user_boot: the kernel's own program is done — the stub calls
+# this before the poweroff. The entry word the loader (user.emo) parked
+# decides: zero means nothing was staged and the call returns straight
+# to the stub's poweroff; anything else is the user's entry, and the
+# sret lands in U-mode. sstatus keeps what the kernel left except the
+# three bits entry owns: SPP cleared (sret enters U-mode), SPIE set
+# (S-mode interrupts return on at the sret), FS set to Dirty (the
+# floats run). The user's first trap lands on its own stack, through
+# the same shim everything else traps through.
+    .globl emo_os_user_boot
+emo_os_user_boot:
+    la t0, emo_os_user_entry
+    ld a0, 0(t0)
+    beqz a0, 1f
+    csrr t1, sstatus
+    andi t1, t1, -257        # SPP = 0: sret enters U-mode
+    ori t1, t1, 0x20         # SPIE = 1: S-mode interrupts return on
+    li t2, 0xC000
+    or t1, t1, t2            # FS = Dirty: the floating point runs
+    csrw sstatus, t1
+    csrw sepc, a0
+    sret
+1:  ret
+
     .section .rodata
 msg_unexpected:
     .ascii "the kernel took an unexpected trap"
 msg_unexpected_end:
+msg_ucall:
+    .ascii "a user ecall the gate does not answer"
+msg_ucall_end:
 
     .section .bss
     .align 8
@@ -407,3 +459,19 @@ emo_os_in_cons:
     .globl emo_os_in_ring
 emo_os_in_ring:
     .zero 128
+
+# The user handoff (T4.1): the boot stub parks the embedded user image's
+# bounds in the first two words and zeroes the third; the kernel's Emo
+# loader (user.emo) reads the bounds at the same fixed constants, copies
+# the segments, and parks the staged entry; emo_os_user_boot reads the
+# entry and srets into U-mode. A zero entry means nothing was staged.
+    .section .emo_user, "aw", @nobits
+    .globl emo_os_handoff_blob
+emo_os_handoff_blob:
+    .zero 8
+    .globl emo_os_handoff_end
+emo_os_handoff_end:
+    .zero 8
+    .globl emo_os_user_entry
+emo_os_user_entry:
+    .zero 8

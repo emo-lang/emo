@@ -1348,8 +1348,8 @@ let merge_component ~(what : string) ~(a_name : string) ~(b_name : string)
 
 (* The native inputs of two providers, merged. Sources and libraries
    append; the image components conflict loudly. *)
-let merge_native ~(a_name : string) ~(b_name : string)
-    (a : native_inputs) (b : native_inputs) : native_inputs =
+let merge_native ~(a_name : string) ~(b_name : string) (a : native_inputs)
+    (b : native_inputs) : native_inputs =
   {
     ni_sources = a.ni_sources @ b.ni_sources;
     ni_link = a.ni_link @ b.ni_link;
@@ -1474,12 +1474,10 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
               ni_pkg_config = pkg.Emo_pkg.pkg_config;
               ni_asm = asm;
               ni_runtime =
-                one_component
-                  ~provider:entry.Emo_pkg.Lockfile.dep
+                one_component ~provider:entry.Emo_pkg.Lockfile.dep
                   ~span_file:dir ~what:"boot stub (runtime.S)" stubs;
               ni_link_script =
-                one_component
-                  ~provider:entry.Emo_pkg.Lockfile.dep
+                one_component ~provider:entry.Emo_pkg.Lockfile.dep
                   ~span_file:dir ~what:"linker script (link.ld)" scripts;
             };
         })
@@ -1617,8 +1615,9 @@ let compile_inputs ~entry_file ~target :
                     span;
                     hint =
                       Some
-                        "the kernel builds on `core` alone; a kernel service is \
-                         an ordinary package that declares the riscv64 target";
+                        "the kernel builds on `core` alone; a kernel service \
+                         is an ordinary package that declares the riscv64 \
+                         target";
                   })
                 kernel_offenders))
   end;
@@ -1677,8 +1676,7 @@ let compile_inputs ~entry_file ~target :
       |> List.map (fun d -> d.nd_name)
     in
     let providers =
-      if root_inputs <> no_native_inputs then
-        manifest.Emo_pkg.name :: dep_names
+      if root_inputs <> no_native_inputs then manifest.Emo_pkg.name :: dep_names
       else dep_names
     in
     let providers = List.sort_uniq compare providers in
@@ -1694,13 +1692,14 @@ let compile_inputs ~entry_file ~target :
                   the c target alone carries a package's C sources and \
                   libraries; the riscv64 target alone carries a package's .S \
                   sources and the image's boot stub and linker script"
-                 target (String.concat ", " providers);
+                 target
+                 (String.concat ", " providers);
              span =
                Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
                  ~stop:0;
              hint = None;
            };
-         ]);
+         ])
   end;
   let module_paths =
     List.filter (fun path -> not (is_test_module path)) (module_paths p)

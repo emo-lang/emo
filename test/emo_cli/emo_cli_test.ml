@@ -473,7 +473,8 @@ let beam_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"beam")
+                  ~native:Emo_project.no_native_inputs ~target:"beam"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -572,7 +573,8 @@ let wasm_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"wasm")
+                  ~native:Emo_project.no_native_inputs ~target:"wasm"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -780,7 +782,7 @@ let scratch_entry name source =
 let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
   in_dir (Filename.dirname entry) (fun () ->
       Emo_cli.build_file ~entry ~output ~specialize ~cclibs
-        ~native:Emo_project.no_native_inputs ~target)
+        ~native:Emo_project.no_native_inputs ~target ~profile:"kernel")
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -1389,7 +1391,7 @@ let c_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
                   ~specialize:false ~cclibs ~native:Emo_project.no_native_inputs
-                  ~target:"c")
+                  ~target:"c" ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           (* A TLS golden runs from its own directory: the program
@@ -3008,7 +3010,8 @@ let riscv64_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"riscv64")
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -3083,7 +3086,7 @@ let riscv64_refusal_tests =
               in
               match
                 try
-                  ignore (Emo_codegen.Riscv.emit program);
+                  ignore (Emo_codegen.Riscv.emit ~profile:"kernel" program);
                   None
                 with Emo_ir.Lower_error message -> Some message
               with
@@ -3104,6 +3107,80 @@ let riscv64_refusal_tests =
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
           ]);
+  ]
+
+(* The image profiles (EmoOS T4.1): `user` selects the second riscv64
+   shape — the U-mode ELF the kernel loads — and refuses everywhere it
+   does not exist; `kernel` is the default and emits what it always
+   did. *)
+let riscv64_profile_tests =
+  let lower source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"riscv64"
+        items
+    in
+    match diags with
+    | _ :: _ -> Alcotest.fail "unexpected check errors"
+    | [] ->
+        Emo_ir.lower
+          {
+            Emo_ir.modules =
+              [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+            entry = [];
+            packages = [];
+          }
+  in
+  [
+    tc "the user profile refuses off the riscv64 target" (fun () ->
+        let entry = scratch_entry "profile-c" {|println("ok")|} in
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat (Filename.dirname entry) "out")
+             ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
+             ~target:"c" ~profile:"user"));
+    tc "an unknown profile refuses by name" (fun () ->
+        let entry = scratch_entry "profile-x" {|println("ok")|} in
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat (Filename.dirname entry) "out")
+             ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
+             ~target:"riscv64" ~profile:"turbo"));
+    tc "the profiles pick their own load addresses" (fun () ->
+        Alcotest.(check bool)
+          "the kernel profile links where OpenSBI enters" true
+          (contains
+             (Emo_codegen.Riscv.linker_script ~profile:"kernel")
+             "0x80200000");
+        Alcotest.(check bool)
+          "the user profile links at the user window's base" true
+          (contains
+             (Emo_codegen.Riscv.linker_script ~profile:"user")
+             "0x87100000"));
+    tc "the user profile emits its own stub and sizing" (fun () ->
+        let program = lower {|println("ok")|} in
+        let user_asm = Emo_codegen.Riscv.emit ~profile:"user" program in
+        Alcotest.(check bool)
+          "the user stub is the entry" true
+          (contains user_asm "The user profile's boot stub");
+        Alcotest.(check bool)
+          "the user heap is the profile's budget" true
+          (contains user_asm ".zero 8388608");
+        Alcotest.(check bool)
+          "the user image carries no kernel heap" true
+          (not (contains user_asm ".zero 100663296"));
+        let kernel_asm = Emo_codegen.Riscv.emit ~profile:"kernel" program in
+        Alcotest.(check bool)
+          "the kernel stub is the entry" true
+          (contains kernel_asm "Boot profile A");
+        Alcotest.(check bool)
+          "the kernel heap is unchanged" true
+          (contains kernel_asm ".zero 100663296"));
   ]
 
 (* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other
@@ -3183,7 +3260,8 @@ let foreign_tests =
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
-            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
+            ( "riscv64",
+              fun p -> ignore (Emo_codegen.Riscv.emit ~profile:"kernel" p) );
           ]);
     tc "the c and ocaml targets build a declaration-only program" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -3213,7 +3291,8 @@ let foreign_tests =
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
-            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
+            ( "riscv64",
+              fun p -> ignore (Emo_codegen.Riscv.emit ~profile:"kernel" p) );
           ]);
     tc "taking a foreign definition's value refuses off the native targets"
       (fun () ->
@@ -3253,7 +3332,8 @@ let specialization_tests =
         let exit_code =
           in_example "specialize_shapes" (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
-                ~cclibs:[] ~native:Emo_project.no_native_inputs ~target:"ocaml")
+                ~cclibs:[] ~native:Emo_project.no_native_inputs ~target:"ocaml"
+                ~profile:"kernel")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
@@ -4302,13 +4382,15 @@ let manifest_entry_tests =
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
-                 ~native:Emo_project.no_native_inputs ~target:"wasm"));
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"
+                 ~profile:"kernel"));
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
-                 ~native:Emo_project.no_native_inputs ~target:"wasm")));
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"
+                 ~profile:"kernel")));
   ]
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
@@ -5505,6 +5587,7 @@ let () =
       ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
+      ("riscv64_profile", riscv64_profile_tests);
       ("foreign", foreign_tests);
       ("specialization", specialization_tests);
       ("publish", publish_tests);

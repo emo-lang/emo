@@ -2842,8 +2842,7 @@ let riscv_native_tests =
               ( "main.emo",
                 {|require "acme/metal_tools"
 println(metal_tools.idle())
-|}
-              );
+|} );
             ]
             "main.emo"
         in
@@ -2901,6 +2900,54 @@ println(metal_tools.idle())
           (match native.Emo_project.ni_link_script with
           | Some script -> Filename.basename script = "link.ld"
           | None -> false));
+    tc "a nested package's shapes stay out of the outer image" (fun () ->
+        (* The kernel tree carries the user programs beside its own
+           modules (EmoOS T4.1); a directory holding its own
+           package.emo is a project of its own, and its .S shapes — a
+           boot stub most of all — never leak into the outer package's
+           image, where they would be a second candidate for one
+           component. *)
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", "println(1)\n");
+              ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+              ( "hello/package.emo",
+                {|package {
+  name = "local/hello"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("hello/main.emo", "println(2)\n");
+              ("hello/runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+            ]
+            "main.emo"
+        in
+        let _inputs, _entry, _packages, native =
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+        in
+        Alcotest.(check bool)
+          "the boot stub is the root's alone" true
+          (match native.Emo_project.ni_runtime with
+          | Some stub -> Filename.basename stub = "runtime.S"
+          | None -> false);
+        Alcotest.(check int)
+          "no .S sources ride in" 0
+          (List.length native.Emo_project.ni_asm));
     tc "a .S-carrying package is refused off the riscv64 target" (fun () ->
         let entry =
           with_project
@@ -2920,15 +2967,12 @@ println(metal_tools.idle())
               ( "main.emo",
                 {|require "acme/metal_tools"
 println(metal_tools.idle())
-|}
-              );
+|} );
             ]
             "main.emo"
         in
         with_registry (fun () ->
-            match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
-            with
+            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
             | _ -> Alcotest.fail "expected the native gate to refuse"
             | exception Emo_project.Static_errors ds ->
                 Alcotest.(check bool)
@@ -2958,9 +3002,7 @@ println(metal_tools.idle())
             ]
             "main.emo"
         in
-        match
-          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
-        with
+        match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
         | _ -> Alcotest.fail "expected the native gate to refuse"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
@@ -3028,8 +3070,7 @@ println(native_tools.halve_floor(9.0))
               ( "main.emo",
                 {|require "acme/metal_tools"
 println(metal_tools.idle())
-|}
-              );
+|} );
               ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
             ]
             "main.emo"
@@ -3080,11 +3121,9 @@ package {
 }
 |}
               );
-              ( "main.emo",
-                {|require "json"
+              ("main.emo", {|require "json"
 println(1)
-|}
-              );
+|});
             ]
             "main.emo"
         in
@@ -3130,7 +3169,9 @@ println(1)
             ]
             "main.emo"
         in
-        match Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" with
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+        with
         | _ -> Alcotest.fail "expected the unknown require to refuse"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)

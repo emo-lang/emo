@@ -57,6 +57,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 ## Running it
 
 ```console
+$ (cd hello && emo build main.emo --target riscv64 --profile user -o ../hello.elf)
 $ emo build main.emo --target riscv64
 $ ./run.sh
 ```

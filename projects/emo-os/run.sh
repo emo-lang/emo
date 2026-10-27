@@ -6,7 +6,9 @@ cd "$(dirname "$0")"
 elf='main.elf'
 
 if [ ! -f "$elf" ]; then
-  echo "run.sh: $elf not found; run: emo build main.emo --target riscv64" >&2
+  echo "run.sh: $elf not found; build both images first:" >&2
+  echo "  (cd hello && emo build main.emo --target riscv64 --profile user -o ../hello.elf)" >&2
+  echo "  emo build main.emo --target riscv64" >&2
   exit 1
 fi
 
@@ -72,11 +74,12 @@ boot() {
     echo "run.sh: the tick verdict is missing; the tick is not running" >&2
     exit 1
   fi
-  # The five console deliveries, in request order — the byte offsets in
-  # the log are the serial order, whatever the -d int trace wove
-  # between them.
+  # The five console deliveries, in request order, then the user image
+  # staged and the U-mode program's greeting — the byte offsets in the
+  # log are the serial order, whatever the -d int trace wove between
+  # them.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101'; do
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -114,7 +117,7 @@ boot() {
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, self-exit"
 # The stimecmp transport when it does.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, proof, console, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, self-exit, 1 ecall"

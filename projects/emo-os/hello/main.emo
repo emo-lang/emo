@@ -1,0 +1,44 @@
+// The first user program (T4.1): the kernel loads this image into the
+// user window and srets into it in U-mode. U-mode owns no CSRs and the
+// SBI is unreachable from it, so the greeting rides the 16550A's
+// transmit registers directly — the weak-isolation window: loads and
+// stores reach MMIO until SV39 closes it. The exit is the stub's
+// shutdown ecall, which lands in the kernel — the exit verb the gate
+// answers (T4.1), the syscall dispatch generalizes (T4.2).
+//
+//   cd hello && emo build main.emo --target riscv64 \
+//        --profile user -o ../hello.elf
+
+const uart = 0x10000000
+
+def put(b Int64) Void {
+  while (peek8(uart + 5).to_int64() & 32) == 0 {
+  }
+  poke8(uart, b.to_byte())
+}
+
+def put_num(n Int64) Void {
+  if n >= 10 {
+    put_num(n / 10)
+  }
+  put(48 + (n % 10))
+}
+
+// The greeting is explicit bytes — U-mode has no console service yet —
+// and the number is computed, so the line on the serial is both a
+// marker and a small arithmetic pin.
+put(85) // U
+put(45) // -
+put(77) // M
+put(79) // O
+put(68) // D
+put(69) // E
+put(32) // space
+var sum = 0
+var i = 0
+while i <= 1000 {
+  sum = sum + i
+  i = i + 1
+}
+put_num(sum)
+put(10)

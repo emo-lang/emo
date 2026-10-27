@@ -129,3 +129,13 @@ receive { done1 -> {} }
 receive { done2 -> {} }
 receive { done3 -> {} }
 receive { done4 -> {} }
+
+// The kernel's program is done: stage the user image (T4.1). The boot
+// stub reads the staged entry once this returns, srets into U-mode,
+// and the user program runs — its own greeting is the proof on the
+// serial line. A refusal already said why; the entry word stays zero
+// and the stub powers the machine off.
+var staged = user.stage()
+if staged > 0 {
+  println("user: staged ${staged}")
+}

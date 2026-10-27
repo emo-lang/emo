@@ -22,6 +22,15 @@ emo_start:
     addi t0, t0, 8
     j 1b
 2:
+    # the user handoff (T4.1): the embedded user image's bounds go to
+    # the handoff page, the staged entry starts zeroed — nothing enters
+    # user mode unless the kernel's loader (user.emo) stages it
+    la t0, emo_os_user_blob
+    la t1, emo_os_handoff_blob
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_end
+    sd t0, 8(t1)
+    sd zero, 16(t1)
     la t0, emo_main__console_put_byte
     la t1, emo_console_hook
     sd t0, 0(t1)
@@ -34,6 +43,9 @@ emo_start:
     call emo_os_trap_init
     call emo_runtime_init
     call emo_program
+    # the kernel's program is done: enter the staged user image (T4.1) —
+    # or come straight back when none was staged — then the poweroff
+    call emo_os_user_boot
     li a7, 8
     ecall
 emo_park:

@@ -39,5 +39,13 @@ SECTIONS
   . = 0x87001000;
   .emo_in (NOLOAD) : { *(.emo_in) } :tick
 
+  /* The user handoff page (T4.1), a page above the input ring: the
+     boot stub parks the embedded user image's bounds and zeroes the
+     staged entry; the kernel's Emo loader (user.emo) reads the bounds
+     at the same fixed constants and parks the entry; emo_os_user_boot
+     reads the entry and srets into U-mode. */
+  . = 0x87002000;
+  .emo_user (NOLOAD) : { *(.emo_user) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

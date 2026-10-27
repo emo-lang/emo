@@ -57,6 +57,7 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 ## 运行
 
 ```console
+$ (cd hello && emo build main.emo --target riscv64 --profile user -o ../hello.elf)
 $ emo build main.emo --target riscv64
 $ ./run.sh
 ```

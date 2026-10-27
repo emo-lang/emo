@@ -65,15 +65,15 @@
    the dynamic convention already passes. *)
 
 type param_kind =
-  | P_int64  (* the raw payload, integer bank a0.. *)
-  | P_float64  (* the raw double bits, float bank fa0.. *)
-  | P_word  (* the tagged word both conventions share, integer bank *)
+  | P_int64 (* the raw payload, integer bank a0.. *)
+  | P_float64 (* the raw double bits, float bank fa0.. *)
+  | P_word (* the tagged word both conventions share, integer bank *)
 
 type result_kind =
-  | R_int64  (* the raw payload in a0 *)
-  | R_float64  (* the raw double bits in fa0 *)
-  | R_word  (* the tagged word in a0 — the dynamic convention's result *)
-  | R_void  (* nothing *)
+  | R_int64 (* the raw payload in a0 *)
+  | R_float64 (* the raw double bits in fa0 *)
+  | R_word (* the tagged word in a0 — the dynamic convention's result *)
+  | R_void (* nothing *)
 
 type conv = { cparams : param_kind list; cresult : result_kind }
 
@@ -116,7 +116,8 @@ let bank_assign (kinds : param_kind list) : (param_kind * int) list =
     | [] -> List.rev acc
     | k :: rest ->
         let acc = (k, if k = P_float64 then f else i) :: acc in
-        go rest (if k = P_float64 then i else i + 1)
+        go rest
+          (if k = P_float64 then i else i + 1)
           (if k = P_float64 then f + 1 else f)
           acc
   in
@@ -390,7 +391,9 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
             Option.iter ex b.Emo_ir.guard;
             List.iter st b.Emo_ir.body)
           branches
-    | Send { target; message } -> ex target; ex message
+    | Send { target; message } ->
+        ex target;
+        ex message
     | Raise _ -> ()
     | Return_stmt e -> ex e
     | While { cond; body; _ } ->
@@ -507,8 +510,7 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
                 (fun acc (b : Emo_ir.branch) ->
                   max acc
                     (match b.Emo_ir.guard with
-                    | Some g ->
-                        max (expr_depth g) (stmts_depth b.Emo_ir.body)
+                    | Some g -> max (expr_depth g) (stmts_depth b.Emo_ir.body)
                     | None -> stmts_depth b.Emo_ir.body))
                 0 branches
         | Break | Continue -> 0
@@ -631,12 +633,12 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          raw local loads its payload; a tagged one — a pattern binding
          holds the boxed scrutinee — unboxes here, so a raw Int64/Float64
          reaches every consumer that trusts the rule. *)
-      | Some f when env.native ->
+      | Some f when env.native -> (
           if List.mem_assoc name f.raw then
             match List.assoc name f.raw with
             | Emo_check.Float64 -> put env "    fld fa0, %d(sp)\n" slot
             | _ -> put env "    ld a0, %d(sp)\n" slot
-          else (
+          else
             match e.Emo_ir.ety with
             | Emo_check.Int64 ->
                 put env "    ld a0, %d(sp)\n" slot;
@@ -648,7 +650,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                 put env "    fld fa0, 8(t0)\n"
             | _ -> put env "    ld a0, %d(sp)\n" slot)
       | _ -> put env "    ld a0, %d(sp)\n" slot)
-  | Binary (op, l, r) -> emit_binary env d e.Emo_ir.ety ~boxed:(not env.native) op l r
+  | Binary (op, l, r) ->
+      emit_binary env d e.Emo_ir.ety ~boxed:(not env.native) op l r
   | Unary (op, x) -> emit_unary env d e.Emo_ir.ety ~boxed:(not env.native) op x
   | Cond { c; t; e } ->
       let l_else = fresh_label env "else" in
@@ -661,7 +664,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "%s:\n" l_else;
       emit_expr env d e;
       put env "%s:\n" l_end
-  | Call { func; args } ->
+  | Call { func; args } -> (
       if List.mem func env.fforeigns then
         raise
           (Emo_ir.Lower_error
@@ -669,7 +672,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                 "the riscv64 target does not support a call to the foreign \
                  definition `%s` yet"
                 func));
-      (match List.assoc_opt func env.fsigs with
+      match List.assoc_opt func env.fsigs with
       | Some conv -> emit_typed_call env d func conv args
       | None ->
           emit_args env d args;
@@ -781,8 +784,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          brings the process back. A send to a device-waiter does not
          wake it: requests queue in its mailbox for the next pump. *)
       call_runtime env "emo_park_console"
-  | Builtin { name = "self_pid"; args = [] } ->
-      call_runtime env "emo_self_pid"
+  | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
          accesses alike; `fence` answers nothing, like `halt` *)
@@ -1814,9 +1816,9 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
 and emit_stmt env (st : Emo_ir.stmt) : unit =
   match st with
   | Effect e -> emit_expr env 0 e
-  | Let { name; init; _ } ->
+  | Let { name; init; _ } -> (
       emit_expr env 0 init;
-      (match env.cur with
+      match env.cur with
       | Some f when env.native -> (
           match init.Emo_ir.ety with
           | Emo_check.Float64 ->
@@ -1829,9 +1831,9 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
               f.raw <- List.remove_assoc name f.raw;
               put env "    sd a0, %d(sp)\n" (slot_offset env name))
       | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
-  | Assign_var { name; value } ->
+  | Assign_var { name; value } -> (
       emit_expr env 0 value;
-      (match env.cur with
+      match env.cur with
       | Some f when env.native -> (
           match value.Emo_ir.ety with
           | Emo_check.Float64 ->
@@ -2306,6 +2308,44 @@ emo_start:
 emo_park:
     wfi
     j emo_park
+|asm}
+
+(* The user profile's boot stub (EmoOS T4.1): the kernel loads this image
+   and enters it in U-mode through sret — a0 is whatever the kernel left,
+   not a hart id, and the SBI is unreachable from U-mode. The stub owns
+   no CSR: it clears .bss, sets its own stack (the image carries it in
+   .bss), runs the program, and exits with the shutdown ecall — which
+   lands in the kernel, the exit verb the gate answers (T4.1) and the
+   syscall dispatch generalizes (T4.2). *)
+let user_boot_stub_asm =
+  {asm|
+# ---- The user profile's boot stub (EmoOS T4.1) ----
+#
+# The kernel loads the image and enters it in U-mode through sret: a0 is
+# the kernel's, not a hart id, and the SBI is unreachable from U-mode.
+# No runtime CSRs — the stub clears .bss, sets the stack the image
+# carries, runs the program, and exits with the shutdown ecall, which
+# lands in the kernel: the exit verb the gate answers.
+
+    .section .text
+    .globl emo_start
+emo_start:
+    la sp, emo_stack_top
+    la t0, __emo_bss_start
+    la t1, __emo_bss_end
+1:
+    bgeu t0, t1, 2f
+    sd zero, 0(t0)
+    addi t0, t0, 8
+    j 1b
+2:
+    call emo_runtime_init
+    call emo_program
+    li a7, 8
+    ecall
+3:
+    wfi
+    j 3b
 |asm}
 
 (* The runtime body: everything the generated code calls — the heap
@@ -4966,13 +5006,25 @@ emo_copy_deep:
     ret
 |asm}
 
-(* One whole-program artifact at 0x80200000, the profile A entry
-   address. Two read-only segments and one read-write, so the loader
-   sees honest permissions; .bss is NOBITS — the entry stub clears it,
-   which is also why the stack and the value heap live there (no image
-   weight). *)
-let linker_script =
-  {ld|OUTPUT_ARCH(riscv)
+(* The default linker script per profile. The kernel profile links at
+   0x80200000, where OpenSBI's boot enters the payload (T0.1). The user
+   profile links at 0x87100000 — the pre-SV39 user window's base, the
+   one load address the kernel's ELF loader copies segments to (EmoOS
+   T4.1): a page above the kernel's fixed rings, under the top of the
+   board's 128 MiB. SV39 replaces the fixed window with per-process
+   address spaces (M5). Two read-only segments and one read-write, so
+   the loader sees honest permissions; .bss is NOBITS — the entry stub
+   clears it, which is also why the stack and the value heap live there
+   (no image weight). *)
+let linker_script ~(profile : string) : string =
+  let base =
+    match profile with
+    | "kernel" -> "0x80200000"
+    | "user" -> "0x87100000"
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
+  Printf.sprintf
+    {|OUTPUT_ARCH(riscv)
 ENTRY(emo_start)
 
 PHDRS
@@ -4983,7 +5035,7 @@ PHDRS
 
 SECTIONS
 {
-  . = 0x80200000;
+  . = %s;
 
   .text : { *(.text .text.*) } :text
   .rodata : { *(.rodata .rodata.*) } :text
@@ -5000,31 +5052,43 @@ SECTIONS
 
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }
-|ld}
+|}
+    base
 
-(* The stack (1 MiB) and the value heap live in .bss — NOBITS, so
-   neither weighs on the image; the entry stub clears the region
-   before first use, and the heap cursor sits past the heap's end.
-   The heap is 96 MiB: T2.1's boundary adapters forced the growth from
-   64 (a typed call in a dynamic body allocated on both sides), and
-   T2.2's native bodies closed that window — `examples/fib`'s
-   `count_down(1000000)` now runs its recursion allocation-free — but
-   the headroom stays: dynamic bodies still box per operation, and the
-   bump's exhaustion is loud by design. QEMU virt's default 128 MiB
-   holds it all with room to spare. *)
-let stack_asm =
-  {asm|
-# ---- The stack and the value heap: .bss, cleared by the entry stub ----
+(* The stack and the value heap live in .bss — NOBITS, so neither weighs
+   on the image; the entry stub clears the region before first use, and
+   the heap cursor sits past the heap's end. The sizes are the one thing
+   the image profiles (EmoOS T4.1) change in the emitted runtime. The
+   kernel profile keeps the 1 MiB stack and the 96 MiB heap: T2.1's
+   boundary adapters forced the growth from 64 (a typed call in a
+   dynamic body allocated on both sides), and T2.2's native bodies
+   closed that window — `examples/fib`'s `count_down(1000000)` now runs
+   its recursion allocation-free — but the headroom stays: dynamic
+   bodies still box per operation, and the bump's exhaustion is loud by
+   design. The user profile is the kernel's guest: one 64 KiB stack —
+   the per-process stack size — over an 8 MiB heap, the budget that
+   fits the pre-SV39 user window under the board's 128 MiB with the
+   process world beside it; per-process quotas arrive with the arenas
+   (EmoOS T5). QEMU virt's default 128 MiB holds both. *)
+let stack_asm ~(profile : string) : string =
+  let stack_bytes, heap_bytes =
+    match profile with
+    | "kernel" -> (1048576, 100663296)
+    | "user" -> (65536, 8388608)
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
+  Printf.sprintf
+    {|# ---- The stack and the value heap: .bss, cleared by the entry stub ----
 
     .section .bss
     .align 16
     .globl emo_stack_top
 emo_stack_bottom:
-    .zero 1048576
+    .zero %d
 emo_stack_top:
     .globl emo_heap_start
 emo_heap_start:
-    .zero 100663296
+    .zero %d
     .globl emo_heap_end
 emo_heap_end:
     .globl emo_heap_cursor
@@ -5091,7 +5155,8 @@ emo_slice_left:
     .globl emo_trap_resume_hook
 emo_trap_resume_hook:
     .zero 8
-|asm}
+|}
+    stack_bytes heap_bytes
 
 (* The float formatter's tables: 10^k for every exponent the rule can
    produce (indexed by k + 303), as a double-double pair so the digit
@@ -5294,8 +5359,18 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
 (* [boot_stub] is the compiler's own entry discipline (the default). A
    package-provided `runtime.S` (EmoOS T3.1) replaces it: the image's
    entry is the package's, the runtime body and the program are the
-   compiler's. *)
-let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
+   compiler's. [profile] is the image shape (EmoOS T4.1): "kernel", the
+   boot-profile-A image OpenSBI enters in S-mode, or "user", the U-mode
+   ELF the kernel loads — its own stub, its own sizing, its own load
+   address. A package's stub and linker script ride in above either. *)
+let emit ?(boot_stub : bool = true) ~(profile : string)
+    (program : Emo_ir.program) : string =
+  let profile_stub =
+    match profile with
+    | "kernel" -> boot_stub_asm
+    | "user" -> user_boot_stub_asm
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
   if program.pglobals <> [] then refuse "module-level `var`";
   const_thunks := program.Emo_ir.pconsts;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
@@ -5378,7 +5453,7 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
     program.pclasses;
   walk_stmts_enum env program.pinit;
   gput env "%s" arch_directive;
-  if boot_stub then gput env "%s\n" boot_stub_asm;
+  if boot_stub then gput env "%s\n" profile_stub;
   gput env "%s\n" runtime_asm;
   gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is
@@ -5506,7 +5581,8 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
                     (fun (d, _) -> String.equal d m)
                     info.cls_methods
                 with
-                | Some (_, mangled) -> gput env "    .dword %s\n" (func_label mangled)
+                | Some (_, mangled) ->
+                    gput env "    .dword %s\n" (func_label mangled)
                 | None -> gput env "    .dword 0\n")
               sigs)
           program.pclasses)
@@ -5629,5 +5705,5 @@ let emit ?(boot_stub : bool = true) (program : Emo_ir.program) : string =
         gput env "    .balign 32\n%s:\n    .quad 1\n    .quad %Ld\n" label bits)
       (List.rev env.cells)
   end;
-  gput env "%s" stack_asm;
+  gput env "%s" (stack_asm ~profile);
   Buffer.contents env.buf
