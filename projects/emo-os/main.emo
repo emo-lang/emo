@@ -1,8 +1,11 @@
-// The EmoOS kernel bring-up (T3.7): the interrupt-driven console. The
-// UART's receive line rides the PLIC into the trap shim, which fills
-// the input ring at its fixed address and wakes the console process;
-// readers block on their mailboxes until the console hands them a
-// byte. Output stays the polled 16550A path; SBI keeps poweroff.
+// The EmoOS kernel (T3.7 console, T4.4 services): the interrupt-driven
+// console — the UART's receive line rides the PLIC into the trap shim,
+// which fills the input ring at its fixed address and wakes the console
+// service; the kernel's own printing stays the polled 16550A path
+// through the runtime's console hook; SBI keeps poweroff. T4.4 adds
+// the two processes the gate routes to while a user program runs: the
+// console service (read/write) and the process service
+// (spawn/exit/wait).
 //
 //   emo build main.emo --target riscv64
 
@@ -16,7 +19,7 @@ const uart = 0x10000000
 // The input ring (T3.7): the trap shim fills it from the UART's FIFO —
 // the producer cursor, the consumer cursor, then 128 one-byte entries,
 // at the fixed addresses the kernel's linker script gives the section.
-// The trap shim is the only producer; the console process is the only
+// The trap shim is the only producer; the console service is the only
 // consumer; a full ring leaves the bytes in the FIFO and the line
 // re-raises.
 const in_prod = 0x87001000
@@ -27,6 +30,36 @@ const in_ring = 0x87001010
 // into it — the producer cursor, the consumer cursor, the dropped
 // count, then 64 entries.
 const tick_ring = 0x87000000
+
+// The handoff cells the services read and the boot flow fills (T4.4):
+// the services' raw pids (the gate posts by number), the request
+// cells the gate fills, the process service's exit table, and the
+// spawn-stack bump.
+const console_svc_cell = 0x870020f0
+const process_svc_cell = 0x870020f8
+const handoff_arga = 0x870020e0
+const handoff_argb = 0x870020e8
+const user_program_cell = 0x87fff000
+const exit_count = 0x87002118
+const exit_pids = 0x87002120
+const exit_codes = 0x87002160
+const pending_flag = 0x870021a0
+const pending_target = 0x870021a8
+const stack_next = 0x87002100
+const stack_floor = 0x87d40000
+
+// The gate's verbs, as the services see them: the request word rides
+// op << 32 — a magnitude no pid ever reaches, so the console service
+// tells the boot demo's plain-pid readers from the gate's requests by
+// size alone. The decode lives in a typed def: the mailbox word
+// arrives untyped, and comparisons on it are the dynamic operator the
+// target refuses.
+const op_write = 4294967296
+const op_read = 8589934592
+
+def op_of(w Int64) Int64 {
+  return w >> 32
+}
 
 def console_put_byte(b Int64) Void {
   while (peek8(uart + 5).to_int64() & 32) == 0 {
@@ -43,25 +76,110 @@ def uart_init() Void {
   poke8(uart + 1, 1B)
 }
 
-// The console process (T3.7): sleep until a byte lands, then hand it
-// to the oldest unread request — a reader's pid, sent before it
-// parked. The ring is empty only while the device is quiet, and the
-// park is the device-wait the shim's wake answers; a request that
-// arrives meanwhile queues in this mailbox for the next pass. The
-// console announces its pid to the boss first, so the boss can spawn
-// the readers that will ask it for bytes.
-def console_main(boss Pid) Void {
+// One byte from the input ring: sleep until the device world has one,
+// then hand it over. The console service's read half and the boot
+// demo's readers all land here.
+def take_byte() Int64 {
+  if peek64(in_cons) == peek64(in_prod) {
+    device_wait()
+  }
+  var cons = peek64(in_cons)
+  var b = peek8(in_ring + (cons % 128)).to_int64()
+  poke64(in_cons, cons + 1)
+  return b
+}
+
+// The console service (T3.7/T4.4): the byte channel's one process.
+// The gate's write verb prints its buffer through the polled driver
+// and answers the count; the gate's read verb answers the next byte,
+// sleeping in the device-wait while the ring is empty; the boot
+// demo's readers speak the older protocol — a bare pid — and get the
+// byte by mailbox. The kinds separate by magnitude: a gate request
+// rides op << 32, a pid never reaches that high. The announce goes to
+// the boss, whose pid is passed — a `do` bound to a value is a
+// lowering this tree does not trust (T3.7's note).
+def console_service(boss Pid) Void {
   boss <- self_pid()
   while true {
     receive {
-      who -> {
-        if peek64(in_cons) == peek64(in_prod) {
-          device_wait()
+      w -> {
+        var op = op_of(w)
+        if op == 1 {
+          var buf = peek64(handoff_arga)
+          var len = peek64(handoff_argb)
+          var i = 0
+          while i < len {
+            console_put_byte(peek8(buf + i).to_int64())
+            i = i + 1
+          }
+          gate_reply(len)
+        } else {
+          if op == 2 {
+            gate_reply(take_byte())
+          } else {
+            var b = take_byte()
+            w <- b
+          }
         }
-        var cons = peek64(in_cons)
-        var b = peek8(in_ring + (cons % 128)).to_int64()
-        poke64(in_cons, cons + 1)
-        who <- b
+      }
+    }
+  }
+}
+
+// The process service (T4.4): spawn carves a stack above the user
+// image and starts a new process at the image's program; wait answers
+// from the exit table or parks the loop holding the request; exit
+// records itself and answers a waiting parent. One gate transaction
+// runs at a time, so the one pending-wait pair of cells is the whole
+// of the waiting bookkeeping.
+def process_service(boss Pid) Void {
+  boss <- self_pid()
+  while true {
+    receive {
+      w -> {
+        var op = op_of(w)
+        if op == 3 {
+          var st = peek64(stack_next)
+          if st - 65536 < stack_floor {
+            gate_reply(-5)
+          } else {
+            poke64(stack_next, st - 65536)
+            gate_reply(user_spawn(peek64(user_program_cell), st))
+          }
+        } else {
+          if op == 4 {
+            var n0 = peek64(exit_count)
+            var i0 = 0
+            var hit = -1
+            while i0 < n0 {
+              if peek64(exit_pids + (i0 * 8)) == peek64(handoff_arga) {
+                hit = i0
+              }
+              i0 = i0 + 1
+            }
+            if hit >= 0 {
+              gate_reply(peek64(exit_codes + (hit * 8)))
+            } else {
+              poke64(pending_target, peek64(handoff_arga))
+              poke64(pending_flag, 1)
+            }
+          } else {
+            var pid = peek64(handoff_argb)
+            var code = peek64(handoff_arga)
+            var n = peek64(exit_count)
+            if n < 8 {
+              poke64(exit_pids + (n * 8), pid)
+              poke64(exit_codes + (n * 8), code)
+              poke64(exit_count, n + 1)
+            }
+            if peek64(pending_flag) == 1 {
+              if peek64(pending_target) == pid {
+                poke64(pending_flag, 0)
+                gate_reply(code)
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -109,22 +227,30 @@ def tick_proof() Void {
   println(ticks() > t0)
 }
 
+// The services come up first (T4.4): they answer the gate while a
+// user program runs. Each announces its pid to the boss; the root
+// consumes BOTH announces before any console request goes out — a
+// request answered by mailbox and a stray announce are the same shape
+// to a receive — and parks the raw numbers into the handoff cells the
+// shim posts by.
+var me = self_pid()
+var console_svc = me
+do console_service(me)
+do process_service(me)
 uart_init()
 println("Hello, EmoOS!")
 tick_proof()
-
-const me = self_pid()
-do console_main(me)
-receive {
-  c -> {
-    var root_b = read_byte(c)
-    println("0:${root_b}")
-    do reader(c, me, 1)
-    do reader(c, me, 2)
-    do reader(c, me, 3)
-    do reader(c, me, 4)
-  }
-}
+receive { c1 -> {
+  poke64(console_svc_cell, pid_num(c1))
+  console_svc = c1
+} }
+receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
+do reader(console_svc, me, 1)
+do reader(console_svc, me, 2)
+do reader(console_svc, me, 3)
+do reader(console_svc, me, 4)
+var root_b = read_byte(console_svc)
+println("0:${root_b}")
 receive { done1 -> {} }
 receive { done2 -> {} }
 receive { done3 -> {} }

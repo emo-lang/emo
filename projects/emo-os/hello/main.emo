@@ -1,12 +1,13 @@
 // The first user program (T4.1): the kernel loads this image into the
 // user window and srets into it in U-mode. U-mode owns no CSRs and the
-// SBI is unreachable from it. Two proofs ride the serial line: the
-// greeting pokes the 16550A directly — the weak-isolation window, what
-// U-mode can reach with no gate at all — and the `gate` line goes
-// through the ecall gate (T4.2) by way of the `syscall` stubs (T4.3):
-// one successful write of this line's own bytes, then two refusals,
-// each printed through the same gate that refused it. The exit is the
-// stub's verb 0, which lands in the kernel and never returns.
+// SBI is unreachable from it. The proofs ride the serial line in
+// order: the greeting pokes the 16550A directly — the weak-isolation
+// window, what U-mode reaches with no gate at all; the `gate` line is
+// T4.2's write verb with two refusals printed by the same gate that
+// refused them; `echo` is T4.4's read verb, blocking on the console
+// service until a byte exists. The exit is the stub's verb 0, which
+// lands in the kernel and ends the machine. (The spawn/wait proofs
+// wait on the fault documented in docs/temp-spawn-wait-problem.md.)
 //
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
@@ -16,9 +17,9 @@ require "syscall"
 const uart = 0x10000000
 
 // A scratch page inside this image's read-write segment — the buffer
-// the successful write sends from — and the two addresses the refusals
-// try: the text segment is load-and-run but not writable, and the
-// kernel's own memory is nobody's.
+// the successful write sends from — and the two addresses the
+// refusals try: the text segment is load-and-run but not writable,
+// and the kernel's own memory is nobody's.
 const buf = 0x87200000
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
@@ -48,6 +49,9 @@ def reason_num(why String) Int64 {
   if why == "bad argument" {
     return 4
   }
+  if why == "the kernel is out of a resource" {
+    return 5
+  }
   return 1
 }
 
@@ -74,7 +78,17 @@ def num_at(n Int64, pos Int64) Int64 {
   return p + 1
 }
 
-// The U-mode proof, straight at the machine: U-MODE 500500
+// A line through the console service, from the scratch buffer.
+def gate_line(len Int64) Void {
+  var r = syscall.write(buf, len)
+  case r {
+    (R.error, why) -> { put(63) } // ? — the gate refused a line
+    (R.ok, _) -> {}
+  }
+}
+
+// The proofs, in order: the U-mode greeting straight at the machine,
+// the gate line, the read — then the root exits and the machine ends.
 put(85) // U
 put(45) // -
 put(77) // M
@@ -91,11 +105,10 @@ while i <= 1000 {
 put_num(sum)
 put(10)
 
-// The gate proof, through the kernel by way of the stubs: one write
-// that answers, two that refuse — the text segment with reason 3 (no
-// permission), the kernel's memory with reason 2 (out of range) — and
-// each refusal printed by the same gate that refused it. The line
-// reads `gate 500500 r3 r2`.
+// The gate proof: one write that answers, two that refuse — the
+// text segment with reason 3 (no permission), the kernel's memory
+// with reason 2 (out of range) — and each refusal printed by the
+// same gate that refused it. The line reads `gate 500500 r3 r2`.
 var pos = byte_at(0, 103) // g
 pos = byte_at(pos, 97) // a
 pos = byte_at(pos, 116) // t
@@ -109,4 +122,21 @@ pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
 pos = num_at(reason_of(syscall.write(kernel_mem, 4)), pos)
 pos = byte_at(pos, 10)
-var wrote = syscall.write(buf, pos)
+gate_line(pos)
+
+// The read proof: block on the console until a byte exists, then
+// print it — `echo 88` when the feed is an X.
+var c = syscall.read()
+var rp = byte_at(0, 101) // e
+rp = byte_at(rp, 99) // c
+rp = byte_at(rp, 104) // h
+rp = byte_at(rp, 111) // o
+rp = byte_at(rp, 32) // space
+rp = num_at(c, rp)
+rp = byte_at(rp, 10)
+gate_line(rp)
+
+// The process proof arrives with the spawn/wait fix (see
+// docs/temp-spawn-wait-problem.md); until then the root exits: the
+// machine ends.
+syscall.exit(0)

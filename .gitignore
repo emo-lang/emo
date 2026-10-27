@@ -22,6 +22,7 @@ benchmarks/baselines/build/
 
 # Logs
 *.log
+*.log.clean
 
 # Release packaging output
 /dist/

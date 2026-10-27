@@ -220,14 +220,20 @@ emo_os_trap_shim:
     addi sp, sp, 544
     j emo_os_trap_resume
 .Ltrap_ucall:
-    # the gate (T4.2): verb 0 never returns — a handler that cannot
-    # return has no return path to marshal, so the entry takes it
-    # directly (the SBI poweroff). Every other verb marshals into the
-    # gate's Emo dispatcher — the verb, then the six words — whose one
-    # answer (>= 0 the payload, < 0 the refusal's reason) rides home in
-    # the trapped a0. Everything else round-trips through the frame.
+    # the gate (T4.2/T4.4): every verb marshals into the gate's Emo
+    # dispatcher — the verb, then the six words. The caller's pid goes
+    # to its handoff cell first (the dispatcher reads it through
+    # peek/poke like everything else on the page). The answer is one of
+    # three shapes: -103 the root's exit (the machine ends here), a
+    # -1000-op route (the request goes to a service process and the
+    # caller parks — its context IS this frame), or anything else: an
+    # answer or a refusal, riding home in the trapped a0.
     ld t0, 136(sp)           # the trapped a7: the verb
-    beqz t0, .Ltrap_exit
+    la t2, emo_cur_slot
+    ld t2, 0(t2)
+    ld t2, 8(t2)             # the caller's pid
+    li t3, 0x87002110        # the caller-pid cell (+272)
+    sd t2, 0(t3)
     ld a0, 136(sp)
     ld a1, 80(sp)
     ld a2, 88(sp)
@@ -236,6 +242,12 @@ emo_os_trap_shim:
     ld a5, 112(sp)
     ld a6, 120(sp)
     call emo_gate__dispatch
+    li t1, -103
+    beq a0, t1, .Ltrap_exit
+    li t1, -1000
+    bge a0, t1, .Ltrap_answer   # -1000 and up never happens: answers,
+    j .Ltrap_route              # refusals, then the routes below it
+.Ltrap_answer:
     sd a0, 80(sp)
     # the ecall is a synchronous exception: sret returns to sepc, so
     # the frame's sepc moves past the instruction — without this the
@@ -245,6 +257,40 @@ emo_os_trap_shim:
     sd t0, 152(sp)
     addi sp, sp, 544
     j emo_os_trap_resume
+.Ltrap_route:
+    # a0 = -(1000 + op): the op goes to its service's mailbox (the
+    # helper posts and wakes), the caller's slot takes this frame as
+    # its context with state 5 — gate-wait, woken only by the reply —
+    # and the ecall's sepc moves past the instruction before the
+    # switch. The pick never returns to the shim.
+    addi t5, a0, 0
+    sub t6, zero, t5
+    addi t6, t6, -1000       # the op
+    li t3, 3
+    bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
+    beqz t6, .Lroute_proc    # op 0 (a child's exit)
+.Lroute_cons:
+    li a0, 0x870020f0        # the console service's pid cell (+240)
+    j .Lroute_post
+.Lroute_proc:
+    li a0, 0x870020f8        # the process service's pid cell (+248)
+.Lroute_post:
+    ld a0, 0(a0)             # the service's raw pid
+    mv a1, t6
+    slli a1, a1, 32          # the request word rides op << 32: the
+    call emo_gate_post       # service's magnitude check reads the op
+    la t0, emo_cur_slot
+    ld t0, 0(t0)             # the caller's slot
+    addi t1, sp, 336         # the frame's switch-section base (the shim's
+    sd t1, 0(t0)             # sp sits at the frame base — the tick's own
+    ld t2, emo_trap_resume_hook # preempt passes sp+336 the same way)
+    sd t2, 0(t1)             # the resume is the trap resume
+    li t3, 5
+    sd t3, 16(t0)            # state 5: gate-wait
+    ld t4, 152(sp)
+    addi t4, t4, 4           # the ecall is consumed
+    sd t4, 152(sp)
+    j emo_sched_pick
 .Ltrap_exit:
     li a7, 8
     ecall                    # the SBI poweroff
@@ -394,6 +440,18 @@ emo_os_trap_resume:
     ld t0, -520(sp)
     ld t1, -512(sp)
     sret
+
+# emo_os_user_exit: a spawned user process's return address — a
+# program that falls off its top level has exited (verb 0), and the
+# gate routes a child's exit to the process service. Never returns to
+# the faller.
+    .globl emo_os_user_exit
+emo_os_user_exit:
+    li a0, 0                 # the exit code a fall-off leaves
+    li a7, 0
+    ecall
+1:  wfi
+    j 1b
 
 # emo_os_user_boot: the kernel's own program is done — the stub calls
 # this before the poweroff. The entry word the loader (user.emo) parked

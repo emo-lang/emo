@@ -1,4 +1,4 @@
-// The gate (T4.2): every U-mode ecall lands here through the trap
+// The gate (T4.2/T4.4): every U-mode ecall lands here through the trap
 // shim — the verb in a7, six words in a0..a5, and one answer back in
 // a0: >= 0 the payload, < 0 a refusal whose reason is -a0. The checks
 // are the supervisor's: every pointer argument must lie inside the
@@ -7,15 +7,31 @@
 // read. The gate runs inside the trap, on the caller's own stack, and
 // every def here is fully typed: nothing allocates.
 //
+// Since T4.4 the gate is also the router: the verbs the services own
+// come back as routes — negative past every refusal, the op encoded —
+// and the shim turns a route into the request (emo_gate_post), the
+// park (the caller's trap frame IS its context, state 5), and the
+// switch. The service's answer lands in the parked frame's a0 slot and
+// the resume is the trap resume the frame already carries.
+//
 // The contract lives in docs/syscalls.md; this module is its kernel
-// side. The verb set grows with the services (T4.4); the numbering,
-// the answer convention, and the reason codes are frozen from here.
+// side. The verb set grows with the services; the numbering, the
+// answer convention, and the reason codes are frozen from here.
 
 // The handoff page (the kernel's link.ld gives the .emo_user section
-// this fixed address): the segment count and the table the loader
-// parked.
+// this fixed address). The segment count and table the loader parked;
+// the request cells the gate fills for the service it routes to; the
+// caller-pid cell the shim fills at every U-mode ecall. The spawned
+// process's entry lives in the user image's own cell (the user stub
+// parks its emo_program there — the one address no ELF header
+// carries), at the fixed address the user profile's linker script
+// gives it.
 const seg_count_addr = 0x87002018
 const seg_table = 0x87002020
+const handoff_arga = 0x870020e0
+const handoff_argb = 0x870020e8
+const user_program_cell = 0x87fff000
+const handoff_caller = 0x87002110
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
@@ -23,13 +39,19 @@ const reason_range = 2
 const reason_permission = 3
 const reason_argument = 4
 
+// The routes: -(1000 + op). The shim decodes the op, posts to the
+// service (1 and 2 are the console's; 0, 3 and 4 the process
+// service's), and parks the caller. -103 is the root's exit: the
+// machine ends at the shim, no service involved.
+const route_process_exit = -1000
+const route_console_write = -1001
+const route_console_read = -1002
+const route_process_spawn = -1003
+const route_process_wait = -1004
+const route_poweroff = -103
+
 // The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
 const flag_w = 2
-
-// The verbs. Exit is not here on purpose: verb 0 never returns, so the
-// trap entry takes it directly — a handler that cannot return has no
-// return path to marshal.
-const verb_write = 1
 
 // One segment covers the whole range? The subtraction form cannot
 // overflow: both operands are non-negative and endp >= start.
@@ -70,19 +92,41 @@ def check_write(buf Int64, len Int64) Int64 {
   return reason_range
 }
 
-// The dispatch: the verb answers, everything else refuses by name.
+// The dispatch: the gate answers what needs no service, routes what
+// the services own, refuses everything else by name.
 def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64) Int64 {
-  if n == verb_write {
+  if n == 1 {
     var verdict = check_write(r0, r1)
     if verdict != 0 {
       return -verdict
     }
-    var i = 0
-    while i < r1 {
-      main.console_put_byte(peek8(r0 + i).to_int64())
-      i = i + 1
+    poke64(handoff_arga, r0)
+    poke64(handoff_argb, r1)
+    return route_console_write
+  }
+  if n == 2 {
+    return route_console_read
+  }
+  if n == 3 {
+    poke64(handoff_arga, peek64(user_program_cell))
+    return route_process_spawn
+  }
+  if n == 4 {
+    var me = peek64(handoff_caller)
+    if r0 < 2 || r0 == me {
+      return -reason_argument
     }
-    return r1
+    poke64(handoff_arga, r0)
+    return route_process_wait
+  }
+  if n == 0 {
+    var me = peek64(handoff_caller)
+    if me == 1 {
+      return route_poweroff
+    }
+    poke64(handoff_arga, r0)
+    poke64(handoff_argb, me)
+    return route_process_exit
   }
   return -reason_unknown
 }

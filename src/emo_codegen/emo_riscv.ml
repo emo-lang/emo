@@ -823,6 +823,49 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
            "the `ecall` builtin with %d arguments — it takes the verb and \
             exactly six words"
            (List.length args))
+  | Builtin { name = "user_spawn"; args = [ entry; stack ] } ->
+      (* T4.4: the process service's word — a new user process enters
+         the image's program on the fresh stack, and the raw pid number
+         comes back. The helper is raw in, raw out; the dynamic body
+         converts at the call site. *)
+      emit_expr env (d + 2) entry;
+      put env "    sd a0, %d(sp)\n" (temp_offset env d);
+      emit_expr env (d + 2) stack;
+      if env.native then begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        call_runtime env "emo_user_spawn"
+      end
+      else begin
+        (* the tagged words decode, the call runs, the answer boxes *)
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        put env "    andi t0, a0, -32\n";
+        put env "    ld a0, 8(t0)\n";
+        put env "    andi t0, a1, -32\n";
+        put env "    ld a1, 8(t0)\n";
+        call_runtime env "emo_user_spawn";
+        call_runtime env "emo_box_i64"
+      end
+  | Builtin { name = "gate_reply"; args = [ answer ] } ->
+      (* T4.4: a service's answer to the gate's parked caller — the raw
+         word lands in the caller's own trap frame and the wake is this
+         helper's alone. *)
+      emit_expr env (d + 1) answer;
+      if env.native then call_runtime env "emo_gate_reply"
+      else begin
+        put env "    andi t0, a0, -32\n";
+        put env "    ld a0, 8(t0)\n";
+        call_runtime env "emo_gate_reply"
+      end
+  | Builtin { name = "pid_num"; args = [ p ] } ->
+      (* T4.4: the raw machine sees a pid as its number — the kernel's
+         handoff cells carry numbers, not Pid words. The Pid word is
+         tagged in both worlds; the answer boxes back in a dynamic
+         body. *)
+      emit_expr env (d + 1) p;
+      call_runtime env "emo_pid_num";
+      if not env.native then call_runtime env "emo_box_i64"
   | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
@@ -2377,6 +2420,9 @@ emo_start:
     addi t0, t0, 8
     j 1b
 2:
+    la t0, emo_program
+    la t1, emo_user_program_cell
+    sd t0, 0(t1)
     call emo_runtime_init
     call emo_program
     li a7, 0
@@ -2384,6 +2430,22 @@ emo_start:
 3:
     wfi
     j 3b
+|asm}
+
+(* The user profile's extra .bss: the user-program cell (T4.4) — the
+   stub parks this image's emo_program there, the one address no ELF
+   header carries and no user code can name, and the kernel's process
+   service starts a spawned process at it. The user profile's linker
+   script gives the section its fixed address under the top of RAM. *)
+let user_cell_asm =
+  {asm|
+
+# ---- The user-program cell (EmoOS T4.4) ----
+
+    .section .emo_ucall, "aw", @nobits
+    .globl emo_user_program_cell
+emo_user_program_cell:
+    .zero 8
 |asm}
 
 (* The runtime body: everything the generated code calls — the heap
@@ -3125,7 +3187,7 @@ emo_eq_deep:
     li t0, 16
     beq t2, t0, .Leq_atomic
     li t0, 18
-    beq t2, t0, .Leq_no
+    beq t2, t0, .Leq_cell
     j .Leq_inst
 .Leq_cell:
     ld t0, 8(s0)
@@ -4298,6 +4360,9 @@ msg_noproc_end:
 msg_mbox:
     .ascii "a process mailbox is full"
 msg_mbox_end:
+msg_reply:
+    .ascii "a service replied with no gate caller waiting"
+msg_reply_end:
 msg_nan:
     .ascii "nan"
 msg_inf:
@@ -4981,6 +5046,206 @@ emo_mb_remove:
     sd t4, 48(t0)
     ret
 
+# ---- The gate's service side (EmoOS T4.4) ----
+#
+# Three helpers the kernel's services and trap shim share. The gate
+# (typed Emo, inside the trap) validates a syscall and picks the verb;
+# the shim posts the request to the service process and parks the
+# caller — the trap frame IS the caller's context, the answer lands in
+# its a0 slot, and the resume is the trap resume the frame already
+# carries. All three are raw in, raw out; the mask discipline is the
+# scheduler's own.
+
+# emo_pid_num: a0 = a Pid word; a0 = the pid number.
+    .globl emo_pid_num
+emo_pid_num:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    ret
+
+# emo_gate_post: a0 = the service's raw pid, a1 = the op word (raw).
+# The raw word joins the service's mailbox and a receive-parked
+# service wakes — the service's dynamic body holds the word raw and
+# shifts the op out (op << 32; a plain pid never reaches that height,
+# which is how the console service tells the gate's requests from the
+# boot demo's readers). The caller — inside the trap — neither yields
+# nor unmarks: the park that follows is the shim's. A service that is
+# not receiving (it has not reached its loop, or is mid-request)
+# simply finds the request queued on its next receive.
+    .globl emo_gate_post
+emo_gate_post:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    sd a1, 16(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lgp_scan:
+    bgeu t1, t2, .Lgp_fail
+    li t3, 576
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lgp_found
+    addi t1, t1, 1
+    j .Lgp_scan
+.Lgp_fail:
+    la a0, msg_noproc
+    la a1, msg_noproc_end
+    call emo_fail
+.Lgp_found:
+    sd t4, 24(sp)               # the service's slot
+    ld a0, 16(sp)               # the raw op word
+    ld t4, 24(sp)
+    ld t0, 24(t4)               # head
+    ld t1, 32(t4)               # length
+    li t2, 32
+    bge t1, t2, .Lgp_full
+    add t3, t0, t1
+    andi t3, t3, 31
+    slli t3, t3, 3
+    addi t6, t3, 64
+    add t6, t4, t6
+    sd a0, 0(t6)                # the request
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    ld t5, 48(t5)               # the caller's effective priority rides it
+    addi t6, t3, 320
+    add t6, t4, t6
+    sd t5, 0(t6)
+    addi t1, t1, 1
+    sd t1, 32(t4)
+    ld t5, 16(t4)
+    li t6, 2
+    bne t5, t6, .Lgp_done
+    li t5, 1
+    sd t5, 16(t4)               # the service wakes
+    mv a0, t4
+    call emo_runq_push
+.Lgp_done:
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+.Lgp_full:
+    la a0, msg_mbox
+    la a1, msg_mbox_end
+    call emo_fail
+
+# emo_gate_reply: a0 = the raw answer. The gate's parked caller — the
+# one slot in state 5 — takes the word straight into its own trap
+# frame's a0 slot and wakes; the mailbox never carries a gate answer,
+# so an ordinary message can never be mistaken for one. A reply with
+# no waiter is the service's bug, and loud.
+    .globl emo_gate_reply
+emo_gate_reply:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lgr_scan:
+    bgeu t1, t2, .Lgr_fail
+    li t3, 576
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    li t6, 5
+    bne t5, t6, .Lgr_next
+    ld a0, 8(sp)
+    ld t5, 0(t4)                # the caller's switch-section base
+    addi t5, t5, -256           # the trap frame's a0 slot (544 - 80 - 208)
+    sd a0, 0(t5)
+    li t5, 1
+    sd t5, 16(t4)               # alive
+    mv a0, t4
+    call emo_runq_push
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+.Lgr_next:
+    addi t1, t1, 1
+    j .Lgr_scan
+.Lgr_fail:
+    la a0, msg_reply
+    la a1, msg_reply_end
+    call emo_fail
+
+# emo_user_spawn: a0 = the entry, a1 = the fresh stack's top; a0 = the
+# child's raw pid. The child's context is a synthetic trap frame on its
+# own stack — every register zero, sstatus SPIE with SPP clear and FS
+# dirty, sepc the entry — and its ra slot is the user-exit stub, so a
+# program that falls off its top level has exited (verb 0) rather than
+# jumped into the weeds. The frame is zeroed because the resume
+# restores all of it.
+    .globl emo_user_spawn
+emo_user_spawn:
+    csrci sstatus, 2
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)                # the entry
+    sd a1, 16(sp)               # the stack top
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lus_scan:
+    bgeu t1, t2, .Lus_fail
+    li t3, 576
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    beqz t5, .Lus_found
+    addi t1, t1, 1
+    j .Lus_scan
+.Lus_fail:
+    la a0, msg_procs
+    la a1, msg_procs_end
+    call emo_fail
+.Lus_found:
+    mv t3, t4
+    la t5, emo_pid_counter
+    ld t6, 0(t5)
+    addi t6, t6, 1
+    sd t6, 0(t5)
+    sd t6, 8(t3)                # the pid
+    sd t6, 24(sp)               # survives the frame build
+    li t5, 1
+    sd t5, 16(t3)               # alive
+    la t4, emo_cur_slot
+    ld t4, 0(t4)
+    ld t0, 40(t4)
+    sd t0, 40(t3)               # the policy fields, as any child's
+    sd t0, 48(t3)
+    ld t0, 56(t4)
+    sd t0, 56(t3)
+    ld t5, 16(sp)               # the stack top
+    addi t4, t5, -544           # the synthetic trap frame
+    mv a0, t4
+    addi a1, t4, 544
+.Lus_zero:
+    sd zero, 0(a0)
+    addi a0, a0, 8
+    ble a0, a1, .Lus_zero
+    ld t0, 8(sp)
+    li t1, 0x6020               # SPIE, SPP clear, FS dirty
+    sd t1, 144(t4)              # sstatus
+    sd t0, 152(t4)              # sepc = the entry
+    ld t1, emo_trap_resume_hook
+    sd t1, 336(t4)              # the switch section's ra
+    li t1, 1
+    sd t1, 536(t4)              # the spare word: born outside any region
+    sd t4, 0(t3)                # the slot's saved sp
+    mv a0, t3
+    call emo_runq_push
+    csrsi sstatus, 2
+    ld a0, 24(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+
 # emo_self_pid: a0 = the current process's Pid word.
     .globl emo_self_pid
 emo_self_pid:
@@ -5090,10 +5355,22 @@ emo_copy_deep:
    clears it, which is also why the stack and the value heap live there
    (no image weight). *)
 let linker_script ~(profile : string) : string =
-  let base =
+  let base, extra =
     match profile with
-    | "kernel" -> "0x80200000"
-    | "user" -> "0x87100000"
+    | "kernel" -> ("0x80200000", "")
+    | "user" ->
+        (* The user-program cell (T4.4): the user stub parks its own
+           emo_program here, so the kernel's process service can start a
+           spawned process at the program's top level — the one address
+           no header carries and no user code can name. Above every
+           image content, under the top of the board's RAM, and in no
+           program header — the loader's segment zeroing must never
+           reach it, and the kernel's fixed pages next door must never
+           fall inside a user segment. *)
+        ( "0x87100000",
+          "
+  . = 0x87fff000;
+  .emo_ucall (NOLOAD) : { *(.emo_ucall) }" )
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
   Printf.sprintf
@@ -5121,12 +5398,12 @@ SECTIONS
     *(COMMON)
     . = ALIGN(16);
     __emo_bss_end = .;
-  } :data
+  } :data%s
 
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }
 |}
-    base
+    base extra
 
 (* The stack and the value heap live in .bss — NOBITS, so neither weighs
    on the image; the entry stub clears the region before first use, and
@@ -5192,6 +5469,7 @@ emo_runq_len:
     .zero 8
 emo_pid_counter:
     .zero 8
+    .globl emo_cur_slot
 emo_cur_slot:
     .zero 8
 
@@ -5779,4 +6057,5 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       (List.rev env.cells)
   end;
   gput env "%s" (stack_asm ~profile);
+  if profile = "user" then gput env "%s" user_cell_asm;
   Buffer.contents env.buf

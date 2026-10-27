@@ -31,6 +31,17 @@ emo_start:
     la t0, emo_os_user_blob_end
     sd t0, 8(t1)
     sd zero, 16(t1)
+    # the service handoff (T4.4): the spawn stacks grow down from
+    # 0x87e00000 (above the user image, under the board's top); the
+    # service pids and the caller cell start zeroed, filled by the
+    # kernel's own boot flow. The spawned process's entry is the user
+    # image's own business — its stub parks it in the user cell.
+    li t1, 0x87002100
+    li t0, 0x87e00000
+    sd t0, 0(t1)
+    sd zero, -16(t1)
+    sd zero, -8(t1)
+    sd zero, 16(t1)
     la t0, emo_main__console_put_byte
     la t1, emo_console_hook
     sd t0, 0(t1)

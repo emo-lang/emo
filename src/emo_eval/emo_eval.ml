@@ -327,6 +327,12 @@ let global_env () =
     { bound = BuiltinFn "device_wait"; mutable_ = false };
   Hashtbl.replace env.frame "ecall"
     { bound = BuiltinFn "ecall"; mutable_ = false };
+  Hashtbl.replace env.frame "user_spawn"
+    { bound = BuiltinFn "user_spawn"; mutable_ = false };
+  Hashtbl.replace env.frame "gate_reply"
+    { bound = BuiltinFn "gate_reply"; mutable_ = false };
+  Hashtbl.replace env.frame "pid_num"
+    { bound = BuiltinFn "pid_num"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -2908,6 +2914,12 @@ and apply_builtin span name args =
       error span "E4028"
         "`ecall` reaches the machine's gate: only the `riscv64` target \
          admits it, not the interpreter"
+  | (("user_spawn" | "gate_reply" | "pid_num") as name), _ ->
+      error span "E4028"
+        (Printf.sprintf
+           "`%s` reaches the kernel's service machinery: only the \
+            `riscv64` target admits it, not the interpreter"
+           name)
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own

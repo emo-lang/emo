@@ -1273,10 +1273,34 @@ let raw_mem_bindings =
         is_var = false;
         depth = 0;
       } );
+    (* user_spawn (EmoOS T4.4): the process service's word — a new user
+       process enters the image's program on a fresh stack, and the raw
+       pid number comes back. Same admission rule. *)
+    ( "user_spawn",
+      {
+        vtype = FuncType ([ ("entry", Int64); ("stack", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    (* gate_reply (EmoOS T4.4): a service's answer to the gate's
+       parked caller — the raw word lands in the caller's own trap
+       frame and the wake is this helper's alone. Same admission
+       rule. *)
+    ( "gate_reply",
+      { vtype = FuncType ([ ("answer", Int64) ], Void); is_var = false; depth = 0 }
+    );
+    (* pid_num (EmoOS T4.4): the raw machine sees a pid as its number —
+       the kernel's handoff cells carry numbers, not Pid words. Same
+       admission rule. *)
+    ( "pid_num",
+      { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 }
+    );
   ]
 
 let raw_mem_builtin = function
-  | "peek8" | "poke8" | "peek64" | "poke64" | "device_wait" | "ecall" -> true
+  | "peek8" | "poke8" | "peek64" | "poke64" | "device_wait" | "ecall"
+  | "user_spawn" | "gate_reply" | "pid_num" ->
+      true
   | _ -> false
 
 (* The refusal names what the name reaches: the memory lanes reach raw

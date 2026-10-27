@@ -45,8 +45,20 @@ boot() {
     printf 'abcde' >&3
   fi
 
+  # The user program's read blocks on the console until a byte exists:
+  # feed one once its gate line is on the wire, then wait for the rest
+  # of the proof chain.
+  for _ in $(seq 1 100); do
+    if grep -av 'riscv_cpu_do_interrupt' "$log" 2>/dev/null | grep -qF 'gate 500500 r3 r2'; then
+      break
+    fi
+    kill -0 "$qemu_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  printf 'X' >&3
+
   local exited=0
-  for _ in $(seq 1 50); do
+  for _ in $(seq 1 150); do
     if ! kill -0 "$qemu_pid" 2>/dev/null; then
       exited=1
       break
@@ -62,26 +74,30 @@ boot() {
 
   cat "$log"
 
+  # The -d int trace weaves interrupt dumps into the serial stream — a
+  # timer landing mid-line splits it. The assertions run on the clean
+  # view: every line the -d tracer contributed is dropped.
+  grep -av 'riscv_cpu_do_interrupt' "$log" > "$log.clean"
+
   if [ "$found" -ne 1 ]; then
     echo "run.sh: the tick proof's checksum never came" >&2
     exit 1
   fi
-  if ! grep -qF -- 'Hello, EmoOS!' "$log"; then
+  if ! grep -qF -- 'Hello, EmoOS!' "$log.clean"; then
     echo "run.sh: expected 'Hello, EmoOS!' in the serial output" >&2
     exit 1
   fi
-  if [ "$(grep -c 'true' "$log" || true)" -lt 1 ]; then
+  if [ "$(grep -c 'true' "$log.clean" || true)" -lt 1 ]; then
     echo "run.sh: the tick verdict is missing; the tick is not running" >&2
     exit 1
   fi
-  # The five console deliveries, in request order, then the user image
-  # staged, the U-mode program's greeting, and the gate line — one
-  # write that answered and two refusals printed by the gate that
-  # refused them. The byte offsets in the log are the serial order,
-  # whatever the -d int trace wove between them.
+  # The five console deliveries, in request order, then the user
+  # image's proof chain: staged, the U-mode greeting, the gate line,
+  # and the byte the read waited for. The byte offsets in the clean
+  # view are the serial order.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2'; do
-    pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88'; do
+    pos=$(grep -aboF -- "$line" "$log.clean" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
       exit 1
