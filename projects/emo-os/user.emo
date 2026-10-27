@@ -13,11 +13,19 @@
 
 // The handoff page, at the fixed address the kernel's link.ld gives the
 // .emo_user section: the boot stub writes the embedded image's bounds
-// and zeroes the entry word at boot; the loader writes the staged entry.
+// and zeroes the entry word at boot; the loader writes the staged entry
+// and the segment table — the record every gate check (gate.emo) reads.
 const handoff = 0x87002000
 const handoff_blob = handoff
 const handoff_end = handoff + 8
 const handoff_entry = handoff + 16
+const handoff_segn = handoff + 24
+const handoff_segs = handoff + 32
+
+// The segment table's shape: eight slots of (start, end, flags), one
+// per loaded segment, flags the ELF's p_flags (X=1, W=2, R=4). Eight
+// is more than any image the user profile links; a ninth is a refusal.
+const seg_slots = 8
 
 // The pre-SV39 user window: the base is the load address the user
 // profile's default linker script fixes (the compiler's user image
@@ -61,9 +69,9 @@ def load_segment(blob Int64, ph Int64) Bool {
   return true
 }
 
-// Parse the embedded image, copy its loadable segments, park the entry.
-// The answer is the entry address, or 0 when nothing was staged — and
-// every refusal says which check failed.
+// Parse the embedded image, copy its loadable segments, park the entry
+// and the segment table. The answer is the entry address, or 0 when
+// nothing was staged — and every refusal says which check failed.
 def stage() Int64 {
   var blob = peek64(handoff_blob)
   var blob_end = peek64(handoff_end)
@@ -96,15 +104,30 @@ def stage() Int64 {
     return 0
   }
   var i = 0
+  var loaded = 0
   while i < phnum {
     var ph = blob + phoff + (i * phentsize)
     if rd32(ph) == 1 {
+      if loaded == seg_slots {
+        println("user: too many loadable segments for the table")
+        return 0
+      }
       if !load_segment(blob, ph) {
         return 0
       }
+      var slot = handoff_segs + (loaded * 24)
+      poke64(slot, peek64(ph + 16))
+      poke64(slot + 8, peek64(ph + 16) + peek64(ph + 40))
+      poke64(slot + 16, rd32(ph + 4))
+      loaded = loaded + 1
     }
     i = i + 1
   }
+  if loaded == 0 {
+    println("user: no loadable segment")
+    return 0
+  }
+  poke64(handoff_segn, loaded)
   poke64(handoff_entry, entry)
   return entry
 }

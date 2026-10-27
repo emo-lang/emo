@@ -203,6 +203,7 @@ let smoke_tests =
             "run.sh";
             "user.emo";
             "user.S";
+            "gate.emo";
             "hello/package.emo";
             "hello/main.emo";
           ];

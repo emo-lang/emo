@@ -75,11 +75,12 @@ boot() {
     exit 1
   fi
   # The five console deliveries, in request order, then the user image
-  # staged and the U-mode program's greeting — the byte offsets in the
-  # log are the serial order, whatever the -d int trace wove between
-  # them.
+  # staged, the U-mode program's greeting, and the gate line — one
+  # write that answered and two refusals printed by the gate that
+  # refused them. The byte offsets in the log are the serial order,
+  # whatever the -d int trace wove between them.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500'; do
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

@@ -1,15 +1,25 @@
 // The first user program (T4.1): the kernel loads this image into the
 // user window and srets into it in U-mode. U-mode owns no CSRs and the
-// SBI is unreachable from it, so the greeting rides the 16550A's
-// transmit registers directly — the weak-isolation window: loads and
-// stores reach MMIO until SV39 closes it. The exit is the stub's
-// shutdown ecall, which lands in the kernel — the exit verb the gate
-// answers (T4.1), the syscall dispatch generalizes (T4.2).
+// SBI is unreachable from it. Two proofs ride the serial line: the
+// greeting pokes the 16550A directly — the weak-isolation window, what
+// U-mode can reach with no gate at all — and the `gate` line goes
+// through the ecall gate (T4.2): one successful write of this line's
+// own bytes, then two refusals, each printed through the same gate
+// that refused it. The exit is the stub's verb 0, which lands in the
+// kernel and never returns.
 //
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
 
 const uart = 0x10000000
+
+// A scratch page inside this image's read-write segment — the buffer
+// the successful write sends from — and the two addresses the refusals
+// try: the text segment is load-and-run but not writable, and the
+// kernel's own memory is nobody's.
+const buf = 0x87200000
+const text_seg = 0x87100000
+const kernel_mem = 0x80200000
 
 def put(b Int64) Void {
   while (peek8(uart + 5).to_int64() & 32) == 0 {
@@ -24,9 +34,29 @@ def put_num(n Int64) Void {
   put(48 + (n % 10))
 }
 
-// The greeting is explicit bytes — U-mode has no console service yet —
-// and the number is computed, so the line on the serial is both a
-// marker and a small arithmetic pin.
+// The gate, raw: verb 1 is write(buf, len); the answer is the byte
+// count, or the refusal's reason negated.
+def gate_write(addr Int64, len Int64) Int64 {
+  return ecall(1, addr, len, 0, 0, 0, 0)
+}
+
+// One byte into the scratch buffer; the cursor comes back.
+def byte_at(pos Int64, b Int64) Int64 {
+  poke8(buf + pos, b.to_byte())
+  return pos + 1
+}
+
+// The decimal digits of n, poked at the cursor; the cursor comes back.
+def num_at(n Int64, pos Int64) Int64 {
+  var p = pos
+  if n >= 10 {
+    p = num_at(n / 10, p)
+  }
+  poke8(buf + p, (48 + (n % 10)).to_byte())
+  return p + 1
+}
+
+// The U-mode proof, straight at the machine: U-MODE 500500
 put(85) // U
 put(45) // -
 put(77) // M
@@ -42,3 +72,23 @@ while i <= 1000 {
 }
 put_num(sum)
 put(10)
+
+// The gate proof, through the kernel: one write that answers, two that
+// refuse — the text segment with reason 3 (no permission), the
+// kernel's memory with reason 2 (out of range) — and each refusal
+// printed by the same gate that refused it. The line reads
+// `gate 500500 r3 r2`.
+var pos = byte_at(0, 103) // g
+pos = byte_at(pos, 97) // a
+pos = byte_at(pos, 116) // t
+pos = byte_at(pos, 101) // e
+pos = byte_at(pos, 32) // space
+pos = num_at(sum, pos)
+pos = byte_at(pos, 32)
+pos = byte_at(pos, 114) // r
+pos = num_at(-gate_write(text_seg, 4), pos)
+pos = byte_at(pos, 32)
+pos = byte_at(pos, 114) // r
+pos = num_at(-gate_write(kernel_mem, 4), pos)
+pos = byte_at(pos, 10)
+var wrote = gate_write(buf, pos)

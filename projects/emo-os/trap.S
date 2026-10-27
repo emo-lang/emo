@@ -220,21 +220,36 @@ emo_os_trap_shim:
     addi sp, sp, 544
     j emo_os_trap_resume
 .Ltrap_ucall:
-    # the gate (T4.1): the exit verb is the one the kernel answers — a7
-    # 8, the shutdown request, taken to the SBI poweroff. Any other verb
-    # is the loud failure; the syscall dispatch (T4.2) replaces this
-    # single answer with the real table.
-    ld t0, 136(sp)           # the trapped a7, saved in the frame
-    li t1, 8                 # the shutdown request
-    bne t0, t1, .Ltrap_ucall_bad
+    # the gate (T4.2): verb 0 never returns — a handler that cannot
+    # return has no return path to marshal, so the entry takes it
+    # directly (the SBI poweroff). Every other verb marshals into the
+    # gate's Emo dispatcher — the verb, then the six words — whose one
+    # answer (>= 0 the payload, < 0 the refusal's reason) rides home in
+    # the trapped a0. Everything else round-trips through the frame.
+    ld t0, 136(sp)           # the trapped a7: the verb
+    beqz t0, .Ltrap_exit
+    ld a0, 136(sp)
+    ld a1, 80(sp)
+    ld a2, 88(sp)
+    ld a3, 96(sp)
+    ld a4, 104(sp)
+    ld a5, 112(sp)
+    ld a6, 120(sp)
+    call emo_gate__dispatch
+    sd a0, 80(sp)
+    # the ecall is a synchronous exception: sret returns to sepc, so
+    # the frame's sepc moves past the instruction — without this the
+    # same ecall re-executes forever
+    ld t0, 152(sp)
+    addi t0, t0, 4
+    sd t0, 152(sp)
+    addi sp, sp, 544
+    j emo_os_trap_resume
+.Ltrap_exit:
     li a7, 8
-    ecall                    # the kernel answers: poweroff
+    ecall                    # the SBI poweroff
 1:  wfi
     j 1b
-.Ltrap_ucall_bad:
-    la a0, msg_ucall
-    la a1, msg_ucall_end
-    call emo_fail
 .Ltrap_ext:
     call emo_os_console_irq
     j .Ltrap_home
@@ -408,9 +423,6 @@ emo_os_user_boot:
 msg_unexpected:
     .ascii "the kernel took an unexpected trap"
 msg_unexpected_end:
-msg_ucall:
-    .ascii "a user ecall the gate does not answer"
-msg_ucall_end:
 
     .section .bss
     .align 8

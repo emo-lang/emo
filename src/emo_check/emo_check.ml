@@ -1258,11 +1258,30 @@ let raw_mem_bindings =
        wakes it — the ISR side of an interrupt-driven driver. Same
        admission rule: only the target that owns the machine. *)
     ("device_wait", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    (* ecall (EmoOS T4.2): the machine's syscall instruction, raw — the
+       user side of the gate. The verb and its six words ride a7 and
+       a0..a5 on the other side of the instruction; the answer comes
+       back in a0 (>= 0 the payload, < 0 the refusal's reason). Same
+       admission rule as the rest of raw memory. *)
+    ( "ecall",
+      {
+        vtype =
+          FuncType
+            ([ ("verb", Int64); ("r0", Int64); ("r1", Int64); ("r2", Int64);
+               ("r3", Int64); ("r4", Int64); ("r5", Int64) ],
+             Int64);
+        is_var = false;
+        depth = 0;
+      } );
   ]
 
 let raw_mem_builtin = function
-  | "peek8" | "poke8" | "peek64" | "poke64" | "device_wait" -> true
+  | "peek8" | "poke8" | "peek64" | "poke64" | "device_wait" | "ecall" -> true
   | _ -> false
+
+(* The refusal names what the name reaches: the memory lanes reach raw
+   memory, `ecall` reaches the machine's gate. *)
+let raw_mem_what = function "ecall" -> "the machine's gate" | _ -> "raw memory"
 
 let base_env target =
   if target = "riscv64" then
@@ -1570,9 +1589,9 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               if raw_mem_builtin name then
                 report ctx span "E4028"
                   (Printf.sprintf
-                     "`%s` reaches raw memory: only the `riscv64` target \
-                      admits it, not `%s`"
-                     name ctx.target)
+                     "`%s` reaches %s: only the `riscv64` target admits it, \
+                      not `%s`"
+                     name (raw_mem_what name) ctx.target)
               else if out_of_scope ctx name then
                 report ctx span "E5008"
                   (Printf.sprintf "%s does not declare `%s` in its deps"

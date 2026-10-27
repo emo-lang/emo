@@ -5496,15 +5496,22 @@ println(peek8(page))
 poke8(page, 12B)
 println(peek64(page))
 poke64(page, 0)
+println(ecall(0, 0, 0, 0, 0, 0, 0))
 |}
 
 let peek_refusal_expected target =
   List.map
-    (fun name ->
+    (fun (name, what) ->
       Printf.sprintf
-        "`%s` reaches raw memory: only the `riscv64` target admits it, not `%s`"
-        name target)
-    [ "peek8"; "poke8"; "peek64"; "poke64" ]
+        "`%s` reaches %s: only the `riscv64` target admits it, not `%s`"
+        name what target)
+    [
+      ("peek8", "raw memory");
+      ("poke8", "raw memory");
+      ("peek64", "raw memory");
+      ("poke64", "raw memory");
+      ("ecall", "the machine's gate");
+    ]
 
 let peek_refusal_tests =
   let diagnostics target source =

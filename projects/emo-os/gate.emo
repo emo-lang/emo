@@ -1,0 +1,88 @@
+// The gate (T4.2): every U-mode ecall lands here through the trap
+// shim — the verb in a7, six words in a0..a5, and one answer back in
+// a0: >= 0 the payload, < 0 a refusal whose reason is -a0. The checks
+// are the supervisor's: every pointer argument must lie inside the
+// caller's own loaded segments, with the permission the access needs —
+// the segment table the loader parked at stage time is what the checks
+// read. The gate runs inside the trap, on the caller's own stack, and
+// every def here is fully typed: nothing allocates.
+//
+// The contract lives in docs/syscalls.md; this module is its kernel
+// side. The verb set grows with the services (T4.4); the numbering,
+// the answer convention, and the reason codes are frozen from here.
+
+// The handoff page (the kernel's link.ld gives the .emo_user section
+// this fixed address): the segment count and the table the loader
+// parked.
+const seg_count_addr = 0x87002018
+const seg_table = 0x87002020
+
+// The refusal reasons, part of the ABI.
+const reason_unknown = 1
+const reason_range = 2
+const reason_permission = 3
+const reason_argument = 4
+
+// The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
+const flag_w = 2
+
+// The verbs. Exit is not here on purpose: verb 0 never returns, so the
+// trap entry takes it directly — a handler that cannot return has no
+// return path to marshal.
+const verb_write = 1
+
+// One segment covers the whole range? The subtraction form cannot
+// overflow: both operands are non-negative and endp >= start.
+def covers(start Int64, endp Int64, buf Int64, len Int64) Bool {
+  if buf < start {
+    return false
+  }
+  if len > (endp - buf) {
+    return false
+  }
+  return true
+}
+
+// The write's pointer checks: the whole range inside one segment, and
+// that segment writable. The answer is 0, or the refusal's reason —
+// permission when a segment covers the range but cannot be written,
+// range when none does.
+def check_write(buf Int64, len Int64) Int64 {
+  if len < 0 {
+    return reason_argument
+  }
+  var covered = false
+  var i = 0
+  var n = peek64(seg_count_addr)
+  while i < n {
+    var slot = seg_table + (i * 24)
+    if covers(peek64(slot), peek64(slot + 8), buf, len) {
+      if (peek64(slot + 16) & flag_w) != 0 {
+        return 0
+      }
+      covered = true
+    }
+    i = i + 1
+  }
+  if covered {
+    return reason_permission
+  }
+  return reason_range
+}
+
+// The dispatch: the verb answers, everything else refuses by name.
+def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64) Int64 {
+  if n == verb_write {
+    var verdict = check_write(r0, r1)
+    if verdict != 0 {
+      return -verdict
+    }
+    var i = 0
+    while i < r1 {
+      main.console_put_byte(peek8(r0 + i).to_int64())
+      i = i + 1
+    }
+    return r1
+  }
+  return -reason_unknown
+}

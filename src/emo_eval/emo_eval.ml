@@ -325,6 +325,8 @@ let global_env () =
     { bound = BuiltinFn "poke64"; mutable_ = false };
   Hashtbl.replace env.frame "device_wait"
     { bound = BuiltinFn "device_wait"; mutable_ = false };
+  Hashtbl.replace env.frame "ecall"
+    { bound = BuiltinFn "ecall"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -2902,6 +2904,10 @@ and apply_builtin span name args =
            "`%s` reaches raw memory: only the `riscv64` target admits it, not \
             the interpreter"
            name)
+  | "ecall", _ ->
+      error span "E4028"
+        "`ecall` reaches the machine's gate: only the `riscv64` target \
+         admits it, not the interpreter"
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own

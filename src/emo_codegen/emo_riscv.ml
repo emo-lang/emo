@@ -784,6 +784,45 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          brings the process back. A send to a device-waiter does not
          wake it: requests queue in its mailbox for the next pump. *)
       call_runtime env "emo_park_console"
+  | Builtin { name = "ecall"; args = ([ _; _; _; _; _; _; _ ] as args) } ->
+      (* T4.2: the machine's syscall instruction, raw — the user side of
+         the gate. The verb and its six words ride a7 and a0..a5 across
+         the instruction; the answer comes back in a0, the gate's own
+         convention (>= 0 the payload, < 0 the refusal's reason). *)
+      if env.native then begin
+        (* inline: the seven words evaluate, spill, and load raw — no
+           boxing, the instruction takes raw words and answers one —
+           then shift into the ABI's places. Nothing allocated. *)
+        List.iteri
+          (fun i arg ->
+            emit_expr env (d + 7) arg;
+            put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
+          args;
+        List.iteri
+          (fun i _ ->
+            put env "    ld a%d, %d(sp)\n" i (temp_offset env (d + i)))
+          args;
+        put env "    mv a7, a0\n";
+        put env "    mv a0, a1\n";
+        put env "    mv a1, a2\n";
+        put env "    mv a2, a3\n";
+        put env "    mv a3, a4\n";
+        put env "    mv a4, a5\n";
+        put env "    mv a5, a6\n";
+        put env "    ecall\n"
+      end
+      else begin
+        (* the tagged world boxes its way in: emo_sys_ecall decodes the
+           seven cells, runs the instruction, and boxes the answer *)
+        emit_args_from env d ~from:0 args;
+        call_runtime env "emo_sys_ecall"
+      end
+  | Builtin { name = "ecall"; args = args } ->
+      refuse
+        (Printf.sprintf
+           "the `ecall` builtin with %d arguments — it takes the verb and \
+            exactly six words"
+           (List.length args))
   | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
@@ -2314,9 +2353,8 @@ emo_park:
    and enters it in U-mode through sret — a0 is whatever the kernel left,
    not a hart id, and the SBI is unreachable from U-mode. The stub owns
    no CSR: it clears .bss, sets its own stack (the image carries it in
-   .bss), runs the program, and exits with the shutdown ecall — which
-   lands in the kernel, the exit verb the gate answers (T4.1) and the
-   syscall dispatch generalizes (T4.2). *)
+   .bss), runs the program, and exits with the gate's exit verb (T4.2's
+   ABI: verb 0), which lands in the kernel and never returns. *)
 let user_boot_stub_asm =
   {asm|
 # ---- The user profile's boot stub (EmoOS T4.1) ----
@@ -2324,8 +2362,8 @@ let user_boot_stub_asm =
 # The kernel loads the image and enters it in U-mode through sret: a0 is
 # the kernel's, not a hart id, and the SBI is unreachable from U-mode.
 # No runtime CSRs — the stub clears .bss, sets the stack the image
-# carries, runs the program, and exits with the shutdown ecall, which
-# lands in the kernel: the exit verb the gate answers.
+# carries, runs the program, and exits with the gate's exit verb, which
+# lands in the kernel and never returns.
 
     .section .text
     .globl emo_start
@@ -2341,7 +2379,7 @@ emo_start:
 2:
     call emo_runtime_init
     call emo_program
-    li a7, 8
+    li a7, 0
     ecall
 3:
     wfi
@@ -2820,6 +2858,41 @@ emo_poke64:
     andi a1, a1, -32
     ld t1, 8(a1)
     sd t1, 0(t0)
+    ret
+
+# emo_sys_ecall (T4.2): a0 = the verb, a1..a6 = the six words, all
+# tagged Int64 cells; a0 = the answer, boxed. The tagged world's way
+# through the machine's syscall instruction — decode, shift into the
+# ABI's places, ecall, box.
+    .globl emo_sys_ecall
+emo_sys_ecall:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    andi t0, a1, -32
+    ld a1, 8(t0)
+    andi t0, a2, -32
+    ld a2, 8(t0)
+    andi t0, a3, -32
+    ld a3, 8(t0)
+    andi t0, a4, -32
+    ld a4, 8(t0)
+    andi t0, a5, -32
+    ld a5, 8(t0)
+    andi t0, a6, -32
+    ld a6, 8(t0)
+    mv a7, a0
+    mv a0, a1
+    mv a1, a2
+    mv a2, a3
+    mv a3, a4
+    mv a4, a5
+    mv a5, a6
+    ecall
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
 # ---- Strings ----
