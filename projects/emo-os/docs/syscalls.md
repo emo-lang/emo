@@ -112,8 +112,9 @@ nothing covers is reason 2.
 Pre-SV39 the checks are the supervisor's word alone — the window
 [0x87100000, 0x88000000) is where user images live, and the kernel's
 own memory at 0x80200000 is reachable by a wild store. That is the
-weak-isolation window, documented as such; SV39 (M5) turns these same
-checks into hardware ones.
+weak-isolation window, documented as such in
+[`isolation.md`](isolation.md); SV39 (M5) turns these same checks into
+hardware ones.
 
 ## The fixed addresses
 

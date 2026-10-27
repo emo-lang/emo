@@ -31,7 +31,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 ## Isolation route
 
 - **Privilege first, address space later.** User programs enter U-mode behind the ecall gate before paging exists; SV39 closes the window afterwards.
-- **The weak-isolation window is documented, not hidden.** Before SV39, U-mode cannot execute privileged instructions, but its loads and stores reach kernel RAM and MMIO. The pre-SV39 defenses are the copy semantics and the supervisor's own argument checks.
+- **The weak-isolation window is documented, not hidden.** From the user profile's landing until SV39, user and kernel share one flat physical map: U-mode cannot execute privileged instructions — the ecall gate is the only sanctioned crossing — but its loads and stores are untranslated, so kernel RAM, other processes' memory, and the devices are all inside a wild address's reach, and the raw builtins are admitted by target, not profile. What defends the kernel meanwhile: the gate's supervisor checks on every pointer argument, the copy semantics, and — from Step 5 — per-process quotas. The full account of what can and cannot be reached: [`docs/isolation.md`](docs/isolation.md).
 - **SV39 (M5) buys:** per-process address spaces, wild writes killed by the MMU instead of absorbed by the kernel, hardware enforcement behind every service boundary, and one fixed load address for every user ELF.
 
 ## Language primitives the kernel stands on
