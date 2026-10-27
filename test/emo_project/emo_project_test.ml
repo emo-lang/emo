@@ -3223,7 +3223,7 @@ println(1)
             Alcotest.(check bool)
               "the solve names the target" true (ds <> []));
     tc "the kernel profile refuses the gate's own stub package" (fun () ->
-        (* emoos rides the bundled registry (T4.3), so the kernel's gate
+        (* syscall rides the bundled registry (T4.3), so the kernel's gate
            covers it too: the kernel builds on `core` alone and never
            requires its own userland. *)
         let entry =
@@ -3239,7 +3239,7 @@ println(1)
 }
 |}
               );
-              ("main.emo", {|require "emoos"
+              ("main.emo", {|require "syscall"
 println(1)
 |});
             ]
@@ -3248,7 +3248,7 @@ println(1)
         match
           Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
         with
-        | _ -> Alcotest.fail "expected the layering gate to refuse emoos"
+        | _ -> Alcotest.fail "expected the layering gate to refuse syscall"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
               "E5014" true

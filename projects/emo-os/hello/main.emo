@@ -3,7 +3,7 @@
 // SBI is unreachable from it. Two proofs ride the serial line: the
 // greeting pokes the 16550A directly — the weak-isolation window, what
 // U-mode can reach with no gate at all — and the `gate` line goes
-// through the ecall gate (T4.2) by way of the `emoos` stubs (T4.3):
+// through the ecall gate (T4.2) by way of the `syscall` stubs (T4.3):
 // one successful write of this line's own bytes, then two refusals,
 // each printed through the same gate that refused it. The exit is the
 // stub's verb 0, which lands in the kernel and never returns.
@@ -11,7 +11,7 @@
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
 
-require "emoos"
+require "syscall"
 
 const uart = 0x10000000
 
@@ -104,9 +104,9 @@ pos = byte_at(pos, 32) // space
 pos = num_at(sum, pos)
 pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
-pos = num_at(reason_of(emoos.write(text_seg, 4)), pos)
+pos = num_at(reason_of(syscall.write(text_seg, 4)), pos)
 pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
-pos = num_at(reason_of(emoos.write(kernel_mem, 4)), pos)
+pos = num_at(reason_of(syscall.write(kernel_mem, 4)), pos)
 pos = byte_at(pos, 10)
-var wrote = emoos.write(buf, pos)
+var wrote = syscall.write(buf, pos)

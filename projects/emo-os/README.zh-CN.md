@@ -51,7 +51,7 @@ EmoOS 是 QNX 谱系的微内核：进程边界只画在故障隔离买得到的
 
 ## 项目在源码树中的位置
 
-- 内核包名为 **`emo_os`**——扁平名（包注册表对第三方禁用 `emo` 前缀防冒充；内核本身不走发布），与 hosted 的 `os` 包相互独立。用户态 syscall stub 是独立的包——**`emoos`**，住在内置 registry，盖在裸 ecall 之上的类型化 Emo 表面（[`docs/syscalls.md`](docs/syscalls.md)）——不叫 `os`。
+- 内核包名为 **`emo_os`**——扁平名（包注册表对第三方禁用 `emo` 前缀防冒充；内核本身不走发布），与 hosted 的 `os` 包相互独立。用户态 syscall stub 是独立的包——**`syscall`**，住在内置 registry，盖在裸 ecall 之上的类型化 Emo 表面（[`docs/syscalls.md`](docs/syscalls.md)）——不叫 `os`。
 - EmoOS 在 [`docs/TASKS.md`](docs/TASKS.md) 独立追踪自己的工作；编译器侧任务（atomics、Stage B、镜像打包）在 Emo 主树执行、在此追踪。
 
 ## 运行

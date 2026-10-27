@@ -4,6 +4,6 @@ package {
   targets = ["riscv64"]
 
   deps {
-    "emoos" = "0.1.0"
+    "syscall" = "0.1.0"
   }
 }

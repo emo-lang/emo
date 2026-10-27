@@ -51,7 +51,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 
 ## The project in the tree
 
-- The kernel package is **`emo_os`** — a flat name (the package registry bans `emo`-prefixed names for third parties; the kernel never publishes), distinct from the hosted `os` package. The user-side syscall stub is its own package — **`emoos`**, in the bundled registry, the typed Emo surface over the raw ecall ([`docs/syscalls.md`](docs/syscalls.md)) — not `os`.
+- The kernel package is **`emo_os`** — a flat name (the package registry bans `emo`-prefixed names for third parties; the kernel never publishes), distinct from the hosted `os` package. The user-side syscall stub is its own package — **`syscall`**, in the bundled registry, the typed Emo surface over the raw ecall ([`docs/syscalls.md`](docs/syscalls.md)) — not `os`.
 - EmoOS tracks its own work in [`docs/TASKS.md`](docs/TASKS.md); compiler-side tasks (atomics, Stage B, image packaging) are executed in the Emo tree and tracked there.
 
 ## Running it

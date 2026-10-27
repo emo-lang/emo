@@ -1,5 +1,5 @@
 package {
-  name = "emoos"
+  name = "syscall"
   version = "0.1.0"
   targets = ["riscv64"]
 
