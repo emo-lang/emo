@@ -21,16 +21,21 @@
 // The handoff page (the kernel's link.ld gives the .emo_user section
 // this fixed address). The segment count and table the loader parked;
 // the request cells the gate fills for the service it routes to; the
-// caller-pid cell the shim fills at every U-mode ecall. The spawned
-// process's entry lives in the user image's own cell (the user stub
-// parks its emo_program there — the one address no ELF header
-// carries), at the fixed address the user profile's linker script
-// gives it.
+// caller-pid cell the shim fills at every U-mode ecall. The cells are
+// per service — a console transaction and a process transaction can
+// sit parked at the same time (a spawned child's write beside its
+// parent's wait), so one pair of shared cells would let a later
+// dispatch clobber an earlier request's arguments before its service
+// consumes them. The spawned process's entry lives in the user image's
+// own cell (the user stub parks its emo_program there — the one
+// address no ELF header carries), at the fixed address the user
+// profile's linker script gives it.
 const seg_count_addr = 0x87002018
 const seg_table = 0x87002020
 const handoff_arga = 0x870020e0
 const handoff_argb = 0x870020e8
-const user_program_cell = 0x87fff000
+const proc_arga = 0x870021b0
+const proc_argb = 0x870021b8
 const handoff_caller = 0x87002110
 
 // The refusal reasons, part of the ABI.
@@ -108,7 +113,6 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return route_console_read
   }
   if n == 3 {
-    poke64(handoff_arga, peek64(user_program_cell))
     return route_process_spawn
   }
   if n == 4 {
@@ -116,7 +120,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r0 < 2 || r0 == me {
       return -reason_argument
     }
-    poke64(handoff_arga, r0)
+    poke64(proc_arga, r0)
     return route_process_wait
   }
   if n == 0 {
@@ -124,8 +128,8 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if me == 1 {
       return route_poweroff
     }
-    poke64(handoff_arga, r0)
-    poke64(handoff_argb, me)
+    poke64(proc_arga, r0)
+    poke64(proc_argb, me)
     return route_process_exit
   }
   return -reason_unknown

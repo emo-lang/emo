@@ -5,9 +5,10 @@
 // window, what U-mode reaches with no gate at all; the `gate` line is
 // T4.2's write verb with two refusals printed by the same gate that
 // refused them; `echo` is T4.4's read verb, blocking on the console
-// service until a byte exists. The exit is the stub's verb 0, which
-// lands in the kernel and ends the machine. (The spawn/wait proofs
-// wait on the fault documented in docs/temp-spawn-wait-problem.md.)
+// service until a byte exists; `born`/`wait 7` are T4.4's spawn and
+// wait — the child re-enters this top level, finds the token, and
+// exits 7, and the parent's wait answers with it. The root's exit is
+// the stub's verb 0, which lands in the kernel and ends the machine.
 //
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
@@ -17,10 +18,12 @@ require "syscall"
 const uart = 0x10000000
 
 // A scratch page inside this image's read-write segment — the buffer
-// the successful write sends from — and the two addresses the
-// refusals try: the text segment is load-and-run but not writable,
-// and the kernel's own memory is nobody's.
+// the successful write sends from, with the second half the child
+// token lives in — and the two addresses the refusals try: the text
+// segment is load-and-run but not writable, and the kernel's own
+// memory is nobody's.
 const buf = 0x87200000
+const child_cell = buf + 2048
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 
@@ -87,6 +90,21 @@ def gate_line(len Int64) Void {
   }
 }
 
+// The child branch (T4.4): a spawned process re-enters this top level
+// sharing the image — its runtime state, its consts, this cell — so
+// the token the parent pokes just before the spawn is the one
+// difference between the two passes. The child says its line and ends
+// as an exit the parent's wait can answer.
+if peek64(child_cell) != 0 {
+  var bp = byte_at(0, 98) // b
+  bp = byte_at(bp, 111) // o
+  bp = byte_at(bp, 114) // r
+  bp = byte_at(bp, 110) // n
+  bp = byte_at(bp, 10)
+  gate_line(bp)
+  syscall.exit(7)
+}
+
 // The proofs, in order: the U-mode greeting straight at the machine,
 // the gate line, the read — then the root exits and the machine ends.
 put(85) // U
@@ -136,7 +154,30 @@ rp = num_at(c, rp)
 rp = byte_at(rp, 10)
 gate_line(rp)
 
-// The process proof arrives with the spawn/wait fix (see
-// docs/temp-spawn-wait-problem.md); until then the root exits: the
-// machine ends.
+// The process proof (T4.4): spawn a child — it re-enters this top
+// level, finds the token, prints its line, and exits 7 — then wait
+// for that exit and print the code. `wait 7` on the wire is the
+// whole spawn/wait round trip: the request, the park, the service,
+// and the exit that answers it.
+poke64(child_cell, 1)
+var spawned = syscall.spawn()
+case spawned {
+  (R.error, _) -> { put(63) } // ? — the gate refused the spawn
+  (R.ok, pid) -> {
+    var waited = syscall.wait(pid)
+    case waited {
+      (R.error, _) -> { put(63) } // ? — the gate refused the wait
+      (R.ok, code) -> {
+        var wp = byte_at(0, 119) // w
+        wp = byte_at(wp, 97) // a
+        wp = byte_at(wp, 105) // i
+        wp = byte_at(wp, 116) // t
+        wp = byte_at(wp, 32) // space
+        wp = num_at(code, wp)
+        wp = byte_at(wp, 10)
+        gate_line(wp)
+      }
+    }
+  }
+}
 syscall.exit(0)

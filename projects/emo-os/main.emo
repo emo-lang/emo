@@ -32,33 +32,40 @@ const in_ring = 0x87001010
 const tick_ring = 0x87000000
 
 // The handoff cells the services read and the boot flow fills (T4.4):
-// the services' raw pids (the gate posts by number), the request
-// cells the gate fills, the process service's exit table, and the
-// spawn-stack bump.
+// the services' raw pids (the gate posts by number), the request cells
+// the gate fills — one pair per service, since a console transaction
+// and a process transaction can sit parked at the same time — the
+// process service's exit table, and the spawn-stack bump.
 const console_svc_cell = 0x870020f0
 const process_svc_cell = 0x870020f8
 const handoff_arga = 0x870020e0
 const handoff_argb = 0x870020e8
+const proc_arga = 0x870021b0
+const proc_argb = 0x870021b8
 const user_program_cell = 0x87fff000
 const exit_count = 0x87002118
 const exit_pids = 0x87002120
 const exit_codes = 0x87002160
 const pending_flag = 0x870021a0
 const pending_target = 0x870021a8
+const pending_waiter = 0x870021c0
 const stack_next = 0x87002100
 const stack_floor = 0x87d40000
 
 // The gate's verbs, as the services see them: the request word rides
-// op << 32 — a magnitude no pid ever reaches, so the console service
-// tells the boot demo's plain-pid readers from the gate's requests by
-// size alone. The decode lives in a typed def: the mailbox word
-// arrives untyped, and comparisons on it are the dynamic operator the
-// target refuses.
-const op_write = 4294967296
-const op_read = 8589934592
+// op << 32 with the caller's pid number beside it — a magnitude no pid
+// word reaches, so the console service tells the gate's requests from
+// the boot demo's readers by size alone. The decode lives in a typed
+// def: the mailbox word arrives untyped, and comparisons on it are the
+// dynamic operator the target refuses. The low half is the reply's
+// addressee: gate_reply takes it beside the answer.
 
 def op_of(w Int64) Int64 {
   return w >> 32
+}
+
+def caller_of(w Int64) Int64 {
+  return w & 4294967295
 }
 
 def console_put_byte(b Int64) Void {
@@ -95,9 +102,9 @@ def take_byte() Int64 {
 // sleeping in the device-wait while the ring is empty; the boot
 // demo's readers speak the older protocol — a bare pid — and get the
 // byte by mailbox. The kinds separate by magnitude: a gate request
-// rides op << 32, a pid never reaches that high. The announce goes to
-// the boss, whose pid is passed — a `do` bound to a value is a
-// lowering this tree does not trust (T3.7's note).
+// rides op << 32, a pid word never reaches that high. The announce
+// goes to the boss, whose pid is passed — a `do` bound to a value is
+// a lowering this tree does not trust (T3.7's note).
 def console_service(boss Pid) Void {
   boss <- self_pid()
   while true {
@@ -112,10 +119,10 @@ def console_service(boss Pid) Void {
             console_put_byte(peek8(buf + i).to_int64())
             i = i + 1
           }
-          gate_reply(len)
+          gate_reply(caller_of(w), len)
         } else {
           if op == 2 {
-            gate_reply(take_byte())
+            gate_reply(caller_of(w), take_byte())
           } else {
             var b = take_byte()
             w <- b
@@ -131,7 +138,8 @@ def console_service(boss Pid) Void {
 // from the exit table or parks the loop holding the request; exit
 // records itself and answers a waiting parent. One gate transaction
 // runs at a time, so the one pending-wait pair of cells is the whole
-// of the waiting bookkeeping.
+// of the waiting bookkeeping; the request's arguments live in this
+// service's own cells (proc_arga/proc_argb), not the console's.
 def process_service(boss Pid) Void {
   boss <- self_pid()
   while true {
@@ -141,10 +149,10 @@ def process_service(boss Pid) Void {
         if op == 3 {
           var st = peek64(stack_next)
           if st - 65536 < stack_floor {
-            gate_reply(-5)
+            gate_reply(caller_of(w), -5)
           } else {
             poke64(stack_next, st - 65536)
-            gate_reply(user_spawn(peek64(user_program_cell), st))
+            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), st))
           }
         } else {
           if op == 4 {
@@ -152,20 +160,21 @@ def process_service(boss Pid) Void {
             var i0 = 0
             var hit = -1
             while i0 < n0 {
-              if peek64(exit_pids + (i0 * 8)) == peek64(handoff_arga) {
+              if peek64(exit_pids + (i0 * 8)) == peek64(proc_arga) {
                 hit = i0
               }
               i0 = i0 + 1
             }
             if hit >= 0 {
-              gate_reply(peek64(exit_codes + (hit * 8)))
+              gate_reply(caller_of(w), peek64(exit_codes + (hit * 8)))
             } else {
-              poke64(pending_target, peek64(handoff_arga))
+              poke64(pending_waiter, caller_of(w))
+              poke64(pending_target, peek64(proc_arga))
               poke64(pending_flag, 1)
             }
           } else {
-            var pid = peek64(handoff_argb)
-            var code = peek64(handoff_arga)
+            var pid = peek64(proc_argb)
+            var code = peek64(proc_arga)
             var n = peek64(exit_count)
             if n < 8 {
               poke64(exit_pids + (n * 8), pid)
@@ -175,7 +184,7 @@ def process_service(boss Pid) Void {
             if peek64(pending_flag) == 1 {
               if peek64(pending_target) == pid {
                 poke64(pending_flag, 0)
-                gate_reply(code)
+                gate_reply(peek64(pending_waiter), code)
               }
             }
           }

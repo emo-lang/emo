@@ -847,15 +847,26 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         call_runtime env "emo_user_spawn";
         call_runtime env "emo_box_i64"
       end
-  | Builtin { name = "gate_reply"; args = [ answer ] } ->
-      (* T4.4: a service's answer to the gate's parked caller — the raw
-         word lands in the caller's own trap frame and the wake is this
-         helper's alone. *)
-      emit_expr env (d + 1) answer;
-      if env.native then call_runtime env "emo_gate_reply"
+  | Builtin { name = "gate_reply"; args = [ target; answer ] } ->
+      (* T4.4: a service's answer to the gate's parked caller — the
+         target's raw pid names the waiter, the raw answer lands in
+         that caller's own trap frame and the wake is this helper's
+         alone. *)
+      emit_expr env (d + 2) target;
+      put env "    sd a0, %d(sp)\n" (temp_offset env d);
+      emit_expr env (d + 2) answer;
+      if env.native then begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        call_runtime env "emo_gate_reply"
+      end
       else begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
         put env "    andi t0, a0, -32\n";
         put env "    ld a0, 8(t0)\n";
+        put env "    andi t0, a1, -32\n";
+        put env "    ld a1, 8(t0)\n";
         call_runtime env "emo_gate_reply"
       end
   | Builtin { name = "pid_num"; args = [ p ] } ->
@@ -5063,15 +5074,14 @@ emo_pid_num:
     ld a0, 8(a0)
     ret
 
-# emo_gate_post: a0 = the service's raw pid, a1 = the op word (raw).
-# The raw word joins the service's mailbox and a receive-parked
-# service wakes — the service's dynamic body holds the word raw and
-# shifts the op out (op << 32; a plain pid never reaches that height,
-# which is how the console service tells the gate's requests from the
-# boot demo's readers). The caller — inside the trap — neither yields
-# nor unmarks: the park that follows is the shim's. A service that is
-# not receiving (it has not reached its loop, or is mid-request)
-# simply finds the request queued on its next receive.
+# emo_gate_post: a0 = the service's raw pid, a1 = the request word —
+# the op shifted left 32, the caller's pid number beside it. The
+# service reads the op out of the word's height (op << 32; a plain pid
+# never reaches it) and answers by the pid in the low half. The caller
+# — inside the trap — neither yields nor unmarks: the park that follows
+# is the shim's. A service that is not receiving (it has not reached
+# its loop, or is mid-request) simply finds the request queued on its
+# next receive.
     .globl emo_gate_post
 emo_gate_post:
     addi sp, sp, -32
@@ -5132,17 +5142,19 @@ emo_gate_post:
     la a1, msg_mbox_end
     call emo_fail
 
-# emo_gate_reply: a0 = the raw answer. The gate's parked caller — the
-# one slot in state 5 — takes the word straight into its own trap
-# frame's a0 slot and wakes; the mailbox never carries a gate answer,
-# so an ordinary message can never be mistaken for one. A reply with
-# no waiter is the service's bug, and loud.
+# emo_gate_reply: a0 = the waiting caller's raw pid number, a1 = the
+# raw answer. The reply is targeted: the request word carried the
+# caller's pid beside the op, so the answering service names its waiter
+# and the word lands in THAT caller's trap frame a0 slot, state 5 → 1,
+# pushed. An ordinary send never wakes a 5, and a reply to a pid that
+# is not parked in one is the service's bug, and loud.
     .globl emo_gate_reply
 emo_gate_reply:
     csrci sstatus, 2
     addi sp, sp, -16
     sd ra, 0(sp)
     sd a0, 8(sp)
+    sd a1, 16(sp)
     la t0, emo_procs
     li t1, 0
     li t2, 64
@@ -5151,10 +5163,19 @@ emo_gate_reply:
     li t3, 576
     mul t4, t1, t3
     add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lgr_found
+    addi t1, t1, 1
+    j .Lgr_scan
+.Lgr_fail:
+    la a0, msg_reply
+    la a1, msg_reply_end
+    call emo_fail
+.Lgr_found:
     ld t5, 16(t4)
     li t6, 5
-    bne t5, t6, .Lgr_next
-    ld a0, 8(sp)
+    bne t5, t6, .Lgr_fail
+    ld a0, 16(sp)
     ld t5, 0(t4)                # the caller's switch-section base
     addi t5, t5, -256           # the trap frame's a0 slot (544 - 80 - 208)
     sd a0, 0(t5)
@@ -5166,13 +5187,6 @@ emo_gate_reply:
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
-.Lgr_next:
-    addi t1, t1, 1
-    j .Lgr_scan
-.Lgr_fail:
-    la a0, msg_reply
-    la a1, msg_reply_end
-    call emo_fail
 
 # emo_user_spawn: a0 = the entry, a1 = the fresh stack's top; a0 = the
 # child's raw pid. The child's context is a synthetic trap frame on its
@@ -5229,6 +5243,8 @@ emo_user_spawn:
     sd zero, 0(a0)
     addi a0, a0, 8
     ble a0, a1, .Lus_zero
+    la t1, emo_os_user_exit
+    sd t1, 0(t4)                # ra: a top-level fall-off exits (verb 0)
     ld t0, 8(sp)
     li t1, 0x6020               # SPIE, SPP clear, FS dirty
     sd t1, 144(t4)              # sstatus
@@ -5237,7 +5253,8 @@ emo_user_spawn:
     sd t1, 336(t4)              # the switch section's ra
     li t1, 1
     sd t1, 536(t4)              # the spare word: born outside any region
-    sd t4, 0(t3)                # the slot's saved sp
+    addi t4, t4, 336            # the slot saves the switch-section base —
+    sd t4, 0(t3)                # what the shim's park and the preempt store
     mv a0, t3
     call emo_runq_push
     csrsi sstatus, 2
@@ -5245,6 +5262,20 @@ emo_user_spawn:
     ld ra, 0(sp)
     addi sp, sp, 32
     ret
+
+# emo_os_user_exit: a spawned user process's return address — a
+# program that falls off its top level has exited (verb 0), and the
+# gate routes a child's exit to the process service. Never returns to
+# the faller. It lives in the runtime body, not the kernel's trap
+# machinery, because emo_user_spawn serves every image this file
+# emits — the user profile assembles without the kernel package.
+    .globl emo_os_user_exit
+emo_os_user_exit:
+    li a0, 0                 # the exit code a fall-off leaves
+    li a7, 0
+    ecall
+1:  wfi
+    j 1b
 
 # emo_self_pid: a0 = the current process's Pid word.
     .globl emo_self_pid

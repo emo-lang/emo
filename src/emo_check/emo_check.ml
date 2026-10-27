@@ -1283,12 +1283,16 @@ let raw_mem_bindings =
         depth = 0;
       } );
     (* gate_reply (EmoOS T4.4): a service's answer to the gate's
-       parked caller — the raw word lands in the caller's own trap
-       frame and the wake is this helper's alone. Same admission
+       parked caller — the target's raw pid names the waiter (it rode
+       the request word), the raw answer lands in that caller's own
+       trap frame and the wake is this helper's alone. Same admission
        rule. *)
     ( "gate_reply",
-      { vtype = FuncType ([ ("answer", Int64) ], Void); is_var = false; depth = 0 }
-    );
+      {
+        vtype = FuncType ([ ("target", Int64); ("answer", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
     (* pid_num (EmoOS T4.4): the raw machine sees a pid as its number —
        the kernel's handoff cells carry numbers, not Pid words. Same
        admission rule. *)

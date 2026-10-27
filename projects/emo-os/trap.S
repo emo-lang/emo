@@ -245,8 +245,9 @@ emo_os_trap_shim:
     li t1, -103
     beq a0, t1, .Ltrap_exit
     li t1, -1000
-    bge a0, t1, .Ltrap_answer   # -1000 and up never happens: answers,
-    j .Ltrap_route              # refusals, then the routes below it
+    bgt a0, t1, .Ltrap_answer   # answers and refusals ride home; the
+    j .Ltrap_route              # routes are -1000 (a child's exit) and
+                                # below it — the exit is the boundary
 .Ltrap_answer:
     sd a0, 80(sp)
     # the ecall is a synchronous exception: sret returns to sepc, so
@@ -276,9 +277,12 @@ emo_os_trap_shim:
     li a0, 0x870020f8        # the process service's pid cell (+248)
 .Lroute_post:
     ld a0, 0(a0)             # the service's raw pid
-    mv a1, t6
-    slli a1, a1, 32          # the request word rides op << 32: the
-    call emo_gate_post       # service's magnitude check reads the op
+    slli a1, t6, 32          # the request word: op << 32 | the caller's
+    la t2, emo_cur_slot      # pid — the answer's addressee rides with
+    ld t2, 0(t2)             # the request, so the service's reply lands
+    ld t2, 8(t2)             # on the caller that asked, not on whichever
+    or a1, a1, t2            # state-5 slot a scan finds first
+    call emo_gate_post
     la t0, emo_cur_slot
     ld t0, 0(t0)             # the caller's slot
     addi t1, sp, 336         # the frame's switch-section base (the shim's
@@ -440,18 +444,6 @@ emo_os_trap_resume:
     ld t0, -520(sp)
     ld t1, -512(sp)
     sret
-
-# emo_os_user_exit: a spawned user process's return address — a
-# program that falls off its top level has exited (verb 0), and the
-# gate routes a child's exit to the process service. Never returns to
-# the faller.
-    .globl emo_os_user_exit
-emo_os_user_exit:
-    li a0, 0                 # the exit code a fall-off leaves
-    li a7, 0
-    ecall
-1:  wfi
-    j 1b
 
 # emo_os_user_boot: the kernel's own program is done — the stub calls
 # this before the poweroff. The entry word the loader (user.emo) parked
