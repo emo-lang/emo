@@ -36,7 +36,7 @@ One register, `a0`:
 | 2 | a pointer argument lies outside the caller's memory |
 | 3 | a pointer argument's memory does not carry the permission the access needs |
 | 4 | a non-pointer argument is out of range |
-| 5 | the kernel is out of a resource (`spawn` with no stack left) |
+| 5 | the kernel is out of a resource (`spawn` with no free block left for the new process's stack and arena) |
 
 A refusal is an answer, not a fault: the caller's registers are intact
 and execution resumes after the `ecall`. What a program does with a
@@ -55,9 +55,9 @@ undocumented ever acts.
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
 
 Verb 5 (T5.1) is not a service request but the user image's allocator
-speaking: when the running pass's own arena — the 64 KiB carve the
-kernel's spawn made from the kernel heap — is full, the user image's
-`emo_alloc` says verb 5 instead of failing the machine. The gate
+speaking: when the running pass's own arena — the 64 KiB block the
+kernel's spawn took from its frame allocator (T5.3) — is full, the user
+image's `emo_alloc` says verb 5 instead of failing the machine. The gate
 answers it with the caller's death: the loud report (`user heap <pid>
 gone`) printed by the supervisor on the offender's own stack, the
 slot ending done, and the machine continuing without the process —
@@ -145,6 +145,23 @@ The kernel-side layout the loader and the gate share (the kernel's
 | `0x87002010` | the staged entry (0 = nothing staged) |
 | `0x87002018` | the segment count |
 | `0x87002020` | the segment table: eight slots of (start, end, flags), 24 bytes each |
+
+The frame allocator's page (T5.3, `.emo_frames`, a page above) is the
+kernel's own — its freelist head, the free and total block counts, the
+region's bounds, the take and give tallies, and the claimed bitmap —
+written by `frames.emo` alone; the account the machine prints as its
+last line (`frames <taken> <given>`) reads the two tallies.
+
+| Address | Contents |
+| --- | --- |
+| `0x87003000` | the freelist head (a free block's base; 0 = the region is spent) |
+| `0x87003008` | free blocks |
+| `0x87003010` | blocks the region holds |
+| `0x87003018` | the region's base (the image's end, rounded up to a block) |
+| `0x87003020` | the region's end (`0x87000000`, the tick ring's page) |
+| `0x87003028` | blocks taken so far |
+| `0x87003030` | blocks given back so far |
+| `0x87003040` | the claimed bitmap: one bit per block, eight words |
 
 The user side of the page (T5.1) sits in the user profile's own cell
 page at the top of RAM — three words the user stub parks and the

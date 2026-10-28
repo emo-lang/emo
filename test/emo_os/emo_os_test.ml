@@ -171,8 +171,8 @@ cat %s
    builds into a scratch copy — the user image first (the kernel embeds
    it), then the kernel — and run.sh boots it, its assertions (the tick
    proof on both timer transports, the five console deliveries, the
-   echo, the staged user program's greeting, the self-exit) deciding
-   the test. *)
+   echo, the staged user program's greeting, the frame allocator's
+   account, the self-exit) deciding the test. *)
 let smoke_tests =
   [
     tc "the kernel's run.sh smoke passes" (fun () ->
@@ -204,6 +204,7 @@ let smoke_tests =
             "user.emo";
             "user.S";
             "gate.emo";
+            "frames.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";

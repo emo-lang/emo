@@ -120,9 +120,9 @@ if peek64(doomed_cell) != 0 {
 }
 
 // The greedy branch (T5.1): a spawned pass whose allocations outrun
-// its own 64 KiB arena — the carve the kernel's spawn makes from the
-// kernel heap, handed across the boundary by the trap shim. Its
-// allocator says so through the gate (verb 5); the supervisor's
+// its own 64 KiB arena — the block the kernel's spawn took from its
+// frame allocator (T5.3), handed across the boundary by the trap shim.
+// Its allocator says so through the gate (verb 5); the supervisor's
 // report is the last thing this pass prints, and the machine
 // continues — the good child's round trip rides after the report.
 if peek64(greedy_cell) != 0 {

@@ -21,8 +21,9 @@ fi
 # assertions read; on stderr the trace never touches the serial). The
 # assertions: the greeting, the checksum, the tick verdict, the five
 # console deliveries in order, the user program's proof chain — the
-# kill report included, the machine surviving its offender — and the
-# machine's own exit, the SBI poweroff.
+# kill report included, the machine surviving its offender — the frame
+# allocator's account as the last line, and the machine's own exit, the
+# SBI poweroff.
 boot() {
   local cpu="$1" mode="$2" log="$3"
   local fifo
@@ -101,9 +102,14 @@ boot() {
   # arena, announced through the gate, the pid the spawn order
   # fixes), then the good child's line and the spawn/wait round trip
   # answering after both deaths: the machine survived its offenders.
+  # Last, the frame allocator's account at the root's exit (T5.3):
+  # twelve blocks taken — the six green spawns' arenas, then a stack
+  # and an arena for each of the three user passes — and ten given
+  # back — the four readers' arenas at their deaths, both blocks of
+  # each user pass at its kill or exit; the two services keep theirs.
   # The byte offsets are the serial order.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7'; do
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7' 'frames 12 10'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -141,7 +147,7 @@ boot() {
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, kill, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, kill, frames, self-exit"
 # The stimecmp transport when it does.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, kill, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, kill, frames, self-exit, 1 ecall"

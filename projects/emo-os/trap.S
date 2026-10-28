@@ -280,8 +280,9 @@ emo_os_trap_shim:
     li t3, 3
     sd t3, 16(s0)            # done
     mv a0, s0
-    call emo_arena_reap      # the arena goes home unless one of its
-                             # queued messages still pins it (T5.2)
+    call emo_arena_reap      # the stack block and the arena go home
+                             # unless a queued message still pins the
+                             # arena (T5.2/T5.3)
     ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
@@ -331,8 +332,9 @@ emo_os_trap_shim:
     li t3, 3
     sd t3, 16(s0)               # done
     mv a0, s0
-    call emo_arena_reap         # the arena goes home unless one of its
-                                # queued messages still pins it (T5.2)
+    call emo_arena_reap         # the stack block and the arena go home
+                                # unless a queued message still pins the
+                                # arena (T5.2/T5.3)
     ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
@@ -397,7 +399,8 @@ emo_os_trap_shim:
     # to it is the loud service bug instead of a resurrection, and the
     # deadlock scan reads a finished process, not a pending one. The
     # frame stays where the exit left it, on the dead process's own
-    # stack, for the arena reclamation (T5) to take back.
+    # stack, for the reclamation (T5) to take back — the stack block
+    # and the arena.
     li a0, 0x870020f8        # the process service's pid cell (+248)
     ld a0, 0(a0)             # the service's raw pid
     slli a1, t6, 32          # the request word: op << 32 | the caller's
@@ -411,10 +414,15 @@ emo_os_trap_shim:
     li t3, 3
     sd t3, 16(t0)            # done
     mv a0, t0
-    call emo_arena_reap      # the arena goes home unless one of its
-                             # queued messages still pins it (T5.2)
+    call emo_arena_reap      # the stack block and the arena go home
+                             # unless a queued message still pins the
+                             # arena (T5.2/T5.3)
     j emo_sched_pick
 .Ltrap_exit:
+    # the machine's end: the frame allocator's account is the last line
+    # (T5.3) — on whichever stack the root died on, the typed def
+    # allocating nothing — then the SBI poweroff
+    call emo_frames__report
     li a7, 8
     ecall                    # the SBI poweroff
 1:  wfi
@@ -643,7 +651,9 @@ emo_os_probe_state:
 # The boot pass's arena (T5.1): the kernel's own root is the boot user
 # pass — the stub entered it once the kernel's program returned — and
 # its arena progress lands here, not in the root slot, whose words
-# stay the kernel heap's (the spawn carve reads them).
+# stay the kernel heap's (the kernel's own root allocates against
+# them; a spawn's block comes from the frame allocator, never the
+# carve, but the pair keeps the two worlds apart either way).
 emo_os_boot_cur:
     .zero 8
 emo_os_boot_lim:
@@ -699,3 +709,37 @@ emo_os_handoff_end:
     .globl emo_os_user_entry
 emo_os_user_entry:
     .zero 8
+
+# The frame allocator's page (T5.3): the kernel's Emo (frames.emo) owns
+# every word — the freelist head, the free and total counts, the
+# region's bounds, the take and give tallies, and the claimed bitmap —
+# at the fixed address the kernel's linker script gives the section.
+# The boot stub builds the freelist through emo_frames__boot; the
+# runtime reaches the words only through the allocator's own defs, by
+# the block hooks. Named here so the forensics can read them.
+    .section .emo_frames, "aw", @nobits
+    .globl emo_os_frames_head
+emo_os_frames_head:
+    .zero 8
+    .globl emo_os_frames_free
+emo_os_frames_free:
+    .zero 8
+    .globl emo_os_frames_total
+emo_os_frames_total:
+    .zero 8
+    .globl emo_os_frames_lo
+emo_os_frames_lo:
+    .zero 8
+    .globl emo_os_frames_hi
+emo_os_frames_hi:
+    .zero 8
+    .globl emo_os_frames_taken
+emo_os_frames_taken:
+    .zero 8
+    .globl emo_os_frames_given
+emo_os_frames_given:
+    .zero 8
+    .zero 8                  # padding: the bitmap opens at +64
+    .globl emo_os_frames_claimed
+emo_os_frames_claimed:
+    .zero 64

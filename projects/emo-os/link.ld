@@ -47,5 +47,14 @@ SECTIONS
   . = 0x87002000;
   .emo_user (NOLOAD) : { *(.emo_user) } :tick
 
+  /* The frame allocator's page (T5.3), a page above the handoff page:
+     the freelist head, the counts, the region's bounds, and the
+     claimed bitmap — the kernel's Emo (frames.emo) reads and writes it
+     through peek/poke, and the free RAM it hands out lies between the
+     image's end and the tick ring's page. NOLOAD — the boot stub's
+     emo_frames__boot builds the freelist. */
+  . = 0x87003000;
+  .emo_frames (NOLOAD) : { *(.emo_frames) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

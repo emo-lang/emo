@@ -2,7 +2,7 @@
 
 An operating system written in Emo — kernel, shell, and user programs in one language, from power-on to prompt. EmoOS is an xv6-class research and teaching system: complete enough to run real programs on real (or simulated) RISC-V hardware, small enough to read end to end. It is the proof of Emo's single-language closure, and the hardest stress test the language undergoes.
 
-Status: pre-alpha. The kernel boots under QEMU, drives its own 16550A, and runs a user program in U-mode behind the ecall gate — spawn, wait, console I/O through two service processes, a misbehaving program killed alone, and every process's allocations charged to its own arena quota; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
+Status: pre-alpha. The kernel boots under QEMU, drives its own 16550A, and runs a user program in U-mode behind the ecall gate — spawn, wait, console I/O through two service processes, a misbehaving program killed alone, every process's allocations charged to its own arena quota, and every process's memory a block of the kernel's frame allocator, taken at the spawn and back in the pool at the death; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
 
 Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 

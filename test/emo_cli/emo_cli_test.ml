@@ -3224,6 +3224,42 @@ let riscv64_profile_tests =
              (contains
                 (Emo_codegen.Riscv.emit ~profile:"kernel" program)
                 "emo_user_arena_cell")));
+    tc "the block hooks let a kernel back every block" (fun () ->
+        (* T5.3: the runtime asks a parked frame allocator for every
+           64 KiB block — a spawn's arena, a user process's stack (the
+           slot's word at 864, the stride 872) — and the reaper gives
+           both back at the death; hookless, the pool and the carve
+           stay. The words ride both profiles, zero unless a kernel's
+           stub parks them. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the take hook")
+              true
+              (contains asm "emo_block_take_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the give hook")
+              true
+              (contains asm "emo_block_give_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the stack block rides the slot")
+              true
+              (contains asm "sd t6, 864(t3)");
+            Alcotest.(check bool)
+              (profile ^ ": the slot stride grew")
+              true
+              (contains asm "li t3, 872");
+            Alcotest.(check bool)
+              (profile ^ ": the reaper gives through the hook")
+              true
+              (contains asm "the kernel's give: the stack block goes home");
+            Alcotest.(check bool)
+              (profile ^ ": the pool stays the hookless path")
+              true
+              (contains asm ".Lspawn_pool:"))
+          [ "kernel"; "user" ]);
   ]
 
 (* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other

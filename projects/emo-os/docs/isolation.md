@@ -29,10 +29,12 @@ RAM holds, and the MMIO beside it:
 | Range | Contents |
 | --- | --- |
 | `0x80000000`–`0x80200000` | OpenSBI (M-mode) — the one region PMP locks |
-| `0x80200000` | the kernel image — text, rodata, data, and the `.bss` holding the 96 MiB value heap, the 64 process slots, and the 64 × 64 KiB process stacks |
+| `0x80200000` | the kernel image — text, rodata, data, and the `.bss` holding the 96 MiB value heap (the root's arena), the 64 process slots, and the 64 × 64 KiB green-process stacks |
+| the image's end–`0x87000000` | the frame allocator's region (T5.3) — the free RAM above the image, rounded up to a block, in 64 KiB blocks of sixteen 4 KiB frames: every spawned process's arena, every user process's stack, M5's page tables |
 | `0x87000000` | the tick ring (`.emo_tick`) |
 | `0x87001000` | the input ring (`.emo_in`) |
 | `0x87002000` | the user handoff page (`.emo_user`) — the embedded image's bounds, the staged entry, the segment table |
+| `0x87003000` | the frame allocator's page (`.emo_frames`) — the freelist head, the counts, the region's bounds, the claimed bitmap |
 | `0x87100000`–`0x88000000` | the user window — every user image links at its base |
 | `0x10000000`, `0x0c000000`, … | MMIO — the 16550A UART, the PLIC, the rest of `virt`'s devices |
 
@@ -105,9 +107,14 @@ RAM holds, and the MMIO beside it:
   window, and the copy discipline does not pretend otherwise.
 - **Trap containment.** A user fault kills its process and nothing
   else; the kernel's own faults stay machine-wide, as they should.
-- **Per-process accounting (Step 5)** — arenas and quotas: every
-  allocation charges the running process's own arena, and a runaway
-  process exhausts its own arena alone.
+- **Per-process accounting (Step 5)** — arenas, quotas, and the frame
+  allocator: every allocation charges the running process's own arena,
+  a runaway process exhausts its own arena alone, and every block a
+  process holds — its arena, a user process's stack — is the kernel's
+  frame allocator's, taken at the spawn and given back at the death,
+  so the kernel's books, not a process's word, say what memory each
+  process holds. The window still lets a wild store reach outside
+  them.
 - **What does not defend:** the MMU (absent pre-SV39), PMP for S-mode
   memory (above), and — the honest limit of the kill — any damage a
   wild store did before its process trapped.

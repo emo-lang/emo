@@ -5,7 +5,9 @@
 // through the runtime's console hook; SBI keeps poweroff. T4.4 adds
 // the two processes the gate routes to while a user program runs: the
 // console service (read/write) and the process service
-// (spawn/exit/wait).
+// (spawn/exit/wait). T5.3 puts every spawned pass's stack and arena on
+// the frame allocator (frames.emo) — the free RAM above this image in
+// 64 KiB blocks, taken at the spawn, given back at the death.
 //
 //   emo build main.emo --target riscv64
 
@@ -34,8 +36,10 @@ const tick_ring = 0x87000000
 // The handoff cells the services read and the boot flow fills (T4.4):
 // the services' raw pids (the gate posts by number), the request cells
 // the gate fills — one pair per service, since a console transaction
-// and a process transaction can sit parked at the same time — the
-// process service's exit table, and the spawn-stack bump.
+// and a process transaction can sit parked at the same time — and the
+// process service's exit table. A spawned pass's stack is a block of
+// the frame allocator (frames.emo, T5.3), taken by the process service
+// and given back by the runtime's reaper at the death.
 const console_svc_cell = 0x870020f0
 const process_svc_cell = 0x870020f8
 const handoff_arga = 0x870020e0
@@ -49,8 +53,7 @@ const exit_codes = 0x87002160
 const pending_flag = 0x870021a0
 const pending_target = 0x870021a8
 const pending_waiter = 0x870021c0
-const stack_next = 0x87002100
-const stack_floor = 0x87d40000
+const block = 65536
 
 // The gate's verbs, as the services see them: the request word rides
 // op << 32 with the caller's pid number beside it — a magnitude no pid
@@ -216,13 +219,16 @@ def console_service(boss Pid) Void {
   }
 }
 
-// The process service (T4.4): spawn carves a stack above the user
-// image and starts a new process at the image's program; wait answers
-// from the exit table or parks the loop holding the request; exit
-// records itself and answers a waiting parent. One gate transaction
-// runs at a time, so the one pending-wait pair of cells is the whole
-// of the waiting bookkeeping; the request's arguments live in this
-// service's own cells (proc_arga/proc_argb), not the console's.
+// The process service (T4.4): spawn takes a block from the frame
+// allocator for the child's stack (T5.3) and starts a new process at
+// the image's program — the runtime takes the arena block itself, so a
+// pass costs two blocks, and a spawn the allocator cannot back is
+// refused (−5) before anything is taken; wait answers from the exit
+// table or parks the loop holding the request; exit records itself and
+// answers a waiting parent. One gate transaction runs at a time, so
+// the one pending-wait pair of cells is the whole of the waiting
+// bookkeeping; the request's arguments live in this service's own
+// cells (proc_arga/proc_argb), not the console's.
 def process_service(boss Pid) Void {
   boss <- self_pid()
   while true {
@@ -230,12 +236,11 @@ def process_service(boss Pid) Void {
       w -> {
         var op = op_of(w)
         if op == 3 {
-          var st = peek64(stack_next)
-          if st - 65536 < stack_floor {
+          if frames.spare() < 2 {
             gate_reply(caller_of(w), -5)
           } else {
-            poke64(stack_next, st - 65536)
-            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), st))
+            var stack = frames.take()
+            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), stack + block))
           }
         } else {
           if op == 4 {

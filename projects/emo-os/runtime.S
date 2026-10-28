@@ -7,7 +7,9 @@
 # in main.emo instead of the SBI console ecalls. Then the trap
 # machinery (T3.6): the resume stub's address is parked in the
 # runtime's emo_trap_resume_hook and emo_os_trap_init arms the timer
-# under the shim's vector. SBI stays for poweroff.
+# under the shim's vector. Then the frame allocator (T5.3): the block
+# hooks point at frames.emo's take and give, and its init builds the
+# freelist over the free RAM above this image. SBI stays for poweroff.
 
     .section .text
     .globl emo_start
@@ -31,19 +33,28 @@ emo_start:
     la t0, emo_os_user_blob_end
     sd t0, 8(t1)
     sd zero, 16(t1)
-    # the service handoff (T4.4): the spawn stacks grow down from
-    # 0x87e00000 (above the user image, under the board's top); the
-    # service pids and the caller cell start zeroed, filled by the
-    # kernel's own boot flow. The spawned process's entry is the user
-    # image's own business — its stub parks it in the user cell.
+    # the service handoff (T4.4): the service pids and the caller cell
+    # start zeroed, filled by the kernel's own boot flow. The spawned
+    # process's entry is the user image's own business — its stub parks
+    # it in the user cell.
     li t1, 0x87002100
-    li t0, 0x87e00000
-    sd t0, 0(t1)
     sd zero, -16(t1)
     sd zero, -8(t1)
     sd zero, 16(t1)
     la t0, emo_main__console_put_byte
     la t1, emo_console_hook
+    sd t0, 0(t1)
+    # the frame allocator (T5.3): the block hooks' raw entries go to the
+    # runtime's two words — from here on every block a spawn claims (an
+    # arena, a user process's stack) and every death returns is the
+    # kernel's frames.emo, the freelist over the free RAM between this
+    # image's end and the tick ring's page. Its boot builds the freelist
+    # after the runtime's own init, before the program's first spawn.
+    la t0, emo_frames__take
+    la t1, emo_block_take_hook
+    sd t0, 0(t1)
+    la t0, emo_frames__give
+    la t1, emo_block_give_hook
     sd t0, 0(t1)
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and
@@ -53,10 +64,14 @@ emo_start:
     sd t0, 0(t1)
     call emo_os_trap_init
     call emo_runtime_init
+    la a0, __emo_bss_end
+    call emo_frames__boot
     call emo_program
     # the kernel's program is done: enter the staged user image (T4.1) —
-    # or come straight back when none was staged — then the poweroff
+    # or come straight back when none was staged — then the account
+    # (T5.3) and the poweroff
     call emo_os_user_boot
+    call emo_frames__report
     li a7, 8
     ecall
 emo_park:
