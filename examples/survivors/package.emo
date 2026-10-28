@@ -1,0 +1,7 @@
+package {
+  name = "emo/survivors"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}

@@ -1143,7 +1143,12 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
           | Emo_ast.Sub -> "emo_sub_dyn"
           | _ -> "emo_mul_dyn"
         in
-        call_runtime env helper
+        call_runtime env helper;
+        (* the helper answers the tagged word; an expression the checker
+           types numeric keeps the representation rule — the raw payload
+           in a0 — so a dynamic operand inside a native body unboxes
+           here, the Call arm's rule *)
+        if not boxed then unbox_if_numeric env ty
     | Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge ->
         (* Gt/Ge swap the operands onto Lt/Le, the c target's trick *)
         let a, b =

@@ -1,0 +1,61 @@
+// Accounting (EmoOS T5.4): a process's quota is its own. Three
+// children spawn against three arenas; the middle one runs out and
+// dies inside its 64 KiB, and the two around it keep spending theirs
+// across the death — every boxed message that arrives after the
+// report was allocated in a survivor's arena after the runaway was
+// already gone, the send's snapshot charged to the sender, the
+// receive's copy-out landing in the root's heap. The machine answers
+// all four and ends on its own. The lanes refuse on every hosted
+// target's quota story (the interpreter has no arenas); this corpus
+// runs on the freestanding image under QEMU alone.
+//
+//   emo build main.emo --target riscv64
+
+// A survivor: two boxed messages, one per turn — the send yields the
+// sender, so the second box is allocated on a later pick, after the
+// runaway between them has already died.
+def spender(boss Pid, id Int64) {
+  var round = 1
+  while round < 3 {
+    boss <- Box.new(id * 100 + round)
+    round = round + 1
+  }
+}
+
+// The runaway: a million boxes against a 64 KiB arena. The 2049th
+// allocation finds the carve full; the allocator prints and ends this
+// process, and the machine goes on without it.
+def burn(n Int64) Void {
+  var i = 0
+  while i < n {
+    var b = Box.new(i)
+    i = i + 1
+  }
+}
+
+def main() {
+  println("spawned")
+  const me = self_pid()
+  do spender(me, 1)
+  do burn(1000000)
+  do spender(me, 3)
+  // The root parks here; the three children run in spawn order, the
+  // runaway's report landing between the first sends, and the four
+  // receives pull the survivors' boxes in arrival order — 301, 102,
+  // and 302 all allocated after the death they outlived.
+  var got = 0
+  var total = 0
+  while got < 4 {
+    receive {
+      b -> {
+        var v = b.read()
+        println(v)
+        total = total + v
+        got = got + 1
+      }
+    }
+  }
+  println("total " + total.to_string())
+}
+
+main()

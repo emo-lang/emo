@@ -2,7 +2,7 @@
 
 一个用 Emo 写成的操作系统——内核、shell、用户程序同出一门语言，从上电走到提示符。EmoOS 是一个 xv6 量级的研究与教学系统：大到能在真实（或模拟的）RISC-V 硬件上跑真程序，小到可以通读全部源码。它是 Emo 单语言闭环的证明，也是这门语言经受的最狠试金石。
 
-状态：pre-alpha。内核可在 QEMU 下启动、驱动自己的 16550A，并在 ecall 门后以 U-mode 运行用户程序——spawn、wait、经两个服务进程的控制台 I/O、失控程序被单独击杀、每个进程的分配都记在它自己的 arena 配额上，且每个进程的内存都是内核帧分配器的块，spawn 时取走、死亡时回到池里；固件控制台只保留关机。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
+状态：pre-alpha。内核可在 QEMU 下启动、驱动自己的 16550A，并在 ecall 门后以 U-mode 运行用户程序——spawn、wait、经两个服务进程的控制台 I/O、失控程序被单独击杀、每个进程的分配都记在它自己的 arena 配额上，且每个进程的内存都是内核帧分配器的块，spawn 时取走、死亡时回到池里——失控进程独自烧尽自己的配额，它周围的进程则在它的死讯两侧继续花各自的配额；固件控制台只保留关机。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
 
 English version: [`README.md`](README.md).
 
@@ -71,7 +71,7 @@ $ ./run.sh
 | S2 — riscv64 Stage B | 类型化调用约定、逃逸点装箱 | complete |
 | M2 — 协作内核 | 金属上的进程、调度器、中断驱动 UART | complete |
 | M3 — 用户态 | U-mode、ecall 门、用户 ELF、syscall stub | complete |
-| M4 — 进程内存 | arena、配额、死亡即回收、帧分配器 | — |
+| M4 — 进程内存 | arena、配额、死亡即回收、帧分配器 | complete |
 | M5 — SV39 | 每进程地址空间、trampoline、fault 即击杀 | — |
 | M6 — FS、shell、EmoUI | virtio-blk 服务、shell REPL、控制台 UI | — |
 
