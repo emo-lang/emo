@@ -2434,6 +2434,17 @@ emo_start:
     la t0, emo_program
     la t1, emo_user_program_cell
     sd t0, 0(t1)
+    # the arena cells (T5.1): the addresses of this image's own root
+    # slot's arena cursor and end, parked where the kernel's trap shim
+    # reads and writes them — every U-mode boundary crossing hands the
+    # running pass's arena to this image's allocator through them.
+    la t0, emo_procs
+    addi t0, t0, 576
+    la t1, emo_user_arena_cell
+    sd t0, 0(t1)
+    addi t0, t0, 8
+    la t1, emo_user_alim_cell
+    sd t0, 0(t1)
     call emo_runtime_init
     call emo_program
     li a7, 0
@@ -2446,16 +2457,26 @@ emo_start:
 (* The user profile's extra .bss: the user-program cell (T4.4) — the
    stub parks this image's emo_program there, the one address no ELF
    header carries and no user code can name, and the kernel's process
-   service starts a spawned process at it. The user profile's linker
+   service starts a spawned process at it — and the arena cells
+   (T5.1): the addresses of this image's root slot's arena words, the
+   one pair of words the kernel's trap shim reads and writes at every
+   U-mode boundary crossing, so the user image's own allocator charges
+   whichever pass the kernel is running. The user profile's linker
    script gives the section its fixed address under the top of RAM. *)
 let user_cell_asm =
   {asm|
 
-# ---- The user-program cell (EmoOS T4.4) ----
+# ---- The user-program cell (EmoOS T4.4) and the arena cells (T5.1) ----
 
     .section .emo_ucall, "aw", @nobits
     .globl emo_user_program_cell
 emo_user_program_cell:
+    .zero 8
+    .globl emo_user_arena_cell
+emo_user_arena_cell:
+    .zero 8
+    .globl emo_user_alim_cell
+emo_user_alim_cell:
     .zero 8
 |asm}
 
@@ -2463,21 +2484,23 @@ emo_user_program_cell:
    cursor's init, the bump allocator, failure, boxing, the atomic
    helpers, the dynamic dispatch and formatting support. The compiler
    always provides it; a package's boot stub calls into it like the
-   program does. *)
+   program does. The allocator's exhaustion tail is not part of it:
+   the profile picks that (arena_gone_asm below). *)
 let runtime_asm =
   {asm|# ---- The bump allocator ----
 #
 # emo_alloc: a0 = payload words, a0 = the block (raw pointer, header
-# word first). Exhaustion is a loud failure; the tagged layout stays
-# ready for a collector.
+# word first). Every allocation charges the current process's own
+# arena (EmoOS T5.1) — the slot holds the cursor and the end — so a
+# runaway process exhausts its own quota, loudly and alone. The tagged
+# layout stays ready for a collector.
 
     .globl emo_runtime_init
 emo_runtime_init:
-    la t0, emo_heap_start
-    la t1, emo_heap_cursor
-    sd t0, 0(t1)
     # the process world (EmoOS T3.3): pid 1 is the root, running now on
-    # the boot stack; every other slot is free, the run queue empty
+    # the boot stack; every other slot is free, the run queue empty.
+    # The root's arena is the whole image heap (T5.1); every spawned
+    # process gets its own, carved from the root's remainder at spawn.
     la t0, emo_pid_counter
     li t1, 1
     sd t1, 0(t0)
@@ -2487,6 +2510,10 @@ emo_runtime_init:
     li t2, 1
     sd t2, 8(t1)            # the root's pid
     sd t2, 16(t1)           # alive
+    la t0, emo_heap_start
+    sd t0, 576(t1)          # the root's arena cursor
+    la t0, emo_heap_end
+    sd t0, 584(t1)          # and its end
     ret
 
     .globl emo_alloc
@@ -2495,19 +2522,16 @@ emo_alloc:
     slli t0, t0, 3
     addi t0, t0, 31
     andi t0, t0, -32
-    la t1, emo_heap_cursor
-    ld t2, 0(t1)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)            # the allocator is the current process
+    ld t2, 576(t1)          # its arena cursor
     add t3, t2, t0
-    la t4, emo_heap_end
-    bgeu t3, t4, emo_heap_gone
-    sd t3, 0(t1)
+    ld t4, 584(t1)          # its arena end — the quota's edge
+    bgeu t3, t4, emo_arena_gone
+    sd t3, 576(t1)
     sd a0, 0(t2)
     mv a0, t2
     ret
-emo_heap_gone:
-    la a0, msg_heap
-    la a1, msg_heap_end
-    call emo_fail
 
 # ---- Failure ----
 
@@ -4359,6 +4383,12 @@ msg_false_end:
 msg_heap:
     .ascii "the value heap is exhausted"
 msg_heap_end:
+msg_arena:
+    .ascii "heap gone in process "
+msg_arena_end:
+msg_arenas:
+    .ascii "no arena left for a new process"
+msg_arenas_end:
 msg_blocked:
     .ascii "all processes are blocked; no message will ever arrive"
 msg_blocked_end:
@@ -4464,14 +4494,17 @@ emo_atomic_mtbl:
 # message its patterns accept, and parks on no match; the root exiting
 # ends the program; a switch with nobody runnable is the loud deadlock.
 #
-# Slot layout (stride 72 words = 576 bytes): 0 the saved sp, 8 the pid,
+# Slot layout (stride 74 words = 592 bytes): 0 the saved sp, 8 the pid,
 # 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
 # 24 the mailbox head, 32 the mailbox length, 40 the process's own
 # priority, 48 its effective priority, 56 its CPU quota, 64.. the
 # 32-word message ring, 320.. the 32-word ring of the priorities the
-# messages carry (entry i of each ring belongs to the same message). A
-# slot never returns to free — a pid is unique for the whole run, so a
-# send to a dead pid is dropped, never redirected to a new occupant.
+# messages carry (entry i of each ring belongs to the same message),
+# 576 the arena cursor and 584 the arena end (T5.1 — the process's own
+# bump heap: the root's is the whole image heap, a child's its 64 KiB
+# carve, and emo_alloc charges whoever is running). A slot never
+# returns to free — a pid is unique for the whole run, so a send to a
+# dead pid is dropped, never redirected to a new occupant.
 #
 # The scheduler's policy (EmoOS T3.4): dispatch is round-robin — the
 # run queue is a FIFO ring and emo_schedule pops its head. The priority
@@ -4634,7 +4667,7 @@ emo_deadlock:
 .Ldl_scan:
     li t2, 64
     bgeu t1, t2, emo_fail_blocked
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4766,7 +4799,7 @@ emo_sched_wake_console:
 .Lwake_scan:
     li t2, 64
     bgeu t1, t2, .Lwake_none
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4819,7 +4852,7 @@ emo_spawn:
     li t2, 64
 .Lspawn_scan:
     bgeu t1, t2, .Lspawn_exhausted
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4829,6 +4862,10 @@ emo_spawn:
 .Lspawn_exhausted:
     la a0, msg_procs
     la a1, msg_procs_end
+    call emo_fail
+.Lspawn_noarena:
+    la a0, msg_arenas
+    la a1, msg_arenas_end
     call emo_fail
 .Lspawn_found:
     mv t3, t4               # the slot; t3 keeps it through the bookkeeping
@@ -4850,6 +4887,23 @@ emo_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
+    # the child's arena (T5.1): a 64 KiB carve from the root's arena —
+    # its top 64 KiB, the end closing above it. The root's cursor never
+    # moves (its existing blocks stay below), its end drops to the
+    # carve's base, and the child's arena is exactly the range the root
+    # gave up: the root can never allocate into a child's arena, and a
+    # child's exhaustion is its own. The remainder gone is the machine's
+    # loud end, the process table's ceiling in memory. (t1 — the slot
+    # index the stack build reads below — is not touched.)
+    la t4, emo_procs
+    ld t0, 576(t4)          # the root's arena cursor
+    ld t5, 584(t4)          # and its end
+    li t6, 65536
+    sub t2, t5, t6          # the carve: the arena's top 64 KiB
+    bgeu t0, t2, .Lspawn_noarena
+    sd t2, 584(t4)          # the root's end closes above the carve
+    sd t2, 576(t3)          # the child allocates from the carve's base
+    sd t5, 584(t3)          # to the end the root gave up
     # the child's stack: one switch-shaped frame whose ra is the entry
     # thunk, the arguments just above it. The spare word records the
     # mask state the switch-in restores: the child is born outside any
@@ -4911,7 +4965,7 @@ emo_send:
     li t3, 64
 .Lsend_scan:
     bgeu t2, t3, .Lsend_noproc
-    li t4, 576
+    li t4, 592
     mul t5, t2, t4
     add t5, t1, t5
     ld t6, 8(t5)
@@ -5093,7 +5147,7 @@ emo_gate_post:
     li t2, 64
 .Lgp_scan:
     bgeu t1, t2, .Lgp_fail
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5160,7 +5214,7 @@ emo_gate_reply:
     li t2, 64
 .Lgr_scan:
     bgeu t1, t2, .Lgr_fail
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5207,7 +5261,7 @@ emo_user_spawn:
     li t2, 64
 .Lus_scan:
     bgeu t1, t2, .Lus_fail
-    li t3, 576
+    li t3, 592
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -5217,6 +5271,10 @@ emo_user_spawn:
 .Lus_fail:
     la a0, msg_procs
     la a1, msg_procs_end
+    call emo_fail
+.Lus_noarena:
+    la a0, msg_arenas
+    la a1, msg_arenas_end
     call emo_fail
 .Lus_found:
     mv t3, t4
@@ -5235,6 +5293,20 @@ emo_user_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
+    # the child's arena (T5.1), as any green child's: a 64 KiB carve
+    # from the root's arena — its top 64 KiB, the end closing above it.
+    # The user image's allocator charges it to the running pass through
+    # the cells its stub parked (the trap shim's save and restore). The
+    # frame build reads t1 below; the carve leaves it alone.
+    la t4, emo_procs
+    ld t0, 576(t4)              # the root's arena cursor
+    ld t5, 584(t4)              # and its end
+    li t6, 65536
+    sub t2, t5, t6              # the carve: the arena's top 64 KiB
+    bgeu t0, t2, .Lus_noarena
+    sd t2, 584(t4)              # the root's end closes above the carve
+    sd t2, 576(t3)              # the child allocates from the carve's base
+    sd t5, 584(t3)              # to the end the root gave up
     ld t5, 16(sp)               # the stack top
     addi t4, t5, -544           # the synthetic trap frame
     mv a0, t4
@@ -5377,6 +5449,97 @@ emo_copy_deep:
     ret
 |asm}
 
+(* The allocator's exhaustion tail, per profile (EmoOS T5.1). A kernel
+   image owns its processes end to end: a spawned process whose own
+   arena ran dry dies alone — the loud report on the console, the slot
+   ending done, the machine continuing — while the root's exhaustion is
+   the machine-wide failure it always was. The user image's processes
+   are the kernel's to track (the slot table is the kernel's), so its
+   allocator reports through the gate's verb 5 and the kernel's shim
+   owns the death. *)
+let arena_gone_asm ~(profile : string) : string =
+  match profile with
+  | "kernel" ->
+      {asm|
+    .section .text
+emo_arena_gone:
+    # the root's exhaustion is the machine's: the root arena is the
+    # image heap and the root's death ends the program as its exit
+    # does. A spawned process dies alone: the loud report, the slot
+    # ending done, the machine continuing with the rest. The region is
+    # masked — the kill may run inside a spawn's own — and the pick
+    # never returns here; the dead frame stays on the dead stack, the
+    # arena unclaimed until the reclamation (T5.2) takes it. The slot
+    # pointer rides s0 — the dying process's saved registers are this
+    # path's to spend, the fault route's precedent — and the pid waits
+    # on the stack across the print calls, whose scratches are theirs.
+    la s0, emo_cur_slot
+    ld s0, 0(s0)
+    ld a0, 8(s0)            # the allocator's pid
+    li t4, 1
+    beq a0, t4, emo_heap_gone
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd a0, 0(sp)
+    la a0, msg_arena
+    la a1, msg_arena_end
+    call emo_print_bytes
+    ld a0, 0(sp)
+    call emo_print_dec
+    li a0, 10
+    call emo_console_emit
+    addi sp, sp, 16
+    li t5, 3
+    sd t5, 16(s0)           # done — the machine continues without it
+    j emo_sched_pick
+emo_heap_gone:
+    la a0, msg_heap
+    la a1, msg_heap_end
+    call emo_fail
+
+# emo_print_dec: a0 = a non-negative integer; its decimal digits ride
+# the console, most significant first. The exhausted arena's report is
+# its only caller.
+emo_print_dec:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li t0, 10
+    bgeu a0, t0, 1f
+    addi a0, a0, 48
+    call emo_console_emit
+    j 2f
+1:
+    divu t1, a0, t0
+    remu t2, a0, t0
+    addi sp, sp, -16
+    sd t2, 0(sp)
+    mv a0, t1
+    call emo_print_dec
+    ld t2, 0(sp)
+    addi sp, sp, 16
+    addi a0, t2, 48
+    call emo_console_emit
+2:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+|asm}
+  | "user" ->
+      {asm|
+    .section .text
+emo_arena_gone:
+    # the user world's exhaustion is the gate's verb (T5.1): the
+    # allocator's caller is a U-mode pass the kernel's slot table
+    # tracks, so the report and the death are the kernel's. The ecall
+    # never returns for this process; the park below is only reached
+    # if the gate is not there to answer.
+    li a7, 5
+    ecall
+1:  wfi
+    j 1b
+|asm}
+  | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+
 (* The default linker script per profile. The kernel profile links at
    0x80200000, where OpenSBI's boot enters the payload (T0.1). The user
    profile links at 0x87100000 — the pre-SV39 user window's base, the
@@ -5437,20 +5600,23 @@ SECTIONS
     base extra
 
 (* The stack and the value heap live in .bss — NOBITS, so neither weighs
-   on the image; the entry stub clears the region before first use, and
-   the heap cursor sits past the heap's end. The sizes are the one thing
-   the image profiles (EmoOS T4.1) change in the emitted runtime. The
-   kernel profile keeps the 1 MiB stack and the 96 MiB heap: T2.1's
-   boundary adapters forced the growth from 64 (a typed call in a
-   dynamic body allocated on both sides), and T2.2's native bodies
-   closed that window — `examples/fib`'s `count_down(1000000)` now runs
-   its recursion allocation-free — but the headroom stays: dynamic
-   bodies still box per operation, and the bump's exhaustion is loud by
-   design. The user profile is the kernel's guest: one 64 KiB stack —
-   the per-process stack size — over an 8 MiB heap, the budget that
-   fits the pre-SV39 user window under the board's 128 MiB with the
-   process world beside it; per-process quotas arrive with the arenas
-   (EmoOS T5). QEMU virt's default 128 MiB holds both. *)
+   on the image; the entry stub clears the region before first use. The
+   sizes are the one thing the image profiles (EmoOS T4.1) change in the
+   emitted runtime. The kernel profile keeps the 1 MiB stack and the
+   96 MiB heap: T2.1's boundary adapters forced the growth from 64 (a
+   typed call in a dynamic body allocated on both sides), and T2.2's
+   native bodies closed that window — `examples/fib`'s
+   `count_down(1000000)` now runs its recursion allocation-free — but
+   the headroom stays: dynamic bodies still box per operation. Since
+   T5.1 the heap is the root process's arena: every spawned process
+   gets its own 64 KiB carve from the root's remainder at spawn, and
+   the allocator charges whoever is running. The user profile is the
+   kernel's guest: one 64 KiB stack — the per-process stack size — over
+   an 8 MiB heap (its root's arena), the budget that fits the pre-SV39
+   user window under the board's 128 MiB with the process world beside
+   it; a gate-spawned pass's arena is carved by the kernel from its own
+   heap, and the trap shim hands it across the boundary. QEMU virt's
+   default 128 MiB holds both. *)
 let stack_asm ~(profile : string) : string =
   let stack_bytes, heap_bytes =
     match profile with
@@ -5472,24 +5638,22 @@ emo_heap_start:
     .zero %d
     .globl emo_heap_end
 emo_heap_end:
-    .globl emo_heap_cursor
-emo_heap_cursor:
-    .zero 8
 
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
 #
-# 64 slots at 576 bytes (context word, pid, state, mailbox head and
+# 64 slots at 592 bytes (context word, pid, state, mailbox head and
 # length, the own and effective priorities and the quota, a 32-word
-# message ring and the 32-word ring of the priorities the messages
-# carry), one 64 KiB stack per slot, and the run-queue ring. A slot
-# never returns to free — pids stay unique for the whole run — so 64 is
-# the bound on spawns ever taken, loud at the ceiling. Everything here
-# is NOBITS: the image carries none of it.
+# message ring, the 32-word ring of the priorities the messages carry,
+# and the arena cursor and end — T5.1's per-process bump heaps), one
+# 64 KiB stack per slot, and the run-queue ring. A slot never returns
+# to free — pids stay unique for the whole run — so 64 is the bound on
+# spawns ever taken, loud at the ceiling. Everything here is NOBITS:
+# the image carries none of it.
 
     .align 8
 emo_procs:
-    .zero 36864
+    .zero 37888
 emo_pstacks:
     .zero 4194304
     .globl emo_runq
@@ -5840,6 +6004,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   gput env "%s" arch_directive;
   if boot_stub then gput env "%s\n" profile_stub;
   gput env "%s\n" runtime_asm;
+  gput env "%s\n" (arena_gone_asm ~profile);
   gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is
      text. *)

@@ -211,6 +211,7 @@ let beyond_the_interpreter =
     "native_image";
     "processes";
     "parity_metal";
+    "arena_gone";
   ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
@@ -3044,6 +3045,7 @@ let riscv64_examples_tests =
       "typed_calls";
       "native_image";
       "processes";
+      "arena_gone";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -3181,6 +3183,45 @@ let riscv64_profile_tests =
         Alcotest.(check bool)
           "the kernel heap is unchanged" true
           (contains kernel_asm ".zero 100663296"));
+    tc "the allocator charges the current process's arena" (fun () ->
+        (* T5.1: the slot holds the cursor and the end (offsets 576 and
+           584, the stride 592), emo_alloc reads them off the current
+           slot, and both profiles carry the exhaustion tail — the
+           kernel's own confined kill, the user image's gate verb. *)
+        let program = lower {|println("ok")|} in
+        let kernel_asm = Emo_codegen.Riscv.emit ~profile:"kernel" program in
+        Alcotest.(check bool)
+          "the root's arena is the image heap" true
+          (contains kernel_asm "the root's arena cursor");
+        Alcotest.(check bool)
+          "the spawn carves the child's arena" true
+          (contains kernel_asm "the child allocates from the carve's base");
+        Alcotest.(check bool)
+          "a spawned process dies alone" true
+          (contains kernel_asm "heap gone in process ");
+        Alcotest.(check bool)
+          "the user image's exhaustion is the gate's verb" true
+          (contains
+             (Emo_codegen.Riscv.emit ~profile:"user" program)
+             "    li a7, 5\n    ecall");
+        Alcotest.(check bool)
+          "the kernel image's kill is its own" true
+          (contains kernel_asm "emo_sched_pick"));
+    tc "the user image parks its arena cells" (fun () ->
+        (* T5.1: the stub parks the addresses of its root slot's arena
+           words where the kernel's trap shim reads and writes them —
+           the cells live in the user profile alone. *)
+        let program = lower {|println("ok")|} in
+        let user_asm = Emo_codegen.Riscv.emit ~profile:"user" program in
+        Alcotest.(check bool)
+          "the arena cells are the user profile's" true
+          (contains user_asm "emo_user_arena_cell");
+        Alcotest.(check bool)
+          "the kernel image carries no arena cells" true
+          (not
+             (contains
+                (Emo_codegen.Riscv.emit ~profile:"kernel" program)
+                "emo_user_arena_cell")));
   ]
 
 (* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other

@@ -30,6 +30,7 @@ const uart = 0x10000000
 const buf = 0x87200000
 const child_cell = buf + 2048
 const doomed_cell = buf + 2056
+const greedy_cell = buf + 2064
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 
@@ -118,6 +119,29 @@ if peek64(doomed_cell) != 0 {
   syscall.exit(1)
 }
 
+// The greedy branch (T5.1): a spawned pass whose allocations outrun
+// its own 64 KiB arena — the carve the kernel's spawn makes from the
+// kernel heap, handed across the boundary by the trap shim. Its
+// allocator says so through the gate (verb 5); the supervisor's
+// report is the last thing this pass prints, and the machine
+// continues — the good child's round trip rides after the report.
+if peek64(greedy_cell) != 0 {
+  poke64(greedy_cell, 0)
+  var yp = byte_at(0, 103) // g
+  yp = byte_at(yp, 114) // r
+  yp = byte_at(yp, 101) // e
+  yp = byte_at(yp, 101) // e
+  yp = byte_at(yp, 100) // d
+  yp = byte_at(yp, 121) // y
+  yp = byte_at(yp, 10)
+  gate_line(yp)
+  var k = 0
+  while true {
+    var b = Box.new(k)
+    k = k + 1
+  }
+}
+
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
 // the token the parent pokes just before the spawn is the one
@@ -185,9 +209,17 @@ gate_line(rp)
 // The kill proof (T4.6): the misbehaving child spawns first — its
 // line, then its fault, then the supervisor's loud report — and the
 // parent does NOT wait on it: a killed process never exited, so its
-// wait would block forever (the stated bound). The good child's
-// `born`/`wait 7` after the report is the survival proof.
+// wait would block forever (the stated bound). The runaway proof
+// (T5.1) rides the same shape: a greedy pass whose boxes outrun its
+// own 64 KiB arena — its allocator announces the exhaustion (verb 5),
+// the supervisor's report follows, and the machine goes on. The good
+// child's `born`/`wait 7` after both reports is the survival proof.
 poke64(doomed_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { put(63) } // ? — the gate refused the spawn
+  (R.ok, _) -> {}
+}
+poke64(greedy_cell, 1)
 case syscall.spawn() {
   (R.error, _) -> { put(63) } // ? — the gate refused the spawn
   (R.ok, _) -> {}

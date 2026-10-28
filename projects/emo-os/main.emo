@@ -132,6 +132,31 @@ def fault_report(pid Int64, cause Int64, epc Int64) Void {
   console_put_byte(10)
 }
 
+// The heap's death report (T5.1): a user pass whose own arena ran dry
+// — announced by the user image's allocator through the gate (verb 5),
+// printed by the supervisor on the offender's own stack, zero
+// allocation. The shim ends the pass after this returns; the machine
+// continues.
+def heap_report(pid Int64) Void {
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(104) // h
+  console_put_byte(101) // e
+  console_put_byte(97)  // a
+  console_put_byte(112) // p
+  console_put_byte(32)  // space
+  fault_dec(pid)
+  console_put_byte(32)  // space
+  console_put_byte(103) // g
+  console_put_byte(111) // o
+  console_put_byte(110) // n
+  console_put_byte(101) // e
+  console_put_byte(10)
+}
+
 def uart_init() Void {
   poke8(uart + 3, 128B)
   poke8(uart + 0, 3B)

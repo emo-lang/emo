@@ -50,13 +50,19 @@ const reason_argument = 4
 // The routes: -(1000 + op). The shim decodes the op, posts to the
 // service (1 and 2 are the console's; 0, 3 and 4 the process
 // service's), and parks the caller. -103 is the root's exit: the
-// machine ends at the shim, no service involved.
+// machine ends at the shim, no service involved. -104 is the heap's
+// death: the caller's own allocator reported its arena exhausted (the
+// user image's verb 5 — the runtime issues it, though nothing stops a
+// program from saying it of itself), and the shim ends the caller the
+// fault route ends a user program: the loud report, the slot done,
+// the machine continuing.
 const route_process_exit = -1000
 const route_console_write = -1001
 const route_console_read = -1002
 const route_process_spawn = -1003
 const route_process_wait = -1004
 const route_poweroff = -103
+const route_heap_gone = -104
 
 // The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
 const flag_w = 2
@@ -134,6 +140,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     poke64(proc_arga, r0)
     poke64(proc_argb, me)
     return route_process_exit
+  }
+  if n == 5 {
+    return route_heap_gone
   }
   return -reason_unknown
 }

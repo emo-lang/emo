@@ -52,6 +52,19 @@ undocumented ever acts.
 | 2 | `read()` | the next console byte, blocking until one exists; answers it (0–255) |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
+| 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
+
+Verb 5 (T5.1) is not a service request but the user image's allocator
+speaking: when the running pass's own arena — the 64 KiB carve the
+kernel's spawn made from the kernel heap — is full, the user image's
+`emo_alloc` says verb 5 instead of failing the machine. The gate
+answers it with the caller's death: the loud report (`user heap <pid>
+gone`) printed by the supervisor on the offender's own stack, the
+slot ending done, and the machine continuing without the process —
+the fault route's reclamation, reached through the gate instead of a
+trap. Nothing stops a program from saying verb 5 of itself, and the
+answer is the same: the program wanted out. The root riding verb 5
+ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
@@ -132,6 +145,17 @@ The kernel-side layout the loader and the gate share (the kernel's
 | `0x87002010` | the staged entry (0 = nothing staged) |
 | `0x87002018` | the segment count |
 | `0x87002020` | the segment table: eight slots of (start, end, flags), 24 bytes each |
+
+The user side of the page (T5.1) sits in the user profile's own cell
+page at the top of RAM — three words the user stub parks and the
+kernel's trap shim reads and writes at every U-mode boundary crossing,
+so the user image's own allocator charges whichever pass is running:
+
+| Address | Contents |
+| --- | --- |
+| `0x87fff000` | the user image's `emo_program` entry (the process service starts spawned passes here) |
+| `0x87fff008` | the address of the user image's arena cursor (its root slot's word) |
+| `0x87fff010` | the address of its arena end |
 
 The user window is `[0x87100000, 0x88000000)`; the user profile links
 at its base.

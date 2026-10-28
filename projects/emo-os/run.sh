@@ -96,12 +96,14 @@ boot() {
   # the byte the read waited for, the misbehaving child's line, the
   # supervisor's kill report (the faulting load is the one the
   # hardware refuses, so the cause is the access fault — the epc
-  # moves per build and is not asserted), then the good child's line
-  # and the spawn/wait round trip answering after the kill: the
-  # machine survived the offender. The byte offsets are the serial
-  # order.
+  # moves per build and is not asserted), then the runaway's line and
+  # its allocator's exhaustion report (T5.1: the pass's own 64 KiB
+  # arena, announced through the gate, the pid the spawn order
+  # fixes), then the good child's line and the spawn/wait round trip
+  # answering after both deaths: the machine survived its offenders.
+  # The byte offsets are the serial order.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'born' 'wait 7'; do
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

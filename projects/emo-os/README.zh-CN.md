@@ -2,7 +2,7 @@
 
 一个用 Emo 写成的操作系统——内核、shell、用户程序同出一门语言，从上电走到提示符。EmoOS 是一个 xv6 量级的研究与教学系统：大到能在真实（或模拟的）RISC-V 硬件上跑真程序，小到可以通读全部源码。它是 Emo 单语言闭环的证明，也是这门语言经受的最狠试金石。
 
-状态：pre-alpha。内核可在 QEMU 下启动、驱动自己的 16550A，并在 ecall 门后以 U-mode 运行用户程序——spawn、wait、经两个服务进程的控制台 I/O，以及失控程序被单独击杀；固件控制台只保留关机。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
+状态：pre-alpha。内核可在 QEMU 下启动、驱动自己的 16550A，并在 ecall 门后以 U-mode 运行用户程序——spawn、wait、经两个服务进程的控制台 I/O、失控程序被单独击杀，且每个进程的分配都记在它自己的 arena 配额上；固件控制台只保留关机。任务追踪见 [`docs/TASKS.md`](docs/TASKS.md)。
 
 English version: [`README.md`](README.md).
 

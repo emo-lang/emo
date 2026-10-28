@@ -194,7 +194,42 @@ emo_os_trap_shim:
     # dispatch on scause: the supervisor timer interrupt, the
     # supervisor external interrupt (the devices, through the PLIC),
     # the U-mode ecall (the gate's door), the probe's
-    # illegal-instruction answer, or the loud failure for anything else
+    # illegal-instruction answer, or the loud failure for anything else.
+    # First the arena's save (T5.1): a trap out of U-mode leaves the
+    # user image's arena cursor behind — the leaver's slot takes it
+    # home, so the next resume can hand the arena to someone else. The
+    # boot pass is the exception: it IS the kernel's own root still
+    # (the stub entered it after the kernel's program returned), and
+    # the root slot's arena words must stay the kernel heap's — the
+    # spawn carve reads them — so the boot pass's progress lands in
+    # the boot pair below. A trap from the kernel's own code saves
+    # nothing: the kernel's processes allocate against their own
+    # slot's arena directly.
+    ld t0, 144(sp)
+    srli t0, t0, 8
+    andi t0, t0, 1           # sstatus.SPP: 0 = the trap came from U-mode
+    bnez t0, .Larena_saved
+    li t0, 0x87fff008        # the user stub parked the address of its
+    ld t0, 0(t0)             # root slot's arena cursor word here
+    beqz t0, .Larena_saved   # nothing staged: nothing to save
+    la t2, emo_cur_slot
+    ld t2, 0(t2)
+    ld t3, 8(t2)             # the leaver's pid
+    li t1, 1
+    beq t3, t1, .Larena_boot
+    ld t1, 0(t0)             # the running pass's cursor
+    sd t1, 576(t2)
+    j .Larena_saved
+.Larena_boot:
+    ld t1, 0(t0)
+    la t3, emo_os_boot_cur
+    sd t1, 0(t3)
+    li t0, 0x87fff010
+    ld t0, 0(t0)             # the end word beside it
+    ld t1, 0(t0)
+    la t3, emo_os_boot_lim
+    sd t1, 0(t3)
+.Larena_saved:
     ld t0, 160(sp)
     bgez t0, .Ltrap_exc      # bit 63 clear: an exception
     slli t0, t0, 1           # drop the interrupt bit
@@ -273,10 +308,29 @@ emo_os_trap_shim:
     call emo_gate__dispatch
     li t1, -103
     beq a0, t1, .Ltrap_exit
+    li t1, -104
+    beq a0, t1, .Ltrap_heap
     li t1, -1000
     bgt a0, t1, .Ltrap_answer   # answers and refusals ride home; the
     j .Ltrap_route              # routes are -1000 (a child's exit) and
                                 # below it — the exit is the boundary
+.Ltrap_heap:
+    # The heap's death route (T5.1): the user image's allocator
+    # reported its caller's arena exhausted (verb 5), the dispatch
+    # answered -104, and the offender dies alone — the loud report on
+    # the offender's own stack (the fault report's precedent), the
+    # slot ending done, the frame abandoned, the machine continuing.
+    # The root's death is the machine's end, as its exit is.
+    la s0, emo_cur_slot
+    ld s0, 0(s0)                # the offender's slot
+    ld a0, 8(s0)                # its pid
+    call emo_main__heap_report
+    li t3, 3
+    sd t3, 16(s0)               # done
+    ld t0, 8(s0)
+    li t1, 1
+    beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
+    j emo_sched_pick
 .Ltrap_answer:
     sd a0, 80(sp)
     # the ecall is a synchronous exception: sret returns to sepc, so
@@ -454,9 +508,43 @@ emo_os_console_irq:
 # emo_os_trap_resume: the preempted process's landing — entered with
 # sp at the interrupted value and the rest of the frame below it. The
 # shim's own exit path lands here too. The status and cause registers
-# restore through a scratch whose own slot is read last.
+# restore through a scratch whose own slot is read last. First the
+# arena's restore (T5.1): a frame that srets into U-mode hands its
+# process's arena to the user image — cursor and limit through the
+# cells the user stub parked — so the user image's own allocator
+# charges the pass that is about to run. A frame returning to the
+# kernel restores nothing.
     .globl emo_os_trap_resume
 emo_os_trap_resume:
+    ld t0, -400(sp)
+    srli t0, t0, 8
+    andi t0, t0, 1           # sstatus.SPP: 0 = the frame enters U-mode
+    bnez t0, .Larena_ready
+    li t0, 0x87fff008
+    ld t0, 0(t0)             # the user image's arena cursor word
+    beqz t0, .Larena_ready   # nothing staged: nothing to hand over
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t2, 8(t1)             # the passer's pid
+    li t3, 1
+    beq t2, t3, .Larena_boot_in
+    ld t2, 576(t1)
+    sd t2, 0(t0)             # the passer's cursor becomes the arena's
+    li t0, 0x87fff010
+    ld t0, 0(t0)             # and the end word beside it
+    ld t2, 584(t1)
+    sd t2, 0(t0)
+    j .Larena_ready
+.Larena_boot_in:
+    la t2, emo_os_boot_cur
+    ld t2, 0(t2)
+    sd t2, 0(t0)
+    li t0, 0x87fff010
+    ld t0, 0(t0)
+    la t2, emo_os_boot_lim
+    ld t2, 0(t2)
+    sd t2, 0(t0)
+.Larena_ready:
     ld ra, -544(sp)
     ld gp, -536(sp)
     ld tp, -528(sp)
@@ -541,6 +629,15 @@ msg_unexpected_end:
 emo_os_timer_kind:
     .zero 8
 emo_os_probe_state:
+    .zero 8
+
+# The boot pass's arena (T5.1): the kernel's own root is the boot user
+# pass — the stub entered it once the kernel's program returned — and
+# its arena progress lands here, not in the root slot, whose words
+# stay the kernel heap's (the spawn carve reads them).
+emo_os_boot_cur:
+    .zero 8
+emo_os_boot_lim:
     .zero 8
 
 # The tick ring: the ISR's preallocated channel — the producer cursor,

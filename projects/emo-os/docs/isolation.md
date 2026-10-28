@@ -105,8 +105,9 @@ RAM holds, and the MMIO beside it:
   window, and the copy discipline does not pretend otherwise.
 - **Trap containment.** A user fault kills its process and nothing
   else; the kernel's own faults stay machine-wide, as they should.
-- **Per-process accounting arrives with Step 5** — arenas and quotas;
-  a runaway process exhausts its own arena alone.
+- **Per-process accounting (Step 5)** — arenas and quotas: every
+  allocation charges the running process's own arena, and a runaway
+  process exhausts its own arena alone.
 - **What does not defend:** the MMU (absent pre-SV39), PMP for S-mode
   memory (above), and — the honest limit of the kill — any damage a
   wild store did before its process trapped.
