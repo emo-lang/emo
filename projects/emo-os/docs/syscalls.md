@@ -57,8 +57,12 @@ Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
 (1 and 2 to the console service, 0, 3 and 4 to the process service)
 ride the gate's routing — the request reaches its service, the caller
-parks, and the service's answer lands back in the parked frame as if
-the `ecall` had answered directly. (The language's `halt` builtin is
+parks, and the service's answer lands in the parked frame as if
+the `ecall` had answered directly. The exit is the routing's one
+exception: its transaction is the caller's own death, so the caller's
+slot ends done instead of parked — a send to the exited pid drops, and
+the exit table's entry is the only thing left of the process.
+(The language's `halt` builtin is
 the kernel profile's own shutdown ecall — on a user image it reaches
 the gate as verb 8 and is refused like any other verb not in the set.)
 

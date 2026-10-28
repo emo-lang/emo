@@ -263,13 +263,17 @@ emo_os_trap_shim:
     # helper posts and wakes), the caller's slot takes this frame as
     # its context with state 5 — gate-wait, woken only by the reply —
     # and the ecall's sepc moves past the instruction before the
-    # switch. The pick never returns to the shim.
+    # switch. The pick never returns to the shim. The exit (op 0) is
+    # the one route that never answers: the caller's death IS the
+    # transaction, so its slot ends done (3, the state a returning
+    # entry thunk writes) and the frame is abandoned — not parked as a
+    # gate-wait that no reply will ever relieve.
     addi t5, a0, 0
     sub t6, zero, t5
     addi t6, t6, -1000       # the op
     li t3, 3
     bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
-    beqz t6, .Lroute_proc    # op 0 (a child's exit)
+    beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
 .Lroute_cons:
     li a0, 0x870020f0        # the console service's pid cell (+240)
     j .Lroute_post
@@ -294,6 +298,29 @@ emo_os_trap_shim:
     ld t4, 152(sp)
     addi t4, t4, 4           # the ecall is consumed
     sd t4, 152(sp)
+    j emo_sched_pick
+.Lroute_exit:
+    # The death route: the request reaches the process service exactly
+    # as every route's does, but the caller is not parked — a finished
+    # process holds no transaction. Its slot takes state 3, the done
+    # the entry thunk's own return writes: a send to the pid now drops
+    # instead of queueing into a mailbox nobody drains, a stray reply
+    # to it is the loud service bug instead of a resurrection, and the
+    # deadlock scan reads a finished process, not a pending one. The
+    # frame stays where the exit left it, on the dead process's own
+    # stack, for the arena reclamation (T5) to take back.
+    li a0, 0x870020f8        # the process service's pid cell (+248)
+    ld a0, 0(a0)             # the service's raw pid
+    slli a1, t6, 32          # the request word: op << 32 | the caller's
+    la t2, emo_cur_slot      # pid — the record's subject rides with it
+    ld t2, 0(t2)
+    ld t2, 8(t2)
+    or a1, a1, t2
+    call emo_gate_post
+    la t0, emo_cur_slot
+    ld t0, 0(t0)             # the exiting caller's slot
+    li t3, 3
+    sd t3, 16(t0)            # done
     j emo_sched_pick
 .Ltrap_exit:
     li a7, 8
