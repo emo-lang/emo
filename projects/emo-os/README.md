@@ -2,7 +2,7 @@
 
 An operating system written in Emo — kernel, shell, and user programs in one language, from power-on to prompt. EmoOS is an xv6-class research and teaching system: complete enough to run real programs on real (or simulated) RISC-V hardware, small enough to read end to end. It is the proof of Emo's single-language closure, and the hardest stress test the language undergoes.
 
-Status: pre-alpha. The kernel boots under QEMU and prints through its own polled 16550A driver; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
+Status: pre-alpha. The kernel boots under QEMU, drives its own 16550A, and runs a user program in U-mode behind the ecall gate — spawn, wait, console I/O through two service processes, and a misbehaving program killed alone; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
 
 Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
@@ -70,7 +70,7 @@ $ ./run.sh
 | S1 — Memory primitives | atomics + volatile `peek`/`poke` + `fence`, all targets | complete |
 | S2 — riscv64 Stage B | typed calling convention, escape-point boxing | complete |
 | M2 — Cooperative kernel | processes on metal, scheduler, interrupt-driven UART | complete |
-| M3 — User mode | U-mode, ecall gate, user ELF, syscall stubs | — |
+| M3 — User mode | U-mode, ecall gate, user ELF, syscall stubs | complete |
 | M4 — Process memory | arenas, quotas, reclaim on death, frame allocator | — |
 | M5 — SV39 | per-process address spaces, trampoline, fault-to-kill | — |
 | M6 — FS, shell, EmoUI | virtio-blk service, shell REPL, console UI | — |

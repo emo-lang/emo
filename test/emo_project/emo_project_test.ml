@@ -1427,7 +1427,8 @@ println(json_tools.parse("hello"))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the wasm gate to refuse"
             | exception Emo_project.Static_errors ds -> (
@@ -1466,7 +1467,8 @@ println(wasm_tools.shrink(4))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+                ~profile:"kernel"
             with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
@@ -1496,7 +1498,10 @@ println(json_tools.parse("hello"))
             "main.emo"
         in
         with_registry (fun () ->
-            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel" with
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
             | _ -> Alcotest.fail "expected the c gate to refuse"
             | exception Emo_project.Static_errors ds -> (
                 match ds with
@@ -1532,7 +1537,10 @@ println(c_tools.halve(8))
             "main.emo"
         in
         with_registry (fun () ->
-            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel" with
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
@@ -1563,7 +1571,8 @@ println(json_tools.parse("hello"))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the typescript gate to refuse"
             | exception Emo_project.Static_errors ds -> (
@@ -1604,7 +1613,8 @@ println(ts_tools.bump(41))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+                ~profile:"kernel"
             with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
@@ -1716,7 +1726,8 @@ println(helper.twice(21))
         let entry = shadow_app () in
         with_registry (fun () ->
             let inputs, entry_path, packages, _ =
-              Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
             in
             let program =
               Emo_ir.lower
@@ -2687,7 +2698,8 @@ def test_never() {
             "main.emo"
         in
         let inputs, _entry, _packages, _native =
-          Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel"
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
         in
         let paths =
           List.map (fun (m : Emo_ir.module_input) -> m.mpath) inputs
@@ -2719,7 +2731,10 @@ def test_never() {
             ]
             "test/arithmetic.emo"
         in
-        match Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel" with
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
+        with
         | _ -> Alcotest.fail "expected a test entry to be refused"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
@@ -2765,7 +2780,8 @@ println(native_tools.halve_floor(9.0))
         in
         with_registry (fun () ->
             let _inputs, _entry, _packages, native =
-              Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
             in
             Alcotest.(check (list string))
               "link" [ "m" ] native.Emo_project.ni_link;
@@ -2802,7 +2818,8 @@ println(native_tools.halve_floor(9.0))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"ocaml" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"ocaml"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the link gate to refuse"
             | exception Emo_project.Static_errors ds ->
@@ -2848,7 +2865,8 @@ println(metal_tools.idle())
         in
         with_registry (fun () ->
             let _inputs, _entry, _packages, native =
-              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
             in
             Alcotest.(check (list string))
               "the .S sources" [ "switch.S" ]
@@ -2885,7 +2903,8 @@ println(metal_tools.idle())
             "main.emo"
         in
         let _inputs, _entry, _packages, native =
-          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
         in
         Alcotest.(check (list string))
           "the .S sources" [ "extra.S" ]
@@ -2938,7 +2957,8 @@ println(metal_tools.idle())
             "main.emo"
         in
         let _inputs, _entry, _packages, native =
-          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
         in
         Alcotest.(check bool)
           "the boot stub is the root's alone" true
@@ -2972,7 +2992,10 @@ println(metal_tools.idle())
             "main.emo"
         in
         with_registry (fun () ->
-            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel" with
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
             | _ -> Alcotest.fail "expected the native gate to refuse"
             | exception Emo_project.Static_errors ds ->
                 Alcotest.(check bool)
@@ -3002,7 +3025,10 @@ println(metal_tools.idle())
             ]
             "main.emo"
         in
-        match Emo_project.compile_inputs ~entry_file:entry ~target:"c" ~profile:"kernel" with
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
+        with
         | _ -> Alcotest.fail "expected the native gate to refuse"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
@@ -3039,7 +3065,8 @@ println(native_tools.halve_floor(9.0))
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the native gate to refuse"
             | exception Emo_project.Static_errors ds ->
@@ -3077,7 +3104,8 @@ println(metal_tools.idle())
         in
         with_registry (fun () ->
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the component conflict to refuse"
             | exception Emo_project.Static_errors ds ->
@@ -3131,7 +3159,8 @@ println(1)
           (fun (pinned, label) ->
             let entry = manifest pinned in
             match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
             with
             | _ ->
                 Alcotest.fail
@@ -3170,7 +3199,8 @@ println(1)
             "main.emo"
         in
         match
-          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
         with
         | _ -> Alcotest.fail "expected the unknown require to refuse"
         | exception Emo_project.Static_errors ds ->
@@ -3213,15 +3243,15 @@ println(1)
           Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
             ~profile:"user"
         with
-        | _ -> Alcotest.fail "expected the solve to refuse a hosted-only package"
+        | _ ->
+            Alcotest.fail "expected the solve to refuse a hosted-only package"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
               "no E5014 on the user profile" true
               (List.for_all
                  (fun d -> d.Emo_support.Diagnostic.code <> Some "E5014")
                  ds);
-            Alcotest.(check bool)
-              "the solve names the target" true (ds <> []));
+            Alcotest.(check bool) "the solve names the target" true (ds <> []));
     tc "the kernel profile refuses the gate's own stub package" (fun () ->
         (* syscall rides the bundled registry (T4.3), so the kernel's gate
            covers it too: the kernel builds on `core` alone and never
@@ -3246,7 +3276,8 @@ println(1)
             "main.emo"
         in
         match
-          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64" ~profile:"kernel"
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
         with
         | _ -> Alcotest.fail "expected the layering gate to refuse syscall"
         | exception Emo_project.Static_errors ds ->

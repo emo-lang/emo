@@ -74,6 +74,64 @@ def console_put_byte(b Int64) Void {
   poke8(uart, b.to_byte())
 }
 
+// The supervisor's fault report (T4.6): a user fault kills the
+// offender, and the shim announces it — who, why, where — through
+// this def on the offender's own stack (the gate's precedent: typed
+// Emo inside the trap, zero allocation, the polled console). The pid
+// and the cause print decimal, the faulting address hex.
+def fault_digit(n Int64) Void {
+  if n < 10 {
+    console_put_byte(48 + n)
+  } else {
+    console_put_byte(87 + n)
+  }
+}
+
+def fault_hex(n Int64) Void {
+  if n >= 16 {
+    fault_hex(n / 16)
+  }
+  fault_digit(n % 16)
+}
+
+def fault_dec(n Int64) Void {
+  if n >= 10 {
+    fault_dec(n / 10)
+  }
+  console_put_byte(48 + (n % 10))
+}
+
+def fault_report(pid Int64, cause Int64, epc Int64) Void {
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(102) // f
+  console_put_byte(97)  // a
+  console_put_byte(117) // u
+  console_put_byte(108) // l
+  console_put_byte(116) // t
+  console_put_byte(32)  // space
+  fault_dec(pid)
+  console_put_byte(32)  // space
+  console_put_byte(99)  // c
+  console_put_byte(97)  // a
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(32)  // space
+  fault_dec(cause)
+  console_put_byte(32)  // space
+  console_put_byte(97)  // a
+  console_put_byte(116) // t
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(epc)
+  console_put_byte(10)
+}
+
 def uart_init() Void {
   poke8(uart + 3, 128B)
   poke8(uart + 0, 3B)

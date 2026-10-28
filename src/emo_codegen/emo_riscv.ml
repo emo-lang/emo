@@ -784,7 +784,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          brings the process back. A send to a device-waiter does not
          wake it: requests queue in its mailbox for the next pump. *)
       call_runtime env "emo_park_console"
-  | Builtin { name = "ecall"; args = ([ _; _; _; _; _; _; _ ] as args) } ->
+  | Builtin { name = "ecall"; args = [ _; _; _; _; _; _; _ ] as args } ->
       (* T4.2: the machine's syscall instruction, raw — the user side of
          the gate. The verb and its six words ride a7 and a0..a5 across
          the instruction; the answer comes back in a0, the gate's own
@@ -817,7 +817,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         emit_args_from env d ~from:0 args;
         call_runtime env "emo_sys_ecall"
       end
-  | Builtin { name = "ecall"; args = args } ->
+  | Builtin { name = "ecall"; args } ->
       refuse
         (Printf.sprintf
            "the `ecall` builtin with %d arguments — it takes the verb and \
@@ -5151,7 +5151,7 @@ emo_gate_post:
     .globl emo_gate_reply
 emo_gate_reply:
     csrci sstatus, 2
-    addi sp, sp, -16
+    addi sp, sp, -24
     sd ra, 0(sp)
     sd a0, 8(sp)
     sd a1, 16(sp)
@@ -5251,8 +5251,10 @@ emo_user_spawn:
     sd t0, 152(t4)              # sepc = the entry
     ld t1, emo_trap_resume_hook
     sd t1, 336(t4)              # the switch section's ra
-    li t1, 1
-    sd t1, 536(t4)              # the spare word: born outside any region
+    sd zero, 536(t4)            # the spare word: switch in masked — the
+                                # sret restores SIE from the frame's SPIE,
+                                # and an unmask before the resume would let
+                                # an interrupt's frame overwrite this one
     addi t4, t4, 336            # the slot saves the switch-section base —
     sd t4, 0(t3)                # what the shim's park and the preempt store
     mv a0, t3
@@ -5399,9 +5401,7 @@ let linker_script ~(profile : string) : string =
            reach it, and the kernel's fixed pages next door must never
            fall inside a user segment. *)
         ( "0x87100000",
-          "
-  . = 0x87fff000;
-  .emo_ucall (NOLOAD) : { *(.emo_ucall) }" )
+          "\n  . = 0x87fff000;\n  .emo_ucall (NOLOAD) : { *(.emo_ucall) }" )
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
   Printf.sprintf
@@ -5492,10 +5492,13 @@ emo_procs:
     .zero 36864
 emo_pstacks:
     .zero 4194304
+    .globl emo_runq
 emo_runq:
     .zero 512
+    .globl emo_runq_head
 emo_runq_head:
     .zero 8
+    .globl emo_runq_len
 emo_runq_len:
     .zero 8
 emo_pid_counter:

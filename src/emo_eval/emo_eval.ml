@@ -2912,13 +2912,13 @@ and apply_builtin span name args =
            name)
   | "ecall", _ ->
       error span "E4028"
-        "`ecall` reaches the machine's gate: only the `riscv64` target \
-         admits it, not the interpreter"
+        "`ecall` reaches the machine's gate: only the `riscv64` target admits \
+         it, not the interpreter"
   | (("user_spawn" | "gate_reply" | "pid_num") as name), _ ->
       error span "E4028"
         (Printf.sprintf
-           "`%s` reaches the kernel's service machinery: only the \
-            `riscv64` target admits it, not the interpreter"
+           "`%s` reaches the kernel's service machinery: only the `riscv64` \
+            target admits it, not the interpreter"
            name)
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 

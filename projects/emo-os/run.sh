@@ -15,10 +15,14 @@ fi
 # One boot: the named CPU config, the serial input on a named pipe
 # written only after the kernel is ready — the tick proof's checksum is
 # the gate, so the reader's request beats the input and the console
-# sleeps in its device-wait before a byte exists — and the -d int trace
-# in the log for the ecall count. The assertions: the greeting, the
-# checksum, the tick verdict, the five console deliveries in order,
-# and the machine's own exit — the SBI poweroff.
+# sleeps in its device-wait before a byte exists — and the -d int
+# trace on its own stream (the guest's console bytes are written one
+# by one, and a dump woven between them would split the lines the
+# assertions read; on stderr the trace never touches the serial). The
+# assertions: the greeting, the checksum, the tick verdict, the five
+# console deliveries in order, the user program's proof chain — the
+# kill report included, the machine surviving its offender — and the
+# machine's own exit, the SBI poweroff.
 boot() {
   local cpu="$1" mode="$2" log="$3"
   local fifo
@@ -26,8 +30,9 @@ boot() {
   mkfifo "$fifo"
 
   : > "$log"
+  : > "$log.trace"
   qemu-system-riscv64 -machine virt -nographic -d int -cpu "$cpu" \
-    -kernel "$elf" <"$fifo" >"$log" 2>&1 &
+    -kernel "$elf" <"$fifo" >"$log" 2>"$log.trace" &
   local qemu_pid=$!
   exec 3>"$fifo"
 
@@ -49,7 +54,7 @@ boot() {
   # feed one once its gate line is on the wire, then wait for the rest
   # of the proof chain.
   for _ in $(seq 1 100); do
-    if grep -av 'riscv_cpu_do_interrupt' "$log" 2>/dev/null | grep -qF 'gate 500500 r3 r2'; then
+    if grep -qF 'gate 500500 r3 r2' "$log" 2>/dev/null; then
       break
     fi
     kill -0 "$qemu_pid" 2>/dev/null || break
@@ -74,31 +79,30 @@ boot() {
 
   cat "$log"
 
-  # The -d int trace weaves interrupt dumps into the serial stream — a
-  # timer landing mid-line splits it. The assertions run on the clean
-  # view: every line the -d tracer contributed is dropped.
-  grep -av 'riscv_cpu_do_interrupt' "$log" > "$log.clean"
-
   if [ "$found" -ne 1 ]; then
     echo "run.sh: the tick proof's checksum never came" >&2
     exit 1
   fi
-  if ! grep -qF -- 'Hello, EmoOS!' "$log.clean"; then
+  if ! grep -qF -- 'Hello, EmoOS!' "$log"; then
     echo "run.sh: expected 'Hello, EmoOS!' in the serial output" >&2
     exit 1
   fi
-  if [ "$(grep -c 'true' "$log.clean" || true)" -lt 1 ]; then
+  if [ "$(grep -c 'true' "$log" || true)" -lt 1 ]; then
     echo "run.sh: the tick verdict is missing; the tick is not running" >&2
     exit 1
   fi
   # The five console deliveries, in request order, then the user
   # image's proof chain: staged, the U-mode greeting, the gate line,
-  # the byte the read waited for, and the spawn/wait round trip — the
-  # child's line, then the exit code its parent waited on. The byte
-  # offsets in the clean view are the serial order.
+  # the byte the read waited for, the misbehaving child's line, the
+  # supervisor's kill report (the faulting load is the one the
+  # hardware refuses, so the cause is the access fault — the epc
+  # moves per build and is not asserted), then the good child's line
+  # and the spawn/wait round trip answering after the kill: the
+  # machine survived the offender. The byte offsets are the serial
+  # order.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'born' 'wait 7'; do
-    pos=$(grep -aboF -- "$line" "$log.clean" | head -1 | cut -d: -f1 || true)
+  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'born' 'wait 7'; do
+    pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
       exit 1
@@ -115,7 +119,7 @@ boot() {
   fi
 
   local ecalls
-  ecalls=$(grep -c 'supervisor_ecall' "$log" || true)
+  ecalls=$(grep -c 'supervisor_ecall' "$log.trace" || true)
   if [ "$mode" = legacy ]; then
     # The SBI set_timer fallback: one ecall per re-arm, one for the
     # poweroff — many, and every one of them the tick working.
@@ -135,7 +139,7 @@ boot() {
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, kill, self-exit"
 # The stimecmp transport when it does.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, kill, self-exit, 1 ecall"

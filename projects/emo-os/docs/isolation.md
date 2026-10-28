@@ -63,17 +63,26 @@ RAM holds, and the MMIO beside it:
 
 ## What U-mode cannot reach
 
-- **Privileged instructions.** Every S-mode CSR (`satp`, `sstatus`,
-  `stvec`, `stimecmp`), `sfence.vma`, `sret` — an illegal instruction
-  in U-mode. Today that is the loud failure: the shim's "the kernel
-  took an unexpected trap" ends the machine, and confining the kill to
-  the offending process is T4.6's task. Until it lands, a trapped user
-  program takes the machine down with it — loudly, which is at least
-  the honest direction.
+- **Privileged instructions, and every other fault.** Every S-mode CSR
+  (`satp`, `sstatus`, `stvec`, `stimecmp`), `sfence.vma`, `sret` — an
+  illegal instruction in U-mode; a load or store the hardware refuses
+  (the firmware's PMP-locked region) — an access fault. Any such trap
+  from U-mode kills the offender alone: the supervisor reports it
+  loudly on the console (`user fault <pid> cause <scause> at <epc>`),
+  the process's slot ends done, and the machine continues with its
+  other processes. A fault from the kernel's own code is still the
+  loud failure that ends the machine — that is the kernel's bug, not
+  a user's. The pre-SV39 boundary this draws is honest about its
+  width: the kill confines the *trap*, not the damage a wild store did
+  before it — a user program that corrupted kernel memory and then
+  faulted is killed cleanly, and the kernel runs on over the corruption
+  until SV39 makes the store itself the fault.
 - **The firmware.** An `ecall` from U-mode is the kernel's door, not
   OpenSBI's; the firmware's own region is the one range PMP keeps from
-  lower privilege (OpenSBI locks it at boot), and nothing else can
-  stand behind PMP: the CSR is M-mode-writable, and OpenSBI defines no
+  lower privilege (OpenSBI locks it at boot — and the kill golden rides
+  exactly this: the misbehaving program's load at `0x80000000` is the
+  access fault the supervisor reports), and nothing else can stand
+  behind PMP: the CSR is M-mode-writable, and OpenSBI defines no
   standard call to extend it.
 - **Anything the gate refuses.** A verb outside the set, a pointer
   outside the caller's segments, a segment without the permission the
@@ -94,11 +103,13 @@ RAM holds, and the MMIO beside it:
   sender: a corrupted process cannot alias another's objects through
   the mailbox. It can still reach them by address — that is the
   window, and the copy discipline does not pretend otherwise.
+- **Trap containment.** A user fault kills its process and nothing
+  else; the kernel's own faults stay machine-wide, as they should.
 - **Per-process accounting arrives with Step 5** — arenas and quotas;
   a runaway process exhausts its own arena alone.
 - **What does not defend:** the MMU (absent pre-SV39), PMP for S-mode
-  memory (above), and — until T4.6 — trap containment, which is
-  machine-wide.
+  memory (above), and — the honest limit of the kill — any damage a
+  wild store did before its process trapped.
 
 ## Why the window is accepted
 

@@ -5503,8 +5503,8 @@ let peek_refusal_expected target =
   List.map
     (fun (name, what) ->
       Printf.sprintf
-        "`%s` reaches %s: only the `riscv64` target admits it, not `%s`"
-        name what target)
+        "`%s` reaches %s: only the `riscv64` target admits it, not `%s`" name
+        what target)
     [
       ("peek8", "raw memory");
       ("poke8", "raw memory");

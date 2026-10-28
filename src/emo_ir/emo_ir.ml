@@ -164,8 +164,8 @@ type env = {
 let is_builtin = function
   | "println" | "printf" | "self_pid" | "halt" | "fence" | "expect_equal"
   | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
-  | "peek64" | "poke64" | "device_wait" | "ecall" | "user_spawn"
-  | "gate_reply" | "pid_num" ->
+  | "peek64" | "poke64" | "device_wait" | "ecall" | "user_spawn" | "gate_reply"
+  | "pid_num" ->
       true
   | _ -> false
 

@@ -1267,9 +1267,16 @@ let raw_mem_bindings =
       {
         vtype =
           FuncType
-            ([ ("verb", Int64); ("r0", Int64); ("r1", Int64); ("r2", Int64);
-               ("r3", Int64); ("r4", Int64); ("r5", Int64) ],
-             Int64);
+            ( [
+                ("verb", Int64);
+                ("r0", Int64);
+                ("r1", Int64);
+                ("r2", Int64);
+                ("r3", Int64);
+                ("r4", Int64);
+                ("r5", Int64);
+              ],
+              Int64 );
         is_var = false;
         depth = 0;
       } );
@@ -1297,8 +1304,7 @@ let raw_mem_bindings =
        the kernel's handoff cells carry numbers, not Pid words. Same
        admission rule. *)
     ( "pid_num",
-      { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 }
-    );
+      { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
   ]
 
 let raw_mem_builtin = function
@@ -1309,7 +1315,9 @@ let raw_mem_builtin = function
 
 (* The refusal names what the name reaches: the memory lanes reach raw
    memory, `ecall` reaches the machine's gate. *)
-let raw_mem_what = function "ecall" -> "the machine's gate" | _ -> "raw memory"
+let raw_mem_what = function
+  | "ecall" -> "the machine's gate"
+  | _ -> "raw memory"
 
 let base_env target =
   if target = "riscv64" then

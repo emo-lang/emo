@@ -124,10 +124,11 @@ emo_os_trap_shim:
     sd t1, 152(sp)
     csrr t0, sstatus
     sd t0, 144(sp)
-    ld t1, 144(sp)
-    srli t1, t1, 5
-    andi t1, t1, 1
-    sd t1, 536(sp)           # the spare word: the pre-trap SIE
+    sd zero, 536(sp)         # the spare word: a trap frame switches in
+                             # masked — its sret restores SIE from the
+                             # saved SPIE, and an interrupt landing between
+                             # the scheduler's unmask and the resume would
+                             # lay its own frame over this one's rest section
     sd ra, 0(sp)             # the rest section keeps its own ra copy
     sd gp, 8(sp)
     sd tp, 16(sp)
@@ -207,11 +208,11 @@ emo_os_trap_shim:
     li t1, 8                 # environment call from U-mode
     beq t0, t1, .Ltrap_ucall
     li t1, 2                 # illegal instruction — the probe's answer?
-    bne t0, t1, .Ltrap_bad
+    bne t0, t1, .Ltrap_fault
     la t2, emo_os_probe_state
     ld t3, 0(t2)
     li t4, 1
-    bne t3, t4, .Ltrap_bad
+    bne t3, t4, .Ltrap_fault
     li t3, 2
     sd t3, 0(t2)             # no stimecmp: the legacy transport it is
     ld t0, 152(sp)
@@ -219,6 +220,34 @@ emo_os_trap_shim:
     sd t0, 152(sp)
     addi sp, sp, 544
     j emo_os_trap_resume
+.Ltrap_fault:
+    # An exception the gate does not own: whose fault is it? The
+    # frame's saved sstatus carries SPP — the privilege the trap came
+    # from. A kernel fault is the machine's own: the loud failure. A
+    # user fault is the offender's: the report is loud (who, why,
+    # where — through the kernel's typed def, on the offender's own
+    # stack, the gate's precedent), the slot ends done — sends to it
+    # drop, replies to it refuse, the deadlock scan reads a finished
+    # process — and the machine continues without it. The root's death
+    # ends the machine, as its own exit does. The frame is abandoned:
+    # no sepc, no resume — and the victim's s0 is the shim's to spend,
+    # because nothing on this path ever resumes.
+    ld t0, 144(sp)
+    srli t0, t0, 8
+    andi t0, t0, 1           # sstatus.SPP: 0 means the trap came from U-mode
+    bnez t0, .Ltrap_bad
+    la s0, emo_cur_slot
+    ld s0, 0(s0)             # the offender's slot
+    ld a0, 8(s0)             # its pid
+    ld a1, 160(sp)           # scause
+    ld a2, 152(sp)           # sepc
+    call emo_main__fault_report
+    li t3, 3
+    sd t3, 16(s0)            # done
+    ld t0, 8(s0)
+    li t1, 1
+    beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
+    j emo_sched_pick
 .Ltrap_ucall:
     # the gate (T4.2/T4.4): every verb marshals into the gate's Emo
     # dispatcher — the verb, then the six words. The caller's pid goes

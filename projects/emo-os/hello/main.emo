@@ -5,9 +5,13 @@
 // window, what U-mode reaches with no gate at all; the `gate` line is
 // T4.2's write verb with two refusals printed by the same gate that
 // refused them; `echo` is T4.4's read verb, blocking on the console
-// service until a byte exists; `born`/`wait 7` are T4.4's spawn and
-// wait — the child re-enters this top level, finds the token, and
-// exits 7, and the parent's wait answers with it. The root's exit is
+// service until a byte exists; `doomed` and the `user fault` report
+// are T4.6's — a misbehaving child says its line through the gate,
+// then loads where the hardware refuses, and the supervisor kills it
+// loudly while the machine continues; `born`/`wait 7` are T4.4's
+// spawn and wait — the child re-enters this top level, finds the
+// token, and exits 7, and the parent's wait answers with it, riding
+// after the kill report as the survival proof. The root's exit is
 // the stub's verb 0, which lands in the kernel and ends the machine.
 //
 //   cd hello && emo build main.emo --target riscv64 \
@@ -18,12 +22,14 @@ require "syscall"
 const uart = 0x10000000
 
 // A scratch page inside this image's read-write segment — the buffer
-// the successful write sends from, with the second half the child
-// token lives in — and the two addresses the refusals try: the text
-// segment is load-and-run but not writable, and the kernel's own
-// memory is nobody's.
+// the successful write sends from, with the two token cells the
+// spawned passes read (each poked once before the parent parks, so
+// the passes see their own) — and the two addresses the refusals try:
+// the text segment is load-and-run but not writable, and the kernel's
+// own memory is nobody's.
 const buf = 0x87200000
 const child_cell = buf + 2048
+const doomed_cell = buf + 2056
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 
@@ -90,6 +96,28 @@ def gate_line(len Int64) Void {
   }
 }
 
+// The doomed branch (T4.6): a spawned pass finds this token, claims
+// it (clears it — the good child re-enters this same top level and
+// must not follow), says its line through the gate, then misbehaves —
+// one load where the hardware says no, the firmware's own region, the
+// one range PMP keeps from lower privilege. The supervisor's report
+// is the last thing this pass prints; the kill is this pass's slot
+// ending done.
+if peek64(doomed_cell) != 0 {
+  poke64(doomed_cell, 0)
+  var dp = byte_at(0, 100) // d
+  dp = byte_at(dp, 111) // o
+  dp = byte_at(dp, 111) // o
+  dp = byte_at(dp, 109) // m
+  dp = byte_at(dp, 101) // e
+  dp = byte_at(dp, 100) // d
+  dp = byte_at(dp, 10)
+  gate_line(dp)
+  var wild = peek64(0x80000000)
+  put_num(wild) // unreachable — the load faults
+  syscall.exit(1)
+}
+
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
 // the token the parent pokes just before the spawn is the one
@@ -153,6 +181,17 @@ rp = byte_at(rp, 32) // space
 rp = num_at(c, rp)
 rp = byte_at(rp, 10)
 gate_line(rp)
+
+// The kill proof (T4.6): the misbehaving child spawns first — its
+// line, then its fault, then the supervisor's loud report — and the
+// parent does NOT wait on it: a killed process never exited, so its
+// wait would block forever (the stated bound). The good child's
+// `born`/`wait 7` after the report is the survival proof.
+poke64(doomed_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { put(63) } // ? — the gate refused the spawn
+  (R.ok, _) -> {}
+}
 
 // The process proof (T4.4): spawn a child — it re-enters this top
 // level, finds the token, prints its line, and exits 7 — then wait
