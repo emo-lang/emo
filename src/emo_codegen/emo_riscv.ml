@@ -2049,6 +2049,19 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         (fun (b : Emo_ir.branch) ->
           let l_next = fresh_label env "skip" in
           emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
+          (* accepted by the pattern: the message crosses heaps now —
+             the copy-out (T5.2) lands it in this process's own arena
+             before any binding reads a word of it, because the
+             sender's arena reclaims the moment this receive clears
+             the last pin. The sender ring decides what is a value: a
+             gate request (the kernel's raw word) rides as-is. A guard
+             that still fails wastes the copy's quota and nothing else;
+             the pin holds and the scan continues over the copy, which
+             answers exactly as the snapshot would. *)
+          put env "    ld a0, %d(sp)\n" msg_slot;
+          put env "    mv a1, s0\n";
+          call_runtime env "emo_copy_out_at";
+          put env "    sd a0, %d(sp)\n" msg_slot;
           rec_pattern_bind env msg_slot b.Emo_ir.pattern;
           (match b.Emo_ir.guard with
           | Some g ->
@@ -2514,6 +2527,8 @@ emo_runtime_init:
     sd t0, 576(t1)          # the root's arena cursor
     la t0, emo_heap_end
     sd t0, 584(t1)          # and its end
+    sd zero, 592(t1)        # nothing sent; the root's arena is never
+    sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
     ret
 
     .globl emo_alloc
@@ -4494,7 +4509,7 @@ emo_atomic_mtbl:
 # message its patterns accept, and parks on no match; the root exiting
 # ends the program; a switch with nobody runnable is the loud deadlock.
 #
-# Slot layout (stride 74 words = 592 bytes): 0 the saved sp, 8 the pid,
+# Slot layout (stride 108 words = 864 bytes): 0 the saved sp, 8 the pid,
 # 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
 # 24 the mailbox head, 32 the mailbox length, 40 the process's own
 # priority, 48 its effective priority, 56 its CPU quota, 64.. the
@@ -4502,9 +4517,14 @@ emo_atomic_mtbl:
 # messages carry (entry i of each ring belongs to the same message),
 # 576 the arena cursor and 584 the arena end (T5.1 — the process's own
 # bump heap: the root's is the whole image heap, a child's its 64 KiB
-# carve, and emo_alloc charges whoever is running). A slot never
-# returns to free — a pid is unique for the whole run, so a send to a
-# dead pid is dropped, never redirected to a new occupant.
+# block, and emo_alloc charges whoever is running), 592 the count of
+# sent messages still queued somewhere — each one pins the sender's
+# arena until a receive copies it out — 600 the claimed flag (1 = the
+# arena is this process's; 0 = reclaimed to the pool, or never claimed,
+# as the root's never is), and 608.. the 32-word ring of the senders'
+# slots (a gate request posts a 0 there: no sender, nothing pinned).
+# A slot never returns to free — a pid is unique for the whole run, so
+# a send to a dead pid is dropped, never redirected to a new occupant.
 #
 # The scheduler's policy (EmoOS T3.4): dispatch is round-robin — the
 # run queue is a FIFO ring and emo_schedule pops its head. The priority
@@ -4667,7 +4687,7 @@ emo_deadlock:
 .Ldl_scan:
     li t2, 64
     bgeu t1, t2, emo_fail_blocked
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4799,7 +4819,7 @@ emo_sched_wake_console:
 .Lwake_scan:
     li t2, 64
     bgeu t1, t2, .Lwake_none
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4820,6 +4840,32 @@ emo_sched_wake_console:
     addi sp, sp, 16
     ret
 
+# emo_arena_reap: a0 = the slot. A done process whose arena nothing
+# pins returns its 64 KiB block to the pool (T5.2): the state is done,
+# the arena still claimed, and no message it sent still waits in a
+# mailbox — each queued snapshot holds the count above zero until its
+# receiver has copied the message out. A live process, a root (never
+# claimed), and an already-reclaimed arena all simply return. The
+# callers run masked.
+    .globl emo_arena_reap
+emo_arena_reap:
+    ld t0, 16(a0)
+    li t1, 3
+    bne t0, t1, 1f              # only a done process reclaims
+    ld t0, 600(a0)
+    beqz t0, 1f                 # nothing claimed: the root, or taken back
+    ld t0, 592(a0)
+    bnez t0, 1f                 # a queued message still pins the arena
+    ld t1, 584(a0)
+    li t2, 65536
+    sub t1, t1, t2              # the block's base
+    la t3, emo_arena_pool
+    ld t4, 0(t3)
+    sd t4, 0(t1)                # the block's first word becomes the link
+    sd t1, 0(t3)                # and the block the pool's head
+    sd zero, 600(a0)            # claimed no more
+1:  ret
+
 # emo_process_done: the entry thunk's return address — a spawned
 # process that falls off its body lands here and never comes back. The
 # root never does: its return goes to the boot stub, and the program
@@ -4831,6 +4877,8 @@ emo_process_done:
     ld t1, 0(t0)
     li t2, 3
     sd t2, 16(t1)
+    mv a0, t1
+    call emo_arena_reap         # nothing queued: the arena goes home now
     j emo_schedule
 
 # emo_spawn: a0 = the entry thunk, a1 = the argument count, a2 = the
@@ -4852,7 +4900,7 @@ emo_spawn:
     li t2, 64
 .Lspawn_scan:
     bgeu t1, t2, .Lspawn_exhausted
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4887,14 +4935,25 @@ emo_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
-    # the child's arena (T5.1): a 64 KiB carve from the root's arena —
-    # its top 64 KiB, the end closing above it. The root's cursor never
-    # moves (its existing blocks stay below), its end drops to the
-    # carve's base, and the child's arena is exactly the range the root
-    # gave up: the root can never allocate into a child's arena, and a
-    # child's exhaustion is its own. The remainder gone is the machine's
-    # loud end, the process table's ceiling in memory. (t1 — the slot
-    # index the stack build reads below — is not touched.)
+    # the child's arena (T5.1/T5.2): a block from the pool first — a
+    # dead process's arena, returned on death — a fresh 64 KiB carve
+    # from the root's arena top only when the pool is empty. The
+    # root's cursor never moves and its end closes above the carve, so
+    # the root can never allocate into a child's arena, and a child's
+    # exhaustion is its own. The remainder gone is the machine's loud
+    # end, the process table's ceiling in memory. (t1 — the slot index
+    # the stack build reads below — is not touched.)
+    la t4, emo_arena_pool
+    ld t0, 0(t4)            # the pool's head
+    beqz t0, .Lspawn_carve
+    ld t5, 0(t0)            # the next block
+    sd t5, 0(t4)            # pop
+    li t6, 65536
+    add t2, t0, t6
+    sd t0, 576(t3)          # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lspawn_arena_taken
+.Lspawn_carve:
     la t4, emo_procs
     ld t0, 576(t4)          # the root's arena cursor
     ld t5, 584(t4)          # and its end
@@ -4904,6 +4963,10 @@ emo_spawn:
     sd t2, 584(t4)          # the root's end closes above the carve
     sd t2, 576(t3)          # the child allocates from the carve's base
     sd t5, 584(t3)          # to the end the root gave up
+.Lspawn_arena_taken:
+    li t5, 1
+    sd t5, 600(t3)          # the arena is claimed — reclaimed on death
+    sd zero, 592(t3)        # and nothing it sends is outstanding yet
     # the child's stack: one switch-shaped frame whose ra is the entry
     # thunk, the arguments just above it. The spare word records the
     # mask state the switch-in restores: the child is born outside any
@@ -4965,7 +5028,7 @@ emo_send:
     li t3, 64
 .Lsend_scan:
     bgeu t2, t3, .Lsend_noproc
-    li t4, 592
+    li t4, 864
     mul t5, t2, t4
     add t5, t1, t5
     ld t6, 8(t5)
@@ -5007,6 +5070,20 @@ emo_send:
     sd t5, 0(t6)            # rides with the message
     addi t1, t1, 1
     sd t1, 32(t4)
+    # the sender rides too (T5.2): its slot in the third ring, and its
+    # count of queued messages grows — the snapshot lives in the
+    # sender's arena and pins it there until the receive copies the
+    # message into its own heap and the remove lets the pin go
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    addi t6, t3, 608
+    add t6, t4, t6
+    sd t5, 0(t6)            # the sender's slot
+    ld t6, 592(t5)
+    addi t6, t6, 1
+    sd t6, 592(t5)
+    ld t5, 48(t5)           # the sender's effective priority, again for
+                            # the donation below
     # the donation: the target's effective priority rises to the
     # sender's when the sender outranks it
     ld t6, 48(t4)
@@ -5059,17 +5136,30 @@ emo_mb_at:                      # a0 = the scan index; a0 = the word
     ld a0, 0(t0)
     ret
 
-# emo_mb_remove: a0 = the scan index; the message leaves both rings —
-# the entries after it shift down together — and the effective
+# emo_mb_remove: a0 = the scan index; the message leaves all three
+# rings — the entries after it shift down together — and the effective
 # priority re-forms from what remains: the process's own, or the
-# highest priority a queued message still carries.
+# highest priority a queued message still carries. Then the sender's
+# pin lets go (T5.2): the receive site copied the message into this
+# process's own heap before calling here, so the sender's count of
+# queued messages drops, and a sender already done whose last queued
+# message this was returns its arena to the pool. A gate request's
+# sender word is 0: nothing pinned, nothing to unpin. Masked: the
+# sender's count and the pool are shared words.
     .globl emo_mb_remove
 emo_mb_remove:
+    csrci sstatus, 2
+    addi sp, sp, -32
+    sd ra, 0(sp)
     la t0, emo_cur_slot
     ld t0, 0(t0)
     ld t1, 24(t0)
     add t1, t1, a0
     andi t1, t1, 31             # the position being removed
+    slli a1, t1, 3
+    add a1, t0, a1
+    ld a1, 608(a1)
+    sd a1, 8(sp)                # the removed message's sender slot
     ld t3, 32(t0)
     mv t2, a0
 .Lmb_rm_loop:
@@ -5080,11 +5170,13 @@ emo_mb_remove:
     slli a1, t5, 3
     add a1, t0, a1
     ld a2, 64(a1)               # the next message
-    ld a3, 320(a1)              # and the priority it carries
+    ld a3, 320(a1)              # the priority it carries
+    ld a4, 608(a1)              # and its sender
     slli a1, t1, 3
     add a1, t0, a1
-    sd a2, 64(a1)               # both move down one
+    sd a2, 64(a1)               # all three move down one
     sd a3, 320(a1)
+    sd a4, 608(a1)
     mv t1, t5
     addi t2, t2, 1
     j .Lmb_rm_loop
@@ -5109,6 +5201,20 @@ emo_mb_remove:
     bnez t2, .Lmb_rm_scan
 .Lmb_rm_eff:
     sd t4, 48(t0)
+    ld a0, 8(sp)
+    beqz a0, .Lmb_rm_ret        # a gate request: no sender to unpin
+    la t0, emo_copy_shared
+    ld t1, 0(t0)
+    bnez t1, .Lmb_rm_ret        # an Atomic crossed shared: the sender's
+                                # arena stays pinned under it, for good
+    ld t0, 592(a0)
+    addi t0, t0, -1
+    sd t0, 592(a0)              # one queued message fewer
+    call emo_arena_reap         # a done sender with nothing left queued
+.Lmb_rm_ret:
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    csrsi sstatus, 2
     ret
 
 # ---- The gate's service side (EmoOS T4.4) ----
@@ -5147,7 +5253,7 @@ emo_gate_post:
     li t2, 64
 .Lgp_scan:
     bgeu t1, t2, .Lgp_fail
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5178,6 +5284,10 @@ emo_gate_post:
     addi t6, t3, 320
     add t6, t4, t6
     sd t5, 0(t6)
+    addi t6, t3, 608
+    add t6, t4, t6
+    sd zero, 0(t6)              # a gate request has no sender (T5.2):
+                                # nothing pinned, nothing to unpin
     addi t1, t1, 1
     sd t1, 32(t4)
     ld t5, 16(t4)
@@ -5214,7 +5324,7 @@ emo_gate_reply:
     li t2, 64
 .Lgr_scan:
     bgeu t1, t2, .Lgr_fail
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5261,7 +5371,7 @@ emo_user_spawn:
     li t2, 64
 .Lus_scan:
     bgeu t1, t2, .Lus_fail
-    li t3, 592
+    li t3, 864
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -5293,11 +5403,23 @@ emo_user_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
-    # the child's arena (T5.1), as any green child's: a 64 KiB carve
-    # from the root's arena — its top 64 KiB, the end closing above it.
-    # The user image's allocator charges it to the running pass through
-    # the cells its stub parked (the trap shim's save and restore). The
-    # frame build reads t1 below; the carve leaves it alone.
+    # the child's arena (T5.1/T5.2), as any green child's: a block
+    # from the pool first, a fresh 64 KiB carve from the root's arena
+    # top only when the pool is empty. The user image's allocator
+    # charges it to the running pass through the cells its stub parked
+    # (the trap shim's save and restore). The frame build reads t1
+    # below; the carve leaves it alone.
+    la t4, emo_arena_pool
+    ld t0, 0(t4)                # the pool's head
+    beqz t0, .Lus_carve
+    ld t5, 0(t0)                # the next block
+    sd t5, 0(t4)                # pop
+    li t6, 65536
+    add t2, t0, t6
+    sd t0, 576(t3)              # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lus_arena_taken
+.Lus_carve:
     la t4, emo_procs
     ld t0, 576(t4)              # the root's arena cursor
     ld t5, 584(t4)              # and its end
@@ -5307,6 +5429,10 @@ emo_user_spawn:
     sd t2, 584(t4)              # the root's end closes above the carve
     sd t2, 576(t3)              # the child allocates from the carve's base
     sd t5, 584(t3)              # to the end the root gave up
+.Lus_arena_taken:
+    li t5, 1
+    sd t5, 600(t3)              # the arena is claimed — reclaimed on death
+    sd zero, 592(t3)            # and nothing it sends is outstanding yet
     ld t5, 16(sp)               # the stack top
     addi t4, t5, -544           # the synthetic trap frame
     mv a0, t4
@@ -5447,6 +5573,140 @@ emo_copy_deep:
     ld ra, 0(sp)
     addi sp, sp, 64
     ret
+
+# emo_copy_out: a0 = a dynamic value; a0 = the forced deep copy — the
+# receive's copy-out (T5.2), landing the message in the receiver's own
+# arena. Where the send's snapshot shares what is immutable (an Int64
+# or Float64 cell, a String, a closure, a Pid), the copy-out clones
+# them: the sender's arena reclaims the moment this receive clears the
+# last pin, and a shared cell would dangle inside it. Only an Atomic
+# stays shared — the declared exception — and a shared Atomic never
+# unpins: the remove's count skips it, so the sender's arena waits
+# forever rather than dangling under it.
+    .globl emo_copy_out
+emo_copy_out:
+    addi sp, sp, -64
+    sd ra, 0(sp)                # 0 ra
+    sd a0, 8(sp)                # 8 the word
+    andi t0, a0, 1
+    bnez t0, .Lco_asis          # a Bool immediate
+    andi t0, a0, 31
+    sd t0, 48(sp)               # 48 the tag, back onto the fresh block
+    li t1, 16
+    bne t0, t1, 2f
+    la t1, emo_copy_shared      # an Atomic (the shared cell): the
+    sd t0, 0(t1)                # receive keeps the sender's arena pinned
+    j .Lco_asis
+2:  li t1, 4
+    beq t0, t1, .Lco_string
+    li t1, 10
+    beq t0, t1, .Lco_box
+    # 0, 2, 6, 8, 12, 14, 18: the block clone — verbatim header and
+    # first word, every further word recursed (an Int64 cell, a Float64
+    # cell, and a Pid all carry header 1, so the clone is the fresh
+    # cell they need)
+    andi t2, a0, -32
+    sd t2, 24(sp)               # 24 the source block
+    ld t3, 0(t2)
+    sd t3, 32(sp)               # 32 the payload word count
+    addi t3, t3, 1              # the words end at block word hdr, so the
+    sd t3, 32(sp)               #   bound is one past it (hdr counts payload
+    mv a0, t3                   #   words 1..hdr; the elements are 2..hdr)
+    call emo_alloc
+    sd a0, 16(sp)               # 16 the new word
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 0(t2)
+    sd t5, 0(t4)                # the header, verbatim
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the first word (length, code, class)
+    li t6, 2
+    sd t6, 40(sp)               # 40 the word index
+.Lco_loop:
+    ld t2, 24(sp)
+    ld t3, 32(sp)
+    ld t6, 40(sp)
+    bgeu t6, t3, .Lco_wrap
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a0, 0(t5)
+    call emo_copy_out
+    ld t4, 16(sp)
+    andi t4, t4, -32
+    ld t6, 40(sp)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a0, 0(t5)
+    addi t6, t6, 1
+    sd t6, 40(sp)
+    j .Lco_loop
+.Lco_wrap:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2               # the fresh block wears the original's tag
+    j .Lco_ret
+.Lco_string:
+    # a String's payload is bytes, not values: the clone is verbatim
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld t3, 0(t2)
+    addi a0, t3, 1              # header + every payload word
+    call emo_alloc
+    sd a0, 16(sp)
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t3, 0(t2)
+    addi t3, t3, 1
+    li t6, 0
+1:  bgeu t6, t3, .Lco_wraps
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a1, 0(t5)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a1, 0(t5)
+    addi t6, t6, 1
+    j 1b
+.Lco_wraps:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2
+    j .Lco_ret
+.Lco_box:
+    # a Box's payload rides in its first word: unbox, recurse, rebox
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_copy_out
+    call emo_box_new
+    j .Lco_ret
+.Lco_asis:
+.Lco_ret:
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    ret
+
+# emo_copy_out_at: a0 = the staged message word, a1 = its scan index
+# in the current mailbox; a0 = the word the receive binds. The sender
+# ring decides: a message a process sent carries that process's slot
+# and crosses into this arena through emo_copy_out; a gate request
+# carries 0 — the kernel posted a raw word, `op << 32 | pid`, not a
+# value, and no tag test can tell the exit's (op 0: the bare pid) from
+# a pointer — so it rides as-is, as the services expect it.
+    .globl emo_copy_out_at
+emo_copy_out_at:
+    la t0, emo_copy_shared
+    sd zero, 0(t0)              # no Atomic crossed yet; the copy says if one does
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a1
+    andi t1, t1, 31
+    slli t1, t1, 3
+    add t1, t0, t1
+    ld t1, 608(t1)              # the sender's slot, or 0
+    beqz t1, 1f
+    j emo_copy_out              # the copy lands in this arena
+1:  ret
 |asm}
 
 (* The allocator's exhaustion tail, per profile (EmoOS T5.1). A kernel
@@ -5491,6 +5751,9 @@ emo_arena_gone:
     addi sp, sp, 16
     li t5, 3
     sd t5, 16(s0)           # done — the machine continues without it
+    mv a0, s0
+    call emo_arena_reap     # and its arena goes home unless a queued
+                            # message still pins it (T5.2)
     j emo_sched_pick
 emo_heap_gone:
     la a0, msg_heap
@@ -5642,18 +5905,20 @@ emo_heap_end:
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
 #
-# 64 slots at 592 bytes (context word, pid, state, mailbox head and
+# 64 slots at 864 bytes (context word, pid, state, mailbox head and
 # length, the own and effective priorities and the quota, a 32-word
 # message ring, the 32-word ring of the priorities the messages carry,
-# and the arena cursor and end — T5.1's per-process bump heaps), one
-# 64 KiB stack per slot, and the run-queue ring. A slot never returns
-# to free — pids stay unique for the whole run — so 64 is the bound on
-# spawns ever taken, loud at the ceiling. Everything here is NOBITS:
-# the image carries none of it.
+# the arena cursor and end — T5.1's per-process bump heaps — the count
+# of queued messages pinning the arena and the claimed flag, and the
+# 32-word ring of the senders' slots — T5.2's reclamation), one 64 KiB
+# stack per slot, and the run-queue ring. A slot never returns to free
+# — pids stay unique for the whole run — so 64 is the bound on spawns
+# ever taken, loud at the ceiling. Everything here is NOBITS: the
+# image carries none of it.
 
     .align 8
 emo_procs:
-    .zero 37888
+    .zero 55296
 emo_pstacks:
     .zero 4194304
     .globl emo_runq
@@ -5669,6 +5934,24 @@ emo_pid_counter:
     .zero 8
     .globl emo_cur_slot
 emo_cur_slot:
+    .zero 8
+
+# ---- The arena pool (EmoOS T5.2) ----
+#
+# The freelist of 64 KiB blocks a dead process's arena returns to, and
+# the first place a spawn claims one; a block's first word is the next
+# link while it waits. Empty, the spawn carves a fresh block from the
+# root's arena top (T5.1). The frame allocator (T5.3) generalizes this
+# to stacks and page tables.
+
+emo_arena_pool:
+    .zero 8
+
+# The copy-out's shared-cell flag (T5.2): emo_copy_out_at clears it,
+# emo_copy_out sets it when an Atomic crosses as the shared cell it is,
+# and emo_mb_remove reads it — a shared Atomic keeps the sender's
+# arena pinned for good rather than dangling under it.
+emo_copy_shared:
     .zero 8
 
 # ---- The console hook (EmoOS T3.5) ----

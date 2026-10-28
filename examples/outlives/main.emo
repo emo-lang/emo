@@ -1,0 +1,26 @@
+// The message outlives its sender (EmoOS T5.2): what arrives is the
+// whole value, not a pointer into whoever sent it. The send's
+// snapshot lives in the sender's arena and pins it there; the
+// receive's copy-out lands a fresh copy in the receiver's own heap
+// and the remove lets the pin go — so the message's correctness never
+// depends on the sender still running, and a sender that dies after
+// the fact leaves nothing behind but a block for the pool.
+//
+//   emo build main.emo --target riscv64
+
+// The sender: one boxed message, then silence — the body falls off
+// and the process is done, its arena reclaimed, the message already
+// safe in the receiver's heap.
+def sender(boss Pid) {
+  boss <- Box.new(42)
+}
+
+const me = self_pid()
+do sender(me)
+// The spawn does not yield, so this receive parks first; the send
+// wakes this process ahead of the sender, the copy-out delivers the
+// box, and the sender ends with nothing left queued.
+receive {
+  box -> { println(box.read()) }
+}
+println("outlived")

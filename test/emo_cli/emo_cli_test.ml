@@ -212,6 +212,7 @@ let beyond_the_interpreter =
     "processes";
     "parity_metal";
     "arena_gone";
+    "outlives";
   ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
@@ -3046,6 +3047,7 @@ let riscv64_examples_tests =
       "native_image";
       "processes";
       "arena_gone";
+      "outlives";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

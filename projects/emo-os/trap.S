@@ -279,6 +279,9 @@ emo_os_trap_shim:
     call emo_main__fault_report
     li t3, 3
     sd t3, 16(s0)            # done
+    mv a0, s0
+    call emo_arena_reap      # the arena goes home unless one of its
+                             # queued messages still pins it (T5.2)
     ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
@@ -327,6 +330,9 @@ emo_os_trap_shim:
     call emo_main__heap_report
     li t3, 3
     sd t3, 16(s0)               # done
+    mv a0, s0
+    call emo_arena_reap         # the arena goes home unless one of its
+                                # queued messages still pins it (T5.2)
     ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
@@ -404,6 +410,9 @@ emo_os_trap_shim:
     ld t0, 0(t0)             # the exiting caller's slot
     li t3, 3
     sd t3, 16(t0)            # done
+    mv a0, t0
+    call emo_arena_reap      # the arena goes home unless one of its
+                             # queued messages still pins it (T5.2)
     j emo_sched_pick
 .Ltrap_exit:
     li a7, 8
