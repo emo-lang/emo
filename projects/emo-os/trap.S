@@ -16,6 +16,14 @@
 # fixed words; the tick ring is preallocated at a fixed address the
 # kernel's linker script owns; ack (re-arm), enqueue (the ring), wake
 # (the scheduler: the quota step, then the preemption).
+#
+# Addresses (T6.1): the kernel runs in Sv39's high half, so every fixed
+# address the shim names — the devices, the handoff cells, the rings by
+# symbol — is the physical one plus EMO_KOFF. The user cells at
+# 0x87fff000 stay physical: they are the user image's, read and written
+# through the identity alias the kernel's table keeps for U-mode (SUM).
+
+    .set EMO_KOFF, 0xFFFFFFC000000000
 
     .section .text
 
@@ -65,13 +73,13 @@ emo_os_trap_init:
     # bit, threshold zero (OpenSBI leaves context 1's threshold at 7 —
     # masked — the kernel owns the context now). The device side of the
     # receive interrupt (IER bit 0) is the driver's own `uart_init`.
-    li t0, 0x0c000028       # priority[10]
+    li t0, EMO_KOFF + 0x0c000028  # priority[10]
     li t1, 1
     sw t1, 0(t0)
-    li t0, 0x0c002080       # enable[context 1] word 0
+    li t0, EMO_KOFF + 0x0c002080  # enable[context 1] word 0
     li t1, 1024             # 1 << 10
     sw t1, 0(t0)
-    li t0, 0x0c201000       # threshold[context 1]
+    li t0, EMO_KOFF + 0x0c201000  # threshold[context 1]
     sw zero, 0(t0)
     ld ra, 0(sp)
     addi sp, sp, 16
@@ -204,7 +212,10 @@ emo_os_trap_shim:
     # spawn carve reads them — so the boot pass's progress lands in
     # the boot pair below. A trap from the kernel's own code saves
     # nothing: the kernel's processes allocate against their own
-    # slot's arena directly.
+    # slot's arena directly. The slot's words are kernel addresses
+    # (T6.1), the cells the user's — the pass runs on the identity
+    # alias — so the cursor crosses with the offset added; the boot
+    # pass's pair round-trips the user's values as they are.
     ld t0, 144(sp)
     srli t0, t0, 8
     andi t0, t0, 1           # sstatus.SPP: 0 = the trap came from U-mode
@@ -217,7 +228,9 @@ emo_os_trap_shim:
     ld t3, 8(t2)             # the leaver's pid
     li t1, 1
     beq t3, t1, .Larena_boot
-    ld t1, 0(t0)             # the running pass's cursor
+    ld t1, 0(t0)             # the running pass's cursor, the user's address
+    li t4, EMO_KOFF
+    add t1, t1, t4           # the kernel's
     sd t1, 576(t2)
     j .Larena_saved
 .Larena_boot:
@@ -300,7 +313,7 @@ emo_os_trap_shim:
     la t2, emo_cur_slot
     ld t2, 0(t2)
     ld t2, 8(t2)             # the caller's pid
-    li t3, 0x87002110        # the caller-pid cell (+272)
+    li t3, EMO_KOFF + 0x87002110  # the caller-pid cell (+272)
     sd t2, 0(t3)
     ld a0, 136(sp)
     ld a1, 80(sp)
@@ -366,10 +379,10 @@ emo_os_trap_shim:
     bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
     beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
 .Lroute_cons:
-    li a0, 0x870020f0        # the console service's pid cell (+240)
+    li a0, EMO_KOFF + 0x870020f0  # the console service's pid cell (+240)
     j .Lroute_post
 .Lroute_proc:
-    li a0, 0x870020f8        # the process service's pid cell (+248)
+    li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
 .Lroute_post:
     ld a0, 0(a0)             # the service's raw pid
     slli a1, t6, 32          # the request word: op << 32 | the caller's
@@ -401,7 +414,7 @@ emo_os_trap_shim:
     # frame stays where the exit left it, on the dead process's own
     # stack, for the reclamation (T5) to take back — the stack block
     # and the arena.
-    li a0, 0x870020f8        # the process service's pid cell (+248)
+    li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
     ld a0, 0(a0)             # the service's raw pid
     slli a1, t6, 32          # the request word: op << 32 | the caller's
     la t2, emo_cur_slot      # pid — the record's subject rides with it
@@ -476,17 +489,17 @@ emo_os_trap_shim:
 emo_os_console_irq:
     addi sp, sp, -16
     sd ra, 0(sp)
-    li t0, 0x0c201004        # claim[context 1]
+    li t0, EMO_KOFF + 0x0c201004  # claim[context 1]
     lw a0, 0(t0)
     beqz a0, .Lcons_done     # a spurious claim: nothing to complete
     li t1, 10
     bne a0, t1, .Lcons_bad   # a device this kernel does not know
 .Lcons_drain:
-    li t0, 0x10000005        # the line-status register
+    li t0, EMO_KOFF + 0x10000005  # the line-status register
     lbu t1, 0(t0)
     andi t1, t1, 1           # data ready?
     beqz t1, .Lcons_wake
-    li t0, 0x10000000        # the receive buffer; the read clears DR
+    li t0, EMO_KOFF + 0x10000000  # the receive buffer; the read clears DR
     lbu t2, 0(t0)
     la t3, emo_os_in_prod
     ld t4, 0(t3)
@@ -505,7 +518,7 @@ emo_os_console_irq:
     j .Lcons_drain
 .Lcons_wake:
     call emo_sched_wake_console
-    li t0, 0x0c201004
+    li t0, EMO_KOFF + 0x0c201004
     li t1, 10
     sw t1, 0(t0)             # complete the claim
 .Lcons_done:
@@ -530,7 +543,8 @@ emo_os_console_irq:
 # process's arena to the user image — cursor and limit through the
 # cells the user stub parked — so the user image's own allocator
 # charges the pass that is about to run. A frame returning to the
-# kernel restores nothing.
+# kernel restores nothing. The slot's words are kernel addresses, the
+# cells take the user's (T6.1): the offset comes off on the way down.
     .globl emo_os_trap_resume
 emo_os_trap_resume:
     ld t0, -400(sp)
@@ -545,11 +559,14 @@ emo_os_trap_resume:
     ld t2, 8(t1)             # the passer's pid
     li t3, 1
     beq t2, t3, .Larena_boot_in
+    li t4, EMO_KOFF
     ld t2, 576(t1)
-    sd t2, 0(t0)             # the passer's cursor becomes the arena's
+    sub t2, t2, t4           # the passer's cursor, as the user addresses it,
+    sd t2, 0(t0)             # becomes the arena's
     li t0, 0x87fff010
     ld t0, 0(t0)             # and the end word beside it
     ld t2, 584(t1)
+    sub t2, t2, t4
     sd t2, 0(t0)
     j .Larena_ready
 .Larena_boot_in:
@@ -599,9 +616,11 @@ emo_os_trap_resume:
     fld fa6, -232(sp)
     fld fa7, -224(sp)
     ld t0, -400(sp)
-    csrw sstatus, t0
-    ld t0, -392(sp)
-    csrw sepc, t0
+    li t1, 0x40000
+    or t0, t0, t1            # SUM is the kernel's, not the frame's (T6.1):
+    csrw sstatus, t0         # every return keeps the user's pages reachable
+    ld t0, -392(sp)          # for the next trap's frame — a spawn's synthetic
+    csrw sepc, t0            # frame carries a bare sstatus
     ld t0, -520(sp)
     ld t1, -512(sp)
     sret
@@ -743,3 +762,15 @@ emo_os_frames_given:
     .globl emo_os_frames_claimed
 emo_os_frames_claimed:
     .zero 64
+# The frame freelist (T6.1), at +128: the head, the count, and the
+# blocks split so far — the page tables' 4 KiB unit, sixteen off a
+# block at a time.
+    .globl emo_os_frames_frame_head
+emo_os_frames_frame_head:
+    .zero 8
+    .globl emo_os_frames_frame_free
+emo_os_frames_frame_free:
+    .zero 8
+    .globl emo_os_frames_frame_split
+emo_os_frames_frame_split:
+    .zero 8

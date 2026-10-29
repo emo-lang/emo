@@ -2,7 +2,7 @@
 
 An operating system written in Emo — kernel, shell, and user programs in one language, from power-on to prompt. EmoOS is an xv6-class research and teaching system: complete enough to run real programs on real (or simulated) RISC-V hardware, small enough to read end to end. It is the proof of Emo's single-language closure, and the hardest stress test the language undergoes.
 
-Status: pre-alpha. The kernel boots under QEMU, drives its own 16550A, and runs a user program in U-mode behind the ecall gate — spawn, wait, console I/O through two service processes, a misbehaving program killed alone, every process's allocations charged to its own arena quota, and every process's memory a block of the kernel's frame allocator, taken at the spawn and back in the pool at the death — a runaway burns its own quota alone while the processes around it keep spending theirs across its death; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
+Status: pre-alpha. The kernel boots under QEMU, drives its own 16550A, and runs a user program in U-mode behind the ecall gate — spawn, wait, console I/O through two service processes, a misbehaving program killed alone, every process's allocations charged to its own arena quota, and every process's memory a block of the kernel's frame allocator, taken at the spawn and back in the pool at the death — a runaway burns its own quota alone while the processes around it keep spending theirs across its death; the kernel itself runs under Sv39 in the high half of the address space, on a page table it builds for itself in Emo before its first line; the firmware console keeps only poweroff. The tracker is [`docs/TASKS.md`](docs/TASKS.md).
 
 Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
@@ -33,6 +33,7 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 - **Privilege first, address space later.** User programs enter U-mode behind the ecall gate before paging exists; SV39 closes the window afterwards.
 - **The weak-isolation window is documented, not hidden.** From the user profile's landing until SV39, user and kernel share one flat physical map: U-mode cannot execute privileged instructions — the ecall gate is the only sanctioned crossing — but its loads and stores are untranslated, so kernel RAM, other processes' memory, and the devices are all inside a wild address's reach, and the raw builtins are admitted by target, not profile. What defends the kernel meanwhile: the gate's supervisor checks on every pointer argument, the copy semantics, and — from Step 5 — per-process quotas. The full account of what can and cannot be reached: [`docs/isolation.md`](docs/isolation.md).
 - **SV39 (M5) buys:** per-process address spaces, wild writes killed by the MMU instead of absorbed by the kernel, hardware enforcement behind every service boundary, and one fixed load address for every user ELF.
+- **The kernel lives in the high half.** Every kernel address is the physical one plus `0xffffffc000000000`; the kernel builds its own Sv39 table in Emo at boot — text RX, rodata R, the rest of the RAM RW, the two devices it drives — and runs paged from before its first line, the lower half left whole for the user. Until the per-process tables land, the window is two gigapage entries in that table. The layout: [`docs/sv39.md`](docs/sv39.md).
 
 ## Language primitives the kernel stands on
 
@@ -79,6 +80,7 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 
 ## Related documents
 
+- [`docs/sv39.md`](docs/sv39.md) — the kernel's high-half layout: the two halves, the kernel's table, the two aliases, the boot.
 - [`docs/atomics.md`](../../docs/atomics.md) — the atomic memory model: sequential consistency only, the op set, the per-target matrix, the data-race semantics.
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — the real-time boundary, in the Emo tree.
 - [`docs/xv6.md`](../../docs/xv6.md) — the xv6-class feasibility assessment: what Emo replaces, what stays assembly.

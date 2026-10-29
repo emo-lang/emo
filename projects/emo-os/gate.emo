@@ -22,8 +22,9 @@
 // answer convention, and the reason codes are frozen from here.
 
 // The handoff page (the kernel's link.ld gives the .emo_user section
-// this fixed address). The segment count and table the loader parked;
-// the request cells the gate fills for the service it routes to; the
+// this fixed address — a kernel address since T6.1, the physical one
+// plus koff). The segment count and table the loader parked; the
+// request cells the gate fills for the service it routes to; the
 // caller-pid cell the shim fills at every U-mode ecall. The cells are
 // per service — a console transaction and a process transaction can
 // sit parked at the same time (a spawned child's write beside its
@@ -32,14 +33,17 @@
 // consumes them. The spawned process's entry lives in the user image's
 // own cell (the user stub parks its emo_program there — the one
 // address no ELF header carries), at the fixed address the user
-// profile's linker script gives it.
-const seg_count_addr = 0x87002018
-const seg_table = 0x87002020
-const handoff_arga = 0x870020e0
-const handoff_argb = 0x870020e8
-const proc_arga = 0x870021b0
-const proc_argb = 0x870021b8
-const handoff_caller = 0x87002110
+// profile's linker script gives it. The pointer arguments the checks
+// judge are the user's own addresses, as the segment table records
+// them.
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const seg_count_addr = koff + 0x87002018
+const seg_table = koff + 0x87002020
+const handoff_arga = koff + 0x870020e0
+const handoff_argb = koff + 0x870020e8
+const proc_arga = koff + 0x870021b0
+const proc_argb = koff + 0x870021b8
+const handoff_caller = koff + 0x87002110
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1

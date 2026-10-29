@@ -6,9 +6,14 @@ while it stands, user programs and the kernel share one flat physical
 address space, and instruction privilege is the only line the hardware
 draws between them. Fixed as of T4.5 (2026-10-27): this document is
 the window's standing record, so the reach is a matter of account, not
-folklore.
+folklore. Updated for T6.1 (2026-10-29): the kernel runs under Sv39 in
+the high half, and the window is now a mapping — two entries in the
+kernel's own table, see below — instead of the absence of one. The
+reach is unchanged; the per-process tables (T6.2) are what close it.
 
-Chinese translation: [`isolation.zh-CN.md`](isolation.zh-CN.md).
+Chinese translation: [`isolation.zh-CN.md`](isolation.zh-CN.md). The
+kernel's address-space layout is its own document:
+[`sv39.md`](sv39.md).
 
 ## The route
 
@@ -30,23 +35,34 @@ RAM holds, and the MMIO beside it:
 | --- | --- |
 | `0x80000000`–`0x80200000` | OpenSBI (M-mode) — the one region PMP locks |
 | `0x80200000` | the kernel image — text, rodata, data, and the `.bss` holding the 96 MiB value heap (the root's arena), the 64 process slots, and the 64 × 64 KiB green-process stacks |
-| the image's end–`0x87000000` | the frame allocator's region (T5.3) — the free RAM above the image, rounded up to a block, in 64 KiB blocks of sixteen 4 KiB frames: every spawned process's arena, every user process's stack, M5's page tables |
+| the image's end–`0x87000000` | the frame allocator's region (T5.3) — the free RAM above the image, rounded up to a block, in 64 KiB blocks of sixteen 4 KiB frames: every spawned process's arena, every user process's stack, the kernel's page tables (T6.1, one block split into frames) |
 | `0x87000000` | the tick ring (`.emo_tick`) |
 | `0x87001000` | the input ring (`.emo_in`) |
 | `0x87002000` | the user handoff page (`.emo_user`) — the embedded image's bounds, the staged entry, the segment table |
-| `0x87003000` | the frame allocator's page (`.emo_frames`) — the freelist head, the counts, the region's bounds, the claimed bitmap |
+| `0x87003000` | the frame allocator's page (`.emo_frames`) — the freelist head, the counts, the region's bounds, the claimed bitmap, the frame freelist |
+| `0x87004000` | the Sv39 page (`.emo_sv39`) — the kernel's root table, the live `satp` |
 | `0x87100000`–`0x88000000` | the user window — every user image links at its base |
 | `0x10000000`, `0x0c000000`, … | MMIO — the 16550A UART, the PLIC, the rest of `virt`'s devices |
 
+Since T6.1 the kernel reaches every row of this table at its physical
+address plus `0xffffffc000000000` — the high half, the layout in
+[`sv39.md`](sv39.md) — and the user reaches it at the physical address
+itself, through two gigapage entries in the kernel's table that alias
+the RAM (`0x80000000`–`0xc0000000`, RWX with U) and the first gigabyte
+of the MMIO (RW with U) at identity. The window is those two entries.
+
 ## What U-mode can reach
 
-- **Every load and store is untranslated.** Nothing sits between a
-  user address and the map: kernel text and data, the heap, the
-  scheduler's slot table, every process's stack, both rings, the
-  handoff page, other processes' memory, and the devices are all
-  inside a wild address's reach. A wild jump into kernel text even
-  executes — and stays in U-mode, because privilege rides the mode,
-  not the code.
+- **Every load and store reaches its physical address.** Untranslated
+  before T6.1; since T6.1 translated through the window's two gigapage
+  entries to the same byte — nothing sits between a user address and
+  the map: kernel text and data, the heap, the scheduler's slot table,
+  every process's stack, the rings, the handoff page, the page tables
+  themselves, other processes' memory, and the devices are all inside
+  a wild address's reach. A wild jump into kernel text even executes —
+  and stays in U-mode, because privilege rides the mode, not the code.
+  The kernel's own mappings of the same bytes carry no U bit, but that
+  protects nothing while the alias stands.
 - **The raw family is admitted by target, not profile.** `peek`/`poke`,
   `ecall`, and `device_wait` are legal spellings in a user image, by
   the admission's own principle — a target admits the raw family iff
@@ -115,9 +131,11 @@ RAM holds, and the MMIO beside it:
   so the kernel's books, not a process's word, say what memory each
   process holds. The window still lets a wild store reach outside
   them.
-- **What does not defend:** the MMU (absent pre-SV39), PMP for S-mode
-  memory (above), and — the honest limit of the kill — any damage a
-  wild store did before its process trapped.
+- **What does not defend:** the MMU — absent before T6.1, and since
+  T6.1 present but granting U-mode everything through the window's two
+  entries until the per-process tables (T6.2) — PMP for S-mode memory
+  (above), and — the honest limit of the kill — any damage a wild
+  store did before its process trapped.
 
 ## Why the window is accepted
 

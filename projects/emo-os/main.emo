@@ -7,16 +7,23 @@
 // console service (read/write) and the process service
 // (spawn/exit/wait). T5.3 puts every spawned pass's stack and arena on
 // the frame allocator (frames.emo) — the free RAM above this image in
-// 64 KiB blocks, taken at the spawn, given back at the death.
+// 64 KiB blocks, taken at the spawn, given back at the death. T6.1
+// moves the kernel into Sv39's high half: every address the kernel
+// reaches is the physical one plus koff, the user's addresses stay
+// physical (the identity alias the kernel's table keeps for U-mode
+// until T6.2), and the program's first lines check the live satp
+// against the table sv39.emo built.
 //
 //   emo build main.emo --target riscv64
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 
 // The registers the polled transmit path touches, byte-wide: the
 // transmit holding register at 0, the interrupt-enable register at 1,
 // the FIFO control at 2, the line control at 3, the line-status
 // register at 5 — bit 5 says the transmitter is empty (safe to
 // write), bit 0 says a received byte is waiting.
-const uart = 0x10000000
+const uart = koff + 0x10000000
 
 // The input ring (T3.7): the trap shim fills it from the UART's FIFO —
 // the producer cursor, the consumer cursor, then 128 one-byte entries,
@@ -24,14 +31,14 @@ const uart = 0x10000000
 // The trap shim is the only producer; the console service is the only
 // consumer; a full ring leaves the bytes in the FIFO and the line
 // re-raises.
-const in_prod = 0x87001000
-const in_cons = 0x87001008
-const in_ring = 0x87001010
+const in_prod = koff + 0x87001000
+const in_cons = koff + 0x87001008
+const in_ring = koff + 0x87001010
 
 // The tick ring (T3.6): the trap shim counts every timer interrupt
 // into it — the producer cursor, the consumer cursor, the dropped
 // count, then 64 entries.
-const tick_ring = 0x87000000
+const tick_ring = koff + 0x87000000
 
 // The handoff cells the services read and the boot flow fills (T4.4):
 // the services' raw pids (the gate posts by number), the request cells
@@ -39,21 +46,28 @@ const tick_ring = 0x87000000
 // and a process transaction can sit parked at the same time — and the
 // process service's exit table. A spawned pass's stack is a block of
 // the frame allocator (frames.emo, T5.3), taken by the process service
-// and given back by the runtime's reaper at the death.
-const console_svc_cell = 0x870020f0
-const process_svc_cell = 0x870020f8
-const handoff_arga = 0x870020e0
-const handoff_argb = 0x870020e8
-const proc_arga = 0x870021b0
-const proc_argb = 0x870021b8
+// and given back by the runtime's reaper at the death. The user
+// program cell is the user image's own, at the top of its window: a
+// user address, read through the identity alias.
+const console_svc_cell = koff + 0x870020f0
+const process_svc_cell = koff + 0x870020f8
+const handoff_arga = koff + 0x870020e0
+const handoff_argb = koff + 0x870020e8
+const proc_arga = koff + 0x870021b0
+const proc_argb = koff + 0x870021b8
 const user_program_cell = 0x87fff000
-const exit_count = 0x87002118
-const exit_pids = 0x87002120
-const exit_codes = 0x87002160
-const pending_flag = 0x870021a0
-const pending_target = 0x870021a8
-const pending_waiter = 0x870021c0
+const exit_count = koff + 0x87002118
+const exit_pids = koff + 0x87002120
+const exit_codes = koff + 0x87002160
+const pending_flag = koff + 0x870021a0
+const pending_target = koff + 0x870021a8
+const pending_waiter = koff + 0x870021c0
 const block = 65536
+
+// The Sv39 page (T6.1): the root table's kernel address, written by
+// sv39.emo's boot, and the satp the stub read back from the switch.
+const sv39_root = koff + 0x87004000
+const sv39_satp = koff + 0x87004008
 
 // The gate's verbs, as the services see them: the request word rides
 // op << 32 with the caller's pid number beside it — a magnitude no pid
@@ -169,6 +183,32 @@ def uart_init() Void {
   poke8(uart + 1, 1B)
 }
 
+// The live table (T6.1): the satp the stub read back from the switch
+// must say Sv39 (mode 8) and name the root sv39.emo built, or the
+// kernel is running on some other table and ends here. The line is the
+// proof on the serial that the kernel runs paged on its own table; the
+// root prints physical, as satp holds it.
+def sv39_report() Void {
+  var live = peek64(sv39_satp)
+  var mode = (live >> 60) & 15
+  var root = (live & 0xFFFFFFFFFFF) << 12
+  if mode != 8 || root != sv39.pa_of(peek64(sv39_root)) {
+    println("sv39: the live table is not the kernel's")
+    halt()
+  }
+  console_put_byte(115) // s
+  console_put_byte(118) // v
+  console_put_byte(51)  // 3
+  console_put_byte(57)  // 9
+  console_put_byte(32)  // space
+  fault_dec(mode)
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(root)
+  console_put_byte(10)
+}
+
 // One byte from the input ring: sleep until the device world has one,
 // then hand it over. The console service's read half and the boot
 // demo's readers all land here.
@@ -223,12 +263,13 @@ def console_service(boss Pid) Void {
 // allocator for the child's stack (T5.3) and starts a new process at
 // the image's program — the runtime takes the arena block itself, so a
 // pass costs two blocks, and a spawn the allocator cannot back is
-// refused (−5) before anything is taken; wait answers from the exit
-// table or parks the loop holding the request; exit records itself and
-// answers a waiting parent. One gate transaction runs at a time, so
-// the one pending-wait pair of cells is the whole of the waiting
-// bookkeeping; the request's arguments live in this service's own
-// cells (proc_arga/proc_argb), not the console's.
+// refused (−5) before anything is taken; the pass runs on the identity
+// alias of its block (T6.1), so the top it receives is the physical
+// one; wait answers from the exit table or parks the loop holding the
+// request; exit records itself and answers a waiting parent. One gate
+// transaction runs at a time, so the one pending-wait pair of cells is
+// the whole of the waiting bookkeeping; the request's arguments live in
+// this service's own cells (proc_arga/proc_argb), not the console's.
 def process_service(boss Pid) Void {
   boss <- self_pid()
   while true {
@@ -240,7 +281,7 @@ def process_service(boss Pid) Void {
             gate_reply(caller_of(w), -5)
           } else {
             var stack = frames.take()
-            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), stack + block))
+            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block))
           }
         } else {
           if op == 4 {
@@ -336,6 +377,7 @@ do console_service(me)
 do process_service(me)
 uart_init()
 println("Hello, EmoOS!")
+sv39_report()
 tick_proof()
 receive { c1 -> {
   poke64(console_svc_cell, pid_num(c1))

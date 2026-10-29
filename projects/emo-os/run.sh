@@ -19,11 +19,12 @@ fi
 # trace on its own stream (the guest's console bytes are written one
 # by one, and a dump woven between them would split the lines the
 # assertions read; on stderr the trace never touches the serial). The
-# assertions: the greeting, the checksum, the tick verdict, the five
-# console deliveries in order, the user program's proof chain — the
-# kill report included, the machine surviving its offender — the frame
-# allocator's account as the last line, and the machine's own exit, the
-# SBI poweroff.
+# assertions: the greeting, the Sv39 line (the kernel paged on the
+# table it built), the checksum, the tick verdict, the five console
+# deliveries in order, the user program's proof chain — the kill report
+# included, the machine surviving its offender — the frame allocator's
+# account as the last line, and the machine's own exit, the SBI
+# poweroff.
 boot() {
   local cpu="$1" mode="$2" log="$3"
   local fifo
@@ -92,7 +93,12 @@ boot() {
     echo "run.sh: the tick verdict is missing; the tick is not running" >&2
     exit 1
   fi
-  # The five console deliveries, in request order, then the user
+  # The Sv39 line first (T6.1): mode 8 and the root the kernel built,
+  # printed by the program after it compared the live satp against its
+  # own table — the kernel is linked in the high half, so nothing after
+  # the stub's first instructions could even run untranslated; the line
+  # says the table running is the Emo-built one, not the stub's. Then
+  # the five console deliveries, in request order, then the user
   # image's proof chain: staged, the U-mode greeting, the gate line,
   # the byte the read waited for, the misbehaving child's line, the
   # supervisor's kill report (the faulting load is the one the
@@ -103,13 +109,14 @@ boot() {
   # fixes), then the good child's line and the spawn/wait round trip
   # answering after both deaths: the machine survived its offenders.
   # Last, the frame allocator's account at the root's exit (T5.3):
-  # twelve blocks taken — the six green spawns' arenas, then a stack
-  # and an arena for each of the three user passes — and ten given
-  # back — the four readers' arenas at their deaths, both blocks of
-  # each user pass at its kill or exit; the two services keep theirs.
-  # The byte offsets are the serial order.
+  # thirteen blocks taken — the kernel's page tables' block (T6.1), the
+  # six green spawns' arenas, then a stack and an arena for each of the
+  # three user passes — and ten given back — the four readers' arenas
+  # at their deaths, both blocks of each user pass at its kill or exit;
+  # the two services and the page tables keep theirs. The byte offsets
+  # are the serial order.
   local prev=0 pos line
-  for line in '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7' 'frames 12 10'; do
+  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7' 'frames 13 10'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -147,7 +154,7 @@ boot() {
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, proof, console, user, kill, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, console, user, kill, frames, self-exit"
 # The stimecmp transport when it does.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, proof, console, user, kill, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, console, user, kill, frames, self-exit, 1 ecall"

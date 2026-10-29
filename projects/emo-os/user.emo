@@ -12,10 +12,12 @@
 // without entering user mode.
 
 // The handoff page, at the fixed address the kernel's link.ld gives the
-// .emo_user section: the boot stub writes the embedded image's bounds
-// and zeroes the entry word at boot; the loader writes the staged entry
+// .emo_user section — a kernel address since T6.1, the physical one
+// plus koff: the boot stub writes the embedded image's bounds and
+// zeroes the entry word at boot; the loader writes the staged entry
 // and the segment table — the record every gate check (gate.emo) reads.
-const handoff = 0x87002000
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const handoff = koff + 0x87002000
 const handoff_blob = handoff
 const handoff_end = handoff + 8
 const handoff_entry = handoff + 16
@@ -29,8 +31,11 @@ const seg_slots = 8
 
 // The pre-SV39 user window: the base is the load address the user
 // profile's default linker script fixes (the compiler's user image
-// links there), the top the end of the board's 128 MiB. SV39 replaces
-// the window with per-process address spaces (M5).
+// links there), the top the end of the board's 128 MiB. These are the
+// user's addresses — physical, the identity alias the kernel's table
+// keeps for U-mode (T6.1) — and the copies below write through them,
+// as the gate reads a user buffer: by the user's own address, with
+// SUM. SV39's per-process tables replace the window (T6.2).
 const user_base = 0x87100000
 const user_top = 0x88000000
 

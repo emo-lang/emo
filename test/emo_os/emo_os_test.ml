@@ -169,10 +169,11 @@ cat %s
 
 (* The kernel's own QEMU smoke, wired into the suite: the project tree
    builds into a scratch copy — the user image first (the kernel embeds
-   it), then the kernel — and run.sh boots it, its assertions (the tick
-   proof on both timer transports, the five console deliveries, the
-   echo, the staged user program's greeting, the frame allocator's
-   account, the self-exit) deciding the test. *)
+   it), then the kernel — and run.sh boots it, its assertions (the Sv39
+   line — the kernel paged on the table it built — the tick proof on
+   both timer transports, the five console deliveries, the echo, the
+   staged user program's greeting, the frame allocator's account, the
+   self-exit) deciding the test. *)
 let smoke_tests =
   [
     tc "the kernel's run.sh smoke passes" (fun () ->
@@ -205,6 +206,8 @@ let smoke_tests =
             "user.S";
             "gate.emo";
             "frames.emo";
+            "sv39.emo";
+            "sv39.S";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";
