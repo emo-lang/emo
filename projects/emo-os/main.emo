@@ -9,10 +9,14 @@
 // the frame allocator (frames.emo) — the free RAM above this image in
 // 64 KiB blocks, taken at the spawn, given back at the death. T6.1
 // moves the kernel into Sv39's high half: every address the kernel
-// reaches is the physical one plus koff, the user's addresses stay
-// physical (the identity alias the kernel's table keeps for U-mode
-// until T6.2), and the program's first lines check the live satp
-// against the table sv39.emo built.
+// reaches is the physical one plus koff, and the program's first lines
+// check the live satp against the table sv39.emo built. T6.2 gives
+// every user pass its own table (space.emo, built at the spawn): its
+// image's segments with U, its own stack and arena, the cells page —
+// and the kernel's whole high half mapped without U — so a pass's
+// world is its own pages and the gate's copy-in (the write verb's
+// staging buffer) is what crosses; the services on the kernel's own
+// table read nothing of the caller's memory.
 //
 //   emo build main.emo --target riscv64
 

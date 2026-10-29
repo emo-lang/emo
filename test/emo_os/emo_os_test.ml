@@ -208,6 +208,7 @@ let smoke_tests =
             "frames.emo";
             "sv39.emo";
             "sv39.S";
+            "space.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";

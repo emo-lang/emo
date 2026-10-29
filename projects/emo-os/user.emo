@@ -3,8 +3,15 @@
 // loadable segments into the user window, and parks the entry in the
 // handoff page — where the boot stub's enter shim (trap.S) reads it once
 // the kernel's own program is done, sets sepc and sstatus, and srets
-// into U-mode. Everything runs in fully typed defs: the copy loop is
-// one inline volatile byte load and store per step, zero allocation.
+// into U-mode. Since T6.2 the loader also builds the boot pass's own
+// page table: the image's segments by page-union permission with U, the
+// cells page, and the kernel's whole high half without U (space.emo's
+// base), its physical root parked in the handoff page's space cell —
+// the enter shim takes it into the root slot's space word, adopts it,
+// and switches satp before the sret, so the boot pass runs paged on
+// its own table like every spawned pass after it. Everything runs in
+// fully typed defs: the copy loop is one inline volatile byte load and
+// store per step, zero allocation.
 //
 // The checks are the loader's own honesty, not the syscall gate: a
 // malformed or out-of-window image refuses loudly and stages nothing —
@@ -14,8 +21,9 @@
 // The handoff page, at the fixed address the kernel's link.ld gives the
 // .emo_user section — a kernel address since T6.1, the physical one
 // plus koff: the boot stub writes the embedded image's bounds and
-// zeroes the entry word at boot; the loader writes the staged entry
-// and the segment table — the record every gate check (gate.emo) reads.
+// zeroes the entry word at boot; the loader writes the staged entry,
+// the segment table, and the boot pass's space cell — the record every
+// gate check (gate.emo) and table build (space.emo) reads.
 const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 const handoff = koff + 0x87002000
 const handoff_blob = handoff
@@ -23,6 +31,7 @@ const handoff_end = handoff + 8
 const handoff_entry = handoff + 16
 const handoff_segn = handoff + 24
 const handoff_segs = handoff + 32
+const handoff_space = handoff + 456
 
 // The segment table's shape: eight slots of (start, end, flags), one
 // per loaded segment, flags the ELF's p_flags (X=1, W=2, R=4). Eight
@@ -32,10 +41,12 @@ const seg_slots = 8
 // The pre-SV39 user window: the base is the load address the user
 // profile's default linker script fixes (the compiler's user image
 // links there), the top the end of the board's 128 MiB. These are the
-// user's addresses — physical, the identity alias the kernel's table
-// keeps for U-mode (T6.1) — and the copies below write through them,
-// as the gate reads a user buffer: by the user's own address, with
-// SUM. SV39's per-process tables replace the window (T6.2).
+// user's addresses — since T6.2 mapped by each process's own table
+// (space.emo), not by a window gigapage: the segments at their
+// recorded vaddrs, the identity of every block the process owns. The
+// copies below write through the supervisor's low window (the
+// kernel's table's one low mapping, no U) — the bytes land where the
+// per-process tables will map them.
 const user_base = 0x87100000
 const user_top = 0x88000000
 
@@ -133,6 +144,20 @@ def stage() Int64 {
     return 0
   }
   poke64(handoff_segn, loaded)
+  // The boot pass's own table (T6.2): built here, where the segment
+  // table is parked and the frames are cheap, before the entry word
+  // exists — a table that failed to build leaves the entry zero and
+  // the machine never enters U-mode. space.base maps the kernel's
+  // whole high half without U, the segments with U, and the cells
+  // page; the physical root rides the space cell for the enter shim.
+  var root = frames.frame_take()
+  if root == 0 {
+    println("user: no frame left for the boot pass's table")
+    return 0
+  }
+  sv39.clear(root)
+  space.base(root)
+  poke64(handoff_space, sv39.pa_of(root))
   poke64(handoff_entry, entry)
   return entry
 }

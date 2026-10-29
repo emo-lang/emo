@@ -17,6 +17,17 @@
 // service's answer lands in the parked frame's a0 slot and the resume
 // is the trap resume the frame already carries.
 //
+// Since T6.2 the write's buffer is copied at the gate (the send
+// snapshot's discipline): the trap that checks the range is the same
+// trap that copies the bytes into the kernel's staging page, and the
+// console service prints from that copy on the kernel's own table.
+// Before the per-process tables the service read the caller's buffer
+// through the window's alias; with each pass on its own table the
+// service's context no longer maps the caller's memory, and reading
+// through the caller's addresses after the check was a race anyway.
+// A write longer than the staging page carries is reason 4: the bound
+// is the supervisor's, stated in docs/syscalls.md.
+//
 // The contract lives in docs/syscalls.md; this module is its kernel
 // side. The verb set grows with the services; the numbering, the
 // answer convention, and the reason codes are frozen from here.
@@ -44,6 +55,14 @@ const handoff_argb = koff + 0x870020e8
 const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
 const handoff_caller = koff + 0x87002110
+
+// The write's staging page (T6.2): the gate copies the caller's buffer
+// here, inside the same trap that checked it, and the console service
+// prints from the copy on the kernel's own table. The page's free tail
+// past the fixed cells is the staging area; a write longer than it is
+// refused (reason 4) before anything is copied.
+const stage_buf = koff + 0x870021d0
+const stage_cap = 2048
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
@@ -110,15 +129,33 @@ def check_write(buf Int64, len Int64) Int64 {
   return reason_range
 }
 
+// One byte from the caller's buffer into the staging page, the whole
+// range at once: the check above has already bounded it inside one
+// writable segment, and this runs in that same trap, on the caller's
+// own table with SUM — one volatile byte load and store per step,
+// nothing allocated, nothing deferred to a context that cannot see
+// the caller's memory (T6.2).
+def copy_in(buf Int64, len Int64) Void {
+  var i = 0
+  while i < len {
+    poke8(stage_buf + i, peek8(buf + i))
+    i = i + 1
+  }
+}
+
 // The dispatch: the gate answers what needs no service, routes what
 // the services own, refuses everything else by name.
 def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64) Int64 {
   if n == 1 {
+    if r1 > stage_cap {
+      return -reason_argument
+    }
     var verdict = check_write(r0, r1)
     if verdict != 0 {
       return -verdict
     }
-    poke64(handoff_arga, r0)
+    copy_in(r0, r1)
+    poke64(handoff_arga, stage_buf)
     poke64(handoff_argb, r1)
     return route_console_write
   }

@@ -48,7 +48,7 @@ undocumented ever acts.
 | Verb | Spelling | Answer |
 | --- | --- | --- |
 | 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` |
-| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` |
+| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
 | 2 | `read()` | the next console byte, blocking until one exists; answers it (0–255) |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
@@ -124,14 +124,24 @@ written overflow-safe (`len > end - buf`, never `buf + len > end`), a
 zero length inside a writable segment answers 0, and the
 range-versus-permission distinction is honest: a range that some
 segment covers but no writable segment covers is reason 3, a range
-nothing covers is reason 2.
+nothing covers is reason 2. A write longer than the gate's staging
+page carries (2048 bytes) is reason 4 before anything is copied.
 
-Pre-SV39 the checks are the supervisor's word alone — the window
-[0x87100000, 0x88000000) is where user images live, and the kernel's
-own memory at 0x80200000 is reachable by a wild store. That is the
-weak-isolation window, documented as such in
-[`isolation.md`](isolation.md); SV39 (M5) turns these same checks into
-hardware ones.
+Since SV39's per-process tables (T6.2) the check and the use are one
+trap: the write's bytes are copied into the kernel's staging page by
+the same trap that checked the range — the gate reads the caller's
+memory exactly once, through the caller's own table with SUM — and the
+console service prints from that copy on the kernel's own table, which
+maps none of the caller's memory. Before the per-process tables the
+service read the caller's buffer directly through the window's alias;
+the copy-in at the gate is the honest form the tables make necessary
+(and closes the read-after-check race the direct read carried).
+
+The checks remain the supervisor's word on top of the mapping — a
+refusal is an answer, not a fault — and the mapping is the hardware's:
+since T6.2 a pass's own table maps its image's segments with U and
+nothing else, so a wild pointer that slipped every check would still
+be the hardware's page fault, not a landing.
 
 ## The fixed addresses
 

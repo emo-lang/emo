@@ -629,16 +629,36 @@ emo_os_trap_resume:
 # this before the poweroff. The entry word the loader (user.emo) parked
 # decides: zero means nothing was staged and the call returns straight
 # to the stub's poweroff; anything else is the user's entry, and the
-# sret lands in U-mode. sstatus keeps what the kernel left except the
-# three bits entry owns: SPP cleared (sret enters U-mode), SPIE set
-# (S-mode interrupts return on at the sret), FS set to Dirty (the
-# floats run). The user's first trap lands on its own stack, through
-# the same shim everything else traps through.
+# sret lands in U-mode. The boot pass's own address space (T6.2) comes
+# first: the loader built the boot table at stage time and parked its
+# physical root in the handoff page's space cell — the runtime takes
+# it into the root slot's space word (so the first switch back to the
+# boot pass installs the same table), space.emo's cache adopts it (so
+# the switch's resolve knows satp already names it), and the satp
+# shim performs the switch. From here on every address space is a
+# process's own. sstatus keeps what the kernel left but three bits —
+# SPP cleared (sret enters U-mode), SPIE set (S-mode interrupts return
+# on), FS set Dirty (the floats run). The user's first trap lands on
+# its own stack, through the same shim everything else traps through.
     .globl emo_os_user_boot
 emo_os_user_boot:
     la t0, emo_os_user_entry
     ld a0, 0(t0)
     beqz a0, 1f
+    la t0, emo_os_user_space
+    ld a0, 0(t0)
+    beqz a0, 2f              # a staged entry always carries its table;
+                             # the guard keeps a half-staged handoff
+                             # on the old path rather than a fault
+    call emo_space_set       # the root slot's word: the boot pass's own
+    la t0, emo_os_user_space # (a0 is the caller's to lose across a call,
+    ld a0, 0(t0)             # so each call re-reads the cell)
+    call emo_space__adopt    # the switch's cache: satp is about to name it
+    la t0, emo_os_user_space
+    ld a0, 0(t0)
+    call emo_os_satp_switch  # the boot pass's table is live
+2:  la t0, emo_os_user_entry
+    ld a0, 0(t0)
     csrr t1, sstatus
     andi t1, t1, -257        # SPP = 0: sret enters U-mode
     ori t1, t1, 0x20         # SPIE = 1: S-mode interrupts return on
@@ -716,8 +736,12 @@ emo_os_in_ring:
 # The user handoff (T4.1): the boot stub parks the embedded user image's
 # bounds in the first two words and zeroes the third; the kernel's Emo
 # loader (user.emo) reads the bounds at the same fixed constants, copies
-# the segments, and parks the staged entry; emo_os_user_boot reads the
-# entry and srets into U-mode. A zero entry means nothing was staged.
+# the segments, and parks the entry; emo_os_user_boot reads the entry
+# and srets into U-mode. A zero entry means nothing was staged. The
+# space cell (T6.2, at +456) rides beside them: the loader builds the
+# boot pass's own page table at stage time and parks its physical root
+# there; emo_os_user_boot takes it into the root slot's space word,
+# adopts it into the switch's cache, and switches satp before the sret.
     .section .emo_user, "aw", @nobits
     .globl emo_os_handoff_blob
 emo_os_handoff_blob:
@@ -727,6 +751,15 @@ emo_os_handoff_end:
     .zero 8
     .globl emo_os_user_entry
 emo_os_user_entry:
+    .zero 8
+# The cells between here and the space cell — the segment count and
+# table, the services' pid cells, the request cells, the exit table —
+# are addressed by the kernel's fixed constants, not by symbols. The
+# space cell sits at +456 (0x870021c8), the first word after the
+# pending-wait pair the constants already name.
+    .zero 432
+    .globl emo_os_user_space
+emo_os_user_space:
     .zero 8
 
 # The frame allocator's page (T5.3): the kernel's Emo (frames.emo) owns

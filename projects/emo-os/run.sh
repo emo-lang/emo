@@ -99,24 +99,27 @@ boot() {
   # the stub's first instructions could even run untranslated; the line
   # says the table running is the Emo-built one, not the stub's. Then
   # the five console deliveries, in request order, then the user
-  # image's proof chain: staged, the U-mode greeting, the gate line,
-  # the byte the read waited for, the misbehaving child's line, the
-  # supervisor's kill report (the faulting load is the one the
-  # hardware refuses, so the cause is the access fault — the epc
-  # moves per build and is not asserted), then the runaway's line and
-  # its allocator's exhaustion report (T5.1: the pass's own 64 KiB
-  # arena, announced through the gate, the pid the spawn order
-  # fixes), then the good child's line and the spawn/wait round trip
-  # answering after both deaths: the machine survived its offenders.
-  # Last, the frame allocator's account at the root's exit (T5.3):
-  # thirteen blocks taken — the kernel's page tables' block (T6.1), the
-  # six green spawns' arenas, then a stack and an arena for each of the
-  # three user passes — and ten given back — the four readers' arenas
-  # at their deaths, both blocks of each user pass at its kill or exit;
-  # the two services and the page tables keep theirs. The byte offsets
-  # are the serial order.
+  # image's proof chain: staged, the U-mode greeting (T6.2: every byte
+  # out of U-mode rides the gate — the pass's own table maps nothing
+  # else), the gate line, the byte the read waited for, the misbehaving
+  # child's line, the supervisor's kill report (the faulting load is
+  # the one the pass's own table maps nothing — the load page fault,
+  # cause 13; the epc moves per build and is not asserted), then the
+  # runaway's line and its allocator's exhaustion report (T5.1: the
+  # pass's own 64 KiB arena, announced through the gate, the pid the
+  # spawn order fixes), then the good child's line and the spawn/wait
+  # round trip answering after both deaths: the machine survived its
+  # offenders. Last, the frame allocator's account at the root's exit
+  # (T5.3): seventeen blocks taken — the kernel's page tables' block
+  # (T6.1), the six green spawns' arenas, a stack and an arena for each
+  # of the three user passes, and the four blocks the per-process
+  # tables' frames split (T6.2: the boot pass's table and one per
+  # spawned pass, kept for the whole run like the services' arenas) —
+  # and ten given back — the four readers' arenas at their deaths, both
+  # blocks of each user pass at its kill or exit; the two services and
+  # every table keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 5' 'greedy' 'user heap 9 gone' 'born' 'wait 7' 'frames 13 10'; do
+  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 13' 'greedy' 'user heap 9 gone' 'born' 'wait 7' 'frames 17 10'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

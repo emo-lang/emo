@@ -37,11 +37,23 @@ emo_os_sfence:
 # by sv39.emo's boot) and the satp the stub read back from the switch,
 # at the fixed address the kernel's linker script gives the section.
 # The program's own check reads both through peek/poke; named here so
-# the forensics can read them.
+# the forensics can read them. The third word (T6.2) is space.emo's
+# cache — the physical root satp names right now, what the switch's
+# resolve compares against so the kernel's processes switching among
+# themselves fence nothing.
     .section .emo_sv39, "aw", @nobits
     .globl emo_os_sv39_root
 emo_os_sv39_root:
     .zero 8
     .globl emo_os_sv39_satp
 emo_os_sv39_satp:
+    .zero 8
+    .globl emo_os_sv39_current
+emo_os_sv39_current:
+    .zero 8
+    .globl emo_os_sv39_text_end
+emo_os_sv39_text_end:
+    .zero 8
+    .globl emo_os_sv39_rodata_end
+emo_os_sv39_rodata_end:
     .zero 8

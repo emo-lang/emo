@@ -3229,7 +3229,7 @@ let riscv64_profile_tests =
     tc "the block hooks let a kernel back every block" (fun () ->
         (* T5.3: the runtime asks a parked frame allocator for every
            64 KiB block — a spawn's arena, a user process's stack (the
-           slot's word at 864, the stride 872) — and the reaper gives
+           slot's word at 864, the stride 880) — and the reaper gives
            both back at the death; hookless, the pool and the carve
            stay. The words ride both profiles, zero unless a kernel's
            stub parks them. *)
@@ -3252,7 +3252,7 @@ let riscv64_profile_tests =
             Alcotest.(check bool)
               (profile ^ ": the slot stride grew")
               true
-              (contains asm "li t3, 872");
+              (contains asm "li t3, 880");
             Alcotest.(check bool)
               (profile ^ ": the reaper gives through the hook")
               true
@@ -3261,6 +3261,49 @@ let riscv64_profile_tests =
               (profile ^ ": the pool stays the hookless path")
               true
               (contains asm ".Lspawn_pool:"))
+          [ "kernel"; "user" ]);
+    tc "the space hooks stay runtime words a kernel parks" (fun () ->
+        (* T6.2: the per-process address spaces ride the same pattern —
+           three words in .bss, zero in every image whose stub leaves
+           them (plain programs and the user image never write satp),
+           the pick's switch and emo_user_spawn's build call riding
+           both profiles, the space word at 872 beside the stride. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the build hook")
+              true
+              (contains asm "emo_space_build_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the resolve hook")
+              true
+              (contains asm "emo_space_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the write hook")
+              true
+              (contains asm "emo_space_write_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the pick resolves the incoming slot")
+              true
+              (contains asm "ld a0, 872(s1)");
+            Alcotest.(check bool)
+              (profile ^ ": the pick carries the slot across the call")
+              true
+              (contains asm "mv s1, a1");
+            Alcotest.(check bool)
+              (profile ^ ": the build hook answers at the spawn")
+              true
+              (contains asm "la t4, emo_space_build_hook");
+            Alcotest.(check bool)
+              (profile ^ ": the root's space starts zero")
+              true
+              (contains asm "sd zero, 872(t1)");
+            Alcotest.(check bool)
+              (profile ^ ": the slot table grew with the word")
+              true
+              (contains asm ".zero 56320"))
           [ "kernel"; "user" ]);
   ]
 

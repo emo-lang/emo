@@ -92,6 +92,23 @@ emo_start:
     la t0, emo_frames__give
     la t1, emo_block_give_hook
     sd t0, 0(t1)
+    # the address spaces (T6.2): the three space hooks go to the
+    # runtime's words — the build (a spawned pass's table, built at the
+    # end of emo_user_spawn from the slot's own words), the resolve (the
+    # pick's switch: the incoming slot's word to the physical root satp
+    # should name, or -1 when it already does), and the write (the satp
+    # switch itself). Zero in every image whose stub leaves them — the
+    # plain programs and the user image never touch satp; here every
+    # switch and every spawn drives the per-process tables.
+    la t0, emo_space__build
+    la t1, emo_space_build_hook
+    sd t0, 0(t1)
+    la t0, emo_space__switch
+    la t1, emo_space_hook
+    sd t0, 0(t1)
+    la t0, emo_os_satp_switch
+    la t1, emo_space_write_hook
+    sd t0, 0(t1)
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and
     # arms the first deadline — all before the program runs

@@ -2535,6 +2535,8 @@ emo_runtime_init:
     sd zero, 592(t1)        # nothing sent; the root's arena is never
     sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
     sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
+    sd zero, 872(t1)        # and its space is the kernel's own table (T6.2),
+                            # until the boot pass adopts its own
     ret
 
     .globl emo_alloc
@@ -4515,7 +4517,7 @@ emo_atomic_mtbl:
 # message its patterns accept, and parks on no match; the root exiting
 # ends the program; a switch with nobody runnable is the loud deadlock.
 #
-# Slot layout (stride 109 words = 872 bytes): 0 the saved sp, 8 the pid,
+# Slot layout (stride 110 words = 880 bytes): 0 the saved sp, 8 the pid,
 # 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
 # 24 the mailbox head, 32 the mailbox length, 40 the process's own
 # priority, 48 its effective priority, 56 its CPU quota, 64.. the
@@ -4529,10 +4531,14 @@ emo_atomic_mtbl:
 # arena is this process's; 0 = reclaimed to the pool, or never claimed,
 # as the root's never is), 608.. the 32-word ring of the senders'
 # slots (a gate request posts a 0 there: no sender, nothing pinned),
-# and 864 the stack block (T5.3 — the base of a 64 KiB block a kernel
+# 864 the stack block (T5.3 — the base of a 64 KiB block a kernel
 # handed emo_user_spawn for the process's stack, given back through
 # the block hooks at its death; 0 for the root and for a green process,
-# whose stack is its slot's own in emo_pstacks). A slot never returns
+# whose stack is its slot's own in emo_pstacks), and 872 the space
+# word (T6.2 — the physical address of the process's own page table,
+# built by the kernel's build hook at the end of emo_user_spawn; 0 for
+# the kernel's own table, which is every green process's and the
+# root's until the boot pass adopts its own). A slot never returns
 # to free — a pid is unique for the whole run, so a send to a dead pid
 # is dropped, never redirected to a new occupant.
 #
@@ -4652,7 +4658,36 @@ emo_sched_pick:
     ld t2, 56(a1)
     la t3, emo_slice_left
     sd t2, 0(t3)
-    ld sp, 0(a1)
+    # the address-space switch (EmoOS T6.2): the incoming slot's space
+    # word through the resolve hook — the physical root satp should
+    # name, or -1 when it already does — and, on a root, the write
+    # hook (the satp swap and its fences). Both hooks are zero in every
+    # image without per-process spaces, and the whole step is two
+    # loads. The switch runs before a register of the incoming process
+    # is loaded: the outgoing context's volatile registers are dead at
+    # a switch, the frame holds what the resume needs, and satp must
+    # be the incoming process's before its first load or fetch. The
+    # masked-region discipline covers the call — the pick runs inside
+    # the scheduler's region, and the trap shim's entry path is
+    # hardware-masked — so no interrupt can land between the resolve
+    # and the sret that rides the new table. The slot pointer moves to
+    # s1 for the calls: a1 is the caller's to lose, and the resolve is
+    # ordinary typed Emo whose own calls spend a1 freely — the outgoing
+    # s1 is already in the frame, so the register is dead until the
+    # incoming context reloads it.
+    mv s1, a1
+    la t2, emo_space_hook
+    ld t2, 0(t2)
+    beqz t2, .Lpick_nospace
+    ld a0, 872(s1)
+    jalr t2                   # resolve: a0 = the root, or -1 = installed
+    bltz a0, .Lpick_nospace
+    la t2, emo_space_write_hook
+    ld t2, 0(t2)
+    beqz t2, .Lpick_nospace
+    jalr t2                   # satp follows the process
+.Lpick_nospace:
+    ld sp, 0(s1)
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -4697,7 +4732,7 @@ emo_deadlock:
 .Ldl_scan:
     li t2, 64
     bgeu t1, t2, emo_fail_blocked
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4829,7 +4864,7 @@ emo_sched_wake_console:
 .Lwake_scan:
     li t2, 64
     bgeu t1, t2, .Lwake_none
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -4938,7 +4973,7 @@ emo_spawn:
     li t2, 64
 .Lspawn_scan:
     bgeu t1, t2, .Lspawn_exhausted
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -5087,7 +5122,7 @@ emo_send:
     li t3, 64
 .Lsend_scan:
     bgeu t2, t3, .Lsend_noproc
-    li t4, 872
+    li t4, 880
     mul t5, t2, t4
     add t5, t1, t5
     ld t6, 8(t5)
@@ -5312,7 +5347,7 @@ emo_gate_post:
     li t2, 64
 .Lgp_scan:
     bgeu t1, t2, .Lgp_fail
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5383,7 +5418,7 @@ emo_gate_reply:
     li t2, 64
 .Lgr_scan:
     bgeu t1, t2, .Lgr_fail
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -5432,7 +5467,7 @@ emo_user_spawn:
     li t2, 64
 .Lus_scan:
     bgeu t1, t2, .Lus_fail
-    li t3, 872
+    li t3, 880
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -5518,7 +5553,14 @@ emo_user_spawn:
 .Lus_zero:
     sd zero, 0(a0)
     addi a0, a0, 8
-    ble a0, a1, .Lus_zero
+    blt a0, a1, .Lus_zero       # exactly the frame's 544 bytes — a
+                                # `ble` here wrote one word PAST the
+                                # stack top, and the word past a
+                                # pass's stack top is the next 64 KiB
+                                # block's freelist link (T6.2's first
+                                # boot caught it: the frame allocator's
+                                # chain lost its head to eight zero
+                                # bytes)
     la t1, emo_os_user_exit
     sd t1, 0(t4)                # ra: a top-level fall-off exits (verb 0)
     ld t0, 8(sp)
@@ -5533,6 +5575,23 @@ emo_user_spawn:
                                 # an interrupt's frame overwrite this one
     addi t4, t4, 336            # the slot saves the switch-section base —
     sd t4, 0(t3)                # what the shim's park and the preempt store
+    # the child's address space (EmoOS T6.2), the block hooks' pattern:
+    # the build hook takes the dressed slot — pid, arena, stack block,
+    # synthetic frame, saved sp are all in it — builds the pass's page
+    # table from those words, and answers the physical root into the
+    # slot's space word (872). Zero in every image without per-process
+    # spaces; in the kernel, the table exists before the child is ever
+    # queued, so the first pick that reaches it switches satp to a
+    # table that is already whole. The slot sits out the call on the
+    # frame, as it did for the arena take.
+    la t4, emo_space_build_hook
+    ld t4, 0(t4)
+    beqz t4, .Lus_nospace
+    sd t3, 40(sp)               # the slot survives the call
+    mv a0, t3
+    jalr t4
+    ld t3, 40(sp)
+.Lus_nospace:
     mv a0, t3
     call emo_runq_push
     csrsi sstatus, 2
@@ -5554,6 +5613,21 @@ emo_os_user_exit:
     ecall
 1:  wfi
     j 1b
+
+# emo_space_set: a0 = a page-table root's physical address — the
+# current slot's space word takes it (EmoOS T6.2). The boot pass's
+# entry: the kernel's enter shim calls it after its loader built and
+# staged the boot table, so slot 0's word names the space the boot
+# pass already runs on and the first switch back to it installs the
+# same one. Masked, like every writer of scheduler state.
+    .globl emo_space_set
+emo_space_set:
+    csrci sstatus, 2
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    sd a0, 872(t0)
+    csrsi sstatus, 2
+    ret
 
 # emo_self_pid: a0 = the current process's Pid word.
     .globl emo_self_pid
@@ -5984,7 +6058,7 @@ emo_heap_end:
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
 #
-# 64 slots at 872 bytes (context word, pid, state, mailbox head and
+# 64 slots at 880 bytes (context word, pid, state, mailbox head and
 # length, the own and effective priorities and the quota, a 32-word
 # message ring, the 32-word ring of the priorities the messages carry,
 # the arena cursor and end — T5.1's per-process bump heaps — the count
@@ -5998,7 +6072,7 @@ emo_heap_end:
 
     .align 8
 emo_procs:
-    .zero 55808
+    .zero 56320
 emo_pstacks:
     .zero 4194304
     .globl emo_runq
@@ -6047,6 +6121,37 @@ emo_block_give_hook:
 # and emo_mb_remove reads it — a shared Atomic keeps the sender's
 # arena pinned for good rather than dangling under it.
 emo_copy_shared:
+    .zero 8
+
+# ---- The space hooks (EmoOS T6.2) ----
+#
+# The per-process address spaces, the block hooks' pattern: three words
+# in .bss, zero in every image whose stub does not touch them — the
+# plain program and the user image never write satp — while a kernel
+# package's boot stub parks the entries that drive the switch. The
+# build hook runs at the end of emo_user_spawn with the child's slot:
+# a kernel Emo def builds the pass's page table from the slot's own
+# words and answers the physical root into the slot's space word (872,
+# the stride 880). The resolve hook runs in the pick with the incoming
+# slot's word (0 = the kernel's own table, every green process's) and
+# answers the physical root to install — or -1 when satp already names
+# it, the cache hit that keeps the kernel's processes switching among
+# themselves without a fence. The write hook takes that root and does
+# the one thing no Emo spelling reaches: satp, then the fence. All
+# three are the psABI discipline; the switch happens inside the
+# scheduler's masked regions, before a register of the incoming
+# process is loaded.
+
+    .globl emo_space_build_hook
+emo_space_build_hook:
+    .zero 8
+
+    .globl emo_space_hook
+emo_space_hook:
+    .zero 8
+
+    .globl emo_space_write_hook
+emo_space_write_hook:
     .zero 8
 
 # ---- The console hook (EmoOS T3.5) ----
