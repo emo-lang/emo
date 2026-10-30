@@ -65,6 +65,8 @@ $ emo build main.emo --target riscv64
 $ ./run.sh
 ```
 
+步骤的完整走法——编译器构建、两个镜像、金测一条龙、直到提示符的手动启动——见 [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md)。
+
 ## 里程碑
 
 | 里程碑 | 范围 | 状态 |
@@ -82,6 +84,7 @@ $ ./run.sh
 
 ## 相关文档
 
+- [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md) — 启动机器:构建、金测、手动启动、提示符。
 - [`docs/sv39.zh-CN.md`](docs/sv39.zh-CN.md) — 内核的高半区布局：两个半区、内核的表、两个别名、启动。
 - [`docs/fs.zh-CN.md`](docs/fs.zh-CN.md) — 文件系统服务：权威态与可重建态的分裂、磁盘布局、提交点、重启。
 - [`docs/shell.zh-CN.md`](docs/shell.zh-CN.md) — shell REPL:行、七个命令、表面携带的严格性、边界。

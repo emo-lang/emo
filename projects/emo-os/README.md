@@ -65,6 +65,8 @@ $ emo build main.emo --target riscv64
 $ ./run.sh
 ```
 
+The walk-through — the compiler build, both images, the golden smoke, and the hand-driven boot up to the prompt — is [`docs/how-to-start-emoos.md`](docs/how-to-start-emoos.md).
+
 ## Milestones
 
 | Milestone | Scope | Status |
@@ -82,6 +84,7 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 
 ## Related documents
 
+- [`docs/how-to-start-emoos.md`](docs/how-to-start-emoos.md) — starting the machine: the build, the smoke, the hand-driven boot, the prompt.
 - [`docs/sv39.md`](docs/sv39.md) — the kernel's high-half layout: the two halves, the kernel's table, the two aliases, the boot.
 - [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
 - [`docs/shell.md`](docs/shell.md) — the shell REPL: the line, the seven commands, the strictness the surface carries, the bounds.
