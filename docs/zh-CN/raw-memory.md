@@ -19,8 +19,12 @@ volatile(随原子内存模型一并定案,2026-10-25):永不被消除、互相�
 | --- | --- | --- |
 | `peek8(addr)` | `Int64 → Byte` | 一次 volatile 字节读,按无符号(0–255)读回 |
 | `poke8(addr, b)` | `Int64 → Byte → Void` | 一次 volatile 字节写 |
+| `peek32(addr)` | `Int64 → Int64` | 一次 volatile 32 位读,零扩展 |
+| `poke32(addr, v)` | `Int64 → Int64 → Void` | 一次 volatile 32 位写;值必须落在 32 位内(0–4294967295),否则响亮失败 |
 | `peek64(addr)` | `Int64 → Int64` | 一次 volatile 字读 |
 | `poke64(addr, v)` | `Int64 → Int64 → Void` | 一次 volatile 字写 |
+
+32 位线随 EmoOS T7.1(2026-10-30)加入,是 virtio-blk 驱动的需求:MMIO 寄存器是四字节,而既有两个宽度都表达不了它——字节写是各自独立的寄存器访问(每个字节偏移都是自己的寄存器,未映射的偏移让设备出错),64 位写又会碰到相邻寄存器。这条线与 `Int32` 算术类型解耦,后者继续推迟到它自己挣得席位之时:值的宽度在运行时守卫——没有 `Int32` 类型来承载这个保证——守的是 `Byte.from_int64` 同一条「响亮、绝不静默」的规则。
 
 表格所依据的规则:
 
@@ -62,7 +66,7 @@ T7.1)的诚实形态。16 位线在 roadmap 上没有消费者,不做投机构�
 
 ## 按目标矩阵
 
-| 目标 | `peek8`/`poke8`/`peek64`/`poke64` |
+| 目标 | `peek8`/`poke8`/`peek32`/`poke32`/`peek64`/`poke64` |
 | --- | --- |
 | `riscv64` | 准入 —— 生成镜像里的 volatile 访问 helper |
 | 解释器、`c`、`ocaml`、`ts`、`wasm`、`beam` | 检查期按名拒绝(E4028) |

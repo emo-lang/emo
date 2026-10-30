@@ -5639,6 +5639,8 @@ println(peek8(page))
 poke8(page, 12B)
 println(peek64(page))
 poke64(page, 0)
+println(peek32(page))
+poke32(page, 0)
 println(ecall(0, 0, 0, 0, 0, 0, 0))
 |}
 
@@ -5653,6 +5655,8 @@ let peek_refusal_expected target =
       ("poke8", "raw memory");
       ("peek64", "raw memory");
       ("poke64", "raw memory");
+      ("peek32", "raw memory");
+      ("poke32", "raw memory");
       ("ecall", "the machine's gate");
     ]
 
@@ -5697,9 +5701,11 @@ peek8("text")
 poke8(0)
 poke8(0, 12)
 peek64()
+peek32(0, 0)
+poke32(0)
 |}
         in
-        Alcotest.(check int) "four refusals" 4 (List.length got));
+        Alcotest.(check int) "six refusals" 6 (List.length got));
   ]
 
 let () =

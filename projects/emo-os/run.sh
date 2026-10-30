@@ -12,6 +12,14 @@ if [ ! -f "$elf" ]; then
   exit 1
 fi
 
+# The block device's backing (T7.1): a raw 1 MiB image, created when
+# absent. The driver writes and reads one sector of it; every boot
+# writes the same word, so a dirty image between runs changes nothing.
+img='.blk.img'
+if [ ! -f "$img" ]; then
+  dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
+fi
+
 # One boot: the named CPU config, the serial input on a named pipe
 # written only after the kernel is ready — the tick proof's checksum is
 # the gate, so the reader's request beats the input and the console
@@ -33,7 +41,14 @@ boot() {
 
   : > "$log"
   : > "$log.trace"
+  # force-legacy=false: the transports report version 2 (the modern
+  # register layout the driver speaks — 64-bit queue addresses, no
+  # guest page size); a transitional device would answer version 1
+  # and the driver's loud end names it.
   qemu-system-riscv64 -machine virt -nographic -d int -cpu "$cpu" \
+    -global virtio-mmio.force-legacy=false \
+    -drive file="$img",format=raw,if=none,id=emoos-blk \
+    -device virtio-blk-device,drive=emoos-blk \
     -kernel "$elf" <"$fifo" >"$log" 2>"$log.trace" &
   local qemu_pid=$!
   exec 3>"$fifo"
@@ -98,7 +113,12 @@ boot() {
   # own table — the kernel is linked in the high half, so nothing after
   # the stub's first instructions could even run untranslated; the line
   # says the table running is the Emo-built one, not the stub's. Then
-  # the five console deliveries, in request order, then the user
+  # the block device's line (T7.1: the driver scanned the virtio-mmio
+  # slots, negotiated the modern layout, built its queue on one
+  # allocator block, and the capacity reads 2048 sectors — the 1 MiB
+  # image below), then the five console deliveries, in request order,
+  # then the block roundtrip (one sector written through the queue and
+  # read back through it), then the user
   # image's proof chain: staged, the U-mode greeting (T6.2: every byte
   # out of U-mode rides the gate — the pass's own table maps nothing
   # else), the gate line, the byte the read waited for, the misbehaving
@@ -120,18 +140,20 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): twenty-three blocks taken —
-  # the kernel's page tables' block (T6.1), the six green spawns'
-  # arenas, a stack and an arena for each of the five user passes,
-  # the five blocks the per-process tables' frames split (T6.2's
-  # four; the smash pass's frames from the splits' leftovers, the
-  # reach pass's table splitting the fifth), and the DMA check's
-  # block — and fifteen given back — the four readers' arenas at
-  # their deaths, both blocks of each user pass at its kill or exit,
-  # and the DMA check's block home; the two services and every table
+  # account at the root's exit (T5.3): twenty-five blocks taken —
+  # the kernel's page tables' block (T6.1), the seven green spawns'
+  # arenas (the three services' and the four readers'), a stack and an
+  # arena for each of the five user passes, the five blocks the
+  # per-process tables' frames split (the store-fault pass's frames
+  # from the splits' leftovers, the reach pass's table splitting the
+  # fifth), the DMA check's block, and the block driver's queue block
+  # (T7.1, held for the service's life like the services' arenas) —
+  # and fifteen given back — the four readers' arenas at their deaths,
+  # both blocks of each user pass at its kill or exit, and the DMA
+  # check's block home; the three services, every table, and the queue
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 13' 'addr 0x80000000' 'greedy' 'user heap 9 gone' 'smash' 'user fault 10 cause 15' 'addr 0x40000000' 'reach' 'user fault 11 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 23 15'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' '0:97' '1:98' '2:99' '3:100' '4:101' 'blk rw ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 9 cause 13' 'addr 0x80000000' 'greedy' 'user heap 10 gone' 'smash' 'user fault 11 cause 15' 'addr 0x40000000' 'reach' 'user fault 12 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 25 15'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

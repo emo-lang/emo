@@ -1254,6 +1254,25 @@ let raw_mem_bindings =
         is_var = false;
         depth = 0;
       } );
+    (* peek32/poke32 (EmoOS T7.1): the 32-bit device line — MMIO
+       registers are 4 bytes, and neither byte writes (each byte offset
+       is its own register access, and unmapped offsets fault the
+       device) nor 64-bit writes (the neighbor register may be invalid)
+       can express one. The value's width is guarded at runtime — there
+       is no Int32 type yet — the loud end, never a silent truncation;
+       the arithmetic type stays deferred. *)
+    ( "peek32",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke32",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
     (* device_wait (T3.7): the kernel sleeps until the device world
        wakes it — the ISR side of an interrupt-driven driver. Same
        admission rule: only the target that owns the machine. *)
@@ -1308,8 +1327,8 @@ let raw_mem_bindings =
   ]
 
 let raw_mem_builtin = function
-  | "peek8" | "poke8" | "peek64" | "poke64" | "device_wait" | "ecall"
-  | "user_spawn" | "gate_reply" | "pid_num" ->
+  | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
+  | "device_wait" | "ecall" | "user_spawn" | "gate_reply" | "pid_num" ->
       true
   | _ -> false
 

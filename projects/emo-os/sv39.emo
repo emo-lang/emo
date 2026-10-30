@@ -68,6 +68,9 @@ const ram_top = koff + 0x88000000
 const low_base = 0x80200000
 const uart = 0x10000000
 const plic = 0x0c000000
+// The virtio-mmio transports (T7.1): eight slots on this board, a
+// 4 KiB register page each, the first one the block device's.
+const virtio = 0x10001000
 
 // The two aliases of one byte: the kernel's address and the physical
 // one. The leaf entries carry the physical; the kernel reads and writes
@@ -229,6 +232,11 @@ def map_kernel(root Int64, low Bool) Void {
   map_range(root, rodata_end, pa_of(rodata_end), ram_top - rodata_end, rw)
   map_range(root, va_of(uart), uart, page, rw)
   map_range(root, va_of(plic), plic, 2 * mega, rw)
+  var i = 0
+  while i < 8 {
+    map_range(root, va_of(virtio + i * page), virtio + i * page, page, rw)
+    i = i + 1
+  }
   if low {
     map_range(root, low_base, low_base, pa_of(ram_top) - low_base, rw)
   }

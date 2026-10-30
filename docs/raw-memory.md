@@ -21,8 +21,20 @@ names — given a checked surface instead of an escape hatch.
 | --- | --- | --- |
 | `peek8(addr)` | `Int64 → Byte` | a volatile byte load, read unsigned (0–255) |
 | `poke8(addr, b)` | `Int64 → Byte → Void` | a volatile byte store |
+| `peek32(addr)` | `Int64 → Int64` | a volatile 32-bit load, zero-extended |
+| `poke32(addr, v)` | `Int64 → Int64 → Void` | a volatile 32-bit store; the value must fit 32 bits (0–4294967295), the loud end otherwise |
 | `peek64(addr)` | `Int64 → Int64` | a volatile word load |
 | `poke64(addr, v)` | `Int64 → Int64 → Void` | a volatile word store |
+
+The 32-bit line joined with EmoOS T7.1 (2026-10-30), the virtio-blk
+driver's demand: MMIO registers are four bytes, and neither of the two
+widths can express one — byte writes are separate register accesses
+(each byte offset is its own register, and unmapped offsets fault the
+device), and a 64-bit write would touch the neighbor register. The
+line is decoupled from the `Int32` arithmetic type, which stays
+deferred until it earns its own place: the value's width is guarded at
+runtime — there is no `Int32` type to carry the guarantee — the same
+loud-never-silent rule `Byte.from_int64` keeps.
 
 The rules the table sits on:
 
@@ -65,7 +77,7 @@ lane has no consumer on the roadmap and is not built speculatively.
 
 ## Volatile — what the rule means
 
-- The four builtins are never elided and never reordered against each
+- The six builtins are never elided and never reordered against each
   other; `fence()` widens that pairwise rule into a full barrier over
   ordinary and volatile accesses alike (the atomics note's contract).
   Nothing makes a `peek`-then-`poke` pair atomic.
@@ -76,7 +88,7 @@ lane has no consumer on the roadmap and is not built speculatively.
 
 ## The per-target matrix
 
-| Target | `peek8`/`poke8`/`peek64`/`poke64` |
+| Target | `peek8`/`poke8`/`peek32`/`poke32`/`peek64`/`poke64` |
 | --- | --- |
 | `riscv64` | admits — the volatile access helpers in the generated image |
 | interpreter, `c`, `ocaml`, `ts`, `wasm`, `beam` | refuse by name at check time (E4028) |

@@ -947,6 +947,45 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    ld a0, %d(sp)\n" addr_slot;
         call_runtime env "emo_poke64"
       end
+  | Builtin { name = "peek32"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      if env.native then
+        (* the volatile 32-bit load, inline (T7.1): raw address in, the
+           zero-extended word the raw payload — lw clears the top half *)
+        put env "    lw a0, 0(a0)\n"
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek32";
+        unbox_if_numeric env e.Emo_ir.ety
+      end
+  | Builtin { name = "poke32"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      if env.native then begin
+        (* the volatile 32-bit store, inline (T7.1): the value must fit
+           the width — no Int32 type guards it yet, so the runtime check
+           is the loud end, never a silent truncation (the Byte lane's
+           rule) *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    li t1, 0x100000000\n";
+        put env "    bltu a0, t1, 1f\n";
+        put env "    la a0, msg_poke32_range\n";
+        put env "    la a1, msg_poke32_range_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sw a0, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke32"
+      end
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
@@ -1933,15 +1972,35 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_expr env 0 value;
       match env.cur with
       | Some f when env.native -> (
-          match value.Emo_ir.ety with
-          | Emo_check.Float64 ->
-              f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
+          (* The slot's convention was fixed at its declaration (or the
+             param list) and never moves: every store converts the
+             produced word into it. The convention used to follow the
+             assignment — a conditional `d = x` (a tagged word) flipped
+             the slot for every read after the branch, while the
+             skipped path still held the declaration's raw 0, and the
+             next read unboxed zero (T7.1's driver caught it: the read
+             request skipped the write's data receive). *)
+          match List.assoc_opt name f.raw with
+          | Some Emo_check.Float64 ->
+              (match value.Emo_ir.ety with
+              | Emo_check.Float64 -> () (* the raw bits already in fa0 *)
+              | _ ->
+                  (* a tagged producer: the cell's bits into fa0 *)
+                  put env "    andi t0, a0, -32\n";
+                  put env "    fld fa0, 8(t0)\n");
               put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
-          | Emo_check.Int64 ->
-              f.raw <- (name, Emo_check.Int64) :: List.remove_assoc name f.raw;
+          | Some Emo_check.Int64 ->
+              (match value.Emo_ir.ety with
+              | Emo_check.Int64 -> () (* the raw payload already in a0 *)
+              | _ ->
+                  (* a tagged producer: the cell's payload into a0 *)
+                  put env "    andi a0, a0, -32\n";
+                  put env "    ld a0, 8(a0)\n");
               put env "    sd a0, %d(sp)\n" (slot_offset env name)
           | _ ->
-              f.raw <- List.remove_assoc name f.raw;
+              (* a tagged slot: a raw numeric producer boxes at the
+                 store *)
+              box_if_numeric env value.Emo_ir.ety;
               put env "    sd a0, %d(sp)\n" (slot_offset env name))
       | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
   | If { cond; then_; else_ } ->
@@ -2978,6 +3037,42 @@ emo_poke64:
     andi a1, a1, -32
     ld t1, 8(a1)
     sd t1, 0(t0)
+    ret
+
+# emo_peek32 (T7.1): a0 = the address; a0 = the word, zero-extended,
+# boxed — the 32-bit device line's tagged-world entry.
+    .globl emo_peek32
+emo_peek32:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    lw a0, 0(t0)
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_poke32 (T7.1): a0 = the address, a1 = a boxed Int64. The value
+# must fit the width — the loud end otherwise, never a silent
+# truncation.
+    .globl emo_poke32
+emo_poke32:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    andi a1, a1, -32
+    ld t1, 8(a1)
+    li a2, 0x100000000
+    bltu t1, a2, 1f
+    la a0, msg_poke32_range
+    la a1, msg_poke32_range_end
+    call emo_fail
+1:
+    sw t1, 0(t0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
 # emo_sys_ecall (T4.2): a0 = the verb, a1..a6 = the six words, all
@@ -4460,6 +4555,9 @@ msg_atomic_kind_end:
 msg_byte_range:
     .ascii "`Byte.from_int64` needs a value in 0-255"
 msg_byte_range_end:
+msg_poke32_range:
+    .ascii "`poke32` needs a value in 0-4294967295"
+msg_poke32_range_end:
 name_to_string:
     .ascii "to_string"
 name_length:

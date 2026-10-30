@@ -65,6 +65,15 @@ const exit_pids = koff + 0x87002120
 const exit_codes = koff + 0x87002160
 const pending_flag = koff + 0x870021a0
 const pending_target = koff + 0x870021a8
+
+// The block device (T7.1): the virtio-mmio transports — eight slots
+// on this board, a 4 KiB register page each; the driver scans them for
+// the block device (QEMU's `-device virtio-blk-device` lands on an
+// mmio bus; the slot depends on the bus enumeration, so the scan is
+// the driver's own discipline, the FDT walk's shape). IRQ 1..8 stay
+// unwired: the completion wait is polled (the console's
+// pre-interrupt discipline), the interrupt-driven wait a T7.2 piece.
+const virtio_base = koff + 0x10001000
 const pending_waiter = koff + 0x870021c0
 const block = 65536
 
@@ -401,6 +410,167 @@ def process_service(boss Pid) Void {
   }
 }
 
+// A 32-bit MMIO write (T7.1): `poke32` — the byte lane cannot compose
+// one (each byte offset is its own register access, and unmapped
+// offsets fault the device, the trace proved it), and a 64-bit poke
+// would touch the neighbor register. The address pairs
+// (Desc/Avail/Used Low then High) are the exception: both halves are
+// plain address registers, one 64-bit poke each, ascending.
+def mmio32(a Int64, v Int64) Void {
+  poke32(a, v)
+}
+
+def mmio32r(a Int64) Int64 {
+  return peek32(a)
+}
+
+// A little-endian 16-bit read of queue memory, two bytes — the rings'
+// indices are u16.
+def peek16r(a Int64) Int64 {
+  return peek8(a).to_int64() + (peek8(a + 1).to_int64() << 8)
+}
+
+def blk_zero(a Int64, words Int64) Void {
+  var i = 0
+  while i < words {
+    poke64(a + i * 8, 0)
+    i = i + 1
+  }
+}
+
+// One request through the queue (T7.1): the header (type, sector), the
+// three chained descriptors — header device-read, data (WRITE for a
+// read: the device fills it), status device-written — the avail ring's
+// index, the doorbell after a fence, and the polled completion. The
+// whole request rides the queue block: one contiguous piece of RAM the
+// device owns while the request is in flight, the DMA-coherent
+// discipline T6.5 pinned; the addresses it sees are physical. One
+// request at a time — the serial service's discipline, descriptors
+// 0..2 reused.
+def blk_submit(dev Int64, q Int64, op Int64, sector Int64, word Int64) Int64 {
+  var hdr = q + 0x3000
+  var data = q + 0x3100
+  var stat = q + 0x3400
+  var ty = 0
+  if op == 1 {
+    ty = 1
+  }
+  poke64(hdr, ty)
+  poke64(hdr + 8, sector)
+  poke64(data, word)
+  poke8(stat, 255B)
+  var dflags = 1
+  if op != 1 {
+    dflags = 3
+  }
+  poke64(q, sv39.pa_of(hdr))
+  poke64(q + 8, 16 | (1 << 32) | (1 << 48))
+  poke64(q + 16, sv39.pa_of(data))
+  poke64(q + 24, 512 | (dflags << 32) | (2 << 48))
+  poke64(q + 32, sv39.pa_of(stat))
+  poke64(q + 40, 1 | (2 << 32))
+  var avail = q + 0x1000
+  var nidx = peek16r(avail + 2) + 1
+  poke64(avail, nidx << 16)
+  fence()
+  mmio32(dev + 0x050, 0)
+  var used = q + 0x2000
+  var spins = 0
+  var seen = peek16r(used + 2)
+  while seen != nidx {
+    spins = spins + 1
+    if spins > 10000000 {
+      println("blk: the device never answered")
+      halt()
+    }
+    seen = peek16r(used + 2)
+  }
+  if peek8(stat).to_int64() != 0 {
+    println("blk: the device refused the request")
+    halt()
+  }
+  return peek64(data)
+}
+
+// The block device's driver (T7.1), a process like the services: it
+// owns the queue — one 64 KiB block from the frame allocator, held for
+// the service's life like the services' arenas — and answers the
+// boss's requests from its mailbox: the request word packs
+// op << 32 | sector (op 1 write, 2 read), a write's data word follows
+// as its own message, the reply is a message back. The completion wait
+// is the console's pre-interrupt poll (T3.5's shape): the
+// interrupt-driven wait needs a park that checks a condition cell
+// inside the scheduler's masked region, a runtime piece the FS
+// service's concurrency (T7.2) earns; the poll is bounded, and the
+// loud end answers a silent device.
+def blk_service(boss Pid) Void {
+  // The slot scan: a transport answers with the magic and the version
+  // whether or not a device rides it; a block device is DeviceID 2.
+  var dev = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 2 {
+        dev = cand
+      }
+    }
+    slot = slot + 1
+  }
+  if dev == 0 {
+    println("blk: no block device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("blk: no block for the queue")
+    halt()
+  }
+  blk_zero(q, 16)
+  blk_zero(q + 0x1000, 3)
+  blk_zero(q + 0x2000, 9)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("blk: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 8 {
+    println("blk: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 8)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  var cap = peek64(dev + 0x100)
+  println("blk ${cap} ready")
+  boss <- self_pid()
+  while true {
+    var w = 0
+    receive {
+      x -> { w = x }
+    }
+    var op = w >> 32
+    var sector = w & 0xFFFFFFFF
+    var d = 0
+    if op == 1 {
+      receive {
+        x -> { d = x }
+      }
+    }
+    var answer = blk_submit(dev, q, op, sector, d)
+    boss <- answer
+  }
+}
+
 // A reader's byte: ask, then block on the answer. The request is a
 // send, the wait an ordinary receive — the mailbox is the wait queue,
 // and a byte delivered before the park is found by the scan.
@@ -451,8 +621,10 @@ def tick_proof() Void {
 // shim posts by.
 var me = self_pid()
 var console_svc = me
+var blk_svc = me
 do console_service(me)
 do process_service(me)
+do blk_service(me)
 uart_init()
 println("Hello, EmoOS!")
 sv39_report()
@@ -462,6 +634,7 @@ receive { c1 -> {
   console_svc = c1
 } }
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
+receive { c3 -> { blk_svc = c3 } }
 do reader(console_svc, me, 1)
 do reader(console_svc, me, 2)
 do reader(console_svc, me, 3)
@@ -472,6 +645,31 @@ receive { done1 -> {} }
 receive { done2 -> {} }
 receive { done3 -> {} }
 receive { done4 -> {} }
+
+// The block roundtrip (T7.1): one sector written through the queue and
+// read back through it — the write's reply the word the device saw,
+// the read's reply the word the disk kept.
+var blkw = 0x456D6F4F53626C6B
+blk_svc <- (1 << 32) | 3
+blk_svc <- blkw
+receive {
+  ackw -> {
+    if ackw != blkw {
+      println("blk: the write roundtrip is wrong")
+      halt()
+    }
+  }
+}
+blk_svc <- (2 << 32) | 3
+receive {
+  backw -> {
+    if backw != blkw {
+      println("blk: the read roundtrip is wrong")
+      halt()
+    }
+  }
+}
+println("blk rw ok")
 
 // The kernel's program is done: stage the user image (T4.1). The boot
 // stub reads the staged entry once this returns, srets into U-mode,
