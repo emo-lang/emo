@@ -94,5 +94,13 @@ SECTIONS
   . = KOFF + 0x87004000;
   .emo_sv39 (NOLOAD) : AT(ADDR(.emo_sv39) - KOFF) { *(.emo_sv39) } :tick
 
+  /* The filesystem's pages (T7.2), three pages above the Sv39 page:
+     the service's and the supervisor's pid cells, the stash, and the
+     four request slots the gate fills — the kernel's Emo (gate.emo,
+     fs.emo, main.emo) reads and writes them through peek/poke by their
+     fixed constants. */
+  . = KOFF + 0x87005000;
+  .emo_fs (NOLOAD) : AT(ADDR(.emo_fs) - KOFF) { *(.emo_fs) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

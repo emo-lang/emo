@@ -5048,6 +5048,14 @@ emo_process_done:
     ld t1, 0(t0)
     li t2, 3
     sd t2, 16(t1)
+    la t3, emo_death_hook
+    ld t3, 0(t3)
+    beqz t3, .Ldone_reap
+    ld a0, 8(t1)                # the dead pid, to the kernel's notice (T7.2)
+    jalr t3
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+.Ldone_reap:
     mv a0, t1
     call emo_arena_reap         # nothing queued: the arena goes home now
     j emo_schedule
@@ -5541,7 +5549,12 @@ emo_gate_reply:
     call emo_runq_push
     csrsi sstatus, 2
     ld ra, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 24             # the frame the entry opened (24 — T4.6
+                                # widened it for a1's spill, and the
+                                # epilogue had kept the old 16: eight bytes
+                                # of the caller's stack leaked per reply,
+                                # invisible to a service that never
+                                # returns, and a wild ra for one that does)
     ret
 
 # emo_user_spawn: a0 = the entry, a1 = the fresh stack's top — the top
@@ -6009,6 +6022,12 @@ emo_arena_gone:
     addi sp, sp, 16
     li t5, 3
     sd t5, 16(s0)           # done — the machine continues without it
+    la t5, emo_death_hook
+    ld t5, 0(t5)
+    beqz t5, 1f
+    ld a0, 8(s0)            # the dead pid, to the kernel's notice (T7.2)
+    jalr t5
+1:
     mv a0, s0
     call emo_arena_reap     # and its arena goes home unless a queued
                             # message still pins it (T5.2)
@@ -6258,6 +6277,23 @@ emo_space_hook:
 
     .globl emo_space_write_hook
 emo_space_write_hook:
+    .zero 8
+
+# ---- The death hook (EmoOS T7.2) ----
+#
+# A green process's end, reported: one word in .bss, zero in every
+# image whose stub does not touch it, while a kernel package's boot
+# stub parks a routine the runtime calls with the dead process's pid
+# at the two places a green process ends alone — the entry thunk's
+# return (emo_process_done) and the arena kill (the kernel profile's
+# emo_arena_gone) — after the slot is marked done and before the
+# reclamation. The kernel's supervisor restarts the services it owns
+# from the notice; nothing in the runtime knows what the kernel does
+# with it. The call runs inside the masked region on the dead
+# process's own stack, and the routine must allocate nothing.
+
+    .globl emo_death_hook
+emo_death_hook:
     .zero 8
 
 # ---- The console hook (EmoOS T3.5) ----

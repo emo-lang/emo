@@ -36,7 +36,8 @@ One register, `a0`:
 | 2 | a pointer argument lies outside the caller's memory |
 | 3 | a pointer argument's memory does not carry the permission the access needs |
 | 4 | a non-pointer argument is out of range |
-| 5 | the kernel is out of a resource (`spawn` with no free block left for the new process's stack and arena) |
+| 5 | the kernel is out of a resource (`spawn` with no free block left for the new process's stack and arena; a filesystem verb with no request slot free, or no name-table entry or data run left) |
+| 6 | no such file (the filesystem verbs, T7.2) |
 
 A refusal is an answer, not a fault: the caller's registers are intact
 and execution resumes after the `ecall`. What a program does with a
@@ -53,6 +54,22 @@ undocumented ever acts.
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
+| 6 | `file_write(name, name_len, buf, len)` | the file named by the `name_len` bytes at `name` becomes the `len` bytes at `buf` (at most 2048); answers `len` |
+| 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
+| 8 | `file_list(buf, cap)` | the names, each followed by a newline, land at `buf`; answers the bytes written |
+| 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
+
+Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
+name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
+and the service's own state discipline are
+[`docs/fs.md`](fs.md). Every pointer argument among them is checked
+like `write`'s buffer and copied at the gate: the name and the write's
+bytes land in one of four request slots on the filesystem's pages
+inside the trap that checked them (a fifth caller while four are
+parked is reason 5), and the slot's index rides the route, so the
+service's request word names it (`slot << 36 | op << 32 | pid`). The
+read's and the list's bytes land in the caller's buffer through the
+supervisor's low window while the caller is parked.
 
 Verb 5 (T5.1) is not a service request but the user image's allocator
 speaking: when the running pass's own arena — the 64 KiB block the
@@ -68,7 +85,8 @@ ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
-(1 and 2 to the console service, 0, 3 and 4 to the process service)
+(1 and 2 to the console service, 0, 3 and 4 to the process service, 6
+to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
 the `ecall` had answered directly. The exit is the routing's one
@@ -77,14 +95,16 @@ slot ends done instead of parked — a send to the exited pid drops, and
 the exit table's entry is the only thing left of the process.
 (The language's `halt` builtin is
 the kernel profile's own shutdown ecall — on a user image it reaches
-the gate as verb 8 and is refused like any other verb not in the set.)
+the gate as verb 8 — the filesystem's list since T7.2, which it
+reaches with a zero buffer and a zero capacity, refused as a range
+the caller's memory does not cover.)
 
 ## The user surface
 
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its five
+It admits the `riscv64` target alone; the raw `ecall` lives in its nine
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -104,6 +124,13 @@ bodies and nowhere else a user program writes.
   coordinates through raw cells or the console.
 - `syscall.wait(pid)` — the exit of the child with that pid number,
   blocking until it happens, answering `(R.ok, the exit code)`.
+- `syscall.file_write(name, name_len, buf, len)`,
+  `syscall.file_read(name, name_len, buf, cap)`,
+  `syscall.file_list(buf, cap)`, `syscall.file_remove(name, name_len)`
+  — the filesystem verbs (T7.2), each answering `(R.ok, the answer)`
+  or `(R.error, why)`; the reasons the earlier verbs name, plus
+  `"no such file"` for reason 6. The names and the bytes are raw
+  addresses in the program's own memory, like `write`'s buffer.
 
 Programs pin it like any package (`deps { "syscall" = "0.1.0" }`) and
 resolve it from the bundled registry. The kernel profile refuses it
@@ -183,6 +210,12 @@ so the user image's own allocator charges whichever pass is running:
 | `0x87fff000` | the user image's `emo_program` entry (the process service starts spawned passes here) |
 | `0x87fff008` | the address of the user image's arena cursor (its root slot's word) |
 | `0x87fff010` | the address of its arena end |
+
+The filesystem's pages (T7.2, `.emo_fs`, three pages from
+`0x87005000`) hold the service's pid cell the gate routes by, the
+supervisor's pid cell the runtime's death notice posts to, the stash,
+and the four request slots the gate fills; the layout is in
+[`docs/fs.md`](fs.md).
 
 The user window is `[0x87100000, 0x88000000)`; the user profile links
 at its base.

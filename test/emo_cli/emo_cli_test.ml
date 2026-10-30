@@ -3290,8 +3290,7 @@ let riscv64_profile_tests =
               (contains asm "ld a0, 872(s1)");
             Alcotest.(check bool)
               (profile ^ ": the pick carries the slot across the call")
-              true
-              (contains asm "mv s1, a1");
+              true (contains asm "mv s1, a1");
             Alcotest.(check bool)
               (profile ^ ": the build hook answers at the spawn")
               true
@@ -3323,6 +3322,38 @@ let riscv64_profile_tests =
               (profile ^ ": the initial sp rides the slot below the frame")
               true
               (contains asm "sd t5, -8(t4)"))
+          [ "kernel"; "user" ]);
+    tc "the death hook is a runtime word a kernel parks" (fun () ->
+        (* EmoOS T7.2: a green process's end is reported through one
+           word in .bss, zero in every image whose stub leaves it — the
+           entry thunk's return calls it in both profiles, the arena
+           kill in the kernel profile alone (the user profile's kill is
+           the gate's verb 5, no green death of its own). The reply
+           helper's epilogue releases the frame its entry opened — the
+           24 bytes T4.6 widened it to; the old 16 leaked eight bytes
+           of the caller's stack per reply, which a service that never
+           returns never saw and the filesystem's serve-and-return did. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the death hook word")
+              true
+              (contains asm "emo_death_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the entry thunk's return reports the death")
+              true
+              (contains asm "la t3, emo_death_hook");
+            Alcotest.(check bool)
+              (profile
+             ^ ": the arena kill reports the death in the kernel alone")
+              (profile = "kernel")
+              (contains asm "la t5, emo_death_hook");
+            Alcotest.(check bool)
+              (profile ^ ": the reply's epilogue releases the frame it opened")
+              true
+              (contains asm "ld ra, 0(sp)\n    addi sp, sp, 24"))
           [ "kernel"; "user" ]);
   ]
 

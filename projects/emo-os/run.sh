@@ -12,13 +12,13 @@ if [ ! -f "$elf" ]; then
   exit 1
 fi
 
-# The block device's backing (T7.1): a raw 1 MiB image, created when
-# absent. The driver writes and reads one sector of it; every boot
-# writes the same word, so a dirty image between runs changes nothing.
+# The block device's backing (T7.1): a raw 1 MiB image, written zero
+# before the first boot (T7.2) — so the two boots below are one story:
+# the first finds a blank disk and the filesystem formats it, the
+# second finds the volume the first left and mounts it. A dirty image
+# from an earlier run changes nothing.
 img='.blk.img'
-if [ ! -f "$img" ]; then
-  dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
-fi
+dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 
 # One boot: the named CPU config, the serial input on a named pipe
 # written only after the kernel is ready — the tick proof's checksum is
@@ -28,13 +28,17 @@ fi
 # by one, and a dump woven between them would split the lines the
 # assertions read; on stderr the trace never touches the serial). The
 # assertions: the greeting, the Sv39 line (the kernel paged on the
-# table it built), the checksum, the tick verdict, the five console
-# deliveries in order, the user program's proof chain — the kill report
-# included, the machine surviving its offender — the frame allocator's
-# account as the last line, and the machine's own exit, the SBI
-# poweroff.
+# table it built), the checksum, the tick verdict, the filesystem's
+# mount lines (the first instance's, then the one the supervisor
+# restarted), the five console deliveries in order, the user program's
+# proof chain — the kill report included, the machine surviving its
+# offender — the frame allocator's account as the last line, and the
+# machine's own exit, the SBI poweroff. The filesystem's lines differ
+# per boot (T7.2): the first boot's first mount formats the blank disk
+# and counts no file, its restarted instance counts the root's one;
+# the second boot's instances count the two files the first boot left.
 boot() {
-  local cpu="$1" mode="$2" log="$3"
+  local cpu="$1" mode="$2" log="$3" mount1="$4" mount2="$5" formats="$6"
   local fifo
   fifo=$(mktemp -u /tmp/emoos-serial.XXXXXX)
   mkfifo "$fifo"
@@ -116,12 +120,23 @@ boot() {
   # the block device's line (T7.1: the driver scanned the virtio-mmio
   # slots, negotiated the modern layout, built its queue on one
   # allocator block, and the capacity reads 2048 sectors — the 1 MiB
-  # image below), then the five console deliveries, in request order,
-  # then the block roundtrip (one sector written through the queue and
-  # read back through it), then the user
-  # image's proof chain: staged, the U-mode greeting (T6.2: every byte
-  # out of U-mode rides the gate — the pass's own table maps nothing
-  # else), the gate line, the byte the read waited for, the misbehaving
+  # image below), then the filesystem's first mount line (T7.2: the
+  # service read sector 0 through the driver, formatted the blank disk
+  # on the first boot or found the volume on the second, wrote the
+  # generation back, read the name table, rebuilt its free map), then
+  # the five console deliveries, in request order, then the restarted
+  # instance's mount line (the root wrote a file through the first
+  # instance and stopped it; the runtime's death hook told the
+  # supervisor, which spawned the next — the generation one higher,
+  # the file counted: the mount table durable on the disk, the cache
+  # rebuilt from it) and `fs restart ok` (the file read back through
+  # the restarted instance, byte for byte), then the user image's proof
+  # chain: staged, the U-mode greeting (T6.2: every byte out of U-mode
+  # rides the gate — the pass's own table maps nothing else), the gate
+  # line, the byte the read waited for, the filesystem roundtrip
+  # through the gate (T7.2: a 600-byte file written and read back byte
+  # for byte, a second file written and removed, the list naming two),
+  # the misbehaving
   # child's line, the supervisor's kill report (the faulting load is
   # the one the pass's own table maps nothing — the load page fault,
   # cause 13; the epc moves per build and is not asserted, but T6.4's
@@ -140,20 +155,26 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): twenty-five blocks taken —
-  # the kernel's page tables' block (T6.1), the seven green spawns'
-  # arenas (the three services' and the four readers'), a stack and an
-  # arena for each of the five user passes, the five blocks the
-  # per-process tables' frames split (the store-fault pass's frames
-  # from the splits' leftovers, the reach pass's table splitting the
-  # fifth), the DMA check's block, and the block driver's queue block
-  # (T7.1, held for the service's life like the services' arenas) —
-  # and fifteen given back — the four readers' arenas at their deaths,
-  # both blocks of each user pass at its kill or exit, and the DMA
-  # check's block home; the three services, every table, and the queue
-  # keep theirs. The byte offsets are the serial order.
+  # account at the root's exit (T5.3): thirty blocks taken — the
+  # kernel's page tables' block (T6.1), the ten green spawns' arenas
+  # (the three services', the supervisor's, the filesystem's two
+  # instances', and the four readers'), the filesystem's cache block
+  # (the supervisor's, held across the instances) and the root's
+  # scratch block for its proof, a stack and an arena for each of the
+  # five user passes, the five blocks the per-process tables' frames
+  # split (the store-fault pass's frames from the splits' leftovers,
+  # the reach pass's table splitting the fifth), the DMA check's
+  # block, and the block driver's queue block (T7.1, held for the
+  # service's life like the services' arenas) — and seventeen given
+  # back — the four readers' arenas at their deaths, the first
+  # filesystem instance's arena at its stop, the root's scratch block
+  # after its proof, both blocks of each user pass at its kill or exit,
+  # and the DMA check's block home; the three services, the
+  # supervisor, the live filesystem instance, every table, the cache
+  # block, and the queue keep theirs. The byte offsets are the serial
+  # order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' '0:97' '1:98' '2:99' '3:100' '4:101' 'blk rw ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 9 cause 13' 'addr 0x80000000' 'greedy' 'user heap 10 gone' 'smash' 'user fault 11 cause 15' 'addr 0x40000000' 'reach' 'user fault 12 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 25 15'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 30 17'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -165,6 +186,15 @@ boot() {
     fi
     prev=$pos
   done
+  # The format happens exactly once, on the blank disk: the first boot's
+  # first mount says so before its mount line; the second boot's never
+  # does — the volume the first boot left is what it mounts.
+  local formatted
+  formatted=$(grep -c 'fs formatted' "$log" || true)
+  if [ "$formatted" -ne "$formats" ]; then
+    echo "run.sh: expected 'fs formatted' $formats time(s), saw $formatted" >&2
+    exit 1
+  fi
   if [ "$exited" -ne 1 ]; then
     echo "run.sh: QEMU did not exit on its own; the SBI poweroff is gone" >&2
     exit 1
@@ -190,8 +220,12 @@ boot() {
 }
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
-boot 'rv64,sstc=false' legacy '.qemu.log'
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, console, user, kill, frames, self-exit"
-# The stimecmp transport when it does.
-boot 'rv64,sstc=true' sstc '.qemu-sstc.log'
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, console, user, kill, frames, self-exit, 1 ecall"
+# The first boot meets the blank disk: the filesystem formats it, and
+# its restarted instance counts the root's one file.
+boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, frames, self-exit"
+# The stimecmp transport when it does. The second boot meets the volume
+# the first left — two files, the root's and hello's — and formats
+# nothing: the mount table came off the disk.
+boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, frames, self-exit, 1 ecall"

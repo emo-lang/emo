@@ -109,6 +109,13 @@ emo_start:
     la t0, emo_os_satp_switch
     la t1, emo_space_write_hook
     sd t0, 0(t1)
+    # the death notice (T7.2): the runtime's death hook goes to the
+    # shim's routine, which posts a green process's end to the
+    # supervisor's mailbox — the filesystem service's restart hangs on
+    # it. Zero in every image whose stub leaves it.
+    la t0, emo_os_death_notice
+    la t1, emo_death_hook
+    sd t0, 0(t1)
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and
     # arms the first deadline — all before the program runs

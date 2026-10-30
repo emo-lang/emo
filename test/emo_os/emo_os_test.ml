@@ -209,6 +209,7 @@ let smoke_tests =
             "sv39.emo";
             "sv39.S";
             "space.emo";
+            "fs.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";

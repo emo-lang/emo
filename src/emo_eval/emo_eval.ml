@@ -2908,8 +2908,9 @@ and apply_builtin span name args =
   | "fence", vs ->
       error span "E3007"
         (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
-  | (("peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-    | "device_wait") as name), _ ->
+  | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
+       | "device_wait" ) as name),
+      _ ) ->
       error span "E4028"
         (Printf.sprintf
            "`%s` reaches raw memory: only the `riscv64` target admits it, not \

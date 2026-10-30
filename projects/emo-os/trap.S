@@ -574,7 +574,11 @@ emo_os_trap_trampoline:
     # gate-wait that no reply will ever relieve.
     addi t5, a0, 0
     sub t6, zero, t5
-    addi t6, t6, -1000       # the op
+    addi t6, t6, -1000       # the op — for the filesystem's routes the
+                             # request slot rides above it (slot << 4 | op,
+                             # T7.2), and the whole value goes into the word
+    li t3, 6
+    bge t6, t3, .Lroute_fs   # ops 6.. (the filesystem's, any slot)
     li t3, 3
     bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
     beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
@@ -583,14 +587,26 @@ emo_os_trap_trampoline:
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
+    j .Lroute_post
+.Lroute_fs:
+    li a0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
+    ld a0, 0(a0)
+    beqz a0, .Lroute_parked       # no instance between one's death and
+                                  # the next one's parking: the gate put
+                                  # the request word in the stash the
+                                  # next instance serves first — the
+                                  # caller parks without a post (T7.2)
+    j .Lroute_posted
 .Lroute_post:
     ld a0, 0(a0)             # the service's raw pid
+.Lroute_posted:
     slli a1, t6, 32          # the request word: op << 32 | the caller's
     la t2, emo_cur_slot      # pid — the answer's addressee rides with
     ld t2, 0(t2)             # the request, so the service's reply lands
     ld t2, 8(t2)             # on the caller that asked, not on whichever
     or a1, a1, t2            # state-5 slot a scan finds first
     call emo_gate_post
+.Lroute_parked:
     la t0, emo_cur_slot
     ld t0, 0(t0)             # the caller's slot
     la t1, emo_os_trap_frame
@@ -961,6 +977,42 @@ emo_os_user_boot:
     sret
 1:  ret
 
+# The death notice (T7.2): the runtime's death hook lands here with the
+# dead green process's pid in a0 — from emo_process_done (a service
+# that returned) and from the kernel profile's arena kill — inside the
+# masked region, on the dead process's own stack, after its slot is
+# done and before its blocks go home. The notice is a raw word posted
+# into the supervisor's mailbox the way the gate posts a request:
+# 256 << 32 | pid, an op no gate verb reaches, so the supervisor's
+# decode (op_of) tells it from an announce. A zero supervisor cell —
+# before the supervisor exists, or in a kernel without one — means no
+# notice; the posting helper's own loud end answers a supervisor pid
+# that names no slot.
+    .globl emo_os_death_notice
+emo_os_death_notice:
+    # the dead process was the filesystem service: its pid cell goes to
+    # zero here, inside the death's own masked region, so a request the
+    # gate dispatches before the supervisor has parked the next
+    # instance is set aside — the stash the next instance serves first
+    # — instead of posted into a dead mailbox nobody drains
+    li t0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
+    ld t1, 0(t0)
+    bne t1, a0, 2f
+    sd zero, 0(t0)
+2:  li t0, EMO_KOFF + 0x87005008  # the supervisor's pid cell
+    ld t1, 0(t0)
+    beqz t1, 1f
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a1, 256
+    slli a1, a1, 32
+    or a1, a1, a0            # 256 << 32 | the dead pid
+    mv a0, t1
+    call emo_gate_post
+    ld ra, 0(sp)
+    addi sp, sp, 16
+1:  ret
+
     .section .rodata
 msg_unexpected:
     .ascii "the kernel took an unexpected trap"
@@ -1121,3 +1173,30 @@ emo_os_frames_frame_free:
     .globl emo_os_frames_frame_split
 emo_os_frames_frame_split:
     .zero 8
+
+# The filesystem's pages (T7.2): three pages at the fixed address the
+# kernel's linker script gives the section — the service's pid cell
+# the gate routes by, the supervisor's pid cell the death notice posts
+# to, the stash of request words the service sets aside while it waits
+# on the driver, and the four request slots the gate fills (busy, the
+# caller's pid, the lengths, the caller's buffer, the name, the bytes;
+# 2304 bytes apart from 0x87005100). The kernel's Emo (gate.emo,
+# fs.emo, the supervisor in main.emo) reads and writes every word by
+# its fixed constant; named here so the forensics can read them.
+    .section .emo_fs, "aw", @nobits
+    .globl emo_os_fs_pid
+emo_os_fs_pid:
+    .zero 8
+    .globl emo_os_fs_supervisor
+emo_os_fs_supervisor:
+    .zero 8
+    .globl emo_os_fs_stash_count
+emo_os_fs_stash_count:
+    .zero 8
+    .globl emo_os_fs_stash
+emo_os_fs_stash:
+    .zero 32
+    .zero 200                # padding: the slots open at +256
+    .globl emo_os_fs_slots
+emo_os_fs_slots:
+    .zero 9216               # four slots of 2304 bytes

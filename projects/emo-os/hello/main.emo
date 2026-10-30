@@ -40,6 +40,14 @@ const smash_cell = buf + 2072
 const reach_cell = buf + 2080
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
+// The filesystem proof's buffers (T7.2), further up the same scratch
+// page: the two names, the 600 bytes written, the read-back (the
+// read's capacity is 2048, so the buffer is that long), and the list.
+const fs_name = buf + 2304
+const fs_data = buf + 2560
+const fs_back = buf + 3328
+const fs_tmp = buf + 5376
+const fs_names = buf + 5632
 // The kernel's own image by its high-half address: the physical load
 // base plus the upper half's offset. A pass's table maps the kernel's
 // whole half without U, so the mapping is there and the walk succeeds
@@ -108,6 +116,64 @@ def gate_line(len Int64) Void {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
   }
+}
+
+// The filesystem proof's helpers (T7.2): the names poked into the
+// scratch page, a byte pattern long enough to span two sectors, the
+// byte-for-byte compare, and the count of names in a list.
+def put_name(a Int64) Int64 {
+  poke8(a, 104B)     // h
+  poke8(a + 1, 101B) // e
+  poke8(a + 2, 108B) // l
+  poke8(a + 3, 108B) // l
+  poke8(a + 4, 111B) // o
+  poke8(a + 5, 46B)  // .
+  poke8(a + 6, 116B) // t
+  poke8(a + 7, 120B) // x
+  poke8(a + 8, 116B) // t
+  return 9
+}
+
+def put_tmp(a Int64) Int64 {
+  poke8(a, 116B)     // t
+  poke8(a + 1, 109B) // m
+  poke8(a + 2, 112B) // p
+  poke8(a + 3, 46B)  // .
+  poke8(a + 4, 116B) // t
+  poke8(a + 5, 120B) // x
+  poke8(a + 6, 116B) // t
+  return 7
+}
+
+def fill(a Int64, n Int64) Void {
+  var i = 0
+  while i < n {
+    poke8(a + i, ((i * 7 + 3) % 251).to_byte())
+    i = i + 1
+  }
+}
+
+def same(a Int64, b Int64, n Int64) Bool {
+  var i = 0
+  while i < n {
+    if peek8(a + i) != peek8(b + i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+def lines(a Int64, n Int64) Int64 {
+  var count = 0
+  var i = 0
+  while i < n {
+    if peek8(a + i) == 10B {
+      count = count + 1
+    }
+    i = i + 1
+  }
+  return count
 }
 
 // The doomed branch (T4.6): a spawned pass finds this token, claims
@@ -268,6 +334,73 @@ rp = byte_at(rp, 32) // space
 rp = num_at(c, rp)
 rp = byte_at(rp, 10)
 gate_line(rp)
+
+// The filesystem proof (T7.2, docs/fs.md): a 600-byte file written
+// through the gate — two sectors, the second one's tail zero on the
+// disk — and read back byte for byte; a second file written and
+// removed; the list naming what is left: the root's boot file and
+// this one. `fs rw ok` is the roundtrip, `fs ls 2` the list; a
+// refusal or a wrong byte prints `fs rw ?`. The proof runs before the
+// spawns, so no other pass is on the service meanwhile.
+var fn = put_name(fs_name)
+fill(fs_data, 600)
+var fs_ok = true
+case syscall.file_write(fs_name, fn, fs_data, 600) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, wn) -> {
+    if wn != 600 {
+      fs_ok = false
+    }
+  }
+}
+case syscall.file_read(fs_name, fn, fs_back, 2048) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, rn) -> {
+    if rn != 600 {
+      fs_ok = false
+    }
+  }
+}
+if !same(fs_data, fs_back, 600) {
+  fs_ok = false
+}
+var tn = put_tmp(fs_tmp)
+case syscall.file_write(fs_tmp, tn, fs_data, 1) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, _) -> {}
+}
+case syscall.file_remove(fs_tmp, tn) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, _) -> {}
+}
+var listed = 0
+case syscall.file_list(fs_names, 256) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, ln) -> { listed = ln }
+}
+var xp = byte_at(0, 102) // f
+xp = byte_at(xp, 115) // s
+xp = byte_at(xp, 32) // space
+xp = byte_at(xp, 114) // r
+xp = byte_at(xp, 119) // w
+xp = byte_at(xp, 32) // space
+if fs_ok {
+  xp = byte_at(xp, 111) // o
+  xp = byte_at(xp, 107) // k
+} else {
+  xp = byte_at(xp, 63) // ?
+}
+xp = byte_at(xp, 10)
+gate_line(xp)
+var lp = byte_at(0, 102) // f
+lp = byte_at(lp, 115) // s
+lp = byte_at(lp, 32) // space
+lp = byte_at(lp, 108) // l
+lp = byte_at(lp, 115) // s
+lp = byte_at(lp, 32) // space
+lp = num_at(lines(fs_names, listed), lp)
+lp = byte_at(lp, 10)
+gate_line(lp)
 
 // The kill proof (T4.6): the misbehaving child spawns first — its
 // line, then its fault, then the supervisor's loud report — and the

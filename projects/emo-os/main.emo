@@ -16,7 +16,12 @@
 // and the kernel's whole high half mapped without U — so a pass's
 // world is its own pages and the gate's copy-in (the write verb's
 // staging buffer) is what crosses; the services on the kernel's own
-// table read nothing of the caller's memory.
+// table read nothing of the caller's memory. T7.1 adds the block
+// driver, a process that owns the virtio-blk queue; T7.2 the
+// filesystem service above it (fs.emo, the design in docs/fs.md) and
+// the supervisor that owns the service's life — the cache block, the
+// spawn, the restart on the death notice the runtime's death hook
+// posts, the parked clients refused at the restart.
 //
 //   emo build main.emo --target riscv64
 
@@ -72,10 +77,20 @@ const pending_target = koff + 0x870021a8
 // mmio bus; the slot depends on the bus enumeration, so the scan is
 // the driver's own discipline, the FDT walk's shape). IRQ 1..8 stay
 // unwired: the completion wait is polled (the console's
-// pre-interrupt discipline), the interrupt-driven wait a T7.2 piece.
+// pre-interrupt discipline); the interrupt-driven wait is a later
+// piece — nothing in the filesystem's work (T7.2) demanded it.
 const virtio_base = koff + 0x10001000
 const pending_waiter = koff + 0x870021c0
 const block = 65536
+
+// The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
+// the gate routes by — cleared by the death notice the moment the
+// service dies, parked again by the supervisor when the next instance
+// has announced — and the supervisor's own pid cell the death notice
+// posts to.
+const fs_pid_cell = koff + 0x87005000
+const supervisor_cell = koff + 0x87005008
+const notice_op = 256
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
@@ -442,30 +457,31 @@ def blk_zero(a Int64, words Int64) Void {
 // three chained descriptors — header device-read, data (WRITE for a
 // read: the device fills it), status device-written — the avail ring's
 // index, the doorbell after a fence, and the polled completion. The
-// whole request rides the queue block: one contiguous piece of RAM the
-// device owns while the request is in flight, the DMA-coherent
-// discipline T6.5 pinned; the addresses it sees are physical. One
-// request at a time — the serial service's discipline, descriptors
-// 0..2 reused.
-def blk_submit(dev Int64, q Int64, op Int64, sector Int64, word Int64) Int64 {
+// header and the status ride the queue block; the data descriptor
+// names the client's buffer (T7.2) — `buf` is its kernel address, one
+// contiguous range the client answers for (the filesystem's cache
+// block, the DMA discipline T6.5 pinned) and the device sees its
+// physical address. One request at a time — the serial service's
+// discipline, descriptors 0..2 reused. Op 3 writes the sector from
+// the buffer, op 4 reads it into the buffer; the answer is the sector
+// number, the echo the client checks.
+def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
   var hdr = q + 0x3000
-  var data = q + 0x3100
   var stat = q + 0x3400
   var ty = 0
-  if op == 1 {
+  if op == 3 {
     ty = 1
   }
   poke64(hdr, ty)
   poke64(hdr + 8, sector)
-  poke64(data, word)
   poke8(stat, 255B)
   var dflags = 1
-  if op != 1 {
+  if ty == 0 {
     dflags = 3
   }
   poke64(q, sv39.pa_of(hdr))
   poke64(q + 8, 16 | (1 << 32) | (1 << 48))
-  poke64(q + 16, sv39.pa_of(data))
+  poke64(q + 16, sv39.pa_of(buf))
   poke64(q + 24, 512 | (dflags << 32) | (2 << 48))
   poke64(q + 32, sv39.pa_of(stat))
   poke64(q + 40, 1 | (2 << 32))
@@ -489,20 +505,25 @@ def blk_submit(dev Int64, q Int64, op Int64, sector Int64, word Int64) Int64 {
     println("blk: the device refused the request")
     halt()
   }
-  return peek64(data)
+  return sector
 }
 
 // The block device's driver (T7.1), a process like the services: it
 // owns the queue — one 64 KiB block from the frame allocator, held for
-// the service's life like the services' arenas — and answers the
-// boss's requests from its mailbox: the request word packs
-// op << 32 | sector (op 1 write, 2 read), a write's data word follows
-// as its own message, the reply is a message back. The completion wait
-// is the console's pre-interrupt poll (T3.5's shape): the
+// the service's life like the services' arenas — and answers requests
+// from its mailbox. A request is a tuple (T7.2): the word packs
+// op << 32 | sector (3 write a sector from a buffer, 4 read a sector
+// into a buffer, 5 the capacity), the requester's Pid rides beside it
+// — the reply goes to the requester, whoever it is — and the third
+// element is the buffer's kernel address. T7.1's word-in-a-sector
+// self-test is retired: the filesystem's mount is the sector proof
+// now, and a self-test that wrote into the name table's sectors would
+// be the corruption it was meant to rule out. The completion wait is
+// the console's pre-interrupt poll (T3.5's shape): the
 // interrupt-driven wait needs a park that checks a condition cell
-// inside the scheduler's masked region, a runtime piece the FS
-// service's concurrency (T7.2) earns; the poll is bounded, and the
-// loud end answers a silent device.
+// inside the scheduler's masked region, a runtime piece a later
+// consumer earns; the poll is bounded, and the loud end answers a
+// silent device.
 def blk_service(boss Pid) Void {
   // The slot scan: a transport answers with the magic and the version
   // whether or not a device rides it; a block device is DeviceID 2.
@@ -553,28 +574,156 @@ def blk_service(boss Pid) Void {
   var cap = peek64(dev + 0x100)
   println("blk ${cap} ready")
   boss <- self_pid()
+  var from = boss
   while true {
     var w = 0
+    var d = 0
     receive {
-      x -> { w = x }
+      (x, f, y) -> {
+        w = x
+        from = f
+        d = y
+      }
     }
     var op = w >> 32
     var sector = w & 0xFFFFFFFF
-    var d = 0
-    if op == 1 {
-      receive {
-        x -> { d = x }
+    if op == 5 {
+      from <- cap
+    } else {
+      from <- blk_submit(dev, q, op, sector, d)
+    }
+  }
+}
+
+// The supervisor (T7.2, docs/fs.md): the filesystem service's owner.
+// It takes the service's cache block from the frame allocator once —
+// the block outlives the instances, each one overwrites it from the
+// disk and trusts nothing it held — spawns the service into it, parks
+// the instance's pid in the cell the gate routes by, and forwards the
+// Pid to the boss. The runtime's death hook tells it when an instance
+// died (the notice's op is 256, a height no gate verb reaches, the
+// dead pid beside it); the notice named the current instance, it
+// refuses every client the dead one left parked (fs.abandon), spawns
+// the next, and forwards the new Pid. The pid cell is zero between
+// the death and the parking — the death notice cleared it inside the
+// death's own masked region — and the gate sets aside what arrives in
+// the gap, into the stash the next instance serves first.
+def fs_run(boss Pid, blk Pid, cache Int64) Void {
+  fs.service(boss, blk, cache)
+}
+
+// One Pid from the mailbox, raw words set aside: the supervisor's
+// mailbox holds its instances' announces (a Pid, negative as every
+// pointer is) and the death notices (a positive raw word); the loop
+// runs until a Pid exists.
+def wait_pid() Pid {
+  var got = self_pid()
+  var done = false
+  while !done {
+    receive {
+      x -> {
+        if op_of(x) < 0 {
+          got = x
+          done = true
+        }
       }
     }
-    var answer = blk_submit(dev, q, op, sector, d)
-    boss <- answer
   }
+  return got
+}
+
+def supervisor(boss Pid, blk Pid) Void {
+  var me = self_pid()
+  poke64(supervisor_cell, pid_num(me))
+  var cache = frames.take()
+  if cache == 0 {
+    println("fs: no block for the cache")
+    halt()
+  }
+  var fs_boss = me
+  do fs_run(fs_boss, blk, cache)
+  var inst = wait_pid()
+  poke64(fs_pid_cell, pid_num(inst))
+  boss <- inst
+  while true {
+    receive {
+      w -> {
+        if op_of(w) == notice_op {
+          if caller_of(w) == pid_num(inst) {
+            poke64(fs_pid_cell, 0)
+            fs.abandon()
+            do fs_run(fs_boss, blk, cache)
+            inst = wait_pid()
+            poke64(fs_pid_cell, pid_num(inst))
+            boss <- inst
+          }
+        }
+      }
+    }
+  }
+}
+
+// The kernel side of the filesystem (T7.2): a six-tuple per request —
+// (op, from, name, name_len, buf, len) — the addresses kernel ones,
+// the answer a message to `from`. The root uses it once at boot, to
+// drive the restart the chain pins: a file written through the first
+// instance, the stop (op 0, a death the supervisor restarts), the
+// file read back through the instance the supervisor produced. The
+// root's words and names live in a block of their own, given back
+// when the proof is done.
+
+def put_boot_name(a Int64) Void {
+  poke8(a, 98B)      // b
+  poke8(a + 1, 111B) // o
+  poke8(a + 2, 111B) // o
+  poke8(a + 3, 116B) // t
+  poke8(a + 4, 46B)  // .
+  poke8(a + 5, 116B) // t
+  poke8(a + 6, 120B) // x
+  poke8(a + 7, 116B) // t
+}
+
+def put_boot_text(a Int64) Int64 {
+  poke8(a, 69B)      // E
+  poke8(a + 1, 109B) // m
+  poke8(a + 2, 111B) // o
+  poke8(a + 3, 79B)  // O
+  poke8(a + 4, 83B)  // S
+  poke8(a + 5, 32B)  // space
+  poke8(a + 6, 98B)  // b
+  poke8(a + 7, 111B) // o
+  poke8(a + 8, 111B) // o
+  poke8(a + 9, 116B) // t
+  poke8(a + 10, 115B) // s
+  poke8(a + 11, 32B) // space
+  poke8(a + 12, 102B) // f
+  poke8(a + 13, 114B) // r
+  poke8(a + 14, 111B) // o
+  poke8(a + 15, 109B) // m
+  poke8(a + 16, 32B) // space
+  poke8(a + 17, 100B) // d
+  poke8(a + 18, 105B) // i
+  poke8(a + 19, 115B) // s
+  poke8(a + 20, 107B) // k
+  return 21
+}
+
+def same_bytes(a Int64, b Int64, n Int64) Bool {
+  var i = 0
+  while i < n {
+    if peek8(a + i) != peek8(b + i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
 }
 
 // A reader's byte: ask, then block on the answer. The request is a
 // send, the wait an ordinary receive — the mailbox is the wait queue,
 // and a byte delivered before the park is found by the scan.
 def read_byte(console Pid) Int64 {
+
   console <- self_pid()
   var b = 0
   receive {
@@ -615,13 +764,16 @@ def tick_proof() Void {
 
 // The services come up first (T4.4): they answer the gate while a
 // user program runs. Each announces its pid to the boss; the root
-// consumes BOTH announces before any console request goes out — a
+// consumes the announces before any console request goes out — a
 // request answered by mailbox and a stray announce are the same shape
 // to a receive — and parks the raw numbers into the handoff cells the
-// shim posts by.
+// shim posts by. The filesystem (T7.2) comes up through its
+// supervisor, which forwards the service's Pid: the mount lines are
+// on the wire before the root's first console request.
 var me = self_pid()
 var console_svc = me
 var blk_svc = me
+var fs_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
@@ -635,6 +787,8 @@ receive { c1 -> {
 } }
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 -> { blk_svc = c3 } }
+do supervisor(me, blk_svc)
+receive { f1 -> { fs_svc = f1 } }
 do reader(console_svc, me, 1)
 do reader(console_svc, me, 2)
 do reader(console_svc, me, 3)
@@ -646,30 +800,46 @@ receive { done2 -> {} }
 receive { done3 -> {} }
 receive { done4 -> {} }
 
-// The block roundtrip (T7.1): one sector written through the queue and
-// read back through it — the write's reply the word the device saw,
-// the read's reply the word the disk kept.
-var blkw = 0x456D6F4F53626C6B
-blk_svc <- (1 << 32) | 3
-blk_svc <- blkw
+// The restart proof (T7.2, docs/fs.md): a file written through the
+// first instance of the filesystem service, the stop — a death the
+// supervisor is told of by the runtime's death hook and answers with
+// the next instance, whose mount line counts the file — and the file
+// read back through that instance, byte for byte: the mount table
+// found on the disk, the cache rebuilt from it. The root's words live
+// in a block of their own, given back when the proof is done.
+var scratch = frames.take()
+if scratch == 0 {
+  println("fs: no block for the proof")
+  halt()
+}
+put_boot_name(scratch)
+var boot_len = put_boot_text(scratch + 64)
+fs_svc <- (6, me, scratch, 8, scratch + 64, boot_len)
 receive {
-  ackw -> {
-    if ackw != blkw {
-      println("blk: the write roundtrip is wrong")
+  wrote -> {
+    if wrote != boot_len {
+      println("fs: the write answered ${wrote}, not ${boot_len}")
       halt()
     }
   }
 }
-blk_svc <- (2 << 32) | 3
+fs_svc <- (0, me, 0, 0, 0, 0)
+receive { f2 -> { fs_svc = f2 } }
+fs_svc <- (7, me, scratch, 8, scratch + 1024, 2048)
 receive {
-  backw -> {
-    if backw != blkw {
-      println("blk: the read roundtrip is wrong")
+  got -> {
+    if got != boot_len {
+      println("fs: the read answered ${got}, not ${boot_len}")
       halt()
     }
   }
 }
-println("blk rw ok")
+if !same_bytes(scratch + 64, scratch + 1024, boot_len) {
+  println("fs: the file came back wrong")
+  halt()
+}
+frames.give(scratch)
+println("fs restart ok")
 
 // The kernel's program is done: stage the user image (T4.1). The boot
 // stub reads the staged entry once this returns, srets into U-mode,

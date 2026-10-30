@@ -56,10 +56,57 @@ def wait(pid Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The filesystem (EmoOS T7.2, docs/fs.md): whole files by name, the
+// name the name_len bytes at name (1 to 24 of them, no NUL and no
+// newline), the bytes at raw addresses in this program's own memory
+// like write's buffer. file_write makes the file the len bytes at buf
+// (at most 2048), replacing one of that name, answering the count;
+// file_read lands the file's bytes at buf, at most cap of them,
+// answering the file's size — a size past cap says the buffer was
+// short; file_list lands the names, each followed by a newline,
+// answering the bytes written; file_remove answers 0. A name no file
+// holds is the refusal "no such file"; a full disk or name table is
+// "the kernel is out of a resource". A request made while the service
+// is between one instance and the next waits for the next.
+def file_write(name Int64, name_len Int64, buf Int64, len Int64) (R, Int64) {
+  var answer = ecall(6, name, name_len, buf, len, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_read(name Int64, name_len Int64, buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(7, name, name_len, buf, cap, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_list(buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(8, buf, cap, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_remove(name Int64, name_len Int64) (R, Int64) {
+  var answer = ecall(9, name, name_len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The gate's refusal reason, as the message that names it.
 def why_of(answer Int64) String {
   if answer == -2 {
     return "outside the caller's memory"
+  }
+  if answer == -6 {
+    return "no such file"
   }
   if answer == -3 {
     return "not writable"
