@@ -32,11 +32,15 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # mount lines (the first instance's, then the one the supervisor
 # restarted), the five console deliveries in order, the user program's
 # proof chain — the kill report included, the machine surviving its
-# offender — the frame allocator's account as the last line, and the
-# machine's own exit, the SBI poweroff. The filesystem's lines differ
-# per boot (T7.2): the first boot's first mount formats the blank disk
-# and counts no file, its restarted instance counts the root's one;
-# the second boot's instances count the two files the first boot left.
+# offender — the shell REPL taking the foreground (T7.3: the prompt,
+# the help line, the echo, the list, the boot file read back, the
+# refusal after the remove, the unknown word named, and `poweroff`
+# reaching the exit route), the frame allocator's account as the last
+# line, and the machine's own exit, the SBI poweroff. The filesystem's
+# lines differ per boot (T7.2): the first boot's first mount formats
+# the blank disk and counts no file, its restarted instance counts the
+# root's one; the second boot's instances count the two files the
+# first boot left.
 boot() {
   local cpu="$1" mode="$2" log="$3" mount1="$4" mount2="$5" formats="$6"
   local fifo
@@ -82,6 +86,54 @@ boot() {
     sleep 0.1
   done
   printf 'X' >&3
+
+  # The shell (T7.3, docs/shell.md): the REPL takes the machine's
+  # foreground once the proof chain is done — the first prompt is the
+  # sync point, and every command waits for its answer before the next
+  # feed. A line goes out in chunks no longer than the UART's receive
+  # FIFO (16 bytes): QEMU delivers a burst before the guest's ISR
+  # drains it, and an overrun drops bytes, so the pauses keep the
+  # delivery boring. The exchange rides the same assertions as the
+  # chain below; the poweroff command is what reaches the exit route
+  # now.
+  feed() {
+    local s="$1" i=0
+    while [ "$i" -lt "${#s}" ]; do
+      printf '%s' "${s:i:12}" >&3
+      sleep 0.05
+      i=$((i + 12))
+    done
+    printf '\n' >&3
+  }
+  await() {
+    local pat="$1"
+    for _ in $(seq 1 100); do
+      if grep -qF -- "$pat" "$log" 2>/dev/null; then
+        return 0
+      fi
+      kill -0 "$qemu_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    echo "run.sh: the shell never delivered '$pat'" >&2
+    exit 1
+  }
+  await 'emo>'
+  feed 'help'
+  await 'commands: help echo ls cat write rm poweroff'
+  feed 'echo repl answers'
+  await 'echo repl answers'
+  feed 'ls'
+  await 'hello.txt'
+  feed 'write note.txt shell wrote this'
+  feed 'ls'
+  feed 'cat boot.txt'
+  await 'EmoOS boots from disk'
+  feed 'rm note.txt'
+  feed 'cat note.txt'
+  await 'cat: no such file'
+  feed 'bogus'
+  await 'bogus: unknown command'
+  feed 'poweroff'
 
   local exited=0
   for _ in $(seq 1 150); do
@@ -150,7 +202,16 @@ boot() {
   # walk reaches the leaf and the permission fails, the same cause 15,
   # the kernel's high-half address named in full), then the good
   # child's line and the spawn/wait round trip answering after the
-  # four deaths: the machine survived its offenders. Then the DMA
+  # four deaths: the machine survived its offenders. Then the shell
+  # (T7.3, docs/shell.md): the first prompt — the REPL took the
+  # foreground when the proof chain ended — the help line, the echo
+  # command's echo, the list naming hello.txt, the boot file's bytes
+  # read back through the gate (`cat boot.txt`; the file the kernel
+  # root wrote through the first instance, read by a user program —
+  # nothing staged by the test), the refusal after the remove
+  # (`cat: no such file`), the unknown word naming itself — the
+  # machine's foreground answering, every byte through the gate. Then
+  # the DMA
   # proof at the machine's end (T6.5): after everything this boot
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
@@ -174,7 +235,7 @@ boot() {
   # block, and the queue keep theirs. The byte offsets are the serial
   # order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 30 17'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'emo>' 'commands: help echo ls cat write rm poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' '0000 ok' 'frames 30 17'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -186,6 +247,16 @@ boot() {
     fi
     prev=$pos
   done
+  # The shell's write, proven by the list that followed it: the second
+  # `ls` answered `note.txt` on the line right after `hello.txt` — a
+  # pair the write's own echo cannot produce (the first `ls` ran
+  # before the write, so the line after its `hello.txt` is the
+  # prompt). The check runs here, after the poweroff, because by then
+  # both lists are on the wire.
+  if ! grep -A1 '^hello.txt$' "$log" | grep -q '^note.txt$'; then
+    echo "run.sh: the shell's write never made the list" >&2
+    exit 1
+  fi
   # The format happens exactly once, on the blank disk: the first boot's
   # first mount says so before its mount line; the second boot's never
   # does — the volume the first boot left is what it mounts.
@@ -223,9 +294,9 @@ boot() {
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, shell, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, shell, frames, self-exit, 1 ecall"

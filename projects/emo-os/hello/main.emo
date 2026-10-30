@@ -18,8 +18,11 @@
 // address, mapped without U, the permission the walk refuses),
 // `born`/`wait 7` (the
 // spawn and wait round trip — the child re-enters this top level,
-// finds the token, and exits 7). The root's exit is the stub's verb 0,
-// which lands in the kernel and ends the machine.
+// finds the token, and exits 7). Then the shell (T7.3, shell.emo, its
+// design in docs/shell.md) takes the machine's foreground: the top
+// level enters the REPL instead of exiting, and the machine ends the
+// way the proof's exit did — the poweroff command's verb 0, the boot
+// pass's exit landing in the kernel.
 //
 //   cd hello && emo build main.emo --target riscv64 \
 //        --profile user -o ../hello.elf
@@ -463,4 +466,7 @@ case spawned {
     }
   }
 }
-syscall.exit(0)
+
+// The shell takes the foreground (T7.3): the REPL loop never returns —
+// the poweroff command's exit verb is what ends the machine now.
+shell.run()

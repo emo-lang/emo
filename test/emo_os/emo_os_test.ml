@@ -213,6 +213,7 @@ let smoke_tests =
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";
+            "hello/shell.emo";
           ];
         (* The user image first: the kernel's tree embeds it, so the
            ELF has to exist before the kernel's .S assembles. *)
