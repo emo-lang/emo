@@ -1,12 +1,14 @@
 # The console renderer — EmoUI on EmoOS
 
-How the machine shows its first frame: the declarative renderer that
-runs as a user pass between the proof chain and the shell, the node
-vocabulary it renders, the loop that drives it, and the bounds it
-states. Fixed as of T7.4 (2026-10-31). Around it: the shell
-([`shell.md`](shell.md)) takes the console when the pass exits; the
-verbs it speaks are [`syscalls.md`](syscalls.md)'s; the portable core
-it mirrors is [`projects/emo-ui/`](../../../../projects/emo-ui/)
+How the machine shows its frame: the declarative renderer that runs as
+a user pass — the machine's one program, begun from the shell's
+`counter` command (T7.5) — the node vocabulary it renders, the loop
+that drives it, and the bounds it states. Fixed as of T7.4
+(2026-10-31), the pass moved from the proof chain to the prompt at
+T7.5. Around it: the shell ([`shell.md`](shell.md)) owns the console
+when the pass exits; the verbs it speaks are
+[`syscalls.md`](syscalls.md)'s; the portable core it mirrors is
+[`projects/emo-ui/`](../../../../projects/emo-ui/)
 (the main tree's [`docs/emo-ui.md`](../../../../docs/emo-ui.md) is the
 design's standing record — this note carries it to the machine the
 language booted).
@@ -24,7 +26,11 @@ changes, the tree rebuilds, the frame repaints. The pass is the
 machine's third kind of resident — neither kernel nor service nor
 shell, but an application — and the closure demo's last piece: the
 kernel is Emo, the shell is Emo, and the UI is Emo, one language from
-the trap shim to the frame on the wire.
+the trap shim to the frame on the wire. The shell's `counter` command
+starts it by the proof chain's own spawn discipline — the token cell
+poked, the child re-entering the image's top level, the exit answering
+the wait — so the full-boot story reads: power on, the prompt, a user
+program runs, the filesystem roundtrip.
 
 ## The currency
 
@@ -143,8 +149,9 @@ read verb one at a time; the frames ride the write verb one per event.
   what nothing frees.
 - **The renderer owns the console exclusively while it runs.** One
   reader at a time is the console service's oldest-request discipline
-  (T3.7): the parent parks at the wait before the pass's first read,
-  and the REPL starts when the pass has exited.
+  (T3.7): the REPL parks at the wait before the pass's first read and
+  re-prompts when the pass has exited — the bytes a feed queues behind
+  the quit key are the REPL's, the FIFO order the whole handoff.
 - **The frame clips at its edge.** The grid is the whole world the
   renderer draws in; a tree wider than the frame loses the excess
   bytes the frame's bound loses.
@@ -154,13 +161,14 @@ read verb one at a time; the frames ride the write verb one per event.
 
 ## The pins
 
-`run.sh`'s chain grows the pass's exchange between the proof chain's
-last line and the REPL's first prompt, under both timer transports:
-the first frame on the wire the moment the pass is spawned — the
-title line, the count's `000`, the buttons row — `count 001` after
-the first key, the quit key ending the pass (its exit answering the
-parent's wait, the second `count 000` unasserted — the first
-occurrence already proves the frame), and the REPL's prompt after it,
-the machine's foreground resuming. Three consecutive rounds
-byte-identical on each leg; the frame ledger grows by the pass's
-stack and arena — taken at the spawn, given back at the exit.
+`run.sh`'s chain carries the pass's exchange between the REPL's first
+prompt and the shell's filesystem roundtrip, under both timer
+transports: the `counter` command on the wire, the first frame there
+the moment the pass is spawned — the title line, the count's `000`,
+the buttons row — `count 001` after the first key, the quit key ending
+the pass (its exit answering the shell's wait, the second `count 000`
+unasserted — the first occurrence already proves the frame), and the
+prompt's return, the machine's foreground resuming before the roundtrip
+rides on. Three consecutive rounds byte-identical on each leg; the
+frame ledger grows by the pass's stack and arena — taken at the spawn,
+given back at the exit.

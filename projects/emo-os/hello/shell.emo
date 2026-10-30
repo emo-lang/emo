@@ -8,12 +8,15 @@
 // erase the last character, CR and LF both end it (echoed as one LF,
 // the kernel's own console discipline), every other byte is dropped,
 // and the line's bound is 120 bytes — bytes past it are dropped and
-// not echoed, the missing echo the tell. Seven commands, lowercase
+// not echoed, the missing echo the tell. Eight commands, lowercase
 // and exact; a command that takes no argument refuses one, one that
 // takes a name refuses a second and refuses none, an unknown word
 // names itself, and refusals the services answer come back as
-// `<command>: <message>`. The machine ends the way the proof's exit
-// did: the poweroff command is the boot pass's exit verb.
+// `<command>: <message>`. The `counter` command (T7.5) starts the
+// machine's one program — the console renderer pass, ui.emo — and
+// waits for its exit, the REPL parked at the wait while the program
+// owns the console. The machine ends the way the proof's exit did:
+// the poweroff command is the boot pass's exit verb.
 //
 // The texts are byte-array literals poked into this image's
 // read-write segment at REPL start — the riscv64 backend carries no
@@ -41,17 +44,23 @@ const sh_m_res = sh_text + 32
 const sh_m_ref = sh_text + 64
 const sh_m_unk = sh_text + 72
 const sh_help = sh_text + 88
-const sh_prompt = sh_text + 136
-const sh_c_help = sh_text + 144
-const sh_c_echo = sh_text + 152
-const sh_c_ls = sh_text + 160
-const sh_c_cat = sh_text + 168
-const sh_c_rm = sh_text + 176
-const sh_c_write = sh_text + 184
-const sh_c_pow = sh_text + 192
-const sh_colon = sh_text + 200
-const sh_nl = sh_text + 202
-const sh_one = sh_text + 204
+const sh_prompt = sh_text + 144
+const sh_c_help = sh_text + 152
+const sh_c_echo = sh_text + 160
+const sh_c_ls = sh_text + 168
+const sh_c_cat = sh_text + 176
+const sh_c_rm = sh_text + 184
+const sh_c_write = sh_text + 192
+const sh_c_pow = sh_text + 200
+const sh_colon = sh_text + 208
+const sh_nl = sh_text + 210
+const sh_one = sh_text + 212
+const sh_c_counter = sh_text + 216
+
+// main.emo's token cell: the counter pass claims it on re-entering
+// the top level (the proof chain's spawn discipline — the channel a
+// spawn with no arguments speaks through).
+const sh_ui_cell = buf + 2088
 
 const line_cap = 120
 
@@ -90,12 +99,13 @@ def m_unk() Array[Byte] {
 }
 
 def help_bytes() Array[Byte] {
-  // "commands: help echo ls cat write rm poweroff"
+  // "commands: help echo ls cat write rm counter poweroff"
   return [
     99B, 111B, 109B, 109B, 97B, 110B, 100B, 115B, 58B, 32B, 104B, 101B, 108B,
     112B, 32B, 101B, 99B, 104B, 111B, 32B, 108B, 115B, 32B, 99B, 97B, 116B,
-    32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 112B, 111B, 119B,
-    101B, 114B, 111B, 102B, 102B
+    32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 99B, 111B, 117B,
+    110B, 116B, 101B, 114B, 32B, 112B, 111B, 119B, 101B, 114B, 111B, 102B,
+    102B
   ]
 }
 
@@ -139,6 +149,11 @@ def c_pow() Array[Byte] {
   return [112B, 111B, 119B, 101B, 114B, 111B, 102B, 102B]
 }
 
+def c_counter() Array[Byte] {
+  // "counter"
+  return [99B, 111B, 117B, 110B, 116B, 101B, 114B]
+}
+
 def put_bytes(dst Int64, bs Array[Byte]) Void {
   var n = bs.length()
   var i = 0
@@ -163,6 +178,7 @@ def sh_init() Void {
   put_bytes(sh_c_rm, c_rm())
   put_bytes(sh_c_write, c_write())
   put_bytes(sh_c_pow, c_pow())
+  put_bytes(sh_c_counter, c_counter())
   poke8(sh_colon, 58B)
   poke8(sh_colon + 1, 32B)
   poke8(sh_nl, 10B)
@@ -291,7 +307,7 @@ def cmd_help(e Int64, n Int64) Void {
   if extra_args(e, n) {
     err_line(sh_c_help, 4, sh_m_badarg, 12)
   } else {
-    out(sh_help, 44)
+    out(sh_help, 52)
     out_nl()
   }
 }
@@ -371,6 +387,29 @@ def cmd_rm(e Int64, n Int64) Void {
   }
 }
 
+// The machine's one program (T7.5): the command pokes the token cell
+// the pass claims on re-entering the top level, spawns it, and waits
+// for its exit — the REPL parked at the wait while the program owns
+// the console, the frames its whole output. Silence on success: the
+// frames were the answer, and the next prompt says the program is
+// done.
+def cmd_counter(e Int64, n Int64) Void {
+  if extra_args(e, n) {
+    err_line(sh_c_counter, 7, sh_m_badarg, 12)
+  } else {
+    poke64(sh_ui_cell, 1)
+    case syscall.spawn() {
+      (R.error, why) -> { err_file(sh_c_counter, 7, why) }
+      (R.ok, pid) -> {
+        case syscall.wait(pid) {
+          (R.error, why) -> { err_file(sh_c_counter, 7, why) }
+          (R.ok, _) -> {}
+        }
+      }
+    }
+  }
+}
+
 def cmd_poweroff(e Int64, n Int64) Void {
   if extra_args(e, n) {
     err_line(sh_c_pow, 8, sh_m_badarg, 12)
@@ -410,10 +449,14 @@ def execute(n Int64) Void {
               if word_is(s, wlen, sh_c_rm, 2) {
                 cmd_rm(e, n)
               } else {
-                if word_is(s, wlen, sh_c_pow, 8) {
-                  cmd_poweroff(e, n)
+                if word_is(s, wlen, sh_c_counter, 7) {
+                  cmd_counter(e, n)
                 } else {
-                  unknown_cmd(s, wlen)
+                  if word_is(s, wlen, sh_c_pow, 8) {
+                    cmd_poweroff(e, n)
+                  } else {
+                    unknown_cmd(s, wlen)
+                  }
                 }
               }
             }

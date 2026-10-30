@@ -63,16 +63,17 @@ The prompt is `emo> `, printed before each line is read.
 The line parses by one rule: leading spaces are skipped, the command
 word ends at the first space (or the line's end), and what follows
 after that one separating space is the argument — verbatim, spaces
-included. Commands are lowercase and exact. Seven:
+included. Commands are lowercase and exact. Eight:
 
 | Command | Argument | Effect | Output |
 | --- | --- | --- | --- |
-| `help` | none | — | one line naming the seven commands |
+| `help` | none | — | one line naming the eight commands |
 | `echo` | the text, verbatim | — | the text, then a newline; an empty argument is an empty line |
 | `ls` | none | `file_list` | the names, one per line, as the service lists them; an empty volume lists nothing |
 | `cat` | one name | `file_read` | the file's bytes, then a newline; the read's capacity is 2048, the write bound, so a whole file always fits |
 | `write` | one name, then the text | `file_write` | the file named becomes the text's bytes (an absent text is an empty file); quiet on success |
 | `rm` | one name | `file_remove` | the file is gone; quiet on success |
+| `counter` | none | the machine's program: `spawn` + `wait` | the console renderer pass (T7.4) runs to its quit key, the frames its whole output; silence on success, the prompt's return saying it is done |
 | `poweroff` | none | the boot pass's `exit` | the machine ends — the exit route's `dma` line and frames account, then the SBI poweroff |
 
 The strictness is the platform's, carried to the surface:
@@ -115,7 +116,7 @@ these):
 | `+6144` | the line, 128 bytes (the bound is 120) |
 | `+6272` | the list's buffer, 256 bytes |
 | `+6528` | the read's buffer, 2048 bytes |
-| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the seven command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
+| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the eight command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
 
 The texts ride byte-array literals because strings cannot: the
 riscv64 backend carries no String-to-bytes path, and the array literal
@@ -125,9 +126,15 @@ array is read, the destination is raw memory.
 
 ## The bounds
 
-- The command set is the seven above. Starting a program is not one
-  of them — the closure demo (T7.5) decides how a program begins from
-  the shell, and the set grows then if it earns a word.
+- The command set is the eight above. Starting a program became one of
+  them at T7.5, the decision the closure demo owed: `counter` starts
+  the machine's one program — the console renderer pass — by the
+  proof chain's own spawn discipline (the token cell poked, the child
+  re-entering the top level, the exit answering the wait), because
+  the spawn verb carries no arguments and the image is the one program
+  the machine has. The command names what it runs; a second program,
+  or a program loaded from the disk, reopens the name — a `run` with
+  nothing honest to run would be a construct without its place.
 - One volume, a flat namespace, whole files: the filesystem service's
   own bounds (T7.2). A name with a space in it is legal to the
   service and unreachable from the shell — the space is the
@@ -139,21 +146,25 @@ array is read, the destination is raw memory.
   running.
 - One reader at a time, the console service's oldest-request
   discipline (T3.7): the proof chain's readers are done before the
-  REPL starts, and the REPL's reads and writes never overlap a
-  transaction of another client.
+  REPL starts, and while the counter pass runs the REPL is parked at
+  the wait — the program owns the console until its exit, and the
+  bytes the feed queues behind the quit key are the REPL's.
 
 ## The pins
 
 `run.sh`'s chain grows the REPL's exchange after the proof chain's
-last line, under both timer transports: the first prompt, the `help`
-line, the echo command's echo, the `ls` naming `hello.txt`, the
-`cat boot.txt` naming the kernel's boot file's bytes
-(`EmoOS boots from disk`, written by the kernel root through the first
-instance — the disk's content read back by a user program through the
-gate, nothing staged by the test), the refusal `cat: no such file`
-after `rm`, and `bogus: unknown command` — then the exit route's lines
-as before, reached now by typing `poweroff`. The write is proven by a
-line-order check on the list: the second `ls` answers
-`hello.txt` and `note.txt` on consecutive lines, and the write's echo
-cannot produce that pair. Three consecutive rounds byte-identical on
-each leg.
+last line, under both timer transports: the first prompt, the
+`counter` command starting the machine's program (the full-boot
+golden's beat — the frames, the keys, the quit key, the prompt's
+return; the pins are the console renderer's, [`ui.md`](ui.md)), the
+`help` line naming the eight commands, the echo command's echo, the
+`ls` naming `hello.txt`, the `cat boot.txt` naming the kernel's boot
+file's bytes (`EmoOS boots from disk`, written by the kernel root
+through the first instance — the disk's content read back by a user
+program through the gate, nothing staged by the test), the refusal
+`cat: no such file` after `rm`, and `bogus: unknown command` — then
+the exit route's lines as before, reached now by typing `poweroff`.
+The write is proven by a line-order check on the list: the second
+`ls` answers `hello.txt` and `note.txt` on consecutive lines, and the
+write's echo cannot produce that pair. Three consecutive rounds
+byte-identical on each leg.
