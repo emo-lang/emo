@@ -3,7 +3,8 @@
 // data RW, a shared boundary page where the ELF's segments meet inside
 // one 4 KiB page, the union of the two), the process's own stack block
 // and arena block, the user cells page, each with U, and the kernel's
-// whole high half beside them with no U (sv39.map_kernel). U-mode's
+// whole high half beside them with no U (sv39.map_kernel) — the boot
+// pass's trap page (T6.3) included, rw without U. U-mode's
 // world is exactly those pages: its code, its image's data (the passes
 // of one image share it — a spawned pass re-enters the top level and
 // finds the tokens the parent poked, the spawn semantics since T4.4),
@@ -57,6 +58,16 @@ const seg_table = koff + 0x87002020
 // them, with U — the user stub writes them at the boot pass's entry.
 const cells_page = 0x87fff000
 
+// The boot pass's trap page (T6.3): the fixed page under the cells
+// page, the one memory the boot pass's frame parks in — the image's
+// stack is the stub's own and the heap is live data, so the page is
+// the scratch that belongs to no pass's execution. Mapped rw without U
+// into every table (the trampoline stores through the pass's own
+// before the swap; the low window covers the kernel-side accesses), so
+// U-mode cannot touch it and a wild store there is the fault the shim
+// kills the pass for.
+const boot_trap_page = 0x87ffe000
+
 // The ELF's p_flags (X=1, W=2, R=4), as the loader parked them, and
 // the entry bits this module writes: the permissions translated, U
 // on every leaf, V and A and D as sv39.map sets them.
@@ -71,6 +82,7 @@ const pte_u = 16
 const pte_a = 64
 const pte_d = 128
 const rwu = pte_r | pte_w | pte_u
+const rw = pte_r | pte_w
 const page = 4096
 const block = 65536
 
@@ -136,6 +148,7 @@ def base(root Int64) Void {
     i = i + 1
   }
   map_page(root, cells_page, cells_page, rwu)
+  map_page(root, boot_trap_page, boot_trap_page, rw)
 }
 
 // The boot pass's adoption: its root's physical address, into the

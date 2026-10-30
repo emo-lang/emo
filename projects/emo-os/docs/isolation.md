@@ -8,8 +8,9 @@ the reach is a matter of account, not folklore. Fixed as of T4.5
 (2026-10-27), updated for T6.1 (2026-10-29 — the window became a
 mapping in the kernel's own table), closed as of T6.2 (2026-10-29 —
 every user process runs on its own page table, and the window's
-entries are gone). The kernel's address-space layout is its own
-document: [`sv39.md`](sv39.md).
+entries are gone), hardened as of T6.3 (2026-10-30 — the trap entry
+no longer obeys the user's `sp` either). The kernel's address-space
+layout is its own document: [`sv39.md`](sv39.md).
 
 Chinese translation: [`isolation.zh-CN.md`](isolation.zh-CN.md).
 
@@ -60,8 +61,10 @@ and arena, the cells page, and the kernel's high half without U).
   re-enters the top level and finds the tokens the parent poked) —
   its own 64 KiB stack and arena blocks, and the cells page. The
   kernel's half is mapped into the same table without U: present for
-  the trap's sake, unreachable from U-mode. Every other address is a
-  page fault the supervisor kills the pass for.
+  the trap's sake, unreachable from U-mode — and the boot pass's trap
+  page (`0x87ffe000`, T6.3) joins it on the same bargain, the one
+  page of scratch that is nobody's execution memory. Every other
+  address is a page fault the supervisor kills the pass for.
 - **The raw family is admitted by target, not profile.** `peek`/`poke`,
   `ecall`, and `device_wait` are legal spellings in a user image, by
   the admission's own principle — a target admits the raw family iff
@@ -127,6 +130,13 @@ and arena, the cells page, and the kernel's high half without U).
   the mailbox.
 - **Trap containment.** A user fault kills its process and nothing
   else; the kernel's own faults stay machine-wide, as they should.
+  Since T6.3 the trap entry itself no longer obeys the user either:
+  the trampoline frames every user trap at the pass's anchor — memory
+  the kernel chose, not the pass's `sp` — so a pass cannot aim the
+  kernel's frame stores by moving its stack pointer, and the dispatch
+  runs on the kernel's own table and stack, past a `satp` swap the
+  entry performs mid-transition (see the trampoline section of
+  [`sv39.md`](sv39.md)).
 - **Per-process accounting (Step 5)** — arenas, quotas, and the frame
   allocator: every allocation charges the running process's own arena,
   a runaway process exhausts its own arena alone, and every block a

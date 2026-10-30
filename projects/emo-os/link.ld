@@ -31,6 +31,12 @@ SECTIONS
   .text : AT(ADDR(.text) - KOFF) {
     *(.text.boot)
     *(.text .text.*)
+    /* The trampoline page (T6.3): the trap entry, alone on its own
+       page-aligned page at the end of the text — the one page every
+       address space maps (map_kernel's text RX) that the crossing
+       through satp may touch before the swap. */
+    . = ALIGN(4096);
+    *(.emo_tramp)
     . = ALIGN(4096);
     __emo_text_end = .;
   } :text

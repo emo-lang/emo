@@ -3305,6 +3305,25 @@ let riscv64_profile_tests =
               true
               (contains asm ".zero 56320"))
           [ "kernel"; "user" ]);
+    tc "the synthetic frame parks the initial sp at the anchor" (fun () ->
+        (* T6.3: the frame the spawn builds sits at the block's bottom
+           scratch — the trampoline's anchor — with the initial sp in
+           the interrupted-sp slot below it, so the pass enters U-mode
+           at the top of its stack and its first trap out lands on its
+           own frame. Both profiles ride the runtime. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the anchor is the block's bottom scratch")
+              true
+              (contains asm "addi t4, t6, 552");
+            Alcotest.(check bool)
+              (profile ^ ": the initial sp rides the slot below the frame")
+              true
+              (contains asm "sd t5, -8(t4)"))
+          [ "kernel"; "user" ]);
   ]
 
 (* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other

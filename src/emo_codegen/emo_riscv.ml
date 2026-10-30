@@ -5547,20 +5547,28 @@ emo_user_spawn:
     li t6, 65536
     sub t6, t5, t6              # the block's base — the death gives it back
     sd t6, 864(t3)
-    addi t4, t5, -544           # the synthetic trap frame
+    addi t4, t6, 552            # the synthetic trap frame, at the block's
+                                # bottom scratch (T6.3): the anchor's
+                                # frame [t4, t4+544) with the sp slot in
+                                # the word below — memory no call chain
+                                # from the block's top ever reaches, so
+                                # the trampoline's later frames here
+                                # cannot touch live ones
     mv a0, t4
-    addi a1, t4, 544
+    addi a1, t4, 552
 .Lus_zero:
     sd zero, 0(a0)
     addi a0, a0, 8
-    blt a0, a1, .Lus_zero       # exactly the frame's 544 bytes — a
-                                # `ble` here wrote one word PAST the
-                                # stack top, and the word past a
-                                # pass's stack top is the next 64 KiB
-                                # block's freelist link (T6.2's first
-                                # boot caught it: the frame allocator's
-                                # chain lost its head to eight zero
-                                # bytes)
+    blt a0, a1, .Lus_zero       # the frame and its sp slot, 552 bytes at
+                                # the block's bottom — the old loop framed
+                                # at the stack's top, where a `ble` wrote
+                                # one word PAST the stack top into the
+                                # next block's freelist link (T6.2's
+                                # first boot caught it)
+    sd t5, -8(t4)               # the initial sp, in the interrupted-sp
+                                # slot: the pass enters U-mode at the top
+                                # of its stack, and its first trap out is
+                                # framed at this anchor by the trampoline
     la t1, emo_os_user_exit
     sd t1, 0(t4)                # ra: a top-level fall-off exits (verb 0)
     ld t0, 8(sp)
