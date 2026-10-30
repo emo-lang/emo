@@ -32,8 +32,11 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # mount lines (the first instance's, then the one the supervisor
 # restarted), the five console deliveries in order, the user program's
 # proof chain — the kill report included, the machine surviving its
-# offender — the shell REPL taking the foreground (T7.3: the prompt,
-# the help line, the echo, the list, the boot file read back, the
+# offender — the counter pass (T7.4: the machine's first frame the
+# moment the pass is spawned, the console's keys through the Elm loop
+# into frames, the quit key ending the pass whose exit answers the
+# parent's wait), the shell REPL taking the foreground (T7.3: the
+# prompt, the help line, the echo, the list, the boot file read back, the
 # refusal after the remove, the unknown word named, and `poweroff`
 # reaching the exit route), the frame allocator's account as the last
 # line, and the machine's own exit, the SBI poweroff. The filesystem's
@@ -117,6 +120,19 @@ boot() {
     echo "run.sh: the shell never delivered '$pat'" >&2
     exit 1
   }
+  # The counter pass (T7.4, docs/ui.md): the machine's first frame is
+  # on the wire the moment the pass is spawned — no input needed —
+  # then the keys, one byte at a time: `a` through update into
+  # `count 001`, `b` back to `000`, `q` ending the pass, whose exit
+  # answers the parent's wait and lets the REPL take the console. The
+  # frame rides the write verb whole; nothing echoes — the frame is
+  # the answer.
+  await 'EmoUI on EmoOS'
+  printf 'a' >&3
+  await 'count 001'
+  printf 'b' >&3
+  printf 'q' >&3
+
   await 'emo>'
   feed 'help'
   await 'commands: help echo ls cat write rm poweroff'
@@ -202,9 +218,15 @@ boot() {
   # walk reaches the leaf and the permission fails, the same cause 15,
   # the kernel's high-half address named in full), then the good
   # child's line and the spawn/wait round trip answering after the
-  # four deaths: the machine survived its offenders. Then the shell
-  # (T7.3, docs/shell.md): the first prompt — the REPL took the
-  # foreground when the proof chain ended — the help line, the echo
+  # four deaths: the machine survived its offenders. Then the counter
+  # pass (T7.4, docs/ui.md): its first frame on the wire the moment it
+  # is spawned — the title line, the count's 000, the buttons row —
+  # then `count 001` after the first key, the quit key ending the pass
+  # (the second `count 000` unasserted — the first occurrence already
+  # proves the frame), its exit answering the parent's wait. Then the
+  # shell (T7.3, docs/shell.md): the first prompt — the REPL took the
+  # foreground when the counter pass's exit answered — the help line,
+  # the echo
   # command's echo, the list naming hello.txt, the boot file's bytes
   # read back through the gate (`cat boot.txt`; the file the kernel
   # root wrote through the first instance, read by a user program —
@@ -216,26 +238,27 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): thirty blocks taken — the
+  # account at the root's exit (T5.3): thirty-three blocks taken — the
   # kernel's page tables' block (T6.1), the ten green spawns' arenas
   # (the three services', the supervisor's, the filesystem's two
   # instances', and the four readers'), the filesystem's cache block
   # (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
-  # five user passes, the five blocks the per-process tables' frames
+  # six user passes, the six blocks the per-process tables' frames
   # split (the store-fault pass's frames from the splits' leftovers,
-  # the reach pass's table splitting the fifth), the DMA check's
-  # block, and the block driver's queue block (T7.1, held for the
-  # service's life like the services' arenas) — and seventeen given
-  # back — the four readers' arenas at their deaths, the first
-  # filesystem instance's arena at its stop, the root's scratch block
-  # after its proof, both blocks of each user pass at its kill or exit,
+  # the reach pass's table splitting the fifth, the counter pass's the
+  # sixth), the DMA check's block, and the block driver's queue block
+  # (T7.1, held for the service's life like the services' arenas) —
+  # and nineteen given back — the four readers' arenas at their
+  # deaths, the first filesystem instance's arena at its stop, the
+  # root's scratch block after its proof, both blocks of each user
+  # pass at its kill or exit (the counter pass's at its clean exit),
   # and the DMA check's block home; the three services, the
   # supervisor, the live filesystem instance, every table, the cache
   # block, and the queue keep theirs. The byte offsets are the serial
   # order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'emo>' 'commands: help echo ls cat write rm poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' '0000 ok' 'frames 30 17'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'emo>' 'commands: help echo ls cat write rm poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' '0000 ok' 'frames 33 19'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -294,9 +317,9 @@ boot() {
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, shell, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, ui, shell, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, shell, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, ui, shell, frames, self-exit, 1 ecall"

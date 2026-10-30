@@ -1,0 +1,488 @@
+// The console renderer (T7.4, docs/ui.md): EmoUI's console backend on
+// EmoOS — the declarative spine (Node, Column, Row, Text, Button, the
+// style's padding and gap in whole cells), the cell grid in raw
+// memory, and the Elm loop with the console's keys in the event seat.
+// The pass that runs it is the machine's third kind of resident — an
+// application — and the closure demo's last piece: the tree, the
+// loop, and the bytes are all Emo, every one of them through the gate
+// (the write verb out, the read verb in, the same path the shell
+// speaks).
+//
+// The currency is raw bytes — the riscv64 String surface is equality
+// only — so a Text carries an address and a length, and every text is
+// a byte-array literal poked into this image's read-write segment at
+// start (the shell's discipline; no array-element assignment anywhere,
+// the target refuses it). The frame is one write: (w+1) bytes per row,
+// the last a newline poked once at start, the whole grid through the
+// gate at once. The layout is the TUI backend's box model minus the
+// parts the console has no consumer for: a column stacks, a row lines
+// up, padding insets, gap separates, sizes intrinsic.
+
+require "syscall"
+
+// This image's scratch (main.emo's buf), the renderer's addresses
+// above the shell's: the grid, the app's texts, and the two bracket
+// bytes the buttons draw with. All poked once, at start.
+const buf = 0x87200000
+const ui_grid = buf + 10240
+const ui_text = buf + 10752
+const ui_title = ui_text
+const ui_count = ui_text + 16
+const ui_lbl_a = ui_text + 32
+const ui_lbl_b = ui_text + 48
+const ui_lbl_q = ui_text + 64
+const ui_br_open = ui_text + 80
+const ui_br_close = ui_text + 81
+
+const frame_w = 32
+const frame_h = 8
+const row_stride = frame_w + 1
+
+// The tags are the application's own constants: a full repaint needs
+// no tag stability (the hosted loop's registry stays hosted), so a
+// button's event is one of these and the console's keys map onto them
+// by one rule — key_of below.
+const tag_plus = 0
+const tag_minus = 1
+const tag_quit = 2
+
+// The texts, each its own literal — "the bytes read in order".
+def title_bytes() Array[Byte] {
+  // "EmoUI on EmoOS"
+  return [
+    69B, 109B, 111B, 85B, 73B, 32B, 111B, 110B, 32B, 69B, 109B, 111B, 79B, 83B
+  ]
+}
+
+def count_head() Array[Byte] {
+  // "count " — the three digit cells follow it, repoked per frame
+  return [99B, 111B, 117B, 110B, 116B, 32B]
+}
+
+def lbl_a_bytes() Array[Byte] {
+  // "a plus"
+  return [97B, 32B, 112B, 108B, 117B, 115B]
+}
+
+def lbl_b_bytes() Array[Byte] {
+  // "b minus"
+  return [98B, 32B, 109B, 105B, 110B, 117B, 115B]
+}
+
+def lbl_q_bytes() Array[Byte] {
+  // "q quit"
+  return [113B, 32B, 113B, 117B, 105B, 116B]
+}
+
+def put_bytes(dst Int64, bs Array[Byte]) Void {
+  var n = bs.length()
+  var i = 0
+  while i < n {
+    poke8(dst + i, bs[i])
+    i = i + 1
+  }
+}
+
+def ui_init() Void {
+  put_bytes(ui_title, title_bytes())
+  put_bytes(ui_count, count_head())
+  put_bytes(ui_lbl_a, lbl_a_bytes())
+  put_bytes(ui_lbl_b, lbl_b_bytes())
+  put_bytes(ui_lbl_q, lbl_q_bytes())
+  poke8(ui_br_open, 91B)
+  poke8(ui_br_close, 93B)
+  var y = 0
+  while y < frame_h {
+    poke8(ui_grid + y * row_stride + frame_w, 10B)
+    y = y + 1
+  }
+}
+
+// The style: padding insets a container's children, gap separates
+// them — whole cells, the console's only unit. The hosted core's
+// Align, grow, and fixed sizes stay hosted: a carried value the
+// renderer would ignore is a silent fallback.
+class Style {
+  def init(padding Int64, gap Int64) {
+    self.padding = padding
+    self.gap = gap
+  }
+
+  def padding() Int64 {
+    return self.padding
+  }
+
+  def gap() Int64 {
+    return self.gap
+  }
+}
+
+// The spine (the hosted core's one-tree-type contract, at the
+// console's currency): one interface, so nodes compose with nodes;
+// the walk narrows with is().
+interface Node {
+  def style() Style
+  def children() Array[Node]
+}
+
+class Column {
+  def init(children Array[Node], style Style) {
+    self.children = children
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Row {
+  def init(children Array[Node], style Style) {
+    self.children = children
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Text {
+  def init(body Int64, len Int64, style Style) {
+    self.body = body
+    self.len = len
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def body() Int64 {
+    return self.body
+  }
+
+  def len() Int64 {
+    return self.len
+  }
+}
+
+// A button is the event's carrier, never a closure — the hosted
+// core's own contract; the tag is one of the constants above.
+class Button {
+  def init(label Int64, len Int64, event Int64, style Style) {
+    self.label = label
+    self.len = len
+    self.event = event
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def label() Int64 {
+    return self.label
+  }
+
+  def len() Int64 {
+    return self.len
+  }
+
+  def event() Int64 {
+    return self.event
+  }
+}
+
+// The primitives are lowercase defs and `.new` never appears in a
+// tree — the hosted core's convention, carried.
+def column(children Array[Node], style Style) Node {
+  return Column.new(children: children, style: style)
+}
+
+def row(children Array[Node], style Style) Node {
+  return Row.new(children: children, style: style)
+}
+
+def text(body Int64, len Int64) Node {
+  return Text.new(body: body, len: len, style: Style.new(padding: 0, gap: 0))
+}
+
+def button(label Int64, len Int64, event Int64) Node {
+  return Button.new(label: label, len: len, event: event,
+    style: Style.new(padding: 0, gap: 0))
+}
+
+// A layout result: the width and height a node measures to, in cells.
+class Extent {
+  def init(w Int64, h Int64) {
+    self.w = w
+    self.h = h
+  }
+
+  def w() Int64 {
+    return self.w
+  }
+
+  def h() Int64 {
+    return self.h
+  }
+}
+
+// A leaf's cells: a text its bytes, a button two more for the
+// brackets the renderer draws around its label.
+def intrinsic(n Node) Extent {
+  if n.is(Button) {
+    return Extent.new(w: n.len() + 2, h: 1)
+  }
+  if n.is(Text) {
+    return Extent.new(w: n.len(), h: 1)
+  }
+  return Extent.new(w: 0, h: 0)
+}
+
+// The box model: a column stacks, a row lines up, padding insets,
+// gap separates, sizes intrinsic.
+def measure(n Node) Extent {
+  if n.is(Column) {
+    return measure_stack(n)
+  }
+  if n.is(Row) {
+    return measure_line(n)
+  }
+  return intrinsic(n)
+}
+
+def measure_stack(n Node) Extent {
+  var pad = n.style().padding()
+  var gap = n.style().gap()
+  var kids = n.children()
+  var maxw = 0
+  var total = 0
+  var i = 0
+  while i < kids.length() {
+    var e = measure(kids[i])
+    if e.w() > maxw {
+      maxw = e.w()
+    }
+    total = total + e.h()
+    i = i + 1
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  return Extent.new(w: maxw + pad * 2, h: total + pad * 2)
+}
+
+def measure_line(n Node) Extent {
+  var pad = n.style().padding()
+  var gap = n.style().gap()
+  var kids = n.children()
+  var total = 0
+  var maxh = 0
+  var i = 0
+  while i < kids.length() {
+    var e = measure(kids[i])
+    total = total + e.w()
+    if e.h() > maxh {
+      maxh = e.h()
+    }
+    i = i + 1
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  return Extent.new(w: total + pad * 2, h: maxh + pad * 2)
+}
+
+// One byte-span into the grid, clipped at the frame's edge — the
+// renderer's job, the frame's own bound.
+def put(x Int64, y Int64, addr Int64, len Int64) Void {
+  if y >= 0 && y < frame_h {
+    var i = 0
+    while i < len {
+      var cx = x + i
+      if cx >= 0 && cx < frame_w {
+        poke8(ui_grid + y * row_stride + cx, peek8(addr + i))
+      }
+      i = i + 1
+    }
+  }
+}
+
+// Lay one node at (x, y) and walk its children. A Void def does not
+// return (E4016), so the dispatch nests.
+def place(n Node, x Int64, y Int64) Void {
+  if n.is(Column) {
+    place_stack(n, x, y)
+  } else {
+    if n.is(Row) {
+      place_line(n, x, y)
+    } else {
+      if n.is(Button) {
+        put(x, y, ui_br_open, 1)
+        put(x + 1, y, n.label(), n.len())
+        put(x + 1 + n.len(), y, ui_br_close, 1)
+      } else {
+        if n.is(Text) {
+          put(x, y, n.body(), n.len())
+        }
+      }
+    }
+  }
+}
+
+def place_stack(n Node, x Int64, y Int64) Void {
+  var pad = n.style().padding()
+  var gap = n.style().gap()
+  var kids = n.children()
+  var cursor = y + pad
+  var i = 0
+  while i < kids.length() {
+    var e = measure(kids[i])
+    place(kids[i], x + pad, cursor)
+    cursor = cursor + e.h() + gap
+    i = i + 1
+  }
+}
+
+def place_line(n Node, x Int64, y Int64) Void {
+  var pad = n.style().padding()
+  var gap = n.style().gap()
+  var kids = n.children()
+  var cursor = x + pad
+  var i = 0
+  while i < kids.length() {
+    var e = measure(kids[i])
+    place(kids[i], cursor, y + pad)
+    cursor = cursor + e.w() + gap
+    i = i + 1
+  }
+}
+
+// The grid's cells to spaces each frame; the newline column is poked
+// once, at start, and clear never touches it.
+def clear() Void {
+  var y = 0
+  while y < frame_h {
+    var x = 0
+    while x < frame_w {
+      poke8(ui_grid + y * row_stride + x, 32B)
+      x = x + 1
+    }
+    y = y + 1
+  }
+}
+
+// The view: the model's tree. The count's digits are the model's
+// bytes — repoked into the fixed cell before the tree is built, the
+// tree referencing the cell. The count is clamped in update at what
+// three digit cells can show.
+def view(model Int64) Node {
+  poke8(ui_count + 6, (48 + ((model / 100) % 10)).to_byte())
+  poke8(ui_count + 7, (48 + ((model / 10) % 10)).to_byte())
+  poke8(ui_count + 8, (48 + (model % 10)).to_byte())
+  return column(
+    [
+      text(ui_title, 14),
+      text(ui_count, 9),
+      row(
+        [
+          button(ui_lbl_a, 6, tag_plus),
+          button(ui_lbl_b, 7, tag_minus),
+          button(ui_lbl_q, 6, tag_quit)
+        ],
+        Style.new(padding: 0, gap: 2)
+      )
+    ],
+    Style.new(padding: 1, gap: 1)
+  )
+}
+
+// One frame: clear, view, place, and the grid rides the gate whole —
+// height lines of exactly width bytes, one write.
+def paint(model Int64) Void {
+  clear()
+  var root = view(model)
+  place(root, 0, 0)
+  case syscall.write(ui_grid, row_stride * frame_h) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+}
+
+// The model's events: the count clamped at 0 and 999 — a fourth digit
+// is a frame the currency cannot show, and the clamp is the honest
+// answer, not a silent wrap.
+def update(model Int64, tag Int64) Int64 {
+  if tag == tag_plus {
+    if model < 999 {
+      return model + 1
+    }
+    return 999
+  }
+  if tag == tag_minus {
+    if model > 0 {
+      return model - 1
+    }
+    return 0
+  }
+  return model
+}
+
+// The console's keys onto the tags, by one rule: the three bytes the
+// buttons name are the application's events, every other byte is
+// dropped — the unmapped byte is never guessed at, and nothing
+// echoes: the frame is the answer.
+def key_of(b Int64) Int64 {
+  if b == 97 {
+    return tag_plus
+  }
+  if b == 98 {
+    return tag_minus
+  }
+  if b == 113 {
+    return tag_quit
+  }
+  return -1
+}
+
+// The pass's whole run: the first frame the moment it starts, then
+// the loop — one blocking byte, one event, one frame — until the quit
+// tag ends it. The parent parks at the wait the whole time: the
+// console's one-reader discipline is this pass's alone, and the
+// REPL's first read waits until its exit has answered.
+def run() Void {
+  ui_init()
+  var model = 0
+  paint(model)
+  var live = true
+  while live {
+    var b = syscall.read()
+    var tag = key_of(b)
+    if tag >= 0 {
+      if tag == tag_quit {
+        live = false
+      } else {
+        model = update(model, tag)
+        paint(model)
+      }
+    }
+  }
+}
