@@ -11,7 +11,10 @@
 // service until a byte exists), `doomed` and the `user fault` report
 // (T4.6's kill — a misbehaving child says its line through the gate,
 // then loads where its own table maps nothing, and the supervisor
-// kills it loudly while the machine continues), `born`/`wait 7` (the
+// kills it loudly while the machine continues), `smash` and its
+// report (T6.4's page-fault kill — a store where the table maps
+// nothing, the report naming the address the hardware refused),
+// `born`/`wait 7` (the
 // spawn and wait round trip — the child re-enters this top level,
 // finds the token, and exits 7). The root's exit is the stub's verb 0,
 // which lands in the kernel and ends the machine.
@@ -31,6 +34,7 @@ const buf = 0x87200000
 const child_cell = buf + 2048
 const doomed_cell = buf + 2056
 const greedy_cell = buf + 2064
+const smash_cell = buf + 2072
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 
@@ -146,6 +150,27 @@ if peek64(greedy_cell) != 0 {
   }
 }
 
+// The smash branch (T6.4): a spawned pass stores where its own table
+// maps nothing — the store page fault, cause 15 — and the
+// supervisor's report names the address the hardware refused (stval).
+// The parent does not wait on it, as with the doomed pass: a killed
+// process never exited.
+if peek64(smash_cell) != 0 {
+  poke64(smash_cell, 0)
+  var mp = byte_at(0, 115) // s
+  mp = byte_at(mp, 109) // m
+  mp = byte_at(mp, 97) // a
+  mp = byte_at(mp, 115) // s
+  mp = byte_at(mp, 104) // h
+  mp = byte_at(mp, 10)
+  gate_line(mp)
+  poke64(0x40000000, 1)
+  var mp2 = byte_at(0, 63) // '?' — unreachable, the store faults
+  mp2 = byte_at(mp2, 10)
+  gate_line(mp2)
+  syscall.exit(1)
+}
+
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
 // the token the parent pokes just before the spawn is the one
@@ -218,14 +243,22 @@ gate_line(rp)
 // wait would block forever (the stated bound). The runaway proof
 // (T5.1) rides the same shape: a greedy pass whose boxes outrun its
 // own 64 KiB arena — its allocator announces the exhaustion (verb 5),
-// the supervisor's report follows, and the machine goes on. The good
-// child's `born`/`wait 7` after both reports is the survival proof.
+// the supervisor's report follows, and the machine goes on. The
+// store-fault proof (T6.4) rides it too: a pass that stores where its
+// own table maps nothing — the page-fault kill named by its address,
+// stval in the report. The good child's `born`/`wait 7` after the
+// three reports is the survival proof.
 poke64(doomed_cell, 1)
 case syscall.spawn() {
   (R.error, _) -> { mark() }
   (R.ok, _) -> {}
 }
 poke64(greedy_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+poke64(smash_cell, 1)
 case syscall.spawn() {
   (R.error, _) -> { mark() }
   (R.ok, _) -> {}

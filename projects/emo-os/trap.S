@@ -152,6 +152,10 @@ emo_os_trap_shim:
     sd t1, 152(sp)
     csrr t0, sstatus
     sd t0, 144(sp)
+    csrr t0, stval
+    sd t0, 328(sp)           # stval in the rest section's one free
+                             # word: the fault route's report names it
+                             # — the address the walk refused (T6.4)
     sd zero, 536(sp)         # the spare word: a trap frame switches in
                              # masked — its sret restores SIE from the
                              # saved SPIE, and an interrupt landing between
@@ -278,6 +282,8 @@ emo_os_trap_trampoline:
     sd t1, 152(sp)
     csrr t0, sstatus
     sd t0, 144(sp)
+    csrr t0, stval
+    sd t0, 328(sp)           # stval, as the shim's frame does (T6.4)
     sd zero, 536(sp)         # the spare word: a trap frame switches in
                              # masked, as the shim's always were
     sd t2, 40(sp)
@@ -479,6 +485,7 @@ emo_os_trap_trampoline:
     ld t0, 0(t0)
     ld a1, 160(t0)           # scause
     ld a2, 152(t0)           # sepc
+    ld a3, 328(t0)           # stval — the address the hardware refused
     call emo_main__fault_report
     li t3, 3
     sd t3, 16(s0)            # done

@@ -96,10 +96,11 @@ def console_put_byte(b Int64) Void {
 }
 
 // The supervisor's fault report (T4.6): a user fault kills the
-// offender, and the shim announces it — who, why, where — through
-// this def on the offender's own stack (the gate's precedent: typed
-// Emo inside the trap, zero allocation, the polled console). The pid
-// and the cause print decimal, the faulting address hex.
+// offender, and the shim announces it — who, why, where, and (T6.4)
+// the address the hardware refused — through this def on the kernel's
+// trap stack (the gate's precedent: typed Emo inside the trap, zero
+// allocation, the polled console). The pid and the cause print
+// decimal, the epc and stval hex.
 def fault_digit(n Int64) Void {
   if n < 10 {
     console_put_byte(48 + n)
@@ -122,7 +123,7 @@ def fault_dec(n Int64) Void {
   console_put_byte(48 + (n % 10))
 }
 
-def fault_report(pid Int64, cause Int64, epc Int64) Void {
+def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
   console_put_byte(117) // u
   console_put_byte(115) // s
   console_put_byte(101) // e
@@ -150,6 +151,20 @@ def fault_report(pid Int64, cause Int64, epc Int64) Void {
   console_put_byte(48)  // 0
   console_put_byte(120) // x
   fault_hex(epc)
+  // stval (T6.4): the address the hardware refused — for a page fault
+  // the page the walk never reached; for the other exceptions whatever
+  // the hardware recorded (an illegal instruction's bits, or zero).
+  // The kill is the whole handling: nothing inspects the address to
+  // fill a mapping — demand paging is out of scope by decision.
+  console_put_byte(32)  // space
+  console_put_byte(97)  // a
+  console_put_byte(100) // d
+  console_put_byte(100) // d
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(addr)
   console_put_byte(10)
 }
 
