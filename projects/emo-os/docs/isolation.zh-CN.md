@@ -35,7 +35,7 @@
 
 ## U-mode 够不到什么
 
-- **它的表不映射的一切,以及一切无 U 映射的东西。** 内核的内存、其他进程的栈与 arena、分配器的页、页表本身、两个环、设备——每一处都是缺页(cause 12/13/15)或硬件的权限拒绝,而 supervisor 响亮地击杀肇事的 pass(`user fault <pid> cause <scause> at <epc>`——击杀金测的 cause 如今是 13,load page fault;窗口的 RAM 巨页让同一访问由 PMP 答 access fault,cause 5)。来自内核自己代码的故障仍旧是终结机器的响亮失败——那是内核的 bug,不是用户的。
+- **它的表不映射的一切,以及一切无 U 映射的东西。** 内核的内存、其他进程的栈与 arena、分配器的页、页表本身、两个环、设备——每一处都是缺页(cause 12/13/15)或硬件的权限拒绝,而 supervisor 响亮地击杀肇事的 pass,报告自 T6.4 起指名硬件拒绝的地址(`user fault <pid> cause <c> at 0x<epc> addr 0x<stval>`)。三次击杀钉在链上:未映射地址的 load(cause 13、`addr 0x80000000`——窗口的 RAM 巨页当年让同一访问由 PMP 答 access fault、cause 5)、未映射地址的 store(cause 15、`addr 0x40000000`),以及向内核地址的 store(T6.5:同是 cause 15,但映射在那里、只是无 U——遍历到达了叶,被拒的是权限——`addr 0xffffffc080200000`,内核自己的镜像按高半区地址拼写,pre-SV39 窗口放这类 store 进内核 RAM 的那一条)。来自内核自己代码的故障仍旧是终结机器的响亮失败——那是内核的 bug,不是用户的。
 - **特权指令。** 每个 S-mode CSR(`satp`、`sstatus`、`stvec`、`stimecmp`)、`sfence.vma`、`sret`——U-mode 里的非法指令,同一种被圈住的击杀。
 - **固件。** 来自 U-mode 的 `ecall` 是内核的门,不是 OpenSBI 的;固件自己的区域不在任何映射里(监管者的低位窗始于加载地址,T6.1 的决定保持),而 PMP 在一切背后,仍是连 supervisor 都被拒的那段范围。
 - **门拒绝的一切。** 集合之外的动词、调用者各段之外的指针、缺该访问所需权限的段——每一个都是经门答回的编号拒绝,不是故障,不是崩溃。

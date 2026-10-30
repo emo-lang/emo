@@ -635,9 +635,12 @@ emo_os_trap_trampoline:
                              # arena (T5.2/T5.3)
     j emo_sched_pick
 .Ltrap_exit:
-    # the machine's end: the frame allocator's account is the last line
-    # (T5.3) — on whichever stack the root died on, the typed def
-    # allocating nothing — then the SBI poweroff
+    # the machine's end: the DMA proof (T6.5) — after everything this
+    # boot took, split, and gave back, the allocator still answers one
+    # whole contiguous block — then the frame allocator's account is
+    # the last line (T5.3) — on whichever stack the root died on, the
+    # typed defs allocating nothing — then the SBI poweroff
+    call emo_main__dma_report
     call emo_frames__report
     li a7, 8
     ecall                    # the SBI poweroff

@@ -110,21 +110,28 @@ boot() {
   # arena, announced through the gate, the pid the spawn order fixes),
   # then the store-fault pass's line and its report (T6.4: a store
   # where the pass's own table maps nothing — the store page fault,
-  # cause 15, the address named), then the good child's line and the
-  # spawn/wait round trip answering after the three deaths: the
-  # machine survived its offenders. Last, the frame allocator's
-  # account at the root's exit (T5.3): nineteen blocks taken — the
-  # kernel's page tables' block (T6.1), the six green spawns' arenas, a
-  # stack and an arena for each of the four user passes, and the four
-  # blocks the per-process tables' frames split (T6.2: the boot pass's
-  # table and one per spawned pass, kept for the whole run like the
-  # services' arenas; the store-fault pass's table drew its frames
-  # from the splits' leftovers — no block of its own) — and twelve
-  # given back — the four readers' arenas at their deaths, both blocks
-  # of each user pass at its kill or exit; the two services and every
-  # table keep theirs. The byte offsets are the serial order.
+  # cause 15, the address named), then the reach pass's line and its
+  # report (T6.5: a store at a kernel address, mapped without U — the
+  # walk reaches the leaf and the permission fails, the same cause 15,
+  # the kernel's high-half address named in full), then the good
+  # child's line and the spawn/wait round trip answering after the
+  # four deaths: the machine survived its offenders. Then the DMA
+  # proof at the machine's end (T6.5): after everything this boot
+  # took, split, and gave back, the allocator still answers one whole
+  # 64 KiB block — block-aligned, one pattern word per frame, every
+  # one read back — and returns it. Last, the frame allocator's
+  # account at the root's exit (T5.3): twenty-three blocks taken —
+  # the kernel's page tables' block (T6.1), the six green spawns'
+  # arenas, a stack and an arena for each of the five user passes,
+  # the five blocks the per-process tables' frames split (T6.2's
+  # four; the smash pass's frames from the splits' leftovers, the
+  # reach pass's table splitting the fifth), and the DMA check's
+  # block — and fifteen given back — the four readers' arenas at
+  # their deaths, both blocks of each user pass at its kill or exit,
+  # and the DMA check's block home; the two services and every table
+  # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 13' 'addr 0x80000000' 'greedy' 'user heap 9 gone' 'smash' 'user fault 10 cause 15' 'addr 0x40000000' 'born' 'wait 7' 'frames 19 12'; do
+  for line in 'sv39 8 0x8' '0:97' '1:98' '2:99' '3:100' '4:101' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'doomed' 'user fault 8 cause 13' 'addr 0x80000000' 'greedy' 'user heap 9 gone' 'smash' 'user fault 10 cause 15' 'addr 0x40000000' 'reach' 'user fault 11 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'dma 0xffffffc08' '0000 ok' 'frames 23 15'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

@@ -109,11 +109,25 @@ def fault_digit(n Int64) Void {
   }
 }
 
-def fault_hex(n Int64) Void {
-  if n >= 16 {
-    fault_hex(n / 16)
+// Hex from the top down, leading zeros skipped, the 64-bit pattern
+// unsigned-faithful (T6.5): a kernel address is negative as an Int64
+// and its hex is the pattern the hardware put in stval or satp, not
+// its sign — the arithmetic shift keeps the low nibble true at every
+// depth, and the sign bits are the top digits.
+def fault_hex_walk(n Int64, shift Int64, started Int64) Void {
+  if shift >= 0 {
+    var d = (n >> shift) & 15
+    var st = started
+    if d != 0 || st != 0 || shift == 0 {
+      fault_digit(d)
+      st = 1
+    }
+    fault_hex_walk(n, shift - 4, st)
   }
-  fault_digit(n % 16)
+}
+
+def fault_hex(n Int64) Void {
+  fault_hex_walk(n, 60, 0)
 }
 
 def fault_dec(n Int64) Void {
@@ -225,6 +239,51 @@ def sv39_report() Void {
   console_put_byte(48)  // 0
   console_put_byte(120) // x
   fault_hex(root)
+  console_put_byte(10)
+}
+
+// The DMA proof (T6.5): the machine's last act beside its account —
+// after everything this boot took, split, and gave back, the allocator
+// still answers one whole 64 KiB block, block-aligned, and the range
+// is one piece of writable RAM: a distinct word lands in each of the
+// block's sixteen frames and every one reads back. That range is what
+// a DMA consumer (M6's virtio-blk) needs and what the allocator's
+// block unit promises — a device's buffer comes from `take`, never
+// from sixteen `frame_take`s: the frames the page tables split never
+// rejoin a block (T6.1). The check runs in the exit route's trap (the
+// fault report's discipline): typed Emo, raw words, zero allocation —
+// `take` and `give` are the allocator's own account, and the check's
+// pair rides the ledger the account prints right after.
+def dma_report() Void {
+  var b = frames.take()
+  if b == 0 || (b & 65535) != 0 {
+    println("dma: no block for the check")
+    halt()
+  }
+  var i = 0
+  while i < 16 {
+    poke64(b + i * 4096, 0x646D6100 + i)
+    i = i + 1
+  }
+  i = 0
+  while i < 16 {
+    if peek64(b + i * 4096) != 0x646D6100 + i {
+      println("dma: the block is not one range of RAM")
+      halt()
+    }
+    i = i + 1
+  }
+  frames.give(b)
+  console_put_byte(100) // d
+  console_put_byte(109) // m
+  console_put_byte(97)  // a
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(b)
+  console_put_byte(32)  // space
+  console_put_byte(111) // o
+  console_put_byte(107) // k
   console_put_byte(10)
 }
 

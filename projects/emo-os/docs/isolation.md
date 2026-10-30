@@ -92,12 +92,19 @@ and arena, the cells page, and the kernel's high half without U).
   allocator's page, the page tables themselves, the rings, the
   devices — each is a page fault (cause 12/13/15) or a permission
   refusal by the hardware, and the supervisor kills the offending
-  pass loudly (`user fault <pid> cause <scause> at <epc>` — the
-  kill golden's cause is now 13, the load page fault, where the
-  window's RAM gigapage made the same access PMP's access fault,
-  cause 5). A fault from the kernel's own code is still the loud
-  failure that ends the machine — that is the kernel's bug, not a
-  user's.
+  pass loudly, the address the hardware refused named in the report
+  since T6.4 (`user fault <pid> cause <c> at 0x<epc> addr 0x<stval>`).
+  Three kills are pinned on the chain: the load at an unmapped
+  address (cause 13, `addr 0x80000000` — where the window's RAM
+  gigapage once made the same access PMP's access fault, cause 5),
+  the store at an unmapped address (cause 15, `addr 0x40000000`), and
+  the store at a kernel address (T6.5: cause 15 again, but the
+  mapping is there without U and it is the permission the walk
+  refuses — `addr 0xffffffc080200000`, the kernel's own image by its
+  high-half address, the one store the pre-SV39 window let through to
+  the kernel's RAM). A fault from the kernel's own code is still the
+  loud failure that ends the machine — that is the kernel's bug, not
+  a user's.
 - **Privileged instructions.** Every S-mode CSR (`satp`, `sstatus`,
   `stvec`, `stimecmp`), `sfence.vma`, `sret` — an illegal instruction
   in U-mode, the same confined kill.
