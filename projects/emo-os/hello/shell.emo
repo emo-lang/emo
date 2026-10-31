@@ -30,9 +30,9 @@ require "syscall"
 // This image's scratch (main.emo's buf), the shell's addresses above
 // the proof chain's: the line, the list's and the read's buffers, and
 // the texts (the four refusal messages the file verbs can answer,
-// `unknown command`, the help line, the prompt, the seven command
-// names, `: `, a LF, and the echo byte with the erase sequence beside
-// it). All poked once, at REPL start.
+// `unknown command`, the help line, the prompt, the eight command
+// names, the boot banner, `: `, a LF, and the echo byte with the
+// erase sequence beside it). All poked once, at REPL start.
 const buf = 0x87200000
 const sh_line = buf + 6144
 const sh_names = buf + 6272
@@ -56,6 +56,7 @@ const sh_colon = sh_text + 208
 const sh_nl = sh_text + 210
 const sh_one = sh_text + 212
 const sh_c_counter = sh_text + 216
+const sh_logo = sh_text + 224
 
 // main.emo's token cell: the counter pass claims it on re-entering
 // the top level (the proof chain's spawn discipline — the channel a
@@ -109,9 +110,70 @@ def help_bytes() Array[Byte] {
   ]
 }
 
+// The banner, one literal per row: the riscv64 backend materializes
+// an array literal through a stack frame whose element stores take
+// 12-bit immediates, so a literal stops assembling past ~253
+// elements. Each row is 53 bytes — the plain prefix, the O and S in
+// ANSI cyan (SGR 36, one escape/reset pair per row), and a bare LF.
+// docs/shell.md has it drawn.
+def logo_r1() Array[Byte] {
+  return [
+    32B, 95B, 95B, 95B, 95B, 95B, 32B, 32B, 32B, 32B, 32B, 32B,
+    32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 32B, 95B, 95B, 95B,
+    95B, 32B, 32B, 32B, 32B, 32B, 95B, 95B, 95B, 95B, 32B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r2() Array[Byte] {
+  return [
+    124B, 32B, 95B, 95B, 95B, 95B, 124B, 32B, 32B, 95B, 95B, 32B,
+    32B, 95B, 95B, 32B, 32B, 32B, 32B, 95B, 95B, 95B, 95B, 32B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 47B, 32B, 95B, 95B,
+    32B, 92B, 32B, 32B, 32B, 47B, 32B, 95B, 95B, 95B, 124B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r3() Array[Byte] {
+  return [
+    124B, 32B, 32B, 95B, 124B, 32B, 32B, 32B, 124B, 32B, 32B, 92B,
+    47B, 32B, 32B, 124B, 32B, 32B, 47B, 32B, 95B, 95B, 32B, 92B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 124B, 32B, 124B, 32B, 32B,
+    124B, 32B, 124B, 32B, 32B, 92B, 95B, 95B, 95B, 32B, 92B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r4() Array[Byte] {
+  return [
+    124B, 32B, 124B, 95B, 95B, 95B, 32B, 32B, 124B, 32B, 124B, 92B,
+    47B, 124B, 32B, 124B, 32B, 124B, 32B, 124B, 32B, 32B, 124B, 32B,
+    124B, 27B, 91B, 51B, 54B, 109B, 32B, 124B, 32B, 124B, 95B, 95B,
+    124B, 32B, 124B, 32B, 32B, 32B, 95B, 95B, 95B, 41B, 32B, 124B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r5() Array[Byte] {
+  return [
+    124B, 95B, 95B, 95B, 95B, 95B, 124B, 32B, 124B, 95B, 124B, 32B,
+    32B, 124B, 95B, 124B, 32B, 32B, 92B, 95B, 95B, 95B, 95B, 47B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 92B, 95B, 95B, 95B,
+    95B, 47B, 32B, 32B, 32B, 124B, 95B, 95B, 95B, 95B, 47B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_tail() Array[Byte] {
+  // the two blank lines that part the banner from the first prompt
+  return [10B, 10B]
+}
+
 def prompt_bytes() Array[Byte] {
-  // "emo> "
-  return [101B, 109B, 111B, 62B, 32B]
+  // "emo-os> "
+  return [101B, 109B, 111B, 45B, 111B, 115B, 62B, 32B]
 }
 
 def c_help() Array[Byte] {
@@ -179,6 +241,12 @@ def sh_init() Void {
   put_bytes(sh_c_write, c_write())
   put_bytes(sh_c_pow, c_pow())
   put_bytes(sh_c_counter, c_counter())
+  put_bytes(sh_logo, logo_r1())
+  put_bytes(sh_logo + 53, logo_r2())
+  put_bytes(sh_logo + 106, logo_r3())
+  put_bytes(sh_logo + 159, logo_r4())
+  put_bytes(sh_logo + 212, logo_r5())
+  put_bytes(sh_logo + 265, logo_tail())
   poke8(sh_colon, 58B)
   poke8(sh_colon + 1, 32B)
   poke8(sh_nl, 10B)
@@ -467,12 +535,14 @@ def execute(n Int64) Void {
   }
 }
 
-// The REPL: the prompt, the line, the command — until the poweroff
-// command's exit verb ends the machine, this loop never returns.
+// The REPL: the banner, then the prompt, the line, the command —
+// until the poweroff command's exit verb ends the machine, this loop
+// never returns.
 def run() Void {
   sh_init()
+  out(sh_logo, 267)
   while true {
-    out(sh_prompt, 5)
+    out(sh_prompt, 8)
     execute(read_line())
   }
 }

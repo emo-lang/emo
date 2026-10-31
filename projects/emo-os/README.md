@@ -63,9 +63,14 @@ EmoOS is a microkernel in the QNX lineage: process boundaries exist exactly wher
 $ (cd hello && emo build main.emo --target riscv64 --profile user -o ../hello.elf)
 $ emo build main.emo --target riscv64
 $ ./run.sh
+$ ./start.sh
 ```
 
-The walk-through — the compiler build, both images, the golden smoke, and the hand-driven boot up to the prompt — is [`docs/how-to-start-emoos.md`](docs/how-to-start-emoos.md).
+`./run.sh` is the golden smoke; `./start.sh` is the ride — it builds
+the images when they are missing or stale and hands the terminal to
+the machine. The walk-through — the compiler build, both images, the
+golden smoke, and the hand-driven boot up to the prompt — is
+[`docs/how-to-start-emoos.md`](docs/how-to-start-emoos.md).
 
 ## Milestones
 

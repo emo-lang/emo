@@ -56,7 +56,21 @@ read through the gate:
   strictness the gate's staging bound uses (reason 4 there, visible
   silence here).
 
-The prompt is `emo> `, printed before each line is read.
+The REPL opens with the banner:
+
+```
+ _____                      ____     ____
+| ____|  __  __    ____    / __ \   / ___|
+|  _|   |  \/  |  / __ \  | |  | |  \___ \
+| |___  | |\/| | | |  | | | |__| |   ___) |
+|_____| |_|  |_|  \____/   \____/   |____/
+```
+
+On the wire the `O` and `S` ride in ANSI cyan (SGR 36, one
+escape/reset pair per row); the art above is drawn plain. Two blank
+lines part the banner from the first prompt.
+
+The prompt is `emo-os> `, printed before each line is read.
 
 ## The commands
 
