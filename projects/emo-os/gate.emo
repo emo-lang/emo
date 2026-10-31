@@ -77,6 +77,17 @@ const fs_slot_size = 2304
 const fs_slot_count = 4
 const name_max = 24
 
+// The desktop segment's cells (T8.4): the display service's pid cell
+// the routes post by; the authorization table's first entry — the
+// screen carve's grant, the holder's pid the process service parked
+// when it handed the carve out; and the five argument cells a present
+// stages (the grant id, the damage rect) — the service's own cells,
+// like the console's and the process's, because a present and a write
+// can sit parked at the same time.
+const gpu_svc_cell = koff + 0x870029f8
+const screen_grant_cell = koff + 0x87002a00
+const gpu_args = koff + 0x87002a08
+
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
 const reason_range = 2
@@ -102,6 +113,8 @@ const route_console_write = -1001
 const route_input_byte = -1002
 const route_process_spawn = -1003
 const route_process_wait = -1004
+const route_desktop_present = -1010
+const route_output_info = -1011
 const route_input_event = -1012
 const route_poweroff = -103
 const route_heap_gone = -104
@@ -270,6 +283,39 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 2 {
     return route_input_byte
+  }
+  if n == 10 {
+    // The desktop segment's commit (T8.4): present(grant, x, y, w, h)
+    // — the buffer the grant names, the damage rect. The grant id 0 is
+    // the screen carve's, the authorization table's first entry: the
+    // caller must be the holder the process service parked (a dead
+    // holder's pid never matches — the slots are never reused). The
+    // window grants are T8.5's: an id the table does not hold is the
+    // argument refusal until then. The rect's sanity here, its bounds
+    // the display service's to judge against the mode; the atomic
+    // commit is the service's — the transfer and the flush complete
+    // before the answer.
+    if r1 < 0 || r2 < 0 || r3 < 1 || r4 < 1 {
+      return -reason_argument
+    }
+    if r0 != 0 {
+      return -reason_argument
+    }
+    if peek64(screen_grant_cell) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(gpu_args, r1)
+    poke64(gpu_args + 8, r2)
+    poke64(gpu_args + 16, r3)
+    poke64(gpu_args + 24, r4)
+    return route_desktop_present
+  }
+  if n == 11 {
+    // The desktop segment's enumeration (T8.4): output_info(index) —
+    // the index-th output's rect, the answer the display service
+    // packs; an index no output answers is the service's argument
+    // refusal (one display is the first answer, not the only shape).
+    return route_output_info
   }
   if n == 12 {
     // The desktop segment's first verb (T8.3): the next event of the

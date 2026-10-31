@@ -135,6 +135,18 @@ const screen_pending_cell = koff + 0x870029e0
 const input_svc_cell = koff + 0x870029e8
 const input_irq_cell = koff + 0x870029f0
 
+// The desktop segment's cells (T8.4): the display service's pid cell
+// the gate routes present and output_info by; the authorization
+// table's first entry — the screen carve's grant, the pid the process
+// service parked the moment it handed the carve out (a dead pid never
+// matches: the slots are never reused, and the grant is the machine's
+// desktop for its life); and the five argument cells the gate fills
+// for a present (the grant id, the damage rect). All past the staging
+// area's tail.
+const gpu_svc_cell = koff + 0x870029f8
+const screen_grant_cell = koff + 0x87002a00
+const gpu_args = koff + 0x87002a08
+
 // The display (T8.1): the virtio-gpu device rides the same eight mmio
 // transports the block driver scans — DeviceID 16 — and the screen
 // carve's physical address is the backing the 2D resource attaches:
@@ -480,6 +492,11 @@ def process_service(boss Pid) Void {
               if screen != 0 {
                 screen_pid = child
                 screen_base = screen
+                // The authorization table's first entry (T8.4): the
+                // carve's grant names its holder — the gate's present
+                // check reads it. The slots are never reused, so a
+                // dead holder's pid can never match a new caller.
+                poke64(screen_grant_cell, child)
               }
               gate_reply(caller_of(w), child)
             }
@@ -795,6 +812,37 @@ def gpu_height(w Int64) Int64 {
   return w & 4294967295
 }
 
+// The atomic commit (T8.4): the damage rect's transfer to the host
+// resource, then the flush to the display — the two device commands
+// complete before the answer, so a frame lands whole or the machine
+// ends loudly; the scanout shows the old frame until the flush's own
+// completion. The rect is the mode's to judge: outside it, or empty,
+// is the argument refusal the caller's stub names.
+def gpu_present(dev Int64, q Int64, gw Int64, gh Int64, x Int64, y Int64, w Int64, h Int64) Int64 {
+  if x < 0 || y < 0 || w < 1 || h < 1 {
+    return -4
+  }
+  if (x + w) > gw || (y + h) > gh {
+    return -4
+  }
+  gpu_hdr(q + 0x3000, 0x0105)
+  gpu_rect(q + 0x3018, x, y, w, h)
+  poke64(q + 0x3028, 0)
+  poke32(q + 0x3030, 1)
+  if gpu_submit(dev, q, 56) != 0x1100 {
+    println("gpu: the transfer refused")
+    halt()
+  }
+  gpu_hdr(q + 0x3000, 0x0104)
+  gpu_rect(q + 0x3018, x, y, w, h)
+  poke32(q + 0x3028, 1)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the flush refused")
+    halt()
+  }
+  return 0
+}
+
 def gpu_service(boss Pid) Void {
   // The slot scan: a transport answers with the magic and the version
   // whether or not a device rides it; the display device is DeviceID 16.
@@ -901,46 +949,45 @@ def gpu_service(boss Pid) Void {
   }
   println("gpu ${gw}x${gh} ready")
   boss <- self_pid()
-  var w0 = 0
-  var from = boss
   while true {
     receive {
       (a, b, c) -> {
-        w0 = a
-        from = b
+        // The kernel's own mailbox (the boot smoke's protocol): op 0
+        // the whole-screen flush, op 1 the mode packed.
+        var op = op_of(a)
+        if op == 0 {
+          var v = gpu_present(dev, q, gw, gh, 0, 0, gw, gh)
+          if v == 0 {
+            b <- a
+          } else {
+            b <- v
+          }
+        } else {
+          if op == 1 {
+            b <- (gw << 32) | gh
+          } else {
+            b <- 0 - a
+          }
+        }
       }
-    }
-    var op = op_of(w0)
-    if op == 0 {
-      // TRANSFER_TO_HOST_2D (56 bytes): the whole rect, from the
-      // backing's offset 0 — the pixels the pass painted are what
-      // moves.
-      gpu_hdr(q + 0x3000, 0x0105)
-      gpu_rect(q + 0x3018, 0, 0, gw, gh)
-      poke64(q + 0x3028, 0)
-      poke32(q + 0x3030, 1)
-      if gpu_submit(dev, q, 56) != 0x1100 {
-        println("gpu: the transfer refused")
-        halt()
-      }
-      // RESOURCE_FLUSH (48 bytes): the host resource to the display,
-      // the same rect — present is the flush, the M7 shape's whole of
-      // it.
-      gpu_hdr(q + 0x3000, 0x0104)
-      gpu_rect(q + 0x3018, 0, 0, gw, gh)
-      poke32(q + 0x3028, 1)
-      if gpu_submit(dev, q, 48) != 0x1100 {
-        println("gpu: the flush refused")
-        halt()
-      }
-      from <- w0
-    } else {
-      if op == 1 {
-        // The mode: the display info's rectangle packed — the
-        // output_info verb's kernel side rides this answer (T8.4).
-        from <- (gw << 32) | gh
-      } else {
-        from <- 0 - w0
+      w -> {
+        // The gate's posts (T8.4): verb 10 present — the grant is the
+        // gate's to have checked, the rect the mode's to judge, the
+        // five arguments in the cells the gate filled — and verb 11
+        // output_info, the mode packed. The window grants and their
+        // present checks are T8.5's.
+        var op = op_of(w)
+        if op == 10 {
+          var v = gpu_present(dev, q, gw, gh, peek64(gpu_args), peek64(gpu_args + 8), peek64(gpu_args + 16), peek64(gpu_args + 24))
+          gate_reply(caller_of(w), v)
+        } else {
+          if op == 11 {
+            gate_reply(caller_of(w), (gw << 32) | gh)
+          } else {
+            println("gpu: the verb is nobody's")
+            halt()
+          }
+        }
       }
     }
   }
@@ -1342,7 +1389,10 @@ receive { c1 -> {
 } }
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 -> { blk_svc = c3 } }
-receive { g1 -> { gpu_svc = g1 } }
+receive { g1 -> {
+  poke64(gpu_svc_cell, pid_num(g1))
+  gpu_svc = g1
+} }
 receive { i1 -> {
   poke64(input_svc_cell, pid_num(i1))
   input_svc = i1
@@ -1432,10 +1482,11 @@ println("fs restart ok")
 // and the user program runs — its own greeting is the proof on the
 // serial line. A refusal already said why; the entry word stays zero
 // and the stub powers the machine off. The screen token's cell (T8.2)
-// is established before the image runs: the spawner's poke and the
-// spawn-side read are the only writers, and the machine starts with
-// the grant held by nobody.
+// and the carve grant's entry (T8.4) are established before the image
+// runs: the machine starts with the token unpoked and the grant held
+// by nobody.
 poke64(screen_cell, 0)
+poke64(screen_grant_cell, 0)
 var staged = user.stage()
 if staged > 0 {
   println("user: staged ${staged}")

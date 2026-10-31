@@ -35,6 +35,10 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # offender — the screen carve's proof (T8.2: the first full-screen
 # pass paints the carve its spawn was granted, the pattern read back
 # through the kernel's half, the second screen spawn refused) — the
+# desktop segment's verbs (T8.4: `output 1024x768`, the mode the
+# device's own answer, and `present ok`, the grant's commit — the
+# transfer and the flush complete before the line; the unauthorized
+# `present r3` the input pass's refusal) — the
 # input merge's proof (T8.3: the pass parked on the merged stream —
 # `keys?` — the monitor's sendkey delivering the device's key event,
 # the serial's byte riding the same stream after it, the bytes first) —
@@ -289,7 +293,13 @@ PYEOF
   # whole 4 MiB and read back through the kernel's half (`screen
   # 0x86c00000 ok`, the base asserted in full) — and the second screen
   # spawn refused, the carve handed once (`screen r5`, the resource
-  # refusal's number). Then the shell
+  # refusal's number). Then the desktop segment's verbs (T8.4):
+  # `output 1024x768` — the mode the device's own answer through verb
+  # 11 — and `present ok`, the grant's commit through verb 10 (the
+  # gate checked the carve's holder, the display service judged the
+  # rect, the transfer and the flush completed before the line); the
+  # input pass's `present r3` is the authorization table's edge, the
+  # permission refusal a non-holder meets. Then the shell
   # (T7.3, docs/shell.md): the first prompt — the REPL took the
   # foreground when the proof chain ended — and the counter command
   # (T7.5, docs/ui.md) starting the machine's program from it (T7.4's
@@ -336,7 +346,7 @@ PYEOF
   # instance, every table, the cache block, and the queues keep
   # theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 14 cause 13' 'addr 0x80000000' 'greedy' 'user heap 15 gone' 'smash' 'user fault 16 cause 15' 'addr 0x40000000' 'reach' 'user fault 17 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 43 23'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 14 cause 13' 'addr 0x80000000' 'greedy' 'user heap 15 gone' 'smash' 'user fault 16 cause 15' 'addr 0x40000000' 'reach' 'user fault 17 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 43 23'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

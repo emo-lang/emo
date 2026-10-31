@@ -44,6 +44,34 @@ def input_read() Int64 {
   return ecall(12, 0, 0, 0, 0, 0, 0)
 }
 
+// The desktop segment's commit (EmoOS T8.4): the buffer the grant
+// names lands whole — the damage rect (x, y, w, h) is what the device
+// takes and what the scanout shows, the transfer and the flush both
+// complete before the answer. The grant id 0 is the screen carve's —
+// the caller must be the holder the kernel's authorization table
+// names (reason 3 otherwise); a grant id the table does not hold is
+// reason 4 until the window grants land; a rect outside the display,
+// or empty, reason 4 as well. Answers (R.ok, 0) or (R.error, why).
+def present(grant Int64, x Int64, y Int64, w Int64, h Int64) (R, Int64) {
+  var answer = ecall(10, grant, x, y, w, h, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desktop segment's enumeration (EmoOS T8.4): the index-th
+// output's rectangle, packed (the width in bits 32..63, the height in
+// bits 0..31). An index no output answers is (R.error, "bad
+// argument") — one display is the first answer, not the only shape.
+def output_info(index Int64) (R, Int64) {
+  var answer = ecall(11, index, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.

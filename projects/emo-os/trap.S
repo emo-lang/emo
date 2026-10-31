@@ -578,9 +578,9 @@ emo_os_trap_trampoline:
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
     li t3, 10
-    bge t6, t3, .Lroute_input # ops 10..: the desktop segment (T8.3 —
-                              # verb 12 lands today; the gate refuses
-                              # the rest of the segment by name)
+    bge t6, t3, .Lroute_desktop # ops 10..: the desktop segment (T8.3
+                                # landed verb 12, T8.4 verbs 10 and 11;
+                                # the gate refuses the rest by name)
     li t3, 6
     bge t6, t3, .Lroute_fs   # ops 6..9 (the filesystem's, any slot)
     li t3, 3
@@ -595,6 +595,12 @@ emo_os_trap_trampoline:
     j .Lroute_post
 .Lroute_input:
     li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
+    j .Lroute_post
+.Lroute_desktop:
+    li t3, 12
+    beq t6, t3, .Lroute_input # verb 12, input_read: the input service's
+    li a0, EMO_KOFF + 0x870029f8  # verbs 10 and 11: the display
+                                  # service's pid cell (T8.4)
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)

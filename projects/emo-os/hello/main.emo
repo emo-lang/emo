@@ -308,6 +308,20 @@ if peek64(screen_cell) != 0 {
     poke64(screen_base + (k * 65536), 0x7363726E + k)
     k = k + 1
   }
+  // The desktop segment's verbs (T8.4): the mode from the device's
+  // own answer (output_info 0), the commit the grant's present —
+  // the gate checks the carve's holder, the display service judges
+  // the rect, and the pixels reach the display before the line does.
+  case syscall.output_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, mode) -> {
+      output_line(mode)
+      case syscall.present(0, 0, 0, out_w(mode), out_h(mode)) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { present_ok() }
+      }
+    }
+  }
   syscall.exit(0)
 }
 
@@ -324,6 +338,51 @@ def ev_code(e Int64) Int64 {
 
 def ev_value(e Int64) Int64 {
   return e & 4294967295
+}
+
+// The display's answer's halves (T8.4): the width above, the height
+// below — the decode in typed defs, as every mailbox word's.
+def out_w(m Int64) Int64 {
+  return m >> 32
+}
+
+def out_h(m Int64) Int64 {
+  return m & 4294967295
+}
+
+// The enumeration's answer, as the pass's line: `output <w>x<h>` —
+// the mode the device itself reports (the verb's index 0; the one
+// display is the first answer, not the only shape).
+def output_line(m Int64) Void {
+  var p = byte_at(0, 111) // o
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = num_at(out_w(m), p)
+  p = byte_at(p, 120) // x
+  p = num_at(out_h(m), p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The commit's answer, as the pass's line: `present ok` — the device's
+// transfer and flush both complete before the answer lands.
+def present_ok() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
 }
 
 // One event, as the pass's line: the machine's byte event (0x454D —
@@ -370,6 +429,25 @@ if peek64(key_cell) != 0 {
   gate_line(kp)
   input_line(syscall.input_read())
   input_line(syscall.input_read())
+  // The grant's edge (T8.4): the pass holds no display grant — the
+  // present is the permission refusal, the reason number on the wire.
+  case syscall.present(0, 0, 0, 1, 1) {
+    (R.error, why) -> {
+      var gp = byte_at(0, 112) // p
+      gp = byte_at(gp, 114) // r
+      gp = byte_at(gp, 101) // e
+      gp = byte_at(gp, 115) // s
+      gp = byte_at(gp, 101) // e
+      gp = byte_at(gp, 110) // n
+      gp = byte_at(gp, 116) // t
+      gp = byte_at(gp, 32) // space
+      gp = byte_at(gp, 114) // r
+      gp = num_at(reason_num(why), gp)
+      gp = byte_at(gp, 10)
+      gate_line(gp)
+    }
+    (R.ok, _) -> { mark() }
+  }
   syscall.exit(0)
 }
 

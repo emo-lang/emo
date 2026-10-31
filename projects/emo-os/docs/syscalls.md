@@ -58,14 +58,18 @@ undocumented ever acts.
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
 | 8 | `file_list(buf, cap)` | the names, each followed by a newline, land at `buf`; answers the bytes written |
 | 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
+| 10 | `present(grant, x, y, w, h)` | the buffer the grant names lands whole — the damage rect is what the device takes and what the scanout shows; answers 0 when the commit completed (T8.4, below) |
+| 11 | `output_info(index)` | the index-th output's rectangle, packed; an index no output answers is reason 4 (T8.4, below) |
 | 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
 verb lands, frozen from that day) — `present`, `output_info`,
 `input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
-[`docs/desktop-abi.md`](desktop-abi.md). Verb 12 has landed (T8.3);
-the rest of the segment stays reserved.
+[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10, 11 and 12 have
+landed (T8.3, T8.4); 13 to 16 — the window verbs — stay reserved
+until the window buffers (T8.5) and the compositor's mechanism (T8.6)
+give them their substance.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -93,7 +97,8 @@ ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
-(1 to the console service, 2 and 12 to the input service, 0, 3 and 4
+(1 to the console service, 2 and 12 to the input service, 10 and 11
+to the display service, 0, 3 and 4
 to the process service, 6 to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
@@ -106,6 +111,27 @@ the kernel profile's own shutdown ecall — on a user image it reaches
 the gate as verb 8 — the filesystem's list since T7.2, which it
 reaches with a zero buffer and a zero capacity, refused as a range
 the caller's memory does not cover.)
+
+Verbs 10 and 11 (T8.4) are the display's, and the authorization
+table's first entry rides them. **Verb 10, `present(grant, x, y, w,
+h)`**, commits the buffer the grant names: the damage rect is what
+the device transfers and what the scanout shows, the transfer and the
+flush both completing before the answer — a frame lands whole, or the
+machine ends loudly, and the scanout shows the old frame until the
+flush's own completion. The grant id 0 is the screen carve's — the
+authorization table's first entry, the holder's pid the process
+service parked the moment it handed the carve out; a caller that is
+not the holder is reason 3 (the slots are never reused, so a dead
+holder's pid can never match a new caller). A grant id the table does
+not hold is reason 4 — the window grants are T8.5's. An empty rect,
+or one outside the display, is reason 4: the sanity is the gate's,
+the bounds the display service's to judge against the mode.
+**Verb 11, `output_info(index)`**, is the outputs list's verb — the
+protocol's second seam: the list is not a constant, and the index is
+the enumeration's shape. The answer packs the output's rectangle (the
+width in bits 32..63, the height in bits 0..31); an index no output
+answers is reason 4. One display is the first answer, not the only
+shape.
 
 Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
 the next event of the input service's merged stream, blocking until
@@ -131,7 +157,7 @@ event the service loses.
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its ten
+It admits the `riscv64` target alone; the raw `ecall` lives in its twelve
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -147,6 +173,11 @@ bodies and nowhere else a user program writes.
 - `syscall.input_read()` — the next event of the merged input stream
   (T8.3, verb 12), blocking until one exists; the packed word the
   verb's section above describes.
+- `syscall.present(grant, x, y, w, h)` — the desktop segment's commit
+  (T8.4, verb 10), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.output_info(index)` — the desktop segment's enumeration
+  (T8.4, verb 11), answering `(R.ok, the packed rect)` or
+  `(R.error, why)`.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the
