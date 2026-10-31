@@ -50,7 +50,7 @@ undocumented ever acts.
 | --- | --- | --- |
 | 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` |
 | 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
-| 2 | `read()` | the next console byte, blocking until one exists; answers it (0–255) |
+| 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
@@ -58,12 +58,14 @@ undocumented ever acts.
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
 | 8 | `file_list(buf, cap)` | the names, each followed by a newline, land at `buf`; answers the bytes written |
 | 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
+| 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
 verb lands, frozen from that day) — `present`, `output_info`,
 `input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
-[`docs/desktop-abi.md`](desktop-abi.md).
+[`docs/desktop-abi.md`](desktop-abi.md). Verb 12 has landed (T8.3);
+the rest of the segment stays reserved.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -91,8 +93,8 @@ ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
-(1 and 2 to the console service, 0, 3 and 4 to the process service, 6
-to 9 to the filesystem service)
+(1 to the console service, 2 and 12 to the input service, 0, 3 and 4
+to the process service, 6 to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
 the `ecall` had answered directly. The exit is the routing's one
@@ -105,12 +107,31 @@ the gate as verb 8 — the filesystem's list since T7.2, which it
 reaches with a zero buffer and a zero capacity, refused as a range
 the caller's memory does not cover.)
 
+Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
+the next event of the input service's merged stream, blocking until
+one exists. The answer packs the event into one word — the type in
+bits 48..63, the code in bits 32..47, the value in bits 0..31 — the
+virtio-input device's own event types riding verbatim (0 the
+separator, 1 a key, 2 a relative move, 3 an absolute one) and one
+machine type beside them: 0x454D ("EM") is the serial console's byte,
+the byte in the value, the code 0. The stream merges the device's
+events with the serial's bytes in the one order the two sources can
+name without a clock — the bytes first, then the device's — and the
+machine's standing discipline holds: one reader at a time (the
+service's mailbox is the wait queue; a read parks the caller and the
+service until the stream has something). The device half is wired:
+the eventq's completion rides the PLIC (the input service's driver
+parks its transport's IRQ number in the shim's cell), so the device's
+events wake the machine the serial's bytes do; an event the sixteen
+pre-posted buffers cannot hold at the moment it fires is the one
+event the service loses.
+
 ## The user surface
 
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its nine
+It admits the `riscv64` target alone; the raw `ecall` lives in its ten
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -122,7 +143,10 @@ bodies and nowhere else a user program writes.
   them (`"outside the caller's memory"`, `"not writable"`,
   `"bad argument"`, `"the kernel is out of a resource"`,
   `"unknown verb"`).
-- `syscall.read()` — the next console byte, blocking until one exists.
+- `syscall.read()` — the next input byte, blocking until one exists.
+- `syscall.input_read()` — the next event of the merged input stream
+  (T8.3, verb 12), blocking until one exists; the packed word the
+  verb's section above describes.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the

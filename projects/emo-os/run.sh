@@ -35,6 +35,10 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # offender — the screen carve's proof (T8.2: the first full-screen
 # pass paints the carve its spawn was granted, the pattern read back
 # through the kernel's half, the second screen spawn refused) — the
+# input merge's proof (T8.3: the pass parked on the merged stream —
+# `keys?` — the monitor's sendkey delivering the device's key event,
+# the serial's byte riding the same stream after it, the bytes first) —
+# the
 # shell REPL taking the foreground (T7.3: the prompt,
 # the help line, the echo, the list, the boot file read back, the
 # refusal after the remove, the unknown word named, and `poweroff`
@@ -52,6 +56,8 @@ boot() {
   local fifo
   fifo=$(mktemp -u /tmp/emoos-serial.XXXXXX)
   mkfifo "$fifo"
+  local mon
+  mon=$(mktemp -u /tmp/emoos-mon.XXXXXX)
 
   : > "$log"
   : > "$log.trace"
@@ -62,12 +68,16 @@ boot() {
   # assessment's decided baseline (1024x768 XRGB8888) — the device
   # property is where that decision lives, and the driver still reads
   # whatever the device answers (T8.1; this QEMU's own default is
-  # 1280x800, the golden would name it).
+  # 1280x800, the golden would name it). The keyboard (T8.3) is the
+  # merged input stream's device half; the monitor socket is the run's
+  # hand — the sendkey injection the input beat waits for.
   qemu-system-riscv64 -machine virt -nographic -d int -cpu "$cpu" \
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
     -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-keyboard-device \
+    -monitor unix:"$mon",server,nowait \
     -kernel "$elf" <"$fifo" >"$log" 2>"$log.trace" &
   local qemu_pid=$!
   exec 3>"$fifo"
@@ -131,6 +141,34 @@ boot() {
     kill "$qemu_pid" 2>/dev/null || true
     exit 1
   }
+  # The run's hand (T8.3): one HMP command over the monitor socket —
+  # connect, take the banner, send the line, close. The sendkey is how
+  # the merged input stream's device half gets its event; the serial
+  # feed above is how the byte half does.
+  hmp() {
+    python3 - "$mon" "$1" <<'PYEOF'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+time.sleep(0.3)
+try:
+    s.recv(4096)
+except OSError:
+    pass
+s.sendall((sys.argv[2] + "\n").encode())
+time.sleep(0.3)
+s.close()
+PYEOF
+  }
+  # The input merge's beat (T8.3): the pass parks on the merged stream
+  # (`keys?` on the wire), the monitor's hand answers it — one sendkey,
+  # the device's key event — and the serial's byte rides the same
+  # stream after it: one stream, two sources, the bytes first.
+  await 'keys?'
+  hmp 'sendkey q'
+  await 'key 1 16 1'
+  printf 'K' >&3
+  await 'byte 75'
   # The counter command (T7.5, docs/ui.md): the machine's program —
   # the console renderer pass (T7.4) — begun from the prompt, the
   # full-boot golden's beat between the shell and the filesystem
@@ -274,29 +312,31 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): thirty-eight blocks taken — the
-  # kernel's page tables' block (T6.1), the eleven green spawns' arenas
-  # (the four services', the supervisor's, the filesystem's two
+  # account at the root's exit (T5.3): forty-three blocks taken — the
+  # kernel's page tables' block (T6.1), the twelve green spawns' arenas
+  # (the five services', the supervisor's, the filesystem's two
   # instances', and the four readers'), the filesystem's cache block
   # (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
-  # seven user passes (the screen pass's, T8.2, beside the six), the
-  # seven blocks the per-process tables' frames split (the store-fault
-  # pass's frames from the splits' leftovers, the reach pass's table
-  # splitting the fifth, the counter pass's the sixth, the screen
-  # pass's the seventh), the DMA check's block, and the block driver's
-  # queue block (T7.1) beside the display driver's (T8.1), each held
+  # eight user passes (the screen pass's and the input pass's, T8.2 and
+  # T8.3, beside the six), the eight blocks the per-process tables'
+  # frames split (the store-fault pass's frames from the splits'
+  # leftovers, the reach pass's table splitting the fifth, the counter
+  # pass's the sixth, the screen pass's the seventh, the input pass's
+  # the eighth), the DMA check's block, and the block driver's
+  # queue block (T7.1) beside the display driver's (T8.1) and the input
+  # driver's (T8.3), each held
   # for the service's life like the services' arenas — and
-  # twenty-one given back — the four readers' arenas at
+  # twenty-three given back — the four readers' arenas at
   # their deaths, the first filesystem instance's arena at its stop,
   # the root's scratch block after its proof, both blocks of each user
-  # pass at its kill or exit (the counter pass's and the screen pass's
-  # at their clean exits), and the DMA check's block home; the three
-  # services, the supervisor, the live filesystem instance, every
-  # table, the cache block, and the queue keep theirs. The byte
-  # offsets are the serial order.
+  # pass at its kill or exit (the counter pass's, the screen pass's,
+  # and the input pass's at their clean exits), and the DMA check's
+  # block home; the services, the supervisor, the live filesystem
+  # instance, every table, the cache block, and the queues keep
+  # theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 13 cause 13' 'addr 0x80000000' 'greedy' 'user heap 14 gone' 'smash' 'user fault 15 cause 15' 'addr 0x40000000' 'reach' 'user fault 16 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 38 21'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 14 cause 13' 'addr 0x80000000' 'greedy' 'user heap 15 gone' 'smash' 'user fault 16 cause 15' 'addr 0x40000000' 'reach' 'user fault 17 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 43 23'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -371,9 +411,9 @@ boot() {
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, shell, counter, frames, self-exit, 1 ecall"

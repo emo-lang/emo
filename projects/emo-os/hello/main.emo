@@ -50,6 +50,9 @@ const greedy_cell = buf + 2064
 const smash_cell = buf + 2072
 const reach_cell = buf + 2080
 const ui_cell = buf + 2088
+// The input pass's token (T8.3): the cells the spawned passes read,
+// each poked once before the parent parks.
+const key_cell = buf + 2096
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -308,6 +311,68 @@ if peek64(screen_cell) != 0 {
   syscall.exit(0)
 }
 
+// The merged event's halves (T8.3): the type in bits 48..63, the code
+// above the low word, the value in it — the decode in typed defs (the
+// riscv64 emitter refuses the operators on a dynamic value).
+def ev_type(e Int64) Int64 {
+  return e >> 48
+}
+
+def ev_code(e Int64) Int64 {
+  return (e >> 32) & 65535
+}
+
+def ev_value(e Int64) Int64 {
+  return e & 4294967295
+}
+
+// One event, as the pass's line: the machine's byte event (0x454D —
+// "EM") prints `byte <v>`, a device event `key <t> <c> <v>`.
+def input_line(ev Int64) Void {
+  if ev_type(ev) == 17741 {
+    var bp = byte_at(0, 98) // b
+    bp = byte_at(bp, 121) // y
+    bp = byte_at(bp, 116) // t
+    bp = byte_at(bp, 101) // e
+    bp = byte_at(bp, 32) // space
+    bp = num_at(ev_value(ev), bp)
+    bp = byte_at(bp, 10)
+    gate_line(bp)
+  } else {
+    var tp = byte_at(0, 107) // k
+    tp = byte_at(tp, 101) // e
+    tp = byte_at(tp, 121) // y
+    tp = byte_at(tp, 32) // space
+    tp = num_at(ev_type(ev), tp)
+    tp = byte_at(tp, 32)
+    tp = num_at(ev_code(ev), tp)
+    tp = byte_at(tp, 32)
+    tp = num_at(ev_value(ev), tp)
+    tp = byte_at(tp, 10)
+    gate_line(tp)
+  }
+}
+
+// The input branch (T8.3): a pass parked on the machine's merged input
+// stream — `keys?` on the wire as it waits. The run's hands (the
+// monitor's sendkey) deliver the device's key event, and the serial's
+// byte rides the same stream after it: one stream, two sources, the
+// bytes first. Both lines through the gate; the pass ends and the
+// parent's wait answers.
+if peek64(key_cell) != 0 {
+  poke64(key_cell, 0)
+  var kp = byte_at(0, 107) // k
+  kp = byte_at(kp, 101) // e
+  kp = byte_at(kp, 121) // y
+  kp = byte_at(kp, 115) // s
+  kp = byte_at(kp, 63) // ?
+  kp = byte_at(kp, 10)
+  gate_line(kp)
+  input_line(syscall.input_read())
+  input_line(syscall.input_read())
+  syscall.exit(0)
+}
+
 // The UI branch (T7.4, docs/ui.md): a spawned pass renders the
 // counter's frame and answers the console's keys until the quit key
 // ends it — the machine's third kind of resident, an application, and
@@ -555,6 +620,24 @@ case screen_again {
     gate_line(scp)
   }
   (R.ok, _) -> { mark() }
+}
+
+// The input merge's proof (T8.3): the machine's keyboard beyond the
+// serial. The pass above claims the token and parks on the merged
+// stream — the run's hands answer it (the monitor's sendkey, then the
+// serial's byte on the same stream) and its exit answers the parent's
+// wait.
+poke64(key_cell, 1)
+var key_spawned = syscall.spawn()
+case key_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, kpid) -> {
+    var key_waited = syscall.wait(kpid)
+    case key_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
 }
 
 // The shell takes the foreground (T7.3): the REPL loop never returns —

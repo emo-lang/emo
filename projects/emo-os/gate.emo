@@ -85,20 +85,24 @@ const reason_argument = 4
 const reason_resource = 5
 
 // The routes: -(1000 + op). The shim decodes the op, posts to the
-// service (1 and 2 are the console's; 0, 3 and 4 the process
-// service's; 6 to 9 the filesystem's, the request slot's index riding
-// above the op), and parks the caller. -103 is the root's exit: the
-// machine ends at the shim, no service involved. -104 is the heap's
-// death: the caller's own allocator reported its arena exhausted (the
-// user image's verb 5 — the runtime issues it, though nothing stops a
+// service (1 the console's; 2 the input service's — T8.3 moved the
+// machine's input to one service, the console the machine's output; 0,
+// 3 and 4 the process service's; 6 to 9 the filesystem's, the request
+// slot's index riding above the op; 12 the input service's — the
+// desktop segment's first verb, the number frozen the day it landed),
+// and parks the caller. -103 is the root's exit: the machine ends at
+// the shim, no service involved. -104 is the heap's death: the
+// caller's own allocator reported its arena exhausted (the user
+// image's verb 5 — the runtime issues it, though nothing stops a
 // program from saying it of itself), and the shim ends the caller the
 // fault route ends a user program: the loud report, the slot done,
 // the machine continuing.
 const route_process_exit = -1000
 const route_console_write = -1001
-const route_console_read = -1002
+const route_input_byte = -1002
 const route_process_spawn = -1003
 const route_process_wait = -1004
+const route_input_event = -1012
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -265,7 +269,13 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return fs_dispatch(n, r0, r1, r2, r3)
   }
   if n == 2 {
-    return route_console_read
+    return route_input_byte
+  }
+  if n == 12 {
+    // The desktop segment's first verb (T8.3): the next event of the
+    // input service's merged stream — the serial's bytes first, then
+    // the device's. No arguments; the ABI in docs/syscalls.md.
+    return route_input_event
   }
   if n == 3 {
     return route_process_spawn

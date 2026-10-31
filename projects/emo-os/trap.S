@@ -577,13 +577,24 @@ emo_os_trap_trampoline:
     addi t6, t6, -1000       # the op — for the filesystem's routes the
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
+    li t3, 10
+    bge t6, t3, .Lroute_input # ops 10..: the desktop segment (T8.3 —
+                              # verb 12 lands today; the gate refuses
+                              # the rest of the segment by name)
     li t3, 6
-    bge t6, t3, .Lroute_fs   # ops 6.. (the filesystem's, any slot)
+    bge t6, t3, .Lroute_fs   # ops 6..9 (the filesystem's, any slot)
     li t3, 3
     bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
     beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
+    li t3, 2
+    beq t6, t3, .Lroute_input # op 2, the read verb: the machine's
+                              # input is the input service's (T8.3) —
+                              # the console is the machine's output
 .Lroute_cons:
     li a0, EMO_KOFF + 0x870020f0  # the console service's pid cell (+240)
+    j .Lroute_post
+.Lroute_input:
+    li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
@@ -723,7 +734,21 @@ emo_os_console_irq:
     lw a0, 0(t0)
     beqz a0, .Lcons_done     # a spurious claim: nothing to complete
     li t1, 10
-    bne a0, t1, .Lcons_bad   # a device this kernel does not know
+    beq a0, t1, .Lcons_drain # the UART's line: the FIFO drains here
+    li t3, EMO_KOFF + 0x870029f0  # the input service's IRQ cell (T8.3):
+                                  # the driver parked its transport's
+                                  # PLIC number; 0 = not wired, the loud
+                                  # end this branch always was
+    ld t3, 0(t3)
+    beqz t3, .Lcons_bad
+    bne a0, t3, .Lcons_bad   # a device this kernel does not know
+    # The input device's line (T8.3): the eventq holds the events, so
+    # the ISR's whole duty is the wake — the service drains and
+    # recycles when it runs.
+    call emo_sched_wake_console
+    li t0, EMO_KOFF + 0x0c201004
+    sw a0, 0(t0)             # complete the claim
+    j .Lcons_done
 .Lcons_drain:
     li t0, EMO_KOFF + 0x10000005  # the line-status register
     lbu t1, 0(t0)

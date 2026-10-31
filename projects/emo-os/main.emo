@@ -88,10 +88,19 @@ const pending_target = koff + 0x870021a8
 // the driver's own discipline, the FDT walk's shape). IRQ 1..8 stay
 // unwired: the completion wait is polled (the console's
 // pre-interrupt discipline); the interrupt-driven wait is a later
-// piece — nothing in the filesystem's work (T7.2) demanded it.
+// piece — nothing in the filesystem's work (T7.2) demanded it. The
+// input device (T8.3) is the first whose line is wired: its events
+// arrive without a request to poll for, and the wake is the whole ISR.
 const virtio_base = koff + 0x10001000
 const pending_waiter = koff + 0x870021c0
 const block = 65536
+
+// The PLIC's registers the input service's init writes (T8.3): the
+// per-IRQ priority, and S-mode context 1's enable word for IRQs
+// 0..31 — the UART's bit 10 already set by the shim's init (T3.7), so
+// the enable is a read-modify-write.
+const plic = koff + 0x0c000000
+const plic_enable = koff + 0x0c002080
 
 // The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
 // the gate routes by — cleared by the death notice the moment the
@@ -116,6 +125,15 @@ const notice_op = 256
 // first boot caught the collision).
 const screen_cell = 0x87fff040
 const screen_pending_cell = koff + 0x870029e0
+
+// The input service's cells (T8.3): the pid cell the gate routes the
+// read verb and the input_read verb by, and the IRQ cell the service's
+// driver parks its virtio-input transport's PLIC number in — the trap
+// shim's external branch reads it (0 = not wired, the loud end it
+// always was). Both live on the handoff page past the staging area and
+// the screen's pending cell.
+const input_svc_cell = koff + 0x870029e8
+const input_irq_cell = koff + 0x870029f0
 
 // The display (T8.1): the virtio-gpu device rides the same eight mmio
 // transports the block driver scans — DeviceID 16 — and the screen
@@ -381,28 +399,12 @@ def screen_check(base Int64) Void {
   console_put_byte(10)
 }
 
-// One byte from the input ring: sleep until the device world has one,
-// then hand it over. The console service's read half and the boot
-// demo's readers all land here.
-def take_byte() Int64 {
-  if peek64(in_cons) == peek64(in_prod) {
-    device_wait()
-  }
-  var cons = peek64(in_cons)
-  var b = peek8(in_ring + (cons % 128)).to_int64()
-  poke64(in_cons, cons + 1)
-  return b
-}
-
-// The console service (T3.7/T4.4): the byte channel's one process.
-// The gate's write verb prints its buffer through the polled driver
-// and answers the count; the gate's read verb answers the next byte,
-// sleeping in the device-wait while the ring is empty; the boot
-// demo's readers speak the older protocol — a bare pid — and get the
-// byte by mailbox. The kinds separate by magnitude: a gate request
-// rides op << 32, a pid word never reaches that high. The announce
-// goes to the boss, whose pid is passed — a `do` bound to a value is
-// a lowering this tree does not trust (T3.7's note).
+// The console service (T3.7/T4.4), the machine's output since T8.3:
+// the gate's write verb prints its buffer through the polled driver
+// and answers the count. The read verb and the boot demo's readers
+// moved to the input service (T8.3) — the machine's input is one
+// service, the console the machine's output — so any message that is
+// not a write is a kernel bug, the loud end.
 def console_service(boss Pid) Void {
   boss <- self_pid()
   while true {
@@ -419,12 +421,8 @@ def console_service(boss Pid) Void {
           }
           gate_reply(caller_of(w), len)
         } else {
-          if op == 2 {
-            gate_reply(caller_of(w), take_byte())
-          } else {
-            var b = take_byte()
-            w <- b
-          }
+          println("console: the message is nobody's")
+          halt()
         }
       }
     }
@@ -948,6 +946,206 @@ def gpu_service(boss Pid) Void {
   }
 }
 
+// The input service (T8.3): the machine's input, one process — the
+// virtio-input device's event stream (DeviceID 18) merged with the
+// serial console's bytes. The UART's input ring (T3.7) is this
+// service's to drain now: the read verb (gate verb 2) and the boot
+// demo's bare-pid readers take the next byte from it, the device-wait
+// park moving here with the ownership — the shim's wake (the runtime's
+// emo_sched_wake_console, the name it booted with) wakes the first
+// state-4 slot, and this service is the machine's one device-waiter.
+// The input_read verb (verb 12) takes the next event of the merged
+// stream: the bytes first, then the device's — the one order the two
+// sources can name without a clock, and the rule docs/syscalls.md
+// states. A byte event rides type 0x454D ("EM"), code 0, the byte in
+// the value; a device event its own type, code, and value — the packed
+// word (type << 48 | code << 32 | value) the ABI fixed. The device
+// half: the eventq (queue 0) with sixteen 8-byte buffers pre-posted on
+// one allocator block, the completion wired — the transport's PLIC IRQ
+// parked in the shim's cell, the PLIC's priority and enable set — so
+// the device's events wake the machine the serial's bytes do; the ISR's
+// whole duty on that line is the wake (the eventq holds the events),
+// and the drain recycles each buffer through the avail ring. The
+// statusq (queue 1) is untouched — the pointer sprite's M8 piece.
+def input_byte() Int64 {
+  var got = 0
+  var done = false
+  while !done {
+    if peek64(in_cons) != peek64(in_prod) {
+      var cons = peek64(in_cons)
+      got = peek8(in_ring + (cons % 128)).to_int64()
+      poke64(in_cons, cons + 1)
+      done = true
+    } else {
+      device_wait()
+    }
+  }
+  return got
+}
+
+// One event from the device's used ring, or 0 when none is pending.
+// The buffer's id names the descriptor the device filled; the event is
+// read, the buffer recycled through the avail ring (the entry, then
+// the index behind it, the fence and the doorbell after), and the
+// packed word answered. The drain's cursors ride the queue block —
+// the used index this service has consumed, the avail index the next
+// recycled buffer takes — raw words, the untyped-memory discipline.
+def eventq_take(dev Int64, q Int64) Int64 {
+  var used = q + 0x2000
+  var uidx = peek16r(used + 2)
+  var handled = peek64(q + 0x3f00)
+  if uidx == handled {
+    return 0
+  }
+  var entry = used + 4 + ((handled % 16) * 8)
+  var id = peek32(entry)
+  var buf = q + 0x3000 + (id * 8)
+  var ty = peek16r(buf)
+  var code = peek16r(buf + 2)
+  var value = peek32(buf + 4)
+  var avail = q + 0x1000
+  var nxt = peek64(q + 0x3f08)
+  var at = avail + 4 + ((nxt % 16) * 2)
+  poke8(at, (id & 255).to_byte())
+  poke8(at + 1, ((id >> 8) & 255).to_byte())
+  var after = nxt + 1
+  poke8(avail + 2, (after & 255).to_byte())
+  poke8(avail + 3, ((after >> 8) & 255).to_byte())
+  poke64(q + 0x3f08, after)
+  poke64(q + 0x3f00, handled + 1)
+  fence()
+  mmio32(dev + 0x050, 0)
+  return (ty << 48) | (code << 32) | value
+}
+
+// The merged stream's next event: the serial's byte if the ring holds
+// one (the byte event), else the device's next event, else the
+// device-wait park — the wake is the UART's ISR or the input line's,
+// either one lands.
+def input_event(dev Int64, q Int64) Int64 {
+  var got = 0
+  var done = false
+  while !done {
+    if peek64(in_cons) != peek64(in_prod) {
+      var cons = peek64(in_cons)
+      var b = peek8(in_ring + (cons % 128)).to_int64()
+      poke64(in_cons, cons + 1)
+      got = (0x454D << 48) | b
+      done = true
+    } else {
+      var e = eventq_take(dev, q)
+      if e != 0 {
+        got = e
+        done = true
+      } else {
+        device_wait()
+      }
+    }
+  }
+  return got
+}
+
+def input_service(boss Pid) Void {
+  // The slot scan: the input device is DeviceID 18.
+  var dev = 0
+  var dev_slot = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 18 {
+        dev = cand
+        dev_slot = slot
+      }
+    }
+    slot = slot + 1
+  }
+  if dev == 0 {
+    println("input: no input device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("input: no block for the queue")
+    halt()
+  }
+  blk_zero(q, 32)
+  blk_zero(q + 0x1000, 5)
+  blk_zero(q + 0x2000, 17)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("input: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 16 {
+    println("input: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 16)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  // Sixteen 8-byte event buffers, one descriptor each (device-written,
+  // no next), pre-posted on the avail ring after DRIVER_OK: the
+  // entries, the fence, the index behind them, the doorbell. When
+  // every buffer is out and the device has another event, the event
+  // is the drop — the drain keeps the ring fed.
+  var i = 0
+  while i < 16 {
+    poke64(q + (i * 16), sv39.pa_of(q + 0x3000 + (i * 8)))
+    poke64(q + (i * 16) + 8, 8 | (2 << 32))
+    i = i + 1
+  }
+  i = 0
+  while i < 4 {
+    poke64(q + 0x1004 + (i * 8), (i * 4) | ((i * 4 + 1) << 16) | ((i * 4 + 2) << 32) | ((i * 4 + 3) << 48))
+    i = i + 1
+  }
+  fence()
+  poke8(q + 0x1002, 16B)
+  poke8(q + 0x1003, 0B)
+  fence()
+  mmio32(dev + 0x050, 0)
+  // The drain's cursors: the used index this service has consumed, the
+  // avail index the next recycled buffer takes.
+  poke64(q + 0x3f00, 0)
+  poke64(q + 0x3f08, 16)
+  // The device's line: the transport's PLIC IRQ into the shim's cell
+  // first (0 = not wired, the loud end it always was), then the PLIC's
+  // priority and the enable bit — the enable a read-modify-write, the
+  // UART's bit already set.
+  var irq = dev_slot + 1
+  poke64(input_irq_cell, irq)
+  poke32(plic + (irq * 4), 1)
+  poke32(plic_enable, peek32(plic_enable) | (1 << irq))
+  println("input ready")
+  boss <- self_pid()
+  while true {
+    receive {
+      w -> {
+        var op = op_of(w)
+        if op == 2 {
+          gate_reply(caller_of(w), input_byte())
+        } else {
+          if op == 12 {
+            gate_reply(caller_of(w), input_event(dev, q))
+          } else {
+            w <- input_byte()
+          }
+        }
+      }
+    }
+  }
+}
+
 // The supervisor (T7.2, docs/fs.md): the filesystem service's owner.
 // It takes the service's cache block from the frame allocator once —
 // the block outlives the instances, each one overwrites it from the
@@ -1127,11 +1325,13 @@ var me = self_pid()
 var console_svc = me
 var blk_svc = me
 var gpu_svc = me
+var input_svc = me
 var fs_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
 do gpu_service(me)
+do input_service(me)
 uart_init()
 println("Hello, EmoOS!")
 sv39_report()
@@ -1143,6 +1343,10 @@ receive { c1 -> {
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 -> { blk_svc = c3 } }
 receive { g1 -> { gpu_svc = g1 } }
+receive { i1 -> {
+  poke64(input_svc_cell, pid_num(i1))
+  input_svc = i1
+} }
 
 // The display's flush smoke (T8.1): the root asks the driver for the
 // mode (the answer that verb 11 will one day route), paints the
@@ -1171,11 +1375,11 @@ println("gpu flush ok")
 
 do supervisor(me, blk_svc)
 receive { f1 -> { fs_svc = f1 } }
-do reader(console_svc, me, 1)
-do reader(console_svc, me, 2)
-do reader(console_svc, me, 3)
-do reader(console_svc, me, 4)
-var root_b = read_byte(console_svc)
+do reader(input_svc, me, 1)
+do reader(input_svc, me, 2)
+do reader(input_svc, me, 3)
+do reader(input_svc, me, 4)
+var root_b = read_byte(input_svc)
 println("0:${root_b}")
 receive { done1 -> {} }
 receive { done2 -> {} }

@@ -32,6 +32,18 @@ def read() Int64 {
   return ecall(2, 0, 0, 0, 0, 0, 0)
 }
 
+// The next event of the machine's merged input stream (EmoOS T8.3,
+// the desktop segment's first verb), blocking until one exists. The
+// answer packs the event into one word: the type in bits 48..63 (the
+// device's own event types — 0 the separator, 1 a key, 2 a relative
+// move, 3 an absolute one — and 0x454D the machine's byte event), the
+// code in bits 32..47, the value in bits 0..31. The stream merges the
+// virtio-input device's events with the serial console's bytes, the
+// bytes first; one reader at a time.
+def input_read() Int64 {
+  return ecall(12, 0, 0, 0, 0, 0, 0)
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.
