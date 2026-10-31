@@ -61,15 +61,17 @@ undocumented ever acts.
 | 10 | `present(grant, x, y, w, h)` | the buffer the grant names lands whole — the damage rect is what the device takes and what the scanout shows; answers 0 when the commit completed (T8.4, below) |
 | 11 | `output_info(index)` | the index-th output's rectangle, packed; an index no output answers is reason 4 (T8.4, below) |
 | 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
+| 13 | `win_new(w, h)` | a window buffer of the given size: a contiguous run of the allocator's blocks mapped into the caller's own table; answers the buffer's frame number and the grant id packed (T8.5, below) |
+| 14 | `win_close(grant)` | the buffer's release: the run back to the allocator, the grant gone; answers 0 (T8.5, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
 verb lands, frozen from that day) — `present`, `output_info`,
 `input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
-[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10, 11 and 12 have
-landed (T8.3, T8.4); 13 to 16 — the window verbs — stay reserved
-until the window buffers (T8.5) and the compositor's mechanism (T8.6)
-give them their substance.
+[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10 to 14 have landed
+(T8.3, T8.4, T8.5); 15 and 16 — `win_focus` and `win_move`, the
+compositor's stack's verbs — stay reserved until the compositor's
+mechanism (T8.6) gives them their substance.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -97,8 +99,8 @@ ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
-(1 to the console service, 2 and 12 to the input service, 10 and 11
-to the display service, 0, 3 and 4
+(1 to the console service, 2 and 12 to the input service, 10, 11, 13
+and 14 to the display service, 0, 3 and 4
 to the process service, 6 to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
@@ -133,6 +135,34 @@ width in bits 32..63, the height in bits 0..31); an index no output
 answers is reason 4. One display is the first answer, not the only
 shape.
 
+Verbs 13 and 14 (T8.5) are the window buffer's lifecycle. **Verb 13,
+`win_new(w, h)`**, hands the caller its own display memory: a
+contiguous run of the allocator's blocks (`frames.take_run` — the
+run's base is block-aligned and its blocks consecutive, the range a
+device and a compositor can name), mapped into the **caller's own
+table** at the identity of the run's physical addresses, RW with U —
+the mapping into a table a `satp` already names is the live-table's
+own act, the new entries whole words and the `sfence` (the raw family's
+address-translation fence, `docs/raw-memory.md`) after them. The
+grant — the row the kernel's authorization table gains (id, owner,
+base, extent) — is the capability the buffer is named by ever after:
+`present` and `win_close` take the id, never an address. The answer
+packs the buffer's frame number (the byte address this program paints,
+shifted left by 12 at the client — the frame number keeps the word's
+sign bit true) above the grant id. A size past a window's bound (four
+megapixels) is reason 4; a run or a table row the machine cannot back
+is reason 5. **Verb 14, `win_close(grant)`**, is the release: the run
+back to the allocator block by block, the row to the table. The gate
+checks the caller against the row's owner (reason 3) and the id
+against the table (reason 4) before anything moves. A window whose
+owner dies without a close leaks its run until the compositor's
+reclamation (T8.6) — the stated bound, M9's killed-and-restarted
+acceptance is where the death-side reclamation earns its place. A
+window's `present` (verb 10, the grant id nonzero) is checked against
+the row — the owner and the damage rect within the buffer's extent —
+and commits by the row's ready flag and the recorded rect, the
+compositor's tick (T8.6) being the reader.
+
 Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
 the next event of the input service's merged stream, blocking until
 one exists. The answer packs the event into one word — the type in
@@ -157,7 +187,8 @@ event the service loses.
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its twelve
+It admits the `riscv64` target alone; the raw `ecall` lives in its
+fourteen
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -178,6 +209,11 @@ bodies and nowhere else a user program writes.
 - `syscall.output_info(index)` — the desktop segment's enumeration
   (T8.4, verb 11), answering `(R.ok, the packed rect)` or
   `(R.error, why)`.
+- `syscall.win_new(w, h)` — the window buffer's creation (T8.5,
+  verb 13), answering `(R.ok, the packed frame number and grant id)`
+  or `(R.error, why)`.
+- `syscall.win_close(grant)` — the window buffer's release (T8.5,
+  verb 14), answering `(R.ok, 0)` or `(R.error, why)`.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the

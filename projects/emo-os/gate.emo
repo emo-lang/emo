@@ -77,16 +77,27 @@ const fs_slot_size = 2304
 const fs_slot_count = 4
 const name_max = 24
 
-// The desktop segment's cells (T8.4): the display service's pid cell
-// the routes post by; the authorization table's first entry — the
+// The desktop segment's cells (T8.4, T8.5): the display service's pid
+// cell the routes post by; the authorization table's first entry — the
 // screen carve's grant, the holder's pid the process service parked
-// when it handed the carve out; and the five argument cells a present
-// stages (the grant id, the damage rect) — the service's own cells,
-// like the console's and the process's, because a present and a write
-// can sit parked at the same time.
+// when it handed the carve out; the five argument cells the desktop
+// verbs stage (the grant id, the damage rect, win_new's w and h); the
+// caller's space word the shim stages at every ecall and the dispatch
+// copies into the arguments (win_new's mapping target — the staging
+// cell and the arguments' slot are different words, or the copy would
+// be the no-op the first boot caught); the grant id the next win_new
+// answers; and the
+// window grants' rows — twelve words each (id, owner, base, blocks,
+// w, h, spare, ready, the damage rect's four), eight of them, zero =
+// a free row. All past the staging area's tail.
 const gpu_svc_cell = koff + 0x870029f8
 const screen_grant_cell = koff + 0x87002a00
 const gpu_args = koff + 0x87002a08
+const caller_space_cell = koff + 0x87002a40
+const grant_next_cell = koff + 0x87002a38
+const grant_table = koff + 0x87002b00
+const grant_rows = 8
+const grant_row = 96
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
@@ -116,6 +127,8 @@ const route_process_wait = -1004
 const route_desktop_present = -1010
 const route_output_info = -1011
 const route_input_event = -1012
+const route_win_new = -1013
+const route_win_close = -1014
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -203,6 +216,21 @@ def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   return s
 }
 
+// The window grant's row for that id, or -1 (T8.5): the table the
+// display service fills at win_new and empties at win_close, the
+// present's authorization read. The scan is eight peeks in the trap —
+// no allocation, the gate's discipline.
+def grant_row_of(id Int64) Int64 {
+  var i = 0
+  while i < grant_rows {
+    if peek64(grant_table + (i * grant_row)) == id {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
 // The filesystem verbs (T7.2): every pointer argument inside one
 // writable segment of the caller's, the name's length and the write's
 // length within the format's bounds, a slot free; then the name and
@@ -285,29 +313,46 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return route_input_byte
   }
   if n == 10 {
-    // The desktop segment's commit (T8.4): present(grant, x, y, w, h)
-    // — the buffer the grant names, the damage rect. The grant id 0 is
-    // the screen carve's, the authorization table's first entry: the
-    // caller must be the holder the process service parked (a dead
-    // holder's pid never matches — the slots are never reused). The
-    // window grants are T8.5's: an id the table does not hold is the
-    // argument refusal until then. The rect's sanity here, its bounds
-    // the display service's to judge against the mode; the atomic
-    // commit is the service's — the transfer and the flush complete
-    // before the answer.
+    // The desktop segment's commit (T8.4, T8.5): present(grant, x, y,
+    // w, h) — the buffer the grant names, the damage rect. The grant
+    // id 0 is the screen carve's, the authorization table's first
+    // entry: the caller must be the holder the process service parked
+    // (a dead holder's pid never matches — the slots are never
+    // reused). A window grant (T8.5) is the row's to authorize: the
+    // owner and the row's extent — the rect within the buffer the id
+    // names. The rect's sanity here, its fullscreen bounds the display
+    // service's to judge against the mode; the atomic commit is the
+    // service's — the transfer and the flush complete before the
+    // answer, and a window's commit is the ready flag the compositor
+    // finds (T8.6's tick).
+    poke64(koff + 0x87002a68, r0)
+    poke64(koff + 0x87002a70, r3)
     if r1 < 0 || r2 < 0 || r3 < 1 || r4 < 1 {
+      poke64(koff + 0x87002a48, 111)
       return -reason_argument
     }
     if r0 != 0 {
-      return -reason_argument
+      var idx = grant_row_of(r0)
+      if idx < 0 {
+        return -reason_argument
+      }
+      var row = grant_table + (idx * grant_row)
+      if peek64(row + 8) != peek64(handoff_caller) {
+        return -reason_permission
+      }
+      if (r1 + r3) > peek64(row + 32) || (r2 + r4) > peek64(row + 40) {
+        return -reason_argument
+      }
+    } else {
+      if peek64(screen_grant_cell) != peek64(handoff_caller) {
+        return -reason_permission
+      }
     }
-    if peek64(screen_grant_cell) != peek64(handoff_caller) {
-      return -reason_permission
-    }
-    poke64(gpu_args, r1)
-    poke64(gpu_args + 8, r2)
-    poke64(gpu_args + 16, r3)
-    poke64(gpu_args + 24, r4)
+    poke64(gpu_args, r0)
+    poke64(gpu_args + 8, r1)
+    poke64(gpu_args + 16, r2)
+    poke64(gpu_args + 24, r3)
+    poke64(gpu_args + 32, r4)
     return route_desktop_present
   }
   if n == 11 {
@@ -322,6 +367,49 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     // input service's merged stream — the serial's bytes first, then
     // the device's. No arguments; the ABI in docs/syscalls.md.
     return route_input_event
+  }
+  if n == 13 {
+    // win_new(w, h) (T8.5): the window buffer's creation — the run the
+    // allocator hands (contiguous, frames.take_run), the grant row the
+    // table gains, the mapping into the caller's own table (the space
+    // word the shim stages at every ecall). The answer packs the
+    // buffer's base — the client paints its own mapping — above the
+    // grant id. A size past a window's bound is the argument refusal;
+    // a run or a row the machine cannot back is the resource refusal,
+    // the service's.
+    if r0 < 1 || r1 < 1 || (r0 * r1) > 4194304 {
+      return -reason_argument
+    }
+    poke64(gpu_args, r0)
+    poke64(gpu_args + 8, r1)
+    // The caller's space word rides the request (T8.5): the shim
+    // stages it at every ecall, and this dispatch — inside the
+    // caller's own trap — copies it into the arguments, where the
+    // service reads it. The staged cell alone would race: the service
+    // runs after the park, and a later ecall (the parent's wait
+    // beside the child's win_new) would have overwritten it — the
+    // first boot's map landed in the parent's table, and the child's
+    // paint was the store fault that named it.
+    poke64(gpu_args + 40, peek64(caller_space_cell))
+    return route_win_new
+  }
+  if n == 14 {
+    // win_close(grant) (T8.5): the buffer's release — the run back to
+    // the allocator block by block, the row to the table. The owner is
+    // the gate's check (reason 3); an id the table does not hold is
+    // reason 4.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(gpu_args, r0)
+    return route_win_close
   }
   if n == 3 {
     return route_process_spawn

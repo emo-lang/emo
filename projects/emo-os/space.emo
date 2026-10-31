@@ -239,3 +239,23 @@ def switch(w Int64) Int64 {
   poke64(current_cell, target)
   return target
 }
+
+// A window buffer's run, mapped into its owner's table after the spawn
+// (T8.5) — the incremental half of the build: a table that exists
+// grows a mapping the way the spawn's built one. The run maps at the
+// identity of its physical addresses, RW with U — the same discipline
+// the stack and the arena blocks ride — megapages wherever the
+// alignment gives them (map_range's rule). The root arrives physical
+// (the gate stages the caller's space word into the request, the
+// shim's staging read inside the caller's own trap); the walk rides
+// the kernel's aliases of the table frames, and the new entries are
+// whole words the hardware walk either misses or sees complete. The
+// fence is the live table's own discipline — the spawn's build wrote
+// a table no satp named yet, and this one is installed: the sfence
+// after the last entry is what makes the mapping visible to the walks
+// the owner's next stores take.
+def map_run(root_pa Int64, base_pa Int64, len Int64) Void {
+  var root = sv39.va_of(root_pa)
+  sv39.map_range(root, base_pa, base_pa, len, rwu)
+  sfence()
+}

@@ -882,6 +882,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       (* the full sequential-consistency barrier, ordinary and volatile
          accesses alike; `fence` answers nothing, like `halt` *)
       put env "    fence rw, rw\n"
+  | Builtin { name = "sfence"; args = [] } ->
+      (* The address-translation fence (EmoOS T8.5): the whole TLB,
+         every address space — what a live page table's new entries owe
+         the hardware before its walks may be trusted. The switch's own
+         fences cover the satp writes; this is the mapping-change
+         leaf beside them. *)
+      put env "    sfence.vma zero, zero\n"
   | Builtin { name = "peek8"; args = [ addr ] } ->
       emit_expr env (d + 1) addr;
       if env.native then begin

@@ -135,17 +135,24 @@ const screen_pending_cell = koff + 0x870029e0
 const input_svc_cell = koff + 0x870029e8
 const input_irq_cell = koff + 0x870029f0
 
-// The desktop segment's cells (T8.4): the display service's pid cell
-// the gate routes present and output_info by; the authorization
-// table's first entry — the screen carve's grant, the pid the process
-// service parked the moment it handed the carve out (a dead pid never
-// matches: the slots are never reused, and the grant is the machine's
-// desktop for its life); and the five argument cells the gate fills
-// for a present (the grant id, the damage rect). All past the staging
-// area's tail.
+// The desktop segment's cells (T8.4, T8.5): the display service's pid
+// cell the gate routes the desktop verbs by; the authorization table's
+// first entry — the screen carve's grant, the pid the process service
+// parked the moment it handed the carve out (a dead pid never matches:
+// the slots are never reused, and the grant is the machine's desktop
+// for its life); the five argument cells the gate fills for the
+// desktop verbs (the grant id, the damage rect, win_new's w and h);
+// the caller's space word the shim stages at every ecall and the
+// gate's dispatch copies into the arguments (win_new's mapping
+// target); the grant id the next win_new answers; and the
+// window grants' rows — twelve words each, eight of them, zero = a
+// free row. All past the staging area's tail.
 const gpu_svc_cell = koff + 0x870029f8
 const screen_grant_cell = koff + 0x87002a00
 const gpu_args = koff + 0x87002a08
+const caller_space_cell = koff + 0x87002a30
+const grant_next_cell = koff + 0x87002a38
+const grant_table = koff + 0x87002b00
 
 // The display (T8.1): the virtio-gpu device rides the same eight mmio
 // transports the block driver scans — DeviceID 16 — and the screen
@@ -270,6 +277,15 @@ def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
   console_put_byte(48)  // 0
   console_put_byte(120) // x
   fault_hex(addr)
+  // TEMPORARY (T8.5 debug): the live satp at the fault, staged by the
+  // shim — the hardware's own root beside the software's.
+  console_put_byte(32)  // space
+  console_put_byte(115) // s
+  console_put_byte(97)  // a
+  console_put_byte(116) // t
+  console_put_byte(112) // p
+  console_put_byte(32)  // space
+  fault_hex(peek64(koff + 0x87002a48))
   console_put_byte(10)
 }
 
@@ -843,6 +859,34 @@ def gpu_present(dev Int64, q Int64, gw Int64, gh Int64, x Int64, y Int64, w Int6
   return 0
 }
 
+// The grant table's first free row, or 0 (T8.5) — the id word's zero
+// is a free row's mark.
+def grant_row_pick() Int64 {
+  var i = 0
+  while i < 8 {
+    var row = grant_table + (i * 96)
+    if peek64(row) == 0 {
+      return row
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+// The grant table's row for that id, or 0 (T8.5) — the window
+// present's ready record and the close's release both find it here.
+def grant_row_of(id Int64) Int64 {
+  var i = 0
+  while i < 8 {
+    var row = grant_table + (i * 96)
+    if peek64(row) == id {
+      return row
+    }
+    i = i + 1
+  }
+  return 0
+}
+
 def gpu_service(boss Pid) Void {
   // The slot scan: a transport answers with the magic and the version
   // whether or not a device rides it; the display device is DeviceID 16.
@@ -948,6 +992,10 @@ def gpu_service(boss Pid) Void {
     halt()
   }
   println("gpu ${gw}x${gh} ready")
+  // The grant table's reset (T8.5): the rows and the id counter start
+  // empty — the service's own init, before any client can ask.
+  blk_zero(grant_table, 96)
+  poke64(grant_next_cell, 0)
   boss <- self_pid()
   while true {
     receive {
@@ -971,21 +1019,102 @@ def gpu_service(boss Pid) Void {
         }
       }
       w -> {
-        // The gate's posts (T8.4): verb 10 present — the grant is the
-        // gate's to have checked, the rect the mode's to judge, the
-        // five arguments in the cells the gate filled — and verb 11
-        // output_info, the mode packed. The window grants and their
-        // present checks are T8.5's.
+        // The gate's posts (T8.4, T8.5): verb 10 present — the
+        // fullscreen commit is the device's (the rect the mode's to
+        // judge), a window's commit is the ready flag and the damage
+        // rect the compositor finds on its tick (T8.6); verb 11
+        // output_info, the mode packed; verb 13 win_new, the run and
+        // the row and the mapping; verb 14 win_close, the release.
+        // The gate has checked every grant's owner; the table here is
+        // the record those checks read.
         var op = op_of(w)
         if op == 10 {
-          var v = gpu_present(dev, q, gw, gh, peek64(gpu_args), peek64(gpu_args + 8), peek64(gpu_args + 16), peek64(gpu_args + 24))
-          gate_reply(caller_of(w), v)
+          var grant = peek64(gpu_args)
+          if grant == 0 {
+            var v = gpu_present(dev, q, gw, gh, peek64(gpu_args + 8), peek64(gpu_args + 16), peek64(gpu_args + 24), peek64(gpu_args + 32))
+            gate_reply(caller_of(w), v)
+          } else {
+            var row = grant_row_of(grant)
+            println("win: svc grant ${grant} row ${row} w ${peek64(row + 32)}")
+            if row == 0 {
+              gate_reply(caller_of(w), -4)
+            } else {
+              poke64(row + 56, 1)
+              poke64(row + 64, peek64(gpu_args + 8))
+              poke64(row + 72, peek64(gpu_args + 16))
+              poke64(row + 80, peek64(gpu_args + 24))
+              poke64(row + 88, peek64(gpu_args + 32))
+              gate_reply(caller_of(w), 0)
+            }
+          }
         } else {
           if op == 11 {
             gate_reply(caller_of(w), (gw << 32) | gh)
           } else {
-            println("gpu: the verb is nobody's")
-            halt()
+            if op == 13 {
+              // win_new (T8.5): the run the allocator hands, the row
+              // the table gains, the mapping into the caller's own
+              // table — the space word the shim staged. The answer
+              // packs the buffer's base (the physical, the identity
+              // the client paints) above the grant id.
+              var ww = peek64(gpu_args)
+              var hh = peek64(gpu_args + 8)
+              var n = ((ww * hh * 4) + block - 1) / block
+              var base = frames.take_run(n)
+              if base == 0 {
+                gate_reply(caller_of(w), -5)
+              } else {
+                var row = grant_row_pick()
+                if row == 0 {
+                  var i = 0
+                  while i < n {
+                    frames.give(base + (i * block))
+                    i = i + 1
+                  }
+                  gate_reply(caller_of(w), -5)
+                } else {
+                  space.map_run(peek64(gpu_args + 40), sv39.pa_of(base), n * block)
+                  var id = peek64(grant_next_cell) + 1
+                  poke64(grant_next_cell, id)
+                  poke64(row, id)
+                  poke64(row + 8, caller_of(w))
+                  poke64(row + 16, base)
+                  poke64(row + 24, n)
+                  poke64(row + 32, ww)
+                  poke64(row + 40, hh)
+                  poke64(row + 56, 0)
+                  // The answer's packing keeps the sign bit true: the
+                  // base rides as its frame number (the byte address
+                  // shifted left by 12 at the client) — a base above
+                  // 0x7fffffff would sign-extend the word otherwise,
+                  // and the stub would read the grant as a refusal.
+                  gate_reply(caller_of(w), ((sv39.pa_of(base) >> 12) << 32) | id)
+                }
+              }
+            } else {
+              if op == 14 {
+                // win_close (T8.5): the run back to the allocator
+                // block by block, the row to the table — the owner is
+                // the gate's check.
+                var row = grant_row_of(peek64(gpu_args))
+                if row == 0 {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  var base = peek64(row + 16)
+                  var n = peek64(row + 24)
+                  var i = 0
+                  while i < n {
+                    frames.give(base + (i * block))
+                    i = i + 1
+                  }
+                  blk_zero(row, 12)
+                  gate_reply(caller_of(w), 0)
+                }
+              } else {
+                println("gpu: the verb is nobody's")
+                halt()
+              }
+            }
           }
         }
       }

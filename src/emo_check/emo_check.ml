@@ -1324,11 +1324,19 @@ let raw_mem_bindings =
        admission rule. *)
     ( "pid_num",
       { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
+    (* sfence (EmoOS T8.5): the address-translation fence — the live
+       page table's own discipline. A table a satp names (a window
+       buffer's run mapped after the spawn) owes the hardware the
+       flush before its walks may be trusted; the spawn-time build
+       writes a table nothing walks yet and owes nothing. Same
+       admission rule as the rest of raw memory. *)
+    ("sfence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
   ]
 
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-  | "device_wait" | "ecall" | "user_spawn" | "gate_reply" | "pid_num" ->
+  | "device_wait" | "ecall" | "user_spawn" | "gate_reply" | "pid_num" | "sfence"
+    ->
       true
   | _ -> false
 

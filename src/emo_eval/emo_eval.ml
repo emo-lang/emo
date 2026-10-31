@@ -337,6 +337,8 @@ let global_env () =
     { bound = BuiltinFn "gate_reply"; mutable_ = false };
   Hashtbl.replace env.frame "pid_num"
     { bound = BuiltinFn "pid_num"; mutable_ = false };
+  Hashtbl.replace env.frame "sfence"
+    { bound = BuiltinFn "sfence"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -2909,7 +2911,7 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
   | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-       | "device_wait" ) as name),
+       | "device_wait" | "sfence" ) as name),
       _ ) ->
       error span "E4028"
         (Printf.sprintf

@@ -72,6 +72,37 @@ def output_info(index Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// A window buffer of the given size (EmoOS T8.5, verb 13): a
+// contiguous run of the allocator's blocks, mapped into this process's
+// own table at the identity of its physical addresses, owned by the
+// grant the answer names. The answer packs the buffer's location above
+// the grant id: the base's frame number in bits 32..63 — the byte
+// address this program paints is it shifted left by 12 (the frame
+// number keeps the word's sign bit true) — and the grant id in bits
+// 0..31; the id is what present and win_close name the buffer by.
+// (R.error, "the kernel is out of a resource") when the machine
+// cannot back the run or the table has no row left; "bad argument"
+// for a size past a window's bound.
+def win_new(w Int64, h Int64) (R, Int64) {
+  var answer = ecall(13, w, h, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The window buffer's release (EmoOS T8.5, verb 14): the run back to
+// the allocator, the grant gone. Closing a grant this process does not
+// own is (R.error, "not writable"); an id no grant holds is "bad
+// argument".
+def win_close(grant Int64) (R, Int64) {
+  var answer = ecall(14, grant, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.

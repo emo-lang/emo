@@ -514,6 +514,14 @@ emo_os_trap_trampoline:
     ld t2, 8(t2)             # the caller's pid
     li t3, EMO_KOFF + 0x87002110  # the caller-pid cell (+272)
     sd t2, 0(t3)
+    la t2, emo_cur_slot
+    ld t2, 0(t2)
+    ld t3, 872(t2)           # the caller's space word (T8.5): the
+                             # physical root a win_new's mapping rides
+                             # into — staged at every ecall, like the
+                             # pid beside it
+    li t2, EMO_KOFF + 0x87002a40  # the caller-space cell
+    sd t3, 0(t2)
     ld a0, 136(t0)
     ld a1, 80(t0)
     ld a2, 88(t0)

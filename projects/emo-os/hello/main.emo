@@ -53,6 +53,8 @@ const ui_cell = buf + 2088
 // The input pass's token (T8.3): the cells the spawned passes read,
 // each poked once before the parent parks.
 const key_cell = buf + 2096
+// The window pass's token (T8.5), beside them.
+const win_cell = buf + 2104
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -385,6 +387,104 @@ def present_ok() Void {
   gate_line(p)
 }
 
+// The window answer's halves (T8.5): the buffer's frame number above
+// (the byte address shifted left by 12 — the frame number keeps the
+// word's sign bit true), the grant id below.
+def win_id(ans Int64) Int64 {
+  return ans & 4294967295
+}
+
+def win_base(ans Int64) Int64 {
+  return (ans >> 32) << 12
+}
+
+// The buffer's paint: one pattern word per 8 bytes, the row's number
+// in it — the deterministic pattern the readback verifies.
+def paint_win(base Int64, rows Int64, row_words Int64) Void {
+  var r = 0
+  while r < rows {
+    var word = 0x57494E00 + r
+    var pair = word | (word << 32)
+    var i = 0
+    while i < row_words {
+      poke64(base + (r * row_words + i) * 8, pair)
+      i = i + 1
+    }
+    r = r + 1
+  }
+}
+
+// The readback: every word the paint wrote, compared.
+def win_verify(base Int64, rows Int64, row_words Int64) Bool {
+  var r = 0
+  var ok = true
+  while r < rows {
+    var word = 0x57494E00 + r
+    var pair = word | (word << 32)
+    var i = 0
+    while i < row_words {
+      if peek64(base + (r * row_words + i) * 8) != pair {
+        ok = false
+      }
+      i = i + 1
+    }
+    r = r + 1
+  }
+  return ok
+}
+
+// The lifecycle's lines (T8.5): the grant, the verified paint, the
+// commit, the release.
+def win_line(id Int64) Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_ok_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_shown_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 104) // h
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 119) // w
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_closed_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 // One event, as the pass's line: the machine's byte event (0x454D —
 // "EM") prints `byte <v>`, a device event `key <t> <c> <v>`.
 def input_line(ev Int64) Void {
@@ -447,6 +547,55 @@ if peek64(key_cell) != 0 {
       gate_line(gp)
     }
     (R.ok, _) -> { mark() }
+  }
+  // The grant table's edge (T8.5): no window exists yet — the close
+  // is the argument refusal, the unknown grant the table cannot name.
+  case syscall.win_close(1) {
+    (R.error, why) -> {
+      var cp = byte_at(0, 99) // c
+      cp = byte_at(cp, 108) // l
+      cp = byte_at(cp, 111) // o
+      cp = byte_at(cp, 115) // s
+      cp = byte_at(cp, 101) // e
+      cp = byte_at(cp, 32) // space
+      cp = byte_at(cp, 114) // r
+      cp = num_at(reason_num(why), cp)
+      cp = byte_at(cp, 10)
+      gate_line(cp)
+    }
+    (R.ok, _) -> { mark() }
+  }
+  syscall.exit(0)
+}
+
+// The window branch (T8.5): a pass holding its own buffer — the run
+// win_new handed, mapped into this pass's own table at the identity of
+// its physical addresses. The pass paints it, reads it back (the
+// mapping is the proof), commits it (the ready flag the compositor's
+// tick will find, T8.6), and closes it (the run home, the grant gone)
+// — the buffer's whole lifecycle, every state named on the wire.
+if peek64(win_cell) != 0 {
+  poke64(win_cell, 0)
+  case syscall.win_new(512, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      var id = win_id(ans)
+      win_line(id)
+      paint_win(win_base(ans), 128, 256)
+      if win_verify(win_base(ans), 128, 256) {
+        win_ok_line()
+      } else {
+        mark()
+      }
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_shown_line() }
+      }
+      case syscall.win_close(id) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_closed_line() }
+      }
+    }
   }
   syscall.exit(0)
 }
@@ -714,6 +863,31 @@ case key_spawned {
     case key_waited {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}
+    }
+  }
+}
+
+// The window buffer's proof (T8.5): the pass above — the run handed,
+// the mapping painted and read back, the commit recorded, the release
+// home — the buffer's lifecycle whole, and its exit answering the
+// parent's wait.
+poke64(win_cell, 1)
+var win_spawned = syscall.spawn()
+case win_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, wpid) -> {
+    var win_waited = syscall.wait(wpid)
+    case win_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var ep = byte_at(0, 119) // w
+        ep = byte_at(ep, 105) // i
+        ep = byte_at(ep, 110) // n
+        ep = byte_at(ep, 32) // space
+        ep = num_at(code, ep)
+        ep = byte_at(ep, 10)
+        gate_line(ep)
+      }
     }
   }
 }
