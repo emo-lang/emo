@@ -32,7 +32,10 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # mount lines (the first instance's, then the one the supervisor
 # restarted), the five console deliveries in order, the user program's
 # proof chain — the kill report included, the machine surviving its
-# offender — the shell REPL taking the foreground (T7.3: the prompt,
+# offender — the screen carve's proof (T8.2: the first full-screen
+# pass paints the carve its spawn was granted, the pattern read back
+# through the kernel's half, the second screen spawn refused) — the
+# shell REPL taking the foreground (T7.3: the prompt,
 # the help line, the echo, the list, the boot file read back, the
 # refusal after the remove, the unknown word named, and `poweroff`
 # reaching the exit route) with the counter command starting the
@@ -227,7 +230,14 @@ boot() {
   # walk reaches the leaf and the permission fails, the same cause 15,
   # the kernel's high-half address named in full), then the good
   # child's line and the spawn/wait round trip answering after the
-  # four deaths: the machine survived its offenders. Then the shell
+  # four deaths: the machine survived its offenders. Then the screen
+  # carve's proof (T8.2): the machine's first full-screen pass — the
+  # cells-page token poked, the spawn's kernel side handing the carve
+  # into the child's table, the child's pattern painted across the
+  # whole 4 MiB and read back through the kernel's half (`screen
+  # 0x86c00000 ok`, the base asserted in full) — and the second screen
+  # spawn refused, the carve handed once (`screen r5`, the resource
+  # refusal's number). Then the shell
   # (T7.3, docs/shell.md): the first prompt — the REPL took the
   # foreground when the proof chain ended — and the counter command
   # (T7.5, docs/ui.md) starting the machine's program from it (T7.4's
@@ -250,27 +260,28 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): thirty-three blocks taken — the
+  # account at the root's exit (T5.3): thirty-six blocks taken — the
   # kernel's page tables' block (T6.1), the ten green spawns' arenas
   # (the three services', the supervisor's, the filesystem's two
   # instances', and the four readers'), the filesystem's cache block
   # (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
-  # six user passes, the six blocks the per-process tables' frames
-  # split (the store-fault pass's frames from the splits' leftovers,
-  # the reach pass's table splitting the fifth, the counter pass's the
-  # sixth), the DMA check's block, and the block driver's queue block
-  # (T7.1, held for the service's life like the services' arenas) —
-  # and nineteen given back — the four readers' arenas at their
-  # deaths, the first filesystem instance's arena at its stop, the
-  # root's scratch block after its proof, both blocks of each user
-  # pass at its kill or exit (the counter pass's at its clean exit),
-  # and the DMA check's block home; the three services, the
-  # supervisor, the live filesystem instance, every table, the cache
-  # block, and the queue keep theirs. The byte offsets are the serial
-  # order.
+  # seven user passes (the screen pass's, T8.2, beside the six), the
+  # seven blocks the per-process tables' frames split (the store-fault
+  # pass's frames from the splits' leftovers, the reach pass's table
+  # splitting the fifth, the counter pass's the sixth, the screen
+  # pass's the seventh), the DMA check's block, and the block driver's
+  # queue block (T7.1, held for the service's life like the services'
+  # arenas) — and twenty-one given back — the four readers' arenas at
+  # their deaths, the first filesystem instance's arena at its stop,
+  # the root's scratch block after its proof, both blocks of each user
+  # pass at its kill or exit (the counter pass's and the screen pass's
+  # at their clean exits), and the DMA check's block home; the three
+  # services, the supervisor, the live filesystem instance, every
+  # table, the cache block, and the queue keep theirs. The byte
+  # offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' '0000 ok' 'frames 33 19'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 36 21'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -290,6 +301,22 @@ boot() {
   # both lists are on the wire.
   if ! grep -A1 '^hello.txt$' "$log" | grep -q '^note.txt$'; then
     echo "run.sh: the shell's write never made the list" >&2
+    exit 1
+  fi
+  # The DMA proof's line, whole: the block the allocator answered at the
+  # machine's end was block-aligned (the tail 0000) and named by its
+  # kernel alias. The fragments above pin the line's place — its start
+  # only, because the screen carve's line (T8.2) ends the same way —
+  # this pins the tail.
+  if ! grep -qE '^dma 0x[0-9a-f]+0000 ok$' "$log"; then
+    echo "run.sh: the dma proof's block was not block-aligned" >&2
+    exit 1
+  fi
+  # The screen carve's line, whole (T8.2): the base is the carve's
+  # physical address, asserted in full — stable across builds, unlike
+  # the dma block's.
+  if ! grep -qE '^screen 0x86c00000 ok$' "$log"; then
+    echo "run.sh: the screen carve's line is not the carve's base" >&2
     exit 1
   fi
   # The format happens exactly once, on the blank disk: the first boot's
@@ -329,9 +356,9 @@ boot() {
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit, 1 ecall"

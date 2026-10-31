@@ -21,7 +21,13 @@
 // filesystem service above it (fs.emo, the design in docs/fs.md) and
 // the supervisor that owns the service's life — the cache block, the
 // spawn, the restart on the death notice the runtime's death hook
-// posts, the parked clients refused at the restart.
+// posts, the parked clients refused at the restart. T8.2 cuts the
+// screen carve from the allocator's region's top (frames.emo) and
+// hands it once, at the spawn: the cells-page token is the grant's
+// channel, the process service takes the hand and pokes the pending
+// cell, space.emo's build maps the carve into the child's table, and
+// the child's exit is the pattern's readback — the first full-screen
+// pass's proof.
 //
 //   emo build main.emo --target riscv64
 
@@ -91,6 +97,21 @@ const block = 65536
 const fs_pid_cell = koff + 0x87005000
 const supervisor_cell = koff + 0x87005008
 const notice_op = 256
+
+// The screen carve's grant channel (T8.2): the token cell on the user
+// cells page — the one crossing every table maps, so any spawner (the
+// proof chain today, the shell's desktop command tomorrow) pokes it
+// and the claimed pass reads it — and the pending cell on the handoff
+// page the spawn-side half rides in: the process service reads the
+// token at the spawn, takes the carve's hand (frames.screen_take,
+// once — a second claimant is the refusal), and pokes the carve's
+// kernel address into the pending cell for space.emo's build to map
+// into the child's table before the child's first store. The pending
+// cell sits on the handoff page past the write's staging area
+// (gate.emo's stage_buf owns the free tail's first 2048 bytes — the
+// first boot caught the collision).
+const screen_cell = 0x87fff040
+const screen_pending_cell = koff + 0x870029e0
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
@@ -311,6 +332,39 @@ def dma_report() Void {
   console_put_byte(10)
 }
 
+// The screen carve's proof (T8.2): the machine's first full-screen pass
+// painted its pattern through its own table into the carve — one word
+// per 64 KiB across the whole 4 MiB — and exited; the process service
+// reads the same words back through the kernel's high alias. One RAM,
+// two tables: the words are the hand's proof, and the line names the
+// base the pass painted — the physical address, the identity its table
+// mapped and the number the display's device will scan out (T8.1). A
+// wrong word is a kernel bug, the loud end.
+def screen_check(base Int64) Void {
+  var i = 0
+  while i < 64 {
+    if peek64(base + (i * 65536)) != 0x7363726E + i {
+      println("screen: the pattern did not land")
+      halt()
+    }
+    i = i + 1
+  }
+  console_put_byte(115) // s
+  console_put_byte(99)  // c
+  console_put_byte(114) // r
+  console_put_byte(101) // e
+  console_put_byte(101) // e
+  console_put_byte(110) // n
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(sv39.pa_of(base))
+  console_put_byte(32)  // space
+  console_put_byte(111) // o
+  console_put_byte(107) // k
+  console_put_byte(10)
+}
+
 // One byte from the input ring: sleep until the device world has one,
 // then hand it over. The console service's read half and the boot
 // demo's readers all land here.
@@ -372,8 +426,21 @@ def console_service(boss Pid) Void {
 // transaction runs at a time, so the one pending-wait pair of cells is
 // the whole of the waiting bookkeeping; the request's arguments live in
 // this service's own cells (proc_arga/proc_argb), not the console's.
+//
+// The screen carve's grant rides the spawn (T8.2): the cells-page
+// token poked by the spawner is read here, at the spawn — the carve's
+// mapping must exist before the child's first store, and the build
+// (space.emo) runs inside user_spawn, so the grant crosses in the
+// pending cell. The hand is taken at the token: a second claimant's
+// spawn is the resource refusal (−5) before anything is staged, the
+// stack untouched. The granted child's pid and the carve's base stay
+// in the service's own words across the transactions, and the exit
+// that answers them is the proof's moment: the pattern read back
+// through the kernel's half before the waiting parent is answered.
 def process_service(boss Pid) Void {
   boss <- self_pid()
+  var screen_pid = 0
+  var screen_base = 0
   while true {
     receive {
       w -> {
@@ -382,8 +449,26 @@ def process_service(boss Pid) Void {
           if frames.spare() < 2 {
             gate_reply(caller_of(w), -5)
           } else {
-            var stack = frames.take()
-            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block))
+            var screen = 0
+            var ok = true
+            if peek64(screen_cell) != 0 {
+              screen = frames.screen_take()
+              ok = screen != 0
+            }
+            if !ok {
+              gate_reply(caller_of(w), -5)
+            } else {
+              var stack = frames.take()
+              if screen != 0 {
+                poke64(screen_pending_cell, screen)
+              }
+              var child = user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block)
+              if screen != 0 {
+                screen_pid = child
+                screen_base = screen
+              }
+              gate_reply(caller_of(w), child)
+            }
           }
         } else {
           if op == 4 {
@@ -411,6 +496,12 @@ def process_service(boss Pid) Void {
               poke64(exit_pids + (n * 8), pid)
               poke64(exit_codes + (n * 8), code)
               poke64(exit_count, n + 1)
+            }
+            if screen_pid != 0 {
+              if pid == screen_pid {
+                screen_pid = 0
+                screen_check(screen_base)
+              }
             }
             if peek64(pending_flag) == 1 {
               if peek64(pending_target) == pid {
@@ -845,7 +936,11 @@ println("fs restart ok")
 // stub reads the staged entry once this returns, srets into U-mode,
 // and the user program runs — its own greeting is the proof on the
 // serial line. A refusal already said why; the entry word stays zero
-// and the stub powers the machine off.
+// and the stub powers the machine off. The screen token's cell (T8.2)
+// is established before the image runs: the spawner's poke and the
+// spawn-side read are the only writers, and the machine starts with
+// the grant held by nobody.
+poke64(screen_cell, 0)
 var staged = user.stage()
 if staged > 0 {
   println("user: staged ${staged}")

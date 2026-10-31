@@ -18,7 +18,11 @@
 // address, mapped without U, the permission the walk refuses),
 // `born`/`wait 7` (the
 // spawn and wait round trip — the child re-enters this top level,
-// finds the token, and exits 7). Then the shell (T7.3, shell.emo, its
+// finds the token, and exits 7), the screen carve's proof (T8.2 — the
+// machine's first full-screen pass paints the carve its spawn was
+// granted, the service reads the pattern back, and the second screen
+// spawn is the resource refusal), and then the shell (T7.3,
+// shell.emo, its
 // design in docs/shell.md) takes the machine's foreground: the top
 // level enters the REPL instead of exiting, and the machine ends the
 // way the proof's exit did — the poweroff command's verb 0, the boot
@@ -46,6 +50,14 @@ const greedy_cell = buf + 2064
 const smash_cell = buf + 2072
 const reach_cell = buf + 2080
 const ui_cell = buf + 2088
+// The screen grant's channel and the carve itself (T8.2): the token on
+// the user cells page — the one crossing every table maps, so the
+// kernel's spawn-side read sees the poke — and the carve's base by its
+// physical address, the identity this pass paints when the token is
+// its own (the table the kernel's build made carries the carve, RW
+// with U; a pass without the grant maps none of it).
+const screen_cell = 0x87fff040
+const screen_base = 0x86c00000
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 // The filesystem proof's buffers (T7.2), further up the same scratch
@@ -277,6 +289,25 @@ if peek64(reach_cell) != 0 {
   syscall.exit(1)
 }
 
+// The screen branch (T8.2): the machine's first full-screen pass. The
+// cells-page token is the grant's channel — the kernel's spawn-side
+// read handed the carve into this pass's table at the spawn (the
+// identity of the carve's physical addresses, RW with U, frames.emo's
+// one hand). The pass claims the token, paints one pattern word per
+// 64 KiB across the whole 4 MiB, and exits — the words are what the
+// process service reads back through the kernel's half, the line that
+// names the base. A pass whose spawn carried no grant maps none of the
+// carve: its first store here is the page fault that kills it.
+if peek64(screen_cell) != 0 {
+  poke64(screen_cell, 0)
+  var k = 0
+  while k < 64 {
+    poke64(screen_base + (k * 65536), 0x7363726E + k)
+    k = k + 1
+  }
+  syscall.exit(0)
+}
+
 // The UI branch (T7.4, docs/ui.md): a spawned pass renders the
 // counter's frame and answers the console's keys until the quit key
 // ends it — the machine's third kind of resident, an application, and
@@ -482,6 +513,48 @@ case spawned {
       }
     }
   }
+}
+
+// The screen carve's proof (T8.2): the machine's first full-screen
+// pass. The token poked, the spawn's kernel side reads it and hands
+// the carve into the child's table; the child paints its pattern
+// across the whole carve and exits, the process service reads the
+// words back through the kernel's half — `screen 0x86c00000 ok` on the
+// wire — and the parent's wait is answered after the line. The carve
+// was handed once: the second screen spawn is the resource refusal
+// (the reason number on the wire, `screen r5`), the pass that would
+// have claimed it never runs, and the token is cleared by the hand
+// that poked it.
+poke64(screen_cell, 1)
+var screen_spawned = syscall.spawn()
+case screen_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, spid) -> {
+    var screen_waited = syscall.wait(spid)
+    case screen_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+poke64(screen_cell, 1)
+var screen_again = syscall.spawn()
+case screen_again {
+  (R.error, why) -> {
+    poke64(screen_cell, 0)
+    var scp = byte_at(0, 115) // s
+    scp = byte_at(scp, 99) // c
+    scp = byte_at(scp, 114) // r
+    scp = byte_at(scp, 101) // e
+    scp = byte_at(scp, 101) // e
+    scp = byte_at(scp, 110) // n
+    scp = byte_at(scp, 32) // space
+    scp = byte_at(scp, 114) // r
+    scp = num_at(reason_num(why), scp)
+    scp = byte_at(scp, 10)
+    gate_line(scp)
+  }
+  (R.ok, _) -> { mark() }
 }
 
 // The shell takes the foreground (T7.3): the REPL loop never returns —

@@ -12,6 +12,21 @@
 // single frames: the page tables' unit, split off a block sixteen at a
 // time onto their own freelist on the same page.
 //
+// The screen carve (T8.2): display memory is the kernel's to hand out,
+// and the carve is the one allocation bigger than a block — a fixed
+// 4 MiB cut at the region's top, never on the freelist (the boot loop
+// bounds at the region's end, which now sits at the carve's base). The
+// size is the assessment's decision point: the resolution baseline is
+// 1024×768 XRGB8888 — a 3 MiB buffer — and the carve is the floor of
+// the assessment's 4–8 MiB range, the buffer with a MiB beside it. The
+// hand below answers the whole carve once: the first full-screen pass's
+// grant, refused after — a second claimant is the process service's
+// resource refusal, before anything is staged. The base is named by
+// its physical address (the identity a pass runs it at, the number the
+// display's device will scan out); the hand answers the kernel's
+// address, the allocator's currency, and the kernel reads the same RAM
+// at its high alias like any RAM below the board's top.
+//
 // Every address here is a kernel address (T6.1): the kernel lives in
 // Sv39's high half, where every byte of the machine sits at its
 // physical address plus koff, so the region's bounds, the links, and
@@ -43,15 +58,22 @@ const frame_free = page + 136 // frames on that list
 const frame_split = page + 144 // blocks split into frames so far
 const block = 65536
 const frame = 4096
-const region_end = koff + 0x87000000
+// The screen carve (T8.2): the region's end moved down to the carve's
+// base — the carve, 4 MiB, is the memory between the two, the kernel's
+// to hand out whole and once (the hand below).
+const screen_base = 0x86c00000 // physical: the carve's base, 2 MiB-aligned
+const screen_size = 0x400000 // 4 MiB: the baseline's 3 MiB buffer, a MiB beside
+const screen_flag = page + 152 // the hand's one-shot word: 0 = the carve held
+const region_end = koff + screen_base
 const uart = koff + 0x10000000
 
 // Build the freelist at boot: the region runs from the image's end
 // (the boot stub passes `__emo_bss_end`, rounded up to a block) to the
-// tick ring's page, pushed top down so the first take answers the
-// lowest block. An image grown past the region leaves an empty
-// allocator — the first spawn is the loud end, the process table's
-// ceiling in memory.
+// screen carve's base (T8.2 — the tick ring's page sits above the
+// carve, both outside the region), pushed top down so the first take
+// answers the lowest block. An image grown past the region leaves an
+// empty allocator — the first spawn is the loud end, the process
+// table's ceiling in memory.
 def boot(bss_end Int64) Void {
   var p = page
   while p < page + 4096 {
@@ -161,6 +183,23 @@ def frame_take() Int64 {
   poke64(frame_head, peek64(f))
   poke64(frame_free, peek64(frame_free) - 1)
   return f
+}
+
+// The screen carve's hand (T8.2): the carve's whole base, once — the
+// first full-screen pass's grant. A second hand answers 0, and the
+// process service turns that into the spawn's resource refusal before
+// anything is staged. There is no give: the full-screen pass is the
+// machine's desktop for the machine's life, and a restart would be the
+// compositor's own piece (T8.6), not the allocator's. The answer is
+// the kernel's address, the allocator's currency; the taker translates
+// to the physical where the identity (the pass's table, the device)
+// needs it.
+def screen_take() Int64 {
+  if peek64(screen_flag) != 0 {
+    return 0
+  }
+  poke64(screen_flag, 1)
+  return koff + screen_base
 }
 
 // The account: `frames <taken> <given>` on the console — the machine's

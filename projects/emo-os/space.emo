@@ -94,6 +94,25 @@ const slot_arena = 576
 const slot_stack = 864
 const slot_space = 872
 
+// The screen carve's grant (T8.2): the cell on the handoff page the
+// process service pokes with the carve's kernel address when the spawn
+// it is serving is the machine's full-screen pass — the screen token's
+// other half, read at the spawn because the carve's mapping must exist
+// before the child's first store. The build consumes it: the cell is
+// zero again after the one build that mapped the carve, and a spawn
+// without the grant builds a table that maps none of it. The mapping
+// is the identity of the carve's physical addresses, RW with U,
+// megapages — both ends 2 MiB-aligned, and no block of the allocator's
+// region can sit there (the carve is the region's exclusion,
+// frames.emo's), so the two megapage leaves cost no table beyond the
+// entries the low half's middle already carries. The cell sits past
+// the write's staging area (gate.emo's stage_buf, the handoff page's
+// free tail) — the first boot caught the collision: user bytes landed
+// in the cell and the build mapped a phantom grant, the range check
+// the loud end.
+const screen_pending = koff + 0x870029e0
+const screen_size = 0x400000 // 4 MiB, frames.emo's carve
+
 // One 4 KiB page into a user table, unioning with what is there: the
 // image's segments share their boundary page (the text's last page
 // holds the data's first bytes in this ELF's layout), so a page the
@@ -188,6 +207,16 @@ def build(slot Int64) Void {
   while va < top {
     map_page(root, va, va, rwu)
     va = va + page
+  }
+  // The screen carve's grant (T8.2): the service poked the cell before
+  // the spawn; this build is the one consumer. The carve maps at the
+  // identity of its physical addresses — the pass paints it where the
+  // device will scan it out of — RW with U, megapages both ends.
+  var screen = peek64(screen_pending)
+  if screen != 0 {
+    poke64(screen_pending, 0)
+    var spa = sv39.pa_of(screen)
+    sv39.map_range(root, spa, spa, screen_size, rwu)
   }
   poke64(slot + slot_space, sv39.pa_of(root))
 }
