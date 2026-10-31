@@ -1,0 +1,163 @@
+// The user ELF loader (T4.1): the image the user profile built rides in
+// the kernel (user.S embeds it), and this module parses it, copies its
+// loadable segments into the user window, and parks the entry in the
+// handoff page — where the boot stub's enter shim (trap.S) reads it once
+// the kernel's own program is done, sets sepc and sstatus, and srets
+// into U-mode. Since T6.2 the loader also builds the boot pass's own
+// page table: the image's segments by page-union permission with U, the
+// cells page, and the kernel's whole high half without U (space.emo's
+// base), its physical root parked in the handoff page's space cell —
+// the enter shim takes it into the root slot's space word, adopts it,
+// and switches satp before the sret, so the boot pass runs paged on
+// its own table like every spawned pass after it. Everything runs in
+// fully typed defs: the copy loop is one inline volatile byte load and
+// store per step, zero allocation.
+//
+// The checks are the loader's own honesty, not the syscall gate: a
+// malformed or out-of-window image refuses loudly and stages nothing —
+// the entry word stays zero, and the boot stub powers the machine off
+// without entering user mode.
+
+// The handoff page, at the fixed address the kernel's link.ld gives the
+// .emo_user section — a kernel address since T6.1, the physical one
+// plus koff: the boot stub writes the embedded image's bounds and
+// zeroes the entry word at boot; the loader writes the staged entry,
+// the segment table, and the boot pass's space cell — the record every
+// gate check (gate.emo) and table build (space.emo) reads.
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const handoff = koff + 0x87002000
+const handoff_blob = handoff
+const handoff_end = handoff + 8
+const handoff_entry = handoff + 16
+const handoff_segn = handoff + 24
+const handoff_segs = handoff + 32
+const handoff_space = handoff + 456
+
+// The segment table's shape: eight slots of (start, end, flags), one
+// per loaded segment, flags the ELF's p_flags (X=1, W=2, R=4). Eight
+// is more than any image the user profile links; a ninth is a refusal.
+const seg_slots = 8
+
+// The pre-SV39 user window: the base is the load address the user
+// profile's default linker script fixes (the compiler's user image
+// links there), the top the end of the board's 128 MiB. These are the
+// user's addresses — since T6.2 mapped by each process's own table
+// (space.emo), not by a window gigapage: the segments at their
+// recorded vaddrs, the identity of every block the process owns. The
+// copies below write through the supervisor's low window (the
+// kernel's table's one low mapping, no U) — the bytes land where the
+// per-process tables will map them.
+const user_base = 0x87100000
+const user_top = 0x88000000
+
+def rd8(a Int64) Int64 {
+  return peek8(a).to_int64()
+}
+
+def rd16(a Int64) Int64 {
+  return rd8(a) + (rd8(a + 1) << 8)
+}
+
+def rd32(a Int64) Int64 {
+  return rd16(a) + (rd16(a + 2) << 16)
+}
+
+// One loadable segment: copy its bytes from the image, zero its tail
+// (the .bss the user image carries — its stack and heap included).
+def load_segment(blob Int64, ph Int64) Bool {
+  var off = peek64(ph + 8)
+  var vaddr = peek64(ph + 16)
+  var filesz = peek64(ph + 32)
+  var memsz = peek64(ph + 40)
+  if vaddr < user_base || (vaddr + memsz) > user_top || memsz < filesz {
+    println("user: a segment lands outside the user window")
+    return false
+  }
+  var i = 0
+  while i < filesz {
+    poke8(vaddr + i, peek8(blob + off + i))
+    i = i + 1
+  }
+  while i < memsz {
+    poke8(vaddr + i, 0B)
+    i = i + 1
+  }
+  return true
+}
+
+// Parse the embedded image, copy its loadable segments, park the entry
+// and the segment table. The answer is the entry address, or 0 when
+// nothing was staged — and every refusal says which check failed.
+def stage() Int64 {
+  var blob = peek64(handoff_blob)
+  var blob_end = peek64(handoff_end)
+  if blob == 0 || blob_end <= blob {
+    println("user: no image rides in the kernel")
+    return 0
+  }
+  if rd8(blob) != 127 || rd8(blob + 1) != 69 || rd8(blob + 2) != 76 || rd8(blob + 3) != 70 {
+    println("user: not an ELF image")
+    return 0
+  }
+  if rd8(blob + 4) != 2 {
+    println("user: not a 64-bit image")
+    return 0
+  }
+  if rd16(blob + 18) != 243 {
+    println("user: not a RISC-V image")
+    return 0
+  }
+  var entry = peek64(blob + 24)
+  var phoff = peek64(blob + 32)
+  var phentsize = rd16(blob + 54)
+  var phnum = rd16(blob + 56)
+  if phentsize != 56 || phnum < 1 || phnum > 16 {
+    println("user: the program-header table is not sane")
+    return 0
+  }
+  if entry < user_base || entry >= user_top {
+    println("user: the entry lands outside the user window")
+    return 0
+  }
+  var i = 0
+  var loaded = 0
+  while i < phnum {
+    var ph = blob + phoff + (i * phentsize)
+    if rd32(ph) == 1 {
+      if loaded == seg_slots {
+        println("user: too many loadable segments for the table")
+        return 0
+      }
+      if !load_segment(blob, ph) {
+        return 0
+      }
+      var slot = handoff_segs + (loaded * 24)
+      poke64(slot, peek64(ph + 16))
+      poke64(slot + 8, peek64(ph + 16) + peek64(ph + 40))
+      poke64(slot + 16, rd32(ph + 4))
+      loaded = loaded + 1
+    }
+    i = i + 1
+  }
+  if loaded == 0 {
+    println("user: no loadable segment")
+    return 0
+  }
+  poke64(handoff_segn, loaded)
+  // The boot pass's own table (T6.2): built here, where the segment
+  // table is parked and the frames are cheap, before the entry word
+  // exists — a table that failed to build leaves the entry zero and
+  // the machine never enters U-mode. space.base maps the kernel's
+  // whole high half without U, the segments with U, and the cells
+  // page; the physical root rides the space cell for the enter shim.
+  var root = frames.frame_take()
+  if root == 0 {
+    println("user: no frame left for the boot pass's table")
+    return 0
+  }
+  sv39.clear(root)
+  space.base(root)
+  poke64(handoff_space, sv39.pa_of(root))
+  poke64(handoff_entry, entry)
+  return entry
+}

@@ -27,6 +27,7 @@ type value =
   | Builder of emo_builder
   | Map of emo_map
   | Box of value ref
+  | Atomic of value ref (* the synchronized cell: a handle, never copied *)
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | TcpConn of conn
   | TcpListener of listener
@@ -194,6 +195,7 @@ let type_name = function
   | Builder _ -> "ArrayBuilder"
   | Map _ -> "Map"
   | Box _ -> "Box"
+  | Atomic _ -> "Atomic"
   | Pid _ -> "Pid"
   | TcpConn _ -> "TcpConn"
   | TcpListener _ -> "TcpListener"
@@ -256,6 +258,7 @@ let rec equal_value a b =
              | None -> false)
            (map_keys x)
   | Box x, Box y -> equal_value !x !y
+  | Atomic x, Atomic y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
   | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
@@ -306,6 +309,34 @@ let global_env () =
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
+  Hashtbl.replace env.frame "fence"
+    { bound = BuiltinFn "fence"; mutable_ = false };
+  (* The raw-memory builtins (docs/raw-memory.md): the interpreter owns
+     no address space, so every call is the named refusal — the checker
+     already refuses on every hosted target (E4028); these arms are the
+     defense for any unchecked path. *)
+  Hashtbl.replace env.frame "peek8"
+    { bound = BuiltinFn "peek8"; mutable_ = false };
+  Hashtbl.replace env.frame "poke8"
+    { bound = BuiltinFn "poke8"; mutable_ = false };
+  Hashtbl.replace env.frame "peek64"
+    { bound = BuiltinFn "peek64"; mutable_ = false };
+  Hashtbl.replace env.frame "poke64"
+    { bound = BuiltinFn "poke64"; mutable_ = false };
+  Hashtbl.replace env.frame "peek32"
+    { bound = BuiltinFn "peek32"; mutable_ = false };
+  Hashtbl.replace env.frame "poke32"
+    { bound = BuiltinFn "poke32"; mutable_ = false };
+  Hashtbl.replace env.frame "device_wait"
+    { bound = BuiltinFn "device_wait"; mutable_ = false };
+  Hashtbl.replace env.frame "ecall"
+    { bound = BuiltinFn "ecall"; mutable_ = false };
+  Hashtbl.replace env.frame "user_spawn"
+    { bound = BuiltinFn "user_spawn"; mutable_ = false };
+  Hashtbl.replace env.frame "gate_reply"
+    { bound = BuiltinFn "gate_reply"; mutable_ = false };
+  Hashtbl.replace env.frame "pid_num"
+    { bound = BuiltinFn "pid_num"; mutable_ = false };
   Hashtbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
   Hashtbl.replace env.frame "expect_true"
@@ -322,6 +353,8 @@ let global_env () =
   Hashtbl.replace env.frame "Float64"
     { bound = TypeValue "Float64"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  Hashtbl.replace env.frame "Atomic"
+    { bound = TypeValue "Atomic"; mutable_ = false };
   Hashtbl.replace env.frame "Bytes"
     { bound = TypeValue "Bytes"; mutable_ = false };
   Hashtbl.replace env.frame "List"
@@ -611,6 +644,7 @@ let rec to_string v =
              (map_keys m))
       ^ "}"
   | Box _ -> "<box>"
+  | Atomic _ -> "<atomic>"
   | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
@@ -1087,6 +1121,10 @@ let find_process span pid =
 let rec snapshot (v : value) : value =
   match v with
   | Box r -> Box (ref (snapshot !r))
+  (* The one declared exception (CHECK.md, the atomic memory model): an
+     Atomic copies as the handle to the same cell — every operation on
+     the cell is synchronized, so the sharing is safe by construction. *)
+  | Atomic _ -> v
   | Bytes b -> Bytes (Bytes.copy b)
   | Tuple vs -> Tuple (List.map snapshot vs)
   | Array xs -> Array (Array.map snapshot xs)
@@ -1694,6 +1732,13 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue "Atomic", "new" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] -> Atomic (ref v)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Atomic.new` expects 1 argument, got %d" argc))
       | TypeValue "Byte", "from_int64" -> (
           let args = eval_args () in
           match args with
@@ -1828,6 +1873,78 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | Atomic cell, "load" ->
+          none_expected "load";
+          !cell
+      | Atomic cell, "store" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] ->
+              cell := v;
+              Void
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`store` expects 1 argument, got %d" argc))
+      | Atomic cell, "exchange" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] ->
+              let old = !cell in
+              cell := v;
+              old
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`exchange` expects 1 argument, got %d" argc))
+      | Atomic cell, "compare_exchange" -> (
+          let args = eval_args () in
+          match args with
+          | [ expected; fresh ] ->
+              let old = !cell in
+              let swapped = equal_value old expected in
+              if swapped then cell := fresh;
+              Tuple [ Bool swapped; old ]
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+                   argc))
+      | ( Atomic cell,
+          (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor")
+           as mname) ) -> (
+          (* The payload dispatches on the value the cell holds: the
+             arithmetic pair is Int64's, the bitwise family is Int64's and
+             Bool's — the checker refuses the rest by name, and the
+             runtime refuses what a gradual call could still reach. *)
+          let args = eval_args () in
+          match (mname, args, !cell) with
+          | _, [ Int64 v ], Int64 old ->
+              let computed =
+                match mname with
+                | "fetch_add" -> Int64 (Int64.add old v)
+                | "fetch_sub" -> Int64 (Int64.sub old v)
+                | "fetch_and" -> Int64 (Int64.logand old v)
+                | "fetch_or" -> Int64 (Int64.logor old v)
+                | _ -> Int64 (Int64.logxor old v)
+              in
+              cell := computed;
+              Int64 old
+          | ("fetch_and" | "fetch_or" | "fetch_xor"), [ Bool y ], Bool b ->
+              let computed =
+                match mname with
+                | "fetch_and" -> Bool (b && y)
+                | "fetch_or" -> Bool (b || y)
+                | _ -> Bool (b <> y)
+              in
+              cell := computed;
+              Bool b
+          | _, [ v ], (Int64 _ | Bool _) ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects %s, got %s" mname
+                   (match !cell with Bool _ -> "a Bool" | _ -> "an Int64")
+                   (type_name v))
+          | _, _, other ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int64 or Bool cell, got %s"
+                   mname (type_name other)))
       | List l, "push_front" -> (
           match eval_args () with
           | [ v ] ->
@@ -2782,6 +2899,33 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | "fence", [] ->
+      (* The exact no-op (CHECK.md, the atomic memory model): every Emo
+         process here cooperates on one OS thread and switches only at
+         defined points, so sequential consistency holds vacuously and
+         the barrier is a correct lowering of nothing to do. *)
+      Void
+  | "fence", vs ->
+      error span "E3007"
+        (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
+  | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
+       | "device_wait" ) as name),
+      _ ) ->
+      error span "E4028"
+        (Printf.sprintf
+           "`%s` reaches raw memory: only the `riscv64` target admits it, not \
+            the interpreter"
+           name)
+  | "ecall", _ ->
+      error span "E4028"
+        "`ecall` reaches the machine's gate: only the `riscv64` target admits \
+         it, not the interpreter"
+  | (("user_spawn" | "gate_reply" | "pid_num") as name), _ ->
+      error span "E4028"
+        (Printf.sprintf
+           "`%s` reaches the kernel's service machinery: only the `riscv64` \
+            target admits it, not the interpreter"
+           name)
   | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own

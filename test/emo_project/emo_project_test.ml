@@ -833,6 +833,45 @@ double emo_native_floor(double x) { return floor(x); }
     (Filename.concat native_dir "extra.m")
     {|long emo_native_extra(void) { return 0; }
 |};
+  (* A package with riscv64 native inputs (EmoOS T3.1): .S sources and
+     the image's boot stub and linker script, under the fixed component
+     names. Its manifest declares the one target that honors them. *)
+  let metal_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "metal_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat metal_dir "package.emo")
+    {|package {
+  name = "acme/metal_tools"
+  version = "1.0.0"
+  targets = ["riscv64"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat metal_dir "metal_tools.emo")
+    {|def idle() Int64 {
+  return 0
+}
+|};
+  let metal_native = Filename.concat metal_dir "native" in
+  write_file
+    (Filename.concat metal_native "switch.S")
+    {|    .section .text
+    .globl emo_metal_switch
+emo_metal_switch:
+    ret
+|};
+  write_file
+    (Filename.concat metal_native "runtime.S")
+    {|    .section .text
+    .globl emo_start
+emo_start:
+    wfi
+    j emo_start
+|};
+  write_file (Filename.concat metal_dir "link.ld") "ENTRY(emo_start)\n";
   dir
 
 let app_manifest =
@@ -1389,6 +1428,7 @@ println(json_tools.parse("hello"))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the wasm gate to refuse"
             | exception Emo_project.Static_errors ds -> (
@@ -1428,6 +1468,7 @@ println(wasm_tools.shrink(4))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+                ~profile:"kernel"
             with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
@@ -1457,7 +1498,10 @@ println(json_tools.parse("hello"))
             "main.emo"
         in
         with_registry (fun () ->
-            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
             | _ -> Alcotest.fail "expected the c gate to refuse"
             | exception Emo_project.Static_errors ds -> (
                 match ds with
@@ -1493,7 +1537,10 @@ println(c_tools.halve(8))
             "main.emo"
         in
         with_registry (fun () ->
-            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
@@ -1525,6 +1572,7 @@ println(json_tools.parse("hello"))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the typescript gate to refuse"
             | exception Emo_project.Static_errors ds -> (
@@ -1566,6 +1614,7 @@ println(ts_tools.bump(41))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+                ~profile:"kernel"
             with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
@@ -1678,6 +1727,7 @@ println(helper.twice(21))
         with_registry (fun () ->
             let inputs, entry_path, packages, _ =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
             in
             let program =
               Emo_ir.lower
@@ -2649,6 +2699,7 @@ def test_never() {
         in
         let inputs, _entry, _packages, _native =
           Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
         in
         let paths =
           List.map (fun (m : Emo_ir.module_input) -> m.mpath) inputs
@@ -2680,7 +2731,10 @@ def test_never() {
             ]
             "test/arithmetic.emo"
         in
-        match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
+        with
         | _ -> Alcotest.fail "expected a test entry to be refused"
         | exception Emo_project.Static_errors ds ->
             Alcotest.(check bool)
@@ -2727,6 +2781,7 @@ println(native_tools.halve_floor(9.0))
         with_registry (fun () ->
             let _inputs, _entry, _packages, native =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
             in
             Alcotest.(check (list string))
               "link" [ "m" ] native.Emo_project.ni_link;
@@ -2764,6 +2819,7 @@ println(native_tools.halve_floor(9.0))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"ocaml"
+                ~profile:"kernel"
             with
             | _ -> Alcotest.fail "expected the link gate to refuse"
             | exception Emo_project.Static_errors ds ->
@@ -2775,6 +2831,461 @@ println(native_tools.halve_floor(9.0))
                        && contains_substring d.Emo_support.Diagnostic.message
                             "acme/native_tools")
                      ds)));
+  ]
+
+(* The riscv64 target's native shapes (EmoOS T3.1): a package's .S
+   sources assemble into the image, its `runtime.S` and `link.ld` own
+   the image's boot stub and linker script — the root package's own
+   tree rides in too, a kernel package owns its image — and each shape
+   is honored by its one target alone. *)
+let riscv_native_tests =
+  [
+    tc "the riscv64 target collects a package's .S shapes" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/metalapp"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "acme/metal_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/metal_tools"
+println(metal_tools.idle())
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let _inputs, _entry, _packages, native =
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
+            in
+            Alcotest.(check (list string))
+              "the .S sources" [ "switch.S" ]
+              (List.map Filename.basename native.Emo_project.ni_asm);
+            (match native.Emo_project.ni_runtime with
+            | Some stub ->
+                Alcotest.(check string)
+                  "the boot stub" "runtime.S" (Filename.basename stub)
+            | None -> Alcotest.fail "expected the package's boot stub");
+            match native.Emo_project.ni_link_script with
+            | Some script ->
+                Alcotest.(check string)
+                  "the linker script" "link.ld" (Filename.basename script)
+            | None -> Alcotest.fail "expected the package's linker script"));
+    tc "the root package's own .S shapes ride in" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", "println(1)\n");
+              ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+              ("link.ld", "ENTRY(emo_start)\n");
+              ("extra.S", "    .section .data\n    .quad 1\n");
+            ]
+            "main.emo"
+        in
+        let _inputs, _entry, _packages, native =
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
+        in
+        Alcotest.(check (list string))
+          "the .S sources" [ "extra.S" ]
+          (List.map Filename.basename native.Emo_project.ni_asm);
+        Alcotest.(check bool)
+          "the boot stub" true
+          (match native.Emo_project.ni_runtime with
+          | Some stub -> Filename.basename stub = "runtime.S"
+          | None -> false);
+        Alcotest.(check bool)
+          "the linker script" true
+          (match native.Emo_project.ni_link_script with
+          | Some script -> Filename.basename script = "link.ld"
+          | None -> false));
+    tc "a nested package's shapes stay out of the outer image" (fun () ->
+        (* The kernel tree carries the user programs beside its own
+           modules (EmoOS T4.1); a directory holding its own
+           package.emo is a project of its own, and its .S shapes — a
+           boot stub most of all — never leak into the outer package's
+           image, where they would be a second candidate for one
+           component. *)
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", "println(1)\n");
+              ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+              ( "hello/package.emo",
+                {|package {
+  name = "local/hello"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("hello/main.emo", "println(2)\n");
+              ("hello/runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+            ]
+            "main.emo"
+        in
+        let _inputs, _entry, _packages, native =
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
+        in
+        Alcotest.(check bool)
+          "the boot stub is the root's alone" true
+          (match native.Emo_project.ni_runtime with
+          | Some stub -> Filename.basename stub = "runtime.S"
+          | None -> false);
+        Alcotest.(check int)
+          "no .S sources ride in" 0
+          (List.length native.Emo_project.ni_asm));
+    tc "a .S-carrying package is refused off the riscv64 target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/metalapp"
+  version = "0.1.0"
+  targets = ["ocaml", "riscv64"]
+
+  deps {
+    "acme/metal_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/metal_tools"
+println(metal_tools.idle())
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+                ~profile:"kernel"
+            with
+            | _ -> Alcotest.fail "expected the native gate to refuse"
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  "E5007" true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5007"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "acme/metal_tools")
+                     ds)));
+    tc "the root's own .S shapes refuse off the riscv64 target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", "println(1)\n");
+              ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+            ]
+            "main.emo"
+        in
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            ~profile:"kernel"
+        with
+        | _ -> Alcotest.fail "expected the native gate to refuse"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "E5007" true
+              (List.exists
+                 (fun d ->
+                   d.Emo_support.Diagnostic.code = Some "E5007"
+                   && contains_substring d.Emo_support.Diagnostic.message
+                        "local/kernel")
+                 ds));
+    tc "a C-carrying package is refused on the riscv64 target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/metalapp"
+  version = "0.1.0"
+  targets = ["ocaml", "riscv64"]
+
+  deps {
+    "acme/native_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/native_tools"
+println(native_tools.halve_floor(9.0))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
+            with
+            | _ -> Alcotest.fail "expected the native gate to refuse"
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  "E5007" true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5007"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "acme/native_tools")
+                     ds)));
+    tc "two providers of the boot stub refuse" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "acme/metal_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/metal_tools"
+println(metal_tools.idle())
+|} );
+              ("runtime.S", "    .globl emo_start\nemo_start:\n    wfi\n");
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
+            with
+            | _ -> Alcotest.fail "expected the component conflict to refuse"
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  "E5013" true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5013"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "runtime.S"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "acme/metal_tools"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "local/kernel")
+                     ds)));
+    tc "a stdlib require refuses on the kernel target, pin or not" (fun () ->
+        let manifest pinned =
+          with_project
+            [
+              ( "package.emo",
+                if pinned then
+                  {|
+package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "json" = "0.1.0"
+  }
+}
+|}
+                else
+                  {|
+package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", {|require "json"
+println(1)
+|});
+            ]
+            "main.emo"
+        in
+        List.iter
+          (fun (pinned, label) ->
+            let entry = manifest pinned in
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+                ~profile:"kernel"
+            with
+            | _ ->
+                Alcotest.fail
+                  (Printf.sprintf "%s: expected the layering gate to refuse"
+                     label)
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  (label ^ ": E5014") true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5014"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "json"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "core")
+                     ds))
+          [ (true, "pinned"); (false, "unpinned") ]);
+    tc "an unknown unscoped require keeps its own answer" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", {|require "jsson"
+println(1)
+|});
+            ]
+            "main.emo"
+        in
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
+        with
+        | _ -> Alcotest.fail "expected the unknown require to refuse"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "E5009" true
+              (List.exists
+                 (fun d ->
+                   d.Emo_support.Diagnostic.code = Some "E5009"
+                   && contains_substring d.Emo_support.Diagnostic.message
+                        "jsson")
+                 ds));
+    tc "the user profile stands the layering gate down" (fun () ->
+        (* The user profile is an ordinary program (EmoOS T4.3): its
+           packages declare their own targets, and the resolution's
+           target gate governs. A hosted-only require therefore gets
+           past the layering gate — and refuses at the solve, by the
+           solve's own answer, not E5014's. *)
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/userapp"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "json" = "0.1.0"
+  }
+}
+|}
+              );
+              ("main.emo", {|require "json"
+println(1)
+|});
+            ]
+            "main.emo"
+        in
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"user"
+        with
+        | _ ->
+            Alcotest.fail "expected the solve to refuse a hosted-only package"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "no E5014 on the user profile" true
+              (List.for_all
+                 (fun d -> d.Emo_support.Diagnostic.code <> Some "E5014")
+                 ds);
+            Alcotest.(check bool) "the solve names the target" true (ds <> []));
+    tc "the kernel profile refuses the gate's own stub package" (fun () ->
+        (* syscall rides the bundled registry (T4.3), so the kernel's gate
+           covers it too: the kernel builds on `core` alone and never
+           requires its own userland. *)
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/kernel"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {}
+}
+|}
+              );
+              ("main.emo", {|require "syscall"
+println(1)
+|});
+            ]
+            "main.emo"
+        in
+        match
+          Emo_project.compile_inputs ~entry_file:entry ~target:"riscv64"
+            ~profile:"kernel"
+        with
+        | _ -> Alcotest.fail "expected the layering gate to refuse syscall"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "E5014" true
+              (List.exists
+                 (fun d -> d.Emo_support.Diagnostic.code = Some "E5014")
+                 ds));
   ]
 
 (* ---- Step 14 bootstrap: the examples/ suite as compiled binaries ----
@@ -3043,6 +3554,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "png_demo")
           "png_demo" "main.emo");
+    tc "atomic_cell compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "atomic_cell")
+          "atomic_cell" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 17) ----
@@ -3110,6 +3626,7 @@ let ts_golden_tests =
       ("loops", "main.emo");
       ("tcp_echo", "main.emo");
       ("http_roundtrip", "main.emo");
+      ("atomic_cell", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the
@@ -3499,6 +4016,7 @@ let () =
       ("stdlib_require", stdlib_require_tests);
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);
+      ("riscv_native", riscv_native_tests);
       ("bootstrap", bootstrap_tests);
       ("ts_golden", ts_golden_tests);
       ("cross_module", cross_module_tests);

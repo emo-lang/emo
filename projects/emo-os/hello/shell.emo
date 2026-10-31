@@ -1,0 +1,548 @@
+// The shell (T7.3, docs/shell.md): the REPL that takes the machine's
+// foreground once the boot proof is done — a user pass on its own
+// table, speaking the gate and nothing else. Every byte in and out
+// rides the console service's read and write verbs; every file
+// operation rides the filesystem service's verbs. The line is built
+// here, one blocking read at a time: printable ASCII joins it and is
+// echoed back (nothing below the shell echoes), backspace and DEL
+// erase the last character, CR and LF both end it (echoed as one LF,
+// the kernel's own console discipline), every other byte is dropped,
+// and the line's bound is 120 bytes — bytes past it are dropped and
+// not echoed, the missing echo the tell. Eight commands, lowercase
+// and exact; a command that takes no argument refuses one, one that
+// takes a name refuses a second and refuses none, an unknown word
+// names itself, and refusals the services answer come back as
+// `<command>: <message>`. The `counter` command (T7.5) starts the
+// machine's one program — the console renderer pass, ui.emo — and
+// waits for its exit, the REPL parked at the wait while the program
+// owns the console. The machine ends the way the proof's exit did:
+// the poweroff command is the boot pass's exit verb.
+//
+// The texts are byte-array literals poked into this image's
+// read-write segment at REPL start — the riscv64 backend carries no
+// String-to-bytes path (every String method refuses by name), and
+// equality on the stubs' refusal messages maps them back onto these
+// bytes. The arrays are read one element at a time into raw memory;
+// no array-element assignment anywhere (the target refuses it).
+
+require "syscall"
+
+// This image's scratch (main.emo's buf), the shell's addresses above
+// the proof chain's: the line, the list's and the read's buffers, and
+// the texts (the four refusal messages the file verbs can answer,
+// `unknown command`, the help line, the prompt, the eight command
+// names, the boot banner, `: `, a LF, and the echo byte with the
+// erase sequence beside it). All poked once, at REPL start.
+const buf = 0x87200000
+const sh_line = buf + 6144
+const sh_names = buf + 6272
+const sh_back = buf + 6528
+const sh_text = buf + 8576
+const sh_m_nosuch = sh_text
+const sh_m_badarg = sh_text + 16
+const sh_m_res = sh_text + 32
+const sh_m_ref = sh_text + 64
+const sh_m_unk = sh_text + 72
+const sh_help = sh_text + 88
+const sh_prompt = sh_text + 144
+const sh_c_help = sh_text + 152
+const sh_c_echo = sh_text + 160
+const sh_c_ls = sh_text + 168
+const sh_c_cat = sh_text + 176
+const sh_c_rm = sh_text + 184
+const sh_c_write = sh_text + 192
+const sh_c_pow = sh_text + 200
+const sh_colon = sh_text + 208
+const sh_nl = sh_text + 210
+const sh_one = sh_text + 212
+const sh_c_counter = sh_text + 216
+const sh_logo = sh_text + 224
+
+// main.emo's token cell: the counter pass claims it on re-entering
+// the top level (the proof chain's spawn discipline — the channel a
+// spawn with no arguments speaks through).
+const sh_ui_cell = buf + 2088
+
+const line_cap = 120
+
+// The texts, each its own literal — "the bytes read in order", the
+// filesystem's magic convention.
+def m_nosuch() Array[Byte] {
+  // "no such file"
+  return [110B, 111B, 32B, 115B, 117B, 99B, 104B, 32B, 102B, 105B, 108B, 101B]
+}
+
+def m_badarg() Array[Byte] {
+  // "bad argument"
+  return [97B, 97B, 100B, 32B, 97B, 114B, 103B, 117B, 109B, 101B, 110B, 116B]
+}
+
+def m_res() Array[Byte] {
+  // "the kernel is out of a resource"
+  return [
+    116B, 104B, 101B, 32B, 107B, 101B, 114B, 110B, 101B, 108B, 32B, 105B, 115B,
+    32B, 111B, 117B, 116B, 32B, 111B, 102B, 32B, 97B, 32B, 114B, 101B, 115B,
+    111B, 117B, 114B, 99B, 101B
+  ]
+}
+
+def m_ref() Array[Byte] {
+  // "refused"
+  return [114B, 101B, 102B, 117B, 115B, 101B, 100B]
+}
+
+def m_unk() Array[Byte] {
+  // "unknown command"
+  return [
+    117B, 110B, 107B, 110B, 111B, 119B, 110B, 32B, 99B, 111B, 109B, 109B, 97B,
+    110B, 100B
+  ]
+}
+
+def help_bytes() Array[Byte] {
+  // "commands: help echo ls cat write rm counter poweroff"
+  return [
+    99B, 111B, 109B, 109B, 97B, 110B, 100B, 115B, 58B, 32B, 104B, 101B, 108B,
+    112B, 32B, 101B, 99B, 104B, 111B, 32B, 108B, 115B, 32B, 99B, 97B, 116B,
+    32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 99B, 111B, 117B,
+    110B, 116B, 101B, 114B, 32B, 112B, 111B, 119B, 101B, 114B, 111B, 102B,
+    102B
+  ]
+}
+
+// The banner, one literal per row: the riscv64 backend materializes
+// an array literal through a stack frame whose element stores take
+// 12-bit immediates, so a literal stops assembling past ~253
+// elements. Each row is 53 bytes — the plain prefix, the O and S in
+// ANSI cyan (SGR 36, one escape/reset pair per row), and a bare LF.
+// docs/shell.md has it drawn.
+def logo_r1() Array[Byte] {
+  return [
+    32B, 95B, 95B, 95B, 95B, 95B, 32B, 32B, 32B, 32B, 32B, 32B,
+    32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B, 32B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 32B, 95B, 95B, 95B,
+    95B, 32B, 32B, 32B, 32B, 32B, 95B, 95B, 95B, 95B, 32B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r2() Array[Byte] {
+  return [
+    124B, 32B, 95B, 95B, 95B, 95B, 124B, 32B, 32B, 95B, 95B, 32B,
+    32B, 95B, 95B, 32B, 32B, 32B, 32B, 95B, 95B, 95B, 95B, 32B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 47B, 32B, 95B, 95B,
+    32B, 92B, 32B, 32B, 32B, 47B, 32B, 95B, 95B, 95B, 124B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r3() Array[Byte] {
+  return [
+    124B, 32B, 32B, 95B, 124B, 32B, 32B, 32B, 124B, 32B, 32B, 92B,
+    47B, 32B, 32B, 124B, 32B, 32B, 47B, 32B, 95B, 95B, 32B, 92B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 124B, 32B, 124B, 32B, 32B,
+    124B, 32B, 124B, 32B, 32B, 92B, 95B, 95B, 95B, 32B, 92B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r4() Array[Byte] {
+  return [
+    124B, 32B, 124B, 95B, 95B, 95B, 32B, 32B, 124B, 32B, 124B, 92B,
+    47B, 124B, 32B, 124B, 32B, 124B, 32B, 124B, 32B, 32B, 124B, 32B,
+    124B, 27B, 91B, 51B, 54B, 109B, 32B, 124B, 32B, 124B, 95B, 95B,
+    124B, 32B, 124B, 32B, 32B, 32B, 95B, 95B, 95B, 41B, 32B, 124B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_r5() Array[Byte] {
+  return [
+    124B, 95B, 95B, 95B, 95B, 95B, 124B, 32B, 124B, 95B, 124B, 32B,
+    32B, 124B, 95B, 124B, 32B, 32B, 92B, 95B, 95B, 95B, 95B, 47B,
+    32B, 27B, 91B, 51B, 54B, 109B, 32B, 32B, 92B, 95B, 95B, 95B,
+    95B, 47B, 32B, 32B, 32B, 124B, 95B, 95B, 95B, 95B, 47B, 32B,
+    27B, 91B, 48B, 109B, 10B
+  ]
+}
+
+def logo_tail() Array[Byte] {
+  // the blank line that parts the banner from the first prompt
+  return [10B]
+}
+
+def prompt_bytes() Array[Byte] {
+  // "emo-os> "
+  return [101B, 109B, 111B, 45B, 111B, 115B, 62B, 32B]
+}
+
+def c_help() Array[Byte] {
+  // "help"
+  return [104B, 101B, 108B, 112B]
+}
+
+def c_echo() Array[Byte] {
+  // "echo"
+  return [101B, 99B, 104B, 111B]
+}
+
+def c_ls() Array[Byte] {
+  // "ls"
+  return [108B, 115B]
+}
+
+def c_cat() Array[Byte] {
+  // "cat"
+  return [99B, 97B, 116B]
+}
+
+def c_rm() Array[Byte] {
+  // "rm"
+  return [114B, 109B]
+}
+
+def c_write() Array[Byte] {
+  // "write"
+  return [119B, 114B, 105B, 116B, 101B]
+}
+
+def c_pow() Array[Byte] {
+  // "poweroff"
+  return [112B, 111B, 119B, 101B, 114B, 111B, 102B, 102B]
+}
+
+def c_counter() Array[Byte] {
+  // "counter"
+  return [99B, 111B, 117B, 110B, 116B, 101B, 114B]
+}
+
+def put_bytes(dst Int64, bs Array[Byte]) Void {
+  var n = bs.length()
+  var i = 0
+  while i < n {
+    poke8(dst + i, bs[i])
+    i = i + 1
+  }
+}
+
+def sh_init() Void {
+  put_bytes(sh_m_nosuch, m_nosuch())
+  put_bytes(sh_m_badarg, m_badarg())
+  put_bytes(sh_m_res, m_res())
+  put_bytes(sh_m_ref, m_ref())
+  put_bytes(sh_m_unk, m_unk())
+  put_bytes(sh_help, help_bytes())
+  put_bytes(sh_prompt, prompt_bytes())
+  put_bytes(sh_c_help, c_help())
+  put_bytes(sh_c_echo, c_echo())
+  put_bytes(sh_c_ls, c_ls())
+  put_bytes(sh_c_cat, c_cat())
+  put_bytes(sh_c_rm, c_rm())
+  put_bytes(sh_c_write, c_write())
+  put_bytes(sh_c_pow, c_pow())
+  put_bytes(sh_c_counter, c_counter())
+  put_bytes(sh_logo, logo_r1())
+  put_bytes(sh_logo + 53, logo_r2())
+  put_bytes(sh_logo + 106, logo_r3())
+  put_bytes(sh_logo + 159, logo_r4())
+  put_bytes(sh_logo + 212, logo_r5())
+  put_bytes(sh_logo + 265, logo_tail())
+  poke8(sh_colon, 58B)
+  poke8(sh_colon + 1, 32B)
+  poke8(sh_nl, 10B)
+}
+
+// n bytes at a through the write verb. The buffer is this image's own
+// writable segment, so the write cannot refuse; the answer is
+// discarded in both arms.
+def out(a Int64, n Int64) Void {
+  case syscall.write(a, n) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+}
+
+def out_nl() Void {
+  out(sh_nl, 1)
+}
+
+// One byte at a time, each a blocking read through the gate; the
+// line's bytes land in sh_line, the length comes back.
+def read_line() Int64 {
+  var n = 0
+  var done = false
+  while !done {
+    var b = syscall.read()
+    if b == 13 || b == 10 {
+      out_nl()
+      done = true
+    } else {
+      if b == 8 || b == 127 {
+        if n > 0 {
+          n = n - 1
+          poke8(sh_one, 8B)
+          poke8(sh_one + 1, 32B)
+          poke8(sh_one + 2, 8B)
+          out(sh_one, 3)
+        }
+      } else {
+        if b >= 32 && b <= 126 {
+          if n < line_cap {
+            poke8(sh_line + n, b.to_byte())
+            n = n + 1
+            poke8(sh_one, b.to_byte())
+            out(sh_one, 1)
+          }
+        }
+      }
+    }
+  }
+  return n
+}
+
+def skip_spaces(i Int64, n Int64) Int64 {
+  var p = i
+  while p < n {
+    if peek8(sh_line + p).to_int64() != 32 {
+      return p
+    }
+    p = p + 1
+  }
+  return p
+}
+
+def word_end(i Int64, n Int64) Int64 {
+  var p = i
+  while p < n {
+    if peek8(sh_line + p).to_int64() == 32 {
+      return p
+    }
+    p = p + 1
+  }
+  return p
+}
+
+// The line's word at s against the n bytes at a.
+def word_is(s Int64, wlen Int64, a Int64, n Int64) Bool {
+  if wlen != n {
+    return false
+  }
+  var i = 0
+  while i < n {
+    if peek8(sh_line + s + i).to_int64() != peek8(a + i).to_int64() {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+// A command that takes no argument refuses one; one that takes a name
+// refuses a second, with the same line.
+def extra_args(e Int64, n Int64) Bool {
+  return skip_spaces(e, n) < n
+}
+
+// The refusal line: `<command>: <message>`.
+def err_line(cmd Int64, clen Int64, msg Int64, mlen Int64) Void {
+  out(cmd, clen)
+  out(sh_colon, 2)
+  out(msg, mlen)
+  out_nl()
+}
+
+// The stubs' refusal message back onto the shell's own bytes: the
+// String surface is equality only, so the messages the file verbs can
+// answer are mapped by name and anything outside them prints as
+// `refused`.
+def err_file(cmd Int64, clen Int64, why String) Void {
+  if why == "no such file" {
+    err_line(cmd, clen, sh_m_nosuch, 12)
+  } else {
+    if why == "bad argument" {
+      err_line(cmd, clen, sh_m_badarg, 12)
+    } else {
+      if why == "the kernel is out of a resource" {
+        err_line(cmd, clen, sh_m_res, 31)
+      } else {
+        err_line(cmd, clen, sh_m_ref, 7)
+      }
+    }
+  }
+}
+
+def cmd_help(e Int64, n Int64) Void {
+  if extra_args(e, n) {
+    err_line(sh_c_help, 4, sh_m_badarg, 12)
+  } else {
+    out(sh_help, 52)
+    out_nl()
+  }
+}
+
+def cmd_echo(e Int64, n Int64) Void {
+  if e < n {
+    var tl = n - e - 1
+    if tl > 0 {
+      out(sh_line + e + 1, tl)
+    }
+  }
+  out_nl()
+}
+
+def cmd_ls(e Int64, n Int64) Void {
+  if extra_args(e, n) {
+    err_line(sh_c_ls, 2, sh_m_badarg, 12)
+  } else {
+    case syscall.file_list(sh_names, 256) {
+      (R.error, why) -> { err_file(sh_c_ls, 2, why) }
+      (R.ok, ln) -> { out(sh_names, ln) }
+    }
+  }
+}
+
+def cmd_cat(e Int64, n Int64) Void {
+  var ns = skip_spaces(e, n)
+  var ne = word_end(ns, n)
+  if ns == n || skip_spaces(ne, n) < n {
+    err_line(sh_c_cat, 3, sh_m_badarg, 12)
+  } else {
+    case syscall.file_read(sh_line + ns, ne - ns, sh_back, 2048) {
+      (R.error, why) -> { err_file(sh_c_cat, 3, why) }
+      (R.ok, size) -> {
+        var copied = size
+        if copied > 2048 {
+          copied = 2048
+        }
+        out(sh_back, copied)
+        out_nl()
+      }
+    }
+  }
+}
+
+def cmd_write(e Int64, n Int64) Void {
+  var ns = skip_spaces(e, n)
+  var ne = word_end(ns, n)
+  if ns == n {
+    err_line(sh_c_write, 5, sh_m_badarg, 12)
+  } else {
+    // The text is the line's tail after the one space that follows the
+    // name — verbatim; an absent text is an empty file.
+    var ts = 0
+    var tl = 0
+    if ne < n {
+      ts = ne + 1
+      tl = n - ne - 1
+    }
+    case syscall.file_write(sh_line + ns, ne - ns, sh_line + ts, tl) {
+      (R.error, why) -> { err_file(sh_c_write, 5, why) }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+def cmd_rm(e Int64, n Int64) Void {
+  var ns = skip_spaces(e, n)
+  var ne = word_end(ns, n)
+  if ns == n || skip_spaces(ne, n) < n {
+    err_line(sh_c_rm, 2, sh_m_badarg, 12)
+  } else {
+    case syscall.file_remove(sh_line + ns, ne - ns) {
+      (R.error, why) -> { err_file(sh_c_rm, 2, why) }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The machine's one program (T7.5): the command pokes the token cell
+// the pass claims on re-entering the top level, spawns it, and waits
+// for its exit — the REPL parked at the wait while the program owns
+// the console, the frames its whole output. Silence on success: the
+// frames were the answer, and the next prompt says the program is
+// done.
+def cmd_counter(e Int64, n Int64) Void {
+  if extra_args(e, n) {
+    err_line(sh_c_counter, 7, sh_m_badarg, 12)
+  } else {
+    poke64(sh_ui_cell, 1)
+    case syscall.spawn() {
+      (R.error, why) -> { err_file(sh_c_counter, 7, why) }
+      (R.ok, pid) -> {
+        case syscall.wait(pid) {
+          (R.error, why) -> { err_file(sh_c_counter, 7, why) }
+          (R.ok, _) -> {}
+        }
+      }
+    }
+  }
+}
+
+def cmd_poweroff(e Int64, n Int64) Void {
+  if extra_args(e, n) {
+    err_line(sh_c_pow, 8, sh_m_badarg, 12)
+  } else {
+    syscall.exit(0)
+  }
+}
+
+def unknown_cmd(s Int64, wlen Int64) Void {
+  out(sh_line + s, wlen)
+  out(sh_colon, 2)
+  out(sh_m_unk, 15)
+  out_nl()
+}
+
+def execute(n Int64) Void {
+  var s = skip_spaces(0, n)
+  var e = word_end(s, n)
+  var wlen = e - s
+  if wlen == 0 {
+  } else {
+    if word_is(s, wlen, sh_c_help, 4) {
+      cmd_help(e, n)
+    } else {
+      if word_is(s, wlen, sh_c_echo, 4) {
+        cmd_echo(e, n)
+      } else {
+        if word_is(s, wlen, sh_c_ls, 2) {
+          cmd_ls(e, n)
+        } else {
+          if word_is(s, wlen, sh_c_cat, 3) {
+            cmd_cat(e, n)
+          } else {
+            if word_is(s, wlen, sh_c_write, 5) {
+              cmd_write(e, n)
+            } else {
+              if word_is(s, wlen, sh_c_rm, 2) {
+                cmd_rm(e, n)
+              } else {
+                if word_is(s, wlen, sh_c_counter, 7) {
+                  cmd_counter(e, n)
+                } else {
+                  if word_is(s, wlen, sh_c_pow, 8) {
+                    cmd_poweroff(e, n)
+                  } else {
+                    unknown_cmd(s, wlen)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The REPL: the banner, then the prompt, the line, the command —
+// until the poweroff command's exit verb ends the machine, this loop
+// never returns.
+def run() Void {
+  sh_init()
+  out(sh_logo, 266)
+  while true {
+    out(sh_prompt, 8)
+    execute(read_line())
+  }
+}

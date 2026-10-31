@@ -1,0 +1,212 @@
+// The per-process address spaces (T6.2): every user process runs on
+// its own Sv39 table, built at spawn — the image's segments (code RX,
+// data RW, a shared boundary page where the ELF's segments meet inside
+// one 4 KiB page, the union of the two), the process's own stack block
+// and arena block, the user cells page, each with U, and the kernel's
+// whole high half beside them with no U (sv39.map_kernel) — the boot
+// pass's trap page (T6.3) included, rw without U. U-mode's
+// world is exactly those pages: its code, its image's data (the passes
+// of one image share it — a spawned pass re-enters the top level and
+// finds the tokens the parent poked, the spawn semantics since T4.4),
+// its own stack and arena, the cells the trap shim hands the arena
+// through — and nothing else. Every kernel byte is mapped in the same
+// table without U: the kernel runs on whichever table satp names, and
+// a trap out of a pass finds its own world; U-mode reaching for any of
+// it is a page fault the shim kills the pass for (T6.4's work, the
+// fault route already takes any exception). The window's two gigapages
+// with U are gone: the per-process tables are what close it.
+//
+// The untyped-memory discipline as everywhere: Int64 addresses,
+// peek/poke, bit masks, every def a fully typed native body — the
+// build runs inside emo_user_spawn's masked region and the switch
+// inside the pick's, so nothing here may allocate.
+//
+// The runtime reaches this module through the hook words its stub
+// parks, the block hooks' pattern: emo_space_build_hook (the build,
+// called at the end of emo_user_spawn with the child's slot),
+// emo_space_hook (the resolve, called by the pick with the incoming
+// slot's word and answered the physical root to install — or -1 when
+// satp already names it), and emo_space_write_hook (the write itself,
+// parked at sv39.S's emo_os_satp_switch). A slot word of 0 means the
+// kernel's own table: every green process's word, the kernel root's
+// until the boot pass adopts its own. The boot pass's table is built
+// by the loader (user.emo) at stage time and adopted by the kernel's
+// enter shim (trap.S) through adopt before the first sret into
+// U-mode, so the boot pass's own word is in its slot before its first
+// trap can preempt it.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The Sv39 page: the kernel root's kernel address (sv39.emo wrote it
+// at boot), and the current cell — the physical root satp names right
+// now, the switch's cache: resolve answers -1 when the incoming word
+// resolves to what is already installed, so the kernel's processes
+// switching among themselves fence nothing.
+const root_cell = koff + 0x87004000
+const current_cell = koff + 0x87004010
+
+// The handoff page: the segment table the loader parked (the gate's
+// constants). The staged space cell the boot pass's table rides in
+// lives here too — the loader writes it, the enter shim reads it —
+// but through user.emo's own constants.
+const seg_count_addr = koff + 0x87002018
+const seg_table = koff + 0x87002020
+
+// The user cells page (T5.1): the user stub parks the addresses of
+// its root slot's arena words here; every trap out of a pass and every
+// resume into one crosses these cells, so every user table carries
+// them, with U — the user stub writes them at the boot pass's entry.
+const cells_page = 0x87fff000
+
+// The boot pass's trap page (T6.3): the fixed page under the cells
+// page, the one memory the boot pass's frame parks in — the image's
+// stack is the stub's own and the heap is live data, so the page is
+// the scratch that belongs to no pass's execution. Mapped rw without U
+// into every table (the trampoline stores through the pass's own
+// before the swap; the low window covers the kernel-side accesses), so
+// U-mode cannot touch it and a wild store there is the fault the shim
+// kills the pass for.
+const boot_trap_page = 0x87ffe000
+
+// The ELF's p_flags (X=1, W=2, R=4), as the loader parked them, and
+// the entry bits this module writes: the permissions translated, U
+// on every leaf, V and A and D as sv39.map sets them.
+const flag_x = 1
+const flag_w = 2
+const flag_r = 4
+const pte_v = 1
+const pte_r = 2
+const pte_w = 4
+const pte_x = 8
+const pte_u = 16
+const pte_a = 64
+const pte_d = 128
+const rwu = pte_r | pte_w | pte_u
+const rw = pte_r | pte_w
+const page = 4096
+const block = 65536
+
+// The slot words the build reads: the arena cursor at 576 (the block's
+// base, a kernel address), the stack block at 864 (its physical base —
+// the pass runs on the identity alias of its block), and the space
+// word at 872 the build answers into (the stride 880).
+const slot_arena = 576
+const slot_stack = 864
+const slot_space = 872
+
+// One 4 KiB page into a user table, unioning with what is there: the
+// image's segments share their boundary page (the text's last page
+// holds the data's first bytes in this ELF's layout), so a page the
+// walk already mapped gets its permissions OR'd in — same physical
+// page or the loud end — and a fresh one is written leaf-complete.
+// Everything else about the mapping is sv39.map's strictness; the
+// union is what makes an unaligned segment pair map at all.
+def map_page(root Int64, va Int64, pa Int64, flags Int64) Void {
+  var at = sv39.slot_of(root, va, 0)
+  var e = peek64(at)
+  if (e & pte_v) != 0 {
+    if sv39.pte_pa(e) != pa {
+      sv39.die("sv39: two segments claim one page differently")
+    }
+    poke64(at, e | flags)
+  } else {
+    poke64(at, sv39.pte_of(pa, flags | pte_v | pte_a | pte_d))
+  }
+}
+
+// The user's half of a table: the image's segments by page-union
+// permission, then the cells page. One shared helper for the two
+// builders — the boot pass's (user.emo's stage, which knows the
+// segments before anything spawns) and each spawned pass's (build).
+// The permissions are the segment's own, translated, plus U: code RX,
+// data RW — and where one page carries both, both.
+def base(root Int64) Void {
+  sv39.map_kernel(root, false)
+  var n = peek64(seg_count_addr)
+  var i = 0
+  while i < n {
+    var slot = seg_table + (i * 24)
+    var start = peek64(slot)
+    var endp = peek64(slot + 8)
+    var pf = peek64(slot + 16)
+    var flags = 0
+    if (pf & flag_r) != 0 {
+      flags = flags | pte_r
+    }
+    if (pf & flag_w) != 0 {
+      flags = flags | pte_w
+    }
+    if (pf & flag_x) != 0 {
+      flags = flags | pte_x
+    }
+    flags = flags | pte_u
+    var va = (start / page) * page
+    while va < endp {
+      map_page(root, va, va, flags)
+      va = va + page
+    }
+    i = i + 1
+  }
+  map_page(root, cells_page, cells_page, rwu)
+  map_page(root, boot_trap_page, boot_trap_page, rw)
+}
+
+// The boot pass's adoption: its root's physical address, into the
+// switch's cache — the enter shim (trap.S) calls this before its own
+// satp_switch, so the cache stays true about what satp holds and the
+// first resolve neither skips a needed write nor repeats the boot's.
+def adopt(root_pa Int64) Void {
+  poke64(current_cell, root_pa)
+}
+
+// The spawned pass's table, built at spawn: the runtime's hook, called
+// at the end of emo_user_spawn with the child's slot — every word the
+// build needs is already in it. The kernel's half, the image's
+// segments, the cells page (base), then the process's own: its stack
+// block and its arena block, each 64 KiB at the identity of its
+// physical address, RW with U. The root's physical address goes into
+// the slot's space word — what the switch resolves on every pick.
+// Frame exhaustion is the loud end, as the arena carve's is: the
+// process table's ceiling in memory.
+def build(slot Int64) Void {
+  var root = frames.frame_take()
+  if root == 0 {
+    sv39.die("sv39: no frame left for a process table")
+  }
+  sv39.clear(root)
+  base(root)
+  var stack = peek64(slot + slot_stack)
+  var va = stack
+  var top = stack + block
+  while va < top {
+    map_page(root, va, va, rwu)
+    va = va + page
+  }
+  var arena = sv39.pa_of(peek64(slot + slot_arena))
+  va = arena
+  top = arena + block
+  while va < top {
+    map_page(root, va, va, rwu)
+    va = va + page
+  }
+  poke64(slot + slot_space, sv39.pa_of(root))
+}
+
+// The switch's resolve: the incoming slot's word to the physical root
+// satp should name — 0 means the kernel's own table, every green
+// process's answer — or -1 when that is already installed, the cache
+// hit that keeps the kernel's processes switching among themselves
+// without a fence. A miss is recorded before the answer: the caller's
+// write is the next thing that happens, and a resolve whose write was
+// skipped would leave the cache lying about satp.
+def switch(w Int64) Int64 {
+  var target = w
+  if w == 0 {
+    target = sv39.pa_of(peek64(root_cell))
+  }
+  if target == peek64(current_cell) {
+    return -1
+  }
+  poke64(current_cell, target)
+  return target
+}

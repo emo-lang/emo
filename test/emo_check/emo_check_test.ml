@@ -1330,6 +1330,191 @@ kids.nope()|}
         Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
   ]
 
+let atomic_tests =
+  [
+    tc "the atomic surface checks clean across both payloads" (fun () ->
+        let diagnostics =
+          check
+            {|const served = Atomic.new(0)
+served.store(served.load() + 1)
+const prior = served.exchange(7)
+const swapped = served.compare_exchange(7, 0)
+served.fetch_add(2)
+served.fetch_sub(1)
+served.fetch_and(12)
+served.fetch_or(3)
+served.fetch_xor(1)
+
+const flag = Atomic.new(false)
+flag.store(flag.load())
+flag.exchange(true)
+flag.compare_exchange(true, false)
+flag.fetch_and(true)
+flag.fetch_or(false)
+flag.fetch_xor(true)
+
+fence()
+println(served.load() + swapped[1])|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "compare_exchange answers the (Bool, previous) pair" (fun () ->
+        let diagnostics =
+          check
+            {|const served = Atomic.new(0)
+const swapped = served.compare_exchange(0, 1)
+if swapped[0] {
+  println("swapped")
+}
+println(swapped[1] + 1)|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "the bare Atomic spelling takes either payload" (fun () ->
+        let diagnostics =
+          check
+            {|def takes_any(c Atomic) Int64 {
+  return 0
+}
+
+const served = Atomic.new(0)
+const flag = Atomic.new(false)
+takes_any(served)
+takes_any(flag)|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "the payload scope covers Int64 and Bool only, by name" (fun () ->
+        let diagnostics =
+          check
+            {|def s(c Atomic[String]) Int64 {
+  return 0
+}
+
+def f(c Atomic[Float64]) Int64 {
+  return 0
+}
+
+def g(c Atomic[Box[Int64]]) Int64 {
+  return 0
+}
+
+def h(c Atomic[Atomic[Int64]]) Int64 {
+  return 0
+}|}
+        in
+        Alcotest.(check int)
+          "four E4027s" 4
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4027")
+                diagnostics)));
+    tc "Atomic.new refuses a non-scalar payload by name" (fun () ->
+        let diagnostics = check {|const c = Atomic.new("text")|} in
+        Alcotest.(check bool) "E4027" true (has_code diagnostics "E4027"));
+    tc "Atomic.new arity and named arguments are checked" (fun () ->
+        let diagnostics =
+          check {|Atomic.new()
+Atomic.new(1, 2)
+Atomic.new(x: 1)|}
+        in
+        Alcotest.(check int)
+          "three E4009s" 3
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4009")
+                diagnostics)));
+    tc "the arithmetic fetch family refuses on a Bool cell" (fun () ->
+        let diagnostics =
+          check
+            {|const flag = Atomic.new(false)
+flag.fetch_add(1)
+flag.fetch_sub(1)|}
+        in
+        Alcotest.(check int)
+          "two E4004s" 2
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4004")
+                diagnostics)));
+    tc "store, exchange, and compare_exchange check against the payload"
+      (fun () ->
+        let diagnostics =
+          check
+            {|const served = Atomic.new(0)
+served.store("text")
+served.exchange("text")
+served.compare_exchange(0, "text")|}
+        in
+        Alcotest.(check int)
+          "three E4004s" 3
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4004")
+                diagnostics)));
+    tc "an unknown method on an atomic is refused" (fun () ->
+        let diagnostics =
+          check {|const served = Atomic.new(0)
+served.nope()|}
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "fence takes no arguments" (fun () ->
+        let diagnostics = check {|fence(1)|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+  ]
+
+(* The raw-memory lanes (docs/raw-memory.md): the default check target
+   is `c`, so every reference refuses E4028; the riscv64 target admits
+   the four and still checks payloads and arities. *)
+let raw_memory_tests =
+  let check_on target source =
+    match Emo_parser.parse_program ~file:"test.emo" ~source with
+    | items ->
+        let diagnostics, _, _, _ =
+          Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+        in
+        diagnostics
+    | exception Emo_parser.Error d ->
+        Alcotest.fail ("parse failed: " ^ d.Diagnostic.message)
+  in
+  [
+    tc "a hosted target refuses every lane by name" (fun () ->
+        let diagnostics =
+          check
+            {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)|}
+        in
+        Alcotest.(check int)
+          "four E4028s" 4
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4028")
+                diagnostics)));
+    tc "riscv64 admits the lanes and checks their payloads" (fun () ->
+        let clean =
+          check_on "riscv64"
+            {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)|}
+        in
+        Alcotest.(check int) "clean on riscv64" 0 (List.length clean);
+        let diagnostics =
+          check_on "riscv64" {|
+peek8("text")
+poke8(0)
+poke8(0, 12)
+peek64()|}
+        in
+        Alcotest.(check int) "four refusals" 4 (List.length diagnostics));
+  ]
+
 let cross_module_tests =
   [
     tc "a type declaration names another module's type" (fun () ->
@@ -2376,6 +2561,8 @@ let () =
       ("printf", printf_tests);
       ("expect", expect_tests);
       ("box", box_tests);
+      ("atomic", atomic_tests);
+      ("raw_memory", raw_memory_tests);
       ("array_builder", array_builder_tests);
       ("member_signature", member_signature_tests);
       ("field_type", field_type_tests);

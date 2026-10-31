@@ -1,0 +1,120 @@
+// Processes on metal (EmoOS T3.3): spawn, send, and receive over the
+// green threads on the boot hart. Every line the entry process prints
+// lands there only after the messages it depends on have arrived, so
+// the output is what it is no matter how the scheduler interleaves the
+// processes — the shape every cross-target process program takes.
+//
+//   emo build main.emo --target riscv64
+
+// A worker doubles its number and reports back.
+def doubler(boss Pid, n Int64) {
+  boss <- n * 2
+}
+
+// A packer wraps its number in a Box: the message snapshots at the
+// send boundary, and the box arrives as a fresh copy.
+def packer(boss Pid, n Int64) {
+  boss <- Box.new(n * 10)
+}
+
+// A sender of pairs: the tuple snapshots at the send boundary and the
+// pattern binds both elements on the far side.
+def twin(boss Pid, n Int64) {
+  boss <- (n, n * n)
+}
+
+// Two senders feed one mailbox; the guard keeps only the big one, and
+// the small one stays queued for the plain binding that follows.
+def low(boss Pid) {
+  boss <- 1
+}
+
+def high(boss Pid) {
+  boss <- 5
+}
+
+// A goodbye, then silence: the pid answers its own exit.
+def bye(boss Pid) {
+  boss <- "bye"
+}
+
+// One more message after the goodbye.
+def fresh(boss Pid) {
+  boss <- "fresh"
+}
+
+// Six carriers, six numbers, one mailbox: the receives below pull them
+// out in a fixed order of their own, so every dequeue lands on a
+// different position of the ring and shifts what follows it — the
+// scheduler's bookkeeping must stay aligned at every index (T3.4).
+def carry(boss Pid, n Int64) {
+  boss <- n
+}
+
+const me = self_pid()
+
+do doubler(me, 21)
+receive {
+  n -> { println(n) }
+}
+
+do packer(me, 3)
+receive {
+  box -> { println(box.read()) }
+}
+
+do twin(me, 4)
+receive {
+  (a, b) -> {
+    println(a)
+    println(b)
+  }
+}
+
+do low(me)
+do high(me)
+receive {
+  n when n > 3 -> { println(n) }
+}
+receive {
+  n -> { println(n) }
+}
+
+const gone = do bye(me)
+receive {
+  "bye" -> { println("bye got") }
+}
+gone <- "late"
+do fresh(me)
+receive {
+  "late" -> { println("late came back") }
+  "fresh" -> { println("fresh got") }
+}
+
+do carry(me, 1)
+do carry(me, 2)
+do carry(me, 3)
+do carry(me, 4)
+do carry(me, 5)
+do carry(me, 6)
+receive {
+  n when n == 4 -> { println(n) }
+}
+receive {
+  n when n == 1 -> { println(n) }
+}
+receive {
+  n when n == 6 -> { println(n) }
+}
+receive {
+  n when n == 2 -> { println(n) }
+}
+receive {
+  n when n == 5 -> { println(n) }
+}
+receive {
+  n when n == 3 -> { println(n) }
+}
+
+println(gone)
+println("done")

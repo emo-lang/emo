@@ -1,0 +1,9 @@
+package {
+  name = "hello"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "syscall" = "0.1.0"
+  }
+}

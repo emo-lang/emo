@@ -22,6 +22,7 @@ benchmarks/baselines/build/
 
 # Logs
 *.log
+*.log.trace
 
 # Release packaging output
 /dist/
@@ -48,3 +49,6 @@ gh-pages-worktree/
 __pycache__
 
 .zcode
+
+# EmoOS T7.1: the block device backing image run.sh creates
+projects/emo-os/.blk.img

@@ -1,0 +1,125 @@
+// The typed calling convention (EmoOS T2.1): a fully typed signature
+// takes raw-register params and results on riscv64 — Int64 in the
+// integer bank, Float64 in the float bank, every other type the tagged
+// word both conventions share — with boxing adapters at every
+// typed↔dynamic boundary while bodies still emit dynamic. The corpus is
+// plain Emo and answers byte for byte on every target; a mis-banked or
+// mis-adapted lane corrupts a value these prints would show.
+//
+//   emo run main.emo
+
+// ---- 1 · Int64 params and results, nested calls, the wrap rule ----
+
+def add(a Int64, b Int64) Int64 {
+  return a + b
+}
+
+println(add(1, 2))
+println(add(add(1, 2), add(3, 4)))
+println(add(9223372036854775807, 1))
+println(add(0 - 9223372036854775807 - 1, 1))
+
+// ---- 2 · The two banks count independently: fa0, a0, fa1 ----
+
+def mix(x Float64, n Int64, y Float64) Float64 {
+  if n > 0 {
+    return x * y
+  }
+  return x + y
+}
+
+println(mix(0.5, 7, 0.25))
+println(mix(0.5, 0 - 1, 0.25))
+println(mix(0.1, 1, 3.0))
+println(mix(1.5, 7, 2.5))
+
+// ---- 3 · The tail chain: a hundred thousand crossings ----
+
+def sum_to(n Int64, acc Int64) Int64 {
+  if n == 0 {
+    return acc
+  }
+  return sum_to(n - 1, acc + n)
+}
+
+println(sum_to(100000, 0))
+
+// ---- 4 · The tagged-word params: Bool, Byte, String ----
+
+// (the byte crosses as an immediate and widens explicitly for the
+// string — the c target has no Byte-in-string form yet)
+def describe(flag Bool, tag Byte, name String) String {
+  return "${name}/${tag.to_int64()}/${flag}"
+}
+
+println(describe(true, 200B, "uart"))
+println(describe(false, 7B, "mmio"))
+
+// ---- 5 · A Void result crosses with nothing to box ----
+
+def announce(n Int64) Void {
+  println("n=${n}")
+}
+
+announce(42)
+
+// ---- 6 · A module-level const: the memo holds the raw result ----
+
+const limit = 40 + 2
+
+println(limit)
+println(limit + 8)
+println(add(limit, limit))
+
+// ---- 7 · The stays-dynamic surfaces beside the convention ----
+
+class Counter {
+  def init() {
+    self.cell = Box.new(0)
+  }
+
+  def bump(by Int64) Int64 {
+    self.cell.replace(self.cell.read() + by)
+    return self.cell.read()
+  }
+
+  // a method body — the dynamic convention — tail-calling a typed def:
+  // the plain-call fallback, the adapter at our own return label
+  def absorb(by Int64) Int64 {
+    self.cell.replace(add(self.cell.read(), by))
+    return add(self.cell.read(), 0)
+  }
+}
+
+const c = Counter.new()
+println(c.bump(5))
+println(c.bump(7))
+println(c.absorb(10))
+
+// a typed body returning a dynamic call's result: the exit adapter
+// unboxes what the method leaves tagged
+def bumped(c Counter) Int64 {
+  return c.bump(3)
+}
+
+println(bumped(c))
+
+// a case inside a native body: the scrutinee boxes at the case, the
+// binding holds the tagged word, and its read unboxes — the shape that
+// once double-boxed and printed a pointer
+def verdict(n Int64) String {
+  case n {
+    0 -> { return "zero" }
+    1 -> { return "one" }
+    m -> { return "many:${m}" }
+  }
+}
+
+println(verdict(0))
+println(verdict(1))
+println(verdict(42))
+
+const greet = -> (name String) {
+  return "hi, ${name}"
+}
+println(greet("emo"))

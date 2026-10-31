@@ -1,0 +1,30 @@
+// Per-process arenas (EmoOS T5.1): every spawned process allocates
+// against its own arena — a 64 KiB carve from the root's heap at
+// spawn — and a runaway child dies alone: its allocator reports and
+// ends it, and the root continues. The lanes refuse on every hosted
+// target's quota story (the interpreter has no arenas); this corpus
+// runs on the freestanding image under QEMU alone.
+//
+//   emo build main.emo --target riscv64
+
+// A runaway: a million boxes against a 64 KiB arena. The 2049th
+// allocation finds the carve full; the allocator prints and ends this
+// process, and the machine goes on without it.
+def burn(n Int64) Void {
+  var i = 0
+  while i < n {
+    var b = Box.new(i)
+    i = i + 1
+  }
+}
+
+println("spawned")
+const kid = do burn(1000000)
+// The send yields the root, so the child runs now: it burns its carve
+// and dies inside it — the allocator's report (the one line the
+// runtime prints, `heap gone in process 2`) lands before the root's
+// next line. The message stays queued in a dead process's mailbox,
+// and the root resumes.
+kid <- 1
+println("survived")
+println(kid)

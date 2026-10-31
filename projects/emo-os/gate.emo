@@ -1,0 +1,294 @@
+// The gate (T4.2/T4.4): every U-mode ecall lands here through the trap
+// shim — the verb in a7, six words in a0..a5, and one answer back in
+// a0: >= 0 the payload, < 0 a refusal whose reason is -a0. The checks
+// are the supervisor's: every pointer argument must lie inside the
+// caller's own loaded segments, with the permission the access needs —
+// the segment table the loader parked at stage time is what the checks
+// read. The gate runs inside the trap, on the caller's own stack, and
+// every def here is fully typed: nothing allocates.
+//
+// Since T4.4 the gate is also the router: the verbs the services own
+// come back as routes — negative past every refusal, the op encoded —
+// and the shim turns a route into the request (emo_gate_post) and the
+// park (the caller's trap frame IS its context, state 5) before the
+// switch. The exit is the one route that never answers: the caller's
+// death IS the transaction, so the shim ends its slot done (3) instead
+// of parking it — the reclamation the exit-table entry promises. The
+// service's answer lands in the parked frame's a0 slot and the resume
+// is the trap resume the frame already carries.
+//
+// Since T6.2 the write's buffer is copied at the gate (the send
+// snapshot's discipline): the trap that checks the range is the same
+// trap that copies the bytes into the kernel's staging page, and the
+// console service prints from that copy on the kernel's own table.
+// Before the per-process tables the service read the caller's buffer
+// through the window's alias; with each pass on its own table the
+// service's context no longer maps the caller's memory, and reading
+// through the caller's addresses after the check was a race anyway.
+// A write longer than the staging page carries is reason 4: the bound
+// is the supervisor's, stated in docs/syscalls.md.
+//
+// The contract lives in docs/syscalls.md; this module is its kernel
+// side. The verb set grows with the services; the numbering, the
+// answer convention, and the reason codes are frozen from here.
+
+// The handoff page (the kernel's link.ld gives the .emo_user section
+// this fixed address — a kernel address since T6.1, the physical one
+// plus koff). The segment count and table the loader parked; the
+// request cells the gate fills for the service it routes to; the
+// caller-pid cell the shim fills at every U-mode ecall. The cells are
+// per service — a console transaction and a process transaction can
+// sit parked at the same time (a spawned child's write beside its
+// parent's wait), so one pair of shared cells would let a later
+// dispatch clobber an earlier request's arguments before its service
+// consumes them. The spawned process's entry lives in the user image's
+// own cell (the user stub parks its emo_program there — the one
+// address no ELF header carries), at the fixed address the user
+// profile's linker script gives it. The pointer arguments the checks
+// judge are the user's own addresses, as the segment table records
+// them.
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const seg_count_addr = koff + 0x87002018
+const seg_table = koff + 0x87002020
+const handoff_arga = koff + 0x870020e0
+const handoff_argb = koff + 0x870020e8
+const proc_arga = koff + 0x870021b0
+const proc_argb = koff + 0x870021b8
+const handoff_caller = koff + 0x87002110
+
+// The write's staging page (T6.2): the gate copies the caller's buffer
+// here, inside the same trap that checked it, and the console service
+// prints from the copy on the kernel's own table. The page's free tail
+// past the fixed cells is the staging area; a write longer than it is
+// refused (reason 4) before anything is copied.
+const stage_buf = koff + 0x870021d0
+const stage_cap = 2048
+
+// The filesystem's pages (T7.2, docs/fs.md): the service's pid cell —
+// zero while no instance is parked, and the gate stashes then — and
+// the four request slots the gate fills: busy, the caller's pid, the
+// name's length, the write's length or the read's and the list's
+// capacity, the caller's buffer, the name at 64, the bytes at 256. The
+// slot's index rides the route above the op (op + 16 × slot), so the
+// request word the service decodes names it.
+const fs_pid_cell = koff + 0x87005000
+const fs_slots = koff + 0x87005100
+const fs_slot_size = 2304
+const fs_slot_count = 4
+const name_max = 24
+
+// The refusal reasons, part of the ABI.
+const reason_unknown = 1
+const reason_range = 2
+const reason_permission = 3
+const reason_argument = 4
+const reason_resource = 5
+
+// The routes: -(1000 + op). The shim decodes the op, posts to the
+// service (1 and 2 are the console's; 0, 3 and 4 the process
+// service's; 6 to 9 the filesystem's, the request slot's index riding
+// above the op), and parks the caller. -103 is the root's exit: the
+// machine ends at the shim, no service involved. -104 is the heap's
+// death: the caller's own allocator reported its arena exhausted (the
+// user image's verb 5 — the runtime issues it, though nothing stops a
+// program from saying it of itself), and the shim ends the caller the
+// fault route ends a user program: the loud report, the slot done,
+// the machine continuing.
+const route_process_exit = -1000
+const route_console_write = -1001
+const route_console_read = -1002
+const route_process_spawn = -1003
+const route_process_wait = -1004
+const route_poweroff = -103
+const route_heap_gone = -104
+
+// The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
+const flag_w = 2
+
+// One segment covers the whole range? The subtraction form cannot
+// overflow: both operands are non-negative and endp >= start.
+def covers(start Int64, endp Int64, buf Int64, len Int64) Bool {
+  if buf < start {
+    return false
+  }
+  if len > (endp - buf) {
+    return false
+  }
+  return true
+}
+
+// The write's pointer checks: the whole range inside one segment, and
+// that segment writable. The answer is 0, or the refusal's reason —
+// permission when a segment covers the range but cannot be written,
+// range when none does.
+def check_write(buf Int64, len Int64) Int64 {
+  if len < 0 {
+    return reason_argument
+  }
+  var covered = false
+  var i = 0
+  var n = peek64(seg_count_addr)
+  while i < n {
+    var slot = seg_table + (i * 24)
+    if covers(peek64(slot), peek64(slot + 8), buf, len) {
+      if (peek64(slot + 16) & flag_w) != 0 {
+        return 0
+      }
+      covered = true
+    }
+    i = i + 1
+  }
+  if covered {
+    return reason_permission
+  }
+  return reason_range
+}
+
+// One byte from the caller's buffer into the kernel's staging, the
+// whole range at once: the check above has already bounded it inside
+// one writable segment, and this runs in that same trap, on the
+// caller's own table with SUM — one volatile byte load and store per
+// step, nothing allocated, nothing deferred to a context that cannot
+// see the caller's memory (T6.2). The console's write stages on the
+// handoff page; the filesystem's requests stage in their slots.
+def copy_to(dst Int64, buf Int64, len Int64) Void {
+  var i = 0
+  while i < len {
+    poke8(dst + i, peek8(buf + i))
+    i = i + 1
+  }
+}
+
+// The first free request slot of the filesystem's four, or -1 when
+// every one holds a parked caller — the fifth caller's refusal.
+def fs_slot_pick() Int64 {
+  var k = 0
+  while k < fs_slot_count {
+    if peek64(fs_slots + k * fs_slot_size) == 0 {
+      return k
+    }
+    k = k + 1
+  }
+  return -1
+}
+
+// A filesystem request's slot, filled and busy: the caller's pid (the
+// supervisor refuses it by this at a restart), the lengths, the
+// caller's buffer, the name copied in; the answer is the slot's base.
+def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
+  var s = fs_slots + k * fs_slot_size
+  poke64(s, 1)
+  poke64(s + 8, peek64(handoff_caller))
+  poke64(s + 16, nlen)
+  poke64(s + 24, len)
+  poke64(s + 32, buf)
+  copy_to(s + 64, name, nlen)
+  return s
+}
+
+// The filesystem verbs (T7.2): every pointer argument inside one
+// writable segment of the caller's, the name's length and the write's
+// length within the format's bounds, a slot free; then the name and
+// the write's bytes are copied into the slot inside this trap, and
+// the route carries the slot's index. A zero pid cell is the gap
+// between an instance's death and the next one's parking: the request
+// is not refused but set aside — its word goes into the stash the next
+// instance serves first, and the shim parks the caller without
+// posting — so a client that asks during a restart waits for the
+// restart instead of spinning on refusals (a cooperative kernel: a
+// client that retries without parking would starve the instance it
+// waits for).
+def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  var has_name = n != 8
+  var has_buf = n != 9
+  if has_name {
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    var vn = check_write(r0, r1)
+    if vn != 0 {
+      return -vn
+    }
+  }
+  var buf = r2
+  var len = r3
+  if n == 8 {
+    buf = r0
+    len = r1
+  }
+  if has_buf {
+    if len < 0 || (n == 6 && len > stage_cap) {
+      return -reason_argument
+    }
+    var vb = check_write(buf, len)
+    if vb != 0 {
+      return -vb
+    }
+  }
+  var k = fs_slot_pick()
+  if k < 0 {
+    return -reason_resource
+  }
+  var s = 0
+  if has_name {
+    s = fs_slot_fill(k, r0, r1, len, buf)
+  } else {
+    s = fs_slot_fill(k, 0, 0, len, buf)
+  }
+  if n == 6 {
+    copy_to(s + 256, buf, len)
+  }
+  var op = n + 16 * k
+  if peek64(fs_pid_cell) == 0 {
+    fs.stash_push((op << 32) | peek64(handoff_caller))
+  }
+  return -(1000 + op)
+}
+
+// The dispatch: the gate answers what needs no service, routes what
+// the services own, refuses everything else by name.
+def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64) Int64 {
+  if n == 1 {
+    if r1 > stage_cap {
+      return -reason_argument
+    }
+    var verdict = check_write(r0, r1)
+    if verdict != 0 {
+      return -verdict
+    }
+    copy_to(stage_buf, r0, r1)
+    poke64(handoff_arga, stage_buf)
+    poke64(handoff_argb, r1)
+    return route_console_write
+  }
+  if n >= 6 && n <= 9 {
+    return fs_dispatch(n, r0, r1, r2, r3)
+  }
+  if n == 2 {
+    return route_console_read
+  }
+  if n == 3 {
+    return route_process_spawn
+  }
+  if n == 4 {
+    var me = peek64(handoff_caller)
+    if r0 < 2 || r0 == me {
+      return -reason_argument
+    }
+    poke64(proc_arga, r0)
+    return route_process_wait
+  }
+  if n == 0 {
+    var me = peek64(handoff_caller)
+    if me == 1 {
+      return route_poweroff
+    }
+    poke64(proc_arga, r0)
+    poke64(proc_argb, me)
+    return route_process_exit
+  }
+  if n == 5 {
+    return route_heap_gone
+  }
+  return -reason_unknown
+}

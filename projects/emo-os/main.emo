@@ -1,1 +1,852 @@
+// The EmoOS kernel (T3.7 console, T4.4 services): the interrupt-driven
+// console — the UART's receive line rides the PLIC into the trap shim,
+// which fills the input ring at its fixed address and wakes the console
+// service; the kernel's own printing stays the polled 16550A path
+// through the runtime's console hook; SBI keeps poweroff. T4.4 adds
+// the two processes the gate routes to while a user program runs: the
+// console service (read/write) and the process service
+// (spawn/exit/wait). T5.3 puts every spawned pass's stack and arena on
+// the frame allocator (frames.emo) — the free RAM above this image in
+// 64 KiB blocks, taken at the spawn, given back at the death. T6.1
+// moves the kernel into Sv39's high half: every address the kernel
+// reaches is the physical one plus koff, and the program's first lines
+// check the live satp against the table sv39.emo built. T6.2 gives
+// every user pass its own table (space.emo, built at the spawn): its
+// image's segments with U, its own stack and arena, the cells page —
+// and the kernel's whole high half mapped without U — so a pass's
+// world is its own pages and the gate's copy-in (the write verb's
+// staging buffer) is what crosses; the services on the kernel's own
+// table read nothing of the caller's memory. T7.1 adds the block
+// driver, a process that owns the virtio-blk queue; T7.2 the
+// filesystem service above it (fs.emo, the design in docs/fs.md) and
+// the supervisor that owns the service's life — the cache block, the
+// spawn, the restart on the death notice the runtime's death hook
+// posts, the parked clients refused at the restart.
+//
+//   emo build main.emo --target riscv64
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The registers the polled transmit path touches, byte-wide: the
+// transmit holding register at 0, the interrupt-enable register at 1,
+// the FIFO control at 2, the line control at 3, the line-status
+// register at 5 — bit 5 says the transmitter is empty (safe to
+// write), bit 0 says a received byte is waiting.
+const uart = koff + 0x10000000
+
+// The input ring (T3.7): the trap shim fills it from the UART's FIFO —
+// the producer cursor, the consumer cursor, then 128 one-byte entries,
+// at the fixed addresses the kernel's linker script gives the section.
+// The trap shim is the only producer; the console service is the only
+// consumer; a full ring leaves the bytes in the FIFO and the line
+// re-raises.
+const in_prod = koff + 0x87001000
+const in_cons = koff + 0x87001008
+const in_ring = koff + 0x87001010
+
+// The tick ring (T3.6): the trap shim counts every timer interrupt
+// into it — the producer cursor, the consumer cursor, the dropped
+// count, then 64 entries.
+const tick_ring = koff + 0x87000000
+
+// The handoff cells the services read and the boot flow fills (T4.4):
+// the services' raw pids (the gate posts by number), the request cells
+// the gate fills — one pair per service, since a console transaction
+// and a process transaction can sit parked at the same time — and the
+// process service's exit table. A spawned pass's stack is a block of
+// the frame allocator (frames.emo, T5.3), taken by the process service
+// and given back by the runtime's reaper at the death. The user
+// program cell is the user image's own, at the top of its window: a
+// user address, read through the identity alias.
+const console_svc_cell = koff + 0x870020f0
+const process_svc_cell = koff + 0x870020f8
+const handoff_arga = koff + 0x870020e0
+const handoff_argb = koff + 0x870020e8
+const proc_arga = koff + 0x870021b0
+const proc_argb = koff + 0x870021b8
+const user_program_cell = 0x87fff000
+const exit_count = koff + 0x87002118
+const exit_pids = koff + 0x87002120
+const exit_codes = koff + 0x87002160
+const pending_flag = koff + 0x870021a0
+const pending_target = koff + 0x870021a8
+
+// The block device (T7.1): the virtio-mmio transports — eight slots
+// on this board, a 4 KiB register page each; the driver scans them for
+// the block device (QEMU's `-device virtio-blk-device` lands on an
+// mmio bus; the slot depends on the bus enumeration, so the scan is
+// the driver's own discipline, the FDT walk's shape). IRQ 1..8 stay
+// unwired: the completion wait is polled (the console's
+// pre-interrupt discipline); the interrupt-driven wait is a later
+// piece — nothing in the filesystem's work (T7.2) demanded it.
+const virtio_base = koff + 0x10001000
+const pending_waiter = koff + 0x870021c0
+const block = 65536
+
+// The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
+// the gate routes by — cleared by the death notice the moment the
+// service dies, parked again by the supervisor when the next instance
+// has announced — and the supervisor's own pid cell the death notice
+// posts to.
+const fs_pid_cell = koff + 0x87005000
+const supervisor_cell = koff + 0x87005008
+const notice_op = 256
+
+// The Sv39 page (T6.1): the root table's kernel address, written by
+// sv39.emo's boot, and the satp the stub read back from the switch.
+const sv39_root = koff + 0x87004000
+const sv39_satp = koff + 0x87004008
+
+// The gate's verbs, as the services see them: the request word rides
+// op << 32 with the caller's pid number beside it — a magnitude no pid
+// word reaches, so the console service tells the gate's requests from
+// the boot demo's readers by size alone. The decode lives in a typed
+// def: the mailbox word arrives untyped, and comparisons on it are the
+// dynamic operator the target refuses. The low half is the reply's
+// addressee: gate_reply takes it beside the answer.
+
+def op_of(w Int64) Int64 {
+  return w >> 32
+}
+
+def caller_of(w Int64) Int64 {
+  return w & 4294967295
+}
+
+def console_put_byte(b Int64) Void {
+  while (peek8(uart + 5).to_int64() & 32) == 0 {
+  }
+  poke8(uart, b.to_byte())
+}
+
+// The supervisor's fault report (T4.6): a user fault kills the
+// offender, and the shim announces it — who, why, where, and (T6.4)
+// the address the hardware refused — through this def on the kernel's
+// trap stack (the gate's precedent: typed Emo inside the trap, zero
+// allocation, the polled console). The pid and the cause print
+// decimal, the epc and stval hex.
+def fault_digit(n Int64) Void {
+  if n < 10 {
+    console_put_byte(48 + n)
+  } else {
+    console_put_byte(87 + n)
+  }
+}
+
+// Hex from the top down, leading zeros skipped, the 64-bit pattern
+// unsigned-faithful (T6.5): a kernel address is negative as an Int64
+// and its hex is the pattern the hardware put in stval or satp, not
+// its sign — the arithmetic shift keeps the low nibble true at every
+// depth, and the sign bits are the top digits.
+def fault_hex_walk(n Int64, shift Int64, started Int64) Void {
+  if shift >= 0 {
+    var d = (n >> shift) & 15
+    var st = started
+    if d != 0 || st != 0 || shift == 0 {
+      fault_digit(d)
+      st = 1
+    }
+    fault_hex_walk(n, shift - 4, st)
+  }
+}
+
+def fault_hex(n Int64) Void {
+  fault_hex_walk(n, 60, 0)
+}
+
+def fault_dec(n Int64) Void {
+  if n >= 10 {
+    fault_dec(n / 10)
+  }
+  console_put_byte(48 + (n % 10))
+}
+
+def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(102) // f
+  console_put_byte(97)  // a
+  console_put_byte(117) // u
+  console_put_byte(108) // l
+  console_put_byte(116) // t
+  console_put_byte(32)  // space
+  fault_dec(pid)
+  console_put_byte(32)  // space
+  console_put_byte(99)  // c
+  console_put_byte(97)  // a
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(32)  // space
+  fault_dec(cause)
+  console_put_byte(32)  // space
+  console_put_byte(97)  // a
+  console_put_byte(116) // t
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(epc)
+  // stval (T6.4): the address the hardware refused — for a page fault
+  // the page the walk never reached; for the other exceptions whatever
+  // the hardware recorded (an illegal instruction's bits, or zero).
+  // The kill is the whole handling: nothing inspects the address to
+  // fill a mapping — demand paging is out of scope by decision.
+  console_put_byte(32)  // space
+  console_put_byte(97)  // a
+  console_put_byte(100) // d
+  console_put_byte(100) // d
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(addr)
+  console_put_byte(10)
+}
+
+// The heap's death report (T5.1): a user pass whose own arena ran dry
+// — announced by the user image's allocator through the gate (verb 5),
+// printed by the supervisor on the offender's own stack, zero
+// allocation. The shim ends the pass after this returns; the machine
+// continues.
+def heap_report(pid Int64) Void {
+  console_put_byte(117) // u
+  console_put_byte(115) // s
+  console_put_byte(101) // e
+  console_put_byte(114) // r
+  console_put_byte(32)  // space
+  console_put_byte(104) // h
+  console_put_byte(101) // e
+  console_put_byte(97)  // a
+  console_put_byte(112) // p
+  console_put_byte(32)  // space
+  fault_dec(pid)
+  console_put_byte(32)  // space
+  console_put_byte(103) // g
+  console_put_byte(111) // o
+  console_put_byte(110) // n
+  console_put_byte(101) // e
+  console_put_byte(10)
+}
+
+def uart_init() Void {
+  poke8(uart + 3, 128B)
+  poke8(uart + 0, 3B)
+  poke8(uart + 1, 0B)
+  poke8(uart + 3, 3B)
+  poke8(uart + 2, 7B)
+  poke8(uart + 1, 1B)
+}
+
+// The live table (T6.1): the satp the stub read back from the switch
+// must say Sv39 (mode 8) and name the root sv39.emo built, or the
+// kernel is running on some other table and ends here. The line is the
+// proof on the serial that the kernel runs paged on its own table; the
+// root prints physical, as satp holds it.
+def sv39_report() Void {
+  var live = peek64(sv39_satp)
+  var mode = (live >> 60) & 15
+  var root = (live & 0xFFFFFFFFFFF) << 12
+  if mode != 8 || root != sv39.pa_of(peek64(sv39_root)) {
+    println("sv39: the live table is not the kernel's")
+    halt()
+  }
+  console_put_byte(115) // s
+  console_put_byte(118) // v
+  console_put_byte(51)  // 3
+  console_put_byte(57)  // 9
+  console_put_byte(32)  // space
+  fault_dec(mode)
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(root)
+  console_put_byte(10)
+}
+
+// The DMA proof (T6.5): the machine's last act beside its account —
+// after everything this boot took, split, and gave back, the allocator
+// still answers one whole 64 KiB block, block-aligned, and the range
+// is one piece of writable RAM: a distinct word lands in each of the
+// block's sixteen frames and every one reads back. That range is what
+// a DMA consumer (M6's virtio-blk) needs and what the allocator's
+// block unit promises — a device's buffer comes from `take`, never
+// from sixteen `frame_take`s: the frames the page tables split never
+// rejoin a block (T6.1). The check runs in the exit route's trap (the
+// fault report's discipline): typed Emo, raw words, zero allocation —
+// `take` and `give` are the allocator's own account, and the check's
+// pair rides the ledger the account prints right after.
+def dma_report() Void {
+  var b = frames.take()
+  if b == 0 || (b & 65535) != 0 {
+    println("dma: no block for the check")
+    halt()
+  }
+  var i = 0
+  while i < 16 {
+    poke64(b + i * 4096, 0x646D6100 + i)
+    i = i + 1
+  }
+  i = 0
+  while i < 16 {
+    if peek64(b + i * 4096) != 0x646D6100 + i {
+      println("dma: the block is not one range of RAM")
+      halt()
+    }
+    i = i + 1
+  }
+  frames.give(b)
+  console_put_byte(100) // d
+  console_put_byte(109) // m
+  console_put_byte(97)  // a
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(b)
+  console_put_byte(32)  // space
+  console_put_byte(111) // o
+  console_put_byte(107) // k
+  console_put_byte(10)
+}
+
+// One byte from the input ring: sleep until the device world has one,
+// then hand it over. The console service's read half and the boot
+// demo's readers all land here.
+def take_byte() Int64 {
+  if peek64(in_cons) == peek64(in_prod) {
+    device_wait()
+  }
+  var cons = peek64(in_cons)
+  var b = peek8(in_ring + (cons % 128)).to_int64()
+  poke64(in_cons, cons + 1)
+  return b
+}
+
+// The console service (T3.7/T4.4): the byte channel's one process.
+// The gate's write verb prints its buffer through the polled driver
+// and answers the count; the gate's read verb answers the next byte,
+// sleeping in the device-wait while the ring is empty; the boot
+// demo's readers speak the older protocol — a bare pid — and get the
+// byte by mailbox. The kinds separate by magnitude: a gate request
+// rides op << 32, a pid word never reaches that high. The announce
+// goes to the boss, whose pid is passed — a `do` bound to a value is
+// a lowering this tree does not trust (T3.7's note).
+def console_service(boss Pid) Void {
+  boss <- self_pid()
+  while true {
+    receive {
+      w -> {
+        var op = op_of(w)
+        if op == 1 {
+          var buf = peek64(handoff_arga)
+          var len = peek64(handoff_argb)
+          var i = 0
+          while i < len {
+            console_put_byte(peek8(buf + i).to_int64())
+            i = i + 1
+          }
+          gate_reply(caller_of(w), len)
+        } else {
+          if op == 2 {
+            gate_reply(caller_of(w), take_byte())
+          } else {
+            var b = take_byte()
+            w <- b
+          }
+        }
+      }
+    }
+  }
+}
+
+// The process service (T4.4): spawn takes a block from the frame
+// allocator for the child's stack (T5.3) and starts a new process at
+// the image's program — the runtime takes the arena block itself, so a
+// pass costs two blocks, and a spawn the allocator cannot back is
+// refused (−5) before anything is taken; the pass runs on the identity
+// alias of its block (T6.1), so the top it receives is the physical
+// one; wait answers from the exit table or parks the loop holding the
+// request; exit records itself and answers a waiting parent. One gate
+// transaction runs at a time, so the one pending-wait pair of cells is
+// the whole of the waiting bookkeeping; the request's arguments live in
+// this service's own cells (proc_arga/proc_argb), not the console's.
+def process_service(boss Pid) Void {
+  boss <- self_pid()
+  while true {
+    receive {
+      w -> {
+        var op = op_of(w)
+        if op == 3 {
+          if frames.spare() < 2 {
+            gate_reply(caller_of(w), -5)
+          } else {
+            var stack = frames.take()
+            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block))
+          }
+        } else {
+          if op == 4 {
+            var n0 = peek64(exit_count)
+            var i0 = 0
+            var hit = -1
+            while i0 < n0 {
+              if peek64(exit_pids + (i0 * 8)) == peek64(proc_arga) {
+                hit = i0
+              }
+              i0 = i0 + 1
+            }
+            if hit >= 0 {
+              gate_reply(caller_of(w), peek64(exit_codes + (hit * 8)))
+            } else {
+              poke64(pending_waiter, caller_of(w))
+              poke64(pending_target, peek64(proc_arga))
+              poke64(pending_flag, 1)
+            }
+          } else {
+            var pid = peek64(proc_argb)
+            var code = peek64(proc_arga)
+            var n = peek64(exit_count)
+            if n < 8 {
+              poke64(exit_pids + (n * 8), pid)
+              poke64(exit_codes + (n * 8), code)
+              poke64(exit_count, n + 1)
+            }
+            if peek64(pending_flag) == 1 {
+              if peek64(pending_target) == pid {
+                poke64(pending_flag, 0)
+                gate_reply(peek64(pending_waiter), code)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A 32-bit MMIO write (T7.1): `poke32` — the byte lane cannot compose
+// one (each byte offset is its own register access, and unmapped
+// offsets fault the device, the trace proved it), and a 64-bit poke
+// would touch the neighbor register. The address pairs
+// (Desc/Avail/Used Low then High) are the exception: both halves are
+// plain address registers, one 64-bit poke each, ascending.
+def mmio32(a Int64, v Int64) Void {
+  poke32(a, v)
+}
+
+def mmio32r(a Int64) Int64 {
+  return peek32(a)
+}
+
+// A little-endian 16-bit read of queue memory, two bytes — the rings'
+// indices are u16.
+def peek16r(a Int64) Int64 {
+  return peek8(a).to_int64() + (peek8(a + 1).to_int64() << 8)
+}
+
+def blk_zero(a Int64, words Int64) Void {
+  var i = 0
+  while i < words {
+    poke64(a + i * 8, 0)
+    i = i + 1
+  }
+}
+
+// One request through the queue (T7.1): the header (type, sector), the
+// three chained descriptors — header device-read, data (WRITE for a
+// read: the device fills it), status device-written — the avail ring's
+// index, the doorbell after a fence, and the polled completion. The
+// header and the status ride the queue block; the data descriptor
+// names the client's buffer (T7.2) — `buf` is its kernel address, one
+// contiguous range the client answers for (the filesystem's cache
+// block, the DMA discipline T6.5 pinned) and the device sees its
+// physical address. One request at a time — the serial service's
+// discipline, descriptors 0..2 reused. Op 3 writes the sector from
+// the buffer, op 4 reads it into the buffer; the answer is the sector
+// number, the echo the client checks.
+def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
+  var hdr = q + 0x3000
+  var stat = q + 0x3400
+  var ty = 0
+  if op == 3 {
+    ty = 1
+  }
+  poke64(hdr, ty)
+  poke64(hdr + 8, sector)
+  poke8(stat, 255B)
+  var dflags = 1
+  if ty == 0 {
+    dflags = 3
+  }
+  poke64(q, sv39.pa_of(hdr))
+  poke64(q + 8, 16 | (1 << 32) | (1 << 48))
+  poke64(q + 16, sv39.pa_of(buf))
+  poke64(q + 24, 512 | (dflags << 32) | (2 << 48))
+  poke64(q + 32, sv39.pa_of(stat))
+  poke64(q + 40, 1 | (2 << 32))
+  var avail = q + 0x1000
+  var nidx = peek16r(avail + 2) + 1
+  poke64(avail, nidx << 16)
+  fence()
+  mmio32(dev + 0x050, 0)
+  var used = q + 0x2000
+  var spins = 0
+  var seen = peek16r(used + 2)
+  while seen != nidx {
+    spins = spins + 1
+    if spins > 10000000 {
+      println("blk: the device never answered")
+      halt()
+    }
+    seen = peek16r(used + 2)
+  }
+  if peek8(stat).to_int64() != 0 {
+    println("blk: the device refused the request")
+    halt()
+  }
+  return sector
+}
+
+// The block device's driver (T7.1), a process like the services: it
+// owns the queue — one 64 KiB block from the frame allocator, held for
+// the service's life like the services' arenas — and answers requests
+// from its mailbox. A request is a tuple (T7.2): the word packs
+// op << 32 | sector (3 write a sector from a buffer, 4 read a sector
+// into a buffer, 5 the capacity), the requester's Pid rides beside it
+// — the reply goes to the requester, whoever it is — and the third
+// element is the buffer's kernel address. T7.1's word-in-a-sector
+// self-test is retired: the filesystem's mount is the sector proof
+// now, and a self-test that wrote into the name table's sectors would
+// be the corruption it was meant to rule out. The completion wait is
+// the console's pre-interrupt poll (T3.5's shape): the
+// interrupt-driven wait needs a park that checks a condition cell
+// inside the scheduler's masked region, a runtime piece a later
+// consumer earns; the poll is bounded, and the loud end answers a
+// silent device.
+def blk_service(boss Pid) Void {
+  // The slot scan: a transport answers with the magic and the version
+  // whether or not a device rides it; a block device is DeviceID 2.
+  var dev = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 2 {
+        dev = cand
+      }
+    }
+    slot = slot + 1
+  }
+  if dev == 0 {
+    println("blk: no block device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("blk: no block for the queue")
+    halt()
+  }
+  blk_zero(q, 16)
+  blk_zero(q + 0x1000, 3)
+  blk_zero(q + 0x2000, 9)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("blk: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 8 {
+    println("blk: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 8)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  var cap = peek64(dev + 0x100)
+  println("blk ${cap} ready")
+  boss <- self_pid()
+  var from = boss
+  while true {
+    var w = 0
+    var d = 0
+    receive {
+      (x, f, y) -> {
+        w = x
+        from = f
+        d = y
+      }
+    }
+    var op = w >> 32
+    var sector = w & 0xFFFFFFFF
+    if op == 5 {
+      from <- cap
+    } else {
+      from <- blk_submit(dev, q, op, sector, d)
+    }
+  }
+}
+
+// The supervisor (T7.2, docs/fs.md): the filesystem service's owner.
+// It takes the service's cache block from the frame allocator once —
+// the block outlives the instances, each one overwrites it from the
+// disk and trusts nothing it held — spawns the service into it, parks
+// the instance's pid in the cell the gate routes by, and forwards the
+// Pid to the boss. The runtime's death hook tells it when an instance
+// died (the notice's op is 256, a height no gate verb reaches, the
+// dead pid beside it); the notice named the current instance, it
+// refuses every client the dead one left parked (fs.abandon), spawns
+// the next, and forwards the new Pid. The pid cell is zero between
+// the death and the parking — the death notice cleared it inside the
+// death's own masked region — and the gate sets aside what arrives in
+// the gap, into the stash the next instance serves first.
+def fs_run(boss Pid, blk Pid, cache Int64) Void {
+  fs.service(boss, blk, cache)
+}
+
+// One Pid from the mailbox, raw words set aside: the supervisor's
+// mailbox holds its instances' announces (a Pid, negative as every
+// pointer is) and the death notices (a positive raw word); the loop
+// runs until a Pid exists.
+def wait_pid() Pid {
+  var got = self_pid()
+  var done = false
+  while !done {
+    receive {
+      x -> {
+        if op_of(x) < 0 {
+          got = x
+          done = true
+        }
+      }
+    }
+  }
+  return got
+}
+
+def supervisor(boss Pid, blk Pid) Void {
+  var me = self_pid()
+  poke64(supervisor_cell, pid_num(me))
+  var cache = frames.take()
+  if cache == 0 {
+    println("fs: no block for the cache")
+    halt()
+  }
+  var fs_boss = me
+  do fs_run(fs_boss, blk, cache)
+  var inst = wait_pid()
+  poke64(fs_pid_cell, pid_num(inst))
+  boss <- inst
+  while true {
+    receive {
+      w -> {
+        if op_of(w) == notice_op {
+          if caller_of(w) == pid_num(inst) {
+            poke64(fs_pid_cell, 0)
+            fs.abandon()
+            do fs_run(fs_boss, blk, cache)
+            inst = wait_pid()
+            poke64(fs_pid_cell, pid_num(inst))
+            boss <- inst
+          }
+        }
+      }
+    }
+  }
+}
+
+// The kernel side of the filesystem (T7.2): a six-tuple per request —
+// (op, from, name, name_len, buf, len) — the addresses kernel ones,
+// the answer a message to `from`. The root uses it once at boot, to
+// drive the restart the chain pins: a file written through the first
+// instance, the stop (op 0, a death the supervisor restarts), the
+// file read back through the instance the supervisor produced. The
+// root's words and names live in a block of their own, given back
+// when the proof is done.
+
+def put_boot_name(a Int64) Void {
+  poke8(a, 98B)      // b
+  poke8(a + 1, 111B) // o
+  poke8(a + 2, 111B) // o
+  poke8(a + 3, 116B) // t
+  poke8(a + 4, 46B)  // .
+  poke8(a + 5, 116B) // t
+  poke8(a + 6, 120B) // x
+  poke8(a + 7, 116B) // t
+}
+
+def put_boot_text(a Int64) Int64 {
+  poke8(a, 69B)      // E
+  poke8(a + 1, 109B) // m
+  poke8(a + 2, 111B) // o
+  poke8(a + 3, 79B)  // O
+  poke8(a + 4, 83B)  // S
+  poke8(a + 5, 32B)  // space
+  poke8(a + 6, 98B)  // b
+  poke8(a + 7, 111B) // o
+  poke8(a + 8, 111B) // o
+  poke8(a + 9, 116B) // t
+  poke8(a + 10, 115B) // s
+  poke8(a + 11, 32B) // space
+  poke8(a + 12, 102B) // f
+  poke8(a + 13, 114B) // r
+  poke8(a + 14, 111B) // o
+  poke8(a + 15, 109B) // m
+  poke8(a + 16, 32B) // space
+  poke8(a + 17, 100B) // d
+  poke8(a + 18, 105B) // i
+  poke8(a + 19, 115B) // s
+  poke8(a + 20, 107B) // k
+  return 21
+}
+
+def same_bytes(a Int64, b Int64, n Int64) Bool {
+  var i = 0
+  while i < n {
+    if peek8(a + i) != peek8(b + i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+// A reader's byte: ask, then block on the answer. The request is a
+// send, the wait an ordinary receive — the mailbox is the wait queue,
+// and a byte delivered before the park is found by the scan.
+def read_byte(console Pid) Int64 {
+
+  console <- self_pid()
+  var b = 0
+  receive {
+    got -> { b = got }
+  }
+  return b
+}
+
+def reader(console Pid, boss Pid, id Int64) Void {
+  var b = read_byte(console)
+  println("${id}:${b}")
+  boss <- 1
+}
+
+// Ticks so far: everything the shim counted, captured or dropped.
+def ticks() Int64 {
+  return peek64(tick_ring) + peek64(tick_ring + 16)
+}
+
+// The tick's proof under load: a long raw computation — its checksum
+// is the register-file pin, because the timer fires mid-loop over and
+// over and any mis-restored register bends the sum.
+def sweep(n Int64) Int64 {
+  var sum = 0
+  var i = 0
+  while i < n {
+    sum = sum + i
+    i = i + 1
+  }
+  return sum
+}
+
+def tick_proof() Void {
+  var t0 = ticks()
+  println(sweep(100000000))
+  println(ticks() > t0)
+}
+
+// The services come up first (T4.4): they answer the gate while a
+// user program runs. Each announces its pid to the boss; the root
+// consumes the announces before any console request goes out — a
+// request answered by mailbox and a stray announce are the same shape
+// to a receive — and parks the raw numbers into the handoff cells the
+// shim posts by. The filesystem (T7.2) comes up through its
+// supervisor, which forwards the service's Pid: the mount lines are
+// on the wire before the root's first console request.
+var me = self_pid()
+var console_svc = me
+var blk_svc = me
+var fs_svc = me
+do console_service(me)
+do process_service(me)
+do blk_service(me)
+uart_init()
 println("Hello, EmoOS!")
+sv39_report()
+tick_proof()
+receive { c1 -> {
+  poke64(console_svc_cell, pid_num(c1))
+  console_svc = c1
+} }
+receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
+receive { c3 -> { blk_svc = c3 } }
+do supervisor(me, blk_svc)
+receive { f1 -> { fs_svc = f1 } }
+do reader(console_svc, me, 1)
+do reader(console_svc, me, 2)
+do reader(console_svc, me, 3)
+do reader(console_svc, me, 4)
+var root_b = read_byte(console_svc)
+println("0:${root_b}")
+receive { done1 -> {} }
+receive { done2 -> {} }
+receive { done3 -> {} }
+receive { done4 -> {} }
+
+// The restart proof (T7.2, docs/fs.md): a file written through the
+// first instance of the filesystem service, the stop — a death the
+// supervisor is told of by the runtime's death hook and answers with
+// the next instance, whose mount line counts the file — and the file
+// read back through that instance, byte for byte: the mount table
+// found on the disk, the cache rebuilt from it. The root's words live
+// in a block of their own, given back when the proof is done.
+var scratch = frames.take()
+if scratch == 0 {
+  println("fs: no block for the proof")
+  halt()
+}
+put_boot_name(scratch)
+var boot_len = put_boot_text(scratch + 64)
+fs_svc <- (6, me, scratch, 8, scratch + 64, boot_len)
+receive {
+  wrote -> {
+    if wrote != boot_len {
+      println("fs: the write answered ${wrote}, not ${boot_len}")
+      halt()
+    }
+  }
+}
+fs_svc <- (0, me, 0, 0, 0, 0)
+receive { f2 -> { fs_svc = f2 } }
+fs_svc <- (7, me, scratch, 8, scratch + 1024, 2048)
+receive {
+  got -> {
+    if got != boot_len {
+      println("fs: the read answered ${got}, not ${boot_len}")
+      halt()
+    }
+  }
+}
+if !same_bytes(scratch + 64, scratch + 1024, boot_len) {
+  println("fs: the file came back wrong")
+  halt()
+}
+frames.give(scratch)
+println("fs restart ok")
+
+// The kernel's program is done: stage the user image (T4.1). The boot
+// stub reads the staged entry once this returns, srets into U-mode,
+// and the user program runs — its own greeting is the proof on the
+// serial line. A refusal already said why; the entry word stays zero
+// and the stub powers the machine off.
+var staged = user.stage()
+if staged > 0 {
+  println("user: staged ${staged}")
+}

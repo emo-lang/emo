@@ -115,6 +115,17 @@ class EBox {
   }
 }
 
+// The Atomic cell — Box's synchronized sibling (CHECK.md, the atomic
+// memory model). Every Emo process here cooperates on one event loop and
+// switches only at defined points, so the exact no-op is a correct
+// lowering: the reads and writes are plain field access.
+class EAtomic {
+  v: any;
+  constructor(v: any) {
+    this.v = v;
+  }
+}
+
 class EBytes {
   data: Uint8Array;
   constructor(n: number) {
@@ -274,6 +285,9 @@ class EPid {
 // identity the boundary deliberately shares).
 function deepCopy(v: any): any {
   if (v instanceof EBox) return new EBox(deepCopy(v.v));
+  // The one declared exception: an Atomic copies as the handle to the
+  // same cell — every operation on it is synchronized.
+  if (v instanceof EAtomic) return v;
   if (v instanceof EBytes) {
     const copy = new EBytes(v.data.length);
     copy.data.set(v.data);
@@ -576,6 +590,8 @@ function deepEq(a: any, b: any): boolean {
     if (a.items.length !== b.items.length) return false;
     return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
   }
+  if (a instanceof EAtomic && b instanceof EAtomic)
+    return deepEq(a.v, b.v); // the values the cells hold now
   if (
     a &&
     b &&
@@ -601,6 +617,7 @@ function toStr(v: any): string {
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
     const items: string[] = [];
@@ -677,6 +694,7 @@ function toStrP(v: any): string | Promise<string> {
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStrP(v.v);
+  if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
     const items: (string | Promise<string>)[] = [];
@@ -1235,6 +1253,7 @@ function tag(v: any): string {
   if (v instanceof EMap) return "Map";
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
+  if (v instanceof EAtomic) return "Atomic";
   if (v instanceof EBytes) return "Bytes";
   if (v instanceof EList) return "List";
   if (v instanceof EBuilder) return "ArrayBuilder";
@@ -1267,6 +1286,8 @@ const E: any = {
   tuple: (...items: any[]) => new ETuple(items),
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
+  atomic: (v: any) => new EAtomic(v),
+  fence: (): void => {},
   bytesNew: (n: any) => {
     const len = num(n);
     if (!Number.isInteger(len) || len < 0)
@@ -1467,6 +1488,57 @@ const E: any = {
       if (name === "replace" && recv instanceof EBox) {
         recv.v = args[0];
         return args[0];
+      }
+      if (name === "load" && recv instanceof EAtomic) return recv.v;
+      if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
+      if (name === "store" && recv instanceof EAtomic) {
+        recv.v = args[0];
+        return undefined;
+      }
+      if (name === "exchange" && recv instanceof EAtomic) {
+        const old = recv.v;
+        recv.v = args[0];
+        return old;
+      }
+      if (name === "compare_exchange" && recv instanceof EAtomic) {
+        // A mismatch is a value, not an error: the pair (Bool, previous).
+        const old = recv.v;
+        const swapped = deepEq(old, args[0]);
+        if (swapped) recv.v = args[1];
+        return new ETuple([swapped, old]);
+      }
+      if (
+        (name === "fetch_add" || name === "fetch_sub" ||
+          name === "fetch_and" || name === "fetch_or" ||
+          name === "fetch_xor") &&
+        recv instanceof EAtomic
+      ) {
+        // The single cooperative context makes the read-compute-write
+        // exact; the checker refuses the rest by name, and the arm
+        // refuses what a gradual call could still reach.
+        const old = recv.v;
+        if (typeof old === "bigint" && typeof args[0] === "bigint") {
+          // the Int64 rule: fetch_add and fetch_sub wrap at 64 bits
+          recv.v = BigInt.asIntN(
+            64,
+            name === "fetch_add" ? old + (args[0] as bigint)
+              : name === "fetch_sub" ? old - (args[0] as bigint)
+              : name === "fetch_and" ? old & (args[0] as bigint)
+              : name === "fetch_or" ? old | (args[0] as bigint)
+              : old ^ (args[0] as bigint),
+          );
+        } else if (typeof old === "boolean" && typeof args[0] === "boolean") {
+          if (name === "fetch_add" || name === "fetch_sub")
+            throw new Error("`" + name + "` expects an Int64");
+          recv.v = name === "fetch_and" ? old && (args[0] as boolean)
+            : name === "fetch_or" ? old || (args[0] as boolean)
+            : old !== (args[0] as boolean);
+        } else {
+          throw new Error(
+            "`" + name + "` expects an Int64 or Bool cell, got " + tag(recv.v),
+          );
+        }
+        return old;
       }
       if (recv instanceof EBytes) {
         const d = recv.data;

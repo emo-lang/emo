@@ -1,0 +1,219 @@
+// The physical frame allocator (T5.3): the kernel's raw memory, managed
+// the way the README decides it — Int64 addresses, peek/poke, bit masks;
+// no value of the language ever points into it. The region is the free
+// RAM between the kernel image's end and the tick ring at 0x87000000,
+// handed out in blocks of 64 KiB — sixteen frames of the architecture's
+// 4 KiB page, the quantum a process's arena and a user process's stack
+// each take. The structure is a freelist: a free block's first word
+// links to the next, the head rides this module's own page, and a
+// claimed bitmap beside it makes a give strict — a base that is not a
+// claimed block of this region is a kernel bug, and the machine ends
+// loudly rather than corrupt the list. Beside the blocks, since T6.1,
+// single frames: the page tables' unit, split off a block sixteen at a
+// time onto their own freelist on the same page.
+//
+// Every address here is a kernel address (T6.1): the kernel lives in
+// Sv39's high half, where every byte of the machine sits at its
+// physical address plus koff, so the region's bounds, the links, and
+// the answers are all high-half aliases — what the kernel's own loads
+// and stores reach. The physical address is the same number without
+// the offset; sv39.emo's leaf entries carry that.
+//
+// Who calls: the runtime's spawn and its reaper, through the block
+// hooks the boot stub parks (every arena a spawn claims and every user
+// process's stack, given back at the death), the process service,
+// which takes each user pass's stack before it spawns, and sv39.emo,
+// which takes a frame for every table it builds. Every def here is
+// fully typed over raw words — a native body, nothing allocated —
+// because the hooks run inside the scheduler's masked regions and the
+// report runs inside the trap.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const page = koff + 0x87003000
+const head = page // the freelist's head: a free block's base, 0 = none
+const free = page + 8 // blocks on the list
+const total = page + 16 // blocks the region holds
+const lo = page + 24 // the region's base, block-aligned
+const hi = page + 32 // the region's end
+const taken = page + 40 // takes so far
+const given = page + 48 // gives so far
+const claimed = page + 64 // the claimed bitmap: one bit per block, eight words
+const frame_head = page + 128 // the frame freelist's head: a free frame, 0 = none
+const frame_free = page + 136 // frames on that list
+const frame_split = page + 144 // blocks split into frames so far
+const block = 65536
+const frame = 4096
+const region_end = koff + 0x87000000
+const uart = koff + 0x10000000
+
+// Build the freelist at boot: the region runs from the image's end
+// (the boot stub passes `__emo_bss_end`, rounded up to a block) to the
+// tick ring's page, pushed top down so the first take answers the
+// lowest block. An image grown past the region leaves an empty
+// allocator — the first spawn is the loud end, the process table's
+// ceiling in memory.
+def boot(bss_end Int64) Void {
+  var p = page
+  while p < page + 4096 {
+    poke64(p, 0)
+    p = p + 8
+  }
+  var base = ((bss_end + block - 1) / block) * block
+  poke64(lo, base)
+  poke64(hi, region_end)
+  var b = region_end - block
+  var n = 0
+  while b >= base {
+    poke64(b, peek64(head))
+    poke64(head, b)
+    b = b - block
+    n = n + 1
+  }
+  poke64(free, n)
+  poke64(total, n)
+}
+
+// The base of a free block, or 0 when the region is spent. O(1): pop
+// the head, claim the block's bit, count both.
+def take() Int64 {
+  var b = peek64(head)
+  if b == 0 {
+    return 0
+  }
+  poke64(head, peek64(b))
+  poke64(free, peek64(free) - 1)
+  poke64(taken, peek64(taken) + 1)
+  var i = (b - peek64(lo)) / block
+  poke64(claimed + ((i / 64) * 8), peek64(claimed + ((i / 64) * 8)) | (1 << (i % 64)))
+  return b
+}
+
+// A block goes home. Strict: the base must be a claimed block of this
+// region — anything else is a kernel bug (a double give, a base the
+// allocator never handed out), and the machine ends loudly rather than
+// link a foreign block into the list.
+//
+// The one translation (T6.1): a user pass runs on the identity alias
+// of its blocks — the kernel's table maps the RAM at its physical
+// addresses for U-mode until the per-process tables (T6.2) — so the
+// reaper names a dead pass's stack by the address the pass ran on, a
+// physical one; a physical base becomes the kernel's here, and the
+// checks below then judge it like any other.
+def give(base Int64) Void {
+  var b = base
+  if b >= 0 {
+    b = b + koff
+  }
+  if b % block != 0 {
+    die()
+  }
+  if b < peek64(lo) {
+    die()
+  }
+  if b >= peek64(hi) {
+    die()
+  }
+  var i = (b - peek64(lo)) / block
+  var w = claimed + ((i / 64) * 8)
+  var bit = 1 << (i % 64)
+  if (peek64(w) & bit) == 0 {
+    die()
+  }
+  poke64(w, peek64(w) ^ bit)
+  poke64(b, peek64(head))
+  poke64(head, b)
+  poke64(free, peek64(free) + 1)
+  poke64(given, peek64(given) + 1)
+}
+
+// How many blocks are free right now — the process service's test that
+// a pass's two blocks (stack and arena) are both there before it
+// spawns, so a spawn the allocator cannot back is a refusal the caller
+// sees, not a machine the allocator ends.
+def spare() Int64 {
+  return peek64(free)
+}
+
+// A single 4 KiB frame — a page table's unit (T6.1) — or 0 when the
+// region is spent. The frame freelist is fed a block at a time: an
+// empty list takes a block through the account above (the block is
+// taken, claimed, and counted like any other) and pushes its sixteen
+// frames; the frame then pops. A block once split stays split — the
+// frames never rejoin it, a bound the page tables' small, long-lived
+// working set accepts.
+def frame_take() Int64 {
+  var f = peek64(frame_head)
+  if f == 0 {
+    var b = take()
+    if b == 0 {
+      return 0
+    }
+    poke64(frame_split, peek64(frame_split) + 1)
+    var i = 0
+    while i < 16 {
+      poke64(b + (i * frame), peek64(frame_head))
+      poke64(frame_head, b + (i * frame))
+      i = i + 1
+    }
+    poke64(frame_free, peek64(frame_free) + 16)
+    f = peek64(frame_head)
+  }
+  poke64(frame_head, peek64(f))
+  poke64(frame_free, peek64(frame_free) - 1)
+  return f
+}
+
+// The account: `frames <taken> <given>` on the console — the machine's
+// last line. The trap shim's exit route and the boot stub's own
+// shutdown both call it, so every end the kernel owns ends with its
+// memory's books.
+def report() Void {
+  put(102) // f
+  put(114) // r
+  put(97) // a
+  put(109) // m
+  put(101) // e
+  put(115) // s
+  put(32) // space
+  dec(peek64(taken))
+  put(32)
+  dec(peek64(given))
+  put(10)
+}
+
+def dec(n Int64) Void {
+  if n >= 10 {
+    dec(n / 10)
+  }
+  put(48 + (n % 10))
+}
+
+def put(b Int64) Void {
+  while (peek8(uart + 5).to_int64() & 32) == 0 {
+  }
+  poke8(uart, b.to_byte())
+}
+
+// The loud end of a kernel bug: the line says what was wrong, the SBI
+// takes the machine down — the same one duty the stub and emo_fail
+// keep it for.
+def die() Void {
+  put(102) // f
+  put(114) // r
+  put(97) // a
+  put(109) // m
+  put(101) // e
+  put(115) // s
+  put(58) // :
+  put(32)
+  put(98) // b
+  put(97) // a
+  put(100) // d
+  put(32)
+  put(103) // g
+  put(105) // i
+  put(118) // v
+  put(101) // e
+  put(10)
+  halt()
+}

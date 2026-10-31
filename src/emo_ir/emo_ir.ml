@@ -33,6 +33,7 @@ and expr_desc =
   | Builtin of { name : string; args : expr list }
   | Runtime_impl of { name : string; args : expr list }
   | Box_new of expr
+  | Atomic_new of expr (* Atomic.new(v) — the synchronized cell *)
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
   | List_new of expr (* List.new(array) — a fresh deque over the elements *)
@@ -161,8 +162,10 @@ type env = {
 (* The language's own built-ins: bare names, no declaration and no import,
    registered in every frame. *)
 let is_builtin = function
-  | "println" | "printf" | "self_pid" | "halt" | "expect_equal" | "expect_true"
-  | "expect_false" | "expect_fail" ->
+  | "println" | "printf" | "self_pid" | "halt" | "fence" | "expect_equal"
+  | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
+  | "peek64" | "poke64" | "peek32" | "poke32" | "device_wait" | "ecall"
+  | "user_spawn" | "gate_reply" | "pid_num" ->
       true
   | _ -> false
 
@@ -173,8 +176,7 @@ let is_builtin = function
 (* The DOM family: the browser target's capability layer. It is part of
    the same implementation namespace, but only the browser host defines
    its functions, so the emitter gates each target by prefix. *)
-let is_dom_impl name =
-  String.length name >= 4 && String.sub name 0 4 = "dom_"
+let is_dom_impl name = String.length name >= 4 && String.sub name 0 4 = "dom_"
 
 let is_runtime_impl = function
   | name ->
@@ -530,6 +532,14 @@ and lower_call env span callee args =
                         desc = Box_new (lower_expr env arg_value);
                       }
                   | _ -> raise (Lower_error "`Box.new` takes one argument"))
+              | Ast.Type_ident "Atomic" when name = "new" -> (
+                  match args with
+                  | [ { Ast.arg_name = None; arg_value } ] ->
+                      {
+                        ety = Emo_check.Unknown;
+                        desc = Atomic_new (lower_expr env arg_value);
+                      }
+                  | _ -> raise (Lower_error "`Atomic.new` takes one argument"))
               | Ast.Type_ident "Bytes" when name = "new" -> (
                   match args with
                   | [ { Ast.arg_name = None; arg_value } ] ->
@@ -906,8 +916,8 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
   | Call_value _ | Method _ | Builtin _ | Runtime_impl _ | Box_new _
-  | Bytes_new _ | List_new _ | Builder_new | Make_exception _ | Do_spawn _
-  | Spawn_value _ | Closure _ | Global_var _ ->
+  | Atomic_new _ | Bytes_new _ | List_new _ | Builder_new | Make_exception _
+  | Do_spawn _ | Spawn_value _ | Closure _ | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 
 and stmts_native special (stmts : stmt list) : bool =
@@ -1015,8 +1025,7 @@ let rec mentioned_expr (e : Ast.expr) (acc : string list) : string list =
   | Ast.Interpolated parts ->
       List.fold_left
         (fun a -> function
-          | Ast.Literal_text _ -> a
-          | Ast.Part_expr e -> mentioned_expr e a)
+          | Ast.Literal_text _ -> a | Ast.Part_expr e -> mentioned_expr e a)
         acc parts
   | Ast.Member (inner, _) -> mentioned_expr inner acc
   | Ast.Index (a, b) -> mentioned_expr b (mentioned_expr a acc)
@@ -1053,9 +1062,9 @@ and mentioned_stmt (s : Ast.stmt) acc =
   | Ast.Return (Some e) -> mentioned_expr e acc
   | Ast.Return None | Ast.Break | Ast.Continue -> acc
   | Ast.Raise e -> mentioned_expr e acc
-  | Ast.If { cond; then_body; else_body } ->
+  | Ast.If { cond; then_body; else_body } -> (
       let acc = mentioned_stmts then_body (mentioned_expr cond acc) in
-      (match else_body with None -> acc | Some b -> mentioned_stmts b acc)
+      match else_body with None -> acc | Some b -> mentioned_stmts b acc)
   | Ast.While { cond; body } -> mentioned_stmts body (mentioned_expr cond acc)
   | Ast.For { init; cond; post; body } ->
       mentioned_stmts body
@@ -1092,8 +1101,7 @@ let lower (input : input) : program =
           List.concat_map
             (fun (item : Ast.item) ->
               match item.Ast.item_desc with
-              | Ast.Item_stmt
-                  { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
+              | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
                   match pattern.Ast.pattern_desc with
                   | Ast.Pattern_binding _ -> []
                   | _ -> pattern_names pattern)
@@ -1325,14 +1333,15 @@ let lower (input : input) : program =
                  module reference is). *)
               if
                 (m.mpath = input.entry && thunk_unsafe init)
-                || (match
-                      Option.bind (full_chain init) (fun chain ->
-                          let chain = relativize const_env chain in
-                          if is_module_path const_env chain then Some chain
-                          else None)
-                    with
-                   | Some _ -> true
-                   | None -> false)
+                ||
+                match
+                  Option.bind (full_chain init) (fun chain ->
+                      let chain = relativize const_env chain in
+                      if is_module_path const_env chain then Some chain
+                      else None)
+                with
+                | Some _ -> true
+                | None -> false
               then ()
               else begin
                 let mangled = mangle m.mpath name in
@@ -1568,10 +1577,9 @@ let lower (input : input) : program =
                   pattern = { pattern_desc = Ast.Pattern_binding name; _ };
                   _;
                 }
-              when
-                (match Hashtbl.find_opt symbols (input.entry, name) with
-                | Some (S_func { params = []; _ }) -> true
-                | _ -> false) ->
+              when match Hashtbl.find_opt symbols (input.entry, name) with
+                   | Some (S_func { params = []; _ }) -> true
+                   | _ -> false ->
                 (* The const's binding stays: top-level reads resolve to
                    the local, which is what keeps a const holding a
                    callable (`const f = -> …`, then `f(x)`) a value call
@@ -1584,32 +1592,32 @@ let lower (input : input) : program =
         | _ -> None)
     |> lower_stmts env
     |> List.map (fun (s : stmt) ->
-           (* An entry-module const's local now reads the same memoized
+        (* An entry-module const's local now reads the same memoized
               thunk a def's read of the symbol calls, so the program
               initializes it exactly once. The discarded initializer is
               still lowered (a compile-time cost only): the thunk's own
               body is the copy that runs. *)
-           match s with
-           | Let { mutable_ = false; name; _ } -> (
-               match Hashtbl.find_opt symbols (input.entry, name) with
-               | Some (S_func { mangled; params = [] }) ->
-                   (* The read's type is the thunk's own result, so a
+        match s with
+        | Let { mutable_ = false; name; _ } -> (
+            match Hashtbl.find_opt symbols (input.entry, name) with
+            | Some (S_func { mangled; params = [] }) ->
+                (* The read's type is the thunk's own result, so a
                       const holding a native value stays native at the
                       binding site instead of being boxed and unboxed
                       around every use. *)
-                   let ety =
-                     match List.find_opt (fun f -> f.fname = mangled) !funcs with
-                     | Some f -> f.fresult
-                     | None -> Emo_check.Unknown
-                   in
-                   Let
-                     {
-                       mutable_ = false;
-                       name;
-                       init = { ety; desc = Call { func = mangled; args = [] } };
-                     }
-               | _ -> s)
-           | _ -> s)
+                let ety =
+                  match List.find_opt (fun f -> f.fname = mangled) !funcs with
+                  | Some f -> f.fresult
+                  | None -> Emo_check.Unknown
+                in
+                Let
+                  {
+                    mutable_ = false;
+                    name;
+                    init = { ety; desc = Call { func = mangled; args = [] } };
+                  }
+            | _ -> s)
+        | _ -> s)
   in
   (* The entry module can be discovered under two paths, lowering its
      items twice; dedupe functions by name, keeping the first. *)

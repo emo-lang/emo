@@ -29,6 +29,12 @@ language's design, not just its features.
 - **[`loops/`](loops/)** — the three-clause `for` and `while`, with
   `break`, `continue`, and nested loops.
 - **[`objects/`](objects/)** — classes, enums, interfaces, equality.
+- **[`atomic_cell/`](atomic_cell/)** — `Atomic`, Box's synchronized
+  sibling: the Int64 cell's nine operations and the Bool cell's logical
+  family, `compare_exchange` answering its pair on a hit and a miss, a
+  cell behind a class field reached where its type is open, equality
+  by the values held, and `fetch_add`/`fetch_sub` wrapping at Int64's
+  ends — byte-identical on all seven paths, QEMU included.
 - **[`builtin_names/`](builtin_names/)** — a class whose methods carry
   names the builtins also use (`length`, `get`, `set`, `push`,
   `to_string`), called on a statically-classed receiver and on one a

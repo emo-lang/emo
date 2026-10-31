@@ -202,7 +202,19 @@ let requires_nothing source =
    the C math library, `file_read` writes and reads a file, and
    `pipeline` runs four processes. Each runs end to end in test/emo_project
    instead, compiled and interpreted. *)
-let beyond_the_interpreter = [ "numerics"; "file_read"; "pipeline" ]
+let beyond_the_interpreter =
+  [
+    "numerics";
+    "file_read";
+    "pipeline";
+    "peek_poke";
+    "native_image";
+    "processes";
+    "parity_metal";
+    "arena_gone";
+    "outlives";
+    "survivors";
+  ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
    end through the bare interpreter and prints its expected.txt. A
@@ -363,10 +375,12 @@ let wasm_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     "sql_demo";
     "sql_edge";
+    "atomic_cell";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -380,7 +394,7 @@ let node_strip_available =
        "node --no-warnings -e 'process.exit(typeof \
         require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
         1)' >/dev/null 2>&1"
-     = 0)
+    = 0)
 
 (* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
    run under `erl -noshell`. Skips when Erlang is absent. *)
@@ -427,10 +441,12 @@ let beam_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     "sql_demo";
     "sql_edge";
+    "atomic_cell";
   ]
 
 let erl_available =
@@ -460,7 +476,8 @@ let beam_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"beam")
+                  ~native:Emo_project.no_native_inputs ~target:"beam"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -559,7 +576,8 @@ let wasm_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"wasm")
+                  ~native:Emo_project.no_native_inputs ~target:"wasm"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -650,6 +668,7 @@ let c_goldens =
     "branch_var";
     "builtin_names";
     "to_string_render";
+    "typed_calls";
     "plot_demo";
     "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
@@ -659,6 +678,7 @@ let c_goldens =
     "sql_demo";
     "sql_edge";
     "term_demo";
+    "atomic_cell";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -765,7 +785,7 @@ let scratch_entry name source =
 let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
   in_dir (Filename.dirname entry) (fun () ->
       Emo_cli.build_file ~entry ~output ~specialize ~cclibs
-        ~native:Emo_project.no_native_inputs ~target)
+        ~native:Emo_project.no_native_inputs ~target ~profile:"kernel")
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -1374,7 +1394,7 @@ let c_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
                   ~specialize:false ~cclibs ~native:Emo_project.no_native_inputs
-                  ~target:"c")
+                  ~target:"c" ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           (* A TLS golden runs from its own directory: the program
@@ -2993,7 +3013,8 @@ let riscv64_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
                   ~specialize:false ~cclibs:[]
-                  ~native:Emo_project.no_native_inputs ~target:"riscv64")
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                  ~profile:"kernel")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -3021,29 +3042,25 @@ let riscv64_examples_tests =
       "loops";
       "error_matching";
       "floats";
+      "atomic_cell";
+      "peek_poke";
+      "typed_calls";
+      "native_image";
+      "processes";
+      "arena_gone";
+      "outlives";
+      "survivors";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that
    names the construct — the check itself rides the emitter's
-   Lower_error, so the text is asserted directly. *)
+   Lower_error, so the text is asserted directly. Processes left this
+   list at T3.3: spawn/send/receive lower to the green threads. *)
 let riscv64_refusal_tests =
   [
     tc "a map literal refuses with a clear diagnostic" (fun () ->
         let entry = scratch_entry "riscv-map" {|println({ "a": 1 })|} in
-        Alcotest.(check int)
-          "exit" 65
-          (build_entry ~target:"riscv64" entry
-             (Filename.concat (Filename.dirname entry) "out")));
-    tc "spawn refuses with a clear diagnostic" (fun () ->
-        let entry =
-          scratch_entry "riscv-spawn"
-            {|
-def work() {
-  println("nope")
-}
-do work()|}
-        in
         Alcotest.(check int)
           "exit" 65
           (build_entry ~target:"riscv64" entry
@@ -3075,7 +3092,7 @@ do work()|}
               in
               match
                 try
-                  ignore (Emo_codegen.Riscv.emit program);
+                  ignore (Emo_codegen.Riscv.emit ~profile:"kernel" program);
                   None
                 with Emo_ir.Lower_error message -> Some message
               with
@@ -3093,15 +3110,251 @@ do work()|}
                   (contains message "does not support"
                   && contains message fragment))
           [
-            ( "processes",
-              {|def work() {
-  println("nope")
-}
-do work()|},
-              "spawn" );
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
           ]);
+  ]
+
+(* The image profiles (EmoOS T4.1): `user` selects the second riscv64
+   shape — the U-mode ELF the kernel loads — and refuses everywhere it
+   does not exist; `kernel` is the default and emits what it always
+   did. *)
+let riscv64_profile_tests =
+  let lower source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"riscv64"
+        items
+    in
+    match diags with
+    | _ :: _ -> Alcotest.fail "unexpected check errors"
+    | [] ->
+        Emo_ir.lower
+          {
+            Emo_ir.modules =
+              [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+            entry = [];
+            packages = [];
+          }
+  in
+  [
+    tc "the user profile refuses off the riscv64 target" (fun () ->
+        let entry = scratch_entry "profile-c" {|println("ok")|} in
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat (Filename.dirname entry) "out")
+             ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
+             ~target:"c" ~profile:"user"));
+    tc "an unknown profile refuses by name" (fun () ->
+        let entry = scratch_entry "profile-x" {|println("ok")|} in
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat (Filename.dirname entry) "out")
+             ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
+             ~target:"riscv64" ~profile:"turbo"));
+    tc "the profiles pick their own load addresses" (fun () ->
+        Alcotest.(check bool)
+          "the kernel profile links where OpenSBI enters" true
+          (contains
+             (Emo_codegen.Riscv.linker_script ~profile:"kernel")
+             "0x80200000");
+        Alcotest.(check bool)
+          "the user profile links at the user window's base" true
+          (contains
+             (Emo_codegen.Riscv.linker_script ~profile:"user")
+             "0x87100000"));
+    tc "the user profile emits its own stub and sizing" (fun () ->
+        let program = lower {|println("ok")|} in
+        let user_asm = Emo_codegen.Riscv.emit ~profile:"user" program in
+        Alcotest.(check bool)
+          "the user stub is the entry" true
+          (contains user_asm "The user profile's boot stub");
+        Alcotest.(check bool)
+          "the user heap is the profile's budget" true
+          (contains user_asm ".zero 8388608");
+        Alcotest.(check bool)
+          "the user image carries no kernel heap" true
+          (not (contains user_asm ".zero 100663296"));
+        let kernel_asm = Emo_codegen.Riscv.emit ~profile:"kernel" program in
+        Alcotest.(check bool)
+          "the kernel stub is the entry" true
+          (contains kernel_asm "Boot profile A");
+        Alcotest.(check bool)
+          "the kernel heap is unchanged" true
+          (contains kernel_asm ".zero 100663296"));
+    tc "the allocator charges the current process's arena" (fun () ->
+        (* T5.1: the slot holds the cursor and the end (offsets 576 and
+           584, the stride 592), emo_alloc reads them off the current
+           slot, and both profiles carry the exhaustion tail — the
+           kernel's own confined kill, the user image's gate verb. *)
+        let program = lower {|println("ok")|} in
+        let kernel_asm = Emo_codegen.Riscv.emit ~profile:"kernel" program in
+        Alcotest.(check bool)
+          "the root's arena is the image heap" true
+          (contains kernel_asm "the root's arena cursor");
+        Alcotest.(check bool)
+          "the spawn carves the child's arena" true
+          (contains kernel_asm "the child allocates from the carve's base");
+        Alcotest.(check bool)
+          "a spawned process dies alone" true
+          (contains kernel_asm "heap gone in process ");
+        Alcotest.(check bool)
+          "the user image's exhaustion is the gate's verb" true
+          (contains
+             (Emo_codegen.Riscv.emit ~profile:"user" program)
+             "    li a7, 5\n    ecall");
+        Alcotest.(check bool)
+          "the kernel image's kill is its own" true
+          (contains kernel_asm "emo_sched_pick"));
+    tc "the user image parks its arena cells" (fun () ->
+        (* T5.1: the stub parks the addresses of its root slot's arena
+           words where the kernel's trap shim reads and writes them —
+           the cells live in the user profile alone. *)
+        let program = lower {|println("ok")|} in
+        let user_asm = Emo_codegen.Riscv.emit ~profile:"user" program in
+        Alcotest.(check bool)
+          "the arena cells are the user profile's" true
+          (contains user_asm "emo_user_arena_cell");
+        Alcotest.(check bool)
+          "the kernel image carries no arena cells" true
+          (not
+             (contains
+                (Emo_codegen.Riscv.emit ~profile:"kernel" program)
+                "emo_user_arena_cell")));
+    tc "the block hooks let a kernel back every block" (fun () ->
+        (* T5.3: the runtime asks a parked frame allocator for every
+           64 KiB block — a spawn's arena, a user process's stack (the
+           slot's word at 864, the stride 880) — and the reaper gives
+           both back at the death; hookless, the pool and the carve
+           stay. The words ride both profiles, zero unless a kernel's
+           stub parks them. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the take hook")
+              true
+              (contains asm "emo_block_take_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the give hook")
+              true
+              (contains asm "emo_block_give_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the stack block rides the slot")
+              true
+              (contains asm "sd t6, 864(t3)");
+            Alcotest.(check bool)
+              (profile ^ ": the slot stride grew")
+              true
+              (contains asm "li t3, 880");
+            Alcotest.(check bool)
+              (profile ^ ": the reaper gives through the hook")
+              true
+              (contains asm "the kernel's give: the stack block goes home");
+            Alcotest.(check bool)
+              (profile ^ ": the pool stays the hookless path")
+              true
+              (contains asm ".Lspawn_pool:"))
+          [ "kernel"; "user" ]);
+    tc "the space hooks stay runtime words a kernel parks" (fun () ->
+        (* T6.2: the per-process address spaces ride the same pattern —
+           three words in .bss, zero in every image whose stub leaves
+           them (plain programs and the user image never write satp),
+           the pick's switch and emo_user_spawn's build call riding
+           both profiles, the space word at 872 beside the stride. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the build hook")
+              true
+              (contains asm "emo_space_build_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the resolve hook")
+              true
+              (contains asm "emo_space_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the write hook")
+              true
+              (contains asm "emo_space_write_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the pick resolves the incoming slot")
+              true
+              (contains asm "ld a0, 872(s1)");
+            Alcotest.(check bool)
+              (profile ^ ": the pick carries the slot across the call")
+              true (contains asm "mv s1, a1");
+            Alcotest.(check bool)
+              (profile ^ ": the build hook answers at the spawn")
+              true
+              (contains asm "la t4, emo_space_build_hook");
+            Alcotest.(check bool)
+              (profile ^ ": the root's space starts zero")
+              true
+              (contains asm "sd zero, 872(t1)");
+            Alcotest.(check bool)
+              (profile ^ ": the slot table grew with the word")
+              true
+              (contains asm ".zero 56320"))
+          [ "kernel"; "user" ]);
+    tc "the synthetic frame parks the initial sp at the anchor" (fun () ->
+        (* T6.3: the frame the spawn builds sits at the block's bottom
+           scratch — the trampoline's anchor — with the initial sp in
+           the interrupted-sp slot below it, so the pass enters U-mode
+           at the top of its stack and its first trap out lands on its
+           own frame. Both profiles ride the runtime. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the anchor is the block's bottom scratch")
+              true
+              (contains asm "addi t4, t6, 552");
+            Alcotest.(check bool)
+              (profile ^ ": the initial sp rides the slot below the frame")
+              true
+              (contains asm "sd t5, -8(t4)"))
+          [ "kernel"; "user" ]);
+    tc "the death hook is a runtime word a kernel parks" (fun () ->
+        (* EmoOS T7.2: a green process's end is reported through one
+           word in .bss, zero in every image whose stub leaves it — the
+           entry thunk's return calls it in both profiles, the arena
+           kill in the kernel profile alone (the user profile's kill is
+           the gate's verb 5, no green death of its own). The reply
+           helper's epilogue releases the frame its entry opened — the
+           24 bytes T4.6 widened it to; the old 16 leaked eight bytes
+           of the caller's stack per reply, which a service that never
+           returns never saw and the filesystem's serve-and-return did. *)
+        let program = lower {|println("ok")|} in
+        List.iter
+          (fun profile ->
+            let asm = Emo_codegen.Riscv.emit ~profile program in
+            Alcotest.(check bool)
+              (profile ^ ": the death hook word")
+              true
+              (contains asm "emo_death_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the entry thunk's return reports the death")
+              true
+              (contains asm "la t3, emo_death_hook");
+            Alcotest.(check bool)
+              (profile
+             ^ ": the arena kill reports the death in the kernel alone")
+              (profile = "kernel")
+              (contains asm "la t5, emo_death_hook");
+            Alcotest.(check bool)
+              (profile ^ ": the reply's epilogue releases the frame it opened")
+              true
+              (contains asm "ld ra, 0(sp)\n    addi sp, sp, 24"))
+          [ "kernel"; "user" ]);
   ]
 
 (* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other
@@ -3181,7 +3434,8 @@ let foreign_tests =
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
-            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
+            ( "riscv64",
+              fun p -> ignore (Emo_codegen.Riscv.emit ~profile:"kernel" p) );
           ]);
     tc "the c and ocaml targets build a declaration-only program" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -3211,7 +3465,8 @@ let foreign_tests =
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
-            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
+            ( "riscv64",
+              fun p -> ignore (Emo_codegen.Riscv.emit ~profile:"kernel" p) );
           ]);
     tc "taking a foreign definition's value refuses off the native targets"
       (fun () ->
@@ -3251,8 +3506,8 @@ let specialization_tests =
         let exit_code =
           in_example "specialize_shapes" (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
-                ~cclibs:[] ~native:Emo_project.no_native_inputs
-                ~target:"ocaml")
+                ~cclibs:[] ~native:Emo_project.no_native_inputs ~target:"ocaml"
+                ~profile:"kernel")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
@@ -4025,10 +4280,11 @@ let browser_emit_refusal source emit =
   in
   (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
   let diags, _refs, _requires, types =
-    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser"
-      items
+    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser" items
   in
-  (match diags with _ :: _ -> Alcotest.fail "unexpected check errors" | [] -> ());
+  (match diags with
+  | _ :: _ -> Alcotest.fail "unexpected check errors"
+  | [] -> ());
   let program =
     Emo_ir.lower
       {
@@ -4045,8 +4301,7 @@ let browser_emit_refusal source emit =
 
 let browser_tests =
   [
-    tc "browser: one bundle with no host imports, run against a page"
-      (fun () ->
+    tc "browser: one bundle with no host imports, run against a page" (fun () ->
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
         let entry =
           scratch_entry "browser-page"
@@ -4067,13 +4322,12 @@ println("ready")
         List.iter
           (fun marker ->
             Alcotest.(check bool)
-              ("bundle contains no `" ^ marker ^ "`") false
-              (contains text marker))
+              ("bundle contains no `" ^ marker ^ "`")
+              false (contains text marker))
           [ "require("; "from \"node:"; "process."; "_als" ];
         write_file (Filename.concat dir "run.js") browser_page_harness;
         check_run "browser"
-          (run_cmd
-             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          (run_cmd ("node " ^ Filename.quote (Filename.concat dir "run.js")))
           "ready\ntitle=Page title children=hello\n");
     tc "browser: an event reaches the sink with its tag" (fun () ->
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
@@ -4093,13 +4347,11 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
           (build_entry ~target:"browser" entry (Filename.concat dir "app"));
         write_file (Filename.concat dir "run.js") browser_event_harness;
         check_run "browser event"
-          (run_cmd
-             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          (run_cmd ("node " ^ Filename.quote (Filename.concat dir "run.js")))
           "event 7\nfired\n");
     tc "browser refuses Node's runtime capabilities by name" (fun () ->
         match
-          browser_emit_refusal
-            "const x = file_read(\"a\")\nprintln(x)\n"
+          browser_emit_refusal "const x = file_read(\"a\")\nprintln(x)\n"
             Emo_codegen.Ts.emit_browser
         with
         | None -> Alcotest.fail "expected a refusal"
@@ -4111,7 +4363,8 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
                   browser target"));
     tc "typescript refuses the DOM capabilities by name" (fun () ->
         match
-          browser_emit_refusal "const root = dom_root()\n" Emo_codegen.Ts.emit_ts
+          browser_emit_refusal "const root = dom_root()\n"
+            Emo_codegen.Ts.emit_ts
         with
         | None -> Alcotest.fail "expected a refusal"
         | Some message ->
@@ -4122,8 +4375,7 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
                   typescript target; build for the browser target"));
     tc "browser refuses a spawned process by name" (fun () ->
         match
-          browser_emit_refusal
-            {|def worker() {
+          browser_emit_refusal {|def worker() {
   println("w")
 }
 do worker()
@@ -4304,13 +4556,15 @@ let manifest_entry_tests =
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
-                 ~native:Emo_project.no_native_inputs ~target:"wasm"));
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"
+                 ~profile:"kernel"));
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
-                 ~native:Emo_project.no_native_inputs ~target:"wasm")));
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"
+                 ~profile:"kernel")));
   ]
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
@@ -4893,6 +5147,598 @@ main()
           "red (ok, 12.5)\n");
   ]
 
+(* The atomic surface (CHECK.md, the atomic memory model): the cell ops
+   answer identically on the interpreter and the compiled hosted targets,
+   the copy-as-handle rule shares one cell across a process boundary, and
+   `==` compares the values the cells hold. The managed targets join when
+   their exact no-ops land (T1.5). *)
+let atomic_surface_tests =
+  let source =
+    {|
+def reader(reply_to Pid, cell Atomic) {
+  cell.fetch_add(10)
+  reply_to <- cell.load()
+  halt()
+}
+
+const served = Atomic.new(0)
+served.store(5)
+const before = served.exchange(7)
+served.fetch_add(3)
+const swapped = served.compare_exchange(10, 100)
+served.fetch_sub(58)
+served.fetch_and(126)
+served.fetch_or(1)
+served.fetch_xor(1)
+fence()
+println(before)
+println(swapped[0])
+println(swapped[1])
+println(served.load())
+
+const flag = Atomic.new(true)
+println(flag.fetch_and(false))
+println(flag.load())
+println(flag.fetch_or(true))
+println(flag.load())
+
+const r = do reader(self_pid(), served)
+receive {
+  v -> { println(v) }
+}
+println(served.load())
+
+const missed = served.compare_exchange(999, 0)
+println(missed[0])
+println(missed[1])
+served.fetch_sub(10)
+println(served.load())
+println(served == served)
+println(served == Atomic.new(42))
+println(served == Atomic.new(1))
+println(served)
+|}
+  in
+  let expected =
+    "5\n\
+     true\n\
+     10\n\
+     42\n\
+     true\n\
+     false\n\
+     false\n\
+     true\n\
+     52\n\
+     52\n\
+     false\n\
+     52\n\
+     42\n\
+     true\n\
+     true\n\
+     false\n\
+     <atomic>\n"
+  in
+  [
+    tc "the atomic surface answers identically on the interpreter, ocaml, and c"
+      (fun () ->
+        let entry = scratch_entry "atomic-surface" source in
+        let dir = Filename.dirname entry in
+        write_file
+          (Filename.concat dir "package.emo")
+          {|package {
+  name = "local/scratch"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|};
+        (* the interpreter *)
+        let out = Buffer.create 256 in
+        Emo_eval.set_output (Buffer.add_string out);
+        let run_exit =
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              in_dir dir (fun () ->
+                  Emo_cli.run_file ~file:"main.emo" ~color:false ~error_limit:20))
+        in
+        Alcotest.(check int) "interpreter exit" 0 run_exit;
+        Alcotest.(check string)
+          "interpreter output" expected (Buffer.contents out);
+        (* Four compiled targets pin the same bytes — the availability
+           gates mirror check_hosted's. The wasm leg runs program B
+           below: the receive-handler lowering cannot see a module const
+           yet (the pre-existing gap CHECK.md records), so program A's
+           cross-process sharing pins on these four. *)
+        Alcotest.(check int)
+          "ocaml build" 0
+          (build_entry ~target:"ocaml" entry (Filename.concat dir "app-ocaml"));
+        check_run "ocaml"
+          (run_cmd (Filename.quote (Filename.concat dir "app-ocaml")))
+          expected;
+        if Lazy.force cc_available then begin
+          Alcotest.(check int)
+            "c build" 0
+            (build_entry ~target:"c" entry (Filename.concat dir "app-c"));
+          check_run "c"
+            (run_cmd (Filename.quote (Filename.concat dir "app-c")))
+            expected
+        end;
+        if Lazy.force node_available then begin
+          Alcotest.(check int)
+            "typescript build" 0
+            (build_entry ~target:"typescript" entry
+               (Filename.concat dir "app-ts"));
+          check_run "typescript"
+            (run_cmd
+               ("node " ^ Filename.quote (Filename.concat dir "app-ts.ts")))
+            expected
+        end;
+        if Lazy.force erl_available then begin
+          Alcotest.(check int)
+            "beam build" 0
+            (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+          check_run "beam"
+            (run_cmd
+               (Printf.sprintf
+                  "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                  (Filename.quote dir)))
+            expected
+        end);
+  ]
+
+(* The wasm leg's program: the same assertions through a direct call —
+   no receive, no module-const read inside one. The bytes match program
+   A's on every target. *)
+let atomic_wasm_source =
+  {|
+def reader(cell Atomic) Int64 {
+  cell.fetch_add(10)
+  println(cell.load())
+  const missed = cell.compare_exchange(999, 0)
+  println(missed[0])
+  println(missed[1])
+  cell.fetch_sub(10)
+  println(cell.load())
+  println(cell == cell)
+  println(cell == Atomic.new(42))
+  println(cell == Atomic.new(1))
+  println(cell)
+  return cell.load()
+}
+
+const served = Atomic.new(0)
+served.store(5)
+const before = served.exchange(7)
+served.fetch_add(3)
+const swapped = served.compare_exchange(10, 100)
+served.fetch_sub(58)
+served.fetch_and(126)
+served.fetch_or(1)
+served.fetch_xor(1)
+fence()
+println(before)
+println(swapped[0])
+println(swapped[1])
+println(served.load())
+
+const flag = Atomic.new(true)
+println(flag.fetch_and(false))
+println(flag.load())
+println(flag.fetch_or(true))
+println(flag.load())
+
+const final = reader(served)
+println(final)
+|}
+
+(* Program B's bytes — the same on every target that runs it. *)
+let atomic_direct_expected =
+  "5\n\
+   true\n\
+   10\n\
+   42\n\
+   true\n\
+   false\n\
+   false\n\
+   true\n\
+   52\n\
+   false\n\
+   52\n\
+   42\n\
+   true\n\
+   true\n\
+   false\n\
+   <atomic>\n\
+   42\n"
+
+let atomic_wasm_tests =
+  [
+    tc "the atomic surface answers identically on wasm through a direct call"
+      (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "atomic-wasm" atomic_wasm_source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "wasm build" 0
+          (build_entry ~target:"wasm" entry (Filename.concat dir "app.wasm"));
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote (Filename.concat dir "app.wasm"))))
+          atomic_direct_expected);
+  ]
+
+(* The riscv64 leg (T1.6): the real lowering — amoswap, LR/SC, fence —
+   as runtime helpers in the freestanding image, booted under QEMU and
+   read back through the serial transport the riscv64 goldens use. The
+   second program reaches the cells through class fields, where the
+   emitter loses the static type and the runtime dispatches by name,
+   and crosses Int64's upper bound under the wrap rule. *)
+let atomic_riscv64_dynamic_source =
+  {|
+class Counter {
+  def init(cell Atomic) {
+    self.cell = cell
+  }
+
+  def bump() Int64 {
+    return self.cell.fetch_add(1)
+  }
+
+  def flip(flag Bool) Bool {
+    return self.cell.exchange(flag)
+  }
+
+  def swap(expected Int64, fresh Int64) Bool {
+    const outcome = self.cell.compare_exchange(expected, fresh)
+    return outcome[0]
+  }
+
+  def show() String {
+    return self.cell.to_string()
+  }
+}
+
+const counter = Counter.new(cell: Atomic.new(100))
+println(counter.bump())
+println(counter.bump())
+println(counter.swap(102, 7))
+println(counter.swap(102, 8))
+println(counter.bump())
+println(counter.show())
+const wrapped = Atomic.new(9223372036854775807)
+println(wrapped.fetch_add(1))
+println(wrapped.load())
+println(wrapped.fetch_sub(1))
+println(wrapped.load())
+const toggle = Counter.new(cell: Atomic.new(false))
+println(toggle.flip(true))
+println(toggle.flip(false))
+|}
+
+let atomic_riscv64_tests =
+  let boot entry elf expected =
+    Alcotest.(check int)
+      "riscv64 build" 0
+      (build_entry ~target:"riscv64" entry elf);
+    let serial, err, status =
+      run_cmd
+        (Printf.sprintf
+           "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+           (Filename.quote elf))
+    in
+    check_run "riscv64" (riscv64_payload serial, err, status) expected
+  in
+  [
+    tc "the atomic surface answers identically on riscv64 under QEMU" (fun () ->
+        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        let entry = scratch_entry "atomic-riscv64" atomic_wasm_source in
+        boot entry
+          (Filename.concat (Filename.dirname entry) "app.elf")
+          atomic_direct_expected);
+    tc "a dynamic Atomic receiver dispatches by name on riscv64" (fun () ->
+        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "atomic-riscv64-dyn" atomic_riscv64_dynamic_source
+        in
+        boot entry
+          (Filename.concat (Filename.dirname entry) "app.elf")
+          "100\n\
+           101\n\
+           true\n\
+           false\n\
+           7\n\
+           <atomic>\n\
+           9223372036854775807\n\
+           -9223372036854775808\n\
+           -9223372036854775808\n\
+           9223372036854775807\n\
+           false\n\
+           true\n");
+  ]
+
+(* The refusal goldens (T1.7): every payload outside Int64 and Bool
+   refuses at check time, by name, with one diagnostic on every target —
+   through both spellings, the type position and the constructor. The
+   signature pass runs before the bodies and a signature refusal gates
+   them, so the two spellings carry separate programs. The messages are
+   pinned whole: the type the program wrote is the type the refusal
+   names. *)
+let atomic_refusal_type_source =
+  {|
+class Point {
+  def init(x Int64) {
+    self.x = x
+  }
+}
+
+interface Shape {
+  def area() Int64
+}
+
+enum Color { red, green }
+
+def a(c Atomic[Float64]) Int64 { return 0 }
+def b(c Atomic[String]) Int64 { return 0 }
+def c(c Atomic[Char]) Int64 { return 0 }
+def d(c Atomic[Byte]) Int64 { return 0 }
+def e(c Atomic[Array[Int64]]) Int64 { return 0 }
+def f(c Atomic[(Int64, Bool)]) Int64 { return 0 }
+def g(c Atomic[Map[String, Int64]]) Int64 { return 0 }
+def h(c Atomic[List[Int64]]) Int64 { return 0 }
+def i(c Atomic[Bytes]) Int64 { return 0 }
+def j(c Atomic[Box[Int64]]) Int64 { return 0 }
+def k(c Atomic[Atomic[Int64]]) Int64 { return 0 }
+def l(c Atomic[Point]) Int64 { return 0 }
+def m(c Atomic[Shape]) Int64 { return 0 }
+def n(c Atomic[Color]) Int64 { return 0 }
+def o(c Atomic[Pid]) Int64 { return 0 }
+|}
+
+let atomic_refusal_type_expected =
+  List.map
+    (fun got ->
+      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+    [
+      "Float64";
+      "String";
+      "Char";
+      "Byte";
+      "Array[Int64]";
+      "(Int64, Bool)";
+      "Map[String, Int64]";
+      "List[Int64]";
+      "Bytes";
+      "Box[Int64]";
+      "Atomic[Int64]";
+      "Point";
+      "Shape";
+      "Color";
+      "Pid";
+    ]
+
+let atomic_refusal_new_source =
+  {|
+class Point {
+  def init(x Int64) {
+    self.x = x
+  }
+}
+
+enum Color { red, green }
+
+const a = Atomic.new(1.5)
+const b = Atomic.new("text")
+const c = Atomic.new('a')
+const d = Atomic.new([1, 2])
+const e = Atomic.new((1, true))
+const f = Atomic.new({"a": 1})
+const g = Atomic.new(List.new([1]))
+const h = Atomic.new(Box.new(1))
+const i = Atomic.new(Atomic.new(1))
+const j = Atomic.new(Point.new(x: 1))
+const k = Atomic.new(Color.red)
+const l = Atomic.new(Color)
+const m = Atomic.new(Exception.new("boom"))
+const n = Atomic.new(-> (x Int64) { return x })
+|}
+
+(* `Atomic.new(Bytes.new(4))` is absent above: `Bytes.new` has no
+   constructor rule in the checker, so its result is Unknown and the
+   payload scope cannot see it (CHECK.md records the gap); the type
+   position pins the Bytes refusal. *)
+let atomic_refusal_new_expected =
+  List.map
+    (fun got ->
+      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+    [
+      "Float64";
+      "String";
+      "Char";
+      "Array[Int64]";
+      "(Int64, Bool)";
+      "Map[String, Int64]";
+      "List[Int64]";
+      "Box[Int64]";
+      "Atomic[Int64]";
+      "Point";
+      "Color";
+      "Color";
+      "Exception";
+      "(x: Int64) -> Int64";
+    ]
+
+(* The op-level refusals beside the payload scope: arithmetic on a Bool
+   cell, a value of the wrong payload, the constructor's arity. *)
+let atomic_refusal_ops_source =
+  {|
+const flag = Atomic.new(false)
+flag.fetch_add(1)
+flag.fetch_sub(1)
+const served = Atomic.new(0)
+served.store("text")
+served.compare_exchange(0, "text")
+Atomic.new(1, 2)
+|}
+
+let atomic_refusal_ops_expected =
+  [
+    ("E4004", "`fetch_add` expects an `Atomic[Int64]`, got `Atomic[Bool]`");
+    ("E4004", "`fetch_sub` expects an `Atomic[Int64]`, got `Atomic[Bool]`");
+    ("E4004", "`store` expects Int64, got String");
+    ("E4004", "`compare_exchange` expects Int64 as the new value, got String");
+    ("E4009", "`Atomic.new` expects 1 argument, got 2");
+  ]
+
+let atomic_refusal_tests =
+  (* the six compiled targets; `emo check` and `emo run` check as `c` *)
+  let every_target =
+    [ "ocaml"; "c"; "typescript"; "wasm"; "beam"; "riscv64" ]
+  in
+  (* The checker's answer for one program on one target: (code, message)
+     per diagnostic, in source order. *)
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  let pin_e4027 what source expected =
+    List.iter
+      (fun target ->
+        let got = diagnostics target source in
+        Alcotest.(check (list string))
+          (Printf.sprintf "%s: the %s refusals name the payload" target what)
+          expected (List.map snd got);
+        Alcotest.(check (list string))
+          (Printf.sprintf "%s: every %s refusal is E4027" target what)
+          (List.map (fun _ -> "E4027") expected)
+          (List.map fst got))
+      every_target
+  in
+  [
+    tc "every non-scalar payload refuses by name in a type position" (fun () ->
+        pin_e4027 "type-position" atomic_refusal_type_source
+          atomic_refusal_type_expected);
+    tc "every non-scalar payload refuses by name at the constructor" (fun () ->
+        pin_e4027 "constructor" atomic_refusal_new_source
+          atomic_refusal_new_expected);
+    tc "the op-level refusals name the operation and the payload" (fun () ->
+        List.iter
+          (fun target ->
+            Alcotest.(check (list (pair string string)))
+              (target ^ ": op refusals") atomic_refusal_ops_expected
+              (diagnostics target atomic_refusal_ops_source))
+          every_target);
+    tc "emo check answers the refusals with exit 65" (fun () ->
+        List.iter
+          (fun (name, source) ->
+            let entry = scratch_entry name source in
+            Alcotest.(check int)
+              (name ^ " exit") 65
+              (in_dir (Filename.dirname entry) (fun () ->
+                   Emo_cli.check_file ~file:entry ~color:false ~error_limit:40)))
+          [
+            ("atomic-refuse-type", atomic_refusal_type_source);
+            ("atomic-refuse-new", atomic_refusal_new_source);
+            ("atomic-refuse-ops", atomic_refusal_ops_source);
+          ]);
+  ]
+
+(* The raw-memory lanes (docs/raw-memory.md, EmoOS T1.8): riscv64
+   admits them, every hosted target refuses by name — E4028 at the
+   reference site, the atomics no-op precedent deliberately not
+   carried. *)
+let peek_refusal_source =
+  {|
+const page = 0x87000000
+println(peek8(page))
+poke8(page, 12B)
+println(peek64(page))
+poke64(page, 0)
+println(peek32(page))
+poke32(page, 0)
+println(ecall(0, 0, 0, 0, 0, 0, 0))
+|}
+
+let peek_refusal_expected target =
+  List.map
+    (fun (name, what) ->
+      Printf.sprintf
+        "`%s` reaches %s: only the `riscv64` target admits it, not `%s`" name
+        what target)
+    [
+      ("peek8", "raw memory");
+      ("poke8", "raw memory");
+      ("peek64", "raw memory");
+      ("poke64", "raw memory");
+      ("peek32", "raw memory");
+      ("poke32", "raw memory");
+      ("ecall", "the machine's gate");
+    ]
+
+let peek_refusal_tests =
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  [
+    tc "every hosted target refuses the lanes by name" (fun () ->
+        List.iter
+          (fun target ->
+            let expected = peek_refusal_expected target in
+            let got = diagnostics target peek_refusal_source in
+            Alcotest.(check (list string))
+              (target ^ ": the refusals name the lane")
+              expected (List.map snd got);
+            Alcotest.(check (list string))
+              (target ^ ": every refusal is E4028")
+              (List.map (fun _ -> "E4028") expected)
+              (List.map fst got))
+          [ "ocaml"; "c"; "typescript"; "wasm"; "beam" ]);
+    tc "riscv64 admits the lanes and checks them" (fun () ->
+        Alcotest.(check (list (pair string string)))
+          "riscv64: the lanes check clean" []
+          (diagnostics "riscv64" peek_refusal_source));
+    tc "riscv64 still checks the lanes' payloads and arities" (fun () ->
+        let got =
+          diagnostics "riscv64"
+            {|
+peek8("text")
+poke8(0)
+poke8(0, 12)
+peek64()
+peek32(0, 0)
+poke32(0)
+|}
+        in
+        Alcotest.(check int) "six refusals" 6 (List.length got));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4912,6 +5758,11 @@ let () =
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
       ("hosted_bindings", hosted_bindings_tests);
+      ("atomic_surface", atomic_surface_tests);
+      ("atomic_wasm", atomic_wasm_tests);
+      ("atomic_riscv64", atomic_riscv64_tests);
+      ("atomic_refusal", atomic_refusal_tests);
+      ("peek_refusal", peek_refusal_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
@@ -4923,6 +5774,7 @@ let () =
       ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
+      ("riscv64_profile", riscv64_profile_tests);
       ("foreign", foreign_tests);
       ("specialization", specialization_tests);
       ("publish", publish_tests);

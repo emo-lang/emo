@@ -245,6 +245,17 @@ routine is a decimal dtoa in freestanding RV64 assembly; the
 algorithm and the tie rule are recorded under T19.3's decisions above.
 Everything on this page is landed.
 
+**Follow-up landed (2026-10-25, EmoOS T1.6):** the tag widened from
+four bits to five — 32-byte-aligned blocks, kind in bits 4:1 — to seat
+`Atomic` as the ninth pointer kind (tag 16) with seven seats left for
+the kernel steps' `Bytes`/`List`/`Map`/`Pid`; the atomic op set and
+`fence()` are runtime helpers in the image (`amoswap.d.aqrl`, LR/SC,
+`fence rw, rw`, the ISA's sequential-consistency mapping). Numeric
+literals became static read-only cells in `.rodata` at the same time,
+so the heap holds computed values only — which is what keeps `fib`'s
+`count_down(1000000)` inside the 64 MiB heap at the wider block. The
+decision trail is in `CHECK.md`; every golden here is byte-identical.
+
 ## Acceptance
 
 - `emo build --target riscv64 main.emo` produces a freestanding ELF

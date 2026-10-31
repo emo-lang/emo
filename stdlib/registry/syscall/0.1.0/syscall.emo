@@ -1,0 +1,121 @@
+// The gate's user side (EmoOS T4.3, T4.4): the typed Emo surface over
+// the raw ecall — the only thing a user program sees of the kernel
+// boundary. This package is not the hosted `os`: it answers to the
+// EmoOS kernel, and it admits the riscv64 target alone. The contract
+// is the kernel's docs/syscalls.md — the verb in a7, six words beside
+// it, one answer back: >= 0 the payload, < 0 the refusal's reason. The
+// raw ecall lives in these bodies and nowhere else a user program
+// writes.
+
+// The calling process ends. The root's exit ends the machine; a
+// spawned process's exit answers its parent's wait. Never returns.
+def exit(code Int64) Void {
+  ecall(0, code, 0, 0, 0, 0, 0)
+}
+
+// The len bytes at buf ride the kernel's console. The answer is
+// (R.ok, the byte count), or (R.error, why) by the error convention —
+// the gate's refusal reasons (2 buf's range outside the caller's
+// memory, 3 the memory there not writable, 4 len out of range, 5 the
+// kernel out of a resource) as the message that names it.
+def write(buf Int64, len Int64) (R, Int64) {
+  var answer = ecall(1, buf, len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The next byte from the console, blocking until one exists. The byte
+// is 0..255.
+def read() Int64 {
+  return ecall(2, 0, 0, 0, 0, 0, 0)
+}
+
+// A new process enters this program's top level on a fresh stack —
+// the image's consts are its consts (they are the image's memory), so
+// the first process's const is how the child knows it is the child.
+// Coordinate through raw cells or the console; the answer is
+// (R.ok, the child's pid number) — the number wait takes.
+def spawn() (R, Int64) {
+  var answer = ecall(3, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The exit of the child with that pid number, blocking until it
+// happens. The answer is (R.ok, the child's exit code) or
+// (R.error, why).
+def wait(pid Int64) (R, Int64) {
+  var answer = ecall(4, pid, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The filesystem (EmoOS T7.2, docs/fs.md): whole files by name, the
+// name the name_len bytes at name (1 to 24 of them, no NUL and no
+// newline), the bytes at raw addresses in this program's own memory
+// like write's buffer. file_write makes the file the len bytes at buf
+// (at most 2048), replacing one of that name, answering the count;
+// file_read lands the file's bytes at buf, at most cap of them,
+// answering the file's size — a size past cap says the buffer was
+// short; file_list lands the names, each followed by a newline,
+// answering the bytes written; file_remove answers 0. A name no file
+// holds is the refusal "no such file"; a full disk or name table is
+// "the kernel is out of a resource". A request made while the service
+// is between one instance and the next waits for the next.
+def file_write(name Int64, name_len Int64, buf Int64, len Int64) (R, Int64) {
+  var answer = ecall(6, name, name_len, buf, len, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_read(name Int64, name_len Int64, buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(7, name, name_len, buf, cap, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_list(buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(8, buf, cap, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+def file_remove(name Int64, name_len Int64) (R, Int64) {
+  var answer = ecall(9, name, name_len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The gate's refusal reason, as the message that names it.
+def why_of(answer Int64) String {
+  if answer == -2 {
+    return "outside the caller's memory"
+  }
+  if answer == -6 {
+    return "no such file"
+  }
+  if answer == -3 {
+    return "not writable"
+  }
+  if answer == -4 {
+    return "bad argument"
+  }
+  if answer == -5 {
+    return "the kernel is out of a resource"
+  }
+  return "unknown verb"
+}

@@ -1,0 +1,4 @@
+spawned
+heap gone in process 2
+survived
+<pid 2>

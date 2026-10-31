@@ -1619,6 +1619,42 @@ let loop_tests =
           ]);
   ]
 
+let atomic_tests =
+  [
+    tc "an Atomic payload annotation parses as an applied type" (fun () ->
+        match parse_program "def f(c Atomic[Int64]) Int64 {\n  return 0\n}" with
+        | [ { Emo_ast.item_desc = Emo_ast.Item_def d; _ } ] -> (
+            match d.Emo_ast.def_params with
+            | [ { Emo_ast.param_type; _ } ] ->
+                Alcotest.(check string)
+                  "shape" "Atomic[Int64]"
+                  (render pp_type_ann param_type)
+            | ps ->
+                Alcotest.fail
+                  (Printf.sprintf "expected 1 param, got %d" (List.length ps)))
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "the bare Atomic spelling parses as a named type" (fun () ->
+        match parse_program "def f(c Atomic) Int64 {\n  return 0\n}" with
+        | [ { Emo_ast.item_desc = Emo_ast.Item_def d; _ } ] -> (
+            match d.Emo_ast.def_params with
+            | [ { Emo_ast.param_type; _ } ] ->
+                Alcotest.(check string)
+                  "shape" "Atomic"
+                  (render pp_type_ann param_type)
+            | ps ->
+                Alcotest.fail
+                  (Printf.sprintf "expected 1 param, got %d" (List.length ps)))
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "the fence call parses as a plain call" (fun () ->
+        Alcotest.(check string)
+          "shape" "(fence call)"
+          (render pp_expr (parse_expr "fence()")));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -1644,4 +1680,5 @@ let () =
       ("golden", golden_tests);
       ("require", require_tests);
       ("manifest", manifest_tests);
+      ("atomic", atomic_tests);
     ]

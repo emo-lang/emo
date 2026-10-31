@@ -325,134 +325,162 @@ let pkg_config_flags (modules : string list) :
 
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(native : Emo_project.native_inputs)
-    ~(target : string) : int =
-  match Sys.file_exists entry with
-  | false ->
-      prerr_endline (Printf.sprintf "%s: No such file or directory" entry);
-      66
-  | true when Emo_pkg.is_manifest_file entry ->
-      refuse_manifest_entry ~file:entry
-        ~hint:"`emo emoji build` builds a package from its manifest"
-  | true -> (
-      try
-        let inputs, entry_path, packages, dep_native =
-          Emo_project.compile_inputs ~entry_file:entry ~target
-        in
-        let native =
-          {
-            Emo_project.ni_sources =
-              native.Emo_project.ni_sources @ dep_native.Emo_project.ni_sources;
-            ni_link = native.ni_link @ dep_native.ni_link;
-            ni_frameworks = native.ni_frameworks @ dep_native.ni_frameworks;
-            ni_pkg_config = native.ni_pkg_config @ dep_native.ni_pkg_config;
-          }
-        in
-        let program =
-          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
-        in
-        let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
-        if
-          (not (Sys.file_exists build_dir))
-          && Emo_tool.run_status
-               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
-             <> 0
-        then raise (Build_dir_failed build_dir);
-        match target with
-        | "wasm" ->
-            let module_ = Emo_codegen.Wasm.assemble program in
-            let out =
-              if Filename.check_suffix output ".wasm" then output
-              else output ^ ".wasm"
+    ~(target : string) ~(profile : string) : int =
+  (* The profile is the riscv64 image's shape (EmoOS T4.1): "kernel", the
+     boot-profile-A image, or "user", the U-mode ELF the kernel loads.
+     Any other name is refused, and so is the user profile off the one
+     target that has it — an image shape its target cannot emit is an
+     error, not a silently ignored flag. *)
+  let profile_error =
+    match (profile, target) with
+    | "kernel", _ | "user", "riscv64" -> None
+    | "user", other ->
+        Some
+          (Printf.sprintf
+             "emo build: the user profile is the riscv64 image's — the %s \
+              target has no user profile"
+             other)
+    | other, _ ->
+        Some
+          (Printf.sprintf
+             "emo build: unknown profile `%s` — the profiles are kernel (the \
+              default) and user"
+             other)
+  in
+  match profile_error with
+  | Some message ->
+      prerr_endline message;
+      65
+  | None -> (
+      match Sys.file_exists entry with
+      | false ->
+          prerr_endline (Printf.sprintf "%s: No such file or directory" entry);
+          66
+      | true when Emo_pkg.is_manifest_file entry ->
+          refuse_manifest_entry ~file:entry
+            ~hint:"`emo emoji build` builds a package from its manifest"
+      | true -> (
+          try
+            let inputs, entry_path, packages, dep_native =
+              Emo_project.compile_inputs ~entry_file:entry ~target ~profile
             in
-            let out_wat = Filename.remove_extension out ^ ".wat" in
-            let binary = Emo_codegen.Wasm.to_binary module_ in
-            let oc = open_out_bin out in
-            output_string oc binary;
-            close_out oc;
-            let oc = open_out_bin out_wat in
-            output_string oc (Emo_codegen.Wasm.to_text module_);
-            close_out oc;
-            Printf.printf "built %s\n" out;
-            0
-        | "beam" ->
-            (* erlc requires the module atom to equal the .core file's
+            (* The caller's own inputs (the pre-publish gate's package) merge
+           with the dependencies'; a component provided on both sides
+           refuses here the way it does inside the resolution. *)
+            let native =
+              Emo_project.merge_native ~a_name:"the package being built"
+                ~b_name:"its dependencies" native dep_native
+            in
+            let program =
+              Emo_ir.lower
+                { Emo_ir.modules = inputs; entry = entry_path; packages }
+            in
+            let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
+            if
+              (not (Sys.file_exists build_dir))
+              && Emo_tool.run_status
+                   (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
+                 <> 0
+            then raise (Build_dir_failed build_dir);
+            match target with
+            | "wasm" ->
+                let module_ = Emo_codegen.Wasm.assemble program in
+                let out =
+                  if Filename.check_suffix output ".wasm" then output
+                  else output ^ ".wasm"
+                in
+                let out_wat = Filename.remove_extension out ^ ".wat" in
+                let binary = Emo_codegen.Wasm.to_binary module_ in
+                let oc = open_out_bin out in
+                output_string oc binary;
+                close_out oc;
+                let oc = open_out_bin out_wat in
+                output_string oc (Emo_codegen.Wasm.to_text module_);
+                close_out oc;
+                Printf.printf "built %s\n" out;
+                0
+            | "beam" ->
+                (* erlc requires the module atom to equal the .core file's
                stem (plan/step-18-beam.md), so the module is named after
                the requested output and both the file and the atom come
                from that one name. A stem that is not an atom is refused
                here, where the rule can still be explained. *)
-            let stem = Filename.remove_extension (Filename.basename output) in
-            if not (Emo_codegen.Beam.valid_module_name stem) then begin
-              prerr_endline
-                (Printf.sprintf
-                   "emo build: `%s` is not a usable BEAM module name — the \
-                    module is named after the output file, and a BEAM module \
-                    name is a lower-case letter followed by letters, digits, \
-                    `_` or `@`"
-                   stem);
-              65
-            end
-            else
-              let core = Emo_codegen.Beam.emit ~module_name:stem program in
-              let out =
-                Filename.concat (Filename.dirname output) (stem ^ ".core")
-              in
-              let oc = open_out_bin out in
-              output_string oc core;
-              close_out oc;
-              let beam = Filename.remove_extension out ^ ".beam" in
-              (* erlc writes beside the source only with -o; without it the
+                let stem =
+                  Filename.remove_extension (Filename.basename output)
+                in
+                if not (Emo_codegen.Beam.valid_module_name stem) then begin
+                  prerr_endline
+                    (Printf.sprintf
+                       "emo build: `%s` is not a usable BEAM module name — the \
+                        module is named after the output file, and a BEAM \
+                        module name is a lower-case letter followed by \
+                        letters, digits, `_` or `@`"
+                       stem);
+                  65
+                end
+                else
+                  let core = Emo_codegen.Beam.emit ~module_name:stem program in
+                  let out =
+                    Filename.concat (Filename.dirname output) (stem ^ ".core")
+                  in
+                  let oc = open_out_bin out in
+                  output_string oc core;
+                  close_out oc;
+                  let beam = Filename.remove_extension out ^ ".beam" in
+                  (* erlc writes beside the source only with -o; without it the
                  .beam lands in the caller's working directory, wherever
                  that is *)
-              let rc =
-                Emo_tool.run_status
-                  (Printf.sprintf "erlc -o %s %s"
-                     (Filename.quote (Filename.dirname out))
-                     (Filename.quote out))
-              in
-              if rc <> 0 then (
-                prerr_endline
-                  (Printf.sprintf "emo build: erlc failed on %s" out);
-                70)
-              else (
-                Printf.printf "built %s\n" beam;
-                0)
-        | "typescript" ->
-            (* The prelude rides the compiler as generated data; the
+                  let rc =
+                    Emo_tool.run_status
+                      (Printf.sprintf "erlc -o %s %s"
+                         (Filename.quote (Filename.dirname out))
+                         (Filename.quote out))
+                  in
+                  if rc <> 0 then (
+                    prerr_endline
+                      (Printf.sprintf "emo build: erlc failed on %s" out);
+                    70)
+                  else (
+                    Printf.printf "built %s\n" beam;
+                    0)
+            | "typescript" ->
+                (* The prelude rides the compiler as generated data; the
                arm never touches the filesystem for it (step 25). *)
-            let source = Emo_codegen.Ts.emit_ts program in
-            let digest =
-              Digest.to_hex
-                (Digest.string
-                   (Printf.sprintf "ts|%s|%s" source Emo_codegen.Ts.ts_prelude))
-            in
-            let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
-            let out =
-              if Filename.check_suffix output ".ts" then output
-              else output ^ ".ts"
-            in
-            if Sys.file_exists cache_file then begin
-              ignore
-                (Emo_tool.run_or_warn ~what:"emo build"
-                   (Printf.sprintf "cp %s %s"
-                      (Filename.quote cache_file)
-                      (Filename.quote out)));
-              Printf.printf "built %s (cached)\n" out;
-              0
-            end
-            else begin
-              let oc = open_out_bin cache_file in
-              output_string oc source;
-              close_out oc;
-              ignore
-                (Emo_tool.run_or_warn ~what:"emo build"
-                   (Printf.sprintf "cp %s %s"
-                      (Filename.quote cache_file)
-                      (Filename.quote out)));
-              Printf.printf "built %s\n" out;
-              0
-            end
-        | "browser" ->
-            (* One bundle for the page: the shared runtime core plus the
+                let source = Emo_codegen.Ts.emit_ts program in
+                let digest =
+                  Digest.to_hex
+                    (Digest.string
+                       (Printf.sprintf "ts|%s|%s" source
+                          Emo_codegen.Ts.ts_prelude))
+                in
+                let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
+                let out =
+                  if Filename.check_suffix output ".ts" then output
+                  else output ^ ".ts"
+                in
+                if Sys.file_exists cache_file then begin
+                  ignore
+                    (Emo_tool.run_or_warn ~what:"emo build"
+                       (Printf.sprintf "cp %s %s"
+                          (Filename.quote cache_file)
+                          (Filename.quote out)));
+                  Printf.printf "built %s (cached)\n" out;
+                  0
+                end
+                else begin
+                  let oc = open_out_bin cache_file in
+                  output_string oc source;
+                  close_out oc;
+                  ignore
+                    (Emo_tool.run_or_warn ~what:"emo build"
+                       (Printf.sprintf "cp %s %s"
+                          (Filename.quote cache_file)
+                          (Filename.quote out)));
+                  Printf.printf "built %s\n" out;
+                  0
+                end
+            | "browser" ->
+                (* One bundle for the page: the shared runtime core plus the
                browser host, then the program. Browsers run no
                TypeScript, so the build step strips the types with
                Node's own stripper — Node >= 22.13, where
@@ -460,86 +488,84 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                JavaScript keyed by the source, and the intermediate
                .ts stays in the build directory, never beside the
                output. *)
-            let source = Emo_codegen.Ts.emit_browser program in
-            let digest =
-              Digest.to_hex
-                (Digest.string
-                   (Printf.sprintf "browser|%s|%s" source
-                      Emo_codegen.Ts.ts_browser_prelude))
-            in
-            let cache_file =
-              Filename.concat build_dir ("browser-" ^ digest ^ ".js")
-            in
-            let out =
-              if Filename.check_suffix output ".js" then output
-              else output ^ ".js"
-            in
-            if Sys.file_exists cache_file then begin
-              ignore
-                (Emo_tool.run_or_warn ~what:"emo build"
-                   (Printf.sprintf "cp %s %s"
-                      (Filename.quote cache_file)
-                      (Filename.quote out)));
-              Printf.printf "built %s (cached)\n" out;
-              0
-            end
-            else if not (tool_exists "node") then begin
-              prerr_endline
-                "emo build: the browser target needs Node with \
-                 module.stripTypeScriptTypes (Node >= 22.13) to strip the \
-                 bundle's types, and node was not found";
-              69
-            end
-            else begin
-              let ts_file =
-                Filename.concat build_dir ("browser-" ^ digest ^ ".ts")
-              in
-              let oc = open_out_bin ts_file in
-              output_string oc source;
-              close_out oc;
-              let strip =
-                "const {stripTypeScriptTypes}=require(\"node:module\");\
-                 const fs=require(\"node:fs\");\
-                 fs.writeFileSync(process.argv[2],\
-                 stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
-              in
-              let rc =
-                Emo_tool.run_status
-                  (Printf.sprintf "node --no-warnings -e %s %s %s"
-                     (Filename.quote strip)
-                     (Filename.quote ts_file)
-                     (Filename.quote cache_file))
-              in
-              if rc <> 0 then begin
-                prerr_endline
-                  "emo build: node could not strip the bundle's types — the \
-                   browser target needs Node >= 22.13 \
-                   (module.stripTypeScriptTypes)";
-                69
-              end
-              else begin
-                ignore
-                  (Emo_tool.run_or_warn ~what:"emo build"
-                     (Printf.sprintf "cp %s %s"
-                        (Filename.quote cache_file)
-                        (Filename.quote out)));
-                Printf.printf "built %s\n" out;
-                0
-              end
-            end
-        | "c" ->
-            (* Emit one main.c plus the Emo runtime sources, compile
+                let source = Emo_codegen.Ts.emit_browser program in
+                let digest =
+                  Digest.to_hex
+                    (Digest.string
+                       (Printf.sprintf "browser|%s|%s" source
+                          Emo_codegen.Ts.ts_browser_prelude))
+                in
+                let cache_file =
+                  Filename.concat build_dir ("browser-" ^ digest ^ ".js")
+                in
+                let out =
+                  if Filename.check_suffix output ".js" then output
+                  else output ^ ".js"
+                in
+                if Sys.file_exists cache_file then begin
+                  ignore
+                    (Emo_tool.run_or_warn ~what:"emo build"
+                       (Printf.sprintf "cp %s %s"
+                          (Filename.quote cache_file)
+                          (Filename.quote out)));
+                  Printf.printf "built %s (cached)\n" out;
+                  0
+                end
+                else if not (tool_exists "node") then begin
+                  prerr_endline
+                    "emo build: the browser target needs Node with \
+                     module.stripTypeScriptTypes (Node >= 22.13) to strip the \
+                     bundle's types, and node was not found";
+                  69
+                end
+                else begin
+                  let ts_file =
+                    Filename.concat build_dir ("browser-" ^ digest ^ ".ts")
+                  in
+                  let oc = open_out_bin ts_file in
+                  output_string oc source;
+                  close_out oc;
+                  let strip =
+                    "const \
+                     {stripTypeScriptTypes}=require(\"node:module\");const \
+                     fs=require(\"node:fs\");fs.writeFileSync(process.argv[2],stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
+                  in
+                  let rc =
+                    Emo_tool.run_status
+                      (Printf.sprintf "node --no-warnings -e %s %s %s"
+                         (Filename.quote strip) (Filename.quote ts_file)
+                         (Filename.quote cache_file))
+                  in
+                  if rc <> 0 then begin
+                    prerr_endline
+                      "emo build: node could not strip the bundle's types — \
+                       the browser target needs Node >= 22.13 \
+                       (module.stripTypeScriptTypes)";
+                    69
+                  end
+                  else begin
+                    ignore
+                      (Emo_tool.run_or_warn ~what:"emo build"
+                         (Printf.sprintf "cp %s %s"
+                            (Filename.quote cache_file)
+                            (Filename.quote out)));
+                    Printf.printf "built %s\n" out;
+                    0
+                  end
+                end
+            | "c" ->
+                (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
                runtime (step 23). *)
-            let write path contents =
-              let oc = open_out_bin path in
-              output_string oc contents;
-              close_out oc
-            in
-            let main_c_contents, defs_h_contents, uses_tls =
-              Emo_codegen.C.emit program
-            in
-            (* The resolved packages' native inputs ride the cclib
+                let write path contents =
+                  let oc = open_out_bin path in
+                  output_string oc contents;
+                  close_out oc
+                in
+                let main_c_contents, defs_h_contents, uses_tls =
+                  Emo_codegen.C.emit program
+                in
+                (* The resolved packages' native inputs ride the cclib
                mechanism: a package's .c/.m sources pass to cc verbatim
                (absolute existing paths) and enter the cache key by
                content, its `link` libraries become -l flags, its
@@ -549,390 +575,465 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                package's Objective-C is compiled under ARC — the c
                target's policy for `.m`, the ownership model Emo's
                dynamic world already follows. *)
-            let pkg_cflags, pkg_libs =
-              match pkg_config_flags native.Emo_project.ni_pkg_config with
-              | Some pair -> pair
-              | None -> raise Pkg_config_failed
-            in
-            let framework_flags =
-              List.map
-                (fun f -> "-framework " ^ f)
-                native.Emo_project.ni_frameworks
-            in
-            let cflags =
-              (if
-                 List.exists
-                   (fun src -> Filename.check_suffix src ".m")
-                   native.Emo_project.ni_sources
-               then [ "-fobjc-arc" ]
-               else [])
-              @ pkg_cflags
-            in
-            let cclibs =
-              cclibs @ native.Emo_project.ni_sources
-              @ native.Emo_project.ni_link @ framework_flags @ pkg_libs
-            in
-            (* The TLS gate (step 51): the emitter flips the flag at
+                let pkg_cflags, pkg_libs =
+                  match pkg_config_flags native.Emo_project.ni_pkg_config with
+                  | Some pair -> pair
+                  | None -> raise Pkg_config_failed
+                in
+                let framework_flags =
+                  List.map
+                    (fun f -> "-framework " ^ f)
+                    native.Emo_project.ni_frameworks
+                in
+                let cflags =
+                  (if
+                     List.exists
+                       (fun src -> Filename.check_suffix src ".m")
+                       native.Emo_project.ni_sources
+                   then [ "-fobjc-arc" ]
+                   else [])
+                  @ pkg_cflags
+                in
+                let cclibs =
+                  cclibs @ native.Emo_project.ni_sources
+                  @ native.Emo_project.ni_link @ framework_flags @ pkg_libs
+                in
+                (* The TLS gate (step 51): the emitter flips the flag at
                genuine Runtime_impl nodes, and the conditional flags
                ride the cclib slot — so they enter the cache key by the
                mechanism that already keys cclib, and a TLS build and
                its non-TLS twin never share a cached binary. *)
-            let cclibs =
-              if uses_tls then cclibs @ [ "-DEMO_HAS_TLS"; "ssl"; "crypto" ]
-              else cclibs
-            in
-            (* Incremental, same scheme as the ocaml arm: the digest of
+                let cclibs =
+                  if uses_tls then cclibs @ [ "-DEMO_HAS_TLS"; "ssl"; "crypto" ]
+                  else cclibs
+                in
+                (* Incremental, same scheme as the ocaml arm: the digest of
                the emitted C, the runtime sources, and the link inputs
                names the cached binary — an unchanged program skips cc.
                A cclib that names an existing file (a shim object)
                enters by content, so editing the shim invalidates the
                cached binary instead of silently relinking it. *)
-            let cclib_key =
-              String.concat ","
-                (List.map
-                   (fun lib ->
-                     match lib.[0] with
-                     | '/' when Sys.file_exists lib ->
-                         let ic = open_in_bin lib in
-                         let n = in_channel_length ic in
-                         let s = really_input_string ic n in
-                         close_in ic;
-                         lib ^ "=" ^ Digest.to_hex (Digest.string s)
-                     | _ -> lib)
-                   cclibs)
-            in
-            let digest =
-              Digest.to_hex
-                (Digest.string
-                   (Printf.sprintf "%s|%s|%s|%s|%s|%s" main_c_contents
-                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h cclib_key
-                      (String.concat "," cflags) (Lazy.force compiler_key)))
-            in
-            let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
-            if Sys.file_exists cache_binary then begin
-              ignore
-                (Emo_tool.run_or_warn ~what:"emo build"
-                   (Printf.sprintf "cp %s %s"
-                      (Filename.quote cache_binary)
-                      (Filename.quote output)));
-              Printf.printf "built %s (cached)\n" output;
-              0
-            end
-            else begin
-              let main_c = Filename.concat build_dir "main.c" in
-              write main_c main_c_contents;
-              let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
-              write runtime_c Emo_codegen.C.runtime_c;
-              let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
-              write runtime_h Emo_codegen.C.runtime_h;
-              let defs_h = Filename.concat build_dir "emo_defs.h" in
-              write defs_h defs_h_contents;
-              (* cclib entries pass to cc: bare names become -l flags,
+                let cclib_key =
+                  String.concat ","
+                    (List.map
+                       (fun lib ->
+                         match lib.[0] with
+                         | '/' when Sys.file_exists lib ->
+                             let ic = open_in_bin lib in
+                             let n = in_channel_length ic in
+                             let s = really_input_string ic n in
+                             close_in ic;
+                             lib ^ "=" ^ Digest.to_hex (Digest.string s)
+                         | _ -> lib)
+                       cclibs)
+                in
+                let digest =
+                  Digest.to_hex
+                    (Digest.string
+                       (Printf.sprintf "%s|%s|%s|%s|%s|%s" main_c_contents
+                          Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h
+                          cclib_key (String.concat "," cflags)
+                          (Lazy.force compiler_key)))
+                in
+                let cache_binary =
+                  Filename.concat build_dir ("cache-" ^ digest)
+                in
+                if Sys.file_exists cache_binary then begin
+                  ignore
+                    (Emo_tool.run_or_warn ~what:"emo build"
+                       (Printf.sprintf "cp %s %s"
+                          (Filename.quote cache_binary)
+                          (Filename.quote output)));
+                  Printf.printf "built %s (cached)\n" output;
+                  0
+                end
+                else begin
+                  let main_c = Filename.concat build_dir "main.c" in
+                  write main_c main_c_contents;
+                  let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
+                  write runtime_c Emo_codegen.C.runtime_c;
+                  let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
+                  write runtime_h Emo_codegen.C.runtime_h;
+                  let defs_h = Filename.concat build_dir "emo_defs.h" in
+                  write defs_h defs_h_contents;
+                  (* cclib entries pass to cc: bare names become -l flags,
                  anything already flag- or path-shaped passes verbatim. *)
-              let cclib_flags =
-                String.concat " "
-                  (List.map
-                     (fun lib ->
-                       if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
-                       else "-l" ^ lib)
-                     cclibs)
-              in
-              (* The TLS pre-flight probe (step 51): the runtime's own
+                  let cclib_flags =
+                    String.concat " "
+                      (List.map
+                         (fun lib ->
+                           if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then
+                             lib
+                           else "-l" ^ lib)
+                         cclibs)
+                  in
+                  (* The TLS pre-flight probe (step 51): the runtime's own
                  TLS section, compiled and linked with the TLS
                  libraries before the real build — a machine without
                  them, or with one older than the fence's floor, is
                  refused with the fix instead of raw linker output.
                  The flags ride the same cclib slot, so a user's -L
                  reaches the probe too. *)
-              let tls_linked =
-                if not uses_tls then true
-                else begin
-                  let probe_c = Filename.concat build_dir "emo_tls_probe.c" in
-                  write probe_c "int main(void) { return 0; }\n";
-                  let probe_bin =
-                    Filename.concat build_dir "emo_tls_probe-bin"
+                  let tls_linked =
+                    if not uses_tls then true
+                    else begin
+                      let probe_c =
+                        Filename.concat build_dir "emo_tls_probe.c"
+                      in
+                      write probe_c "int main(void) { return 0; }\n";
+                      let probe_bin =
+                        Filename.concat build_dir "emo_tls_probe-bin"
+                      in
+                      let probe_cmd =
+                        Printf.sprintf
+                          "cc -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
+                           >/dev/null 2>&1"
+                          (Filename.quote build_dir) (Filename.quote runtime_c)
+                          (Filename.quote probe_c) cclib_flags
+                          (Filename.quote probe_bin)
+                      in
+                      Emo_tool.run_status probe_cmd = 0
+                    end
                   in
-                  let probe_cmd =
-                    Printf.sprintf
-                      "cc -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
-                       >/dev/null 2>&1"
-                      (Filename.quote build_dir) (Filename.quote runtime_c)
-                      (Filename.quote probe_c) cclib_flags
-                      (Filename.quote probe_bin)
-                  in
-                  Emo_tool.run_status probe_cmd = 0
-                end
-              in
-              if not tls_linked then begin
-                prerr_endline
-                  "emo build: linking the program's TLS failed — install the \
-                   OpenSSL development files (Linux: the libssl-dev package or \
-                   its equivalent), or pass a custom location with --cclib \
-                   -L<dir> --cclib -lssl --cclib -lcrypto (Homebrew's \
-                   openssl@3, say). Headers are never needed — the runtime \
-                   declares its TLS subset itself.";
-                69
-              end
-              else
-                (* -lm carries the runtime's math functions (sqrt,
+                  if not tls_linked then begin
+                    prerr_endline
+                      "emo build: linking the program's TLS failed — install \
+                       the OpenSSL development files (Linux: the libssl-dev \
+                       package or its equivalent), or pass a custom location \
+                       with --cclib -L<dir> --cclib -lssl --cclib -lcrypto \
+                       (Homebrew's openssl@3, say). Headers are never needed — \
+                       the runtime declares its TLS subset itself.";
+                    69
+                  end
+                  else
+                    (* -lm carries the runtime's math functions (sqrt,
                    floor, ceil, trunc); macOS folds libm into libSystem,
                    so the flag is a no-op there and the fix on glibc,
                    where those symbols live in a separate library. It
                    stays after cclib_flags so a package's own library
                    (sqlite3, say) resolves its math imports too. *)
-                let cflag_flags =
-                  String.concat " " (List.map Filename.quote cflags)
-                in
-                let cmd =
-                  Printf.sprintf
-                    "cc -O2 -ffp-contract=off -std=c11 -Wall \
-                     -Wno-deprecated-declarations -I %s %s %s %s              \
-                     %s -lm -o %s"
-                    (Filename.quote build_dir) cflag_flags
-                    (Filename.quote main_c) (Filename.quote runtime_c)
-                    cclib_flags (Filename.quote output)
-                in
-                let exit_code = Emo_tool.run_status cmd in
-                if exit_code <> 0 then begin
-                  prerr_endline
-                    (Printf.sprintf "emo build: the C compiler failed (exit %d)"
-                       exit_code);
-                  70
+                    let cflag_flags =
+                      String.concat " " (List.map Filename.quote cflags)
+                    in
+                    let cmd =
+                      Printf.sprintf
+                        "cc -O2 -ffp-contract=off -std=c11 -Wall \
+                         -Wno-deprecated-declarations -I %s %s %s \
+                         %s              %s -lm -o %s"
+                        (Filename.quote build_dir) cflag_flags
+                        (Filename.quote main_c) (Filename.quote runtime_c)
+                        cclib_flags (Filename.quote output)
+                    in
+                    let exit_code = Emo_tool.run_status cmd in
+                    if exit_code <> 0 then begin
+                      prerr_endline
+                        (Printf.sprintf
+                           "emo build: the C compiler failed (exit %d)"
+                           exit_code);
+                      70
+                    end
+                    else begin
+                      ignore
+                        (Emo_tool.run_or_warn ~what:"emo build"
+                           (Printf.sprintf "cp %s %s" (Filename.quote output)
+                              (Filename.quote cache_binary)));
+                      Printf.printf "built %s\n" output;
+                      0
+                    end
                 end
-                else begin
-                  ignore
-                    (Emo_tool.run_or_warn ~what:"emo build"
-                       (Printf.sprintf "cp %s %s" (Filename.quote output)
-                          (Filename.quote cache_binary)));
-                  Printf.printf "built %s\n" output;
-                  0
-                end
-            end
-        | "ocaml" ->
-            (* The refusal is installation-independent (step 25): the
+            | "ocaml" ->
+                (* The refusal is installation-independent (step 25): the
                runtime rides the compiler, so the only question is
                whether the target's own toolchain — ocamlfind with the
                unix and ssl packages — is on PATH. Name the fix, never
                raw ocamlfind output. Exit 69 (unavailable), the sysexits
                family of 65/66/70. *)
-            if not (ocaml_target_ok ()) then begin
-              prerr_endline
-                "emo build: the ocaml target needs the OCaml toolchain on PATH \
-                 — ocamlfind with the unix and ssl packages (opam brings both; \
-                 the c target, the default, needs only the system cc)";
-              69
-            end
-            else
-              let source = Emo_codegen.emit ~specialize program in
-              (* Incremental: the digest of the emitted source plus the
+                if not (ocaml_target_ok ()) then begin
+                  prerr_endline
+                    "emo build: the ocaml target needs the OCaml toolchain on \
+                     PATH — ocamlfind with the unix and ssl packages (opam \
+                     brings both; the c target, the default, needs only the \
+                     system cc)";
+                  69
+                end
+                else
+                  let source = Emo_codegen.emit ~specialize program in
+                  (* Incremental: the digest of the emitted source plus the
                runtime source names the cached binary — an unchanged
                program (and unchanged runtime) skips the toolchain
                entirely, and any runtime change invalidates the cache. *)
-              let digest =
-                Digest.to_hex
-                  (Digest.string
-                     (Printf.sprintf "%s|%s|%b|%s|%s" source
-                        Emo_codegen.ocaml_runtime_ml specialize
-                        (String.concat "," cclibs) (Lazy.force compiler_key)))
-              in
-              let cache_binary =
-                Filename.concat build_dir ("cache-" ^ digest)
-              in
-              if Sys.file_exists cache_binary then begin
-                ignore
-                  (Emo_tool.run_or_warn ~what:"emo build"
-                     (Printf.sprintf "cp %s %s"
-                        (Filename.quote cache_binary)
-                        (Filename.quote output)));
-                Printf.printf "built %s (cached)\n" output;
-                0
-              end
-              else begin
-                (* The runtime and the program are written side by side
+                  let digest =
+                    Digest.to_hex
+                      (Digest.string
+                         (Printf.sprintf "%s|%s|%b|%s|%s" source
+                            Emo_codegen.ocaml_runtime_ml specialize
+                            (String.concat "," cclibs) (Lazy.force compiler_key)))
+                  in
+                  let cache_binary =
+                    Filename.concat build_dir ("cache-" ^ digest)
+                  in
+                  if Sys.file_exists cache_binary then begin
+                    ignore
+                      (Emo_tool.run_or_warn ~what:"emo build"
+                         (Printf.sprintf "cp %s %s"
+                            (Filename.quote cache_binary)
+                            (Filename.quote output)));
+                    Printf.printf "built %s (cached)\n" output;
+                    0
+                  end
+                  else begin
+                    (* The runtime and the program are written side by side
                    and compiled by the target's own toolchain — nothing
                    is looked up beside the emo binary or in the host
                    build tree. *)
-                let ml_path = Filename.concat build_dir "main.ml" in
-                let oc = open_out_bin ml_path in
-                output_string oc source;
-                close_out oc;
-                let rt_path =
-                  Filename.concat build_dir "emo_ocaml_runtime.ml"
-                in
-                let oc = open_out_bin rt_path in
-                output_string oc Emo_codegen.ocaml_runtime_ml;
-                close_out oc;
-                (* ocamlfind invokes its switch's compiler; the switch's
+                    let ml_path = Filename.concat build_dir "main.ml" in
+                    let oc = open_out_bin ml_path in
+                    output_string oc source;
+                    close_out oc;
+                    let rt_path =
+                      Filename.concat build_dir "emo_ocaml_runtime.ml"
+                    in
+                    let oc = open_out_bin rt_path in
+                    output_string oc Emo_codegen.ocaml_runtime_ml;
+                    close_out oc;
+                    (* ocamlfind invokes its switch's compiler; the switch's
                    bin dir must be on PATH for ocamlopt.opt to resolve. *)
-                let ocamlfind = find_ocamlfind () in
-                let switch_bin = Filename.dirname ocamlfind in
-                (* Foreign bindings get a compiled C wrapper
+                    let ocamlfind = find_ocamlfind () in
+                    let switch_bin = Filename.dirname ocamlfind in
+                    (* Foreign bindings get a compiled C wrapper
                    (ffi_stubs): ocaml's stdlib headers live in the
                    switch, so cc can find caml/mlvalues.h there. *)
-                let stub_obj =
-                  let stubs = Emo_codegen.ffi_stubs program in
-                  if stubs = "" then ""
-                  else begin
-                    let c_path = Filename.concat build_dir "ffi_stubs.c" in
-                    let oc = open_out_bin c_path in
-                    output_string oc stubs;
-                    close_out oc;
-                    let obj_path = Filename.concat build_dir "ffi_stubs.o" in
-                    let stdlib_dir =
-                      Filename.concat
-                        (Filename.concat switch_bin "..")
-                        "lib/ocaml"
+                    let stub_obj =
+                      let stubs = Emo_codegen.ffi_stubs program in
+                      if stubs = "" then ""
+                      else begin
+                        let c_path = Filename.concat build_dir "ffi_stubs.c" in
+                        let oc = open_out_bin c_path in
+                        output_string oc stubs;
+                        close_out oc;
+                        let obj_path =
+                          Filename.concat build_dir "ffi_stubs.o"
+                        in
+                        let stdlib_dir =
+                          Filename.concat
+                            (Filename.concat switch_bin "..")
+                            "lib/ocaml"
+                        in
+                        let cc_cmd =
+                          Printf.sprintf "cc -O2 -I %s -c %s -o %s"
+                            (Filename.quote stdlib_dir)
+                            (Filename.quote c_path) (Filename.quote obj_path)
+                        in
+                        if Emo_tool.run_status cc_cmd <> 0 then
+                          raise Stub_cc_failed;
+                        Printf.sprintf " %s" (Filename.quote obj_path)
+                      end
                     in
-                    let cc_cmd =
-                      Printf.sprintf "cc -O2 -I %s -c %s -o %s"
-                        (Filename.quote stdlib_dir)
-                        (Filename.quote c_path) (Filename.quote obj_path)
+                    let cclib_flags =
+                      String.concat " "
+                        (List.concat_map
+                           (fun lib -> [ "-cclib"; "-l" ^ lib ])
+                           cclibs)
                     in
-                    if Emo_tool.run_status cc_cmd <> 0 then raise Stub_cc_failed;
-                    Printf.sprintf " %s" (Filename.quote obj_path)
-                  end
-                in
-                let cclib_flags =
-                  String.concat " "
-                    (List.concat_map
-                       (fun lib -> [ "-cclib"; "-l" ^ lib ])
-                       cclibs)
-                in
-                (* Two invocations: the runtime compiles alone (it never
+                    (* Two invocations: the runtime compiles alone (it never
                    opens itself), then the program links against it with
                    -open, so the emitter's qualified paths resolve
                    without touching the emitted source. ocamlfind brings
                    only the runtime's own packages (unix, ssl). *)
-                let compile_runtime =
-                  Printf.sprintf
-                    "cd %s && PATH=%s:$PATH %s ocamlopt -package unix,ssl -c %s"
-                    (Filename.quote build_dir)
-                    (Filename.quote switch_bin)
-                    (Filename.quote ocamlfind) (Filename.quote rt_path)
-                in
-                let link_cmd =
-                  Printf.sprintf
-                    "PATH=%s:$PATH %s ocamlopt -package unix,ssl -linkpkg -I \
-                     %s -open Emo_ocaml_runtime %s %s %s %s -o %s"
-                    (Filename.quote switch_bin)
-                    (Filename.quote ocamlfind) (Filename.quote build_dir)
-                    (Filename.quote
-                       (Filename.concat build_dir "emo_ocaml_runtime.cmx"))
-                    (Filename.quote ml_path) cclib_flags stub_obj
-                    (Filename.quote output)
-                in
-                let exit_code = Emo_tool.run_status compile_runtime in
-                let exit_code =
-                  if exit_code <> 0 then exit_code
-                  else Emo_tool.run_status link_cmd
-                in
-                if exit_code <> 0 then begin
-                  prerr_endline
-                    (Printf.sprintf
-                       "emo build: the OCaml toolchain failed (exit %d)"
-                       exit_code);
-                  70
-                end
-                else begin
-                  ignore
-                    (Emo_tool.run_or_warn ~what:"emo build"
-                       (Printf.sprintf "cp %s %s" (Filename.quote output)
-                          (Filename.quote cache_binary)));
-                  Printf.printf "built %s\n" output;
-                  0
-                end
-              end
-        | "riscv64" ->
-            (* Emit RV64 assembly for the GNU cross binutils: one
+                    let compile_runtime =
+                      Printf.sprintf
+                        "cd %s && PATH=%s:$PATH %s ocamlopt -package unix,ssl \
+                         -c %s"
+                        (Filename.quote build_dir)
+                        (Filename.quote switch_bin)
+                        (Filename.quote ocamlfind) (Filename.quote rt_path)
+                    in
+                    let link_cmd =
+                      Printf.sprintf
+                        "PATH=%s:$PATH %s ocamlopt -package unix,ssl -linkpkg \
+                         -I %s -open Emo_ocaml_runtime %s %s %s %s -o %s"
+                        (Filename.quote switch_bin)
+                        (Filename.quote ocamlfind) (Filename.quote build_dir)
+                        (Filename.quote
+                           (Filename.concat build_dir "emo_ocaml_runtime.cmx"))
+                        (Filename.quote ml_path) cclib_flags stub_obj
+                        (Filename.quote output)
+                    in
+                    let exit_code = Emo_tool.run_status compile_runtime in
+                    let exit_code =
+                      if exit_code <> 0 then exit_code
+                      else Emo_tool.run_status link_cmd
+                    in
+                    if exit_code <> 0 then begin
+                      prerr_endline
+                        (Printf.sprintf
+                           "emo build: the OCaml toolchain failed (exit %d)"
+                           exit_code);
+                      70
+                    end
+                    else begin
+                      ignore
+                        (Emo_tool.run_or_warn ~what:"emo build"
+                           (Printf.sprintf "cp %s %s" (Filename.quote output)
+                              (Filename.quote cache_binary)));
+                      Printf.printf "built %s\n" output;
+                      0
+                    end
+                  end
+            | "riscv64" ->
+                (* Emit RV64 assembly for the GNU cross binutils: one
                freestanding ELF that boots under QEMU or on the machine
-               (step 19). *)
-            let asm = Emo_codegen.Riscv.emit program in
-            let out =
-              if Filename.check_suffix output ".elf" then output
-              else output ^ ".elf"
-            in
-            let asm_file = Filename.concat build_dir "emo_main.s" in
-            let obj_file = Filename.concat build_dir "emo_main.o" in
-            let ld_file = Filename.concat build_dir "emo_link.ld" in
-            let write path contents =
-              let oc = open_out_bin path in
-              output_string oc contents;
-              close_out oc
-            in
-            write asm_file asm;
-            write ld_file Emo_codegen.Riscv.linker_script;
-            let prefix = riscv_binutils_prefix () in
-            begin match prefix with
-            | None ->
+               (step 19). A package's native inputs ride in (EmoOS T3.1):
+               its .S sources assemble beside the program into the image,
+               its `runtime.S` replaces the compiler's boot stub, its
+               `link.ld` replaces the linker script — a kernel package
+               owns its image. The profile (EmoOS T4.1) picks the
+               compiler's own stub and sizing when the package provides
+               none: the kernel image boot profile A enters, the user
+               image is the U-mode ELF the kernel loads. *)
+                let asm =
+                  Emo_codegen.Riscv.emit
+                    ~boot_stub:(native.Emo_project.ni_runtime = None)
+                    ~profile program
+                in
+                let out =
+                  if Filename.check_suffix output ".elf" then output
+                  else output ^ ".elf"
+                in
+                let asm_file = Filename.concat build_dir "emo_main.s" in
+                let obj_file = Filename.concat build_dir "emo_main.o" in
+                let native_obj = Filename.concat build_dir "emo_native.o" in
+                let ld_file = Filename.concat build_dir "emo_link.ld" in
+                let write path contents =
+                  let oc = open_out_bin path in
+                  output_string oc contents;
+                  close_out oc
+                in
+                write asm_file asm;
+                let script =
+                  match native.Emo_project.ni_link_script with
+                  | Some script -> script
+                  | None ->
+                      write ld_file (Emo_codegen.Riscv.linker_script ~profile);
+                      ld_file
+                in
+                let prefix = riscv_binutils_prefix () in
+                begin match prefix with
+                | None ->
+                    prerr_endline
+                      "emo build: the riscv64 target needs the GNU cross \
+                       binutils on PATH — riscv64-unknown-elf-as/-ld or \
+                       riscv64-elf-as/-ld";
+                    69
+                | Some prefix ->
+                    let as_cmd =
+                      Printf.sprintf "%s-as -march=rv64gc -mabi=lp64d %s -o %s"
+                        prefix (Filename.quote asm_file)
+                        (Filename.quote obj_file)
+                    in
+                    let exit_code = Emo_tool.run_status as_cmd in
+                    (* The package sources assemble as one unit beside the
+                   program — the boot stub first, then the plain sources;
+                   each file owns its section directives, the plain
+                   assembly discipline. *)
+                    let package_sources =
+                      match native.Emo_project.ni_runtime with
+                      | Some stub -> stub :: native.Emo_project.ni_asm
+                      | None -> native.Emo_project.ni_asm
+                    in
+                    let exit_code =
+                      if exit_code <> 0 then exit_code
+                      else
+                        match package_sources with
+                        | [] -> 0
+                        | sources ->
+                            (* `.incbin` in a package source resolves against
+                           the directories its files live in, so the
+                           image's data rides the package tree wherever
+                           the build runs from. *)
+                            let include_flags =
+                              sources |> List.map Filename.dirname
+                              |> List.sort_uniq compare
+                              |> List.map (fun d -> " -I " ^ Filename.quote d)
+                              |> String.concat ""
+                            in
+                            Emo_tool.run_status
+                              (Printf.sprintf
+                                 "%s-as -march=rv64gc -mabi=lp64d%s %s -o %s"
+                                 prefix include_flags
+                                 (String.concat " "
+                                    (List.map Filename.quote sources))
+                                 (Filename.quote native_obj))
+                    in
+                    let objects =
+                      if package_sources = [] then Filename.quote obj_file
+                      else
+                        (* The package's object links first: OpenSBI enters at
+                       the image's load address, not the ELF entry, so the
+                       boot stub must open .text — the load order the
+                       default image lays out too. *)
+                        Filename.quote native_obj ^ " "
+                        ^ Filename.quote obj_file
+                    in
+                    let exit_code =
+                      if exit_code <> 0 then exit_code
+                      else
+                        Emo_tool.run_status
+                          (Printf.sprintf "%s-ld -T %s %s -o %s" prefix
+                             (Filename.quote script) objects
+                             (Filename.quote out))
+                    in
+                    if exit_code <> 0 then begin
+                      prerr_endline
+                        (Printf.sprintf
+                           "emo build: the riscv64 cross binutils failed (exit \
+                            %d)"
+                           exit_code);
+                      70
+                    end
+                    else begin
+                      Printf.printf "built %s\n" out;
+                      0
+                    end
+                end
+            (* cache miss *)
+            | other ->
                 prerr_endline
-                  "emo build: the riscv64 target needs the GNU cross binutils \
-                   on PATH — riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld";
-                69
-            | Some prefix ->
-                let as_cmd =
-                  Printf.sprintf "%s-as -march=rv64gc -mabi=lp64d %s -o %s"
-                    prefix (Filename.quote asm_file) (Filename.quote obj_file)
-                in
-                let ld_cmd =
-                  Printf.sprintf "%s-ld -T %s %s -o %s" prefix
-                    (Filename.quote ld_file) (Filename.quote obj_file)
-                    (Filename.quote out)
-                in
-                let exit_code = Emo_tool.run_status as_cmd in
-                let exit_code =
-                  if exit_code <> 0 then exit_code
-                  else Emo_tool.run_status ld_cmd
-                in
-                if exit_code <> 0 then begin
-                  prerr_endline
-                    (Printf.sprintf
-                       "emo build: the riscv64 cross binutils failed (exit %d)"
-                       exit_code);
-                  70
-                end
-                else begin
-                  Printf.printf "built %s\n" out;
-                  0
-                end
-            end
-        (* cache miss *)
-        | other ->
-            prerr_endline
-              (Printf.sprintf
-                 "emo build: unknown target `%s` (ocaml, c, typescript, \
-                  browser, wasm, beam, riscv64)"
-                 other);
-            65
-      with
-      | Emo_project.Static_errors diagnostics ->
-          render_errors ~color:false ~error_limit:20 diagnostics;
-          65
-      | Emo_tool.Timeout { command; timeout } ->
-          (* One handler covers every toolchain step below: a build that
+                  (Printf.sprintf
+                     "emo build: unknown target `%s` (ocaml, c, typescript, \
+                      browser, wasm, beam, riscv64)"
+                     other);
+                65
+          with
+          | Emo_project.Static_errors diagnostics ->
+              render_errors ~color:false ~error_limit:20 diagnostics;
+              65
+          | Emo_tool.Timeout { command; timeout } ->
+              (* One handler covers every toolchain step below: a build that
              stopped because a tool stopped answering is an external
              command failing, which is what 70 already means here. *)
-          prerr_endline
-            (Printf.sprintf
-               "emo build: %s did not finish within %.0fs and was killed"
-               command timeout);
-          70
-      | Stub_cc_failed ->
-          prerr_endline "emo build: the C stub compilation failed";
-          70
-      | Pkg_config_failed ->
-          (* The missing-tool / missing-module case (an environment
+              prerr_endline
+                (Printf.sprintf
+                   "emo build: %s did not finish within %.0fs and was killed"
+                   command timeout);
+              70
+          | Stub_cc_failed ->
+              prerr_endline "emo build: the C stub compilation failed";
+              70
+          | Pkg_config_failed ->
+              (* The missing-tool / missing-module case (an environment
              gap), not a compiler failure: 69, like the riscv binutils
              and TLS probes. *)
-          69
-      | Build_dir_failed dir ->
-          prerr_endline (Printf.sprintf "emo build: cannot create %s" dir);
-          70
-      | Emo_lexer.Error diagnostic ->
-          render_errors ~color:false ~error_limit:20 [ diagnostic ];
-          65
-      | Emo_ir.Lower_error message ->
-          prerr_endline ("emo build: " ^ message);
-          65)
+              69
+          | Build_dir_failed dir ->
+              prerr_endline (Printf.sprintf "emo build: cannot create %s" dir);
+              70
+          | Emo_lexer.Error diagnostic ->
+              render_errors ~color:false ~error_limit:20 [ diagnostic ];
+              65
+          | Emo_ir.Lower_error message ->
+              prerr_endline ("emo build: " ^ message);
+              65))
 
 let build =
   let entry =
@@ -963,7 +1064,15 @@ let build =
             "The compilation target: c, ocaml, typescript, browser, wasm, \
              beam, or riscv64.")
   in
-  let build entry output no_specialize cclibs target locked =
+  let profile =
+    Arg.(
+      value & opt string "kernel"
+      & info [ "profile" ] ~docv:"PROFILE"
+          ~doc:
+            "The riscv64 image shape: kernel (the default, boot profile A) or \
+             user (the U-mode ELF the kernel loads and enters).")
+  in
+  let build entry output no_specialize cclibs target profile locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
     let out =
       match output with
@@ -974,7 +1083,7 @@ let build =
     in
     match
       build_file ~entry ~output:out ~specialize:(not no_specialize) ~cclibs
-        ~native:Emo_project.no_native_inputs ~target
+        ~native:Emo_project.no_native_inputs ~target ~profile
     with
     | 0 -> Cmd.Exit.ok
     | code -> exit code
@@ -982,7 +1091,7 @@ let build =
   Cmd.v
     (Cmd.info "build" ~doc:"Compile an Emo program.")
     Term.(
-      const build $ entry $ output $ no_specialize $ cclib $ target
+      const build $ entry $ output $ no_specialize $ cclib $ target $ profile
       $ locked_flag ())
 
 (* `emo check`: the static stages only, over the whole module tree. A
@@ -1052,6 +1161,7 @@ let run =
         let code =
           build_file ~entry:file ~output:elf ~specialize:false ~cclibs:[]
             ~native:Emo_project.no_native_inputs ~target:"riscv64"
+            ~profile:"kernel"
         in
         if code <> 0 then exit code
         else if not (tool_exists "qemu-system-riscv64") then begin
@@ -2419,11 +2529,14 @@ let emoji_build ~(dir : string) : int =
           end
         in
         (* The package's own native inputs ride the build too — the
-           pre-publish gate must link what the package's consumers will
+           pre-publish gate must build what the package's consumers will
            get: its tree's .c/.m sources, its manifest's link libraries,
-           frameworks and pkg-config modules. The dependency mechanism
-           in build_file covers a package's deps; the package itself is
-           not its own dep. *)
+           frameworks and pkg-config modules. Its riscv64 shapes (the
+           .S sources and the image's boot stub and linker script) are
+           not here: they are the root package's own, and the
+           resolution inside build_file collects them from the root
+           tree directly. The dependency mechanism in build_file covers
+           a package's deps; the package itself is not its own dep. *)
         let own_native =
           {
             Emo_project.ni_sources =
@@ -2437,6 +2550,9 @@ let emoji_build ~(dir : string) : int =
             ni_link = m.Emo_pkg.link;
             ni_frameworks = m.Emo_pkg.frameworks;
             ni_pkg_config = m.Emo_pkg.pkg_config;
+            ni_asm = [];
+            ni_runtime = None;
+            ni_link_script = None;
           }
         in
         let results =
@@ -2450,7 +2566,7 @@ let emoji_build ~(dir : string) : int =
               in
               let code =
                 build_file ~entry ~output ~specialize:true ~cclibs:[]
-                  ~native:own_native ~target
+                  ~native:own_native ~target ~profile:"kernel"
               in
               (target, code))
             m.Emo_pkg.targets

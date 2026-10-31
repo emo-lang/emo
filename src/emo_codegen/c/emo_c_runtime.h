@@ -57,6 +57,7 @@ enum emo_kind {
   EMO_TUPLE,
   EMO_ARRAY,
   EMO_BOX,
+  EMO_ATOMIC,
   EMO_INSTANCE,
   EMO_ENUM,
   EMO_CLOSURE,
@@ -167,6 +168,23 @@ emo_value emo_array_append(emo_value arr, emo_value v); /* value semantics: a ne
 emo_value emo_box_new(emo_value v);
 emo_value emo_box_read(emo_value box);
 emo_value emo_box_replace(emo_value box, emo_value v);
+
+/* The Atomic cell — Box's synchronized sibling (CHECK.md, the atomic
+   memory model). The same one-payload shape; every access goes through
+   the __atomic builtins at sequential consistency. Copying an Atomic
+   shares the cell: emo_deep_copy passes it through like a Pid. */
+emo_value emo_atomic_new(emo_value v);
+emo_value emo_atomic_load(emo_value cell);
+emo_value emo_atomic_store(emo_value cell, emo_value v);
+emo_value emo_atomic_exchange(emo_value cell, emo_value v);
+emo_value emo_atomic_compare_exchange(emo_value cell, emo_value expected,
+                                      emo_value fresh);
+emo_value emo_atomic_fetch_add(emo_value cell, emo_value v);
+emo_value emo_atomic_fetch_sub(emo_value cell, emo_value v);
+emo_value emo_atomic_fetch_and(emo_value cell, emo_value v);
+emo_value emo_atomic_fetch_or(emo_value cell, emo_value v);
+emo_value emo_atomic_fetch_xor(emo_value cell, emo_value v);
+void emo_atomic_fence(void);
 
 /* The List deque: an identity, like a Box — mutation is visible through
    every alias. A doubly-linked node chain gives O(1) push and pop at

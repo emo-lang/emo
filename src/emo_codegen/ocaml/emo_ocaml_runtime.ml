@@ -51,6 +51,7 @@ module Emo_eval = struct
     | Builder of emo_builder
     | Map of emo_map
     | Box of value ref
+    | Atomic of value Atomic.t (* the synchronized cell: a handle, never copied *)
     | Pid of int (* a process identity, from `do` or `self_pid()` *)
     | TcpConn of conn
     | TcpListener of listener
@@ -381,6 +382,10 @@ module Emo_eval = struct
   let rec snapshot (v : value) : value =
     match v with
     | Box r -> Box (ref (snapshot !r))
+    (* The one declared exception (CHECK.md, the atomic memory model): an
+       Atomic copies as the handle to the same cell — every operation on
+       the cell is synchronized, so the sharing is safe by construction. *)
+    | Atomic _ -> v
     | Bytes b -> Bytes (Bytes.copy b)
     | Tuple vs -> Tuple (List.map snapshot vs)
     | Array xs -> Array (Array.map snapshot xs)
@@ -473,6 +478,7 @@ module Emo_eval = struct
     | Builder _ -> "ArrayBuilder"
     | Map _ -> "Map"
     | Box _ -> "Box"
+    | Atomic _ -> "Atomic"
     | Pid _ -> "Pid"
     | TcpConn _ -> "TcpConn"
     | TcpListener _ -> "TcpListener"
@@ -554,6 +560,7 @@ module Emo_eval = struct
         done;
         !ok
     | Box x, Box y -> equal_value !x !y
+    | Atomic x, Atomic y -> equal_value (Atomic.get x) (Atomic.get y)
     | Pid x, Pid y -> Int.equal x y
     | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
     | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
@@ -637,6 +644,7 @@ module Emo_eval = struct
                (map_keys m))
         ^ "}"
     | Box _ -> "<box>"
+    | Atomic _ -> "<atomic>"
     | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
     | Pid n -> Printf.sprintf "<pid %d>" n
     | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
@@ -1282,6 +1290,14 @@ let pf_hash_float conv minus plus space width prec f =
     | "halt", vs ->
         error "E3007"
           (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+    | "fence", [] ->
+        (* The exact no-op: one cooperative scheduler domain, sequential
+           consistency holds vacuously. *)
+        Void
+    | "fence", vs ->
+        error "E3007"
+          (Printf.sprintf "`fence` expects no arguments, got %d"
+             (List.length vs))
     | _, _ -> error "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
   (* The standard library's runtime implementations — what a package's own
@@ -2042,6 +2058,13 @@ module Emo_runtime = struct
 
   let box_new v = Emo_eval.Box (ref v)
 
+  (* Atomic.new(v): the synchronized cell. The OCaml runtime runs every
+     Emo process on one scheduler domain (CHECK.md, the atomic memory
+     model), so the cell is a `value Atomic.t` and the operations are
+     exact on it; the fetch family is the compare-and-set loop the
+     design note names, because the cell's payload is a boxed value. *)
+  let atomic_new v = Emo_eval.Atomic (Atomic.make v)
+
   (* List.new(array): copies the elements into a fresh deque, front to
      back. The argument must be an Array — anything else is the E3001
      type error. *)
@@ -2405,6 +2428,80 @@ module Emo_runtime = struct
         let v = List.hd args in
         r := v;
         v
+    | Emo_eval.Atomic cell, "load" ->
+        none_expected ();
+        Atomic.get cell
+    | Emo_eval.Atomic cell, "store" ->
+        one_expected ();
+        Atomic.set cell (List.hd args);
+        Emo_eval.Void
+    | Emo_eval.Atomic cell, "exchange" ->
+        one_expected ();
+        Atomic.exchange cell (List.hd args)
+    | Emo_eval.Atomic cell, "compare_exchange" ->
+        (* A mismatch is a value, not an error: the pair carries whether
+           the swap happened and the value the cell held before the call.
+           The structural contract is a get-equal-set here — the single
+           cooperative domain makes the two steps exact. *)
+        if argc <> 2 then
+          failwith
+            (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+               argc);
+        let expected = List.nth args 0 and fresh = List.nth args 1 in
+        let old = Atomic.get cell in
+        let swapped = Emo_eval.equal_value old expected in
+        if swapped then Atomic.set cell fresh;
+        Emo_eval.Tuple [ Emo_eval.Bool swapped; old ]
+    | Emo_eval.Atomic cell, (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor") as mname) ->
+        (* The compare-and-set loop the design note names: read, compute
+           on the boxed payload, retry the swap. The arithmetic pair is
+           Int64's, the bitwise family is Int64's and Bool's — the
+           checker refuses the rest by name, and the loop refuses what a
+           gradual call could still reach. *)
+        one_expected ();
+        let v = List.hd args in
+        let rec loop () =
+          let old = Atomic.get cell in
+          let next =
+            match (mname, old, v) with
+            | ( "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or"
+              | "fetch_xor" ),
+              Emo_eval.Int64 a,
+              Emo_eval.Int64 b ->
+                Emo_eval.Int64
+                  (match mname with
+                   | "fetch_add" -> Int64.add a b
+                   | "fetch_sub" -> Int64.sub a b
+                   | "fetch_and" -> Int64.logand a b
+                   | "fetch_or" -> Int64.logor a b
+                   | _ -> Int64.logxor a b)
+            | ( "fetch_and" | "fetch_or" | "fetch_xor" ),
+              Emo_eval.Bool a,
+              Emo_eval.Bool b ->
+                Emo_eval.Bool
+                  (match mname with
+                   | "fetch_and" -> a && b
+                   | "fetch_or" -> a || b
+                   | _ -> a <> b)
+            | _, cellv, v -> (
+                match cellv with
+                | Emo_eval.Bool _ ->
+                    Emo_eval.error "E3001"
+                      (Printf.sprintf "`%s` expects a Bool, got %s" mname
+                         (Emo_eval.type_name v))
+                | Emo_eval.Int64 _ ->
+                    Emo_eval.error "E3001"
+                      (Printf.sprintf "`%s` expects an Int64, got %s" mname
+                         (Emo_eval.type_name v))
+                | other ->
+                    Emo_eval.error "E3001"
+                      (Printf.sprintf
+                         "`%s` expects an Int64 or Bool cell, got %s" mname
+                         (Emo_eval.type_name other)))
+          in
+          if Atomic.compare_and_set cell old next then old else loop ()
+        in
+        loop ()
     | Emo_eval.List l, "push_front" ->
         one_expected ();
         Emo_eval.list_push_front l (List.hd args);

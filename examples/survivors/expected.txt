@@ -1,0 +1,7 @@
+spawned
+heap gone in process 3
+101
+301
+102
+302
+total 806

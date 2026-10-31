@@ -1,0 +1,7 @@
+package {
+  name = "emo/parity_fake"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {}
+}

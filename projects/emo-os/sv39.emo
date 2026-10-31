@@ -1,0 +1,285 @@
+// Sv39 (T6.1): the kernel's page tables, built in Emo over raw memory
+// — the README's untyped-memory discipline, Int64 addresses and
+// peek/poke and bit masks, no value of the language pointing into a
+// table. A table is a 4 KiB frame of 512 eight-byte entries; a leaf
+// entry carries a physical page number and the permission bits, a
+// non-leaf the next table's; the walk takes nine bits of the virtual
+// address per level, three levels down from the root. The frames come
+// from the allocator (frames.emo), one per table.
+//
+// The layout is the kernel's high half: every kernel address is the
+// physical one plus koff, the base of Sv39's upper half, so the image,
+// the free RAM, the fixed pages, and the devices all sit where the
+// kernel's own loads, stores, and fetches reach them, and a user address
+// — the lower half — is told from a kernel one by its sign. The kernel's
+// own table, built at boot, maps the image by its permission boundaries
+// (text RX, rodata R, data and bss RW), the rest of the RAM RW to the
+// board's top, and the two devices the kernel drives — and, since T6.2,
+// the same kernel half again in every user process's table, no U: the
+// kernel runs on whichever table satp names, and U-mode on a user table
+// reaches none of it. The kernel half is joined in every table by the
+// supervisor's window onto the low RAM — the image's load address to
+// the board's top at identity, RW, no U — the one low mapping the
+// kernel's own processes need: the loader's copies, the handoff cells,
+// and the gate's answers into a parked pass's trap frame are all low
+// addresses, and a kernel process runs on the kernel's table. Nothing
+// here touches satp: the write and the fence are the shim's (sv39.S),
+// called with the physical root this module answers.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+const page = 4096
+const mega = 2097152
+const giga = 1073741824
+
+// This module's fixed page: the root's kernel address, for the
+// program's check against the live satp; the stub writes the satp
+// beside it. The two permission boundaries the stub passed to boot
+// are recorded here too (T6.2) — map_kernel reads them for every
+// table it builds, the kernel's and every user process's, so the
+// linker's boundaries are written once and honored everywhere.
+const root_cell = koff + 0x87004000
+const satp_cell = koff + 0x87004008
+const current_cell = koff + 0x87004010
+const text_end_cell = koff + 0x87004018
+const rodata_end_cell = koff + 0x87004020
+
+// The entry's bits: valid, the three permissions, user, accessed,
+// dirty. Every leaf is written accessed and dirty — the kernel keeps
+// no use counts, and a hardware that traps on a clear bit must not.
+const pte_v = 1
+const pte_r = 2
+const pte_w = 4
+const pte_x = 8
+const pte_u = 16
+const pte_a = 64
+const pte_d = 128
+const leaf_bits = pte_r | pte_w | pte_x
+const rx = pte_r | pte_x
+const r = pte_r
+const rw = pte_r | pte_w
+
+// The machine: the image's load address (where OpenSBI enters, where
+// the kernel's text begins), the top of the board's 128 MiB, the two
+// devices the kernel drives, and the first address the supervisor's low
+// window maps — the load address itself, one megapage above the
+// firmware's PMP-locked region, which no table maps.
+const image = koff + 0x80200000
+const ram_top = koff + 0x88000000
+const low_base = 0x80200000
+const uart = 0x10000000
+const plic = 0x0c000000
+// The virtio-mmio transports (T7.1): eight slots on this board, a
+// 4 KiB register page each, the first one the block device's.
+const virtio = 0x10001000
+
+// The two aliases of one byte: the kernel's address and the physical
+// one. The leaf entries carry the physical; the kernel reads and writes
+// through the kernel's; a user pass pre-T6.2 runs on the physical.
+def pa_of(va Int64) Int64 {
+  return va - koff
+}
+
+def va_of(pa Int64) Int64 {
+  return pa + koff
+}
+
+def pte_of(pa Int64, flags Int64) Int64 {
+  return ((pa >> 12) << 10) | flags
+}
+
+def pte_pa(e Int64) Int64 {
+  return (e >> 10) << 12
+}
+
+// The nine bits of `va` the table at `level` indexes by: level 2 is the
+// root's. A kernel address is negative; the mask keeps the shift's sign
+// out of the index.
+def vpn(va Int64, level Int64) Int64 {
+  return (va >> (12 + (9 * level))) & 511
+}
+
+def clear(table Int64) Void {
+  var i = 0
+  while i < 512 {
+    poke64(table + (i * 8), 0)
+    i = i + 1
+  }
+}
+
+// The entry's address for `va` at `level`, the tables on the way
+// created as needed — a fresh frame, cleared, its entry in the parent
+// valid and nothing else. A leaf met on the way is a kernel bug: a
+// larger page already covers this address.
+def slot_of(root Int64, va Int64, level Int64) Int64 {
+  var table = root
+  var l = 2
+  while l > level {
+    var at = table + (vpn(va, l) * 8)
+    var e = peek64(at)
+    if (e & pte_v) == 0 {
+      var f = frames.frame_take()
+      if f == 0 {
+        die("sv39: no frame left for a table")
+      }
+      clear(f)
+      poke64(at, pte_of(pa_of(f), pte_v))
+      table = f
+    } else {
+      if (e & leaf_bits) != 0 {
+        die("sv39: a leaf blocks the walk")
+      }
+      table = va_of(pte_pa(e))
+    }
+    l = l - 1
+  }
+  return table + (vpn(va, level) * 8)
+}
+
+// One leaf: a 4 KiB page at level 0, a 2 MiB megapage at 1, a 1 GiB
+// gigapage at 2. The entry must be free — mapping an address twice is
+// a kernel bug — and both addresses aligned to the page the level
+// means.
+def map(root Int64, va Int64, pa Int64, flags Int64, level Int64) Void {
+  var size = page << (9 * level)
+  if va % size != 0 || pa % size != 0 {
+    die("sv39: a leaf off its page boundary")
+  }
+  var at = slot_of(root, va, level)
+  if (peek64(at) & pte_v) != 0 {
+    die("sv39: an address mapped twice")
+  }
+  poke64(at, pte_of(pa, flags | pte_v | pte_a | pte_d))
+}
+
+// A range, page-aligned at both ends and in length: megapages wherever
+// both addresses sit on a 2 MiB boundary with 2 MiB to go, 4 KiB pages
+// elsewhere — so an image whose permission boundaries fall mid-megapage
+// costs one small table, and the hundred megabytes behind it a few
+// dozen entries.
+def map_range(root Int64, va Int64, pa Int64, len Int64, flags Int64) Void {
+  if va % page != 0 || pa % page != 0 || len % page != 0 {
+    die("sv39: a range off its page boundaries")
+  }
+  var v = va
+  var p = pa
+  var left = len
+  while left > 0 {
+    if v % mega == 0 && p % mega == 0 && left >= mega {
+      map(root, v, p, flags, 1)
+      v = v + mega
+      p = p + mega
+      left = left - mega
+    } else {
+      map(root, v, p, flags, 0)
+      v = v + page
+      p = p + page
+      left = left - page
+    }
+  }
+}
+
+// The translation a table gives `va`: the physical address, or -1 when
+// nothing maps it — the software walk, what the hardware does on a
+// miss. The boot's check reads it against the addresses the kernel is
+// about to run on.
+def lookup(root Int64, va Int64) Int64 {
+  var table = root
+  var l = 2
+  while l >= 0 {
+    var e = peek64(table + (vpn(va, l) * 8))
+    if (e & pte_v) == 0 {
+      return -1
+    }
+    if (e & leaf_bits) != 0 {
+      var size = page << (9 * l)
+      return pte_pa(e) + (va & (size - 1))
+    }
+    table = va_of(pte_pa(e))
+    l = l - 1
+  }
+  return -1
+}
+
+def check(root Int64, va Int64, pa Int64) Void {
+  if lookup(root, va) != pa {
+    die("sv39: the table does not translate the kernel's own addresses")
+  }
+}
+
+// The kernel's half, into any table: the image by the linker's
+// page-aligned permission boundaries (text RX, rodata R, data onward
+// RW to the RAM's top — the boundaries boot recorded on this page),
+// the UART's page and the PLIC's 4 MiB, and — on the kernel's own
+// table only — the supervisor's window onto the low RAM, the load
+// address to the RAM's top at identity, RW, no U: the loader's
+// copies, the handoff cells, and the gate's answers into a parked
+// pass's trap frame are all low addresses, and a kernel process runs
+// on the kernel's table. The window is megapages, and the user's
+// pages are 4 KiB ones in the same half of the same tree — a table
+// that carried both would meet a leaf blocking the walk — so a user
+// process's table takes the kernel's half WITHOUT the window
+// (`low` false): the kernel running on such a table is inside a trap,
+// where everything it touches is either high or the caller's own
+// mapped pages, and nothing reaches for the window. No entry anywhere
+// carries U: a U-mode on a table that maps only this half reaches
+// nothing — the half is the kernel's alone, and the hardware is what
+// says so.
+def map_kernel(root Int64, low Bool) Void {
+  var text_end = peek64(text_end_cell)
+  var rodata_end = peek64(rodata_end_cell)
+  map_range(root, image, pa_of(image), text_end - image, rx)
+  map_range(root, text_end, pa_of(text_end), rodata_end - text_end, r)
+  map_range(root, rodata_end, pa_of(rodata_end), ram_top - rodata_end, rw)
+  map_range(root, va_of(uart), uart, page, rw)
+  map_range(root, va_of(plic), plic, 2 * mega, rw)
+  var i = 0
+  while i < 8 {
+    map_range(root, va_of(virtio + i * page), virtio + i * page, page, rw)
+    i = i + 1
+  }
+  if low {
+    map_range(root, low_base, low_base, pa_of(ram_top) - low_base, rw)
+  }
+}
+
+// The kernel's own table, built before the program runs: the stub
+// passes the two permission boundaries the linker script draws, and
+// the answer is the root's physical address — what the shim writes
+// into satp. The boundaries are recorded first, so every later table
+// draws the same picture; the kernel's half follows (map_kernel).
+// Since T6.2 the table carries no user mapping at all — the window's
+// two gigapages with U are gone, every user address belongs to the
+// process's own table (space.emo), and the supervisor's low window is
+// the one low mapping, no U, for the kernel's own bookkeeping. The
+// firmware's region stays in no mapping, as T6.1 decided: the window
+// begins at the load address, one megapage above it. Before the
+// answer, the table is walked for the addresses the next instructions
+// depend on.
+def boot(text_end Int64, rodata_end Int64) Int64 {
+  poke64(text_end_cell, text_end)
+  poke64(rodata_end_cell, rodata_end)
+  var root = frames.frame_take()
+  if root == 0 {
+    die("sv39: no frame left for the root")
+  }
+  clear(root)
+  map_kernel(root, true)
+  check(root, image, pa_of(image))
+  check(root, rodata_end, pa_of(rodata_end))
+  check(root, root, pa_of(root))
+  check(root, root_cell, pa_of(root_cell))
+  check(root, va_of(uart), uart)
+  check(root, 0x87fff000, 0x87fff000)
+  check(root, 0x87100000, 0x87100000)
+  poke64(root_cell, root)
+  return pa_of(root)
+}
+
+// The loud end of a kernel bug in the tables: the line says which, the
+// SBI takes the machine down. Boot- and spawn-time only — the table
+// builders run outside the traps, inside the scheduler's masked
+// regions, where a polled line is allowed.
+def die(what String) Void {
+  println(what)
+  halt()
+}

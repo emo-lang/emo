@@ -27,6 +27,7 @@ type t =
   | MapType of t * t
   | TupleType of t list
   | BoxType of t
+  | AtomicType of t (* the payload: Int64 or Bool, Unknown until pinned *)
   | ListType of t (* the List deque's element type *)
   | BuilderType of
       t (* ArrayBuilder's element type; Unknown until a push pins it *)
@@ -52,6 +53,7 @@ let rec to_string = function
   | ArrayType e -> "Array[" ^ to_string e ^ "]"
   | MapType (k, v) -> "Map[" ^ to_string k ^ ", " ^ to_string v ^ "]"
   | BoxType e -> "Box[" ^ to_string e ^ "]"
+  | AtomicType e -> "Atomic[" ^ to_string e ^ "]"
   | ListType e -> "List[" ^ to_string e ^ "]"
   | BuilderType e -> "ArrayBuilder[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
@@ -300,6 +302,16 @@ let resolve_type_ref ctx span (ref_ : string) : t option =
    module may name a type from the library consuming the block, and
    cross-module types stay unchecked this step — so it narrows to Unknown
    instead of reporting E4005. Definitions stay strict. *)
+(* The atomic payload scope (CHECK.md, the atomic memory model): the two
+   scalars the op set covers. Unknown stays silent — inference has not
+   pinned the cell yet. *)
+let atomic_payload_ok = function Int64 | Bool | Unknown -> true | _ -> false
+
+let refuse_atomic_payload ctx span (payload : t) =
+  report ctx span "E4027"
+    (Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`"
+       (to_string payload))
+
 let rec decl_to_type ?(lenient = false) ctx
     ({ Ast.type_span = span; type_desc; _ } : Ast.type_decl) =
   match type_desc with
@@ -317,6 +329,7 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "Void" -> Void
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
+  | Ast.Named_type "Atomic" -> AtomicType Unknown
   | Ast.Named_type "List" -> ListType Unknown
   | Ast.Named_type "ArrayBuilder" -> BuilderType Unknown
   | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
@@ -337,6 +350,15 @@ let rec decl_to_type ?(lenient = false) ctx
       Unknown
   | Ast.Applied_type ("Box", [ elem ]) ->
       BoxType (decl_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("Atomic", [ elem ]) ->
+      let payload = decl_to_type ~lenient ctx elem in
+      if atomic_payload_ok payload then AtomicType payload
+      else (
+        refuse_atomic_payload ctx span payload;
+        AtomicType Unknown)
+  | Ast.Applied_type ("Atomic", _) ->
+      report ctx span "E4005" "`Atomic` takes one type argument: Atomic[T]";
+      AtomicType Unknown
   | Ast.Applied_type ("List", [ elem ]) ->
       ListType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("List", _) ->
@@ -803,6 +825,7 @@ let empty_env =
           } );
         ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
         ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
+        ("fence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
         ( "expect_equal",
           {
             vtype =
@@ -830,6 +853,7 @@ let empty_env =
           } );
         (* The capability types: the language's own, import-free names. *)
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Atomic", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
         ("List", { vtype = Unknown; is_var = false; depth = 0 });
         ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
@@ -1199,6 +1223,126 @@ let empty_env =
     loop_depth = 0;
   }
 
+(* The raw-memory builtins (docs/raw-memory.md): admitted only where the
+   program owns the address space. Registered on the riscv64 target
+   alone — on every hosted target a reference to the names is refused
+   by name at the identifier (E4028): the atomics no-op precedent
+   cannot carry a peek, which would have to invent a value. *)
+let raw_mem_bindings =
+  [
+    ( "peek8",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Byte);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke8",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Byte) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "peek64",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke64",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+    (* peek32/poke32 (EmoOS T7.1): the 32-bit device line — MMIO
+       registers are 4 bytes, and neither byte writes (each byte offset
+       is its own register access, and unmapped offsets fault the
+       device) nor 64-bit writes (the neighbor register may be invalid)
+       can express one. The value's width is guarded at runtime — there
+       is no Int32 type yet — the loud end, never a silent truncation;
+       the arithmetic type stays deferred. *)
+    ( "peek32",
+      {
+        vtype = FuncType ([ ("addr", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    ( "poke32",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+    (* device_wait (T3.7): the kernel sleeps until the device world
+       wakes it — the ISR side of an interrupt-driven driver. Same
+       admission rule: only the target that owns the machine. *)
+    ("device_wait", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    (* ecall (EmoOS T4.2): the machine's syscall instruction, raw — the
+       user side of the gate. The verb and its six words ride a7 and
+       a0..a5 on the other side of the instruction; the answer comes
+       back in a0 (>= 0 the payload, < 0 the refusal's reason). Same
+       admission rule as the rest of raw memory. *)
+    ( "ecall",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("verb", Int64);
+                ("r0", Int64);
+                ("r1", Int64);
+                ("r2", Int64);
+                ("r3", Int64);
+                ("r4", Int64);
+                ("r5", Int64);
+              ],
+              Int64 );
+        is_var = false;
+        depth = 0;
+      } );
+    (* user_spawn (EmoOS T4.4): the process service's word — a new user
+       process enters the image's program on a fresh stack, and the raw
+       pid number comes back. Same admission rule. *)
+    ( "user_spawn",
+      {
+        vtype = FuncType ([ ("entry", Int64); ("stack", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+      } );
+    (* gate_reply (EmoOS T4.4): a service's answer to the gate's
+       parked caller — the target's raw pid names the waiter (it rode
+       the request word), the raw answer lands in that caller's own
+       trap frame and the wake is this helper's alone. Same admission
+       rule. *)
+    ( "gate_reply",
+      {
+        vtype = FuncType ([ ("target", Int64); ("answer", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
+    (* pid_num (EmoOS T4.4): the raw machine sees a pid as its number —
+       the kernel's handoff cells carry numbers, not Pid words. Same
+       admission rule. *)
+    ( "pid_num",
+      { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
+  ]
+
+let raw_mem_builtin = function
+  | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
+  | "device_wait" | "ecall" | "user_spawn" | "gate_reply" | "pid_num" ->
+      true
+  | _ -> false
+
+(* The refusal names what the name reaches: the memory lanes reach raw
+   memory, `ecall` reaches the machine's gate. *)
+let raw_mem_what = function
+  | "ecall" -> "the machine's gate"
+  | _ -> "raw memory"
+
+let base_env target =
+  if target = "riscv64" then
+    { empty_env with bindings = raw_mem_bindings @ empty_env.bindings }
+  else empty_env
+
 let lookup_env env name = List.assoc_opt name env.bindings
 
 (* Whether a name is bound locally (a var, const, def, or parameter).
@@ -1245,6 +1389,7 @@ and conforms ctx actual expected =
   | MapType (ka, va), MapType (kb, vb) ->
       conforms ctx ka kb && conforms ctx va vb
   | BoxType a, BoxType b -> conforms ctx a b
+  | AtomicType a, AtomicType b -> conforms ctx a b
   | ListType a, ListType b -> conforms ctx a b
   | BuilderType a, BuilderType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
@@ -1496,7 +1641,13 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               ctx.refs := name_path :: !(ctx.refs);
               Unknown
           | None ->
-              if out_of_scope ctx name then
+              if raw_mem_builtin name then
+                report ctx span "E4028"
+                  (Printf.sprintf
+                     "`%s` reaches %s: only the `riscv64` target admits it, \
+                      not `%s`"
+                     name (raw_mem_what name) ctx.target)
+              else if out_of_scope ctx name then
                 report ctx span "E5008"
                   (Printf.sprintf "%s does not declare `%s` in its deps"
                      (package_label ctx) name)
@@ -1519,6 +1670,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                 "Byte";
                 "Float64";
                 "Box";
+                "Atomic";
                 "Bytes";
                 "List";
                 "ArrayBuilder";
@@ -2114,6 +2266,35 @@ and check_method_call ctx env span recv mname args : t =
         BoxType Unknown)
   else if
     match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Atomic", "new" -> true
+    | _ -> false
+  then (
+    (* Atomic.new(v) — the synchronized cell's constructor. The argument's
+       type is the payload, and the payload scope is the two scalars: an
+       Int64 or Bool cell checks, anything else refuses by name (the
+       annotation form refuses through decl_to_type). *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    match arg_values with
+    | [ (None, vt) ] ->
+        if atomic_payload_ok vt then AtomicType vt
+        else (
+          refuse_atomic_payload ctx span vt;
+          AtomicType Unknown)
+    | [ (Some n, _) ] ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Atomic.new` takes a positional value, got `%s`" n);
+        AtomicType Unknown
+    | _ ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Atomic.new` expects 1 argument, got %d"
+             (List.length arg_values));
+        AtomicType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
     | Ast.Type_ident "ArrayBuilder", "new" -> true
     | _ -> false
   then (
@@ -2460,6 +2641,83 @@ and check_method_call ctx env span recv mname args : t =
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`replace` expects 1 argument, got %d"
+                 (List.length args));
+            elem)
+    | AtomicType elem, "load" -> none_expected elem
+    | AtomicType elem, "store" -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`store` expects %s, got %s" (to_string elem)
+                   (to_string v));
+            Void
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`store` expects 1 argument, got %d"
+                 (List.length args));
+            Void)
+    | AtomicType elem, "exchange" -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`exchange` expects %s, got %s" (to_string elem)
+                   (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`exchange` expects 1 argument, got %d"
+                 (List.length args));
+            elem)
+    | AtomicType elem, "compare_exchange" -> (
+        match List.map snd arg_values with
+        | [ expected; fresh ] ->
+            if not (conforms ctx expected elem) then
+              report ctx span "E4004"
+                (Printf.sprintf
+                   "`compare_exchange` expects %s as the expected value, got %s"
+                   (to_string elem) (to_string expected));
+            if not (conforms ctx fresh elem) then
+              report ctx span "E4004"
+                (Printf.sprintf
+                   "`compare_exchange` expects %s as the new value, got %s"
+                   (to_string elem) (to_string fresh));
+            TupleType [ Bool; elem ]
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+                 (List.length args));
+            TupleType [ Bool; elem ])
+    | AtomicType Bool, (("fetch_add" | "fetch_sub") as mname) ->
+        (* Arithmetic is not Bool's vocabulary; the bitwise family is. *)
+        report ctx span "E4004"
+          (Printf.sprintf "`%s` expects an `Atomic[Int64]`, got `Atomic[Bool]`"
+             mname);
+        Bool
+    | AtomicType elem, (("fetch_add" | "fetch_sub") as mname) -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v Int64) then
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects Int64, got %s" mname (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                 (List.length args));
+            elem)
+    | AtomicType elem, (("fetch_and" | "fetch_or" | "fetch_xor") as mname) -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects %s, got %s" mname (to_string elem)
+                   (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
                  (List.length args));
             elem)
     | ListType elem, (("push_front" | "push_back") as mname) -> (
@@ -3408,7 +3666,7 @@ let check_items ctx (items : Ast.item list) : unit =
                 depth = env.depth;
               }
         | _ -> env)
-      empty_env items
+      (base_env ctx.target) items
   in
   ignore
     (List.fold_left
@@ -3664,7 +3922,7 @@ let preregister_types ~(packages : string list list)
                     depth = 0;
                   }
             | _ -> env)
-          empty_env items
+          (base_env ctx.target) items
       in
       ignore
         (List.fold_left

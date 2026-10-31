@@ -1,5 +1,5 @@
 package {
-  name = "emo/os"
+  name = "emo_os"
   version = "0.1.0"
   targets = ["riscv64"]
 

@@ -88,6 +88,8 @@ EmoUI is a project of its own under [`projects/emo-ui/`](projects/emo-ui), not a
 
 Emo's reach extends down to the operating system layer: the language is capable of writing a kernel, so that an Emo kernel plus an Emo shell — with EmoUI on top — forms a complete OS, EmoOS.
 
+EmoOS is a project of its own under [`projects/emo-os/`](projects/emo-os) — its [README](projects/emo-os/README.md) holds the decided design and the [task tracker](projects/emo-os/docs/TASKS.md).
+
 The `riscv64` compilation target is the bare-metal target. It assumes no OS, no libc, and no default runtime; it builds freestanding RISC-V images — the kernel development loop is compile, boot, debug, with no hardware required. QEMU is the target's default runner for that loop, not part of the target itself; the same image runs on real RISC-V hardware.
 
 Writing a kernel shapes the language in four ways:

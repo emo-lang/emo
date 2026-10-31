@@ -1,0 +1,16 @@
+42
+30
+4
+16
+5
+1
+bye got
+fresh got
+4
+1
+6
+2
+5
+3
+<pid 7>
+done

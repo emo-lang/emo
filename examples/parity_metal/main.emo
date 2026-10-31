@@ -1,0 +1,108 @@
+// The dual-run parity, metal leg (EmoOS T3.8): the console service
+// against the real devices — the 16550A's receive side polled raw, the
+// echoed bytes into a raw output ring above the heap. The same service
+// text runs on the hosted interpreter in parity_fake; the emo_os
+// harness asserts the shared block is byte-identical and the two legs'
+// outputs match byte for byte.
+
+// ==== 8< ==== the service: byte-identical in parity_fake and
+// ==== parity_metal; the harness asserts this prefix.
+
+interface Dev {
+  def ready() Int64
+
+  def read() Int64
+
+  def send(b Int64) Int64
+}
+
+// One line of console service: the bytes up to and including the
+// newline are consumed, and every byte before the newline goes back
+// through the device's send. Answers the count consumed.
+def service_line(dev Dev) Int64 {
+  var n = 1
+  var done = 0
+  while done == 0 {
+    var b = dev.read()
+    if b == 10 {
+      done = 1
+    } else {
+      dev.send(b)
+      n = n + 1
+    }
+  }
+  return n
+}
+
+// `lines` lines drained; answers the total bytes consumed across
+// them, newlines included.
+def service_lines(dev Dev, lines Int64) Int64 {
+  var total = 0
+  var i = 0
+  while i < lines {
+    total = total + service_line(dev)
+    i = i + 1
+  }
+  return total
+}
+// ==== >8 ==== end of the shared service ====
+
+// The receive side's hot loop lives in fully typed top-level defs: the
+// bodies are native (zero allocation — a boxed poll would burn the
+// heap), and the device's methods delegate to them.
+def uart_ready() Int64 {
+  if (peek8(0x10000005).to_int64() & 1) == 1 {
+    return 1
+  }
+  return 0
+}
+
+def uart_read() Int64 {
+  while (peek8(0x10000005).to_int64() & 1) == 0 {
+  }
+  return peek8(0x10000000).to_int64()
+}
+
+// The metal device: the line-status register's data-ready bit gates
+// the read, the receive buffer answers the byte, and the send side
+// appends into a raw ring — producer cursor, then the entries — the
+// same SPSC shape the kernel's console uses.
+class UartDev {
+  def init(in_base Int64, out_base Int64) {
+    self.in_base = in_base
+    self.out_base = out_base
+  }
+
+  def ready() Int64 {
+    return uart_ready()
+  }
+
+  def read() Int64 {
+    return uart_read()
+  }
+
+  def send(b Int64) Int64 {
+    var prod = peek64(self.out_base)
+    poke8(self.out_base + 16 + (prod % 64), b.to_byte())
+    poke64(self.out_base, prod + 1)
+    return 0
+  }
+
+  def out_count() Int64 {
+    return peek64(self.out_base)
+  }
+
+  def out_at(i Int64) Int64 {
+    return peek8(self.out_base + 16 + (i % 64)).to_int64()
+  }
+}
+
+println("parity")
+const dev = UartDev.new(0x10000000, 0x87001000)
+var total = service_lines(dev, 2)
+println(total)
+var i = 0
+while i < dev.out_count() {
+  println(dev.out_at(i))
+  i = i + 1
+}

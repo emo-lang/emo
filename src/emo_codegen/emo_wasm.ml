@@ -50,6 +50,10 @@ let t_vbuilder = 34
 let t_builder_new = 35
 let t_vmap = 36
 let t_str_slice = 37
+let t_vatomic = 38
+let t_atomic_store = 39
+let t_atomic_rm = 40
+let t_atomic_cas = 41
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -159,6 +163,16 @@ let runtime_types : W.typ list =
        the key array's order is the insertion order *)
     W.FuncT ([ W.RefNull t_bytes; W.I32; W.I32 ], [ W.RefNull t_bytes ]);
     (* str_slice: src, start, len -> bytes *)
+    W.StructT [ (W.Anyref, true); (W.I32, true) ];
+    (* $vatomic — Box's synchronized sibling; the second mutable field is
+       what keeps this type distinct from $vbox under WasmGC's
+       iso-recursive equivalence *)
+    W.FuncT ([ W.Anyref; W.Anyref ], []);
+    (* atomic_store: cell, value -> nothing (`store` answers Void) *)
+    W.FuncT ([ W.Anyref; W.Anyref ], [ W.Anyref ]);
+    (* atomic exchange and the fetch family: cell, value -> previous *)
+    W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], [ W.Anyref ]);
+    (* atomic_compare_exchange: cell, expected, fresh -> (Bool, previous) *)
   ]
 
 let i_print = 0
@@ -260,6 +274,16 @@ let rt = function
   | "str_trim" -> 94
   | "str_lower" -> 95
   | "str_to_int64" -> 96
+  | "atomic_new" -> 97
+  | "atomic_load" -> 98
+  | "atomic_store" -> 99
+  | "atomic_exchange" -> 100
+  | "atomic_compare_exchange" -> 101
+  | "atomic_fetch_add" -> 102
+  | "atomic_fetch_sub" -> 103
+  | "atomic_fetch_and" -> 104
+  | "atomic_fetch_or" -> 105
+  | "atomic_fetch_xor" -> 106
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -272,7 +296,7 @@ let rt = function
    (88), the String split surface (89..91), the tuple rendering
    (92), and the rest of the String surface — index_of, trim, lower,
    to_int64 (93..96) — last. *)
-let runtime_count = 97
+let runtime_count = 107
 
 (* ---- Lowering state ---- *)
 
@@ -508,10 +532,27 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | None -> (
           match List.assoc_opt name env.local_map with
           | Some i -> e env (W.Local_get i)
-          | None ->
-              failwith
-                ("wasm: unbound local " ^ name ^ " in " ^ env.fname ^ " map="
-                ^ String.concat "," (List.map fst env.local_map))))
+          | None -> (
+              (* A receive handler is a hidden function with a fresh local
+                 map: the branch's reads of the entry's module-level consts
+                 have no local here. The const's memoized thunk is the same
+                 value the binding read — call it. *)
+              match
+                List.find_opt
+                  (fun c -> String.ends_with ~suffix:("__" ^ name) c)
+                  env.consts
+              with
+              | Some thunk -> (
+                  match List.assoc_opt thunk env.funcs with
+                  | Some fidx -> e env (W.Call fidx)
+                  | None ->
+                      failwith ("wasm: const thunk " ^ thunk ^ " is not lowered")
+                  )
+              | None ->
+                  failwith
+                    ("wasm: unbound local " ^ name ^ " in " ^ env.fname
+                   ^ " map="
+                    ^ String.concat "," (List.map fst env.local_map)))))
   | Global name -> (
       if List.mem name env.fforeigns then
         raise
@@ -753,6 +794,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
           e env (W.Call (rt "println"))
       | "self_pid", [] -> e env (W.Call (rt "self_pid"))
       | "halt", [] -> e env (W.Call (rt "halt"))
+      | "fence", [] -> ()
       | _ ->
           raise
             (Emo_ir.Lower_error
@@ -765,6 +807,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Box_new v ->
       expr env v;
       e env (W.Call (rt "box"))
+  | Atomic_new v ->
+      expr env v;
+      e env (W.Call (rt "atomic_new"))
   | Bytes_new v ->
       expr env v;
       e env (W.Call (rt "bytes_new"))
@@ -1181,6 +1226,30 @@ and builtin_method_call env self_ name args =
       e env (W.Local_get val_local);
       e env (W.Struct_set (t_vbox, 0));
       e env (W.Local_get val_local)
+  (* The Atomic cell: the exact no-op lowering — the single cooperative
+     context makes the plain runtime calls sequentially consistent. *)
+  | "load", [] ->
+      expr env self_;
+      e env (W.Call (rt "atomic_load"))
+  | "store", [ v ] ->
+      expr env self_;
+      expr env v;
+      e env (W.Call (rt "atomic_store"))
+  | "exchange", [ v ] ->
+      expr env self_;
+      expr env v;
+      e env (W.Call (rt "atomic_exchange"))
+  | "compare_exchange", [ expected; fresh ] ->
+      expr env self_;
+      expr env expected;
+      expr env fresh;
+      e env (W.Call (rt "atomic_compare_exchange"))
+  | ( (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor") as
+       mname),
+      [ v ] ) ->
+      expr env self_;
+      expr env v;
+      e env (W.Call (rt ("atomic_" ^ mname)))
   | (("push_front" | "push_back") as mname), [ v ] ->
       expr env self_;
       expr env v;
@@ -1611,6 +1680,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       let code = expr_block env x in
       match x.Emo_ir.desc with
       | Emo_ir.Builtin { name = "println"; _ } -> code
+      (* `fence()` is the exact no-op; `store` answers nothing — neither
+         leaves a word for the statement to drop *)
+      | Emo_ir.Builtin { name = "fence"; _ } -> code
+      | Emo_ir.Method { name = "store"; _ } -> code
       | _ -> code @ [ W.Drop ])
   | Emo_ir.Let { mutable_ = _; name; init } ->
       (* Every value, a closure struct included, fits anyref; a dynamic
@@ -2255,6 +2328,22 @@ let rt_to_str : W.func_type =
       ]
       [ W.Local_get 0; W.Call (rt "instance_str") ]
   in
+  let atomic_branch =
+    branch (test_of t_vatomic)
+      [
+        W.I32_const 60;
+        W.I32_const 97;
+        W.I32_const 116;
+        W.I32_const 111;
+        W.I32_const 109;
+        W.I32_const 105;
+        W.I32_const 99;
+        W.I32_const 62;
+        W.Array_new_fixed (t_bytes, 8);
+        W.Struct_new t_vstring;
+      ]
+      [ innermost ]
+  in
   let char_branch =
     branch (test_of t_vchar)
       [
@@ -2264,7 +2353,7 @@ let rt_to_str : W.func_type =
         W.Call (rt "char_str");
         W.Struct_new t_vstring;
       ]
-      [ innermost ]
+      [ atomic_branch ]
   in
   let bool_branch =
     branch (test_of t_vbool)
@@ -4142,6 +4231,16 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
       (both t_vbytes 0 1, bytes_arm);
       (both t_vlist 0 1, list_arm);
       (both t_vmap 0 1, map_arm);
+      ( both t_vatomic 0 1,
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vatomic;
+          W.Struct_get (t_vatomic, 0);
+          W.Local_get 1;
+          W.Ref_cast t_vatomic;
+          W.Struct_get (t_vatomic, 0);
+          W.Call (rt "deep_eq");
+        ] );
     ]
     @ class_arms
   in
@@ -4216,6 +4315,9 @@ let rt_deep_copy_func (env : env) : W.func_type =
   in
   let arms =
     [
+      (* the one declared exception (CHECK.md, the atomic memory model):
+         the copy is the handle to the same cell *)
+      (passes t_vatomic, [ W.Local_get 0 ]);
       ( passes t_vbox,
         [
           W.Local_get 0;
@@ -5658,6 +5760,147 @@ let rt_str_to_int64 : W.func_type =
 
 (* builder_str(b) -> $vstring: "ArrayBuilder[a, b, c]" over the live
    prefix. Locals: 1 result, 2 builder, 3 i, 4 scratch, 5 first. *)
+(* ---- The Atomic cell ----
+
+   Box's synchronized sibling (CHECK.md, the atomic memory model). Every
+   Emo process here cooperates on one event loop and switches only at
+   defined points, so the exact no-op is a correct lowering: the reads
+   and writes are plain struct field access, and the fetch family is the
+   read-compute-write the payload's own kind picks — a wrong-shape pair
+   traps on the casts. The answer to a fetch is the value the cell held,
+   which is the payload word itself. *)
+
+let rt_atomic_new : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [];
+    fbody = [ W.Local_get 0; W.I32_const 0; W.Struct_new t_vatomic ];
+  }
+
+let rt_atomic_load : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "cell" ];
+    flocals = [];
+    fbody = [ W.Local_get 0; W.Ref_cast t_vatomic; W.Struct_get (t_vatomic, 0) ];
+  }
+
+let rt_atomic_store : W.func_type =
+  {
+    W.ftype_idx = t_atomic_store;
+    fparams = [ "cell"; "v" ];
+    flocals = [ (1, W.RefNull t_vatomic); (1, W.Anyref) ];
+    fbody =
+      [ W.Local_get 0; W.Ref_cast t_vatomic; W.Local_set 2 ]
+      @ [ W.Local_get 1; W.Local_set 3 ]
+      @ [ W.Local_get 2; W.Local_get 3; W.Struct_set (t_vatomic, 0) ];
+  }
+
+let rt_atomic_exchange : W.func_type =
+  {
+    W.ftype_idx = t_atomic_rm;
+    fparams = [ "cell"; "v" ];
+    flocals = [ (1, W.RefNull t_vatomic); (1, W.Anyref); (1, W.Anyref) ];
+    fbody =
+      [ W.Local_get 0; W.Ref_cast t_vatomic; W.Local_set 2 ]
+      @ [ W.Local_get 1; W.Local_set 3 ]
+      @ [ W.Local_get 2; W.Struct_get (t_vatomic, 0); W.Local_set 4 ]
+      @ [ W.Local_get 2; W.Local_get 3; W.Struct_set (t_vatomic, 0) ]
+      @ [ W.Local_get 4 ];
+  }
+
+let rt_atomic_compare_exchange : W.func_type =
+  {
+    W.ftype_idx = t_atomic_cas;
+    fparams = [ "cell"; "expected"; "fresh" ];
+    flocals = [ (1, W.RefNull t_vatomic); (1, W.Anyref); (1, W.I32) ];
+    fbody =
+      [ W.Local_get 0; W.Ref_cast t_vatomic; W.Local_set 3 ]
+      @ [ W.Local_get 3; W.Struct_get (t_vatomic, 0); W.Local_set 4 ]
+      @ [ W.Local_get 4; W.Local_get 1; W.Call (rt "deep_eq") ]
+      @ [ W.Local_set 5 ]
+      @ [
+          W.If_else
+            ( W.Void,
+              [ W.Local_get 5 ],
+              [ W.Local_get 3; W.Local_get 2; W.Struct_set (t_vatomic, 0) ],
+              [] );
+        ]
+      @ [
+          W.Local_get 5;
+          W.Struct_new t_vbool;
+          W.Local_get 4;
+          W.Array_new_fixed (t_anyarray, 2);
+          W.Struct_new t_vtuple;
+        ];
+  }
+
+(* The fetch helper the five ops instantiate: int payload and int operand
+   compute in i64, bool payload and bool operand in i32, and anything
+   else traps on the casts — the checker refuses the rest by name, and
+   the trap is what a gradual call could still reach. *)
+let both_bool (a : int) (b : int) : W.instr list =
+  [
+    W.Local_get a;
+    W.Ref_test t_vbool;
+    W.Local_get b;
+    W.Ref_test t_vbool;
+    W.I32_and;
+  ]
+
+let rt_atomic_fetch (int_op : W.instr) (bool_op : W.instr option) : W.func_type
+    =
+  let unbox_int l =
+    [ W.Local_get l; W.Ref_cast t_vint; W.Struct_get (t_vint, 0) ]
+  in
+  let unbox_bool l =
+    [ W.Local_get l; W.Ref_cast t_vbool; W.Struct_get (t_vbool, 0) ]
+  in
+  (* the arms store the computed value and leave nothing: the answer is
+     the payload the cell held, which waits in local 2 *)
+  let int_arm =
+    [ W.Local_get 0; W.Ref_cast t_vatomic ]
+    @ unbox_int 2 @ unbox_int 1
+    @ [ int_op; W.Struct_new t_vint; W.Struct_set (t_vatomic, 0) ]
+  in
+  let bool_arm =
+    match bool_op with
+    | Some op ->
+        [ W.Local_get 0; W.Ref_cast t_vatomic ]
+        @ unbox_bool 2 @ unbox_bool 1
+        @ [ op; W.Struct_new t_vbool; W.Struct_set (t_vatomic, 0) ]
+    | None ->
+        (* fetch_add/fetch_sub on a Bool cell: the operand's cast traps *)
+        [ W.Local_get 1; W.Ref_cast t_vint; W.Drop ]
+  in
+  {
+    W.ftype_idx = t_atomic_rm;
+    fparams = [ "cell"; "v" ];
+    flocals = [ (1, W.Anyref); (1, W.Anyref); (1, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vatomic;
+        W.Struct_get (t_vatomic, 0);
+        W.Local_set 2;
+      ]
+      @ [
+          W.If_else
+            ( W.Void,
+              both_int 2 1,
+              int_arm,
+              [ W.If_else (W.Void, both_bool 2 1, bool_arm, bool_arm) ] );
+        ]
+      @ [ W.Local_get 2 ];
+  }
+
+let rt_atomic_fetch_add = rt_atomic_fetch W.I64_add None
+let rt_atomic_fetch_sub = rt_atomic_fetch W.I64_sub None
+let rt_atomic_fetch_and = rt_atomic_fetch W.I64_and (Some W.I32_and)
+let rt_atomic_fetch_or = rt_atomic_fetch W.I64_or (Some W.I32_or)
+let rt_atomic_fetch_xor = rt_atomic_fetch W.I64_xor (Some W.I32_xor)
+
 let rt_builder_str : W.func_type =
   {
     W.ftype_idx = t_sig1;
@@ -7427,6 +7670,16 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_str_trim;
         rt_str_lower;
         rt_str_to_int64;
+        rt_atomic_new;
+        rt_atomic_load;
+        rt_atomic_store;
+        rt_atomic_exchange;
+        rt_atomic_compare_exchange;
+        rt_atomic_fetch_add;
+        rt_atomic_fetch_sub;
+        rt_atomic_fetch_and;
+        rt_atomic_fetch_or;
+        rt_atomic_fetch_xor;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

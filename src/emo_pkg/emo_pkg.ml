@@ -656,10 +656,15 @@ module Registry = struct
     |> Digestif.SHA256.to_hex
 
   (* Collects every package file under [dir], relative paths as keys: the
-     .emo modules plus the .c/.h/.m sources a native-binding package carries
-     (the c target compiles them into the program — CHECK.md, 2026-10-12;
-     `.m` joins them with the native packaging mechanism, T48.7). Build
-     output (.emo-build) and dune's tree (_build) are not package content. *)
+     .emo modules plus the native sources a package carries — the .c/.h/.m
+     the c target compiles into the program (CHECK.md, 2026-10-12; `.m`
+     joins them with the native packaging mechanism, T48.7) and the .S/.ld
+     the riscv64 target assembles into the image (a `runtime.S` boot stub
+     and a `link.ld` linker script, EmoOS T3.1). Build output (.emo-build)
+     and dune's tree (_build) are not package content. A directory holding
+     its own package.emo is a project of its own — the same rule the
+     module walk applies: a nested package never leaks its sources into
+     the outer package's shapes. *)
   let collect_files (dir : string) : (string * string) list =
     let rec walk rel =
       let dir_path = Filename.concat dir (String.concat "/" rel) in
@@ -676,12 +681,16 @@ module Registry = struct
             let path = Filename.concat dir_path entry in
             if Sys.is_directory path then
               if entry = ".emo-build" || entry = "_build" then []
+              else if Sys.file_exists (Filename.concat path "package.emo") then
+                []
               else walk rel_entry
             else if
               Filename.check_suffix entry ".emo"
               || Filename.check_suffix entry ".c"
               || Filename.check_suffix entry ".h"
               || Filename.check_suffix entry ".m"
+              || Filename.check_suffix entry ".S"
+              || Filename.check_suffix entry ".ld"
             then
               let ic = open_in_bin path in
               let content =
@@ -694,6 +703,16 @@ module Registry = struct
         entries
     in
     walk []
+
+  (* The embedded registry publishes this unscoped name? The paths are
+       `name/version/...`, so the name is the first segment. *)
+  let bundled_name (name : string) : bool =
+    let prefix = name ^ "/" in
+    let plen = String.length prefix in
+    List.exists
+      (fun (path, _) ->
+        String.length path >= plen && String.sub path 0 plen = prefix)
+      Emo_stdlib_data.files
 
   let fetch (t : t) ~(name : string) ~(version : Version.t) :
       (fetched, string) result =

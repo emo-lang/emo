@@ -1,0 +1,490 @@
+// The first user program (T4.1): the kernel loads this image into the
+// user window and srets into it in U-mode. U-mode owns no CSRs and the
+// SBI is unreachable from it. Since T6.2 the program runs on its own
+// page table — its code RX, its data RW, its own stack and arena, the
+// kernel's memory mapped without U — so every byte out rides the gate:
+// the greeting, the lines, the marks, all through the console service.
+// The proofs ride the serial line in order: the greeting (`U-MODE
+// 500500`, the computed sum the register file's pin), the `gate` line
+// (T4.2's write verb with two refusals printed by the same gate that
+// refused them), `echo` (T4.4's read verb, blocking on the console
+// service until a byte exists), `doomed` and the `user fault` report
+// (T4.6's kill — a misbehaving child says its line through the gate,
+// then loads where its own table maps nothing, and the supervisor
+// kills it loudly while the machine continues), `smash` and its
+// report (T6.4's page-fault kill — a store where the table maps
+// nothing, the report naming the address the hardware refused),
+// `reach` and its report (T6.5's isolation kill — a store at a kernel
+// address, mapped without U, the permission the walk refuses),
+// `born`/`wait 7` (the
+// spawn and wait round trip — the child re-enters this top level,
+// finds the token, and exits 7). Then the shell (T7.3, shell.emo, its
+// design in docs/shell.md) takes the machine's foreground: the top
+// level enters the REPL instead of exiting, and the machine ends the
+// way the proof's exit did — the poweroff command's verb 0, the boot
+// pass's exit landing in the kernel. The counter pass (T7.4, ui.emo,
+// its design in docs/ui.md) is the machine's program: the shell's
+// `counter` command (T7.5) pokes ui_cell, spawns it, and waits for
+// its exit — a user program begun from the prompt, the closure
+// demo's last beat.
+//
+//   cd hello && emo build main.emo --target riscv64 \
+//        --profile user -o ../hello.elf
+
+require "syscall"
+
+// A scratch page inside this image's read-write segment — the buffer
+// every line is built in and sent from, with the two token cells the
+// spawned passes read (each poked once before the parent parks, so
+// the passes see their own) — and the two addresses the refusals try:
+// the text segment is load-and-run but not writable, and the kernel's
+// own memory is nobody's.
+const buf = 0x87200000
+const child_cell = buf + 2048
+const doomed_cell = buf + 2056
+const greedy_cell = buf + 2064
+const smash_cell = buf + 2072
+const reach_cell = buf + 2080
+const ui_cell = buf + 2088
+const text_seg = 0x87100000
+const kernel_mem = 0x80200000
+// The filesystem proof's buffers (T7.2), further up the same scratch
+// page: the two names, the 600 bytes written, the read-back (the
+// read's capacity is 2048, so the buffer is that long), and the list.
+const fs_name = buf + 2304
+const fs_data = buf + 2560
+const fs_back = buf + 3328
+const fs_tmp = buf + 5376
+const fs_names = buf + 5632
+// The kernel's own image by its high-half address: the physical load
+// base plus the upper half's offset. A pass's table maps the kernel's
+// whole half without U, so the mapping is there and the walk succeeds
+// — it is the permission that fails (T6.5's golden: the pre-SV39
+// window let this store through to the kernel's RAM; the table
+// refuses it now).
+const kernel_hi = 0x80200000 - 0x4000000000
+
+// The stub's refusal message, back to the ABI's reason number
+// (docs/syscalls.md) — the number the line prints.
+def reason_num(why String) Int64 {
+  if why == "not writable" {
+    return 3
+  }
+  if why == "outside the caller's memory" {
+    return 2
+  }
+  if why == "bad argument" {
+    return 4
+  }
+  if why == "the kernel is out of a resource" {
+    return 5
+  }
+  return 1
+}
+
+def reason_of(answer (R, Int64)) Int64 {
+  case answer {
+    (R.error, why) -> { return reason_num(why) }
+    (R.ok, _) -> { return 0 }
+  }
+}
+
+// One byte into the scratch buffer; the cursor comes back.
+def byte_at(pos Int64, b Int64) Int64 {
+  poke8(buf + pos, b.to_byte())
+  return pos + 1
+}
+
+// The decimal digits of n, poked at the cursor; the cursor comes back.
+def num_at(n Int64, pos Int64) Int64 {
+  var p = pos
+  if n >= 10 {
+    p = num_at(n / 10, p)
+  }
+  poke8(buf + p, (48 + (n % 10)).to_byte())
+  return p + 1
+}
+
+// A line through the console service, from the scratch buffer. The
+// one ride that cannot refuse is the mark: a '?' from this image's
+// own writable segment, sent when a line the gate should have carried
+// comes back refused — the loud wrongness of it is the point.
+def mark() Void {
+  poke8(buf, 63B)
+  var r = syscall.write(buf, 1)
+  case r {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+}
+
+def gate_line(len Int64) Void {
+  var r = syscall.write(buf, len)
+  case r {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+}
+
+// The filesystem proof's helpers (T7.2): the names poked into the
+// scratch page, a byte pattern long enough to span two sectors, the
+// byte-for-byte compare, and the count of names in a list.
+def put_name(a Int64) Int64 {
+  poke8(a, 104B)     // h
+  poke8(a + 1, 101B) // e
+  poke8(a + 2, 108B) // l
+  poke8(a + 3, 108B) // l
+  poke8(a + 4, 111B) // o
+  poke8(a + 5, 46B)  // .
+  poke8(a + 6, 116B) // t
+  poke8(a + 7, 120B) // x
+  poke8(a + 8, 116B) // t
+  return 9
+}
+
+def put_tmp(a Int64) Int64 {
+  poke8(a, 116B)     // t
+  poke8(a + 1, 109B) // m
+  poke8(a + 2, 112B) // p
+  poke8(a + 3, 46B)  // .
+  poke8(a + 4, 116B) // t
+  poke8(a + 5, 120B) // x
+  poke8(a + 6, 116B) // t
+  return 7
+}
+
+def fill(a Int64, n Int64) Void {
+  var i = 0
+  while i < n {
+    poke8(a + i, ((i * 7 + 3) % 251).to_byte())
+    i = i + 1
+  }
+}
+
+def same(a Int64, b Int64, n Int64) Bool {
+  var i = 0
+  while i < n {
+    if peek8(a + i) != peek8(b + i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+def lines(a Int64, n Int64) Int64 {
+  var count = 0
+  var i = 0
+  while i < n {
+    if peek8(a + i) == 10B {
+      count = count + 1
+    }
+    i = i + 1
+  }
+  return count
+}
+
+// The doomed branch (T4.6): a spawned pass finds this token, claims
+// it (clears it — the good child re-enters this same top level and
+// must not follow), says its line through the gate, then misbehaves —
+// one load where its own table maps nothing. Pre-T6.2 the same load
+// reached the firmware's PMP-locked region and died as an access
+// fault (cause 5); on its own address space the address is simply
+// unmapped, and the walk fails — the load page fault, cause 13. The
+// supervisor's report is the last thing this pass prints; the kill is
+// this pass's slot ending done.
+if peek64(doomed_cell) != 0 {
+  poke64(doomed_cell, 0)
+  var dp = byte_at(0, 100) // d
+  dp = byte_at(dp, 111) // o
+  dp = byte_at(dp, 111) // o
+  dp = byte_at(dp, 109) // m
+  dp = byte_at(dp, 101) // e
+  dp = byte_at(dp, 100) // d
+  dp = byte_at(dp, 10)
+  gate_line(dp)
+  var wild = peek64(0x80000000)
+  var dp2 = byte_at(0, 48 + (wild % 10)) // unreachable — the load faults
+  dp2 = byte_at(dp2, 10)
+  gate_line(dp2)
+  syscall.exit(1)
+}
+
+// The greedy branch (T5.1): a spawned pass whose allocations outrun
+// its own 64 KiB arena — the block the kernel's spawn took from its
+// frame allocator (T5.3), handed across the boundary by the trap shim,
+// and mapped RW with U by the pass's own table (T6.2). Its allocator
+// says so through the gate (verb 5); the supervisor's report is the
+// last thing this pass prints, and the machine continues — the good
+// child's round trip rides after the report.
+if peek64(greedy_cell) != 0 {
+  poke64(greedy_cell, 0)
+  var yp = byte_at(0, 103) // g
+  yp = byte_at(yp, 114) // r
+  yp = byte_at(yp, 101) // e
+  yp = byte_at(yp, 101) // e
+  yp = byte_at(yp, 100) // d
+  yp = byte_at(yp, 121) // y
+  yp = byte_at(yp, 10)
+  gate_line(yp)
+  var k = 0
+  while true {
+    var b = Box.new(k)
+    k = k + 1
+  }
+}
+
+// The smash branch (T6.4): a spawned pass stores where its own table
+// maps nothing — the store page fault, cause 15 — and the
+// supervisor's report names the address the hardware refused (stval).
+// The parent does not wait on it, as with the doomed pass: a killed
+// process never exited.
+if peek64(smash_cell) != 0 {
+  poke64(smash_cell, 0)
+  var mp = byte_at(0, 115) // s
+  mp = byte_at(mp, 109) // m
+  mp = byte_at(mp, 97) // a
+  mp = byte_at(mp, 115) // s
+  mp = byte_at(mp, 104) // h
+  mp = byte_at(mp, 10)
+  gate_line(mp)
+  poke64(0x40000000, 1)
+  var mp2 = byte_at(0, 63) // '?' — unreachable, the store faults
+  mp2 = byte_at(mp2, 10)
+  gate_line(mp2)
+  syscall.exit(1)
+}
+
+// The reach branch (T6.5): a spawned pass stores at a kernel address.
+// Unlike the smash branch's unmapped store, the mapping IS in this
+// pass's table — the kernel's half, without U — so the walk reaches
+// the leaf and the permission fails: the store page fault, cause 15,
+// the kernel address named in the report. The parent does not wait on
+// it, as with the other killed passes.
+if peek64(reach_cell) != 0 {
+  poke64(reach_cell, 0)
+  var rp = byte_at(0, 114) // r
+  rp = byte_at(rp, 101) // e
+  rp = byte_at(rp, 97) // a
+  rp = byte_at(rp, 99) // c
+  rp = byte_at(rp, 104) // h
+  rp = byte_at(rp, 10)
+  gate_line(rp)
+  poke64(kernel_hi, 1)
+  var rp2 = byte_at(0, 63) // '?' — unreachable, the store faults
+  rp2 = byte_at(rp2, 10)
+  gate_line(rp2)
+  syscall.exit(1)
+}
+
+// The UI branch (T7.4, docs/ui.md): a spawned pass renders the
+// counter's frame and answers the console's keys until the quit key
+// ends it — the machine's third kind of resident, an application, and
+// the closure demo's last piece: kernel, shell, and UI in one
+// language. Its exit answers the parent's wait, and the REPL takes
+// the console after it.
+if peek64(ui_cell) != 0 {
+  poke64(ui_cell, 0)
+  ui.run()
+  syscall.exit(0)
+}
+
+// The child branch (T4.4): a spawned process re-enters this top level
+// sharing the image — its runtime state, its consts, this cell — so
+// the token the parent pokes just before the spawn is the one
+// difference between the two passes. The child says its line and ends
+// as an exit the parent's wait can answer.
+if peek64(child_cell) != 0 {
+  var bp = byte_at(0, 98) // b
+  bp = byte_at(bp, 111) // o
+  bp = byte_at(bp, 114) // r
+  bp = byte_at(bp, 110) // n
+  bp = byte_at(bp, 10)
+  gate_line(bp)
+  syscall.exit(7)
+}
+
+// The greeting, through the gate: U-mode's world is its own pages now
+// (T6.2) — the 16550A is the kernel's, and the greeting is the gate's
+// first line. The sum is the register file's pin, as it always was.
+var gp = byte_at(0, 85) // U
+gp = byte_at(gp, 45) // -
+gp = byte_at(gp, 77) // M
+gp = byte_at(gp, 79) // O
+gp = byte_at(gp, 68) // D
+gp = byte_at(gp, 69) // E
+gp = byte_at(gp, 32) // space
+var sum = 0
+var i = 0
+while i <= 1000 {
+  sum = sum + i
+  i = i + 1
+}
+gp = num_at(sum, gp)
+gp = byte_at(gp, 10)
+gate_line(gp)
+
+// The gate proof: one write that answers, two that refuse — the text
+// segment with reason 3 (no permission), the kernel's memory with
+// reason 2 (out of range) — and each refusal printed by the same gate
+// that refused it. The line reads `gate 500500 r3 r2`.
+var pos = byte_at(0, 103) // g
+pos = byte_at(pos, 97) // a
+pos = byte_at(pos, 116) // t
+pos = byte_at(pos, 101) // e
+pos = byte_at(pos, 32) // space
+pos = num_at(sum, pos)
+pos = byte_at(pos, 32)
+pos = byte_at(pos, 114) // r
+pos = num_at(reason_of(syscall.write(text_seg, 4)), pos)
+pos = byte_at(pos, 32)
+pos = byte_at(pos, 114) // r
+pos = num_at(reason_of(syscall.write(kernel_mem, 4)), pos)
+pos = byte_at(pos, 10)
+gate_line(pos)
+
+// The read proof: block on the console until a byte exists, then
+// print it — `echo 88` when the feed is an X.
+var c = syscall.read()
+var rp = byte_at(0, 101) // e
+rp = byte_at(rp, 99) // c
+rp = byte_at(rp, 104) // h
+rp = byte_at(rp, 111) // o
+rp = byte_at(rp, 32) // space
+rp = num_at(c, rp)
+rp = byte_at(rp, 10)
+gate_line(rp)
+
+// The filesystem proof (T7.2, docs/fs.md): a 600-byte file written
+// through the gate — two sectors, the second one's tail zero on the
+// disk — and read back byte for byte; a second file written and
+// removed; the list naming what is left: the root's boot file and
+// this one. `fs rw ok` is the roundtrip, `fs ls 2` the list; a
+// refusal or a wrong byte prints `fs rw ?`. The proof runs before the
+// spawns, so no other pass is on the service meanwhile.
+var fn = put_name(fs_name)
+fill(fs_data, 600)
+var fs_ok = true
+case syscall.file_write(fs_name, fn, fs_data, 600) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, wn) -> {
+    if wn != 600 {
+      fs_ok = false
+    }
+  }
+}
+case syscall.file_read(fs_name, fn, fs_back, 2048) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, rn) -> {
+    if rn != 600 {
+      fs_ok = false
+    }
+  }
+}
+if !same(fs_data, fs_back, 600) {
+  fs_ok = false
+}
+var tn = put_tmp(fs_tmp)
+case syscall.file_write(fs_tmp, tn, fs_data, 1) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, _) -> {}
+}
+case syscall.file_remove(fs_tmp, tn) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, _) -> {}
+}
+var listed = 0
+case syscall.file_list(fs_names, 256) {
+  (R.error, _) -> { fs_ok = false }
+  (R.ok, ln) -> { listed = ln }
+}
+var xp = byte_at(0, 102) // f
+xp = byte_at(xp, 115) // s
+xp = byte_at(xp, 32) // space
+xp = byte_at(xp, 114) // r
+xp = byte_at(xp, 119) // w
+xp = byte_at(xp, 32) // space
+if fs_ok {
+  xp = byte_at(xp, 111) // o
+  xp = byte_at(xp, 107) // k
+} else {
+  xp = byte_at(xp, 63) // ?
+}
+xp = byte_at(xp, 10)
+gate_line(xp)
+var lp = byte_at(0, 102) // f
+lp = byte_at(lp, 115) // s
+lp = byte_at(lp, 32) // space
+lp = byte_at(lp, 108) // l
+lp = byte_at(lp, 115) // s
+lp = byte_at(lp, 32) // space
+lp = num_at(lines(fs_names, listed), lp)
+lp = byte_at(lp, 10)
+gate_line(lp)
+
+// The kill proof (T4.6): the misbehaving child spawns first — its
+// line, then its fault, then the supervisor's loud report — and the
+// parent does NOT wait on it: a killed process never exited, so its
+// wait would block forever (the stated bound). The runaway proof
+// (T5.1) rides the same shape: a greedy pass whose boxes outrun its
+// own 64 KiB arena — its allocator announces the exhaustion (verb 5),
+// the supervisor's report follows, and the machine goes on. The
+// store-fault proof (T6.4) rides it too: a pass that stores where its
+// own table maps nothing — the page-fault kill named by its address,
+// stval in the report. And the isolation proof (T6.5): a pass that
+// stores at a kernel address, where the mapping is there without U
+// and the permission is what fails — the same kill, the kernel's own
+// address named. The good child's `born`/`wait 7` after the four
+// reports is the survival proof.
+poke64(doomed_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+poke64(greedy_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+poke64(smash_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+poke64(reach_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+
+// The process proof (T4.4): spawn a child — it re-enters this top
+// level, finds the token, prints its line, and exits 7 — then wait
+// for that exit and print the code. `wait 7` on the wire is the
+// whole spawn/wait round trip: the request, the park, the service,
+// and the exit that answers it.
+poke64(child_cell, 1)
+var spawned = syscall.spawn()
+case spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, pid) -> {
+    var waited = syscall.wait(pid)
+    case waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var wp = byte_at(0, 119) // w
+        wp = byte_at(wp, 97) // a
+        wp = byte_at(wp, 105) // i
+        wp = byte_at(wp, 116) // t
+        wp = byte_at(wp, 32) // space
+        wp = num_at(code, wp)
+        wp = byte_at(wp, 10)
+        gate_line(wp)
+      }
+    }
+  }
+}
+
+// The shell takes the foreground (T7.3): the REPL loop never returns —
+// the poweroff command's exit verb is what ends the machine now, and
+// the `counter` command (T7.5) is how a program begins from it.
+shell.run()

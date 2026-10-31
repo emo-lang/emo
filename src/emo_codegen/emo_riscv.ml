@@ -4,26 +4,32 @@
    `qemu-system-riscv64 -machine virt`, OpenSBI enters the payload at
    0x80200000 in S-mode with a0 = hart id and a1 = the DTB pointer, and
    the legacy ecalls (a7 = 1 console putchar, a7 = 8 shutdown) are the
-   runtime's whole IO.
+   runtime's whole IO — the console one only until a kernel package's
+   boot stub parks a driver entry in `emo_console_hook` (EmoOS T3.5);
+   the shutdown ecall stays for every image.
 
    The value model (T19.2/T19.3): a dynamic value is one tagged machine
-   word. Heap pointers carry their kind in the low three bits — 0
+   word. Heap pointers carry their kind in bits 4:1 (bit 0 clear) — 0
    Int64 cell, 1 Float64 cell, 2 String, 3 Tuple, 4 Array, 5 Box,
-   6 Closure, 7 Instance — and every block is [header word][payload],
+   6 Closure, 7 Instance, 8 Atomic — so every block is 32-byte aligned
+   and the five low bits are free; every block is [header word][payload],
    the header naming the payload size for a future precise GC:
 
      Int64/Float64  [header][bits]
      String         [header][length][bytes padded to 8]
      Tuple/Array    [header][length][elements...]
-     Box            [header][value]
+     Box/Atomic     [header][value]
      Closure        [header][code][captures...]
      Instance       [header][class id][fields...]
 
-   Bool, Char, and enum members are immediates (bit 0 set; kind in
-   bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
-   member id above bit 3), so an immediate is never a valid pointer.
+  Bool, Char, Byte, and enum members are immediates (bit 0 set; kind in
+  bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
+  member id above bit 3 — 3 Byte, the eight bits in bits 11:4), so an
+  immediate is never a valid pointer.
    Int64/Float64 are boxed: the decided wrap-around semantics need all
-   2⁶⁴ bit patterns. Equality is content equality (emo_eq_deep).
+   2⁶⁴ bit patterns — a numeric literal is a static read-only cell in
+   .rodata, so the heap holds computed values only. Equality is content
+   equality (emo_eq_deep).
    Method dispatch: a class-typed receiver calls its mangled method
    directly; an interface-typed receiver goes through a static
    per-interface table indexed by class id; `is` compares class ids or
@@ -32,12 +38,97 @@
 
    Correctness first: every local lives in a stack slot (the wasm
    target's implicit stack machine), the psABI is the internal calling
-   convention (params a0–a7, result a0; a closure's record rides in
-   t0), and a call in return position lowers to `tail`/`jalr x0` after
-   restoring sp — the guaranteed tail call. Expression temporaries are
-   depth-indexed slots; field access always untags first (andi -8).
-   Stage B specialization (raw Int64/Float64 registers) is a later
-   task; every body emits dynamic for now. *)
+   convention (a closure's record rides in t0), and a call in return
+   position lowers to `tail`/`jalr x0` after restoring sp — the
+   guaranteed tail call. Expression temporaries are depth-indexed
+   slots; field access always untags first (andi -32).
+
+   The typed calling convention (EmoOS T2.1, Stage B's first half): a
+   top-level def whose signature is fully typed takes raw-register
+   params and results — Int64 as the raw payload in the integer bank
+   (a0–a7), Float64 as the raw bits in the float bank (fa0–fa7), every
+   other type the tagged word both conventions share — while bodies
+   still emit dynamic, so boxing adapters stand at every
+   typed↔dynamic boundary: the callee's entry boxes its raw params
+   into cells, its exit unboxes the tagged result, and a call site
+   unboxes its Int64/Float64 args and boxes a raw result back.
+   Methods, constructors, and closures keep the dynamic convention —
+   the runtime's name dispatch passes tagged words and cannot know a
+   signature. T2.2's typed bodies are what melt the adapters away
+   until a value truly escapes. *)
+
+(* ---- The typed calling convention (EmoOS T2.1) ----
+
+   The register classes a signature maps onto, and the conventions'
+   agreement rule: only Int64 and Float64 change representation across
+   the boundary — every other statically known type is the tagged word
+   the dynamic convention already passes. *)
+
+type param_kind =
+  | P_int64 (* the raw payload, integer bank a0.. *)
+  | P_float64 (* the raw double bits, float bank fa0.. *)
+  | P_word (* the tagged word both conventions share, integer bank *)
+
+type result_kind =
+  | R_int64 (* the raw payload in a0 *)
+  | R_float64 (* the raw double bits in fa0 *)
+  | R_word (* the tagged word in a0 — the dynamic convention's result *)
+  | R_void (* nothing *)
+
+type conv = { cparams : param_kind list; cresult : result_kind }
+
+let dynamic_conv (n : int) : conv =
+  { cparams = List.init n (fun _ -> P_word); cresult = R_word }
+
+(* A def qualifies when the checker pinned every parameter type and the
+   result; an Unknown anywhere keeps the dynamic convention. *)
+let conv_of (f : Emo_ir.func) : conv option =
+  if f.Emo_ir.fforeign <> None then None
+  else if
+    List.exists (fun (_, t) -> t = Emo_check.Unknown) f.Emo_ir.fparams
+    || f.Emo_ir.fresult = Emo_check.Unknown
+  then None
+  else
+    Some
+      {
+        cparams =
+          List.map
+            (fun (_, t) ->
+              match t with
+              | Emo_check.Int64 -> P_int64
+              | Emo_check.Float64 -> P_float64
+              | _ -> P_word)
+            f.Emo_ir.fparams;
+        cresult =
+          (match f.Emo_ir.fresult with
+          | Emo_check.Int64 -> R_int64
+          | Emo_check.Float64 -> R_float64
+          | Emo_check.Void -> R_void
+          | _ -> R_word);
+      }
+
+(* Each parameter's bank register: the integer bank counts the
+   non-float parameters, the float bank the Float64 ones, each from
+   zero — the psABI's two independent banks. *)
+let bank_assign (kinds : param_kind list) : (param_kind * int) list =
+  let rec go kinds i f acc =
+    match kinds with
+    | [] -> List.rev acc
+    | k :: rest ->
+        let acc = (k, if k = P_float64 then f else i) :: acc in
+        go rest
+          (if k = P_float64 then i else i + 1)
+          (if k = P_float64 then f + 1 else f)
+          acc
+  in
+  go kinds 0 0 []
+
+(* A tail call may replace this function's return only when the
+   callee's result representation is the one this function's own
+   caller expects; Void and the tagged word agree because nobody
+   reads the register. *)
+let result_compatible (a : result_kind) (b : result_kind) : bool =
+  a = b || (a = R_word && b = R_void) || (a = R_void && b = R_word)
 
 type frame = {
   fbuf : Buffer.t;
@@ -46,6 +137,12 @@ type frame = {
   mutable temps : int; (* the temp slot count (the expression-depth bound) *)
   ret : string; (* the epilogue label *)
   mutable size : int; (* the frame size in bytes *)
+  fconv : conv; (* this function's calling convention (T2.1) *)
+  mutable raw : (string * Emo_check.t) list;
+      (* in a native body (T2.2): the locals whose slots hold raw
+         Int64/Float64 payloads instead of tagged cells — typed params
+         and numeric-typed bindings; a pattern binding holds the tagged
+         scrutinee word and drops any name it rebinds *)
 }
 
 type class_info = {
@@ -55,10 +152,21 @@ type class_info = {
   cls_methods : (string * string) list; (* display name -> mangled fname *)
 }
 
+(* What a spawned process runs (T3.3): a def — mangled name and its
+   calling convention, so the thunk hands over the psABI registers —
+   or a closure value, the spawn's first argument, called like any
+   first-class block. *)
+type spawn_callee =
+  | Spawn_def of string * conv
+  | Spawn_closure of int (* the argument count after the closure word *)
+
 type env = {
   buf : Buffer.t;
   mutable fresh : int; (* the string-literal counter *)
   mutable strs : (string * string) list; (* label, bytes — newest first *)
+  mutable cells : (int64 * int * string) list;
+      (* the numeric literal cells: bits, tag, label — newest first; one
+         static read-only cell per distinct literal *)
   mutable labels : int; (* the fresh-label counter *)
   mutable cur : frame option;
   mutable fclass : string option; (* the class whose method is emitting *)
@@ -75,6 +183,19 @@ type env = {
          the post label, on a `for`, so the post runs first *)
   fforeigns : string list;
       (* `foreign def` names: the binding is skipped, a call refuses *)
+  fsigs : (string * conv) list;
+      (* mangled def name -> its typed calling convention; a name absent
+         here (a method, a constructor, a closure, a dynamic-signature
+         def) uses the dynamic convention (T2.1) *)
+  mutable native : bool;
+      (* emitting a typed body right now (T2.2): expressions follow the
+         representation rule — Int64 raw in a0, Float64 raw in fa0,
+         everything else the tagged word — and boxing happens only at
+         the escape points. Outside, the dynamic rule holds: everything
+         tagged in a0. *)
+  mutable spawns : (string * spawn_callee) list;
+      (* the spawn entry thunks queued for emission (T3.3): label,
+         callee — newest first *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -100,9 +221,14 @@ let tag_array = 8
 let tag_box = 10
 let tag_closure = 12
 let tag_instance = 14
+let tag_atomic = 16
 let bool_false = 1 (* immediate: kind 0 in bits 3:1, payload bit 4 = 0 *)
 let bool_true = 17 (* kind 0 in bits 3:1, payload bit 4 *)
 let char_imm (c : char) : int = (Char.code c lsl 4) lor 0b0011
+
+(* Bytes: kind 3 in bits 3:1, the eight bits in bits 11:4 — the lane
+   `peek8` reads and `poke8` writes (docs/raw-memory.md). *)
+let byte_imm (n : int) : int = (n lsl 4) lor 0b0111
 
 (* Enum members: kind 2 in bits 3:1, the member id above bit 3. *)
 let enum_imm env enum_name member =
@@ -117,6 +243,20 @@ let string_label env (s : string) : string =
   env.fresh <- env.fresh + 1;
   env.strs <- (label, s) :: env.strs;
   label
+
+(* An Int64 or Float64 literal is an immutable cell, so it lives once in
+   .rodata — [header][bits], 32-byte aligned like every block — and an
+   evaluation is its address, not an allocation. The heap is spent on
+   computed values only. *)
+let cell_label env (bits : int64) (tag : int) : string =
+  match
+    List.find_opt (fun (b, t, _) -> Int64.equal b bits && t = tag) env.cells
+  with
+  | Some (_, _, label) -> label
+  | None ->
+      let label = Printf.sprintf "emo_cell_%d" (List.length env.cells) in
+      env.cells <- (bits, tag, label) :: env.cells;
+      label
 
 let fresh_label env base =
   env.labels <- env.labels + 1;
@@ -209,7 +349,7 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
         ex self_;
         List.iter ex args
     | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
-    | Box_new x | Bytes_new x | List_new x -> ex x
+    | Box_new x | Atomic_new x | Bytes_new x | List_new x -> ex x
     | Builder_new -> ()
     | Make_exception { message; data } ->
         ex message;
@@ -245,7 +385,16 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
             Option.iter ex b.Emo_ir.guard;
             List.iter st b.Emo_ir.body)
           branches
-    | Receive _ | Send _ | Raise _ -> ()
+    | Receive { branches } ->
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            Option.iter ex b.Emo_ir.guard;
+            List.iter st b.Emo_ir.body)
+          branches
+    | Send { target; message } ->
+        ex target;
+        ex message
+    | Raise _ -> ()
     | Return_stmt e -> ex e
     | While { cond; body; _ } ->
         ex cond;
@@ -307,7 +456,13 @@ let rec expr_depth (e : Emo_ir.expr) : int =
   | Method { self_; args; _ } ->
       1 + List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (self_ :: args)
-  | Box_new x -> 1 + expr_depth x
+  | Box_new x | Atomic_new x -> 1 + expr_depth x
+  | Do_spawn { args; _ } ->
+      List.length args
+      + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 args
+  | Spawn_value { f; args } ->
+      1 + List.length args
+      + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (f :: args)
   | _ -> 0
 
 (* The names a pattern binds, in binding order. *)
@@ -345,6 +500,19 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
         | While { cond; body; _ } -> max (expr_depth cond) (stmts_depth body)
         | For { init; cond; post; body; _ } ->
             max (expr_depth cond) (stmts_depth (init :: post :: body))
+        | Send { target; message } ->
+            1 + max (expr_depth target) (expr_depth message)
+        | Receive { branches } ->
+            (* the scan keeps its index in s0; the pattern machinery
+               owns slots 0-2 and guards evaluate at depth 3 *)
+            3
+            + List.fold_left
+                (fun acc (b : Emo_ir.branch) ->
+                  max acc
+                    (match b.Emo_ir.guard with
+                    | Some g -> max (expr_depth g) (stmts_depth b.Emo_ir.body)
+                    | None -> stmts_depth b.Emo_ir.body))
+                0 branches
         | Break | Continue -> 0
         | _ -> 0))
     0 stmts
@@ -374,6 +542,18 @@ let rec collect_stmt (f : frame) (s : Emo_ir.stmt) : unit =
             (pattern_bindings b.Emo_ir.pattern);
           collect_stmts f b.Emo_ir.body)
         branches
+  | Receive { branches } ->
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          List.iter
+            (fun n ->
+              if not (List.mem_assoc n f.slots) then begin
+                f.slots <- (n, List.length f.slots) :: f.slots;
+                f.named <- f.named + 1
+              end)
+            (pattern_bindings b.Emo_ir.pattern);
+          collect_stmts f b.Emo_ir.body)
+        branches
   | While { body; _ } -> collect_stmts f body
   | For { init; post; body; _ } -> collect_stmts f (init :: post :: body)
   | _ -> ()
@@ -392,27 +572,87 @@ and collect_stmts (f : frame) (stmts : Emo_ir.stmt list) : unit =
 
 let call_runtime env name = put env "    call %s\n" name
 
+(* ---- The escape-point adapters (T2.2) ---- *)
+
+(* Typed → dynamic: a raw numeric value boxes into the tagged cell the
+   dynamic consumer reads. A no-op outside native bodies (where values
+   are tagged already) and on every other type (whose tagged word is
+   the value). Clobbers t0/ra through the helper — insert before the
+   spill, never over a live t0. *)
+let box_if_numeric env (t : Emo_check.t) : unit =
+  if env.native then
+    match t with
+    | Emo_check.Int64 -> call_runtime env "emo_box_i64"
+    | Emo_check.Float64 -> call_runtime env "emo_box_f64"
+    | _ -> ()
+
+(* Dynamic → typed: a dynamic producer left the tagged word in a0; the
+   raw numeric consumer reads the payload. *)
+let unbox_if_numeric env (t : Emo_check.t) : unit =
+  if env.native then
+    match t with
+    | Emo_check.Int64 ->
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n"
+    | Emo_check.Float64 ->
+        put env "    andi t0, a0, -32\n";
+        put env "    fld fa0, 8(t0)\n"
+    | _ -> ()
+
 let rec emit_expr env d (e : Emo_ir.expr) : unit =
   match e.Emo_ir.desc with
   | Const (Emo_ast.L_int i) ->
-      put env "    li a0, %Ld\n" i;
-      put env "    call emo_box_i64\n"
+      (* native: the raw payload; dynamic: the static read-only cell *)
+      if env.native then put env "    li a0, %Ld\n" i
+      else put env "    la a0, %s\n" (cell_label env i 0)
   | Const (Emo_ast.L_bool b) ->
       put env "    li a0, %d\n" (if b then bool_true else bool_false)
   | Const (Emo_ast.L_char c) -> put env "    li a0, %d\n" (char_imm c)
+  | Const (Emo_ast.L_byte n) -> put env "    li a0, %d\n" (byte_imm n)
   | Const (Emo_ast.L_float f) ->
-      put env "    li t0, %Ld\n" (Int64.bits_of_float f);
-      put env "    fmv.d.x fa0, t0\n";
-      put env "    call emo_box_f64\n"
+      let cell = cell_label env (Int64.bits_of_float f) tag_float64 in
+      if env.native then begin
+        (* the raw bits into fa0, straight out of the read-only cell *)
+        put env "    la t0, %s\n" cell;
+        put env "    ld t0, 8(t0)\n";
+        put env "    fmv.d.x fa0, t0\n"
+      end
+      else begin
+        put env "    la a0, %s\n" cell;
+        put env "    ori a0, a0, %d\n" tag_float64
+      end
   | Const (Emo_ast.L_string s) ->
       let label = string_label env s in
       put env "    la a0, %s\n" label;
       put env "    li a1, %d\n" (String.length s);
       call_runtime env "emo_string_lit"
-  | Const _ -> refuse "this literal kind"
-  | Var name -> put env "    ld a0, %d(sp)\n" (slot_offset env name)
-  | Binary (op, l, r) -> emit_binary env d e.Emo_ir.ety op l r
-  | Unary (op, x) -> emit_unary env d e.Emo_ir.ety op x
+  | Var name -> (
+      let slot = slot_offset env name in
+      match env.cur with
+      (* Native bodies honor the representation rule on every read: a
+         raw local loads its payload; a tagged one — a pattern binding
+         holds the boxed scrutinee — unboxes here, so a raw Int64/Float64
+         reaches every consumer that trusts the rule. *)
+      | Some f when env.native -> (
+          if List.mem_assoc name f.raw then
+            match List.assoc name f.raw with
+            | Emo_check.Float64 -> put env "    fld fa0, %d(sp)\n" slot
+            | _ -> put env "    ld a0, %d(sp)\n" slot
+          else
+            match e.Emo_ir.ety with
+            | Emo_check.Int64 ->
+                put env "    ld a0, %d(sp)\n" slot;
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+            | Emo_check.Float64 ->
+                put env "    ld a0, %d(sp)\n" slot;
+                put env "    andi t0, a0, -32\n";
+                put env "    fld fa0, 8(t0)\n"
+            | _ -> put env "    ld a0, %d(sp)\n" slot)
+      | _ -> put env "    ld a0, %d(sp)\n" slot)
+  | Binary (op, l, r) ->
+      emit_binary env d e.Emo_ir.ety ~boxed:(not env.native) op l r
+  | Unary (op, x) -> emit_unary env d e.Emo_ir.ety ~boxed:(not env.native) op x
   | Cond { c; t; e } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
@@ -424,7 +664,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "%s:\n" l_else;
       emit_expr env d e;
       put env "%s:\n" l_end
-  | Call { func; args } ->
+  | Call { func; args } -> (
       if List.mem func env.fforeigns then
         raise
           (Emo_ir.Lower_error
@@ -432,17 +672,66 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                 "the riscv64 target does not support a call to the foreign \
                  definition `%s` yet"
                 func));
-      emit_args env d args;
-      put env "    call %s\n" (func_label func)
+      match List.assoc_opt func env.fsigs with
+      | Some conv -> emit_typed_call env d func conv args
+      | None ->
+          emit_args env d args;
+          put env "    call %s\n" (func_label func);
+          (* a dynamic callee answers the tagged word; a raw numeric
+             consumer reads the payload *)
+          unbox_if_numeric env e.Emo_ir.ety)
   | Call_value { f; args } ->
       let fslot = temp_offset env d in
       emit_expr env (d + 1) f;
       put env "    sd a0, %d(sp)\n" fslot;
       emit_args_from env (d + 1) ~from:0 args;
       put env "    ld t0, %d(sp)\n" fslot;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
-      put env "    jalr t2\n"
+      put env "    jalr t2\n";
+      unbox_if_numeric env e.Emo_ir.ety
+  | Spawn_value { f; args } ->
+      (* `do f(...)` as a value: the closure word and the tagged
+         arguments spill consecutively, and the thunk (queued below)
+         calls the closure on the child's stack *)
+      let fslot = temp_offset env d in
+      emit_expr env (d + 1) f;
+      put env "    sd a0, %d(sp)\n" fslot;
+      List.iteri
+        (fun i arg ->
+          emit_expr env (d + 1 + List.length args) arg;
+          box_if_numeric env arg.Emo_ir.ety;
+          put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
+        args;
+      let label = fresh_label env "spawn_thunk" in
+      env.spawns <- (label, Spawn_closure (List.length args)) :: env.spawns;
+      put env "    la a0, %s\n" label;
+      put env "    li a1, %d\n" (List.length args + 1);
+      put env "    addi a2, sp, %d\n" fslot;
+      call_runtime env "emo_spawn"
+  | Do_spawn { func; args } ->
+      (* `do f(...)`: the arguments evaluate eagerly in the spawning
+         process (the escape point boxes them), the thunk delivers them
+         through the child's psABI registers or the dynamic words, and
+         the answer is the child's Pid *)
+      let n = List.length args in
+      List.iteri
+        (fun i arg ->
+          emit_expr env (d + n) arg;
+          box_if_numeric env arg.Emo_ir.ety;
+          put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
+        args;
+      let conv =
+        match List.assoc_opt func env.fsigs with
+        | Some conv -> conv
+        | None -> dynamic_conv n
+      in
+      let label = fresh_label env "spawn_thunk" in
+      env.spawns <- (label, Spawn_def (func, conv)) :: env.spawns;
+      put env "    la a0, %s\n" label;
+      put env "    li a1, %d\n" n;
+      put env "    addi a2, sp, %d\n" (temp_offset env d);
+      call_runtime env "emo_spawn"
   | Closure { cparams; cbody } -> emit_closure_creation env d cparams cbody
   | Interpolate parts -> emit_interpolate env d parts
   | Tuple es -> emit_seq env d es tag_tuple
@@ -452,7 +741,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       match obj.Emo_ir.ety with
       | Emo_check.ClassType _ ->
           emit_expr env d obj;
-          put env "    andi a0, a0, -16\n";
+          put env "    andi a0, a0, -32\n";
           let idx = field_index env obj.Emo_ir.ety name in
           put env "    ld a0, %d(a0)\n" (16 + (8 * idx))
       | _ ->
@@ -460,7 +749,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
              class's field table (the c target's emo_field_by_name) *)
           let spill = temp_offset env d in
           emit_expr env (d + 1) obj;
-          put env "    andi a0, a0, -16\n";
+          put env "    andi a0, a0, -32\n";
           put env "    sd a0, %d(sp)\n" spill;
           put env "    ld t0, 8(a0)\n";
           let nlabel = string_label env name in
@@ -472,23 +761,240 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
           put env "    add t0, t0, t1\n";
           put env "    ld a0, 16(t0)\n")
   | Method { self_; name; args } ->
-      emit_method env d e.Emo_ir.ety self_ name args
+      emit_method env d e.Emo_ir.ety ~boxed:(not env.native) self_ name args
   | Make_enum { enum_name; member } ->
       put env "    li a0, %d\n" (enum_imm env enum_name member)
   | Box_new arg ->
       emit_expr env (d + 1) arg;
+      box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_box_new"
+  | Atomic_new arg ->
+      emit_expr env (d + 1) arg;
+      box_if_numeric env arg.Emo_ir.ety;
+      call_runtime env "emo_atomic_new"
   | Builtin { name = "println"; args = [ arg ] } ->
       emit_expr env d arg;
+      box_if_numeric env arg.Emo_ir.ety;
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
+  | Builtin { name = "device_wait"; args = [] } ->
+      (* T3.7: the kernel sleeps until the device world wakes it — the
+         park is state 4 (device-wait), the resume is this call's own
+         return, and the ISR's wake (emo_sched_wake_console) is what
+         brings the process back. A send to a device-waiter does not
+         wake it: requests queue in its mailbox for the next pump. *)
+      call_runtime env "emo_park_console"
+  | Builtin { name = "ecall"; args = [ _; _; _; _; _; _; _ ] as args } ->
+      (* T4.2: the machine's syscall instruction, raw — the user side of
+         the gate. The verb and its six words ride a7 and a0..a5 across
+         the instruction; the answer comes back in a0, the gate's own
+         convention (>= 0 the payload, < 0 the refusal's reason). *)
+      if env.native then begin
+        (* inline: the seven words evaluate, spill, and load raw — no
+           boxing, the instruction takes raw words and answers one —
+           then shift into the ABI's places. Nothing allocated. *)
+        List.iteri
+          (fun i arg ->
+            emit_expr env (d + 7) arg;
+            put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
+          args;
+        List.iteri
+          (fun i _ ->
+            put env "    ld a%d, %d(sp)\n" i (temp_offset env (d + i)))
+          args;
+        put env "    mv a7, a0\n";
+        put env "    mv a0, a1\n";
+        put env "    mv a1, a2\n";
+        put env "    mv a2, a3\n";
+        put env "    mv a3, a4\n";
+        put env "    mv a4, a5\n";
+        put env "    mv a5, a6\n";
+        put env "    ecall\n"
+      end
+      else begin
+        (* the tagged world boxes its way in: emo_sys_ecall decodes the
+           seven cells, runs the instruction, and boxes the answer *)
+        emit_args_from env d ~from:0 args;
+        call_runtime env "emo_sys_ecall"
+      end
+  | Builtin { name = "ecall"; args } ->
+      refuse
+        (Printf.sprintf
+           "the `ecall` builtin with %d arguments — it takes the verb and \
+            exactly six words"
+           (List.length args))
+  | Builtin { name = "user_spawn"; args = [ entry; stack ] } ->
+      (* T4.4: the process service's word — a new user process enters
+         the image's program on the fresh stack, and the raw pid number
+         comes back. The helper is raw in, raw out; the dynamic body
+         converts at the call site. *)
+      emit_expr env (d + 2) entry;
+      put env "    sd a0, %d(sp)\n" (temp_offset env d);
+      emit_expr env (d + 2) stack;
+      if env.native then begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        call_runtime env "emo_user_spawn"
+      end
+      else begin
+        (* the tagged words decode, the call runs, the answer boxes *)
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        put env "    andi t0, a0, -32\n";
+        put env "    ld a0, 8(t0)\n";
+        put env "    andi t0, a1, -32\n";
+        put env "    ld a1, 8(t0)\n";
+        call_runtime env "emo_user_spawn";
+        call_runtime env "emo_box_i64"
+      end
+  | Builtin { name = "gate_reply"; args = [ target; answer ] } ->
+      (* T4.4: a service's answer to the gate's parked caller — the
+         target's raw pid names the waiter, the raw answer lands in
+         that caller's own trap frame and the wake is this helper's
+         alone. *)
+      emit_expr env (d + 2) target;
+      put env "    sd a0, %d(sp)\n" (temp_offset env d);
+      emit_expr env (d + 2) answer;
+      if env.native then begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        call_runtime env "emo_gate_reply"
+      end
+      else begin
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" (temp_offset env d);
+        put env "    andi t0, a0, -32\n";
+        put env "    ld a0, 8(t0)\n";
+        put env "    andi t0, a1, -32\n";
+        put env "    ld a1, 8(t0)\n";
+        call_runtime env "emo_gate_reply"
+      end
+  | Builtin { name = "pid_num"; args = [ p ] } ->
+      (* T4.4: the raw machine sees a pid as its number — the kernel's
+         handoff cells carry numbers, not Pid words. The Pid word is
+         tagged in both worlds; the answer boxes back in a dynamic
+         body. *)
+      emit_expr env (d + 1) p;
+      call_runtime env "emo_pid_num";
+      if not env.native then call_runtime env "emo_box_i64"
+  | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
+  | Builtin { name = "fence"; args = [] } ->
+      (* the full sequential-consistency barrier, ordinary and volatile
+         accesses alike; `fence` answers nothing, like `halt` *)
+      put env "    fence rw, rw\n"
+  | Builtin { name = "peek8"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      if env.native then begin
+        (* the volatile byte load, inline: the raw address is already in
+           a0, the answer is the Byte immediate — one instruction, in
+           program order, nothing allocated (T2.3) *)
+        put env "    lbu t0, 0(a0)\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek8"
+      end
+  | Builtin { name = "peek64"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      if env.native then
+        (* the volatile word load, inline: raw address in, raw payload
+           out — an MMIO read allocates nothing *)
+        put env "    ld a0, 0(a0)\n"
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek64";
+        unbox_if_numeric env e.Emo_ir.ety
+      end
+  | Builtin { name = "poke8"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      if env.native then begin
+        (* the volatile byte store, inline: raw address, the value's
+           Byte immediate decodes with the shift *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    srli t1, a0, 4\n";
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sb t1, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke8"
+      end
+  | Builtin { name = "poke64"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      if env.native then begin
+        (* the volatile word store, inline: raw address, raw payload *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sd a0, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke64"
+      end
+  | Builtin { name = "peek32"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      if env.native then
+        (* the volatile 32-bit load, inline (T7.1): raw address in, the
+           zero-extended word the raw payload — lw clears the top half *)
+        put env "    lw a0, 0(a0)\n"
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        call_runtime env "emo_peek32";
+        unbox_if_numeric env e.Emo_ir.ety
+      end
+  | Builtin { name = "poke32"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      if env.native then begin
+        (* the volatile 32-bit store, inline (T7.1): the value must fit
+           the width — no Int32 type guards it yet, so the runtime check
+           is the loud end, never a silent truncation (the Byte lane's
+           rule) *)
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        put env "    li t1, 0x100000000\n";
+        put env "    bltu a0, t1, 1f\n";
+        put env "    la a0, msg_poke32_range\n";
+        put env "    la a1, msg_poke32_range_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    ld t0, %d(sp)\n" addr_slot;
+        put env "    sw a0, 0(t0)\n"
+      end
+      else begin
+        box_if_numeric env addr.Emo_ir.ety;
+        put env "    sd a0, %d(sp)\n" addr_slot;
+        emit_expr env (d + 1) value;
+        box_if_numeric env value.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" addr_slot;
+        call_runtime env "emo_poke32"
+      end
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
   | _ -> refuse (describe_expr e)
 
 (* Evaluate the args, each spilled to its own slot first — later args
-   may call over earlier results — then load them into a[from].. *)
+   may call over earlier results — then load them into a[from].. A raw
+   numeric arg boxes first: these registers feed dynamic callees, whose
+   tagged-word contract is the escape point. *)
 and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
   if from + List.length args > 8 then
     refuse "a call with more than eight arguments";
@@ -496,6 +1002,7 @@ and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
     (fun i arg ->
       let spill = temp_offset env (d + i) in
       emit_expr env (d + List.length args) arg;
+      box_if_numeric env arg.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" spill)
     args;
   List.iteri
@@ -506,13 +1013,100 @@ and emit_args_from env d ~(from : int) (args : Emo_ir.expr list) : unit =
 and emit_args env d (args : Emo_ir.expr list) : unit =
   emit_args_from env d ~from:0 args
 
-(* A Tuple or Array literal: the elements evaluate first (each spilled),
-   then one block is allocated and filled. *)
+(* ---- The typed-convention adapters (T2.1) ----
+
+   The caller side. Dynamic context: args evaluate left to right as
+   tagged words, each spilled to its own temp slot (later args may call
+   over earlier results), then the registers fill from the slots — an
+   Int64 or Float64 arg unboxes into its bank register, every other arg
+   loads its tagged word — and a raw result boxes back into a0.
+   Native context (T2.2): the args already hold their rule-1
+   representations (raw Int64 in a0, raw Float64 in fa0, tagged
+   otherwise), so spill and fill are plain moves — the boundary
+   disappears. *)
+
+and emit_typed_regs env d (kinds : param_kind list) : unit =
+  List.iteri
+    (fun i (k, reg) ->
+      let spill = temp_offset env (d + i) in
+      match k with
+      | P_int64 ->
+          put env "    ld a%d, %d(sp)\n" reg spill;
+          put env "    andi a%d, a%d, -32\n" reg reg;
+          put env "    ld a%d, 8(a%d)\n" reg reg
+      | P_word -> put env "    ld a%d, %d(sp)\n" reg spill
+      | P_float64 ->
+          put env "    ld t0, %d(sp)\n" spill;
+          put env "    andi t0, t0, -32\n";
+          put env "    fld fa%d, 8(t0)\n" reg)
+    (bank_assign kinds)
+
+and emit_typed_regs_native env d (kinds : param_kind list) : unit =
+  List.iteri
+    (fun i (k, reg) ->
+      let spill = temp_offset env (d + i) in
+      match k with
+      | P_float64 -> put env "    fld fa%d, %d(sp)\n" reg spill
+      | _ -> put env "    ld a%d, %d(sp)\n" reg spill)
+    (bank_assign kinds)
+
+and emit_box_result env (r : result_kind) : unit =
+  match r with
+  | R_int64 -> call_runtime env "emo_box_i64"
+  | R_float64 -> call_runtime env "emo_box_f64"
+  | R_word | R_void -> ()
+
+(* The callee side, at the return label: the dynamic body leaves the
+   tagged result in a0; a typed result unboxes to its raw register.
+   Only dynamic bodies run this — a native body already holds the rule-1
+   representation. *)
+and emit_unbox_result env (r : result_kind) : unit =
+  match r with
+  | R_int64 ->
+      put env "    andi a0, a0, -32\n";
+      put env "    ld a0, 8(a0)\n"
+  | R_float64 ->
+      put env "    andi t0, a0, -32\n";
+      put env "    fld fa0, 8(t0)\n"
+  | R_word | R_void -> ()
+
+and emit_typed_call env d (func : string) (conv : conv)
+    (args : Emo_ir.expr list) : unit =
+  if List.length args > 8 then refuse "a call with more than eight arguments";
+  let n = List.length args in
+  if env.native then begin
+    List.iteri
+      (fun i arg ->
+        let spill = temp_offset env (d + i) in
+        emit_expr env (d + n) arg;
+        match arg.Emo_ir.ety with
+        | Emo_check.Float64 -> put env "    fsd fa0, %d(sp)\n" spill
+        | _ -> put env "    sd a0, %d(sp)\n" spill)
+      args;
+    emit_typed_regs_native env d conv.cparams;
+    put env "    call %s\n" (func_label func)
+  end
+  else begin
+    List.iteri
+      (fun i arg ->
+        let spill = temp_offset env (d + i) in
+        emit_expr env (d + n) arg;
+        put env "    sd a0, %d(sp)\n" spill)
+      args;
+    emit_typed_regs env d conv.cparams;
+    put env "    call %s\n" (func_label func);
+    emit_box_result env conv.cresult
+  end
+
+(* A Tuple or Array literal: the elements evaluate first (each spilled —
+   boxed at the container boundary first), then one block is allocated
+   and filled. *)
 and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
   let n = List.length es in
   List.iteri
     (fun i el ->
       emit_expr env (d + n) el;
+      box_if_numeric env el.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     es;
   put env "    li a0, %d\n" (n + 1);
@@ -529,10 +1123,11 @@ and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
 and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) b;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    sd a0, %d(sp)\n" spill;
   emit_expr env (d + 1) i;
-  put env "    andi a0, a0, -16\n";
+  box_if_numeric env i.Emo_ir.ety;
+  put env "    andi a0, a0, -32\n";
   put env "    ld t2, 8(a0)\n";
   put env "    ld t0, %d(sp)\n" spill;
   put env "    ld t1, 8(t0)\n";
@@ -550,30 +1145,35 @@ and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   call_runtime env "emo_fail";
   put env "%s:\n" l_ok
 
-and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
-    (r : Emo_ir.expr) : unit =
+and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
+    (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let bool_of_t0 () =
     put env "    slli t0, t0, 4\n    addi t0, t0, 1\n    mv a0, t0\n"
   in
   (* Comparisons key on the operand type (their own result is Bool). *)
   let ty = if ty = Emo_check.Bool then l.Emo_ir.ety else ty in
   (* A dynamic operand: the runtime dispatches on the values (the c
-     target's emo_*_dyn family). *)
+     target's emo_*_dyn family). A raw numeric operand boxes at the
+     dynamic boundary — the helper reads tagged words. *)
   if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then
     match op with
     | Emo_ast.Eq | Emo_ast.Ne ->
         emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    ld a1, %d(sp)\n" spill;
         call_runtime env "emo_eq_deep";
         if op = Emo_ast.Ne then put env "    xori a0, a0, 16\n"
     | Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul ->
         emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         let helper =
@@ -582,16 +1182,23 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
           | Emo_ast.Sub -> "emo_sub_dyn"
           | _ -> "emo_mul_dyn"
         in
-        call_runtime env helper
+        call_runtime env helper;
+        (* the helper answers the tagged word; an expression the checker
+           types numeric keeps the representation rule — the raw payload
+           in a0 — so a dynamic operand inside a native body unboxes
+           here, the Call arm's rule *)
+        if not boxed then unbox_if_numeric env ty
     | Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge ->
         (* Gt/Ge swap the operands onto Lt/Le, the c target's trick *)
         let a, b =
           if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
         in
         emit_expr env (d + 1) a;
+        box_if_numeric env a.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
         emit_expr env (d + 1) b;
+        box_if_numeric env b.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env
@@ -618,7 +1225,44 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         in
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        if boxed then put env "    call emo_box_i64\n"
+    | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
+        | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
+        Emo_check.Byte ) ->
+        (* the byte lane: in-type, wrapping modulo 256 — Byte is
+           unsigned, the family rule the hosted targets already run.
+           Operands are immediates: decode, op, re-encode *)
+        emit_byte_pair env d l r;
+        let mnemonic =
+          match op with
+          | Emo_ast.Add -> "add"
+          | Emo_ast.Sub -> "sub"
+          | Emo_ast.Mul -> "mul"
+          | Emo_ast.Bit_and -> "and"
+          | Emo_ast.Bit_or -> "or"
+          | Emo_ast.Bit_xor -> "xor"
+          | _ -> assert false
+        in
+        put env "    %s t0, t0, t1\n" mnemonic;
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+    | (Emo_ast.Shl | Emo_ast.Shr), Emo_check.Byte ->
+        (* a count of eight or more saturates at the width: the Byte
+           answers 0, the same rule every hosted target runs *)
+        emit_byte_pair env d l r;
+        let saturated = fresh_label env "bshift" in
+        put env "    li t2, 8\n";
+        put env "    bgeu t1, t2, %s\n" saturated;
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Shl then "sll" else "srl");
+        put env "    j 1f\n";
+        put env "%s:\n" saturated;
+        put env "    li t0, 0\n";
+        put env "1:\n";
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
     | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Int64 ->
         (* the divisor is checked first: RISC-V's div/rem define x/0
            instead of trapping, and the language raises. INT64_MIN / -1
@@ -633,7 +1277,20 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    %s t0, t0, t1\n"
           (if op = Emo_ast.Div then "div" else "rem");
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        if boxed then put env "    call emo_box_i64\n"
+    | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Byte ->
+        (* unsigned, and the divisor is checked first — the Int64 arm's
+           discipline *)
+        emit_byte_pair env d l r;
+        put env "    bnez t1, 1f\n";
+        put env "    la a0, msg_divzero\n";
+        put env "    la a1, msg_divzero_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Div then "divu" else "remu");
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
     | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
       ->
         emit_float_pair env d l r;
@@ -646,7 +1303,7 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
           | _ -> assert false
         in
         put env "    %s fa0, fa0, fa1\n" mnemonic;
-        put env "    call emo_box_f64\n"
+        if boxed then put env "    call emo_box_f64\n"
     | Emo_ast.Add, Emo_check.String ->
         emit_expr env (d + 1) l;
         let spill = temp_offset env d in
@@ -670,7 +1327,8 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env "emo_string_eq"
     | ( (Emo_ast.Eq | Emo_ast.Ne),
-        (Emo_check.Bool | Emo_check.Char | Emo_check.EnumType _) ) ->
+        (Emo_check.Bool | Emo_check.Char | Emo_check.Byte | Emo_check.EnumType _)
+      ) ->
         (* immediates: equal iff the words are identical *)
         emit_expr env (d + 1) l;
         let spill = temp_offset env d in
@@ -693,6 +1351,20 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         if op = Emo_ast.Ne then put env "    xori a0, a0, 16\n"
     | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Int64 ->
         emit_int_pair env d l r;
+        (match op with
+        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
+        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Le ->
+            put env "    slt t0, t1, t0\n";
+            put env "    xori t0, t0, 1\n"
+        | Emo_ast.Ge ->
+            put env "    slt t0, t0, t1\n";
+            put env "    xori t0, t0, 1\n"
+        | _ -> assert false);
+        bool_of_t0 ()
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Byte ->
+        (* unsigned bytes, so the decoded pair compares as plain ints *)
+        emit_byte_pair env d l r;
         (match op with
         | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
         | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
@@ -729,55 +1401,103 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
 
 (* Unbox both operands of an Int64 binary: the left payload spills to
    this depth's slot while the right evaluates one deeper. Leaves the
-   payloads in t0 (left) and t1 (right). *)
+   payloads in t0 (left) and t1 (right). A native body's operands are
+   raw already — the pair is plain moves. *)
 and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -16\n";
-  put env "    ld t0, 8(a0)\n";
+  if env.native then put env "    sd a0, %d(sp)\n" spill
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    ld t0, 8(a0)\n";
+    put env "    sd t0, %d(sp)\n" spill
+  end;
+  emit_expr env (d + 1) r;
+  if env.native then begin
+    put env "    mv t1, a0\n";
+    put env "    ld t0, %d(sp)\n" spill
+  end
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    ld t1, 8(a0)\n";
+    put env "    ld t0, %d(sp)\n" spill
+  end
+
+(* The Byte twin: immediates both, so decoding is a shift. Leaves the
+   payloads in t0 (left) and t1 (right). *)
+and emit_byte_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
+  let spill = temp_offset env d in
+  emit_expr env (d + 1) l;
+  put env "    srli t0, a0, 4\n";
   put env "    sd t0, %d(sp)\n" spill;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -16\n";
-  put env "    ld t1, 8(a0)\n";
+  put env "    srli t1, a0, 4\n";
   put env "    ld t0, %d(sp)\n" spill
 
 (* The Float64 twin: payloads ride fa0/fa1. Field reads untag first —
    every heap access runs on the untagged pointer (Int64's tag is 0 and
-   hides any slip, so the discipline is checked on the float paths). *)
+   hides any slip, so the discipline is checked on the float paths).
+   Native: the operands are raw in fa0 already, so the left spill is an
+   fsd and the right lands in fa0 via a register move. *)
 and emit_float_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
   let spill = temp_offset env d in
   emit_expr env (d + 1) l;
-  put env "    andi a0, a0, -16\n";
-  put env "    fld fa0, 8(a0)\n";
-  put env "    fsd fa0, %d(sp)\n" spill;
+  if env.native then put env "    fsd fa0, %d(sp)\n" spill
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    fld fa0, 8(a0)\n";
+    put env "    fsd fa0, %d(sp)\n" spill
+  end;
   emit_expr env (d + 1) r;
-  put env "    andi a0, a0, -16\n";
-  put env "    fld fa1, 8(a0)\n";
-  put env "    fld fa0, %d(sp)\n" spill
+  if env.native then begin
+    put env "    fmv.d fa1, fa0\n";
+    put env "    fld fa0, %d(sp)\n" spill
+  end
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    fld fa1, 8(a0)\n";
+    put env "    fld fa0, %d(sp)\n" spill
+  end
 
-and emit_unary env d (ty : Emo_check.t) (op : Emo_ast.unop) (x : Emo_ir.expr) :
-    unit =
+and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
+    (x : Emo_ir.expr) : unit =
   match (op, ty) with
   | Emo_ast.Neg, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
-      put env "    ld t0, 8(a0)\n";
-      put env "    sub t0, x0, t0\n";
-      put env "    mv a0, t0\n";
-      put env "    call emo_box_i64\n"
+      if not boxed then put env "    sub a0, x0, a0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t0, 8(a0)\n";
+        put env "    sub t0, x0, t0\n";
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+      end
   | Emo_ast.Neg, Emo_check.Float64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
-      put env "    fld fa0, 8(a0)\n";
-      put env "    fneg.d fa0, fa0\n";
-      put env "    call emo_box_f64\n"
+      if not boxed then put env "    fneg.d fa0, fa0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    fld fa0, 8(a0)\n";
+        put env "    fneg.d fa0, fa0\n";
+        put env "    call emo_box_f64\n"
+      end
   | Emo_ast.Bit_not, Emo_check.Int64 ->
       emit_expr env d x;
-      put env "    andi a0, a0, -16\n";
-      put env "    ld t0, 8(a0)\n";
+      if not boxed then put env "    not a0, a0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t0, 8(a0)\n";
+        put env "    not t0, t0\n";
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+      end
+  | Emo_ast.Bit_not, Emo_check.Byte ->
+      emit_expr env d x;
+      put env "    srli t0, a0, 4\n";
       put env "    not t0, t0\n";
-      put env "    mv a0, t0\n";
-      put env "    call emo_box_i64\n"
+      put env "    andi t0, t0, 255\n";
+      put env "    slli a0, t0, 4\n";
+      put env "    ori a0, a0, 7\n"
   | Emo_ast.Not, _ ->
       emit_expr env d x;
       put env "    xori a0, a0, 16\n"
@@ -790,6 +1510,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   List.iteri
     (fun i part ->
       emit_expr env (d + k) part;
+      box_if_numeric env part.Emo_ir.ety;
       call_runtime env "emo_to_string";
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     parts;
@@ -797,7 +1518,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   List.iteri
     (fun i _ ->
       put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t1, 8(t0)\n";
       put env "    add t2, t2, t1\n")
     parts;
@@ -806,7 +1527,7 @@ and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   let block_slot = temp_offset env (d + k) in
   let cursor_slot = temp_offset env (d + k + 1) in
   put env "    sd a0, %d(sp)\n" block_slot;
-  put env "    andi a0, a0, -16\n";
+  put env "    andi a0, a0, -32\n";
   put env "    addi a0, a0, 16\n";
   List.iteri
     (fun i _ ->
@@ -826,6 +1547,14 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
   List.iteri
     (fun i name ->
       put env "    ld a0, %d(sp)\n" (slot_offset env name);
+      (* the record holds tagged words: a captured raw local boxes at
+         the capture — the closure boundary is an escape point *)
+      (match env.cur with
+      | Some f when env.native -> (
+          match List.assoc_opt name f.raw with
+          | Some t -> box_if_numeric env t
+          | None -> ())
+      | _ -> ());
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     caps;
   put env "    li a0, %d\n" (1 + k);
@@ -846,13 +1575,13 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
 
 (* ---- Method dispatch ---- *)
 
-and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
-    (args : Emo_ir.expr list) : unit =
+and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
+    (name : string) (args : Emo_ir.expr list) : unit =
   (* `is` takes a type reference, not a value. *)
   match (name, args) with
   | "is", [ { Emo_ir.desc = Type_ref target; _ } ] -> (
       emit_expr env d self_;
-      put env "    andi a0, a0, -16\n";
+      put env "    andi a0, a0, -32\n";
       put env "    ld t0, 8(a0)\n";
       match List.assoc_opt target env.classes with
       | Some c ->
@@ -871,41 +1600,120 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    xori t0, t0, 1\n";
               put env "    slli t0, t0, 4\n    addi t0, t0, 1\n    mv a0, t0\n"
           | None -> refuse (Printf.sprintf "`is(%s)`" target)))
+  | "from_int64", [ x ]
+    when match self_.Emo_ir.desc with
+         | Emo_ir.Type_ref "Byte" -> true
+         | _ -> false ->
+      (* the conversion the checker admits statically, the interpreter
+         runs loudly: 0–255 or the named failure — the mask the c
+         target applies silently is not the rule here *)
+      emit_expr env (d + 1) x;
+      box_if_numeric env x.Emo_ir.ety;
+      put env "    andi a0, a0, -32\n";
+      put env "    ld t0, 8(a0)\n";
+      put env "    li t1, -256\n";
+      put env "    and t1, t0, t1\n";
+      put env "    beqz t1, 1f\n";
+      put env "    la a0, msg_byte_range\n";
+      put env "    la a1, msg_byte_range_end\n";
+      put env "    call emo_fail\n";
+      put env "1:\n";
+      put env "    slli a0, t0, 4\n";
+      put env "    ori a0, a0, 7\n"
   | _ -> (
       match self_.Emo_ir.ety with
+      | Emo_check.Byte -> (
+          match (name, args) with
+          | "to_int64", [] ->
+              emit_expr env d self_;
+              put env "    srli a0, a0, 4\n";
+              put env "    andi a0, a0, 255\n";
+              if boxed then put env "    call emo_box_i64\n"
+          | "to_string", [] ->
+              emit_expr env d self_;
+              call_runtime env "emo_to_string"
+          | _ -> refuse (Printf.sprintf "the Byte method `%s`" name))
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
-          put env "    andi a0, a0, -16\n";
-          put env "    ld a0, 8(a0)\n";
+          if not boxed then ()
+          else begin
+            put env "    andi a0, a0, -32\n";
+            put env "    ld a0, 8(a0)\n"
+          end;
           call_runtime env "emo_i64_to_string"
+      | Emo_check.Int64 when name = "to_byte" && args = [] ->
+          (* the low eight bits, the family's rule *)
+          emit_expr env d self_;
+          if boxed then begin
+            put env "    andi a0, a0, -32\n";
+            put env "    ld t0, 8(a0)\n";
+            put env "    andi t0, t0, 255\n"
+          end
+          else put env "    andi t0, a0, 255\n";
+          put env "    slli a0, t0, 4\n";
+          put env "    ori a0, a0, 7\n"
       | Emo_check.BoxType _ -> (
           match (name, args) with
           | "read", [] ->
               emit_expr env d self_;
-              put env "    andi a0, a0, -16\n";
-              put env "    ld a0, 8(a0)\n"
+              put env "    andi a0, a0, -32\n";
+              put env "    ld a0, 8(a0)\n";
+              (* the cell holds the tagged word; a raw numeric consumer
+                 reads the payload *)
+              if not boxed then unbox_if_numeric env ty
           | "replace", [ v ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) v;
+              box_if_numeric env v.Emo_ir.ety;
               put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -16\n";
+              put env "    andi t0, t0, -32\n";
               put env "    sd a0, 8(t0)\n";
               put env "    ld a0, %d(sp)\n" self_slot
           | _ -> refuse (Printf.sprintf "the Box method `%s`" name))
+      | Emo_check.AtomicType _ -> (
+          (* Box's synchronized sibling: every access is a runtime
+             helper over the cell's word (the psABI: a0 = cell, a1.. =
+             the args), so the static and the dynamic paths share one
+             implementation *)
+          let helper =
+            match (name, args) with
+            | "load", [] -> Some "emo_atomic_load"
+            | "store", [ _ ] -> Some "emo_atomic_store"
+            | "exchange", [ _ ] -> Some "emo_atomic_exchange"
+            | "compare_exchange", [ _; _ ] -> Some "emo_atomic_compare_exchange"
+            | ( ( "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or"
+                | "fetch_xor" ),
+                [ _ ] ) ->
+                Some ("emo_atomic_" ^ name)
+            | "to_string", [] -> Some "emo_to_string"
+            | _ -> None
+          in
+          match helper with
+          | Some helper ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_args_from env (d + 1) ~from:1 args;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env helper;
+              if not boxed then unbox_if_numeric env ty
+          | None -> refuse (Printf.sprintf "the Atomic method `%s`" name))
       | Emo_check.ArrayType _ -> (
           match (name, args) with
           | "length", [] ->
               emit_expr env d self_;
-              put env "    andi a0, a0, -16\n";
+              put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
-              put env "    call emo_box_i64\n"
+              if boxed then put env "    call emo_box_i64\n"
           | "append", [ x ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) x;
+              box_if_numeric env x.Emo_ir.ety;
+              put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1));
               put env "    ld a1, %d(sp)\n" (temp_offset env (d + 1));
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_array_append"
@@ -919,7 +1727,10 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
-              put env "    call %s\n" (func_label mangled)
+              put env "    call %s\n" (func_label mangled);
+              (* the callee is a dynamic-convention body: its tagged
+                 result crosses back through the boundary *)
+              if not boxed then unbox_if_numeric env ty
           | None ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display))
       | Emo_check.InterfaceType display -> (
@@ -934,14 +1745,29 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
               put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -16\n";
+              put env "    andi t0, t0, -32\n";
               put env "    ld t1, 8(t0)\n";
               put env "    la t2, emo_iface_%s\n"
                 (Emo_ir.sanitize_ident display);
+              (* the table is one row of per-class slots, a slot per
+                 interface method in the interface's own order — the row
+                 for the receiver's class, the slot for this method *)
+              put env "    li t3, %d\n" (List.length sigs);
+              put env "    mul t1, t1, t3\n";
               put env "    slli t1, t1, 3\n";
               put env "    add t2, t2, t1\n";
-              put env "    ld t2, 0(t2)\n";
-              put env "    jalr t2\n"
+              let idx =
+                let rec go i = function
+                  | [] -> 0
+                  | (m, _) :: rest ->
+                      if String.equal m (Emo_ir.sanitize_ident name) then i
+                      else go (i + 1) rest
+                in
+                go 0 sigs
+              in
+              put env "    ld t2, %d(t2)\n" (idx * 8);
+              put env "    jalr t2\n";
+              if not boxed then unbox_if_numeric env ty
           | Some _ ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display)
           | None -> refuse (Printf.sprintf "the interface `%s`" display))
@@ -963,6 +1789,7 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
           List.iteri
             (fun i arg ->
               emit_expr env (d + 1 + List.length args) arg;
+              box_if_numeric env arg.Emo_ir.ety;
               put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
             args;
           put env "    ld a0, %d(sp)\n" self_slot;
@@ -981,28 +1808,57 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
    frame is released first (nothing live rides in it — the args are
    already in registers), so the stack stays constant. `tail`/`jr`
    leave ra alone, so the original return address is loaded into ra
-   first — it rides through the whole tail chain. *)
+   first — it rides through the whole tail chain. A typed callee's
+   result must match this function's own representation — the tail
+   path bypasses the return label, so no adapter can convert a raw
+   result into the tagged word the dynamic convention promises (or the
+   reverse); a mismatching pair takes the plain call instead. *)
 and emit_tail env (e : Emo_ir.expr) : bool =
+  let frame () =
+    match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
+  in
+  let mine () = (frame ()).fconv.cresult in
   match e.Emo_ir.desc with
-  | Call { func; args } ->
-      emit_args env 0 args;
-      let f =
-        match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
-      in
-      put env "    ld ra, 0(sp)\n";
-      put env "    addi sp, sp, %d\n" f.size;
-      put env "    tail %s\n" (func_label func);
-      true
-  | Call_value { f; args } ->
-      let ff =
-        match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
-      in
+  | Call { func; args } -> (
+      match List.assoc_opt func env.fsigs with
+      | Some conv when result_compatible conv.cresult (mine ()) ->
+          if List.length args > 8 then
+            refuse "a call with more than eight arguments";
+          let n = List.length args in
+          List.iteri
+            (fun i arg ->
+              let spill = temp_offset env i in
+              emit_expr env n arg;
+              if env.native then
+                match arg.Emo_ir.ety with
+                | Emo_check.Float64 -> put env "    fsd fa0, %d(sp)\n" spill
+                | _ -> put env "    sd a0, %d(sp)\n" spill
+              else put env "    sd a0, %d(sp)\n" spill)
+            args;
+          if env.native then emit_typed_regs_native env 0 conv.cparams
+          else emit_typed_regs env 0 conv.cparams;
+          let f = frame () in
+          put env "    ld ra, 0(sp)\n";
+          put env "    addi sp, sp, %d\n" f.size;
+          put env "    tail %s\n" (func_label func);
+          true
+      | Some _ -> false
+      | None when result_compatible R_word (mine ()) ->
+          emit_args env 0 args;
+          let f = frame () in
+          put env "    ld ra, 0(sp)\n";
+          put env "    addi sp, sp, %d\n" f.size;
+          put env "    tail %s\n" (func_label func);
+          true
+      | None -> false)
+  | Call_value { f; args } when result_compatible R_word (mine ()) ->
+      let ff = frame () in
       let fslot = temp_offset env 0 in
       emit_expr env 1 f;
       put env "    sd a0, %d(sp)\n" fslot;
       emit_args_from env 1 ~from:0 args;
       put env "    ld t0, %d(sp)\n" fslot;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
       put env "    ld ra, 0(sp)\n";
       put env "    addi sp, sp, %d\n" ff.size;
@@ -1023,9 +1879,9 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
       put env "    bne t0, t1, %s\n" l_next
   | Emo_ast.Pattern_literal (Emo_ast.L_int n) ->
       put env "    ld t0, %d(sp)\n" slot_off;
-      put env "    andi t1, t0, 15\n";
+      put env "    andi t1, t0, 31\n";
       put env "    bnez t1, %s\n" l_next;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t0, 8(t0)\n";
       put env "    li t1, %Ld\n" n;
       put env "    bne t0, t1, %s\n" l_next
@@ -1053,10 +1909,10 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
   | Emo_ast.Pattern_literal (Emo_ast.L_byte _) -> refuse "a Byte pattern"
   | Emo_ast.Tuple_pattern ps ->
       put env "    ld t0, %d(sp)\n" slot_off;
-      put env "    andi t1, t0, 15\n";
+      put env "    andi t1, t0, 31\n";
       put env "    li t2, %d\n" tag_tuple;
       put env "    bne t1, t2, %s\n" l_next;
-      put env "    andi t0, t0, -16\n";
+      put env "    andi t0, t0, -32\n";
       put env "    ld t1, 8(t0)\n";
       put env "    li t2, %d\n" (List.length ps);
       put env "    bne t1, t2, %s\n" l_next;
@@ -1064,7 +1920,7 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
         (fun i sub ->
           let elem_slot = temp_offset env 1 in
           put env "    ld t0, %d(sp)\n" slot_off;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    ld t0, %d(t0)\n" (16 + (8 * i));
           put env "    sd t0, %d(sp)\n" elem_slot;
           emit_pattern_test env elem_slot sub l_next)
@@ -1077,13 +1933,18 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
   match p.Emo_ast.pattern_desc with
   | Emo_ast.Wildcard | Emo_ast.Pattern_literal _ | Emo_ast.Enum_member _ -> ()
   | Emo_ast.Pattern_binding n ->
+      (* the bound word is tagged (the scrutinee boxed at the case); a
+         native body must not read the name as a raw numeric local *)
+      (match env.cur with
+      | Some f when env.native -> f.raw <- List.remove_assoc n f.raw
+      | _ -> ());
       put env "    ld t0, %d(sp)\n" src_off;
       put env "    sd t0, %d(sp)\n" (slot_offset env n)
   | Emo_ast.Tuple_pattern ps ->
       List.iteri
         (fun i sub ->
           put env "    ld t0, %d(sp)\n" src_off;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    ld t0, %d(t0)\n" (16 + (8 * i));
           put env "    sd t0, %d(sp)\n" (temp_offset env 1);
           rec_pattern_bind env (temp_offset env 1) sub)
@@ -1092,12 +1953,56 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
 and emit_stmt env (st : Emo_ir.stmt) : unit =
   match st with
   | Effect e -> emit_expr env 0 e
-  | Let { name; init; _ } ->
+  | Let { name; init; _ } -> (
       emit_expr env 0 init;
-      put env "    sd a0, %d(sp)\n" (slot_offset env name)
-  | Assign_var { name; value } ->
+      match env.cur with
+      | Some f when env.native -> (
+          match init.Emo_ir.ety with
+          | Emo_check.Float64 ->
+              f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
+              put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
+          | Emo_check.Int64 ->
+              f.raw <- (name, Emo_check.Int64) :: List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+          | _ ->
+              f.raw <- List.remove_assoc name f.raw;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
+  | Assign_var { name; value } -> (
       emit_expr env 0 value;
-      put env "    sd a0, %d(sp)\n" (slot_offset env name)
+      match env.cur with
+      | Some f when env.native -> (
+          (* The slot's convention was fixed at its declaration (or the
+             param list) and never moves: every store converts the
+             produced word into it. The convention used to follow the
+             assignment — a conditional `d = x` (a tagged word) flipped
+             the slot for every read after the branch, while the
+             skipped path still held the declaration's raw 0, and the
+             next read unboxed zero (T7.1's driver caught it: the read
+             request skipped the write's data receive). *)
+          match List.assoc_opt name f.raw with
+          | Some Emo_check.Float64 ->
+              (match value.Emo_ir.ety with
+              | Emo_check.Float64 -> () (* the raw bits already in fa0 *)
+              | _ ->
+                  (* a tagged producer: the cell's bits into fa0 *)
+                  put env "    andi t0, a0, -32\n";
+                  put env "    fld fa0, 8(t0)\n");
+              put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
+          | Some Emo_check.Int64 ->
+              (match value.Emo_ir.ety with
+              | Emo_check.Int64 -> () (* the raw payload already in a0 *)
+              | _ ->
+                  (* a tagged producer: the cell's payload into a0 *)
+                  put env "    andi a0, a0, -32\n";
+                  put env "    ld a0, 8(a0)\n");
+              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+          | _ ->
+              (* a tagged slot: a raw numeric producer boxes at the
+                 store *)
+              box_if_numeric env value.Emo_ir.ety;
+              put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
   | If { cond; then_; else_ } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
@@ -1112,6 +2017,10 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Case { scrutinee; branches } ->
       let scrut_slot = temp_offset env 0 in
       emit_expr env 3 scrutinee;
+      (* the pattern tests read the tagged word: a raw numeric
+         scrutinee boxes at the case boundary, and any binding the
+         patterns make holds tagged words *)
+      box_if_numeric env scrutinee.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" scrut_slot;
       let l_end = fresh_label env "case_end" in
       List.iter
@@ -1148,6 +2057,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_expr env 1 self_;
       put env "    sd a0, %d(sp)\n" self_slot;
       emit_expr env 1 value;
+      box_if_numeric env value.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" (temp_offset env 1);
       put env "    ld t0, %d(sp)\n" self_slot;
       match self_.Emo_ir.ety with
@@ -1156,21 +2066,87 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
           put env "    sd a0, %d(t0)\n" (16 + (8 * idx))
       | _ ->
-          put env "    andi a0, t0, -16\n";
+          put env "    andi a0, t0, -32\n";
           put env "    ld t1, 8(a0)\n";
           let nlabel = string_label env name in
           put env "    la a1, %s\n" nlabel;
           put env "    li a2, %d\n" (String.length name);
           call_runtime env "emo_field_index";
           put env "    ld t0, %d(sp)\n" self_slot;
-          put env "    andi t0, t0, -16\n";
+          put env "    andi t0, t0, -32\n";
           put env "    slli t1, a0, 3\n";
           put env "    add t0, t0, t1\n";
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
           put env "    sd a0, 16(t0)\n")
   | Set_global_var _ -> refuse "module-level `var` assignment"
-  | Send _ -> refuse "send"
-  | Receive _ -> refuse "receive"
+  | Send { target; message } ->
+      (* the send boundary: the message snapshots in emo_send and the
+         sender yields — the call returns when this process is next
+         scheduled *)
+      emit_expr env 0 target;
+      put env "    sd a0, %d(sp)\n" (temp_offset env 0);
+      emit_expr env 1 message;
+      box_if_numeric env message.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" (temp_offset env 0);
+      call_runtime env "emo_send"
+  | Receive { branches } ->
+      (* the mailbox scan (T3.3): the index rides s0 — every helper is
+         ABI-clean and the switch saves the callee-saved set — the
+         candidate message stages in temp slot 0, the pattern machinery
+         uses slots 1 and 2, and guards evaluate at depth 3. The first
+         message a pattern and its guard accept dequeues; nothing
+         accepting anywhere parks the process and the scan restarts
+         from the oldest message on waking. *)
+      let msg_slot = temp_offset env 0 in
+      let l_test = fresh_label env "recv_scan" in
+      let l_park = fresh_label env "recv_park" in
+      let l_end = fresh_label env "recv_end" in
+      put env "    li s0, 0\n";
+      put env "%s:\n" l_test;
+      call_runtime env "emo_mb_count";
+      put env "    bgeu s0, a0, %s\n" l_park;
+      put env "    mv a0, s0\n";
+      call_runtime env "emo_mb_at";
+      put env "    sd a0, %d(sp)\n" msg_slot;
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          let l_next = fresh_label env "skip" in
+          emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
+          (* accepted by the pattern: the message crosses heaps now —
+             the copy-out (T5.2) lands it in this process's own arena
+             before any binding reads a word of it, because the
+             sender's arena reclaims the moment this receive clears
+             the last pin. The sender ring decides what is a value: a
+             gate request (the kernel's raw word) rides as-is. A guard
+             that still fails wastes the copy's quota and nothing else;
+             the pin holds and the scan continues over the copy, which
+             answers exactly as the snapshot would. *)
+          put env "    ld a0, %d(sp)\n" msg_slot;
+          put env "    mv a1, s0\n";
+          call_runtime env "emo_copy_out_at";
+          put env "    sd a0, %d(sp)\n" msg_slot;
+          rec_pattern_bind env msg_slot b.Emo_ir.pattern;
+          (match b.Emo_ir.guard with
+          | Some g ->
+              emit_expr env 3 g;
+              put env "    andi t0, a0, 16\n";
+              put env "    beqz t0, %s\n" l_next
+          | None -> ());
+          (* accepted: the message leaves the mailbox, the body runs *)
+          put env "    mv a0, s0\n";
+          call_runtime env "emo_mb_remove";
+          List.iter (emit_stmt env) b.Emo_ir.body;
+          put env "    j %s\n" l_end;
+          put env "%s:\n" l_next)
+        branches;
+      put env "    addi s0, s0, 1\n";
+      put env "    j %s\n" l_test;
+      put env "%s:\n" l_park;
+      call_runtime env "emo_park_receive";
+      put env "    li s0, 0\n";
+      put env "    j %s\n" l_test;
+      put env "%s:\n" l_end
   | Raise _ -> refuse "raise"
   | While { cond; body; _ } ->
       let head = fresh_label env "loop" in
@@ -1222,7 +2198,6 @@ and describe_expr (e : Emo_ir.expr) : string =
   | List_new _ -> "List"
   | Builder_new -> "ArrayBuilder"
   | Make_exception _ -> "exceptions"
-  | Do_spawn _ | Spawn_value _ -> "processes (`spawn`)"
   | _ -> "this expression"
 
 (* ---- Function emission ---- *)
@@ -1239,6 +2214,13 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   let val_label = Printf.sprintf "emo_const_val_%s" n in
   let store = fresh_label env "const_store" in
   let hit = fresh_label env "const_hit" in
+  (* a const thunk adopts its signature's convention (T2.1): the memo
+     slot holds the raw result, and every reader — a call site keyed on
+     the thunk's signature — boxes it back. A fully typed thunk's body
+     is native (T2.2): the initializer computes the raw result
+     directly. *)
+  let conv = match conv_of f with Some c -> c | None -> dynamic_conv 0 in
+  let native = match conv_of f with Some _ -> true | None -> false in
   let frm =
     {
       fbuf = Buffer.create 512;
@@ -1247,9 +2229,12 @@ let emit_const_function env (f : Emo_ir.func) : unit =
       temps = 0;
       ret = store;
       size = 0;
+      fconv = conv;
+      raw = [];
     }
   in
   env.cur <- Some frm;
+  env.native <- native;
   collect_stmts frm f.Emo_ir.fbody;
   frm.temps <- stmts_depth f.Emo_ir.fbody + 2;
   frm.size <- (8 + (8 * (frm.named + frm.temps)) + 15) / 16 * 16;
@@ -1267,13 +2252,31 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   List.iter (emit_stmt env) f.Emo_ir.fbody;
   put env "%s:\n" store;
   put env "    la t2, %s\n" val_label;
-  put env "    sd a0, 0(t2)\n";
+  (match conv.cresult with
+  | R_int64 ->
+      if native then put env "    sd a0, 0(t2)\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n";
+        put env "    sd a0, 0(t2)\n"
+      end
+  | R_float64 ->
+      if native then put env "    fsd fa0, 0(t2)\n"
+      else begin
+        put env "    andi t0, a0, -32\n";
+        put env "    fld fa0, 8(t0)\n";
+        put env "    fsd fa0, 0(t2)\n"
+      end
+  | R_word | R_void -> put env "    sd a0, 0(t2)\n");
   put env "    li t1, 1\n";
   put env "    la t0, %s\n" done_label;
   put env "    sd t1, 0(t0)\n";
   put env "%s:\n" hit;
   put env "    la t0, %s\n" val_label;
   put env "    ld a0, 0(t0)\n";
+  (match conv.cresult with
+  | R_float64 -> put env "    fmv.d.x fa0, a0\n"
+  | R_int64 | R_word | R_void -> ());
   put env "    ld ra, 0(sp)\n";
   put env "    addi sp, sp, %d\n" frm.size;
   put env "    ret\n";
@@ -1282,9 +2285,19 @@ let emit_const_function env (f : Emo_ir.func) : unit =
 
 (* One function: label, prologue (ra + the param/capture spill), body,
    epilogue. A closure body takes its record in t0 and spills the
-   captures into its own slots at entry. *)
+   captures into its own slots at entry. The convention (T2.1) drives
+   the prologue and epilogue: a dynamic conv is all P_word/R_word, so
+   it emits exactly the old shape; a typed conv spills each raw param
+   to its slot. A native body (T2.2 — a fully typed def) stops there:
+   the params stay raw, the locals and arithmetic stay raw, and the
+   result answers in its rule-1 representation — no adapters at all. A
+   dynamic body boxes its raw numeric params in place (after the
+   captures, whose record rides in t0 — the boxing calls clobber the
+   argument registers) and unboxes the tagged result at the return
+   label. *)
 let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
-    ~(captures : string list) ~(body : Emo_ir.stmt list) : unit =
+    ~(captures : string list) ~(conv : conv) ~(native : bool)
+    ~(body : Emo_ir.stmt list) : unit =
   if List.length params > 8 then refuse "a def with more than eight parameters";
   let f =
     {
@@ -1294,6 +2307,8 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       temps = 0;
       ret = fresh_label env "ret";
       size = 0;
+      fconv = conv;
+      raw = [];
     }
   in
   let nparams = List.length params in
@@ -1301,23 +2316,60 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
     List.mapi (fun i (n, _) -> (n, i)) params
     @ List.mapi (fun i n -> (n, nparams + i)) captures;
   f.named <- nparams + List.length captures;
+  (* a native body's typed numeric params hold raw payloads *)
+  if native then
+    f.raw <-
+      List.filter_map
+        (fun (n, t) ->
+          match t with
+          | Emo_check.Int64 | Emo_check.Float64 -> Some (n, t)
+          | _ -> None)
+        params;
   env.cur <- Some f;
+  env.native <- native;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
   f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
   gput env "%s:\n" label;
   gput env "    addi sp, sp, -%d\n" f.size;
   gput env "    sd ra, 0(sp)\n";
-  List.iteri (fun i _ -> gput env "    sd a%d, %d(sp)\n" i (8 + (8 * i))) params;
+  (* every raw param to its own slot first — the boxing calls clobber
+     the argument registers, so nothing may still ride in one *)
+  List.iteri
+    (fun i (k, reg) ->
+      let off = 8 + (8 * i) in
+      match k with
+      | P_float64 -> gput env "    fsd fa%d, %d(sp)\n" reg off
+      | _ -> gput env "    sd a%d, %d(sp)\n" reg off)
+    (bank_assign conv.cparams);
   List.iteri
     (fun i _ ->
       gput env "    ld t1, %d(t0)\n" (16 + (8 * i));
       gput env "    sd t1, %d(sp)\n" (8 + (8 * (nparams + i))))
     captures;
+  (* the dynamic body's entry adapter: box each raw numeric param into
+     the cell the body reads *)
+  if not native then
+    List.iteri
+      (fun i k ->
+        let off = 8 + (8 * i) in
+        match k with
+        | P_int64 ->
+            gput env "    ld a0, %d(sp)\n" off;
+            gput env "    call emo_box_i64\n";
+            gput env "    sd a0, %d(sp)\n" off
+        | P_float64 ->
+            gput env "    fld fa0, %d(sp)\n" off;
+            gput env "    call emo_box_f64\n";
+            gput env "    sd a0, %d(sp)\n" off
+        | P_word -> ())
+      conv.cparams;
   List.iter (emit_stmt env) body;
   (* Fall-off: the statement walk already left a final expression
-     statement's value in a0; a Void body just returns. *)
+     statement's value in a0 (fa0 for a Float64-typed fall-off in a
+     native body); a Void body just returns. *)
   put env "%s:\n" f.ret;
+  if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   put env "    addi sp, sp, %d\n" f.size;
   put env "    ret\n";
@@ -1347,6 +2399,8 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
       temps = 0;
       ret = fresh_label env "ret";
       size = 0;
+      fconv = dynamic_conv (List.length real_params + 1);
+      raw = [];
     }
   in
   let nparams = List.length real_params in
@@ -1354,6 +2408,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
     List.mapi (fun i (n, _) -> (n, i)) real_params @ [ ("self", nparams) ];
   f.named <- nparams + 1;
   env.cur <- Some f;
+  env.native <- false;
   env.fclass <- Some c.Emo_ir.cdisplay;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
@@ -1380,9 +2435,21 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
 
 (* ---- The runtime ---- *)
 
-let runtime_asm =
-  {asm|    .attribute arch, "rv64gc"
+(* The assembly opens with the architecture attribute in every shape: it
+   precedes whatever code follows, the compiler's boot stub or a
+   package-provided one. *)
+let arch_directive = "    .attribute arch, \"rv64gc\"\n"
 
+(* The boot stub: the image's entry discipline. This is the one piece of
+   the runtime a package may replace (EmoOS T3.1) — a package's
+   `runtime.S` takes the image's entry over while the runtime body below
+   stays: `emo_runtime_init`, `emo_program`, the allocator, and every
+   other symbol the generated code calls remain the compiler's. The stub
+   owns the entry symbol the linker script names (the default script's
+   `ENTRY(emo_start)`) and the boot discipline — a kernel package writes
+   its own and never touches this one. *)
+let boot_stub_asm =
+  {asm|
 # ---- The freestanding runtime ----
 #
 # Boot profile A: OpenSBI enters emo_start in S-mode with a0 = hart id
@@ -1411,55 +2478,180 @@ emo_start:
 emo_park:
     wfi
     j emo_park
+|asm}
 
-# ---- The bump allocator ----
+(* The user profile's boot stub (EmoOS T4.1): the kernel loads this image
+   and enters it in U-mode through sret — a0 is whatever the kernel left,
+   not a hart id, and the SBI is unreachable from U-mode. The stub owns
+   no CSR: it clears .bss, sets its own stack (the image carries it in
+   .bss), runs the program, and exits with the gate's exit verb (T4.2's
+   ABI: verb 0), which lands in the kernel and never returns. *)
+let user_boot_stub_asm =
+  {asm|
+# ---- The user profile's boot stub (EmoOS T4.1) ----
+#
+# The kernel loads the image and enters it in U-mode through sret: a0 is
+# the kernel's, not a hart id, and the SBI is unreachable from U-mode.
+# No runtime CSRs — the stub clears .bss, sets the stack the image
+# carries, runs the program, and exits with the gate's exit verb, which
+# lands in the kernel and never returns.
+
+    .section .text
+    .globl emo_start
+emo_start:
+    la sp, emo_stack_top
+    la t0, __emo_bss_start
+    la t1, __emo_bss_end
+1:
+    bgeu t0, t1, 2f
+    sd zero, 0(t0)
+    addi t0, t0, 8
+    j 1b
+2:
+    la t0, emo_program
+    la t1, emo_user_program_cell
+    sd t0, 0(t1)
+    # the arena cells (T5.1): the addresses of this image's own root
+    # slot's arena cursor and end, parked where the kernel's trap shim
+    # reads and writes them — every U-mode boundary crossing hands the
+    # running pass's arena to this image's allocator through them.
+    la t0, emo_procs
+    addi t0, t0, 576
+    la t1, emo_user_arena_cell
+    sd t0, 0(t1)
+    addi t0, t0, 8
+    la t1, emo_user_alim_cell
+    sd t0, 0(t1)
+    call emo_runtime_init
+    call emo_program
+    li a7, 0
+    ecall
+3:
+    wfi
+    j 3b
+|asm}
+
+(* The user profile's extra .bss: the user-program cell (T4.4) — the
+   stub parks this image's emo_program there, the one address no ELF
+   header carries and no user code can name, and the kernel's process
+   service starts a spawned process at it — and the arena cells
+   (T5.1): the addresses of this image's root slot's arena words, the
+   one pair of words the kernel's trap shim reads and writes at every
+   U-mode boundary crossing, so the user image's own allocator charges
+   whichever pass the kernel is running. The user profile's linker
+   script gives the section its fixed address under the top of RAM. *)
+let user_cell_asm =
+  {asm|
+
+# ---- The user-program cell (EmoOS T4.4) and the arena cells (T5.1) ----
+
+    .section .emo_ucall, "aw", @nobits
+    .globl emo_user_program_cell
+emo_user_program_cell:
+    .zero 8
+    .globl emo_user_arena_cell
+emo_user_arena_cell:
+    .zero 8
+    .globl emo_user_alim_cell
+emo_user_alim_cell:
+    .zero 8
+|asm}
+
+(* The runtime body: everything the generated code calls — the heap
+   cursor's init, the bump allocator, failure, boxing, the atomic
+   helpers, the dynamic dispatch and formatting support. The compiler
+   always provides it; a package's boot stub calls into it like the
+   program does. The allocator's exhaustion tail is not part of it:
+   the profile picks that (arena_gone_asm below). *)
+let runtime_asm =
+  {asm|# ---- The bump allocator ----
 #
 # emo_alloc: a0 = payload words, a0 = the block (raw pointer, header
-# word first). Exhaustion is a loud failure; the tagged layout stays
-# ready for a collector.
+# word first). Every allocation charges the current process's own
+# arena (EmoOS T5.1) — the slot holds the cursor and the end — so a
+# runaway process exhausts its own quota, loudly and alone. The tagged
+# layout stays ready for a collector.
 
     .globl emo_runtime_init
 emo_runtime_init:
+    # the process world (EmoOS T3.3): pid 1 is the root, running now on
+    # the boot stack; every other slot is free, the run queue empty.
+    # The root's arena is the whole image heap (T5.1); every spawned
+    # process gets its own, carved from the root's remainder at spawn.
+    la t0, emo_pid_counter
+    li t1, 1
+    sd t1, 0(t0)
+    la t0, emo_cur_slot
+    la t1, emo_procs
+    sd t1, 0(t0)
+    li t2, 1
+    sd t2, 8(t1)            # the root's pid
+    sd t2, 16(t1)           # alive
     la t0, emo_heap_start
-    la t1, emo_heap_cursor
-    sd t0, 0(t1)
+    sd t0, 576(t1)          # the root's arena cursor
+    la t0, emo_heap_end
+    sd t0, 584(t1)          # and its end
+    sd zero, 592(t1)        # nothing sent; the root's arena is never
+    sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
+    sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
+    sd zero, 872(t1)        # and its space is the kernel's own table (T6.2),
+                            # until the boot pass adopts its own
     ret
 
     .globl emo_alloc
 emo_alloc:
     addi t0, a0, 1
     slli t0, t0, 3
-    addi t0, t0, 15
-    andi t0, t0, -16
-    la t1, emo_heap_cursor
-    ld t2, 0(t1)
+    addi t0, t0, 31
+    andi t0, t0, -32
+    la t1, emo_cur_slot
+    ld t1, 0(t1)            # the allocator is the current process
+    ld t2, 576(t1)          # its arena cursor
     add t3, t2, t0
-    la t4, emo_heap_end
-    bgeu t3, t4, emo_heap_gone
-    sd t3, 0(t1)
+    ld t4, 584(t1)          # its arena end — the quota's edge
+    bgeu t3, t4, emo_arena_gone
+    sd t3, 576(t1)
     sd a0, 0(t2)
     mv a0, t2
     ret
-emo_heap_gone:
-    la a0, msg_heap
-    la a1, msg_heap_end
-    call emo_fail
 
 # ---- Failure ----
 
-# emo_print_bytes: a0 = start, a1 = end; every byte through the legacy
-# console ecall (a7 = 1, which the ecall leaves alone).
+# emo_console_emit: a0 = the byte. Through the console hook when one is
+# parked — a tail call, the hook answers the runtime's own caller — else
+# the legacy console ecall (a7 = 1, which the ecall leaves alone).
+emo_console_emit:
+    la t0, emo_console_hook
+    ld t0, 0(t0)
+    beqz t0, 1f
+    jr t0
+1:
+    li a7, 1
+    ecall
+    ret
+
+# emo_print_bytes: a0 = start, a1 = end; every byte through the console
+# hook or the legacy ecall. The walk rides the saved registers — the
+# hook is a call like any other.
     .globl emo_print_bytes
 emo_print_bytes:
-    mv t0, a0
-    li a7, 1
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a0
+    mv s1, a1
 .Lpb:
-    bgeu t0, a1, .Lpb_done
-    lbu a0, 0(t0)
-    ecall
-    addi t0, t0, 1
+    bgeu s0, s1, .Lpb_done
+    lbu a0, 0(s0)
+    call emo_console_emit
+    addi s0, s0, 1
     j .Lpb
 .Lpb_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
     ret
 
 # emo_fail: a0 = message start, a1 = end; announce and power off.
@@ -1476,8 +2668,7 @@ emo_fail:
     ld a1, 16(sp)
     call emo_print_bytes
     li a0, 10
-    li a7, 1
-    ecall
+    call emo_console_emit
     li a7, 8
     ecall
 .Lfail_park:
@@ -1531,6 +2722,247 @@ emo_box_new:
     addi sp, sp, 16
     ret
 
+# ---- Atomics ----
+#
+# The Atomic cell: Box's synchronized sibling (docs/atomics.md) —
+# [header][word], tag 16, the word a tagged dynamic value (a boxed
+# Int64 or a Bool immediate), the shape the c runtime keeps. Sequential
+# consistency by the ISA's recommended mapping: a load is
+# fence rw,rw; ld; fence r,rw — a store or an exchange is
+# amoswap.d.aqrl — and compare_exchange and the fetch_* family are
+# LR/SC loops over the word. The payload is a boxed pointer, so the
+# arithmetic decodes, computes under the Int64 wrap rule, boxes, and
+# swaps the word in against the exact word it read; a cell that moved
+# meanwhile is read again. The AMO arithmetic (amoadd and its family)
+# lands when Stage B gives the cell a raw word. Every helper takes the
+# psABI (a0 = cell, a1 = v, a2 = fresh) so the dynamic dispatch jumps
+# to it directly.
+
+# emo_atomic_new: a0 = any value; a0 = a fresh Atomic holding it. The
+# initial word is published with the sequential-consistency store.
+    .globl emo_atomic_new
+emo_atomic_new:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    li a0, 1
+    call emo_alloc
+    ld t0, 8(sp)
+    fence rw, w
+    sd t0, 8(a0)
+    fence rw, rw
+    ori a0, a0, 16
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_atomic_load: a0 = cell; a0 = the value the cell holds.
+    .globl emo_atomic_load
+emo_atomic_load:
+    andi t0, a0, -32
+    fence rw, rw
+    ld a0, 8(t0)
+    fence r, rw
+    ret
+
+# emo_atomic_store: a0 = cell, a1 = v; the cell holds v. `store`
+# answers nothing; a0 keeps the cell for the statement to discard.
+    .globl emo_atomic_store
+emo_atomic_store:
+    andi t0, a0, -32
+    addi t0, t0, 8
+    amoswap.d.aqrl zero, a1, (t0)
+    ret
+
+# emo_atomic_exchange: a0 = cell, a1 = v; a0 = the previous value.
+    .globl emo_atomic_exchange
+emo_atomic_exchange:
+    andi t0, a0, -32
+    addi t0, t0, 8
+    amoswap.d.aqrl a0, a1, (t0)
+    ret
+
+# emo_atomic_compare_exchange: a0 = cell, a1 = expected, a2 = fresh;
+# a0 = the tuple (swapped, the value the cell held before). The
+# comparison is content equality on the word read (emo_eq_deep: two
+# boxed Int64 holding the same bits are equal), then the swap is an
+# LR/SC against that exact word — the reservation covers only the
+# instructions between lr and sc, so the deep compare runs outside it
+# and a word that moved meanwhile sends the read around again. A
+# mismatch answers (false, actual); nothing raises.
+    .globl emo_atomic_compare_exchange
+emo_atomic_compare_exchange:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    andi s0, a0, -32
+    addi s0, s0, 8
+    mv s1, a1
+    mv s2, a2
+.Lcas_read:
+    fence rw, rw
+    ld s3, 0(s0)
+    fence r, rw
+    mv a0, s3
+    mv a1, s1
+    call emo_eq_deep
+    andi t0, a0, 16
+    beqz t0, .Lcas_miss
+.Lcas_try:
+    lr.d.aqrl t1, (s0)
+    bne t1, s3, .Lcas_read
+    sc.d.rl t2, s2, (s0)
+    bnez t2, .Lcas_try
+    li t0, 1
+    j .Lcas_pack
+.Lcas_miss:
+    li t0, 0
+.Lcas_pack:
+    sd t0, 40(sp)
+    li a0, 3
+    call emo_alloc
+    li t0, 2
+    sd t0, 8(a0)
+    ld t0, 40(sp)
+    slli t0, t0, 4
+    addi t0, t0, 1
+    sd t0, 16(a0)
+    sd s3, 24(a0)
+    ori a0, a0, 6
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+
+# The fetch_* family: a0 = cell, a1 = v; a0 = the value the cell held
+# before. t6 selects the operation (0 add, 1 sub, 2 and, 3 or, 4 xor)
+# on the way into the shared body. An Int64 word decodes both cells,
+# computes in the wrap rule, and boxes the result; a Bool word takes
+# the logical family on the immediates and allocates nothing. Any other
+# word, or an operand of the wrong shape, is a loud failure — the
+# checker refuses these statically; a dynamic receiver reaches here.
+    .globl emo_atomic_fetch_add
+emo_atomic_fetch_add:
+    li t6, 0
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_sub
+emo_atomic_fetch_sub:
+    li t6, 1
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_and
+emo_atomic_fetch_and:
+    li t6, 2
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_or
+emo_atomic_fetch_or:
+    li t6, 3
+    j emo_atomic_rmw
+    .globl emo_atomic_fetch_xor
+emo_atomic_fetch_xor:
+    li t6, 4
+    j emo_atomic_rmw
+
+emo_atomic_rmw:
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    andi s0, a0, -32
+    addi s0, s0, 8
+    mv s1, a1
+    mv s4, t6
+.Lrmw_read:
+    fence rw, rw
+    ld s2, 0(s0)
+    fence r, rw
+    andi t0, s2, 1
+    bnez t0, .Lrmw_bool
+    andi t0, s2, 31
+    bnez t0, .Lrmw_kind
+    andi t0, s1, 31
+    bnez t0, .Lrmw_kind
+    ld t0, 8(s2)
+    ld t1, 8(s1)
+    beqz s4, .Lrmw_add
+    li t2, 1
+    beq s4, t2, .Lrmw_sub
+    li t2, 2
+    beq s4, t2, .Lrmw_and
+    li t2, 3
+    beq s4, t2, .Lrmw_or
+    xor a0, t0, t1
+    j .Lrmw_box
+.Lrmw_add:
+    add a0, t0, t1
+    j .Lrmw_box
+.Lrmw_sub:
+    sub a0, t0, t1
+    j .Lrmw_box
+.Lrmw_and:
+    and a0, t0, t1
+    j .Lrmw_box
+.Lrmw_or:
+    or a0, t0, t1
+.Lrmw_box:
+    call emo_box_i64
+    mv s3, a0
+    j .Lrmw_try
+.Lrmw_bool:
+    andi t0, s2, 15
+    li t1, 1
+    bne t0, t1, .Lrmw_kind
+    andi t0, s1, 15
+    bne t0, t1, .Lrmw_kind
+    srli t0, s2, 4
+    andi t0, t0, 1
+    srli t1, s1, 4
+    andi t1, t1, 1
+    li t2, 2
+    beq s4, t2, .Lrmw_band
+    li t2, 3
+    beq s4, t2, .Lrmw_bor
+    li t2, 4
+    beq s4, t2, .Lrmw_bxor
+    j .Lrmw_kind
+.Lrmw_band:
+    and t0, t0, t1
+    j .Lrmw_bpack
+.Lrmw_bor:
+    or t0, t0, t1
+    j .Lrmw_bpack
+.Lrmw_bxor:
+    xor t0, t0, t1
+.Lrmw_bpack:
+    slli t0, t0, 4
+    addi s3, t0, 1
+.Lrmw_try:
+    lr.d.aqrl t1, (s0)
+    bne t1, s2, .Lrmw_read
+    sc.d.rl t2, s3, (s0)
+    bnez t2, .Lrmw_try
+    mv a0, s2
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    addi sp, sp, 64
+    ret
+.Lrmw_kind:
+    la a0, msg_atomic_kind
+    la a1, msg_atomic_kind_end
+    call emo_fail
+
 # emo_instance_new: a0 = class id, a1 = field count; a0 = the tagged
 # instance with zeroed fields.
     .globl emo_instance_new
@@ -1555,6 +2987,127 @@ emo_instance_new:
     ori a0, a0, 14
     ld ra, 0(sp)
     addi sp, sp, 32
+    ret
+
+# ---- Raw memory ----
+#
+# The volatile lanes (docs/raw-memory.md): peek8/poke8 over Byte,
+# peek64/poke64 over Int64. Each is one load or store where the program
+# put it — never elided, never reordered against its siblings. The
+# address is exactly what the program named; a bad one traps.
+
+# emo_peek8: a0 = the address (an Int64 cell); a0 = the byte, a Byte
+# immediate, read unsigned.
+    .globl emo_peek8
+emo_peek8:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    lbu t0, 0(t0)
+    slli a0, t0, 4
+    ori a0, a0, 7
+    ret
+
+# emo_poke8: a0 = the address, a1 = the Byte immediate.
+    .globl emo_poke8
+emo_poke8:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    srli t1, a1, 4
+    sb t1, 0(t0)
+    ret
+
+# emo_peek64: a0 = the address; a0 = the word, a boxed Int64.
+    .globl emo_peek64
+emo_peek64:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    ld a0, 0(t0)
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_poke64: a0 = the address, a1 = a boxed Int64.
+    .globl emo_poke64
+emo_poke64:
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    andi a1, a1, -32
+    ld t1, 8(a1)
+    sd t1, 0(t0)
+    ret
+
+# emo_peek32 (T7.1): a0 = the address; a0 = the word, zero-extended,
+# boxed — the 32-bit device line's tagged-world entry.
+    .globl emo_peek32
+emo_peek32:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    lw a0, 0(t0)
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_poke32 (T7.1): a0 = the address, a1 = a boxed Int64. The value
+# must fit the width — the loud end otherwise, never a silent
+# truncation.
+    .globl emo_poke32
+emo_poke32:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi a0, a0, -32
+    ld t0, 8(a0)
+    andi a1, a1, -32
+    ld t1, 8(a1)
+    li a2, 0x100000000
+    bltu t1, a2, 1f
+    la a0, msg_poke32_range
+    la a1, msg_poke32_range_end
+    call emo_fail
+1:
+    sw t1, 0(t0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_sys_ecall (T4.2): a0 = the verb, a1..a6 = the six words, all
+# tagged Int64 cells; a0 = the answer, boxed. The tagged world's way
+# through the machine's syscall instruction — decode, shift into the
+# ABI's places, ecall, box.
+    .globl emo_sys_ecall
+emo_sys_ecall:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    andi t0, a1, -32
+    ld a1, 8(t0)
+    andi t0, a2, -32
+    ld a2, 8(t0)
+    andi t0, a3, -32
+    ld a3, 8(t0)
+    andi t0, a4, -32
+    ld a4, 8(t0)
+    andi t0, a5, -32
+    ld a5, 8(t0)
+    andi t0, a6, -32
+    ld a6, 8(t0)
+    mv a7, a0
+    mv a0, a1
+    mv a1, a2
+    mv a2, a3
+    mv a3, a4
+    mv a4, a5
+    mv a5, a6
+    ecall
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
 # ---- Strings ----
@@ -1614,7 +3167,7 @@ emo_alloc_string:
 # emo_blit: a0 = raw destination cursor, a1 = String; a0 = past the copy.
     .globl emo_blit
 emo_blit:
-    andi a1, a1, -16
+    andi a1, a1, -32
     ld t0, 8(a1)
     beqz t0, .Lbl_done
     addi t1, a1, 16
@@ -1636,14 +3189,14 @@ emo_string_concat:
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
+    andi s0, a0, -32
+    andi s1, a1, -32
     ld t0, 8(s0)
     ld t1, 8(s1)
     add s2, t0, t1
     mv a0, s2
     call emo_alloc_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     addi t2, t0, 16
     ld t3, 8(s0)
     addi t4, s0, 16
@@ -1702,8 +3255,8 @@ emo_str_content:
 # emo_string_eq: a0 = a1 = Strings; a0 = a Bool immediate (content).
     .globl emo_string_eq
 emo_string_eq:
-    andi a0, a0, -16
-    andi a1, a1, -16
+    andi a0, a0, -32
+    andi a1, a1, -32
     tail emo_str_content
 
 # ---- Arrays ----
@@ -1717,7 +3270,7 @@ emo_array_append:
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
-    andi s0, a0, -16
+    andi s0, a0, -32
     mv s1, a1
     ld s2, 8(s0)
     addi a0, s2, 2
@@ -1765,12 +3318,12 @@ emo_eq_deep:
     andi t1, a1, 1
     xor t2, t0, t1
     bnez t2, .Leq_no
-    andi t2, a0, 15
-    andi t3, a1, 15
+    andi t2, a0, 31
+    andi t3, a1, 31
     bne t2, t3, .Leq_no
     bnez t0, .Leq_no
-    andi s0, a0, -16
-    andi s1, a1, -16
+    andi s0, a0, -32
+    andi s1, a1, -32
     beqz t2, .Leq_cell
     li t0, 2
     beq t2, t0, .Leq_cell
@@ -1784,6 +3337,10 @@ emo_eq_deep:
     beq t2, t0, .Leq_box
     li t0, 12
     beq t2, t0, .Leq_no
+    li t0, 16
+    beq t2, t0, .Leq_atomic
+    li t0, 18
+    beq t2, t0, .Leq_cell
     j .Leq_inst
 .Leq_cell:
     ld t0, 8(s0)
@@ -1818,6 +3375,14 @@ emo_eq_deep:
 .Leq_box:
     ld a0, 8(s0)
     ld a1, 8(s1)
+    call emo_eq_deep
+    j .Leq_raw
+.Leq_atomic:
+    # the values the cells hold now, each an atomic load
+    fence rw, rw
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    fence r, rw
     call emo_eq_deep
     j .Leq_raw
 .Leq_inst:
@@ -1923,7 +3488,7 @@ emo_dyn_method:
     mv s1, t1
     andi t2, a0, 1
     bnez t2, .Ldm_imm
-    andi t2, a0, 15
+    andi t2, a0, 31
     beqz t2, .Ldm_scalar
     li t3, 2
     beq t2, t3, .Ldm_scalar
@@ -1933,6 +3498,8 @@ emo_dyn_method:
     beq t2, t3, .Ldm_scalar
     li t3, 10
     beq t2, t3, .Ldm_scalar
+    li t3, 16
+    beq t2, t3, .Ldm_atomic
     li t3, 14
     bne t2, t3, .Ldm_fail
     # an instance: the class's method table first
@@ -2007,7 +3574,7 @@ emo_dyn_method:
     la t6, .Ldm_do_repl
     j .Ldm_namecmp
 .Ldm_do_read:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -2016,7 +3583,7 @@ emo_dyn_method:
     addi sp, sp, 32
     ret
 .Ldm_do_repl:
-    andi t0, a0, -16
+    andi t0, a0, -32
     sd a1, 8(t0)
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -2047,6 +3614,32 @@ emo_dyn_method:
     li t2, 6
     beq t1, t2, .Ldm_sc_len
     j .Ldm_fail
+.Ldm_atomic:
+    # an Atomic cell: the op set and to_string, by name through
+    # emo_atomic_mtbl ([name][length][impl], zero-terminated); the impl
+    # takes a0.. as they stand
+    la s2, emo_atomic_mtbl
+.Ldm_at_loop:
+    ld t3, 0(s2)
+    beqz t3, .Ldm_fail
+    ld t4, 8(s2)
+    bne t4, s1, .Ldm_at_next
+    mv t2, s1
+.Ldm_at_cmp:
+    beqz t2, .Ldm_at_hit
+    addi t2, t2, -1
+    add t5, t3, t2
+    add t6, s0, t2
+    lbu t5, 0(t5)
+    lbu t6, 0(t6)
+    bne t5, t6, .Ldm_at_next
+    j .Ldm_at_cmp
+.Ldm_at_hit:
+    ld t2, 16(s2)
+    j .Ldm_go
+.Ldm_at_next:
+    addi s2, s2, 24
+    j .Ldm_at_loop
 .Ldm_namecmp:
     mv t2, s1
 .Ldm_nloop:
@@ -2069,7 +3662,7 @@ emo_dyn_method:
     addi sp, sp, 32
     jr t2
 .Ldm_length:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     call emo_box_i64
     ld ra, 0(sp)
@@ -2102,10 +3695,10 @@ emo_add_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lad_int
     li t2, 2
@@ -2145,10 +3738,10 @@ emo_sub_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lsb_int
     li t2, 2
@@ -2173,10 +3766,10 @@ emo_mul_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lmu_int
     li t2, 2
@@ -2201,10 +3794,10 @@ emo_lt_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Llt_int
     li t2, 2
@@ -2227,10 +3820,10 @@ emo_le_dyn:
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
-    andi s0, a0, -16
-    andi s1, a1, -16
-    andi t0, a0, 15
-    andi t1, a1, 15
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
     bne t0, t1, .Ldyn_bad
     beqz t0, .Lle_int
     li t2, 2
@@ -2298,7 +3891,7 @@ emo_i64_to_string:
     sd t3, 64(sp)
     mv a0, t3
     call emo_alloc_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     addi t0, t0, 16
     ld t1, 56(sp)
     ld t2, 64(sp)
@@ -2323,24 +3916,78 @@ emo_to_string:
     sd ra, 0(sp)
     andi t0, a0, 1
     bnez t0, .Lts_imm
-    andi t0, a0, 15
+    andi t0, a0, 31
     beqz t0, .Lts_i64
     li t1, 4
     beq t0, t1, .Lts_done
     li t1, 2
     beq t0, t1, .Lts_f64
+    li t1, 16
+    beq t0, t1, .Lts_atomic
+    li t1, 18
+    beq t0, t1, .Lts_pid
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
 .Lts_i64:
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a0, 8(a0)
     call emo_i64_to_string
     j .Lts_done
 .Lts_f64:
-    andi t0, a0, -16
+    andi t0, a0, -32
     fld fa0, 8(t0)
     call emo_f64_to_string
+    j .Lts_done
+.Lts_atomic:
+    la a0, msg_atomic
+    li a1, 8
+    call emo_string_lit
+    j .Lts_done
+.Lts_pid:
+    # "<pid N>" — the hosted rendering
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_i64_to_string
+    andi t1, a0, -32
+    ld t2, 8(t1)            # the digits' length
+    addi sp, sp, -16
+    sd a0, 0(sp)
+    addi a0, t2, 6
+    call emo_alloc_string
+    ld t1, 0(sp)
+    addi sp, sp, 16
+    andi t0, a0, -32
+    andi t1, t1, -32
+    ld t2, 8(t1)
+    addi t3, t1, 16
+    addi t4, t0, 16
+    li t5, 60
+    sb t5, 0(t4)
+    li t5, 112
+    sb t5, 1(t4)
+    li t5, 105
+    sb t5, 2(t4)
+    li t5, 100
+    sb t5, 3(t4)
+    li t5, 32
+    sb t5, 4(t4)
+    addi t4, t4, 5
+.Lts_pid_copy:
+    beqz t2, .Lts_pid_tail
+    lbu t5, 0(t3)
+    sb t5, 0(t4)
+    addi t3, t3, 1
+    addi t4, t4, 1
+    addi t2, t2, -1
+    j .Lts_pid_copy
+.Lts_pid_tail:
+    li t5, 62
+    sb t5, 0(t4)
+    ld ra, 0(sp)            # this arm's own frame — .Lts_done pops only
+    addi sp, sp, 16         # the entry frame, so restore ours first
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -2348,9 +3995,16 @@ emo_to_string:
     beqz t1, .Lts_bool
     li t2, 1
     beq t1, t2, .Lts_char
+    li t2, 3
+    beq t1, t2, .Lts_byte
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
+.Lts_byte:
+    srli a0, a0, 4
+    andi a0, a0, 255
+    call emo_i64_to_string
+    j .Lts_done
 .Lts_bool:
     andi t0, a0, 16
     beqz t0, .Lts_false
@@ -2370,7 +4024,7 @@ emo_to_string:
     li a0, 1
     call emo_alloc_string
     ld t0, 8(sp)
-    andi t1, a0, -16
+    andi t1, a0, -32
     sb t0, 16(t1)
     j .Lts_done
 .Lts_done:
@@ -2422,13 +4076,13 @@ emo_f64_to_string:
     beqz t2, .Lfs_g6
     # the integer, then ".0" appended to a fresh block
     call emo_i64_to_string
-    andi t0, a0, -16
+    andi t0, a0, -32
     ld t1, 8(t0)
     sd t0, 56(sp)
     sd t1, 64(sp)
     addi a0, t1, 2
     call emo_alloc_string
-    andi t2, a0, -16
+    andi t2, a0, -32
     addi t2, t2, 16
     ld t0, 56(sp)
     ld t1, 64(sp)
@@ -2794,7 +4448,7 @@ emo_f64_to_string:
     sd t1, 64(sp)
     mv a0, t1
     call emo_alloc_string
-    andi t2, a0, -16
+    andi t2, a0, -32
     addi t2, t2, 16
     ld t0, 56(sp)
     ld t1, 64(sp)
@@ -2821,14 +4475,13 @@ emo_println:
     addi sp, sp, -16
     sd ra, 0(sp)
     call emo_to_string
-    andi a0, a0, -16
+    andi a0, a0, -32
     ld a1, 8(a0)
     addi a0, a0, 16
     add a1, a0, a1
     call emo_print_bytes
     li a0, 10
-    li a7, 1
-    ecall
+    call emo_console_emit
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -2848,6 +4501,27 @@ msg_false_end:
 msg_heap:
     .ascii "the value heap is exhausted"
 msg_heap_end:
+msg_arena:
+    .ascii "heap gone in process "
+msg_arena_end:
+msg_arenas:
+    .ascii "no arena left for a new process"
+msg_arenas_end:
+msg_blocked:
+    .ascii "all processes are blocked; no message will ever arrive"
+msg_blocked_end:
+msg_procs:
+    .ascii "the process table is exhausted"
+msg_procs_end:
+msg_noproc:
+    .ascii "a message was sent to a process that does not exist"
+msg_noproc_end:
+msg_mbox:
+    .ascii "a process mailbox is full"
+msg_mbox_end:
+msg_reply:
+    .ascii "a service replied with no gate caller waiting"
+msg_reply_end:
 msg_nan:
     .ascii "nan"
 msg_inf:
@@ -2873,6 +4547,17 @@ msg_arith_end:
 msg_divzero:
     .ascii "division by zero"
 msg_divzero_end:
+msg_atomic:
+    .ascii "<atomic>"
+msg_atomic_kind:
+    .ascii "an atomic operation on a value of this kind"
+msg_atomic_kind_end:
+msg_byte_range:
+    .ascii "`Byte.from_int64` needs a value in 0-255"
+msg_byte_range_end:
+msg_poke32_range:
+    .ascii "`poke32` needs a value in 0-4294967295"
+msg_poke32_range_end:
 name_to_string:
     .ascii "to_string"
 name_length:
@@ -2883,15 +4568,1547 @@ name_read:
     .ascii "read"
 name_replace:
     .ascii "replace"
+name_load:
+    .ascii "load"
+name_store:
+    .ascii "store"
+name_exchange:
+    .ascii "exchange"
+name_compare_exchange:
+    .ascii "compare_exchange"
+name_fetch_add:
+    .ascii "fetch_add"
+name_fetch_sub:
+    .ascii "fetch_sub"
+name_fetch_and:
+    .ascii "fetch_and"
+name_fetch_or:
+    .ascii "fetch_or"
+name_fetch_xor:
+    .ascii "fetch_xor"
+
+# The Atomic cell's dynamic method table: [name][length][impl], the
+# impl taking the psABI registers as emo_dyn_method received them.
+    .align 3
+emo_atomic_mtbl:
+    .quad name_load, 4, emo_atomic_load
+    .quad name_store, 5, emo_atomic_store
+    .quad name_exchange, 8, emo_atomic_exchange
+    .quad name_compare_exchange, 16, emo_atomic_compare_exchange
+    .quad name_fetch_add, 9, emo_atomic_fetch_add
+    .quad name_fetch_sub, 9, emo_atomic_fetch_sub
+    .quad name_fetch_and, 9, emo_atomic_fetch_and
+    .quad name_fetch_or, 8, emo_atomic_fetch_or
+    .quad name_fetch_xor, 9, emo_atomic_fetch_xor
+    .quad name_to_string, 9, emo_to_string
+    .quad 0, 0, 0
+
+# ---- Processes: green threads on the boot hart (EmoOS T3.3) ----
+#
+# The root process runs emo_program on the boot stack; every spawned
+# process owns one slot in emo_procs — its saved context, its pid, its
+# state word, the scheduler's policy fields, and its bounded mailbox —
+# and one stack in emo_pstacks. The discipline is the hosted
+# scheduler's: spawn does not yield; send snapshots the message (the
+# copy-on-send boundary), wakes a receiver parked on it, and yields the
+# sender; receive scans the mailbox oldest-first, dequeues the first
+# message its patterns accept, and parks on no match; the root exiting
+# ends the program; a switch with nobody runnable is the loud deadlock.
+#
+# Slot layout (stride 110 words = 880 bytes): 0 the saved sp, 8 the pid,
+# 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
+# 24 the mailbox head, 32 the mailbox length, 40 the process's own
+# priority, 48 its effective priority, 56 its CPU quota, 64.. the
+# 32-word message ring, 320.. the 32-word ring of the priorities the
+# messages carry (entry i of each ring belongs to the same message),
+# 576 the arena cursor and 584 the arena end (T5.1 — the process's own
+# bump heap: the root's is the whole image heap, a child's its 64 KiB
+# block, and emo_alloc charges whoever is running), 592 the count of
+# sent messages still queued somewhere — each one pins the sender's
+# arena until a receive copies it out — 600 the claimed flag (1 = the
+# arena is this process's; 0 = reclaimed to the pool, or never claimed,
+# as the root's never is), 608.. the 32-word ring of the senders'
+# slots (a gate request posts a 0 there: no sender, nothing pinned),
+# 864 the stack block (T5.3 — the base of a 64 KiB block a kernel
+# handed emo_user_spawn for the process's stack, given back through
+# the block hooks at its death; 0 for the root and for a green process,
+# whose stack is its slot's own in emo_pstacks), and 872 the space
+# word (T6.2 — the physical address of the process's own page table,
+# built by the kernel's build hook at the end of emo_user_spawn; 0 for
+# the kernel's own table, which is every green process's and the
+# root's until the boot pass adopts its own). A slot never returns
+# to free — a pid is unique for the whole run, so a send to a dead pid
+# is dropped, never redirected to a new occupant.
+#
+# The scheduler's policy (EmoOS T3.4): dispatch is round-robin — the
+# run queue is a FIFO ring and emo_schedule pops its head. The priority
+# and quota words are present and maintained, read by nothing yet: no
+# surface sets a priority, so every one is 0 and the policy below is
+# dormant until one does. A child inherits its spawner's own priority
+# and quota. A message carries its sender's effective priority, and a
+# process's effective priority is the maximum of its own and the
+# priorities its queued messages carry — the asynchronous form of
+# "the priorities of the processes waiting on it": raised at enqueue
+# (the send-time donation), re-formed from the remaining messages at
+# dequeue, so it is always a function of the wait graph the slots hold
+# and never a stale residue. The quota is the CPU slice budget in
+# ticks; the tick (T3.6) consumes it, and 0 is the unassigned value
+# until then.
+#
+# Interrupt safety (T3.6): every function that mutates scheduler state
+# — the run queue, the slot words, the cur-slot swap — opens with
+# `csrci sstatus, 2` (SIE off) and, on every exit the resumed process
+# flows through, closes with `csrsi sstatus, 2`. A timer interrupt
+# therefore never lands inside a scheduler region: the trap entry
+# hardware-masks interrupts, the ISR's own helpers assume the mask, and
+# the one switch made under a mask records the mask in the context
+# frame's spare word, which the switch-in restores — a process
+# preempted or parked mid-region resumes still masked, and unmasks when
+# its own region ends. Helpers called only from masked contexts (the
+# run-queue push, the mailbox reads) toggle nothing.
+
+    .section .text
+
+# emo_runq_push: a0 = the slot; appends it to the run-queue ring.
+    .globl emo_runq_push
+emo_runq_push:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_runq_len
+    ld t1, 0(t0)
+    la t2, emo_runq_head
+    ld t3, 0(t2)
+    add t4, t3, t1
+    andi t4, t4, 63
+    slli t4, t4, 3
+    la t5, emo_runq
+    add t4, t4, t5
+    sd a0, 0(t4)
+    addi t1, t1, 1
+    sd t1, 0(t0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_schedule: the caller's slot state and the run queue are already
+# set (park = receiving and unqueued; yield = alive and enqueued). This
+# saves the current context into the current slot, picks the next
+# runnable, and switches. An empty queue is the loud deadlock — a wake
+# happens only in a send, whose sender stays runnable, so nobody can
+# ever arrive. The region is masked (T3.6); the spare word at 200(sp)
+# records the mask for the switch-in, and the pick loads the incoming
+# slot's quota into the tick's slice countdown. The pick half is its
+# own entry — emo_sched_pick — for the tick's preemption path, which
+# arrives with the victim's context already built.
+    .globl emo_schedule
+emo_schedule:
+    csrci sstatus, 2
+    addi sp, sp, -208
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    sd s6, 56(sp)
+    sd s7, 64(sp)
+    sd s8, 72(sp)
+    sd s9, 80(sp)
+    sd s10, 88(sp)
+    sd s11, 96(sp)
+    fsd fs0, 104(sp)
+    fsd fs1, 112(sp)
+    fsd fs2, 120(sp)
+    fsd fs3, 128(sp)
+    fsd fs4, 136(sp)
+    fsd fs5, 144(sp)
+    fsd fs6, 152(sp)
+    fsd fs7, 160(sp)
+    fsd fs8, 168(sp)
+    fsd fs9, 176(sp)
+    fsd fs10, 184(sp)
+    fsd fs11, 192(sp)
+    csrr t6, sstatus
+    andi t6, t6, 2
+    sd t6, 200(sp)
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    sd sp, 0(t1)
+    .globl emo_sched_pick
+emo_sched_pick:
+    la t0, emo_cur_slot
+    la t2, emo_runq_len
+    ld t3, 0(t2)
+    beqz t3, emo_deadlock
+    la t4, emo_runq_head
+    ld t5, 0(t4)
+    slli t6, t5, 3
+    la a0, emo_runq
+    add t6, t6, a0
+    ld a1, 0(t6)
+    addi t5, t5, 1
+    andi t5, t5, 63
+    sd t5, 0(t4)
+    addi t3, t3, -1
+    sd t3, 0(t2)
+    sd a1, 0(t0)
+    ld t2, 56(a1)
+    la t3, emo_slice_left
+    sd t2, 0(t3)
+    # the address-space switch (EmoOS T6.2): the incoming slot's space
+    # word through the resolve hook — the physical root satp should
+    # name, or -1 when it already does — and, on a root, the write
+    # hook (the satp swap and its fences). Both hooks are zero in every
+    # image without per-process spaces, and the whole step is two
+    # loads. The switch runs before a register of the incoming process
+    # is loaded: the outgoing context's volatile registers are dead at
+    # a switch, the frame holds what the resume needs, and satp must
+    # be the incoming process's before its first load or fetch. The
+    # masked-region discipline covers the call — the pick runs inside
+    # the scheduler's region, and the trap shim's entry path is
+    # hardware-masked — so no interrupt can land between the resolve
+    # and the sret that rides the new table. The slot pointer moves to
+    # s1 for the calls: a1 is the caller's to lose, and the resolve is
+    # ordinary typed Emo whose own calls spend a1 freely — the outgoing
+    # s1 is already in the frame, so the register is dead until the
+    # incoming context reloads it.
+    mv s1, a1
+    la t2, emo_space_hook
+    ld t2, 0(t2)
+    beqz t2, .Lpick_nospace
+    ld a0, 872(s1)
+    jalr t2                   # resolve: a0 = the root, or -1 = installed
+    bltz a0, .Lpick_nospace
+    la t2, emo_space_write_hook
+    ld t2, 0(t2)
+    beqz t2, .Lpick_nospace
+    jalr t2                   # satp follows the process
+.Lpick_nospace:
+    ld sp, 0(s1)
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    ld s6, 56(sp)
+    ld s7, 64(sp)
+    ld s8, 72(sp)
+    ld s9, 80(sp)
+    ld s10, 88(sp)
+    ld s11, 96(sp)
+    fld fs0, 104(sp)
+    fld fs1, 112(sp)
+    fld fs2, 120(sp)
+    fld fs3, 128(sp)
+    fld fs4, 136(sp)
+    fld fs5, 144(sp)
+    fld fs6, 152(sp)
+    fld fs7, 160(sp)
+    fld fs8, 168(sp)
+    fld fs9, 176(sp)
+    fld fs10, 184(sp)
+    fld fs11, 192(sp)
+    ld t0, 200(sp)
+    beqz t0, .Lsched_sie_off
+    csrsi sstatus, 2
+    j .Lsched_sie_done
+.Lsched_sie_off:
+    csrci sstatus, 2
+.Lsched_sie_done:
+    addi sp, sp, 208
+    ret
+emo_deadlock:
+    # nobody runnable: the machine may only wait when the device world
+    # can wake someone — a state-4 device-waiter (T3.7). Otherwise the
+    # classic loud deadlock: a wake happens only in a send, and no
+    # sender exists.
+    la t0, emo_procs
+    li t1, 0
+.Ldl_scan:
+    li t2, 64
+    bgeu t1, t2, emo_fail_blocked
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    li t6, 4
+    beq t5, t6, .Ldl_idle
+    addi t1, t1, 1
+    j .Ldl_scan
+.Ldl_idle:
+    la t0, emo_slice_left
+    sd zero, 0(t0)           # the tick's quota step sleeps with the hart
+    csrsi sstatus, 2         # the timer and the devices can land
+    wfi
+    csrci sstatus, 2         # back under the region's mask
+    j emo_sched_pick         # the ISR may have queued someone
+emo_fail_blocked:
+    la a0, msg_blocked
+    la a1, msg_blocked_end
+    call emo_fail
+
+# emo_sched_tick: the kernel timer ISR's quota step (T3.6). Consumes
+# one tick of the running slice and answers a0 = 1 when the slice is
+# spent — the ISR then calls emo_sched_preempt with the trap frame —
+# and a0 = 0 when the quota is unassigned (0, the dormant case) or
+# still counting. Interrupts are already masked at a trap entry; the
+# helper allocates nothing and touches nothing the ISR does not own.
+    .globl emo_sched_tick
+emo_sched_tick:
+    la t1, emo_slice_left
+    ld t0, 0(t1)
+    beqz t0, .Ltick_dormant
+    addi t0, t0, -1
+    sd t0, 0(t1)
+    bnez t0, .Ltick_dormant
+    li a0, 1
+    ret
+.Ltick_dormant:
+    li a0, 0
+    ret
+
+# emo_sched_preempt: a0 = the trap frame's switch-section base on the
+# victim's own stack — the frame the kernel's trap shim laid down, its
+# top 208 bytes shaped exactly like the scheduler's context frame. The
+# victim's slot takes that base as its saved sp and the resume hook as
+# its ra (the frame keeps the interrupted ra below, for the resume
+# stub), the victim re-joins the run queue, and the scheduler picks the
+# next process — this call never returns to the ISR. Interrupts are
+# already masked at a trap entry; nothing here allocates.
+    .globl emo_sched_preempt
+emo_sched_preempt:
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    sd a0, 0(t0)
+    ld t1, emo_trap_resume_hook
+    sd t1, 0(a0)
+    mv a0, t0
+    call emo_runq_push
+    j emo_sched_pick
+
+# emo_yield: the current process re-joins the run queue and gives the
+# hart away; it resumes here when the scheduler picks it again. The
+# region is masked; the resume unmask is this function's own exit.
+    .globl emo_yield
+emo_yield:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld a0, 0(t0)
+    call emo_runq_push
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_park_receive: the current process waits for its mailbox; it
+# leaves the run queue, so only a send can put it back. Masked (T3.6);
+# the switch away records the mask, and the wake resumes through this
+# call's own exit — the unmask before the ret, so the scan the receive
+# site runs next is unmasked, as the ISR expects.
+    .globl emo_park_receive
+emo_park_receive:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 2
+    sd t2, 16(t1)
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_park_console: the device-wait park (T3.7) — `device_wait` in the
+# kernel's surface. The state is 4, a state only the device world
+# wakes: the ISR's emo_sched_wake_console finds a 4, flips it to 1, and
+# pushes the slot. A send does not wake a 4 — a request arriving while
+# the driver sleeps just queues in its mailbox for the next pump — so
+# the resume is exactly this call's return, no rescan, the mask
+# discipline identical to the receive park's.
+    .globl emo_park_console
+emo_park_console:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 4
+    sd t2, 16(t1)
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_sched_wake_console: the ISR's wake for the device-wait park —
+# the first state-4 slot becomes alive and re-joins the run queue.
+# Called from a trap (interrupts hardware-masked); scans at most the
+# 64 slots; a park that already ended (state not 4) is simply not
+# found, and the byte the ISR enqueued waits in the ring.
+    .globl emo_sched_wake_console
+emo_sched_wake_console:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_procs
+    li t1, 0
+.Lwake_scan:
+    li t2, 64
+    bgeu t1, t2, .Lwake_none
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    li t6, 4
+    bne t5, t6, .Lwake_next
+    li t5, 1
+    sd t5, 16(t4)            # alive
+    mv a0, t4
+    call emo_runq_push
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+.Lwake_next:
+    addi t1, t1, 1
+    j .Lwake_scan
+.Lwake_none:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_arena_reap: a0 = the slot. A done process gives its memory back
+# (T5.2/T5.3): its stack block first — a kernel handed it through
+# emo_user_spawn and takes it back through the give hook; nothing pins a
+# stack, so it goes the moment the process is done — then its arena,
+# when nothing pins it: the arena still claimed, and no message it sent
+# still waiting in a mailbox — each queued snapshot holds the count
+# above zero until its receiver has copied the message out. The arena
+# goes back where it came from: the kernel's frame allocator when the
+# give hook is parked, the runtime's own pool otherwise. A live process,
+# a root (never claimed), and an already-reclaimed arena all simply
+# return. The callers run masked; the hooks are typed Emo, so the frame
+# holds what must survive them.
+    .globl emo_arena_reap
+emo_arena_reap:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)                # the slot survives the hook calls
+    ld t0, 16(a0)
+    li t1, 3
+    bne t0, t1, .Lreap_done     # only a done process reclaims
+    ld t0, 864(a0)
+    beqz t0, .Lreap_arena       # no stack block: a green process, or the root
+    la t1, emo_block_give_hook
+    ld t1, 0(t1)
+    beqz t1, .Lreap_arena       # no kernel allocator to take it back
+    sd zero, 864(a0)
+    mv a0, t0
+    jalr t1                     # the kernel's give: the stack block goes home
+    ld a0, 8(sp)
+.Lreap_arena:
+    ld t0, 600(a0)
+    beqz t0, .Lreap_done        # nothing claimed: the root, or taken back
+    ld t0, 592(a0)
+    bnez t0, .Lreap_done        # a queued message still pins the arena
+    ld t1, 584(a0)
+    li t2, 65536
+    sub t1, t1, t2              # the block's base
+    sd zero, 600(a0)            # claimed no more
+    la t3, emo_block_give_hook
+    ld t3, 0(t3)
+    beqz t3, .Lreap_pool
+    mv a0, t1
+    jalr t3                     # the kernel's give: the arena block goes home
+    j .Lreap_done
+.Lreap_pool:
+    la t3, emo_arena_pool
+    ld t4, 0(t3)
+    sd t4, 0(t1)                # the block's first word becomes the link
+    sd t1, 0(t3)                # and the block the pool's head
+.Lreap_done:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_process_done: the entry thunk's return address — a spawned
+# process that falls off its body lands here and never comes back. The
+# root never does: its return goes to the boot stub, and the program
+# ends with it, the hosted semantics.
+    .globl emo_process_done
+emo_process_done:
+    csrci sstatus, 2
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+    li t2, 3
+    sd t2, 16(t1)
+    la t3, emo_death_hook
+    ld t3, 0(t3)
+    beqz t3, .Ldone_reap
+    ld a0, 8(t1)                # the dead pid, to the kernel's notice (T7.2)
+    jalr t3
+    la t0, emo_cur_slot
+    ld t1, 0(t0)
+.Ldone_reap:
+    mv a0, t1
+    call emo_arena_reap         # nothing queued: the arena goes home now
+    j emo_schedule
+
+# emo_spawn: a0 = the entry thunk, a1 = the argument count, a2 = the
+# arguments (tagged words, copied into the child's fresh stack). The
+# child's first schedule "returns" into the thunk; the thunk jumps to
+# the body with ra = emo_process_done, so a returning body ends the
+# process. Answers the child's Pid.
+    .globl emo_spawn
+emo_spawn:
+    csrci sstatus, 2
+    addi sp, sp, -56
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the entry thunk
+    sd a1, 16(sp)           # the argument count
+    sd a2, 24(sp)           # the arguments
+    # a free slot: state 0, never reused once used
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lspawn_scan:
+    bgeu t1, t2, .Lspawn_exhausted
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    beqz t5, .Lspawn_found
+    addi t1, t1, 1
+    j .Lspawn_scan
+.Lspawn_exhausted:
+    la a0, msg_procs
+    la a1, msg_procs_end
+    call emo_fail
+.Lspawn_noarena:
+    la a0, msg_arenas
+    la a1, msg_arenas_end
+    call emo_fail
+.Lspawn_found:
+    mv t3, t4               # the slot; t3 keeps it through the bookkeeping
+    la t5, emo_pid_counter
+    ld t6, 0(t5)
+    addi t6, t6, 1
+    sd t6, 0(t5)
+    sd t6, 8(t3)            # the slot's pid
+    sd t6, 32(sp)           # it must survive the helper calls below
+    li t5, 1
+    sd t5, 16(t3)           # alive
+    # the policy fields: the child inherits the spawner's own priority
+    # and quota, and its effective priority starts at its own — its
+    # mailbox is empty
+    la t4, emo_cur_slot
+    ld t4, 0(t4)
+    ld t0, 40(t4)
+    sd t0, 40(t3)
+    sd t0, 48(t3)
+    ld t0, 56(t4)
+    sd t0, 56(t3)
+    # the child's arena (T5.1/T5.2/T5.3): when the kernel's frame
+    # allocator is parked, the block is its — a take answers the base
+    # of a free 64 KiB block, 0 that none is left. Otherwise a block
+    # comes from the runtime's own pool first — a dead process's arena,
+    # returned on death — and a fresh 64 KiB carve from the root's
+    # arena top only when the pool is empty. The root's cursor never
+    # moves and its end closes above the carve, so the root can never
+    # allocate into a child's arena, and a child's exhaustion is its
+    # own. The remainder gone is the machine's loud end, the process
+    # table's ceiling in memory. The call clobbers every t-register and
+    # a-register, so the slot and its index sit out on the frame; (t1 —
+    # the slot index the stack build reads below — is not touched by
+    # the pool-and-carve path).
+    la t4, emo_block_take_hook
+    ld t4, 0(t4)
+    beqz t4, .Lspawn_pool
+    sd t1, 40(sp)           # the slot index and the slot survive the call
+    sd t3, 48(sp)
+    jalr t4                 # the kernel's take: a0 = a free block's base
+    ld t1, 40(sp)
+    ld t3, 48(sp)
+    beqz a0, .Lspawn_noarena
+    li t6, 65536
+    add t2, a0, t6
+    sd a0, 576(t3)          # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lspawn_arena_taken
+.Lspawn_pool:
+    la t4, emo_arena_pool
+    ld t0, 0(t4)            # the pool's head
+    beqz t0, .Lspawn_carve
+    ld t5, 0(t0)            # the next block
+    sd t5, 0(t4)            # pop
+    li t6, 65536
+    add t2, t0, t6
+    sd t0, 576(t3)          # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lspawn_arena_taken
+.Lspawn_carve:
+    la t4, emo_procs
+    ld t0, 576(t4)          # the root's arena cursor
+    ld t5, 584(t4)          # and its end
+    li t6, 65536
+    sub t2, t5, t6          # the carve: the arena's top 64 KiB
+    bgeu t0, t2, .Lspawn_noarena
+    sd t2, 584(t4)          # the root's end closes above the carve
+    sd t2, 576(t3)          # the child allocates from the carve's base
+    sd t5, 584(t3)          # to the end the root gave up
+.Lspawn_arena_taken:
+    li t5, 1
+    sd t5, 600(t3)          # the arena is claimed — reclaimed on death
+    sd zero, 592(t3)        # and nothing it sends is outstanding yet
+    sd zero, 864(t3)        # a green process's stack is its slot's own (T5.3)
+    # the child's stack: one switch-shaped frame whose ra is the entry
+    # thunk, the arguments just above it. The spare word records the
+    # mask state the switch-in restores: the child is born outside any
+    # scheduler region — its body's own send/receive/spawn calls open
+    # and close their own — so it starts with interrupts enabled.
+    addi t5, t1, 1
+    slli t5, t5, 16
+    la t6, emo_pstacks
+    add t5, t5, t6
+    addi t4, t5, -208
+    ld t0, 8(sp)
+    sd t0, 0(t4)            # ra = the entry thunk
+    li t0, 1
+    sd t0, 200(t4)          # the spare word: SIE on at the first dispatch
+    sd t4, 0(t3)            # the slot's saved sp
+    # copy the arguments
+    ld t0, 16(sp)           # argc
+    ld t1, 24(sp)           # src
+    mv t2, t5               # dst
+    beqz t0, .Lspawn_copied
+.Lspawn_copy:
+    ld t6, 0(t1)
+    sd t6, 0(t2)
+    addi t0, t0, -1
+    addi t1, t1, 8
+    addi t2, t2, 8
+    bnez t0, .Lspawn_copy
+.Lspawn_copied:
+    mv a0, t3
+    call emo_runq_push
+    # the answer: [header][pid], the pointer tagged kind 9
+    li a0, 1
+    call emo_alloc
+    ld t1, 32(sp)
+    sd t1, 8(a0)
+    ori a0, a0, 18
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 56
+    ret
+
+# emo_send: a0 = the target's Pid word, a1 = the message. The message
+# snapshots at the boundary (the copy-on-send rule; an Atomic shares
+# its cell), a full mailbox or an unknown pid is loud, the message
+# carries the sender's effective priority and donates it to the target,
+# a receiver gets woken, and the sender yields — a send never runs on
+# into the next statement, the hosted discipline.
+    .globl emo_send
+emo_send:
+    csrci sstatus, 2
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the target word
+    sd a1, 16(sp)           # the message word
+    andi t0, a0, -32
+    ld t0, 8(t0)            # the pid number
+    la t1, emo_procs
+    li t2, 0
+    li t3, 64
+.Lsend_scan:
+    bgeu t2, t3, .Lsend_noproc
+    li t4, 880
+    mul t5, t2, t4
+    add t5, t1, t5
+    ld t6, 8(t5)
+    beq t6, t0, .Lsend_found
+    addi t2, t2, 1
+    j .Lsend_scan
+.Lsend_noproc:
+    la a0, msg_noproc
+    la a1, msg_noproc_end
+    call emo_fail
+.Lsend_found:
+    sd t5, 24(sp)           # the target slot
+    ld t5, 16(t5)
+    li t6, 3
+    beq t5, t6, .Lsend_drop
+    # snapshot the message at the boundary
+    ld a0, 16(sp)
+    call emo_copy_deep
+    sd a0, 32(sp)           # the copy
+    ld t4, 24(sp)           # the target slot
+    # into the target's mailbox: 32 entries, oldest first — the message
+    # word in one ring, the priority it carries in the other
+    ld t0, 24(t4)           # head
+    ld t1, 32(t4)           # length
+    li t2, 32
+    bge t1, t2, .Lsend_full
+    add t3, t0, t1
+    andi t3, t3, 31         # the entry
+    slli t3, t3, 3
+    addi t6, t3, 64
+    add t6, t4, t6
+    ld t5, 32(sp)
+    sd t5, 0(t6)            # the message
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    ld t5, 48(t5)           # the sender's effective priority
+    addi t6, t3, 320
+    add t6, t4, t6
+    sd t5, 0(t6)            # rides with the message
+    addi t1, t1, 1
+    sd t1, 32(t4)
+    # the sender rides too (T5.2): its slot in the third ring, and its
+    # count of queued messages grows — the snapshot lives in the
+    # sender's arena and pins it there until the receive copies the
+    # message into its own heap and the remove lets the pin go
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    addi t6, t3, 608
+    add t6, t4, t6
+    sd t5, 0(t6)            # the sender's slot
+    ld t6, 592(t5)
+    addi t6, t6, 1
+    sd t6, 592(t5)
+    ld t5, 48(t5)           # the sender's effective priority, again for
+                            # the donation below
+    # the donation: the target's effective priority rises to the
+    # sender's when the sender outranks it
+    ld t6, 48(t4)
+    bge t6, t5, .Lsend_wake
+    sd t5, 48(t4)
+.Lsend_wake:
+    # wake a receiver; a live-but-running target needs nothing
+    ld t5, 16(t4)
+    li t6, 2
+    bne t5, t6, .Lsend_drop
+    li t5, 1
+    sd t5, 16(t4)
+    mv a0, t4
+    call emo_runq_push
+.Lsend_drop:
+    # the yield: this process re-joins the run queue and the scheduler
+    # switches away — the call returns when the process is next
+    # scheduled, with its own frame still beneath the restored one
+    la t0, emo_cur_slot
+    ld a0, 0(t0)
+    call emo_runq_push
+    call emo_schedule
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 48
+    ret
+.Lsend_full:
+    la a0, msg_mbox
+    la a1, msg_mbox_end
+    call emo_fail
+
+# The mailbox reads, on the current slot's rings. [0] is the oldest.
+    .globl emo_mb_count
+emo_mb_count:
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 32(t0)
+    ret
+
+    .globl emo_mb_at
+emo_mb_at:                      # a0 = the scan index; a0 = the word
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a0
+    andi t1, t1, 31
+    slli t1, t1, 3
+    addi t1, t1, 64
+    add t0, t0, t1
+    ld a0, 0(t0)
+    ret
+
+# emo_mb_remove: a0 = the scan index; the message leaves all three
+# rings — the entries after it shift down together — and the effective
+# priority re-forms from what remains: the process's own, or the
+# highest priority a queued message still carries. Then the sender's
+# pin lets go (T5.2): the receive site copied the message into this
+# process's own heap before calling here, so the sender's count of
+# queued messages drops, and a sender already done whose last queued
+# message this was returns its arena to the pool. A gate request's
+# sender word is 0: nothing pinned, nothing to unpin. Masked: the
+# sender's count and the pool are shared words.
+    .globl emo_mb_remove
+emo_mb_remove:
+    csrci sstatus, 2
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a0
+    andi t1, t1, 31             # the position being removed
+    slli a1, t1, 3
+    add a1, t0, a1
+    ld a1, 608(a1)
+    sd a1, 8(sp)                # the removed message's sender slot
+    ld t3, 32(t0)
+    mv t2, a0
+.Lmb_rm_loop:
+    addi t4, t3, -1
+    bgeu t2, t4, .Lmb_rm_done
+    addi t5, t1, 1
+    andi t5, t5, 31             # the position after it
+    slli a1, t5, 3
+    add a1, t0, a1
+    ld a2, 64(a1)               # the next message
+    ld a3, 320(a1)              # the priority it carries
+    ld a4, 608(a1)              # and its sender
+    slli a1, t1, 3
+    add a1, t0, a1
+    sd a2, 64(a1)               # all three move down one
+    sd a3, 320(a1)
+    sd a4, 608(a1)
+    mv t1, t5
+    addi t2, t2, 1
+    j .Lmb_rm_loop
+.Lmb_rm_done:
+    ld t3, 32(t0)
+    addi t3, t3, -1
+    sd t3, 32(t0)
+    ld t4, 40(t0)               # the floor: the process's own priority
+    beqz t3, .Lmb_rm_eff
+    ld t1, 24(t0)               # head
+    mv t2, t3                   # the remaining messages, newest down
+.Lmb_rm_scan:
+    addi t2, t2, -1
+    add a1, t1, t2
+    andi a1, a1, 31
+    slli a1, a1, 3
+    add a1, t0, a1
+    ld a2, 320(a1)
+    bge t4, a2, .Lmb_rm_next
+    mv t4, a2
+.Lmb_rm_next:
+    bnez t2, .Lmb_rm_scan
+.Lmb_rm_eff:
+    sd t4, 48(t0)
+    ld a0, 8(sp)
+    beqz a0, .Lmb_rm_ret        # a gate request: no sender to unpin
+    la t0, emo_copy_shared
+    ld t1, 0(t0)
+    bnez t1, .Lmb_rm_ret        # an Atomic crossed shared: the sender's
+                                # arena stays pinned under it, for good
+    ld t0, 592(a0)
+    addi t0, t0, -1
+    sd t0, 592(a0)              # one queued message fewer
+    call emo_arena_reap         # a done sender with nothing left queued
+.Lmb_rm_ret:
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    csrsi sstatus, 2
+    ret
+
+# ---- The gate's service side (EmoOS T4.4) ----
+#
+# Three helpers the kernel's services and trap shim share. The gate
+# (typed Emo, inside the trap) validates a syscall and picks the verb;
+# the shim posts the request to the service process and parks the
+# caller — the trap frame IS the caller's context, the answer lands in
+# its a0 slot, and the resume is the trap resume the frame already
+# carries. All three are raw in, raw out; the mask discipline is the
+# scheduler's own.
+
+# emo_pid_num: a0 = a Pid word; a0 = the pid number.
+    .globl emo_pid_num
+emo_pid_num:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    ret
+
+# emo_gate_post: a0 = the service's raw pid, a1 = the request word —
+# the op shifted left 32, the caller's pid number beside it. The
+# service reads the op out of the word's height (op << 32; a plain pid
+# never reaches it) and answers by the pid in the low half. The caller
+# — inside the trap — neither yields nor unmarks: the park that follows
+# is the shim's. A service that is not receiving (it has not reached
+# its loop, or is mid-request) simply finds the request queued on its
+# next receive.
+    .globl emo_gate_post
+emo_gate_post:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    sd a1, 16(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lgp_scan:
+    bgeu t1, t2, .Lgp_fail
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lgp_found
+    addi t1, t1, 1
+    j .Lgp_scan
+.Lgp_fail:
+    la a0, msg_noproc
+    la a1, msg_noproc_end
+    call emo_fail
+.Lgp_found:
+    sd t4, 24(sp)               # the service's slot
+    ld a0, 16(sp)               # the raw op word
+    ld t4, 24(sp)
+    ld t0, 24(t4)               # head
+    ld t1, 32(t4)               # length
+    li t2, 32
+    bge t1, t2, .Lgp_full
+    add t3, t0, t1
+    andi t3, t3, 31
+    slli t3, t3, 3
+    addi t6, t3, 64
+    add t6, t4, t6
+    sd a0, 0(t6)                # the request
+    la t5, emo_cur_slot
+    ld t5, 0(t5)
+    ld t5, 48(t5)               # the caller's effective priority rides it
+    addi t6, t3, 320
+    add t6, t4, t6
+    sd t5, 0(t6)
+    addi t6, t3, 608
+    add t6, t4, t6
+    sd zero, 0(t6)              # a gate request has no sender (T5.2):
+                                # nothing pinned, nothing to unpin
+    addi t1, t1, 1
+    sd t1, 32(t4)
+    ld t5, 16(t4)
+    li t6, 2
+    bne t5, t6, .Lgp_done
+    li t5, 1
+    sd t5, 16(t4)               # the service wakes
+    mv a0, t4
+    call emo_runq_push
+.Lgp_done:
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+.Lgp_full:
+    la a0, msg_mbox
+    la a1, msg_mbox_end
+    call emo_fail
+
+# emo_gate_reply: a0 = the waiting caller's raw pid number, a1 = the
+# raw answer. The reply is targeted: the request word carried the
+# caller's pid beside the op, so the answering service names its waiter
+# and the word lands in THAT caller's trap frame a0 slot, state 5 → 1,
+# pushed. An ordinary send never wakes a 5, and a reply to a pid that
+# is not parked in one is the service's bug, and loud.
+    .globl emo_gate_reply
+emo_gate_reply:
+    csrci sstatus, 2
+    addi sp, sp, -24
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    sd a1, 16(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lgr_scan:
+    bgeu t1, t2, .Lgr_fail
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lgr_found
+    addi t1, t1, 1
+    j .Lgr_scan
+.Lgr_fail:
+    la a0, msg_reply
+    la a1, msg_reply_end
+    call emo_fail
+.Lgr_found:
+    ld t5, 16(t4)
+    li t6, 5
+    bne t5, t6, .Lgr_fail
+    ld a0, 16(sp)
+    ld t5, 0(t4)                # the caller's switch-section base
+    addi t5, t5, -256           # the trap frame's a0 slot (544 - 80 - 208)
+    sd a0, 0(t5)
+    li t5, 1
+    sd t5, 16(t4)               # alive
+    mv a0, t4
+    call emo_runq_push
+    csrsi sstatus, 2
+    ld ra, 0(sp)
+    addi sp, sp, 24             # the frame the entry opened (24 — T4.6
+                                # widened it for a1's spill, and the
+                                # epilogue had kept the old 16: eight bytes
+                                # of the caller's stack leaked per reply,
+                                # invisible to a service that never
+                                # returns, and a wild ra for one that does)
+    ret
+
+# emo_user_spawn: a0 = the entry, a1 = the fresh stack's top — the top
+# of a 64 KiB block the kernel took from its frame allocator (T5.3);
+# the slot remembers the block's base and the death gives it back.
+# a0 = the child's raw pid. The child's context is a synthetic trap
+# frame on its own stack — every register zero, sstatus SPIE with SPP
+# clear and FS dirty, sepc the entry — and its ra slot is the user-exit
+# stub, so a program that falls off its top level has exited (verb 0)
+# rather than jumped into the weeds. The frame is zeroed because the
+# resume restores all of it.
+    .globl emo_user_spawn
+emo_user_spawn:
+    csrci sstatus, 2
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd a0, 8(sp)                # the entry
+    sd a1, 16(sp)               # the stack top
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lus_scan:
+    bgeu t1, t2, .Lus_fail
+    li t3, 880
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 16(t4)
+    beqz t5, .Lus_found
+    addi t1, t1, 1
+    j .Lus_scan
+.Lus_fail:
+    la a0, msg_procs
+    la a1, msg_procs_end
+    call emo_fail
+.Lus_noarena:
+    la a0, msg_arenas
+    la a1, msg_arenas_end
+    call emo_fail
+.Lus_found:
+    mv t3, t4
+    la t5, emo_pid_counter
+    ld t6, 0(t5)
+    addi t6, t6, 1
+    sd t6, 0(t5)
+    sd t6, 8(t3)                # the pid
+    sd t6, 24(sp)               # survives the frame build
+    li t5, 1
+    sd t5, 16(t3)               # alive
+    la t4, emo_cur_slot
+    ld t4, 0(t4)
+    ld t0, 40(t4)
+    sd t0, 40(t3)               # the policy fields, as any child's
+    sd t0, 48(t3)
+    ld t0, 56(t4)
+    sd t0, 56(t3)
+    # the child's arena (T5.1/T5.2/T5.3), as any green child's: the
+    # kernel's frame allocator when its take hook is parked, else a
+    # block from the pool first, a fresh 64 KiB carve from the root's
+    # arena top only when the pool is empty. The user image's allocator
+    # charges it to the running pass through the cells its stub parked
+    # (the trap shim's save and restore). The slot sits out the call on
+    # the frame.
+    la t4, emo_block_take_hook
+    ld t4, 0(t4)
+    beqz t4, .Lus_pool
+    sd t3, 32(sp)               # the slot survives the call
+    jalr t4                     # the kernel's take: a0 = a free block's base
+    ld t3, 32(sp)
+    beqz a0, .Lus_noarena
+    li t6, 65536
+    add t2, a0, t6
+    sd a0, 576(t3)              # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lus_arena_taken
+.Lus_pool:
+    la t4, emo_arena_pool
+    ld t0, 0(t4)                # the pool's head
+    beqz t0, .Lus_carve
+    ld t5, 0(t0)                # the next block
+    sd t5, 0(t4)                # pop
+    li t6, 65536
+    add t2, t0, t6
+    sd t0, 576(t3)              # the child allocates from the block
+    sd t2, 584(t3)
+    j .Lus_arena_taken
+.Lus_carve:
+    la t4, emo_procs
+    ld t0, 576(t4)              # the root's arena cursor
+    ld t5, 584(t4)              # and its end
+    li t6, 65536
+    sub t2, t5, t6              # the carve: the arena's top 64 KiB
+    bgeu t0, t2, .Lus_noarena
+    sd t2, 584(t4)              # the root's end closes above the carve
+    sd t2, 576(t3)              # the child allocates from the carve's base
+    sd t5, 584(t3)              # to the end the root gave up
+.Lus_arena_taken:
+    li t5, 1
+    sd t5, 600(t3)              # the arena is claimed — reclaimed on death
+    sd zero, 592(t3)            # and nothing it sends is outstanding yet
+    ld t5, 16(sp)               # the stack top
+    li t6, 65536
+    sub t6, t5, t6              # the block's base — the death gives it back
+    sd t6, 864(t3)
+    addi t4, t6, 552            # the synthetic trap frame, at the block's
+                                # bottom scratch (T6.3): the anchor's
+                                # frame [t4, t4+544) with the sp slot in
+                                # the word below — memory no call chain
+                                # from the block's top ever reaches, so
+                                # the trampoline's later frames here
+                                # cannot touch live ones
+    mv a0, t4
+    addi a1, t4, 552
+.Lus_zero:
+    sd zero, 0(a0)
+    addi a0, a0, 8
+    blt a0, a1, .Lus_zero       # the frame and its sp slot, 552 bytes at
+                                # the block's bottom — the old loop framed
+                                # at the stack's top, where a `ble` wrote
+                                # one word PAST the stack top into the
+                                # next block's freelist link (T6.2's
+                                # first boot caught it)
+    sd t5, -8(t4)               # the initial sp, in the interrupted-sp
+                                # slot: the pass enters U-mode at the top
+                                # of its stack, and its first trap out is
+                                # framed at this anchor by the trampoline
+    la t1, emo_os_user_exit
+    sd t1, 0(t4)                # ra: a top-level fall-off exits (verb 0)
+    ld t0, 8(sp)
+    li t1, 0x6020               # SPIE, SPP clear, FS dirty
+    sd t1, 144(t4)              # sstatus
+    sd t0, 152(t4)              # sepc = the entry
+    ld t1, emo_trap_resume_hook
+    sd t1, 336(t4)              # the switch section's ra
+    sd zero, 536(t4)            # the spare word: switch in masked — the
+                                # sret restores SIE from the frame's SPIE,
+                                # and an unmask before the resume would let
+                                # an interrupt's frame overwrite this one
+    addi t4, t4, 336            # the slot saves the switch-section base —
+    sd t4, 0(t3)                # what the shim's park and the preempt store
+    # the child's address space (EmoOS T6.2), the block hooks' pattern:
+    # the build hook takes the dressed slot — pid, arena, stack block,
+    # synthetic frame, saved sp are all in it — builds the pass's page
+    # table from those words, and answers the physical root into the
+    # slot's space word (872). Zero in every image without per-process
+    # spaces; in the kernel, the table exists before the child is ever
+    # queued, so the first pick that reaches it switches satp to a
+    # table that is already whole. The slot sits out the call on the
+    # frame, as it did for the arena take.
+    la t4, emo_space_build_hook
+    ld t4, 0(t4)
+    beqz t4, .Lus_nospace
+    sd t3, 40(sp)               # the slot survives the call
+    mv a0, t3
+    jalr t4
+    ld t3, 40(sp)
+.Lus_nospace:
+    mv a0, t3
+    call emo_runq_push
+    csrsi sstatus, 2
+    ld a0, 24(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 48
+    ret
+
+# emo_os_user_exit: a spawned user process's return address — a
+# program that falls off its top level has exited (verb 0), and the
+# gate routes a child's exit to the process service. Never returns to
+# the faller. It lives in the runtime body, not the kernel's trap
+# machinery, because emo_user_spawn serves every image this file
+# emits — the user profile assembles without the kernel package.
+    .globl emo_os_user_exit
+emo_os_user_exit:
+    li a0, 0                 # the exit code a fall-off leaves
+    li a7, 0
+    ecall
+1:  wfi
+    j 1b
+
+# emo_space_set: a0 = a page-table root's physical address — the
+# current slot's space word takes it (EmoOS T6.2). The boot pass's
+# entry: the kernel's enter shim calls it after its loader built and
+# staged the boot table, so slot 0's word names the space the boot
+# pass already runs on and the first switch back to it installs the
+# same one. Masked, like every writer of scheduler state.
+    .globl emo_space_set
+emo_space_set:
+    csrci sstatus, 2
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    sd a0, 872(t0)
+    csrsi sstatus, 2
+    ret
+
+# emo_self_pid: a0 = the current process's Pid word.
+    .globl emo_self_pid
+emo_self_pid:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a1, 8(t0)                # a1 rides emo_alloc untouched
+    li a0, 1
+    call emo_alloc
+    sd a1, 8(a0)
+    ori a0, a0, 18
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_copy_deep: a0 = a dynamic value; a0 = the deep copy. The
+# copy-on-send boundary: a Box, a Tuple, an Array, or an instance
+# arrives as a fresh block with every nested value copied; an Atomic
+# shares its cell (the declared exception); an Int64 or Float64 cell,
+# a String, a closure, and a Pid pass as-is — immutable data or
+# identity, exactly the hosted snapshot's rule.
+    .globl emo_copy_deep
+emo_copy_deep:
+    addi sp, sp, -64
+    sd ra, 0(sp)                # 0 ra
+    sd a0, 8(sp)                # 8 the word
+    andi t0, a0, 1
+    bnez t0, .Lcd_asis
+    andi t0, a0, 31
+    sd t0, 48(sp)               # 48 the tag, back onto the fresh block
+    beqz t0, .Lcd_asis          # the Int64 cell
+    li t1, 2
+    beq t0, t1, .Lcd_asis       # the Float64 cell
+    li t1, 4
+    beq t0, t1, .Lcd_asis       # a String
+    li t1, 12
+    beq t0, t1, .Lcd_asis       # a closure
+    li t1, 16
+    beq t0, t1, .Lcd_asis       # an Atomic (the shared cell)
+    li t1, 18
+    beq t0, t1, .Lcd_asis       # a Pid (identity)
+    li t1, 10
+    beq t0, t1, .Lcd_box
+    # 6 Tuple, 8 Array, 14 instance: a fresh block, verbatim header and
+    # length/class word, every element or field copied
+    andi t2, a0, -32
+    sd t2, 24(sp)               # 24 the source block
+    ld t3, 0(t2)
+    sd t3, 32(sp)               # 32 the payload word count
+    addi t3, t3, 1              # the elements end at block word hdr, so the
+    sd t3, 32(sp)               #   bound is one past it (hdr counts payload
+    mv a0, t3                   #   words 1..hdr; the elements are 2..hdr)
+    call emo_alloc
+    sd a0, 16(sp)               # 16 the new word
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 0(t2)
+    sd t5, 0(t4)                # the header, verbatim
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the length or class id, verbatim
+    li t6, 2
+    sd t6, 40(sp)               # 40 the word index
+.Lcd_loop:
+    ld t2, 24(sp)
+    ld t3, 32(sp)
+    ld t6, 40(sp)
+    bgeu t6, t3, .Lcd_wrap
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a0, 0(t5)
+    call emo_copy_deep
+    ld t4, 16(sp)
+    andi t4, t4, -32
+    ld t6, 40(sp)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a0, 0(t5)
+    addi t6, t6, 1
+    sd t6, 40(sp)
+    j .Lcd_loop
+.Lcd_wrap:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2               # the fresh block wears the original's tag
+    j .Lcd_out
+.Lcd_box:
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_copy_deep
+    call emo_box_new
+.Lcd_asis:
+.Lcd_out:
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    ret
+
+# emo_copy_out: a0 = a dynamic value; a0 = the forced deep copy — the
+# receive's copy-out (T5.2), landing the message in the receiver's own
+# arena. Where the send's snapshot shares what is immutable (an Int64
+# or Float64 cell, a String, a closure, a Pid), the copy-out clones
+# them: the sender's arena reclaims the moment this receive clears the
+# last pin, and a shared cell would dangle inside it. Only an Atomic
+# stays shared — the declared exception — and a shared Atomic never
+# unpins: the remove's count skips it, so the sender's arena waits
+# forever rather than dangling under it.
+    .globl emo_copy_out
+emo_copy_out:
+    addi sp, sp, -64
+    sd ra, 0(sp)                # 0 ra
+    sd a0, 8(sp)                # 8 the word
+    andi t0, a0, 1
+    bnez t0, .Lco_asis          # a Bool immediate
+    andi t0, a0, 31
+    sd t0, 48(sp)               # 48 the tag, back onto the fresh block
+    li t1, 16
+    bne t0, t1, 2f
+    la t1, emo_copy_shared      # an Atomic (the shared cell): the
+    sd t0, 0(t1)                # receive keeps the sender's arena pinned
+    j .Lco_asis
+2:  li t1, 4
+    beq t0, t1, .Lco_string
+    li t1, 10
+    beq t0, t1, .Lco_box
+    # 0, 2, 6, 8, 12, 14, 18: the block clone — verbatim header and
+    # first word, every further word recursed (an Int64 cell, a Float64
+    # cell, and a Pid all carry header 1, so the clone is the fresh
+    # cell they need)
+    andi t2, a0, -32
+    sd t2, 24(sp)               # 24 the source block
+    ld t3, 0(t2)
+    sd t3, 32(sp)               # 32 the payload word count
+    addi t3, t3, 1              # the words end at block word hdr, so the
+    sd t3, 32(sp)               #   bound is one past it (hdr counts payload
+    mv a0, t3                   #   words 1..hdr; the elements are 2..hdr)
+    call emo_alloc
+    sd a0, 16(sp)               # 16 the new word
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 0(t2)
+    sd t5, 0(t4)                # the header, verbatim
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the first word (length, code, class)
+    li t6, 2
+    sd t6, 40(sp)               # 40 the word index
+.Lco_loop:
+    ld t2, 24(sp)
+    ld t3, 32(sp)
+    ld t6, 40(sp)
+    bgeu t6, t3, .Lco_wrap
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a0, 0(t5)
+    call emo_copy_out
+    ld t4, 16(sp)
+    andi t4, t4, -32
+    ld t6, 40(sp)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a0, 0(t5)
+    addi t6, t6, 1
+    sd t6, 40(sp)
+    j .Lco_loop
+.Lco_wrap:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2               # the fresh block wears the original's tag
+    j .Lco_ret
+.Lco_string:
+    # a String's payload is bytes, not values: the clone is verbatim
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld t3, 0(t2)
+    addi a0, t3, 1              # header + every payload word
+    call emo_alloc
+    sd a0, 16(sp)
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t3, 0(t2)
+    addi t3, t3, 1
+    li t6, 0
+1:  bgeu t6, t3, .Lco_wraps
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a1, 0(t5)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a1, 0(t5)
+    addi t6, t6, 1
+    j 1b
+.Lco_wraps:
+    ld a0, 16(sp)
+    ld t2, 48(sp)
+    or a0, a0, t2
+    j .Lco_ret
+.Lco_box:
+    # a Box's payload rides in its first word: unbox, recurse, rebox
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    call emo_copy_out
+    call emo_box_new
+    j .Lco_ret
+.Lco_asis:
+.Lco_ret:
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    ret
+
+# emo_copy_out_at: a0 = the staged message word, a1 = its scan index
+# in the current mailbox; a0 = the word the receive binds. The sender
+# ring decides: a message a process sent carries that process's slot
+# and crosses into this arena through emo_copy_out; a gate request
+# carries 0 — the kernel posted a raw word, `op << 32 | pid`, not a
+# value, and no tag test can tell the exit's (op 0: the bare pid) from
+# a pointer — so it rides as-is, as the services expect it.
+    .globl emo_copy_out_at
+emo_copy_out_at:
+    la t0, emo_copy_shared
+    sd zero, 0(t0)              # no Atomic crossed yet; the copy says if one does
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 24(t0)
+    add t1, t1, a1
+    andi t1, t1, 31
+    slli t1, t1, 3
+    add t1, t0, t1
+    ld t1, 608(t1)              # the sender's slot, or 0
+    beqz t1, 1f
+    j emo_copy_out              # the copy lands in this arena
+1:  ret
 |asm}
 
-(* One whole-program artifact at 0x80200000, the profile A entry
-   address. Two read-only segments and one read-write, so the loader
-   sees honest permissions; .bss is NOBITS — the entry stub clears it,
-   which is also why the stack and the value heap live there (no image
-   weight). *)
-let linker_script =
-  {ld|OUTPUT_ARCH(riscv)
+(* The allocator's exhaustion tail, per profile (EmoOS T5.1). A kernel
+   image owns its processes end to end: a spawned process whose own
+   arena ran dry dies alone — the loud report on the console, the slot
+   ending done, the machine continuing — while the root's exhaustion is
+   the machine-wide failure it always was. The user image's processes
+   are the kernel's to track (the slot table is the kernel's), so its
+   allocator reports through the gate's verb 5 and the kernel's shim
+   owns the death. *)
+let arena_gone_asm ~(profile : string) : string =
+  match profile with
+  | "kernel" ->
+      {asm|
+    .section .text
+emo_arena_gone:
+    # the root's exhaustion is the machine's: the root arena is the
+    # image heap and the root's death ends the program as its exit
+    # does. A spawned process dies alone: the loud report, the slot
+    # ending done, the machine continuing with the rest. The region is
+    # masked — the kill may run inside a spawn's own — and the pick
+    # never returns here; the dead frame stays on the dead stack, the
+    # arena unclaimed until the reclamation (T5.2) takes it. The slot
+    # pointer rides s0 — the dying process's saved registers are this
+    # path's to spend, the fault route's precedent — and the pid waits
+    # on the stack across the print calls, whose scratches are theirs.
+    la s0, emo_cur_slot
+    ld s0, 0(s0)
+    ld a0, 8(s0)            # the allocator's pid
+    li t4, 1
+    beq a0, t4, emo_heap_gone
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd a0, 0(sp)
+    la a0, msg_arena
+    la a1, msg_arena_end
+    call emo_print_bytes
+    ld a0, 0(sp)
+    call emo_print_dec
+    li a0, 10
+    call emo_console_emit
+    addi sp, sp, 16
+    li t5, 3
+    sd t5, 16(s0)           # done — the machine continues without it
+    la t5, emo_death_hook
+    ld t5, 0(t5)
+    beqz t5, 1f
+    ld a0, 8(s0)            # the dead pid, to the kernel's notice (T7.2)
+    jalr t5
+1:
+    mv a0, s0
+    call emo_arena_reap     # and its arena goes home unless a queued
+                            # message still pins it (T5.2)
+    j emo_sched_pick
+emo_heap_gone:
+    la a0, msg_heap
+    la a1, msg_heap_end
+    call emo_fail
+
+# emo_print_dec: a0 = a non-negative integer; its decimal digits ride
+# the console, most significant first. The exhausted arena's report is
+# its only caller.
+emo_print_dec:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li t0, 10
+    bgeu a0, t0, 1f
+    addi a0, a0, 48
+    call emo_console_emit
+    j 2f
+1:
+    divu t1, a0, t0
+    remu t2, a0, t0
+    addi sp, sp, -16
+    sd t2, 0(sp)
+    mv a0, t1
+    call emo_print_dec
+    ld t2, 0(sp)
+    addi sp, sp, 16
+    addi a0, t2, 48
+    call emo_console_emit
+2:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+|asm}
+  | "user" ->
+      {asm|
+    .section .text
+emo_arena_gone:
+    # the user world's exhaustion is the gate's verb (T5.1): the
+    # allocator's caller is a U-mode pass the kernel's slot table
+    # tracks, so the report and the death are the kernel's. The ecall
+    # never returns for this process; the park below is only reached
+    # if the gate is not there to answer.
+    li a7, 5
+    ecall
+1:  wfi
+    j 1b
+|asm}
+  | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+
+(* The default linker script per profile. The kernel profile links at
+   0x80200000, where OpenSBI's boot enters the payload (T0.1). The user
+   profile links at 0x87100000 — the pre-SV39 user window's base, the
+   one load address the kernel's ELF loader copies segments to (EmoOS
+   T4.1): a page above the kernel's fixed rings, under the top of the
+   board's 128 MiB. SV39 replaces the fixed window with per-process
+   address spaces (M5). Two read-only segments and one read-write, so
+   the loader sees honest permissions; .bss is NOBITS — the entry stub
+   clears it, which is also why the stack and the value heap live there
+   (no image weight). *)
+let linker_script ~(profile : string) : string =
+  let base, extra =
+    match profile with
+    | "kernel" -> ("0x80200000", "")
+    | "user" ->
+        (* The user-program cell (T4.4): the user stub parks its own
+           emo_program here, so the kernel's process service can start a
+           spawned process at the program's top level — the one address
+           no header carries and no user code can name. Above every
+           image content, under the top of the board's RAM, and in no
+           program header — the loader's segment zeroing must never
+           reach it, and the kernel's fixed pages next door must never
+           fall inside a user segment. *)
+        ( "0x87100000",
+          "\n  . = 0x87fff000;\n  .emo_ucall (NOLOAD) : { *(.emo_ucall) }" )
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
+  Printf.sprintf
+    {|OUTPUT_ARCH(riscv)
 ENTRY(emo_start)
 
 PHDRS
@@ -2902,7 +6119,7 @@ PHDRS
 
 SECTIONS
 {
-  . = 0x80200000;
+  . = %s;
 
   .text : { *(.text .text.*) } :text
   .rodata : { *(.rodata .rodata.*) } :text
@@ -2915,34 +6132,205 @@ SECTIONS
     *(COMMON)
     . = ALIGN(16);
     __emo_bss_end = .;
-  } :data
+  } :data%s
 
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }
-|ld}
+|}
+    base extra
 
-(* The stack (1 MiB) and the value heap (64 MiB) live in .bss — NOBITS,
-   so neither weighs on the image; the entry stub clears the region
-   before first use, and the heap cursor sits past the heap's end. *)
-let stack_asm =
-  {asm|
-# ---- The stack and the value heap: .bss, cleared by the entry stub ----
+(* The stack and the value heap live in .bss — NOBITS, so neither weighs
+   on the image; the entry stub clears the region before first use. The
+   sizes are the one thing the image profiles (EmoOS T4.1) change in the
+   emitted runtime. The kernel profile keeps the 1 MiB stack and the
+   96 MiB heap: T2.1's boundary adapters forced the growth from 64 (a
+   typed call in a dynamic body allocated on both sides), and T2.2's
+   native bodies closed that window — `examples/fib`'s
+   `count_down(1000000)` now runs its recursion allocation-free — but
+   the headroom stays: dynamic bodies still box per operation. Since
+   T5.1 the heap is the root process's arena: every spawned process
+   gets its own 64 KiB carve from the root's remainder at spawn, and
+   the allocator charges whoever is running. The user profile is the
+   kernel's guest: one 64 KiB stack — the per-process stack size — over
+   an 8 MiB heap (its root's arena), the budget that fits the pre-SV39
+   user window under the board's 128 MiB with the process world beside
+   it; a gate-spawned pass's arena comes from the kernel's frame
+   allocator through the block hooks (T5.3) — or, hookless, from the
+   kernel's own heap — and the trap shim hands the cursor across the
+   boundary. QEMU virt's 128 MiB holds both. *)
+let stack_asm ~(profile : string) : string =
+  let stack_bytes, heap_bytes =
+    match profile with
+    | "kernel" -> (1048576, 100663296)
+    | "user" -> (65536, 8388608)
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
+  Printf.sprintf
+    {|# ---- The stack and the value heap: .bss, cleared by the entry stub ----
 
     .section .bss
     .align 16
     .globl emo_stack_top
 emo_stack_bottom:
-    .zero 1048576
+    .zero %d
 emo_stack_top:
     .globl emo_heap_start
 emo_heap_start:
-    .zero 67108864
+    .zero %d
     .globl emo_heap_end
 emo_heap_end:
-    .globl emo_heap_cursor
-emo_heap_cursor:
+
+# ---- The process world (EmoOS T3.3): the slot table, the per-process
+# ---- stacks, and the run queue ----
+#
+# 64 slots at 880 bytes (context word, pid, state, mailbox head and
+# length, the own and effective priorities and the quota, a 32-word
+# message ring, the 32-word ring of the priorities the messages carry,
+# the arena cursor and end — T5.1's per-process bump heaps — the count
+# of queued messages pinning the arena and the claimed flag, the 32-word
+# ring of the senders' slots — T5.2's reclamation — and the stack
+# block's base — T5.3's), one 64 KiB
+# stack per slot, and the run-queue ring. A slot never returns to free
+# — pids stay unique for the whole run — so 64 is the bound on spawns
+# ever taken, loud at the ceiling. Everything here is NOBITS: the
+# image carries none of it.
+
+    .align 8
+emo_procs:
+    .zero 56320
+emo_pstacks:
+    .zero 4194304
+    .globl emo_runq
+emo_runq:
+    .zero 512
+    .globl emo_runq_head
+emo_runq_head:
     .zero 8
-|asm}
+    .globl emo_runq_len
+emo_runq_len:
+    .zero 8
+emo_pid_counter:
+    .zero 8
+    .globl emo_cur_slot
+emo_cur_slot:
+    .zero 8
+
+# ---- The arena pool (EmoOS T5.2) and the block hooks (T5.3) ----
+#
+# The freelist of 64 KiB blocks a dead process's arena returns to, and
+# the first place a spawn claims one; a block's first word is the next
+# link while it waits. Empty, the spawn carves a fresh block from the
+# root's arena top (T5.1) — unless the kernel's frame allocator is
+# parked, in which case every block is its: the hooks below. The hooks
+# are the console hook's pattern (T3.5): two words in .bss, zero in
+# every image whose stub does not touch them — the plain program and
+# the user image keep the pool and the carve — while a kernel package's
+# boot stub parks the raw entries of two fully typed Emo defs, a take
+# answering the base of a free block (0 = none) and a give taking the
+# base back, both the psABI discipline. Every block — arena, user
+# process's stack — flows through the same pair of words.
+
+emo_arena_pool:
+    .zero 8
+
+    .globl emo_block_take_hook
+emo_block_take_hook:
+    .zero 8
+
+    .globl emo_block_give_hook
+emo_block_give_hook:
+    .zero 8
+
+# The copy-out's shared-cell flag (T5.2): emo_copy_out_at clears it,
+# emo_copy_out sets it when an Atomic crosses as the shared cell it is,
+# and emo_mb_remove reads it — a shared Atomic keeps the sender's
+# arena pinned for good rather than dangling under it.
+emo_copy_shared:
+    .zero 8
+
+# ---- The space hooks (EmoOS T6.2) ----
+#
+# The per-process address spaces, the block hooks' pattern: three words
+# in .bss, zero in every image whose stub does not touch them — the
+# plain program and the user image never write satp — while a kernel
+# package's boot stub parks the entries that drive the switch. The
+# build hook runs at the end of emo_user_spawn with the child's slot:
+# a kernel Emo def builds the pass's page table from the slot's own
+# words and answers the physical root into the slot's space word (872,
+# the stride 880). The resolve hook runs in the pick with the incoming
+# slot's word (0 = the kernel's own table, every green process's) and
+# answers the physical root to install — or -1 when satp already names
+# it, the cache hit that keeps the kernel's processes switching among
+# themselves without a fence. The write hook takes that root and does
+# the one thing no Emo spelling reaches: satp, then the fence. All
+# three are the psABI discipline; the switch happens inside the
+# scheduler's masked regions, before a register of the incoming
+# process is loaded.
+
+    .globl emo_space_build_hook
+emo_space_build_hook:
+    .zero 8
+
+    .globl emo_space_hook
+emo_space_hook:
+    .zero 8
+
+    .globl emo_space_write_hook
+emo_space_write_hook:
+    .zero 8
+
+# ---- The death hook (EmoOS T7.2) ----
+#
+# A green process's end, reported: one word in .bss, zero in every
+# image whose stub does not touch it, while a kernel package's boot
+# stub parks a routine the runtime calls with the dead process's pid
+# at the two places a green process ends alone — the entry thunk's
+# return (emo_process_done) and the arena kill (the kernel profile's
+# emo_arena_gone) — after the slot is marked done and before the
+# reclamation. The kernel's supervisor restarts the services it owns
+# from the notice; nothing in the runtime knows what the kernel does
+# with it. The call runs inside the masked region on the dead
+# process's own stack, and the routine must allocate nothing.
+
+    .globl emo_death_hook
+emo_death_hook:
+    .zero 8
+
+# ---- The console hook (EmoOS T3.5) ----
+#
+# Zero — what the entry stub's .bss clear leaves, and what the default
+# stub never touches — means the legacy SBI console ecall. A kernel
+# package's boot stub parks the raw entry of a fully typed Emo def here
+# (the psABI discipline: the byte in a0, the callee's own frame
+# discipline), and every console byte the runtime emits rides through
+# it. SBI keeps the shutdown.
+
+    .globl emo_console_hook
+emo_console_hook:
+    .zero 8
+
+# ---- The tick's scheduler side (EmoOS T3.6) ----
+#
+# emo_slice_left is the running process's slice countdown in ticks: the
+# dispatch loads it from the incoming slot's quota (0 = unassigned, the
+# dormant case), and the kernel's timer ISR consumes it through
+# `emo_sched_tick`, which answers 1 when the slice is spent — the ISR
+# then hands the interrupted context to `emo_sched_preempt`, which
+# re-queues the victim and dispatches the next process. Both answer to
+# the ISR only: the trap entry hardware-masks interrupts, so neither
+# can race the scheduler's own regions. emo_trap_resume_hook holds the
+# address a preempted process resumes at — the trap frame's other half
+# lives on the victim's own stack, and the hook (parked by the kernel's
+# boot stub) restores it and srets home.
+
+    .globl emo_slice_left
+emo_slice_left:
+    .zero 8
+    .globl emo_trap_resume_hook
+emo_trap_resume_hook:
+    .zero 8
+|}
+    stack_bytes heap_bytes
 
 (* The float formatter's tables: 10^k for every exponent the rule can
    produce (indexed by k + 303), as a double-double pair so the digit
@@ -3063,7 +6451,7 @@ let rec walk_expr_enum env (e : Emo_ir.expr) : unit =
       List.iter (walk_expr_enum env) args
   | Builtin { args; _ } | Runtime_impl { args; _ } ->
       List.iter (walk_expr_enum env) args
-  | Box_new x | Bytes_new x | List_new x -> walk_expr_enum env x
+  | Box_new x | Atomic_new x | Bytes_new x | List_new x -> walk_expr_enum env x
   | Builder_new -> ()
   | Make_exception { message; data } ->
       walk_expr_enum env message;
@@ -3099,9 +6487,15 @@ and walk_stmt_enum env (s : Emo_ir.stmt) : unit =
           walk_pattern_enum env b.Emo_ir.pattern;
           walk_stmts_enum env b.Emo_ir.body)
         branches
-  (* Receive refuses at emission, so its branches never carry enum
-     members the program needs; the walk skips them. *)
-  | Receive _ -> ()
+  | Receive { branches } ->
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          (match b.Emo_ir.guard with
+          | Some g -> walk_expr_enum env g
+          | None -> ());
+          walk_pattern_enum env b.Emo_ir.pattern;
+          walk_stmts_enum env b.Emo_ir.body)
+        branches
   | Send { target; message } ->
       walk_expr_enum env target;
       walk_expr_enum env message
@@ -3136,7 +6530,21 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
   | Emo_ast.Tuple_pattern ps -> List.iter (walk_pattern_enum env) ps
   | _ -> ()
 
-let emit (program : Emo_ir.program) : string =
+(* [boot_stub] is the compiler's own entry discipline (the default). A
+   package-provided `runtime.S` (EmoOS T3.1) replaces it: the image's
+   entry is the package's, the runtime body and the program are the
+   compiler's. [profile] is the image shape (EmoOS T4.1): "kernel", the
+   boot-profile-A image OpenSBI enters in S-mode, or "user", the U-mode
+   ELF the kernel loads — its own stub, its own sizing, its own load
+   address. A package's stub and linker script ride in above either. *)
+let emit ?(boot_stub : bool = true) ~(profile : string)
+    (program : Emo_ir.program) : string =
+  let profile_stub =
+    match profile with
+    | "kernel" -> boot_stub_asm
+    | "user" -> user_boot_stub_asm
+    | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+  in
   if program.pglobals <> [] then refuse "module-level `var`";
   const_thunks := program.Emo_ir.pconsts;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
@@ -3183,6 +6591,7 @@ let emit (program : Emo_ir.program) : string =
       buf = Buffer.create 32768;
       fresh = 0;
       strs = [];
+      cells = [];
       labels = 0;
       cur = None;
       fclass = None;
@@ -3196,6 +6605,15 @@ let emit (program : Emo_ir.program) : string =
           (fun (f : Emo_ir.func) ->
             if f.fforeign <> None then Some f.fname else None)
           program.pfuncs;
+      fsigs =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            match conv_of f with
+            | Some conv -> Some (f.Emo_ir.fname, conv)
+            | None -> None)
+          program.pfuncs;
+      native = false;
+      spawns = [];
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -3208,21 +6626,34 @@ let emit (program : Emo_ir.program) : string =
       List.iter (fun m -> walk_stmts_enum env m.Emo_ir.fbody) c.Emo_ir.cmethods)
     program.pclasses;
   walk_stmts_enum env program.pinit;
+  gput env "%s" arch_directive;
+  if boot_stub then gput env "%s\n" profile_stub;
   gput env "%s\n" runtime_asm;
+  gput env "%s\n" (arena_gone_asm ~profile);
   gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is
      text. *)
   gput env "\n    .section .text\n";
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.fforeign = None then begin
-        if f.fparams = [] && List.mem f.fname !const_thunks then
+      if f.fforeign = None then
+        begin if f.fparams = [] && List.mem f.fname !const_thunks then
           emit_const_function env f
         else
+          let native = match conv_of f with Some _ -> true | None -> false in
+          (* Top-level defs are global: a package's boot stub reaches
+             one by name (the console hook of T3.5, the trap entry of
+             T3.6) — the module-prefixed labels collide with nothing. *)
+          gput env "    .globl %s\n" (func_label f.Emo_ir.fname);
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
-            ~params:f.fparams ~captures:[] ~body:f.fbody
-      end)
+            ~params:f.fparams ~captures:[]
+            ~conv:
+              (match conv_of f with
+              | Some conv -> conv
+              | None -> dynamic_conv (List.length f.fparams))
+            ~native ~body:f.fbody
+        end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
   List.iter
@@ -3234,23 +6665,70 @@ let emit (program : Emo_ir.program) : string =
           env.fclass <- Some c.Emo_ir.cdisplay;
           emit_function env
             ~label:(func_label m.Emo_ir.fname)
-            ~params:m.Emo_ir.fparams ~captures:[] ~body:m.Emo_ir.fbody;
+            ~params:m.Emo_ir.fparams ~captures:[]
+            ~conv:(dynamic_conv (List.length m.Emo_ir.fparams))
+            ~native:false ~body:m.Emo_ir.fbody;
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
+  (* The entry the boot stub calls — the compiler's or a package's
+     (EmoOS T3.1) — global so a stub in its own object reaches it. *)
+  gput env "\n    .section .text\n    .globl emo_program\n";
   emit_function env ~label:"emo_program"
     ~params:([] : (string * Emo_check.t) list)
-    ~captures:[] ~body:program.pinit;
+    ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~body:program.pinit;
   (* Closure bodies queued during emission may queue more. *)
   let rec drain () =
     match env.deferred with
     | [] -> ()
     | (label, cparams, caps, cbody) :: rest ->
         env.deferred <- rest;
-        emit_function env ~label ~params:cparams ~captures:caps ~body:cbody;
+        emit_function env ~label ~params:cparams ~captures:caps
+          ~conv:(dynamic_conv (List.length cparams))
+          ~native:false ~body:cbody;
         drain ()
   in
   drain ();
+  (* The spawn entry thunks (T3.3): the child's first schedule returns
+     into one; it hands the tagged words from the child's stack to the
+     callee — the psABI registers for a typed def, the dynamic words
+     with the closure record in t0 for a first-class block — and sets
+     ra so a returning body ends the process. *)
+  let emit_spawn_thunk (label, callee) =
+    gput env "%s:\n" label;
+    match callee with
+    | Spawn_def (fname, conv) ->
+        List.iteri
+          (fun i (k, reg) ->
+            let off = 8 * i in
+            match k with
+            | P_int64 ->
+                gput env "    ld a%d, %d(sp)\n" reg off;
+                gput env "    andi a%d, a%d, -32\n" reg reg;
+                gput env "    ld a%d, 8(a%d)\n" reg reg
+            | P_float64 ->
+                gput env "    ld t0, %d(sp)\n" off;
+                gput env "    andi t0, t0, -32\n";
+                gput env "    fld fa%d, 8(t0)\n" reg
+            | P_word -> gput env "    ld a%d, %d(sp)\n" reg off)
+          (bank_assign conv.cparams);
+        gput env "    la ra, emo_process_done\n";
+        gput env "    j %s\n" (func_label fname)
+    | Spawn_closure argc ->
+        gput env "    ld t0, 0(sp)\n";
+        gput env "    andi t0, t0, -32\n";
+        let rec go i =
+          if i <= argc then begin
+            gput env "    ld a%d, %d(sp)\n" (i - 1) (8 * i);
+            go (i + 1)
+          end
+        in
+        go 1;
+        gput env "    ld t2, 8(t0)\n";
+        gput env "    la ra, emo_process_done\n";
+        gput env "    jalr t2\n"
+  in
+  List.iter emit_spawn_thunk (List.rev env.spawns);
   (* Dispatch tables in .data: per-interface vtables (one slot per
      class), per-class field-name and method-name tables for the
      dynamic paths, and the per-class pointer tables the runtime
@@ -3263,27 +6741,25 @@ let emit (program : Emo_ir.program) : string =
       \    .align 3\n";
     List.iter
       (fun (name, sigs) ->
-        ignore sigs;
         gput env "    .globl emo_iface_%s\n" (Emo_ir.sanitize_ident name);
         gput env "emo_iface_%s:\n" (Emo_ir.sanitize_ident name);
+        (* one row per class, one slot per interface method in the
+           interface's own order — the dispatch multiplies the class id
+           by the row's width and reads the method's slot *)
         List.iter
           (fun (c : Emo_ir.class_) ->
-            let entry =
-              List.find_map
-                (fun (m, _) ->
-                  let info = class_of env c.Emo_ir.cdisplay in
-                  match
-                    List.find_opt
-                      (fun (d, _) -> String.equal d m)
-                      info.cls_methods
-                  with
-                  | Some (_, mangled) -> Some (func_label mangled)
-                  | None -> None)
-                sigs
-            in
-            match entry with
-            | Some label -> gput env "    .dword %s\n" label
-            | None -> gput env "    .dword 0\n")
+            let info = class_of env c.Emo_ir.cdisplay in
+            List.iter
+              (fun (m, _) ->
+                match
+                  List.find_opt
+                    (fun (d, _) -> String.equal d m)
+                    info.cls_methods
+                with
+                | Some (_, mangled) ->
+                    gput env "    .dword %s\n" (func_label mangled)
+                | None -> gput env "    .dword 0\n")
+              sigs)
           program.pclasses)
       program.pinterfaces
   end;
@@ -3397,5 +6873,13 @@ let emit (program : Emo_ir.program) : string =
         gput env "    .size %s, . - %s\n" label label)
       (List.rev env.strs)
   end;
-  gput env "%s" stack_asm;
+  if env.cells <> [] then begin
+    gput env "\n# ---- Numeric literal cells ----\n\n    .section .rodata\n";
+    List.iter
+      (fun (bits, _, label) ->
+        gput env "    .balign 32\n%s:\n    .quad 1\n    .quad %Ld\n" label bits)
+      (List.rev env.cells)
+  end;
+  gput env "%s" (stack_asm ~profile);
+  if profile = "user" then gput env "%s" user_cell_asm;
   Buffer.contents env.buf
