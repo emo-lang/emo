@@ -102,5 +102,14 @@ SECTIONS
   . = KOFF + 0x87005000;
   .emo_fs (NOLOAD) : AT(ADDR(.emo_fs) - KOFF) { *(.emo_fs) } :tick
 
+  /* The compositor's page (T8.6), a page above the filesystem's: the
+     generation, the mode the display service answered at init, and the
+     window stack (the position and focus the compositor's policy
+     holds) — the state that outlives the instances, the supervisor's
+     restart reading it back the way the filesystem's cache is rebuilt
+     from the disk. */
+  . = KOFF + 0x87008000;
+  .emo_comp (NOLOAD) : AT(ADDR(.emo_comp) - KOFF) { *(.emo_comp) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

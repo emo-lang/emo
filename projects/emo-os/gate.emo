@@ -99,6 +99,14 @@ const grant_table = koff + 0x87002b00
 const grant_rows = 8
 const grant_row = 96
 
+// The compositor's cells (T8.6): the pid cell the gate routes the
+// stack's verbs and the window present's composition by, and the five
+// argument cells those requests stage (the grant, the position, the
+// damage rect) — the compositor's own, like every service's, because
+// its transactions and the display service's can sit parked at once.
+const comp_svc_cell = koff + 0x87002e00
+const comp_args = koff + 0x87002e10
+
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
 const reason_range = 2
@@ -129,6 +137,9 @@ const route_output_info = -1011
 const route_input_event = -1012
 const route_win_new = -1013
 const route_win_close = -1014
+const route_win_focus = -1015
+const route_win_move = -1016
+const route_comp_present = -1017
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -343,6 +354,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       if (r1 + r3) > peek64(row + 32) || (r2 + r4) > peek64(row + 40) {
         return -reason_argument
       }
+      poke64(comp_args, r0)
+      poke64(comp_args + 8, r1)
+      poke64(comp_args + 16, r2)
+      poke64(comp_args + 24, r3)
+      poke64(comp_args + 32, r4)
+      return route_comp_present
     } else {
       if peek64(screen_grant_cell) != peek64(handoff_caller) {
         return -reason_permission
@@ -392,6 +409,47 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     // paint was the store fault that named it.
     poke64(gpu_args + 40, peek64(caller_space_cell))
     return route_win_new
+  }
+  if n == 15 {
+    // win_focus(grant) (T8.6): the compositor's stack records the
+    // focused window — the input routing the focus will drive is
+    // A9.1's. The owner is the gate's check, as win_close's is.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(comp_args, r0)
+    return route_win_focus
+  }
+  if n == 16 {
+    // win_move(grant, x, y) (T8.6): the position the compositor's
+    // blit places the window at. The x rides the blit's word
+    // granularity (even, reason 4); the bounds against the display's
+    // mode are the compositor's to judge (the mode is its init's
+    // query).
+    if r0 == 0 {
+      return -reason_argument
+    }
+    if r1 < 0 || (r1 % 2) != 0 || r2 < 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(comp_args, r0)
+    poke64(comp_args + 8, r1)
+    poke64(comp_args + 16, r2)
+    return route_win_move
   }
   if n == 14 {
     // win_close(grant) (T8.5): the buffer's release — the run back to

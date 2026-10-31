@@ -103,6 +103,30 @@ def win_close(grant Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The compositor's focus (EmoOS T8.6, verb 15): the stack records the
+// window as the focused one — the input routing the focus will drive
+// is the desktop side's. The owner and the id are the gate's checks.
+def win_focus(grant Int64) (R, Int64) {
+  var answer = ecall(15, grant, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The compositor's move (EmoOS T8.6, verb 16): the position the
+// composition blits the window's frame at. The x rides the blit's
+// word granularity (even, or "bad argument"); the bounds against the
+// display's mode are the compositor's to judge ("bad argument"
+// outside).
+def win_move(grant Int64, x Int64, y Int64) (R, Int64) {
+  var answer = ecall(16, grant, x, y, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.

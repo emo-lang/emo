@@ -414,6 +414,22 @@ def paint_win(base Int64, rows Int64, row_words Int64) Void {
   }
 }
 
+// The frame's sum (T8.6): every word the buffer holds — the number
+// the compositor's composition line carries, the blit's proof.
+def buffer_sum(base Int64, rows Int64, row_words Int64) Int64 {
+  var sum = 0
+  var r = 0
+  while r < rows {
+    var i = 0
+    while i < row_words {
+      sum = sum + peek64(base + (r * row_words + i) * 8)
+      i = i + 1
+    }
+    r = r + 1
+  }
+  return sum
+}
+
 // The readback: every word the paint wrote, compared.
 def win_verify(base Int64, rows Int64, row_words Int64) Bool {
   var r = 0
@@ -466,6 +482,36 @@ def win_shown_line() Void {
   p = byte_at(p, 111) // o
   p = byte_at(p, 119) // w
   p = byte_at(p, 110) // n
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_moved_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 118) // v
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_focused_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
   p = byte_at(p, 10)
   gate_line(p)
 }
@@ -587,9 +633,34 @@ if peek64(win_cell) != 0 {
       } else {
         mark()
       }
+      // The frame's sum on the wire (T8.6): the compositor's
+      // composition line carries the same number — the blit's proof.
+      var sp = byte_at(0, 119) // w
+      sp = byte_at(sp, 105) // i
+      sp = byte_at(sp, 110) // n
+      sp = byte_at(sp, 32) // space
+      sp = byte_at(sp, 115) // s
+      sp = byte_at(sp, 117) // u
+      sp = byte_at(sp, 109) // m
+      sp = byte_at(sp, 32) // space
+      sp = num_at(buffer_sum(win_base(ans), 128, 256) & 4294967295, sp)
+      sp = byte_at(sp, 10)
+      gate_line(sp)
       case syscall.present(id, 0, 0, 512, 128) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { win_shown_line() }
+      }
+      case syscall.win_move(id, 16, 32) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_moved_line() }
+      }
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_focus(id) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_focused_line() }
       }
       case syscall.win_close(id) {
         (R.error, _) -> { mark() }

@@ -325,11 +325,12 @@ PYEOF
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): fifty blocks taken — the
-  # kernel's page tables' block (T6.1), the twelve green spawns' arenas
-  # (the five services', the supervisor's, the filesystem's two
-  # instances', and the four readers'), the filesystem's cache block
-  # (the supervisor's, held across the instances) and the root's
+  # account at the root's exit (T5.3): fifty-three blocks taken — the
+  # kernel's page tables' block (T6.1), the fourteen green spawns'
+  # arenas (the five services', the compositor supervisor's, the
+  # compositor's two instances', the supervisor's, the filesystem's
+  # two instances', and the four readers'), the filesystem's cache
+  # block (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
   # nine user passes (the screen pass's, the input pass's, and the
   # window pass's, T8.2, T8.3, and T8.5, beside the six), the
@@ -343,17 +344,18 @@ PYEOF
   # queue block (T7.1) beside the display driver's (T8.1) and the input
   # driver's (T8.3), each held
   # for the service's life like the services' arenas — and
-  # twenty-nine given back — the four readers' arenas at
+  # thirty given back — the four readers' arenas at
   # their deaths, the first filesystem instance's arena at its stop,
-  # the root's scratch block after its proof, both blocks of each user
-  # pass at its kill or exit (the counter pass's, the screen pass's,
-  # the input pass's, and the window pass's at their clean exits), the
-  # window buffer's run at its close, and the DMA check's
-  # block home; the services, the supervisor, the live filesystem
-  # instance, every table, the cache block, and the queues keep
-  # theirs. The byte offsets are the serial order.
+  # the first compositor instance's arena at its stop (T8.6's restart
+  # proof), the root's scratch block after its proof, both blocks of
+  # each user pass at its kill or exit (the counter pass's, the screen
+  # pass's, the input pass's, and the window pass's at their clean
+  # exits), the window buffer's run at its close, and the DMA check's
+  # block home; the services, the supervisors, the live filesystem and
+  # compositor instances, every table, the cache block, and the queues
+  # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 14 cause 13' 'addr 0x80000000' 'greedy' 'user heap 15 gone' 'smash' 'user fault 16 cause 15' 'addr 0x40000000' 'reach' 'user fault 17 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win shown' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 50 29'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 53 30'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -428,9 +430,9 @@ PYEOF
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, comp restart, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, comp restart, shell, counter, frames, self-exit, 1 ecall"

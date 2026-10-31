@@ -605,10 +605,17 @@ emo_os_trap_trampoline:
     li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
     j .Lroute_post
 .Lroute_desktop:
+    li t3, 15
+    bge t6, t3, .Lroute_comp  # verbs 15..: the compositor's (T8.6 —
+                              # 15 and 16 the stack's, 17 the window
+                              # present's composition)
     li t3, 12
     beq t6, t3, .Lroute_input # verb 12, input_read: the input service's
-    li a0, EMO_KOFF + 0x870029f8  # verbs 10 and 11: the display
+    li a0, EMO_KOFF + 0x870029f8  # verbs 10, 11, 13, 14: the display
                                   # service's pid cell (T8.4)
+    j .Lroute_post
+.Lroute_comp:
+    li a0, EMO_KOFF + 0x87002e00  # the compositor's pid cell (T8.6)
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
@@ -1033,24 +1040,43 @@ emo_os_death_notice:
     # zero here, inside the death's own masked region, so a request the
     # gate dispatches before the supervisor has parked the next
     # instance is set aside — the stash the next instance serves first
-    # — instead of posted into a dead mailbox nobody drains
+    # — instead of posted into a dead mailbox nobody drains. The dead
+    # pid rides the routine's own frame: the first post's callee owns
+    # a0, and the second post's notice word needs the pid the first
+    # one consumed (T8.6's restart silently skipped while the word
+    # carried the clobbered register).
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
     li t0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
     ld t1, 0(t0)
     bne t1, a0, 2f
     sd zero, 0(t0)
 2:  li t0, EMO_KOFF + 0x87005008  # the supervisor's pid cell
     ld t1, 0(t0)
-    beqz t1, 1f
-    addi sp, sp, -16
-    sd ra, 0(sp)
+    beqz t1, 3f
     li a1, 256
     slli a1, a1, 32
+    ld a0, 8(sp)
     or a1, a1, a0            # 256 << 32 | the dead pid
     mv a0, t1
     call emo_gate_post
-    ld ra, 0(sp)
-    addi sp, sp, 16
-1:  ret
+3:  li t0, EMO_KOFF + 0x87002e08  # the compositor's supervisor's cell
+                                  # (T8.6): every death reaches it too
+                                  # — its own instance's death is the
+                                  # restart, any other the dead owner's
+                                  # windows reclaimed
+    ld t1, 0(t0)
+    beqz t1, 1f
+    li a1, 256
+    slli a1, a1, 32
+    ld a0, 8(sp)
+    or a1, a1, a0
+    mv a0, t1
+    call emo_gate_post
+1:  ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
 
     .section .rodata
 msg_unexpected:

@@ -100,7 +100,8 @@ ends the machine, as its exit does.
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
 (1 to the console service, 2 and 12 to the input service, 10, 11, 13
-and 14 to the display service, 0, 3 and 4
+and 14 to the display service, 15, 16 and the window present to the
+compositor, 0, 3 and 4
 to the process service, 6 to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
@@ -160,8 +161,21 @@ reclamation (T8.6) — the stated bound, M9's killed-and-restarted
 acceptance is where the death-side reclamation earns its place. A
 window's `present` (verb 10, the grant id nonzero) is checked against
 the row — the owner and the damage rect within the buffer's extent —
-and commits by the row's ready flag and the recorded rect, the
-compositor's tick (T8.6) being the reader.
+and routes to the **compositor** (T8.6): the stack's entry holds the
+position, the composition **blits** the window's frame into the screen
+carve at it (word stores), the display service's flush puts it on the
+display, and the answer follows the flush — the frame lands whole (the
+protocol's sixth seam). The row's ready flag and the recorded rect are
+the compositor's state; the requests that arrive while a flush is in
+flight are stashed and served after. **Verbs 15 and 16 (T8.6)** are the
+compositor's stack's verbs: `win_focus(grant)` records the focused
+window (the input routing the focus will drive is the desktop side's);
+`win_move(grant, x, y)` sets the blit's position — the x even (the
+blit's word granularity, reason 4), the bounds against the display's
+mode the compositor's to judge (reason 4 outside). The owner and the id
+are the gate's checks on both. The death-side reclamation: a window
+whose owner dies without a close has its run reclaimed and its row
+emptied by the compositor's supervisor (T8.6's death-notice flow).
 
 Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
 the next event of the input service's merged stream, blocking until
@@ -188,7 +202,7 @@ User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
 It admits the `riscv64` target alone; the raw `ecall` lives in its
-fourteen
+sixteen
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -214,6 +228,10 @@ bodies and nowhere else a user program writes.
   or `(R.error, why)`.
 - `syscall.win_close(grant)` — the window buffer's release (T8.5,
   verb 14), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_focus(grant)` — the compositor's focus (T8.6, verb 15),
+  answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_move(grant, x, y)` — the compositor's move (T8.6,
+  verb 16), answering `(R.ok, 0)` or `(R.error, why)`.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the
