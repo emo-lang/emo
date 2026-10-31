@@ -58,11 +58,16 @@ boot() {
   # force-legacy=false: the transports report version 2 (the modern
   # register layout the driver speaks — 64-bit queue addresses, no
   # guest page size); a transitional device would answer version 1
-  # and the driver's loud end names it.
+  # and the driver's loud end names it. The display's mode is the
+  # assessment's decided baseline (1024x768 XRGB8888) — the device
+  # property is where that decision lives, and the driver still reads
+  # whatever the device answers (T8.1; this QEMU's own default is
+  # 1280x800, the golden would name it).
   qemu-system-riscv64 -machine virt -nographic -d int -cpu "$cpu" \
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
+    -device virtio-gpu-device,xres=1024,yres=768 \
     -kernel "$elf" <"$fifo" >"$log" 2>"$log.trace" &
   local qemu_pid=$!
   exec 3>"$fifo"
@@ -200,7 +205,16 @@ boot() {
   # the block device's line (T7.1: the driver scanned the virtio-mmio
   # slots, negotiated the modern layout, built its queue on one
   # allocator block, and the capacity reads 2048 sectors — the 1 MiB
-  # image below), then the filesystem's first mount line (T7.2: the
+  # image below), then the display driver's two lines (T8.1: the
+  # virtio-gpu on the blk_service's shape — the slot scan, the modern
+  # negotiation, the control queue on one allocator block, the 2D path
+  # whole: the resource created at the format the baseline decided, the
+  # screen carve attached as the backing, scanout 0 pointed at it — and
+  # the mode is the device's own answer, 1024x768, never a constant),
+  # then the root's flush smoke (`gpu flush ok`: the paint rode the
+  # mode the driver answered, the device's transfer and flush both came
+  # back OK — the pixels left the carve's physical bytes and reached
+  # the display), then the filesystem's first mount line (T7.2: the
   # service read sector 0 through the driver, formatted the blank disk
   # on the first boot or found the volume on the second, wrote the
   # generation back, read the name table, rebuilt its free map), then
@@ -260,9 +274,9 @@ boot() {
   # took, split, and gave back, the allocator still answers one whole
   # 64 KiB block — block-aligned, one pattern word per frame, every
   # one read back — and returns it. Last, the frame allocator's
-  # account at the root's exit (T5.3): thirty-six blocks taken — the
-  # kernel's page tables' block (T6.1), the ten green spawns' arenas
-  # (the three services', the supervisor's, the filesystem's two
+  # account at the root's exit (T5.3): thirty-eight blocks taken — the
+  # kernel's page tables' block (T6.1), the eleven green spawns' arenas
+  # (the four services', the supervisor's, the filesystem's two
   # instances', and the four readers'), the filesystem's cache block
   # (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
@@ -271,8 +285,9 @@ boot() {
   # pass's frames from the splits' leftovers, the reach pass's table
   # splitting the fifth, the counter pass's the sixth, the screen
   # pass's the seventh), the DMA check's block, and the block driver's
-  # queue block (T7.1, held for the service's life like the services'
-  # arenas) — and twenty-one given back — the four readers' arenas at
+  # queue block (T7.1) beside the display driver's (T8.1), each held
+  # for the service's life like the services' arenas — and
+  # twenty-one given back — the four readers' arenas at
   # their deaths, the first filesystem instance's arena at its stop,
   # the root's scratch block after its proof, both blocks of each user
   # pass at its kill or exit (the counter pass's and the screen pass's
@@ -281,7 +296,7 @@ boot() {
   # table, the cache block, and the queue keep theirs. The byte
   # offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 12 cause 13' 'addr 0x80000000' 'greedy' 'user heap 13 gone' 'smash' 'user fault 14 cause 15' 'addr 0x40000000' 'reach' 'user fault 15 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 36 21'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 13 cause 13' 'addr 0x80000000' 'greedy' 'user heap 14 gone' 'smash' 'user fault 15 cause 15' 'addr 0x40000000' 'reach' 'user fault 16 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'screen 0x86c00000 ok' 'screen r5' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 38 21'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -356,9 +371,9 @@ boot() {
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, fs restart, user, fs roundtrip, kill, screen, shell, counter, frames, self-exit, 1 ecall"

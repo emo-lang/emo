@@ -27,7 +27,11 @@
 // channel, the process service takes the hand and pokes the pending
 // cell, space.emo's build maps the carve into the child's table, and
 // the child's exit is the pattern's readback — the first full-screen
-// pass's proof.
+// pass's proof. T8.1 adds the display's driver, a process on the
+// blk_service's shape: the virtio-gpu's control queue on one allocator
+// block, the 2D path the whole need — create, attach the carve as the
+// backing, scanout, transfer, flush — the mode read from the device
+// and never a constant, and the root's flush smoke riding the mailbox.
 //
 //   emo build main.emo --target riscv64
 
@@ -112,6 +116,18 @@ const notice_op = 256
 // first boot caught the collision).
 const screen_cell = 0x87fff040
 const screen_pending_cell = koff + 0x870029e0
+
+// The display (T8.1): the virtio-gpu device rides the same eight mmio
+// transports the block driver scans — DeviceID 16 — and the screen
+// carve's physical address is the backing the 2D resource attaches:
+// the device reads the framebuffer the pass paints straight out of the
+// carve (frames.emo owns the region's exclusion, T8.2). The format is
+// XRGB8888 — B8G8R8X8 in the device's naming — the decided baseline's
+// own; the mode itself is the device's to say (GET_DISPLAY_INFO's
+// answer, never a constant — the protocol's second seam).
+const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA view
+const screen_size = 0x400000
+const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
@@ -686,6 +702,252 @@ def blk_service(boss Pid) Void {
   }
 }
 
+// The display's driver (T8.1), a process like the block driver: it owns
+// the virtio-gpu's control queue — one 64 KiB block from the frame
+// allocator, held for the service's life — and speaks the 2D path, the
+// whole need at M7: create the resource, attach the screen carve as its
+// backing, point scanout 0 at it, and (on request) transfer the painted
+// pixels to the host and flush them to the display. The queue is the
+// blk_service's shape: descriptors 0..1 reused, one command in flight,
+// the doorbell after a fence, the completion polled and bounded — the
+// interrupt-driven wait is the later piece the console's T3.7 note
+// names, and the GPU's IRQ stays unwired. The mode is never a constant:
+// GET_DISPLAY_INFO's answer is the real one (the protocol's second
+// seam), and the resource, the scanout, and the flush all take its
+// rectangle. The mailbox: op 0 flushes (the whole rect, transfer then
+// flush, the request word echoed back), op 1 answers the mode packed —
+// the output_info verb's kernel side will ride it (T8.4) — and an op
+// the driver does not serve comes back negated; any OK the device
+// refuses is the loud end.
+def gpu_hdr(a Int64, ty Int64) Void {
+  poke32(a, ty)
+  poke32(a + 4, 0)
+  poke64(a + 8, 0)
+  poke64(a + 16, 0)
+}
+
+def gpu_rect(a Int64, x Int64, y Int64, w Int64, h Int64) Void {
+  poke32(a, x)
+  poke32(a + 4, y)
+  poke32(a + 8, w)
+  poke32(a + 12, h)
+}
+
+// One command through the control queue: the request at +0x3000 is one
+// descriptor (device-read), the 512-byte response buffer at +0x3400 the
+// second (device-written — the display info's response is 408 bytes,
+// the largest the protocol answers, and every command may offer the
+// whole of it); the avail index, the doorbell, the bounded poll of the
+// used index, and the response's type word back. The type is the
+// caller's to judge — OK_NODATA (0x1100) for the setup and flush
+// commands, OK_DISPLAY_INFO (0x1101) for the display info.
+def gpu_submit(dev Int64, q Int64, req_len Int64) Int64 {
+  poke64(q, sv39.pa_of(q + 0x3000))
+  poke64(q + 8, req_len | (1 << 32) | (1 << 48))
+  poke64(q + 16, sv39.pa_of(q + 0x3400))
+  poke64(q + 24, 512 | (2 << 32))
+  var avail = q + 0x1000
+  var nidx = peek16r(avail + 2) + 1
+  poke64(avail, nidx << 16)
+  fence()
+  mmio32(dev + 0x050, 0)
+  var used = q + 0x2000
+  var spins = 0
+  var seen = peek16r(used + 2)
+  while seen != nidx {
+    spins = spins + 1
+    if spins > 10000000 {
+      println("gpu: the device never answered")
+      halt()
+    }
+    seen = peek16r(used + 2)
+  }
+  return peek32(q + 0x3400)
+}
+
+// The flush smoke's paint (T8.1): the framebuffer's rows, a
+// deterministic gradient — one color per row, both pixels of every
+// 8-byte pair the same — written through the kernel's high alias of
+// the carve. A fully typed native body over raw words: zero
+// allocation, the frame's scale priced at word stores (the
+// assessment's blit rule — a bytewise copy cannot survive TCG).
+def gpu_paint(base Int64, rows Int64, row_words Int64) Void {
+  var r = 0
+  while r < rows {
+    var c = 0xFF000000 | (((r * 5) & 255) << 16) | (((r * 3) & 255) << 8) | 64
+    var word = c | (c << 32)
+    var w = 0
+    while w < row_words {
+      poke64(base + (r * row_words + w) * 8, word)
+      w = w + 1
+    }
+    r = r + 1
+  }
+}
+
+// The mode answer's halves (T8.1): the width rides the op half, the
+// height the caller half — one packed word, decoded by typed defs like
+// every mailbox word (the riscv64 emitter refuses the operators on a
+// dynamic value, T7.2's discipline).
+def gpu_width(w Int64) Int64 {
+  return w >> 32
+}
+
+def gpu_height(w Int64) Int64 {
+  return w & 4294967295
+}
+
+def gpu_service(boss Pid) Void {
+  // The slot scan: a transport answers with the magic and the version
+  // whether or not a device rides it; the display device is DeviceID 16.
+  var dev = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 16 {
+        dev = cand
+      }
+    }
+    slot = slot + 1
+  }
+  if dev == 0 {
+    println("gpu: no display device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("gpu: no block for the queue")
+    halt()
+  }
+  blk_zero(q, 16)
+  blk_zero(q + 0x1000, 3)
+  blk_zero(q + 0x2000, 9)
+  blk_zero(q + 0x3000, 16)
+  blk_zero(q + 0x3400, 64)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  // The features: VIRTIO_F_VERSION_1 alone, offered through the sel
+  // register the 64-bit poke rides (T7.1's byte-composition note) —
+  // no VIRGL, no EDID: the 2D path needs neither.
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("gpu: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 8 {
+    println("gpu: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 8)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  // The mode is the device's answer, not a constant (the protocol's
+  // second seam): the display info's response is the header plus one
+  // pmode per scanout — rect first, the enabled flag after — and
+  // scanout 0's rectangle is what the resource, the scanout, and every
+  // flush take.
+  gpu_hdr(q + 0x3000, 0x0100)
+  if gpu_submit(dev, q, 24) != 0x1101 {
+    println("gpu: the display info refused")
+    halt()
+  }
+  var pmode = peek32(q + 0x3400 + 40)
+  if pmode != 1 {
+    println("gpu: no enabled display")
+    halt()
+  }
+  var gw = peek32(q + 0x3400 + 32)
+  var gh = peek32(q + 0x3400 + 36)
+  // RESOURCE_CREATE_2D (40 bytes): the resource is the baseline's
+  // format at the display's size. Every payload starts at +0x18, the
+  // header's 24 bytes behind it.
+  gpu_hdr(q + 0x3000, 0x0101)
+  poke32(q + 0x3018, 1)
+  poke32(q + 0x301c, gpu_format_bgrx)
+  poke32(q + 0x3020, gw)
+  poke32(q + 0x3024, gh)
+  if gpu_submit(dev, q, 40) != 0x1100 {
+    println("gpu: the resource refused")
+    halt()
+  }
+  // RESOURCE_ATTACH_BACKING (32 bytes plus one 16-byte entry): the
+  // screen carve, physical, the whole 4 MiB the transfers read from
+  // (T6.5's DMA discipline: one contiguous range the allocator's
+  // exclusion keeps so).
+  gpu_hdr(q + 0x3000, 0x0106)
+  poke32(q + 0x3018, 1)
+  poke32(q + 0x301c, 1)
+  poke64(q + 0x3020, screen_base)
+  poke64(q + 0x3028, screen_size)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the backing refused")
+    halt()
+  }
+  // SET_SCANOUT (48 bytes): scanout 0 shows the resource at the
+  // display's rect — the rect comes first, the two ids after it.
+  gpu_hdr(q + 0x3000, 0x0103)
+  gpu_rect(q + 0x3018, 0, 0, gw, gh)
+  poke32(q + 0x3028, 0)
+  poke32(q + 0x302c, 1)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the scanout refused")
+    halt()
+  }
+  println("gpu ${gw}x${gh} ready")
+  boss <- self_pid()
+  var w0 = 0
+  var from = boss
+  while true {
+    receive {
+      (a, b, c) -> {
+        w0 = a
+        from = b
+      }
+    }
+    var op = op_of(w0)
+    if op == 0 {
+      // TRANSFER_TO_HOST_2D (56 bytes): the whole rect, from the
+      // backing's offset 0 — the pixels the pass painted are what
+      // moves.
+      gpu_hdr(q + 0x3000, 0x0105)
+      gpu_rect(q + 0x3018, 0, 0, gw, gh)
+      poke64(q + 0x3028, 0)
+      poke32(q + 0x3030, 1)
+      if gpu_submit(dev, q, 56) != 0x1100 {
+        println("gpu: the transfer refused")
+        halt()
+      }
+      // RESOURCE_FLUSH (48 bytes): the host resource to the display,
+      // the same rect — present is the flush, the M7 shape's whole of
+      // it.
+      gpu_hdr(q + 0x3000, 0x0104)
+      gpu_rect(q + 0x3018, 0, 0, gw, gh)
+      poke32(q + 0x3028, 1)
+      if gpu_submit(dev, q, 48) != 0x1100 {
+        println("gpu: the flush refused")
+        halt()
+      }
+      from <- w0
+    } else {
+      if op == 1 {
+        // The mode: the display info's rectangle packed — the
+        // output_info verb's kernel side rides this answer (T8.4).
+        from <- (gw << 32) | gh
+      } else {
+        from <- 0 - w0
+      }
+    }
+  }
+}
+
 // The supervisor (T7.2, docs/fs.md): the filesystem service's owner.
 // It takes the service's cache block from the frame allocator once —
 // the block outlives the instances, each one overwrites it from the
@@ -864,10 +1126,12 @@ def tick_proof() Void {
 var me = self_pid()
 var console_svc = me
 var blk_svc = me
+var gpu_svc = me
 var fs_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
+do gpu_service(me)
 uart_init()
 println("Hello, EmoOS!")
 sv39_report()
@@ -878,6 +1142,33 @@ receive { c1 -> {
 } }
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 -> { blk_svc = c3 } }
+receive { g1 -> { gpu_svc = g1 } }
+
+// The display's flush smoke (T8.1): the root asks the driver for the
+// mode (the answer that verb 11 will one day route), paints the
+// framebuffer a deterministic row gradient through the kernel's high
+// alias of the carve at the mode the device itself reported, then asks
+// for the whole-rect transfer + flush — the device's two OK replies
+// are the proof that the pipeline end to end took the paint: the
+// device read the carve's physical bytes (attach_backing named it),
+// copied them to the host resource, and put them on the display.
+gpu_svc <- (1 << 32, me, 0)
+var mode = 0
+receive {
+  m -> { mode = m }
+}
+gpu_paint(koff + screen_base, gpu_height(mode), gpu_width(mode) / 2)
+gpu_svc <- (0, me, 0)
+receive {
+  g2 -> {
+    if g2 != 0 {
+      println("gpu: the flush answered ${g2}")
+      halt()
+    }
+  }
+}
+println("gpu flush ok")
+
 do supervisor(me, blk_svc)
 receive { f1 -> { fs_svc = f1 } }
 do reader(console_svc, me, 1)
