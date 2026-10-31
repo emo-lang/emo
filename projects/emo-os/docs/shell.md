@@ -67,8 +67,8 @@ The REPL opens with the banner:
 ```
 
 On the wire the `O` and `S` ride in ANSI cyan (SGR 36, one
-escape/reset pair per row); the art above is drawn plain. Two blank
-lines part the banner from the first prompt.
+escape/reset pair per row); the art above is drawn plain. One blank
+line parts the banner from the first prompt.
 
 The prompt is `emo-os> `, printed before each line is read.
 

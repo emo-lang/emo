@@ -106,7 +106,6 @@ and the prompt (the `O` and `S` arrive in ANSI cyan):
    | |___  | |\/| | | |  | | | |__| |   ___) |
    |_____| |_|  |_|  \____/   \____/   |____/
 
-
     emo-os>
 
 Keys typed outside those two windows are not simply lost. OpenSBI

@@ -167,8 +167,8 @@ def logo_r5() Array[Byte] {
 }
 
 def logo_tail() Array[Byte] {
-  // the two blank lines that part the banner from the first prompt
-  return [10B, 10B]
+  // the blank line that parts the banner from the first prompt
+  return [10B]
 }
 
 def prompt_bytes() Array[Byte] {
@@ -540,7 +540,7 @@ def execute(n Int64) Void {
 // never returns.
 def run() Void {
   sh_init()
-  out(sh_logo, 267)
+  out(sh_logo, 266)
   while true {
     out(sh_prompt, 8)
     execute(read_line())
