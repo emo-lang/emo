@@ -94,6 +94,7 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 - [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
 - [`docs/shell.md`](docs/shell.md) — the shell REPL: the line, the seven commands, the strictness the surface carries, the bounds.
 - [`docs/ui.md`](docs/ui.md) — the console renderer: EmoUI's spine at the console's currency, the frame, the Elm loop, the counter demo, the bounds.
+- [`docs/desktop-abi.md`](docs/desktop-abi.md) — the desktop protocol's stability contract: the frozen ABI, the relocatable implementations, the additions, the eight seams. The desktop itself is [`projects/emo-desktop`](../emo-desktop).
 - [`docs/atomics.md`](../../docs/atomics.md) — the atomic memory model: sequential consistency only, the op set, the per-target matrix, the data-race semantics.
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — the real-time boundary, in the Emo tree.
 - [`docs/xv6.md`](../../docs/xv6.md) — the xv6-class feasibility assessment: what Emo replaces, what stays assembly.

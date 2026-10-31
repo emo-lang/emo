@@ -1,6 +1,6 @@
 # 控制台渲染器——EmoUI on EmoOS
 
-机器如何打出它的帧:作为用户趟运行的声明式渲染器——机器唯一的程序,由 shell 的 `counter` 命令启动(T7.5)——它渲染的节点词汇、驱动它的循环,以及它声明出的边界。定案于 T7.4(2026-10-31),趟在 T7.5 从证明链搬到了提示符。它周围:shell([`shell.zh-CN.md`](shell.zh-CN.md))在趟退出后拥有控制台;它说话用的动词是 [`syscalls.zh-CN.md`](syscalls.zh-CN.md) 的;它所镜像的便携核心在 [`projects/emo-ui/`](../../../../projects/emo-ui/)(主树的 [`docs/emo-ui.md`](../../../../docs/emo-ui.md) 是设计本身的常设记录——本笔记把它带到这门语言所启动的机器上)。
+机器如何打出它的帧:作为用户趟运行的声明式渲染器——机器唯一的程序,由 shell 的 `counter` 命令启动(T7.5)——它渲染的节点词汇、驱动它的循环,以及它声明出的边界。定案于 T7.4(2026-10-31),趟在 T7.5 从证明链搬到了提示符。它周围:shell([`shell.zh-CN.md`](shell.zh-CN.md))在趟退出后拥有控制台;它说话用的动词是 [`syscalls.zh-CN.md`](syscalls.zh-CN.md) 的;它所镜像的便携核心在 [`projects/emo-ui/`](../../../projects/emo-ui/)(主树的 [`docs/emo-ui.md`](../../../docs/emo-ui.md) 是设计本身的常设记录——本笔记把它带到这门语言所启动的机器上)。
 
 英文原文:[`ui.md`](ui.md)。
 
@@ -63,3 +63,7 @@ Elm 循环,类型化的。一个 model,一个纯 `update(model, tag)`,一个纯 
 ## 钉子
 
 `run.sh` 的链条把趟的对话放在 REPL 的第一个提示符与 shell 的文件系统往返之间,双定时器传输皆是:线上的 `counter` 命令、趟一被 spawn 第一帧就在——标题行、计数的 `000`、按钮行——第一个键之后 `count 001`,退出键结束趟(它的 exit 应答 shell 的 wait,第二个 `count 000` 不断言——首次出现已经证明了帧),然后提示符回来,机器的前台继续,往返在其后骑行。每条腿三轮逐字节相同;帧账目长出趟的栈与 arena——spawn 时取走,退出时归还。
+
+## 下一章
+
+控制台的通货是桌面最小的通货。像素继任者——framebuffer backend、字体、shell、应用——是自己的项目,[`projects/emo-desktop`](../../../projects/emo-desktop);协议的机器侧——预留于 10..16 的桌面动词段——在 [`docs/desktop-abi.zh-CN.md`](desktop-abi.zh-CN.md)。

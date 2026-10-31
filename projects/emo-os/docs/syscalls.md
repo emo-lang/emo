@@ -59,6 +59,12 @@ undocumented ever acts.
 | 8 | `file_list(buf, cap)` | the names, each followed by a newline, land at `buf`; answers the bytes written |
 | 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
 
+Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
+numbering rule holds: reserved numbers carry no meaning until their
+verb lands, frozen from that day) — `present`, `output_info`,
+`input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
+[`docs/desktop-abi.md`](desktop-abi.md).
+
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
 and the service's own state discipline are

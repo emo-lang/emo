@@ -1,0 +1,26 @@
+# 桌面协议的稳定性契约
+
+门的动词编号已由规矩冻结([`syscalls.zh-CN.md`](syscalls.zh-CN.md)):一个编号一经分配,含义永不再变——只增不改,版本化承载其余。桌面段(**动词 10..16,预留:`present`、`output_info`、`input_read`、`win_new`、`win_close`、`win_focus`、`win_move`**)把这条规矩从编号扩展到整个协议面,因为桌面的协议活得比它的每一个实现都久——Wayland 与 Quartz 是证明,win32k.sys 是反例。
+
+本文档是桌面([`projects/emo-desktop`](../../emo-desktop))在其内生长的契约。完整调研记录、每个接缝背后的推理,在[桌面评估](../../emo-desktop/docs/assessment.zh-CN.md)。
+
+## 三层
+
+- **Tier A——协议 ABI,冻结。** 动词编号、事件流形状、capability 模型。破它们就是破掉每一个写过的应用;冻结编号规矩是机制,版本化本身就是契约的一部分。
+- **Tier B——实现,可搬。** 字体可以变 TrueType,blit 可以变 GPU 工作,合成器可以离开内核镜像成为用户进程——不动一个动词、一个事件的形状。搬不动的实现,是协议围着它设计的实现——win32k.sys 的病。
+- **Tier C——追加。** IME、剪贴板、截屏、通知、无障碍:新编号下的新动词与新事件,永不是对旧者的改写。
+
+## 八个接缝——从第一个动词起就对
+
+1. **缓冲是 capability 对象**,永不是裸物理地址——IOSurface/DMA-BUF 形状。门的授权表按 grant 名缓冲、不按地址;这是 GPU 路径、零拷贝、沙箱的前提,且无法事后补上。
+2. **outputs 列表不是常量。** `frame_w`/`frame_h` 式常量是诚实的陷阱;协议枚举 outputs——`output_info` 是它的动词——一块屏是第一个答案,不是唯一的形状。
+3. **surface 带 role 字段**——toplevel/popup/subsurface/panel。先实现 toplevel;其余按名拒绝,不靠沉默。
+4. **format 与 scale 是字段**——XRGB8888 是第一个被接受的值,协商的形状从第一天就在。
+5. **统一版本化事件流,带 frame callback。** virtio-gpu 无 vblank;合成器按 tick 合成,frame callback 是动画故事的命门——真硬件到来时,保节奏诚实的接缝。
+6. **present 是原子 commit。** 一帧的状态整体落地;没有动词看得到半 present 的一帧。
+7. **文本永不进协议。** 键与字形是两端的事;合成器运字节与矩形,永不运字符串——让 IME(Tier C)可以追加而非改写的接缝。
+8. **机制与策略分离,合成器可回缩。** grant 对象从第一天起可 attach 进任意授权进程表,于是合成器可以离开内核镜像(Tier B)而协议毫无察觉。
+
+## 契约救不了的——诚实的四件
+
+无回收 arena(autorelease pool 是 Elm 循环上金属的前置,不是并行的锦上添花)、协作式单 hart(抢占必须落地;`-smp` 是 parked 不是不可能)、单镜像多 pass(M11 自己的活)、泛 IPC(portal 类服务终会要;实测路径要它时再造)。没有一件是协议变更;四件都是机器侧与语言侧的活,记在本项目的 Step 8。
