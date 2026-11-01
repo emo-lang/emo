@@ -132,9 +132,13 @@ stays pure and five-target.
       with RFC 5869's cases and RFC 7914's PBKDF2, and
       `examples/crypto_kdf` (c-only) pinning the 4096-iteration
       classic.
-- [ ] **T55.6** — SHA-3 and SHAKE (FIPS 202): Keccak-f[1600] over
-      64-bit lanes, the four fixed-output hashes, SHAKE128/256 with
-      explicit output length; KATs plus Go companions.
+- [x] **T55.6** — SHA-3 and SHAKE in `crypto.sha3` over
+      `internal/keccak.emo` — the sponge after the compact reference
+      (rho-pi walked in place, iota from the 0x71 LFSR, no tables),
+      one-shot; the golden at 175 Go-agreed lines; and two language
+      walls flushed (the gradual-type constructor rule behind the
+      door helpers, and E3005's shift-count proof behind the word
+      layer's narrowing guards).
 - [ ] **T55.7** — The `rand` package: per-target OS entropy
       (getrandom / `/dev/urandom` on `ocaml` and `c`,
       `crypto.getRandomValues` on `typescript`,

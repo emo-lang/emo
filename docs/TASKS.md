@@ -3025,11 +3025,25 @@ error split, and the honesty sections.
       classic 4096 iterations, the shape every off-by-one turns
       wrong first: a minute interpreted, two seconds compiled;
       interpreter, `c`, and ocaml byte-identical; `dune test` green.
-- [ ] **T55.6** — SHA-3 and SHAKE (FIPS 202): Keccak-f[1600] over
-      64-bit lanes (T55.1's rotations), the four fixed-output
-      hashes, SHAKE128/256 as the XOF with explicit output length;
-      the golden takes the known-answer tests and the Go-generated
-      companions.
+- [x] **T55.6** — SHA-3 and SHAKE (FIPS 202) in `crypto.sha3` over
+      `internal/keccak.emo`: Keccak-f[1600] after the Keccak team's
+      compact reference — rho-pi walked in place carrying the rotated
+      lane (no offset table) and the round constants from the 0x71
+      LFSR one bit at a time (no constant table) — derived, not
+      hand-copied, and proven against the reference digests; the four
+      fixed-output hashes and SHAKE128/256 with the length the caller
+      names, one-shot for now (provisional — the streaming shape
+      waits for a consumer); the golden grows to 175 Go-agreed lines
+      (the four hashes over the five messages and the sweep, SHAKE at
+      32 and at 137 — across the rate, so the squeeze refills); and
+      the step flushed two language walls: `Bytes.new` answers the
+      gradual type, so a static receiver's strict `set` refuses
+      gradual arguments — the byte accesses go through six
+      parameterized door helpers, base64's `fill_encode` shape — and
+      E3005 refuses shift counts the checker cannot prove
+      non-negative, so the word layer's rotators carry `n <= 0`
+      narrowing guards (rho's rotation amount is dynamic);
+      interpreter, `c`, and ocaml byte-identical; `dune test` green.
 - [ ] **T55.7** — The `rand` package: the entropy source bound per
       hosted target — `getrandom`/`/dev/urandom` on `ocaml` and `c`,
       `crypto.getRandomValues` on `typescript`,

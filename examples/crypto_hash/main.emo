@@ -254,3 +254,26 @@ println("pbkdf2_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd",
 println("pbkdf2_256 c2: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd", "salt", 2, 64)))
 println("pbkdf2_512 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512("passwd", "salt", 1, 64)))
 println("pbkdf2_512_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512_256("passwd", "salt", 1, 64)))
+
+// ---- SHA-3 and SHAKE (FIPS 202): the sponge derived from the
+// compact reference — rho-pi walked in place, the round constants
+// from the 0x71 LFSR — each digest pinned against Go's crypto/sha3.
+def sha3_all(label String, data String) Void {
+  println("sha3_224 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_224(data)))
+  println("sha3_256 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_256(data)))
+  println("sha3_384 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_384(data)))
+  println("sha3_512 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_512(data)))
+}
+
+sha3_all("empty", "")
+sha3_all("abc", "abc")
+sha3_all("56", long56)
+sha3_all("112", long112)
+sha3_all("quickbrown", quick)
+sha3_all("bytes 0..255", sweep.to_string())
+println("shake128 abc 32: " + crypto.hex_encode(crypto.sha3.shake128("abc", 32)))
+println("shake128 abc 137: " + crypto.hex_encode(crypto.sha3.shake128("abc", 137)))
+println("shake128 empty 32: " + crypto.hex_encode(crypto.sha3.shake128("", 32)))
+println("shake256 abc 32: " + crypto.hex_encode(crypto.sha3.shake256("abc", 32)))
+println("shake256 abc 137: " + crypto.hex_encode(crypto.sha3.shake256("abc", 137)))
+println("shake256 empty 32: " + crypto.hex_encode(crypto.sha3.shake256("", 32)))

@@ -15,21 +15,21 @@
 // `n == 0` is the identity (`1 << 64` would wrap to zero and hand
 // back all ones).
 def lshr(x Int64, n Int64) Int64 {
-  if n == 0 {
+  if n <= 0 {
     return x
   }
   return (x >> n) & ((1 << (64 - n)) - 1)
 }
 
 def rotl64(x Int64, n Int64) Int64 {
-  if n == 0 {
+  if n <= 0 {
     return x
   }
   return (x << n) | lshr(x, 64 - n)
 }
 
 def rotr64(x Int64, n Int64) Int64 {
-  if n == 0 {
+  if n <= 0 {
     return x
   }
   return lshr(x, n) | (x << (64 - n))
@@ -39,14 +39,14 @@ def rotr64(x Int64, n Int64) Int64 {
 // positive as Int64, so `>>` is exact and the final mask only cleans
 // the bits the left shift spilled past bit 31.
 def rotl32(x Int64, n Int64) Int64 {
-  if n == 0 {
+  if n <= 0 {
     return x
   }
   return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
 }
 
 def rotr32(x Int64, n Int64) Int64 {
-  if n == 0 {
+  if n <= 0 {
     return x
   }
   return ((x >> n) | (x << (32 - n))) & 0xFFFFFFFF
