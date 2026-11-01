@@ -1,0 +1,264 @@
+// The AES modes (NIST SP 800-38A and 38-D): CTR, CBC with PKCS#7, and
+// GCM with its GHASH. GHASH's field multiply is pure bitwise — a shift
+// and a masked XOR per bit, branchless on the field's reduction — no
+// tables, no cache-timing caveat. The 128-bit values ride two Int64
+// words, big-endian order (high word first). The byte accesses go
+// through parameterized doors — constructors answer the gradual type,
+// parameters carry the static one.
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def set_u32_be(b Bytes, i Int64, v Int64) Void {
+  b.set(i, (v >> 24) & 0xFF)
+  b.set(i + 1, (v >> 16) & 0xFF)
+  b.set(i + 2, (v >> 8) & 0xFF)
+  b.set(i + 3, v & 0xFF)
+}
+
+def get_u32_be(b Bytes, i Int64) Int64 {
+  return (b.get(i) << 24) | (b.get(i + 1) << 16) | (b.get(i + 2) << 8) | b.get(i + 3)
+}
+
+def zero_fill(b Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, 0)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
+}
+
+def sub_bytes(src Bytes, at Int64, count Int64) Bytes {
+  const out = Bytes.new(count)
+  var i = 0
+  while i < count {
+    out.set(i, src.get(at + i))
+    i = i + 1
+  }
+  return out
+}
+
+// inc32: the last four bytes count up big-endian, the rest stand —
+// the GCM counter step.
+def inc32(cb Bytes) Void {
+  set_u32_be(cb, 12, (get_u32_be(cb, 12) + 1) & 0xFFFFFFFF)
+}
+
+// The full 128-bit big-endian counter step — CTR's.
+def inc128(cb Bytes) Void {
+  var i = 15
+  var carry = 1
+  while i >= 0 && carry == 1 {
+    const next = (get_byte(cb, i) + 1) & 0xFF
+    set_byte(cb, i, next)
+    if next == 0 {
+      carry = 1
+    } else {
+      carry = 0
+    }
+    i = i - 1
+  }
+}
+
+// The GCM counter mode: keystream blocks from inc32(J0).
+def gctr(rk Bytes, nr Int64, cb Bytes, data Bytes, out Bytes) Void {
+  const ks = Bytes.new(16)
+  var off = 0
+  while off < data.length() {
+    internal.aes.encrypt_block(rk, nr, cb, ks)
+    var i = 0
+    while i < 16 && off + i < data.length() {
+      set_byte(out, off + i, get_byte(data, off + i) ^ get_byte(ks, i))
+      i = i + 1
+    }
+    inc32(cb)
+    off = off + 16
+  }
+}
+
+// GHASH's field multiply: Z and V walk the 128 bits of a, the
+// reduction constant 0xE1... riding the low bit of V — branchless,
+// bitwise, no tables.
+const r_high = 0xE100000000000000
+
+def gmul128(ah Int64, al Int64, bh Int64, bl Int64) (Int64, Int64) {
+  var zh = 0
+  var zl = 0
+  var vh = bh
+  var vl = bl
+  var i = 0
+  while i < 128 {
+    var bit = 0
+    if i < 64 {
+      bit = internal.word.lshr(ah, 63 - i) & 1
+    } else {
+      bit = internal.word.lshr(al, 127 - i) & 1
+    }
+    const mask = 0 - bit
+    zh = zh ^ (vh & mask)
+    zl = zl ^ (vl & mask)
+    const lsb = vl & 1
+    const nl = internal.word.lshr(vl, 1) | ((vh & 1) << 63)
+    const nh = internal.word.lshr(vh, 1) ^ ((0 - lsb) & r_high)
+    vh = nh
+    vl = nl
+    i = i + 1
+  }
+  return (zh, zl)
+}
+
+// One GHASH step: Y ^= X, then Y · H.
+def ghash_step(yh Int64, yl Int64, blk Bytes, hh Int64, hl Int64) (Int64, Int64) {
+  const xh = yh ^ internal.word.load_u64_be(blk, 0)
+  const xl = yl ^ internal.word.load_u64_be(blk, 8)
+  return gmul128(xh, xl, hh, hl)
+}
+
+// GHASH over the padded input: Y = (Y ^ X_i) · H per block.
+def ghash(hh Int64, hl Int64, data Bytes) (Int64, Int64) {
+  var yh = 0
+  var yl = 0
+  const blk = Bytes.new(16)
+  var off = 0
+  while off < data.length() {
+    var i = 0
+    while i < 16 {
+      set_byte(blk, i, get_byte(data, off + i))
+      i = i + 1
+    }
+    const (nh, nl) = ghash_step(yh, yl, blk, hh, hl)
+    yh = nh
+    yl = nl
+    off = off + 16
+  }
+  return (yh, yl)
+}
+
+// The GCM MAC input: aad || pad16(aad) || ct || pad16(ct) || the bit
+// lengths, big-endian.
+def mac_data(aad Bytes, ct Bytes) Bytes {
+  const apad = (16 - aad.length() % 16) % 16
+  const cpad = (16 - ct.length() % 16) % 16
+  const total = aad.length() + apad + ct.length() + cpad + 16
+  const out = Bytes.new(total)
+  zero_fill(out)
+  copy_into(out, aad, 0)
+  copy_into(out, ct, aad.length() + apad)
+  internal.word.store_u64_be(out, aad.length() + apad + ct.length() + cpad, aad.length() * 8)
+  internal.word.store_u64_be(out, aad.length() + apad + ct.length() + cpad + 8, ct.length() * 8)
+  return out
+}
+
+// The GCM setup: the hash key H = E(0^128) as its two big-endian
+// words, and the pre-counter block J0 with E(J0) beside it.
+def gcm_setup(rk Bytes, nr Int64, nonce Bytes) (Bytes, Bytes, Int64, Int64) {
+  const zero = Bytes.new(16)
+  zero_fill(zero)
+  const hblk = Bytes.new(16)
+  internal.aes.encrypt_block(rk, nr, zero, hblk)
+  const hh = internal.word.load_u64_be(hblk, 0)
+  const hl = internal.word.load_u64_be(hblk, 8)
+  const j0 = Bytes.new(16)
+  zero_fill(j0)
+  copy_into(j0, nonce, 0)
+  set_byte(j0, 15, 1)
+  const j0e = Bytes.new(16)
+  internal.aes.encrypt_block(rk, nr, j0, j0e)
+  return (j0, j0e, hh, hl)
+}
+
+// CBC's raw block chain over padded input, the IV the first block's
+// masking partner.
+def cbc_encrypt_raw(rk Bytes, nr Int64, iv Bytes, padded Bytes, out Bytes) Void {
+  const blk = Bytes.new(16)
+  const enc = Bytes.new(16)
+  var i = 0
+  while i < 16 {
+    set_byte(blk, i, get_byte(iv, i))
+    i = i + 1
+  }
+  var off = 0
+  while off < padded.length() {
+    i = 0
+    while i < 16 {
+      set_byte(blk, i, get_byte(blk, i) ^ get_byte(padded, off + i))
+      i = i + 1
+    }
+    internal.aes.encrypt_block(rk, nr, blk, enc)
+    i = 0
+    while i < 16 {
+      set_byte(out, off + i, get_byte(enc, i))
+      set_byte(blk, i, get_byte(enc, i))
+      i = i + 1
+    }
+    off = off + 16
+  }
+}
+
+// CBC's raw block chain in reverse, answering the padded bytes.
+def cbc_decrypt_raw(rk Bytes, nr Int64, iv Bytes, ct Bytes, out Bytes) Void {
+  const blk = Bytes.new(16)
+  const dec = Bytes.new(16)
+  var i = 0
+  while i < 16 {
+    set_byte(blk, i, get_byte(iv, i))
+    i = i + 1
+  }
+  var off = 0
+  while off < ct.length() {
+    i = 0
+    while i < 16 {
+      set_byte(blk, i, get_byte(ct, off + i))
+      i = i + 1
+    }
+    internal.aes.decrypt_block(rk, nr, blk, dec)
+    i = 0
+    while i < 16 {
+      set_byte(out, off + i, get_byte(dec, i) ^ get_byte(blk, i))
+      i = i + 1
+    }
+    i = 0
+    while i < 16 {
+      set_byte(blk, i, get_byte(ct, off + i))
+      i = i + 1
+    }
+    off = off + 16
+  }
+}
+
+// CTR's raw stream: keystream blocks from the counter block as given,
+// the full 128-bit counter stepping per block.
+def ctr_raw(rk Bytes, nr Int64, cb Bytes, data Bytes, out Bytes) Void {
+  const ks = Bytes.new(16)
+  var off = 0
+  while off < data.length() {
+    internal.aes.encrypt_block(rk, nr, cb, ks)
+    var i = 0
+    while i < 16 && off + i < data.length() {
+      set_byte(out, off + i, get_byte(data, off + i) ^ get_byte(ks, i))
+      i = i + 1
+    }
+    inc128(cb)
+    off = off + 16
+  }
+}

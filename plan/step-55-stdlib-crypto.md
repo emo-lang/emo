@@ -161,10 +161,10 @@ stays pure and five-target.
       vectors, the forgeries, and the boundary sizes against a
       self-checked Python reference, riding all five lists; and the
       typescript `get_u32_le` signed-read bug flushed and fixed.
-- [ ] **T55.10** — AES and GCM: the block cipher as T-tables (the
-      timing caveat documented), GHASH bitwise, CTR/CBC with PKCS#7
-      for the interop shapes; NIST vectors plus Go AES-GCM
-      companions, Wycheproof's GCM edge cases sampled.
+- [x] **T55.10** — AES and GCM in `crypto.cipher`: the block cipher
+      S-box byte-oriented (one derived table, proven through the FIPS
+      197 KATs before landing), CBC/CTR/GCM over Bytes; the golden
+      grows the AES panel, all fifty Go lines agreeing on five lists.
 - [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
       arithmetic over `Int64` limbs, the width decided by
       measurement (radix 2^26 five-limb is the fallback shape);

@@ -113,3 +113,56 @@ for var s = 0; s < 9; s = s + 1 {
 
 // ---- the empty box's tag, an input of its own
 println("empty: " + crypto.hex_encode(crypto.cipher.chacha20_poly1305_seal(k3, n3, Bytes.new(0), Bytes.new(0))))
+
+// ---- AES (FIPS 197) and its modes (SP 800-38A/38D): the three
+// block known answers, GCM's NIST cases, and the CTR/CBC boundary
+// sizes — every line pinned against Go's crypto/aes and crypto/cipher.
+const pt16 = from_hex("00112233445566778899aabbccddeeff")
+println("aes128 block: " + crypto.hex_encode(crypto.cipher.aes_encrypt_block(seq(16, 0), pt16)))
+println("aes128 unblock: " + crypto.hex_encode(crypto.cipher.aes_decrypt_block(seq(16, 0), crypto.cipher.aes_encrypt_block(seq(16, 0), pt16))))
+println("aes192 block: " + crypto.hex_encode(crypto.cipher.aes_encrypt_block(seq(24, 0), pt16)))
+println("aes192 unblock: " + crypto.hex_encode(crypto.cipher.aes_decrypt_block(seq(24, 0), crypto.cipher.aes_encrypt_block(seq(24, 0), pt16))))
+println("aes256 block: " + crypto.hex_encode(crypto.cipher.aes_encrypt_block(seq(32, 0), pt16)))
+println("aes256 unblock: " + crypto.hex_encode(crypto.cipher.aes_decrypt_block(seq(32, 0), crypto.cipher.aes_encrypt_block(seq(32, 0), pt16))))
+println("gcm case1: " + crypto.hex_encode(crypto.cipher.aes_gcm_seal(Bytes.new(16), Bytes.new(12), Bytes.new(0), Bytes.new(0))))
+println("gcm case2: " + crypto.hex_encode(crypto.cipher.aes_gcm_seal(Bytes.new(16), Bytes.new(12), Bytes.new(16), Bytes.new(0))))
+
+const ak = seq(32, 0x80)
+const an = from_hex("070000004041424344454647")
+const gsizes = [0, 1, 15, 16, 17, 63, 64, 65, 128]
+const gaads = [0, 15, 16, 17]
+for var gs = 0; gs < 9; gs = gs + 1 {
+  const ga = gs % 4
+  const gpt = seq(gsizes[gs], 0x40)
+  const gaad = seq(gaads[ga], 0xa0)
+  const box = crypto.cipher.aes_gcm_seal(ak, an, gpt, gaad)
+  println("gcm seal " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": " + crypto.hex_encode(box))
+  case crypto.cipher.aes_gcm_open(ak, an, box, gaad) {
+    (R.ok, back) -> {
+      if crypto.constant_time_compare(back, gpt) {
+        println("gcm open " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": ok")
+      } else {
+        println("gcm open " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": MISMATCH")
+      }
+    }
+    (R.error, why) -> { println(why) }
+  }
+}
+println("gcm128 seal: " + crypto.hex_encode(crypto.cipher.aes_gcm_seal(seq(16, 0), an, seq(40, 0x40), seq(12, 0xa0))))
+
+const aiv = seq(16, 0x10)
+for var ck = 0; ck < 2; ck = ck + 1 {
+  var akey = seq(16, 0)
+  if ck == 1 {
+    akey = seq(32, 0)
+  }
+  const cns = [0, 1, 15, 16, 17, 33]
+  for var cn = 0; cn < 6; cn = cn + 1 {
+    println("cbc" + (akey.length() * 8).to_string() + " " + cns[cn].to_string() + ": " + crypto.hex_encode(crypto.cipher.aes_cbc_encrypt(akey, aiv, seq(cns[cn], 0x40))))
+  }
+  const tns = [0, 1, 16, 17, 40]
+  for var tn = 0; tn < 5; tn = tn + 1 {
+    println("ctr" + (akey.length() * 8).to_string() + " " + tns[tn].to_string() + ": " + crypto.hex_encode(crypto.cipher.aes_ctr(akey, aiv, seq(tns[tn], 0x40))))
+  }
+}
+println("ctr carry: " + crypto.hex_encode(crypto.cipher.aes_ctr(seq(16, 0), from_hex("000000000000000000000000000000ff"), Bytes.new(32))))

@@ -3109,14 +3109,28 @@ error split, and the honesty sections.
       flushed the typescript `get_u32_le` signed-read bug
       (`CHECK.md`, fixed) and two block-boundary flaws in the new
       code itself.
-- [ ] **T55.10** — AES and GCM: the block cipher as T-tables
-      (provisional — the cache-timing caveat documented in the same
-      breath; the AES-NI C shim is the later optional hardening for
-      `c`), GCM's GHASH pure bitwise (no tables, no such caveat),
-      CTR/CBC with PKCS#7 for the interop shapes; NIST vectors plus
-      Go-generated AES-GCM companions, Wycheproof's GCM boundary
-      cases (short tags; nonce reuse is the caller's contract
-      violation and the doc says so) sampled.
+- [x] **T55.10** — AES and GCM in `crypto.cipher`: the block cipher
+      landed S-box byte-oriented rather than T-tables — one derived
+      table instead of five, the same SubBytes lookup caveat
+      documented in the same breath (branchless xtime and the field
+      multiply; the AES-NI C shim stays the later optional hardening
+      for `c`) — with the key expansion for 128/192/256, the cipher
+      and its inverse, CTR (full 128-bit big-endian counter, the
+      caller's IV copied), CBC with PKCS#7 (a bad padding the value
+      `(R.error, "crypto: invalid padding")`, the padded-oracle caveat
+      stated), and GCM — GHASH pure bitwise (branchless, no tables,
+      no such caveat), the 12-byte nonce, the 16-byte tag, nonce
+      reuse the caller's irrecoverable contract violation. The S-box
+      and its inverse were derived from the GF(2^8) inversion and the
+      affine map, proven through a Python AES against all three
+      FIPS 197 Appendix C known answers before landing. The golden
+      `examples/crypto_aead` grows the AES panel — the three KATs and
+      their decrypts, GCM's NIST cases 1 and 2, nine GCM sizes across
+      the block and pad16 boundaries, CBC and CTR at six lengths each
+      and a counter carry past the low byte — all fifty Go lines
+      agreeing byte for byte; five lists byte-identically. Found on
+      the way and fixed: `aes_ctr` mutated the caller's IV — the
+      counter block is copied now.
 - [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
       arithmetic over `Int64` limbs, the width decided by
       measurement (a 128-bit product is not known to be expressible;
