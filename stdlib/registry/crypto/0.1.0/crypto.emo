@@ -38,3 +38,63 @@ def constant_time_compare(a String, b String) Bool {
   }
   return diff == 0
 }
+
+// The lowercase hex rendering of bytes — two characters each, the
+// form every digest is read and compared in.
+def hex_encode(data String) String {
+  const src = data.to_bytes()
+  const n = src.length()
+  const digits = "0123456789abcdef".to_bytes()
+  const out = Bytes.new(n * 2)
+  var i = 0
+  while i < n {
+    const b = src.get(i)
+    out.set(i * 2, digits.get((b >> 4) & 0xF))
+    out.set(i * 2 + 1, digits.get(b & 0xF))
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+// The strict inverse: an even number of characters, both cases of
+// every hex digit accepted, and every other byte an
+// `(R.error, reason)` naming its offset — the decoder accepts exactly
+// what hex_encode produces and their case-insensitive kin, nothing
+// else.
+def hex_decode(text String) (R, String) {
+  const src = text.to_bytes()
+  const n = src.length()
+  if n % 2 == 1 {
+    return (R.error, "crypto: hex_decode odd length " + n.to_string())
+  }
+  const out = Bytes.new(n / 2)
+  var i = 0
+  while i < n {
+    const hi = hex_nibble(src.get(i))
+    if hi < 0 {
+      return (R.error, "crypto: hex_decode expects a hex digit at byte " + i.to_string())
+    }
+    const lo = hex_nibble(src.get(i + 1))
+    if lo < 0 {
+      return (R.error, "crypto: hex_decode expects a hex digit at byte " + (i + 1).to_string())
+    }
+    out.set(i / 2, hi * 16 + lo)
+    i = i + 2
+  }
+  return (R.ok, out.to_string())
+}
+
+// The digit's value 0–15, or −1 when the byte is not a hex digit at
+// all.
+def hex_nibble(b Int64) Int64 {
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  return 0 - 1
+}

@@ -1,0 +1,163 @@
+// The SHA-2 engine at the 32-bit width (FIPS 180-4): one compression
+// function behind SHA-256 and SHA-224, which differ only in their
+// initial words and their digest length. Words ride in Int64 masked
+// to 32 bits at every addition, so every shift and rotation is exact
+// and every target answers with the same bits. The public surface
+// lives in crypto.sha2; sibling internals are called through the full
+// qualified path, never through a wiring const (a module bound to a
+// name answers dynamic on the c target, and the dynamic world refuses
+// the bitwise operators).
+
+// The 64 round constants: the fractional parts of the cube roots of
+// the first 64 primes (FIPS 180-4 §4.2.2), most significant word
+// first.
+const k = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+  0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+  0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+  0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+  0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+  0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+  0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]
+
+// The addition mod 2^32: the one place every 32-bit sum goes through,
+// so the masking is a property of the engine and not of each call
+// site's discipline.
+def add32(x Int64, y Int64) Int64 {
+  return (x + y) & 0xFFFFFFFF
+}
+
+// The initial words into a fresh 32-byte state (FIPS 180-4 §5.3.3,
+// §5.3.4): SHA-256's are the fractional parts of the square roots of
+// the first eight primes; SHA-224's start from the SHA-256 chain at a
+// different point, per the spec.
+def iv256(state Bytes) Void {
+  internal.word.store_u32_be(state, 0, 0x6a09e667)
+  internal.word.store_u32_be(state, 4, 0xbb67ae85)
+  internal.word.store_u32_be(state, 8, 0x3c6ef372)
+  internal.word.store_u32_be(state, 12, 0xa54ff53a)
+  internal.word.store_u32_be(state, 16, 0x510e527f)
+  internal.word.store_u32_be(state, 20, 0x9b05688c)
+  internal.word.store_u32_be(state, 24, 0x1f83d9ab)
+  internal.word.store_u32_be(state, 28, 0x5be0cd19)
+}
+
+def iv224(state Bytes) Void {
+  internal.word.store_u32_be(state, 0, 0xc1059ed8)
+  internal.word.store_u32_be(state, 4, 0x367cd507)
+  internal.word.store_u32_be(state, 8, 0x3070dd17)
+  internal.word.store_u32_be(state, 12, 0xf70e5939)
+  internal.word.store_u32_be(state, 16, 0xffc00b31)
+  internal.word.store_u32_be(state, 20, 0x68581511)
+  internal.word.store_u32_be(state, 24, 0x64f98fa7)
+  internal.word.store_u32_be(state, 28, 0xbefa4fa4)
+}
+
+// One compression step over the 64-byte block at off: the message
+// schedule through a 16-word rolling window and the 64 rounds, the
+// working variables folded back into state at the end. The block
+// bytes are read, never written.
+def compress(state Bytes, block Bytes, off Int64) Void {
+  var a = internal.word.load_u32_be(state, 0)
+  var b = internal.word.load_u32_be(state, 4)
+  var c = internal.word.load_u32_be(state, 8)
+  var d = internal.word.load_u32_be(state, 12)
+  var e = internal.word.load_u32_be(state, 16)
+  var f = internal.word.load_u32_be(state, 20)
+  var g = internal.word.load_u32_be(state, 24)
+  var h = internal.word.load_u32_be(state, 28)
+  const w = Bytes.new(64)
+  var t = 0
+  while t < 16 {
+    internal.word.store_u32_be(w, t * 4, internal.word.load_u32_be(block, off + t * 4))
+    t = t + 1
+  }
+  t = 0
+  while t < 64 {
+    if t >= 16 {
+      const wi = (t & 15) * 4
+      const w15 = internal.word.load_u32_be(w, ((t + 1) & 15) * 4)
+      const w2 = internal.word.load_u32_be(w, ((t + 14) & 15) * 4)
+      const w7 = internal.word.load_u32_be(w, ((t + 9) & 15) * 4)
+      const w16 = internal.word.load_u32_be(w, wi)
+      const ws0 = (internal.word.rotr32(w15, 7) ^ internal.word.rotr32(w15, 18)) ^ (w15 >> 3)
+      const ws1 = (internal.word.rotr32(w2, 17) ^ internal.word.rotr32(w2, 19)) ^ (w2 >> 10)
+      internal.word.store_u32_be(w, wi, add32(add32(add32(ws1, w7), ws0), w16))
+    }
+    const bs1 = (internal.word.rotr32(e, 6) ^ internal.word.rotr32(e, 11)) ^ internal.word.rotr32(e, 25)
+    const ch = (e & f) ^ (~e & g)
+    const temp1 = add32(add32(add32(add32(h, bs1), ch), k[t]), internal.word.load_u32_be(w, (t & 15) * 4))
+    const bs0 = (internal.word.rotr32(a, 2) ^ internal.word.rotr32(a, 13)) ^ internal.word.rotr32(a, 22)
+    const maj = ((a & b) ^ (a & c)) ^ (b & c)
+    const temp2 = add32(bs0, maj)
+    h = g
+    g = f
+    f = e
+    e = add32(d, temp1)
+    d = c
+    c = b
+    b = a
+    a = add32(temp1, temp2)
+    t = t + 1
+  }
+  internal.word.store_u32_be(state, 0, add32(internal.word.load_u32_be(state, 0), a))
+  internal.word.store_u32_be(state, 4, add32(internal.word.load_u32_be(state, 4), b))
+  internal.word.store_u32_be(state, 8, add32(internal.word.load_u32_be(state, 8), c))
+  internal.word.store_u32_be(state, 12, add32(internal.word.load_u32_be(state, 12), d))
+  internal.word.store_u32_be(state, 16, add32(internal.word.load_u32_be(state, 16), e))
+  internal.word.store_u32_be(state, 20, add32(internal.word.load_u32_be(state, 20), f))
+  internal.word.store_u32_be(state, 24, add32(internal.word.load_u32_be(state, 24), g))
+  internal.word.store_u32_be(state, 28, add32(internal.word.load_u32_be(state, 28), h))
+}
+
+// The digest without disturbing the inputs: a copy of the state, the
+// buffered bytes behind buf_off, the 0x80 terminator, the zero run,
+// and the bit length (total * 8, wrapping mod 2^64 exactly as the
+// spec reads it) — one padding block when the message ends in the
+// first 55 bytes of a block, two when it does not. The first outlen
+// bytes of the final state are the digest.
+def finish(state Bytes, buf Bytes, buf_off Int64, buflen Int64, total Int64, outlen Int64) String {
+  const st = Bytes.new(32)
+  var i = 0
+  while i < 32 {
+    st.set(i, state.get(i))
+    i = i + 1
+  }
+  const pad = Bytes.new(128)
+  i = 0
+  while i < 128 {
+    pad.set(i, 0)
+    i = i + 1
+  }
+  i = 0
+  while i < buflen {
+    pad.set(i, buf.get(buf_off + i))
+    i = i + 1
+  }
+  pad.set(buflen, 0x80)
+  if buflen < 56 {
+    internal.word.store_u64_be(pad, 56, total << 3)
+    compress(st, pad, 0)
+  } else {
+    internal.word.store_u64_be(pad, 120, total << 3)
+    compress(st, pad, 0)
+    compress(st, pad, 64)
+  }
+  const out = Bytes.new(outlen)
+  i = 0
+  while i < outlen {
+    out.set(i, st.get(i))
+    i = i + 1
+  }
+  return out.to_string()
+}

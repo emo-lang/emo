@@ -103,10 +103,15 @@ stays pure and five-target.
       the bitwise operators — the package's modules call their
       internals through the direct qualified path (`word.lshr(…)`),
       never through a wiring const.
-- [ ] **T55.2** — SHA-256 and SHA-224 (FIPS 180-4): streaming
-      (write/sum/reset) and one-shot over 32-bit words held in
-      `Int64`; the golden `examples/crypto_hash` takes the RFC 6234
-      suite plus Go `crypto/sha256` companions.
+- [x] **T55.2** — SHA-256 and SHA-224 (FIPS 180-4): streaming
+      (write/sum/reset/size) and one-shot in `crypto.sha2` over
+      `internal/sha256.emo`'s engine (the hasher's mutable state
+      riding one `Bytes` box — fields are assigned only inside
+      init); the golden `examples/crypto_hash` takes the RFC 6234
+      suite plus Go `crypto/sha256` companions, with the streaming,
+      sum, reset, and hex panels; `examples/crypto_hash_million`
+      (c-only) rides the million-`a` vector; `crypto.hex_encode`/
+      `hex_decode` joined the root.
 - [ ] **T55.3** — The SHA-512 family (512/384/512-224/512-256) over
       64-bit words through T55.1's shift discipline, and the legacy
       pair — SHA-1 and MD5 in `crypto.legacy`; the golden grows,

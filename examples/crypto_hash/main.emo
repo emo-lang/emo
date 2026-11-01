@@ -1,0 +1,119 @@
+require "crypto"
+
+// The SHA-2 vectors: FIPS 180-4 and RFC 6234's one-shot suite, the
+// padding boundaries, a high-bit byte sweep — each digest pinned
+// against the value Go's crypto/sha256 answers for the same bytes —
+// then the streaming semantics and the hex codec's edges.
+
+def both(label String, data String) Void {
+  println("sha256 " + label + ": " + crypto.hex_encode(crypto.sha2.sha256(data)))
+  println("sha224 " + label + ": " + crypto.hex_encode(crypto.sha2.sha224(data)))
+}
+
+// n bytes, every one carrying the value n — the lengths that sit on
+// the padding boundaries (55/56/57 around the first length slot,
+// 63/64/65 around a block, 119/120/127/128 around the second).
+def repeat_byte(n Int64) String {
+  const b = Bytes.new(n)
+  var i = 0
+  while i < n {
+    b.set(i, n)
+    i = i + 1
+  }
+  return b.to_string()
+}
+
+const long56 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+const long112 = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+const quick = "The quick brown fox jumps over the lazy dog"
+
+both("empty", "")
+both("abc", "abc")
+both("56", long56)
+both("112", long112)
+both("quickbrown", quick)
+
+const edges = [1, 55, 56, 57, 63, 64, 65, 119, 120, 127, 128]
+for var e = 0; e < 11; e = e + 1 {
+  both("repeat " + edges[e].to_string(), repeat_byte(edges[e]))
+}
+
+const sweep = Bytes.new(256)
+for var i = 0; i < 256; i = i + 1 {
+  sweep.set(i, i)
+}
+both("bytes 0..255", sweep.to_string())
+
+// ---- streaming: the same bytes through every chunk size answer the
+// one-shot digest, so each line below repeats `sha256 quickbrown`.
+const qb = quick.to_bytes()
+const ql = qb.length()
+const sizes = [1, 3, 7, 13, 64, 65]
+for var s = 0; s < 6; s = s + 1 {
+  const size = sizes[s]
+  const d = crypto.sha2.new()
+  var off = 0
+  while off < ql {
+    var take = size
+    if ql - off < take {
+      take = ql - off
+    }
+    const piece = Bytes.new(take)
+    var j = 0
+    while j < take {
+      piece.set(j, qb.get(off + j))
+      j = j + 1
+    }
+    d.write(piece.to_string())
+    off = off + take
+  }
+  println("chunks " + size.to_string() + ": " + crypto.hex_encode(d.sum()))
+}
+
+// ---- sum leaves the state standing: two sums agree, a write after a
+// sum continues the stream, reset starts over. The lines repeat the
+// `abc` and `abcd` digests.
+const d = crypto.sha2.new()
+d.write("ab")
+d.write("c")
+println("sum once: " + crypto.hex_encode(d.sum()))
+println("sum twice: " + crypto.hex_encode(d.sum()))
+d.write("d")
+println("after more: " + crypto.hex_encode(d.sum()))
+d.reset()
+d.write("abc")
+println("after reset: " + crypto.hex_encode(d.sum()))
+println("size: " + d.size().to_string() + " block: " + d.block_size().to_string())
+const d224 = crypto.sha2.new224()
+d224.write("ab")
+d224.write("c")
+println("sha224 stream: " + crypto.hex_encode(d224.sum()))
+println("size224: " + d224.size().to_string() + " block: " + d224.block_size().to_string())
+
+// ---- the hex codec: the empty string both ways, both cases of a
+// digit accepted, and every rejection naming its offset.
+println("hex empty: [" + crypto.hex_encode("") + "]")
+case crypto.hex_decode("") {
+  (R.ok, v) -> { println("hex empty decode: [" + crypto.hex_encode(v) + "]") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("BA7816bF") {
+  (R.ok, v) -> { println("hex mixed case: " + crypto.hex_encode(v)) }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("abc") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("zz") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("ab0g") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("abz0") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}

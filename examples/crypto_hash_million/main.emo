@@ -1,0 +1,28 @@
+require "crypto"
+
+// RFC 6234's million-`a` vector through the streaming path — a
+// million bytes, 126 chunks of 7919 and one tail of 2206. It rides
+// the compiled goldens only: nineteen seconds on the interpreter is
+// the tree-walk's business, not the algorithm's.
+
+const chunk = Bytes.new(7919)
+var i = 0
+while i < 7919 {
+  chunk.set(i, 97)
+  i = i + 1
+}
+const tail = Bytes.new(2206)
+i = 0
+while i < 2206 {
+  tail.set(i, 97)
+  i = i + 1
+}
+
+const d = crypto.sha2.new()
+var written = 0
+while written < 997794 {
+  d.write(chunk.to_string())
+  written = written + 7919
+}
+d.write(tail.to_string())
+println("sha256 million a: " + crypto.hex_encode(d.sum()))

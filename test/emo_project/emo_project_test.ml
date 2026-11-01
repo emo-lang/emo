@@ -3505,6 +3505,12 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "base64_demo")
           "base64_demo" "main.emo");
+    tc "crypto_hash compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "crypto_hash")
+          "crypto_hash" "main.emo");
     tc "math_special compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;

@@ -1,0 +1,121 @@
+// The SHA-2 family (FIPS 180-4): SHA-256 and SHA-224 — one-shot or
+// streaming. A digest is raw bytes as String, the byte carrier this
+// standard library reads everywhere; the hex rendering is
+// crypto.hex_encode. The machinery is internal.sha256's engine, one
+// compression function behind both widths.
+//
+// Emo's fields are assigned only inside init, so the hasher's mutable
+// state lives in one Bytes — the working words at 0, the pending
+// block at 32, the pending count at 96, the total byte count at 104 —
+// mutated through the word layer's stores, the same way plot's buffer
+// mutates the List it holds.
+
+class Digest {
+  def init(is224 Bool) {
+    self.is224 = is224
+    self.box = Bytes.new(112)
+    if is224 {
+      internal.sha256.iv224(self.box)
+    } else {
+      internal.sha256.iv256(self.box)
+    }
+  }
+
+  // Absorb data: fill the pending block, compress every full block,
+  // keep the tail. The byte count is the total across writes, and the
+  // bit length the spec wants is that count times eight mod 2^64 —
+  // the wrap is the spec, not an accident.
+  def write(data String) Void {
+    const src = data.to_bytes()
+    const n = src.length()
+    var i = 0
+    const buflen = internal.word.load_u64_be(self.box, 96)
+    if buflen > 0 {
+      var take = 64 - buflen
+      if n < take {
+        take = n
+      }
+      while i < take {
+        self.box.set(32 + buflen + i, src.get(i))
+        i = i + 1
+      }
+      const bl = buflen + take
+      internal.word.store_u64_be(self.box, 96, bl)
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + take)
+      if bl == 64 {
+        internal.sha256.compress(self.box, self.box, 32)
+        internal.word.store_u64_be(self.box, 96, 0)
+      }
+    }
+    while i + 64 <= n {
+      internal.sha256.compress(self.box, src, i)
+      i = i + 64
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + 64)
+    }
+    if i < n {
+      var j = 0
+      while j < n - i {
+        self.box.set(32 + j, src.get(i + j))
+        j = j + 1
+      }
+      internal.word.store_u64_be(self.box, 96, n - i)
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + (n - i))
+    }
+  }
+
+  // The digest so far, leaving the state standing: sum twice and the
+  // answers agree, write after sum and the stream continues.
+  def sum() String {
+    if self.is224 {
+      return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 28)
+    }
+    return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 32)
+  }
+
+  def reset() Void {
+    if self.is224 {
+      internal.sha256.iv224(self.box)
+    } else {
+      internal.sha256.iv256(self.box)
+    }
+    internal.word.store_u64_be(self.box, 96, 0)
+    internal.word.store_u64_be(self.box, 104, 0)
+  }
+
+  // The digest length in bytes; the block length is the algorithm's
+  // 64 and carries no state.
+  def size() Int64 {
+    if self.is224 {
+      return 28
+    }
+    return 32
+  }
+
+  def block_size() Int64 {
+    return 64
+  }
+}
+
+// A fresh SHA-256 hasher.
+def new() Digest {
+  return Digest.new(false)
+}
+
+// A fresh SHA-224 hasher.
+def new224() Digest {
+  return Digest.new(true)
+}
+
+// The one-shot SHA-256 digest of data.
+def sha256(data String) String {
+  const d = Digest.new(false)
+  d.write(data)
+  return d.sum()
+}
+
+// The one-shot SHA-224 digest of data.
+def sha224(data String) String {
+  const d = Digest.new(true)
+  d.write(data)
+  return d.sum()
+}
