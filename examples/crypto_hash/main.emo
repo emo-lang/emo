@@ -213,3 +213,44 @@ def iface_digest(h crypto.hash.Hash) String {
 }
 println("iface256: " + iface_digest(crypto.sha2.new()))
 println("iface512: " + iface_digest(crypto.sha2.new512()))
+
+// ---- HKDF (RFC 5869): the SHA-256 test cases, the wide family on
+// tc1's inputs, and the expansion fed the RFC's own PRK through the
+// hex decoder — each output pinned against the Go oracle.
+def seq_bytes(count Int64, start Int64) String {
+  const b = Bytes.new(count)
+  var i = 0
+  while i < count {
+    b.set(i, start + i)
+    i = i + 1
+  }
+  return b.to_string()
+}
+
+def hex_str(text String) String {
+  case crypto.hex_decode(text) {
+    (R.ok, v) -> { return v }
+    (R.error, why) -> { println(why) }
+  }
+  return ""
+}
+
+const ikm22 = fill(22, 0x0b)
+const salt13 = seq_bytes(13, 0)
+const info10 = seq_bytes(10, 0xf0)
+
+println("hkdf256 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(ikm22, salt13, info10, 42)))
+println("hkdf512 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha512(ikm22, salt13, info10, 42)))
+println("hkdf384 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha384(ikm22, salt13, info10, 42)))
+println("hkdf512_256 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha512_256(ikm22, salt13, info10, 42)))
+println("hkdf256 tc2: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(seq_bytes(80, 0), seq_bytes(80, 0x60), seq_bytes(16, 0xb0), 82)))
+println("hkdf256 tc3: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(ikm22, "", "", 42)))
+println("hkdf256expand tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha256_expand(hex_str("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"), info10, 42)))
+
+// ---- PBKDF2 (RFC 8018): the light iterations here — RFC 7914's
+// vectors and the wide family beside them; the classic 4096 lives in
+// crypto_kdf, the compiled golden.
+println("pbkdf2_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd", "salt", 1, 64)))
+println("pbkdf2_256 c2: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd", "salt", 2, 64)))
+println("pbkdf2_512 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512("passwd", "salt", 1, 64)))
+println("pbkdf2_512_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512_256("passwd", "salt", 1, 64)))

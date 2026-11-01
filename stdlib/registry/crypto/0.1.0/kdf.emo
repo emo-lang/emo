@@ -1,0 +1,120 @@
+// The key-derivation surface: HKDF (RFC 5869) and PBKDF2 (RFC 8018)
+// over the SHA-2 family. HKDF-Extract is not duplicated here — it is
+// `hmac_<alg>(salt, ikm)` exactly, with the salt replaced by
+// hash-length zero bytes when absent, which the combined function
+// below does for you. Derived keys are raw bytes as String; the
+// output-length caps and the one-iteration floor are the
+// construction's own rules and raise when violated — the iteration
+// count itself is the caller's number, no work-factor policy lives
+// here.
+
+// The HKDF-SHA-256 output of length bytes: extract from ikm under
+// salt (zero bytes when empty), then expand over info.
+def hkdf_sha256(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(32)
+  }
+  return hkdf_sha256_expand(internal.hmac.hmac(1, 64, prk, ikm), info, length)
+}
+
+// The HKDF-SHA-256 expansion of a pseudo-random key over info.
+def hkdf_sha256_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(1, 32, 64, prk, info, length)
+}
+
+// The HKDF-SHA-224 output of length bytes.
+def hkdf_sha224(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(28)
+  }
+  return hkdf_sha224_expand(internal.hmac.hmac(2, 64, prk, ikm), info, length)
+}
+
+def hkdf_sha224_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(2, 28, 64, prk, info, length)
+}
+
+// The HKDF-SHA-512 output of length bytes.
+def hkdf_sha512(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(64)
+  }
+  return hkdf_sha512_expand(internal.hmac.hmac(3, 128, prk, ikm), info, length)
+}
+
+def hkdf_sha512_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(3, 64, 128, prk, info, length)
+}
+
+// The HKDF-SHA-384 output of length bytes.
+def hkdf_sha384(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(48)
+  }
+  return hkdf_sha384_expand(internal.hmac.hmac(4, 128, prk, ikm), info, length)
+}
+
+def hkdf_sha384_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(4, 48, 128, prk, info, length)
+}
+
+// The HKDF-SHA-512/224 output of length bytes.
+def hkdf_sha512_224(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(28)
+  }
+  return hkdf_sha512_224_expand(internal.hmac.hmac(5, 128, prk, ikm), info, length)
+}
+
+def hkdf_sha512_224_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(5, 28, 128, prk, info, length)
+}
+
+// The HKDF-SHA-512/256 output of length bytes.
+def hkdf_sha512_256(ikm String, salt String, info String, length Int64) String {
+  var prk = salt
+  if prk == "" {
+    prk = internal.kdf.zeros(32)
+  }
+  return hkdf_sha512_256_expand(internal.hmac.hmac(6, 128, prk, ikm), info, length)
+}
+
+def hkdf_sha512_256_expand(prk String, info String, length Int64) String {
+  return internal.kdf.expand(6, 32, 128, prk, info, length)
+}
+
+// The PBKDF2-HMAC-SHA-256 key of length bytes from password and salt,
+// iterated the caller's number of times.
+def pbkdf2_sha256(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(1, 32, 64, password, salt, iterations, length)
+}
+
+// The PBKDF2-HMAC-SHA-224 key of length bytes.
+def pbkdf2_sha224(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(2, 28, 64, password, salt, iterations, length)
+}
+
+// The PBKDF2-HMAC-SHA-512 key of length bytes.
+def pbkdf2_sha512(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(3, 64, 128, password, salt, iterations, length)
+}
+
+// The PBKDF2-HMAC-SHA-384 key of length bytes.
+def pbkdf2_sha384(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(4, 48, 128, password, salt, iterations, length)
+}
+
+// The PBKDF2-HMAC-SHA-512/224 key of length bytes.
+def pbkdf2_sha512_224(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(5, 28, 128, password, salt, iterations, length)
+}
+
+// The PBKDF2-HMAC-SHA-512/256 key of length bytes.
+def pbkdf2_sha512_256(password String, salt String, iterations Int64, length Int64) String {
+  return internal.kdf.pbkdf2(6, 32, 128, password, salt, iterations, length)
+}

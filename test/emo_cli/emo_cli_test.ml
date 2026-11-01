@@ -690,9 +690,12 @@ let c_goldens =
        machine; crypto_hash_million: RFC 6234's million-a vector
        through the streaming path — nineteen seconds on the
        interpreter, a quarter second compiled, so this golden is
-       c-only *)
+       c-only; crypto_kdf: PBKDF2 at the classic 4096 iterations — a
+       minute interpreted, two seconds compiled, c-only for the same
+       reason *)
     "crypto_hash";
     "crypto_hash_million";
+    "crypto_kdf";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

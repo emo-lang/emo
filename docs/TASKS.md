@@ -3008,12 +3008,23 @@ error split, and the honesty sections.
       131-byte keys forcing the hash-the-key path) across all six
       algorithms; interpreter, `c`, and ocaml byte-identical;
       `dune test` green.
-- [ ] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) over the
-      `Hash` interface: extract/expand with HKDF's output-length cap
-      stated, PBKDF2 the iterated HMAC with the count a plain
-      `Int64` argument — no work-factor policy in the package, the
-      caller names the numbers; RFC vectors plus Go companions in
-      the golden.
+- [x] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) in
+      `crypto.kdf` over `internal/kdf.emo`: the combined HKDF and
+      its expand step for all six SHA-2 variants, extract documented
+      as the HMAC call it is (not re-exported) with the absent salt
+      as hash-length zero bytes; the output-length cap (255 hash
+      lengths), a negative length, and an iteration count below one
+      raise — the construction's own rules — while the count itself
+      is a plain `Int64` argument, no work-factor policy in the
+      package; the engine rides internal.hmac's one-shots, the
+      dependency one-way; the golden grows to 145 Go-agreed lines —
+      RFC 5869's tc1–tc3 across the family (tc2's 80-byte inputs
+      included), the expansion fed the RFC's own PRK through the hex
+      decoder, RFC 7914's PBKDF2 vectors plus the wide family — and
+      `examples/crypto_kdf` (c-only, like the million-`a`) pins the
+      classic 4096 iterations, the shape every off-by-one turns
+      wrong first: a minute interpreted, two seconds compiled;
+      interpreter, `c`, and ocaml byte-identical; `dune test` green.
 - [ ] **T55.6** — SHA-3 and SHAKE (FIPS 202): Keccak-f[1600] over
       64-bit lanes (T55.1's rotations), the four fixed-output
       hashes, SHAKE128/256 as the XOF with explicit output length;

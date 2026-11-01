@@ -125,10 +125,13 @@ stays pure and five-target.
       one-shots through a variant code so no module cycle forms; the
       golden grows to 134 Go-agreed vectors with RFC 4231's cases
       (the 131-byte keys included).
-- [ ] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) over the
-      `Hash` interface; the iteration count a plain argument — no
-      work-factor policy in the package; RFC vectors plus Go
-      companions.
+- [x] **T55.5** — HKDF and PBKDF2 in `crypto.kdf` over
+      `internal/kdf.emo` (extract documented as the HMAC call it
+      is; the 255-hash-length cap and the iteration floor raise; the
+      count a plain argument); the golden at 145 Go-agreed lines
+      with RFC 5869's cases and RFC 7914's PBKDF2, and
+      `examples/crypto_kdf` (c-only) pinning the 4096-iteration
+      classic.
 - [ ] **T55.6** — SHA-3 and SHAKE (FIPS 202): Keccak-f[1600] over
       64-bit lanes, the four fixed-output hashes, SHAKE128/256 with
       explicit output length; KATs plus Go companions.
