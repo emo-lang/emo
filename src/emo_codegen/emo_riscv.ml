@@ -143,6 +143,12 @@ type frame = {
          Int64/Float64 payloads instead of tagged cells — typed params
          and numeric-typed bindings; a pattern binding holds the tagged
          scrutinee word and drops any name it rebinds *)
+  mutable pool : int;
+      (* the frame pool's item ceiling (T8.7's pool): the births that
+         push between two drains, the maximum the emission-order walk
+         finds; zero means no pool area at all *)
+  fname : string; (* this function's own IR name — the self-tail's test *)
+  body_start : string; (* the label past the prologue: the rebind's home *)
 }
 
 type class_info = {
@@ -177,10 +183,11 @@ type env = {
   classes : (string * class_info) list; (* display name -> info *)
   ifaces : (string * (string * int) list) list; (* display -> method/arity *)
   mutable enums : ((string * string) * int) list; (* (enum, member) -> id *)
-  mutable loops : (string * string) list;
-      (* each enclosing loop's (exit label, continue label), innermost
-         first: break jumps to the exit, continue to the head — or to
-         the post label, on a `for`, so the post runs first *)
+  mutable loops : (string * string * int) list;
+      (* each enclosing loop's (exit label, continue label, owned mark),
+         innermost first: break jumps to the exit, continue to the head
+         — or to the post label, on a `for`, so the post runs first —
+         and both release what the loop's body bound before jumping *)
   fforeigns : string list;
       (* `foreign def` names: the binding is skipped, a call refuses *)
   fsigs : (string * conv) list;
@@ -196,6 +203,19 @@ type env = {
   mutable spawns : (string * spawn_callee) list;
       (* the spawn entry thunks queued for emission (T3.3): label,
          callee — newest first *)
+  mutable owned : (string * int) list;
+      (* the bindings holding their own claims (T8.7's pool): name and
+         slot offset, innermost last — a scope's exit releases what its
+         body bound; a re-binding of an outer name never enters here,
+         its flat slot's claim rides the write barriers instead *)
+  mutable bound : string list;
+      (* the names bound so far, in emission order: a Let of a name
+         already here re-binds the flat slot and takes the write
+         barrier; a fresh one takes its own claim *)
+  mutable pool_live : int;
+      (* the births pooled since the last drain, the emission's own
+         mirror of the pre-pass's sizing walk — the drain fires where
+         this is positive *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -339,6 +359,95 @@ let sp_store env reg (off : int) : unit =
     put env "    li t6, %d\n" off;
     put env "    add t6, t6, sp\n";
     put env "    sd %s, 0(t6)\n" reg
+  end
+
+(* ---- The identity reclamation's emitter side (T8.7's pool) ----
+
+   The runtime owns the counts and the freelist; the emitter owns the
+   discipline, the c target's shape (CHECK.md, the T23.5 gate): every
+   identity birth pools its own claim, every read takes a claim of the
+   reader's own, every escape into longer-lived storage retains, every
+   binding releases at its scope's exit, and the statement boundary
+   drains the frame's pool. The pre-pass below sizes each frame's pool
+   by walking the body in emission order — a birth the emitter pools
+   that the walk missed is a loud overflow, never a silent one. *)
+
+(* Whether a value of this type may be an identity the claims track:
+   the Unknown of a dynamic body, the class and interface names, the
+   Box, the closure. The value kinds — the numerics, the string, the
+   tuple, the array, the enum family, the Pid — carry no claims, and
+   the Atomic crosses processes, so its cell carries no count either:
+   the helpers would answer no-ops, and the emitter skips the work. *)
+let may_own (t : Emo_check.t) : bool =
+  match t with
+  | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.BoxType _ | Emo_check.FuncType _ ->
+      true
+  | _ -> false
+
+(* The frame pool's count word: [count][items...] past the last slot. *)
+let pool_offset (f : frame) : int = 8 + (8 * (f.named + f.temps))
+
+(* The pool push: a0 = the word, a1 = the count word's address, a2 the
+   ceiling the pre-pass sized. *)
+let pool_put env (f : frame) : unit =
+  put env "    addi a1, sp, %d\n" (pool_offset f);
+  put env "    li a2, %d\n" f.pool;
+  put env "    call emo_pool_put\n"
+
+(* The statement boundary: the frame's pooled births release together. *)
+let pool_drain env (f : frame) : unit =
+  (* unconditional at the boundary: the runtime drain answers at once
+     when the pool is empty, and the emission's live counter is a
+     running estimate, never the gate (T8.7's pool) *)
+  if f.pool > 0 then begin
+    put env "    addi a0, sp, %d\n" (pool_offset f);
+    put env "    call emo_drain\n";
+    env.pool_live <- 0
+  end
+
+(* The pooled birth: a0 holds a word whose claim the frame's pool now
+   owns — the birth's own, transferred (T8.7's pool). The live counter
+   rides the pre-pass's mirror. *)
+let pool_result env (t : Emo_check.t) : unit =
+  if may_own t then
+    match env.cur with
+    | Some f ->
+        env.pool_live <- env.pool_live + 1;
+        pool_put env f
+    | None -> ()
+
+(* The read's claim: the reader takes a word of its own and pools it —
+   the holder's claim never covered the reading statement (a barrier on
+   the holder could land mid-statement). *)
+let read_claim env (t : Emo_check.t) : unit =
+  if may_own t then
+    match env.cur with
+    | Some f ->
+        env.pool_live <- env.pool_live + 1;
+        put env "    call emo_retain\n";
+        pool_put env f
+    | None -> ()
+
+(* The write barrier: a0 arrives holding the new word, answers holding
+   it again. The slot's new claim is taken before the old drops — a
+   self-assignment keeps its word — and the store stays the caller's. *)
+let emit_barrier env (old_off : int) : unit =
+  put env "    mv a5, a0\n";
+  put env "    call emo_retain\n";
+  put env "    ld a0, %d(sp)\n" old_off;
+  put env "    call emo_release\n";
+  put env "    mv a0, a5\n"
+
+(* A scope's exit: the bindings its body took claims for release them,
+   innermost first. [mark] is the owned stack's depth at the entry. *)
+let rec unwind_owned env (mark : int) : unit =
+  if List.length env.owned > mark then begin
+    let _, off = List.hd env.owned in
+    env.owned <- List.tl env.owned;
+    put env "    ld a0, %d(sp)\n" off;
+    put env "    call emo_release\n";
+    unwind_owned env mark
   end
 
 (* ---- The pre-pass ---- *)
@@ -595,6 +704,145 @@ and collect_stmts (f : frame) (stmts : Emo_ir.stmt list) : unit =
       collect_stmt f s;
       collect_stmts f rest
 
+(* The pool pre-pass: the emission-order walk that sizes the frame's
+   pool (T8.7's pool) — the births that push between two drains, the
+   maximum over the whole body. The mirror of emit_stmt's order is the
+   contract: a construct's own expressions count before its nested
+   statements, a loop's test counts again at the back edge (the body's
+   last births are still pooled when the test re-runs), the for's post
+   drains before it runs, and the receive's scan drains before it
+   parks. A drain fires wherever this walk resets, and once more at the
+   function's exit. *)
+let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
+  match e.Emo_ir.desc with
+  | Call { func; args; _ } -> (
+      List.iter (pool_expr env ctr) args;
+      match List.assoc_opt func env.fsigs with
+      | Some conv ->
+          if conv.cresult = R_word && may_own e.Emo_ir.ety then incr ctr
+      | None -> if may_own e.Emo_ir.ety then incr ctr)
+  | Method { self_; args; _ } ->
+      pool_expr env ctr self_;
+      List.iter (pool_expr env ctr) args;
+      if may_own e.Emo_ir.ety then incr ctr
+  | Call_value { f; args; _ } ->
+      pool_expr env ctr f;
+      List.iter (pool_expr env ctr) args;
+      if may_own e.Emo_ir.ety then incr ctr
+  | Box_new x ->
+      pool_expr env ctr x;
+      incr ctr
+  | Atomic_new x -> pool_expr env ctr x (* the cell carries no count *)
+  | Closure _ -> incr ctr
+  | Field_read { obj; _ } ->
+      pool_expr env ctr obj;
+      if may_own e.Emo_ir.ety then incr ctr
+  | Index (b, i) ->
+      pool_expr env ctr b;
+      pool_expr env ctr i;
+      if may_own e.Emo_ir.ety then incr ctr
+  | Unary (_, x) -> pool_expr env ctr x
+  | Binary (_, l, r) ->
+      pool_expr env ctr l;
+      pool_expr env ctr r
+  | Cond { c; t; e } ->
+      pool_expr env ctr c;
+      pool_expr env ctr t;
+      pool_expr env ctr e
+  | Interpolate es -> List.iter (pool_expr env ctr) es
+  | Tuple es | Array_lit es -> List.iter (pool_expr env ctr) es
+  | Map_lit pairs -> List.iter (pool_expr env ctr) pairs
+  | Spawn_value { f; args } ->
+      pool_expr env ctr f;
+      List.iter (pool_expr env ctr) args
+  | Do_spawn { args; _ } -> List.iter (pool_expr env ctr) args
+  | Builtin { args; _ } | Runtime_impl { args; _ } ->
+      List.iter (pool_expr env ctr) args
+  | List_new x | Bytes_new x -> pool_expr env ctr x
+  | Make_exception { message; data } ->
+      pool_expr env ctr message;
+      Option.iter (pool_expr env ctr) data
+  | Var _ | Const _ | Type_ref _ | Global _ | Global_var _ | Builder_new
+  | Make_enum _ ->
+      ()
+
+let rec pool_stmt env (ctr : int ref) (f : frame) (s : Emo_ir.stmt) : unit =
+  (* the statement boundary: the drain fires where the pool holds births *)
+  if !ctr > f.pool then f.pool <- !ctr;
+  if !ctr > 0 then ctr := 0;
+  match s with
+  | Effect e -> pool_expr env ctr e
+  | Let { init; _ } -> pool_expr env ctr init
+  | Assign_var { value; _ } -> pool_expr env ctr value
+  | If { cond; then_; else_ } ->
+      pool_expr env ctr cond;
+      List.iter (pool_stmt env ctr f) then_;
+      List.iter (pool_stmt env ctr f) else_
+  | Case { scrutinee; branches } ->
+      pool_expr env ctr scrutinee;
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          List.iter (pool_stmt env ctr f) b.Emo_ir.body)
+        branches
+  | Return_stmt e -> pool_expr env ctr e
+  | Set_field { self_; value; _ } ->
+      pool_expr env ctr self_;
+      pool_expr env ctr value
+  | Send { target; message } ->
+      pool_expr env ctr target;
+      pool_expr env ctr message
+  | Receive { branches } ->
+      List.iter
+        (fun (b : Emo_ir.branch) ->
+          incr ctr;
+          (* the copy-out's clone pools at the site *)
+          List.iter (pool_stmt env ctr f) b.Emo_ir.body)
+        branches;
+      if !ctr > f.pool then f.pool <- !ctr;
+      ctr := 0 (* the scan's drain, before the park *)
+  | While { cond; body; _ } ->
+      pool_expr env ctr cond;
+      List.iter (pool_stmt env ctr f) body;
+      pool_expr env ctr cond (* the back edge re-runs the test *)
+  | For { init; cond; post; body; _ } ->
+      pool_stmt env ctr f init;
+      pool_expr env ctr cond;
+      List.iter (pool_stmt env ctr f) body;
+      if !ctr > f.pool then f.pool <- !ctr;
+      ctr := 0;
+      (* the post's drain *)
+      pool_stmt env ctr f post;
+      pool_expr env ctr cond (* the wrap back to the test *)
+  | Break | Continue -> ()
+  | Set_global_var _ | Raise _ -> () (* refused at emission *)
+
+let pool_scan env (f : frame) (body : Emo_ir.stmt list) : unit =
+  let ctr = ref 0 in
+  List.iter (pool_stmt env ctr f) body;
+  if !ctr > f.pool then f.pool <- !ctr
+
+(* Whether any return path ends in a call to this very function: the
+   shape the rebind loop serves. The frame lives on, the parameters
+   take the next pass's arguments through write barriers, and the
+   entry's own claim discipline keeps the passes balanced. *)
+let rec has_self_tail (fname : string) (stmts : Emo_ir.stmt list) : bool =
+  List.exists
+    (fun (s : Emo_ir.stmt) ->
+      match s with
+      | Return_stmt e -> (
+          match e.Emo_ir.desc with
+          | Call { func; _ } -> String.equal func fname
+          | _ -> false)
+      | If { then_; else_; _ } ->
+          has_self_tail fname then_ || has_self_tail fname else_
+      | Case { branches; _ } ->
+          List.exists
+            (fun (b : Emo_ir.branch) -> has_self_tail fname b.Emo_ir.body)
+            branches
+      | While { body; _ } | For { body; _ } -> has_self_tail fname body
+      | _ -> false)
+    stmts
+
 (* ---- Expression emission: the result arrives in a0 ---- *)
 
 (* [d] is the expression's temp-slot depth: this node's own spill
@@ -703,10 +951,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                  definition `%s` yet"
                 func));
       match List.assoc_opt func env.fsigs with
-      | Some conv -> emit_typed_call env d func conv args
+      | Some conv ->
+          emit_typed_call env d func conv args;
+          pool_result env e.Emo_ir.ety
       | None ->
           emit_args env d args;
           put env "    call %s\n" (func_label func);
+          pool_result env e.Emo_ir.ety;
           (* a dynamic callee answers the tagged word; a raw numeric
              consumer reads the payload *)
           unbox_if_numeric env e.Emo_ir.ety)
@@ -719,6 +970,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
       put env "    jalr t2\n";
+      pool_result env e.Emo_ir.ety;
       unbox_if_numeric env e.Emo_ir.ety
   | Spawn_value { f; args } ->
       (* `do f(...)` as a value: the closure word and the tagged
@@ -766,14 +1018,17 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Interpolate parts -> emit_interpolate env d parts
   | Tuple es -> emit_seq env d es tag_tuple
   | Array_lit es -> emit_seq env d es tag_array
-  | Index (b, i) -> emit_index env d b i
+  | Index (b, i) ->
+      emit_index env d b i;
+      read_claim env e.Emo_ir.ety
   | Field_read { obj; name } -> (
       match obj.Emo_ir.ety with
       | Emo_check.ClassType _ ->
           emit_expr env d obj;
           put env "    andi a0, a0, -32\n";
           let idx = field_index env obj.Emo_ir.ety name in
-          put env "    ld a0, %d(a0)\n" (16 + (8 * idx))
+          put env "    ld a0, %d(a0)\n" (16 + (8 * idx));
+          read_claim env e.Emo_ir.ety
       | _ ->
           (* a dynamic receiver: the field resolves by name through the
              class's field table (the c target's emo_field_by_name) *)
@@ -785,23 +1040,42 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
           let nlabel = string_label env name in
           put env "    la a1, %s\n" nlabel;
           put env "    li a2, %d\n" (String.length name);
-          call_runtime env "emo_field_index";
+          put env "    call emo_field_index\n";
           put env "    ld t0, %d(sp)\n" spill;
           put env "    slli t1, a0, 3\n";
           put env "    add t0, t0, t1\n";
-          put env "    ld a0, 16(t0)\n")
-  | Method { self_; name; args } ->
-      emit_method env d e.Emo_ir.ety ~boxed:(not env.native) self_ name args
+          put env "    ld a0, 16(t0)\n";
+          read_claim env e.Emo_ir.ety)
+  | Method { self_; name; args } -> (
+      emit_method env d e.Emo_ir.ety ~boxed:(not env.native) self_ name args;
+      (* every method answers a claimed word (T8.7's pool): the Emo
+         methods retain at return, the Atomic helpers take their own,
+         the Box accessors answer borrows the site claims here — the
+         Array's borrow answers are value kinds the pool never holds *)
+      match e.Emo_ir.ety with
+      | Emo_check.BoxType _ -> read_claim env e.Emo_ir.ety
+      | Emo_check.ArrayType _ | Emo_check.BuilderType _ -> ()
+      | Emo_check.Unknown -> (
+          (* a dynamic receiver: the borrow answers (the Box accessors
+             and the Array's) claim at this site; everything else — the
+             instance's methods and the Atomic's ops — answers a claim
+             of its own (T8.7's pool) *)
+          match name with
+          | "read" | "replace" -> read_claim env e.Emo_ir.ety
+          | "append" | "length" -> ()
+          | _ -> pool_result env e.Emo_ir.ety)
+      | ty -> pool_result env ty)
   | Make_enum { enum_name; member } ->
       put env "    li a0, %d\n" (enum_imm env enum_name member)
   | Box_new arg ->
       emit_expr env (d + 1) arg;
       box_if_numeric env arg.Emo_ir.ety;
-      call_runtime env "emo_box_new"
+      put env "    call emo_box_new\n";
+      pool_result env e.Emo_ir.ety
   | Atomic_new arg ->
       emit_expr env (d + 1) arg;
       box_if_numeric env arg.Emo_ir.ety;
-      call_runtime env "emo_atomic_new"
+      put env "    call emo_atomic_new\n"
   | Builtin { name = "println"; args = [ arg ] } ->
       emit_expr env d arg;
       box_if_numeric env arg.Emo_ir.ety;
@@ -1151,31 +1425,51 @@ and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
   put env "    li t0, %d\n" n;
   put env "    sd t0, 8(a0)\n";
   let last_fill = 16 + (8 * (n - 1)) in
+  (* the block rides t5 across every fill path: the retain calls spend
+     a0, and the tag lands on the block at the end *)
+  put env "    mv t5, a0\n";
   if n = 0 || (last_fill <= 2047 && temp_offset env (d + n - 1) <= 2047) then
+    (* the unrolled fill: the aggregate holds every identity word it
+       stores (T8.7's pool) *)
     List.iteri
-      (fun i _ ->
-        put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
-        put env "    sd t0, %d(a0)\n" (16 + (8 * i)))
+      (fun i el ->
+        put env "    ld a0, %d(sp)\n" (temp_offset env (d + i));
+        if may_own el.Emo_ir.ety then put env "    call emo_retain\n";
+        put env "    sd a0, %d(t5)\n" (16 + (8 * i)))
       es
   else begin
     (* The literal's span leaves the 12-bit immediate's reach on both
        sides — the fill's offsets off a0 and the spill's off sp — so
        the spilled elements walk into the block through two pointers:
        the register-plus-addi address CHECK.md 155 names, O(1) text
-       for any n. *)
+       for any n. The walk's state rides s1–s3 across the retain call,
+       saved and restored around it; the s1 slot address carries the
+       24 bytes the saves added to sp. *)
     let l_fill = fresh_label env "seqfill" in
-    put env "    addi t1, a0, 16\n";
-    put env "    li t2, %d\n" (temp_offset env d);
-    put env "    add t2, t2, sp\n";
-    put env "    li t3, %d\n" n;
+    put env "    addi sp, sp, -24\n";
+    put env "    sd s1, 0(sp)\n";
+    put env "    sd s2, 8(sp)\n";
+    put env "    sd s3, 16(sp)\n";
+    put env "    addi s2, t5, 16\n";
+    put env "    li t2, %d\n" (temp_offset env d + 24);
+    put env "    add s1, t2, sp\n";
+    put env "    li s3, %d\n" n;
     put env "%s:\n" l_fill;
-    put env "    ld t4, 0(t2)\n";
-    put env "    sd t4, 0(t1)\n";
-    put env "    addi t2, t2, 8\n";
-    put env "    addi t1, t1, 8\n";
-    put env "    addi t3, t3, -1\n";
-    put env "    bnez t3, %s\n" l_fill
+    put env "    beqz s3, %s\n" (l_fill ^ "_done");
+    put env "    ld a0, 0(s1)\n";
+    put env "    call emo_retain\n";
+    put env "    sd a0, 0(s2)\n";
+    put env "    addi s1, s1, 8\n";
+    put env "    addi s2, s2, 8\n";
+    put env "    addi s3, s3, -1\n";
+    put env "    j %s\n" l_fill;
+    put env "%s_done:\n" l_fill;
+    put env "    ld s1, 0(sp)\n";
+    put env "    ld s2, 8(sp)\n";
+    put env "    ld s3, 16(sp)\n";
+    put env "    addi sp, sp, 24\n"
   end;
+  put env "    mv a0, t5\n";
   put env "    ori a0, a0, %d\n" tag
 
 and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
@@ -1613,22 +1907,33 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
           | Some t -> box_if_numeric env t
           | None -> ())
       | _ -> ());
+      (* the closure holds every word it captures (T8.7's pool) *)
+      put env "    call emo_retain\n";
       put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
     caps;
-  put env "    li a0, %d\n" (1 + k);
-  call_runtime env "emo_alloc";
+  (* the closure's birth: refcount 1, the frame pool's claim *)
+  (match env.cur with
+  | Some f ->
+      put env "    li a0, %d\n" (1 + k);
+      put env "    addi a1, sp, %d\n" (pool_offset f);
+      put env "    li a2, %d\n" tag_closure;
+      put env "    li a3, %d\n" f.pool;
+      put env "    call emo_ident_new\n";
+      env.pool_live <- env.pool_live + 1
+  | None -> ());
   put env "    sd a0, %d(sp)\n" (temp_offset env (d + k));
   put env "    la t0, %s\n" label;
   put env "    ld t1, %d(sp)\n" (temp_offset env (d + k));
+  put env "    andi t1, t1, -32\n";
   put env "    sd t0, 8(t1)\n";
   List.iteri
     (fun i _ ->
       put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
       put env "    ld t1, %d(sp)\n" (temp_offset env (d + k));
+      put env "    andi t1, t1, -32\n";
       put env "    sd t0, %d(t1)\n" (16 + (8 * i)))
     caps;
-  put env "    ld t1, %d(sp)\n" (temp_offset env (d + k));
-  put env "    ori a0, t1, %d\n" tag_closure;
+  put env "    ld a0, %d(sp)\n" (temp_offset env (d + k));
   env.deferred <- (label, cparams, caps, cbody) :: env.deferred
 
 (* ---- Method dispatch ---- *)
@@ -1716,9 +2021,9 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
-              (* the cell holds the tagged word; a raw numeric consumer
-                 reads the payload *)
-              if not boxed then unbox_if_numeric env ty
+              (* the read hands the reader its own claim, pooled (the
+                 helper answers a borrow; the site claims) *)
+              if boxed then read_claim env ty else unbox_if_numeric env ty
           | "replace", [ v ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
@@ -1727,8 +2032,23 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               box_if_numeric env v.Emo_ir.ety;
               put env "    ld t0, %d(sp)\n" self_slot;
               put env "    andi t0, t0, -32\n";
-              put env "    sd a0, 8(t0)\n";
-              put env "    ld a0, %d(sp)\n" self_slot
+              (* the cell takes the new claim before the old drops
+                 (T8.7's pool); a value payload's barrier is the no-op
+                 its kind carries. Both words come out before the
+                 calls — the release spends the t-registers — and the
+                 block reloads for the store. *)
+              put env "    ld t1, 8(t0)\n";
+              put env "    mv a5, a0\n";
+              put env "    call emo_retain\n";
+              put env "    mv t2, a0\n";
+              put env "    mv a0, t1\n";
+              put env "    call emo_release\n";
+              put env "    ld t0, %d(sp)\n" self_slot;
+              put env "    andi t0, t0, -32\n";
+              put env "    sd t2, 8(t0)\n";
+              put env "    ld a0, %d(sp)\n" self_slot;
+              (* the answer is the box itself: the caller's claim *)
+              if boxed then read_claim env ty
           | _ -> refuse (Printf.sprintf "the Box method `%s`" name))
       | Emo_check.AtomicType _ -> (
           (* Box's synchronized sibling: every access is a runtime
@@ -1883,6 +2203,8 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           if List.length args > 8 then
             refuse "a call with more than eight arguments";
           let n = List.length args in
+          let f = frame () in
+          let self = String.equal func f.fname in
           List.iteri
             (fun i arg ->
               let spill = temp_offset env i in
@@ -1893,17 +2215,78 @@ and emit_tail env (e : Emo_ir.expr) : bool =
                 | _ -> put env "    sd a0, %d(sp)\n" spill
               else put env "    sd a0, %d(sp)\n" spill)
             args;
-          if env.native then emit_typed_regs_native env 0 conv.cparams
-          else emit_typed_regs env 0 conv.cparams;
-          let f = frame () in
-          put env "    ld ra, 0(sp)\n";
-          sp_frame_adjust env ~module_buf:false ~up:true f.size;
-          put env "    tail %s\n" (func_label func);
-          true
+          if self then begin
+            (* The rebind loop: the frame lives on, the parameters take
+               the next pass's arguments through write barriers — the
+               new claim lands before the old drops — the current pass's
+               bindings unwind, the pool drains, and the body starts
+               again past the prologue (T8.7's pool). *)
+            List.iteri
+              (fun i k ->
+                let spill = temp_offset env i in
+                let slot = 8 + (8 * i) in
+                match k with
+                | P_word ->
+                    put env "    ld a0, %d(sp)\n" spill;
+                    emit_barrier env slot;
+                    put env "    sd a0, %d(sp)\n" slot
+                | P_int64 ->
+                    put env "    ld a0, %d(sp)\n" spill;
+                    put env "    sd a0, %d(sp)\n" slot
+                | P_float64 ->
+                    put env "    fld fa0, %d(sp)\n" spill;
+                    put env "    fsd fa0, %d(sp)\n" slot)
+              conv.cparams;
+            unwind_owned env 0;
+            pool_drain env f;
+            put env "    j %s\n" f.body_start;
+            true
+          end
+          else begin
+            let f = frame () in
+            (* the arguments' claims ride the call: taken from the
+               spills before the registers load, so the callee's exit
+               release never drops the caller's pool claims (T8.7's
+               pool; the one claim per link the non-self tail
+               concedes) *)
+            List.iter
+              (fun (i, _) ->
+                put env "    ld a0, %d(sp)\n" (temp_offset env i);
+                put env "    call emo_retain\n")
+              (List.filter
+                 (fun (i, _) -> may_own (List.nth args i).Emo_ir.ety)
+                 (List.mapi (fun i k -> (i, k)) conv.cparams));
+            unwind_owned env 0;
+            pool_drain env f;
+            if env.native then emit_typed_regs_native env 0 conv.cparams
+            else emit_typed_regs env 0 conv.cparams;
+            put env "    ld ra, 0(sp)\n";
+            sp_frame_adjust env ~module_buf:false ~up:true f.size;
+            put env "    tail %s\n" (func_label func);
+            true
+          end
       | Some _ -> false
       | None when result_compatible R_word (mine ()) ->
-          emit_args env 0 args;
           let f = frame () in
+          let n = List.length args in
+          emit_args env 0 args;
+          (* the dynamic words ride the call: spilled, claimed, and
+             reloaded after the unwind — the releases spend a0 *)
+          for i = 0 to n - 1 do
+            put env "    sd a%d, %d(sp)\n" i (temp_offset env i)
+          done;
+          List.iter
+            (fun (i, arg) ->
+              if may_own arg.Emo_ir.ety then begin
+                put env "    mv a0, a%d\n" i;
+                put env "    call emo_retain\n"
+              end)
+            (List.mapi (fun i a -> (i, a)) args);
+          unwind_owned env 0;
+          pool_drain env f;
+          for i = 0 to n - 1 do
+            put env "    ld a%d, %d(sp)\n" i (temp_offset env i)
+          done;
           put env "    ld ra, 0(sp)\n";
           sp_frame_adjust env ~module_buf:false ~up:true f.size;
           put env "    tail %s\n" (func_label func);
@@ -1915,6 +2298,25 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       emit_expr env 1 f;
       put env "    sd a0, %d(sp)\n" fslot;
       emit_args_from env 1 ~from:0 args;
+      (* the frame is abandoned here: the arguments' claims ride the
+         call, the current pass's bindings unwind, and the pool drains
+         before the jump — the releases spend the t-registers, so the
+         closure's code pointer reloads last (T8.7's pool) *)
+      List.iteri
+        (fun i arg ->
+          if may_own arg.Emo_ir.ety then begin
+            put env "    sd a%d, %d(sp)\n" i (temp_offset env (1 + i));
+            put env "    mv a0, a%d\n" i;
+            put env "    call emo_retain\n"
+          end)
+        args;
+      unwind_owned env 0;
+      pool_drain env ff;
+      List.iteri
+        (fun i arg ->
+          if may_own arg.Emo_ir.ety then
+            put env "    ld a%d, %d(sp)\n" i (temp_offset env (1 + i)))
+        args;
       put env "    ld t0, %d(sp)\n" fslot;
       put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
@@ -1996,8 +2398,20 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
       (match env.cur with
       | Some f when env.native -> f.raw <- List.remove_assoc n f.raw
       | _ -> ());
+      (* the binding takes its own claim (T8.7's pool): a fresh name
+         retains the word, a re-binding of an outer name takes the
+         barrier — the claims are the tagged word's, whatever kind it
+         runs out to be *)
+      let fresh = not (List.mem n env.bound) in
       put env "    ld t0, %d(sp)\n" src_off;
-      put env "    sd t0, %d(sp)\n" (slot_offset env n)
+      put env "    mv a0, t0\n";
+      if fresh then put env "    call emo_retain\n"
+      else emit_barrier env (slot_offset env n);
+      put env "    sd a0, %d(sp)\n" (slot_offset env n);
+      if fresh then begin
+        env.bound <- n :: env.bound;
+        env.owned <- (n, slot_offset env n) :: env.owned
+      end
   | Emo_ast.Tuple_pattern ps ->
       List.iteri
         (fun i sub ->
@@ -2008,14 +2422,32 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
           rec_pattern_bind env (temp_offset env 1) sub)
         ps
 
+and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
+  (* The statement boundary is the borrow window (T8.7's pool): the
+     births pooled inside one statement release together at the next,
+     and a scope's exit releases what its body bound. *)
+  match env.cur with
+  | Some f ->
+      List.iter
+        (fun s ->
+          pool_drain env f;
+          emit_stmt env s)
+        stmts
+  | None -> List.iter (emit_stmt env) stmts
+
 and emit_stmt env (st : Emo_ir.stmt) : unit =
   match st with
   | Effect e -> emit_expr env 0 e
-  | Let { name; init; _ } -> (
+  | Let { name; init; _ } ->
+      let ty = init.Emo_ir.ety in
       emit_expr env 0 init;
-      match env.cur with
+      let fresh = not (List.mem name env.bound) in
+      if may_own ty then
+        if fresh then put env "    call emo_retain\n"
+        else emit_barrier env (slot_offset env name);
+      (match env.cur with
       | Some f when env.native -> (
-          match init.Emo_ir.ety with
+          match ty with
           | Emo_check.Float64 ->
               f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
               put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
@@ -2025,7 +2457,10 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           | _ ->
               f.raw <- List.remove_assoc name f.raw;
               put env "    sd a0, %d(sp)\n" (slot_offset env name))
-      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name));
+      if fresh then env.bound <- name :: env.bound;
+      if may_own ty && fresh then
+        env.owned <- (name, slot_offset env name) :: env.owned
   | Assign_var { name; value } -> (
       emit_expr env 0 value;
       match env.cur with
@@ -2057,27 +2492,40 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
               put env "    sd a0, %d(sp)\n" (slot_offset env name)
           | _ ->
               (* a tagged slot: a raw numeric producer boxes at the
-                 store *)
+                 store, and the slot takes the new claim before the old
+                 drops (T8.7's pool) *)
               box_if_numeric env value.Emo_ir.ety;
+              emit_barrier env (slot_offset env name);
               put env "    sd a0, %d(sp)\n" (slot_offset env name))
-      | _ -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
+      | _ ->
+          (* the dynamic rule: every slot tagged, every write through
+             the barrier *)
+          emit_barrier env (slot_offset env name);
+          put env "    sd a0, %d(sp)\n" (slot_offset env name))
   | If { cond; then_; else_ } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
+      let mark = List.length env.owned in
       emit_expr env 0 cond;
       put env "    andi t0, a0, 16\n";
       put env "    beqz t0, %s\n" l_else;
-      List.iter (emit_stmt env) then_;
+      emit_stmts env then_;
+      unwind_owned env mark;
       put env "    j %s\n" l_end;
       put env "%s:\n" l_else;
-      List.iter (emit_stmt env) else_;
+      emit_stmts env else_;
+      unwind_owned env mark;
       put env "%s:\n" l_end
   | Case { scrutinee; branches } ->
       let scrut_slot = temp_offset env 0 in
+      let mark = List.length env.owned in
       emit_expr env 3 scrutinee;
       (* the pattern tests read the tagged word: a raw numeric
          scrutinee boxes at the case boundary, and any binding the
-         patterns make holds tagged words *)
+         patterns make holds tagged words. The scrutinee's own birth
+         claim rides the frame pool — it drains at the next statement's
+         boundary, after the whole case has read it (T8.7's pool); the
+         bindings took their own claims at the binds. *)
       box_if_numeric env scrutinee.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" scrut_slot;
       let l_end = fresh_label env "case_end" in
@@ -2086,17 +2534,25 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           (* the test jumps to l_next on failure; a match falls through
              into the bind, the guard, and the body *)
           let l_next = fresh_label env "skip" in
+          let l_fail = fresh_label env "guardfail" in
           emit_pattern_test env scrut_slot b.Emo_ir.pattern l_next;
           rec_pattern_bind env scrut_slot b.Emo_ir.pattern;
-          (match b.Emo_ir.guard with
+          match b.Emo_ir.guard with
           | Some g ->
               emit_expr env 2 g;
               put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_next
-          | None -> ());
-          List.iter (emit_stmt env) b.Emo_ir.body;
-          put env "    j %s\n" l_end;
-          put env "%s:\n" l_next)
+              put env "    beqz t0, %s\n" l_fail;
+              emit_stmts env b.Emo_ir.body;
+              unwind_owned env mark;
+              put env "    j %s\n" l_end;
+              put env "%s:\n" l_fail;
+              unwind_owned env mark;
+              put env "%s:\n" l_next
+          | None ->
+              emit_stmts env b.Emo_ir.body;
+              unwind_owned env mark;
+              put env "    j %s\n" l_end;
+              put env "%s:\n" l_next)
         branches;
       put env "%s:\n" l_end
   | Return_stmt e ->
@@ -2108,6 +2564,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       if emit_tail env e then ()
       else begin
         emit_expr env 0 e;
+        (* the claim rides home to the caller, whose site pools it *)
+        (match env.cur with
+        | Some f when f.fconv.cresult = R_word && may_own e.Emo_ir.ety ->
+            put env "    call emo_retain\n"
+        | _ -> ());
         put env "    j %s\n" ret
       end
   | Set_field { self_; name; value } -> (
@@ -2122,32 +2583,54 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       | Emo_check.ClassType _ ->
           let idx = field_index env self_.Emo_ir.ety name in
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
-          put env "    sd a0, %d(t0)\n" (16 + (8 * idx))
+          (* the field takes the new claim before the old drops. The
+             field's address rides a3 — the release spends the
+             t-registers, a3 is the psABI's to keep (T8.7's pool) *)
+          put env "    ld t0, %d(sp)\n" self_slot;
+          put env "    andi t0, t0, -32\n";
+          put env "    addi a3, t0, %d\n" (16 + (8 * idx));
+          put env "    ld t1, 0(a3)\n";
+          put env "    mv a5, a0\n";
+          put env "    call emo_retain\n";
+          put env "    mv t2, a0\n";
+          put env "    mv a0, t1\n";
+          put env "    call emo_release\n";
+          put env "    sd t2, 0(a3)\n"
       | _ ->
           put env "    andi a0, t0, -32\n";
           put env "    ld t1, 8(a0)\n";
           let nlabel = string_label env name in
           put env "    la a1, %s\n" nlabel;
           put env "    li a2, %d\n" (String.length name);
-          call_runtime env "emo_field_index";
+          put env "    call emo_field_index\n";
           put env "    ld t0, %d(sp)\n" self_slot;
           put env "    andi t0, t0, -32\n";
-          put env "    slli t1, a0, 3\n";
-          put env "    add t0, t0, t1\n";
+          put env "    slli a2, a0, 3\n";
+          put env "    addi a3, t0, 16\n";
+          put env "    add a3, a3, a2\n";
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
-          put env "    sd a0, 16(t0)\n")
+          (* the same claim order; the field's address rides a3 across
+             the calls (T8.7's pool) *)
+          put env "    ld t1, 0(a3)\n";
+          put env "    mv a5, a0\n";
+          put env "    call emo_retain\n";
+          put env "    mv t2, a0\n";
+          put env "    mv a0, t1\n";
+          put env "    call emo_release\n";
+          put env "    sd t2, 0(a3)\n")
   | Set_global_var _ -> refuse "module-level `var` assignment"
   | Send { target; message } ->
       (* the send boundary: the message snapshots in emo_send and the
          sender yields — the call returns when this process is next
-         scheduled *)
+         scheduled. The ring's claim is the send's own, taken inside
+         emo_send on the copy. *)
       emit_expr env 0 target;
       put env "    sd a0, %d(sp)\n" (temp_offset env 0);
       emit_expr env 1 message;
       box_if_numeric env message.Emo_ir.ety;
       put env "    mv a1, a0\n";
       put env "    ld a0, %d(sp)\n" (temp_offset env 0);
-      call_runtime env "emo_send"
+      put env "    call emo_send\n"
   | Receive { branches } ->
       (* the mailbox scan (T3.3): the index rides s0 — every helper is
          ABI-clean and the switch saves the callee-saved set — the
@@ -2155,21 +2638,25 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
          uses slots 1 and 2, and guards evaluate at depth 3. The first
          message a pattern and its guard accept dequeues; nothing
          accepting anywhere parks the process and the scan restarts
-         from the oldest message on waking. *)
+         from the oldest message on waking. Each candidate's clone
+         pools at its copy-out (T8.7's pool); the failed candidates
+         release at the scan's drain, before the park. *)
       let msg_slot = temp_offset env 0 in
       let l_test = fresh_label env "recv_scan" in
       let l_park = fresh_label env "recv_park" in
       let l_end = fresh_label env "recv_end" in
+      let mark = List.length env.owned in
       put env "    li s0, 0\n";
       put env "%s:\n" l_test;
-      call_runtime env "emo_mb_count";
+      put env "    call emo_mb_count\n";
       put env "    bgeu s0, a0, %s\n" l_park;
       put env "    mv a0, s0\n";
-      call_runtime env "emo_mb_at";
+      put env "    call emo_mb_at\n";
       put env "    sd a0, %d(sp)\n" msg_slot;
       List.iter
         (fun (b : Emo_ir.branch) ->
           let l_next = fresh_label env "skip" in
+          let l_fail = fresh_label env "guardfail" in
           emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
           (* accepted by the pattern: the message crosses heaps now —
              the copy-out (T5.2) lands it in this process's own arena
@@ -2182,26 +2669,48 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
              answers exactly as the snapshot would. *)
           put env "    ld a0, %d(sp)\n" msg_slot;
           put env "    mv a1, s0\n";
-          call_runtime env "emo_copy_out_at";
+          put env "    call emo_copy_out_at\n";
           put env "    sd a0, %d(sp)\n" msg_slot;
+          (* the clone's claim: the frame pool's, released at the scan's
+             drain (a failed candidate) or the statement's end (an
+             accepted one — the bindings hold their own) *)
+          pool_result env Emo_check.Unknown;
           rec_pattern_bind env msg_slot b.Emo_ir.pattern;
-          (match b.Emo_ir.guard with
+          match b.Emo_ir.guard with
           | Some g ->
               emit_expr env 3 g;
               put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_next
-          | None -> ());
-          (* accepted: the message leaves the mailbox, the body runs *)
-          put env "    mv a0, s0\n";
-          call_runtime env "emo_mb_remove";
-          List.iter (emit_stmt env) b.Emo_ir.body;
-          put env "    j %s\n" l_end;
-          put env "%s:\n" l_next)
+              put env "    beqz t0, %s\n" l_fail;
+              (* accepted: the message leaves the mailbox, the body runs *)
+              put env "    mv a0, s0\n";
+              put env "    call emo_mb_remove\n";
+              emit_stmts env b.Emo_ir.body;
+              unwind_owned env mark;
+              put env "    j %s\n" l_end;
+              put env "%s:\n" l_fail;
+              unwind_owned env mark;
+              (* the failed candidate's clone releases here, so the next
+                 candidate's clone pools into a fresh window (T8.7's
+                 pool) *)
+              (match env.cur with
+              | Some f -> pool_drain env f
+              | None -> ());
+              put env "%s:\n" l_next
+          | None ->
+              put env "    mv a0, s0\n";
+              put env "    call emo_mb_remove\n";
+              emit_stmts env b.Emo_ir.body;
+              unwind_owned env mark;
+              put env "    j %s\n" l_end;
+              put env "%s:\n" l_next)
         branches;
       put env "    addi s0, s0, 1\n";
       put env "    j %s\n" l_test;
       put env "%s:\n" l_park;
-      call_runtime env "emo_park_receive";
+      (match env.cur with
+      | Some f -> pool_drain env f (* the failed candidates, together *)
+      | None -> ());
+      put env "    call emo_park_receive\n";
       put env "    li s0, 0\n";
       put env "    j %s\n" l_test;
       put env "%s:\n" l_end
@@ -2209,20 +2718,27 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | While { cond; body; _ } ->
       let head = fresh_label env "loop" in
       let exit_l = fresh_label env "endloop" in
+      let mark = List.length env.owned in
       put env "%s:\n" head;
       emit_expr env 0 cond;
       put env "    andi t0, a0, 16\n";
       put env "    beqz t0, %s\n" exit_l;
-      env.loops <- (exit_l, head) :: env.loops;
-      List.iter (emit_stmt env) body;
+      env.loops <- (exit_l, head, mark) :: env.loops;
+      emit_stmts env body;
       env.loops <- List.tl env.loops;
+      unwind_owned env mark;
       put env "    j %s\n" head;
       put env "%s:\n" exit_l
   | For { init; cond; post; body; _ } ->
       (* the head tests, the body runs, the post label sits between the
          body and the jump back — a `continue` lands on the post, a
-         `break` leaves past it *)
+         `break` leaves past it. The init's bindings (the loop variable
+         among them) hold their claims across the whole loop and release
+         at the exit; the body's release at every back edge, and at
+         every break and continue. *)
+      let outer = List.length env.owned in
       emit_stmt env init;
+      let mark = List.length env.owned in
       let head = fresh_label env "loop" in
       let post_l = fresh_label env "post" in
       let exit_l = fresh_label env "endloop" in
@@ -2230,20 +2746,29 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_expr env 0 cond;
       put env "    andi t0, a0, 16\n";
       put env "    beqz t0, %s\n" exit_l;
-      env.loops <- (exit_l, post_l) :: env.loops;
-      List.iter (emit_stmt env) body;
+      env.loops <- (exit_l, post_l, mark) :: env.loops;
+      emit_stmts env body;
       env.loops <- List.tl env.loops;
+      unwind_owned env mark;
       put env "%s:\n" post_l;
+      (match env.cur with
+      | Some f -> pool_drain env f (* the post's own boundary *)
+      | None -> ());
       emit_stmt env post;
       put env "    j %s\n" head;
-      put env "%s:\n" exit_l
+      put env "%s:\n" exit_l;
+      unwind_owned env outer
   | Break -> (
       match env.loops with
-      | (exit_l, _) :: _ -> put env "    j %s\n" exit_l
+      | (exit_l, _, mark) :: _ ->
+          unwind_owned env mark;
+          put env "    j %s\n" exit_l
       | [] -> refuse "`break` outside a loop")
   | Continue -> (
       match env.loops with
-      | (_, continue_l) :: _ -> put env "    j %s\n" continue_l
+      | (_, continue_l, mark) :: _ ->
+          unwind_owned env mark;
+          put env "    j %s\n" continue_l
       | [] -> refuse "`continue` outside a loop")
 
 and describe_expr (e : Emo_ir.expr) : string =
@@ -2289,26 +2814,48 @@ let emit_const_function env (f : Emo_ir.func) : unit =
       size = 0;
       fconv = conv;
       raw = [];
+      pool = 0;
+      fname = f.Emo_ir.fname;
+      body_start = fresh_label env "body";
     }
   in
+  env.owned <- [];
+  env.bound <- [];
+  env.pool_live <- 0;
   env.cur <- Some frm;
   env.native <- native;
   collect_stmts frm f.Emo_ir.fbody;
   frm.temps <- stmts_depth f.Emo_ir.fbody + 2;
-  frm.size <- (8 + (8 * (frm.named + frm.temps)) + 15) / 16 * 16;
+  pool_scan env frm f.Emo_ir.fbody;
+  frm.size <-
+    (8
+    + (8 * (frm.named + frm.temps))
+    + (if frm.pool > 0 then 8 + (8 * frm.pool) else 0)
+    + 15)
+    / 16 * 16;
   gput env "%s:\n" (func_label f.Emo_ir.fname);
   sp_frame_adjust env ~module_buf:true ~up:false frm.size;
   gput env "    sd ra, 0(sp)\n";
   gput env "    la t0, %s\n" done_label;
   gput env "    ld t1, 0(t0)\n";
   gput env "    bnez t1, %s\n" hit;
+  (* the pool word starts at zero — the frame is dirty stack memory,
+     and the body's first push reads it (T8.7's pool) *)
+  if frm.pool > 0 then gput env "    sd zero, %d(sp)\n" (pool_offset frm);
   (* The body writes into [frm.fbuf] through [put]; its `return` jumps
      to the store label, so the value is in a0 when the store block
      runs. Everything after the prologue shares the frame buffer, and
      the whole function is appended to the module in one place — the
      order [emit_function] keeps. *)
-  List.iter (emit_stmt env) f.Emo_ir.fbody;
+  emit_stmts env f.Emo_ir.fbody;
   put env "%s:\n" store;
+  if conv.cresult = R_word then put env "    mv a5, a0\n";
+  unwind_owned env 0;
+  pool_drain env frm;
+  if conv.cresult = R_word then begin
+    put env "    mv a0, a5\n";
+    put env "    call emo_retain\n" (* the memo's own claim *)
+  end;
   put env "    la t2, %s\n" val_label;
   (match conv.cresult with
   | R_int64 ->
@@ -2334,7 +2881,8 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   put env "    ld a0, 0(t0)\n";
   (match conv.cresult with
   | R_float64 -> put env "    fmv.d.x fa0, a0\n"
-  | R_int64 | R_word | R_void -> ());
+  | R_word -> put env "    call emo_retain\n" (* the caller's claim *)
+  | R_int64 | R_void -> ());
   put env "    ld ra, 0(sp)\n";
   sp_frame_adjust env ~module_buf:false ~up:true frm.size;
   put env "    ret\n";
@@ -2353,9 +2901,9 @@ let emit_const_function env (f : Emo_ir.func) : unit =
    captures, whose record rides in t0 — the boxing calls clobber the
    argument registers) and unboxes the tagged result at the return
    label. *)
-let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
-    ~(captures : string list) ~(conv : conv) ~(native : bool)
-    ~(body : Emo_ir.stmt list) : unit =
+let emit_function env ~(label : string) ~(fname : string)
+    ~(params : (string * Emo_check.t) list) ~(captures : string list)
+    ~(conv : conv) ~(native : bool) ~(body : Emo_ir.stmt list) : unit =
   if List.length params > 8 then refuse "a def with more than eight parameters";
   let f =
     {
@@ -2367,6 +2915,9 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       size = 0;
       fconv = conv;
       raw = [];
+      pool = 0;
+      fname;
+      body_start = fresh_label env "body";
     }
   in
   let nparams = List.length params in
@@ -2383,11 +2934,31 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
           | Emo_check.Int64 | Emo_check.Float64 -> Some (n, t)
           | _ -> None)
         params;
+  (* the claim world starts empty: the params and captures are the
+     names a re-binding would barrier against (T8.7's pool) *)
+  env.owned <- [];
+  env.bound <- List.map fst params @ captures;
+  env.pool_live <- 0;
   env.cur <- Some f;
   env.native <- native;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
-  f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
+  pool_scan env f body;
+  f.size <-
+    (8
+    + (8 * (f.named + f.temps))
+    + (if f.pool > 0 then 8 + (8 * f.pool) else 0)
+    + 15)
+    / 16 * 16;
+  (* a body that ends any path in a call to itself runs as a rebind
+     loop: its tagged parameters take their own claims at every entry
+     and give them up at every exit, so the rebind's barriers balance *)
+  let self_tail = has_self_tail fname body in
+  let word_params =
+    List.filter
+      (fun (_, k) -> k = P_word)
+      (List.mapi (fun i k -> (i, k)) conv.cparams)
+  in
   gput env "%s:\n" label;
   sp_frame_adjust env ~module_buf:true ~up:false f.size;
   gput env "    sd ra, 0(sp)\n";
@@ -2405,6 +2976,13 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
       gput env "    ld t1, %d(t0)\n" (16 + (8 * i));
       gput env "    sd t1, %d(sp)\n" (8 + (8 * (nparams + i))))
     captures;
+  (* the rebind loop's parameters: their claims are the slots' *)
+  if self_tail then
+    List.iter
+      (fun (i, _) ->
+        gput env "    ld a0, %d(sp)\n" (8 + (8 * i));
+        gput env "    call emo_retain\n")
+      word_params;
   (* the dynamic body's entry adapter: box each raw numeric param into
      the cell the body reads *)
   if not native then
@@ -2422,11 +3000,43 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
             gput env "    sd a0, %d(sp)\n" off
         | P_word -> ())
       conv.cparams;
-  List.iter (emit_stmt env) body;
+  gput env "%s:\n" f.body_start;
+  (* the pool word starts at zero: the frame is dirty stack memory,
+     and the first push reads it (T8.7's pool) *)
+  if f.pool > 0 then gput env "    sd zero, %d(sp)\n" (pool_offset f);
+  emit_stmts env body;
   (* Fall-off: the statement walk already left a final expression
      statement's value in a0 (fa0 for a Float64-typed fall-off in a
-     native body); a Void body just returns. *)
+     native body); a Void body just returns. The result's claim rides
+     home to the caller — taken only when the body's last statement
+     really is a value expression of a claimable type (T8.7's pool). *)
+  if conv.cresult = R_word then begin
+    (* a trailing expression whose type names a claimable kind hands
+       its value to the caller; an Unknown one — println and friends
+       leave nothing honest in a0 — keeps the old no-retain shape *)
+    let trailing_claims =
+      match List.rev body with
+      | Emo_ir.Effect e :: _ -> (
+          match e.Emo_ir.ety with
+          | Emo_check.ClassType _ | Emo_check.InterfaceType _
+          | Emo_check.BoxType _ | Emo_check.FuncType _ ->
+              true
+          | _ -> false)
+      | _ -> false
+    in
+    if trailing_claims then put env "    call emo_retain\n"
+  end;
   put env "%s:\n" f.ret;
+  if conv.cresult = R_word then put env "    mv a5, a0\n";
+  unwind_owned env 0;
+  if self_tail then
+    List.iter
+      (fun (i, _) ->
+        put env "    ld a0, %d(sp)\n" (8 + (8 * i));
+        put env "    call emo_release\n")
+      word_params;
+  pool_drain env f;
+  if conv.cresult = R_word then put env "    mv a0, a5\n";
   if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   sp_frame_adjust env ~module_buf:false ~up:true f.size;
@@ -2459,18 +3069,30 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
       size = 0;
       fconv = dynamic_conv (List.length real_params + 1);
       raw = [];
+      pool = 0;
+      fname = ctor;
+      body_start = fresh_label env "body";
     }
   in
   let nparams = List.length real_params in
   f.slots <-
     List.mapi (fun i (n, _) -> (n, i)) real_params @ [ ("self", nparams) ];
   f.named <- nparams + 1;
+  env.owned <- [];
+  env.bound <- List.map fst real_params @ [ "self" ];
+  env.pool_live <- 0;
   env.cur <- Some f;
   env.native <- false;
   env.fclass <- Some c.Emo_ir.cdisplay;
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
-  f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
+  pool_scan env f body;
+  f.size <-
+    (8
+    + (8 * (f.named + f.temps))
+    + (if f.pool > 0 then 8 + (8 * f.pool) else 0)
+    + 15)
+    / 16 * 16;
   gput env "%s:\n" (func_label ctor);
   sp_frame_adjust env ~module_buf:true ~up:false f.size;
   gput env "    sd ra, 0(sp)\n";
@@ -2480,10 +3102,23 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
   gput env "    li a0, %d\n" info.cls_id;
   gput env "    li a1, %d\n" (List.length info.cls_fields);
   gput env "    call emo_instance_new\n";
+  (* the fresh self's birth claim is the frame's own — the owned stack
+     holds it, never the pool: the init body's statement boundaries
+     must not reclaim the object under construction (T8.7's pool) *)
+  gput env "    call emo_retain\n";
+  env.owned <- [ ("self", 8 + (8 * nparams)) ];
   gput env "    sd a0, %d(sp)\n" (8 + (8 * nparams));
-  List.iter (emit_stmt env) body;
+  (* the pool word starts at zero, like every body's (T8.7's pool) *)
+  if f.pool > 0 then gput env "    sd zero, %d(sp)\n" (pool_offset f);
+  emit_stmts env body;
   put env "    ld a0, %d(sp)\n" (8 + (8 * nparams));
+  put env "    call emo_retain\n";
+  (* the caller's claim on self *)
   put env "%s:\n" f.ret;
+  put env "    mv a5, a0\n";
+  unwind_owned env 0;
+  pool_drain env f;
+  put env "    mv a0, a5\n";
   put env "    ld ra, 0(sp)\n";
   sp_frame_adjust env ~module_buf:false ~up:true f.size;
   put env "    ret\n";
@@ -2666,11 +3301,256 @@ emo_alloc:
     ld t1, 0(t1)            # the allocator is the current process
     ld t2, 576(t1)          # its arena cursor
     add t3, t2, t0
-    ld t4, 584(t1)          # its arena end — the quota's edge
+    ld t4, 584(t1)          # its arena end — the quota's edge, minus the
+    addi t4, t4, -8         #   freelist head word the arena carries at its
+                            #   top (T8.7's pool): the head is arena memory
+                            #   and travels with it, so no boundary crossing
+                            #   ever hands it across
     bgeu t3, t4, emo_arena_gone
     sd t3, 576(t1)
     sd a0, 0(t2)
     mv a0, t2
+    ret
+
+# ---- Identity reclamation (T8.7's pool) ----
+#
+# The identity kinds — Box, Closure, Instance — carry their refcount in
+# the header word's high half, the payload word count staying in the low
+# half (a value kind's header reads as refcount 0: not counted). The
+# Atomic shares its cell across processes and carries no count — the
+# declared exception's cell waits for its arena, since a release that
+# frees would have to know which arena's freelist to serve. A cell
+# reaching zero walks its holdings (a Box its payload, a Closure its
+# captures, an Instance its fields; a Tuple or an Array releases the
+# identity words it stored, its own block staying arena-resident) and
+# goes to the freelist, whose head lives in the arena itself, at the end
+# word minus 8 — the head travels with the arena, so no boundary
+# crossing ever carries it, and a spawn only has to zero it.
+#
+# The pool: each generated body keeps [count][items...] at a fixed
+# offset in its own frame. Births push there (the transfer of the
+# birth's own claim); reads retain first and push (a claim of the
+# reader's own); the statement boundary drains; the frame's exit
+# releases what is left. The count's ceiling rides every push — an
+# emitter that undercounts is a loud failure, never a silent overrun.
+
+# emo_ident_new: a0 = payload words, a1 = the frame pool's count word (0
+# = none), a2 = the tag, a3 = the pool's ceiling; a0 = the tagged cell,
+# refcount 1. The freelist serves first: the walk takes the first freed
+# cell whose payload count fits, the link riding the freed payload's
+# first word.
+    .globl emo_ident_new
+emo_ident_new:
+    addi sp, sp, -24
+    sd ra, 0(sp)
+    sd a1, 8(sp)            # the pool word
+    sd a2, 16(sp)           # the tag
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t5, 584(t0)          # the arena's end; the head word at -8
+    ld t2, -8(t5)
+    li t3, 0                # the walk's predecessor
+.Lidn_scan:
+    beqz t2, .Lidn_bump
+    ld t4, 0(t2)            # the freed header: refcount 0, the count below
+    slli t6, t4, 32
+    srli t6, t6, 32         # the count, zero-extended
+    bgeu t6, a0, .Lidn_fit
+    mv t3, t2
+    ld t2, 8(t2)            # the link
+    j .Lidn_scan
+.Lidn_fit:
+    ld t4, 8(t2)            # the successor
+    beqz t3, 1f
+    sd t4, 8(t3)
+    j 2f
+1:  sd t4, -8(t5)           # the head moves
+2:  li t4, 1
+    slli t4, t4, 32
+    or t4, t4, a0           # refcount 1, the requested count
+    sd t4, 0(t2)
+    mv t6, t2
+    j .Lidn_tag
+.Lidn_bump:
+    call emo_alloc          # the block, the count header written
+    ld t4, 0(a0)
+    li t3, 1
+    slli t3, t3, 32
+    or t4, t4, t3
+    sd t4, 0(a0)            # refcount 1
+    mv t6, a0
+.Lidn_tag:
+    ld t0, 16(sp)           # the tag
+    or t6, t6, t0           # the pool holds tagged words: the release
+                            #   reads the kind off the word it releases
+    ld t4, 8(sp)            # the pool word
+    beqz t4, .Lidn_out
+    ld t0, 0(t4)            # the count
+    bgeu t0, a3, .Lidn_over
+    addi t1, t4, 8
+    slli t2, t0, 3
+    add t1, t1, t2
+    sd t6, 0(t1)            # items[count] = the tagged word
+    addi t0, t0, 1
+    sd t0, 0(t4)
+.Lidn_out:
+    mv a0, t6
+    ld ra, 0(sp)
+    addi sp, sp, 24
+    ret
+.Lidn_over:
+    la a0, msg_pool
+    la a1, msg_pool_end
+    call emo_fail
+
+# emo_pool_put: a0 = the word, a1 = the frame pool's count word, a2 =
+# the ceiling; the word waits for the statement boundary. The tag rides
+# the word: a value kind's release is the no-op its tag says.
+    .globl emo_pool_put
+emo_pool_put:
+    ld t0, 0(a1)
+    bgeu t0, a2, .Lidn_over
+    addi t1, a1, 8
+    slli t2, t0, 3
+    add t1, t1, t2
+    sd a0, 0(t1)
+    addi t0, t0, 1
+    sd t0, 0(a1)
+    ret
+
+# emo_drain: a0 = the frame pool's count word; every word releases (the
+# pool's own claims) and the count returns to zero. LIFO order — the
+# claims are independent, the release walks carry their own stack. The
+# pool word rides the frame: the callers hold values across this call
+# in a5, and nothing here may touch it.
+    .globl emo_drain
+emo_drain:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the pool word
+1:  ld a0, 8(sp)
+    ld t0, 0(a0)
+    beqz t0, 2f
+    addi t0, t0, -1
+    sd t0, 0(a0)            # the count drops before the walk
+    slli t2, t0, 3
+    addi t3, a0, 8
+    add t3, t3, t2
+    ld a0, 0(t3)
+    call emo_release
+    j 1b
+2:  ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_retain: a0 = a word; the identity kinds' refcount rises, the word
+# answers unchanged. Immediates, zero, and every kind without a count
+# pass through.
+    .globl emo_retain
+emo_retain:
+    beqz a0, .Lret_out
+    andi t0, a0, 1
+    bnez t0, .Lret_out      # an immediate
+    srli t0, a0, 1
+    andi t0, t0, 0xF        # the kind
+    li t1, 5                # Box
+    beq t0, t1, .Lret_bump
+    li t1, 6                # Closure
+    beq t0, t1, .Lret_bump
+    li t1, 7                # Instance
+    bne t0, t1, .Lret_out
+.Lret_bump:
+    andi t0, a0, -32
+    ld t1, 0(t0)
+    li t2, 1
+    slli t2, t2, 32
+    add t1, t1, t2
+    sd t1, 0(t0)
+.Lret_out:
+    ret
+
+# emo_release: a0 = a word whose claim drops. An identity kind reaching
+# zero walks its holdings and joins the freelist; a Tuple or an Array
+# releases the identity words it stored (its own block stays); the rest
+# answer the no-op their tags carry. emo_release_in: the same walk with
+# the freelist of the slot in a1 — the mailbox remove's path, whose
+# words live in the sender's arena while the receiver runs.
+    .globl emo_release
+emo_release:
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    j emo_release_walk
+    .globl emo_release_in
+emo_release_in:
+    mv t1, a1               # the slot whose freelist serves the push
+    # fall through
+emo_release_walk:
+    beqz a0, .Lrel_out
+    andi t0, a0, 1
+    bnez t0, .Lrel_out      # an immediate
+    addi sp, sp, -24
+    sd ra, 0(sp)
+    sd t1, 8(sp)            # the serving slot survives the walk's calls
+    sd a0, 16(sp)           # the word, its kind decoded from it below
+    srli t0, a0, 1
+    andi t0, t0, 0xF        # the kind
+    li t2, 5                # Box
+    beq t0, t2, .Lrel_ident
+    li t2, 6                # Closure
+    beq t0, t2, .Lrel_ident
+    li t2, 7                # Instance
+    beq t0, t2, .Lrel_ident
+    li t2, 3                # Tuple
+    beq t0, t2, .Lrel_seq
+    li t2, 4                # Array
+    beq t0, t2, .Lrel_seq
+    j .Lrel_done            # every other kind carries no claim
+.Lrel_ident:
+    andi t2, a0, -32
+    sd t2, 16(sp)           # the block rides the frame to the push
+    ld t3, 0(t2)
+    li t4, 1
+    slli t4, t4, 32
+    sub t3, t3, t4          # the refcount falls
+    sd t3, 0(t2)
+    srli t4, t3, 32
+    bnez t4, .Lrel_done     # still held
+    li t4, 5                # Box: the payload's one word
+    beq t0, t4, .Lrel_box
+    ld t4, 0(t2)            # the count: code or class id, then the rest
+    slli t5, t4, 32
+    srli t5, t5, 32         # zero-extended
+    addi t5, t5, -1         # the captures or fields
+    addi t6, t2, 16
+    j .Lrel_seq_loop
+.Lrel_box:
+    ld a0, 8(t2)
+    call emo_release
+    j .Lrel_free
+.Lrel_seq:
+    # a Tuple or an Array: the elements' claims drop, the block stays
+    ld t4, 0(t2)
+    slli t5, t4, 32
+    srli t5, t5, 32         # the length
+    addi t6, t2, 16
+.Lrel_seq_loop:
+    beqz t5, .Lrel_free
+    ld a0, 0(t6)
+    call emo_release
+    addi t6, t6, 8
+    addi t5, t5, -1
+    j .Lrel_seq_loop
+.Lrel_free:
+    ld t0, 16(sp)           # the block
+    ld t1, 8(sp)            # the serving slot
+    ld t2, 584(t1)          # the serving arena's end
+    ld t3, -8(t2)           # the freelist head
+    sd t3, 8(t0)            # the link rides the freed payload's first word
+    sd t0, -8(t2)
+.Lrel_done:
+    ld ra, 0(sp)
+    addi sp, sp, 24
+.Lrel_out:
     ret
 
 # ---- Failure ----
@@ -2765,17 +3645,27 @@ emo_box_f64:
     addi sp, sp, 16
     ret
 
-# emo_box_new: a0 = any value, a0 = a fresh Box holding it.
+# emo_box_new: a0 = any value, a0 = a fresh Box holding it. The Box is
+# an identity: refcount 1 in its header (T8.7's pool), the caller's
+# claim. The Box takes its own claim on the payload here — every
+# container holds the words it stores.
     .globl emo_box_new
 emo_box_new:
     addi sp, sp, -16
     sd ra, 0(sp)
     sd a0, 8(sp)
-    li a0, 1
-    call emo_alloc
+    li a0, 1                # the payload: the value's one word
+    li a1, 0                # no pool here: the call site pools the birth
+    li a2, 10               # the tag
+    li a3, 0
+    call emo_ident_new
     ld t0, 8(sp)
-    sd t0, 8(a0)
-    ori a0, a0, 10
+    andi t1, a0, -32
+    sd t0, 8(t1)            # the payload lands in the cell
+    mv a5, a0               # the Box rides a5 across the payload's claim
+    ld a0, 8(sp)
+    call emo_retain         # the Box's claim on its payload
+    mv a0, a5               # the answer is the Box, the caller's claim
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -2797,47 +3687,94 @@ emo_box_new:
 # to it directly.
 
 # emo_atomic_new: a0 = any value; a0 = a fresh Atomic holding it. The
-# initial word is published with the sequential-consistency store.
+# initial word is published with the sequential-consistency store. The
+# Atomic is an identity by shape, but its cell crosses processes (the
+# copy-out keeps it shared), so it carries no refcount — the payload's
+# claim is the Atomic's own, taken here.
     .globl emo_atomic_new
 emo_atomic_new:
-    addi sp, sp, -16
+    addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)
-    li a0, 1
+    li a0, 1                # the payload: the value's one word
+    li a2, 16               # the tag
     call emo_alloc
     ld t0, 8(sp)
+    andi t1, a0, -32
     fence rw, w
-    sd t0, 8(a0)
+    sd t0, 8(t1)
     fence rw, rw
-    ori a0, a0, 16
+    # the Atomic holds its payload: the claim is the cell's, taken on
+    # every publish (no count on the cell itself — it crosses
+    # processes). The cell rides a5 across the claim; the answer is
+    # the tagged cell.
+    mv a5, a0
+    ori a5, a5, 16
+    ld a0, 8(sp)
+    call emo_retain
+    mv a0, a5
     ld ra, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 32
     ret
 
-# emo_atomic_load: a0 = cell; a0 = the value the cell holds.
+# emo_atomic_load: a0 = cell; a0 = the value the cell holds, the
+# caller's own claim taken here (the read hands the caller its claim,
+# like every read).
     .globl emo_atomic_load
 emo_atomic_load:
+    addi sp, sp, -16
+    sd ra, 0(sp)
     andi t0, a0, -32
     fence rw, rw
     ld a0, 8(t0)
     fence r, rw
+    call emo_retain
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
-# emo_atomic_store: a0 = cell, a1 = v; the cell holds v. `store`
-# answers nothing; a0 keeps the cell for the statement to discard.
+# emo_atomic_store: a0 = cell, a1 = v; a0 = the cell, the store's answer
+# and the caller's claim on it (every method answers a claimed word —
+# the site pools it). The claim on the new payload is the Atomic's,
+# taken here; the previous payload's claim is never dropped — the cell
+# crosses processes, a release here could not know which arena's
+# freelist serves it, and the practical payloads are value kinds the
+# retain/release never touch.
     .globl emo_atomic_store
 emo_atomic_store:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the cell, across the calls
+    mv a0, a1
+    call emo_retain         # the new payload's claim: the Atomic's
+    mv a1, a0
+    ld a0, 8(sp)
     andi t0, a0, -32
     addi t0, t0, 8
     amoswap.d.aqrl zero, a1, (t0)
+    ld a0, 8(sp)
+    call emo_retain         # the answer's claim: the caller's
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
-# emo_atomic_exchange: a0 = cell, a1 = v; a0 = the previous value.
+# emo_atomic_exchange: a0 = cell, a1 = v; a0 = the previous value, the
+# caller's claim taken here. The new payload's claim is the Atomic's.
     .globl emo_atomic_exchange
 emo_atomic_exchange:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)            # the cell, across the calls
+    mv a0, a1
+    call emo_retain
+    mv a1, a0
+    ld a0, 8(sp)
     andi t0, a0, -32
     addi t0, t0, 8
     amoswap.d.aqrl a0, a1, (t0)
+    call emo_retain         # the previous rides home with a claim
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
 # emo_atomic_compare_exchange: a0 = cell, a1 = expected, a2 = fresh;
@@ -2874,12 +3811,17 @@ emo_atomic_compare_exchange:
     bne t1, s3, .Lcas_read
     sc.d.rl t2, s2, (s0)
     bnez t2, .Lcas_try
+    mv a0, s2
+    call emo_retain         # the Atomic's claim on the payload it holds
     li t0, 1
     j .Lcas_pack
 .Lcas_miss:
     li t0, 0
 .Lcas_pack:
-    sd t0, 40(sp)
+    sd t0, 40(sp)           # the swapped flag first: the claim below
+    mv a0, s3               #   spends the t-registers
+    call emo_retain         # the actual rides home in the tuple with a
+    mv s3, a0               #   claim of the tuple's own (T8.7's pool)
     li a0, 3
     call emo_alloc
     li t0, 2
@@ -3008,6 +3950,7 @@ emo_atomic_rmw:
     sc.d.rl t2, s3, (s0)
     bnez t2, .Lrmw_try
     mv a0, s2
+    call emo_retain         # the previous rides home with a claim
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -3022,27 +3965,32 @@ emo_atomic_rmw:
     call emo_fail
 
 # emo_instance_new: a0 = class id, a1 = field count; a0 = the tagged
-# instance with zeroed fields.
+# instance with zeroed fields. The instance is an identity: refcount 1
+# in its header (T8.7's pool), the caller's claim.
     .globl emo_instance_new
 emo_instance_new:
     addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)
     sd a1, 16(sp)
-    addi a0, a1, 1
-    call emo_alloc
+    addi a0, a1, 1          # the payload: the class id + the fields
+    li a1, 0                # no pool here: the ctor's prologue pools the birth
+    li a2, 14               # the tag
+    li a3, 0
+    call emo_ident_new
     ld t0, 8(sp)
-    sd t0, 8(a0)
+    andi t1, a0, -32
+    sd t0, 8(t1)
     ld t1, 16(sp)
     beqz t1, .Lin_done
-    addi t2, a0, 16
+    andi t3, a0, -32
+    addi t2, t3, 16
 .Lin_zero:
     sd zero, 0(t2)
     addi t2, t2, 8
     addi t1, t1, -1
     bnez t1, .Lin_zero
 .Lin_done:
-    ori a0, a0, 14
     ld ra, 0(sp)
     addi sp, sp, 32
     ret
@@ -3448,7 +4396,9 @@ emo_eq_deep:
     ld t1, 8(s1)
     bne t0, t1, .Leq_no
     ld s4, 0(s0)
-    addi s4, s4, -1
+    slli s4, s4, 32
+    srli s4, s4, 32         # the count: an identity's header carries
+    addi s4, s4, -1         #   its refcount in the height (T8.7)
     addi s2, s0, 16
     addi s3, s1, 16
     beqz s4, .Leq_yes
@@ -4565,6 +5515,9 @@ msg_arena_end:
 msg_arenas:
     .ascii "no arena left for a new process"
 msg_arenas_end:
+msg_pool:
+    .ascii "identity pool overflow"
+msg_pool_end:
 msg_blocked:
     .ascii "all processes are blocked; no message will ever arrive"
 msg_blocked_end:
@@ -5198,6 +6151,7 @@ emo_spawn:
     add t2, a0, t6
     sd a0, 576(t3)          # the child allocates from the block
     sd t2, 584(t3)
+    sd zero, -8(t2)         # the arena's freelist head starts empty
     j .Lspawn_arena_taken
 .Lspawn_pool:
     la t4, emo_arena_pool
@@ -5209,6 +6163,7 @@ emo_spawn:
     add t2, t0, t6
     sd t0, 576(t3)          # the child allocates from the block
     sd t2, 584(t3)
+    sd zero, -8(t2)         # the block's old freelist head is garbage now
     j .Lspawn_arena_taken
 .Lspawn_carve:
     la t4, emo_procs
@@ -5217,6 +6172,9 @@ emo_spawn:
     li t6, 65536
     sub t2, t5, t6          # the carve: the arena's top 64 KiB
     bgeu t0, t2, .Lspawn_noarena
+    ld t6, -8(t5)           # the root's freelist head, down out of the
+    sd t6, -8(t2)           #   carved range before the child's arena owns
+    sd zero, -8(t5)         #   its top word — the child's head starts empty
     sd t2, 584(t4)          # the root's end closes above the carve
     sd t2, 576(t3)          # the child allocates from the carve's base
     sd t5, 584(t3)          # to the end the root gave up
@@ -5240,18 +6198,34 @@ emo_spawn:
     li t0, 1
     sd t0, 200(t4)          # the spare word: SIE on at the first dispatch
     sd t4, 0(t3)            # the slot's saved sp
-    # copy the arguments
+    # copy the arguments; each keeps the child's claim — the words live
+    # in the spawner's arena, and the child borrows them for its whole
+    # run (the claims ride the copies, never released)
     ld t0, 16(sp)           # argc
     ld t1, 24(sp)           # src
     mv t2, t5               # dst
     beqz t0, .Lspawn_copied
+    addi sp, sp, -32        # the loop's state rides the call below
+    sd s1, 0(sp)
+    sd s2, 8(sp)
+    sd s3, 16(sp)
+    mv s1, t1
+    mv s2, t2
+    mv s3, t0
 .Lspawn_copy:
-    ld t6, 0(t1)
-    sd t6, 0(t2)
-    addi t0, t0, -1
-    addi t1, t1, 8
-    addi t2, t2, 8
-    bnez t0, .Lspawn_copy
+    beqz s3, .Lspawn_copy_done
+    ld a0, 0(s1)
+    call emo_retain
+    sd a0, 0(s2)
+    addi s3, s3, -1
+    addi s1, s1, 8
+    addi s2, s2, 8
+    j .Lspawn_copy
+.Lspawn_copy_done:
+    ld s1, 0(sp)
+    ld s2, 8(sp)
+    ld s3, 16(sp)
+    addi sp, sp, 32
 .Lspawn_copied:
     mv a0, t3
     call emo_runq_push
@@ -5305,6 +6279,10 @@ emo_send:
     # snapshot the message at the boundary
     ld a0, 16(sp)
     call emo_copy_deep
+    call emo_retain         # the ring's claim: on the copy, and on the
+                            #   very word when the snapshot shares it —
+                            #   the statement boundary's drain must never
+                            #   free a queued message under the pool
     sd a0, 32(sp)           # the copy
     ld t4, 24(sp)           # the target slot
     # into the target's mailbox: 32 entries, oldest first — the message
@@ -5418,8 +6396,13 @@ emo_mb_remove:
     add a1, t0, a1
     ld a1, 608(a1)
     sd a1, 8(sp)                # the removed message's sender slot
-    ld t3, 32(t0)
-    mv t2, a0
+    # the ring word's claim stays with the send (T8.7's pool): the
+    # snapshot's cells release at the receive's copy-out boundary on
+    # the receiver's side, and the send's own claim reads as the
+    # documented-perpetual one — the walk home through the sender's
+    # arena belongs to the mailbox design, not to this counter's first
+    # piece.
+    mv t2, a0                   # the scan index, into the shift loop
 .Lmb_rm_loop:
     addi t4, t3, -1
     bgeu t2, t4, .Lmb_rm_done
@@ -5686,6 +6669,7 @@ emo_user_spawn:
     add t2, a0, t6
     sd a0, 576(t3)              # the child allocates from the block
     sd t2, 584(t3)
+    sd zero, -8(t2)             # the arena's freelist head starts empty
     j .Lus_arena_taken
 .Lus_pool:
     la t4, emo_arena_pool
@@ -5697,6 +6681,7 @@ emo_user_spawn:
     add t2, t0, t6
     sd t0, 576(t3)              # the child allocates from the block
     sd t2, 584(t3)
+    sd zero, -8(t2)             # the block's old freelist head is garbage now
     j .Lus_arena_taken
 .Lus_carve:
     la t4, emo_procs
@@ -5705,6 +6690,9 @@ emo_user_spawn:
     li t6, 65536
     sub t2, t5, t6              # the carve: the arena's top 64 KiB
     bgeu t0, t2, .Lus_noarena
+    ld t6, -8(t5)               # the root's freelist head, down out of the
+    sd t6, -8(t2)               #   carved range before the child's arena
+    sd zero, -8(t5)             #   owns its top word — the child starts empty
     sd t2, 584(t4)              # the root's end closes above the carve
     sd t2, 576(t3)              # the child allocates from the carve's base
     sd t5, 584(t3)              # to the end the root gave up
@@ -5851,10 +6839,16 @@ emo_copy_deep:
     li t1, 10
     beq t0, t1, .Lcd_box
     # 6 Tuple, 8 Array, 14 instance: a fresh block, verbatim header and
-    # length/class word, every element or field copied
+    # length/class word, every element or field copied. The clone's
+    # header carries no refcount — the claims are the containers', taken
+    # at every store below (T8.7's pool); an instance's verbatim header
+    # would carry the source's count, so its height masks off.
     andi t2, a0, -32
     sd t2, 24(sp)               # 24 the source block
     ld t3, 0(t2)
+    slli t3, t3, 32
+    srli t3, t3, 32             # the count: an identity's header carries
+                                #   its refcount in the height (T8.7)
     sd t3, 32(sp)               # 32 the payload word count
     addi t3, t3, 1              # the elements end at block word hdr, so the
     sd t3, 32(sp)               #   bound is one past it (hdr counts payload
@@ -5864,7 +6858,11 @@ emo_copy_deep:
     ld t2, 24(sp)
     andi t4, a0, -32
     ld t5, 0(t2)
-    sd t5, 0(t4)                # the header, verbatim
+    li t6, 14
+    bne t0, t6, 1f
+    slli t5, t5, 32             # the instance clone: the source's refcount
+    srli t5, t5, 32             #   stays behind, the clone starts unclaimed
+1:  sd t5, 0(t4)                # the header, verbatim
     ld t5, 8(t2)
     sd t5, 8(t4)                # the length or class id, verbatim
     li t6, 2
@@ -5878,6 +6876,7 @@ emo_copy_deep:
     add t5, t2, t5
     ld a0, 0(t5)
     call emo_copy_deep
+    call emo_retain             # the clone holds every word it stores
     ld t4, 16(sp)
     andi t4, t4, -32
     ld t6, 40(sp)
@@ -5933,10 +6932,16 @@ emo_copy_out:
     # 0, 2, 6, 8, 12, 14, 18: the block clone — verbatim header and
     # first word, every further word recursed (an Int64 cell, a Float64
     # cell, and a Pid all carry header 1, so the clone is the fresh
-    # cell they need)
+    # cell they need). The clone's header carries no refcount (T8.7's
+    # pool): a closure's or an instance's verbatim header would carry
+    # the source's count, so the height masks off, and the claims are
+    # the containers', taken at every store below.
     andi t2, a0, -32
     sd t2, 24(sp)               # 24 the source block
     ld t3, 0(t2)
+    slli t3, t3, 32
+    srli t3, t3, 32             # the count: an identity's header carries
+                                #   its refcount in the height (T8.7)
     sd t3, 32(sp)               # 32 the payload word count
     addi t3, t3, 1              # the words end at block word hdr, so the
     sd t3, 32(sp)               #   bound is one past it (hdr counts payload
@@ -5946,7 +6951,13 @@ emo_copy_out:
     ld t2, 24(sp)
     andi t4, a0, -32
     ld t5, 0(t2)
-    sd t5, 0(t4)                # the header, verbatim
+    li t6, 12
+    beq t0, t6, 2f
+    li t6, 14
+    bne t0, t6, 3f
+2:  slli t5, t5, 32             # the closure/instance clone: the source's
+    srli t5, t5, 32             #   refcount stays behind
+3:  sd t5, 0(t4)                # the header, verbatim
     ld t5, 8(t2)
     sd t5, 8(t4)                # the first word (length, code, class)
     li t6, 2
@@ -5960,6 +6971,7 @@ emo_copy_out:
     add t5, t2, t5
     ld a0, 0(t5)
     call emo_copy_out
+    call emo_retain             # the clone holds every word it stores
     ld t4, 16(sp)
     andi t4, t4, -32
     ld t6, 40(sp)
@@ -6672,6 +7684,9 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           program.pfuncs;
       native = false;
       spawns = [];
+      owned = [];
+      bound = [];
+      pool_live = 0;
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -6705,7 +7720,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           gput env "    .globl %s\n" (func_label f.Emo_ir.fname);
           emit_function env
             ~label:(func_label f.Emo_ir.fname)
-            ~params:f.fparams ~captures:[]
+            ~fname:f.Emo_ir.fname ~params:f.fparams ~captures:[]
             ~conv:
               (match conv_of f with
               | Some conv -> conv
@@ -6723,7 +7738,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           env.fclass <- Some c.Emo_ir.cdisplay;
           emit_function env
             ~label:(func_label m.Emo_ir.fname)
-            ~params:m.Emo_ir.fparams ~captures:[]
+            ~fname:m.Emo_ir.fname ~params:m.Emo_ir.fparams ~captures:[]
             ~conv:(dynamic_conv (List.length m.Emo_ir.fparams))
             ~native:false ~body:m.Emo_ir.fbody;
           env.fclass <- None)
@@ -6732,7 +7747,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   (* The entry the boot stub calls — the compiler's or a package's
      (EmoOS T3.1) — global so a stub in its own object reaches it. *)
   gput env "\n    .section .text\n    .globl emo_program\n";
-  emit_function env ~label:"emo_program"
+  emit_function env ~label:"emo_program" ~fname:"__program__"
     ~params:([] : (string * Emo_check.t) list)
     ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~body:program.pinit;
   (* Closure bodies queued during emission may queue more. *)
@@ -6741,7 +7756,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
     | [] -> ()
     | (label, cparams, caps, cbody) :: rest ->
         env.deferred <- rest;
-        emit_function env ~label ~params:cparams ~captures:caps
+        emit_function env ~label ~fname:"" ~params:cparams ~captures:caps
           ~conv:(dynamic_conv (List.length cparams))
           ~native:false ~body:cbody;
         drain ()
