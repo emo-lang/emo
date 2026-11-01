@@ -2,7 +2,7 @@
 // its own Sv39 table, built at spawn — the image's segments (code RX,
 // data RW, a shared boundary page where the ELF's segments meet inside
 // one 4 KiB page, the union of the two), the process's own stack block
-// and arena block, the user cells page, each with U, and the kernel's
+// and arena run, the user cells page, each with U, and the kernel's
 // whole high half beside them with no U (sv39.map_kernel) — the boot
 // pass's trap page (T6.3) included, rw without U. U-mode's
 // world is exactly those pages: its code, its image's data (the passes
@@ -86,11 +86,14 @@ const rw = pte_r | pte_w
 const page = 4096
 const block = 65536
 
-// The slot words the build reads: the arena cursor at 576 (the block's
-// base, a kernel address), the stack block at 864 (its physical base —
-// the pass runs on the identity alias of its block), and the space
-// word at 872 the build answers into (the stride 880).
-const slot_arena = 576
+// The slot words the build reads: the arena's base at 880 (the run's
+// first block, a kernel address) and the arena's end at 584 (the run's
+// one-past end — between them the whole run the spawn claimed, the
+// length never this module's guess), the stack block at 864 (its
+// physical base — the pass runs on the identity alias of its block),
+// and the space word at 872 the build answers into (the stride 888).
+const slot_arena_base = 880
+const slot_arena_end = 584
 const slot_stack = 864
 const slot_space = 872
 
@@ -182,7 +185,8 @@ def adopt(root_pa Int64) Void {
 // at the end of emo_user_spawn with the child's slot — every word the
 // build needs is already in it. The kernel's half, the image's
 // segments, the cells page (base), then the process's own: its stack
-// block and its arena block, each 64 KiB at the identity of its
+// block, and its arena whole — every block of the run from the base at
+// 880 up to the end at 584 (T8.9), each 4 KiB at the identity of its
 // physical address, RW with U. The root's physical address goes into
 // the slot's space word — what the switch resolves on every pick.
 // Frame exhaustion is the loud end, as the arena carve's is: the
@@ -201,9 +205,9 @@ def build(slot Int64) Void {
     map_page(root, va, va, rwu)
     va = va + page
   }
-  var arena = sv39.pa_of(peek64(slot + slot_arena))
+  var arena = sv39.pa_of(peek64(slot + slot_arena_base))
+  top = sv39.pa_of(peek64(slot + slot_arena_end))
   va = arena
-  top = arena + block
   while va < top {
     map_page(root, va, va, rwu)
     va = va + page

@@ -58,6 +58,19 @@ const frame_free = page + 136 // frames on that list
 const frame_split = page + 144 // blocks split into frames so far
 const block = 65536
 const frame = 4096
+
+// The arena's run (T8.9): the kernel's decision that a child's arena
+// is a contiguous run of this many blocks — 128 KiB — claimed in one
+// take_run at the spawn, mapped whole by the build, walked home block
+// by block at the death. The stub parks the number in the runtime's
+// emo_arena_run_len (runtime.S), and the process service's spare test
+// rides it (main.emo: a spawn backs the stack plus this run or is
+// refused). Two is what the region's budget carries today: the image's
+// 96 MiB heap (the kernel profile's, the T2.1 headroom) leaves the
+// region 71 blocks, and a spawn's stack, table, and run must fit
+// beside every resident's — four is the number the region asks for,
+// the heap's own budget the lever that frees it (CHECK.md, 2026-11-01).
+const arena_run = 2
 // The screen carve (T8.2): the region's end moved down to the carve's
 // base — the carve, 4 MiB, is the memory between the two, the kernel's
 // to hand out whole and once (the hand below).

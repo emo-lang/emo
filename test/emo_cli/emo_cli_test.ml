@@ -3229,11 +3229,12 @@ let riscv64_profile_tests =
                 "emo_user_arena_cell")));
     tc "the block hooks let a kernel back every block" (fun () ->
         (* T5.3: the runtime asks a parked frame allocator for every
-           64 KiB block — a spawn's arena, a user process's stack (the
-           slot's word at 864, the stride 880) — and the reaper gives
-           both back at the death; hookless, the pool and the carve
-           stay. The words ride both profiles, zero unless a kernel's
-           stub parks them. *)
+           64 KiB block — a spawn's arena (T8.9: a contiguous run of
+           the length the kernel parks, the base word at 880), a user
+           process's stack (the slot's word at 864, the stride 888) —
+           and the reaper gives both back at the death; hookless, the
+           pool and the carve stay. The words ride both profiles, zero
+           unless a kernel's stub parks them. *)
         let program = lower {|println("ok")|} in
         List.iter
           (fun profile ->
@@ -3247,13 +3248,25 @@ let riscv64_profile_tests =
               true
               (contains asm "emo_block_give_hook:");
             Alcotest.(check bool)
+              (profile ^ ": the arena hook rides beside the take")
+              true
+              (contains asm "emo_arena_take_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the run's length rides beside it")
+              true
+              (contains asm "emo_arena_run_len:");
+            Alcotest.(check bool)
               (profile ^ ": the stack block rides the slot")
               true
               (contains asm "sd t6, 864(t3)");
             Alcotest.(check bool)
+              (profile ^ ": the arena's base rides the slot")
+              true
+              (contains asm "sd a0, 880(t3)");
+            Alcotest.(check bool)
               (profile ^ ": the slot stride grew")
               true
-              (contains asm "li t3, 880");
+              (contains asm "li t3, 888");
             Alcotest.(check bool)
               (profile ^ ": the reaper gives through the hook")
               true
@@ -3303,7 +3316,7 @@ let riscv64_profile_tests =
             Alcotest.(check bool)
               (profile ^ ": the slot table grew with the word")
               true
-              (contains asm ".zero 56320"))
+              (contains asm ".zero 56832"))
           [ "kernel"; "user" ]);
     tc "the synthetic frame parks the initial sp at the anchor" (fun () ->
         (* T6.3: the frame the spawn builds sits at the block's bottom

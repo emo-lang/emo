@@ -92,6 +92,18 @@ emo_start:
     la t0, emo_frames__give
     la t1, emo_block_give_hook
     sd t0, 0(t1)
+    # the arena's run (T8.9): the arena hook goes to frames.emo's
+    # take_run — the window buffer's own machinery — and the run's
+    # length to the runtime's word beside it, both this stub's writes:
+    # a child's arena is a contiguous run of frames.arena_run blocks,
+    # claimed in one take at the spawn and walked home block by block
+    # at the death, the length never a runtime-side guess.
+    la t0, emo_frames__take_run
+    la t1, emo_arena_take_hook
+    sd t0, 0(t1)
+    li t0, 2                    # frames.emo's arena_run
+    la t1, emo_arena_run_len
+    sd t0, 0(t1)
     # the address spaces (T6.2): the three space hooks go to the
     # runtime's words — the build (a spawned pass's table, built at the
     # end of emo_user_spawn from the slot's own words), the resolve (the

@@ -623,7 +623,16 @@ if peek64(key_cell) != 0 {
 if peek64(win_cell) != 0 {
   poke64(win_cell, 0)
   case syscall.win_new(512, 128) {
-    (R.error, _) -> { mark() }
+    (R.error, why) -> {
+      var wp = byte_at(0, 119) // w
+      wp = byte_at(wp, 105) // i
+      wp = byte_at(wp, 110) // n
+      wp = byte_at(wp, 32) // space
+      wp = byte_at(wp, 114) // r
+      wp = num_at(reason_num(why), wp)
+      wp = byte_at(wp, 10)
+      gate_line(wp)
+    }
     (R.ok, ans) -> {
       var id = win_id(ans)
       win_line(id)

@@ -186,6 +186,11 @@ const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA
 const screen_size = 0x400000
 const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
 
+// The arena's run (T8.9): the blocks one child's arena takes — a
+// contiguous run claimed in one take at the spawn (frames.emo's
+// arena_run, the stub parks it in the runtime's emo_arena_run_len).
+const arena_run = 2
+
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
 const sv39_root = koff + 0x87004000
@@ -508,7 +513,11 @@ def process_service(boss Pid) Void {
       w -> {
         var op = op_of(w)
         if op == 3 {
-          if frames.spare() < 2 {
+          // A spawn is backed before it is served: the stack block plus
+          // the arena's run (arena_run) — a spawn the allocator cannot
+          // back is the refusal the caller sees, never the runtime's
+          // loud end.
+          if frames.spare() < 1 + arena_run {
             gate_reply(caller_of(w), -5)
           } else {
             var screen = 0

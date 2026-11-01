@@ -5647,15 +5647,15 @@ emo_atomic_mtbl:
 # message its patterns accept, and parks on no match; the root exiting
 # ends the program; a switch with nobody runnable is the loud deadlock.
 #
-# Slot layout (stride 110 words = 880 bytes): 0 the saved sp, 8 the pid,
+# Slot layout (stride 111 words = 888 bytes): 0 the saved sp, 8 the pid,
 # 16 the state (0 free, 1 alive, 2 receiving, 3 done, 4 device-wait),
 # 24 the mailbox head, 32 the mailbox length, 40 the process's own
 # priority, 48 its effective priority, 56 its CPU quota, 64.. the
 # 32-word message ring, 320.. the 32-word ring of the priorities the
 # messages carry (entry i of each ring belongs to the same message),
 # 576 the arena cursor and 584 the arena end (T5.1 — the process's own
-# bump heap: the root's is the whole image heap, a child's its 64 KiB
-# block, and emo_alloc charges whoever is running), 592 the count of
+# bump heap: the root's is the whole image heap, a child's its run of
+# blocks, and emo_alloc charges whoever is running), 592 the count of
 # sent messages still queued somewhere — each one pins the sender's
 # arena until a receive copies it out — 600 the claimed flag (1 = the
 # arena is this process's; 0 = reclaimed to the pool, or never claimed,
@@ -5664,11 +5664,15 @@ emo_atomic_mtbl:
 # 864 the stack block (T5.3 — the base of a 64 KiB block a kernel
 # handed emo_user_spawn for the process's stack, given back through
 # the block hooks at its death; 0 for the root and for a green process,
-# whose stack is its slot's own in emo_pstacks), and 872 the space
+# whose stack is its slot's own in emo_pstacks), 872 the space
 # word (T6.2 — the physical address of the process's own page table,
 # built by the kernel's build hook at the end of emo_user_spawn; 0 for
 # the kernel's own table, which is every green process's and the
-# root's until the boot pass adopts its own). A slot never returns
+# root's until the boot pass adopts its own), and 880 the arena's base
+# (EmoOS T8.9 — the first block of the run the spawn claimed, the
+# address the death walks home from block by block up to the end at
+# 584; a kernel's spawn claims a contiguous run of the length the
+# kernel parks, the pool and the carve one block). A slot never returns
 # to free — a pid is unique for the whole run, so a send to a dead pid
 # is dropped, never redirected to a new occupant.
 #
@@ -5862,7 +5866,7 @@ emo_deadlock:
 .Ldl_scan:
     li t2, 64
     bgeu t1, t2, emo_fail_blocked
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -5994,7 +5998,7 @@ emo_sched_wake_console:
 .Lwake_scan:
     li t2, 64
     bgeu t1, t2, .Lwake_none
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -6023,13 +6027,17 @@ emo_sched_wake_console:
 # still waiting in a mailbox — each queued snapshot holds the count
 # above zero until its receiver has copied the message out. The arena
 # goes back where it came from: the kernel's frame allocator when the
-# give hook is parked, the runtime's own pool otherwise. A live process,
+# give hook is parked, the runtime's own pool otherwise, the walk home
+# block by block from the base the spawn wrote at 880 up to the end at
+# 584 (T8.9 — a kernel's run gives a block at a time, the give's
+# strictness per block; the pool and the carve serve one-block arenas,
+# the walk's first and only iteration). A live process,
 # a root (never claimed), and an already-reclaimed arena all simply
 # return. The callers run masked; the hooks are typed Emo, so the frame
 # holds what must survive them.
     .globl emo_arena_reap
 emo_arena_reap:
-    addi sp, sp, -16
+    addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)                # the slot survives the hook calls
     ld t0, 16(a0)
@@ -6049,24 +6057,43 @@ emo_arena_reap:
     beqz t0, .Lreap_done        # nothing claimed: the root, or taken back
     ld t0, 592(a0)
     bnez t0, .Lreap_done        # a queued message still pins the arena
-    ld t1, 584(a0)
-    li t2, 65536
-    sub t1, t1, t2              # the block's base
+    ld t1, 880(a0)              # the arena's base — the walk starts here
+    ld t2, 584(a0)              # and ends at the arena's end
     sd zero, 600(a0)            # claimed no more
     la t3, emo_block_give_hook
     ld t3, 0(t3)
     beqz t3, .Lreap_pool
+.Lreap_give:
+    bgeu t1, t2, .Lreap_done    # the run is home
+    sd t1, 16(sp)               # the walk survives the hook call
+    sd t2, 24(sp)
     mv a0, t1
-    jalr t3                     # the kernel's give: the arena block goes home
-    j .Lreap_done
+    jalr t3                     # the kernel's give: one block goes home
+    la t3, emo_block_give_hook
+    ld t3, 0(t3)                # the hook again — the give owns its t-registers
+    ld t1, 16(sp)
+    ld t2, 24(sp)
+    ld a0, 8(sp)
+    li t4, 65536
+    add t1, t1, t4
+    j .Lreap_give
 .Lreap_pool:
     la t3, emo_arena_pool
+.Lreap_push:
+    bgeu t1, t2, .Lreap_done    # the run is pooled
+    sd t1, 16(sp)
+    sd t2, 24(sp)
     ld t4, 0(t3)
     sd t4, 0(t1)                # the block's first word becomes the link
     sd t1, 0(t3)                # and the block the pool's head
+    ld t1, 16(sp)
+    ld t2, 24(sp)
+    li t4, 65536
+    add t1, t1, t4
+    j .Lreap_push
 .Lreap_done:
     ld ra, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 32
     ret
 
 # emo_process_done: the entry thunk's return address — a spawned
@@ -6111,7 +6138,7 @@ emo_spawn:
     li t2, 64
 .Lspawn_scan:
     bgeu t1, t2, .Lspawn_exhausted
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -6146,9 +6173,10 @@ emo_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
-    # the child's arena (T5.1/T5.2/T5.3): when the kernel's frame
-    # allocator is parked, the block is its — a take answers the base
-    # of a free 64 KiB block, 0 that none is left. Otherwise a block
+    # the child's arena (T5.1/T5.2/T5.3, the run of T8.9): when the
+    # kernel's arena hook is parked, the run is its — one take answers
+    # the base of a contiguous run of the length the kernel parks in
+    # emo_arena_run_len, 0 that no run sits free. Otherwise a block
     # comes from the runtime's own pool first — a dead process's arena,
     # returned on death — and a fresh 64 KiB carve from the root's
     # arena top only when the pool is empty. The root's cursor never
@@ -6159,19 +6187,24 @@ emo_spawn:
     # a-register, so the slot and its index sit out on the frame; (t1 —
     # the slot index the stack build reads below — is not touched by
     # the pool-and-carve path).
-    la t4, emo_block_take_hook
+    la t4, emo_arena_take_hook
     ld t4, 0(t4)
     beqz t4, .Lspawn_pool
+    la t5, emo_arena_run_len
+    ld a0, 0(t5)            # the run's length, the kernel's parked decision
     sd t1, 40(sp)           # the slot index and the slot survive the call
     sd t3, 48(sp)
-    jalr t4                 # the kernel's take: a0 = a free block's base
+    jalr t4                 # the kernel's run take: a0 = the run's base
     ld t1, 40(sp)
     ld t3, 48(sp)
     beqz a0, .Lspawn_noarena
-    li t6, 65536
+    la t5, emo_arena_run_len
+    ld t6, 0(t5)
+    slli t6, t6, 16         # the length in blocks, times the 64 KiB block
     add t2, a0, t6
-    sd a0, 576(t3)          # the child allocates from the block
+    sd a0, 576(t3)          # the child allocates from the run
     sd t2, 584(t3)
+    sd a0, 880(t3)          # the run's base — the death walks it home
     sd zero, -8(t2)         # the arena's freelist head starts empty
     j .Lspawn_arena_taken
 .Lspawn_pool:
@@ -6184,6 +6217,7 @@ emo_spawn:
     add t2, t0, t6
     sd t0, 576(t3)          # the child allocates from the block
     sd t2, 584(t3)
+    sd t0, 880(t3)          # the block's base — the death walks it home
     sd zero, -8(t2)         # the block's old freelist head is garbage now
     j .Lspawn_arena_taken
 .Lspawn_carve:
@@ -6199,6 +6233,7 @@ emo_spawn:
     sd t2, 584(t4)          # the root's end closes above the carve
     sd t2, 576(t3)          # the child allocates from the carve's base
     sd t5, 584(t3)          # to the end the root gave up
+    sd t2, 880(t3)          # the carve's base — the death walks it home
 .Lspawn_arena_taken:
     li t5, 1
     sd t5, 600(t3)          # the arena is claimed — reclaimed on death
@@ -6281,7 +6316,7 @@ emo_send:
     li t3, 64
 .Lsend_scan:
     bgeu t2, t3, .Lsend_noproc
-    li t4, 880
+    li t4, 888
     mul t5, t2, t4
     add t5, t1, t5
     ld t6, 8(t5)
@@ -6516,7 +6551,7 @@ emo_gate_post:
     li t2, 64
 .Lgp_scan:
     bgeu t1, t2, .Lgp_fail
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -6587,7 +6622,7 @@ emo_gate_reply:
     li t2, 64
 .Lgr_scan:
     bgeu t1, t2, .Lgr_fail
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 8(t4)
@@ -6641,7 +6676,7 @@ emo_user_spawn:
     li t2, 64
 .Lus_scan:
     bgeu t1, t2, .Lus_fail
-    li t3, 880
+    li t3, 888
     mul t4, t1, t3
     add t4, t0, t4
     ld t5, 16(t4)
@@ -6673,24 +6708,30 @@ emo_user_spawn:
     sd t0, 48(t3)
     ld t0, 56(t4)
     sd t0, 56(t3)
-    # the child's arena (T5.1/T5.2/T5.3), as any green child's: the
-    # kernel's frame allocator when its take hook is parked, else a
-    # block from the pool first, a fresh 64 KiB carve from the root's
-    # arena top only when the pool is empty. The user image's allocator
-    # charges it to the running pass through the cells its stub parked
-    # (the trap shim's save and restore). The slot sits out the call on
-    # the frame.
-    la t4, emo_block_take_hook
+    # the child's arena (T5.1/T5.2/T5.3, the run of T8.9), as any green
+    # child's: the kernel's arena hook when it is parked — one take
+    # answers the base of a contiguous run of the length the kernel
+    # parks — else a block from the pool first, a fresh 64 KiB carve
+    # from the root's arena top only when the pool is empty. The user
+    # image's allocator charges it to the running pass through the
+    # cells its stub parked (the trap shim's save and restore). The
+    # slot sits out the call on the frame.
+    la t4, emo_arena_take_hook
     ld t4, 0(t4)
     beqz t4, .Lus_pool
+    la t5, emo_arena_run_len
+    ld a0, 0(t5)                # the run's length, the kernel's parked decision
     sd t3, 32(sp)               # the slot survives the call
-    jalr t4                     # the kernel's take: a0 = a free block's base
+    jalr t4                     # the kernel's run take: a0 = the run's base
     ld t3, 32(sp)
     beqz a0, .Lus_noarena
-    li t6, 65536
+    la t5, emo_arena_run_len
+    ld t6, 0(t5)
+    slli t6, t6, 16             # the length in blocks, times the 64 KiB block
     add t2, a0, t6
-    sd a0, 576(t3)              # the child allocates from the block
+    sd a0, 576(t3)              # the child allocates from the run
     sd t2, 584(t3)
+    sd a0, 880(t3)              # the run's base — the death walks it home
     sd zero, -8(t2)             # the arena's freelist head starts empty
     j .Lus_arena_taken
 .Lus_pool:
@@ -6703,6 +6744,7 @@ emo_user_spawn:
     add t2, t0, t6
     sd t0, 576(t3)              # the child allocates from the block
     sd t2, 584(t3)
+    sd t0, 880(t3)              # the block's base — the death walks it home
     sd zero, -8(t2)             # the block's old freelist head is garbage now
     j .Lus_arena_taken
 .Lus_carve:
@@ -6718,6 +6760,7 @@ emo_user_spawn:
     sd t2, 584(t4)              # the root's end closes above the carve
     sd t2, 576(t3)              # the child allocates from the carve's base
     sd t5, 584(t3)              # to the end the root gave up
+    sd t2, 880(t3)              # the carve's base — the death walks it home
 .Lus_arena_taken:
     li t5, 1
     sd t5, 600(t3)              # the arena is claimed — reclaimed on death
@@ -7275,13 +7318,14 @@ emo_heap_end:
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
 #
-# 64 slots at 880 bytes (context word, pid, state, mailbox head and
+# 64 slots at 888 bytes (context word, pid, state, mailbox head and
 # length, the own and effective priorities and the quota, a 32-word
 # message ring, the 32-word ring of the priorities the messages carry,
 # the arena cursor and end — T5.1's per-process bump heaps — the count
 # of queued messages pinning the arena and the claimed flag, the 32-word
-# ring of the senders' slots — T5.2's reclamation — and the stack
-# block's base — T5.3's), one 64 KiB
+# ring of the senders' slots — T5.2's reclamation — the stack
+# block's base — T5.3's — and the space word — T6.2's — plus the
+# arena's base — T8.9's, the run's first block), one 64 KiB
 # stack per slot, and the run-queue ring. A slot never returns to free
 # — pids stay unique for the whole run — so 64 is the bound on spawns
 # ever taken, loud at the ceiling. Everything here is NOBITS: the
@@ -7289,7 +7333,7 @@ emo_heap_end:
 
     .align 8
 emo_procs:
-    .zero 56320
+    .zero 56832
 emo_pstacks:
     .zero 4194304
     .globl emo_runq
@@ -7314,13 +7358,25 @@ emo_cur_slot:
 # link while it waits. Empty, the spawn carves a fresh block from the
 # root's arena top (T5.1) — unless the kernel's frame allocator is
 # parked, in which case every block is its: the hooks below. The hooks
-# are the console hook's pattern (T3.5): two words in .bss, zero in
+# are the console hook's pattern (T3.5): words in .bss, zero in
 # every image whose stub does not touch them — the plain program and
 # the user image keep the pool and the carve — while a kernel package's
-# boot stub parks the raw entries of two fully typed Emo defs, a take
+# boot stub parks the raw entries of fully typed Emo defs, a take
 # answering the base of a free block (0 = none) and a give taking the
 # base back, both the psABI discipline. Every block — arena, user
 # process's stack — flows through the same pair of words.
+#
+# The arena's run (EmoOS T8.9): a kernel's spawn claims a child's
+# arena a contiguous run in one take — frames.take_run, the window
+# buffer's own machinery — through the arena hook parked beside the
+# block take, the run's length in blocks parked beside it. Both words
+# are the kernel's decision, written by the same stub that parks the
+# rest: the length never crosses as a runtime-side guess, and the
+# spawn's end word (base + length · block) and the slot's base word
+# say the same run to the allocator, the build, and the death. Zero in
+# every image whose stub leaves them — those images' spawns take one
+# block from the pool or the carve, the shape the reap's walk serves
+# in its first iteration.
 
 emo_arena_pool:
     .zero 8
@@ -7331,6 +7387,14 @@ emo_block_take_hook:
 
     .globl emo_block_give_hook
 emo_block_give_hook:
+    .zero 8
+
+    .globl emo_arena_take_hook
+emo_arena_take_hook:
+    .zero 8
+
+    .globl emo_arena_run_len
+emo_arena_run_len:
     .zero 8
 
 # The copy-out's shared-cell flag (T5.2): emo_copy_out_at clears it,
@@ -7349,7 +7413,7 @@ emo_copy_shared:
 # build hook runs at the end of emo_user_spawn with the child's slot:
 # a kernel Emo def builds the pass's page table from the slot's own
 # words and answers the physical root into the slot's space word (872,
-# the stride 880). The resolve hook runs in the pick with the incoming
+# the stride 888). The resolve hook runs in the pick with the incoming
 # slot's word (0 = the kernel's own table, every green process's) and
 # answers the physical root to install — or -1 when satp already names
 # it, the cache hit that keeps the kernel's processes switching among
