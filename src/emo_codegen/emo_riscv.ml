@@ -4904,76 +4904,9 @@ emo_deadlock:
     csrci sstatus, 2         # back under the region's mask
     j emo_sched_pick         # the ISR may have queued someone
 emo_fail_blocked:
-    # TEMPORARY (T8.6 debug): the live slots' pid and state in hex —
-    # the loop's index rides the stack: the console emit may descend
-    # into Emo code that owns the s-registers.
-    addi sp, sp, -32
-    la t0, emo_procs
-    sd t0, 0(sp)
-    sd zero, 8(sp)
-.Ldl_dbg:
-    ld t0, 8(sp)
-    li t2, 64
-    bgeu t0, t2, .Ldl_dbg_done
-    li t3, 880
-    mul t4, t0, t3
-    ld t0, 0(sp)
-    add t4, t0, t4
-    ld t5, 16(t4)
-    beqz t5, .Ldl_dbg_next
-    ld a0, 8(t4)
-    sd t4, 16(sp)
-    call emo_dbg_hex
-    li a0, 58
-    call emo_console_emit
-    ld t4, 16(sp)
-    ld a0, 16(t4)
-    call emo_dbg_hex
-    li a0, 47
-    call emo_console_emit
-    ld a0, 32(t4)
-    call emo_dbg_hex
-    li a0, 32
-    call emo_console_emit
-.Ldl_dbg_next:
-    ld t0, 8(sp)
-    addi t0, t0, 1
-    sd t0, 8(sp)
-    j .Ldl_dbg
-.Ldl_dbg_done:
-    li a0, 10
-    call emo_console_emit
-    addi sp, sp, 32
     la a0, msg_blocked
     la a1, msg_blocked_end
     call emo_fail
-
-# emo_dbg_hex: a0 = the word, printed as 16 hex digits (TEMPORARY).
-emo_dbg_hex:
-    addi sp, sp, -32
-    sd ra, 0(sp)
-    sd a0, 8(sp)
-    li t1, 60
-    sd t1, 16(sp)
-.emo_dbg_hex_loop:
-    ld t0, 8(sp)
-    ld t1, 16(sp)
-    srl t2, t0, t1
-    andi t2, t2, 15
-    li t3, 10
-    blt t2, t3, .emo_dbg_hex_digit
-    addi t2, t2, 39
-.emo_dbg_hex_digit:
-    addi t2, t2, 48
-    mv a0, t2
-    call emo_console_emit
-    ld t1, 16(sp)
-    addi t1, t1, -4
-    sd t1, 16(sp)
-    bge t1, zero, .emo_dbg_hex_loop
-    ld ra, 0(sp)
-    addi sp, sp, 32
-    ret
 
 # emo_sched_tick: the kernel timer ISR's quota step (T3.6). Consumes
 # one tick of the running slice and answers a0 = 1 when the slice is
