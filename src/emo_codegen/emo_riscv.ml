@@ -2849,13 +2849,14 @@ let emit_const_function env (f : Emo_ir.func) : unit =
      order [emit_function] keeps. *)
   emit_stmts env f.Emo_ir.fbody;
   put env "%s:\n" store;
-  if conv.cresult = R_word then put env "    mv a5, a0\n";
+  (* the result rides a5 across the unwind and the drain, whatever its
+     kind (the function epilogue's rule) *)
+  put env "    mv a5, a0\n";
   unwind_owned env 0;
   pool_drain env frm;
-  if conv.cresult = R_word then begin
-    put env "    mv a0, a5\n";
-    put env "    call emo_retain\n" (* the memo's own claim *)
-  end;
+  put env "    mv a0, a5\n";
+  if conv.cresult = R_word then
+    put env "    call emo_retain\n" (* the memo's own claim *);
   put env "    la t2, %s\n" val_label;
   (match conv.cresult with
   | R_int64 ->
@@ -3027,7 +3028,11 @@ let emit_function env ~(label : string) ~(fname : string)
     if trailing_claims then put env "    call emo_retain\n"
   end;
   put env "%s:\n" f.ret;
-  if conv.cresult = R_word then put env "    mv a5, a0\n";
+  (* the result rides a5 across the unwind and the drain, whatever its
+     kind: a raw Int64 answers in a0 like a tagged word does, and the
+     releases spend a0 — the kernel's read_byte returned its own pool
+     address until this held for every result (T8.7's pool) *)
+  put env "    mv a5, a0\n";
   unwind_owned env 0;
   if self_tail then
     List.iter
@@ -3036,7 +3041,7 @@ let emit_function env ~(label : string) ~(fname : string)
         put env "    call emo_release\n")
       word_params;
   pool_drain env f;
-  if conv.cresult = R_word then put env "    mv a0, a5\n";
+  put env "    mv a0, a5\n";
   if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   sp_frame_adjust env ~module_buf:false ~up:true f.size;
@@ -3321,8 +3326,9 @@ emo_alloc:
 # declared exception's cell waits for its arena, since a release that
 # frees would have to know which arena's freelist to serve. A cell
 # reaching zero walks its holdings (a Box its payload, a Closure its
-# captures, an Instance its fields; a Tuple or an Array releases the
-# identity words it stored, its own block staying arena-resident) and
+# captures, an Instance its fields — never a Tuple or an Array: the value
+# kinds are shared by value with no count, so the identity words they
+# store keep the claims their construction took, the documented leak) and
 # goes to the freelist, whose head lives in the arena itself, at the end
 # word minus 8 — the head travels with the arena, so no boundary
 # crossing ever carries it, and a spawn only has to zero it.
@@ -3451,7 +3457,19 @@ emo_retain:
     beqz a0, .Lret_out
     andi t0, a0, 1
     bnez t0, .Lret_out      # an immediate
-    srli t0, a0, 1
+    # a tagged pointer is a RAM address — physical (the height zero, bit
+    # 31 set) or the kernel's high alias (the height 0xffffffc0); the
+    # kernel's raw words (op << 32 | pid: the gate's requests, the death
+    # notices) are neither, and a pid whose low bits spell an identity
+    # kind must not read as one
+    srli t1, a0, 32
+    beqz t1, 1f
+    li t2, 0xffffffc0
+    bne t1, t2, .Lret_out
+    j 2f
+1:  srli t1, a0, 31
+    beqz t1, .Lret_out
+2:  srli t0, a0, 1
     andi t0, t0, 0xF        # the kind
     li t1, 5                # Box
     beq t0, t1, .Lret_bump
@@ -3470,11 +3488,11 @@ emo_retain:
     ret
 
 # emo_release: a0 = a word whose claim drops. An identity kind reaching
-# zero walks its holdings and joins the freelist; a Tuple or an Array
-# releases the identity words it stored (its own block stays); the rest
-# answer the no-op their tags carry. emo_release_in: the same walk with
-# the freelist of the slot in a1 — the mailbox remove's path, whose
-# words live in the sender's arena while the receiver runs.
+# zero walks its holdings and joins the freelist; every other kind
+# answers the no-op its tag carries. emo_release_in: the same walk with
+# the freelist of the slot in a1 — for a word that lives in another
+# process's arena (no caller today; the mailbox remove keeps the ring's
+# claim with the send).
     .globl emo_release
 emo_release:
     la t1, emo_cur_slot
@@ -3488,7 +3506,14 @@ emo_release_walk:
     beqz a0, .Lrel_out
     andi t0, a0, 1
     bnez t0, .Lrel_out      # an immediate
-    addi sp, sp, -24
+    srli t2, a0, 32         # a RAM address, or a kernel raw word (the
+    beqz t2, 1f             #   retain's own rule)
+    li t3, 0xffffffc0
+    bne t2, t3, .Lrel_out
+    j 2f
+1:  srli t2, a0, 31
+    beqz t2, .Lrel_out
+2:  addi sp, sp, -24
     sd ra, 0(sp)
     sd t1, 8(sp)            # the serving slot survives the walk's calls
     sd a0, 16(sp)           # the word, its kind decoded from it below
@@ -3500,11 +3525,13 @@ emo_release_walk:
     beq t0, t2, .Lrel_ident
     li t2, 7                # Instance
     beq t0, t2, .Lrel_ident
-    li t2, 3                # Tuple
-    beq t0, t2, .Lrel_seq
-    li t2, 4                # Array
-    beq t0, t2, .Lrel_seq
-    j .Lrel_done            # every other kind carries no claim
+    j .Lrel_done            # every other kind carries no claim: the
+                            #   value kinds (Tuple, Array among them) are
+                            #   shared by value with no count of their
+                            #   own, so a release never walks them — the
+                            #   identity words they hold keep the claims
+                            #   their construction took (the documented
+                            #   leak), and their blocks stay arena-resident
 .Lrel_ident:
     andi t2, a0, -32
     sd t2, 16(sp)           # the block rides the frame to the push
@@ -3527,12 +3554,6 @@ emo_release_walk:
     ld a0, 8(t2)
     call emo_release
     j .Lrel_free
-.Lrel_seq:
-    # a Tuple or an Array: the elements' claims drop, the block stays
-    ld t4, 0(t2)
-    slli t5, t4, 32
-    srli t5, t5, 32         # the length
-    addi t6, t2, 16
 .Lrel_seq_loop:
     beqz t5, .Lrel_free
     ld a0, 0(t6)
@@ -6402,6 +6423,7 @@ emo_mb_remove:
     # documented-perpetual one — the walk home through the sender's
     # arena belongs to the mailbox design, not to this counter's first
     # piece.
+    ld t3, 32(t0)               # the length, the shift loop's bound
     mv t2, a0                   # the scan index, into the shift loop
 .Lmb_rm_loop:
     addi t4, t3, -1
