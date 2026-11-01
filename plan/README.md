@@ -46,6 +46,18 @@ incrementally shippable steps — one file per step, executed in order.
   never links OpenSSL. Conformance, not surface: the ocaml scheduler
   is the semantic reference. Decisions settled 2026-10-17
   (`CHECK.md`, `plan/step-51-tls-c-target.md`).
+- **M21 — The crypto package (step 55):** the portable primitives
+  layer beneath every protocol — the SHA-2 and SHA-3 families with
+  SHAKE, HMAC, HKDF and PBKDF2, the constant-time compares,
+  ChaCha20-Poly1305, AES with GCM and the block modes, and
+  Ed25519/X25519 — pure Emo and byte-identical on the five hosted
+  targets, the RFC/NIST vectors plus Go-generated companions frozen
+  into the goldens so the interop claim is a diff. Its own `rand`
+  package carries the OS entropy the pure core cannot conjure. TLS
+  stays on the system library (step 51); the broken legacy set
+  (DES/RC4/DSA/MD4) is declined outright, with MD5 and SHA-1 behind
+  `crypto.legacy` for existing data only; RSA waits on a bignum
+  foundation. The plan is `plan/step-55-stdlib-crypto.md`.
 
 ## Ground rules
 
@@ -127,5 +139,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 52 | `Map` on `wasm` and `beam` (M19) | done — the wasm `$vmap` and the beam pdict-backed map helpers land with their lowerings and the send snapshot; `examples/map` and `slog_demo` ride the goldens on all five targets, and `slog`'s manifest widens to all five; `riscv64` stays the one target that refuses `Map` |
 | 53 | The `math` package: the transcendental surface, complex arithmetic, the FFT, BLAS1, the dense solver, and the special functions | done — the pure functions are fixed-order series with their coefficients written into the source, byte-identical on all five targets (`erf`/`erfc`/`tgamma`/`lgamma` included); the ELEFUNT-derived battery in `examples/math_elefunt` prints each function's max and rms bit loss and its `expected.txt` is the accuracy record; the native fast lane is step 54 |
 | 54 | The native fast lane: the `fastmath` and `quad` packages | done — `fastmath` carries `math`'s whole scalar surface as host-libm bindings on `c`/`ocaml` (the four unreleased twins moved out of `math` unsuffixed, so `math` stays pure and byte-identical), pinned by its target list (E5007 at load elsewhere, E3009 under the interpreter), with the natives' ELEFUNT battery in `examples/fastmath_elefunt` printing verdicts against stated loss budgets; `quad` vendors f2c-translated QUADPACK (`dqags`/`dqagi` chains, `d1mach` as literals) behind the C shim's workspace and the one FFI shape — a single-method-interface integrand — mapping the ier codes onto the `(R.ok, …)`/`(R.error, …)` split; `examples/quad_demo` pins the c golden |
+| 55 | The standard library: `crypto` and `rand` | in progress — T55.1 landed (the word layer and the package skeleton; `>>` measured arithmetic and `<<` wrapping, 29 probe vectors byte-identical interpreter-to-c, and the c-target corner found: a module-const wiring answers dynamic, and the dynamic world refuses bitwise — internal calls go through the direct qualified path); T55.2–T55.11 open (`plan/step-55-stdlib-crypto.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

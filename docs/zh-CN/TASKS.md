@@ -991,3 +991,24 @@ netlib 评估(`docs/math-netlib.md`,2026-10-22)把「基于 netlib 的高性能�
 - [x] **T54.3** — `quad` 包(名字暂定),`targets = ["c"]`,沿 `sqlite3` 的先例:f2c 转译的 QUADPACK `dqags` 及其牵出的例程(`dqagse`、`dqk21`、`dqelg`、`dqpsrt`,`d1mach` 常量改写为字面量)vendored 进包树;一个持有工作区(固定 `limit`)的 C shim,暴露今天的 FFI 唯一放行的形状——被积函数是单方法接口(`def at(x Float64) Float64`,回调契约),界与容差是 `Float64`,回传 `(result, abserr, neval, ier)` 元组;Emo 表面 `integrate(f, a, b, epsabs, epsrel)` 把 `ier = 0` 映射为 `(R.ok, (value, abserr))`,QUADPACK 的失败码映射为带 netlib 措辞的 `(R.error, reason)`——收敛失败是预期结果,不是违规。金测 `examples/quad_demo` 进 c 金测名单。
 - [x] **T54.4** — 无穷区间:`dqagi` 经同一个 shim(netlib 变换到 (0, 1]),以一个枚举参数命名三种区间——从某界到 +∞、从 −∞ 到某界、整条实轴——而不是用无穷的 `Float64` 界(命名暂定)。`examples/quad_demo` 加面板。
 - [x] **T54.5** — 文档:`docs/stdlib/quad.md`(EN + zh-CN)写 API、错误码映射与宿主依赖说明;`docs/stdlib.md` 的行(`math` 行、新增 `fastmath` 行与 `quad` 行);`docs/stdlib/fastmath.md` 扩全表面(页面已存在,含四个迁入的绑定与 zh-CN 镜像);`docs/math-netlib.md` 的阶段表标注阶段 1–2 已落地、阶段 3 仍挂起,连同 zh-CN 镜像;`plan/README.md` 的状态表。
+
+## M21 — crypto 包
+
+Go 调研(`pkg.go.dev/crypto@go1.27.3`,26 个包)用减法定出了范围。Go 保留坏掉的过去——DES、RC4、DSA、MD4——只因存量数据还要解密;一门全新语言的标准库没有这种包袱,可以直接拒收。Go 一半的包是协议管道——`tls`、`x509`、`asn1`——而这一层在步骤 51 已有答案:`net` 的 TLS 骑在系统 OpenSSL/LibreSSL 上,不是 Emo 侧的协议栈。剩下的正是可移植的原语层,而纯 Emo 规则在这里是要点而非妥协:`math` 0.1.0 已确立固定阶源码在全部五个宿主 target 上逐字节一致,RFC 与 NIST 测试向量随之把每个 target 钉到同一个答案——并与 Go 自己的包逐位对照,向量在本机生成、冻结进金测,互操作的主张就是一次 diff。本步骤落地一个包 `crypto`——哈希(SHA-2、SHA-3、SHAKE;MD5 与 SHA-1 收在 `crypto.legacy` 后面,名字即警告)、HMAC、HKDF 与 PBKDF2、常量时间比较、ChaCha20-Poly1305、AES 连同 GCM 与块模式、Ed25519/X25519——外加独立的 `rand` 包,熵源是纯 Emo 唯一变不出来的东西,而按 target 绑定它会把 `crypto` 的 target 名单撕开。错误二分沿 house 规则:密钥长度错 raise,tag 校验失败是 `(R.error, "crypto: authentication failed")`。文档里骑两节诚实说明:AES 先以 T-table 落地,缓存时序的告诫与它同一口气写明(AES-NI shim 是日后 `c` 上的可选加固;GHASH 是纯位运算,没有这条告诫),常量时间承诺为源级纪律——没有依赖秘密的分支或查表下标——各后端的保证逐 target 写文档,不夸大。RSA 等一个内部 bignum 地基;Ed25519 以定长 limb 域算术承担签名。TLS、x509 与后量子集合都不在本里程碑,各自是未来的独立步骤。每个任务保持闲余时间尺寸的纪律:每项之后 `dune test` 绿、既有金测逐字节不变。
+
+### 步骤 55 — 标准库:`crypto` · `plan/step-55-stdlib-crypto.md`
+
+**前置:** 无(`base64` 是字节纪律的现成范例;`math` 0.1.0 证明纯 Emo 的级数纪律承载得起真算法)。
+**完成标准:** 每个纯函数在其金测所骑的每个 target 上逐字节一致;RFC/NIST 向量与 Go 生成的伴生向量钉成 diff;Project Wycheproof 的案例摆在抽样的边界上;每个 target 上既有的金测逐字节不变;`dune test` 绿;文档写全表面、错误二分与诚实说明各节。
+
+- [x] **T55.1** — 字纪律与包骨架:先做探针——`>>` 实测为算术移位(符号扩展),`<<` 按 2^64 回绕,解释器与 `c` 逐字节一致;`internal/word.emo` 带掩码惯用法的逻辑右移(常量 `n > 0` 时 `(x >> n) & ((1 << (64 - n)) - 1)`),两种宽度的 `rotl`/`rotr`,大端的 u32/u64 `Bytes` 读写;`stdlib/registry/crypto/0.1.0`——manifest 覆盖全部五个 target,根 `crypto.emo` 承载 `subtle`(各 MAC 经它做常量时间等值);29 个探针向量经独立计算复核,自 T55.2 起经摘要金测钉死——示例够不到 `internal/`。探针还撞出一个 c target 的角落:模块绑到一个名字上(`const word = word`)后,其使用点是动态的,而动态世界拒绝位运算符——包内各模块调用内部一律走直接限定路径(`word.lshr(…)`),不经过接线 const。
+- [ ] **T55.2** — SHA-256 与 SHA-224(FIPS 180-4):压缩函数以 `Int64` 承载 32 位字(带掩码,每次移位都精确),消息调度与填充;流式(write/sum/reset)与一次式;金测 `examples/crypto_hash` 收 RFC 6234 全套——"abc"、56 字节双块边界、流式路径上的百万 `a` 向量——外加本机 Go `crypto/sha256` 生成的值。
+- [ ] **T55.3** — SHA-512 家族与 legacy 一对:SHA-512/384/512-224/512-256 以 64 位字经 T55.1 的移位纪律;SHA-1 与 MD5 收进 `crypto.legacy`——在世界既有数据需要校验的意义上在场,文档写明对一切安全用途都是坏的;金测加面板,Go 伴生向量逐一并列。
+- [ ] **T55.4** — `Hash` 接口与 HMAC(RFC 2104):每个哈希都作答的结构式接口(`write`/`sum`/`reset`/`size`/`block_size`),HMAC 由此消费任意一个——ipad/opad 按块大小,tag 经 `subtle` 比较;金测加 RFC 4231 的 HMAC-SHA-2 向量与 Go 伴生向量。
+- [ ] **T55.5** — `Hash` 接口上的 HKDF(RFC 5869)与 PBKDF2(RFC 8018):extract/expand 写明 HKDF 的输出长度上限,PBKDF2 即迭代 HMAC,次数是普通的 `Int64` 参数——包里没有工作因子政策,数字由调用方报;RFC 向量加 Go 伴生向量进金测。
+- [ ] **T55.6** — SHA-3 与 SHAKE(FIPS 202):Keccak-f[1600] 以 64 位 lane(T55.1 的旋转),四个定长输出的哈希,SHAKE128/256 作为显式输出长度的 XOF;金测收已知答案测试与 Go 生成的伴生向量。
+- [ ] **T55.7** — `rand` 包:熵源逐宿主 target 绑定——`ocaml` 与 `c` 上 `getrandom`/`/dev/urandom`,`typescript` 上 `crypto.getRandomValues`,`beam` 上 `crypto:strong_rand_bytes`——wasm 一腿按运行时真能供给什么实测,供给不了就以 target 名单拒收(是声明在案的拒绝,不是运行时惊吓);表面 `rand.bytes(n)`;测试骑纯 Emo 的 HMAC-DRBG(SP 800-90A),确定性序列是金测,OS 一腿做长度与非重复的冒烟。
+- [ ] **T55.8** — ChaCha20-Poly1305(RFC 8439):quarter-round 以 `Int64` 承载 32 位字,Poly1305 的分 limb 累加器,AEAD 一对——`seal` 应答密文接 tag,`open` 应答 `(R.ok, plaintext)` 或 `(R.error, "crypto: authentication failed")`,密钥/nonce 长度错则 raise;金测收 RFC 测试向量与 Go `chacha20poly1305` 伴生向量,Wycheproof 的截短 tag 与篡改密文案例抽样。
+- [ ] **T55.9** — AES 与 GCM:分组密码以 T-table 落地(暂定——缓存时序告诫同口气写进文档;AES-NI 的 C shim 是日后 `c` 的可选加固),GCM 的 GHASH 纯位运算(无表,无此告诫),CTR/CBC 加 PKCS#7 备互操作形状;NIST 向量加 Go 生成的 AES-GCM 伴生向量,Wycheproof 的 GCM 边界案例(短 tag;nonce 复用是调用方的合同违约,文档如此说)抽样。
+- [ ] **T55.10** — Ed25519 与 X25519(RFC 8032、RFC 7748):`Int64` limb 上的域算术,宽度以实测定(128 位乘积未知是否可表达;radix 2^26、五 limb,每个乘积都在 2^52 之下,是兜底形状),签名骑着 T55.3 的 SHA-512;金测收 RFC 向量加 Go `ed25519`/`ecdh` 伴生向量——签名/验证、可锻造性拒绝,以及 X25519 的全零输出拒绝,即 RFC 的 contributory 检查以 `(R.error, …)` 浮出。
+- [ ] **T55.11** — 文档:`docs/stdlib/crypto.md` 与 `docs/stdlib/rand.md`(EN + zh-CN)写全表面、逐函数写明 raise/error 二分、常量时间诚实说明节及其逐 target 状态、legacy 警告;`docs/stdlib.md` 的行(`crypto`、`rand`);新金测随各自 target 落地进金测名单;`plan/README.md` 的状态表。
