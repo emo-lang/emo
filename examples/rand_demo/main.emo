@@ -26,13 +26,13 @@ def hex_of(b Bytes) String {
 // ---- the deterministic stream: the empty seed, a seed at one block,
 // two blocks, a partial block, the same seed again, another seed, and
 // the zero-length stream.
-println("drbg empty 32: " + hex_of(rand.drbg_sha256("", 32)))
-println("drbg seed 32: " + hex_of(rand.drbg_sha256("emo rand seed", 32)))
-println("drbg seed 64: " + hex_of(rand.drbg_sha256("emo rand seed", 64)))
-println("drbg seed 33: " + hex_of(rand.drbg_sha256("emo rand seed", 33)))
-println("drbg again 32: " + hex_of(rand.drbg_sha256("emo rand seed", 32)))
-println("drbg other 32: " + hex_of(rand.drbg_sha256("another seed", 32)))
-println("drbg zero: [" + hex_of(rand.drbg_sha256("x", 0)) + "]")
+println("drbg empty 32: " + hex_of(rand.drbg_sha256(Bytes.new(0), 32)))
+println("drbg seed 32: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 32)))
+println("drbg seed 64: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 64)))
+println("drbg seed 33: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 33)))
+println("drbg again 32: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 32)))
+println("drbg other 32: " + hex_of(rand.drbg_sha256("another seed".to_bytes(), 32)))
+println("drbg zero: [" + hex_of(rand.drbg_sha256("x".to_bytes(), 0)) + "]")
 
 // ---- the operating system's source
 case rand.bytes(32) {

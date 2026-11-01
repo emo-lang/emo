@@ -73,25 +73,25 @@ def pour(out Bytes, v Bytes, at Int64, length Int64) Int64 {
 
 // The one-shot HMAC-DRBG-SHA-256 stream of length bytes from seed. A
 // negative length raises.
-def drbg_sha256(seed String, length Int64) Bytes {
+def drbg_sha256(seed Bytes, length Int64) Bytes {
   if length < 0 {
     raise Exception.new(message: "rand: the stream length must not be negative")
   }
-  const s = seed.to_bytes()
+  const s = seed
   const k0 = Bytes.new(32)
   fill_byte(k0, 0)
   const v0 = Bytes.new(32)
   fill_byte(v0, 1)
-  var k = crypto.hash.hmac_sha256_bytes(k0, joined(v0, 0, s))
-  var v = crypto.hash.hmac_sha256_bytes(k, v0)
+  var k = crypto.hash.hmac_sha256(k0, joined(v0, 0, s))
+  var v = crypto.hash.hmac_sha256(k, v0)
   if s.length() > 0 {
-    k = crypto.hash.hmac_sha256_bytes(k, joined(v, 1, s))
-    v = crypto.hash.hmac_sha256_bytes(k, v)
+    k = crypto.hash.hmac_sha256(k, joined(v, 1, s))
+    v = crypto.hash.hmac_sha256(k, v)
   }
   const out = Bytes.new(length)
   var made = 0
   while made < length {
-    v = crypto.hash.hmac_sha256_bytes(k, v)
+    v = crypto.hash.hmac_sha256(k, v)
     made = pour(out, v, made, length)
   }
   return out

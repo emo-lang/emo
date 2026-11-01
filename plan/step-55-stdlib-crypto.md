@@ -150,21 +150,27 @@ stays pure and five-target.
       `examples/rand_demo` rides all five lists. Found, not fixed
       (`CHECK.md`): the crypto String surface is unsound on
       typescript; the Bytes doors are the migration's proven shape.
-- [ ] **T55.8** — ChaCha20-Poly1305 (RFC 8439): the quarter-round,
+- [x] **T55.8** — The surface in Bytes: every door of `crypto`
+      takes and answers `Bytes` (text stays text at `hex_encode`/
+      `hex_decode`); T55.2's String rule revised for the `plot.png`
+      reason; the String plumbing removed, not doubled; every golden
+      byte-identical before and after; `crypto_hash` joins the
+      typescript golden list.
+- [ ] **T55.9** — ChaCha20-Poly1305 (RFC 8439): the quarter-round,
       the Poly1305 limbed accumulator, `seal`/`open` with the
       `(R.error, …)` authentication failure; RFC vectors, Go
       `chacha20poly1305` companions, Wycheproof boundary cases
       sampled.
-- [ ] **T55.9** — AES and GCM: the block cipher as T-tables (the
+- [ ] **T55.10** — AES and GCM: the block cipher as T-tables (the
       timing caveat documented), GHASH bitwise, CTR/CBC with PKCS#7
       for the interop shapes; NIST vectors plus Go AES-GCM
       companions, Wycheproof's GCM edge cases sampled.
-- [ ] **T55.10** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
+- [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
       arithmetic over `Int64` limbs, the width decided by
       measurement (radix 2^26 five-limb is the fallback shape);
       RFC vectors plus Go `ed25519`/`ecdh` companions, including
       X25519's all-zero-output refusal.
-- [ ] **T55.11** — The docs: `docs/stdlib/crypto.md` and
+- [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
       `docs/stdlib/rand.md` (EN + zh-CN) with the surface, the
       raise/error split per function, the constant-time honesty
       section, and the legacy warning; `docs/stdlib.md`'s rows; the

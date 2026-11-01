@@ -123,8 +123,8 @@ def fill_padded(padded Bytes, msg Bytes, n Int64, q Int64, domain Int64) Void {
 // The absorb-and-squeeze over buffers the caller holds: XOR each
 // rate-byte block into the state's head, permute, then pour lanes
 // into the output, permuting between fills, until it is full.
-def run_sponge(state Bytes, out Bytes, rate Int64, domain Int64, outlen Int64, data String) Void {
-  const msg = data.to_bytes()
+def run_sponge(state Bytes, out Bytes, rate Int64, domain Int64, outlen Int64, data Bytes) Void {
+  const msg = data
   const n = msg.length()
   const q = rate - n % rate
   const padded = Bytes.new(n + q)
@@ -159,9 +159,9 @@ def run_sponge(state Bytes, out Bytes, rate Int64, domain Int64, outlen Int64, d
 
 // The sponge: the buffers are constructed here and handed to the
 // statically typed run.
-def sponge(rate Int64, domain Int64, outlen Int64, data String) String {
+def sponge(rate Int64, domain Int64, outlen Int64, data Bytes) Bytes {
   const state = Bytes.new(200)
   const out = Bytes.new(outlen)
   run_sponge(state, out, rate, domain, outlen, data)
-  return out.to_string()
+  return out
 }

@@ -8,12 +8,12 @@
 
 // The SHA-1 digest of data, twenty bytes. Broken for every security
 // purpose; for verifying existing data.
-def sha1(data String) String {
+def sha1(data Bytes) Bytes {
   return internal.sha1.digest(data)
 }
 
 // The MD5 digest of data, sixteen bytes. Broken for every security
 // purpose; for verifying existing data.
-def md5(data String) String {
+def md5(data Bytes) Bytes {
   return internal.md5.digest(data)
 }

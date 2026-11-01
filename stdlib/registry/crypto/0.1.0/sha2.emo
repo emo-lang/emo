@@ -1,6 +1,5 @@
 // The SHA-2 family (FIPS 180-4): SHA-256 and SHA-224 — one-shot or
-// streaming. A digest is raw bytes as String, the byte carrier this
-// standard library reads everywhere; the hex rendering is
+// streaming. Bytes in, Bytes out; the hex rendering is
 // crypto.hex_encode. The machinery is internal.sha256's engine, one
 // compression function behind both widths.
 //
@@ -25,13 +24,7 @@ class Digest {
   // keep the tail. The byte count is the total across writes, and the
   // bit length the spec wants is that count times eight mod 2^64 —
   // the wrap is the spec, not an accident.
-  def write(data String) Void {
-    self.write_bytes(data.to_bytes())
-  }
-
-  // The same absorb over bytes already in hand — the door raw-byte
-  // callers ride, because a String cannot carry them on every target.
-  def write_bytes(data Bytes) Void {
+  def write(data Bytes) Void {
     const src = data
     const n = src.length()
     var i = 0
@@ -71,12 +64,9 @@ class Digest {
 
   // The digest so far, leaving the state standing: sum twice and the
   // answers agree, write after sum and the stream continues.
-  def sum() String {
-    return self.sum_bytes().to_string()
-  }
-
-  // The digest as Bytes, the state standing as for sum.
-  def sum_bytes() Bytes {
+  // The digest so far, the state standing: sum twice and the answers
+  // agree, write after sum and the stream continues.
+  def sum() Bytes {
     if self.is224 {
       return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 28)
     }
@@ -118,26 +108,17 @@ def new224() Digest {
 }
 
 // The one-shot SHA-256 digest of data.
-def sha256(data String) String {
+def sha256(data Bytes) Bytes {
   const d = Digest.new(false)
   d.write(data)
   return d.sum()
 }
 
 // The one-shot SHA-224 digest of data.
-def sha224(data String) String {
+def sha224(data Bytes) Bytes {
   const d = Digest.new(true)
   d.write(data)
   return d.sum()
-}
-
-// The one-shot SHA-256 digest over bytes, answering bytes — the door
-// raw-byte callers ride (the HMAC bytes engine, the DRBG), because a
-// String cannot carry them on every target.
-def sha256_bytes(data Bytes) Bytes {
-  const d = Digest.new(false)
-  d.write_bytes(data)
-  return d.sum_bytes()
 }
 
 // The 64-bit family: SHA-512, SHA-384, SHA-512/224, SHA-512/256 —
@@ -164,11 +145,7 @@ class Wide {
     }
   }
 
-  def write(data String) Void {
-    self.write_bytes(data.to_bytes())
-  }
-
-  def write_bytes(data Bytes) Void {
+  def write(data Bytes) Void {
     const src = data
     const n = src.length()
     var i = 0
@@ -207,11 +184,8 @@ class Wide {
   }
 
   // The digest so far, leaving the state standing, as Digest.sum.
-  def sum() String {
-    return self.sum_bytes().to_string()
-  }
-
-  def sum_bytes() Bytes {
+  // The digest so far, the state standing, as Digest.sum.
+  def sum() Bytes {
     return internal.sha512.finish(self.box, self.box, 64, internal.word.load_u64_be(self.box, 192), internal.word.load_u64_be(self.box, 200), self.outlen)
   }
 
@@ -262,28 +236,28 @@ def new512_256() Wide {
 }
 
 // The one-shot SHA-512 digest of data.
-def sha512(data String) String {
+def sha512(data Bytes) Bytes {
   const d = Wide.new(64)
   d.write(data)
   return d.sum()
 }
 
 // The one-shot SHA-384 digest of data.
-def sha384(data String) String {
+def sha384(data Bytes) Bytes {
   const d = Wide.new(48)
   d.write(data)
   return d.sum()
 }
 
 // The one-shot SHA-512/224 digest of data.
-def sha512_224(data String) String {
+def sha512_224(data Bytes) Bytes {
   const d = Wide.new(28)
   d.write(data)
   return d.sum()
 }
 
 // The one-shot SHA-512/256 digest of data.
-def sha512_256(data String) String {
+def sha512_256(data Bytes) Bytes {
   const d = Wide.new(32)
   d.write(data)
   return d.sum()

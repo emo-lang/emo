@@ -3072,7 +3072,25 @@ error split, and the honesty sections.
       typescript (U+FFFD where a digest byte passes 0x80; the
       131-byte-key HMAC crashes) — the Bytes doors are the fix's
       proven shape, the surface migration a pending decision.
-- [ ] **T55.8** — ChaCha20-Poly1305 (RFC 8439): the quarter-round
+- [x] **T55.8** — The surface in Bytes: every door of `crypto`
+      takes and answers `Bytes` — the SHA-2 one-shots and the
+      `Digest`/`Wide` classes (`write`/`sum`), the `Hash` interface,
+      HMAC, HKDF and PBKDF2 (an absent salt now an empty `Bytes`),
+      SHA-3 and SHAKE, the legacy pair, `constant_time_compare`, and
+      `rand.drbg_sha256`'s seed — with text staying text: `hex_encode`
+      answers String and `hex_decode` reads it, and a caller hashing
+      text hands over `text.to_bytes()`. The decision (2026-11-01)
+      revises T55.2's String-at-the-surface rule for the reason
+      `plot.png` settled in step 45: a String cannot carry raw bytes
+      on typescript. The internal engines were already Bytes; the
+      String plumbing (the HMAC and KDF String engines, the
+      `_bytes` twins) is gone, not doubled. Every golden's
+      `expected.txt` is byte-identical before and after — the
+      algorithms did not move — and `crypto_hash` joins the
+      typescript golden list, passing where it printed U+FFFD and
+      crashed the day before; `CHECK.md`'s entry carries the
+      resolution.
+- [ ] **T55.9** — ChaCha20-Poly1305 (RFC 8439): the quarter-round
       over 32-bit words in `Int64`, the Poly1305 limbed accumulator,
       the AEAD pair — `seal` answering ciphertext then tag, `open`
       answering `(R.ok, plaintext)` or
@@ -3080,7 +3098,7 @@ error split, and the honesty sections.
       lengths raising; the golden takes the RFC's test vectors and
       the Go `chacha20poly1305` companions, with Wycheproof's
       truncated-tag and tampered-ciphertext cases sampled.
-- [ ] **T55.9** — AES and GCM: the block cipher as T-tables
+- [ ] **T55.10** — AES and GCM: the block cipher as T-tables
       (provisional — the cache-timing caveat documented in the same
       breath; the AES-NI C shim is the later optional hardening for
       `c`), GCM's GHASH pure bitwise (no tables, no such caveat),
@@ -3088,7 +3106,7 @@ error split, and the honesty sections.
       Go-generated AES-GCM companions, Wycheproof's GCM boundary
       cases (short tags; nonce reuse is the caller's contract
       violation and the doc says so) sampled.
-- [ ] **T55.10** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
+- [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
       arithmetic over `Int64` limbs, the width decided by
       measurement (a 128-bit product is not known to be expressible;
       radix 2^26, five limbs, fits every product under 2^52 and is
@@ -3097,7 +3115,7 @@ error split, and the honesty sections.
       companions — sign/verify, the malleability rejections, and
       X25519's all-zero-output refusal as the RFC's contributory
       check surfaced as `(R.error, …)`.
-- [ ] **T55.11** — The docs: `docs/stdlib/crypto.md` and
+- [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
       `docs/stdlib/rand.md` (EN + zh-CN) with the full surface, the
       raise/error split spelled per function, the constant-time
       honesty section with its per-target status, and the legacy

@@ -1,41 +1,66 @@
 // The KDF engine: HKDF's expand step (RFC 5869 §2.3) and PBKDF2's
-// iterated block (RFC 8018 §5.2), both riding internal.hmac's
-// one-shots — the dependency stays one-way (kdf → hmac → sha2; module
-// cycles are refused). The variant rides a code the caller names
-// (1 sha256 … 6 sha512_256) beside its hash length and HMAC block
-// width.
+// iterated block (RFC 8018 §5.2), both riding internal.hmac's engine —
+// the dependency stays one-way (kdf → hmac → sha2; module cycles are
+// refused). The variant rides a code the caller names (1 sha256 …
+// 6 sha512_256) beside its hash length and HMAC block width. Bytes in,
+// Bytes out; the byte accesses go through parameterized doors —
+// constructors answer the gradual type, parameters carry the static
+// one.
 
 // n zero bytes, the shape HKDF's absent salt takes.
-def zeros(n Int64) String {
-  return Bytes.new(n).to_string()
+def zeros(n Int64) Bytes {
+  const out = Bytes.new(n)
+  fill(out, 0)
+  return out
+}
+
+def fill(b Bytes, v Int64) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, v)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
 }
 
 // The one-byte string, HKDF's expansion counter.
-def one_byte(v Int64) String {
+def one_byte(v Int64) Bytes {
   const b = Bytes.new(1)
   b.set(0, v)
-  return b.to_string()
+  return b
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
 }
 
 // The block index as four big-endian bytes, PBKDF2's INT (i).
-def int32_be(v Int64) String {
+def int32_be(v Int64) Bytes {
   const b = Bytes.new(4)
   internal.word.store_u32_be(b, 0, v)
-  return b.to_string()
+  return b
 }
 
 // The bytewise XOR of two equal-length strings, PBKDF2's accumulator
 // step.
-def xor_into(a String, b String) String {
-  const left = a.to_bytes()
-  const right = b.to_bytes()
-  const out = Bytes.new(left.length())
+def xor_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length())
   var i = 0
-  while i < left.length() {
-    out.set(i, left.get(i) ^ right.get(i))
+  while i < a.length() {
+    out.set(i, a.get(i) ^ b.get(i))
     i = i + 1
   }
-  return out.to_string()
+  return out
 }
 
 // HKDF-Expand: the first length bytes of T(1) || T(2) || …, where
@@ -43,7 +68,7 @@ def xor_into(a String, b String) String {
 // The cap is the construction's own — past 255 hash lengths there is
 // no answer, and asking for one raises; a negative length raises
 // too.
-def expand(code Int64, hash_len Int64, block Int64, prk String, info String, length Int64) String {
+def expand(code Int64, hash_len Int64, block Int64, prk Bytes, info Bytes, length Int64) Bytes {
   if length < 0 {
     raise Exception.new(message: "crypto: hkdf length must not be negative")
   }
@@ -51,21 +76,20 @@ def expand(code Int64, hash_len Int64, block Int64, prk String, info String, len
     raise Exception.new(message: "crypto: hkdf length past 255 times the hash length")
   }
   const out = Bytes.new(length)
-  var t = ""
+  var t = Bytes.new(0)
   var at = 0
   var counter = 1
   while at < length {
-    t = internal.hmac.hmac(code, block, prk, t + info + one_byte(counter))
-    const piece = t.to_bytes()
+    t = internal.hmac.hmac(code, block, prk, concat_bytes(concat_bytes(t, info), one_byte(counter)))
     var j = 0
-    while j < piece.length() && at < length {
-      out.set(at, piece.get(j))
+    while j < t.length() && at < length {
+      out.set(at, t.get(j))
       j = j + 1
       at = at + 1
     }
     counter = counter + 1
   }
-  return out.to_string()
+  return out
 }
 
 // PBKDF2: T(i) is the XOR of the iterations' U values, U(1) =
@@ -73,7 +97,7 @@ def expand(code Int64, hash_len Int64, block Int64, prk String, info String, len
 // the digest of the final block is cut to fit. The iteration count is
 // the caller's number — the package carries no work-factor policy —
 // and one that is not at least one raises.
-def pbkdf2(code Int64, hash_len Int64, block Int64, password String, salt String, iterations Int64, length Int64) String {
+def pbkdf2(code Int64, hash_len Int64, block Int64, password Bytes, salt Bytes, iterations Int64, length Int64) Bytes {
   if iterations < 1 {
     raise Exception.new(message: "crypto: pbkdf2 iterations must be at least one")
   }
@@ -84,22 +108,21 @@ def pbkdf2(code Int64, hash_len Int64, block Int64, password String, salt String
   var at = 0
   var index = 1
   while at < length {
-    var u = internal.hmac.hmac(code, block, password, salt + int32_be(index))
+    var u = internal.hmac.hmac(code, block, password, concat_bytes(salt, int32_be(index)))
     var acc = u
     var j = 1
     while j < iterations {
       u = internal.hmac.hmac(code, block, password, u)
-      acc = xor_into(acc, u)
+      acc = xor_bytes(acc, u)
       j = j + 1
     }
-    const piece = acc.to_bytes()
     var k = 0
-    while k < piece.length() && at < length {
-      out.set(at, piece.get(k))
+    while k < acc.length() && at < length {
+      out.set(at, acc.get(k))
       k = k + 1
       at = at + 1
     }
     index = index + 1
   }
-  return out.to_string()
+  return out
 }

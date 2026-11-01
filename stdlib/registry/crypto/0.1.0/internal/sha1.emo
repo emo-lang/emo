@@ -67,8 +67,8 @@ def compress(state Bytes, block Bytes, off Int64) Void {
 // The 20-byte digest of data, message in one pass: the padding block
 // discipline (0x80, the zero run, the bit length big-endian) laid out
 // fresh, every block compressed, the state bytes answering.
-def digest(data String) String {
-  const msg = data.to_bytes()
+def digest(data Bytes) Bytes {
+  const msg = data
   const n = msg.length()
   const blocks = (n + 9 + 63) / 64
   const pad = Bytes.new(blocks * 64)
@@ -95,5 +95,5 @@ def digest(data String) String {
     compress(st, pad, bi * 64)
     bi = bi + 1
   }
-  return st.to_string()
+  return st
 }

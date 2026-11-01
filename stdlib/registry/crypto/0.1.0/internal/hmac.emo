@@ -8,38 +8,48 @@
 // one concatenation; a streaming HMAC would want the interface
 // factory this language does not admit yet (provisional).
 
-// The key material ready for both pads: hashed when longer than the
-// block, zero-padded to the block width either way.
-def key_block(key String, block Int64, code Int64) Bytes {
-  const k = key.to_bytes()
-  var kk = k
-  if k.length() > block {
-    kk = oneshot(code, key).to_bytes()
-  }
-  const kp = Bytes.new(block)
+// The engine over Bytes end to end, for all six variants: the key
+// hashed first when longer than the block, zero-padded to it either
+// way, the two pads around the data, per RFC 2104. The byte accesses
+// go through parameterized doors — constructors answer the gradual
+// type, parameters carry the static one.
+
+def zero_fill(b Bytes) Void {
   var i = 0
-  while i < kk.length() {
-    kp.set(i, kk.get(i))
+  while i < b.length() {
+    b.set(i, 0)
     i = i + 1
   }
-  return kp
 }
 
-// Every key byte folded with the pad byte (0x36 inner, 0x5c outer),
-// as text — the one-shot's input shape.
-def pad_text(kp Bytes, pad Int64) String {
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def pad_bytes(kp Bytes, pad Int64) Bytes {
   const out = Bytes.new(kp.length())
   var i = 0
   while i < kp.length() {
     out.set(i, kp.get(i) ^ pad)
     i = i + 1
   }
-  return out.to_string()
+  return out
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
 }
 
 // The variant's one-shot digest, by code: 1 sha256, 2 sha224,
 // 3 sha512, 4 sha384, 5 sha512_224, 6 sha512_256.
-def oneshot(code Int64, data String) String {
+def oneshot(code Int64, data Bytes) Bytes {
   if code == 1 {
     return sha2.sha256(data)
   }
@@ -59,65 +69,14 @@ def oneshot(code Int64, data String) String {
 }
 
 // The HMAC tag for the code's variant, block width, key, and message.
-def hmac(code Int64, block Int64, key String, data String) String {
-  const kp = key_block(key, block, code)
-  const mid = oneshot(code, pad_text(kp, 0x36) + data)
-  return oneshot(code, pad_text(kp, 0x5c) + mid)
-}
-
-// ---- The bytes engine: the same construction over Bytes end to end,
-// for callers whose inputs and tag are raw bytes (the DRBG feeds its
-// own output back in). SHA-256 only, until a consumer asks for more.
-// The byte accesses go through parameterized doors — constructors
-// answer the gradual type, parameters carry the static one.
-
-def zero_fill(b Bytes) Void {
-  var i = 0
-  while i < b.length() {
-    b.set(i, 0)
-    i = i + 1
-  }
-}
-
-def copy_into(dst Bytes, src Bytes, at Int64) Void {
-  var i = 0
-  while i < src.length() {
-    dst.set(at + i, src.get(i))
-    i = i + 1
-  }
-}
-
-def xor_fill(out Bytes, kp Bytes, pad Int64) Void {
-  var i = 0
-  while i < kp.length() {
-    out.set(i, kp.get(i) ^ pad)
-    i = i + 1
-  }
-}
-
-def pad_bytes(kp Bytes, pad Int64) Bytes {
-  const out = Bytes.new(kp.length())
-  xor_fill(out, kp, pad)
-  return out
-}
-
-def concat_bytes(a Bytes, b Bytes) Bytes {
-  const out = Bytes.new(a.length() + b.length())
-  copy_into(out, a, 0)
-  copy_into(out, b, a.length())
-  return out
-}
-
-// The HMAC-SHA-256 tag over bytes, as bytes: the key hashed first when
-// longer than the 64-byte block, zero-padded to it either way.
-def hmac_sha256_bytes(key Bytes, data Bytes) Bytes {
+def hmac(code Int64, block Int64, key Bytes, data Bytes) Bytes {
   var kk = key
-  if key.length() > 64 {
-    kk = sha2.sha256_bytes(key)
+  if key.length() > block {
+    kk = oneshot(code, key)
   }
-  const kp = Bytes.new(64)
+  const kp = Bytes.new(block)
   zero_fill(kp)
   copy_into(kp, kk, 0)
-  const mid = sha2.sha256_bytes(concat_bytes(pad_bytes(kp, 0x36), data))
-  return sha2.sha256_bytes(concat_bytes(pad_bytes(kp, 0x5c), mid))
+  const mid = oneshot(code, concat_bytes(pad_bytes(kp, 0x36), data))
+  return oneshot(code, concat_bytes(pad_bytes(kp, 0x5c), mid))
 }

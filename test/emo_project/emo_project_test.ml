@@ -3639,6 +3639,7 @@ let ts_golden_tests =
       ("http_roundtrip", "main.emo");
       ("atomic_cell", "main.emo");
       ("rand_demo", "main.emo");
+      ("crypto_hash", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the

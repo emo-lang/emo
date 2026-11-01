@@ -21,8 +21,8 @@ while i < 2206 {
 const d = crypto.sha2.new()
 var written = 0
 while written < 997794 {
-  d.write(chunk.to_string())
+  d.write(chunk)
   written = written + 7919
 }
-d.write(tail.to_string())
+d.write(tail)
 println("sha256 million a: " + crypto.hex_encode(d.sum()))
