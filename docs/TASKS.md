@@ -3090,14 +3090,25 @@ error split, and the honesty sections.
       typescript golden list, passing where it printed U+FFFD and
       crashed the day before; `CHECK.md`'s entry carries the
       resolution.
-- [ ] **T55.9** — ChaCha20-Poly1305 (RFC 8439): the quarter-round
-      over 32-bit words in `Int64`, the Poly1305 limbed accumulator,
-      the AEAD pair — `seal` answering ciphertext then tag, `open`
-      answering `(R.ok, plaintext)` or
-      `(R.error, "crypto: authentication failed")`, wrong key/nonce
-      lengths raising; the golden takes the RFC's test vectors and
-      the Go `chacha20poly1305` companions, with Wycheproof's
-      truncated-tag and tampered-ciphertext cases sampled.
+- [x] **T55.9** — ChaCha20-Poly1305 (RFC 8439) in `crypto.cipher`:
+      the block function and keystream XOR (`chacha20(key, nonce,
+      counter, data)`), the one-shot Poly1305 (`poly1305(key,
+      message)` — five 26-bit limbs, Donna's 32-bit radix, every
+      product under 2^56), and the AEAD pair —
+      `chacha20_poly1305_seal` answering ciphertext then tag,
+      `chacha20_poly1305_open` answering `(R.ok, plaintext)` or
+      `(R.error, "crypto: authentication failed")`, the same answer
+      for a flipped byte, a wrong AAD, and a truncated box; wrong
+      key/nonce/counter raise. The golden `examples/crypto_aead` pins
+      the keystream block, the §2.4.2 stream, the §2.5.2 tag, the
+      §2.8.2 box and its open, the three forgeries, and the
+      block/pad16 boundary sizes — against the RFC's own vectors and
+      a Python reference written from the RFC and self-checked
+      against it first (Go keeps the construction behind
+      x/crypto) — and rides all five lists byte-identically. The step
+      flushed the typescript `get_u32_le` signed-read bug
+      (`CHECK.md`, fixed) and two block-boundary flaws in the new
+      code itself.
 - [ ] **T55.10** — AES and GCM: the block cipher as T-tables
       (provisional — the cache-timing caveat documented in the same
       breath; the AES-NI C shim is the later optional hardening for

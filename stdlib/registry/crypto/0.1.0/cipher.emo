@@ -1,0 +1,54 @@
+// ChaCha20-Poly1305 (RFC 8439): the stream cipher, the one-shot MAC,
+// and the AEAD pair. Bytes in, Bytes out. The lengths are contracts:
+// a key that is not 32 bytes, a nonce that is not 12, a counter past
+// 2^32 − 1 — the caller's mistakes, they raise. An authentication
+// failure is data: `open` answers the value
+// `(R.error, "crypto: authentication failed")`, the same answer for a
+// wrong tag, a truncated box, and a wrong key, the way a forgery
+// should be met. Nonce reuse breaks this construction irrecoverably —
+// that is the caller's contract, and the doc says so.
+
+// The ChaCha20 keystream XOR of data, from the counter.
+def chacha20(key Bytes, nonce Bytes, counter Int64, data Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20 nonce must be 12 bytes")
+  }
+  if counter < 0 || counter > 4294967295 {
+    raise Exception.new(message: "crypto: chacha20 counter must be in 0 to 4294967295")
+  }
+  return internal.chacha.chacha20(key, nonce, counter, data)
+}
+
+// The Poly1305 tag of message under the 32-byte key.
+def poly1305(key Bytes, message Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: poly1305 key must be 32 bytes")
+  }
+  return internal.poly1305.mac(key, message)
+}
+
+// The AEAD seal: the ciphertext followed by the 16-byte tag.
+def chacha20_poly1305_seal(key Bytes, nonce Bytes, plaintext Bytes, aad Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 nonce must be 12 bytes")
+  }
+  return internal.aead.seal(key, nonce, plaintext, aad)
+}
+
+// The AEAD open: `(R.ok, plaintext)` when the tag verifies, the value
+// `(R.error, "crypto: authentication failed")` when it does not.
+def chacha20_poly1305_open(key Bytes, nonce Bytes, sealed Bytes, aad Bytes) (R, Bytes) {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 nonce must be 12 bytes")
+  }
+  return internal.aead.open(key, nonce, sealed, aad)
+}

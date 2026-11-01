@@ -156,11 +156,11 @@ stays pure and five-target.
       reason; the String plumbing removed, not doubled; every golden
       byte-identical before and after; `crypto_hash` joins the
       typescript golden list.
-- [ ] **T55.9** — ChaCha20-Poly1305 (RFC 8439): the quarter-round,
-      the Poly1305 limbed accumulator, `seal`/`open` with the
-      `(R.error, …)` authentication failure; RFC vectors, Go
-      `chacha20poly1305` companions, Wycheproof boundary cases
-      sampled.
+- [x] **T55.9** — ChaCha20-Poly1305 in `crypto.cipher`: the stream,
+      the MAC, and the AEAD pair over Bytes; the golden pins the RFC
+      vectors, the forgeries, and the boundary sizes against a
+      self-checked Python reference, riding all five lists; and the
+      typescript `get_u32_le` signed-read bug flushed and fixed.
 - [ ] **T55.10** — AES and GCM: the block cipher as T-tables (the
       timing caveat documented), GHASH bitwise, CTR/CBC with PKCS#7
       for the interop shapes; NIST vectors plus Go AES-GCM

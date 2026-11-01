@@ -454,6 +454,7 @@ let beam_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
     "rand_demo";
+    "crypto_aead";
   ]
 
 let erl_available =
@@ -702,6 +703,7 @@ let c_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — getentropy is the c leg *)
     "rand_demo";
+    "crypto_aead";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

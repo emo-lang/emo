@@ -3516,6 +3516,12 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "rand_demo")
           "rand_demo" "main.emo");
+    tc "crypto_aead compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "crypto_aead")
+          "crypto_aead" "main.emo");
     tc "math_special compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
@@ -3640,6 +3646,7 @@ let ts_golden_tests =
       ("atomic_cell", "main.emo");
       ("rand_demo", "main.emo");
       ("crypto_hash", "main.emo");
+      ("crypto_aead", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the
