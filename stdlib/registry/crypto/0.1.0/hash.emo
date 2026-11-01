@@ -41,3 +41,11 @@ def hmac_sha512_224(key String, data String) String {
 def hmac_sha512_256(key String, data String) String {
   return internal.hmac.hmac(6, 128, key, data)
 }
+
+// The HMAC-SHA-256 tag over bytes, as bytes — the door raw-byte
+// callers ride (the deterministic stream in rand, and anyone whose
+// key or message is not text), because a String cannot carry them on
+// every target. Compare tags through crypto.constant_time_compare.
+def hmac_sha256_bytes(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac_sha256_bytes(key, data)
+}

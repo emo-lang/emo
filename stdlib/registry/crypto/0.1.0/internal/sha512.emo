@@ -169,7 +169,7 @@ def compress(state Bytes, block Bytes, off Int64) Void {
 // padding block when the message ends in the first 111 bytes of a
 // block, two when it does not. The first outlen bytes of the final
 // state are the digest.
-def finish(state Bytes, buf Bytes, buf_off Int64, buflen Int64, total Int64, outlen Int64) String {
+def finish(state Bytes, buf Bytes, buf_off Int64, buflen Int64, total Int64, outlen Int64) Bytes {
   const st = Bytes.new(64)
   var i = 0
   while i < 64 {
@@ -204,5 +204,5 @@ def finish(state Bytes, buf Bytes, buf_off Int64, buflen Int64, total Int64, out
     out.set(i, st.get(i))
     i = i + 1
   }
-  return out.to_string()
+  return out
 }

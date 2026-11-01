@@ -1,0 +1,9 @@
+package {
+  name = "rand"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "beam"]
+
+  deps {
+    "crypto" = "0.1.0"
+  }
+}

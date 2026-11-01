@@ -139,13 +139,17 @@ stays pure and five-target.
       walls flushed (the gradual-type constructor rule behind the
       door helpers, and E3005's shift-count proof behind the word
       layer's narrowing guards).
-- [ ] **T55.7** — The `rand` package: per-target OS entropy
-      (getrandom / `/dev/urandom` on `ocaml` and `c`,
-      `crypto.getRandomValues` on `typescript`,
-      `crypto:strong_rand_bytes` on `beam`; the wasm leg measured and
-      refused by the target list if the runtime cannot honestly serve
-      it); tests ride a pure-Emo HMAC-DRBG (SP 800-90A) so the
-      deterministic sequences are goldens.
+- [x] **T55.7** — The `rand` package: `rand_bytes` through the
+      runtime-impl table on the interpreter, ocaml, `c`
+      (`getentropy`), typescript (`crypto.randomBytes`), and beam
+      (`crypto:strong_rand_bytes`); wasm refused by the target list.
+      `rand.bytes(n)` answers `(R, Bytes)` — the `plot.png`
+      precedent — and `rand.drbg_sha256(seed, length)` (SP 800-90A,
+      one-shot) answers `Bytes` over crypto's first byte doors
+      (`sha256_bytes`, `hmac_sha256_bytes`, `write_bytes`/`sum_bytes`);
+      `examples/rand_demo` rides all five lists. Found, not fixed
+      (`CHECK.md`): the crypto String surface is unsound on
+      typescript; the Bytes doors are the migration's proven shape.
 - [ ] **T55.8** — ChaCha20-Poly1305 (RFC 8439): the quarter-round,
       the Poly1305 limbed accumulator, `seal`/`open` with the
       `(R.error, …)` authentication failure; RFC vectors, Go

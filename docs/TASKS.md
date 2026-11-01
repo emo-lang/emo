@@ -3044,16 +3044,34 @@ error split, and the honesty sections.
       non-negative, so the word layer's rotators carry `n <= 0`
       narrowing guards (rho's rotation amount is dynamic);
       interpreter, `c`, and ocaml byte-identical; `dune test` green.
-- [ ] **T55.7** — The `rand` package: the entropy source bound per
-      hosted target — `getrandom`/`/dev/urandom` on `ocaml` and `c`,
-      `crypto.getRandomValues` on `typescript`,
-      `crypto:strong_rand_bytes` on `beam` — with the wasm leg
-      measured against what the runtime can honestly supply and
-      refused by the target list if nothing (a declared refusal, not
-      a runtime surprise); the surface `rand.bytes(n)`; the tests
-      ride a pure-Emo HMAC-DRBG (SP 800-90A) so the deterministic
-      sequences are goldens while the OS leg is smoke-tested for
-      length and non-repetition.
+- [x] **T55.7** — The `rand` package: the entropy source bound per
+      hosted target through one runtime implementation, `rand_bytes`
+      — the `rand_` prefix joins the IR's runtime-impl table, the
+      checker's signature table, the interpreter and the standalone
+      OCaml runtime (`/dev/urandom`, read to the count), the C runtime
+      (`getentropy`, 256 bytes a call), the Node host
+      (`crypto.randomBytes`), and the beam emitter
+      (`crypto:strong_rand_bytes`, parked under a ref the way
+      `emo_bytes_new` parks its own); the wasm host supplies no entropy
+      and the target list refuses it, a declared refusal. The surface
+      is `rand.bytes(n)` answering `(R, Bytes)` — the `plot.png`
+      precedent: bytes are what entropy is, and a String cannot carry
+      them on typescript — a negative count raising, a refused source
+      the `(R.error, "rand: …")` value. The deterministic stream is
+      `rand.drbg_sha256(seed, length)` — SP 800-90A's HMAC-DRBG,
+      SHA-256, the one-shot shape — answering `Bytes` byte-identically
+      on every target, which needed crypto's first byte doors:
+      `sha2.sha256_bytes`, `hash.hmac_sha256_bytes`, and
+      `write_bytes`/`sum_bytes` on `Digest` and `Wide` (the engines'
+      `finish` now answers `Bytes`, the String door its `to_string`).
+      The golden `examples/rand_demo` pins the stream (verified against
+      the formula in Python) and smoke-tests the source for length and
+      a differing second draw — on the interpreter, `c`, ocaml,
+      typescript, and beam, all five lists. **Found, not fixed, in
+      `CHECK.md`:** the crypto String surface is unsound on
+      typescript (U+FFFD where a digest byte passes 0x80; the
+      131-byte-key HMAC crashes) — the Bytes doors are the fix's
+      proven shape, the surface migration a pending decision.
 - [ ] **T55.8** — ChaCha20-Poly1305 (RFC 8439): the quarter-round
       over 32-bit words in `Int64`, the Poly1305 limbed accumulator,
       the AEAD pair — `seal` answering ciphertext then tag, `open`

@@ -9,6 +9,7 @@ import * as nodeDgram from "node:dgram";
 import * as nodeTls from "node:tls";
 import * as nodeDns from "node:dns";
 import * as nodeFs from "node:fs";
+import * as nodeCrypto from "node:crypto";
 
 const _als = new AsyncLocalStorage<{ pid: number }>();
 
@@ -936,6 +937,23 @@ function nodeMethod(recv: any, name: string, args: any[]): any {
 
 function nodeRuntimeImpl(name: string, args: any[]): any {
   switch (name) {
+    case "rand_bytes": {
+      // The rand package's entropy source: Node's CSPRNG. The answer is
+      // Bytes — a JS string cannot carry raw bytes — and a refused
+      // source is the (R.error, reason) value under the package's
+      // prefix; a negative count is the package's own raise, upstream.
+      const n = Number(args[0]);
+      try {
+        const out = new EBytes(n < 0 ? 0 : n);
+        out.data.set(nodeCrypto.randomBytes(out.data.length));
+        return netOk(out);
+      } catch (e: any) {
+        return new ETuple([
+          new EEnum("R", "error"),
+          "rand: randomBytes: " + String(e && e.message ? e.message : e),
+        ]);
+      }
+    }
     case "net_resolve":
       return netResult(() => netResolve(args[0]));
     case "net_connect":

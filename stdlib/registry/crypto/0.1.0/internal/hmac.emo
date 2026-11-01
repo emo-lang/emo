@@ -64,3 +64,60 @@ def hmac(code Int64, block Int64, key String, data String) String {
   const mid = oneshot(code, pad_text(kp, 0x36) + data)
   return oneshot(code, pad_text(kp, 0x5c) + mid)
 }
+
+// ---- The bytes engine: the same construction over Bytes end to end,
+// for callers whose inputs and tag are raw bytes (the DRBG feeds its
+// own output back in). SHA-256 only, until a consumer asks for more.
+// The byte accesses go through parameterized doors — constructors
+// answer the gradual type, parameters carry the static one.
+
+def zero_fill(b Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, 0)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def xor_fill(out Bytes, kp Bytes, pad Int64) Void {
+  var i = 0
+  while i < kp.length() {
+    out.set(i, kp.get(i) ^ pad)
+    i = i + 1
+  }
+}
+
+def pad_bytes(kp Bytes, pad Int64) Bytes {
+  const out = Bytes.new(kp.length())
+  xor_fill(out, kp, pad)
+  return out
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
+}
+
+// The HMAC-SHA-256 tag over bytes, as bytes: the key hashed first when
+// longer than the 64-byte block, zero-padded to it either way.
+def hmac_sha256_bytes(key Bytes, data Bytes) Bytes {
+  var kk = key
+  if key.length() > 64 {
+    kk = sha2.sha256_bytes(key)
+  }
+  const kp = Bytes.new(64)
+  zero_fill(kp)
+  copy_into(kp, kk, 0)
+  const mid = sha2.sha256_bytes(concat_bytes(pad_bytes(kp, 0x36), data))
+  return sha2.sha256_bytes(concat_bytes(pad_bytes(kp, 0x5c), mid))
+}

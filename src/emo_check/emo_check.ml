@@ -1151,6 +1151,13 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "rand_bytes",
+          {
+            vtype =
+              FuncType ([ ("n", Int64) ], TupleType [ EnumType "R"; Bytes ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_write",
           {
             vtype =

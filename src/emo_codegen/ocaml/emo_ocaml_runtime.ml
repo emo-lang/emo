@@ -797,6 +797,40 @@ module Emo_eval = struct
     | exception Sys_error message ->
         Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
 
+  (* The rand package's answer shape, the reason under its own prefix. *)
+  let rand_result (f : unit -> value) : value =
+    match f () with
+    | v -> Tuple [ EnumMember ("R", "ok"); v ]
+    | exception Unix.Unix_error (e, fn, arg) ->
+        Tuple
+          [
+            EnumMember ("R", "error");
+            String
+              (Printf.sprintf "rand: %s%s: %s" fn
+                 (if arg = "" then "" else " " ^ arg)
+                 (Unix.error_message e));
+          ]
+    | exception Sys_error message ->
+        Tuple [ EnumMember ("R", "error"); String ("rand: " ^ message) ]
+
+  (* The entropy source: /dev/urandom read to the full count. *)
+  let read_entropy (n : int) : Bytes.t =
+    let fd = Unix.openfile "/dev/urandom" [ Unix.O_RDONLY ] 0 in
+    Fun.protect
+      ~finally:(fun () -> Unix.close fd)
+      (fun () ->
+        let buf = Bytes.create n in
+        let rec fill got =
+          if got < n then begin
+            let read = Unix.read fd buf got (n - got) in
+            if read = 0 then
+              raise (Sys_error "the entropy source closed early");
+            fill (got + read)
+          end
+        in
+        fill 0;
+        buf)
+
   (* ---- printf ----
 
      The standalone copy of the interpreter's renderer (this file takes
@@ -1489,6 +1523,13 @@ let pf_hash_float conv minus plus space width prec f =
     | "os_read", vs ->
         error "E3007"
           (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
+             (List.length vs))
+    | "rand_bytes", [ Int64 n ] ->
+        if n < 0L then error "E3007" "`rand_bytes` expects a non-negative count"
+        else rand_result (fun () -> Bytes (read_entropy (Int64.to_int n)))
+    | "rand_bytes", vs ->
+        error "E3007"
+          (Printf.sprintf "`rand_bytes` expects (n Int64), got %d"
              (List.length vs))
     | "os_write", [ Int64 fd; String data ] ->
         os_result

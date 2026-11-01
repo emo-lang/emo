@@ -26,7 +26,13 @@ class Digest {
   // bit length the spec wants is that count times eight mod 2^64 —
   // the wrap is the spec, not an accident.
   def write(data String) Void {
-    const src = data.to_bytes()
+    self.write_bytes(data.to_bytes())
+  }
+
+  // The same absorb over bytes already in hand — the door raw-byte
+  // callers ride, because a String cannot carry them on every target.
+  def write_bytes(data Bytes) Void {
+    const src = data
     const n = src.length()
     var i = 0
     const buflen = internal.word.load_u64_be(self.box, 96)
@@ -66,6 +72,11 @@ class Digest {
   // The digest so far, leaving the state standing: sum twice and the
   // answers agree, write after sum and the stream continues.
   def sum() String {
+    return self.sum_bytes().to_string()
+  }
+
+  // The digest as Bytes, the state standing as for sum.
+  def sum_bytes() Bytes {
     if self.is224 {
       return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 28)
     }
@@ -120,6 +131,15 @@ def sha224(data String) String {
   return d.sum()
 }
 
+// The one-shot SHA-256 digest over bytes, answering bytes — the door
+// raw-byte callers ride (the HMAC bytes engine, the DRBG), because a
+// String cannot carry them on every target.
+def sha256_bytes(data Bytes) Bytes {
+  const d = Digest.new(false)
+  d.write_bytes(data)
+  return d.sum_bytes()
+}
+
 // The 64-bit family: SHA-512, SHA-384, SHA-512/224, SHA-512/256 —
 // 128-byte blocks, 80 rounds, 64-bit lanes. The variant rides in the
 // digest length, which is unique per variant (64/48/28/32) and picks
@@ -145,7 +165,11 @@ class Wide {
   }
 
   def write(data String) Void {
-    const src = data.to_bytes()
+    self.write_bytes(data.to_bytes())
+  }
+
+  def write_bytes(data Bytes) Void {
+    const src = data
     const n = src.length()
     var i = 0
     const buflen = internal.word.load_u64_be(self.box, 192)
@@ -184,6 +208,10 @@ class Wide {
 
   // The digest so far, leaving the state standing, as Digest.sum.
   def sum() String {
+    return self.sum_bytes().to_string()
+  }
+
+  def sum_bytes() Bytes {
     return internal.sha512.finish(self.box, self.box, 64, internal.word.load_u64_be(self.box, 192), internal.word.load_u64_be(self.box, 200), self.outlen)
   }
 

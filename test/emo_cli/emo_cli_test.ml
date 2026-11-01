@@ -451,6 +451,9 @@ let beam_goldens =
     "sql_demo";
     "sql_edge";
     "atomic_cell";
+    (* rand_demo: the deterministic stream pinned, the OS source
+       smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
+    "rand_demo";
   ]
 
 let erl_available =
@@ -696,6 +699,9 @@ let c_goldens =
     "crypto_hash";
     "crypto_hash_million";
     "crypto_kdf";
+    (* rand_demo: the deterministic stream pinned, the OS source
+       smoke-tested — getentropy is the c leg *)
+    "rand_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

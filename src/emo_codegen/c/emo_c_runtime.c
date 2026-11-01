@@ -25,6 +25,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/random.h>
 #include <unistd.h>
 
 #include <stdarg.h>
@@ -2850,6 +2851,32 @@ static emo_value emo_os_fail(const char *what, const char *arg) {
   else
     snprintf(buf, sizeof buf, "os: %s %s: %s", what, arg, strerror(errno));
   return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+}
+
+/* The rand package's entropy source: getentropy — the portable door on
+   macOS and glibc/musl alike, at most 256 bytes a call, so the loop
+   fills any count. A failed source is the (R.error, reason) value
+   under the package's prefix; the Bytes cell carries the answer,
+   because a String cannot hold raw bytes on every target. */
+static emo_value emo_rand_fail(void) {
+  char buf[512];
+  snprintf(buf, sizeof buf, "rand: getentropy: %s", strerror(errno));
+  return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+}
+
+emo_value emo_rand_bytes(int64_t n) {
+  if (n < 0) n = 0;
+  emo_value v = emo_bytes_new(n);
+  uintptr_t *p = emo_payload(v);
+  unsigned char *buf = (unsigned char *)(p + 1);
+  size_t got = 0;
+  while (got < (size_t)n) {
+    size_t want = (size_t)n - got;
+    if (want > 256) want = 256;
+    if (getentropy(buf + got, want) != 0) return emo_rand_fail();
+    got += want;
+  }
+  return emo_os_ok(v);
 }
 
 emo_value emo_file_read(emo_str path) {
