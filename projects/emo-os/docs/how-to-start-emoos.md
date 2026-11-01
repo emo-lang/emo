@@ -60,8 +60,11 @@ driving the tick, the second with the `stimecmp` transport. Each boot
 runs the whole serial chain (bring-up, the proofs, the shell exchange
 starting the machine's program, the filesystem roundtrip, the exit
 route) and asserts every line's presence and order; a missing or
-misordered line fails the run. Three consecutive runs byte-identical
-is the bar the tracker's tasks are held to.
+misordered line fails the run. Once the compositor's moved copy has
+landed, the monitor's screendump takes the display's PPM and every
+pixel is read back against the composition history's union — the
+golden has eyes as well as ears (T8.8). Three consecutive runs
+byte-identical is the bar the tracker's tasks are held to.
 
 ## Driving it by hand
 
@@ -76,14 +79,21 @@ and re-create it whenever a fresh volume is wanted:
 
 ```console
 $ dd if=/dev/zero of=.blk.img bs=1048576 count=1
-$ qemu-system-riscv64 -machine virt -nographic \
+$ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
     -global virtio-mmio.force-legacy=false \
     -drive file=.blk.img,format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
+    -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-keyboard-device \
     -kernel main.elf
 ```
 
-The serial console is the terminal. OpenSBI's banner goes by, the
+The machine's screen is the cocoa window — the same display the
+golden's screendump asserts (T8.8), the keyboard aboard because the
+input service's scan ends loudly without a DeviceID 18 — and the
+serial console stays the terminal (`-serial mon:stdio` holds the mux
+`-nographic` used to keep; Ctrl-A C reaches the QEMU monitor).
+OpenSBI's banner goes by, the
 kernel boots paged on the table it built (the `sv39 8 0x…` line), the
 block device and the filesystem report — and the chain stops for keys
 twice on its way to the prompt:

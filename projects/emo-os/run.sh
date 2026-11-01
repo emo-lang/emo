@@ -46,7 +46,14 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # proof (T8.5: the run handed, the mapping painted and read back, the
 # commit recorded, the release home — the lifecycle's four lines and
 # the clean exit) — the
-# shell REPL taking the foreground (T7.3: the prompt,
+# compositor's compositions (T8.6: the stack's blit answering the
+# present, the move a second blit at (16,32), the focus, the close —
+# the death notice's restart reclaiming the first instance's arena) —
+# the golden's eyes (T8.8: the monitor's screendump takes the
+# display's PPM once the moved copy's flush has landed, and every
+# pixel reads back against the composition history's union — the
+# gradient, the first copy's surviving rows, the moved copy on top) —
+# the shell REPL taking the foreground (T7.3: the prompt,
 # the help line, the echo, the list, the boot file read back, the
 # refusal after the remove, the unknown word named, and `poweroff`
 # reaching the exit route) with the counter command starting the
@@ -75,10 +82,13 @@ boot() {
   # assessment's decided baseline (1024x768 XRGB8888) — the device
   # property is where that decision lives, and the driver still reads
   # whatever the device answers (T8.1; this QEMU's own default is
-  # 1280x800, the golden would name it). The keyboard (T8.3) is the
-  # merged input stream's device half; the monitor socket is the run's
-  # hand — the sendkey injection the input beat waits for.
-  qemu-system-riscv64 -machine virt -nographic -d int -cpu "$cpu" \
+  # 1280x800, the golden would name it). The display itself has no
+  # window on the asserted leg (`-display none`): its truth is the
+  # monitor's screendump (T8.8); the ride's window is start.sh's. The
+  # keyboard (T8.3) is the merged input stream's device half; the
+  # monitor socket is the run's hand — the sendkey injection the input
+  # beat waits for.
+  qemu-system-riscv64 -machine virt -nographic -display none -d int -cpu "$cpu" \
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
@@ -176,6 +186,54 @@ PYEOF
   await 'key 1 16 1'
   printf 'K' >&3
   await 'byte 75'
+  # The golden's eyes (T8.8): the compositor's compositions blitted the
+  # window's frame into the carve and flushed — the monitor's screendump
+  # takes the display's PPM and every pixel is read back against the
+  # composition history's union: the gradient the flush smoke painted
+  # (blue 64, red and green the row's multiples), the screen carve's
+  # proof pattern over it — the words the T8.2 pass wrote after the
+  # smoke, one per 64 KiB across the display's first 3 MiB, each word's
+  # zero high half the black partner pixel, visible only because every
+  # later flush is whole-screen — and the window's two copies over both
+  # (the first at (0,0), its rows below the move's surviving, the
+  # second at (16,32), written last, holding the overlap; the paint
+  # carries its row in the blue lane, 0x57494E00 + row). A wrong pixel
+  # anywhere is the loud end — and a dead check kills the machine
+  # first, the survivor poisons the next run.
+  await 'comp 16 32'
+  hmp 'screendump .screen.ppm'
+  if ! python3 - <<'PYEOF'
+import sys
+
+data = open('.screen.ppm', 'rb').read()
+if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
+    sys.exit("run.sh: the screendump is not the mode's P6 1024x768")
+px = data[16:]
+
+def want(x, y):
+    if 16 <= x < 528 and 32 <= y < 160:
+        return (73, 78, y - 32)
+    if x < 512 and y < 128:
+        return (73, 78, y)
+    if y % 16 == 0 and 8 <= y // 16 <= 47:
+        if x == 0:
+            return (99, 114, 110 + y // 16)
+        if x == 1:
+            return (0, 0, 0)
+    return ((y * 5) & 255, (y * 3) & 255, 64)
+
+for y in range(768):
+    row = px[y * 3072:(y + 1) * 3072]
+    for x in range(1024):
+        got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+        if got != want(x, y):
+            sys.exit(f'run.sh: the pixel at ({x},{y}) is {got}, the model says {want(x, y)}')
+PYEOF
+  then
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
+  await 'win 0'
   # The counter command (T7.5, docs/ui.md): the machine's program —
   # the console renderer pass (T7.4) — begun from the prompt, the
   # full-boot golden's beat between the shell and the filesystem

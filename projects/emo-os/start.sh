@@ -7,6 +7,13 @@ cd "$(dirname "$0")"
 # it the terminal — the hand-driven boot of
 # docs/how-to-start-emoos.md in one command. run.sh is the golden smoke
 # that asserts the serial chain; this one asserts nothing and drives.
+# The display leg (T8.8): the machine's screen is a cocoa window — the
+# same virtio-gpu and 1024x768 baseline the golden asserts through the
+# monitor's screendump, here shown live — while the serial console
+# stays the terminal (`-serial mon:stdio`, the mux `-nographic` used
+# to keep). The keyboard rides along: without a DeviceID 18 on the
+# buses the input service's scan ends loudly, so the ride's boot needs
+# the device half of its input stream.
 #
 # The images are not committed. The user image builds first — the
 # kernel's build assembles user.S, which embeds hello.elf, so the ELF
@@ -79,7 +86,7 @@ if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo 'EmoOS: the serial console is this terminal.' >&2
+echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
 echo '  the boot stops twice for keys on its way to the emo-os> prompt:' >&2
 echo '    five keys once the fs mount line has gone by (the console delivery test)' >&2
 echo '    one key when "gate 500500 r3 r2" appears (the read proof)' >&2
@@ -87,8 +94,13 @@ echo '  type nothing else before the prompt — early bytes surface later and ga
 echo '  the kill reports on the way are the proof chain working, not trouble' >&2
 echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
 
-exec qemu-system-riscv64 -machine virt -nographic \
+# -display cocoa: the display leg's window (T8.8); -serial mon:stdio
+# keeps the serial-and-monitor mux -nographic used to hold, so the
+# console hand-feel is unchanged.
+exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
   -global virtio-mmio.force-legacy=false \
   -drive file="$img",format=raw,if=none,id=emoos-blk \
   -device virtio-blk-device,drive=emoos-blk \
+  -device virtio-gpu-device,xres=1024,yres=768 \
+  -device virtio-keyboard-device \
   -kernel "$elf"

@@ -38,7 +38,7 @@ $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
 $ ./run.sh
 ```
 
-`run.sh` 是验证,不是 ride。它把盘镜像清零并启动机器两次——第一脚遇到空盘、格式化它,第二脚挂载第一脚留下的卷,所以两脚是一个故事——第一脚用 SBI `set_timer` 兜底驱动 tick,第二脚用 `stimecmp` 传输。每脚跑完整条串口链(启动、各证明、启动机器程序的 shell 对话、文件系统往返、exit 路由)并断言每行的存在与顺序;缺一行或乱序即失败。连续三轮逐字节相同,是追踪器里每个任务被要求的线。
+`run.sh` 是验证,不是 ride。它把盘镜像清零并启动机器两次——第一脚遇到空盘、格式化它,第二脚挂载第一脚留下的卷,所以两脚是一个故事——第一脚用 SBI `set_timer` 兜底驱动 tick,第二脚用 `stimecmp` 传输。每脚跑完整条串口链(启动、各证明、启动机器程序的 shell 对话、文件系统往返、exit 路由)并断言每行的存在与顺序;缺一行或乱序即失败。合成器移动后的拷贝落地时,监视器的 screendump 拿下显示器的 PPM,每个像素按合成历史的并集读回——金测不止有耳朵,还有眼睛(T8.8)。连续三轮逐字节相同,是追踪器里每个任务被要求的线。
 
 ## 手动驾驶
 
@@ -48,14 +48,16 @@ $ ./run.sh
 
 ```console
 $ dd if=/dev/zero of=.blk.img bs=1048576 count=1
-$ qemu-system-riscv64 -machine virt -nographic \
+$ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
     -global virtio-mmio.force-legacy=false \
     -drive file=.blk.img,format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
+    -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-keyboard-device \
     -kernel main.elf
 ```
 
-串口控制台就是终端。OpenSBI 的 banner 走过,内核在自己建的表上分页启动(`sv39 8 0x…` 行),块设备与文件系统各自报到——然后链条在去提示符的路上停两次等键:
+机器的屏幕是 cocoa 窗口——金测 screendump 断言的同一块显示器(T8.8),键盘之所以在列,是因为输入服务的扫描在缺 DeviceID 18 时响亮告终——串口控制台仍是终端(`-serial mon:stdio` 保住 `-nographic` 原有的复用;Ctrl-A C 到 QEMU 监视器)。OpenSBI 的 banner 走过,内核在自己建的表上分页启动(`sv39 8 0x…` 行),块设备与文件系统各自报到——然后链条在去提示符的路上停两次等键:
 
 - **文件系统的挂载行过去之后敲五个键**——控制台服务的投递测试从线上读五个字节(`abcde` 的应答是 `0:97` … `4:101`);
 - **`gate 500500 r3 r2` 行出现后敲一个键**——读证明会在控制台上阻塞直到存在一个字节(`echo 88` 是对 X 的应答)。

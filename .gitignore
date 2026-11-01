@@ -52,3 +52,6 @@ __pycache__
 
 # EmoOS T7.1: the block device backing image run.sh creates
 projects/emo-os/.blk.img
+
+# EmoOS T8.8: the screendump the golden's eyes read back
+projects/emo-os/.screen.ppm
