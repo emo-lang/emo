@@ -112,10 +112,13 @@ stays pure and five-target.
       sum, reset, and hex panels; `examples/crypto_hash_million`
       (c-only) rides the million-`a` vector; `crypto.hex_encode`/
       `hex_decode` joined the root.
-- [ ] **T55.3** — The SHA-512 family (512/384/512-224/512-256) over
-      64-bit words through T55.1's shift discipline, and the legacy
-      pair — SHA-1 and MD5 in `crypto.legacy`; the golden grows,
-      Go companions beside each.
+- [x] **T55.3** — The SHA-512 family (512/384/512-224/512-256) over
+      64-bit lanes in `internal/sha512.emo` (constants derived from
+      the spec, the /224 and /256 initial words through the
+      generation function), the `Wide` class beside `Digest` in
+      `crypto.sha2`; SHA-1 and MD5 in `crypto.legacy`, one-shot only;
+      the golden grows to 98 Go-agreed vectors; and the OCaml
+      emitter's negative-Int64-literal bug flushed and fixed.
 - [ ] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
       structural interface every hash answers, so HMAC consumes any
       of them; the tag verified through `subtle`'s constant-time

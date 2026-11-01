@@ -117,3 +117,56 @@ case crypto.hex_decode("abz0") {
   (R.ok, _) -> { println("unexpected ok") }
   (R.error, why) -> { println(why) }
 }
+
+// ---- the 64-bit family: the same messages through SHA-512,
+// SHA-384, SHA-512/224, SHA-512/256, each pinned against the value
+// Go's crypto/sha512 answers for the same bytes.
+def four(label String, data String) Void {
+  println("sha512 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512(data)))
+  println("sha384 " + label + ": " + crypto.hex_encode(crypto.sha2.sha384(data)))
+  println("sha512_224 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512_224(data)))
+  println("sha512_256 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512_256(data)))
+}
+
+four("abcd", "abcd")
+four("empty", "")
+four("abc", "abc")
+four("56", long56)
+four("112", long112)
+four("quickbrown", quick)
+
+// the 64-bit hasher streams through the same discipline: the lines
+// repeat the `sha512 abc` and `sha512 abcd` digests above.
+const w = crypto.sha2.new512()
+w.write("ab")
+w.write("c")
+println("wide chunks: " + crypto.hex_encode(w.sum()))
+w.write("d")
+println("wide after more: " + crypto.hex_encode(w.sum()))
+w.reset()
+w.write("abc")
+println("wide after reset: " + crypto.hex_encode(w.sum()))
+println("size512: " + w.size().to_string() + " block: " + w.block_size().to_string())
+
+// the 64-bit padding boundaries: 111/112/113 around the first length
+// slot, 127/128/129 around a block.
+const wide_edges = [111, 112, 113, 127, 128, 129]
+for var e = 0; e < 6; e = e + 1 {
+  four("repeat " + wide_edges[e].to_string(), repeat_byte(wide_edges[e]))
+}
+
+four("bytes 0..255", sweep.to_string())
+
+// ---- the legacy pair, verified the same way: present for the
+// world's existing data, refused for every security purpose.
+def legacy(label String, data String) Void {
+  println("sha1 " + label + ": " + crypto.hex_encode(crypto.legacy.sha1(data)))
+  println("md5 " + label + ": " + crypto.hex_encode(crypto.legacy.md5(data)))
+}
+
+legacy("empty", "")
+legacy("abc", "abc")
+legacy("56", long56)
+legacy("112", long112)
+legacy("quickbrown", quick)
+legacy("bytes 0..255", sweep.to_string())

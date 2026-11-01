@@ -2966,12 +2966,30 @@ error split, and the honesty sections.
       a c-only golden; `crypto.hex_encode`/`hex_decode` joined the
       root as the digests' rendering (strict, offset-bearing).
       Byte-identical interpreter to `c`; `dune test` green.
-- [ ] **T55.3** — The SHA-512 family and the legacy pair:
-      SHA-512/384/512-224/512-256 over 64-bit words through T55.1's
-      shift discipline; SHA-1 and MD5 in `crypto.legacy` — present
-      because the world's existing data needs verifying, documented
-      as broken for every security purpose; the golden grows, Go
-      companions beside each.
+- [x] **T55.3** — The SHA-512 family and the legacy pair:
+      SHA-512/384/512-224/512-256 in `internal/sha512.emo` — 128-byte
+      blocks, 80 rounds, 64-bit lanes that wrap natively (no masking;
+      only T55.1's logical shift and rotations), the constants derived
+      from the spec's definitions and checked against the reference
+      digests rather than hand-copied (the /224 and /256 initial
+      words through §5.3.6's generation function — derivation, not
+      memory, which had three of those eight words wrong); the public
+      surface rides `crypto.sha2`'s `Wide` class, the digest length
+      picking the variant (64/48/28/32), factories `new512`/`new384`/
+      `new512_224`/`new512_256` and one-shots beside the 32-bit
+      family's; SHA-1 and MD5 in `internal/sha1.emo`/`internal/
+      md5.emo` behind `crypto.legacy` — one-shot only, documented as
+      broken for every security purpose, MD5 little-endian through
+      and through; the golden grows to 98 Go-agreed vectors (the
+      64-bit family over the five messages, the 111/112/113/127/128/
+      129 padding edges, the sweep; the legacy pair over the same
+      five and the sweep) plus the 64-bit streaming/reset panels; and
+      the step flushed a real backend bug: crypto carries the first
+      Int64 constants past 2^63, and the OCaml emitter's
+      unparenthesized negative literal (`Emo_eval.Int64 -…L`) parsed
+      as subtraction — every `%LdL` emission site now goes through a
+      parenthesizing helper (`emo_codegen.ml`), ocaml target
+      byte-identical like interpreter and `c`; `dune test` green.
 - [ ] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
       structural interface every hash answers (`write`/`sum`/
       `reset`/`size`/`block_size`), so HMAC consumes any of them —
