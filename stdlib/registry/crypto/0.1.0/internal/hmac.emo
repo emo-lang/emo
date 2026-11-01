@@ -1,0 +1,66 @@
+// The HMAC engine (RFC 2104): `H(opad_k || H(ipad_k || message))`
+// over the SHA-2 one-shots, the key prepared per the RFC — hashed
+// first when longer than the block, zero-padded to the block when
+// shorter. The variant rides in a code the caller names (the
+// wrappers in crypto.hash know their own), so this module rides
+// sha2's public surface and never references hash — the dependency
+// stays one-way (module cycles are refused). The message rides as
+// one concatenation; a streaming HMAC would want the interface
+// factory this language does not admit yet (provisional).
+
+// The key material ready for both pads: hashed when longer than the
+// block, zero-padded to the block width either way.
+def key_block(key String, block Int64, code Int64) Bytes {
+  const k = key.to_bytes()
+  var kk = k
+  if k.length() > block {
+    kk = oneshot(code, key).to_bytes()
+  }
+  const kp = Bytes.new(block)
+  var i = 0
+  while i < kk.length() {
+    kp.set(i, kk.get(i))
+    i = i + 1
+  }
+  return kp
+}
+
+// Every key byte folded with the pad byte (0x36 inner, 0x5c outer),
+// as text — the one-shot's input shape.
+def pad_text(kp Bytes, pad Int64) String {
+  const out = Bytes.new(kp.length())
+  var i = 0
+  while i < kp.length() {
+    out.set(i, kp.get(i) ^ pad)
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+// The variant's one-shot digest, by code: 1 sha256, 2 sha224,
+// 3 sha512, 4 sha384, 5 sha512_224, 6 sha512_256.
+def oneshot(code Int64, data String) String {
+  if code == 1 {
+    return sha2.sha256(data)
+  }
+  if code == 2 {
+    return sha2.sha224(data)
+  }
+  if code == 3 {
+    return sha2.sha512(data)
+  }
+  if code == 4 {
+    return sha2.sha384(data)
+  }
+  if code == 5 {
+    return sha2.sha512_224(data)
+  }
+  return sha2.sha512_256(data)
+}
+
+// The HMAC tag for the code's variant, block width, key, and message.
+def hmac(code Int64, block Int64, key String, data String) String {
+  const kp = key_block(key, block, code)
+  const mid = oneshot(code, pad_text(kp, 0x36) + data)
+  return oneshot(code, pad_text(kp, 0x5c) + mid)
+}

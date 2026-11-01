@@ -170,3 +170,46 @@ legacy("56", long56)
 legacy("112", long112)
 legacy("quickbrown", quick)
 legacy("bytes 0..255", sweep.to_string())
+
+// ---- HMAC (RFC 2104) over the SHA-2 family: RFC 4231's test cases,
+// each tag pinned against Go's crypto/hmac. tc6 and tc7 carry a
+// 131-byte key, forcing the hash-the-key path.
+def fill(count Int64, value Int64) String {
+  const b = Bytes.new(count)
+  var i = 0
+  while i < count {
+    b.set(i, value)
+    i = i + 1
+  }
+  return b.to_string()
+}
+
+def hmac_panel(label String, key String, data String) Void {
+  println("hmac256 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha256(key, data)))
+  println("hmac224 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha224(key, data)))
+  println("hmac384 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha384(key, data)))
+  println("hmac512 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512(key, data)))
+  println("hmac512_224 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512_224(key, data)))
+  println("hmac512_256 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512_256(key, data)))
+}
+
+hmac_panel("tc1", fill(20, 0x0b), "Hi There")
+hmac_panel("tc2", "Jefe", "what do ya wanna know?")
+hmac_panel("tc3", fill(20, 0xaa), fill(50, 0xdd))
+const k4 = Bytes.new(25)
+for var i4 = 0; i4 < 25; i4 = i4 + 1 {
+  k4.set(i4, i4 + 1)
+}
+hmac_panel("tc4", k4.to_string(), fill(50, 0xcd))
+hmac_panel("tc6", fill(131, 0xaa), "Test Using Larger Than Block-Size Key - Hash Key First")
+hmac_panel("tc7", fill(131, 0xaa), "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.")
+
+// ---- the interface: one function digests with any hasher the
+// package answers — the lines repeat `sha256 abc` and `sha512 abc`.
+def iface_digest(h crypto.hash.Hash) String {
+  h.write("ab")
+  h.write("c")
+  return crypto.hex_encode(h.sum())
+}
+println("iface256: " + iface_digest(crypto.sha2.new()))
+println("iface512: " + iface_digest(crypto.sha2.new512()))

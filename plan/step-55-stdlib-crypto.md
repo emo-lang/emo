@@ -119,10 +119,12 @@ stays pure and five-target.
       `crypto.sha2`; SHA-1 and MD5 in `crypto.legacy`, one-shot only;
       the golden grows to 98 Go-agreed vectors; and the OCaml
       emitter's negative-Int64-literal bug flushed and fixed.
-- [ ] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
-      structural interface every hash answers, so HMAC consumes any
-      of them; the tag verified through `subtle`'s constant-time
-      compare; RFC 4231 vectors in the golden.
+- [x] **T55.4** — The `Hash` interface in `crypto.hash` (`Digest`
+      and `Wide` answer it by shape); HMAC over the SHA-2 family in
+      `internal/hmac.emo`, one-shot, the engine riding sha2's
+      one-shots through a variant code so no module cycle forms; the
+      golden grows to 134 Go-agreed vectors with RFC 4231's cases
+      (the 131-byte keys included).
 - [ ] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) over the
       `Hash` interface; the iteration count a plain argument — no
       work-factor policy in the package; RFC vectors plus Go

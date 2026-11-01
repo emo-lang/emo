@@ -2990,12 +2990,24 @@ error split, and the honesty sections.
       as subtraction — every `%LdL` emission site now goes through a
       parenthesizing helper (`emo_codegen.ml`), ocaml target
       byte-identical like interpreter and `c`; `dune test` green.
-- [ ] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
-      structural interface every hash answers (`write`/`sum`/
-      `reset`/`size`/`block_size`), so HMAC consumes any of them —
-      ipad/opad over the block size, the tag compared through
-      `subtle`; the golden grows with RFC 4231's HMAC-SHA-2 vectors
-      and their Go companions.
+- [x] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
+      structural interface (`write`/`sum`/`reset`/`size`/
+      `block_size`) in `crypto.hash`, `Digest` and `Wide` satisfying
+      it by shape — the golden holds both through one function taking
+      the interface; HMAC over the SHA-2 family in `internal/
+      hmac.emo` — the RFC's key preparation (hashed first when longer
+      than the block, zero-padded when shorter, the 0x36/0x5c pads),
+      the variant riding a code the wrapper names so the engine rides
+      sha2's one-shots and the dependency stays one-way (module
+      cycles are refused, and the interface-factory shape a streaming
+      HMAC would want does not exist yet, so HMAC is one-shot —
+      provisional); tags compared through
+      `crypto.constant_time_compare` per the docs, never `==`; the
+      golden grows to 134
+      Go-agreed vectors — RFC 4231's tc1–tc4, tc6 and tc7 (the
+      131-byte keys forcing the hash-the-key path) across all six
+      algorithms; interpreter, `c`, and ocaml byte-identical;
+      `dune test` green.
 - [ ] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) over the
       `Hash` interface: extract/expand with HKDF's output-length cap
       stated, PBKDF2 the iterated HMAC with the count a plain
