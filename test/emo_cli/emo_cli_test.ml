@@ -3050,6 +3050,7 @@ let riscv64_examples_tests =
       "arena_gone";
       "outlives";
       "survivors";
+      "wide_literal";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

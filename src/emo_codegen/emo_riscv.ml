@@ -311,6 +311,36 @@ let temp_offset env depth =
   | Some f -> 8 + (8 * (f.named + depth))
   | None -> invalid_arg "riscv: no function frame"
 
+(* The frame's sp adjust (CHECK.md 155): the 12-bit immediate carries
+   frames up to 2048 bytes, and a wide literal's spill area pushes past
+   it — the boot banner died on `addi sp,sp,-2144`. The big sizes ride
+   a scratch register; t6 is the emitted code's to spend (no emitter
+   path holds it across an instruction, and the runtime's helpers are
+   free to clobber it — caller-saved). [module_buf] picks the buffer:
+   the prologues write the module's (gput), the bodies and epilogues
+   the frame's own (put) — the two-buffer order the function emitters
+   keep. *)
+let sp_frame_adjust env ~(module_buf : bool) ~(up : bool) (size : int) : unit =
+  let emit s = if module_buf then gput env "%s" s else put env "%s" s in
+  if size <= 2047 then
+    emit
+      (Printf.sprintf "    addi sp, sp, %s%d\n" (if up then "" else "-") size)
+  else begin
+    emit (Printf.sprintf "    li t6, %d\n" size);
+    emit (Printf.sprintf "    %s sp, sp, t6\n" (if up then "add" else "sub"))
+  end
+
+(* A store at a sp-relative offset, the spill side of the same fix:
+   the wide literal's slots sit past the immediate's reach. The body's
+   own buffer (put) is the only context a spill lives in. *)
+let sp_store env reg (off : int) : unit =
+  if off <= 2047 then put env "    sd %s, %d(sp)\n" reg off
+  else begin
+    put env "    li t6, %d\n" off;
+    put env "    add t6, t6, sp\n";
+    put env "    sd %s, 0(t6)\n" reg
+  end
+
 (* ---- The pre-pass ---- *)
 
 (* The free names a closure body reads: everything referenced that the
@@ -1114,17 +1144,38 @@ and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
     (fun i el ->
       emit_expr env (d + n) el;
       box_if_numeric env el.Emo_ir.ety;
-      put env "    sd a0, %d(sp)\n" (temp_offset env (d + i)))
+      sp_store env "a0" (temp_offset env (d + i)))
     es;
   put env "    li a0, %d\n" (n + 1);
   call_runtime env "emo_alloc";
   put env "    li t0, %d\n" n;
   put env "    sd t0, 8(a0)\n";
-  List.iteri
-    (fun i _ ->
-      put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
-      put env "    sd t0, %d(a0)\n" (16 + (8 * i)))
-    es;
+  let last_fill = 16 + (8 * (n - 1)) in
+  if n = 0 || (last_fill <= 2047 && temp_offset env (d + n - 1) <= 2047) then
+    List.iteri
+      (fun i _ ->
+        put env "    ld t0, %d(sp)\n" (temp_offset env (d + i));
+        put env "    sd t0, %d(a0)\n" (16 + (8 * i)))
+      es
+  else begin
+    (* The literal's span leaves the 12-bit immediate's reach on both
+       sides — the fill's offsets off a0 and the spill's off sp — so
+       the spilled elements walk into the block through two pointers:
+       the register-plus-addi address CHECK.md 155 names, O(1) text
+       for any n. *)
+    let l_fill = fresh_label env "seqfill" in
+    put env "    addi t1, a0, 16\n";
+    put env "    li t2, %d\n" (temp_offset env d);
+    put env "    add t2, t2, sp\n";
+    put env "    li t3, %d\n" n;
+    put env "%s:\n" l_fill;
+    put env "    ld t4, 0(t2)\n";
+    put env "    sd t4, 0(t1)\n";
+    put env "    addi t2, t2, 8\n";
+    put env "    addi t1, t1, 8\n";
+    put env "    addi t3, t3, -1\n";
+    put env "    bnez t3, %s\n" l_fill
+  end;
   put env "    ori a0, a0, %d\n" tag
 
 and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
@@ -1846,7 +1897,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           else emit_typed_regs env 0 conv.cparams;
           let f = frame () in
           put env "    ld ra, 0(sp)\n";
-          put env "    addi sp, sp, %d\n" f.size;
+          sp_frame_adjust env ~module_buf:false ~up:true f.size;
           put env "    tail %s\n" (func_label func);
           true
       | Some _ -> false
@@ -1854,7 +1905,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           emit_args env 0 args;
           let f = frame () in
           put env "    ld ra, 0(sp)\n";
-          put env "    addi sp, sp, %d\n" f.size;
+          sp_frame_adjust env ~module_buf:false ~up:true f.size;
           put env "    tail %s\n" (func_label func);
           true
       | None -> false)
@@ -1868,7 +1919,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
       put env "    ld ra, 0(sp)\n";
-      put env "    addi sp, sp, %d\n" ff.size;
+      sp_frame_adjust env ~module_buf:false ~up:true ff.size;
       put env "    jr t2\n";
       true
   | _ -> false
@@ -2246,7 +2297,7 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   frm.temps <- stmts_depth f.Emo_ir.fbody + 2;
   frm.size <- (8 + (8 * (frm.named + frm.temps)) + 15) / 16 * 16;
   gput env "%s:\n" (func_label f.Emo_ir.fname);
-  gput env "    addi sp, sp, -%d\n" frm.size;
+  sp_frame_adjust env ~module_buf:true ~up:false frm.size;
   gput env "    sd ra, 0(sp)\n";
   gput env "    la t0, %s\n" done_label;
   gput env "    ld t1, 0(t0)\n";
@@ -2285,7 +2336,7 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   | R_float64 -> put env "    fmv.d.x fa0, a0\n"
   | R_int64 | R_word | R_void -> ());
   put env "    ld ra, 0(sp)\n";
-  put env "    addi sp, sp, %d\n" frm.size;
+  sp_frame_adjust env ~module_buf:false ~up:true frm.size;
   put env "    ret\n";
   Buffer.add_buffer env.buf frm.fbuf;
   env.cur <- None
@@ -2338,7 +2389,7 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
   f.temps <- stmts_depth body + 2;
   f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
   gput env "%s:\n" label;
-  gput env "    addi sp, sp, -%d\n" f.size;
+  sp_frame_adjust env ~module_buf:true ~up:false f.size;
   gput env "    sd ra, 0(sp)\n";
   (* every raw param to its own slot first — the boxing calls clobber
      the argument registers, so nothing may still ride in one *)
@@ -2378,7 +2429,7 @@ let emit_function env ~(label : string) ~(params : (string * Emo_check.t) list)
   put env "%s:\n" f.ret;
   if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
-  put env "    addi sp, sp, %d\n" f.size;
+  sp_frame_adjust env ~module_buf:false ~up:true f.size;
   put env "    ret\n";
   Buffer.add_buffer env.buf f.fbuf;
   env.cur <- None
@@ -2421,7 +2472,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
   f.temps <- stmts_depth body + 2;
   f.size <- (8 + (8 * (f.named + f.temps)) + 15) / 16 * 16;
   gput env "%s:\n" (func_label ctor);
-  gput env "    addi sp, sp, -%d\n" f.size;
+  sp_frame_adjust env ~module_buf:true ~up:false f.size;
   gput env "    sd ra, 0(sp)\n";
   List.iteri
     (fun i _ -> gput env "    sd a%d, %d(sp)\n" i (8 + (8 * i)))
@@ -2434,7 +2485,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
   put env "    ld a0, %d(sp)\n" (8 + (8 * nparams));
   put env "%s:\n" f.ret;
   put env "    ld ra, 0(sp)\n";
-  put env "    addi sp, sp, %d\n" f.size;
+  sp_frame_adjust env ~module_buf:false ~up:true f.size;
   put env "    ret\n";
   Buffer.add_buffer env.buf f.fbuf;
   env.fclass <- None;
