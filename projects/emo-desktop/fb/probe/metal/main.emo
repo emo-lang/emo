@@ -3,19 +3,22 @@ require "emo/ui_fb"
 require "emo/ui_fb_frame"
 
 // The metal's lowering, pinned without a machine: the core, the font,
-// the pointer and the first frame built for `riscv64` as a user
-// program, every def of every module a metal consumer reaches lowered —
-// the box model, the palette, the clip and blend arithmetic, the
-// backend, the tree and its digest, (A8.1) the paint walk whole: the box
-// fills, each label's glyphs through `font.glyph_of` — the one-byte
+// the pointer, the first frame and the counter built for `riscv64` as a
+// user program, every def of every module a metal consumer reaches
+// lowered — the box model, the palette, the clip and blend arithmetic,
+// the backend, the tree and its digest, (A8.1) the paint walk whole: the
+// box fills, each label's glyphs through `font.glyph_of` — the one-byte
 // `substring` and the alphabet's `index_of` the metal lowers for it —
-// and the surface's `glyph` verb, and (A8.2) the pointer's drawing read
+// and the surface's `glyph` verb, (A8.2) the pointer's drawing read
 // cell by cell, the walk the screen pass makes when it writes the sprite
-// into the carve. What is left out is what the metal cannot take: the
-// canvas (a `Bytes`) and the packages' own tests (the loop driven with
-// def values). The program is never run here — `projects/emo-os/run.sh`
-// runs the real pass on the real carve; this is the build that fails
-// first when a change in the core stops lowering for the metal.
+// into the carve, and (A8.3) the Elm loop itself: `ui.run` with the
+// counter's defs as values — the registry, the app, the backend's
+// mount and patch, the script in the input's seat — the shape the screen
+// pass runs with the carve and the merged stream. What is left out is
+// what the metal cannot take: the canvas (a `Bytes`). The program is
+// never run here — `projects/emo-os/run.sh` runs the real pass on the
+// real carve; this is the build that fails first when a change in the
+// core stops lowering for the metal.
 
 // A surface that counts what the core hands it and keeps no pixels: the
 // metal's registry carries no canvas, and a probe needs the calls to
@@ -26,6 +29,7 @@ class Tally {
     self.height = height
     self.fills = Box.new(0)
     self.glyphs = Box.new(0)
+    self.presents = Box.new(0)
   }
 
   def width() Int64 {
@@ -51,12 +55,20 @@ class Tally {
     self.glyphs.replace(self.glyphs.read() + 1)
   }
 
+  def present() {
+    self.presents.replace(self.presents.read() + 1)
+  }
+
   def fills() Int64 {
     return self.fills.read()
   }
 
   def glyphs() Int64 {
     return self.glyphs.read()
+  }
+
+  def presents() Int64 {
+    return self.presents.read()
   }
 }
 
@@ -65,9 +77,14 @@ def main() {
   println("probe ${e.w()} ${e.h()}")
   const t = Tally.new(width: 1024, height: 768)
   ui_fb.paint(ui_fb_frame.tree(), t)
-  println("painted ${t.fills()} boxes, ${t.glyphs()} glyphs")
+  const boxes = t.fills()
+  println("painted ${boxes} boxes, ${t.glyphs()} glyphs")
   ui_fb.pointer.paint(t, 512, 384)
-  println("pointer ${t.fills() - 6} cells")
+  println("pointer ${t.fills() - boxes} cells")
+  ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
+    ui_fb_frame.counter.initial(),
+    ui_fb.backend(t, ui_fb.script([0, 0, 1])))
+  println("looped ${t.presents()} frames")
 }
 
 main()

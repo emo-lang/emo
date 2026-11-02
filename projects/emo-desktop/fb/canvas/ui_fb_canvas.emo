@@ -82,6 +82,12 @@ class Canvas {
       }
     }
   }
+
+  // Memory has nothing to commit (A8.3): the words are the frame the
+  // moment they are stored, and whoever holds the canvas reads them back
+  // whenever it likes. The carve's `present` is the display's flush.
+  def present() {
+  }
 }
 
 def canvas(width Int64, height Int64) ui_fb.Surface {

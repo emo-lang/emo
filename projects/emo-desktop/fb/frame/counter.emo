@@ -1,0 +1,63 @@
+require "emo/ui"
+
+// The counter (emo-desktop A8.3): the Elm architecture's own example on
+// the desktop's framebuffer — a model, a pure `update`, a pure `view` —
+// and the first event-driven program the machine's screen pass runs:
+// `ui.run(counter.view, counter.update, counter.initial(), backend)`,
+// the loop unchanged from the hosted backends', with the carve as the
+// surface and the merged input stream in the input's seat
+// (`projects/emo-os/hello/main.emo`). The console renderer's pixel twin
+// (`projects/emo-os/docs/ui.md`): the same count, the same two keys, in
+// the fb core's box model at the display's scale.
+//
+// The tree is the panel, the count, and one button per message — four
+// nodes, twenty-eight glyphs — and that size is a measured decision,
+// not a sketch. On the metal the tree is rebuilt on every event, and
+// the pool takes the frame before's nodes, styles, extents and
+// rectangles back; what stays in the arena is the walk's own boxed
+// numbers and glyph strings — every method's body is the dynamic
+// convention there — at about 3 KiB a node and 600 bytes a glyph, so
+// this tree leaves 18 KiB behind per event and the pass's 128 KiB arena
+// holds the golden's session with room to spare, where the first
+// frame's title strip, body and dock left 42 KiB and died on the third
+// key. The hint the console frame carries (`q quit`) is a key the
+// screen pass's input names instead.
+
+enum Msg { add, sub }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def initial() Model {
+  return Model.new(count: 0)
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.add {
+    return Model.new(count: m.count() + 1)
+  }
+  return Model.new(count: m.count() - 1)
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own: `on` is a side
+  // effect, and this registration order is what fixes add and sub at
+  // tags 0 and 1 on every run — the tags the screen pass maps its keys
+  // onto and the golden's script names.
+  const add = reg.on(Msg.add)
+  const sub = reg.on(Msg.sub)
+  return ui.column([
+    ui.text("count ${m.count()}", ui.style()),
+    ui.row([
+      ui.button("a plus", add, ui.style()),
+      ui.button("b minus", sub, ui.style())
+    ], ui.style().with_gap(16.0))
+  ], ui.style().with_padding(32.0).with_gap(16.0))
+}

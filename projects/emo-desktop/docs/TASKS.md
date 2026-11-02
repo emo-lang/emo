@@ -287,9 +287,66 @@ tree's and EmoOS's, listed there.
   whole sprite redrawn each time; a device cursor on the virtio-gpu's
   cursor queue is Tier B's relocation when a display the golden cannot
   see earns it.
-- [ ] **A8.3** — The Elm loop on metal: an event-driven fb app whose
+- [x] **A8.3** — The Elm loop on metal: an event-driven fb app whose
   per-event tree rebuild survives the arena (the pool's first
-  consumer, on the compiler track's schedule).
+  consumer, on the compiler track's schedule). **Landed 2026-11-03.**
+  The app is the counter — the Elm architecture's own example, the
+  console renderer's pixel twin (`projects/emo-os/docs/ui.md`) —
+  written once in [`fb/frame/counter.emo`](../fb/frame/counter.emo) as
+  a model, a pure `update` and a pure `view`, and run through
+  `ui.run(counter.view, counter.update, counter.initial(), backend)`,
+  **the loop unchanged from the hosted backends'**, on both sides of the
+  gate: the screen pass runs it with the carve as the surface and the
+  merged input stream in the input's seat (`Keys` in `hello/main.emo`:
+  `a` the add, `b` the sub, `q` the input's end, every other event —
+  the device's key reports, the pointer's moves — dropped, never
+  guessed at), and the first frame's golden (`fb/frame/golden/`) runs
+  the same three defs on the hosted canvas with a script in the seat,
+  so one program answers on the interpreter, five hosted targets and
+  the metal. **The first frame is the loop's mount now** —
+  `ui_fb_frame.tree()` is the counter's view at its initial model —
+  and the corpus file grew from one line to the session's four: the
+  mount's frame and one per key (add, add, sub; the second and fourth
+  the same number, the counter at one both times). **`Surface` grows
+  `present`** — the commit the backend makes after every paint, the
+  stability contract's sixth seam at the seam the host provides: the
+  hosted canvas has nothing to commit, the carve's flushes itself
+  through the gate's verb and says its digest first (`frame <n>`, then
+  `present ok`), one pair per frame; `run.sh` asserts the four lines in
+  the file's order, folds the display's screendump at the first
+  present and at the fourth, and builds T8.8's model on the session's
+  last frame. **The compiler track's fifth piece met here** (EmoOS
+  T8.12): the riscv64 target lowers program-wide def values — a def
+  named without its call is a capture-less closure record over the
+  def, its code the def itself when its signature is all tagged words
+  and an adapter thunk otherwise (the caller's words unboxed into the
+  typed banks, the raw answer boxed back, a Void answer the false
+  immediate) — pinned in `examples/def_values`, and four emitter bugs
+  found on the way, all fixed and pinned (`CHECK.md`): a tail call
+  through a block reloaded only its owning arguments after the drain;
+  a static Box's `read` and `replace` claimed twice (a `Block` payload
+  the loud overflow, a typed instance payload one release too many);
+  a const thunk's `return` tail-called past its memo; and **a field
+  store or a Box `replace` of an identity value kept the old word in
+  t1 across the retain and the new in t2 across the release, both
+  registers the runtime spends** — the field held `3`, and every
+  object held in a field on the metal was reached through it for the
+  first time by this loop. **The count, measured on the arena**: the
+  pool takes the frame before's nodes, styles, extents and rectangles
+  back, and what stays is the walk's own boxed numbers and glyph
+  strings — about 3 KiB a node and 600 bytes a glyph — so the first
+  picture (the title strip, the body, the dock: 65 glyphs) left 42 KiB
+  per event and died on the third key, and the counter is the panel,
+  the count and two buttons (four nodes, 28 glyphs), 18 KiB per event,
+  the pass's 128 KiB holding the session with room for two more. The
+  pool's share of a frame is about a kibibyte; the bound is the dynamic
+  convention's, and typed method bodies are the lever (the compiler
+  track's). **The pins**: the fb gate 52 ok (the probe runs the loop
+  for the metal, `looped 4 frames` under QEMU in the kernel profile);
+  `run.sh` green under both timer transports, three rounds
+  byte-identical, the ledger `frames 80 45` unchanged; `dune runtest`
+  (340 in the compiler's suite, the `emo_os` smoke) and `@fmt` green. **With this M8 is complete on both sides of the
+  gate** — both READMEs' milestone rows say so.
 
 ## M9 — windows (the desktop side)
 

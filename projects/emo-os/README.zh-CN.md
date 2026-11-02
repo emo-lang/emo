@@ -81,7 +81,7 @@ $ ./start.sh
 | M5 — SV39 | 每进程地址空间、trampoline、fault 即击杀 | complete |
 | M6 — FS、shell、EmoUI | virtio-blk 服务、shell REPL、控制台 UI | complete |
 | M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | complete |
-| M8 — 字形与指针 | 输入合并、指针平面(内核侧;字形与 Elm 循环是桌面侧的) | in progress |
+| M8 — 字形与指针 | 输入合并、指针平面(内核侧;字形与 Elm 循环是桌面侧的) | complete |
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。
 

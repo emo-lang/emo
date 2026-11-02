@@ -13,32 +13,44 @@ if [ ! -f "$elf" ]; then
   exit 1
 fi
 
-# The corpus leg (emo-desktop A7.3): the first frame's digest is the
-# hosted corpus's number, never this file's. The fb backend's frame
-# golden (projects/emo-desktop/fb/frame/golden) renders the same tree
-# the screen pass paints, on the hosted canvas, and pins its digest in
-# `expected.txt` — the same bytes from the interpreter and every hosted
-# target, the fb gate's own assertion. The two assertions below read
-# that file: the line the pass prints after reading its carve back, and
-# the fold over the display's screendump. The metal and the corpus
-# cannot drift apart, because there is one number and it lives in the
-# corpus. The dune smoke runs this script from a scratch tree that
-# carries no fb tree and points FRAME_EXPECTED at the repository's file;
-# a missing file is the loud end, never a default.
+# The corpus leg (emo-desktop A7.3, A8.3): the frames' digests are the
+# hosted corpus's numbers, never this file's. The fb backend's frame
+# golden (projects/emo-desktop/fb/frame/golden) runs the counter the
+# screen pass runs — the same loop, the same three keys — on the hosted
+# canvas, and pins one `frame <digest>` line per presented frame in
+# `expected.txt`: four lines, the mount's frame and one per key, the
+# same bytes from the interpreter and every hosted target, the fb
+# gate's own assertion. The assertions below read that file: the lines
+# the pass prints as its carve presents, in the file's order, and the
+# folds over the display's two screendumps — the first frame's and the
+# session's last. The metal and the corpus cannot drift apart, because
+# the numbers live in one place and it is the corpus. The dune smoke
+# runs this script from a scratch tree that carries no fb tree and
+# points FRAME_EXPECTED at the repository's file; a missing file is the
+# loud end, never a default.
 frame_expected=${FRAME_EXPECTED:-../emo-desktop/fb/frame/golden/expected.txt}
 if [ ! -f "$frame_expected" ]; then
-  echo "run.sh: the first frame's corpus file is missing: $frame_expected" >&2
+  echo "run.sh: the frames' corpus file is missing: $frame_expected" >&2
   echo "  (the hosted golden under projects/emo-desktop/fb/frame/golden pins the" >&2
-  echo "  digest this run asserts; FRAME_EXPECTED names the file)" >&2
+  echo "  digests this run asserts; FRAME_EXPECTED names the file)" >&2
   exit 1
 fi
-frame_digest=$(awk '$1 == "frame" { print $2 }' "$frame_expected")
-case $frame_digest in
-  ''|*[!0-9]*)
-    echo "run.sh: $frame_expected does not carry a 'frame <digest>' line" >&2
-    exit 1
-    ;;
-esac
+frame_digests=$(awk '$1 == "frame" { print $2 }' "$frame_expected")
+for d in $frame_digests; do
+  case $d in
+    ''|*[!0-9]*)
+      echo "run.sh: $frame_expected carries a 'frame' line that is not a digest" >&2
+      exit 1
+      ;;
+  esac
+done
+if [ "$(echo "$frame_digests" | wc -w | tr -d ' ')" -ne 4 ]; then
+  echo "run.sh: $frame_expected must carry four 'frame <digest>' lines — the" >&2
+  echo "  counter's session is the mount's frame and one per key (add, add, sub)" >&2
+  exit 1
+fi
+frame_digest=$(echo "$frame_digests" | head -1)
+frame_last=$(echo "$frame_digests" | tail -1)
 
 # The pointer's drawing (emo-desktop A8.2, T8.11): the sprite the
 # compositor's cursor plane composites is the desktop's, drawn in
@@ -254,41 +266,77 @@ if "error" in answer:
 s.close()
 PYEOF
   }
-  # The first frame (emo-desktop A7.2): the screen pass laid the fb
-  # core's tree into the carve and presented it, its own digest of the
-  # carve's words on the wire (`frame <n>`). The monitor's screendump
-  # takes the display's PPM, and the same fold over its pixels —
-  # `d = (d * 31 + word) mod 2^32`, the word the pixel's XRGB, row-major
-  # — has to answer the same number, which is the corpus's number read
+  # The first frame (emo-desktop A7.2, A8.3): the screen pass's loop
+  # mounted the counter — the fb core laid its tree into the carve and
+  # the carve presented it, its own digest of its words on the wire
+  # (`frame <n>`) before the present. The monitor's screendump takes the
+  # display's PPM, and the same fold over its pixels — `d = (d * 31 +
+  # word) mod 2^32`, the word the pixel's XRGB, row-major — has to
+  # answer the same number, which is the corpus's first number read
   # above (the hosted twin's `expected.txt`, A7.3): the carve the core
   # painted, the display the device scanned out, the canvas on the host
-  # — three readings, one number, one file. The dump is taken here,
-  # before the input beat below lets the chain run on: nothing flushes
-  # the display between the present and the window pass, and the pass's
-  # pattern words go back into the carve after the present, so this
-  # dump holds the frame alone — the model of the second dump below is
-  # built on it.
+  # — three readings, one number, one file. The dump is taken here, with
+  # the loop parked on the merged stream for its first key: nothing
+  # presents until a byte arrives, so the display holds the first frame
+  # alone.
   await 'present ok'
   hmp 'screendump .frame.ppm'
-  if ! FRAME_DIGEST="$frame_digest" python3 - <<'PYEOF'
+  digest_is() {
+    local ppm="$1" want="$2" what="$3"
+    if ! PPM="$ppm" WANT="$want" WHAT="$what" python3 - <<'PYEOF'
 import os
 import sys
 
-data = open('.frame.ppm', 'rb').read()
+data = open(os.environ['PPM'], 'rb').read()
 if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit("run.sh: the frame's screendump is not the mode's P6 1024x768")
+    sys.exit(f"run.sh: the {os.environ['WHAT']}'s screendump is not the mode's P6 1024x768")
 px = data[16:]
 d = 0
 for i in range(0, len(px), 3):
     d = (d * 31 + ((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])) & 0xFFFFFFFF
-want = int(os.environ['FRAME_DIGEST'])
+want = int(os.environ['WANT'])
 if d != want:
-    sys.exit(f"run.sh: the display's frame digests to {d}; the corpus's first frame is {want}")
+    sys.exit(f"run.sh: the display's {os.environ['WHAT']} digests to {d}; the corpus's is {want}")
 PYEOF
-  then
+    then
+      kill "$qemu_pid" 2>/dev/null || true
+      exit 1
+    fi
+  }
+  digest_is .frame.ppm "$frame_digest" 'first frame'
+  # The Elm loop's session (emo-desktop A8.3): the counter's three keys
+  # through the serial line — each a byte on the merged stream the
+  # pass's `Keys` maps onto a tag (`byte <n>` on the wire), through
+  # `update` into the next model, through `view` into the next tree,
+  # painted and presented from scratch, the frame before it reclaimed
+  # through the pool — add, add, sub, one `present ok` each, counted
+  # because the lines repeat; then the display at the session's end
+  # folds to the corpus's last number, the counter at one, and the quit
+  # key ends the loop, whose exit the pattern words and the parent's
+  # wait follow.
+  await_count() {
+    local pat="$1" n="$2"
+    for _ in $(seq 1 100); do
+      if [ "$(grep -caF -- "$pat" "$log" 2>/dev/null || true)" -ge "$n" ]; then
+        return 0
+      fi
+      kill -0 "$qemu_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    echo "run.sh: the shell never delivered '$pat' $n times" >&2
     kill "$qemu_pid" 2>/dev/null || true
     exit 1
-  fi
+  }
+  printf 'a' >&3
+  await_count 'present ok' 2
+  printf 'a' >&3
+  await_count 'present ok' 3
+  printf 'b' >&3
+  await_count 'present ok' 4
+  hmp 'screendump .counter.ppm'
+  digest_is .counter.ppm "$frame_last" "session's last frame"
+  printf 'q' >&3
+  await 'byte 113'
   # The input merge's beat (T8.3): the pass parks on the merged stream
   # (`keys?` on the wire), the monitor's hand answers it — one sendkey,
   # the device's key event — and the serial's byte rides the same
@@ -315,18 +363,19 @@ PYEOF
   # The golden's eyes (T8.8): the compositor's compositions blitted the
   # window's frame into the carve and flushed — the monitor's screendump
   # takes the display's PPM and every pixel is read back against the
-  # composition history's union: the first frame the screen pass
-  # painted through the fb core (the dump above, pixel for pixel — the
-  # frame is the base now; the flush smoke's gradient lies under it),
-  # the screen carve's proof pattern over it — the words the T8.2 pass
-  # wrote after its present, one per 64 KiB across the display's first
-  # 3 MiB, each word's zero high half the black partner pixel, visible
-  # only because every later flush is whole-screen — and the window's
-  # two copies over both (the first at (0,0), its rows below the move's
-  # surviving, the second at (16,32), written last, holding the
-  # overlap; the paint carries its row in the blue lane, 0x57494E00 +
-  # row). A wrong pixel anywhere is the loud end — and a dead check
-  # kills the machine first, the survivor poisons the next run.
+  # composition history's union: the counter's last frame, the one the
+  # screen pass's loop left in the carve (the session's dump above,
+  # pixel for pixel — that frame is the base now; the flush smoke's
+  # gradient lies under it), the screen carve's proof pattern over it —
+  # the words the T8.2 pass wrote after its loop ended, one per 64 KiB
+  # across the display's first 3 MiB, each word's zero high half the
+  # black partner pixel, visible only because every later flush is
+  # whole-screen — and the window's two copies over both (the first at
+  # (0,0), its rows below the move's surviving, the second at (16,32),
+  # written last, holding the overlap; the paint carries its row in the
+  # blue lane, 0x57494E00 + row). A wrong pixel anywhere is the loud end
+  # — and a dead check kills the machine first, the survivor poisons the
+  # next run.
   await 'comp 16 32'
   hmp 'screendump .screen.ppm'
   if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
@@ -336,7 +385,7 @@ data = open('.screen.ppm', 'rb').read()
 if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
     sys.exit("run.sh: the screendump is not the mode's P6 1024x768")
 px = data[16:]
-frame = open('.frame.ppm', 'rb').read()[16:]
+frame = open('.counter.ppm', 'rb').read()[16:]
 
 # The pointer sprite (T8.11, emo-desktop A8.2): the drawing's rows read
 # off pointer.emo — the quoted strings of `.`, `#` and `o` — composited
@@ -572,7 +621,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 80 45'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 80 45'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -584,20 +633,37 @@ PYEOF
     fi
     prev=$pos
   done
-  # The first frame's line (emo-desktop A7.2, A7.3): the pass's own
-  # digest of the carve, whole, between the mode's line and the
-  # present's — the corpus's number (`$frame_expected`), never a literal
-  # of this file's, so the metal asserts the corpus leg's file directly.
-  local fpos opos ppos
-  fpos=$(grep -aboF -- "frame $frame_digest" "$log" | head -1 | cut -d: -f1 || true)
-  if [ -z "$fpos" ]; then
-    echo "run.sh: the screen pass never delivered 'frame $frame_digest' (the corpus's digest, $frame_expected)" >&2
-    exit 1
-  fi
+  # The loop's frames (emo-desktop A7.2, A7.3, A8.3): the pass's own
+  # digest of the carve at every present, whole lines, in the corpus's
+  # order — the four of `$frame_expected`, never a literal of this
+  # file's, so the metal asserts the corpus leg's file directly. The
+  # first lies between the mode's line and the first present's (the
+  # mount's frame, before any key); each later one after the one before
+  # it — the second and the fourth are the same number, the counter at
+  # one both times, so the search for each starts past the last — and
+  # the last before the carve's read-back, which is the loop's end.
+  local fprev=-1 fpos opos ppos spos d
   opos=$(grep -aboF -- 'output 1024x768' "$log" | head -1 | cut -d: -f1)
   ppos=$(grep -aboF -- 'present ok' "$log" | head -1 | cut -d: -f1)
-  if [ "$fpos" -lt "$opos" ] || [ "$fpos" -gt "$ppos" ]; then
-    echo "run.sh: 'frame $frame_digest' arrived out of order" >&2
+  spos=$(grep -aboF -- 'screen 0x86c00000 ok' "$log" | head -1 | cut -d: -f1)
+  for d in $frame_digests; do
+    fpos=$(grep -aboE -- "^frame $d\$" "$log" | cut -d: -f1 | awk -v p="$fprev" '$1 > p { print; exit }' || true)
+    if [ -z "$fpos" ]; then
+      echo "run.sh: the screen pass never delivered 'frame $d' after byte $fprev (the corpus's frames, $frame_expected)" >&2
+      exit 1
+    fi
+    if [ "$fprev" -lt 0 ] && { [ "$fpos" -lt "$opos" ] || [ "$fpos" -gt "$ppos" ]; }; then
+      echo "run.sh: 'frame $d' arrived out of order" >&2
+      exit 1
+    fi
+    fprev=$fpos
+  done
+  if [ "$fprev" -gt "$spos" ]; then
+    echo "run.sh: the loop's last frame arrived after the carve's read-back" >&2
+    exit 1
+  fi
+  if [ "$(grep -c '^present ok$' "$log" || true)" -ne 4 ]; then
+    echo "run.sh: expected the loop's four presents, one per frame" >&2
     exit 1
   fi
   # The cursor plane's line (T8.11): the compositor's one `pointer`

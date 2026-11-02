@@ -219,7 +219,8 @@ let smoke_tests =
         (* The user image requires the desktop's packages beside the
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
            backend's core with its bitmap font (A8.1) and pointer sprite
-           (A8.2) and the first frame. They are staged into a
+           (A8.2), and the first frame with the counter the screen pass
+           runs through the Elm loop (A8.3). They are staged into a
            registry in the scratch tree — the files start.sh stages,
            from the same trees — and the build reads it through
            EMO_REGISTRY, which names the one registry a build resolves
@@ -250,7 +251,7 @@ let smoke_tests =
               [ "package.emo"; "ui_fb.emo"; "font.emo"; "pointer.emo" ] );
             ( "../../projects/emo-desktop/fb/frame",
               "emo/ui_fb_frame/0.1.0",
-              [ "package.emo"; "ui_fb_frame.emo" ] );
+              [ "package.emo"; "ui_fb_frame.emo"; "counter.emo" ] );
           ];
         Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
@@ -271,10 +272,11 @@ let smoke_tests =
                 ~profile:"kernel")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        (* The corpus leg (emo-desktop A7.3): run.sh asserts the first
-           frame's digest out of the fb frame golden's `expected.txt` —
-           the file the fb gate pins across every hosted target — and
-           the scratch tree carries no fb tree, so the run is pointed at
+        (* The corpus leg (emo-desktop A7.3, A8.3): run.sh asserts the
+           loop's four frame digests out of the fb frame golden's
+           `expected.txt` — the file the fb gate pins across every
+           hosted target, the first line the first frame's — and the
+           scratch tree carries no fb tree, so the run is pointed at
            the repository's file, absolute because run.sh changes into
            its own directory first. *)
         let frame_expected =

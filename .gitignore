@@ -54,6 +54,8 @@ __pycache__
 projects/emo-os/.blk.img
 
 # EmoOS T8.8: the screendump the golden's eyes read back; emo-desktop
-# A7.2: the first frame's, taken at the screen pass's present
+# A7.2: the first frame's, taken at the screen pass's present; A8.3:
+# the counter's last frame, taken at the loop's fourth
 projects/emo-os/.screen.ppm
 projects/emo-os/.frame.ppm
+projects/emo-os/.counter.ppm

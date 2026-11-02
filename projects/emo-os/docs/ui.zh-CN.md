@@ -66,4 +66,4 @@ Elm 循环,类型化的。一个 model,一个纯 `update(model, tag)`,一个纯 
 
 ## 下一章
 
-控制台的通货是桌面最小的通货。像素继任者——framebuffer backend、字体、shell、应用——是自己的项目,[`projects/emo-desktop`](../../../projects/emo-desktop);协议的机器侧——预留于 10..16 的桌面动词段——在 [`docs/desktop-abi.zh-CN.md`](desktop-abi.zh-CN.md)。
+控制台的通货是桌面最小的通货。像素继任者——framebuffer backend、字体、shell、应用——是自己的项目,[`projects/emo-desktop`](../../../projects/emo-desktop);协议的机器侧——预留于 10..16 的桌面动词段——在 [`docs/desktop-abi.zh-CN.md`](desktop-abi.zh-CN.md)。这个计数器的像素孪生自 emo-desktop A8.3 起跑在那里:同一个模型、update 与 view,经 EmoUI 自己的 `ui.run`——与宿主后端分毫不差的那个循环——由 fb 核心从屏幕趟画进屏幕 carve;本文为控制台手写的那个循环,在核心自带的循环里被当作值接过去了。

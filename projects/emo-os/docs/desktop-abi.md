@@ -90,10 +90,13 @@ only); the memory contract stands under it either way.
 
 ## What the contract cannot save — the honest four
 
-The no-reclaim arena (the autorelease pool is a precondition of the
- Elm loop on metal, not a parallel nicety), the cooperative single
-hart (preemption must land; `-smp` is parked, not impossible), the
-single image with many passes (M11's own work), and generic IPC
-(portal-class services will want it; it is built when a measured path
-demands it). None of these is a protocol change; all four are
-machine- and language-side work, tracked in this project's Step 8.
+The arena's residue (the autorelease pool landed as the Elm loop's
+precondition and the loop runs on it, emo-desktop A8.3 — what bounds
+a session now is the dynamic convention's boxed numbers, about 3 KiB
+a node and 600 bytes a glyph per frame, and typed method bodies are
+the next piece), the cooperative single hart (preemption must land;
+`-smp` is parked, not impossible), the single image with many passes
+(M11's own work), and generic IPC (portal-class services will want
+it; it is built when a measured path demands it). None of these is a
+protocol change; all four are machine- and language-side work,
+tracked in this project's Step 8.

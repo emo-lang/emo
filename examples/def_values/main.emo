@@ -1,0 +1,153 @@
+// A program-wide def as a value (emo-desktop A8.3): a def named without
+// its call is a block — handed to a `Block` parameter, kept in a `Box`,
+// called from a method that cannot name its type — the shape EmoUI's
+// Elm loop takes `view` and `update` in. On riscv64 the value is a
+// capture-less closure record over the def, born and reclaimed like a
+// block literal's; a signature with an Int64 or Float64 anywhere in it,
+// or no result, crosses through an adapter that unboxes the caller's
+// words into the typed banks and boxes the raw answer back, so the
+// metal prints these lines as the interpreter does.
+//
+//   emo run main.emo
+
+// ---- 1 · A typed def through a Block parameter: the adapter unboxes
+// ---- the argument and boxes the answer ----
+
+def double(n Int64) Int64 {
+  return n * 2
+}
+
+def apply(f Block, x Int64) Int64 {
+  return f(x)
+}
+
+println(apply(double, 21))
+println(apply(double, apply(double, 5)))
+
+// ---- 2 · The two banks, shuffled: the caller's a0, a1, a2 land in
+// ---- fa0, a0, fa1 ----
+
+def mix(x Float64, n Int64, y Float64) Float64 {
+  if n > 0 {
+    return x * y
+  }
+  return x + y
+}
+
+def apply3(f Block, x Float64, n Int64, y Float64) Float64 {
+  return f(x, n, y)
+}
+
+println(apply3(mix, 0.5, 7, 0.25))
+println(apply3(mix, 0.5, 0 - 1, 0.25))
+
+// ---- 3 · A def of tagged words alone is its own code ----
+
+def shout(s String) String {
+  return s + "!"
+}
+
+def twice_on(f Block, s String) String {
+  return f(f(s))
+}
+
+println(twice_on(shout, "emo"))
+
+// ---- 4 · A Void def as a value, called for its effect ----
+
+def announce(n Int64) Void {
+  println("announce ${n}")
+}
+
+def each(xs Array[Int64], i Int64, f Block) Void {
+  if i < xs.length() {
+    f(xs[i])
+    each(xs, i + 1, f)
+  }
+}
+
+each([1, 2, 3], 0, announce)
+
+// ---- 5 · A dynamic def as a value, handed another def as a value ----
+
+def twice(f Block, x Int64) Int64 {
+  return f(f(x))
+}
+
+def compose(g Block, h Block, x Int64) Int64 {
+  return g(h, x)
+}
+
+println(compose(twice, double, 3))
+
+// ---- 6 · The Elm loop's shape: the defs in Boxes, called from a
+// ---- method that knows them as blocks ----
+
+def update(tag Int64, model Int64) Int64 {
+  if tag == 0 {
+    return model + 1
+  }
+  return model - 1
+}
+
+def view(model Int64) String {
+  return "count ${model}"
+}
+
+class Loop {
+  def init(view Block, update Block, model Int64) {
+    self.view_fn = Box.new(view)
+    self.update_fn = Box.new(update)
+    self.model = Box.new(model)
+  }
+
+  def deliver(tag Int64) Void {
+    const next = self.update_fn.read()(tag, self.model.read())
+    self.model.replace(next)
+    println(self.view_fn.read()(next))
+  }
+}
+
+const loop = Loop.new(view: view, update: update, model: 0)
+loop.deliver(0)
+loop.deliver(0)
+loop.deliver(1)
+
+// ---- 7 · The record is born per step and goes back per step: six
+// ---- hundred crossings through the frame pool's freelist ----
+//
+// Each step births the def's record, hands it across, and the
+// statement's end releases it — the next step's birth takes the same
+// block back off the freelist. The arena this matters on is the metal's
+// (the Elm loop on EmoOS rebuilds a tree per event, `projects/emo-os`);
+// here the sum is the crossings' proof.
+
+def churn(n Int64) Int64 {
+  var acc = 0
+  var i = 0
+  while i < n {
+    acc = acc + apply(double, i)
+    i = i + 1
+  }
+  return acc
+}
+
+println("churned ${churn(600)}")
+
+// ---- 8 · A module-level const holding the loop answers the same loop
+// ---- to every def that reads it ----
+//
+// A const initialized by a constructor is one object for the program's
+// life: a def reading it three times delivers to the same model, and
+// the counts climb — a thunk that rebuilt the loop per read would start
+// every delivery from ten.
+
+const shared = Loop.new(view: view, update: update, model: 10)
+
+def poke(tag Int64) Void {
+  shared.deliver(tag)
+}
+
+poke(0)
+poke(0)
+poke(1)

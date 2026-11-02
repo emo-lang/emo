@@ -3052,6 +3052,7 @@ let riscv64_examples_tests =
       "survivors";
       "wide_literal";
       "glyph_lookup";
+      "def_values";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

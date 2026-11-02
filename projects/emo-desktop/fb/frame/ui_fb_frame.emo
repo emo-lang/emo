@@ -1,38 +1,27 @@
 require "emo/ui"
 require "emo/ui_fb"
 
-// The first frame (emo-desktop A7.2): the tree the machine's screen pass
-// paints through the core onto the carve, and the digest the golden's
-// eye reads off any surface. Three readings answer the one number — the
+// The first frame (emo-desktop A7.2, A8.3): the tree the machine's
+// screen pass paints first, and the digest the golden's eye reads off
+// any surface. Since A8.3 the first frame is the counter's — the view
+// at the initial model, the frame the Elm loop's `mount` paints before
+// the first event (`counter.emo`) — and `tree` is that tree as a value,
+// for the probe that measures it and the reader who wants the first
+// picture in one line. Three readings answer the one number — the
 // pass's own read-back of the carve it painted, the hosted canvas's
 // render of the same tree (`golden/`), and the monitor's screendump of
 // the display (`run.sh`) — or the frame is not on the screen.
 //
-// The picture is M7's: rectangles. A title strip across the top, a body
-// that takes the height left over, a dock along the bottom with two
-// buttons — the shape a desktop has before it has glyphs, a pointer, or
-// windows (M8, M9). The box model lays it into whatever rectangle the
-// surface is: the width and height are the display's answer, never a
-// constant here.
+// The picture is the counter's panel over the whole display — the box
+// model lays the root into whatever rectangle the surface is, so the
+// width and height are the display's answer, never a constant here —
+// with the count and the two buttons inside its padding, in M8's
+// glyphs. M7's first picture, the title strip, the body and the dock,
+// cost the metal 42 KiB of boxed numbers per frame; the panel's is the
+// size the arena keeps a session of (`counter.emo`).
 
 def tree() ui.Node {
-  const title = ui.style().with_height(48.0).with_padding(16.0)
-  const body = ui.style().with_grow(true).with_padding(32.0).with_gap(16.0)
-  const dock = ui.style().with_height(96.0).with_padding(24.0).with_gap(24.0)
-  return ui.column([
-    ui.row([
-      ui.text("EmoOS", ui.style())
-    ], title.with_align(ui.Align.center)),
-    ui.scroll([
-      ui.text("the screen", ui.style()),
-      ui.text("one language from power-on to the desktop", ui.style()),
-      ui.spacer(ui.style().with_grow(true))
-    ], body),
-    ui.row([
-      ui.button("screen", 0, ui.style()),
-      ui.button("power", 1, ui.style())
-    ], dock.with_align(ui.Align.center))
-  ], ui.style().with_align(ui.Align.stretch))
+  return counter.view(ui.Registry.new(), counter.initial())
 }
 
 // Every pixel in row-major order folded into one 32-bit number,

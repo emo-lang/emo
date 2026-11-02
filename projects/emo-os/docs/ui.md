@@ -180,4 +180,9 @@ successor — the framebuffer backend, the fonts, the shell, the apps —
 is its own project,
 [`projects/emo-desktop`](../../../projects/emo-desktop); the machine's
 side of that protocol — the desktop verb segment reserved at 10..16 —
-is [`docs/desktop-abi.md`](desktop-abi.md).
+is [`docs/desktop-abi.md`](desktop-abi.md). This counter's pixel twin
+runs there since emo-desktop A8.3: the same model, update and view
+through EmoUI's own `ui.run`, unchanged from the hosted backends',
+painted by the fb core into the screen carve from the screen pass —
+the loop this note hand-wrote for the console, taken as values by the
+loop the core keeps.

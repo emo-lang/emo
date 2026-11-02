@@ -305,25 +305,31 @@ if peek64(reach_cell) != 0 {
   syscall.exit(1)
 }
 
-// The screen branch (T8.2, emo-desktop A7.2): the machine's first
-// full-screen pass. The cells-page token is the grant's channel — the
-// kernel's spawn-side read handed the carve into this pass's table at
-// the spawn (the identity of the carve's physical addresses, RW with U,
-// frames.emo's one hand). The pass claims the token and paints the
-// desktop's first frame: the mode is the device's own answer (T8.4's
-// output_info), the carve at that mode is the fb core's surface, the
-// tree the first frame's package lays out is painted through the core
-// into the carve's own words, and the digest read back through the
-// same words goes on the wire before the grant's present puts the frame
-// on the display — the gate checks the carve's holder, the display
-// service judges the rect, and the pixels reach the display before the
-// line does. Then T8.2's proof: one pattern word per 64 KiB across the
-// whole 4 MiB, poked over the frame after the present — the exit is
-// when the process service reads them back through the kernel's half,
-// and the display already holds what the present transferred (every
-// later whole-screen flush shows the words again, over the frame). A
-// pass whose spawn carried no grant maps none of the carve: its first
-// store here is the page fault that kills it.
+// The screen branch (T8.2, emo-desktop A7.2, A8.3): the machine's first
+// full-screen pass, and its first event-driven program. The cells-page
+// token is the grant's channel — the kernel's spawn-side read handed
+// the carve into this pass's table at the spawn (the identity of the
+// carve's physical addresses, RW with U, frames.emo's one hand). The
+// pass claims the token and runs the desktop's counter through EmoUI's
+// Elm loop, unchanged from the hosted backends': the mode is the
+// device's own answer (T8.4's output_info), the carve at that mode is
+// the fb core's surface, the sprite goes into the carve's sprite memory
+// first (A8.2), and `ui.run` takes the counter's defs as values — the
+// loop's `mount` paints the first frame through the core into the
+// carve's own words and the carve's `present` says its digest on the
+// wire before the grant's present puts the frame on the display (the
+// gate checks the carve's holder, the display service judges the rect,
+// and the pixels reach the display before the line does); then every
+// byte the merged stream delivers (`Keys`) is an event, the tree is
+// rebuilt, repainted and presented — the frame before it going back to
+// the arena through the pool — until the quit key ends the loop. Then
+// T8.2's proof: one pattern word per 64 KiB across the whole 4 MiB,
+// poked over the last frame after its present — the exit is when the
+// process service reads them back through the kernel's half, and the
+// display already holds what the presents transferred (every later
+// whole-screen flush shows the words again, over the frame). A pass
+// whose spawn carried no grant maps none of the carve: its first store
+// here is the page fault that kills it.
 if peek64(screen_cell) != 0 {
   poke64(screen_cell, 0)
   case syscall.output_info(0) {
@@ -332,13 +338,9 @@ if peek64(screen_cell) != 0 {
       output_line(mode)
       const screen = Carve.new(base: screen_base, width: out_w(mode),
         height: out_h(mode))
-      ui_fb.paint(ui_fb_frame.tree(), screen)
       sprite_upload()
-      frame_line(carve_digest(screen_base, out_w(mode), out_h(mode)))
-      case syscall.present(0, 0, 0, out_w(mode), out_h(mode)) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { present_ok() }
-      }
+      ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
+        ui_fb_frame.counter.initial(), ui_fb.backend(screen, Keys.new()))
     }
   }
   var k = 0
@@ -347,6 +349,40 @@ if peek64(screen_cell) != 0 {
     k = k + 1
   }
   syscall.exit(0)
+}
+
+// The merged event stream as the loop's input (emo-desktop A8.3): the
+// fb backend pulls one tag per `next`, and this is where the machine's
+// bytes become the counter's events, by the application's own rule —
+// the console renderer's (docs/ui.md): `a` is the add, `b` the sub, `q`
+// ends the loop (the input's end, `(R.error, _)`, is how a backend's run
+// ends), and every other event is dropped, never guessed at — the
+// device's key reports and the pointer's moves ride the same stream
+// (T8.3, T8.11) and are not this program's. Each byte the loop consumes
+// is said on the wire (`byte <n>`), the record of what drove the
+// session. A method's body is the dynamic convention on this target,
+// so the event decodes through the typed defs below.
+class Keys {
+  def next() (R, Int64) {
+    var tag = -1
+    while tag < 0 {
+      const ev = syscall.input_read()
+      if ev_type(ev) == 17741 {
+        input_line(ev)
+        const b = ev_value(ev)
+        if b == 113 {
+          return (R.error, 0)
+        }
+        if b == 97 {
+          tag = 0
+        }
+        if b == 98 {
+          tag = 1
+        }
+      }
+    }
+    return (R.ok, tag)
+  }
 }
 
 // The carve as the fb core's `Surface` (emo-desktop A7.2): the raw shim
@@ -406,6 +442,21 @@ class Carve {
   def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
     carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
       color & 0xFFFFFF)
+  }
+
+  // The commit (emo-desktop A8.3): the backend calls it after every
+  // paint. The frame's digest off the carve's own words goes on the
+  // wire first (`frame <n>`, the number the hosted twin prints and the
+  // screendump digests to), then the grant's present puts the frame on
+  // the display — the gate checks the carve's holder, the display
+  // service judges the rect, the transfer and the flush complete — and
+  // `present ok` says so after.
+  def present() {
+    frame_line(carve_digest(self.base, self.width, self.height))
+    case syscall.present(0, 0, 0, self.width, self.height) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> { present_ok() }
+    }
   }
 }
 

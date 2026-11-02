@@ -78,7 +78,7 @@ byte-identical is the bar the tracker's tasks are held to.
 
 `start.sh` is this section in one command: it builds the images when
 they are missing or stale, creates the disk when it is missing
-(`--fresh` trades the volume for a blank one), prints the two windows
+(`--fresh` trades the volume for a blank one), prints the three windows
 below, and boots. The raw steps follow.
 
 The disk is a raw 1 MiB image. The filesystem formats a blank one at
@@ -105,19 +105,25 @@ serial console stays the terminal (`-serial mon:stdio` holds the mux
 OpenSBI's banner goes by, the
 kernel boots paged on the table it built (the `sv39 8 0x…` line), the
 block device and the filesystem report — and the chain stops for keys
-twice on its way to the prompt:
+three times on its way to the prompt:
 
 - **five keys once the filesystem's mount line has gone by** — the
   console service's delivery test reads five bytes off the wire
   (`0:97` … `4:101` is what an `abcde` answers);
 - **one key when the `gate 500500 r3 r2` line appears** — the read
   proof blocks on the console until a byte exists (`echo 88` is the
-  answer to an X).
+  answer to an X);
+- **the counter's keys once its panel is on the window** — the screen
+  pass runs the desktop's counter through EmoUI's Elm loop
+  (emo-desktop A8.3): `a` adds, `b` subtracts, each key repaints the
+  frame and says its digest on the serial line (`frame …`,
+  `present ok`), and `q` ends the loop; the keys are the serial
+  console's, not the window's, and any other byte is dropped.
 
-The four kill reports that follow are the proof chain doing its job —
-misbehaving passes dying alone (one of them by its own allocator's
-exhaustion) while the machine goes on — not trouble. Then the banner,
-and the prompt (the `O` and `S` arrive in ANSI cyan):
+The four kill reports before the counter are the proof chain doing
+its job — misbehaving passes dying alone (one of them by its own
+allocator's exhaustion) while the machine goes on — not trouble. Then
+the banner, and the prompt (the `O` and `S` arrive in ANSI cyan):
 
     _____                      ____     ____
    | ____|  __  __    ____    / __ \   / ___|
@@ -127,7 +133,7 @@ and the prompt (the `O` and `S` arrive in ANSI cyan):
 
     emo-os>
 
-Keys typed outside those two windows are not simply lost. OpenSBI
+Keys typed outside those three windows are not simply lost. OpenSBI
 drains the UART while it runs, and whatever it leaves sits in the FIFO
 until the kernel's driver picks it up — the bytes surface later, in
 order, feeding whichever reader comes next: the proof chain's answers

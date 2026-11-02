@@ -22,12 +22,13 @@ cd "$(dirname "$0")"
 # both images present boots without the toolchain.
 #
 # The user image requires the desktop's packages beside the syscall stub
-# (emo-desktop A7.2): EmoUI's core, the fb backend's core and the first
-# frame, from their own trees. They are staged into a registry named for
-# the sources' content — the way every gate in the tree stages one — and
-# the build reads it through EMO_REGISTRY, which names the one registry
-# a build resolves from, so the stub is staged beside them out of the
-# compiler's own tree; a change in any of them is a stale user image.
+# (emo-desktop A7.2): EmoUI's core, the fb backend's core, and the first
+# frame with the counter the screen pass runs (A8.3), from their own
+# trees. They are staged into a registry named for the sources' content
+# — the way every gate in the tree stages one — and the build reads it
+# through EMO_REGISTRY, which names the one registry a build resolves
+# from, so the stub is staged beside them out of the compiler's own
+# tree; a change in any of them is a stale user image.
 
 user_elf='hello.elf'
 elf='main.elf'
@@ -38,7 +39,7 @@ syscall_dir='../../stdlib/registry/syscall/0.1.0'
 syscall_src="$syscall_dir/package.emo $syscall_dir/syscall.emo"
 ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
 fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo $fb_dir/pointer.emo"
-frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo"
+frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo $fb_dir/frame/counter.emo"
 
 registry() {
   local sum
@@ -123,12 +124,13 @@ if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then
 fi
 
 echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
-echo '  the boot stops twice for keys on its way to the emo-os> prompt:' >&2
+echo '  the boot stops three times for keys on its way to the emo-os> prompt:' >&2
 echo '    five keys once the fs mount line has gone by (the console delivery test)' >&2
 echo '    one key when "gate 500500 r3 r2" appears (the read proof)' >&2
+echo '    the counter'"'"'s keys once its panel is on the window: a adds, b subtracts, q ends it' >&2
 echo '  type nothing else before the prompt — early bytes surface later and garble the exchange' >&2
 echo '  the kill reports on the way are the proof chain working, not trouble' >&2
-echo '  the pointer follows the mouse over the window once the first frame is up' >&2
+echo '  the pointer follows the mouse over the window once the counter has ended' >&2
 echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
 
 # -display cocoa: the display leg's window (T8.8); -serial mon:stdio

@@ -1,7 +1,8 @@
 #!/bin/sh
-# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2): the four
-# packages under `fb/` — the core (`emo/ui_fb`, with the bitmap font and
-# the pointer sprite as its second and third modules), the hosted canvas (`emo/ui_fb_canvas`), the first frame
+# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3): the
+# four packages under `fb/` — the core (`emo/ui_fb`, with the bitmap
+# font and the pointer sprite as its second and third modules), the
+# hosted canvas (`emo/ui_fb_canvas`), the first frame with the counter
 # (`emo/ui_fb_frame`) and their goldens — type-checked, their tests run,
 # their targets built, their bytes compared, the font's table checked
 # against its drawing, and the metal's lowering pinned without a machine.
@@ -68,14 +69,14 @@ build() {
 # the goldens and the probe are consumers and are built in place.
 sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
-  | cksum | awk '{print $1}')
+  frame/counter.emo | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
-cp frame/package.emo frame/ui_fb_frame.emo "$REG/emo/ui_fb_frame/0.1.0/"
+cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
 
 # --- the font's table is its drawing ------------------------------------
 #
@@ -127,11 +128,11 @@ expect 0 "the first frame type-checks" "$rc"
 # consumer that brings a surface compiles: their `beam` and `wasm` claims
 # are pinned by the goldens below, their other three here. The core and
 # the frame declare `riscv64` too, and the probe after this is what pins
-# that: a directory build cannot, because each test drives the loop with
-# def values, which the riscv64 emitter does not lower yet (`CHECK.md`),
-# and the canvas is a `Bytes`, which it does not lower either — so the
-# canvas does not declare the metal, and the metal's registry never
-# carries a test.
+# that: a directory build cannot, because the canvas each test drives
+# is a `Bytes`, which the riscv64 emitter does not lower — so the canvas
+# does not declare the metal, and the metal's registry never carries a
+# test. The loop itself lowers for the metal since A8.3 (its def values
+# did not before), and the probe runs it.
 
 for t in ocaml c typescript wasm beam; do
   build canvas ui_fb_canvas.emo "$t" && rc=0 || rc=$?
@@ -150,9 +151,10 @@ done
 # --- the metal's lowering, pinned without a machine ---------------------
 #
 # `probe/metal/` is a riscv64 user program that reaches the core, the
-# frame and the core's own dependency: built, never run — `run.sh` in
-# `projects/emo-os` runs the real pass on the real carve. The build
-# needs the riscv64-elf binutils the compiler links with.
+# frame and the core's own dependency, and runs the counter through the
+# Elm loop against a counting surface (A8.3): built, never run here —
+# `run.sh` in `projects/emo-os` runs the real pass on the real carve.
+# The build needs the riscv64-elf binutils the compiler links with.
 
 if command -v riscv64-elf-ld >/dev/null 2>&1 || \
    command -v riscv64-unknown-elf-ld >/dev/null 2>&1; then
@@ -173,9 +175,11 @@ fi
 # `golden/` is the 48x32 scripted screen, whose input is a script rather
 # than a device so the bytes are fixed; it writes its frame with
 # `printf`, which `wasm`'s runtime does not have, so it declares the
-# other four and the refusal is pinned. `frame/golden/` is the first
-# frame's digest at the display's baseline mode — the number `run.sh`
-# asserts twice on the metal — and runs on all five.
+# other four and the refusal is pinned. `frame/golden/` is the counter
+# through the Elm loop at the display's baseline mode (A8.3) — one
+# `frame <digest>` line per presented frame, the four lines `run.sh`
+# asserts on the metal, the first the first frame's — and runs on all
+# five.
 
 golden_build() {
   mkdir -p "$3"

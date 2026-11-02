@@ -3,23 +3,65 @@ require "emo/ui_fb"
 require "emo/ui_fb_canvas"
 require "emo/ui_fb_frame"
 
-// The first frame's hosted twin (emo-desktop A7.2): the tree painted
-// through the core onto a canvas the size of the display's baseline
-// mode (1024x768 XRGB8888, D5 — the mode `run.sh` gives the device and
-// the pass reads back from it), and the digest printed. `expected.txt`
-// is the interpreter's one line; every hosted target prints the same,
-// and it is the file `run.sh` asserts against on the metal (A7.3) — the
-// line the screen pass prints after reading its carve back, and the
-// digest of the monitor's screendump, both read from this file, so the
-// metal and the corpus cannot drift apart. One frame, three readings,
-// one number, one file.
+// The Elm loop's hosted twin (emo-desktop A7.2, A8.3): the counter run
+// through `ui.run` on a canvas the size of the display's baseline mode
+// (1024x768 XRGB8888, D5 — the mode `run.sh` gives the device and the
+// pass reads back from it), with a script in the input's seat — add,
+// add, sub, the three keys the metal's run feeds — and every frame's
+// digest printed as the backend presents it. `expected.txt` is the
+// interpreter's four lines; every hosted target prints the same, and it
+// is the file `run.sh` asserts against on the metal (A7.3, A8.3): the
+// first line is the first frame — the line the screen pass prints as
+// its loop mounts, and the digest of the monitor's screendump — and the
+// four together are the loop's frames in order, each the line the pass
+// prints as it presents, the last the digest of the display at the
+// session's end. One loop, two surfaces, one file.
 //
 //   emo run main.emo
 
+// The canvas with the golden's eye on it: every verb is the canvas's,
+// and `present` — the commit the backend makes after each paint — is
+// where the digest is read and said. The metal's carve says the same
+// line in its own `present`, off its own words.
+class Eye {
+  def init(canvas ui_fb.Surface) {
+    self.canvas = canvas
+  }
+
+  def width() Int64 {
+    return self.canvas.width()
+  }
+
+  def height() Int64 {
+    return self.canvas.height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.canvas.at(x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.fill(x, y, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.blend(x, y, w, h, color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    self.canvas.glyph(x, y, top, bottom, color)
+  }
+
+  def present() {
+    println("frame ${ui_fb_frame.digest(self.canvas)}")
+  }
+}
+
 def main() {
-  const screen = ui_fb_canvas.canvas(1024, 768)
-  ui_fb.paint(ui_fb_frame.tree(), screen)
-  println("frame ${ui_fb_frame.digest(screen)}")
+  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1024, 768))
+  ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
+    ui_fb_frame.counter.initial(),
+    ui_fb.backend(screen, ui_fb.script([0, 0, 1])))
 }
 
 main()

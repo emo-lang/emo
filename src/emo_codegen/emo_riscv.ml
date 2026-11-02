@@ -203,6 +203,10 @@ type env = {
   mutable spawns : (string * spawn_callee) list;
       (* the spawn entry thunks queued for emission (T3.3): label,
          callee — newest first *)
+  mutable defvals : (string * conv) list;
+      (* the typed defs taken as values whose convention needs the
+         adapter thunk (emo-desktop A8.3): mangled name and convention,
+         each once — newest first *)
   mutable owned : (string * int) list;
       (* the bindings holding their own claims (T8.7's pool): name and
          slot offset, innermost last — a scope's exit releases what its
@@ -283,6 +287,20 @@ let fresh_label env base =
   Printf.sprintf ".L%s_%d" base env.labels
 
 let func_label (fname : string) : string = "emo_" ^ fname
+
+(* A def taken as a value (emo-desktop A8.3) is a capture-less closure
+   record whose code is called with the dynamic convention — tagged
+   words in a0.., the record in t0, which a def never reads — so a def
+   whose signature is all tagged words is its own code. One with an
+   Int64 or Float64 anywhere in it, or no result, takes the adapter
+   thunk below instead: the caller's words unbox into the typed banks,
+   the raw answer boxes back, and a Void answer is an immediate rather
+   than whatever the body left — a caller that pools what a `Block`
+   answered must never pool a stale word. *)
+let defval_label (fname : string) : string = "emo_defval_" ^ fname
+
+let needs_adapter (conv : conv) : bool =
+  conv.cresult <> R_word || List.exists (fun k -> k <> P_word) conv.cparams
 
 (* The current program's const thunks (mangled names); set by [emit].
    Each memoizes into a .data flag/value pair (see
@@ -733,7 +751,7 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
       pool_expr env ctr x;
       incr ctr
   | Atomic_new x -> pool_expr env ctr x (* the cell carries no count *)
-  | Closure _ -> incr ctr
+  | Closure _ | Global _ -> incr ctr (* a record's birth, captures or none *)
   | Field_read { obj; _ } ->
       pool_expr env ctr obj;
       if may_own e.Emo_ir.ety then incr ctr
@@ -762,8 +780,7 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
   | Make_exception { message; data } ->
       pool_expr env ctr message;
       Option.iter (pool_expr env ctr) data
-  | Var _ | Const _ | Type_ref _ | Global _ | Global_var _ | Builder_new
-  | Make_enum _ ->
+  | Var _ | Const _ | Type_ref _ | Global_var _ | Builder_new | Make_enum _ ->
       ()
 
 let rec pool_stmt env (ctr : int ref) (f : frame) (s : Emo_ir.stmt) : unit =
@@ -1015,6 +1032,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    addi a2, sp, %d\n" (temp_offset env d);
       call_runtime env "emo_spawn"
   | Closure { cparams; cbody } -> emit_closure_creation env d cparams cbody
+  | Global fname -> emit_def_value env fname
   | Interpolate parts -> emit_interpolate env d parts
   | Tuple es -> emit_seq env d es tag_tuple
   | Array_lit es -> emit_seq env d es tag_array
@@ -1060,21 +1078,30 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       emit_method env d e.Emo_ir.ety ~boxed:(not env.native) self_ name args;
       (* every method answers a claimed word (T8.7's pool): the Emo
          methods retain at return, the Atomic helpers take their own,
-         the Box accessors answer borrows the site claims here — the
+         the Box accessors answer borrows the site claims — the
          Array's borrow answers are value kinds the pool never holds *)
-      match e.Emo_ir.ety with
-      | Emo_check.BoxType _ -> read_claim env e.Emo_ir.ety
-      | Emo_check.ArrayType _ | Emo_check.BuilderType _ -> ()
-      | Emo_check.Unknown -> (
-          (* a dynamic receiver: the borrow answers (the Box accessors
-             and the Array's) claim at this site; everything else — the
-             instance's methods and the Atomic's ops — answers a claim
-             of its own (T8.7's pool) *)
-          match name with
-          | "read" | "replace" -> read_claim env e.Emo_ir.ety
-          | "append" | "length" -> ()
-          | _ -> pool_result env e.Emo_ir.ety)
-      | ty -> pool_result env ty)
+      match self_.Emo_ir.ety with
+      | Emo_check.BoxType _ ->
+          (* a static Box receiver's `read` and `replace` claim at their
+             own site in emit_method; a second claim here, keyed on the
+             payload's type, pooled a `Block` payload twice (the loud
+             overflow) and pooled an instance or interface payload once
+             more than it retained — the Elm loop's sink and tree, read
+             per event, released one claim too many (emo-desktop A8.3) *)
+          ()
+      | _ -> (
+          match e.Emo_ir.ety with
+          | Emo_check.ArrayType _ | Emo_check.BuilderType _ -> ()
+          | Emo_check.Unknown -> (
+              (* a dynamic receiver: the borrow answers (the Box accessors
+                 and the Array's) claim at this site; everything else — the
+                 instance's methods and the Atomic's ops — answers a claim
+                 of its own (T8.7's pool) *)
+              match name with
+              | "read" | "replace" -> read_claim env e.Emo_ir.ety
+              | "append" | "length" -> ()
+              | _ -> pool_result env e.Emo_ir.ety)
+          | ty -> pool_result env ty))
   | Make_enum { enum_name; member } ->
       put env "    li a0, %d\n" (enum_imm env enum_name member)
   | Box_new arg ->
@@ -1974,6 +2001,38 @@ and emit_closure_creation env d (cparams : (string * Emo_check.t) list)
   put env "    ld a0, %d(sp)\n" (temp_offset env (d + k));
   env.deferred <- (label, cparams, caps, cbody) :: env.deferred
 
+(* A program-wide def as a value (emo-desktop A8.3): the closure record
+   with no captures, born like a block literal's — refcount 1, the
+   frame pool's claim — its code the def itself or the adapter thunk
+   [needs_adapter] names, queued once per def for the module's end. The
+   c target's shape: a capture-less closure over the def's dynamic
+   thunk. *)
+and emit_def_value env (fname : string) : unit =
+  if List.mem fname env.fforeigns then
+    refuse
+      (Printf.sprintf "taking the value of the foreign definition `%s`" fname);
+  let code =
+    match List.assoc_opt fname env.fsigs with
+    | Some conv when needs_adapter conv ->
+        if not (List.mem_assoc fname env.defvals) then
+          env.defvals <- (fname, conv) :: env.defvals;
+        defval_label fname
+    | _ -> func_label fname
+  in
+  (match env.cur with
+  | Some f ->
+      put env "    li a0, 1\n";
+      put env "    addi a1, sp, %d\n" (pool_offset f);
+      put env "    li a2, %d\n" tag_closure;
+      put env "    li a3, %d\n" f.pool;
+      put env "    call emo_ident_new\n";
+      env.pool_live <- env.pool_live + 1
+  | None -> ());
+  (* the code lands through t0/t1; a0 keeps the tagged record *)
+  put env "    la t0, %s\n" code;
+  put env "    andi t1, a0, -32\n";
+  put env "    sd t0, 8(t1)\n"
+
 (* ---- Method dispatch ---- *)
 
 and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
@@ -2165,22 +2224,28 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_expr env (d + 1) v;
               box_if_numeric env v.Emo_ir.ety;
-              put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -32\n";
               (* the cell takes the new claim before the old drops
                  (T8.7's pool); a value payload's barrier is the no-op
-                 its kind carries. Both words come out before the
-                 calls — the release spends the t-registers — and the
-                 block reloads for the store. *)
-              put env "    ld t1, 8(t0)\n";
-              put env "    mv a5, a0\n";
+                 its kind carries. The retain and the release both spend
+                 the t-registers, so neither word rides one across them:
+                 the new word rides a5 — the register the runtime keeps
+                 for its callers — and the old one is read off the cell
+                 after the retain, the write barrier's own order. (The
+                 old word sat in t1 across the retain and the new in t2
+                 across the release: an identity payload's retain
+                 overwrote t1 with the new header, whose even count read
+                 as a pointer the release then decoded into t2 — the
+                 cell held 3 afterwards; found at the Elm loop's first
+                 frame on the metal, emo-desktop A8.3.) *)
               put env "    call emo_retain\n";
-              put env "    mv t2, a0\n";
-              put env "    mv a0, t1\n";
+              put env "    mv a5, a0\n";
+              put env "    ld t0, %d(sp)\n" self_slot;
+              put env "    andi t0, t0, -32\n";
+              put env "    ld a0, 8(t0)\n";
               put env "    call emo_release\n";
               put env "    ld t0, %d(sp)\n" self_slot;
               put env "    andi t0, t0, -32\n";
-              put env "    sd t2, 8(t0)\n";
+              put env "    sd a5, 8(t0)\n";
               put env "    ld a0, %d(sp)\n" self_slot;
               (* the answer is the box itself: the caller's claim *)
               if boxed then read_claim env ty
@@ -2308,7 +2373,14 @@ and emit_tail env (e : Emo_ir.expr) : bool =
     match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
   in
   let mine () = (frame ()).fconv.cresult in
+  (* a const thunk's return lands on its memo store, and a tail call
+     answers the thunk's caller directly, the store never reached: a
+     module-level const built by a constructor came out a fresh
+     instance on every read from a def (found on the way to
+     emo-desktop A8.3, pinned in examples/def_values) *)
+  let memo_thunk = List.mem (frame ()).fname !const_thunks in
   match e.Emo_ir.desc with
+  | _ when memo_thunk -> false
   | Call { func; args } -> (
       match List.assoc_opt func env.fsigs with
       | Some conv when result_compatible conv.cresult (mine ()) ->
@@ -2412,12 +2484,14 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       emit_args_from env 1 ~from:0 args;
       (* the frame is abandoned here: the arguments' claims ride the
          call, the current pass's bindings unwind, and the pool drains
-         before the jump — the releases spend the t-registers, so the
-         closure's code pointer reloads last (T8.7's pool) *)
+         before the jump — the releases spend the t-registers and a0,
+         so every argument reloads from its spill after them, the named
+         call's rule above (a non-owning Int64 in a0 went to the callee
+         as the drain's pool address until it did: emo-desktop A8.3),
+         and the closure's code pointer reloads last (T8.7's pool) *)
       List.iteri
         (fun i arg ->
           if may_own arg.Emo_ir.ety then begin
-            put env "    sd a%d, %d(sp)\n" i (temp_offset env (1 + i));
             put env "    mv a0, a%d\n" i;
             put env "    call emo_retain\n"
           end)
@@ -2425,9 +2499,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       unwind_owned env 0;
       pool_drain env ff;
       List.iteri
-        (fun i arg ->
-          if may_own arg.Emo_ir.ety then
-            put env "    ld a%d, %d(sp)\n" i (temp_offset env (1 + i)))
+        (fun i _ -> put env "    ld a%d, %d(sp)\n" i (temp_offset env (1 + i)))
         args;
       put env "    ld t0, %d(sp)\n" fslot;
       put env "    andi t0, t0, -32\n";
@@ -2691,23 +2763,33 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       box_if_numeric env value.Emo_ir.ety;
       put env "    sd a0, %d(sp)\n" (temp_offset env 1);
       put env "    ld t0, %d(sp)\n" self_slot;
+      (* the field takes the new claim before the old drops (T8.7's
+         pool). The field's address rides a3 across both calls, and so
+         does nothing else: the retain and the release spend the
+         t-registers, so the new word rides a5 across the release — the
+         register the runtime keeps for its callers — and the old word
+         is read off the field after the retain, the write barrier's
+         own order. (It sat in t1 across the retain and the new word in
+         t2 across the release: an identity value's retain overwrote t1
+         with the new header, whose even count read as a pointer the
+         release then decoded into t2, and the field held 3 — the
+         counter's registry and model, at the Elm loop's first frame on
+         the metal, emo-desktop A8.3.) *)
+      let store () =
+        put env "    call emo_retain\n";
+        put env "    mv a5, a0\n";
+        put env "    ld a0, 0(a3)\n";
+        put env "    call emo_release\n";
+        put env "    sd a5, 0(a3)\n"
+      in
       match self_.Emo_ir.ety with
       | Emo_check.ClassType _ ->
           let idx = field_index env self_.Emo_ir.ety name in
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
-          (* the field takes the new claim before the old drops. The
-             field's address rides a3 — the release spends the
-             t-registers, a3 is the psABI's to keep (T8.7's pool) *)
           put env "    ld t0, %d(sp)\n" self_slot;
           put env "    andi t0, t0, -32\n";
           put env "    addi a3, t0, %d\n" (16 + (8 * idx));
-          put env "    ld t1, 0(a3)\n";
-          put env "    mv a5, a0\n";
-          put env "    call emo_retain\n";
-          put env "    mv t2, a0\n";
-          put env "    mv a0, t1\n";
-          put env "    call emo_release\n";
-          put env "    sd t2, 0(a3)\n"
+          store ()
       | _ ->
           put env "    andi a0, t0, -32\n";
           put env "    ld t1, 8(a0)\n";
@@ -2721,15 +2803,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           put env "    addi a3, t0, 16\n";
           put env "    add a3, a3, a2\n";
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
-          (* the same claim order; the field's address rides a3 across
-             the calls (T8.7's pool) *)
-          put env "    ld t1, 0(a3)\n";
-          put env "    mv a5, a0\n";
-          put env "    call emo_retain\n";
-          put env "    mv t2, a0\n";
-          put env "    mv a0, t1\n";
-          put env "    call emo_release\n";
-          put env "    sd t2, 0(a3)\n")
+          store ())
   | Set_global_var _ -> refuse "module-level `var` assignment"
   | Send { target; message } ->
       (* the send boundary: the message snapshots in emo_send and the
@@ -2886,7 +2960,6 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
 and describe_expr (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Type_ref _ -> "type references in value position"
-  | Global _ -> "program-wide def values"
   | Global_var _ -> "module-level `var`"
   | Map_lit _ -> "maps"
   | Bytes_new _ -> "Bytes"
@@ -7999,6 +8072,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           program.pfuncs;
       native = false;
       spawns = [];
+      defvals = [];
       owned = [];
       bound = [];
       pool_live = 0;
@@ -8117,6 +8191,34 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
         gput env "    jalr t2\n"
   in
   List.iter emit_spawn_thunk (List.rev env.spawns);
+  (* The def-value adapters (emo-desktop A8.3): a typed def taken as a
+     value is called like a block — tagged words in a0.., the record in
+     t0 — so the thunk unboxes each Int64 and Float64 argument into the
+     def's bank register, in ascending order (a target register never
+     sits past its source, so nothing still needed is overwritten),
+     calls the def, and boxes a raw answer back; a Void def answers the
+     false immediate, a word a dynamic caller may pool and release
+     without harm. *)
+  let emit_defval_thunk (fname, conv) =
+    gput env "%s:\n" (defval_label fname);
+    gput env "    addi sp, sp, -16\n    sd ra, 8(sp)\n";
+    List.iteri
+      (fun i (k, reg) ->
+        match k with
+        | P_int64 -> gput env "    andi t0, a%d, -32\n    ld a%d, 8(t0)\n" i reg
+        | P_float64 ->
+            gput env "    andi t0, a%d, -32\n    fld fa%d, 8(t0)\n" i reg
+        | P_word -> if reg <> i then gput env "    mv a%d, a%d\n" reg i)
+      (bank_assign conv.cparams);
+    gput env "    call %s\n" (func_label fname);
+    (match conv.cresult with
+    | R_int64 -> gput env "    call emo_box_i64\n"
+    | R_float64 -> gput env "    call emo_box_f64\n"
+    | R_void -> gput env "    li a0, %d\n" bool_false
+    | R_word -> ());
+    gput env "    ld ra, 8(sp)\n    addi sp, sp, 16\n    ret\n"
+  in
+  List.iter emit_defval_thunk (List.rev env.defvals);
   (* Dispatch tables in .data: per-interface vtables (one slot per
      class), per-class field-name and method-name tables for the
      dynamic paths, and the per-class pointer tables the runtime

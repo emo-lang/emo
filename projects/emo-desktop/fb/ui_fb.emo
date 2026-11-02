@@ -252,6 +252,13 @@ def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
 // its glyphs pixel by pixel — thousands of calls — would spend the
 // arena before its first line ended; one call per cell is the shape a
 // first frame survives.
+//
+// `present` commits a painted frame (A8.3): the backend calls it once
+// after every paint, and what it means is the surface's own business —
+// the metal's carve flushes itself to the display through the gate's
+// verb (the assessment's "present is only the flush", D2), the hosted
+// canvas has nothing to commit and does nothing. A frame lands whole or
+// not at all, the stability contract's sixth seam.
 interface Surface {
   def width() Int64
   def height() Int64
@@ -259,6 +266,7 @@ interface Surface {
   def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) Void
+  def present() Void
 }
 
 // Row `r` of a glyph cell, 0 to 15, as its byte: the left pixel in bit
@@ -341,8 +349,10 @@ def over(src Int64, dst Int64) Int64 {
 // parent, and then — for a leaf — its label's glyphs over its box, from
 // the rectangle's top-left corner. The walk paints as it goes rather
 // than collecting a draw list first: a frame then allocates nothing
-// beyond the tree it was handed, which is what a 64 KiB arena with no
-// reclamation can afford per event on the metal.
+// beyond the tree it was handed, which is what the arena on the metal
+// can afford per event — the tree's nodes go back through the pool at
+// the event's end, and the walk's own boxed numbers are the frame's
+// residue (A8.3's count).
 def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
   if paints_box(n) {
     const r = clip(x, y, w, h, s.width(), s.height())
@@ -516,9 +526,10 @@ def ppm(s Surface) String {
 
 // Where a backend's events come from. On the metal the stream is the
 // input service's merge of the virtio keyboard and the serial line
-// (M8's); a backend only needs a stream of event tags, so the seam is
-// here and `Script` is the source a golden runs on — no device, no
-// timing, the same bytes every time.
+// (M8's: the screen pass maps its bytes onto the application's tags and
+// ends the loop on the quit key, A8.3); a backend only needs a stream of
+// event tags, so the seam is here and `Script` is the source a golden
+// runs on — no device, no timing, the same bytes every time.
 interface Input {
   def next() (R, Int64)
 }
@@ -559,12 +570,12 @@ def unmounted() ui.Events {
 
 // The backend itself. `mount` and `patch` paint the tree onto the
 // surface — every frame from scratch, the terminal's discipline — and
-// `run` pulls the input and hands each tag to the loop's sink, which is
-// the whole of what a backend knows about the application (`ui.Events`,
-// one integer per event). The surface is the caller's: the hosted
-// canvas, or the carve a full-screen pass was authorized (A7.2). The
-// backend allocates no screen, and whoever owns the surface reads the
-// frame back.
+// present it, one commit per frame; `run` pulls the input and hands each
+// tag to the loop's sink, which is the whole of what a backend knows
+// about the application (`ui.Events`, one integer per event). The
+// surface is the caller's: the hosted canvas, or the carve a full-screen
+// pass was authorized (A7.2). The backend allocates no screen, and
+// whoever owns the surface reads the frame back.
 class Fb {
   def init(surface Surface, input Input) {
     self.surface = surface
@@ -575,10 +586,12 @@ class Fb {
   def mount(root ui.Node, events ui.Events) {
     self.sink.replace(events)
     paint(root, self.surface)
+    self.surface.present()
   }
 
   def patch(old ui.Node, next ui.Node) {
     paint(next, self.surface)
+    self.surface.present()
   }
 
   def run() {
