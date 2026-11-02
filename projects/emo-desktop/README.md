@@ -10,7 +10,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
 - **Wayland/Quartz shape, QNX Screen lineage.** A compositor owns the scanout; clients render into authorized buffers and present them; input is a unified event stream. This is the same lineage EmoOS's microkernel already claims, applied to pixels.
 - **A package collection, not a second image.** The kernel embeds exactly one user image; through M7–M10 the desktop rides that image as packages (`require`d by the boot image, the `syscall` stub package's precedent). At M11, when programs load as ELFs from the filesystem, the apps become disk ELFs in place — the structure does not change.
-- **Hosted core, metal shell.** The fb backend's logic (measure, place, clip, blend against a buffer interface) is portable Emo that runs hosted in the corpus and on the metal; only the thin raw shim (`peek`/`poke`) is riscv64's alone. The dual-run discipline EmoOS proved carries up.
+- **Hosted core, metal shell.** The fb backend's logic (measure, place, clip, blend against a buffer interface) is portable Emo that runs hosted in the corpus and on the metal; only the thin raw shim (`peek`/`poke`) is riscv64's alone. The dual-run discipline EmoOS proved carries up. The core is landed as [`fb/`](fb/) — package `emo/ui_fb`, with its test, its golden and its gate (`fb/check.sh`); the carve surface behind the shim is M7's next task.
 
 ## Naming — decided
 
@@ -23,7 +23,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | — |
+| M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | in progress |
 | M8 — Glyphs & pointer | bitmap fonts, the pointer sprite, the input merge | — |
 | M9 — Windows | the composited window loop, drag, focus, kill-and-restart | — |
 | M10 — The desktop | the EmoUI fb backend whole, the dock, the first apps | — |

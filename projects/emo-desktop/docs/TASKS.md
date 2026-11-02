@@ -23,9 +23,69 @@ tree's and EmoOS's, listed there.
 
 ## M7 — the screen (the desktop side)
 
-- [ ] **A7.1** — The fb backend's hosted core: measure, place, clip,
+- [x] **A7.1** — The fb backend's hosted core: measure, place, clip,
   and blend against a buffer interface, pure portable Emo, dual-run
-  in the corpus (the tui backend's discipline).
+  in the corpus (the tui backend's discipline). **Landed 2026-11-02**
+  as [`fb/`](../fb) — package `emo/ui_fb` (`ui_fb.emo`, `canvas.emo`,
+  `test.emo`), its golden (`fb/golden/`) and its gate (`fb/check.sh`),
+  the first code in the project. The box model is `ui_tui`'s to the
+  letter, in pixels: a leaf measures to its label in glyph cells of the
+  bitmap font's fixed 8×16 cell (A8.1's font, measured ahead of its
+  pixels), containers stack and line up with the same `padding`, `gap`,
+  `align`, `grow`, `width` and `height` arithmetic. Painting is
+  rectangles — every node, containers included, fills the rectangle it
+  was placed in with its role's color from a platinum palette whose
+  roles each lean on a different channel (a swapped byte order shows as
+  a tint, never as a matching gray); `Spacer` paints nothing. **The walk
+  paints as it goes** — no draw list between layout and surface — so a
+  frame allocates nothing beyond the tree it was handed, the arena's
+  price on the metal; the first shape collected draws in an
+  `ArrayBuilder`, and the riscv64 probe refused it by name. `clip` is
+  the core's verb (the windows and the damage rectangle clip against
+  bounds that are no surface's own) and `over` is integer source-over
+  with the coverage in the color's top byte, rounded to nearest so
+  every target lands on the same byte. **The seam is `Surface`** —
+  `width`, `height`, `at`, `fill`, `blend` — the one thing a host
+  provides; `canvas.emo` is the hosted one, pixels as XRGB8888 words in
+  one `Bytes` through `set_u32_le`/`get_u32_le` (whole words, the
+  assessment's blit rule, kept on the hosted twin so it exercises the
+  stores the carve will), and a module of its own because riscv64 lowers
+  `Bytes.new` but none of its accessors, so the metal's registry stages
+  the core without it. `ppm` writes any surface as P3 text, the format
+  the metal's `screendump` eye reads. **The backend class rides along**
+  (`Fb` over a caller-owned surface and a scripted `Input`, the tui's
+  shape) because it is load-bearing, not sugar: the `beam` and `wasm`
+  emitters build an interface call's dispatch from the classes in the
+  program that implement it, and a core with no `ui.Backend` implementor
+  was refused by both (`method patch has no dispatch`) — with one, all
+  five hosted targets compile the package. Its sink is typed from
+  birth, `Box.new(unmounted())` holding a `ui.Events` that delivers to
+  no one, the shape the core's own backends still lack (below). The
+  gate: the package and its test type-check, 36 assertions as values
+  (measure, clip, over, the canvas as a `Surface`, paint's layering and
+  clipping, `ppm`, the script, the backend's repaint through `ui.run`),
+  the five targets build, and the golden — an app whose row holds one
+  button per count, driven add, add, sub on a 48×32 screen smaller than
+  its tree, so the frame carries the panel, the title's ink, the row cut
+  at the right edge with its last button a 2-pixel sliver, and the input
+  clipped away below — prints the same bytes on the interpreter,
+  `ocaml`, `c`, `typescript` and `beam`, `wasm`'s `printf` refusal pinned
+  by name (the tui golden's four). **The metal leg, probed by hand**: the
+  core module with `ui.emo` lowers to a riscv64 user ELF as it stands,
+  given only the two manifest lines (`riscv64` on `emo/ui` and
+  `emo/ui_fb`) — those land with the carve surface and the first frame
+  (A7.2), not ahead of them. The convergence corpus entry (`corpus/fb`
+  beside `debug`, `ssr`, `tui`) is A10.1's, with the sixth family.
+  **Found, not fixed**: EmoUI's own gates (`projects/emo-ui/tui/check.sh`,
+  `corpus/check.sh`) have been red since 2026-10-18 — the checker's
+  class-field typing (`8171d0d`) made every backend's
+  `self.sink = Box.new(0)` a `Box[Int64]` that `mount` can no longer
+  `replace` with the loop's `ui.Events` (`debug.emo`, `ui_tui.emo`,
+  E4004), and none of those gates run under `dune runtest`. The fb gate
+  stages the core as `ui.emo` alone — the fb backend never names
+  `ui.debug` — so it is green against the core as it is; the migration
+  of the six backends to a typed sink is EmoUI's task, the fb sink its
+  worked example.
 - [ ] **A7.2** — The first frame: a full-screen pass paints through
   the core into the authorized carve buffer and presents it; the
   golden's eye is the `screendump` PPM checksum.

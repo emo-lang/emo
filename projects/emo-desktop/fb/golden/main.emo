@@ -1,0 +1,74 @@
+require "emo/ui"
+require "emo/ui_fb"
+
+// The fb backend's golden (emo-desktop A7.1): one application through
+// the Elm loop, every frame painted by the backend onto a canvas, and
+// the last frame out as PPM text — the same bytes from the interpreter
+// and from every hosted target the package declares.
+//
+// The screen is 48x32 pixels, deliberately smaller than the tree it is
+// handed, so the frame carries the painter's whole story in one picture:
+// the column's panel under everything, a title's ink inside the
+// padding, the row's strip cut at the right edge with its last button
+// reduced to a sliver, and the count's text input placed below the
+// bottom edge and so clipped away entirely.
+//
+// The input is a script, not a device: add, add, sub, the tags `view`
+// registers. The row holds one button per count, so the frame the
+// script leaves behind is not the frame it started from — a backend
+// that painted on mount and never again would print the wrong picture.
+// `update` prints each transition, so the loop's path is in the bytes
+// beside the frame. `expected.txt` is the interpreter's output.
+//
+//   emo run main.emo                       -> the golden, from the interpreter
+//   emo build main.emo --target <t> -o …   -> the same bytes, from the target
+//
+// `../check.sh` stages the registry and runs this on every target.
+
+enum Msg { add, sub }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.add {
+    println("add ${m.count() + 1}")
+    return Model.new(count: m.count() + 1)
+  }
+  println("sub ${m.count() - 1}")
+  return Model.new(count: m.count() - 1)
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own: `on` is a side
+  // effect, and this registration order is what fixes add and sub at
+  // tags 0 and 1 on every run.
+  const add = reg.on(Msg.add)
+  const sub = reg.on(Msg.sub)
+  const buttons = ArrayBuilder.new()
+  buttons.push(ui.button("a", add, ui.style()))
+  for var i = 0; i < m.count(); i = i + 1 {
+    buttons.push(ui.button("b", sub, ui.style()))
+  }
+  return ui.column([
+    ui.text("ab", ui.style()),
+    ui.row(buttons.to_array(), ui.style().with_gap(2.0)),
+    ui.text_input("${m.count()}", ui.style().with_width(12.0))
+  ], ui.style().with_padding(4.0).with_gap(2.0))
+}
+
+def main() {
+  const screen = ui_fb.canvas.canvas(48, 32)
+  ui.run(view, update, Model.new(count: 0),
+    ui_fb.backend(screen, ui_fb.script([0, 0, 1])))
+  printf("%s", [ui_fb.ppm(screen)])
+}
+
+main()

@@ -1,0 +1,68 @@
+// The hosted surface (emo-desktop A7.1): the pixel words in one `Bytes`,
+// row-major, four bytes to a pixel, `set_u32_le` the store and
+// `get_u32_le` the load. It is the reference `ui_fb.Surface` — what the
+// package's test reads as values and the golden pins as bytes — and the
+// hosted twin of the metal's carve surface, which keeps the same word
+// discipline over raw memory (A7.2). Whole words, never bytes: the
+// assessment's blit rule, kept here so the twin exercises the same
+// stores the carve will.
+//
+// A module of its own, not a section of the core, because the core
+// dual-runs on the metal and this file cannot: riscv64 lowers
+// `Bytes.new` but none of its accessors (`emo_riscv.ml`), so the metal's
+// registry stages the core without it — the rule that leaves a
+// package's test out of a consumer's registry, applied to its host-only
+// surface.
+
+class Canvas {
+  def init(width Int64, height Int64) {
+    self.width = width
+    self.height = height
+    self.data = Bytes.new(width * height * 4)
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  // The word at a pixel; 0 for anything off the surface, the contract
+  // every `Surface` keeps so a reader never has to clip.
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return self.data.get_u32_le((y * self.width + x) * 4)
+  }
+
+  // A color stored over the rectangle, top byte cleared — a store is
+  // never a blend, whatever coverage the color claims.
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    const word = color & 0xFFFFFF
+    for var row = r.y(); row < r.y() + r.h(); row = row + 1 {
+      for var col = r.x(); col < r.x() + r.w(); col = col + 1 {
+        self.data.set_u32_le((row * self.width + col) * 4, word)
+      }
+    }
+  }
+
+  // A color composited over the rectangle, pixel by pixel through
+  // `ui_fb.over`: what is there is read, mixed, and written back.
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    for var row = r.y(); row < r.y() + r.h(); row = row + 1 {
+      for var col = r.x(); col < r.x() + r.w(); col = col + 1 {
+        const i = (row * self.width + col) * 4
+        self.data.set_u32_le(i, ui_fb.over(color, self.data.get_u32_le(i)))
+      }
+    }
+  }
+}
+
+def canvas(width Int64, height Int64) ui_fb.Surface {
+  return Canvas.new(width: width, height: height)
+}
