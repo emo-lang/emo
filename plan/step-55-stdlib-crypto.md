@@ -6,7 +6,7 @@ is the byte-discipline and all-five-golden working example; `math`
 every target) · **Related:** `stdlib/registry/base64`,
 `docs/stdlib/base64.md`, `plan/step-51-tls-c-target.md` (the
 system-library TLS route this package deliberately does not
-duplicate) · **Status:** planned
+duplicate) · **Status:** complete
 
 ## Why this step exists
 
@@ -176,9 +176,12 @@ stays pure and five-target.
       `ed25519`/`ecdh` on five lists, the sweep and the thousand
       iterations c-only; and the typescript emitter's reserved-word
       gap (`public`) flushed and fixed.
-- [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
+- [x] **T55.12** — The docs: `docs/stdlib/crypto.md` and
       `docs/stdlib/rand.md` (EN + zh-CN) with the surface, the
-      raise/error split per function, the constant-time honesty
-      section, and the legacy warning; `docs/stdlib.md`'s rows; the
-      new goldens into the golden lists as their targets land them;
-      `plan/README.md`'s status table.
+      raise/error split per function, the constant-time section per
+      target, and the legacy warning; `docs/stdlib.md`'s rows and
+      sections; `crypto_hash` onto the beam list and the four crypto
+      goldens onto the wasm list, every declared target now
+      golden-exercised; SHAKE's negative length raising with the
+      package's message; the interpreter costs measured;
+      `plan/README.md`'s row done.

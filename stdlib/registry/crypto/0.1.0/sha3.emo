@@ -26,12 +26,20 @@ def sha3_512(data Bytes) Bytes {
   return internal.keccak.sponge(72, 0x06, 64, data)
 }
 
-// The SHAKE128 output of length bytes over data.
+// The SHAKE128 output of length bytes over data; a negative length is
+// the caller's mistake and raises.
 def shake128(data Bytes, length Int64) Bytes {
+  if length < 0 {
+    raise Exception.new(message: "crypto: shake length must not be negative")
+  }
   return internal.keccak.sponge(168, 0x1f, length, data)
 }
 
-// The SHAKE256 output of length bytes over data.
+// The SHAKE256 output of length bytes over data; a negative length is
+// the caller's mistake and raises.
 def shake256(data Bytes, length Int64) Bytes {
+  if length < 0 {
+    raise Exception.new(message: "crypto: shake length must not be negative")
+  }
   return internal.keccak.sponge(136, 0x1f, length, data)
 }

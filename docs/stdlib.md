@@ -58,6 +58,8 @@ The packages:
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
+| [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
+| [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam` |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |
@@ -486,6 +488,78 @@ line-wrap acceptance; every rejection comes back as
 Targets: all five. Reference:
 [`docs/stdlib/base64.md`](stdlib/base64.md) · Demo:
 `examples/base64_demo`.
+
+## The `crypto` package
+
+The primitives layer: hashes, MACs, key derivation, AEAD ciphers, a
+signature scheme, and a key agreement — pure Emo over `Int64` and
+`Bytes`, so every target answers the same bytes, and every golden is
+a diff against the RFC and NIST vectors and — wherever Go's standard
+library carries the primitive — against Go's own answers.
+A root module and eight submodules, called by their qualified names:
+
+```emo
+def constant_time_compare(a Bytes, b Bytes) Bool
+def hex_encode(data Bytes) String
+def hex_decode(text String) (R, Bytes)
+
+// crypto.sha2:   sha256, sha224, sha512, sha384, sha512_224, sha512_256,
+//                and the streaming Digest and Wide classes
+// crypto.sha3:   sha3_224, sha3_256, sha3_384, sha3_512, shake128, shake256
+// crypto.hash:   interface Hash; hmac_<alg>(key, data)
+// crypto.kdf:    hkdf_<alg>(ikm, salt, info, length), hkdf_<alg>_expand,
+//                pbkdf2_<alg>(password, salt, iterations, length)
+// crypto.cipher: chacha20, poly1305, chacha20_poly1305_seal/open,
+//                aes_encrypt_block/decrypt_block, aes_ctr,
+//                aes_cbc_encrypt/decrypt, aes_gcm_seal/open
+// crypto.sign:   ed25519_public(seed), ed25519_sign(seed, message),
+//                ed25519_verify(public, message, signature)
+// crypto.ecdh:   x25519(scalar, point), x25519_public(scalar)
+// crypto.legacy: sha1, md5
+```
+
+Bytes in, Bytes out; text stays text at the hex codec only. The error
+split is the library's: a wrong length or count raises, and a data
+reason is a value — a tag that does not verify is
+`(R.error, "crypto: authentication failed")` whatever the forgery, a
+bad signature is `false`, an all-zero shared secret is
+`(R.error, "crypto: x25519 low-order point")`. Constant time is a
+source-level discipline — no secret-dependent branch or index, AES's
+S-box lookup the documented exception — and the reference states per
+target what that discipline becomes, which is a guarantee on none of
+them. SHA-1 and MD5 sit behind `crypto.legacy`, broken for every
+security purpose and present for existing data.
+
+Targets: all five. Reference:
+[`docs/stdlib/crypto.md`](stdlib/crypto.md) · Demos:
+`examples/crypto_hash`, `examples/crypto_aead`,
+`examples/crypto_sign`, `examples/crypto_ecdh`, and the c-only
+`examples/crypto_hash_million`, `examples/crypto_kdf`,
+`examples/crypto_sign_sweep`, `examples/crypto_ecdh_iterated`.
+
+## The `rand` package
+
+Entropy, and a reproducible stream: the operating system's random
+bytes for keys and seeds, and SP 800-90A's HMAC-DRBG (SHA-256) in its
+one-shot shape for everything that must answer the same bytes every
+time.
+
+```emo
+def bytes(n Int64) (R, Bytes)
+def drbg_sha256(seed Bytes, length Int64) Bytes
+```
+
+`bytes` answers `(R.ok, bytes)` from `/dev/urandom`, `getentropy`,
+Node's `crypto.randomBytes`, or `crypto:strong_rand_bytes` by target,
+and `(R.error, "rand: …")` when the source refuses; a negative count
+raises. `drbg_sha256` answers `length` bytes that depend on the seed
+alone, the same on every target forever — the generator for fixtures
+and test keys, not a source of secrets.
+
+Targets: `ocaml`, `c`, `typescript`, `beam` — the wasm host supplies
+no entropy, so the manifest refuses it rather than failing at run
+time. Reference: [`docs/stdlib/rand.md`](stdlib/rand.md) · Demo:
+`examples/rand_demo`.
 
 ## The `csv` package
 

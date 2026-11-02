@@ -4,8 +4,9 @@ require "crypto"
 // from the byte sweep at each of thirteen lengths around the SHA-512
 // block boundaries, the public key, the signature, and the
 // verification pinned against Go's crypto/ed25519. Thirteen rounds of
-// key derivation, signing, and verification are a minute on the
-// interpreter and under a second compiled, so this golden is c-only.
+// key derivation, signing, and verification are eleven seconds on the
+// interpreter and a tenth of a second compiled, so this golden is
+// c-only.
 
 def seq(n Int64, start Int64) Bytes {
   const b = Bytes.new(n)

@@ -8,8 +8,8 @@ require "crypto"
 // two public keys that do not decode (x = 0 with the sign bit set,
 // and a y with no square root). X25519 is examples/crypto_ecdh; the
 // Go-companion sweep over message lengths is
-// examples/crypto_sign_sweep, c-only — a minute on the interpreter,
-// under a second compiled.
+// examples/crypto_sign_sweep, c-only — eleven seconds on the
+// interpreter, a tenth of a second compiled.
 
 def from_hex(text String) Bytes {
   case crypto.hex_decode(text) {

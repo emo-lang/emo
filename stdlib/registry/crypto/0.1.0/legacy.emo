@@ -3,8 +3,8 @@
 // purpose. Both are broken: SHA-1 collides by construction since
 // 2017, MD5 since 2004; neither answers a new question. One-shot
 // only — the streaming surface belongs to the algorithms with a
-// future. Digests are raw bytes as String, like the rest of the
-// package; render with crypto.hex_encode.
+// future. Digests are Bytes, like the rest of the package; render
+// with crypto.hex_encode.
 
 // The SHA-1 digest of data, twenty bytes. Broken for every security
 // purpose; for verifying existing data.

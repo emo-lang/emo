@@ -3,8 +3,8 @@ require "crypto"
 // X25519 (RFC 7748 §5.2): the iterated vector — k and u start at the
 // base point's 9, and each round sets k to X25519(k, u) and u to the
 // old k. The RFC pins the value after 1 and after 1000 rounds; a
-// thousand ladders is a minute and a half on the interpreter and
-// under a second compiled, so this golden is c-only.
+// thousand ladders is eighty seconds on the interpreter and 0.6 s
+// compiled, so this golden is c-only.
 
 def set_byte(b Bytes, i Int64, v Int64) Void {
   b.set(i, v)

@@ -383,6 +383,12 @@ let wasm_goldens =
     "sql_demo";
     "sql_edge";
     "atomic_cell";
+    (* the crypto goldens: pure Emo over Int64 and Bytes, the fifth of
+       the package's five declared targets — WasmGC under Node *)
+    "crypto_hash";
+    "crypto_aead";
+    "crypto_sign";
+    "crypto_ecdh";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -454,6 +460,7 @@ let beam_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
     "rand_demo";
+    "crypto_hash";
     "crypto_aead";
     "crypto_sign";
     "crypto_ecdh";
@@ -709,10 +716,10 @@ let c_goldens =
     (* crypto_sign and crypto_ecdh: the RFC 8032 and RFC 7748 vectors
        with Go's ed25519/ecdh companions; crypto_sign_sweep: thirteen
        message lengths through key derivation, signing, and
-       verification — a minute interpreted, a tenth of a second
+       verification — eleven seconds interpreted, a tenth of a second
        compiled, so c-only; crypto_ecdh_iterated: RFC 7748's thousand
-       iterations — a minute and a half interpreted, under a second
-       compiled, c-only for the same reason *)
+       iterations — eighty seconds interpreted, 0.6 s compiled, c-only
+       for the same reason *)
     "crypto_sign";
     "crypto_sign_sweep";
     "crypto_ecdh";

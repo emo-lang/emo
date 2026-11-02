@@ -45,6 +45,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
 | M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
 | M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — the `fastmath` package binding `math`'s scalar surface to the host libm on `c`/`ocaml`, and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
+| M21 — The crypto package | 55 | The portable primitives layer as one pure-Emo package, `crypto` — SHA-2, SHA-3 and SHAKE, HMAC, HKDF and PBKDF2, the constant-time comparison, ChaCha20-Poly1305, AES with CTR, CBC, and GCM, Ed25519 and X25519, SHA-1 and MD5 behind `crypto.legacy` — byte-identical on all five hosted targets with every golden a diff against the RFC and NIST vectors and Go's own answers; the `rand` package beside it binding the entropy source per target and carrying the deterministic HMAC-DRBG stream; the error split per the house rule, Bytes as the carrier, and the docs stating constant time as a source-level discipline with each target's honest status. RSA waits on a bignum foundation; TLS, x509, and the post-quantum set stay out. |
 
 ## Design gates
 
@@ -3185,18 +3186,36 @@ error split, and the honesty sections.
       §6.1 both ways, the first iteration, u = 0 and u = 1 refused
       with the reason pinned, and a sweep — agreeing with Go's
       `crypto/ecdh`; both ride all five lists byte-identically;
-      `examples/crypto_sign_sweep` (thirteen message lengths — a
-      minute interpreted, a tenth of a second compiled) and
+      `examples/crypto_sign_sweep` (thirteen message lengths — eleven
+      seconds interpreted, a tenth of a second compiled) and
       `examples/crypto_ecdh_iterated` (RFC 7748's thousand
-      iterations) are c-only. The step flushed a typescript emitter
+      iterations — eighty seconds interpreted, 0.6 s compiled) are
+      c-only. The step flushed a typescript emitter
       gap: a local named `public`, emitted verbatim, is a reserved
       word in strict-mode JavaScript — `ts_local` now guards the
       JS/TS reserved words with a `$` suffix no Emo identifier can
       carry, the C emitter's `c_ident` shape (`CHECK.md`, fixed).
-- [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
-      `docs/stdlib/rand.md` (EN + zh-CN) with the full surface, the
-      raise/error split spelled per function, the constant-time
-      honesty section with its per-target status, and the legacy
-      warning; `docs/stdlib.md`'s rows (`crypto`, `rand`); the new
-      goldens into the golden lists as their targets land them;
-      `plan/README.md`'s status table.
+- [x] **T55.12** — The docs: `docs/stdlib/crypto.md` and
+      `docs/stdlib/rand.md` (EN + zh-CN) — the full surface of the
+      root and the eight submodules with every signature, the
+      raise/error split spelled per function (and tabulated for
+      `rand`), the Bytes-carrier rule, the two caller's contracts the
+      constructions cannot enforce (nonce reuse, the CBC padding
+      oracle), the constant-time section stating the source-level
+      discipline, its two documented exceptions (AES's S-box lookup,
+      the comparisons on public data), and per target what `Int64`
+      is and what the discipline becomes — a guarantee on none of
+      them, no target measured for leakage — and the legacy warning
+      with the refused algorithms named; `docs/stdlib.md`'s rows and
+      sections for `crypto` and `rand`, EN and zh-CN; the README's
+      reference list. The golden lists completed as the targets had
+      landed them: `crypto_hash` onto the beam list and the four
+      crypto goldens onto the wasm list — all byte-identical, so every
+      one of the package's five declared targets is now
+      golden-exercised. Two small corrections on the way: SHAKE's
+      negative length raises with the package's own message (it had
+      surfaced as `Bytes.new`'s E3004 from inside the engine), and the
+      c-only goldens' interpreter costs are now measured, not
+      estimated — the sign sweep is eleven seconds, the thousand
+      X25519 iterations eighty. `plan/README.md`'s row reads done;
+      M21 complete.
