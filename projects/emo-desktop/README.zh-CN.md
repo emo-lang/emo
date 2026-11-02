@@ -23,7 +23,7 @@ English version: [`README.md`](README.md).
 
 | 里程碑 | 范围 | 状态 |
 | --- | --- | --- |
-| M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | 进行中 |
+| M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | complete |
 | M8 — 字形与指针 | 位图字体、指针精灵、输入合并 | — |
 | M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启 | — |
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | — |

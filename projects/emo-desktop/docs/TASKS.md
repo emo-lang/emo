@@ -145,8 +145,35 @@ tree's and EmoOS's, listed there.
   `run.sh` green under both timer transports, three consecutive rounds
   byte-identical, the ledger `frames 77 45` unchanged; the fb gate 51
   ok; `dune runtest` and `@fmt` green.
-- [ ] **A7.3** — The corpus leg: `run.sh`'s display counterpart for
-  the hosted runs (`-display none`, checksums asserted).
+- [x] **A7.3** — The corpus leg: `run.sh`'s display counterpart for
+  the hosted runs (`-display none`, checksums asserted). **Landed
+  2026-11-02, the same day as A7.2, whose machinery carries the leg's
+  substance** — the corpus leg proper is `fb/frame/golden/`: the first
+  frame's tree rendered on the hosted canvas at the display's baseline
+  mode, its digest pinned in `expected.txt`, byte-identical from the
+  interpreter and all five hosted targets, asserted by `fb/check.sh`.
+  What A7.3 adds is the counterpart made mechanical. `run.sh` asserts
+  the corpus's **file**, not its own copy of the number: the line the
+  screen pass prints (`frame <digest>`, whole, between the mode's line
+  and the present's) and the fold over the monitor's screendump at the
+  present both read `../emo-desktop/fb/frame/golden/expected.txt` — a
+  missing file is the loud end with the path named, and a wrong number
+  is refused with the display's real digest named — so the metal and
+  the corpus cannot drift apart, because there is one number and it
+  lives in the corpus (`fb/frame/golden/main.emo`'s header says so).
+  The `dune` smoke runs `run.sh` from a scratch tree that carries no fb
+  tree and points `FRAME_EXPECTED` at the repository's file, asserting
+  it exists before the machine boots. Windowless on both sides: the
+  metal's asserted leg has run `-display none` since T8.8, and the
+  corpus has no window at all — the checksums are the whole truth each
+  side keeps. **With this the A7 ladder closes and M7 is complete on
+  both sides of the gate** (EmoOS Step 8's nine tasks and T8.10 beside
+  them; the desktop's A7.1–A7.3) — both READMEs' milestone rows say so.
+  **The pins**: `run.sh` green in-repo against the default corpus file;
+  a wrong corpus number refused (`the display's frame digests to
+  1234944000; the corpus's first frame is 1`); the missing file
+  refused; the `emo_os` `dune` suite green (3 of 3, the smoke
+  corpus-pointed); `@fmt` green.
 
 ## M8 — glyphs & pointer (the desktop side)
 

@@ -8,9 +8,11 @@ require "emo/ui_fb_frame"
 // mode (1024x768 XRGB8888, D5 — the mode `run.sh` gives the device and
 // the pass reads back from it), and the digest printed. `expected.txt`
 // is the interpreter's one line; every hosted target prints the same,
-// and `run.sh` asserts the same number twice on the metal — the line
-// the screen pass prints after reading its carve back, and the digest
-// of the monitor's screendump. One frame, three readings, one number.
+// and it is the file `run.sh` asserts against on the metal (A7.3) — the
+// line the screen pass prints after reading its carve back, and the
+// digest of the monitor's screendump, both read from this file, so the
+// metal and the corpus cannot drift apart. One frame, three readings,
+// one number, one file.
 //
 //   emo run main.emo
 

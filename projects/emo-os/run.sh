@@ -13,6 +13,33 @@ if [ ! -f "$elf" ]; then
   exit 1
 fi
 
+# The corpus leg (emo-desktop A7.3): the first frame's digest is the
+# hosted corpus's number, never this file's. The fb backend's frame
+# golden (projects/emo-desktop/fb/frame/golden) renders the same tree
+# the screen pass paints, on the hosted canvas, and pins its digest in
+# `expected.txt` — the same bytes from the interpreter and every hosted
+# target, the fb gate's own assertion. The two assertions below read
+# that file: the line the pass prints after reading its carve back, and
+# the fold over the display's screendump. The metal and the corpus
+# cannot drift apart, because there is one number and it lives in the
+# corpus. The dune smoke runs this script from a scratch tree that
+# carries no fb tree and points FRAME_EXPECTED at the repository's file;
+# a missing file is the loud end, never a default.
+frame_expected=${FRAME_EXPECTED:-../emo-desktop/fb/frame/golden/expected.txt}
+if [ ! -f "$frame_expected" ]; then
+  echo "run.sh: the first frame's corpus file is missing: $frame_expected" >&2
+  echo "  (the hosted golden under projects/emo-desktop/fb/frame/golden pins the" >&2
+  echo "  digest this run asserts; FRAME_EXPECTED names the file)" >&2
+  exit 1
+fi
+frame_digest=$(awk '$1 == "frame" { print $2 }' "$frame_expected")
+case $frame_digest in
+  ''|*[!0-9]*)
+    echo "run.sh: $frame_expected does not carry a 'frame <digest>' line" >&2
+    exit 1
+    ;;
+esac
+
 # The block device's backing (T7.1): a raw 1 MiB image, written zero
 # before the first boot (T7.2) — so the two boots below are one story:
 # the first finds a blank disk and the filesystem formats it, the
@@ -188,18 +215,19 @@ PYEOF
   # carve's words on the wire (`frame <n>`). The monitor's screendump
   # takes the display's PPM, and the same fold over its pixels —
   # `d = (d * 31 + word) mod 2^32`, the word the pixel's XRGB, row-major
-  # — has to answer the same number, which is also the number the hosted
-  # twin prints (projects/emo-desktop/fb/frame/golden/expected.txt):
-  # the carve the core painted, the display the device scanned out, the
-  # canvas on the host — three readings, one number. The dump is taken
-  # here, before the input beat below lets the chain run on: nothing
-  # flushes the display between the present and the window pass, and
-  # the pass's pattern words go back into the carve after the present,
-  # so this dump holds the frame alone — the model of the second dump
-  # below is built on it.
+  # — has to answer the same number, which is the corpus's number read
+  # above (the hosted twin's `expected.txt`, A7.3): the carve the core
+  # painted, the display the device scanned out, the canvas on the host
+  # — three readings, one number, one file. The dump is taken here,
+  # before the input beat below lets the chain run on: nothing flushes
+  # the display between the present and the window pass, and the pass's
+  # pattern words go back into the carve after the present, so this
+  # dump holds the frame alone — the model of the second dump below is
+  # built on it.
   await 'present ok'
   hmp 'screendump .frame.ppm'
-  if ! python3 - <<'PYEOF'
+  if ! FRAME_DIGEST="$frame_digest" python3 - <<'PYEOF'
+import os
 import sys
 
 data = open('.frame.ppm', 'rb').read()
@@ -209,8 +237,9 @@ px = data[16:]
 d = 0
 for i in range(0, len(px), 3):
     d = (d * 31 + ((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])) & 0xFFFFFFFF
-if d != 1234944000:
-    sys.exit(f"run.sh: the display's frame digests to {d}; the first frame is 1234944000")
+want = int(os.environ['FRAME_DIGEST'])
+if d != want:
+    sys.exit(f"run.sh: the display's frame digests to {d}; the corpus's first frame is {want}")
 PYEOF
   then
     kill "$qemu_pid" 2>/dev/null || true
@@ -455,7 +484,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'frame 1234944000' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 77 45'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 77 45'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -467,6 +496,22 @@ PYEOF
     fi
     prev=$pos
   done
+  # The first frame's line (emo-desktop A7.2, A7.3): the pass's own
+  # digest of the carve, whole, between the mode's line and the
+  # present's — the corpus's number (`$frame_expected`), never a literal
+  # of this file's, so the metal asserts the corpus leg's file directly.
+  local fpos opos ppos
+  fpos=$(grep -aboF -- "frame $frame_digest" "$log" | head -1 | cut -d: -f1 || true)
+  if [ -z "$fpos" ]; then
+    echo "run.sh: the screen pass never delivered 'frame $frame_digest' (the corpus's digest, $frame_expected)" >&2
+    exit 1
+  fi
+  opos=$(grep -aboF -- 'output 1024x768' "$log" | head -1 | cut -d: -f1)
+  ppos=$(grep -aboF -- 'present ok' "$log" | head -1 | cut -d: -f1)
+  if [ "$fpos" -lt "$opos" ] || [ "$fpos" -gt "$ppos" ]; then
+    echo "run.sh: 'frame $frame_digest' arrived out of order" >&2
+    exit 1
+  fi
   # The shell's write, proven by the list that followed it: the second
   # `ls` answered `note.txt` on the line right after `hello.txt` — a
   # pair the write's own echo cannot produce (the first `ls` ran

@@ -270,7 +270,25 @@ let smoke_tests =
                 ~profile:"kernel")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let out, err, status = run_cmd (Filename.concat scratch "run.sh") in
+        (* The corpus leg (emo-desktop A7.3): run.sh asserts the first
+           frame's digest out of the fb frame golden's `expected.txt` —
+           the file the fb gate pins across every hosted target — and
+           the scratch tree carries no fb tree, so the run is pointed at
+           the repository's file, absolute because run.sh changes into
+           its own directory first. *)
+        let frame_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/frame/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the first frame's corpus file is in the tree" true
+          (Sys.file_exists frame_expected);
+        let out, err, status =
+          run_cmd
+            (Printf.sprintf "FRAME_EXPECTED=%s %s"
+               (Filename.quote frame_expected)
+               (Filename.quote (Filename.concat scratch "run.sh")))
+        in
         (match status with
         | Unix.WEXITED 0 -> ()
         | s ->

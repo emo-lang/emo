@@ -84,6 +84,7 @@ golden smoke, and the hand-driven boot up to the prompt — is
 | M4 — Process memory | arenas, quotas, reclaim on death, frame allocator | complete |
 | M5 — SV39 | per-process address spaces, trampoline, fault-to-kill | complete |
 | M6 — FS, shell, EmoUI | virtio-blk service, shell REPL, console UI | complete |
+| M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | complete |
 
 Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 
