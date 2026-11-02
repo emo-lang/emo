@@ -242,8 +242,51 @@ tree's and EmoOS's, listed there.
   not hold) are arena births per frame — nothing to the first frame's
   hundred glyphs, and the Elm loop's to count (A8.3), on the compiler
   track's schedule with the def values it already waits on.
-- [ ] **A8.2** — The pointer sprite: the compositor's cursor plane,
-  moved by the merged event stream.
+- [x] **A8.2** — The pointer sprite: the compositor's cursor plane,
+  moved by the merged event stream. **Landed 2026-11-02.** The sprite is
+  the desktop's — a Wayland client's cursor is the client's — drawn in
+  [`fb/pointer.emo`](../fb/pointer.emo) as rows of cells (`#` the
+  outline's ink, `o` the body's paper, `.` clear): a 12×17 arrow, a
+  1-pixel outline around a white body, the hotspot its tip; the module's
+  `paint` lays it on any `Surface` (the hosted twin, pinned by the
+  canvas's test at the tip, the body, the tail and off a corner), and
+  the one drawing is read three ways — by `paint`, by the metal's
+  screen pass, which writes it cell by cell into the carve's sprite
+  memory (the carve's last 64 KiB, past the proof pattern's line: the
+  header after the pixels, so a torn read is no sprite — the contract
+  is [`desktop-abi.md`'s](../../emo-os/docs/desktop-abi.md)), and by
+  `run.sh`'s model of the display, which composites the rows off the
+  file at the beat's position. **The plane is the compositor's, in
+  software** (EmoOS T8.11, the kernel side): the display's screendump
+  is the golden's eye and a device cursor never reaches a screendump,
+  so the pointer the golden can see is the one the carve holds — the
+  compositor saves the words under the sprite, stores its opaque
+  pixels, hides it around every window blit, and presents the one
+  rectangle the old and the new places lie in; **moved by the merged
+  event stream's pointer half**: the tablet (absolute axes, so the hand
+  names a position) is a driver process of its own, its events into the
+  stream through a ring after the keyboard's and its reports' positions
+  into cells the compositor scales by the axes' maxima the device's
+  config states, one notice per report. **The desktop-side pins**: the
+  fb gate 52 ok (the core's test 39 — the drawing's shape — the
+  canvas's 35, the probe painting the pointer through its counting
+  surface for the metal); the user image's registry carries the sprite
+  beside the font (`start.sh`, the `dune` smoke). **The metal's**: the
+  pass's `move 0 16384` and `move 1 16384` after `byte 75`, the
+  compositor's `pointer 512 384`, the second screendump's model grown
+  by the sprite at zero mismatches with the window copies composited
+  around it, `run.sh` green under both transports, the ledger
+  `frames 80 45`. **Found on the way** (all fixed, EmoOS T8.11's
+  record): the shim completed the input line's claim with a clobbered
+  register — the first input interrupt was the last a device could
+  raise; a kernel service cannot `gate_reply` another (the notice rides
+  the new `gate_post`); a device-waiter's ring needs a wake of its own
+  (`device_wake`); and the monitor's `mouse_move` is relative motion an
+  absolute device drops — the hand is QMP's `input-send-event`.
+  **Standing**: the ride's pointer costs a rect flush per report, the
+  whole sprite redrawn each time; a device cursor on the virtio-gpu's
+  cursor queue is Tier B's relocation when a display the golden cannot
+  see earns it.
 - [ ] **A8.3** — The Elm loop on metal: an event-driven fb app whose
   per-event tree rebuild survives the arena (the pool's first
   consumer, on the compiler track's schedule).

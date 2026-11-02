@@ -218,8 +218,8 @@ let smoke_tests =
           ];
         (* The user image requires the desktop's packages beside the
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
-           backend's core with its bitmap font (A8.1) and the first
-           frame. They are staged into a
+           backend's core with its bitmap font (A8.1) and pointer sprite
+           (A8.2) and the first frame. They are staged into a
            registry in the scratch tree — the files start.sh stages,
            from the same trees — and the build reads it through
            EMO_REGISTRY, which names the one registry a build resolves
@@ -247,7 +247,7 @@ let smoke_tests =
               [ "package.emo"; "ui.emo"; "debug.emo" ] );
             ( "../../projects/emo-desktop/fb",
               "emo/ui_fb/0.1.0",
-              [ "package.emo"; "ui_fb.emo"; "font.emo" ] );
+              [ "package.emo"; "ui_fb.emo"; "font.emo"; "pointer.emo" ] );
             ( "../../projects/emo-desktop/fb/frame",
               "emo/ui_fb_frame/0.1.0",
               [ "package.emo"; "ui_fb_frame.emo" ] );
@@ -284,10 +284,22 @@ let smoke_tests =
         Alcotest.(check bool)
           "the first frame's corpus file is in the tree" true
           (Sys.file_exists frame_expected);
+        (* The pointer's drawing (emo-desktop A8.2): run.sh's model of
+           the display composites the sprite out of `pointer.emo`'s
+           rows — the same file the user image writes into the carve —
+           and is pointed at the repository's the same way. *)
+        let pointer_sprite =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/pointer.emo"
+        in
+        Alcotest.(check bool)
+          "the pointer sprite's drawing is in the tree" true
+          (Sys.file_exists pointer_sprite);
         let out, err, status =
           run_cmd
-            (Printf.sprintf "FRAME_EXPECTED=%s %s"
+            (Printf.sprintf "FRAME_EXPECTED=%s POINTER_SPRITE=%s %s"
                (Filename.quote frame_expected)
+               (Filename.quote pointer_sprite)
                (Filename.quote (Filename.concat scratch "run.sh")))
         in
         (match status with

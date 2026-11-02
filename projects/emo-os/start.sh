@@ -37,7 +37,7 @@ fb_dir='../emo-desktop/fb'
 syscall_dir='../../stdlib/registry/syscall/0.1.0'
 syscall_src="$syscall_dir/package.emo $syscall_dir/syscall.emo"
 ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
-fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo"
+fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo $fb_dir/pointer.emo"
 frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo"
 
 registry() {
@@ -128,6 +128,7 @@ echo '    five keys once the fs mount line has gone by (the console delivery tes
 echo '    one key when "gate 500500 r3 r2" appears (the read proof)' >&2
 echo '  type nothing else before the prompt — early bytes surface later and garble the exchange' >&2
 echo '  the kill reports on the way are the proof chain working, not trouble' >&2
+echo '  the pointer follows the mouse over the window once the first frame is up' >&2
 echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
 
 # -display cocoa: the display leg's window (T8.8); -serial mon:stdio
@@ -139,4 +140,5 @@ exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
   -device virtio-blk-device,drive=emoos-blk \
   -device virtio-gpu-device,xres=1024,yres=768 \
   -device virtio-keyboard-device \
+  -device virtio-tablet-device \
   -kernel "$elf"

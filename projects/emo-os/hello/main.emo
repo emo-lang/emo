@@ -333,6 +333,7 @@ if peek64(screen_cell) != 0 {
       const screen = Carve.new(base: screen_base, width: out_w(mode),
         height: out_h(mode))
       ui_fb.paint(ui_fb_frame.tree(), screen)
+      sprite_upload()
       frame_line(carve_digest(screen_base, out_w(mode), out_h(mode)))
       case syscall.present(0, 0, 0, out_w(mode), out_h(mode)) {
         (R.error, _) -> { mark() }
@@ -460,6 +461,44 @@ def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
     }
     r = r + 1
   }
+}
+
+// The pointer sprite into the carve's sprite memory (emo-desktop A8.2,
+// EmoOS T8.11): the desktop's drawing — `ui_fb.pointer`'s rows, read
+// cell by cell — as ARGB words, the outline's ink and the body's paper
+// opaque (the top byte 0xFF) and the clear cells 0, then the header
+// last — the width, the height, the hotspot — so the compositor's
+// cursor plane, which reads the header at each composition, sees no
+// sprite until the pixels are whole. The memory is the carve's last
+// 64 KiB, which this pass has mapped with the rest of the carve; the
+// sprite starts past the block's first line, where T8.2's proof pattern
+// below lands its word (docs/desktop-abi.md).
+def sprite_upload() Void {
+  const header = screen_base + 0x400000 - 65536 + 64
+  const w = ui_fb.pointer.width()
+  const h = ui_fb.pointer.height()
+  var r = 0
+  while r < h {
+    const line = ui_fb.pointer.row(r)
+    var c = 0
+    while c < w {
+      const cell = line.substring(c, 1)
+      var word = 0
+      if cell == "#" {
+        word = 0xFF000000
+      }
+      if cell == "o" {
+        word = 0xFFFFFFFF
+      }
+      poke32(header + 16 + ((r * w) + c) * 4, word)
+      c = c + 1
+    }
+    r = r + 1
+  }
+  poke32(header + 8, ui_fb.pointer.hot_x())
+  poke32(header + 12, ui_fb.pointer.hot_y())
+  poke32(header + 4, h)
+  poke32(header, w)
 }
 
 // The frame's digest off the carve's own words — `ui_fb_frame.digest`'s
@@ -728,12 +767,32 @@ def input_line(ev Int64) Void {
   }
 }
 
-// The input branch (T8.3): a pass parked on the machine's merged input
-// stream — `keys?` on the wire as it waits. The run's hands (the
+// The pointer's absolute event as the pass's line (T8.11): `move <axis>
+// <value>` — the axis code (0 X, 1 Y) and the device's own value.
+def move_line(ev Int64) Void {
+  var mp = byte_at(0, 109) // m
+  mp = byte_at(mp, 111) // o
+  mp = byte_at(mp, 118) // v
+  mp = byte_at(mp, 101) // e
+  mp = byte_at(mp, 32) // space
+  mp = num_at(ev_code(ev), mp)
+  mp = byte_at(mp, 32)
+  mp = num_at(ev_value(ev), mp)
+  mp = byte_at(mp, 10)
+  gate_line(mp)
+}
+
+// The input branch (T8.3, T8.11): a pass parked on the machine's merged
+// input stream — `keys?` on the wire as it waits. The run's hands (the
 // monitor's sendkey) deliver the device's key event, and the serial's
-// byte rides the same stream after it: one stream, two sources, the
-// bytes first. Both lines through the gate; the pass ends and the
-// parent's wait answers.
+// byte rides the same stream after it: one stream, the bytes first.
+// The key's release and the reports' separators ride the stream too,
+// unasserted — the pass reads on to the byte. Then the pointer's half
+// (T8.11): the monitor's mouse_move moves the tablet, and its absolute
+// report comes through the same stream after the keyboard's events —
+// the X and the Y in the device's own order, each on the wire — the
+// pass reading until the Y lands. Three sources, one stream. Every
+// line through the gate; the pass ends and the parent's wait answers.
 if peek64(key_cell) != 0 {
   poke64(key_cell, 0)
   var kp = byte_at(0, 107) // k
@@ -744,7 +803,24 @@ if peek64(key_cell) != 0 {
   kp = byte_at(kp, 10)
   gate_line(kp)
   input_line(syscall.input_read())
-  input_line(syscall.input_read())
+  var byte_seen = false
+  while !byte_seen {
+    const ev = syscall.input_read()
+    if ev_type(ev) == 17741 {
+      input_line(ev)
+      byte_seen = true
+    }
+  }
+  var y_seen = false
+  while !y_seen {
+    const ev = syscall.input_read()
+    if ev_type(ev) == 3 {
+      move_line(ev)
+      if ev_code(ev) == 1 {
+        y_seen = true
+      }
+    }
+  }
   // The grant's edge (T8.4): the pass holds no display grant — the
   // present is the permission refusal, the reason number on the wire.
   case syscall.present(0, 0, 0, 1, 1) {

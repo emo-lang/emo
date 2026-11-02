@@ -1098,6 +1098,11 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          brings the process back. A send to a device-waiter does not
          wake it: requests queue in its mailbox for the next pump. *)
       call_runtime env "emo_park_console"
+  | Builtin { name = "device_wake"; args = [] } ->
+      (* EmoOS T8.11: a driver that filled a ring for another
+         device-waiter wakes the device world itself — the ISR's wake,
+         masked, from process context. *)
+      call_runtime env "emo_device_wake"
   | Builtin { name = "ecall"; args = [ _; _; _; _; _; _; _ ] as args } ->
       (* T4.2: the machine's syscall instruction, raw — the user side of
          the gate. The verb and its six words ride a7 and a0..a5 across
@@ -1183,6 +1188,22 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    ld a1, 8(t0)\n";
         call_runtime env "emo_gate_reply"
       end
+  | Builtin { name = "gate_post"; args = [ target; word ] } ->
+      (* EmoOS T8.11: a request word into a service's mailbox by its raw
+         pid — the shim's own post for a gate route, from a kernel
+         process, masked around the mailbox's touch. *)
+      emit_expr env (d + 2) target;
+      put env "    sd a0, %d(sp)\n" (temp_offset env d);
+      emit_expr env (d + 2) word;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" (temp_offset env d);
+      if not env.native then begin
+        put env "    andi t0, a0, -32\n";
+        put env "    ld a0, 8(t0)\n";
+        put env "    andi t0, a1, -32\n";
+        put env "    ld a1, 8(t0)\n"
+      end;
+      call_runtime env "emo_kernel_post"
   | Builtin { name = "pid_num"; args = [ p ] } ->
       (* T4.4: the raw machine sees a pid as its number — the kernel's
          handoff cells carry numbers, not Pid words. The Pid word is
@@ -6157,11 +6178,44 @@ emo_park_console:
     addi sp, sp, 16
     ret
 
+# emo_kernel_post: `gate_post` in the kernel's surface (EmoOS T8.11) —
+# a0 = the service's raw pid, a1 = the request word; emo_gate_post's
+# post from process context, interrupts masked around the mailbox.
+    .globl emo_kernel_post
+emo_kernel_post:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    call emo_gate_post
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    csrsi sstatus, 2
+    ret
+
+# emo_device_wake: `device_wake` in the kernel's surface (EmoOS
+# T8.11) — the ISR's wake from process context, interrupts masked
+# around the run queue's touch as the park masks its own.
+    .globl emo_device_wake
+emo_device_wake:
+    csrci sstatus, 2
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    call emo_sched_wake_console
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    csrsi sstatus, 2
+    ret
+
 # emo_sched_wake_console: the ISR's wake for the device-wait park —
-# the first state-4 slot becomes alive and re-joins the run queue.
-# Called from a trap (interrupts hardware-masked); scans at most the
-# 64 slots; a park that already ended (state not 4) is simply not
-# found, and the byte the ISR enqueued waits in the ring.
+# every state-4 slot becomes alive and re-joins the run queue (EmoOS
+# T8.11: the keyboard's merge and the pointer's driver both park on
+# the device world, and a line's wake reaches them both; a waiter the
+# event was not for re-checks its own queue and parks again, so a
+# broadcast costs a spurious pass and loses nothing — the first-only
+# wake left the second sleeper to starve). Called from a trap
+# (interrupts hardware-masked); scans the 64 slots; a park that already
+# ended (state not 4) is simply not found, and the byte the ISR
+# enqueued waits in the ring.
     .globl emo_sched_wake_console
 emo_sched_wake_console:
     addi sp, sp, -16
@@ -6180,10 +6234,12 @@ emo_sched_wake_console:
     li t5, 1
     sd t5, 16(t4)            # alive
     mv a0, t4
+    addi sp, sp, -16
+    sd t1, 0(sp)
     call emo_runq_push
-    ld ra, 0(sp)
+    ld t1, 0(sp)
     addi sp, sp, 16
-    ret
+    la t0, emo_procs
 .Lwake_next:
     addi t1, t1, 1
     j .Lwake_scan

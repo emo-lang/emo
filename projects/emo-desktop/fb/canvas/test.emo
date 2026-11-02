@@ -1,10 +1,11 @@
 // The canvas package's own test: the hosted surface as a `ui_fb.Surface`,
 // and everything in the core that needs a surface to show itself — the
 // glyph verb, paint's layering and clipping with the labels' glyphs,
-// `ppm`, and the backend's repaint through the loop — checked as values
-// rather than as bytes. The core's own test covers the arithmetic that
-// needs no surface (measure, clip, over, the font's rows, the script);
-// `../golden/` pins the painted bytes.
+// the pointer sprite, `ppm`, and the backend's repaint through the loop
+// — checked as values rather than as bytes. The core's own test covers
+// the arithmetic that needs no surface (measure, clip, over, the font's
+// rows, the pointer's drawing, the script); `../golden/` pins the
+// painted bytes.
 //
 //   emo run test.emo
 //
@@ -137,6 +138,29 @@ def paint_checks() {
     "and its bracketed label in light ink over it")
 }
 
+// ---- the pointer sprite on a surface ----------------------------------
+//
+// The cells named here are the drawing's (`../pointer.emo`): the tip at
+// the top-left, the body's first paper cell on row 2, the tail's
+// outline on row 16 at cells 6 and 7.
+
+def pointer_checks() {
+  const c = ui_fb_canvas.canvas(20, 24)
+  c.fill(0, 0, 20, 24, 0x336699)
+  ui_fb.pointer.paint(c, 3, 3)
+  word_is(c.at(3, 3), 0x000000, "the tip's cell is ink")
+  word_is(c.at(4, 5), 0xFFFFFF, "the body's cells are paper")
+  word_is(c.at(8, 4), 0x336699, "a clear cell leaves the surface alone")
+  word_is(c.at(9, 19), 0x000000, "the tail's outline is ink")
+  word_is(c.at(2, 3), 0x336699, "and nothing lands left of the tip")
+
+  const corner = ui_fb_canvas.canvas(4, 4)
+  corner.fill(0, 0, 4, 4, 0x112233)
+  ui_fb.pointer.paint(corner, -1, -1)
+  word_is(corner.at(0, 0), 0x000000, "a sprite off the corner lands what is inside")
+  word_is(corner.at(0, 1), 0xFFFFFF, "its body with it")
+}
+
 // ---- ppm: the surface as text ----------------------------------------
 
 def ppm_checks() {
@@ -178,5 +202,6 @@ def backend_checks() {
 canvas_checks()
 glyph_checks()
 paint_checks()
+pointer_checks()
 ppm_checks()
 backend_checks()

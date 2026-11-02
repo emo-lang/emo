@@ -132,6 +132,25 @@ def font_checks() {
     "a label measures to the font's cells")
 }
 
+// ---- the pointer: the drawing's shape ---------------------------------
+
+def pointer_checks() {
+  word_is(pointer.width(), 12, "the arrow is twelve cells wide")
+  word_is(pointer.height(), 17, "and seventeen tall")
+  check(pointer.hot_x() == 0 && pointer.hot_y() == 0,
+    "its hotspot is the tip, the top-left cell")
+  var even = true
+  for var r = 0; r < pointer.height(); r = r + 1 {
+    if pointer.row(r).length() != pointer.width() {
+      even = false
+    }
+  }
+  check(even, "every row of the drawing is the width")
+  check(pointer.row(0).substring(0, 1) == "#", "the tip is ink")
+  check(pointer.row(2).substring(1, 1) == "o", "the body is paper")
+  check(pointer.row(0).substring(1, 1) == ".", "and the rest of the first row is clear")
+}
+
 // ---- the scripted input ---------------------------------------------
 
 def script_checks() {
@@ -146,4 +165,5 @@ measure_checks()
 clip_checks()
 over_checks()
 font_checks()
+pointer_checks()
 script_checks()

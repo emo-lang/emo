@@ -114,6 +114,15 @@ const comp_focus_cell = comp_page + 16
 const comp_mode_w = comp_page + 24
 const comp_mode_h = comp_page + 32
 const comp_stack = comp_page + 64
+// The cursor plane's state (T8.11), on the same page so a restarted
+// instance finds the sprite where the last one left it: the drawn
+// sprite's top-left corner, whether it is on the carve, the pointer
+// generation it shows, and whether the plane's first line is out.
+const comp_cursor_x = comp_page + 384
+const comp_cursor_y = comp_page + 392
+const comp_cursor_shown = comp_page + 400
+const comp_cursor_gen = comp_page + 408
+const comp_cursor_said = comp_page + 416
 const comp_svc_cell = koff + 0x87002e00
 const comp_sup_cell = koff + 0x87002e08
 const comp_args = koff + 0x87002e10
@@ -146,13 +155,38 @@ const screen_pending_cell = koff + 0x870029e0
 
 
 // The input service's cells (T8.3): the pid cell the gate routes the
-// read verb and the input_read verb by, and the IRQ cell the service's
-// driver parks its virtio-input transport's PLIC number in — the trap
-// shim's external branch reads it (0 = not wired, the loud end it
-// always was). Both live on the handoff page past the staging area and
-// the screen's pending cell.
+// read verb and the input_read verb by, and the IRQ cell the input
+// drivers park their transports' PLIC numbers in — a mask of bits, one
+// per wired line (T8.11: the keyboard's and the pointer's), which the
+// trap shim's external branch tests the claim against (0 = nothing
+// wired, the loud end it always was). Both live on the handoff page
+// past the staging area and the screen's pending cell.
 const input_svc_cell = koff + 0x870029e8
 const input_irq_cell = koff + 0x870029f0
+
+// The pointer's cells (T8.11, emo-desktop A8.2): the pointer driver's
+// half of the merged stream and of the cursor plane. The ring the
+// driver fills and the input service drains — the producer cursor, the
+// consumer cursor, then 32 packed-event entries, on the input ring's
+// page past the serial's ring (the UART's bytes and the pointer's
+// events reach the merge the same way: a ring the ISR's wake drains);
+// the position cells — the device's last absolute X and Y, the axes'
+// maxima read off its config, the generation the driver counts at each
+// report's separator — the compositor scales to the mode; and the
+// notice flag: one notice word in the compositor's mailbox at a time,
+// set by the driver when it posts, cleared by the compositor when it
+// reads the position, so a burst of reports is one composition.
+const pointer_ring_prod = koff + 0x87001800
+const pointer_ring_cons = koff + 0x87001808
+const pointer_ring = koff + 0x87001810
+const pointer_x_cell = koff + 0x87002e40
+const pointer_y_cell = koff + 0x87002e48
+const pointer_max_x_cell = koff + 0x87002e50
+const pointer_max_y_cell = koff + 0x87002e58
+const pointer_gen_cell = koff + 0x87002e60
+const pointer_notice_cell = koff + 0x87002e68
+const pointer_dirty_cell = koff + 0x87002e70
+const pointer_op = 18
 
 // The desktop segment's cells (T8.4, T8.5): the display service's pid
 // cell the gate routes the desktop verbs by; the authorization table's
@@ -185,6 +219,23 @@ const grant_table = koff + 0x87002b00
 const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA view
 const screen_size = 0x400000
 const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
+
+// The cursor plane's sprite memory (T8.11, emo-desktop A8.2): the
+// carve's last 64 KiB, past any framebuffer the carve can hold — the
+// MiB beside the baseline's buffer T8.2 set aside for it. The desktop
+// writes the sprite there (the full-screen pass, which has the carve
+// mapped): past the block's first line — T8.2's proof pattern pokes the
+// first word of every 64 KiB of the carve, this block's included, so
+// the sprite starts at +64 — the header's four 32-bit words: the width,
+// the height, the hotspot's x and y; then width × height ARGB8888
+// words, a top byte of 0xFF an opaque pixel and 0 a clear one; the
+// header written last so a torn read sees no sprite. The compositor
+// reads the sprite from there at every composition and keeps the pixels
+// it covers in the save-under half, kernel-private (docs/desktop-abi.md).
+const sprite_base = screen_base + screen_size - 65536
+const sprite_header = sprite_base + 64
+const sprite_pixels = sprite_base + 80
+const sprite_under = sprite_base + 0x8000
 
 // The arena's run (T8.9): the blocks one child's arena takes — a
 // contiguous run claimed in one take at the spawn (frames.emo's
@@ -857,6 +908,30 @@ def gpu_height(w Int64) Int64 {
   return w & 4294967295
 }
 
+// A rectangle in one word (T8.11): the compositor's rect flush rides
+// the mailbox tuple's third word — x in bits 48..63, y in 32..47, the
+// width in 16..31, the height in 0..15 — decoded by typed defs like
+// every mailbox word.
+def rect_word(x Int64, y Int64, w Int64, h Int64) Int64 {
+  return (x << 48) | (y << 32) | (w << 16) | h
+}
+
+def rect_x(r Int64) Int64 {
+  return (r >> 48) & 65535
+}
+
+def rect_y(r Int64) Int64 {
+  return (r >> 32) & 65535
+}
+
+def rect_w(r Int64) Int64 {
+  return (r >> 16) & 65535
+}
+
+def rect_h(r Int64) Int64 {
+  return r & 65535
+}
+
 // The atomic commit (T8.4): the damage rect's transfer to the host
 // resource, then the flush to the display — the two device commands
 // complete before the answer, so a frame lands whole or the machine
@@ -1030,15 +1105,20 @@ def gpu_service(boss Pid) Void {
     receive {
       (a, b, c) -> {
         // The kernel's own mailbox (the boot smoke's protocol): op 0
-        // the whole-screen flush, op 1 the mode packed. The bindings
-        // are tagged words — the stores into these typed locals are
-        // the conversion (T7.2's lesson), which lets the typed op_of
-        // see the raw payload instead of a pointer; the sender rides
-        // a Pid local the same way.
+        // the whole-screen flush, op 1 the mode packed, op 2 a rect
+        // flush (T8.11: the compositor's cursor plane presents the
+        // rectangle it touched — the rect rides the third word, and
+        // the answer is 0 or the present's refusal). The bindings are
+        // tagged words — the stores into these typed locals are the
+        // conversion (T7.2's lesson), which lets the typed op_of see
+        // the raw payload instead of a pointer; the sender rides a Pid
+        // local the same way.
         var aw = 0
         var from = boss
+        var cw = 0
         aw = a
         from = b
+        cw = c
         var op = op_of(aw)
         if op == 0 {
           var v = gpu_present(dev, q, gw, gh, 0, 0, gw, gh)
@@ -1051,7 +1131,11 @@ def gpu_service(boss Pid) Void {
           if op == 1 {
             from <- (gw << 32) | gh
           } else {
-            from <- 0 - aw
+            if op == 2 {
+              from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
+            } else {
+              from <- 0 - aw
+            }
           }
         }
       }
@@ -1159,26 +1243,29 @@ def gpu_service(boss Pid) Void {
 }
 
 // The input service (T8.3): the machine's input, one process — the
-// virtio-input device's event stream (DeviceID 18) merged with the
-// serial console's bytes. The UART's input ring (T3.7) is this
-// service's to drain now: the read verb (gate verb 2) and the boot
-// demo's bare-pid readers take the next byte from it, the device-wait
-// park moving here with the ownership — the shim's wake (the runtime's
-// emo_sched_wake_console, the name it booted with) wakes the first
-// state-4 slot, and this service is the machine's one device-waiter.
-// The input_read verb (verb 12) takes the next event of the merged
-// stream: the bytes first, then the device's — the one order the two
-// sources can name without a clock, and the rule docs/syscalls.md
-// states. A byte event rides type 0x454D ("EM"), code 0, the byte in
-// the value; a device event its own type, code, and value — the packed
-// word (type << 48 | code << 32 | value) the ABI fixed. The device
-// half: the eventq (queue 0) with sixteen 8-byte buffers pre-posted on
-// one allocator block, the completion wired — the transport's PLIC IRQ
-// parked in the shim's cell, the PLIC's priority and enable set — so
-// the device's events wake the machine the serial's bytes do; the ISR's
-// whole duty on that line is the wake (the eventq holds the events),
-// and the drain recycles each buffer through the avail ring. The
-// statusq (queue 1) is untouched — the pointer sprite's M8 piece.
+// virtio-input keyboard's event stream (DeviceID 18) merged with the
+// serial console's bytes and, since T8.11, with the pointer driver's
+// events. The UART's input ring (T3.7) is this service's to drain now:
+// the read verb (gate verb 2) and the boot demo's bare-pid readers take
+// the next byte from it, the device-wait park moving here with the
+// ownership — the shim's wake (the runtime's emo_sched_wake_console,
+// the name it booted with) wakes every state-4 slot, and this service
+// and the pointer driver are the machine's device-waiters. The
+// input_read verb (verb 12) takes the next event of the merged stream:
+// the bytes first, then the keyboard's, then the pointer's — the one
+// order the sources can name without a clock, and the rule
+// docs/syscalls.md states. A byte event rides type 0x454D ("EM"), code
+// 0, the byte in the value; a device event its own type, code, and
+// value — the packed word (type << 48 | code << 32 | value) the ABI
+// fixed. The keyboard half: the eventq (queue 0) with sixteen 8-byte
+// buffers pre-posted on one allocator block, the completion wired — the
+// transport's PLIC IRQ a bit in the shim's mask cell, the PLIC's
+// priority and enable set — so the device's events wake the machine the
+// serial's bytes do; the ISR's whole duty on that line is the wake (the
+// eventq holds the events), and the drain recycles each buffer through
+// the avail ring. The pointer half is the driver's below: its own
+// eventq, its events into the pointer ring this merge reads. The
+// statusq (queue 1) of either device is untouched.
 def input_byte() Int64 {
   var got = 0
   var done = false
@@ -1193,6 +1280,14 @@ def input_byte() Int64 {
     }
   }
   return got
+}
+
+// Whether the device's used ring holds an event this queue has not
+// taken (T8.11): the pointer's drain walks the ring to its end on every
+// wake, and a separator packs to the same zero `eventq_take` answers
+// for an empty ring, so the drain asks the ring, not the answer.
+def eventq_pending(q Int64) Bool {
+  return peek16r(q + 0x2000 + 2) != peek64(q + 0x3f00)
 }
 
 // One event from the device's used ring, or 0 when none is pending.
@@ -1230,10 +1325,33 @@ def eventq_take(dev Int64, q Int64) Int64 {
   return (ty << 48) | (code << 32) | value
 }
 
+// The pointer ring (T8.11): the pointer driver's events on their way
+// into the merged stream — the producer the driver, the consumer the
+// input service, 32 entries, a full ring dropping the event (the
+// eventq's own rule); the entry lands before the cursor.
+def pointer_ring_push(e Int64) Void {
+  var prod = peek64(pointer_ring_prod)
+  if prod - peek64(pointer_ring_cons) < 32 {
+    poke64(pointer_ring + ((prod % 32) * 8), e)
+    fence()
+    poke64(pointer_ring_prod, prod + 1)
+  }
+}
+
+def pointer_ring_take() Int64 {
+  var cons = peek64(pointer_ring_cons)
+  if cons == peek64(pointer_ring_prod) {
+    return 0
+  }
+  var e = peek64(pointer_ring + ((cons % 32) * 8))
+  poke64(pointer_ring_cons, cons + 1)
+  return e
+}
+
 // The merged stream's next event: the serial's byte if the ring holds
-// one (the byte event), else the device's next event, else the
-// device-wait park — the wake is the UART's ISR or the input line's,
-// either one lands.
+// one (the byte event), else the keyboard's next event, else the
+// pointer ring's, else the device-wait park — the wake is the UART's
+// ISR or an input line's, any one lands.
 def input_event(dev Int64, q Int64) Int64 {
   var got = 0
   var done = false
@@ -1250,37 +1368,27 @@ def input_event(dev Int64, q Int64) Int64 {
         got = e
         done = true
       } else {
-        device_wait()
+        var p = pointer_ring_take()
+        if p != 0 {
+          got = p
+          done = true
+        } else {
+          device_wait()
+        }
       }
     }
   }
   return got
 }
 
-def input_service(boss Pid) Void {
-  // The slot scan: the input device is DeviceID 18.
-  var dev = 0
-  var dev_slot = 0
-  var slot = 0
-  while slot < 8 {
-    var cand = virtio_base + slot * 0x1000
-    if peek64(cand) == 0x274726976 {
-      if (peek64(cand + 8) & 0xFFFFFFFF) == 18 {
-        dev = cand
-        dev_slot = slot
-      }
-    }
-    slot = slot + 1
-  }
-  if dev == 0 {
-    println("input: no input device on the virtio buses")
-    halt()
-  }
-  var q = frames.take()
-  if q == 0 {
-    println("input: no block for the queue")
-    halt()
-  }
+// One virtio-input device's bring-up (T8.3, shared by the two drivers
+// since T8.11): the queue block's rings zeroed, the modern negotiation
+// (VIRTIO_F_VERSION_1 alone — the input device offers no features),
+// the eventq's sixteen 8-byte buffers posted, the drain's cursors set,
+// and the transport's line wired — its PLIC number a bit in the shim's
+// mask cell, the PLIC's priority and the enable bit (a read-modify-
+// write, the UART's bit already set).
+def input_dev_init(dev Int64, q Int64) Void {
   blk_zero(q, 32)
   blk_zero(q + 0x1000, 5)
   blk_zero(q + 0x2000, 17)
@@ -1326,18 +1434,62 @@ def input_service(boss Pid) Void {
   poke8(q + 0x1003, 0B)
   fence()
   mmio32(dev + 0x050, 0)
-  // The drain's cursors: the used index this service has consumed, the
+  // The drain's cursors: the used index this driver has consumed, the
   // avail index the next recycled buffer takes.
   poke64(q + 0x3f00, 0)
   poke64(q + 0x3f08, 16)
-  // The device's line: the transport's PLIC IRQ into the shim's cell
-  // first (0 = not wired, the loud end it always was), then the PLIC's
-  // priority and the enable bit — the enable a read-modify-write, the
-  // UART's bit already set.
-  var irq = dev_slot + 1
-  poke64(input_irq_cell, irq)
+  var irq = ((dev - virtio_base) / 0x1000) + 1
+  poke64(input_irq_cell, peek64(input_irq_cell) | (1 << irq))
   poke32(plic + (irq * 4), 1)
   poke32(plic_enable, peek32(plic_enable) | (1 << irq))
+}
+
+// An absolute axis's maximum, read off the device's config space
+// (T8.11): the select byte names ABS_INFO, the subselect the axis, and
+// the size byte says whether the device has the axis at all — the
+// keyboard answers none, the pointer its range — so the axis is also
+// how the two DeviceID-18 transports are told apart. -1 when absent.
+def input_abs_max(dev Int64, axis Int64) Int64 {
+  poke8(dev + 0x100, 18B)
+  poke8(dev + 0x101, axis.to_byte())
+  if peek8(dev + 0x102).to_int64() == 0 {
+    return -1
+  }
+  return peek32(dev + 0x10c)
+}
+
+// The slot scan for an input transport: DeviceID 18 with an absolute X
+// axis (the pointer) or without one (the keyboard); 0 when none.
+def input_find(pointer Bool) Int64 {
+  var found = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 18 {
+        var abs = input_abs_max(cand, 0) >= 0
+        if abs == pointer {
+          found = cand
+        }
+      }
+    }
+    slot = slot + 1
+  }
+  return found
+}
+
+def input_service(boss Pid) Void {
+  var dev = input_find(false)
+  if dev == 0 {
+    println("input: no keyboard on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("input: no block for the queue")
+    halt()
+  }
+  input_dev_init(dev, q)
   println("input ready")
   boss <- self_pid()
   while true {
@@ -1355,6 +1507,108 @@ def input_service(boss Pid) Void {
         }
       }
     }
+  }
+}
+
+// The pointer's driver (T8.11, emo-desktop A8.2): the second
+// virtio-input device, the tablet — absolute axes, so the position the
+// run's hand names (the monitor's mouse_move) is the position the
+// device reports — a process of its own, because the merge above
+// drains its keyboard only while a read is parked on it, and the
+// pointer must move whether or not anyone is reading. The driver parks
+// on the device world and on every wake walks its used ring to the
+// end: each event into the pointer ring for the merged stream, each
+// absolute X or Y into the position cells, and at each report's
+// separator a generation step and one notice to the compositor — one
+// at a time, the notice flag the coalescing — whose cursor plane reads
+// the position and composites the sprite (the compositor's piece,
+// below). The axes' maxima come off the device's config, never a
+// constant: the compositor scales the position to the mode with them.
+def ev_type_of(e Int64) Int64 {
+  return (e >> 48) & 65535
+}
+
+def ev_code_of(e Int64) Int64 {
+  return (e >> 32) & 65535
+}
+
+def ev_value_of(e Int64) Int64 {
+  return e & 4294967295
+}
+
+def pointer_notify() Void {
+  if peek64(pointer_notice_cell) == 0 {
+    var comp = peek64(comp_svc_cell)
+    if comp != 0 {
+      poke64(pointer_notice_cell, 1)
+      gate_post(comp, pointer_op << 32)
+    }
+  }
+}
+
+// The wake's drain (T8.11): the used ring to its end, each event into
+// the pointer ring and the merge's device-waiter woken for it — the
+// input service may be parked on the device world with a reader
+// waiting, and nothing but a wake brings it back to look at the ring —
+// each absolute X or Y into the position cells, and the separator the
+// report's end: the generation steps and the compositor is told once.
+def pointer_drain(dev Int64, q Int64) Void {
+  var pushed = false
+  while eventq_pending(q) {
+    var e = eventq_take(dev, q)
+    if e == 0 {
+      if peek64(pointer_dirty_cell) != 0 {
+        poke64(pointer_dirty_cell, 0)
+        poke64(pointer_gen_cell, peek64(pointer_gen_cell) + 1)
+        pointer_notify()
+      }
+    } else {
+      pointer_ring_push(e)
+      pushed = true
+      if ev_type_of(e) == 3 {
+        var code = ev_code_of(e)
+        if code == 0 {
+          poke64(pointer_x_cell, ev_value_of(e))
+          poke64(pointer_dirty_cell, 1)
+        }
+        if code == 1 {
+          poke64(pointer_y_cell, ev_value_of(e))
+          poke64(pointer_dirty_cell, 1)
+        }
+      }
+    }
+  }
+  if pushed {
+    device_wake()
+  }
+}
+
+def pointer_service(boss Pid) Void {
+  var dev = input_find(true)
+  if dev == 0 {
+    println("pointer: no pointer device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("pointer: no block for the queue")
+    halt()
+  }
+  poke64(pointer_ring_prod, 0)
+  poke64(pointer_ring_cons, 0)
+  poke64(pointer_x_cell, 0)
+  poke64(pointer_y_cell, 0)
+  poke64(pointer_max_x_cell, input_abs_max(dev, 0))
+  poke64(pointer_max_y_cell, input_abs_max(dev, 1))
+  poke64(pointer_gen_cell, 0)
+  poke64(pointer_notice_cell, 0)
+  poke64(pointer_dirty_cell, 0)
+  input_dev_init(dev, q)
+  println("pointer ready")
+  boss <- self_pid()
+  while true {
+    device_wait()
+    pointer_drain(dev, q)
   }
 }
 
@@ -1479,14 +1733,194 @@ def comp_reclaim(pid Int64) Void {
   }
 }
 
+// The cursor plane (T8.11, emo-desktop A8.2): the compositor's second
+// plane, composited in software — the display's screendump is the
+// golden's eye, and a device cursor never reaches a screendump, so the
+// pointer the golden can see is the one the carve holds. The sprite is
+// the desktop's, read from the carve's sprite memory at each
+// composition (the full-screen pass uploads it; a zero width is no
+// sprite yet); the plane's own state is the save-under — the carve's
+// words under the sprite, kept in the sprite memory's kernel half — and
+// the cells on the compositor's page that say where the sprite stands.
+// A move hides the sprite (the saved words back), shows it at the new
+// place (the words under it saved, its opaque pixels stored), and
+// presents the one rectangle both places lie in; a window's composition
+// hides the sprite around its blit, so the save-under never holds a
+// window's stale words. Pixel loops in typed defs, the rule.
+def sprite_w() Int64 {
+  return peek32(koff + sprite_header)
+}
+
+def sprite_h() Int64 {
+  return peek32(koff + sprite_header + 4)
+}
+
+def sprite_hot_x() Int64 {
+  return peek32(koff + sprite_header + 8)
+}
+
+def sprite_hot_y() Int64 {
+  return peek32(koff + sprite_header + 12)
+}
+
+def cursor_show(x Int64, y Int64) Void {
+  var w = sprite_w()
+  var h = sprite_h()
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var r = 0
+  while r < h {
+    var c = 0
+    while c < w {
+      var px = x + c
+      var py = y + r
+      if px >= 0 && px < mw && py >= 0 && py < mh {
+        var at = koff + screen_base + ((py * mw) + px) * 4
+        var i = ((r * w) + c) * 4
+        poke32(koff + sprite_under + i, peek32(at))
+        var s = peek32(koff + sprite_pixels + i)
+        if (s >> 24) != 0 {
+          poke32(at, s & 16777215)
+        }
+      }
+      c = c + 1
+    }
+    r = r + 1
+  }
+}
+
+def cursor_hide(x Int64, y Int64) Void {
+  var w = sprite_w()
+  var h = sprite_h()
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var r = 0
+  while r < h {
+    var c = 0
+    while c < w {
+      var px = x + c
+      var py = y + r
+      if px >= 0 && px < mw && py >= 0 && py < mh {
+        poke32(koff + screen_base + ((py * mw) + px) * 4, peek32(koff + sprite_under + ((r * w) + c) * 4))
+      }
+      c = c + 1
+    }
+    r = r + 1
+  }
+}
+
+// The rectangle from one corner to the other, clipped to the mode, as
+// the flush's word — 0 when nothing of it is on the carve.
+def cursor_rect(x0 Int64, y0 Int64, x1 Int64, y1 Int64) Int64 {
+  var ax = x0
+  var ay = y0
+  var bx = x1
+  var by = y1
+  if ax < 0 {
+    ax = 0
+  }
+  if ay < 0 {
+    ay = 0
+  }
+  if bx > peek64(comp_mode_w) {
+    bx = peek64(comp_mode_w)
+  }
+  if by > peek64(comp_mode_h) {
+    by = peek64(comp_mode_h)
+  }
+  if bx <= ax || by <= ay {
+    return 0
+  }
+  return rect_word(ax, ay, bx - ax, by - ay)
+}
+
+// The display service's flush answered (T8.6): the gate's words that
+// arrive while it is in flight are stashed and served after; the stop's
+// tuples do not race the flush — the loud end names one.
+def comp_await_flush() Void {
+  var flushed = false
+  while !flushed {
+    receive {
+      r -> {
+        if r == 0 {
+          flushed = true
+        } else {
+          if op_of(r) >= 0 {
+            comp_stash_push(r)
+          } else {
+            println("comp: the stop does not race the flush")
+            halt()
+          }
+        }
+      }
+    }
+  }
+}
+
+// The pointer's notice (op 18): the flag cleared first — a report that
+// lands after this read is the next notice — then the position scaled
+// to the mode by the axes' maxima, the sprite moved, the rectangle both
+// places lie in presented, and the plane's first line on the wire once
+// (`pointer <x> <y>`, the hotspot's place: the ride would drown in a
+// line per move).
+def comp_cursor_place(gpu Pid, me Pid) Void {
+  poke64(pointer_notice_cell, 0)
+  poke64(comp_cursor_gen, peek64(pointer_gen_cell))
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var hx = (peek64(pointer_x_cell) * mw) / (peek64(pointer_max_x_cell) + 1)
+  var hy = (peek64(pointer_y_cell) * mh) / (peek64(pointer_max_y_cell) + 1)
+  var w = sprite_w()
+  var h = sprite_h()
+  if w != 0 && h != 0 {
+    var nx = hx - sprite_hot_x()
+    var ny = hy - sprite_hot_y()
+    var x0 = nx
+    var y0 = ny
+    var x1 = nx + w
+    var y1 = ny + h
+    if peek64(comp_cursor_shown) != 0 {
+      var ox = peek64(comp_cursor_x)
+      var oy = peek64(comp_cursor_y)
+      cursor_hide(ox, oy)
+      if ox < x0 {
+        x0 = ox
+      }
+      if oy < y0 {
+        y0 = oy
+      }
+      if ox + w > x1 {
+        x1 = ox + w
+      }
+      if oy + h > y1 {
+        y1 = oy + h
+      }
+    }
+    cursor_show(nx, ny)
+    poke64(comp_cursor_x, nx)
+    poke64(comp_cursor_y, ny)
+    poke64(comp_cursor_shown, 1)
+    var rect = cursor_rect(x0, y0, x1, y1)
+    if rect != 0 {
+      gpu <- (2 << 32, me, rect)
+      comp_await_flush()
+    }
+    if peek64(comp_cursor_said) == 0 {
+      poke64(comp_cursor_said, 1)
+      println("pointer ${hx} ${hy}")
+    }
+  }
+}
+
 // The compositor's word handling (T8.6): the stack's verbs (15 focus,
-// 16 move) and the composition requests (op 17, the route the window
-// present answers). The composition: the stack's position, the blit,
-// the display service's flush — the gate's words that arrive while it
-// is in flight stashed and served after (the stop's tuples do not
-// race the flush: the loud end names one) — the row's ready flag and
-// damage rect recorded, and the answer after the flush: the frame
-// lands whole (the protocol's sixth seam).
+// 16 move), the composition requests (op 17, the route the window
+// present answers), and the pointer's notices (op 18, T8.11). The
+// composition: the stack's position, the sprite hidden, the blit, the
+// sprite shown again, the display service's flush — the gate's words
+// that arrive while it is in flight stashed and served after (the
+// stop's tuples do not race the flush: the loud end names one) — the
+// row's ready flag and damage rect recorded, and the answer after the
+// flush: the frame lands whole (the protocol's sixth seam).
 def comp_word(w Int64, gpu Pid, me Pid) Void {
   var op = op_of(w)
   if op == 15 {
@@ -1524,25 +1958,16 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         var hh = peek64(row + 40)
         var x = peek64(entry + 8)
         var y = peek64(entry + 16)
-        var sum = comp_blit(base, ww, hh, x, y)
-        gpu <- (0, me, 0)
-        var flushed = false
-        while !flushed {
-          receive {
-            r -> {
-              if r == 0 {
-                flushed = true
-              } else {
-                if op_of(r) >= 0 {
-                  comp_stash_push(r)
-                } else {
-                  println("comp: the stop does not race the flush")
-                  halt()
-                }
-              }
-            }
-          }
+        var shown = peek64(comp_cursor_shown)
+        if shown != 0 {
+          cursor_hide(peek64(comp_cursor_x), peek64(comp_cursor_y))
         }
+        var sum = comp_blit(base, ww, hh, x, y)
+        if shown != 0 {
+          cursor_show(peek64(comp_cursor_x), peek64(comp_cursor_y))
+        }
+        gpu <- (0, me, 0)
+        comp_await_flush()
         poke64(row + 56, 1)
         poke64(row + 64, peek64(comp_args + 8))
         poke64(row + 72, peek64(comp_args + 16))
@@ -1551,8 +1976,12 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         println("comp ${x} ${y} ${sum & 4294967295}")
         gate_reply(caller_of(w), 0)
       } else {
-        println("comp: the verb is nobody's")
-        halt()
+        if op == pointer_op {
+          comp_cursor_place(gpu, me)
+        } else {
+          println("comp: the verb is nobody's")
+          halt()
+        }
       }
     }
   }
@@ -1579,6 +2008,13 @@ def comp_service(boss Pid, gpu Pid) Void {
     }
   }
   println("comp gen ${gen}")
+  // The cursor plane across the restart (T8.11): a notice the dead
+  // instance never read, or a pointer generation past the one the
+  // sprite shows, is a composition the new instance owes before it
+  // announces — the pages say where the sprite stands.
+  if peek64(pointer_notice_cell) != 0 || peek64(pointer_gen_cell) != peek64(comp_cursor_gen) {
+    comp_cursor_place(gpu, me2)
+  }
   boss <- self_pid()
   var running = true
   while running {
@@ -1812,7 +2248,11 @@ do console_service(me)
 do process_service(me)
 do blk_service(me)
 do gpu_service(me)
+// The input lines' mask is the two drivers' to fill, bit by bit (T8.11):
+// empty before either runs.
+poke64(input_irq_cell, 0)
 do input_service(me)
+do pointer_service(me)
 uart_init()
 println("Hello, EmoOS!")
 sv39_report()
@@ -1831,6 +2271,7 @@ receive { i1 -> {
   poke64(input_svc_cell, pid_num(i1))
   input_svc = i1
 } }
+receive { p1 -> {} }
 
 // The display's flush smoke (T8.1): the root asks the driver for the
 // mode (the answer that verb 11 will one day route), paints the

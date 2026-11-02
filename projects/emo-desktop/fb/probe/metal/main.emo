@@ -2,14 +2,16 @@ require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_frame"
 
-// The metal's lowering, pinned without a machine: the core, the font
-// and the first frame built for `riscv64` as a user program, every def
-// of every module a metal consumer reaches lowered — the box model, the
-// palette, the clip and blend arithmetic, the backend, the tree and its
-// digest, and (A8.1) the paint walk whole: the box fills, each label's
-// glyphs through `font.glyph_of` — the one-byte `substring` and the
-// alphabet's `index_of` the metal lowers for it — and the surface's
-// `glyph` verb. What is left out is what the metal cannot take: the
+// The metal's lowering, pinned without a machine: the core, the font,
+// the pointer and the first frame built for `riscv64` as a user
+// program, every def of every module a metal consumer reaches lowered —
+// the box model, the palette, the clip and blend arithmetic, the
+// backend, the tree and its digest, (A8.1) the paint walk whole: the box
+// fills, each label's glyphs through `font.glyph_of` — the one-byte
+// `substring` and the alphabet's `index_of` the metal lowers for it —
+// and the surface's `glyph` verb, and (A8.2) the pointer's drawing read
+// cell by cell, the walk the screen pass makes when it writes the sprite
+// into the carve. What is left out is what the metal cannot take: the
 // canvas (a `Bytes`) and the packages' own tests (the loop driven with
 // def values). The program is never run here — `projects/emo-os/run.sh`
 // runs the real pass on the real carve; this is the build that fails
@@ -64,6 +66,8 @@ def main() {
   const t = Tally.new(width: 1024, height: 768)
   ui_fb.paint(ui_fb_frame.tree(), t)
   println("painted ${t.fills()} boxes, ${t.glyphs()} glyphs")
+  ui_fb.pointer.paint(t, 512, 384)
+  println("pointer ${t.fills() - 6} cells")
 }
 
 main()

@@ -1,7 +1,7 @@
 #!/bin/sh
-# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1): the four packages
-# under `fb/` — the core (`emo/ui_fb`, with the bitmap font as its second
-# module), the hosted canvas (`emo/ui_fb_canvas`), the first frame
+# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2): the four
+# packages under `fb/` — the core (`emo/ui_fb`, with the bitmap font and
+# the pointer sprite as its second and third modules), the hosted canvas (`emo/ui_fb_canvas`), the first frame
 # (`emo/ui_fb_frame`) and their goldens — type-checked, their tests run,
 # their targets built, their bytes compared, the font's table checked
 # against its drawing, and the metal's lowering pinned without a machine.
@@ -66,14 +66,14 @@ build() {
 # serve a module a package no longer has. A dependency's modules are
 # what a consumer reaches, so each package is staged without its test;
 # the goldens and the probe are consumers and are built in place.
-sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo \
+sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo ui_fb.emo font.emo "$REG/emo/ui_fb/0.1.0/"
+cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
 cp frame/package.emo frame/ui_fb_frame.emo "$REG/emo/ui_fb_frame/0.1.0/"
 
@@ -104,14 +104,14 @@ expect 0 "the core and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the core's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 32 "all thirty-two core assertions pass" "$n"
+expect 39 "all thirty-nine core assertions pass" "$n"
 
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" check ui_fb_canvas.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas and its test type-check" "$rc"
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" run test.emo ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 28 "all twenty-eight canvas assertions pass" "$n"
+expect 35 "all thirty-five canvas assertions pass" "$n"
 
 ( cd frame && EMO_REGISTRY="$REG" "$EMO" check ui_fb_frame.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the first frame type-checks" "$rc"

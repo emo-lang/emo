@@ -184,17 +184,25 @@ bits 48..63, the code in bits 32..47, the value in bits 0..31 — the
 virtio-input device's own event types riding verbatim (0 the
 separator, 1 a key, 2 a relative move, 3 an absolute one) and one
 machine type beside them: 0x454D ("EM") is the serial console's byte,
-the byte in the value, the code 0. The stream merges the device's
-events with the serial's bytes in the one order the two sources can
-name without a clock — the bytes first, then the device's — and the
-machine's standing discipline holds: one reader at a time (the
-service's mailbox is the wait queue; a read parks the caller and the
-service until the stream has something). The device half is wired:
-the eventq's completion rides the PLIC (the input service's driver
-parks its transport's IRQ number in the shim's cell), so the device's
-events wake the machine the serial's bytes do; an event the sixteen
-pre-posted buffers cannot hold at the moment it fires is the one
-event the service loses.
+the byte in the value, the code 0. The stream merges three sources in
+the one order they can name without a clock — the serial's bytes
+first, then the keyboard's events, then the pointer's (T8.11: the
+tablet's absolute reports — ABS_X and ABS_Y, codes 0 and 1, in the
+device's own range — and its buttons, through the pointer driver's
+ring, the way the serial's bytes reach the merge through theirs) —
+and the machine's standing discipline holds: one reader at a time
+(the service's mailbox is the wait queue; a read parks the caller and
+the service until the stream has something). The device halves are
+wired: each eventq's completion rides the PLIC (each input driver sets
+its transport's IRQ number as a bit of the shim's mask cell), so the
+devices' events wake the machine the serial's bytes do; an event the
+sixteen pre-posted buffers of a device cannot hold at the moment it
+fires is the one event that device loses. The pointer's reports also
+move the compositor's cursor plane, which is no part of this verb: the
+plane reads the driver's position cells and the stream carries the
+events unchanged — a reader that wants the pointer reads it here, and
+the sprite on the display is the compositor's (T8.11, the desktop ABI's
+sprite memory).
 
 ## The user surface
 

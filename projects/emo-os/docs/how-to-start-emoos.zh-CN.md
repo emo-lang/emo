@@ -55,6 +55,7 @@ $ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
     -device virtio-blk-device,drive=emoos-blk \
     -device virtio-gpu-device,xres=1024,yres=768 \
     -device virtio-keyboard-device \
+    -device virtio-tablet-device \
     -kernel main.elf
 ```
 

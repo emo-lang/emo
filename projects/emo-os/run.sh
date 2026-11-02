@@ -40,6 +40,21 @@ case $frame_digest in
     ;;
 esac
 
+# The pointer's drawing (emo-desktop A8.2, T8.11): the sprite the
+# compositor's cursor plane composites is the desktop's, drawn in
+# `pointer.emo` as rows of cells (`#` ink, `o` paper, `.` clear), and
+# the model of the display below reads those rows off the same file —
+# the display's pixels and the drawing cannot drift apart, for the
+# reason the frame's digest cannot: one drawing, one file. POINTER_SPRITE
+# names the file; the dune smoke points it at the repository's.
+pointer_sprite=${POINTER_SPRITE:-../emo-desktop/fb/pointer.emo}
+if [ ! -f "$pointer_sprite" ]; then
+  echo "run.sh: the pointer sprite's drawing is missing: $pointer_sprite" >&2
+  echo "  (projects/emo-desktop/fb/pointer.emo draws the sprite the compositor" >&2
+  echo "  composites and this run's display model reads; POINTER_SPRITE names it)" >&2
+  exit 1
+fi
+
 # The block device's backing (T7.1): a raw 1 MiB image, written zero
 # before the first boot (T7.2) — so the two boots below are one story:
 # the first finds a blank disk and the filesystem formats it, the
@@ -103,8 +118,9 @@ boot() {
   local fifo
   fifo=$(mktemp -u /tmp/emoos-serial.XXXXXX)
   mkfifo "$fifo"
-  local mon
+  local mon qmp
   mon=$(mktemp -u /tmp/emoos-mon.XXXXXX)
+  qmp=$(mktemp -u /tmp/emoos-qmp.XXXXXX)
 
   : > "$log"
   : > "$log.trace"
@@ -118,16 +134,20 @@ boot() {
   # 1280x800, the golden would name it). The display itself has no
   # window on the asserted leg (`-display none`): its truth is the
   # monitor's screendump (T8.8); the ride's window is start.sh's. The
-  # keyboard (T8.3) is the merged input stream's device half; the
-  # monitor socket is the run's hand — the sendkey injection the input
-  # beat waits for.
+  # keyboard (T8.3) is the merged input stream's device half and the
+  # tablet (T8.11) the pointer's — absolute axes, so the position the
+  # monitor's mouse_move names is the position the device reports; the
+  # monitor socket is the run's hand — the sendkey and the mouse_move
+  # the input beat waits for.
   qemu-system-riscv64 -machine virt -nographic -display none -d int -cpu "$cpu" \
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
     -device virtio-gpu-device,xres=1024,yres=768 \
     -device virtio-keyboard-device \
+    -device virtio-tablet-device \
     -monitor unix:"$mon",server,nowait \
+    -qmp unix:"$qmp",server,nowait \
     -kernel "$elf" <"$fifo" >"$log" 2>"$log.trace" &
   local qemu_pid=$!
   exec 3>"$fifo"
@@ -210,6 +230,30 @@ time.sleep(0.3)
 s.close()
 PYEOF
   }
+  # The run's other hand (T8.11): one QMP command over the second
+  # socket — the capabilities handshake, the command, the answer read,
+  # the socket closed. The pointer's events ride it: the monitor's
+  # mouse_move queues relative motion, which an absolute device — the
+  # tablet — has no handler for and QEMU drops, so the absolute report
+  # is input-send-event's, the one hand that names a position.
+  qmp() {
+    python3 - "$qmp" "$1" <<'PYEOF'
+import json, socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+f = s.makefile('rw')
+f.readline()
+f.write(json.dumps({"execute": "qmp_capabilities"}) + "\n")
+f.flush()
+f.readline()
+f.write(sys.argv[2] + "\n")
+f.flush()
+answer = json.loads(f.readline())
+if "error" in answer:
+    sys.exit(f"run.sh: QMP refused {sys.argv[2]}: {answer['error']}")
+s.close()
+PYEOF
+  }
   # The first frame (emo-desktop A7.2): the screen pass laid the fb
   # core's tree into the carve and presented it, its own digest of the
   # carve's words on the wire (`frame <n>`). The monitor's screendump
@@ -254,6 +298,20 @@ PYEOF
   await 'key 1 16 1'
   printf 'K' >&3
   await 'byte 75'
+  # The pointer's beat (T8.11, emo-desktop A8.2): the monitor's hand
+  # moves the tablet to the display's center — input-send-event's
+  # absolute coordinates on the device's 0..32767 axes — and two things
+  # happen from the one report: the pointer driver's events ride the merged stream after
+  # the keyboard's (the pass prints the X and the Y as `move <axis>
+  # <value>`), and the driver's notice reaches the compositor, whose
+  # cursor plane scales the position to the mode, composites the
+  # desktop's sprite into the carve, presents the rectangle, and says
+  # so once (`pointer 512 384`, the hotspot's place). The two lines'
+  # order is the scheduler's, so each is awaited on its own; the
+  # sprite's pixels are the second screendump's below.
+  qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":16384}},{"type":"abs","data":{"axis":"y","value":16384}}]}}'
+  await 'move 1 16384'
+  await 'pointer 512 384'
   # The golden's eyes (T8.8): the compositor's compositions blitted the
   # window's frame into the carve and flushed — the monitor's screendump
   # takes the display's PPM and every pixel is read back against the
@@ -271,7 +329,7 @@ PYEOF
   # kills the machine first, the survivor poisons the next run.
   await 'comp 16 32'
   hmp 'screendump .screen.ppm'
-  if ! python3 - <<'PYEOF'
+  if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
 import sys
 
 data = open('.screen.ppm', 'rb').read()
@@ -280,7 +338,33 @@ if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
 px = data[16:]
 frame = open('.frame.ppm', 'rb').read()[16:]
 
+# The pointer sprite (T8.11, emo-desktop A8.2): the drawing's rows read
+# off pointer.emo — the quoted strings of `.`, `#` and `o` — composited
+# over everything at the hotspot the beat put it at, (512, 384): ink
+# black, paper white, a clear cell the pixel beneath. The compositor hid
+# it around the window blits and showed it again, so it lies over the
+# second copy's neighborhood untouched by either.
+import os
+import re
+
+rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(os.environ['POINTER_SPRITE']).read(), re.M)
+if len(rows) != 17 or any(len(r) != 12 for r in rows):
+    sys.exit(f"run.sh: {os.environ['POINTER_SPRITE']} does not draw the 12x17 sprite")
+
+def sprite(x, y):
+    r, c = y - 384, x - 512
+    if 0 <= r < 17 and 0 <= c < 12:
+        cell = rows[r][c]
+        if cell == '#':
+            return (0, 0, 0)
+        if cell == 'o':
+            return (255, 255, 255)
+    return None
+
 def want(x, y):
+    s = sprite(x, y)
+    if s is not None:
+        return s
     if 16 <= x < 528 and 32 <= y < 160:
         return (73, 78, y - 32)
     if x < 512 and y < 128:
@@ -405,7 +489,9 @@ PYEOF
   # through the gate (T7.2: a 600-byte file written and read back byte
   # for byte, a second file written and removed, the list naming two),
   # the misbehaving
-  # child's line, the supervisor's kill report (the faulting load is
+  # child's line (the pids are the spawn order's: the pointer driver,
+  # T8.11, is one more kernel process ahead of every user pass, so the
+  # four offenders are 18 to 21 now), the supervisor's kill report (the faulting load is
   # the one the pass's own table maps nothing — the load page fault,
   # cause 13; the epc moves per build and is not asserted, but T6.4's
   # stval names the address and is asserted), then the runaway's line
@@ -470,8 +556,10 @@ PYEOF
   # the ninth), the window buffer's four-block run (T8.5, taken at
   # win_new and given back at its win_close), the DMA check's block,
   # and the block driver's
-  # queue block (T7.1) beside the display driver's (T8.1) and the input
-  # driver's (T8.3), each held
+  # queue block (T7.1) beside the display driver's (T8.1), the input
+  # driver's (T8.3) and the pointer driver's (T8.11 — its two-block
+  # arena run and its queue block are the three the count grew by),
+  # each held
   # for the service's life like the services' arenas — and
   # thirty given back — the four readers' arenas at
   # their deaths, the first filesystem instance's arena at its stop,
@@ -484,7 +572,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 77 45'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 80 45'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -510,6 +598,28 @@ PYEOF
   ppos=$(grep -aboF -- 'present ok' "$log" | head -1 | cut -d: -f1)
   if [ "$fpos" -lt "$opos" ] || [ "$fpos" -gt "$ppos" ]; then
     echo "run.sh: 'frame $frame_digest' arrived out of order" >&2
+    exit 1
+  fi
+  # The cursor plane's line (T8.11): the compositor's one `pointer`
+  # line — the hotspot at the display's center, the position the beat's
+  # mouse_move named scaled to the mode — after the byte the input pass
+  # read and before the window pass began: its order against the pass's
+  # own `move` lines is the scheduler's, so it is placed here, not in
+  # the list above.
+  local qpos bpos wpos
+  qpos=$(grep -aboF -- 'pointer 512 384' "$log" | head -1 | cut -d: -f1 || true)
+  if [ -z "$qpos" ]; then
+    echo "run.sh: the compositor never delivered 'pointer 512 384'" >&2
+    exit 1
+  fi
+  bpos=$(grep -aboF -- 'byte 75' "$log" | head -1 | cut -d: -f1)
+  wpos=$(grep -aboF -- 'win 1' "$log" | head -1 | cut -d: -f1)
+  if [ "$qpos" -lt "$bpos" ] || [ "$qpos" -gt "$wpos" ]; then
+    echo "run.sh: 'pointer 512 384' arrived out of order" >&2
+    exit 1
+  fi
+  if [ "$(grep -c '^pointer ' "$log" || true)" -ne 2 ]; then
+    echo "run.sh: expected the plane's one 'pointer' line beside 'pointer ready'" >&2
     exit 1
   fi
   # The shell's write, proven by the list that followed it: the second
@@ -575,9 +685,9 @@ PYEOF
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, frame, keys, win, comp restart, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, frame, keys, win, comp restart, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, shell, counter, frames, self-exit, 1 ecall"

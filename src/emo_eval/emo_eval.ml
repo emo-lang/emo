@@ -329,6 +329,10 @@ let global_env () =
     { bound = BuiltinFn "poke32"; mutable_ = false };
   Hashtbl.replace env.frame "device_wait"
     { bound = BuiltinFn "device_wait"; mutable_ = false };
+  Hashtbl.replace env.frame "device_wake"
+    { bound = BuiltinFn "device_wake"; mutable_ = false };
+  Hashtbl.replace env.frame "gate_post"
+    { bound = BuiltinFn "gate_post"; mutable_ = false };
   Hashtbl.replace env.frame "ecall"
     { bound = BuiltinFn "ecall"; mutable_ = false };
   Hashtbl.replace env.frame "user_spawn"
@@ -2911,7 +2915,7 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
   | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-       | "device_wait" | "sfence" ) as name),
+       | "device_wait" | "device_wake" | "sfence" ) as name),
       _ ) ->
       error span "E4028"
         (Printf.sprintf
@@ -2922,7 +2926,7 @@ and apply_builtin span name args =
       error span "E4028"
         "`ecall` reaches the machine's gate: only the `riscv64` target admits \
          it, not the interpreter"
-  | (("user_spawn" | "gate_reply" | "pid_num") as name), _ ->
+  | (("user_spawn" | "gate_reply" | "gate_post" | "pid_num") as name), _ ->
       error span "E4028"
         (Printf.sprintf
            "`%s` reaches the kernel's service machinery: only the `riscv64` \

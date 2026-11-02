@@ -756,17 +756,27 @@ emo_os_console_irq:
     beqz a0, .Lcons_done     # a spurious claim: nothing to complete
     li t1, 10
     beq a0, t1, .Lcons_drain # the UART's line: the FIFO drains here
-    li t3, EMO_KOFF + 0x870029f0  # the input service's IRQ cell (T8.3):
-                                  # the driver parked its transport's
-                                  # PLIC number; 0 = not wired, the loud
+    li t3, EMO_KOFF + 0x870029f0  # the input lines' mask (T8.3, T8.11):
+                                  # each input driver sets its
+                                  # transport's PLIC number as a bit —
+                                  # the keyboard's merge and the pointer's
+                                  # driver; 0 = nothing wired, the loud
                                   # end this branch always was
     ld t3, 0(t3)
     beqz t3, .Lcons_bad
-    bne a0, t3, .Lcons_bad   # a device this kernel does not know
-    # The input device's line (T8.3): the eventq holds the events, so
-    # the ISR's whole duty is the wake — the service drains and
-    # recycles when it runs.
+    srl t4, t3, a0
+    andi t4, t4, 1
+    beqz t4, .Lcons_bad      # a device this kernel does not know
+    # An input device's line (T8.3): the eventq holds the events, so
+    # the ISR's whole duty is the wake — every device-waiter, each of
+    # which drains and recycles its own queue when it runs (T8.11). The
+    # claim id rides the frame across the call: the wake's return left
+    # its own word in a0, and completing the claim with that word
+    # completed nothing — the first event's interrupt was the last the
+    # device could raise (found with the pointer, T8.11).
+    sd a0, 8(sp)
     call emo_sched_wake_console
+    ld a0, 8(sp)
     li t0, EMO_KOFF + 0x0c201004
     sw a0, 0(t0)             # complete the claim
     j .Lcons_done

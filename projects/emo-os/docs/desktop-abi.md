@@ -62,6 +62,32 @@ research record, with the reasoning behind each seam, is the
    day one, so the compositor can leave the kernel image (Tier B)
    without the protocol noticing.
 
+## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
+
+The pointer's sprite is the desktop's — a Wayland client's cursor is
+the client's, and so is this one: the compositor carries pixels and
+rectangles, never a drawing. The contract is memory, not a verb. The
+screen carve's last 64 KiB is the cursor plane's sprite memory; past
+the block's first line — the screen pass's proof pattern pokes the
+first word of every 64 KiB of the carve, this block's included — the
+desktop (the full-screen pass, which has the carve mapped) writes:
+
+- `+64` the header, four 32-bit words: the width, the height, the
+  hotspot's x and y, in sprite pixels;
+- `+80` the pixels, width × height ARGB8888 words, row-major, a top
+  byte of 0xFF an opaque pixel and 0 a clear one, at most 64 × 64;
+
+and the header last, so a torn read sees no sprite: a zero width is
+the compositor's no-sprite-yet, and the plane composites nothing until
+the desktop has drawn one. The save-under — the carve's words under
+the drawn sprite, the compositor's own half of the block at `+0x8000` —
+is kernel-private and no part of the contract. The compositor reads
+the header at each composition, hides the sprite around every window
+blit so its save-under never holds stale words, moves it by the
+pointer's position, and presents the rectangle both places lie in.
+A cursor verb may yet join the desktop segment (Tier C, additions
+only); the memory contract stands under it either way.
+
 ## What the contract cannot save — the honest four
 
 The no-reclaim arena (the autorelease pool is a precondition of the
