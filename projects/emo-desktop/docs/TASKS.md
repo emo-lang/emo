@@ -177,8 +177,71 @@ tree's and EmoOS's, listed there.
 
 ## M8 — glyphs & pointer (the desktop side)
 
-- [ ] **A8.1** — The bitmap font renderer through the fb core (the
-  font's home per D3).
+- [x] **A8.1** — The bitmap font renderer through the fb core (the
+  font's home per D3). **Landed 2026-11-02.** The font is the project's
+  own, drawn in [`fb/glyphs/glyphs.txt`](../fb/glyphs/glyphs.txt) — the
+  95 printable ASCII characters and a hollow cell for every other byte,
+  a 1-pixel stroke on the fixed 8×16 cell the box model has measured
+  labels by since A7.1 — and written into `fb/font.emo`'s `rows` table
+  by `fb/glyphs/gen.py` (the gate refuses a stale table; the drawing's
+  directory is not `font/` because a sibling directory claims the module
+  path the file holds): four 32-bit words per glyph, four rows to a
+  word, the top row in the high byte, so the 96 glyphs are 384 boxed
+  cells on the metal's arena rather than 1,536. That is D3's route — the
+  font's home is the code, the wide-literal fix carrying the table to
+  the metal, no disk and no second image. `font.glyph_of` finds a
+  one-byte string's glyph in the alphabet (`index_of`; a control byte or
+  one byte of a multi-byte character is the hollow cell on every target
+  alike), and `top_rows`/`bottom_rows` hand a glyph's sixteen rows as
+  two words. **The core paints labels now**: `place` fills a leaf's box
+  as before, then lays its label's glyphs from the box's top-left corner,
+  one cell per byte, in the role's ink (`ink_of`: dark on the panel, the
+  input's paper and the image's caption, light on a button's steel);
+  `Text` fills no box any more — its glyphs are ink on whatever it sits
+  on — and the surface's bounds are what clip a cell, never the node's
+  rectangle, the terminal backend's rule, so a label wider than its box
+  runs on as the terminal's does. **`Surface` grows a `glyph` verb** —
+  `(x, y, top, bottom, color)`, one call per cell, the row arithmetic
+  shared through `ui_fb.glyph_row` — rather than painting a glyph as
+  rows of `fill`: on the metal an interface call boxes every Int64 it
+  carries into a cell the pool never reclaims, so a frame of text
+  painted pixel by pixel, thousands of calls, would spend the arena
+  before its first line ended; the hosted canvas and the carve
+  (`carve_glyph`, a typed def in `hello/main.emo`) each implement it,
+  and the user image's registry carries the font beside the core
+  (`start.sh`, the `dune` smoke). **The compiler track lowered three
+  String methods for riscv64** where the metal first asked for them
+  (T8.10's precedent): `substring` and `index_of` as runtime helpers
+  over the String block, and `length` read on the block for a static
+  String receiver — the dynamic dispatch answered `length` boxed, which
+  a typed frame took for the raw word it trusts (`i < s.length()` in a
+  typed def walked past the String's end: found, fixed), and the String
+  methods the metal does not lower refuse by name at the build now
+  rather than failing namelessly at run time. **Two more finds on the
+  way, fixed**: an `Index` read (and a class field read) in a native
+  frame left the element's tagged cell where the frame trusts a raw
+  Int64 — unexposed until now, because a def with an Array parameter is
+  dynamic and the first native shape that indexes is a typed def over a
+  module-level const table, the font's; the metal's first try drew every
+  glyph as the cells' own addresses — and an index expression in a native
+  frame was boxed only to be read back, a 16-byte birth per read the
+  pool never reclaims, read raw now. `examples/glyph_lookup` pins the
+  walk whole (the interpreter and QEMU printing the same lines) and a
+  refusal test pins the refusal. **The pins**: the fb gate 52 ok — the
+  core's test 32, the canvas's 28, the glyph table against its drawing,
+  the probe (which paints the first frame through a counting surface
+  now, 6 boxes and 75 glyphs) built for the metal, both goldens on every
+  target; `run.sh` green under both timer transports, `frame 3285341944`
+  the one number read off the carve, the hosted canvas and the display's
+  screendump alike, the ledger `frames 77 45` unchanged; `dune runtest`
+  and `@fmt` green. **Standing**: a glyph's five boxed arguments, the label
+  walk's own temporaries (`text` takes a `Surface`, and a def with an
+  interface, class or Array parameter is a dynamic frame on the metal —
+  the per-pixel work is `carve_glyph`'s, all-numeric and typed, A7.2's
+  rule) and the per-character `substring` (a String, which the pool does
+  not hold) are arena births per frame — nothing to the first frame's
+  hundred glyphs, and the Elm loop's to count (A8.3), on the compiler
+  track's schedule with the def values it already waits on.
 - [ ] **A8.2** — The pointer sprite: the compositor's cursor plane,
   moved by the merged event stream.
 - [ ] **A8.3** — The Elm loop on metal: an event-driven fb app whose

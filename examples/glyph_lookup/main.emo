@@ -1,0 +1,59 @@
+// The bitmap font renderer's lookup, the walk the fb core makes on the
+// metal: each byte of a label named by a one-byte `substring`, found in
+// the font's alphabet by `index_of`, and its glyph's rows read out of a
+// module-level const table from a typed def — raw Int64s throughout,
+// and the same at the top level, where every value is boxed.
+
+const alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+// Two words per glyph for the first four characters of the alphabet.
+const rows = [0x00000000, 0x00000000, 0x00001010, 0x10101010, 0x00002828, 0x28000000, 0x00000028, 0x287C2828]
+
+def glyph_of(c String) Int64 {
+  const i = alphabet.index_of(c)
+  if i < 0 {
+    return -1
+  }
+  return i
+}
+
+def word(glyph Int64, k Int64) Int64 {
+  return rows[glyph * 2 + k]
+}
+
+def code_of(c String) Int64 {
+  return glyph_of(c) + 32
+}
+
+def codes(s String) String {
+  var out = ""
+  for var i = 0; i < s.length(); i = i + 1 {
+    const c = s.substring(i, 1)
+    if i > 0 {
+      out = out + " "
+    }
+    out = out + "${code_of(c)}"
+  }
+  return out
+}
+
+def top_rows(glyph Int64) Int64 {
+  return (word(glyph, 0) << 32) | word(glyph, 1)
+}
+
+println(codes("Emo!"))
+println(codes(" ~"))
+println("desktop".substring(0, 4))
+println("desktop".substring(4, 3))
+println("desktop".substring(7, 0).length())
+println("hello world".index_of("o"))
+println("hello world".index_of("world"))
+println("hello world".index_of("xyz"))
+println("hello".index_of(""))
+println(alphabet.index_of("~"))
+println(alphabet.index_of("\\"))
+println(word(glyph_of("!"), 0))
+println(word(3, 1))
+println(top_rows(glyph_of("\"")))
+println(rows[7])
+println(glyph_of("\n"))

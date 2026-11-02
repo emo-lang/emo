@@ -63,6 +63,25 @@ class Canvas {
       }
     }
   }
+
+  // One glyph cell at `(x, y)`: each set bit of each row stores the
+  // color, top byte cleared, where the pixel lies on the surface; a
+  // clear bit leaves the word alone.
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    const word = color & 0xFFFFFF
+    for var r = 0; r < ui_fb.glyph_h(); r = r + 1 {
+      const bits = ui_fb.glyph_row(top, bottom, r)
+      const py = y + r
+      if bits != 0 && py >= 0 && py < self.height {
+        for var c = 0; c < ui_fb.glyph_w(); c = c + 1 {
+          const px = x + c
+          if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < self.width {
+            self.data.set_u32_le((py * self.width + px) * 4, word)
+          }
+        }
+      }
+    }
+  }
 }
 
 def canvas(width Int64, height Int64) ui_fb.Surface {

@@ -218,7 +218,8 @@ let smoke_tests =
           ];
         (* The user image requires the desktop's packages beside the
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
-           backend's core and the first frame. They are staged into a
+           backend's core with its bitmap font (A8.1) and the first
+           frame. They are staged into a
            registry in the scratch tree — the files start.sh stages,
            from the same trees — and the build reads it through
            EMO_REGISTRY, which names the one registry a build resolves
@@ -246,7 +247,7 @@ let smoke_tests =
               [ "package.emo"; "ui.emo"; "debug.emo" ] );
             ( "../../projects/emo-desktop/fb",
               "emo/ui_fb/0.1.0",
-              [ "package.emo"; "ui_fb.emo" ] );
+              [ "package.emo"; "ui_fb.emo"; "font.emo" ] );
             ( "../../projects/emo-desktop/fb/frame",
               "emo/ui_fb_frame/0.1.0",
               [ "package.emo"; "ui_fb_frame.emo" ] );

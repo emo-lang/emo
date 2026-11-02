@@ -10,7 +10,7 @@ English version: [`README.md`](README.md).
 
 - **Wayland/Quartz 形状,QNX Screen 谱系。** 一个合成器拥有 scanout;客户端在授权缓冲里渲染再 present;输入是统一的事件流。这与 EmoOS 微内核已认的谱系同宗,用在像素上。
 - **包的集合,不是第二个镜像。** 内核只嵌一个用户镜像;M7–M10 期间桌面以包的形态骑在该镜像上(boot image `require`,`syscall` stub 包的先例)。到 M11、程序从文件系统以 ELF 装载时,应用原地变成磁盘 ELF——结构不变。
-- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`、`emo/ui_fb_canvas`(hosted surface)与 `emo/ui_fb_frame`(第一帧),连同它们的测试、golden 和 gate(`fb/check.sh`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
+- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.1 起带着项目自己的位图字体)、`emo/ui_fb_canvas`(hosted surface)与 `emo/ui_fb_frame`(第一帧),连同它们的测试、golden 和 gate(`fb/check.sh`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
 
 ## 命名——已定
 
@@ -24,7 +24,7 @@ English version: [`README.md`](README.md).
 | 里程碑 | 范围 | 状态 |
 | --- | --- | --- |
 | M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | complete |
-| M8 — 字形与指针 | 位图字体、指针精灵、输入合并 | — |
+| M8 — 字形与指针 | 位图字体、指针精灵、输入合并 | in progress |
 | M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启 | — |
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | — |
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查 | — |

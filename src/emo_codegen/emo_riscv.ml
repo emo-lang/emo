@@ -1020,7 +1020,14 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Array_lit es -> emit_seq env d es tag_array
   | Index (b, i) ->
       emit_index env d b i;
-      read_claim env e.Emo_ir.ety
+      read_claim env e.Emo_ir.ety;
+      (* the element is the tagged word the block holds; a native frame
+         reads a numeric one raw, the rule every consumer in it trusts —
+         unboxed nowhere before, because a def with an Array parameter is
+         dynamic and the one native shape that indexes, a typed def over
+         a module-level const table, first appeared with the bitmap
+         font's rows (emo-desktop A8.1) *)
+      unbox_if_numeric env e.Emo_ir.ety
   | Field_read { obj; name } -> (
       match obj.Emo_ir.ety with
       | Emo_check.ClassType _ ->
@@ -1028,7 +1035,10 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
           put env "    andi a0, a0, -32\n";
           let idx = field_index env obj.Emo_ir.ety name in
           put env "    ld a0, %d(a0)\n" (16 + (8 * idx));
-          read_claim env e.Emo_ir.ety
+          read_claim env e.Emo_ir.ety;
+          (* the field's word, read raw in a native frame as the element
+             above is *)
+          unbox_if_numeric env e.Emo_ir.ety
       | _ ->
           (* a dynamic receiver: the field resolves by name through the
              class's field table (the c target's emo_field_by_name) *)
@@ -1478,9 +1488,16 @@ and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   put env "    andi a0, a0, -32\n";
   put env "    sd a0, %d(sp)\n" spill;
   emit_expr env (d + 1) i;
-  box_if_numeric env i.Emo_ir.ety;
-  put env "    andi a0, a0, -32\n";
-  put env "    ld t2, 8(a0)\n";
+  (* the index's payload into t2: a typed Int64 in a native frame is
+     raw in a0 already — boxing it only to read the cell back was a
+     16-byte birth per read that no pool reclaims, the leak the fb core's
+     table lookups made visible on the metal (emo-desktop A8.1) — and
+     every other shape is a tagged cell *)
+  if env.native && i.Emo_ir.ety = Emo_check.Int64 then put env "    mv t2, a0\n"
+  else begin
+    put env "    andi a0, a0, -32\n";
+    put env "    ld t2, 8(a0)\n"
+  end;
   put env "    ld t0, %d(sp)\n" spill;
   put env "    ld t1, 8(t0)\n";
   let l_oob = fresh_label env "idxoob" in
@@ -1984,6 +2001,39 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
       put env "    slli a0, t0, 4\n";
       put env "    ori a0, a0, 7\n"
   | _ -> (
+      (* a dynamic receiver: the runtime dispatches by name — the
+         instance's method table first, then the scalar builtins (the c
+         target's emo_dynamic_builtin). a0.. carry self and the args as
+         the impl wants them; t0/t1 name the method. *)
+      let dynamic () =
+        let nlabel = string_label env name in
+        let self_slot = temp_offset env d in
+        emit_expr env (d + 1) self_;
+        put env "    sd a0, %d(sp)\n" self_slot;
+        List.iteri
+          (fun i arg ->
+            emit_expr env (d + 1 + List.length args) arg;
+            box_if_numeric env arg.Emo_ir.ety;
+            put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
+          args;
+        put env "    ld a0, %d(sp)\n" self_slot;
+        List.iteri
+          (fun i _ ->
+            put env "    ld a%d, %d(sp)\n" (i + 1) (temp_offset env (d + 1 + i)))
+          args;
+        put env "    la t0, %s\n" nlabel;
+        put env "    li t1, %d\n" (String.length name);
+        call_runtime env "emo_dyn_method"
+      in
+      (* An Int64 argument's payload into a0: raw already in a native
+         frame when the expression is typed so, the boxed cell's word
+         otherwise (a dynamic frame, or a dynamic value in a native one). *)
+      let raw_int64 (arg : Emo_ir.expr) =
+        if not (env.native && arg.Emo_ir.ety = Emo_check.Int64) then begin
+          put env "    andi a0, a0, -32\n";
+          put env "    ld a0, 8(a0)\n"
+        end
+      in
       match self_.Emo_ir.ety with
       | Emo_check.Byte -> (
           match (name, args) with
@@ -1996,6 +2046,56 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               call_runtime env "emo_to_string"
           | _ -> refuse (Printf.sprintf "the Byte method `%s`" name))
+      | Emo_check.String -> (
+          (* the character walk a bitmap font renderer makes (emo-desktop
+             A8.1): a one-byte `substring` names each character of a
+             label and `index_of` finds it in the font's alphabet — the
+             two String methods the metal was first asked for beyond
+             `length`, lowered as a runtime helper each over the block
+             the runtime already keeps (the byte count at 8, the bytes
+             from 16). The receiver is spilled across the arguments'
+             evaluation, an Int64 argument is read raw, and a raw Int64
+             answer boxes back for a dynamic frame; a String answer is
+             a tagged word already. `length` reads its count here too,
+             `to_string` keeps the dynamic dispatch, and the String
+             methods the metal does not lower refuse by name at the
+             build, not as a nameless runtime failure. *)
+          match (name, args) with
+          | "substring", [ start; len ] ->
+              let self_slot = temp_offset env d in
+              let start_slot = temp_offset env (d + 1) in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_expr env (d + 1) start;
+              raw_int64 start;
+              put env "    sd a0, %d(sp)\n" start_slot;
+              emit_expr env (d + 2) len;
+              raw_int64 len;
+              put env "    mv a2, a0\n";
+              put env "    ld a1, %d(sp)\n" start_slot;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env "emo_string_substring"
+          | "index_of", [ needle ] ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_expr env (d + 1) needle;
+              put env "    mv a1, a0\n";
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env "emo_string_index_of";
+              if boxed then put env "    call emo_box_i64\n"
+          | "length", [] ->
+              (* the byte count, read on the block — the dynamic dispatch
+                 answers the boxed cell the interpreter's convention wants,
+                 which a typed frame took for the raw word it trusts (the
+                 loop `i < s.length()` walked past the String's end); the
+                 static receiver now reads the count itself *)
+              emit_expr env d self_;
+              put env "    andi a0, a0, -32\n";
+              put env "    ld a0, 8(a0)\n";
+              if boxed then put env "    call emo_box_i64\n"
+          | "to_string", [] -> dynamic ()
+          | _ -> refuse (Printf.sprintf "the String method `%s`" name))
       | Emo_check.Float64 when name = "to_int64" && args = [] ->
           (* the truncating conversion every hosted target answers —
              toward zero, `rtz` — on the raw double: fa0 in a native
@@ -2169,30 +2269,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
              parameter's annotation, which is why the methods refuse by
              name rather than falling through to the dynamic dispatch. *)
           refuse (Printf.sprintf "the ArrayBuilder method `%s`" name)
-      | _ ->
-          (* a dynamic receiver: the runtime dispatches by name — the
-             instance's method table first, then the scalar builtins
-             (the c target's emo_dynamic_builtin). a0.. carry self and
-             the args as the impl wants them; t0/t1 name the method. *)
-          let nlabel = string_label env name in
-          let self_slot = temp_offset env d in
-          emit_expr env (d + 1) self_;
-          put env "    sd a0, %d(sp)\n" self_slot;
-          List.iteri
-            (fun i arg ->
-              emit_expr env (d + 1 + List.length args) arg;
-              box_if_numeric env arg.Emo_ir.ety;
-              put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1 + i)))
-            args;
-          put env "    ld a0, %d(sp)\n" self_slot;
-          List.iteri
-            (fun i _ ->
-              put env "    ld a%d, %d(sp)\n" (i + 1)
-                (temp_offset env (d + 1 + i)))
-            args;
-          put env "    la t0, %s\n" nlabel;
-          put env "    li t1, %d\n" (String.length name);
-          call_runtime env "emo_dyn_method")
+      | _ -> dynamic ())
 
 (* ---- Statement emission ---- *)
 
@@ -4300,6 +4377,85 @@ emo_string_eq:
     andi a1, a1, -32
     tail emo_str_content
 
+# emo_string_substring: a0 = a String, a1 = start, a2 = length (raw
+# Int64s); a0 = a fresh String holding those bytes. A negative start or
+# length, or an end past the receiver's byte count, is the interpreter's
+# E3004 — a named failure here. The source cursor and the length ride
+# the stack across the allocation.
+    .globl emo_string_substring
+emo_string_substring:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld t1, 8(t0)
+    bltz a1, .Lss_range
+    bltz a2, .Lss_range
+    add t2, a1, a2
+    bgt t2, t1, .Lss_range
+    addi t3, t0, 16
+    add t3, t3, a1
+    sd t3, 8(sp)
+    sd a2, 16(sp)
+    mv a0, a2
+    call emo_alloc_string
+    ld t3, 8(sp)
+    ld t4, 16(sp)
+    andi t5, a0, -32
+    addi t5, t5, 16
+    beqz t4, .Lss_done
+.Lss_copy:
+    lbu t6, 0(t3)
+    sb t6, 0(t5)
+    addi t3, t3, 1
+    addi t5, t5, 1
+    addi t4, t4, -1
+    bnez t4, .Lss_copy
+.Lss_done:
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+.Lss_range:
+    la a0, msg_substring_range
+    la a1, msg_substring_range_end
+    call emo_fail
+
+# emo_string_index_of: a0 = a String, a1 = the needle, a String; a0 = the
+# raw Int64 byte offset where the needle first occurs, -1 when it never
+# does — the interpreter's walk, byte for byte, an empty needle found
+# at 0. A leaf: no frame, the scratch is the t and a registers.
+    .globl emo_string_index_of
+emo_string_index_of:
+    andi t0, a0, -32
+    andi t1, a1, -32
+    ld t2, 8(t0)
+    ld t3, 8(t1)
+    li t4, 0
+.Lio_outer:
+    add t5, t4, t3
+    bgt t5, t2, .Lio_none
+    addi t5, t0, 16
+    add t5, t5, t4
+    addi t6, t1, 16
+    mv a2, t3
+.Lio_cmp:
+    beqz a2, .Lio_hit
+    lbu a3, 0(t5)
+    lbu a4, 0(t6)
+    bne a3, a4, .Lio_next
+    addi t5, t5, 1
+    addi t6, t6, 1
+    addi a2, a2, -1
+    j .Lio_cmp
+.Lio_next:
+    addi t4, t4, 1
+    j .Lio_outer
+.Lio_hit:
+    mv a0, t4
+    ret
+.Lio_none:
+    li a0, -1
+    ret
+
 # ---- Arrays ----
 
 # emo_array_append: a0 = an Array, a1 = a value; a0 = a fresh Array
@@ -5601,6 +5757,9 @@ msg_atomic_kind_end:
 msg_byte_range:
     .ascii "`Byte.from_int64` needs a value in 0-255"
 msg_byte_range_end:
+msg_substring_range:
+    .ascii "`substring` needs a range inside the String"
+msg_substring_range_end:
 msg_poke32_range:
     .ascii "`poke32` needs a value in 0-4294967295"
 msg_poke32_range_end:

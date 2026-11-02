@@ -3051,6 +3051,7 @@ let riscv64_examples_tests =
       "outlives";
       "survivors";
       "wide_literal";
+      "glyph_lookup";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -3113,6 +3114,9 @@ let riscv64_refusal_tests =
           [
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
+            ( "a String method the metal does not lower",
+              {|println("a b".split(" ").length())|},
+              "the String method `split`" );
           ]);
   ]
 

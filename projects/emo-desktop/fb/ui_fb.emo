@@ -6,11 +6,11 @@ require "emo/ui"
 // `width` and `height` place every child — only the unit is a pixel
 // where the terminal's was a cell, and a leaf's own size is its label
 // measured in glyph cells of the bitmap font's fixed cell. Painting is
-// rectangles: every node fills the rectangle it was placed in, in its
-// role's color, parents under children. That is M7's whole picture —
-// the screen — and glyphs land inside those rectangles when the font
-// renderer does (A8.1); the pointer and the windows build on the same
-// verbs (M8, M9).
+// rectangles and glyphs: every box fills the rectangle it was placed in,
+// in its role's color, parents under children, and a leaf's label lands
+// over its box in the bitmap font (`font.emo`, A8.1), one cell per
+// character, in the role's ink. That is M7's picture with M8's glyphs on
+// it; the pointer and the windows build on the same verbs (M8, M9).
 //
 // The core splits where the assessment drew the line: measure, place,
 // clip and blend are pure Emo against the `Surface` interface and run
@@ -18,13 +18,14 @@ require "emo/ui"
 // business — `ui_fb_canvas` keeps one in a `Bytes` for the hosted
 // targets, and the metal's is the screen carve reached through the raw
 // shim, riscv64's alone (A7.2). The core never sees a byte: it hands a
-// surface clipped rectangles and colors, and reads words back through
-// `at`.
+// surface clipped rectangles, glyph cells and colors, and reads words
+// back through `at`.
 //
 // A pixel is one `Int64` word, `0x00RRGGBB` — XRGB8888, the carve's
 // format (D5), red in bits 23..16 and blue in the low byte. A color
 // handed to `blend` carries its coverage in the top byte, `0xAARRGGBB`;
-// a stored word never does, so `fill` and `over` both mask it away.
+// a stored word never does, so `fill`, `glyph` and `over` all mask it
+// away.
 
 // ---- the box model: positions in pixels ----
 
@@ -70,22 +71,23 @@ class Rect {
   }
 }
 
-// The glyph cell: the bitmap font is a fixed 8x16 cell (A8.1 renders
-// it), and until it does a label still measures to the cells it will
-// occupy, so the layout a frame gets now is the layout its text gets
-// later.
+// The glyph cell: the bitmap font's fixed 8x16 (`font.emo`). A label
+// measures to the cells it occupies, so the layout a frame gets is the
+// layout its text lands in.
 def glyph_w() Int64 {
-  return 8
+  return font.cell_w()
 }
 
 def glyph_h() Int64 {
-  return 16
+  return font.cell_h()
 }
 
-// The palette: one color per role, the muted platinum of the early-90s
-// workstation the assessment names as the honest feel. Each role leans
-// on a different channel so a swapped byte order shows up in a golden
-// as the wrong tint, not as a matching gray.
+// The palette: one color per box role, the muted platinum of the
+// early-90s workstation the assessment names as the honest feel. Each
+// role leans on a different channel so a swapped byte order shows up in
+// a golden as the wrong tint, not as a matching gray. `Text` fills no
+// box — its glyphs are ink on whatever it sits on — and `Spacer` paints
+// nothing at all.
 def color_of(n ui.Node) Int64 {
   if n.is(ui.Column) {
     return 0xD8D0C0
@@ -95,9 +97,6 @@ def color_of(n ui.Node) Int64 {
   }
   if n.is(ui.Scroll) {
     return 0xC8D8C0
-  }
-  if n.is(ui.Text) {
-    return 0x282830
   }
   if n.is(ui.Button) {
     return 0x7088A8
@@ -109,6 +108,19 @@ def color_of(n ui.Node) Int64 {
     return 0xA89888
   }
   return 0
+}
+
+// The ink a label's glyphs take: the dark of the panel's text, the
+// input's paper and the image's caption, light on a button's steel.
+def ink_of(n ui.Node) Int64 {
+  if n.is(ui.Button) {
+    return 0xF8F8F0
+  }
+  return 0x282830
+}
+
+def paints_box(n ui.Node) Bool {
+  return !n.is(ui.Spacer) && !n.is(ui.Text)
 }
 
 // A fixed extent from the style's `(R, Float64)` slot: `(R.ok, n)` is n
@@ -221,19 +233,40 @@ def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
 
 // ---- the buffer seam ----
 
-// What the core paints into. `fill` stores a color over a rectangle and
-// `blend` composites one over it with `over`; both take the rectangle
-// unclipped and keep to their own bounds, and `at` outside the surface
-// answers 0, so a caller that skips `clip` is wrong by nothing worse
-// than wasted work. A `Surface` is the one thing a host provides:
-// `ui_fb_canvas`'s keeps words in a `Bytes`, the metal's are the carve's
-// own words behind the raw shim, and the core cannot tell them apart.
+// What the core paints into. `fill` stores a color over a rectangle,
+// `blend` composites one over it with `over`, and `glyph` stores a color
+// through one 8x16 cell of the bitmap font — the cell's sixteen rows as
+// two words, `top` rows 0 to 7 and `bottom` rows 8 to 15, each row a
+// byte with the top row in the high byte and the left pixel in the high
+// bit (`glyph_row` reads them), a set bit the color and a clear bit the
+// surface left alone. All three take their rectangle unclipped and keep
+// to their own bounds, and `at` outside the surface answers 0, so a
+// caller that skips `clip` is wrong by nothing worse than wasted work.
+// A `Surface` is the one thing a host provides: `ui_fb_canvas`'s keeps
+// words in a `Bytes`, the metal's are the carve's own words behind the
+// raw shim, and the core cannot tell them apart.
+//
+// The glyph is a verb of its own, not sixteen rows of `fill`, for the
+// metal's sake: an interface call there boxes every Int64 it carries
+// into a cell the pool never reclaims, so a frame of text that painted
+// its glyphs pixel by pixel — thousands of calls — would spend the
+// arena before its first line ended; one call per cell is the shape a
+// first frame survives.
 interface Surface {
   def width() Int64
   def height() Int64
   def at(x Int64, y Int64) Int64
   def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) Void
+}
+
+// Row `r` of a glyph cell, 0 to 15, as its byte: the left pixel in bit
+// 7. The arithmetic every `Surface` paints a glyph by, kept here so the
+// hosted canvas and the carve read the same bit for the same pixel.
+def glyph_row(top Int64, bottom Int64, r Int64) Int64 {
+  const word = if r < 8 { top } else { bottom }
+  return (word >> (8 * (7 - (r & 7)))) & 0xFF
 }
 
 // ---- clip and blend: the pixel arithmetic ----
@@ -302,15 +335,16 @@ def over(src Int64, dst Int64) Int64 {
 
 // ---- place: the tree onto the surface ----
 
-// Lay one node into the rectangle `(x, y, w, h)` of `s`: its own
-// rectangle filled first, clipped to the surface and in its role's
-// color, then — for a container — its children's, so every child lands
-// over its parent. The walk paints as it goes rather than collecting a
-// draw list first: a frame then allocates nothing beyond the tree it
-// was handed, which is what a 64 KiB arena with no reclamation can
-// afford per event on the metal.
+// Lay one node into the rectangle `(x, y, w, h)` of `s`: its own box
+// filled first, clipped to the surface and in its role's color, then —
+// for a container — its children's, so every child lands over its
+// parent, and then — for a leaf — its label's glyphs over its box, from
+// the rectangle's top-left corner. The walk paints as it goes rather
+// than collecting a draw list first: a frame then allocates nothing
+// beyond the tree it was handed, which is what a 64 KiB arena with no
+// reclamation can afford per event on the metal.
 def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
-  if !n.is(ui.Spacer) {
+  if paints_box(n) {
     const r = clip(x, y, w, h, s.width(), s.height())
     if r.w() > 0 && r.h() > 0 {
       s.fill(r.x(), r.y(), r.w(), r.h(), color_of(n))
@@ -325,6 +359,24 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
   }
   if n.is(ui.Row) {
     place_row(n, x, y, w, h, s)
+  }
+  const label = label_of(n)
+  if label.length() > 0 {
+    text(label, x, y, ink_of(n), s)
+  }
+}
+
+// A label's glyphs along one line from `(x, y)`, a cell per byte of the
+// label, each through the surface's `glyph` in the font's drawing of
+// that byte — the terminal backend's own rule, where a label is laid
+// into the frame cell by cell and only the frame's edge cuts it: the
+// surface's bounds are what clip a cell, never the node's rectangle, so
+// a label wider than its box runs on as the terminal's does. A byte the
+// font has no glyph for shows the hollow cell (`font.glyph_of`).
+def text(label String, x Int64, y Int64, ink Int64, s Surface) {
+  for var i = 0; i < label.length(); i = i + 1 {
+    const g = font.glyph_of(label.substring(i, 1))
+    s.glyph(x + i * glyph_w(), y, font.top_rows(g), font.bottom_rows(g), ink)
   }
 }
 

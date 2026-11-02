@@ -37,7 +37,7 @@ fb_dir='../emo-desktop/fb'
 syscall_dir='../../stdlib/registry/syscall/0.1.0'
 syscall_src="$syscall_dir/package.emo $syscall_dir/syscall.emo"
 ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
-fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo"
+fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo"
 frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo"
 
 registry() {

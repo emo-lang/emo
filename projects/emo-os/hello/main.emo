@@ -363,7 +363,8 @@ if peek64(screen_cell) != 0 {
 // pixels inside a method is the heap gone before the first row ends.
 // A fully typed top-level def computes in raw registers and allocates
 // nothing; the method hands it the words once per rectangle, which is
-// a dozen times a frame.
+// a dozen times a frame, and once per glyph cell (A8.1), which is a
+// hundred.
 class Carve {
   def init(base Int64, width Int64, height Int64) {
     self.base = base
@@ -396,6 +397,15 @@ class Carve {
     const r = ui_fb.clip(x, y, w, h, self.width, self.height)
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
+
+  // One glyph cell (emo-desktop A8.1): the sixteen rows in two words,
+  // handed down whole — the cell is the unit the core calls in, once per
+  // character, because every Int64 an interface call carries is a boxed
+  // cell on this target.
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
+      color & 0xFFFFFF)
+  }
 }
 
 def carve_at(base Int64, width Int64, x Int64, y Int64) Int64 {
@@ -426,6 +436,29 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
       col = col + 1
     }
     row = row + 1
+  }
+}
+
+// A glyph's set bits as stores, each pixel checked against the carve's
+// bounds: the row byte is `ui_fb.glyph_row`'s, the same bit for the same
+// pixel the hosted canvas reads, and a clear row costs no column walk.
+def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
+                top Int64, bottom Int64, word Int64) Void {
+  var r = 0
+  while r < 16 {
+    const bits = ui_fb.glyph_row(top, bottom, r)
+    const py = y + r
+    if bits != 0 && py >= 0 && py < height {
+      var c = 0
+      while c < 8 {
+        const px = x + c
+        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
+          poke32(base + (py * width + px) * 4, word)
+        }
+        c = c + 1
+      }
+    }
+    r = r + 1
   }
 }
 

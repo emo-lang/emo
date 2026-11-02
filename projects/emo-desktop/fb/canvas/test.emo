@@ -1,9 +1,10 @@
 // The canvas package's own test: the hosted surface as a `ui_fb.Surface`,
-// and everything in the core that needs a surface to show itself —
-// paint's layering and clipping, `ppm`, and the backend's repaint
-// through the loop — checked as values rather than as bytes. The core's
-// own test covers the arithmetic that needs no surface (measure, clip,
-// over, the script); `../golden/` pins the painted bytes.
+// and everything in the core that needs a surface to show itself — the
+// glyph verb, paint's layering and clipping with the labels' glyphs,
+// `ppm`, and the backend's repaint through the loop — checked as values
+// rather than as bytes. The core's own test covers the arithmetic that
+// needs no surface (measure, clip, over, the font's rows, the script);
+// `../golden/` pins the painted bytes.
 //
 //   emo run test.emo
 //
@@ -51,6 +52,37 @@ def canvas_checks() {
   word_is(b.at(1, 0), 0x123456, "an opaque blend is a fill")
 }
 
+// ---- glyph: one cell of the font through the surface ------------------
+//
+// The pixels named here are the drawing's (`../glyphs/glyphs.txt`): the
+// `a` has its first ink on row 5, cells 2 to 5, and nothing in cell 0;
+// the `b` has its ascender in cell 1 from row 2.
+
+def glyph_checks() {
+  const c = ui_fb_canvas.canvas(10, 18)
+  c.fill(0, 0, 10, 18, 0x111111)
+  const a = ui_fb.font.glyph_of("a")
+  c.glyph(1, 1, ui_fb.font.top_rows(a), ui_fb.font.bottom_rows(a), 0xFFEEDDCC)
+  word_is(c.at(3, 6), 0xEEDDCC, "a set bit stores the ink, coverage byte cleared")
+  word_is(c.at(6, 6), 0xEEDDCC, "across the row's run")
+  word_is(c.at(1, 6), 0x111111, "a clear bit leaves the surface alone")
+  word_is(c.at(3, 1), 0x111111, "as does a clear row")
+
+  const corner = ui_fb_canvas.canvas(4, 4)
+  corner.glyph(-2, -4, ui_fb.font.top_rows(a), ui_fb.font.bottom_rows(a), 0xABCDEF)
+  check(corner.at(0, 1) == 0xABCDEF && corner.at(3, 1) == 0xABCDEF,
+    "a cell off the top-left corner lands what is inside")
+  check(corner.at(0, 0) == 0 && corner.at(0, 2) == 0,
+    "and nothing where the glyph is clear")
+
+  const edge = ui_fb_canvas.canvas(6, 6)
+  const b = ui_fb.font.glyph_of("b")
+  edge.glyph(2, 2, ui_fb.font.top_rows(b), ui_fb.font.bottom_rows(b), 0x123456)
+  check(edge.at(3, 4) == 0x123456 && edge.at(3, 5) == 0x123456,
+    "a cell over the bottom-right corner lands its ascender")
+  check(edge.at(4, 4) == 0 && edge.at(5, 5) == 0, "and nothing beside it")
+}
+
 // ---- paint: the tree onto the surface, parents under children --------
 
 def paint_checks() {
@@ -59,16 +91,18 @@ def paint_checks() {
     ui.style().with_padding(2.0)), panel)
   check(panel.at(0, 0) == 0xD8D0C0 && panel.at(23, 19) == 0xD8D0C0,
     "a column paints its panel over the whole rectangle it was given")
-  check(panel.at(2, 2) == 0x282830 && panel.at(9, 17) == 0x282830,
-    "and its child's ink over the panel, inside the padding")
-  check(panel.at(10, 2) == 0xD8D0C0 && panel.at(2, 18) == 0xD8D0C0,
+  check(panel.at(4, 7) == 0x282830 && panel.at(7, 7) == 0x282830,
+    "and its child's glyph in ink over the panel, inside the padding")
+  check(panel.at(2, 2) == 0xD8D0C0 && panel.at(2, 7) == 0xD8D0C0,
+    "a text fills no box: the panel shows through the cell's clear pixels")
+  check(panel.at(10, 7) == 0xD8D0C0 && panel.at(4, 18) == 0xD8D0C0,
     "the panel shows again past the child's extent")
 
   const centered = ui_fb_canvas.canvas(24, 16)
   ui_fb.paint(ui.column([ui.text("a", ui.style())],
     ui.style().with_align(ui.Align.center)), centered)
-  check(centered.at(7, 0) == 0xD8D0C0 && centered.at(8, 0) == 0x282830
-    && centered.at(15, 0) == 0x282830 && centered.at(16, 0) == 0xD8D0C0,
+  check(centered.at(9, 5) == 0xD8D0C0 && centered.at(10, 5) == 0x282830
+    && centered.at(13, 5) == 0x282830 && centered.at(14, 5) == 0xD8D0C0,
     "center places a narrower child in the middle of the column")
 
   const grown = ui_fb_canvas.canvas(8, 40)
@@ -77,8 +111,8 @@ def paint_checks() {
     ui.row([], ui.style().with_grow(true)),
     ui.text("b", ui.style())
   ], ui.style().with_align(ui.Align.stretch)), grown)
-  check(grown.at(0, 15) == 0x282830 && grown.at(0, 16) == 0xC0C8D8
-    && grown.at(0, 23) == 0xC0C8D8 && grown.at(0, 24) == 0x282830,
+  check(grown.at(2, 5) == 0x282830 && grown.at(0, 16) == 0xC0C8D8
+    && grown.at(0, 23) == 0xC0C8D8 && grown.at(1, 26) == 0x282830,
     "grow hands a child the column's leftover height")
 
   const spaced = ui_fb_canvas.canvas(8, 32)
@@ -91,8 +125,16 @@ def paint_checks() {
 
   const small = ui_fb_canvas.canvas(8, 8)
   ui_fb.paint(ui.text("abc", ui.style()), small)
-  check(small.at(0, 0) == 0x282830 && small.at(7, 7) == 0x282830,
-    "a leaf larger than the surface is clipped to it")
+  check(small.at(2, 5) == 0x282830 && small.at(0, 0) == 0 && small.at(7, 7) == 0,
+    "a leaf larger than the surface is clipped to it, its glyphs the only ink")
+
+  const boxed = ui_fb_canvas.canvas(48, 16)
+  ui_fb.paint(ui.button("w", 0, ui.style()), boxed)
+  check(boxed.at(0, 0) == 0x7088A8 && boxed.at(47, 15) == 0x7088A8,
+    "a button fills its box in steel")
+  check(boxed.at(2, 2) == 0xF8F8F0 && boxed.at(16, 5) == 0xF8F8F0
+    && boxed.at(24, 2) == 0x7088A8,
+    "and its bracketed label in light ink over it")
 }
 
 // ---- ppm: the surface as text ----------------------------------------
@@ -128,12 +170,13 @@ def update(msg Msg, wide Bool) Bool {
 def backend_checks() {
   const c = ui_fb_canvas.canvas(24, 32)
   ui.run(view, update, false, ui_fb.backend(c, ui_fb.script([0])))
-  check(c.at(7, 0) == 0x282830 && c.at(15, 0) == 0x282830
-    && c.at(16, 0) == 0xD8D0C0 && c.at(0, 16) == 0x7088A8,
+  check(c.at(2, 5) == 0x282830 && c.at(9, 2) == 0x282830 && c.at(16, 5) == 0xD8D0C0
+    && c.at(0, 16) == 0x7088A8 && c.at(2, 18) == 0xF8F8F0,
     "the backend paints on mount and repaints the event's tree")
 }
 
 canvas_checks()
+glyph_checks()
 paint_checks()
 ppm_checks()
 backend_checks()

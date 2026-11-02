@@ -1,9 +1,9 @@
 // The fb core's own test: the box model's arithmetic in pixels, the
-// clip and blend verbs, and the scripted input, checked as values
-// rather than as bytes — everything the core can show without a
-// surface. What needs one (paint's layering, `ppm`, the backend's
-// repaint) is `canvas/test.emo`'s, through the hosted canvas; the
-// painted bytes are `golden/`'s.
+// clip and blend verbs, the font's lookup and rows, and the scripted
+// input, checked as values rather than as bytes — everything the core
+// can show without a surface. What needs one (the glyph verb, paint's
+// layering, `ppm`, the backend's repaint) is `canvas/test.emo`'s,
+// through the hosted canvas; the painted bytes are `golden/`'s.
 //
 //   emo run test.emo
 //
@@ -102,6 +102,36 @@ def over_checks() {
     "a quarter of black over white is three-quarters white")
 }
 
+// ---- the font: a character's glyph, and a glyph's rows ----------------
+//
+// The rows named here are the drawing's (`glyphs/glyphs.txt`): the `A`
+// is an apex of one pixel on row 2, a five-pixel bar on row 7 and two
+// legs on row 11; the missing glyph is the hollow cell.
+
+def font_checks() {
+  word_is(font.glyph_of(" "), 0, "the space is the first glyph")
+  word_is(font.glyph_of("A"), 33, "a character's glyph is its place in the alphabet")
+  word_is(font.glyph_of("~"), 94, "the tilde is the last printable one")
+  word_is(font.glyph_of("\n"), font.missing(),
+    "a character outside the table is the missing glyph")
+  check(font.top_rows(0) == 0 && font.bottom_rows(0) == 0, "the space has no ink")
+  const a = font.glyph_of("A")
+  const top = font.top_rows(a)
+  const bottom = font.bottom_rows(a)
+  word_is(ui_fb.glyph_row(top, bottom, 0), 0, "a capital's row 0 is clear")
+  word_is(ui_fb.glyph_row(top, bottom, 2), 0x10, "its apex is one pixel on row 2")
+  word_is(ui_fb.glyph_row(top, bottom, 7), 0x7C, "its bar spans five pixels on row 7")
+  word_is(ui_fb.glyph_row(top, bottom, 11), 0x44, "its legs stand on row 11")
+  word_is(ui_fb.glyph_row(top, bottom, 15), 0, "and row 15 is clear")
+  const m = font.missing()
+  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 2), 0x7C,
+    "the missing glyph is a hollow cell: its top edge")
+  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 6), 0x44,
+    "and its sides")
+  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1), 16, 16,
+    "a label measures to the font's cells")
+}
+
 // ---- the scripted input ---------------------------------------------
 
 def script_checks() {
@@ -115,4 +145,5 @@ def script_checks() {
 measure_checks()
 clip_checks()
 over_checks()
+font_checks()
 script_checks()
