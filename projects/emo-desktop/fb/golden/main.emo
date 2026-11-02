@@ -1,5 +1,6 @@
 require "emo/ui"
 require "emo/ui_fb"
+require "emo/ui_fb_canvas"
 
 // The fb backend's golden (emo-desktop A7.1): one application through
 // the Elm loop, every frame painted by the backend onto a canvas, and
@@ -65,7 +66,7 @@ def view(reg ui.Registry, m Model) ui.Node {
 }
 
 def main() {
-  const screen = ui_fb.canvas.canvas(48, 32)
+  const screen = ui_fb_canvas.canvas(48, 32)
   ui.run(view, update, Model.new(count: 0),
     ui_fb.backend(screen, ui_fb.script([0, 0, 1])))
   printf("%s", [ui_fb.ppm(screen)])

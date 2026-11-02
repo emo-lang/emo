@@ -57,8 +57,15 @@ expect 17 "all seventeen assertions pass" "$n"
 # --- which targets can compile the package -------------------------------
 #
 # The package is `ui.emo` plus `test.emo`, and the test is what calls
-# `ui.run` with two bare defs. Every target lowers it since `c` grew
-# def-as-value (T48.8), so the whole table builds.
+# `ui.run` with two bare defs. Every hosted target lowers it since `c`
+# grew def-as-value (T48.8), so the whole table builds. The manifest
+# names `riscv64` too (emo-desktop A7.2: the fb backend's metal
+# consumer requires the core), and that claim is for the modules a
+# consumer reaches — `ui.emo` and `debug.emo` lower for a riscv64 user
+# program, `test.emo` does not (the emitter has no program-wide def
+# values yet, `CHECK.md`) — so it is pinned where a consumer stands:
+# `projects/emo-desktop/fb/check.sh` builds one through its metal probe,
+# and `projects/emo-os/run.sh` runs the real one.
 
 for t in ocaml c typescript wasm beam; do
   build . ui.emo "$t" && rc=0 || rc=$?

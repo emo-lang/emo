@@ -1,0 +1,139 @@
+// The canvas package's own test: the hosted surface as a `ui_fb.Surface`,
+// and everything in the core that needs a surface to show itself —
+// paint's layering and clipping, `ppm`, and the backend's repaint
+// through the loop — checked as values rather than as bytes. The core's
+// own test covers the arithmetic that needs no surface (measure, clip,
+// over, the script); `../golden/` pins the painted bytes.
+//
+//   emo run test.emo
+//
+// It is a module of the package, not a package of its own, so
+// `emo check ui_fb_canvas.emo` checks it and `../check.sh` runs it.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def word_is(got Int64, want Int64, what String) {
+  if got == want {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "${what}: got ${got}, wanted ${want}")
+  }
+}
+
+// ---- the canvas as a Surface ------------------------------------------
+
+def canvas_checks() {
+  const c = ui_fb_canvas.canvas(4, 3)
+  c.fill(1, 1, 2, 1, 0x112233)
+  check(c.at(1, 1) == 0x112233 && c.at(2, 1) == 0x112233,
+    "fill stores the word over the rectangle")
+  check(c.at(0, 1) == 0 && c.at(3, 1) == 0 && c.at(1, 0) == 0 && c.at(1, 2) == 0,
+    "and nowhere around it")
+  c.fill(0, 0, 1, 1, 0xFF445566)
+  word_is(c.at(0, 0), 0x445566, "fill clears the coverage byte")
+  c.fill(3, 2, 5, 5, 0xABCDEF)
+  check(c.at(3, 2) == 0xABCDEF, "a fill past the edge lands what is inside")
+  check(c.at(-1, 0) == 0 && c.at(0, -1) == 0 && c.at(4, 0) == 0 && c.at(0, 3) == 0,
+    "a read off the surface answers 0")
+
+  const b = ui_fb_canvas.canvas(2, 1)
+  b.fill(0, 0, 2, 1, 0x00FF00)
+  b.blend(0, 0, 1, 1, 0x80FF0000)
+  word_is(b.at(0, 0), 0x807F00, "blend composites over what is there")
+  word_is(b.at(1, 0), 0x00FF00, "and leaves the rest of the row alone")
+  b.blend(1, 0, 1, 1, 0xFF123456)
+  word_is(b.at(1, 0), 0x123456, "an opaque blend is a fill")
+}
+
+// ---- paint: the tree onto the surface, parents under children --------
+
+def paint_checks() {
+  const panel = ui_fb_canvas.canvas(24, 20)
+  ui_fb.paint(ui.column([ui.text("a", ui.style())],
+    ui.style().with_padding(2.0)), panel)
+  check(panel.at(0, 0) == 0xD8D0C0 && panel.at(23, 19) == 0xD8D0C0,
+    "a column paints its panel over the whole rectangle it was given")
+  check(panel.at(2, 2) == 0x282830 && panel.at(9, 17) == 0x282830,
+    "and its child's ink over the panel, inside the padding")
+  check(panel.at(10, 2) == 0xD8D0C0 && panel.at(2, 18) == 0xD8D0C0,
+    "the panel shows again past the child's extent")
+
+  const centered = ui_fb_canvas.canvas(24, 16)
+  ui_fb.paint(ui.column([ui.text("a", ui.style())],
+    ui.style().with_align(ui.Align.center)), centered)
+  check(centered.at(7, 0) == 0xD8D0C0 && centered.at(8, 0) == 0x282830
+    && centered.at(15, 0) == 0x282830 && centered.at(16, 0) == 0xD8D0C0,
+    "center places a narrower child in the middle of the column")
+
+  const grown = ui_fb_canvas.canvas(8, 40)
+  ui_fb.paint(ui.column([
+    ui.text("a", ui.style()),
+    ui.row([], ui.style().with_grow(true)),
+    ui.text("b", ui.style())
+  ], ui.style().with_align(ui.Align.stretch)), grown)
+  check(grown.at(0, 15) == 0x282830 && grown.at(0, 16) == 0xC0C8D8
+    && grown.at(0, 23) == 0xC0C8D8 && grown.at(0, 24) == 0x282830,
+    "grow hands a child the column's leftover height")
+
+  const spaced = ui_fb_canvas.canvas(8, 32)
+  ui_fb.paint(ui.column([
+    ui.text("a", ui.style()),
+    ui.spacer(ui.style().with_grow(true))
+  ], ui.style()), spaced)
+  check(spaced.at(0, 16) == 0xD8D0C0 && spaced.at(7, 31) == 0xD8D0C0,
+    "a spacer paints nothing, so the panel shows through it")
+
+  const small = ui_fb_canvas.canvas(8, 8)
+  ui_fb.paint(ui.text("abc", ui.style()), small)
+  check(small.at(0, 0) == 0x282830 && small.at(7, 7) == 0x282830,
+    "a leaf larger than the surface is clipped to it")
+}
+
+// ---- ppm: the surface as text ----------------------------------------
+
+def ppm_checks() {
+  const c = ui_fb_canvas.canvas(2, 1)
+  c.fill(0, 0, 1, 1, 0xFF8040)
+  check(ui_fb.ppm(c) == "P3\n2 1\n255\n255 128 64\n0 0 0\n",
+    "ppm is the P3 header and one pixel per line")
+}
+
+// ---- the backend: mount paints, every event repaints ----------------
+//
+// The smallest loop that can show a repaint: one message, a model that
+// is the width of the title, and a view whose ink doubles when it flips.
+// The button carries the tag; the script presses it once.
+
+enum Msg { widen }
+
+def view(reg ui.Registry, wide Bool) ui.Node {
+  const widen = reg.on(Msg.widen)
+  const title = if wide { "ab" } else { "a" }
+  return ui.column([
+    ui.text(title, ui.style()),
+    ui.button("w", widen, ui.style())
+  ], ui.style())
+}
+
+def update(msg Msg, wide Bool) Bool {
+  return true
+}
+
+def backend_checks() {
+  const c = ui_fb_canvas.canvas(24, 32)
+  ui.run(view, update, false, ui_fb.backend(c, ui_fb.script([0])))
+  check(c.at(7, 0) == 0x282830 && c.at(15, 0) == 0x282830
+    && c.at(16, 0) == 0xD8D0C0 && c.at(0, 16) == 0x7088A8,
+    "the backend paints on mount and repaints the event's tree")
+}
+
+canvas_checks()
+paint_checks()
+ppm_checks()
+backend_checks()

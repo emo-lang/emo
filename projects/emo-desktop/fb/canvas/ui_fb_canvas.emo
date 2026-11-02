@@ -1,18 +1,20 @@
+require "emo/ui_fb"
+
 // The hosted surface (emo-desktop A7.1): the pixel words in one `Bytes`,
 // row-major, four bytes to a pixel, `set_u32_le` the store and
 // `get_u32_le` the load. It is the reference `ui_fb.Surface` — what the
-// package's test reads as values and the golden pins as bytes — and the
-// hosted twin of the metal's carve surface, which keeps the same word
+// tests read as values and the goldens pin as bytes — and the hosted
+// twin of the metal's carve surface, which keeps the same word
 // discipline over raw memory (A7.2). Whole words, never bytes: the
 // assessment's blit rule, kept here so the twin exercises the same
-// stores the carve will.
+// stores the carve does.
 //
-// A module of its own, not a section of the core, because the core
+// A package of its own, not a module of the core, because the core
 // dual-runs on the metal and this file cannot: riscv64 lowers
-// `Bytes.new` but none of its accessors (`emo_riscv.ml`), so the metal's
-// registry stages the core without it — the rule that leaves a
-// package's test out of a consumer's registry, applied to its host-only
-// surface.
+// `Bytes.new` but none of its accessors (`emo_riscv.ml`). A package
+// names the targets every module it carries compiles on, so the core
+// declares `riscv64` and the canvas does not, and a hosted consumer
+// takes both.
 
 class Canvas {
   def init(width Int64, height Int64) {

@@ -214,8 +214,44 @@ let smoke_tests =
             "hello/package.lock";
             "hello/main.emo";
             "hello/shell.emo";
-            "hello/ui.emo";
+            "hello/console_ui.emo";
           ];
+        (* The user image requires the desktop's packages beside the
+           syscall stub (emo-desktop A7.2): EmoUI's core, the fb
+           backend's core and the first frame. They are staged into a
+           registry in the scratch tree — the files start.sh stages,
+           from the same trees — and the build reads it through
+           EMO_REGISTRY, which names the one registry a build resolves
+           from, so the stub is staged beside them. The kernel's own
+           package has no dependencies, so the setting is nothing to
+           its build. *)
+        let registry = Filename.concat scratch "registry" in
+        List.iter
+          (fun (src, dst, names) ->
+            let dir = Filename.concat registry dst in
+            ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+            List.iter
+              (fun name ->
+                let source = read_file (Filename.concat src name) in
+                let oc = open_out_bin (Filename.concat dir name) in
+                output_string oc source;
+                close_out oc)
+              names)
+          [
+            ( "../../stdlib/registry/syscall/0.1.0",
+              "syscall/0.1.0",
+              [ "package.emo"; "syscall.emo" ] );
+            ( "../../projects/emo-ui",
+              "emo/ui/0.1.0",
+              [ "package.emo"; "ui.emo"; "debug.emo" ] );
+            ( "../../projects/emo-desktop/fb",
+              "emo/ui_fb/0.1.0",
+              [ "package.emo"; "ui_fb.emo" ] );
+            ( "../../projects/emo-desktop/fb/frame",
+              "emo/ui_fb_frame/0.1.0",
+              [ "package.emo"; "ui_fb_frame.emo" ] );
+          ];
+        Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
            ELF has to exist before the kernel's .S assembles. *)
         let hello_exit =

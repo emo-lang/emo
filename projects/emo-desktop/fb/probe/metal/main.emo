@@ -1,0 +1,20 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_frame"
+
+// The metal's lowering, pinned without a machine: the core and the first
+// frame built for `riscv64` as a user program, every def of every module
+// a metal consumer reaches lowered — the box model, the palette, the
+// clip and blend arithmetic, the backend, the tree and its digest. What
+// is left out is what the metal cannot take: the canvas (a `Bytes`) and
+// the packages' own tests (the loop driven with def values). The program
+// is never run here — `projects/emo-os/run.sh` runs the real pass on the
+// real carve; this is the build that fails first when a change in the
+// core stops lowering for the metal.
+
+def main() {
+  const e = ui_fb.measure(ui_fb_frame.tree(), 1024)
+  println("probe ${e.w()} ${e.h()}")
+}
+
+main()

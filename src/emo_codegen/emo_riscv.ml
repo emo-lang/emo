@@ -1996,6 +1996,20 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               call_runtime env "emo_to_string"
           | _ -> refuse (Printf.sprintf "the Byte method `%s`" name))
+      | Emo_check.Float64 when name = "to_int64" && args = [] ->
+          (* the truncating conversion every hosted target answers —
+             toward zero, `rtz` — on the raw double: fa0 in a native
+             frame, the boxed cell's bits otherwise (emo-desktop A7.2:
+             the fb core's box model reads its pixel counts off the
+             style's Float64 fields, and the first frame on the metal
+             is where this conversion was first asked of this target) *)
+          emit_expr env d self_;
+          if boxed then begin
+            put env "    andi t0, a0, -32\n";
+            put env "    fld fa0, 8(t0)\n"
+          end;
+          put env "    fcvt.l.d a0, fa0, rtz\n";
+          if boxed then put env "    call emo_box_i64\n"
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
           if not boxed then ()

@@ -20,9 +20,43 @@ cd "$(dirname "$0")"
 # has to exist before the kernel links — then the kernel. A source
 # newer than an image rebuilds both, in that order; a fresh tree with
 # both images present boots without the toolchain.
+#
+# The user image requires the desktop's packages beside the syscall stub
+# (emo-desktop A7.2): EmoUI's core, the fb backend's core and the first
+# frame, from their own trees. They are staged into a registry named for
+# the sources' content — the way every gate in the tree stages one — and
+# the build reads it through EMO_REGISTRY, which names the one registry
+# a build resolves from, so the stub is staged beside them out of the
+# compiler's own tree; a change in any of them is a stale user image.
 
 user_elf='hello.elf'
 elf='main.elf'
+
+ui_dir='../emo-ui'
+fb_dir='../emo-desktop/fb'
+syscall_dir='../../stdlib/registry/syscall/0.1.0'
+syscall_src="$syscall_dir/package.emo $syscall_dir/syscall.emo"
+ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
+fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo"
+frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo"
+
+registry() {
+  local sum
+  # shellcheck disable=SC2086
+  sum=$(cat $syscall_src $ui_src $fb_src $frame_src | cksum | awk '{print $1}')
+  local reg="$PWD/.emo-build/registry-$sum"
+  mkdir -p "$reg/syscall/0.1.0" "$reg/emo/ui/0.1.0" "$reg/emo/ui_fb/0.1.0" \
+    "$reg/emo/ui_fb_frame/0.1.0"
+  # shellcheck disable=SC2086
+  cp $syscall_src "$reg/syscall/0.1.0/"
+  # shellcheck disable=SC2086
+  cp $ui_src "$reg/emo/ui/0.1.0/"
+  # shellcheck disable=SC2086
+  cp $fb_src "$reg/emo/ui_fb/0.1.0/"
+  # shellcheck disable=SC2086
+  cp $frame_src "$reg/emo/ui_fb_frame/0.1.0/"
+  printf '%s' "$reg"
+}
 
 if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ "$1" != '--fresh' ]; }; then
   echo "usage: $0 [--fresh]" >&2
@@ -44,7 +78,8 @@ stale() {
   return 1
 }
 
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock ||
+# shellcheck disable=SC2086
+if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src ||
    stale "$elf" *.emo *.S link.ld "$user_elf"; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
@@ -68,7 +103,8 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock ||
     exit 1
   fi
   echo "start.sh: building the images with $emo" >&2
-  (cd hello && "$emo" build main.emo --target riscv64 --profile user -o "../$user_elf")
+  reg=$(registry)
+  (cd hello && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "../$user_elf")
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 

@@ -13,7 +13,7 @@
 // takes a name refuses a second and refuses none, an unknown word
 // names itself, and refusals the services answer come back as
 // `<command>: <message>`. The `counter` command (T7.5) starts the
-// machine's one program — the console renderer pass, ui.emo — and
+// machine's one program — the console renderer pass, console_ui.emo — and
 // waits for its exit, the REPL parked at the wait while the program
 // owns the console. The machine ends the way the proof's exit did:
 // the poweroff command is the boot pass's exit verb.

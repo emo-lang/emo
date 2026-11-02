@@ -32,10 +32,18 @@ README's shorter `emo` spelling.
 
 EmoOS is two Emo programs built by the one compiler: the user image —
 the shell and the machine's program live in it — and the kernel image,
-which embeds the user ELF at its own build. From `projects/emo-os/`:
+which embeds the user ELF at its own build. The user image requires
+the desktop's packages beside the syscall stub (emo-desktop A7.2:
+EmoUI's core, the fb backend's core and the first frame), and a build
+resolves its dependencies from one registry, so those packages and the
+stub are staged into a directory first — `start.sh` does this itself
+before it builds (its `registry` function is the list of files); by
+hand, stage the same files and point `EMO_REGISTRY` at the directory.
+From `projects/emo-os/`:
 
 ```console
-$ (cd hello && ../../../_build/default/src/emo_cli/emo.exe build main.emo \
+$ (cd hello && EMO_REGISTRY=<the staged registry> \
+     ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o ../hello.elf)
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
@@ -43,8 +51,8 @@ $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
 
 The user image builds first: the kernel's build assembles `user.S`,
 which embeds `hello.elf` — the ELF has to exist before the kernel
-links. After any change to `hello/` or to the kernel's own modules,
-rebuild both, in that order.
+links. After any change to `hello/`, to the kernel's own modules, or
+to the staged packages, rebuild both, in that order.
 
 ## The golden smoke
 

@@ -15,10 +15,11 @@ require "emo/ui"
 // The core splits where the assessment drew the line: measure, place,
 // clip and blend are pure Emo against the `Surface` interface and run
 // hosted in the corpus; what sits behind a `Surface` is the host's own
-// business — `canvas.emo` keeps one in a `Bytes` for the hosted targets,
-// and the metal's is the screen carve reached through the raw shim,
-// riscv64's alone (A7.2). The core never sees a byte: it hands a surface
-// clipped rectangles and colors, and reads words back through `at`.
+// business — `ui_fb_canvas` keeps one in a `Bytes` for the hosted
+// targets, and the metal's is the screen carve reached through the raw
+// shim, riscv64's alone (A7.2). The core never sees a byte: it hands a
+// surface clipped rectangles and colors, and reads words back through
+// `at`.
 //
 // A pixel is one `Int64` word, `0x00RRGGBB` — XRGB8888, the carve's
 // format (D5), red in bits 23..16 and blue in the low byte. A color
@@ -225,7 +226,7 @@ def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
 // unclipped and keep to their own bounds, and `at` outside the surface
 // answers 0, so a caller that skips `clip` is wrong by nothing worse
 // than wasted work. A `Surface` is the one thing a host provides:
-// `canvas.emo`'s keeps words in a `Bytes`, the metal's are the carve's
+// `ui_fb_canvas`'s keeps words in a `Bytes`, the metal's are the carve's
 // own words behind the raw shim, and the core cannot tell them apart.
 interface Surface {
   def width() Int64

@@ -21,16 +21,17 @@ $ dune build src/emo_cli/emo.exe
 
 ## 两个镜像
 
-EmoOS 是同一个编译器构建的两个 Emo 程序:用户镜像(shell 与机器的程序住在里面)与内核镜像——后者在自己的构建里嵌入用户的 ELF。在 `projects/emo-os/` 下:
+EmoOS 是同一个编译器构建的两个 Emo 程序:用户镜像(shell 与机器的程序住在里面)与内核镜像——后者在自己的构建里嵌入用户的 ELF。用户镜像在 syscall stub 之外还依赖桌面的几个包(emo-desktop A7.2:EmoUI 核心、fb backend 核心、第一帧),而一次构建只从一个 registry 解析依赖,所以这些包要和 stub 一起先 stage 进一个目录——`start.sh` 构建前自己会做(它的 `registry` 函数就是文件清单);手动做的话,stage 同样的文件,再把 `EMO_REGISTRY` 指向该目录。在 `projects/emo-os/` 下:
 
 ```console
-$ (cd hello && ../../../_build/default/src/emo_cli/emo.exe build main.emo \
+$ (cd hello && EMO_REGISTRY=<staged 好的 registry> \
+     ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o ../hello.elf)
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
-用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf`——ELF 必须先于内核链接存在。改了 `hello/` 或内核自己的模块之后,两个镜像都按这个顺序重建。
+用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf`——ELF 必须先于内核链接存在。改了 `hello/`、内核自己的模块或 stage 进去的那些包之后,两个镜像都按这个顺序重建。
 
 ## 金测一条龙
 

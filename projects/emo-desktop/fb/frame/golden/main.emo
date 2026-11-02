@@ -1,0 +1,23 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+
+// The first frame's hosted twin (emo-desktop A7.2): the tree painted
+// through the core onto a canvas the size of the display's baseline
+// mode (1024x768 XRGB8888, D5 — the mode `run.sh` gives the device and
+// the pass reads back from it), and the digest printed. `expected.txt`
+// is the interpreter's one line; every hosted target prints the same,
+// and `run.sh` asserts the same number twice on the metal — the line
+// the screen pass prints after reading its carve back, and the digest
+// of the monitor's screendump. One frame, three readings, one number.
+//
+//   emo run main.emo
+
+def main() {
+  const screen = ui_fb_canvas.canvas(1024, 768)
+  ui_fb.paint(ui_fb_frame.tree(), screen)
+  println("frame ${ui_fb_frame.digest(screen)}")
+}
+
+main()

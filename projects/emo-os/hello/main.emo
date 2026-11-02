@@ -21,21 +21,32 @@
 // finds the token, and exits 7), the screen carve's proof (T8.2 — the
 // machine's first full-screen pass paints the carve its spawn was
 // granted, the service reads the pattern back, and the second screen
-// spawn is the resource refusal), and then the shell (T7.3,
+// spawn is the resource refusal — and, since emo-desktop A7.2, the
+// pass's first act is the desktop's first frame: the tree the fb core
+// lays out and paints into the carve, its digest on the wire, the
+// grant's present putting it on the display), and then the shell (T7.3,
 // shell.emo, its
 // design in docs/shell.md) takes the machine's foreground: the top
 // level enters the REPL instead of exiting, and the machine ends the
 // way the proof's exit did — the poweroff command's verb 0, the boot
-// pass's exit landing in the kernel. The counter pass (T7.4, ui.emo,
+// pass's exit landing in the kernel. The counter pass (T7.4, console_ui.emo,
 // its design in docs/ui.md) is the machine's program: the shell's
 // `counter` command (T7.5) pokes ui_cell, spawns it, and waits for
 // its exit — a user program begun from the prompt, the closure
 // demo's last beat.
 //
-//   cd hello && emo build main.emo --target riscv64 \
-//        --profile user -o ../hello.elf
+// The image requires the desktop's packages beside the syscall stub —
+// EmoUI's core, the fb backend's core and the first frame — staged
+// into a registry from their trees, the way start.sh does before it
+// builds:
+//
+//   cd hello && EMO_REGISTRY=<the staged registry> emo build main.emo \
+//        --target riscv64 --profile user -o ../hello.elf
 
 require "syscall"
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_frame"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -294,37 +305,163 @@ if peek64(reach_cell) != 0 {
   syscall.exit(1)
 }
 
-// The screen branch (T8.2): the machine's first full-screen pass. The
-// cells-page token is the grant's channel — the kernel's spawn-side
-// read handed the carve into this pass's table at the spawn (the
-// identity of the carve's physical addresses, RW with U, frames.emo's
-// one hand). The pass claims the token, paints one pattern word per
-// 64 KiB across the whole 4 MiB, and exits — the words are what the
-// process service reads back through the kernel's half, the line that
-// names the base. A pass whose spawn carried no grant maps none of the
-// carve: its first store here is the page fault that kills it.
+// The screen branch (T8.2, emo-desktop A7.2): the machine's first
+// full-screen pass. The cells-page token is the grant's channel — the
+// kernel's spawn-side read handed the carve into this pass's table at
+// the spawn (the identity of the carve's physical addresses, RW with U,
+// frames.emo's one hand). The pass claims the token and paints the
+// desktop's first frame: the mode is the device's own answer (T8.4's
+// output_info), the carve at that mode is the fb core's surface, the
+// tree the first frame's package lays out is painted through the core
+// into the carve's own words, and the digest read back through the
+// same words goes on the wire before the grant's present puts the frame
+// on the display — the gate checks the carve's holder, the display
+// service judges the rect, and the pixels reach the display before the
+// line does. Then T8.2's proof: one pattern word per 64 KiB across the
+// whole 4 MiB, poked over the frame after the present — the exit is
+// when the process service reads them back through the kernel's half,
+// and the display already holds what the present transferred (every
+// later whole-screen flush shows the words again, over the frame). A
+// pass whose spawn carried no grant maps none of the carve: its first
+// store here is the page fault that kills it.
 if peek64(screen_cell) != 0 {
   poke64(screen_cell, 0)
-  var k = 0
-  while k < 64 {
-    poke64(screen_base + (k * 65536), 0x7363726E + k)
-    k = k + 1
-  }
-  // The desktop segment's verbs (T8.4): the mode from the device's
-  // own answer (output_info 0), the commit the grant's present —
-  // the gate checks the carve's holder, the display service judges
-  // the rect, and the pixels reach the display before the line does.
   case syscall.output_info(0) {
     (R.error, _) -> { mark() }
     (R.ok, mode) -> {
       output_line(mode)
+      const screen = Carve.new(base: screen_base, width: out_w(mode),
+        height: out_h(mode))
+      ui_fb.paint(ui_fb_frame.tree(), screen)
+      frame_line(carve_digest(screen_base, out_w(mode), out_h(mode)))
       case syscall.present(0, 0, 0, out_w(mode), out_h(mode)) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { present_ok() }
       }
     }
   }
+  var k = 0
+  while k < 64 {
+    poke64(screen_base + (k * 65536), 0x7363726E + k)
+    k = k + 1
+  }
   syscall.exit(0)
+}
+
+// The carve as the fb core's `Surface` (emo-desktop A7.2): the raw shim
+// the assessment keeps on the metal's side alone. A pixel is a 32-bit
+// word at the identity the grant mapped — `poke32` the store, `peek32`
+// the load, no verb and no copy between the core and the display's
+// memory — and the width and height are the display's answer, never a
+// constant. The hosted twin is `emo/ui_fb_canvas`, the same words in a
+// `Bytes`; the core cannot tell them apart.
+//
+// The pixel loops live in the typed defs below the class, not in its
+// methods: on this target a method's body is the dynamic convention —
+// every computed Int64 a boxed cell in the arena, and the value kinds
+// carry no claims for the pool to reclaim — so a loop over 786,432
+// pixels inside a method is the heap gone before the first row ends.
+// A fully typed top-level def computes in raw registers and allocates
+// nothing; the method hands it the words once per rectangle, which is
+// a dozen times a frame.
+class Carve {
+  def init(base Int64, width Int64, height Int64) {
+    self.base = base
+    self.width = width
+    self.height = height
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return carve_at(self.base, self.width, x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_fill(self.base, self.width, r.x(), r.y(), r.w(), r.h(),
+      color & 0xFFFFFF)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
+  }
+}
+
+def carve_at(base Int64, width Int64, x Int64, y Int64) Int64 {
+  return peek32(base + (y * width + x) * 4)
+}
+
+def carve_fill(base Int64, width Int64, x Int64, y Int64, w Int64,
+               h Int64, word Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      poke32(base + (row * width + col) * 4, word)
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
+                h Int64, color Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      var i = base + (row * width + col) * 4
+      poke32(i, ui_fb.over(color, peek32(i)))
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+// The frame's digest off the carve's own words — `ui_fb_frame.digest`'s
+// fold, `d = (d * 31 + word) mod 2^32` over every pixel in row-major
+// order, in a typed loop over `peek32` rather than through the
+// surface's `at`: a method call per pixel would box its answer into the
+// arena 786,432 times. The hosted twin folds through the canvas; the
+// screendump's Python folds the display's bytes; the three agree on one
+// number or on none (run.sh).
+def carve_digest(base Int64, width Int64, height Int64) Int64 {
+  var d = 0
+  var row = 0
+  while row < height {
+    var col = 0
+    while col < width {
+      d = (d * 31 + peek32(base + (row * width + col) * 4)) & 4294967295
+      col = col + 1
+    }
+    row = row + 1
+  }
+  return d
+}
+
+// The frame's digest, as the pass's line: `frame <digest>` — the number
+// the hosted twin prints and the screendump digests to (run.sh).
+def frame_line(d Int64) Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = num_at(d, p)
+  p = byte_at(p, 10)
+  gate_line(p)
 }
 
 // The merged event's halves (T8.3): the type in bits 48..63, the code
@@ -688,7 +825,7 @@ if peek64(win_cell) != 0 {
 // the console after it.
 if peek64(ui_cell) != 0 {
   poke64(ui_cell, 0)
-  ui.run()
+  console_ui.run()
   syscall.exit(0)
 }
 

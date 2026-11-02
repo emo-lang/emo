@@ -1,0 +1,11 @@
+package {
+  name = "emo/ui_fb_probe_metal"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_fb" = "0.1.0"
+    "emo/ui_fb_frame" = "0.1.0"
+  }
+}

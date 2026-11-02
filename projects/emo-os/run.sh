@@ -6,9 +6,10 @@ cd "$(dirname "$0")"
 elf='main.elf'
 
 if [ ! -f "$elf" ]; then
-  echo "run.sh: $elf not found; build both images first:" >&2
-  echo "  (cd hello && emo build main.emo --target riscv64 --profile user -o ../hello.elf)" >&2
-  echo "  emo build main.emo --target riscv64" >&2
+  echo "run.sh: $elf not found; build both images first — start.sh does it" >&2
+  echo "  (it stages the desktop's packages into a registry the user image" >&2
+  echo "  requires, then builds the user image and the kernel; by hand, see" >&2
+  echo "  docs/how-to-start-emoos.md)" >&2
   exit 1
 fi
 
@@ -34,7 +35,12 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # proof chain — the kill report included, the machine surviving its
 # offender — the screen carve's proof (T8.2: the first full-screen
 # pass paints the carve its spawn was granted, the pattern read back
-# through the kernel's half, the second screen spawn refused) — the
+# through the kernel's half, the second screen spawn refused) with the
+# desktop's first frame on it (emo-desktop A7.2: the pass lays the fb
+# core's tree into the carve before the pattern, its own digest of the
+# carve on the wire as `frame <n>`, and the display's screendump at the
+# present digests to the same number — the number the hosted twin
+# prints) — the
 # desktop segment's verbs (T8.4: `output 1024x768`, the mode the
 # device's own answer, and `present ok`, the grant's commit — the
 # transfer and the flush complete before the line; the unauthorized
@@ -177,6 +183,39 @@ time.sleep(0.3)
 s.close()
 PYEOF
   }
+  # The first frame (emo-desktop A7.2): the screen pass laid the fb
+  # core's tree into the carve and presented it, its own digest of the
+  # carve's words on the wire (`frame <n>`). The monitor's screendump
+  # takes the display's PPM, and the same fold over its pixels —
+  # `d = (d * 31 + word) mod 2^32`, the word the pixel's XRGB, row-major
+  # — has to answer the same number, which is also the number the hosted
+  # twin prints (projects/emo-desktop/fb/frame/golden/expected.txt):
+  # the carve the core painted, the display the device scanned out, the
+  # canvas on the host — three readings, one number. The dump is taken
+  # here, before the input beat below lets the chain run on: nothing
+  # flushes the display between the present and the window pass, and
+  # the pass's pattern words go back into the carve after the present,
+  # so this dump holds the frame alone — the model of the second dump
+  # below is built on it.
+  await 'present ok'
+  hmp 'screendump .frame.ppm'
+  if ! python3 - <<'PYEOF'
+import sys
+
+data = open('.frame.ppm', 'rb').read()
+if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
+    sys.exit("run.sh: the frame's screendump is not the mode's P6 1024x768")
+px = data[16:]
+d = 0
+for i in range(0, len(px), 3):
+    d = (d * 31 + ((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])) & 0xFFFFFFFF
+if d != 1234944000:
+    sys.exit(f"run.sh: the display's frame digests to {d}; the first frame is 1234944000")
+PYEOF
+  then
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
   # The input merge's beat (T8.3): the pass parks on the merged stream
   # (`keys?` on the wire), the monitor's hand answers it — one sendkey,
   # the device's key event — and the serial's byte rides the same
@@ -189,17 +228,18 @@ PYEOF
   # The golden's eyes (T8.8): the compositor's compositions blitted the
   # window's frame into the carve and flushed — the monitor's screendump
   # takes the display's PPM and every pixel is read back against the
-  # composition history's union: the gradient the flush smoke painted
-  # (blue 64, red and green the row's multiples), the screen carve's
-  # proof pattern over it — the words the T8.2 pass wrote after the
-  # smoke, one per 64 KiB across the display's first 3 MiB, each word's
-  # zero high half the black partner pixel, visible only because every
-  # later flush is whole-screen — and the window's two copies over both
-  # (the first at (0,0), its rows below the move's surviving, the
-  # second at (16,32), written last, holding the overlap; the paint
-  # carries its row in the blue lane, 0x57494E00 + row). A wrong pixel
-  # anywhere is the loud end — and a dead check kills the machine
-  # first, the survivor poisons the next run.
+  # composition history's union: the first frame the screen pass
+  # painted through the fb core (the dump above, pixel for pixel — the
+  # frame is the base now; the flush smoke's gradient lies under it),
+  # the screen carve's proof pattern over it — the words the T8.2 pass
+  # wrote after its present, one per 64 KiB across the display's first
+  # 3 MiB, each word's zero high half the black partner pixel, visible
+  # only because every later flush is whole-screen — and the window's
+  # two copies over both (the first at (0,0), its rows below the move's
+  # surviving, the second at (16,32), written last, holding the
+  # overlap; the paint carries its row in the blue lane, 0x57494E00 +
+  # row). A wrong pixel anywhere is the loud end — and a dead check
+  # kills the machine first, the survivor poisons the next run.
   await 'comp 16 32'
   hmp 'screendump .screen.ppm'
   if ! python3 - <<'PYEOF'
@@ -209,6 +249,7 @@ data = open('.screen.ppm', 'rb').read()
 if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
     sys.exit("run.sh: the screendump is not the mode's P6 1024x768")
 px = data[16:]
+frame = open('.frame.ppm', 'rb').read()[16:]
 
 def want(x, y):
     if 16 <= x < 528 and 32 <= y < 160:
@@ -220,7 +261,8 @@ def want(x, y):
             return (99, 114, 110 + y // 16)
         if x == 1:
             return (0, 0, 0)
-    return ((y * 5) & 255, (y * 3) & 255, 64)
+    o = (y * 1024 + x) * 3
+    return (frame[o], frame[o + 1], frame[o + 2])
 
 for y in range(768):
     row = px[y * 3072:(y + 1) * 3072]
@@ -413,7 +455,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 77 45'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 17 cause 13' 'addr 0x80000000' 'greedy' 'user heap 18 gone' 'smash' 'user fault 19 cause 15' 'addr 0x40000000' 'reach' 'user fault 20 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'frame 1234944000' 'present ok' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 77 45'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -488,9 +530,9 @@ PYEOF
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, comp restart, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, frame, keys, win, comp restart, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, keys, win, comp restart, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, fs restart, user, fs roundtrip, kill, screen, frame, keys, win, comp restart, shell, counter, frames, self-exit, 1 ecall"

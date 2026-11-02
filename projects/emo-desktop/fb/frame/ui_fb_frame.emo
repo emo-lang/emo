@@ -1,0 +1,51 @@
+require "emo/ui"
+require "emo/ui_fb"
+
+// The first frame (emo-desktop A7.2): the tree the machine's screen pass
+// paints through the core onto the carve, and the digest the golden's
+// eye reads off any surface. Three readings answer the one number — the
+// pass's own read-back of the carve it painted, the hosted canvas's
+// render of the same tree (`golden/`), and the monitor's screendump of
+// the display (`run.sh`) — or the frame is not on the screen.
+//
+// The picture is M7's: rectangles. A title strip across the top, a body
+// that takes the height left over, a dock along the bottom with two
+// buttons — the shape a desktop has before it has glyphs, a pointer, or
+// windows (M8, M9). The box model lays it into whatever rectangle the
+// surface is: the width and height are the display's answer, never a
+// constant here.
+
+def tree() ui.Node {
+  const title = ui.style().with_height(48.0).with_padding(16.0)
+  const body = ui.style().with_grow(true).with_padding(32.0).with_gap(16.0)
+  const dock = ui.style().with_height(96.0).with_padding(24.0).with_gap(24.0)
+  return ui.column([
+    ui.row([
+      ui.text("EmoOS", ui.style())
+    ], title.with_align(ui.Align.center)),
+    ui.scroll([
+      ui.text("the screen", ui.style()),
+      ui.text("one language from power-on to the desktop", ui.style()),
+      ui.spacer(ui.style().with_grow(true))
+    ], body),
+    ui.row([
+      ui.button("screen", 0, ui.style()),
+      ui.button("power", 1, ui.style())
+    ], dock.with_align(ui.Align.center))
+  ], ui.style().with_align(ui.Align.stretch))
+}
+
+// Every pixel in row-major order folded into one 32-bit number,
+// `d = (d * 31 + word) mod 2^32`. Order-sensitive — a frame shifted by
+// one pixel digests to something else — and integer arithmetic every
+// target and the golden's Python reproduce exactly, so the readings
+// agree on one number or on none.
+def digest(s ui_fb.Surface) Int64 {
+  var d = 0
+  for var y = 0; y < s.height(); y = y + 1 {
+    for var x = 0; x < s.width(); x = x + 1 {
+      d = (d * 31 + s.at(x, y)) & 0xFFFFFFFF
+    }
+  }
+  return d
+}

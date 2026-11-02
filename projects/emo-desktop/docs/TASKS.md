@@ -51,7 +51,9 @@ tree's and EmoOS's, listed there.
   assessment's blit rule, kept on the hosted twin so it exercises the
   stores the carve will), and a module of its own because riscv64 lowers
   `Bytes.new` but none of its accessors, so the metal's registry stages
-  the core without it. `ppm` writes any surface as P3 text, the format
+  the core without it (A7.2 made it a package of its own,
+  `emo/ui_fb_canvas`, so the core's manifest could say `riscv64`). `ppm`
+  writes any surface as P3 text, the format
   the metal's `screendump` eye reads. **The backend class rides along**
   (`Fb` over a caller-owned surface and a scripted `Input`, the tui's
   shape) because it is load-bearing, not sugar: the `beam` and `wasm`
@@ -86,9 +88,63 @@ tree's and EmoOS's, listed there.
   backend never names `ui.debug` — and was green against the core as it
   was; the six backends now carry the fb sink's shape (T48.14, the Emo
   tree's tracker).
-- [ ] **A7.2** — The first frame: a full-screen pass paints through
+- [x] **A7.2** — The first frame: a full-screen pass paints through
   the core into the authorized carve buffer and presents it; the
-  golden's eye is the `screendump` PPM checksum.
+  golden's eye is the `screendump` PPM checksum. **Landed 2026-11-02.**
+  The screen pass (`projects/emo-os/hello/main.emo`, T8.2's) now paints
+  the desktop's first frame before its proof: the mode is the device's
+  answer (`output_info`), the carve at that mode is the core's
+  `Surface` — `Carve`, the raw shim the assessment keeps on the metal's
+  side alone, a pixel a 32-bit word at the identity the grant mapped,
+  `poke32` the store and `peek32` the load, no verb and no copy — the
+  tree is `emo/ui_fb_frame`'s (a title strip, a body that takes the
+  height left over, a dock with two buttons: M7's picture, rectangles),
+  `ui_fb.paint` lays it in, and the pass's own fold over the carve's
+  words goes on the wire as `frame 1234944000` before the grant's
+  present puts the frame on the display; T8.2's pattern words go back
+  over the frame after the present, so the exit's read-back still finds
+  them and the display still holds the frame. **The eye is three
+  readings of one number**: the pass's digest of the carve it painted,
+  the hosted canvas's digest of the same tree
+  (`fb/frame/golden/expected.txt`, the same bytes from the interpreter
+  and all five hosted targets), and `run.sh`'s fold over the monitor's
+  screendump at `present ok` — the fold `d = (d * 31 + word) mod 2^32`,
+  row-major, in Emo on both sides and in Python on the display's bytes;
+  the second screendump's model (T8.8's) is built on the first, the
+  frame its base where the gradient was. **The packages were reshaped
+  to make the manifests true**: a package names the targets every module
+  it carries compiles on, so the canvas — a `Bytes`, which riscv64 does
+  not lower — is its own package now, `emo/ui_fb_canvas` (five hosted
+  targets), and the core, the first frame (`emo/ui_fb_frame`, the tree
+  and the digest) and EmoUI's core declare `riscv64` — their reachable
+  modules lower for a user program, pinned without a machine by
+  `fb/probe/metal/` (the core gate pins `beam` and `wasm` through the
+  goldens instead of the directory build: those emitters lower an
+  interface call only against an implementor in the program, and the
+  core alone carries none). The user image's manifest names the three
+  packages beside the stub; `start.sh` stages them with the stub into a
+  registry (`EMO_REGISTRY` names the one registry a build resolves from)
+  and the `dune` smoke stages the same files; `hello/ui.emo` is
+  `console_ui.emo` now, the module path `ui` being the dependency's.
+  **What the metal taught, in order**: a method's body is the dynamic
+  convention and every computed `Int64` in it a boxed cell in the arena
+  that no pool reclaims (value kinds carry no claims) — the first paint
+  was `user heap 22 gone` before the first row ended, and the pixel
+  loops moved into fully typed top-level defs, which compute raw (the
+  rule for every pixel loop on the metal, `CHECK.md`); `Float64.to_int64`
+  was not lowered on riscv64 — the dynamic dispatch knows `to_string`
+  and `length` alone, so the box model's first `padding().to_int64()`
+  was an invisible `emo_fail` — and is now, `fcvt.l.d rtz`, the
+  truncation every hosted target answers, pinned in `examples/floats`
+  (EmoOS T8.10); the user runtime's `emo_fail` says nothing on the wire
+  from U-mode — its console emit never reaches the gate, and the
+  kernel's `user fault … cause 2` on the park's `wfi` was the only trace
+  — found, not fixed; and three gaps named by the emitter stand:
+  program-wide def values (the loop's `ui.run(view, update, …)`, A8.3's
+  blocker), `ArrayBuilder`, and `Bytes`' accessors. **The pins**:
+  `run.sh` green under both timer transports, three consecutive rounds
+  byte-identical, the ledger `frames 77 45` unchanged; the fb gate 51
+  ok; `dune runtest` and `@fmt` green.
 - [ ] **A7.3** — The corpus leg: `run.sh`'s display counterpart for
   the hosted runs (`-display none`, checksums asserted).
 
