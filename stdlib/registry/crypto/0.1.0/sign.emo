@@ -1,0 +1,36 @@
+// Ed25519 (RFC 8032): the signature scheme over Curve25519's twisted
+// Edwards form. A secret key is the 32-byte seed the RFC calls the
+// private key; the public key is derived from it, so the doors take
+// the seed and nothing else. Bytes in, Bytes out. A seed or a public
+// key that is not 32 bytes is the caller's mistake and raises. A
+// signature that does not verify is data: `ed25519_verify` answers
+// false — the same false for a wrong message, a flipped byte, a
+// signature that is not 64 bytes, an S at or above the group order
+// (the malleable twin the RFC refuses), and a public key that does
+// not decode to a point. The verification is the group equation
+// without the cofactor, [S]B = R + [k]A, the form Go checks; the
+// machinery is internal.ed25519 over internal.fe25519.
+
+// The 32-byte public key of the seed.
+def ed25519_public(seed Bytes) Bytes {
+  if seed.length() != 32 {
+    raise Exception.new(message: "crypto: ed25519 seed must be 32 bytes")
+  }
+  return internal.ed25519.public_key(seed)
+}
+
+// The 64-byte signature of the message under the seed: R then S.
+def ed25519_sign(seed Bytes, message Bytes) Bytes {
+  if seed.length() != 32 {
+    raise Exception.new(message: "crypto: ed25519 seed must be 32 bytes")
+  }
+  return internal.ed25519.sign(seed, message)
+}
+
+// Whether the signature is the public key's signature of the message.
+def ed25519_verify(public Bytes, message Bytes, signature Bytes) Bool {
+  if public.length() != 32 {
+    raise Exception.new(message: "crypto: ed25519 public key must be 32 bytes")
+  }
+  return internal.ed25519.verify(public, message, signature)
+}

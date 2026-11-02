@@ -455,6 +455,8 @@ let beam_goldens =
        smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
     "rand_demo";
     "crypto_aead";
+    "crypto_sign";
+    "crypto_ecdh";
   ]
 
 let erl_available =
@@ -704,6 +706,17 @@ let c_goldens =
        smoke-tested — getentropy is the c leg *)
     "rand_demo";
     "crypto_aead";
+    (* crypto_sign and crypto_ecdh: the RFC 8032 and RFC 7748 vectors
+       with Go's ed25519/ecdh companions; crypto_sign_sweep: thirteen
+       message lengths through key derivation, signing, and
+       verification — a minute interpreted, a tenth of a second
+       compiled, so c-only; crypto_ecdh_iterated: RFC 7748's thousand
+       iterations — a minute and a half interpreted, under a second
+       compiled, c-only for the same reason *)
+    "crypto_sign";
+    "crypto_sign_sweep";
+    "crypto_ecdh";
+    "crypto_ecdh_iterated";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

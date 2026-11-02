@@ -43,6 +43,70 @@ let fresh env =
   env.fresh <- env.fresh + 1;
   Printf.sprintf "__s%d" env.fresh
 
+(* A local's JavaScript name: an Emo parameter or binding named
+   `public`, `static`, `let`, or any other word JavaScript reserves
+   (strict mode included) would emit an illegal declaration — the C
+   emitter's `c_ident` guard, for this target. The suffix is `$`,
+   which no Emo identifier can contain, so the mangled name cannot
+   collide with another local. Module-level names are mangled with
+   `__` elsewhere and never meet this list. *)
+let ts_local (name : string) : string =
+  let reserved =
+    List.mem name
+      [
+        "arguments";
+        "await";
+        "break";
+        "case";
+        "catch";
+        "class";
+        "const";
+        "continue";
+        "debugger";
+        "default";
+        "delete";
+        "do";
+        "else";
+        "enum";
+        "eval";
+        "export";
+        "extends";
+        "false";
+        "finally";
+        "for";
+        "function";
+        "if";
+        "implements";
+        "import";
+        "in";
+        "instanceof";
+        "interface";
+        "let";
+        "new";
+        "null";
+        "package";
+        "private";
+        "protected";
+        "public";
+        "return";
+        "static";
+        "super";
+        "switch";
+        "this";
+        "throw";
+        "true";
+        "try";
+        "typeof";
+        "undefined";
+        "var";
+        "void";
+        "while";
+        "with";
+        "yield";
+      ]
+  in
+  if reserved then name ^ "$" else name
+
 (* A tail `return f(args)` to the enclosing function becomes a
    parameter re-assignment and `continue` inside the driver loop — JS
    has no tail calls, and a deep await chain would blow the stack.
@@ -103,7 +167,8 @@ let rec pattern_test s (p : Emo_ast.pattern) : string =
 let rec pattern_bindings s (p : Emo_ast.pattern) : string list =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> []
-  | Ast.Pattern_binding name -> [ Printf.sprintf "const %s = %s;" name s ]
+  | Ast.Pattern_binding name ->
+      [ Printf.sprintf "const %s = %s;" (ts_local name) s ]
   | Ast.Tuple_pattern ps ->
       List.concat
         (List.mapi
@@ -195,7 +260,8 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Const (L_char c) -> Printf.sprintf "E.char(%C)" c
   | Type_ref name -> Printf.sprintf "%S" name
   | Var name ->
-      if List.mem name env.refs then Printf.sprintf "%s.v" name else name
+      if List.mem name env.refs then Printf.sprintf "%s.v" (ts_local name)
+      else ts_local name
   | Global name ->
       if List.mem name env.fforeigns then
         raise
@@ -382,7 +448,9 @@ let rec expr env (e : Emo_ir.expr) : string =
         pre f_code
         (String.concat ", " arg_locals)
   | Closure { cparams; cbody } ->
-      let params = String.concat ", " (List.map fst cparams) in
+      let params =
+        String.concat ", " (List.map (fun (p, _) -> ts_local p) cparams)
+      in
       let saved = env.refs in
       let saved_name = env.fname in
       let saved_loop = env.in_loop in
@@ -423,6 +491,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       else Printf.sprintf "%s;" code
   | Let { mutable_ = false; name; init } ->
       let init_code = expr env init in
+      let name = ts_local name in
       if tail then
         Printf.sprintf "const %s = %s;\nreturn %s;" name init_code name
       else Printf.sprintf "const %s = %s;" name init_code
@@ -430,13 +499,14 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       (* The init reads outer bindings; the box registers afterwards. *)
       let init_code = expr env init in
       env.refs <- name :: env.refs;
+      let name = ts_local name in
       if tail then
         Printf.sprintf "let %s = { v: %s };\nreturn %s.v;" name init_code name
       else Printf.sprintf "let %s = { v: %s };" name init_code
   | Assign_var { name; value } ->
       if List.mem name env.refs then
-        Printf.sprintf "%s.v = %s;" name (expr env value)
-      else Printf.sprintf "const %s = %s;" name (expr env value)
+        Printf.sprintf "%s.v = %s;" (ts_local name) (expr env value)
+      else Printf.sprintf "const %s = %s;" (ts_local name) (expr env value)
   | Set_global_var _ ->
       raise
         (Emo_ir.Lower_error
@@ -564,7 +634,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
             match post with
             | Emo_ir.Assign_var { name = pn; value; _ }
               when List.mem pn env.refs ->
-                Printf.sprintf "%s.v = %s" pn (expr env value)
+                Printf.sprintf "%s.v = %s" (ts_local pn) (expr env value)
             | Emo_ir.Assign_var { name = pn; _ } ->
                 failwith
                   ("ts: the `for` post assigns the non-mutable `" ^ pn ^ "`")
@@ -575,7 +645,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
           env.in_loop <- saved_loop;
           let loop =
             Printf.sprintf "{\nlet %s = { v: %s };\nfor (; %s; %s) {\n%s\n}\n}"
-              name init_code cond_code post_code body_code
+              (ts_local name) init_code cond_code post_code body_code
           in
           if tail then loop ^ "\nreturn undefined;" else loop
       | _ -> failwith "ts: the `for` header binds a `var`")
@@ -633,11 +703,13 @@ let const_thunks : string list ref = ref []
 
 let emit_func env (f : Emo_ir.func) : string =
   env.refs <- [];
-  let params = String.concat ", " (List.map fst f.fparams) in
+  let params =
+    String.concat ", " (List.map (fun (p, _) -> ts_local p) f.fparams)
+  in
   let saved_name = env.fname in
   let saved_params = env.fparams in
   env.fname <- f.Emo_ir.fname;
-  env.fparams <- List.map fst f.Emo_ir.fparams;
+  env.fparams <- List.map (fun (p, _) -> ts_local p) f.Emo_ir.fparams;
   let tramp = trampoline env f in
   let body = stmts env f.Emo_ir.fbody ~tail:true in
   env.fname <- saved_name;

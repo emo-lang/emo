@@ -3522,6 +3522,18 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "crypto_aead")
           "crypto_aead" "main.emo");
+    tc "crypto_sign compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "crypto_sign")
+          "crypto_sign" "main.emo");
+    tc "crypto_ecdh compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "crypto_ecdh")
+          "crypto_ecdh" "main.emo");
     tc "math_special compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
@@ -3647,6 +3659,8 @@ let ts_golden_tests =
       ("rand_demo", "main.emo");
       ("crypto_hash", "main.emo");
       ("crypto_aead", "main.emo");
+      ("crypto_sign", "main.emo");
+      ("crypto_ecdh", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the

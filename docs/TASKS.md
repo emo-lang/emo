@@ -3131,15 +3131,68 @@ error split, and the honesty sections.
       agreeing byte for byte; five lists byte-identically. Found on
       the way and fixed: `aes_ctr` mutated the caller's IV — the
       counter block is copied now.
-- [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
-      arithmetic over `Int64` limbs, the width decided by
-      measurement (a 128-bit product is not known to be expressible;
-      radix 2^26, five limbs, fits every product under 2^52 and is
-      the fallback shape), SHA-512 from T55.3 riding the signing;
-      the golden takes the RFC vectors plus Go `ed25519`/`ecdh`
-      companions — sign/verify, the malleability rejections, and
-      X25519's all-zero-output refusal as the RFC's contributory
-      check surfaced as `(R.error, …)`.
+- [x] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): the
+      probe first — `Int128` is E4005, `2^32 · 2^32` answers 0
+      (multiplication wraps modulo 2^64; there is no 128-bit
+      product), `(2^51 − 1)²` wraps — so the five-limb radix 2^51 is
+      out and the field rides ten signed `Int64` limbs in the
+      alternating radix 2^26/2^25, ref10's 32-bit shape, in
+      `internal/fe25519.emo`: every limb product under 2^53, the
+      wrapped terms times 19 and the odd-by-odd terms times 2, the
+      ten-term sums under 2^63; the multiplier's sums generated from
+      that rule and the whole limb layer mirrored in Python and
+      fuzzed against big-integer arithmetic over three thousand pairs
+      before transliteration (the generator's first draft dropped the
+      odd-by-odd factor 2 — limbs 0 and 1 came out right and the even
+      limbs from 2 up wrong, and the limb-level diff found it in one
+      round); the rounding carry pass, `from_bytes` ignoring bit 255,
+      `to_bytes` through the quotient estimate, the inversion and
+      (p − 5)/8 chains, masked `cmov`/`cswap`; the hot path reads and
+      writes the limb box directly with the carry inline — the smoke
+      panel went from 2.8 to 1.4 seconds interpreted, byte-identical.
+      `internal/ed25519.emo`: the point a class of four field boxes in
+      extended coordinates, §5.1.4's add and double (2d and Z·2Z as
+      single products so every multiplier input stays within the
+      bound), scalar multiplication double-and-add-always with a
+      masked select over 256 bits, decoding through
+      u·v³·(u·v⁷)^((p−5)/8) with the sqrt(−1) correction and the
+      x = 0-with-sign-bit refusal (a non-canonical y accepted, the way
+      Go reads it), the scalars modulo L over sixteen 32-bit words —
+      the schoolbook product with each word product exact as a 64-bit
+      pattern and split through the logical shift, the reduction 260
+      masked trial subtractions — and the scheme: the public key, the
+      signature, and verification as [S]B − [k]A re-encoded against R
+      (the equation without the cofactor, Go's shape), an S at or
+      above L refused. `internal/x25519.emo`: the Montgomery ladder,
+      255 steps with masked swaps, the clamping, the top bit ignored
+      by the field's own `from_bytes`. The constants derived, not
+      hand-copied: d, 2d, and sqrt(−1) as limbs, the base point as
+      its encoding, L as its words. The surface: `crypto.sign` —
+      `ed25519_public(seed)`, `ed25519_sign(seed, message)`,
+      `ed25519_verify(public, message, signature)` answering `Bool`,
+      the same false for a wrong message, a flipped byte, a signature
+      that is not 64 bytes, an S at or above L, and a public key that
+      does not decode, a seed or public key that is not 32 bytes
+      raising — and `crypto.ecdh` — `x25519(scalar, point)` answering
+      `(R, Bytes)`, the all-zero shared secret the value
+      `(R.error, "crypto: x25519 low-order point")`, and
+      `x25519_public(scalar)`. The goldens: `examples/crypto_sign`
+      takes the five §7.1 vectors (public key, signature,
+      verification) and the rejections (a flipped byte, a wrong
+      message, S + L, a 63-byte signature, x = 0 with the sign bit, a
+      y with no root) — 21 lines agreeing with Go's `crypto/ed25519`,
+      five seconds interpreted; `examples/crypto_ecdh` takes §5.2,
+      §6.1 both ways, the first iteration, u = 0 and u = 1 refused
+      with the reason pinned, and a sweep — agreeing with Go's
+      `crypto/ecdh`; both ride all five lists byte-identically;
+      `examples/crypto_sign_sweep` (thirteen message lengths — a
+      minute interpreted, a tenth of a second compiled) and
+      `examples/crypto_ecdh_iterated` (RFC 7748's thousand
+      iterations) are c-only. The step flushed a typescript emitter
+      gap: a local named `public`, emitted verbatim, is a reserved
+      word in strict-mode JavaScript — `ts_local` now guards the
+      JS/TS reserved words with a `$` suffix no Emo identifier can
+      carry, the C emitter's `c_ident` shape (`CHECK.md`, fixed).
 - [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
       `docs/stdlib/rand.md` (EN + zh-CN) with the full surface, the
       raise/error split spelled per function, the constant-time

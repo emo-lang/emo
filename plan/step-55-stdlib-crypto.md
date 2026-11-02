@@ -165,11 +165,17 @@ stays pure and five-target.
       S-box byte-oriented (one derived table, proven through the FIPS
       197 KATs before landing), CBC/CTR/GCM over Bytes; the golden
       grows the AES panel, all fifty Go lines agreeing on five lists.
-- [ ] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): field
-      arithmetic over `Int64` limbs, the width decided by
-      measurement (radix 2^26 five-limb is the fallback shape);
-      RFC vectors plus Go `ed25519`/`ecdh` companions, including
-      X25519's all-zero-output refusal.
+- [x] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): the
+      width measured — no 128-bit product, so ten signed `Int64`
+      limbs in radix 2^26/2^25 (`internal/fe25519.emo`, the limb
+      layer mirrored and fuzzed in Python first); the curve, the
+      scalars modulo L, and the scheme in `internal/ed25519.emo`,
+      the ladder in `internal/x25519.emo`; `crypto.sign` and
+      `crypto.ecdh` over Bytes; the goldens pin the RFC vectors, the
+      rejections, and X25519's low-order refusal against Go's
+      `ed25519`/`ecdh` on five lists, the sweep and the thousand
+      iterations c-only; and the typescript emitter's reserved-word
+      gap (`public`) flushed and fixed.
 - [ ] **T55.12** — The docs: `docs/stdlib/crypto.md` and
       `docs/stdlib/rand.md` (EN + zh-CN) with the surface, the
       raise/error split per function, the constant-time honesty
