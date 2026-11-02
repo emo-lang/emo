@@ -144,7 +144,7 @@ class Recorder {
   def init() {
     self.mounts = Box.new(0)
     self.patches = Box.new([])
-    self.events = Box.new(0)
+    self.events = Box.new(debug.unmounted())
     self.tree = Box.new(ui.text("", ui.style()))
   }
 
@@ -168,7 +168,7 @@ class Rebuild {
   def init() {
     self.mounts = Box.new(0)
     self.painted = Box.new([])
-    self.events = Box.new(0)
+    self.events = Box.new(debug.unmounted())
     self.tree = Box.new(ui.text("", ui.style()))
   }
 

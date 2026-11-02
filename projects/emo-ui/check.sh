@@ -130,20 +130,22 @@ expect 0 "eval_order --target ocaml builds" "$rc"
 got=$("$OUT" 2>&1 || true)
 expect "12 = 3" "eval_order -- ocaml evaluates operands left to right" "$got"
 
-# An enum's display form: bare on the interpreter, module-qualified on
-# `typescript`, and `beam` has no conversion for the kind and raises.
+# An enum's display form: the interpreter's bare-tag form on every
+# target since the 2026-10-19 fix (`CHECK.md`) — `typescript` once
+# qualified the tag and `beam` once raised for want of a conversion, and
+# the probe pins that neither does now.
 run_of probe/enum_print main.emo "red (ok, 12.5)"
 
 build probe/enum_print main.emo typescript && rc=0 || rc=$?
 got=$(node "$OUT.ts" 2>&1 || true)
-expect "main.Color.red (R.ok, 12.5)" "enum_print -- typescript qualifies the tag" "$got"
+expect "red (ok, 12.5)" "enum_print -- typescript prints the bare tag" "$got"
 
 build probe/enum_print main.emo beam && rc=0 || rc=$?
 ( cd "$(dirname "$OUT")" && ERL_CRASH_DUMP=/dev/null erl -noshell -pa . \
     -eval 'out:main(), erlang:halt(0).' ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
-expect 1 "enum_print -- beam raises rather than printing" "$rc"
-got=$(grep -o -m1 "emo_no_to_str" "$OUT.run" || true)
-expect "emo_no_to_str" "enum_print -- and names the conversion it lacks" "$got"
+expect 0 "enum_print -- beam prints rather than raising" "$rc"
+got=$(cat "$OUT.run" || true)
+expect "red (ok, 12.5)" "enum_print -- and prints the bare tag" "$got"
 
 # --- the golden: one screen, the same bytes from every target ------------
 #

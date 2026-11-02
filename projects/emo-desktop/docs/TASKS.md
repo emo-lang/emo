@@ -76,16 +76,16 @@ tree's and EmoOS's, listed there.
   `emo/ui_fb`) — those land with the carve surface and the first frame
   (A7.2), not ahead of them. The convergence corpus entry (`corpus/fb`
   beside `debug`, `ssr`, `tui`) is A10.1's, with the sixth family.
-  **Found, not fixed**: EmoUI's own gates (`projects/emo-ui/tui/check.sh`,
-  `corpus/check.sh`) have been red since 2026-10-18 — the checker's
-  class-field typing (`8171d0d`) made every backend's
-  `self.sink = Box.new(0)` a `Box[Int64]` that `mount` can no longer
-  `replace` with the loop's `ui.Events` (`debug.emo`, `ui_tui.emo`,
-  E4004), and none of those gates run under `dune runtest`. The fb gate
-  stages the core as `ui.emo` alone — the fb backend never names
-  `ui.debug` — so it is green against the core as it is; the migration
-  of the six backends to a typed sink is EmoUI's task, the fb sink its
-  worked example.
+  **Found on the way, fixed the same day as T48.14**: EmoUI's own gates
+  (`projects/emo-ui/check.sh` and the backends' under it) had been red
+  since 2026-10-18 — the checker's class-field typing (`8171d0d`) made
+  every backend's `self.sink = Box.new(0)` a `Box[Int64]` that `mount`
+  could no longer `replace` with the loop's `ui.Events` (`debug.emo`,
+  `ui_tui.emo`, E4004), and none of those gates run under
+  `dune runtest`. The fb gate stages the core as `ui.emo` alone — the fb
+  backend never names `ui.debug` — and was green against the core as it
+  was; the six backends now carry the fb sink's shape (T48.14, the Emo
+  tree's tracker).
 - [ ] **A7.2** — The first frame: a full-screen pass paints through
   the core into the authorized carve buffer and presents it; the
   golden's eye is the `screendump` PPM checksum.

@@ -25,10 +25,24 @@ def apply_styles(handle Int64, kind String, s ui.Style) {
   }
 }
 
+// The sink before `mount`. A backend is built before the loop hands it
+// the application, and a `Box` is typed by what it is born holding, so
+// the cell starts as an `Events` that delivers to no one — never as a
+// number that could not later become one. The root's cell is a number
+// for good: a DOM node is an `Int64` handle.
+class Unmounted {
+  def deliver(tag Int64) Void {
+  }
+}
+
+def unmounted() ui.Events {
+  return Unmounted.new()
+}
+
 class Dom {
   def init(title String) {
     self.title = title
-    self.sink = Box.new(0)
+    self.sink = Box.new(unmounted())
     self.root = Box.new(0)
   }
 
