@@ -569,8 +569,67 @@ tree's and EmoOS's, listed there.
   transports, three consecutive rounds byte-identical on both; `dune
   runtest` (the smoke staging `emo_desktop`, `DOCK_EXPECTED` pointed
   at the repository's file) and `@fmt` green; `fb/check.sh` 107 ok.
-- [ ] **A10.3** — The first apps: a counter, a file browser, an
+- [x] **A10.3** — The first apps: a counter, a file browser, an
   editor — each a corpus package, dual-run where hosted.
+  **Landed 2026-11-03**: one family package,
+  [`fb/apps/`](../fb/apps) — `emo/ui_apps`, targets all six, deps
+  `emo/ui` alone — whose front door (`ui_apps.emo`) names the
+  discipline and whose three submodules are the apps: `counter`, the
+  Elm architecture's own example (the count, the two buttons); `files`,
+  the browser (the listing the model's data — the seed names the
+  desktop's own three sources — the selection down and up, `open`
+  announcing); `editor`, the two-row buffer (the puts typing into the
+  cursor's row, `newline` moving it). Each is a corpus package in
+  `emo/ui_corpus`'s discipline: portable defs, nothing platform-naming,
+  a pure `update` that says each transition, tags registered in the
+  view's own order — add/sub, down/up/open, put_a/put_b/newline, fixed
+  on every run. The trees are the metal's measured budget (A8.3's
+  per-event count): the sessions sized to the pass's 128 KiB arena.
+  The hosted twin ([`fb/apps/golden/`](../fb/apps/golden)) runs the
+  three on canvases the app window's own size (384×128, the window
+  shell's), each through `ui.run` with a script in the input's seat —
+  the sessions the metal's passes run byte for byte — every frame's
+  digest and every transition one line, `app <name> 0` closing each
+  block; the interpreter's bytes `expected.txt`, all five hosted
+  targets the same; the fb gate stages `emo/ui_apps`, checks the three
+  apps, pins each one's riscv64 lowering (107 → 130 ok). The metal's
+  leg: three passes in the boot image, each a window of its own by
+  `win_new`, declared a toplevel, placed, and the Elm loop run over the
+  window buffer's surface (the desk pass's `Win`) with the app's defs
+  as values and the merged stream in the input's seat — `AppKeys`, the
+  byte table whose tag is an index, `q` the loop's end. Spawned after
+  the shell's quit, one at a time, the exit answering the parent's
+  wait (`app <name> 0`, the golden's own closing line). The wire's
+  transitions are `println`'s — which is the round's find: **the user
+  profile's print was silent**, `println` lowered for riscv64 since
+  ever but a user pass's bytes falling into the legacy SBI ecall whose
+  `a0` the gate reads as a buffer address and refuses — the silence
+  A7.2's first frame found and left (`emo_fail`'s announce unheard
+  since). The user boot stub now parks the console hook (T3.5's own
+  mechanism): every byte the runtime prints rides the gate's write
+  verb from a one-byte scratch in the image's .bss — the cells page
+  refused by the gate's `check_write` (the first park's byte died at
+  the range check; the gate admits only the caller's own segments),
+  the .bss the writable segment it admits, the copy interrupt-masked
+  so no other pass's byte lands between the store and the read. And a
+  second find left to its track: **`ArrayBuilder` is not lowered on
+  riscv64** — the browser's and editor's first drafts grew their
+  arrays with it and the emitter refuses by name; the apps went to
+  literals of their own fixed shapes, the lowering itself the compiler
+  track's. `run.sh` grows the apps' eras: the three passes' frames the
+  corpus file pins (ten digests, the seeded scan ending before the
+  editor's exit — the repeated number the counter's sub returning its
+  mount's frame, the search past the last), the transitions and exits
+  in the ordered list, the comp echoes at the apps' own places, and a
+  new eye (`app_is`) folding each app's rectangle at the mount and the
+  session's last frame, the pointer parked off every app's place.
+  The ledger `frames 132 91` (the three passes: each spawn's stack and
+  arena run and table, each window's block at `win_new`, home at the
+  closes and exits); `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both; `dune runtest` (the smoke
+  staging `emo/ui_apps`, `APPS_EXPECTED` pointed at the repository's
+  file) and `@fmt` green; `fb/check.sh` 130 ok. **With this M10 is
+  complete.**
 
 ## M11 — honest multi-app (the desktop side)
 

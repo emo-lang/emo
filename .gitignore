@@ -56,12 +56,19 @@ projects/emo-os/.blk.img
 # EmoOS T8.8: the screendump the golden's eyes read back; emo-desktop
 # A7.2: the first frame's, taken at the screen pass's present; A8.3:
 # the counter's last frame, taken at the loop's fourth; A9.2: the
-# client era's, the reborn window over the dead owner's background
+# client era's, the reborn window over the dead owner's background;
+# A10.3: the apps' eras', each window's mount and last frame
 projects/emo-os/.screen.ppm
 projects/emo-os/.frame.ppm
 projects/emo-os/.counter.ppm
 projects/emo-os/.desk1.ppm
 projects/emo-os/.desk2.ppm
 projects/emo-os/.desk3.ppm
+projects/emo-os/.apps1.ppm
+projects/emo-os/.apps2.ppm
+projects/emo-os/.apps3.ppm
+projects/emo-os/.apps4.ppm
+projects/emo-os/.apps5.ppm
+projects/emo-os/.apps6.ppm
 projects/emo-os/.client.ppm
 projects/emo-os/.blk.img.gdb

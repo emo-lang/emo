@@ -1,0 +1,76 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo/ui_apps"
+
+// The desktop's first apps, the hosted twin (emo-desktop A10.3): the
+// counter, the file browser and the editor — the corpus packages
+// required whole from `emo/ui_apps`, never copied — each run through
+// `ui.run` on a canvas the app window's own size (384x128, the window
+// shell's) with a script in the input's seat: the tags the apps'
+// registration order fixes, the session the metal's passes run byte
+// for byte. The counter's is the add and the sub, the browser's the
+// down and the open, the editor's the put, the newline and the put.
+// Every frame's digest prints as the backend presents it, beside the
+// state transitions `update` says, and the pass's exit line —
+// `app <name> 0`, the parent's wait answered — closes each app's
+// block; the interpreter's bytes are `expected.txt`, and every hosted
+// target prints the same. The metal's pass prints the same lines in
+// the same order, its frames the digests `run.sh` folds the
+// display's rectangles to.
+//
+//   emo run main.emo
+
+// The eye on the canvas: the frame golden's, verb for verb —
+// `present` is where the digest is read and said.
+class Eye {
+  def init(canvas ui_fb.Surface) {
+    self.canvas = canvas
+  }
+
+  def width() Int64 {
+    return self.canvas.width()
+  }
+
+  def height() Int64 {
+    return self.canvas.height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.canvas.at(x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.fill(x, y, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.blend(x, y, w, h, color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    self.canvas.glyph(x, y, top, bottom, color)
+  }
+
+  def present() {
+    println("frame ${ui_fb_frame.digest(self.canvas)}")
+  }
+}
+
+def main() {
+  const c = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  ui.run(ui_apps.counter.view, ui_apps.counter.update,
+    ui_apps.counter.initial(), ui_fb.backend(c, ui_fb.script([0, 1])))
+  println("app counter 0")
+  const f = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  ui.run(ui_apps.files.view, ui_apps.files.update,
+    ui_apps.files.initial(), ui_fb.backend(f, ui_fb.script([0, 2])))
+  println("app files 0")
+  const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  ui.run(ui_apps.editor.view, ui_apps.editor.update,
+    ui_apps.editor.initial(), ui_fb.backend(e, ui_fb.script([0, 2, 1])))
+  println("app editor 0")
+}
+
+main()

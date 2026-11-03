@@ -1,0 +1,19 @@
+// The desktop's first apps (emo-desktop A10.3): the package's front
+// door. Three applications live here as submodules — `counter`, the
+// Elm architecture's own example; `files`, the file browser; and
+// `editor`, the two-row text buffer — each a corpus package in the
+// discipline `emo/ui_corpus` carries: portable defs, nothing
+// platform-naming, a pure `update` that says each transition, a pure
+// `view` that registers the tags in its own order. A consumer writes
+// `ui_apps.counter.view` the way the first frame's consumer writes
+// `ui_fb_frame.counter.view`.
+//
+// The apps dual-run where hosted: every hosted family runs each one
+// through the Elm loop on the pixel surface (`golden/`, the bytes
+// `expected.txt` pins), and the metal runs each in a pass of its own —
+// a `win_new` window of its own, the loop over the window buffer's
+// surface, the merged stream in the input's seat
+// (`projects/emo-os/hello/main.emo`). The trees are the metal's
+// measured budget: each app's session leaves a few KiB of its pass's
+// 128 KiB arena behind per event (A8.3's count), the sessions sized so
+// the passes end green.

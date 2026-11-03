@@ -1,0 +1,60 @@
+require "emo/ui"
+
+// The first of the desktop's apps (emo-desktop A10.3): the counter, a
+// corpus package of its own — portable defs and nothing platform-naming,
+// the corpus discipline `emo/ui_corpus` carries: a model, a pure
+// `update` that says each transition, a pure `view` that registers the
+// tags in its own order (add then sub, tags 0 and 1 on every run — the
+// registration order is what fixes them, `on` being a side effect).
+//
+// The app dual-runs where hosted: every hosted family runs it through
+// the Elm loop on the pixel surface (`apps/golden/`, the bytes
+// `expected.txt` pins), and the metal runs it in a pass of its own —
+// `win_new`'s window, the loop over the window buffer's surface, the
+// merged stream in the input's seat (`projects/emo-os/hello/main.emo`).
+// The tree is the panel, the count and one button per message — five
+// nodes, nine glyphs — the metal's measured budget: about three KiB of
+// the pass's arena left behind per event (A8.3's count), three events
+// the session's whole, the pass's 128 KiB arena green with room to
+// spare.
+
+enum Msg { add, sub }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def initial() Model {
+  return Model.new(count: 0)
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.add {
+    println("add ${m.count() + 1}")
+    return Model.new(count: m.count() + 1)
+  }
+  println("sub ${m.count() - 1}")
+  return Model.new(count: m.count() - 1)
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own: `on` is a side effect,
+  // and this registration order is what fixes add and sub at tags 0 and
+  // 1 on every run — the tags the pass's keys map onto (`a` the add, `b`
+  // the sub, `q` the loop's end) and the golden's script names.
+  const add = reg.on(Msg.add)
+  const sub = reg.on(Msg.sub)
+  return ui.column([
+    ui.text("count ${m.count()}", ui.style()),
+    ui.row([
+      ui.button("+", add, ui.style()),
+      ui.button("-", sub, ui.style())
+    ], ui.style().with_gap(8.0))
+  ], ui.style().with_padding(12.0).with_gap(8.0))
+}

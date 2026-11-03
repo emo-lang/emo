@@ -1,0 +1,84 @@
+require "emo/ui"
+
+// The second of the desktop's apps (emo-desktop A10.3): the file
+// browser, a corpus package of its own — the same discipline the
+// counter carries, portable defs and nothing platform-naming. The
+// folder's listing is the model's data (the disk's answer when M11
+// turns the apps into disk ELFs; here the seed names are the desktop's
+// own first apps — the three sources this package is), the selection
+// moves with `down` and `up` and stops at the list's ends, and `open`
+// announces the selected name. `update` says each transition, and the
+// tags register in the view's own order — down, up, open, tags 0, 1
+// and 2 on every run.
+//
+// The app dual-runs where hosted: the hosted families through
+// `apps/golden/`, the metal in a pass of its own (the `j`/`k`/`o`
+// keys the pass maps onto the tags, `q` the loop's end). The tree is
+// the panel, the title, one text per name, the status and the open
+// button — seven nodes, the names the session leaves shortest — and
+// the session two events, the pass's 128 KiB arena green (A8.3's
+// per-event count).
+
+enum Msg { down, up, open }
+
+class Model {
+  def init(names Array[String], sel Int64) {
+    self.names = names
+    self.sel = sel
+  }
+
+  def names() Array[String] {
+    return self.names
+  }
+
+  def sel() Int64 {
+    return self.sel
+  }
+}
+
+def initial() Model {
+  return Model.new(names: ["counter.emo", "files.emo", "editor.emo"], sel: 0)
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.down {
+    var s = m.sel() + 1
+    if s >= m.names().length() {
+      s = m.names().length() - 1
+    }
+    println("sel ${m.names()[s]}")
+    return Model.new(names: m.names(), sel: s)
+  }
+  if msg == Msg.up {
+    var s = m.sel() - 1
+    if s < 0 {
+      s = 0
+    }
+    println("sel ${m.names()[s]}")
+    return Model.new(names: m.names(), sel: s)
+  }
+  println("open ${m.names()[m.sel()]}")
+  return Model.new(names: m.names(), sel: m.sel())
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own: `on` is a side
+  // effect, and this registration order is what fixes down, up and
+  // open at tags 0, 1 and 2 on every run. The down and up events ride
+  // the input's tags alone — the metal's keys, the golden's script —
+  // no visible node carries them; `open` is the one button, the click
+  // affordance the hosted families share. The children are a literal
+  // of the catalog's own shape — the metal lowers no `ArrayBuilder`
+  // (A10.3's found-not-fixed), and the seed catalog is fixed data.
+  const down = reg.on(Msg.down)
+  const up = reg.on(Msg.up)
+  const open = reg.on(Msg.open)
+  return ui.column([
+    ui.text("files", ui.style()),
+    ui.text(m.names()[0], ui.style()),
+    ui.text(m.names()[1], ui.style()),
+    ui.text(m.names()[2], ui.style()),
+    ui.text("sel ${m.names()[m.sel()]}", ui.style()),
+    ui.button("open", open, ui.style())
+  ], ui.style().with_padding(8.0).with_gap(4.0))
+}

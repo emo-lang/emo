@@ -3464,6 +3464,15 @@ emo_start:
     addi t0, t0, 8
     la t1, emo_user_alim_cell
     sd t0, 0(t1)
+    # the console hook (T3.5's shape, the user profile's park): every
+    # byte the runtime prints rides the gate's write verb — the one
+    # crossing a user pass's bytes honestly make. Without the park a
+    # print falls into the legacy ecall, whose a0 the gate reads as a
+    # buffer address and refuses: the silence A7.2's first frame
+    # found, `emo_fail`'s announce unheard since.
+    la t0, emo_user_console_hook
+    la t1, emo_console_hook
+    sd t0, 0(t1)
     call emo_runtime_init
     call emo_program
     li a7, 0
@@ -3497,6 +3506,41 @@ emo_user_arena_cell:
     .globl emo_user_alim_cell
 emo_user_alim_cell:
     .zero 8
+|asm}
+
+(* The console hook's entry and its one-byte buffer (emo-desktop A10.3,
+   T3.5's shape, the user profile's park): the boot stub writes the
+   entry into `emo_console_hook`, and every byte the runtime prints —
+   `println`, `emo_fail`'s announce — rides the gate's write verb from
+   this buffer, one byte per crossing. Before the park a user pass's
+   print fell into the legacy ecall, whose a0 the gate reads as a
+   buffer address and refuses: the bytes said nothing, the silence
+   A7.2's first frame found and left. The buffer sits in the image's
+   own .bss — the writable segment the gate's `check_write` admits
+   (the cells page is not a segment, and a byte there dies at the
+   range check; the first park put it there and the wire stayed
+   silent) — and the gate's copy runs interrupt-masked, so no other
+   pass's byte can land between the store and the read. *)
+let user_console_hook_asm =
+  {asm|
+
+# ---- The console hook's park (emo-desktop A10.3, T3.5's shape) ----
+
+    .section .text
+    .globl emo_user_console_hook
+emo_user_console_hook:
+    la t2, emo_user_console_byte
+    sb a0, 0(t2)
+    mv a0, t2
+    li a1, 1
+    li a7, 1
+    ecall
+    ret
+
+    .section .bss
+    .globl emo_user_console_byte
+emo_user_console_byte:
+    .zero 1
 |asm}
 
 (* The runtime body: everything the generated code calls — the heap
@@ -8755,4 +8799,5 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   end;
   gput env "%s" (stack_asm ~profile);
   if profile = "user" then gput env "%s" user_cell_asm;
+  if profile = "user" then gput env "%s" user_console_hook_asm;
   Buffer.contents env.buf

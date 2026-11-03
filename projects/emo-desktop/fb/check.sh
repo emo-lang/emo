@@ -1,12 +1,13 @@
 #!/bin/sh
-# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3, A9.1):
-# the five packages under `fb/` — the core (`emo/ui_fb`, with the bitmap
-# font and the pointer sprite as its second and third modules), the
+# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3, A9.1,
+# A10.3): the six packages under `fb/` — the core (`emo/ui_fb`, with the
+# bitmap font and the pointer sprite as its second and third modules), the
 # hosted canvas (`emo/ui_fb_canvas`), the first frame with the counter
-# (`emo/ui_fb_frame`), the window shell's windows (`emo/ui_fb_win`) and
-# their goldens — type-checked, their tests run, their targets built,
-# their bytes compared, the font's table checked against its drawing,
-# and the metal's lowering pinned without a machine.
+# (`emo/ui_fb_frame`), the window shell's windows (`emo/ui_fb_win`), the
+# first apps (`emo/ui_apps`, the counter, the file browser and the
+# editor) and their goldens — type-checked, their tests run, their
+# targets built, their bytes compared, the font's table checked against
+# its drawing, and the metal's lowering pinned without a machine.
 #
 #   ./check.sh
 #
@@ -72,11 +73,12 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo f
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
   desktop/package.emo desktop/emo_desktop.emo \
+  apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
   "$UI/corpus/package.emo" "$UI/corpus/main.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0" \
-  "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0"
+  "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
@@ -84,6 +86,8 @@ cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_fra
 cp desktop/package.emo desktop/emo_desktop.emo "$REG/emo_desktop/0.1.0/"
 cp "$UI/corpus/package.emo" "$UI/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
 cp win/package.emo win/ui_fb_win.emo "$REG/emo/ui_fb_win/0.1.0/"
+cp apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
+  "$REG/emo/ui_apps/0.1.0/"
 
 # --- the font's table is its drawing ------------------------------------
 #
@@ -126,6 +130,13 @@ expect 0 "the first frame type-checks" "$rc"
 
 ( cd win && EMO_REGISTRY="$REG" "$EMO" check ui_fb_win.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the window shell's windows type-check" "$rc"
+
+( cd apps && EMO_REGISTRY="$REG" "$EMO" check counter.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
+expect 0 "the counter app type-checks" "$rc"
+( cd apps && EMO_REGISTRY="$REG" "$EMO" check files.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
+expect 0 "the file browser app type-checks" "$rc"
+( cd apps && EMO_REGISTRY="$REG" "$EMO" check editor.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
+expect 0 "the editor app type-checks" "$rc"
 
 # --- which targets compile the packages ---------------------------------
 #
@@ -174,6 +185,12 @@ if command -v riscv64-elf-ld >/dev/null 2>&1 || \
    command -v riscv64-unknown-elf-ld >/dev/null 2>&1; then
   build probe/metal main.emo riscv64 --profile user && rc=0 || rc=$?
   expect 0 "the core, the frame and the windows lower for a riscv64 user program" "$rc"
+  build apps counter.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the counter app lowers for a riscv64 user program" "$rc"
+  build apps files.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the file browser app lowers for a riscv64 user program" "$rc"
+  build apps editor.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the editor app lowers for a riscv64 user program" "$rc"
 else
   printf 'skip the metal probe: no riscv64-elf binutils on PATH\n'
 fi
@@ -269,5 +286,15 @@ check_golden corpus corpus/expected.txt \
 # folds the strip's rectangle to these digests.
 check_golden desktop/golden desktop/golden/expected.txt \
   "$PWD/.emo-build/check/desktop" "dock" ocaml c typescript wasm beam
+
+# The first apps (emo-desktop A10.3): the counter, the file browser and
+# the editor, each a corpus package under `emo/ui_apps`, run through the
+# Elm loop at the app window's own size — the sessions the metal's
+# passes run byte for byte, the frames' digests and the transitions
+# `update` says one line each, `app <name> 0` closing each block. The
+# lines `run.sh` asserts on the metal and folds the display's window
+# rectangles to.
+check_golden apps/golden apps/golden/expected.txt \
+  "$PWD/.emo-build/check/apps" "first apps" ocaml c typescript wasm beam
 
 exit $fail

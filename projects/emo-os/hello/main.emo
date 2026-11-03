@@ -39,8 +39,8 @@
 // the focused window, the merged stream in its seat.
 //
 // The image requires the desktop's packages beside the syscall stub —
-// EmoUI's core, the fb backend's core, the first frame and the
-// window shell's windows — staged
+// EmoUI's core, the fb backend's core, the first frame, the
+// window shell's windows and the first apps — staged
 // into a registry from their trees, the way start.sh does before it
 // builds:
 //
@@ -53,6 +53,7 @@ require "emo/ui_fb"
 require "emo/ui_fb_frame"
 require "emo/ui_fb_win"
 require "emo_desktop"
+require "emo/ui_apps"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -79,6 +80,13 @@ const desk_cell = buf + 2112
 // stack's reclaim proof — and the one reborn after it.
 const client_cell = buf + 2120
 const client2_cell = buf + 2128
+// The first apps' tokens (emo-desktop A10.3): the pass that opens its
+// own window and runs one of the corpus apps through the Elm loop —
+// the counter, the file browser, the editor — each read once, beside
+// the other passes'.
+const counter_cell = buf + 2136
+const files_cell = buf + 2144
+const editor_cell = buf + 2152
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -391,6 +399,40 @@ class Keys {
         }
         if b == 98 {
           tag = 1
+        }
+      }
+    }
+    return (R.ok, tag)
+  }
+}
+
+// The first apps' keys (emo-desktop A10.3): the byte table in the
+// input's seat, one tag per byte — the tag its index in the table
+// names, and the table the app's own registration order keeps (`a`
+// first, `b` second, and so on, the same tags the golden's script
+// names) — and `q` the loop's end, the quit byte every seat's session
+// ends on. Every other byte is dropped, never guessed at; the pointer's
+// reports ride the same stream and are not an app's.
+class AppKeys {
+  def init(bytes Array[Int64]) {
+    self.bytes = bytes
+  }
+
+  def next() (R, Int64) {
+    var tag = -1
+    while tag < 0 {
+      const ev = syscall.input_read()
+      if ev_type(ev) == 17741 {
+        const b = ev_value(ev)
+        if b == 113 {
+          return (R.error, 0)
+        }
+        var i = 0
+        while tag < 0 && i < self.bytes.length() {
+          if self.bytes[i] == b {
+            tag = i
+          }
+          i = i + 1
         }
       }
     }
@@ -2005,6 +2047,105 @@ if peek64(desk_cell) != 0 {
   syscall.exit(0)
 }
 
+// The first apps (emo-desktop A10.3): the corpus apps on the machine,
+// each a pass of its own — a window of its own by `win_new`, declared a
+// toplevel, placed, and the Elm loop run over the window buffer's
+// surface with the app's defs as values and the merged stream in the
+// input's seat (`AppKeys`). The loop's `mount` paints the app's first
+// frame into the window's own words and the `present` says its digest
+// on the wire before the grant's present puts it on the display — the
+// compositor composites the whole stack with the app's frame in it and
+// flushes, the app's window the only one up. Every byte the stream
+// delivers is an event, the tree rebuilt and repainted — the pass's
+// arena holds the session (A8.3's per-event count, the sessions sized
+// to it) — until the quit key ends the loop, the window closed behind
+// it, the exit answering the parent's wait. The lines the passes print
+// are the hosted twin's (`apps/golden/`), byte for byte.
+if peek64(counter_cell) != 0 {
+  poke64(counter_cell, 0)
+  var gc = 0
+  var base_c = 0
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gc = win_id(ans)
+      base_c = win_base(ans)
+    }
+  }
+  case syscall.win_role(gc, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gc, 160, 160) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  const wc = Win.new(grant: gc, base: base_c, width: 384, height: 128)
+  ui.run(ui_apps.counter.view, ui_apps.counter.update,
+    ui_apps.counter.initial(), ui_fb.backend(wc, AppKeys.new(bytes: [97, 98])))
+  case syscall.win_close(gc) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+if peek64(files_cell) != 0 {
+  poke64(files_cell, 0)
+  var gf = 0
+  var base_f = 0
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gf = win_id(ans)
+      base_f = win_base(ans)
+    }
+  }
+  case syscall.win_role(gf, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gf, 224, 144) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  const wf = Win.new(grant: gf, base: base_f, width: 384, height: 128)
+  ui.run(ui_apps.files.view, ui_apps.files.update,
+    ui_apps.files.initial(), ui_fb.backend(wf, AppKeys.new(bytes: [106, 107, 111])))
+  case syscall.win_close(gf) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+if peek64(editor_cell) != 0 {
+  poke64(editor_cell, 0)
+  var ge = 0
+  var base_e = 0
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      ge = win_id(ans)
+      base_e = win_base(ans)
+    }
+  }
+  case syscall.win_role(ge, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(ge, 288, 208) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  const we = Win.new(grant: ge, base: base_e, width: 384, height: 128)
+  ui.run(ui_apps.editor.view, ui_apps.editor.update,
+    ui_apps.editor.initial(), ui_fb.backend(we, AppKeys.new(bytes: [97, 98, 10])))
+  case syscall.win_close(ge) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
 // the token the parent pokes just before the spawn is the one
@@ -2337,6 +2478,96 @@ case desk_spawned {
         dp = num_at(code, dp)
         dp = byte_at(dp, 10)
         gate_line(dp)
+      }
+    }
+  }
+}
+
+// The app era's answer line, `app <name> <code>`: the name's bytes the
+// caller poked at the cursor, the code after — the desk line's shape,
+// and the hosted twin's own closing line (`apps/golden/`), the same
+// bytes both seats print.
+def app_line(name_len Int64, code Int64) Void {
+  var p = byte_at(name_len, 32)
+  p = num_at(code, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The first apps (emo-desktop A10.3): each pass spawned after the
+// shell's quit, one at a time, its window the only one up, the session
+// the hosted twin's bytes — and its exit answering the parent's wait,
+// the code on the wire. No start park: the pass's first frame is on
+// the wire the moment it spawns, the display settled during the desk
+// era's own end.
+poke64(counter_cell, 1)
+var app_spawned = syscall.spawn()
+case app_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, apid) -> {
+    var app_waited = syscall.wait(apid)
+    case app_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var ap = byte_at(0, 97) // a
+        ap = byte_at(ap, 112) // p
+        ap = byte_at(ap, 112) // p
+        ap = byte_at(ap, 32)
+        ap = byte_at(ap, 99) // c
+        ap = byte_at(ap, 111) // o
+        ap = byte_at(ap, 117) // u
+        ap = byte_at(ap, 110) // n
+        ap = byte_at(ap, 116) // t
+        ap = byte_at(ap, 101) // e
+        ap = byte_at(ap, 114) // r
+        app_line(ap, code)
+      }
+    }
+  }
+}
+poke64(files_cell, 1)
+var files_spawned = syscall.spawn()
+case files_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, fpid) -> {
+    var files_waited = syscall.wait(fpid)
+    case files_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var fp = byte_at(0, 97) // a
+        fp = byte_at(fp, 112) // p
+        fp = byte_at(fp, 112) // p
+        fp = byte_at(fp, 32)
+        fp = byte_at(fp, 102) // f
+        fp = byte_at(fp, 105) // i
+        fp = byte_at(fp, 108) // l
+        fp = byte_at(fp, 101) // e
+        fp = byte_at(fp, 115) // s
+        app_line(fp, code)
+      }
+    }
+  }
+}
+poke64(editor_cell, 1)
+var editor_spawned = syscall.spawn()
+case editor_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, epid) -> {
+    var editor_waited = syscall.wait(epid)
+    case editor_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var ep = byte_at(0, 97) // a
+        ep = byte_at(ep, 112) // p
+        ep = byte_at(ep, 112) // p
+        ep = byte_at(ep, 32)
+        ep = byte_at(ep, 101) // e
+        ep = byte_at(ep, 100) // d
+        ep = byte_at(ep, 105) // i
+        ep = byte_at(ep, 116) // t
+        ep = byte_at(ep, 111) // o
+        ep = byte_at(ep, 114) // r
+        app_line(ep, code)
       }
     }
   }

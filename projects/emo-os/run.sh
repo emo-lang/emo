@@ -103,6 +103,43 @@ win_line() {
   echo "$win_digests" | sed -n "${1}p"
 }
 
+# The first apps' corpus file (emo-desktop A10.3): the apps golden
+# (projects/emo-desktop/fb/apps/golden) runs the counter, the file
+# browser and the editor through the session the metal's three passes
+# run — the mount's frame, the keys, the exit lines — on the hosted
+# canvas and pins one `frame <digest>` line per present: ten lines,
+# three for the counter's session, three the browser's, four the
+# editor's. The assertions below read that file the way they read the
+# windows': the frames in the file's order and the folds over each
+# app's rectangle of the display's screendumps at the beats the
+# pointer is parked away. APPS_EXPECTED names the file; the dune smoke
+# points it at the repository's.
+apps_expected=${APPS_EXPECTED:-../emo-desktop/fb/apps/golden/expected.txt}
+if [ ! -f "$apps_expected" ]; then
+  echo "run.sh: the apps' corpus file is missing: $apps_expected" >&2
+  echo "  (the hosted golden under projects/emo-desktop/fb/apps/golden pins the" >&2
+  echo "  digests this run asserts; APPS_EXPECTED names the file)" >&2
+  exit 1
+fi
+apps_digests=$(awk '$1 == "frame" { print $2 }' "$apps_expected")
+for d in $apps_digests; do
+  case $d in
+    ''|*[!0-9]*)
+      echo "run.sh: $apps_expected carries a 'frame' line that is not a digest" >&2
+      exit 1
+      ;;
+  esac
+done
+if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 10 ]; then
+  echo "run.sh: $apps_expected must carry ten 'frame <digest>' lines — the" >&2
+  echo "  counter's session is the mount's frame and one per key (add, sub)," >&2
+  echo "  the browser's (down, open), the editor's (put, newline, put)" >&2
+  exit 1
+fi
+app_line() {
+  echo "$apps_digests" | sed -n "${1}p"
+}
+
 # The pointer's drawing (emo-desktop A8.2, T8.11): the sprite the
 # compositor's cursor plane composites is the desktop's, drawn in
 # `pointer.emo` as rows of cells (`#` ink, `o` paper, `.` clear), and
@@ -669,6 +706,70 @@ PYEOF
       exit 1
     fi
   }
+  # The first apps' eye (emo-desktop A10.3): the display at an app
+  # era's parked beat — the background everywhere but the app's own
+  # rectangle (the window the era's pass presents, the only one up),
+  # the sprite where the desk era parked it, off every app's place,
+  # and the rectangle folding to the digest the corpus file names for
+  # that frame.
+  app_is() {
+    local ppm="$1" wx="$2" wy="$3" want="$4" what="$5"
+    if ! PPM="$ppm" WX="$wx" WY="$wy" WANT="$want" WHAT="$what" POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
+import os
+import re
+import sys
+
+e = os.environ
+data = open(e['PPM'], 'rb').read()
+if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1024x768")
+px = data[16:]
+wx, wy = int(e['WX']), int(e['WY'])
+W, H = 384, 128
+
+rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+if len(rows) != 17 or any(len(r) != 12 for r in rows):
+    sys.exit(f"run.sh: {os.environ['POINTER_SPRITE']} does not draw the 12x17 sprite")
+
+def sprite(x, y):
+    # The pointer sits where the desk era parked it, (16,700) — off
+    # every app's rectangle; the model keeps it there.
+    r, c = y - 700, x - 16
+    if 0 <= r < 17 and 0 <= c < 12:
+        cell = rows[r][c]
+        if cell == '#':
+            return (0, 0, 0)
+        if cell == 'o':
+            return (255, 255, 255)
+    return None
+
+for y in range(768):
+    row = px[y * 3072:(y + 1) * 3072]
+    for x in range(1024):
+        if wx <= x < wx + W and wy <= y < wy + H:
+            continue
+        got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+        want = sprite(x, y) or (48, 48, 56)
+        if got != want:
+            sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
+
+def fold():
+    d = 0
+    for y in range(wy, wy + H):
+        o = (y * 1024 + wx) * 3
+        for x in range(W):
+            d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
+            o += 3
+    return d
+
+if fold() != int(e['WANT']):
+    sys.exit(f"run.sh: at the {e['WHAT']} the app's rectangle digests to {fold()}; the corpus's is {e['WANT']}")
+PYEOF
+    then
+      kill "$qemu_pid" 2>/dev/null || true
+      exit 1
+    fi
+  }
   btn() {
     qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":'"$1"',"button":"left"}}]}}'
   }
@@ -720,6 +821,75 @@ PYEOF
   desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 "$(dock_line 3)" 'drag back'
   printf 'q' >&3
   await 'desk 0'
+  # The first apps (emo-desktop A10.3): each app a pass of its own — a
+  # window of its own, the Elm loop over the window buffer's surface,
+  # the merged stream in the input's seat — spawned after the shell's
+  # quit, one at a time, its exit answering the parent's wait (`app
+  # <name> 0`). The session is the hosted twin's byte for byte: the
+  # mount's frame on the wire the moment the pass spawns, then the
+  # keys, one byte at a time, each transition `update` says landing
+  # before the frame that carries it — the runtime's print path riding
+  # the console hook's park now, the user pass's bytes on the wire for
+  # the first time. The counter's keys are `a` the add and `b` the sub,
+  # the browser's `j` the down and `o` the open, the editor's `a` and
+  # `b` the puts and the newline byte between them. The pointer sits
+  # where the desk era parked it, (16,700), off every app's rectangle,
+  # so each fold is the window's frame alone; the screendumps read the
+  # display at the mount and the session's last frame.
+  await "frame $(app_line 1)"
+  await 'comp 160 160'
+  sleep 1
+  hmp 'screendump .apps1.ppm'
+  app_is .apps1.ppm 160 160 "$(app_line 1)" 'counter up'
+  printf 'a' >&3
+  await 'add 1'
+  await "frame $(app_line 2)"
+  printf 'b' >&3
+  await 'sub 0'
+  await "frame $(app_line 3)"
+  await 'comp 160 160'
+  sleep 1
+  hmp 'screendump .apps2.ppm'
+  app_is .apps2.ppm 160 160 "$(app_line 3)" 'counter done'
+  printf 'q' >&3
+  await 'app counter 0'
+  await "frame $(app_line 4)"
+  await 'comp 224 144'
+  sleep 1
+  hmp 'screendump .apps3.ppm'
+  app_is .apps3.ppm 224 144 "$(app_line 4)" 'browser up'
+  printf 'j' >&3
+  await 'sel files.emo'
+  await "frame $(app_line 5)"
+  printf 'o' >&3
+  await 'open files.emo'
+  await "frame $(app_line 6)"
+  await 'comp 224 144'
+  sleep 1
+  hmp 'screendump .apps4.ppm'
+  app_is .apps4.ppm 224 144 "$(app_line 6)" 'browser done'
+  printf 'q' >&3
+  await 'app files 0'
+  await "frame $(app_line 7)"
+  await 'comp 288 208'
+  sleep 1
+  hmp 'screendump .apps5.ppm'
+  app_is .apps5.ppm 288 208 "$(app_line 7)" 'editor up'
+  printf 'a' >&3
+  await 'put a'
+  await "frame $(app_line 8)"
+  printf '\n' >&3
+  await 'newline'
+  await "frame $(app_line 9)"
+  printf 'b' >&3
+  await 'put b'
+  await "frame $(app_line 10)"
+  await 'comp 288 208'
+  sleep 1
+  hmp 'screendump .apps6.ppm'
+  app_is .apps6.ppm 288 208 "$(app_line 10)" 'editor done'
+  printf 'q' >&3
+  await 'app editor 0'
   # The counter command (T7.5, docs/ui.md): the machine's program —
   # the console renderer pass (T7.4) — begun from the prompt, the
   # full-boot golden's beat between the shell and the filesystem
@@ -910,7 +1080,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 111 73'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 160 160' 'add 1' 'sub 0' 'app counter 0' 'comp 224 144' 'sel files.emo' 'open files.emo' 'app files 0' 'comp 288 208' 'put a' 'newline' 'put b' 'app editor 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 132 91'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -1013,6 +1183,30 @@ PYEOF
   done
   if [ "$dprev" -gt "$wend" ]; then
     echo "run.sh: the dock's last frame arrived after the desk pass's exit" >&2
+    exit 1
+  fi
+  # The apps' frames (emo-desktop A10.3): the three passes' own digests
+  # of their windows' buffers at every present, whole lines, in the
+  # corpus's order — the ten of `$apps_expected`, never a literal of
+  # this file's. The first lies after the desk pass's exit and the last
+  # before the editor's (`app editor 0`); a frame presented twice is
+  # two lines (the counter's sub returns its mount's frame), so the
+  # search for each starts past the last; a window's present says no
+  # `present ok` — the count above stays the loop's.
+  local aprev astart aend
+  astart=$(grep -aboF -- 'desk 0' "$log" | head -1 | cut -d: -f1)
+  aend=$(grep -aboF -- 'app editor 0' "$log" | head -1 | cut -d: -f1)
+  aprev=$astart
+  for d in $apps_digests; do
+    fpos=$(grep -aboE -- "^frame $d\$" "$log" | cut -d: -f1 | awk -v p="$aprev" '$1 > p { print; exit }' || true)
+    if [ -z "$fpos" ]; then
+      echo "run.sh: the apps never delivered 'frame $d' after byte $aprev (the corpus's apps, $apps_expected)" >&2
+      exit 1
+    fi
+    aprev=$fpos
+  done
+  if [ "$aprev" -gt "$aend" ]; then
+    echo "run.sh: the apps' last frame arrived after the editor's exit" >&2
     exit 1
   fi
   # The cursor plane's line (T8.11): the compositor's one `pointer`
