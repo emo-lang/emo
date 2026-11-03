@@ -605,10 +605,17 @@ emo_os_trap_trampoline:
     li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
     j .Lroute_post
 .Lroute_desktop:
+    li t3, 18
+    beq t6, t3, .Lroute_input # op 18, input_info: the input service's
+                              # (T8.13 — the route's op, not the verb's
+                              # 18 by coincidence alone; the compositor's
+                              # 18 is the pointer's notice, which never
+                              # rides a route)
     li t3, 15
-    bge t6, t3, .Lroute_comp  # verbs 15..: the compositor's (T8.6 —
+    bge t6, t3, .Lroute_comp  # ops 15..: the compositor's (T8.6 —
                               # 15 and 16 the stack's, 17 the window
-                              # present's composition)
+                              # present's composition; T8.13 — 19 the
+                              # role request, verb 17's)
     li t3, 12
     beq t6, t3, .Lroute_input # verb 12, input_read: the input service's
     li a0, EMO_KOFF + 0x870029f8  # verbs 10, 11, 13, 14: the display

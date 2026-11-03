@@ -1,9 +1,11 @@
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_frame"
+require "emo/ui_fb_win"
 
 // The metal's lowering, pinned without a machine: the core, the font,
-// the pointer, the first frame and the counter built for `riscv64` as a
+// the pointer, the first frame, the counter and the window shell's
+// windows built for `riscv64` as a
 // user program, every def of every module a metal consumer reaches
 // lowered — the box model, the palette, the clip and blend arithmetic,
 // the backend, the tree and its digest, (A8.1) the paint walk whole: the
@@ -11,10 +13,12 @@ require "emo/ui_fb_frame"
 // `substring` and the alphabet's `index_of` the metal lowers for it —
 // and the surface's `glyph` verb, (A8.2) the pointer's drawing read
 // cell by cell, the walk the screen pass makes when it writes the sprite
-// into the carve, and (A8.3) the Elm loop itself: `ui.run` with the
+// into the carve, (A8.3) the Elm loop itself: `ui.run` with the
 // counter's defs as values — the registry, the app, the backend's
 // mount and patch, the script in the input's seat — the shape the screen
-// pass runs with the carve and the merged stream. What is left out is
+// pass runs with the carve and the merged stream, and (A9.1) a window's
+// frame painted the way the shell pass paints its two into their own
+// buffers. What is left out is
 // what the metal cannot take: the canvas (a `Bytes`). The program is
 // never run here — `projects/emo-os/run.sh` runs the real pass on the
 // real carve; this is the build that fails first when a change in the
@@ -85,6 +89,9 @@ def main() {
     ui_fb_frame.counter.initial(),
     ui_fb.backend(t, ui_fb.script([0, 0, 1])))
   println("looped ${t.presents()} frames")
+  const w = Tally.new(width: ui_fb_win.width(), height: ui_fb_win.height())
+  ui_fb_win.paint(w, ui_fb_win.title_a(), true, 1)
+  println("window ${w.fills()} boxes, ${w.glyphs()} glyphs")
 }
 
 main()

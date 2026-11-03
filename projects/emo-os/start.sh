@@ -22,8 +22,9 @@ cd "$(dirname "$0")"
 # both images present boots without the toolchain.
 #
 # The user image requires the desktop's packages beside the syscall stub
-# (emo-desktop A7.2): EmoUI's core, the fb backend's core, and the first
-# frame with the counter the screen pass runs (A8.3), from their own
+# (emo-desktop A7.2): EmoUI's core, the fb backend's core, the first
+# frame with the counter the screen pass runs (A8.3), and the window
+# shell's windows (A9.1), from their own
 # trees. They are staged into a registry named for the sources' content
 # — the way every gate in the tree stages one — and the build reads it
 # through EMO_REGISTRY, which names the one registry a build resolves
@@ -40,14 +41,15 @@ syscall_src="$syscall_dir/package.emo $syscall_dir/syscall.emo"
 ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
 fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo $fb_dir/pointer.emo"
 frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo $fb_dir/frame/counter.emo"
+win_src="$fb_dir/win/package.emo $fb_dir/win/ui_fb_win.emo"
 
 registry() {
   local sum
   # shellcheck disable=SC2086
-  sum=$(cat $syscall_src $ui_src $fb_src $frame_src | cksum | awk '{print $1}')
+  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src | cksum | awk '{print $1}')
   local reg="$PWD/.emo-build/registry-$sum"
   mkdir -p "$reg/syscall/0.1.0" "$reg/emo/ui/0.1.0" "$reg/emo/ui_fb/0.1.0" \
-    "$reg/emo/ui_fb_frame/0.1.0"
+    "$reg/emo/ui_fb_frame/0.1.0" "$reg/emo/ui_fb_win/0.1.0"
   # shellcheck disable=SC2086
   cp $syscall_src "$reg/syscall/0.1.0/"
   # shellcheck disable=SC2086
@@ -56,6 +58,8 @@ registry() {
   cp $fb_src "$reg/emo/ui_fb/0.1.0/"
   # shellcheck disable=SC2086
   cp $frame_src "$reg/emo/ui_fb_frame/0.1.0/"
+  # shellcheck disable=SC2086
+  cp $win_src "$reg/emo/ui_fb_win/0.1.0/"
   printf '%s' "$reg"
 }
 
@@ -80,7 +84,7 @@ stale() {
 }
 
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src ||
+if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src ||
    stale "$elf" *.emo *.S link.ld "$user_elf"; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
@@ -124,10 +128,12 @@ if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then
 fi
 
 echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
-echo '  the boot stops three times for keys on its way to the emo-os> prompt:' >&2
+echo '  the boot stops four times for keys on its way to the emo-os> prompt:' >&2
 echo '    five keys once the fs mount line has gone by (the console delivery test)' >&2
 echo '    one key when "gate 500500 r3 r2" appears (the read proof)' >&2
 echo '    the counter'"'"'s keys once its panel is on the window: a adds, b subtracts, q ends it' >&2
+echo '    the window shell once its two windows are up: click a window to focus it, drag it' >&2
+echo '      by its bar, a counts a key in the focused one, q closes them' >&2
 echo '  type nothing else before the prompt — early bytes surface later and garble the exchange' >&2
 echo '  the kill reports on the way are the proof chain working, not trouble' >&2
 echo '  the pointer follows the mouse over the window once the counter has ended' >&2

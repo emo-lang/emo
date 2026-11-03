@@ -1,0 +1,51 @@
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo/ui_fb_win"
+
+// The window shell's hosted twin (emo-desktop A9.1): the two windows
+// the shell pass on the metal paints into their own buffers, painted
+// here into canvases of the same size through the same defs, in the
+// order the metal's session presents them, and every presented frame's
+// digest printed — `expected.txt` is the interpreter's nine lines,
+// every hosted target prints the same, and it is the file `run.sh`
+// asserts against on the metal: the lines the pass prints as its
+// windows present, in this order, and the folds over each window's
+// rectangle of the display's screendumps at the beats the pointer is
+// parked away. One drawing, two surfaces, one file.
+//
+// The session, line by line: `alpha` and `beta` painted unfocused with
+// no keys (1, 2 — the shell's two windows up); the click on alpha
+// focusing it (3); a key routed to alpha (4); the press on beta's bar
+// that begins the drag — alpha dimmed, beta focused (5, 6); the
+// release presenting beta where the drag left it, the frame unchanged
+// (7); the drag back, its release the same present again (8); a key
+// routed to beta (9). A frame presented twice is two lines, because
+// the present is the commit and the file is the commits.
+//
+//   emo run main.emo
+
+def show(s ui_fb.Surface, title String, focused Bool, keys Int64) {
+  ui_fb_win.paint(s, title, focused, keys)
+  again(s)
+}
+
+def again(s ui_fb.Surface) {
+  println("frame ${ui_fb_frame.digest(s)}")
+}
+
+def main() {
+  const a = ui_fb_canvas.canvas(ui_fb_win.width(), ui_fb_win.height())
+  const b = ui_fb_canvas.canvas(ui_fb_win.width(), ui_fb_win.height())
+  show(a, ui_fb_win.title_a(), false, 0)
+  show(b, ui_fb_win.title_b(), false, 0)
+  show(a, ui_fb_win.title_a(), true, 0)
+  show(a, ui_fb_win.title_a(), true, 1)
+  show(a, ui_fb_win.title_a(), false, 1)
+  show(b, ui_fb_win.title_b(), true, 0)
+  again(b)
+  again(b)
+  show(b, ui_fb_win.title_b(), true, 1)
+}
+
+main()

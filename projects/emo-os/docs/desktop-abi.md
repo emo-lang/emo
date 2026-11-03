@@ -62,6 +62,30 @@ research record, with the reasoning behind each seam, is the
    day one, so the compositor can leave the kernel image (Tier B)
    without the protocol noticing.
 
+## The surfaces and their roles (T8.13, emo-desktop A9.1)
+
+The third seam's landing: a buffer becomes a surface when its client
+declares a role for it — verb 17, `win_role(grant, role)` — and the
+compositor's stack acts on surfaces alone. The vocabulary is frozen:
+0 toplevel, 1 popup, 2 subsurface, 3 panel. Toplevel is the role the
+compositor implements; the other three are refused with reason 4, by
+their number — the protocol carries no text (the seventh seam), so
+the caller, who chose the role, is the one to name what it asked for
+(`role popup r4` on the machine's wire). A surface's role does not
+change; a second declaration is refused. A surface's stack entry
+carries its grant, its position and its role; `win_focus` raises it
+to the stack's top, `win_move` places it, and the composition a
+window present posts is the whole stack walked bottom to top over a
+carve cleared to the compositor's own background — the last entry
+over the rest, a moved window's old place the background again, every
+surface whose row is ready carried, and the presenting client's
+answer after the flush (the sixth seam). The wire carries each
+composition as `comp <x> <y> <sum>` — the presenting surface's
+position and the words the walk carried. A client's scale for the
+stream's absolute reports is the device's own answer, verb 18,
+`input_info(index)` — the input side of the second seam; the outputs'
+enumeration has its twin.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

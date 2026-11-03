@@ -52,6 +52,43 @@ fi
 frame_digest=$(echo "$frame_digests" | head -1)
 frame_last=$(echo "$frame_digests" | tail -1)
 
+# The window shell's corpus file (emo-desktop A9.1): the fb window
+# golden (projects/emo-desktop/fb/win/golden) paints the shell pass's
+# two windows through the session the pass runs — up, a focus, a key,
+# a drag's focus and release, a drag back, a key — on the hosted canvas
+# and pins one `frame <digest>` line per present: nine lines, the same
+# bytes from every hosted target. The assertions below read that file
+# the way they read the frames': the lines the pass prints as its
+# windows present, in the file's order, and the folds over each
+# window's rectangle of the display's screendumps at the beats the
+# pointer is parked away. WIN_EXPECTED names the file; the dune smoke
+# points it at the repository's.
+win_expected=${WIN_EXPECTED:-../emo-desktop/fb/win/golden/expected.txt}
+if [ ! -f "$win_expected" ]; then
+  echo "run.sh: the windows' corpus file is missing: $win_expected" >&2
+  echo "  (the hosted golden under projects/emo-desktop/fb/win/golden pins the" >&2
+  echo "  digests this run asserts; WIN_EXPECTED names the file)" >&2
+  exit 1
+fi
+win_digests=$(awk '$1 == "frame" { print $2 }' "$win_expected")
+for d in $win_digests; do
+  case $d in
+    ''|*[!0-9]*)
+      echo "run.sh: $win_expected carries a 'frame' line that is not a digest" >&2
+      exit 1
+      ;;
+  esac
+done
+if [ "$(echo "$win_digests" | wc -w | tr -d ' ')" -ne 9 ]; then
+  echo "run.sh: $win_expected must carry nine 'frame <digest>' lines — the" >&2
+  echo "  window shell's session is two windows up, a focus, a key, a drag's" >&2
+  echo "  focus and release, a drag back, a key" >&2
+  exit 1
+fi
+win_line() {
+  echo "$win_digests" | sed -n "${1}p"
+}
+
 # The pointer's drawing (emo-desktop A8.2, T8.11): the sprite the
 # compositor's cursor plane composites is the desktop's, drawn in
 # `pointer.emo` as rows of cells (`#` ink, `o` paper, `.` clear), and
@@ -360,22 +397,20 @@ PYEOF
   qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":16384}},{"type":"abs","data":{"axis":"y","value":16384}}]}}'
   await 'move 1 16384'
   await 'pointer 512 384'
-  # The golden's eyes (T8.8): the compositor's compositions blitted the
-  # window's frame into the carve and flushed — the monitor's screendump
-  # takes the display's PPM and every pixel is read back against the
-  # composition history's union: the counter's last frame, the one the
-  # screen pass's loop left in the carve (the session's dump above,
-  # pixel for pixel — that frame is the base now; the flush smoke's
-  # gradient lies under it), the screen carve's proof pattern over it —
-  # the words the T8.2 pass wrote after its loop ended, one per 64 KiB
-  # across the display's first 3 MiB, each word's zero high half the
-  # black partner pixel, visible only because every later flush is
-  # whole-screen — and the window's two copies over both (the first at
-  # (0,0), its rows below the move's surviving, the second at (16,32),
-  # written last, holding the overlap; the paint carries its row in the
-  # blue lane, 0x57494E00 + row). A wrong pixel anywhere is the loud end
-  # — and a dead check kills the machine first, the survivor poisons the
-  # next run.
+  # The golden's eyes (T8.8, T8.13): the compositor's compositions
+  # carried the window's frame into the carve and flushed — the monitor's
+  # screendump takes the display's PPM and every pixel is read back
+  # against the model of the composition: since the stack's walk
+  # (T8.13) every composition clears the carve to the desktop's
+  # background before it blits the stack, so the counter's last frame
+  # and the screen carve's proof pattern are gone from the display the
+  # moment the window pass first presents, and the moved copy's
+  # composition leaves the window's frame at (16,32) alone — its first
+  # copy at (0,0) is background again (the paint carries its row in the
+  # blue lane, 0x57494E00 + row) — with the pointer's sprite over it all
+  # at the center the beat put it at, hidden around the walk and shown
+  # again. A wrong pixel anywhere is the loud end — and a dead check
+  # kills the machine first, the survivor poisons the next run.
   await 'comp 16 32'
   hmp 'screendump .screen.ppm'
   if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
@@ -385,14 +420,13 @@ data = open('.screen.ppm', 'rb').read()
 if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
     sys.exit("run.sh: the screendump is not the mode's P6 1024x768")
 px = data[16:]
-frame = open('.counter.ppm', 'rb').read()[16:]
 
 # The pointer sprite (T8.11, emo-desktop A8.2): the drawing's rows read
 # off pointer.emo — the quoted strings of `.`, `#` and `o` — composited
 # over everything at the hotspot the beat put it at, (512, 384): ink
 # black, paper white, a clear cell the pixel beneath. The compositor hid
-# it around the window blits and showed it again, so it lies over the
-# second copy's neighborhood untouched by either.
+# it around the walk and showed it again, so it lies over the background
+# untouched by the blit.
 import os
 import re
 
@@ -416,15 +450,7 @@ def want(x, y):
         return s
     if 16 <= x < 528 and 32 <= y < 160:
         return (73, 78, y - 32)
-    if x < 512 and y < 128:
-        return (73, 78, y)
-    if y % 16 == 0 and 8 <= y // 16 <= 47:
-        if x == 0:
-            return (99, 114, 110 + y // 16)
-        if x == 1:
-            return (0, 0, 0)
-    o = (y * 1024 + x) * 3
-    return (frame[o], frame[o + 1], frame[o + 2])
+    return (48, 48, 56)
 
 for y in range(768):
     row = px[y * 3072:(y + 1) * 3072]
@@ -438,6 +464,144 @@ PYEOF
     exit 1
   fi
   await 'win 0'
+  # The desk pass parks before its first frame (the counter's shape), so
+  # the window era on the display stays still until this run feeds its
+  # first byte — the screendump above takes its beat without racing the
+  # next era's compositions.
+  printf 'z' >&3
+  # The window shell (emo-desktop A9.1, T8.13): the desk pass puts two
+  # toplevel windows up — alpha at (64,128), beta at (576,384), each
+  # 384x128, their grants 2 and 3, the pointer's range the device's own
+  # answer through verb 18 (`desk range 32767 32767`) — and the display
+  # is read three ways at every parked beat: the pixels outside the two
+  # windows are the background with the sprite where the hand left it,
+  # and each window's rectangle folds to the digest the hosted twin's
+  # file names for that frame (the same fold the carve's frames use,
+  # over the rectangle alone), or does not when another window covers
+  # it — the stack's order on the display. The beats: both windows up
+  # (the first two lines of the file); a press on alpha's body focusing
+  # it (`desk focus 2`), a key routed to alpha (`desk key 2 1`); a press
+  # on beta's bar focusing beta and beginning a drag (`desk focus 3`),
+  # the pointer walked to where beta lands over alpha, the release
+  # presenting it there (`desk drag 3 96 160`) — beta on top, alpha's
+  # rectangle no longer its own frame; the drag back (`desk drag 3 576
+  # 384`); a key routed to beta (`desk key 3 1`); the quit byte ending
+  # the shell, its windows closed, the parent's wait answered (`desk
+  # 0`). The hand is QMP's input-send-event: absolute reports on the
+  # tablet's axes (a display position P is P*32 on x and the first value
+  # at or past P*128/3 on y, the mode over the range) and the left
+  # button's press and release; before each screendump the pointer is
+  # parked at (16,700), off both windows, so no window's fold carries the
+  # sprite — the plane says its one line at the first placement only, so
+  # the park waits a beat and the model's sprite is the check.
+  desk_is() {
+    local ppm="$1" ax="$2" ay="$3" bx="$4" by="$5" want_a="$6" not_a="$7" want_b="$8" cx="$9" cy="${10}" what="${11}"
+    if ! PPM="$ppm" AX="$ax" AY="$ay" BX="$bx" BY="$by" WANT_A="$want_a" NOT_A="$not_a" WANT_B="$want_b" CX="$cx" CY="$cy" WHAT="$what" POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
+import os
+import re
+import sys
+
+e = os.environ
+data = open(e['PPM'], 'rb').read()
+if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1024x768")
+px = data[16:]
+ax, ay, bx, by = int(e['AX']), int(e['AY']), int(e['BX']), int(e['BY'])
+cx, cy = int(e['CX']), int(e['CY'])
+W, H = 384, 128
+
+rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+if len(rows) != 17 or any(len(r) != 12 for r in rows):
+    sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
+
+def sprite(x, y):
+    r, c = y - cy, x - cx
+    if 0 <= r < 17 and 0 <= c < 12:
+        cell = rows[r][c]
+        if cell == '#':
+            return (0, 0, 0)
+        if cell == 'o':
+            return (255, 255, 255)
+    return None
+
+def inside(x, y, wx, wy):
+    return wx <= x < wx + W and wy <= y < wy + H
+
+for y in range(768):
+    row = px[y * 3072:(y + 1) * 3072]
+    for x in range(1024):
+        if inside(x, y, ax, ay) or inside(x, y, bx, by):
+            continue
+        got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+        want = sprite(x, y) or (48, 48, 56)
+        if got != want:
+            sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
+
+def fold(wx, wy):
+    d = 0
+    for y in range(wy, wy + H):
+        o = (y * 1024 + wx) * 3
+        for x in range(W):
+            d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
+            o += 3
+    return d
+
+fa = fold(ax, ay)
+fb = fold(bx, by)
+if e['WANT_A'] and fa != int(e['WANT_A']):
+    sys.exit(f"run.sh: at the {e['WHAT']} alpha's rectangle digests to {fa}; the corpus's is {e['WANT_A']}")
+if e['NOT_A'] and fa == int(e['NOT_A']):
+    sys.exit(f"run.sh: at the {e['WHAT']} alpha's rectangle still digests to its own frame {fa}; beta should cover it")
+if fb != int(e['WANT_B']):
+    sys.exit(f"run.sh: at the {e['WHAT']} beta's rectangle digests to {fb}; the corpus's is {e['WANT_B']}")
+PYEOF
+    then
+      kill "$qemu_pid" 2>/dev/null || true
+      exit 1
+    fi
+  }
+  abs() {
+    qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":'"$1"'}},{"type":"abs","data":{"axis":"y","value":'"$2"'}}]}}'
+  }
+  btn() {
+    qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":'"$1"',"button":"left"}}]}}'
+  }
+  await 'desk range 32767 32767'
+  await 'desk b 3'
+  await 'comp 576 384'
+  hmp 'screendump .desk1.ppm'
+  desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 'windows up'
+  abs 3200 8534
+  btn true
+  btn false
+  await 'desk focus 2'
+  printf 'a' >&3
+  await 'desk key 2 1'
+  abs 19200 16896
+  btn true
+  await 'desk focus 3'
+  abs 11520 12118
+  abs 3840 7339
+  btn false
+  await 'desk drag 3 96 160'
+  abs 512 29867
+  sleep 1
+  hmp 'screendump .desk2.ppm'
+  desk_is .desk2.ppm 64 128 96 160 '' "$(win_line 5)" "$(win_line 6)" 16 700 'drag'
+  abs 4480 7339
+  btn true
+  abs 12000 12000
+  abs 19840 16896
+  btn false
+  await 'desk drag 3 576 384'
+  printf 'a' >&3
+  await 'desk key 3 1'
+  abs 512 29867
+  sleep 1
+  hmp 'screendump .desk3.ppm'
+  desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 'drag back'
+  printf 'q' >&3
+  await 'desk 0'
   # The counter command (T7.5, docs/ui.md): the machine's program —
   # the console renderer pass (T7.4) — begun from the prompt, the
   # full-boot golden's beat between the shell and the filesystem
@@ -621,7 +785,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 80 45'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'role popup r4' 'role subsurface r4' 'role panel r4' 'present r4' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' 'desk range 32767 32767' 'desk a 2' 'desk b 3' 'comp 64 128' 'comp 576 384' 'desk focus 2' 'desk key 2 1' 'desk focus 3' 'desk drag 3 96 160' 'desk drag 3 576 384' 'desk key 3 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 90 54'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -664,6 +828,29 @@ PYEOF
   fi
   if [ "$(grep -c '^present ok$' "$log" || true)" -ne 4 ]; then
     echo "run.sh: expected the loop's four presents, one per frame" >&2
+    exit 1
+  fi
+  # The windows' frames (emo-desktop A9.1): the desk pass's own digest
+  # of each window's buffer at every present, whole lines, in the
+  # corpus's order — the nine of `$win_expected`, never a literal of
+  # this file's. The first lies after the window pass's exit and the
+  # last before the desk pass's; a frame presented twice is two lines,
+  # so the search for each starts past the last; and a window's present
+  # says no `present ok` — the count above stays the loop's.
+  local wprev wstart wend
+  wstart=$(grep -aboF -- 'win 0' "$log" | head -1 | cut -d: -f1)
+  wend=$(grep -aboF -- 'desk 0' "$log" | head -1 | cut -d: -f1)
+  wprev=$wstart
+  for d in $win_digests; do
+    fpos=$(grep -aboE -- "^frame $d\$" "$log" | cut -d: -f1 | awk -v p="$wprev" '$1 > p { print; exit }' || true)
+    if [ -z "$fpos" ]; then
+      echo "run.sh: the desk pass never delivered 'frame $d' after byte $wprev (the corpus's windows, $win_expected)" >&2
+      exit 1
+    fi
+    wprev=$fpos
+  done
+  if [ "$wprev" -gt "$wend" ]; then
+    echo "run.sh: the windows' last frame arrived after the desk pass's exit" >&2
     exit 1
   fi
   # The cursor plane's line (T8.11): the compositor's one `pointer`
@@ -751,9 +938,9 @@ PYEOF
 # The first boot meets the blank disk: the filesystem formats it, and
 # its restarted instance counts the root's one file.
 boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, shell, counter, frames, self-exit"
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, shell, counter, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
 # the first left — two files, the root's and hello's — and formats
 # nothing: the mount table came off the disk.
 boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, shell, counter, frames, self-exit, 1 ecall"
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, shell, counter, frames, self-exit, 1 ecall"

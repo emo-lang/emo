@@ -200,6 +200,13 @@ type env = {
          everything else the tagged word — and boxing happens only at
          the escape points. Outside, the dynamic rule holds: everything
          tagged in a0. *)
+  mutable region : bool;
+      (* the const region's build sites (emo-desktop A9.1): true on the
+         user profile, whose passes die mid-run and whose consts must
+         live where every pass's table maps; false on the kernel
+         profile, whose spawn's carve is a live path and whose consts
+         are scalar today — there the const bodies build the old way,
+         in the builder's arena *)
   mutable spawns : (string * spawn_callee) list;
       (* the spawn entry thunks queued for emission (T3.3): label,
          callee — newest first *)
@@ -874,11 +881,25 @@ let call_runtime env name = put env "    call %s\n" name
    are tagged already) and on every other type (whose tagged word is
    the value). Clobbers t0/ra through the helper — insert before the
    spill, never over a live t0. *)
+(* The result box: every runtime call that allocates a tagged cell for
+   the value in a0, picked const-aware — a const thunk's boxes join its
+   build in the const region (emo_riscv's runtime), never in the arena
+   of the process that happened to touch the memo first. *)
+let box_result env (name : string) : unit =
+  call_runtime env
+    (match env.cur with
+    | Some f when env.region && List.mem f.fname !const_thunks ->
+        name ^ "_const"
+    | _ -> name)
+(* a const thunk's boxes join its build in the const region; every
+     other emitter context — the def-value thunks included, whose frame
+     is not the record's to name — takes the arena's own helper *)
+
 let box_if_numeric env (t : Emo_check.t) : unit =
   if env.native then
     match t with
-    | Emo_check.Int64 -> call_runtime env "emo_box_i64"
-    | Emo_check.Float64 -> call_runtime env "emo_box_f64"
+    | Emo_check.Int64 -> box_result env "emo_box_i64"
+    | Emo_check.Float64 -> box_result env "emo_box_f64"
     | _ -> ()
 
 (* Dynamic → typed: a dynamic producer left the tagged word in a0; the
@@ -920,7 +941,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       let label = string_label env s in
       put env "    la a0, %s\n" label;
       put env "    li a1, %d\n" (String.length s);
-      call_runtime env "emo_string_lit"
+      (* a const initializer's strings join its containers in the const
+         region — same reason as the block sites below *)
+      call_runtime env
+        (match env.cur with
+        | Some f when env.region && List.mem f.fname !const_thunks ->
+            "emo_string_lit_const"
+        | _ -> "emo_string_lit")
   | Var name -> (
       let slot = slot_offset env name in
       match env.cur with
@@ -1191,7 +1218,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    andi t0, a1, -32\n";
         put env "    ld a1, 8(t0)\n";
         call_runtime env "emo_user_spawn";
-        call_runtime env "emo_box_i64"
+        box_result env "emo_box_i64"
       end
   | Builtin { name = "gate_reply"; args = [ target; answer ] } ->
       (* T4.4: a service's answer to the gate's parked caller — the
@@ -1238,7 +1265,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
          body. *)
       emit_expr env (d + 1) p;
       call_runtime env "emo_pid_num";
-      if not env.native then call_runtime env "emo_box_i64"
+      if not env.native then box_result env "emo_box_i64"
   | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
@@ -1421,8 +1448,8 @@ and emit_typed_regs_native env d (kinds : param_kind list) : unit =
 
 and emit_box_result env (r : result_kind) : unit =
   match r with
-  | R_int64 -> call_runtime env "emo_box_i64"
-  | R_float64 -> call_runtime env "emo_box_f64"
+  | R_int64 -> box_result env "emo_box_i64"
+  | R_float64 -> box_result env "emo_box_f64"
   | R_word | R_void -> ()
 
 (* The callee side, at the return label: the dynamic body leaves the
@@ -1479,7 +1506,14 @@ and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
       sp_store env "a0" (temp_offset env (d + i)))
     es;
   put env "    li a0, %d\n" (n + 1);
-  call_runtime env "emo_alloc";
+  (* a const initializer's blocks come from the const region (emo_riscv's
+     runtime: the memo they park in is the image's shared static memory,
+     and a builder's arena dies with the builder) *)
+  call_runtime env
+    (match env.cur with
+    | Some f when env.region && List.mem f.fname !const_thunks ->
+        "emo_alloc_const"
+    | _ -> "emo_alloc");
   put env "    li t0, %d\n" n;
   put env "    sd t0, 8(a0)\n";
   let last_fill = 16 + (8 * (n - 1)) in
@@ -1642,7 +1676,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         in
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
-        if boxed then put env "    call emo_box_i64\n"
+        if boxed then box_result env "emo_box_i64"
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
         Emo_check.Byte ) ->
@@ -1694,7 +1728,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         put env "    %s t0, t0, t1\n"
           (if op = Emo_ast.Div then "div" else "rem");
         put env "    mv a0, t0\n";
-        if boxed then put env "    call emo_box_i64\n"
+        if boxed then box_result env "emo_box_i64"
     | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Byte ->
         (* unsigned, and the divisor is checked first — the Int64 arm's
            discipline *)
@@ -1720,7 +1754,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
           | _ -> assert false
         in
         put env "    %s fa0, fa0, fa1\n" mnemonic;
-        if boxed then put env "    call emo_box_f64\n"
+        if boxed then box_result env "emo_box_f64"
     | Emo_ast.Add, Emo_check.String ->
         emit_expr env (d + 1) l;
         let spill = temp_offset env d in
@@ -1728,7 +1762,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         emit_expr env (d + 1) r;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
-        call_runtime env "emo_string_concat"
+        box_result env "emo_string_concat"
     | (Emo_ast.Eq | Emo_ast.Ne), Emo_check.Int64 ->
         emit_int_pair env d l r;
         put env "    sub t0, t0, t1\n";
@@ -1887,7 +1921,7 @@ and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
         put env "    ld t0, 8(a0)\n";
         put env "    sub t0, x0, t0\n";
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        box_result env "emo_box_i64"
       end
   | Emo_ast.Neg, Emo_check.Float64 ->
       emit_expr env d x;
@@ -1896,7 +1930,7 @@ and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
         put env "    andi a0, a0, -32\n";
         put env "    fld fa0, 8(a0)\n";
         put env "    fneg.d fa0, fa0\n";
-        put env "    call emo_box_f64\n"
+        box_result env "emo_box_f64"
       end
   | Emo_ast.Bit_not, Emo_check.Int64 ->
       emit_expr env d x;
@@ -1906,7 +1940,7 @@ and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
         put env "    ld t0, 8(a0)\n";
         put env "    not t0, t0\n";
         put env "    mv a0, t0\n";
-        put env "    call emo_box_i64\n"
+        box_result env "emo_box_i64"
       end
   | Emo_ast.Bit_not, Emo_check.Byte ->
       emit_expr env d x;
@@ -2121,7 +2155,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               put env "    srli a0, a0, 4\n";
               put env "    andi a0, a0, 255\n";
-              if boxed then put env "    call emo_box_i64\n"
+              if boxed then box_result env "emo_box_i64"
           | "to_string", [] ->
               emit_expr env d self_;
               call_runtime env "emo_to_string"
@@ -2163,7 +2197,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    mv a1, a0\n";
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_string_index_of";
-              if boxed then put env "    call emo_box_i64\n"
+              if boxed then box_result env "emo_box_i64"
           | "length", [] ->
               (* the byte count, read on the block — the dynamic dispatch
                  answers the boxed cell the interpreter's convention wants,
@@ -2173,7 +2207,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
-              if boxed then put env "    call emo_box_i64\n"
+              if boxed then box_result env "emo_box_i64"
           | "to_string", [] -> dynamic ()
           | _ -> refuse (Printf.sprintf "the String method `%s`" name))
       | Emo_check.Float64 when name = "to_int64" && args = [] ->
@@ -2189,7 +2223,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
             put env "    fld fa0, 8(t0)\n"
           end;
           put env "    fcvt.l.d a0, fa0, rtz\n";
-          if boxed then put env "    call emo_box_i64\n"
+          if boxed then box_result env "emo_box_i64"
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
           if not boxed then ()
@@ -2284,7 +2318,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
-              if boxed then put env "    call emo_box_i64\n"
+              if boxed then box_result env "emo_box_i64"
           | "append", [ x ] ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
@@ -2984,11 +3018,21 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   let hit = fresh_label env "const_hit" in
   (* a const thunk adopts its signature's convention (T2.1): the memo
      slot holds the raw result, and every reader — a call site keyed on
-     the thunk's signature — boxes it back. A fully typed thunk's body
-     is native (T2.2): the initializer computes the raw result
-     directly. *)
+     the thunk's signature — boxes it back. The BODY's convention
+     follows the profile (emo-desktop A9.1's find): on the user profile
+     it runs dynamic — a native body would box its numerics through
+     emo_box_i64, whose cells come from the running process's arena, and
+     the memo they park in is the image's shared static memory — a
+     builder's death leaves the memo pointing into an arena the next
+     reader's table never mapped; dynamic keeps every numeric literal a
+     static read-only cell and every container block on
+     `emo_alloc_const`'s region, the one heap every pass's table maps
+     for the machine's life. On the kernel profile the body stays
+     native: its consts are scalar today (CHECK.md's bound), the
+     builder's arena never dies on bare metal, and the spawn's carve is
+     a live path the region's floor must not surprise. *)
   let conv = match conv_of f with Some c -> c | None -> dynamic_conv 0 in
-  let native = match conv_of f with Some _ -> true | None -> false in
+  let native = not env.region in
   let frm =
     {
       fbuf = Buffer.create 512;
@@ -3037,11 +3081,15 @@ let emit_const_function env (f : Emo_ir.func) : unit =
   (* the result rides a5 across the unwind and the drain, whatever its
      kind (the function epilogue's rule) *)
   put env "    mv a5, a0\n";
+  if conv.cresult = R_word then put env "    call emo_retain\n"
+    (* the memo's own claim — taken BEFORE the drain, which releases the
+     build's pooled births: a dynamic const body's def value is a
+     pooled record, and a claim taken after the drain parked the
+     freelist cell the memo then answered every later reader
+     (emo-desktop A9.1's find) *);
   unwind_owned env 0;
   pool_drain env frm;
   put env "    mv a0, a5\n";
-  if conv.cresult = R_word then
-    put env "    call emo_retain\n" (* the memo's own claim *);
   put env "    la t2, %s\n" val_label;
   (match conv.cresult with
   | R_int64 ->
@@ -3058,7 +3106,18 @@ let emit_const_function env (f : Emo_ir.func) : unit =
         put env "    fld fa0, 8(t0)\n";
         put env "    fsd fa0, 0(t2)\n"
       end
-  | R_word | R_void -> put env "    sd a0, 0(t2)\n");
+  | R_word ->
+      (* a Pid rides raw in the memo: the dynamic build's boxed cell is
+         its own convention, and the memo's readers pass the const as
+         the pid it is (emo-desktop A9.1's find — `const me =
+         self_pid()` parked the cell and every send to `me` aimed at
+         the pointer) *)
+      if (not native) && f.Emo_ir.fresult = Emo_check.Pid then begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n"
+      end;
+      put env "    sd a0, 0(t2)\n"
+  | R_void -> put env "    sd a0, 0(t2)\n");
   put env "    li t1, 1\n";
   put env "    la t0, %s\n" done_label;
   put env "    sd t1, 0(t0)\n";
@@ -3178,11 +3237,11 @@ let emit_function env ~(label : string) ~(fname : string)
         match k with
         | P_int64 ->
             gput env "    ld a0, %d(sp)\n" off;
-            gput env "    call emo_box_i64\n";
+            box_result env "emo_box_i64";
             gput env "    sd a0, %d(sp)\n" off
         | P_float64 ->
             gput env "    fld fa0, %d(sp)\n" off;
-            gput env "    call emo_box_f64\n";
+            box_result env "emo_box_f64";
             gput env "    sd a0, %d(sp)\n" off
         | P_word -> ())
       conv.cparams;
@@ -3471,14 +3530,17 @@ emo_runtime_init:
     sd t2, 8(t1)            # the root's pid
     sd t2, 16(t1)           # alive
     la t0, emo_heap_start
-    sd t0, 576(t1)          # the root's arena cursor
-    la t0, emo_heap_end
-    sd t0, 584(t1)          # and its end
-    sd zero, 592(t1)        # nothing sent; the root's arena is never
-    sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
-    sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
-    sd zero, 872(t1)        # and its space is the kernel's own table (T6.2),
-                            # until the boot pass adopts its own
+    sd t0, 576(t1)          # the root's arena cursor — its end and the
+                            #   const region ride the profile's tail
+                            #   (`emo_runtime_init_tail`, emitted after
+                            #   this blob), which also draws the root's
+                            #   bump ceiling where the user image's const
+                            #   region sits
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    call emo_runtime_init_tail
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
     .globl emo_alloc
@@ -3500,6 +3562,39 @@ emo_alloc:
     sd t3, 576(t1)
     sd a0, 0(t2)
     mv a0, t2
+    ret
+
+# emo_alloc_const: the const region's bump, shaped like emo_alloc but
+# growing down from the heap's top — a region no pass's arena shares and
+# every pass's table maps, because the region is the image's own heap
+# bytes. A const initializer's blocks live here (emo-desktop A9.1's
+# find): the memo slots they are parked into sit in the image's shared
+# static memory, so a value built into one process's arena dangles the
+# moment that process dies and the next process reads the memo — the
+# machine's second consumer of the bitmap font met exactly that, the
+# first consumer's pass gone and its arena unmapped in the reader's
+# table. Value kinds carry no count and the memo never releases its
+# claim, so the region never gives a byte back; exhaustion is the loud
+# end like any arena's.
+    .globl emo_alloc_const
+emo_alloc_const:
+    addi t0, a0, 1
+    slli t0, t0, 3
+    addi t0, t0, 31
+    andi t0, t0, -32
+    la t1, emo_const_cur
+    ld t2, 0(t1)            # the region's cursor, at its top
+    sub t3, t2, t0          # the block grows down: [t3, t2)
+    andi t3, t3, -32        # the block 32-aligned — the tagged word's low
+                            #   bits are the tag's, so every block's own
+                            #   address must leave them clear (the region's
+                            #   top is a heap end, 16-aligned only)
+    la t4, emo_const_lim
+    ld t4, 0(t4)
+    bltu t3, t4, emo_arena_gone
+    sd t3, 0(t1)
+    sd a0, 0(t3)            # the count header, emo_alloc's own
+    mv a0, t3
     ret
 
 # ---- Identity reclamation (T8.7's pool) ----
@@ -3798,9 +3893,13 @@ emo_print_bytes:
     addi sp, sp, 32
     ret
 
-# emo_fail: a0 = message start, a1 = end; announce and power off.
-    .globl emo_fail
-emo_fail:
+# emo_fail: a0 = message start, a1 = end; announce, then the profile's
+# tail (`fail_asm` below). The announce rides emo_print_bytes — the
+# console hook where one is parked, the legacy ecall where not — and
+# the bodies live per profile, because the tail's crossing is the
+# profile's: the kernel's is the SBI's, a user pass's is the gate's.
+    .globl emo_fail_start
+emo_fail_start:
     addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)
@@ -3813,11 +3912,16 @@ emo_fail:
     call emo_print_bytes
     li a0, 10
     call emo_console_emit
-    li a7, 8
-    ecall
-.Lfail_park:
-    wfi
-    j .Lfail_park
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+
+# the newline emo_fail's announce ends with, one byte for the write
+# verb's buffer (the user profile's tail)
+    .section .rodata
+emo_fail_nl:
+    .byte 10
+    .section .text
 
 # ---- Boxing ----
 
@@ -4353,6 +4457,136 @@ emo_string_lit:
     addi t4, t4, -1
     bnez t4, .Lsl_copy
 .Lsl_done:
+    ori a0, a0, 4
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_string_lit_const: the const region's twin of emo_string_lit — a
+# const initializer's String lives where its memo's readers can reach it
+# for the machine's life, not in the builder's arena (emo-desktop A9.1's
+# find: the font's alphabet was the machine's first cross-pass memo).
+    .globl emo_string_lit_const
+emo_string_lit_const:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    sd a1, 16(sp)
+    addi t0, a1, 7
+    srli t0, t0, 3
+    addi t0, t0, 1
+    mv a0, t0
+    call emo_alloc_const
+    ld t1, 16(sp)
+    sd t1, 8(a0)
+    ld t3, 8(sp)
+    ld t4, 16(sp)
+    addi t2, a0, 16
+    beqz t4, .Lslc_done
+.Lslc_copy:
+    lbu t5, 0(t3)
+    sb t5, 0(t2)
+    addi t3, t3, 1
+    addi t2, t2, 1
+    addi t4, t4, -1
+    bnez t4, .Lslc_copy
+.Lslc_done:
+    ori a0, a0, 4
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_box_i64_const / emo_box_f64_const / emo_alloc_string_const /
+# emo_string_concat_const: the const region's twins of the boxing and
+# string helpers — a const initializer's every birth lands where its
+# memo's readers can reach it for the machine's life (emo-desktop
+# A9.1's find), never in the arena of the process that happened to
+# touch the memo first.
+    .globl emo_box_i64_const
+emo_box_i64_const:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    li a0, 1
+    call emo_alloc_const
+    ld t0, 8(sp)
+    sd t0, 8(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+    .globl emo_box_f64_const
+emo_box_f64_const:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    fsd fa0, 8(sp)
+    li a0, 1
+    call emo_alloc_const
+    fld fa0, 8(sp)
+    fsd fa0, 8(a0)
+    ori a0, a0, 2
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+    .globl emo_alloc_string_const
+emo_alloc_string_const:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    addi t0, a0, 7
+    srli t0, t0, 3
+    addi t0, t0, 1
+    mv a0, t0
+    call emo_alloc_const
+    ld t1, 8(sp)
+    sd t1, 8(a0)
+    ori a0, a0, 4
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_string_concat_const: a0 = a1 = Strings; a0 = a fresh String in the
+# const region — the concat helper's own twin (that one calls
+# emo_alloc_string, the arena's).
+    .globl emo_string_concat_const
+emo_string_concat_const:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    ld t0, 8(s0)
+    ld t1, 8(s1)
+    add s2, t0, t1
+    mv a0, s2
+    call emo_alloc_string_const
+    andi t0, a0, -32
+    addi t2, t0, 16
+    ld t3, 8(s0)
+    addi t4, s0, 16
+    beqz t3, .Lscc_second
+.Lscc_first:
+    lbu t5, 0(t4)
+    sb t5, 0(t2)
+    addi t4, t4, 1
+    addi t2, t2, 1
+    addi t3, t3, -1
+    bnez t3, .Lscc_first
+.Lscc_second:
+    ld t3, 8(s1)
+    addi t4, s1, 16
+    beqz t3, .Lscc_done
+.Lscc_copy:
+    lbu t5, 0(t4)
+    sb t5, 0(t2)
+    addi t4, t4, 1
+    addi t2, t2, 1
+    addi t3, t3, -1
+    bnez t3, .Lscc_copy
+.Lscc_done:
     ori a0, a0, 4
     ld ra, 0(sp)
     addi sp, sp, 32
@@ -7425,6 +7659,141 @@ emo_copy_out_at:
    are the kernel's to track (the slot table is the kernel's), so its
    allocator reports through the gate's verb 5 and the kernel's shim
    owns the death. *)
+(* The failure tail, per profile: the announce is shared
+   (`emo_fail_start` above), the crossing is the profile's. A kernel
+   image's fail ends at the SBI's poweroff — the machine's own loud
+   end. A user pass's fail crosses the gate: the message rides the
+   write verb whole (the gate stages it from the pass's own memory —
+   the per-byte legacy shape the console hook's absence falls into was
+   refused for its buffer-and-length and said nothing, A7.2's silence,
+   which emo-desktop A9.1's windowed session needed said), then the
+   heap-death route — the shim's loud report, the slot done, the
+   machine continuing (T5.1). *)
+let fail_asm ~(profile : string) : string =
+  match profile with
+  | "kernel" ->
+      {asm|
+    .section .text
+    .globl emo_fail
+emo_fail:
+    call emo_fail_start
+    li a7, 8
+    ecall                    # the SBI poweroff
+.Lfail_park:
+    wfi
+    j .Lfail_park
+|asm}
+  | "user" ->
+      {asm|
+    .section .text
+    .globl emo_fail
+emo_fail:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    sd a1, 16(sp)
+    la a0, msg_prefix
+    la a1, msg_prefix_end
+    call emo_fail_write
+    ld a0, 8(sp)
+    ld a1, 16(sp)
+    call emo_fail_write
+    la a0, emo_fail_nl
+    addi a1, a0, 1
+    call emo_fail_write
+    li a7, 5
+    ecall                    # the heap-death route (T5.1)
+.Lfail_park:
+    wfi
+    j .Lfail_park
+
+# emo_fail_write: a0 = start, a1 = end; one write verb, whole.
+emo_fail_write:
+    mv t0, a0
+    sub a1, a1, a0
+    mv a0, t0
+    li a7, 1
+    ecall
+    ret
+|asm}
+  | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+
+(* The root's arena end and the const region's bounds, per profile
+   (emo-desktop A9.1's find): the const region is the heap's top 64 KiB,
+   descending from just below the freelist head word the heap carries at
+   its end. The user image's root ends below the region — its spawn's
+   carve is dead code (the hooks are parked), so no child ever receives
+   the region, and the root's own bump ends at its floor. The kernel
+   profile keeps the root's end at the heap's end: its bare-metal spawn
+   carves live blocks from that end downward, and its const region is
+   built once at startup from the top — a program whose root bumped into
+   the region before the consts built could collide, and none does (the
+   builds are startup, the root's bump a few KiB of a 96 MiB heap; the
+   bound is CHECK.md's). *)
+let init_tail_asm ~(profile : string) : string =
+  match profile with
+  | "kernel" ->
+      {asm|
+emo_runtime_init_tail:
+    la t1, emo_procs        # the root's slot — named here, never carried
+                            #   across the call (the caller's t1 is its own)
+    la t0, emo_heap_end
+    sd t0, 584(t1)          # the root's arena end: the heap's end — the
+                            #   bare-metal spawn carves live blocks from
+                            #   it downward
+    sd zero, 592(t1)        # nothing sent; the root's arena is never
+    sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
+    sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
+    sd zero, 872(t1)        # and its space is the kernel's own table (T6.2),
+                            # until the boot pass adopts its own
+    la t0, emo_heap_end
+    li t2, -8
+    add t0, t0, t2
+    la t1, emo_const_cur
+    sd t0, 0(t1)            # the const region's cursor, at its top (the
+                            #   heap's freelist head word stays above it)
+    la t0, emo_heap_end
+    li t2, -65544
+    add t0, t0, t2
+    la t1, emo_const_lim
+    sd t0, 0(t1)            # and its floor, 64 KiB down
+    ret
+|asm}
+  | "user" ->
+      {asm|
+emo_runtime_init_tail:
+    la t1, emo_procs        # the root's slot — named here, never carried
+                            #   across the call
+    la t0, emo_heap_end
+    li t2, -65544
+    add t0, t0, t2
+    sd t0, 584(t1)          # the root's arena end: 64 KiB below the heap's
+                            #   end — the span above it is the const
+                            #   region's (the words follow), the root's own
+                            #   bump ends at its floor, and the spawn's
+                            #   carve is dead code in this image (the
+                            #   hooks are parked), so no child ever
+                            #   receives the region either
+    sd zero, 592(t1)        # nothing sent; the root's arena is never
+    sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
+    sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
+    sd zero, 872(t1)        # and its space is the kernel's own table (T6.2),
+                            # until the boot pass adopts its own
+    la t0, emo_heap_end
+    li t1, -8
+    add t0, t0, t1
+    la t1, emo_const_cur
+    sd t0, 0(t1)            # the const region's cursor, at its top (the
+                            #   heap's freelist head word stays above it)
+    la t0, emo_heap_end
+    li t1, -65544
+    add t0, t0, t1
+    la t1, emo_const_lim
+    sd t0, 0(t1)            # and its floor, 64 KiB down
+    ret
+|asm}
+  | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+
 let arena_gone_asm ~(profile : string) : string =
   match profile with
   | "kernel" ->
@@ -7594,7 +7963,12 @@ SECTIONS
    it; a gate-spawned pass's arena comes from the kernel's frame
    allocator through the block hooks (T5.3) — or, hookless, from the
    kernel's own heap — and the trap shim hands the cursor across the
-   boundary. QEMU virt's 128 MiB holds both. *)
+   boundary. QEMU virt's 128 MiB holds both. The heap's top 64 KiB is
+   the const region's (emo-desktop A9.1's find): the image's shared
+   static memory can only park values every pass's table maps for the
+   machine's life, so the const initializers' blocks grow down there
+   and the root's own arena ends below the region — `emo_alloc_const`
+   bumps it, `emo_runtime_init` draws the line. *)
 let stack_asm ~(profile : string) : string =
   let stack_bytes, heap_bytes =
     match profile with
@@ -7616,6 +7990,12 @@ emo_heap_start:
     .zero %d
     .globl emo_heap_end
 emo_heap_end:
+    .globl emo_const_cur
+emo_const_cur:
+    .zero 8
+    .globl emo_const_lim
+emo_const_lim:
+    .zero 8
 
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
@@ -8071,6 +8451,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
             | None -> None)
           program.pfuncs;
       native = false;
+      region = profile = "user";
       spawns = [];
       defvals = [];
       owned = [];
@@ -8091,6 +8472,8 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   gput env "%s" arch_directive;
   if boot_stub then gput env "%s\n" profile_stub;
   gput env "%s\n" runtime_asm;
+  gput env "%s\n" (fail_asm ~profile);
+  gput env "%s\n" (init_tail_asm ~profile);
   gput env "%s\n" (arena_gone_asm ~profile);
   gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is

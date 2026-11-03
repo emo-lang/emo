@@ -127,6 +127,38 @@ def win_move(grant Int64, x Int64, y Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The surface's role (EmoOS T8.13, verb 17 — the desktop protocol's
+// third seam): the window buffer the grant names becomes a surface of
+// that role on the compositor's stack — 0 a toplevel, 1 a popup, 2 a
+// subsurface, 3 a panel — and the stack's verbs and the present act on
+// surfaces alone: a buffer with no role declared meets "bad argument"
+// at all of them. Toplevel is the role the compositor implements; the
+// other three are refused with "bad argument" too, by their number —
+// the caller, who chose the role, is the one to name it — as is a role
+// past the vocabulary, or a second declaration for one surface. A full
+// stack is "the kernel is out of a resource".
+def win_role(grant Int64, role Int64) (R, Int64) {
+  var answer = ecall(17, grant, role, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The pointer devices' enumeration (EmoOS T8.13, verb 18): the index-th
+// pointer's axes — the maxima the device's own config states, the X's
+// in bits 32..63 and the Y's in bits 0..31 — the range a program scales
+// the stream's absolute reports to the display by, as the compositor
+// scales its cursor. An index no device answers is (R.error, "bad
+// argument") — one pointer is the first answer, not the only shape.
+def input_info(index Int64) (R, Int64) {
+  var answer = ecall(18, index, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.

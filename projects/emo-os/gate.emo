@@ -102,10 +102,21 @@ const grant_row = 96
 // The compositor's cells (T8.6): the pid cell the gate routes the
 // stack's verbs and the window present's composition by, and the five
 // argument cells those requests stage (the grant, the position, the
-// damage rect) — the compositor's own, like every service's, because
-// its transactions and the display service's can sit parked at once.
+// damage rect; T8.13: win_role's role beside the grant) — the
+// compositor's own, like every service's, because its transactions and
+// the display service's can sit parked at once.
 const comp_svc_cell = koff + 0x87002e00
 const comp_args = koff + 0x87002e10
+
+// The input service's argument cell (T8.13): input_info's index — the
+// one word the enumeration verb stages, past the pointer's cells.
+const input_args = koff + 0x87002e78
+
+// The surface roles (T8.13, emo-desktop A9.1 — the protocol's third
+// seam): the vocabulary win_role names a surface by. The gate bounds
+// the number to the vocabulary; which roles the compositor implements
+// is the compositor's answer (toplevel today, the rest refused).
+const role_count = 4
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
@@ -126,7 +137,12 @@ const reason_resource = 5
 // image's verb 5 — the runtime issues it, though nothing stops a
 // program from saying it of itself), and the shim ends the caller the
 // fault route ends a user program: the loud report, the slot done,
-// the machine continuing.
+// the machine continuing. The route's op is a mailbox number, not the
+// verb's: the window present's composition rides op 17 (a derivative
+// of verb 10, T8.6), so verb 17's role request rides op 19 and verb
+// 18's enumeration op 18 — the compositor's mailbox holds 15 to 17 and
+// the pointer's notice at 18 (T8.11), the input service's holds 2, 12
+// and 18 (T8.13).
 const route_process_exit = -1000
 const route_console_write = -1001
 const route_input_byte = -1002
@@ -140,6 +156,8 @@ const route_win_close = -1014
 const route_win_focus = -1015
 const route_win_move = -1016
 const route_comp_present = -1017
+const route_input_info = -1018
+const route_win_role = -1019
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -412,8 +430,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 15 {
     // win_focus(grant) (T8.6): the compositor's stack records the
-    // focused window — the input routing the focus will drive is
-    // A9.1's. The owner is the gate's check, as win_close's is.
+    // focused window and raises it to the stack's top (T8.13) — the
+    // input routing the focus drives is the desktop side's (emo-desktop
+    // A9.1). The owner is the gate's check, as win_close's is.
     if r0 == 0 {
       return -reason_argument
     }
@@ -450,6 +469,45 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     poke64(comp_args + 8, r1)
     poke64(comp_args + 16, r2)
     return route_win_move
+  }
+  if n == 17 {
+    // win_role(grant, role) (T8.13, emo-desktop A9.1): the surface the
+    // buffer becomes on the compositor's stack, named by its role —
+    // the protocol's third seam. The gate bounds the role to the
+    // vocabulary (0 toplevel, 1 popup, 2 subsurface, 3 panel; past it
+    // reason 4) and checks the owner and the id as the stack's other
+    // verbs do; which roles the compositor implements is its answer —
+    // toplevel is, the rest are refused by their number, and the
+    // caller names what it asked for.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    if r1 < 0 || r1 >= role_count {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(comp_args, r0)
+    poke64(comp_args + 8, r1)
+    return route_win_role
+  }
+  if n == 18 {
+    // input_info(index) (T8.13, emo-desktop A9.1): the index-th
+    // pointer device's axes, packed — the input side of the second
+    // seam, the range a client scales the stream's absolute reports by
+    // never a constant of its own. The index is the enumeration's
+    // shape; an index no device answers is the input service's reason
+    // 4 (one pointer is the first answer, not the only shape).
+    if r0 < 0 {
+      return -reason_argument
+    }
+    poke64(input_args, r0)
+    return route_input_info
   }
   if n == 14 {
     // win_close(grant) (T8.5): the buffer's release — the run back to

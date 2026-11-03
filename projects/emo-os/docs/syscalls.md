@@ -63,6 +63,8 @@ undocumented ever acts.
 | 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
 | 13 | `win_new(w, h)` | a window buffer of the given size: a contiguous run of the allocator's blocks mapped into the caller's own table; answers the buffer's frame number and the grant id packed (T8.5, below) |
 | 14 | `win_close(grant)` | the buffer's release: the run back to the allocator, the grant gone; answers 0 (T8.5, below) |
+| 17 | `win_role(grant, role)` | the buffer becomes a surface of that role on the compositor's stack — 0 toplevel, 1 popup, 2 subsurface, 3 panel; toplevel is the role the compositor implements, the rest are refused with reason 4, as are a second declaration and a grant with no surface behind it; a full stack is reason 5 (T8.13, below) |
+| 18 | `input_info(index)` | the index-th pointer's axes, the maxima the device's own config states, packed (the X's above the Y's); an index no device answers is reason 4 (T8.13, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -71,7 +73,14 @@ verb lands, frozen from that day) — `present`, `output_info`,
 [`docs/desktop-abi.md`](desktop-abi.md). Verbs 10 to 14 have landed
 (T8.3, T8.4, T8.5); 15 and 16 — `win_focus` and `win_move`, the
 compositor's stack's verbs — stay reserved until the compositor's
-mechanism (T8.6) gives them their substance.
+mechanism (T8.6) gives them their substance. Verbs 17 and 18 (T8.13,
+emo-desktop A9.1) grew the segment under the same rule — additions
+under new numbers, never rewrites — and the route numbers they ride
+are the mailbox's, not the verb's: the composition request a window
+present posts holds op 17 (a derivative of verb 10, T8.6) and the
+pointer's notice holds op 18 (T8.11), so win_role's request rides op
+19 and input_info's op 18 lands in the input service's mailbox, where
+2 and 12 were the only residents.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -169,13 +178,42 @@ protocol's sixth seam). The row's ready flag and the recorded rect are
 the compositor's state; the requests that arrive while a flush is in
 flight are stashed and served after. **Verbs 15 and 16 (T8.6)** are the
 compositor's stack's verbs: `win_focus(grant)` records the focused
-window (the input routing the focus will drive is the desktop side's);
-`win_move(grant, x, y)` sets the blit's position — the x even (the
-blit's word granularity, reason 4), the bounds against the display's
-mode the compositor's to judge (reason 4 outside). The owner and the id
-are the gate's checks on both. The death-side reclamation: a window
-whose owner dies without a close has its run reclaimed and its row
-emptied by the compositor's supervisor (T8.6's death-notice flow).
+window and — since T8.13 — raises it to the stack's top, the next
+composition painting it over the rest; `win_move(grant, x, y)` sets
+the blit's position — the x even (the blit's word granularity, reason
+4), the bounds against the display's mode the compositor's to judge
+(reason 4 outside). The owner and the id are the gate's checks on
+both, and — since T8.13 — every stack verb answers reason 4 for a
+grant that declared no role: the surface a role makes is the only
+thing the stack acts on. **Verb 17 (T8.13, emo-desktop A9.1)** is the
+role declaration the surface is: `win_role(grant, role)` makes the
+buffer a surface of that role on the compositor's stack, at the
+origin, until a move places it. The vocabulary is the gate's bounds
+(0 toplevel, 1 popup, 2 subsurface, 3 panel — past it reason 4) and
+the owner and the id are its checks; which roles the compositor
+implements is the compositor's answer — toplevel is, and popup,
+subsurface and panel are refused with reason 4, **by their number**:
+the protocol carries no text (the seventh seam), and the caller, who
+chose the role, is the one to name what it asked for. A second
+declaration for one surface is reason 4 (a surface's role does not
+change); a stack already holding eight surfaces is reason 5. The
+composition a window present posts walks the whole stack bottom to
+top over a carve cleared to the compositor's own background — the
+last entry over the rest, a moved window's old place the background
+again — carrying every surface whose row is ready, so the frame the
+client presented lands whole with the rest of the stack in it (the
+sixth seam). The death-side reclamation: a window whose owner dies
+without a close has its run reclaimed, its row emptied and its
+surface taken off the stack by the compositor's supervisor (T8.6's
+death-notice flow, T8.13's prune).
+
+**Verb 18 (T8.13, emo-desktop A9.1)** is the input side of the second
+seam: `input_info(index)` answers the index-th pointer's axes — the
+maxima the device's own config states, packed the way the display's
+mode is (the X's in bits 32..63, the Y's in bits 0..31) — the range a
+program scales the stream's absolute reports to the display by, as
+the compositor scales its cursor. One pointer is the first answer,
+not the only shape; an index past it is reason 4, the input service's.
 
 Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
 the next event of the input service's merged stream, blocking until
@@ -210,7 +248,7 @@ User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
 It admits the `riscv64` target alone; the raw `ecall` lives in its
-sixteen
+eighteen
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -240,6 +278,19 @@ bodies and nowhere else a user program writes.
   answering `(R.ok, 0)` or `(R.error, why)`.
 - `syscall.win_move(grant, x, y)` — the compositor's move (T8.6,
   verb 16), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_role(grant, role)` — the surface's role declaration
+  (T8.13, verb 17): the buffer becomes a toplevel (0) surface on the
+  compositor's stack, or `(R.error, "bad argument")` for the roles the
+  compositor refuses — popup (1), subsurface (2), panel (3), each by
+  its number; the caller who chose the role names it — as for a second
+  declaration, a role past the vocabulary, a grant that declared no
+  surface at any stack verb or present, or a roleless stack slot left
+  by `"the kernel is out of a resource"` at the ninth.
+- `syscall.input_info(index)` — the pointer devices' enumeration
+  (T8.13, verb 18): `(R.ok, the axes packed)` — the X's maximum in
+  bits 32..63, the Y's in bits 0..31, the device's own answer a client
+  scales the stream's absolute reports by — or `(R.error, "bad
+  argument")` for an index no device answers.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the

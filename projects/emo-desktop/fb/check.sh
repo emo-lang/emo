@@ -1,11 +1,12 @@
 #!/bin/sh
-# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3): the
-# four packages under `fb/` — the core (`emo/ui_fb`, with the bitmap
+# The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3, A9.1):
+# the five packages under `fb/` — the core (`emo/ui_fb`, with the bitmap
 # font and the pointer sprite as its second and third modules), the
 # hosted canvas (`emo/ui_fb_canvas`), the first frame with the counter
-# (`emo/ui_fb_frame`) and their goldens — type-checked, their tests run,
-# their targets built, their bytes compared, the font's table checked
-# against its drawing, and the metal's lowering pinned without a machine.
+# (`emo/ui_fb_frame`), the window shell's windows (`emo/ui_fb_win`) and
+# their goldens — type-checked, their tests run, their targets built,
+# their bytes compared, the font's table checked against its drawing,
+# and the metal's lowering pinned without a machine.
 #
 #   ./check.sh
 #
@@ -69,14 +70,15 @@ build() {
 # the goldens and the probe are consumers and are built in place.
 sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
-  frame/counter.emo | cksum | awk '{print $1}')
+  frame/counter.emo win/package.emo win/ui_fb_win.emo | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
-  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0"
+  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
 cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
+cp win/package.emo win/ui_fb_win.emo "$REG/emo/ui_fb_win/0.1.0/"
 
 # --- the font's table is its drawing ------------------------------------
 #
@@ -117,22 +119,25 @@ expect 35 "all thirty-five canvas assertions pass" "$n"
 ( cd frame && EMO_REGISTRY="$REG" "$EMO" check ui_fb_frame.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the first frame type-checks" "$rc"
 
+( cd win && EMO_REGISTRY="$REG" "$EMO" check ui_fb_win.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
+expect 0 "the window shell's windows type-check" "$rc"
+
 # --- which targets compile the packages ---------------------------------
 #
-# Nothing in the three directories needs a capability a hosted runtime
+# Nothing in the four directories needs a capability a hosted runtime
 # lacks, and the canvas directory — a `Surface` implementor beside its
-# test — builds on all five. The core and the frame carry interfaces and
-# no implementor of their own, and `beam` and `wasm` lower an interface
-# call only against the classes in the program that implement it
-# (`CHECK.md`), so a directory build of either refuses there while every
-# consumer that brings a surface compiles: their `beam` and `wasm` claims
-# are pinned by the goldens below, their other three here. The core and
-# the frame declare `riscv64` too, and the probe after this is what pins
-# that: a directory build cannot, because the canvas each test drives
-# is a `Bytes`, which the riscv64 emitter does not lower — so the canvas
-# does not declare the metal, and the metal's registry never carries a
-# test. The loop itself lowers for the metal since A8.3 (its def values
-# did not before), and the probe runs it.
+# test — builds on all five. The core, the frame and the windows carry
+# interfaces and no implementor of their own, and `beam` and `wasm` lower
+# an interface call only against the classes in the program that
+# implement it (`CHECK.md`), so a directory build of any refuses there
+# while every consumer that brings a surface compiles: their `beam` and
+# `wasm` claims are pinned by the goldens below, their other three here.
+# The core, the frame and the windows declare `riscv64` too, and the
+# probe after this is what pins that: a directory build cannot, because
+# the canvas each test drives is a `Bytes`, which the riscv64 emitter does
+# not lower — so the canvas does not declare the metal, and the metal's
+# registry never carries a test. The loop itself lowers for the metal
+# since A8.3 (its def values did not before), and the probe runs it.
 
 for t in ocaml c typescript wasm beam; do
   build canvas ui_fb_canvas.emo "$t" && rc=0 || rc=$?
@@ -146,20 +151,24 @@ for t in ocaml c typescript; do
   build frame ui_fb_frame.emo "$t" && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
   expect builds "frame --target $t" "$got"
+  build win ui_fb_win.emo "$t" && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
+  expect builds "windows --target $t" "$got"
 done
 
 # --- the metal's lowering, pinned without a machine ---------------------
 #
 # `probe/metal/` is a riscv64 user program that reaches the core, the
-# frame and the core's own dependency, and runs the counter through the
-# Elm loop against a counting surface (A8.3): built, never run here —
-# `run.sh` in `projects/emo-os` runs the real pass on the real carve.
+# frame, the windows and the core's own dependency, and runs the counter
+# through the Elm loop against a counting surface (A8.3) and paints a
+# window through it (A9.1): built, never run here —
+# `run.sh` in `projects/emo-os` runs the real passes on the real carve.
 # The build needs the riscv64-elf binutils the compiler links with.
 
 if command -v riscv64-elf-ld >/dev/null 2>&1 || \
    command -v riscv64-unknown-elf-ld >/dev/null 2>&1; then
   build probe/metal main.emo riscv64 --profile user && rc=0 || rc=$?
-  expect 0 "the core and the frame lower for a riscv64 user program" "$rc"
+  expect 0 "the core, the frame and the windows lower for a riscv64 user program" "$rc"
 else
   printf 'skip the metal probe: no riscv64-elf binutils on PATH\n'
 fi
@@ -179,7 +188,10 @@ fi
 # through the Elm loop at the display's baseline mode (A8.3) — one
 # `frame <digest>` line per presented frame, the four lines `run.sh`
 # asserts on the metal, the first the first frame's — and runs on all
-# five.
+# five. `win/golden/` is the window shell's two windows painted through
+# the session the metal's shell pass runs (A9.1) — one line per present,
+# the nine lines `run.sh` asserts and folds the display's windows to —
+# and runs on all five.
 
 golden_build() {
   mkdir -p "$3"
@@ -233,5 +245,8 @@ expect "builtin \`printf\` is not available on the wasm target" \
 
 check_golden frame/golden frame/golden/expected.txt \
   "$PWD/.emo-build/check/frame" "first frame" ocaml c typescript wasm beam
+
+check_golden win/golden win/golden/expected.txt \
+  "$PWD/.emo-build/check/win" "window shell's twin" ocaml c typescript wasm beam
 
 exit $fail

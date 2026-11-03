@@ -33,10 +33,14 @@
 // its design in docs/ui.md) is the machine's program: the shell's
 // `counter` command (T7.5) pokes ui_cell, spawns it, and waits for
 // its exit — a user program begun from the prompt, the closure
-// demo's last beat.
+// demo's last beat. The window shell (emo-desktop A9.1, desk_cell)
+// puts two toplevel surfaces up after the proof chain: windows of its
+// own, focus and drag through the compositor's verbs, keys routed to
+// the focused window, the merged stream in its seat.
 //
 // The image requires the desktop's packages beside the syscall stub —
-// EmoUI's core, the fb backend's core and the first frame — staged
+// EmoUI's core, the fb backend's core, the first frame and the
+// window shell's windows — staged
 // into a registry from their trees, the way start.sh does before it
 // builds:
 //
@@ -47,6 +51,7 @@ require "syscall"
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_frame"
+require "emo/ui_fb_win"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -66,6 +71,8 @@ const ui_cell = buf + 2088
 const key_cell = buf + 2096
 // The window pass's token (T8.5), beside them.
 const win_cell = buf + 2104
+// The window shell's token (emo-desktop A9.1), beside it.
+const desk_cell = buf + 2112
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -573,6 +580,250 @@ def carve_digest(base Int64, width Int64, height Int64) Int64 {
   return d
 }
 
+// A window's buffer as the fb core's `Surface` (emo-desktop A9.1): the
+// run win_new handed, mapped into this pass's own table at the identity
+// of its physical addresses — the carve's shape over a smaller
+// rectangle, the same typed pixel loops behind the verbs, and the
+// grant the buffer is named by ever after. `present` is the window's
+// commit: the frame's digest off the buffer's own words on the wire
+// first (`frame <n>`, the number the hosted twin prints for the same
+// paint and the screendump's fold over the window's rectangle answers),
+// then the grant's present — the gate checks the owner and the rect,
+// the compositor composites the whole stack with this frame in it and
+// flushes — and the compositor's own line is the answer's echo; the
+// pass says nothing after, so the carve's four `present ok` stay the
+// loop's count.
+class Win {
+  def init(grant Int64, base Int64, width Int64, height Int64) {
+    self.grant = grant
+    self.base = base
+    self.width = width
+    self.height = height
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return carve_at(self.base, self.width, x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_fill(self.base, self.width, r.x(), r.y(), r.w(), r.h(),
+      color & 0xFFFFFF)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
+      color & 0xFFFFFF)
+  }
+
+  def present() {
+    frame_line(carve_digest(self.base, self.width, self.height))
+    case syscall.present(self.grant, 0, 0, self.width, self.height) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The pointer's report scaled to the display (emo-desktop A9.1): the
+// device's value over its axis's range, the compositor's own arithmetic
+// for its cursor — the range is the device's answer through input_info,
+// never a constant of this pass's.
+def scaled(v Int64, mode Int64, max Int64) Int64 {
+  return (v * mode) / (max + 1)
+}
+
+// The drag's next coordinate: the pointer less the grab offset, kept
+// on the display, and — for x — on the blit's word granularity the
+// move verb insists on.
+def dragged(p Int64, grab Int64, extent Int64, mode Int64, even Bool) Int64 {
+  var n = p - grab
+  if n < 0 {
+    n = 0
+  }
+  if n + extent > mode {
+    n = mode - extent
+  }
+  if even {
+    n = n - (n % 2)
+  }
+  return n
+}
+
+def inside(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64) Bool {
+  return px >= x && px < x + w && py >= y && py < y + h
+}
+
+// The role refusals' lines (emo-desktop A9.1): `role <name> r<n>` — the
+// caller chose the role, so the caller names it; the kernel refuses by
+// the number alone (the protocol carries no text, the seventh seam).
+def role_name_at(role Int64, pos Int64) Int64 {
+  var p = pos
+  if role == 1 {
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 111) // o
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 112) // p
+  }
+  if role == 2 {
+    p = byte_at(p, 115) // s
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 98) // b
+    p = byte_at(p, 115) // s
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 114) // r
+    p = byte_at(p, 102) // f
+    p = byte_at(p, 97) // a
+    p = byte_at(p, 99) // c
+    p = byte_at(p, 101) // e
+  }
+  if role == 3 {
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 97) // a
+    p = byte_at(p, 110) // n
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 108) // l
+  }
+  return p
+}
+
+def role_refused_line(role Int64, reason Int64) Void {
+  var p = byte_at(0, 114) // r
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = role_name_at(role, p)
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 114) // r
+  p = num_at(reason, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// A role the compositor refuses, asked for and named: the pass asks
+// for it knowing the answer, the way the input pass asks for a present
+// it has no grant for — the refusal is the proof.
+def role_refusal(grant Int64, role Int64) Void {
+  case syscall.win_role(grant, role) {
+    (R.error, why) -> { role_refused_line(role, reason_num(why)) }
+    (R.ok, _) -> { mark() }
+  }
+}
+
+// The present's refusal line: `present r<n>` — the input pass's
+// permission refusal (T8.4) and the window pass's surface-less one
+// (A9.1) share it.
+def present_refused_line(reason Int64) Void {
+  var gp = byte_at(0, 112) // p
+  gp = byte_at(gp, 114) // r
+  gp = byte_at(gp, 101) // e
+  gp = byte_at(gp, 115) // s
+  gp = byte_at(gp, 101) // e
+  gp = byte_at(gp, 110) // n
+  gp = byte_at(gp, 116) // t
+  gp = byte_at(gp, 32) // space
+  gp = byte_at(gp, 114) // r
+  gp = num_at(reason, gp)
+  gp = byte_at(gp, 10)
+  gate_line(gp)
+}
+
+// The window shell's lines (emo-desktop A9.1), each `desk ` and a fact:
+// the pointer's range (verb 18's answer), a window's grant by its
+// letter, the focus, a key routed, a drag's end.
+def desk_at() Int64 {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 32) // space
+  return p
+}
+
+def desk_range_line(mx Int64, my Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = num_at(mx, p)
+  p = byte_at(p, 32)
+  p = num_at(my, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_win_line(letter Int64, id Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, letter)
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_focus_line(id Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_key_line(id Int64, n Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 121) // y
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 32)
+  p = num_at(n, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_drag_line(id Int64, x Int64, y Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 32)
+  p = num_at(x, p)
+  p = byte_at(p, 32)
+  p = num_at(y, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 // The frame's digest, as the pass's line: `frame <digest>` — the number
 // the hosted twin prints and the screendump digests to (run.sh).
 def frame_line(d Int64) Void {
@@ -875,20 +1126,7 @@ if peek64(key_cell) != 0 {
   // The grant's edge (T8.4): the pass holds no display grant — the
   // present is the permission refusal, the reason number on the wire.
   case syscall.present(0, 0, 0, 1, 1) {
-    (R.error, why) -> {
-      var gp = byte_at(0, 112) // p
-      gp = byte_at(gp, 114) // r
-      gp = byte_at(gp, 101) // e
-      gp = byte_at(gp, 115) // s
-      gp = byte_at(gp, 101) // e
-      gp = byte_at(gp, 110) // n
-      gp = byte_at(gp, 116) // t
-      gp = byte_at(gp, 32) // space
-      gp = byte_at(gp, 114) // r
-      gp = num_at(reason_num(why), gp)
-      gp = byte_at(gp, 10)
-      gate_line(gp)
-    }
+    (R.error, why) -> { present_refused_line(reason_num(why)) }
     (R.ok, _) -> { mark() }
   }
   // The grant table's edge (T8.5): no window exists yet — the close
@@ -911,12 +1149,20 @@ if peek64(key_cell) != 0 {
   syscall.exit(0)
 }
 
-// The window branch (T8.5): a pass holding its own buffer — the run
-// win_new handed, mapped into this pass's own table at the identity of
-// its physical addresses. The pass paints it, reads it back (the
-// mapping is the proof), commits it (the ready flag the compositor's
-// tick will find, T8.6), and closes it (the run home, the grant gone)
-// — the buffer's whole lifecycle, every state named on the wire.
+// The window branch (T8.5, emo-desktop A9.1): a pass holding its own
+// buffer — the run win_new handed, mapped into this pass's own table at
+// the identity of its physical addresses. The buffer is no surface yet:
+// the pass asks for the three roles the compositor does not implement
+// and names each refusal (`role popup r4`, `role subsurface r4`, `role
+// panel r4` — the kernel refuses by the number, the caller who chose
+// the role names it), presents the role-less buffer and meets the
+// surface's absence (`present r4` — the gate's checks pass, the
+// compositor's stack has no entry for it), then declares the toplevel
+// role, and from there the buffer is a window: the pass paints it,
+// reads it back (the mapping is the proof), commits it (the compositor's
+// walk carries it into the carve), moves it, commits again, focuses it
+// (the stack's raise), and closes it (the run home, the grant gone) —
+// the buffer's whole lifecycle, every state named on the wire.
 if peek64(win_cell) != 0 {
   poke64(win_cell, 0)
   case syscall.win_new(512, 128) {
@@ -933,6 +1179,17 @@ if peek64(win_cell) != 0 {
     (R.ok, ans) -> {
       var id = win_id(ans)
       win_line(id)
+      role_refusal(id, 1)
+      role_refusal(id, 2)
+      role_refusal(id, 3)
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, why) -> { present_refused_line(reason_num(why)) }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.win_role(id, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
       paint_win(win_base(ans), 128, 256)
       if win_verify(win_base(ans), 128, 256) {
         win_ok_line()
@@ -986,6 +1243,250 @@ if peek64(win_cell) != 0 {
 if peek64(ui_cell) != 0 {
   poke64(ui_cell, 0)
   console_ui.run()
+  syscall.exit(0)
+}
+
+// The window shell (emo-desktop A9.1, EmoOS T8.13): the desktop's first
+// windows — two toplevel surfaces, `alpha` and `beta`, each a buffer of
+// this pass's own, declared a toplevel by its role, placed by the move
+// verb, painted through `ui_fb_win` into its own words and committed by
+// its present, which the compositor answers with the whole stack
+// composited into the carve. Then the pass owns the merged stream and
+// is the desktop's policy over it: a press inside a window focuses it
+// (the focus verb, which raises it to the stack's top; the bar's steel
+// says which one is focused — the window that was focused repaints
+// dim, the new one repaints focused), a press on a window's bar begins
+// a drag — every report of the pointer moves the window with the
+// pointer through the move verb, its x kept on the blit's word
+// granularity and the window kept on the display — and the release is
+// the present that puts the moved window where the drag left it; a key
+// byte `a` is routed to the focused window alone, which counts it on
+// its body line; `q` ends the shell, the windows closed behind it. The
+// pointer's reports are scaled to the display by the device's own range
+// (verb 18's answer, never a constant). Every state on the wire: the
+// range, the grants, each focus, each key routed, each drag's end — the
+// `run.sh` beats, and the frames' digests (`frame <n>`) the hosted
+// twin's file names in the same order.
+if peek64(desk_cell) != 0 {
+  poke64(desk_cell, 0)
+  var mode = 0
+  case syscall.output_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, m) -> { mode = m }
+  }
+  // The pointer's axes, packed as the display's mode is: the X's
+  // maximum above the Y's.
+  var range = 0
+  case syscall.input_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, r) -> { range = r }
+  }
+  const mw = out_w(mode)
+  const mh = out_h(mode)
+  const max_x = out_w(range)
+  const max_y = out_h(range)
+  desk_range_line(max_x, max_y)
+  const ww = ui_fb_win.width()
+  const wh = ui_fb_win.height()
+  var ga = 0
+  var base_a = 0
+  case syscall.win_new(ww, wh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      ga = win_id(ans)
+      base_a = win_base(ans)
+    }
+  }
+  var gb = 0
+  var base_b = 0
+  case syscall.win_new(ww, wh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gb = win_id(ans)
+      base_b = win_base(ans)
+    }
+  }
+  desk_win_line(97, ga) // a
+  desk_win_line(98, gb) // b
+  case syscall.win_role(ga, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_role(gb, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  var ax = 64
+  var ay = 128
+  var bx = 576
+  var by = 384
+  case syscall.win_move(ga, ax, ay) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gb, bx, by) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  // The start's park (the counter's shape): the pass waits for the
+  // run's first byte before its first frame — the beat between the
+  // window pass's era on the display and this one's, which `run.sh`'s
+  // screendump of the window's moved copy needs to be still. The byte
+  // itself is nothing: the loop's drop rules name what counts.
+  var wake = syscall.input_read()
+  const wa = Win.new(grant: ga, base: base_a, width: ww, height: wh)
+  const wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
+  // The focus: none until a press names a window; the top of the
+  // stack as this pass knows it — beta, declared last, until a focus
+  // raises the other — is the one the hit test asks first.
+  var focused = 0
+  var top = gb
+  var keys_a = 0
+  var keys_b = 0
+  ui_fb_win.paint(wa, ui_fb_win.title_a(), false, keys_a)
+  wa.present()
+  ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
+  wb.present()
+  var px = 0
+  var py = 0
+  var drag = 0
+  var gdx = 0
+  var gdy = 0
+  var running = true
+  while running {
+    const ev = syscall.input_read()
+    const t = ev_type(ev)
+    if t == 17741 {
+      const b = ev_value(ev)
+      if b == 113 {
+        running = false
+      }
+      if b == 97 && focused != 0 {
+        if focused == ga {
+          keys_a = keys_a + 1
+          ui_fb_win.paint(wa, ui_fb_win.title_a(), true, keys_a)
+          wa.present()
+          desk_key_line(ga, keys_a)
+        } else {
+          keys_b = keys_b + 1
+          ui_fb_win.paint(wb, ui_fb_win.title_b(), true, keys_b)
+          wb.present()
+          desk_key_line(gb, keys_b)
+        }
+      }
+    }
+    if t == 3 {
+      if ev_code(ev) == 0 {
+        px = scaled(ev_value(ev), mw, max_x)
+      }
+      if ev_code(ev) == 1 {
+        py = scaled(ev_value(ev), mh, max_y)
+      }
+      if drag == ga {
+        const nx = dragged(px, gdx, ww, mw, true)
+        const ny = dragged(py, gdy, wh, mh, false)
+        if nx != ax || ny != ay {
+          case syscall.win_move(ga, nx, ny) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {
+              ax = nx
+              ay = ny
+            }
+          }
+        }
+      }
+      if drag == gb {
+        const nx = dragged(px, gdx, ww, mw, true)
+        const ny = dragged(py, gdy, wh, mh, false)
+        if nx != bx || ny != by {
+          case syscall.win_move(gb, nx, ny) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {
+              bx = nx
+              by = ny
+            }
+          }
+        }
+      }
+    }
+    // The tablet's left button (BTN_LEFT, 272): the press is the hit
+    // test — the stack's top first — and the release ends a drag with
+    // the present that shows where it went.
+    if t == 1 && ev_code(ev) == 272 {
+      if ev_value(ev) == 1 {
+        var hit = 0
+        if top == gb {
+          if inside(px, py, bx, by, ww, wh) {
+            hit = gb
+          } else {
+            if inside(px, py, ax, ay, ww, wh) {
+              hit = ga
+            }
+          }
+        } else {
+          if inside(px, py, ax, ay, ww, wh) {
+            hit = ga
+          } else {
+            if inside(px, py, bx, by, ww, wh) {
+              hit = gb
+            }
+          }
+        }
+        if hit != 0 && hit != focused {
+          case syscall.win_focus(hit) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          if focused == ga {
+            ui_fb_win.paint(wa, ui_fb_win.title_a(), false, keys_a)
+            wa.present()
+          }
+          if focused == gb {
+            ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
+            wb.present()
+          }
+          focused = hit
+          top = hit
+          if hit == ga {
+            ui_fb_win.paint(wa, ui_fb_win.title_a(), true, keys_a)
+            wa.present()
+          } else {
+            ui_fb_win.paint(wb, ui_fb_win.title_b(), true, keys_b)
+            wb.present()
+          }
+          desk_focus_line(hit)
+        }
+        if hit == ga && (py - ay) < ui_fb_win.bar_height() {
+          drag = ga
+          gdx = px - ax
+          gdy = py - ay
+        }
+        if hit == gb && (py - by) < ui_fb_win.bar_height() {
+          drag = gb
+          gdx = px - bx
+          gdy = py - by
+        }
+      } else {
+        if drag == ga {
+          wa.present()
+          desk_drag_line(ga, ax, ay)
+        }
+        if drag == gb {
+          wb.present()
+          desk_drag_line(gb, bx, by)
+        }
+        drag = 0
+      }
+    }
+  }
+  case syscall.win_close(ga) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_close(gb) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
   syscall.exit(0)
 }
 
@@ -1264,6 +1765,27 @@ case win_spawned {
         ep = num_at(code, ep)
         ep = byte_at(ep, 10)
         gate_line(ep)
+      }
+    }
+  }
+}
+
+// The window shell (emo-desktop A9.1): the pass above — two toplevel
+// windows up, the run's hands focusing, dragging and keying them until
+// the quit byte — and its exit answering the parent's wait (`desk 0`).
+poke64(desk_cell, 1)
+var desk_spawned = syscall.spawn()
+case desk_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, dpid) -> {
+    var desk_waited = syscall.wait(dpid)
+    case desk_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var dp = desk_at()
+        dp = num_at(code, dp)
+        dp = byte_at(dp, 10)
+        gate_line(dp)
       }
     }
   }

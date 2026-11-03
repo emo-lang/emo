@@ -59,3 +59,7 @@ projects/emo-os/.blk.img
 projects/emo-os/.screen.ppm
 projects/emo-os/.frame.ppm
 projects/emo-os/.counter.ppm
+projects/emo-os/.desk1.ppm
+projects/emo-os/.desk2.ppm
+projects/emo-os/.desk3.ppm
+projects/emo-os/.blk.img.gdb

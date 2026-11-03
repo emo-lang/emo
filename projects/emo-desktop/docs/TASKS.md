@@ -350,9 +350,87 @@ tree's and EmoOS's, listed there.
 
 ## M9 — windows (the desktop side)
 
-- [ ] **A9.1** — The window shell: toplevel surfaces with roles
+- [x] **A9.1** — The window shell: toplevel surfaces with roles
   (refuse the rest by name), the composited stack, drag and focus
-  through `win_move`/`win_focus`.
+  through `win_move`/`win_focus`. **Landed 2026-11-03** (the kernel
+  side is EmoOS T8.13: verb 17 `win_role`, verb 18 `input_info`, the
+  stack's roles, raise-on-focus, the walk). The shell is the desk
+  pass, a branch of the user image's program (the screen pass's
+  lineage): two toplevel surfaces of its own — `alpha` and `beta`,
+  384×128, their buffers win_new's runs mapped into the pass's own
+  table, declared with `win_role(grant, 0)` and placed with
+  `win_move` — painted through the desktop's fifth package,
+  [`fb/win/`](../fb) (`emo/ui_fb_win`: the title bar in the steel a
+  focus changes, the body's paper, one line of ink per window), each
+  present committing its frame with the digest on the wire
+  (`frame <n>`, the hosted twin's numbers) and the compositor's
+  composition carrying the whole stack into the carve. The protocol's
+  third seam is on the wire twice: the pass that owns the buffer asks
+  for the three roles the compositor does not implement and names
+  each refusal (`role popup r4`, `role subsurface r4`, `role panel
+  r4` — the kernel refuses by the number, the caller who chose the
+  role names it, the seventh seam's shape), presents the role-less
+  buffer and meets the surface's absence (`present r4` — the gate's
+  checks pass, the stack has no entry for it), then declares the
+  toplevel role and from there the buffer is a window. The pointer's
+  scale is the device's own answer, verb 18's (`desk range 32767
+  32767` on the wire — the input side of the second seam, the
+  absolute reports' range never a constant of the shell's). The
+  pass owns the merged stream and is the desktop's policy over it: a
+  press inside a window focuses it (`win_focus`, which raises it to
+  the stack's top; the bar's steel says which one), a press on a
+  window's bar begins a drag — every report moves the window with the
+  pointer through `win_move`, its x on the blit's word granularity,
+  the window kept on the display — and the release is the present
+  that shows where it went; a key byte `a` routes to the focused
+  window alone, which counts it on its body line (`desk key <grant>
+  <n>`); `q` ends the shell, the windows closed behind it. The
+  composition itself changed with the stack (T8.13): the carve is
+  cleared to the compositor's own background before the walk, so a
+  moved window leaves the background behind it and the last entry
+  lies over the rest — the counter's full-screen frame and the proof
+  pattern are gone from the display the moment the first window
+  presents, and the T8.8-era model of the display is rebuilt for the
+  new truth (background, the window's pattern rows, the sprite). The
+  golden's windowed beats: the display read three ways at every
+  parked beat — the pixels outside the two windows are the background
+  with the sprite where the hand left it, each window's rectangle
+  folds to the digest the hosted twin's file names for that frame
+  ([`fb/win/golden/`](../fb/win/golden), nine lines, the session's
+  presents in order), and a covered rectangle folds to someone else's
+  frame — the stack's order on the display. **Found on the way, fixed
+  the same day, the compiler track's** (CHECK.md): the image's shared
+  static memory can only park values every pass's table maps for the
+  machine's life, and the const thunks' memos parked arena pointers —
+  the machine's second consumer of the font's memo (this pass, the
+  first consumer's screen pass gone) read a dead pass's heap and the
+  fault was the load page fault that named it; the fix is the const
+  region (the heap's top 64 KiB, the root's arena ending below it),
+  `emo_alloc_const` and the const twins of the string, boxing and
+  concat helpers, the const bodies always dynamic so their numerics
+  stay static cells; the region's blocks 32-aligned (the tagged
+  words' low bits are the tag's — the first boot's index-out-of-bounds
+  named it); and the user profile's `emo_fail` crossed the gate at
+  last (A7.2's silence: the message rides the write verb whole, then
+  the heap-death route — which is what said why, when the first
+  const-region boot died before its first frame). **Found on the
+  way, fixed, EmoOS T8.13's**: the display service's rect transfer
+  posted offset 0 — the fullscreen transfers it had only ever served
+  were correct by coincidence, the cursor plane's rect flushes copied
+  the carve's top-left bytes into the host canvas at the sprite's
+  rectangle, and the uniform backgrounds every earlier golden had
+  composited over hid it until the windowed desktop's first drag
+  (`offset = (y * width + x) * 4` now). **The pins**: the fb gate 73
+  ok (the windows' package type-checked, its targets built, the
+  window golden's nine lines byte-identical from the interpreter and
+  all five hosted targets, the probe painting a window for the
+  metal); `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both, the ledger `frames 90
+  54`; `dune runtest` and `@fmt` green. **Standing**: the shell is
+  one process owning two windows — the kill-and-restart acceptance
+  (A9.2) is where separate clients make the stack's reclamation
+  earn its place; the surfaces' other roles are refused by name
+  until a milestone gives them substance (A9.3's increments).
 - [ ] **A9.2** — The kill-and-restart acceptance: a window stack that
   survives a client's death and rebirth with the machine whole.
 - [ ] **A9.3** — The five M9 increments the growth contract adds
