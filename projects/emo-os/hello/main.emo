@@ -73,6 +73,11 @@ const key_cell = buf + 2096
 const win_cell = buf + 2104
 // The window shell's token (emo-desktop A9.1), beside it.
 const desk_cell = buf + 2112
+// The client's token and the rebirth's (emo-desktop A9.2): the pass
+// that opens a toplevel, presents, and dies without closing — the
+// stack's reclaim proof — and the one reborn after it.
+const client_cell = buf + 2120
+const client2_cell = buf + 2128
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -910,11 +915,13 @@ def win_base(ans Int64) Int64 {
 }
 
 // The buffer's paint: one pattern word per 8 bytes, the row's number
-// in it — the deterministic pattern the readback verifies.
-def paint_win(base Int64, rows Int64, row_words Int64) Void {
+// in the word's low three bytes over the caller's base — the
+// deterministic pattern the readback verifies and the display model
+// recomputes.
+def paint_win(base Int64, rows Int64, row_words Int64, word_base Int64) Void {
   var r = 0
   while r < rows {
-    var word = 0x57494E00 + r
+    var word = word_base + r
     var pair = word | (word << 32)
     var i = 0
     while i < row_words {
@@ -1190,7 +1197,7 @@ if peek64(win_cell) != 0 {
         (R.error, _) -> { mark() }
         (R.ok, _) -> {}
       }
-      paint_win(win_base(ans), 128, 256)
+      paint_win(win_base(ans), 128, 256, 0x57494E00)
       if win_verify(win_base(ans), 128, 256) {
         win_ok_line()
       } else {
@@ -1228,6 +1235,93 @@ if peek64(win_cell) != 0 {
       case syscall.win_close(id) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { win_closed_line() }
+      }
+    }
+  }
+  syscall.exit(0)
+}
+
+// The client's line (emo-desktop A9.2): `client up <grant>` — the
+// surface is on the stack and its frame is on the display.
+def client_up_line(id Int64) Void {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The client branch (emo-desktop A9.2): a pass of its own that opens a
+// toplevel surface — win_new, win_role(toplevel), win_move to its
+// place, the raw pattern painted into its own buffer, the present
+// putting it on the stack — and says `client up <grant>`. The first
+// client then stores where its table maps nothing and dies without
+// closing: the fault route reaps the pass and writes the comp page's
+// dead-owner cell (T8.14), and the compositor's next composition reads
+// it — the run back to the allocator, the row emptied, the surface off
+// the stack — the acceptance the rebirth proves. The reborn client
+// takes a different place and a different pattern, closes cleanly and
+// exits, so the parent's wait answers and the chain moves on with the
+// machine whole.
+if peek64(client_cell) != 0 {
+  poke64(client_cell, 0)
+  var cplace_x = 96
+  var cword = 0x57494E00
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, cans) -> {
+      var cid = win_id(cans)
+      case syscall.win_role(cid, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_move(cid, cplace_x, 320) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      paint_win(win_base(cans), 128, 192, cword)
+      case syscall.present(cid, 0, 0, 384, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      client_up_line(cid)
+      poke64(0x20000000, 0) // the kill: a store the table maps nothing —
+                           //   the fault the death-side reclaim waits for
+    }
+  }
+  syscall.exit(1) // unreachable — the store above faults first
+}
+if peek64(client2_cell) != 0 {
+  poke64(client2_cell, 0)
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, cans) -> {
+      var cid = win_id(cans)
+      case syscall.win_role(cid, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_move(cid, 512, 320) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      paint_win(win_base(cans), 128, 192, 0x52454200)
+      case syscall.present(cid, 0, 0, 384, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      client_up_line(cid)
+      case syscall.win_close(cid) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
       }
     }
   }
@@ -1769,6 +1863,57 @@ case win_spawned {
     }
   }
 }
+
+// The client's kill and rebirth (emo-desktop A9.2): the entry parks on
+// the console read first — the era gate, the byte itself nothing — and
+// the run's hand opens it only when the previous era's display beat is
+// done. Then the first client presents its surface and dies without
+// closing — the death notice drops the surface and the run — and the
+// entry parks again until the hand says the reclaim landed. Then the
+// rebirth: a fresh pass, a fresh grant, a different place and pattern,
+// closed cleanly, its exit answering the wait.
+var cgate = syscall.read()
+poke64(client_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+var cwalk = syscall.read()
+poke64(client2_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, c2pid) -> {
+    var c2wait = syscall.wait(c2pid)
+    case c2wait {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        if code == 0 {
+          var bp = byte_at(0, 99) // c
+          bp = byte_at(bp, 108) // l
+          bp = byte_at(bp, 105) // i
+          bp = byte_at(bp, 101) // e
+          bp = byte_at(bp, 110) // n
+          bp = byte_at(bp, 116) // t
+          bp = byte_at(bp, 32) // space
+          bp = byte_at(bp, 98) // b
+          bp = byte_at(bp, 97) // a
+          bp = byte_at(bp, 99) // c
+          bp = byte_at(bp, 107) // k
+          bp = byte_at(bp, 10)
+          gate_line(bp)
+        } else {
+          mark()
+        }
+      }
+    }
+  }
+}
+
+var cgate3 = syscall.read() // the third era gate: the run's hand has
+                            //   parked the pointer and read the client's
+                            //   display beat — only then does the desk era
+                            //   begin, so its start park takes the queued
+                            //   pointer event, never an early wake
 
 // The window shell (emo-desktop A9.1): the pass above — two toplevel
 // windows up, the run's hands focusing, dragging and keying them until

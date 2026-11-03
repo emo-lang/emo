@@ -303,6 +303,9 @@ if "error" in answer:
 s.close()
 PYEOF
   }
+  abs() {
+    qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":'"$1"'}},{"type":"abs","data":{"axis":"y","value":'"$2"'}}]}}'
+  }
   # The first frame (emo-desktop A7.2, A8.3): the screen pass's loop
   # mounted the counter — the fb core laid its tree into the carve and
   # the carve presented it, its own digest of its words on the wire
@@ -464,11 +467,84 @@ PYEOF
     exit 1
   fi
   await 'win 0'
-  # The desk pass parks before its first frame (the counter's shape), so
-  # the window era on the display stays still until this run feeds its
-  # first byte — the screendump above takes its beat without racing the
-  # next era's compositions.
+  # The window era's display beat is done; the desk pass parks before its
+  # first frame (the counter's shape), so every era below waits for this
+  # run's byte at its own gate.
+  printf 'c' >&3
+  # The client's kill and rebirth (emo-desktop A9.2): a client pass of
+  # its own opens a toplevel surface at (96,320), presents it — the
+  # composition `comp 96 320` carries the client's frame alone, the
+  # T8.5 window's entry pruned — and dies without closing: a store its
+  # table maps nothing, the fault the death-side reclaim waits for, the
+  # run back to the allocator, the row emptied, the surface off the
+  # stack (`comp reclaim` names the dead owner). The hand opens the
+  # rebirth: a fresh pass, a fresh grant (3), a different place
+  # (512,320) and a different pattern — the comp carries the reborn
+  # frame alone, which is the reclaim's arithmetic proof: a stuck
+  # surface would double the carried sum. The screendump is the visual
+  # one: the reborn window's rows where it stands, the dead client's
+  # old rect background — the walk cleared the carve and the surface is
+  # off the stack — the pointer parked at (16,16) out of both rects.
+  await 'comp 96 320 2102906880'
+  await 'client up 2'
+  await 'user fault 26 cause 15'
+  await 'addr 0x20000000'
+  printf 'c' >&3
+  await 'comp reclaim 26'
+  await 'client up 3'
+  await 'comp 512 320 4174893056'
+  abs 512 683
+  sleep 1
+  hmp 'screendump .client.ppm'
+  if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF2'
+import os
+import re
+import sys
+
+e = os.environ
+data = open('.client.ppm', 'rb').read()
+if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
+    sys.exit("run.sh: the client screendump is not the mode's P6 1024x768")
+px = data[16:]
+
+rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+if len(rows) != 17 or any(len(r) != 12 for r in rows):
+    sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
+
+def sprite(x, y):
+    r, c = y - 16, x - 16
+    if 0 <= r < 17 and 0 <= c < 12:
+        cell = rows[r][c]
+        if cell == '#':
+            return (0, 0, 0)
+        if cell == 'o':
+            return (255, 255, 255)
+    return None
+
+def want(x, y):
+    s = sprite(x, y)
+    if s is not None:
+        return s
+    if 512 <= x < 896 and 320 <= y < 448:
+        return (69, 66, y - 320)
+    return (48, 48, 56)
+
+for y in range(768):
+    row = px[y * 3072:(y + 1) * 3072]
+    for x in range(1024):
+        got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+        if got != want(x, y):
+            sys.exit(f'run.sh: the pixel at ({x},{y}) is {got}, the model says {want(x, y)}')
+PYEOF2
+  then
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
+  printf 'c' >&3
+  await 'client back'
   printf 'z' >&3
+  abs 16384 16384
+  sleep 1
   # The window shell (emo-desktop A9.1, T8.13): the desk pass puts two
   # toplevel windows up — alpha at (64,128), beta at (576,384), each
   # 384x128, their grants 2 and 3, the pointer's range the device's own
@@ -560,30 +636,27 @@ PYEOF
       exit 1
     fi
   }
-  abs() {
-    qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":'"$1"'}},{"type":"abs","data":{"axis":"y","value":'"$2"'}}]}}'
-  }
   btn() {
     qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":'"$1"',"button":"left"}}]}}'
   }
   await 'desk range 32767 32767'
-  await 'desk b 3'
+  await 'desk b 5'
   await 'comp 576 384'
   hmp 'screendump .desk1.ppm'
   desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 'windows up'
   abs 3200 8534
   btn true
   btn false
-  await 'desk focus 2'
+  await 'desk focus 4'
   printf 'a' >&3
-  await 'desk key 2 1'
+  await 'desk key 4 1'
   abs 19200 16896
   btn true
-  await 'desk focus 3'
+  await 'desk focus 5'
   abs 11520 12118
   abs 3840 7339
   btn false
-  await 'desk drag 3 96 160'
+  await 'desk drag 5 96 160'
   abs 512 29867
   sleep 1
   hmp 'screendump .desk2.ppm'
@@ -593,9 +666,9 @@ PYEOF
   abs 12000 12000
   abs 19840 16896
   btn false
-  await 'desk drag 3 576 384'
+  await 'desk drag 5 576 384'
   printf 'a' >&3
-  await 'desk key 3 1'
+  await 'desk key 5 1'
   abs 512 29867
   sleep 1
   hmp 'screendump .desk3.ppm'
@@ -760,32 +833,39 @@ PYEOF
   # two instances', and the four readers'), the filesystem's cache
   # block (the supervisor's, held across the instances) and the root's
   # scratch block for its proof, a stack and an arena for each of the
-  # nine user passes (the screen pass's, the input pass's, and the
-  # window pass's, T8.2, T8.3, and T8.5, beside the six), the
-  # nine blocks the per-process tables' frames split (the store-fault
+  # eleven user passes (the screen pass's, the input pass's, and the
+  # window pass's, T8.2, T8.3, and T8.5, beside the six, and the two
+  # clients', A9.2), the
+  # eleven blocks the per-process tables' frames split (the store-fault
   # pass's frames from the splits' leftovers, the reach pass's table
   # splitting the fifth, the counter pass's the sixth, the screen
   # pass's the seventh, the input pass's the eighth, the window pass's
-  # the ninth), the window buffer's four-block run (T8.5, taken at
-  # win_new and given back at its win_close), the DMA check's block,
+  # the ninth, the clients' the tenth and the eleventh), the window
+  # buffer's four-block run (T8.5, taken at
+  # win_new and given back at its win_close), the clients' two (A9.2:
+  # each spawn's arena and table and each win_new's run, the dead
+  # one's every block back through the compositor's reclaim, the
+  # reborn one's through its close), the DMA check's block,
   # and the block driver's
   # queue block (T7.1) beside the display driver's (T8.1), the input
   # driver's (T8.3) and the pointer driver's (T8.11 — its two-block
   # arena run and its queue block are the three the count grew by),
   # each held
   # for the service's life like the services' arenas — and
-  # thirty given back — the four readers' arenas at
+  # thirty given back, twelve of them the clients' (A9.2) — the four readers' arenas at
   # their deaths, the first filesystem instance's arena at its stop,
   # the first compositor instance's arena at its stop (T8.6's restart
   # proof), the root's scratch block after its proof, both blocks of
   # each user pass at its kill or exit (the counter pass's, the screen
   # pass's, the input pass's, and the window pass's at their clean
-  # exits), the window buffer's run at its close, and the DMA check's
+  # exits, and the clients': the dead one's to the fault's reap and
+  # the compositor's reclaim, the reborn one's to its exit), the
+  # window buffer's run at its close, and the DMA check's
   # block home; the services, the supervisors, the live filesystem and
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'role popup r4' 'role subsurface r4' 'role panel r4' 'present r4' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' 'desk range 32767 32767' 'desk a 2' 'desk b 3' 'comp 64 128' 'comp 576 384' 'desk focus 2' 'desk key 2 1' 'desk focus 3' 'desk drag 3 96 160' 'desk drag 3 576 384' 'desk key 3 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 90 54'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'role popup r4' 'role subsurface r4' 'role panel r4' 'present r4' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 2' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 3' 'client back' 'desk range 32767 32767' 'desk a 4' 'desk b 5' 'comp 64 128' 'comp 576 384' 'desk focus 4' 'desk key 4 1' 'desk focus 5' 'desk drag 5 96 160' 'desk drag 5 576 384' 'desk key 5 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 104 66'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2

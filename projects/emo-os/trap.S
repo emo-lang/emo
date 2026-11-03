@@ -493,7 +493,12 @@ emo_os_trap_trampoline:
     call emo_arena_reap      # the stack block and the arena go home
                              # unless a queued message still pins the
                              # arena (T5.2/T5.3)
-    ld t0, 8(s0)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
+    sd t1, 0(t0)             # the comp service's walk reclaims it
+5:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
     j emo_sched_pick
@@ -555,7 +560,15 @@ emo_os_trap_trampoline:
     call emo_arena_reap         # the stack block and the arena go home
                                 # unless a queued message still pins the
                                 # arena (T5.2/T5.3)
-    ld t0, 8(s0)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
+    sd t1, 0(t0)             # the comp service's walk reclaims it
+6:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
     j emo_sched_pick
@@ -680,7 +693,12 @@ emo_os_trap_trampoline:
     ld t2, 8(t2)
     or a1, a1, t2
     call emo_gate_post
-    la t0, emo_cur_slot
+    la t0, emo_cur_slot      # the exiting caller's slot (T8.14): the
+    ld t0, 0(t0)             #   dead pid rides to the comp page's cell —
+    ld t1, 8(t0)             #   an exit without win_close is the reclaim's
+    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
+    sd t1, 0(t0)             #   trigger
+8:  la t0, emo_cur_slot
     ld t0, 0(t0)             # the exiting caller's slot
     li t3, 3
     sd t3, 16(t0)            # done
@@ -1081,8 +1099,9 @@ emo_os_death_notice:
 3:  li t0, EMO_KOFF + 0x87002e08  # the compositor's supervisor's cell
                                   # (T8.6): every death reaches it too
                                   # — its own instance's death is the
-                                  # restart, any other the dead owner's
-                                  # windows reclaimed
+                                  # restart, any other drops (T8.14: a
+                                  # user pass's windows go home through
+                                  # the comp page's dead-owner cell)
     ld t1, 0(t0)
     beqz t1, 1f
     li a1, 256

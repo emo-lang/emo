@@ -141,6 +141,11 @@ const comp_cursor_said = comp_page + 416
 const comp_svc_cell = koff + 0x87002e00
 const comp_sup_cell = koff + 0x87002e08
 const comp_args = koff + 0x87002e10
+// The dead-owner's cell (emo-desktop A9.2, T8.14): the trap shim writes
+// the dead pass's pid here on every user death (fault, heap, exit) and
+// the comp service's walk reclaims the dead owner's windows at its next
+// composition — the notice without a gate_post from the trap.
+const comp_dead_cell = comp_page + 448
 
 
 // The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
@@ -1811,6 +1816,7 @@ def comp_stash_pop() Int64 {
 // (T8.13), so the stack a client leaves behind is the stack without
 // it.
 def comp_reclaim(pid Int64) Void {
+  var said = 0
   var i = 0
   while i < 8 {
     var row = grant_table + (i * 96)
@@ -1823,10 +1829,14 @@ def comp_reclaim(pid Int64) Void {
         j = j + 1
       }
       blk_zero(row, 12)
+      said = 1
     }
     i = i + 1
   }
   comp_stack_prune()
+  if said != 0 {
+    println("comp reclaim ${pid}")
+  }
 }
 
 // The carve cleared to the desktop's background (T8.13): word stores
@@ -1980,17 +1990,22 @@ def cursor_rect(x0 Int64, y0 Int64, x1 Int64, y1 Int64) Int64 {
 
 // The display service's flush answered (T8.6): the gate's words that
 // arrive while it is in flight are stashed and served after; the stop's
-// tuples do not race the flush — the loud end names one.
+// tuples do not race the flush — the loud end names one. The op_of
+// dispatch goes first (T8.14): the gate's words are raw — a notice's
+// `op << 32` carries the Int64 tag in its low bits — and an `==` on
+// the Unknown binding would walk into the word as if it were a cell;
+// only the kernel's own sends are cells, and the `== 0` on them is the
+// flush's reply.
 def comp_await_flush() Void {
   var flushed = false
   while !flushed {
     receive {
       r -> {
-        if r == 0 {
-          flushed = true
+        if op_of(r) >= 0 {
+          comp_stash_push(r)
         } else {
-          if op_of(r) >= 0 {
-            comp_stash_push(r)
+          if r == 0 {
+            flushed = true
           } else {
             println("comp: the stop does not race the flush")
             halt()
@@ -2104,7 +2119,15 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         // The stack pruned first, so the walk's rows are live and the
         // entry found is the one the walk paints at; its position read
         // before the walk — the flush's wait is a yield, and a death
-        // notice served in it may shift the entries below.
+        // notice served in it may shift the entries below. The dead
+        // owner's cell read and cleared first: the reclaim gives the
+        // dead owner's runs back and takes the surfaces off the stack
+        // (emo-desktop A9.2).
+        var dead = peek64(comp_dead_cell)
+        if dead != 0 {
+          poke64(comp_dead_cell, 0)
+          comp_reclaim(dead)
+        }
         comp_stack_prune()
         var grant = peek64(comp_args)
         var entry = comp_stack_find(grant)
@@ -2224,8 +2247,11 @@ def comp_run(boss Pid, gpu Pid) Void {
 
 // The compositor's supervisor (T8.6): the filesystem supervisor's
 // shape — the pages outlive the instances, the spawn, the death
-// notice the shim's hook posts, the restart. Any other death's notice
-// is the reclaim: the dead owner's windows go home.
+// notice the shim's hook posts, the restart. The notices a user
+// pass's death posts drop here (T8.14): the dead owner's windows go
+// home through the comp page's dead-owner cell, read at the next
+// composition inside the service — the stack's walk and the reclaim
+// never race.
 def comp_supervisor(boss Pid, gpu Pid) Void {
   var me3 = self_pid()
   poke64(comp_sup_cell, pid_num(me3))

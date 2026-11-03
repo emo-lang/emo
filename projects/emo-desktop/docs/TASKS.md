@@ -431,8 +431,40 @@ tree's and EmoOS's, listed there.
   (A9.2) is where separate clients make the stack's reclamation
   earn its place; the surfaces' other roles are refused by name
   until a milestone gives them substance (A9.3's increments).
-- [ ] **A9.2** — The kill-and-restart acceptance: a window stack that
+- [x] **A9.2** — The kill-and-restart acceptance: a window stack that
   survives a client's death and rebirth with the machine whole.
+  **Landed 2026-11-03** (the kernel side is EmoOS T8.14: the
+  dead-owner cell, the reclaim inside the service). The clients are
+  branches of the user image's program, the parent block's spawns
+  gated by its `read()` yields so every era waits for this run's
+  byte: the first client opens a toplevel at (96, 320), declares it,
+  paints its own pattern, presents — the composition `comp 96 320`
+  carries the client's frame alone — and dies without closing: a
+  store to an address its table maps nothing, the fault that is the
+  death, `client up <grant>` the last thing it ever said. The
+  machine continues: the compositor reclaims the dead owner's frames
+  and surfaces at its next composition (`comp reclaim <pid>` on the
+  wire), the hand opens the rebirth — a fresh pass, a fresh grant, a
+  different place (512, 320) and a different pattern, `client up`
+  again, its composition carrying the reborn frame alone, which is
+  the reclaim's arithmetic proof: a stuck surface would double the
+  carried sum — and the parent's `wait` answering the clean exit is
+  `client back`, the stack whole from one era to the next. The
+  screendump is the visual half: the reborn window's rows where it
+  stands, the dead client's old rect the background — the walk
+  cleared the carve and the surface is off the stack — the pointer
+  parked out of both rects. **Found on the way, fixed, EmoOS
+  T8.14's**: the compositor's flush wait compared the Unknown
+  binding against the reply before the op dispatch, and the
+  pointer's notice — a raw `op << 32` word wearing the Int64 tag in
+  its low bits — queuing while a flush was in flight was walked into
+  as if it were a cell; the desk era's first composition died there
+  until the dispatch went first. **The pins**: the wire — `client up
+  2`, `user fault 26 cause 15`, `addr 0x20000000`, `comp reclaim
+  26`, `client up 3`, `comp 512 320 4174893056`, `client back`;
+  `run.sh` green under both timer transports, three consecutive
+  rounds byte-identical on both, the ledger `frames 104 66`; `dune
+  runtest` and `@fmt` green.
 - [ ] **A9.3** — The five M9 increments the growth contract adds
   (with the assessment's seams as the spec).
 
