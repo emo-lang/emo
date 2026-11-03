@@ -535,7 +535,40 @@ tree's and EmoOS's, listed there.
   A8.3: the same loop, the same backend interface, the carve for the
   surface — `run.sh`'s screen pass and the corpus file the family's
   digests live in. The EmoUI README names the family (EN + zh).
-- [ ] **A10.2** — The dock and the desktop shell (`emo_desktop`).
+- [x] **A10.2** — The dock and the desktop shell (`emo_desktop`).
+  **Landed 2026-11-03**: the shell's chrome is a package of its own —
+  [`fb/desktop/`](../fb/desktop), `emo_desktop` (the flat name the
+  placement round decided), targets all six, deps `emo/ui_fb` alone —
+  the dock painted direct, fills and glyphs through the `Surface`, no
+  tree, the window package's shape and reason (the shell repaints the
+  dock per focus change; a tree's nodes are arena KiB per repaint on
+  the metal). The dock is a **panel surface** at the display's bottom
+  edge — the walk's topmost strip, no window over it, the role A9.3
+  gave substance — one tile per app the shell runs, the tile in the
+  steel a focused window's bar wears when its app holds the focus,
+  the one visible fact a focus changes, the app's initial in the
+  bitmap font on it. The press policy is a pure def (`press(x, y, w,
+  h, count)` → the tile or −1): the shell's pointer handler asks it
+  before the window hit test, a strip press names a tile, the tile
+  names its app, `win_focus` raises it and the dock repaints with the
+  tile lit — a strip press never starts a drag, and no window beneath
+  is consulted. The hosted twin ([`fb/desktop/golden/`](../fb/desktop/golden))
+  paints the strip onto a canvas the dock buffer's own size (1024×40)
+  in its three states — none focused, alpha lit, beta — and probes
+  the policy (`tile -1` above the strip, `tile 0`, `tile 1`), the
+  interpreter's bytes `expected.txt`, all five hosted targets the
+  same; the fb gate stages `emo_desktop` and checks the family (90 →
+  107 ok). The metal's desk pass wears the dock: the panel surface
+  beside its two windows, its digest lines the corpus file pins (the
+  check seeded past the desk era's start, positioned like the
+  windows'), `desk_is` growing the strip's own rectangle — skipped in
+  the walk, folded to the corpus's digest — and the beta focus beat
+  moved from a press inside the window to a press on beta's tile.
+  The ledger `frames 111 73` (the dock's three blocks, taken at its
+  `win_new`, home at its close); `run.sh` green under both timer
+  transports, three consecutive rounds byte-identical on both; `dune
+  runtest` (the smoke staging `emo_desktop`, `DOCK_EXPECTED` pointed
+  at the repository's file) and `@fmt` green; `fb/check.sh` 107 ok.
 - [ ] **A10.3** — The first apps: a counter, a file browser, an
   editor — each a corpus package, dual-run where hosted.
 

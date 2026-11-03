@@ -1,0 +1,95 @@
+require "emo/ui_fb"
+
+// The desktop shell's dock (emo-desktop A10.2): the machine's desktop
+// chrome, painted direct — fills and glyphs through the `Surface`, no
+// tree, the window package's shape and reason (the shell repaints the
+// dock per focus change, and every node of a tree is a few KiB of
+// boxed numbers left in the arena per repaint on the metal). The dock
+// is a panel surface at the display's bottom edge — the walk's
+// topmost strip, no window over it (T8.15) — one tile per app the
+// shell runs, the focused app's tile in the steel a focused window's
+// bar wears, the one visible fact a focus changes. A press names the
+// tile it landed on, or none: the policy the shell's pointer handler
+// asks before its window hit test, the click it answers with the
+// app's own focus.
+//
+// The tiles sit left to right, one per app in the shell's own order;
+// a tile carries the app's initial in the bitmap font. The strip's
+// paper is a slate darker than the desktop's background — chrome
+// under everything's chrome.
+
+def strip_height() Int64 {
+  return 40
+}
+
+def tile_size() Int64 {
+  return 32
+}
+
+def tile_gap() Int64 {
+  return 8
+}
+
+def tile_margin() Int64 {
+  return 8
+}
+
+def paper() Int64 {
+  return 0x24242C
+}
+
+def ink() Int64 {
+  return 0xF8F8F0
+}
+
+// A tile's steel: the focused window's bar's when the tile is the
+// focused app's, a quiet slate when it is not — a different byte in
+// every channel, so a swapped focus shows.
+def tile_color(focused Bool) Int64 {
+  if focused {
+    return 0x7088A8
+  }
+  return 0x3A3A46
+}
+
+// The tile index at a display position, or -1: outside the strip is
+// no dock's business, and a gap between tiles names no app. `count`
+// is the shell's app count, `w` and `h` the display's mode.
+def press(x Int64, y Int64, w Int64, h Int64, count Int64) Int64 {
+  if y < h - strip_height() {
+    return -1
+  }
+  var i = 0
+  while i < count {
+    const tx = tile_margin() + (i * (tile_size() + tile_gap()))
+    if x >= tx && x < tx + tile_size() {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// A tile's left edge in the display's own coordinates — the shell's
+// to map a tile back to its window, and the model's to name the rect
+// a screendump folds.
+def tile_x(i Int64) Int64 {
+  return tile_margin() + (i * (tile_size() + tile_gap()))
+}
+
+// The strip onto its own surface, whole from scratch: the paper, then
+// one tile per app — the face in its steel, the initial one pad in
+// and centered on the tile. `labels` are the apps' initials in tile
+// order, `focused` the lit tile's index or -1 when no app holds the
+// focus.
+def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64) Void {
+  s.fill(0, h - strip_height(), w, strip_height(), paper())
+  var i = 0
+  while i < labels.length() {
+    const tx = tile_x(i)
+    const ty = h - strip_height() + 4
+    s.fill(tx, ty, tile_size(), tile_size(), tile_color(i == focused))
+    ui_fb.text(labels[i], tx + 12, ty + 8, ink(), s)
+    i = i + 1
+  }
+}

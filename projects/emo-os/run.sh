@@ -64,6 +64,20 @@ frame_last=$(echo "$frame_digests" | tail -1)
 # pointer is parked away. WIN_EXPECTED names the file; the dune smoke
 # points it at the repository's.
 win_expected=${WIN_EXPECTED:-../emo-desktop/fb/win/golden/expected.txt}
+dock_expected=${DOCK_EXPECTED:-../emo-desktop/fb/desktop/golden/expected.txt}
+if [ ! -f "$dock_expected" ]; then
+  echo "run.sh: the dock's corpus file is missing: $dock_expected" >&2
+  exit 1
+fi
+dock_digests=$(awk '$1 == "frame" { print $2 }' "$dock_expected")
+if [ "$(echo "$dock_digests" | grep -c .)" -ne 3 ]; then
+  echo "run.sh: $dock_expected must carry three 'frame <digest>' lines — the dock's" >&2
+  echo "  strip with no app focused, alpha's tile lit, beta's" >&2
+  exit 1
+fi
+dock_line() {
+  echo "$dock_digests" | sed -n "${1}p"
+}
 if [ ! -f "$win_expected" ]; then
   echo "run.sh: the windows' corpus file is missing: $win_expected" >&2
   echo "  (the hosted golden under projects/emo-desktop/fb/win/golden pins the" >&2
@@ -582,8 +596,8 @@ PYEOF2
   # sprite — the plane says its one line at the first placement only, so
   # the park waits a beat and the model's sprite is the check.
   desk_is() {
-    local ppm="$1" ax="$2" ay="$3" bx="$4" by="$5" want_a="$6" not_a="$7" want_b="$8" cx="$9" cy="${10}" what="${11}"
-    if ! PPM="$ppm" AX="$ax" AY="$ay" BX="$bx" BY="$by" WANT_A="$want_a" NOT_A="$not_a" WANT_B="$want_b" CX="$cx" CY="$cy" WHAT="$what" POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
+    local ppm="$1" ax="$2" ay="$3" bx="$4" by="$5" want_a="$6" not_a="$7" want_b="$8" cx="$9" cy="${10}" want_d="${11}" what="${12}"
+    if ! PPM="$ppm" AX="$ax" AY="$ay" BX="$bx" BY="$by" WANT_A="$want_a" NOT_A="$not_a" WANT_B="$want_b" CX="$cx" CY="$cy" WANT_D="$want_d" WHAT="$what" POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
 import os
 import re
 import sys
@@ -596,6 +610,9 @@ px = data[16:]
 ax, ay, bx, by = int(e['AX']), int(e['AY']), int(e['BX']), int(e['BY'])
 cx, cy = int(e['CX']), int(e['CY'])
 W, H = 384, 128
+# The dock (emo-desktop A10.2): the shell's strip at the bottom edge,
+# the walk's topmost — no window over it, the sprite parked out of it.
+DX, DY, DW, DH = 0, 728, 1024, 40
 
 rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
@@ -619,28 +636,33 @@ for y in range(768):
     for x in range(1024):
         if inside(x, y, ax, ay) or inside(x, y, bx, by):
             continue
+        if DX <= x < DX + DW and DY <= y < DY + DH:
+            continue
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
         want = sprite(x, y) or (48, 48, 56)
         if got != want:
             sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
 
-def fold(wx, wy):
+def fold(wx, wy, fw, fh):
     d = 0
-    for y in range(wy, wy + H):
+    for y in range(wy, wy + fh):
         o = (y * 1024 + wx) * 3
-        for x in range(W):
+        for x in range(fw):
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
     return d
 
-fa = fold(ax, ay)
-fb = fold(bx, by)
+fa = fold(ax, ay, W, H)
+fb = fold(bx, by, W, H)
+fd = fold(DX, DY, DW, DH)
 if e['WANT_A'] and fa != int(e['WANT_A']):
     sys.exit(f"run.sh: at the {e['WHAT']} alpha's rectangle digests to {fa}; the corpus's is {e['WANT_A']}")
 if e['NOT_A'] and fa == int(e['NOT_A']):
     sys.exit(f"run.sh: at the {e['WHAT']} alpha's rectangle still digests to its own frame {fa}; beta should cover it")
 if fb != int(e['WANT_B']):
     sys.exit(f"run.sh: at the {e['WHAT']} beta's rectangle digests to {fb}; the corpus's is {e['WANT_B']}")
+if fd != int(e['WANT_D']):
+    sys.exit(f"run.sh: at the {e['WHAT']} the dock's strip digests to {fd}; the corpus's is {e['WANT_D']}")
 PYEOF
     then
       kill "$qemu_pid" 2>/dev/null || true
@@ -653,17 +675,29 @@ PYEOF
   await 'desk range 32767 32767'
   await 'desk b 8'
   await 'comp 576 384'
+  # The dock's first frame (emo-desktop A10.2): the strip's own
+  # present, its composition the walk's carrying of it — the panel
+  # over everything, the model's bottom strip skipped for it.
+  await 'comp 0 728'
   hmp 'screendump .desk1.ppm'
-  desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 'windows up'
+  desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 "$(dock_line 1)" 'windows up'
   abs 3200 8534
   btn true
   btn false
   await 'desk focus 7'
+  await 'comp 0 728'
   printf 'a' >&3
   await 'desk key 7 1'
+  # The beta focus rides the dock's tile (emo-desktop A10.2): a press
+  # on the strip names the tile, the tile names its app, the dock
+  # repaints with the tile lit.
+  abs 2048 31979
+  btn true
+  btn false
+  await 'desk focus 8'
+  await 'comp 0 728'
   abs 19200 16896
   btn true
-  await 'desk focus 8'
   abs 11520 12118
   abs 3840 7339
   btn false
@@ -671,7 +705,7 @@ PYEOF
   abs 512 29867
   sleep 1
   hmp 'screendump .desk2.ppm'
-  desk_is .desk2.ppm 64 128 96 160 '' "$(win_line 5)" "$(win_line 6)" 16 700 'drag'
+  desk_is .desk2.ppm 64 128 96 160 '' "$(win_line 5)" "$(win_line 6)" 16 700 "$(dock_line 3)" 'drag'
   abs 4480 7339
   btn true
   abs 12000 12000
@@ -683,7 +717,7 @@ PYEOF
   abs 512 29867
   sleep 1
   hmp 'screendump .desk3.ppm'
-  desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 'drag back'
+  desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 "$(dock_line 3)" 'drag back'
   printf 'q' >&3
   await 'desk 0'
   # The counter command (T7.5, docs/ui.md): the machine's program —
@@ -876,7 +910,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 108 70'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 111 73'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -959,6 +993,26 @@ PYEOF
   done
   if [ "$wprev" -gt "$wend" ]; then
     echo "run.sh: the windows' last frame arrived after the desk pass's exit" >&2
+    exit 1
+  fi
+  # The dock's frames (emo-desktop A10.2): the strip's own digests —
+  # none focused, alpha's tile lit, beta's — in the corpus's order,
+  # interleaved with the windows' (the search for each starts past the
+  # last, seeded past the desk era's first line), the last before the
+  # desk pass's exit.
+  local dprev dpos dstart
+  dstart=$(grep -aboF -- 'desk range 32767 32767' "$log" | head -1 | cut -d: -f1)
+  dprev=$dstart
+  for d in $dock_digests; do
+    dpos=$(grep -aboE -- "^frame $d\$" "$log" | cut -d: -f1 | awk -v p="$dprev" '$1 > p { print; exit }' || true)
+    if [ -z "$dpos" ]; then
+      echo "run.sh: the desk pass never delivered 'frame $d' after byte $dprev (the corpus's dock, $dock_expected)" >&2
+      exit 1
+    fi
+    dprev=$dpos
+  done
+  if [ "$dprev" -gt "$wend" ]; then
+    echo "run.sh: the dock's last frame arrived after the desk pass's exit" >&2
     exit 1
   fi
   # The cursor plane's line (T8.11): the compositor's one `pointer`

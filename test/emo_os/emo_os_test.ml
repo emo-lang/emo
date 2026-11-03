@@ -220,8 +220,9 @@ let smoke_tests =
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
            backend's core with its bitmap font (A8.1) and pointer sprite
            (A8.2), the first frame with the counter the screen pass
-           runs through the Elm loop (A8.3), and the window shell's
-           windows (A9.1). They are staged into a
+           runs through the Elm loop (A8.3), the window shell's
+           windows (A9.1), and the desktop shell's dock (A10.2). They
+           are staged into a
            registry in the scratch tree — the files start.sh stages,
            from the same trees — and the build reads it through
            EMO_REGISTRY, which names the one registry a build resolves
@@ -256,6 +257,9 @@ let smoke_tests =
             ( "../../projects/emo-desktop/fb/win",
               "emo/ui_fb_win/0.1.0",
               [ "package.emo"; "ui_fb_win.emo" ] );
+            ( "../../projects/emo-desktop/fb/desktop",
+              "emo_desktop/0.1.0",
+              [ "package.emo"; "emo_desktop.emo" ] );
           ];
         Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
@@ -312,13 +316,25 @@ let smoke_tests =
         Alcotest.(check bool)
           "the window shell's corpus file is in the tree" true
           (Sys.file_exists win_expected);
+        (* The desktop shell's dock (emo-desktop A10.2): run.sh asserts
+           the strip's three state digests out of the dock golden's
+           `expected.txt` and folds the display's strip to its lines —
+           pointed at the repository's file the same way. *)
+        let dock_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/desktop/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the dock's corpus file is in the tree" true
+          (Sys.file_exists dock_expected);
         let out, err, status =
           run_cmd
             (Printf.sprintf
-               "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s %s"
+               "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s DOCK_EXPECTED=%s %s"
                (Filename.quote frame_expected)
                (Filename.quote pointer_sprite)
                (Filename.quote win_expected)
+               (Filename.quote dock_expected)
                (Filename.quote (Filename.concat scratch "run.sh")))
         in
         (match status with

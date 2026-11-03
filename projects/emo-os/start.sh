@@ -23,9 +23,9 @@ cd "$(dirname "$0")"
 #
 # The user image requires the desktop's packages beside the syscall stub
 # (emo-desktop A7.2): EmoUI's core, the fb backend's core, the first
-# frame with the counter the screen pass runs (A8.3), and the window
-# shell's windows (A9.1), from their own
-# trees. They are staged into a registry named for the sources' content
+# frame with the counter the screen pass runs (A8.3), the window
+# shell's windows (A9.1), and the desktop shell's dock (A10.2), from
+# their own trees. They are staged into a registry named for the sources' content
 # — the way every gate in the tree stages one — and the build reads it
 # through EMO_REGISTRY, which names the one registry a build resolves
 # from, so the stub is staged beside them out of the compiler's own
@@ -42,11 +42,12 @@ ui_src="$ui_dir/package.emo $ui_dir/ui.emo $ui_dir/debug.emo"
 fb_src="$fb_dir/package.emo $fb_dir/ui_fb.emo $fb_dir/font.emo $fb_dir/pointer.emo"
 frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo $fb_dir/frame/counter.emo"
 win_src="$fb_dir/win/package.emo $fb_dir/win/ui_fb_win.emo"
+desktop_src="$fb_dir/desktop/package.emo $fb_dir/desktop/emo_desktop.emo"
 
 registry() {
   local sum
   # shellcheck disable=SC2086
-  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src | cksum | awk '{print $1}')
+  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src | cksum | awk '{print $1}')
   local reg="$PWD/.emo-build/registry-$sum"
   mkdir -p "$reg/syscall/0.1.0" "$reg/emo/ui/0.1.0" "$reg/emo/ui_fb/0.1.0" \
     "$reg/emo/ui_fb_frame/0.1.0" "$reg/emo/ui_fb_win/0.1.0"
@@ -60,6 +61,8 @@ registry() {
   cp $frame_src "$reg/emo/ui_fb_frame/0.1.0/"
   # shellcheck disable=SC2086
   cp $win_src "$reg/emo/ui_fb_win/0.1.0/"
+  mkdir -p "$reg/emo_desktop/0.1.0"
+  cp $desktop_src "$reg/emo_desktop/0.1.0/"
   printf '%s' "$reg"
 }
 
@@ -84,7 +87,7 @@ stale() {
 }
 
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src ||
+if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src ||
    stale "$elf" *.emo *.S link.ld "$user_elf"; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo

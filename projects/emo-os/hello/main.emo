@@ -52,6 +52,7 @@ require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_frame"
 require "emo/ui_fb_win"
+require "emo_desktop"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -1767,6 +1768,20 @@ if peek64(desk_cell) != 0 {
       base_b = win_base(ans)
     }
   }
+  // The shell's dock (emo-desktop A10.2): a panel surface at the
+  // display's bottom edge — the walk's topmost strip, no window over
+  // it — one tile per app, the focused app's lit.
+  const dw = mw
+  const dh = emo_desktop.strip_height()
+  var gd = 0
+  var base_d = 0
+  case syscall.win_new(dw, dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gd = win_id(ans)
+      base_d = win_base(ans)
+    }
+  }
   desk_win_line(97, ga) // a
   desk_win_line(98, gb) // b
   case syscall.win_role(ga, 0) {
@@ -1774,6 +1789,10 @@ if peek64(desk_cell) != 0 {
     (R.ok, _) -> {}
   }
   case syscall.win_role(gb, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_role(gd, 3) {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
   }
@@ -1789,6 +1808,10 @@ if peek64(desk_cell) != 0 {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
   }
+  case syscall.win_move(gd, 0, mh - dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
   // The start's park (the counter's shape): the pass waits for the
   // run's first byte before its first frame — the beat between the
   // window pass's era on the display and this one's, which `run.sh`'s
@@ -1797,6 +1820,8 @@ if peek64(desk_cell) != 0 {
   var wake = syscall.input_read()
   const wa = Win.new(grant: ga, base: base_a, width: ww, height: wh)
   const wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
+  const wd = Win.new(grant: gd, base: base_d, width: dw, height: dh)
+  const labels = ["a", "b"]
   // The focus: none until a press names a window; the top of the
   // stack as this pass knows it — beta, declared last, until a focus
   // raises the other — is the one the hit test asks first.
@@ -1808,6 +1833,8 @@ if peek64(desk_cell) != 0 {
   wa.present()
   ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
   wb.present()
+  emo_desktop.paint(wd, dw, dh, labels, -1)
+  wd.present()
   var px = 0
   var py = 0
   var drag = 0
@@ -1876,20 +1903,34 @@ if peek64(desk_cell) != 0 {
     if t == 1 && ev_code(ev) == 272 {
       if ev_value(ev) == 1 {
         var hit = 0
-        if top == gb {
-          if inside(px, py, bx, by, ww, wh) {
+        if py >= mh - dh {
+          // The strip is the dock's: a press there names a tile, and
+          // the tile names its app — no window beneath is consulted,
+          // and no drag begins (the dock is topmost; the walk paints
+          // it over everything).
+          const tile = emo_desktop.press(px, py, mw, mh, 2)
+          if tile == 0 {
+            hit = ga
+          }
+          if tile == 1 {
             hit = gb
+          }
+        } else {
+          if top == gb {
+            if inside(px, py, bx, by, ww, wh) {
+              hit = gb
+            } else {
+              if inside(px, py, ax, ay, ww, wh) {
+                hit = ga
+              }
+            }
           } else {
             if inside(px, py, ax, ay, ww, wh) {
               hit = ga
-            }
-          }
-        } else {
-          if inside(px, py, ax, ay, ww, wh) {
-            hit = ga
-          } else {
-            if inside(px, py, bx, by, ww, wh) {
-              hit = gb
+            } else {
+              if inside(px, py, bx, by, ww, wh) {
+                hit = gb
+              }
             }
           }
         }
@@ -1915,14 +1956,23 @@ if peek64(desk_cell) != 0 {
             ui_fb_win.paint(wb, ui_fb_win.title_b(), true, keys_b)
             wb.present()
           }
+          var lit = -1
+          if hit == ga {
+            lit = 0
+          }
+          if hit == gb {
+            lit = 1
+          }
+          emo_desktop.paint(wd, dw, dh, labels, lit)
+          wd.present()
           desk_focus_line(hit)
         }
-        if hit == ga && (py - ay) < ui_fb_win.bar_height() {
+        if hit == ga && py < mh - dh && (py - ay) < ui_fb_win.bar_height() {
           drag = ga
           gdx = px - ax
           gdy = py - ay
         }
-        if hit == gb && (py - by) < ui_fb_win.bar_height() {
+        if hit == gb && py < mh - dh && (py - by) < ui_fb_win.bar_height() {
           drag = gb
           gdx = px - bx
           gdy = py - by
@@ -1945,6 +1995,10 @@ if peek64(desk_cell) != 0 {
     (R.ok, _) -> {}
   }
   case syscall.win_close(gb) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_close(gd) {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
   }

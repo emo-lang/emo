@@ -1,0 +1,6 @@
+frame 2470650526
+frame 3153235410
+frame 2879429156
+tile -1
+tile 0
+tile 1

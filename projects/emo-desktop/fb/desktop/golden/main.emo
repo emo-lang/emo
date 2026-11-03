@@ -1,0 +1,30 @@
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo_desktop"
+
+// The dock's hosted twin (emo-desktop A10.2): the strip painted onto a
+// canvas the dock buffer's own size (1024x40 — the metal's dock is a
+// win buffer of that size, its digest the one the screendump's rect
+// fold meets), three states in the order the desk era lives them —
+// no app focused, alpha's tile lit, beta's — and the press policy's
+// probes beside: above the strip is no dock's business, a tile names
+// its app. The interpreter's bytes are `expected.txt`, and every
+// hosted target prints the same.
+//
+//   emo run main.emo
+
+def main() {
+  const strip = ui_fb_canvas.canvas(1024, 40)
+  emo_desktop.paint(strip, 1024, 40, ["a", "b"], -1)
+  println("frame ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint(strip, 1024, 40, ["a", "b"], 0)
+  println("frame ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint(strip, 1024, 40, ["a", "b"], 1)
+  println("frame ${ui_fb_frame.digest(strip)}")
+  println("tile ${emo_desktop.press(100, 200, 1024, 768, 2)}")
+  println("tile ${emo_desktop.press(16, 750, 1024, 768, 2)}")
+  println("tile ${emo_desktop.press(64, 750, 1024, 768, 2)}")
+}
+
+main()
