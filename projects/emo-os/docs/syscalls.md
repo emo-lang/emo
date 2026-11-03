@@ -65,6 +65,11 @@ undocumented ever acts.
 | 14 | `win_close(grant)` | the buffer's release: the run back to the allocator, the grant gone; answers 0 (T8.5, below) |
 | 17 | `win_role(grant, role)` | the buffer becomes a surface of that role on the compositor's stack — 0 toplevel, 1 popup, 2 subsurface, 3 panel; toplevel is the role the compositor implements, the rest are refused with reason 4, as are a second declaration and a grant with no surface behind it; a full stack is reason 5 (T8.13, below) |
 | 18 | `input_info(index)` | the index-th pointer's axes, the maxima the device's own config states, packed (the X's above the Y's); an index no device answers is reason 4 (T8.13, below) |
+| 19 | `win_parent(grant, parent)` | a popup or a subsurface names the toplevel it hangs from — its coordinates the parent's from the binding on, the walk painting it immediately above the parent, the parent's death taking it; the caller must own both grants, a surface with no entry, a role that takes no parent (toplevel, panel), a parent that is no live toplevel, all reason 4 (T8.15, below) |
+| 20 | `win_format(grant, format)` | the buffer's format recorded on its row — XRGB8888 (0) is the first accepted value; a format the compositor does not carry is reason 4, by its number (T8.15, below) |
+| 21 | `win_scale(grant, scale)` | the surface's scale recorded on its row — 1 is the first accepted value; the rest are reason 4, by their number (T8.15, below) |
+| 22 | `win_frame()` | the frame callback: the caller parks, and the answer is the next composition's completion — the flush that put a frame on the display; a ring of four parks full is reason 5 (T8.15, below) |
+| 23 | `desktop_version()` | the desktop protocol's version word; answers 1 (T8.15, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -80,7 +85,11 @@ are the mailbox's, not the verb's: the composition request a window
 present posts holds op 17 (a derivative of verb 10, T8.6) and the
 pointer's notice holds op 18 (T8.11), so win_role's request rides op
 19 and input_info's op 18 lands in the input service's mailbox, where
-2 and 12 were the only residents.
+2 and 12 were the only residents. Verbs 19 to 23 (T8.15, emo-desktop
+A9.3) grew it again — 19's binding riding mailbox op 20, 22's callback
+op 21, the gate answering 20, 21 and 23 itself (the negotiation's
+fields and the version are the protocol's front door's to state, no
+service between).
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -93,6 +102,18 @@ parked is reason 5), and the slot's index rides the route, so the
 service's request word names it (`slot << 36 | op << 32 | pid`). The
 read's and the list's bytes land in the caller's buffer through the
 supervisor's low window while the caller is parked.
+
+Verb 1's bytes stage whole too (T8.15): the console grew the same
+request-slot shape — four slots on the console's own page
+(`.emo_console` at 0x87009000, a pending length at the head, the bytes
+after), one per parked writer, a fifth concurrent writer reason 5. The
+slot's index does not ride the route — the route stays −1001, and the
+compositor's mailbox ops 15 to 21 share the number space the fs's
+`op + 16 × slot` seats would collide with — it sits in a per-pid cell
+the gate writes and the service reads and clears: a process parks per
+ecall, so one cell per pid is the whole of the race. Two writers parked
+at once were print-the-last-stager's-bytes wrong before this; the frame
+callback's beat (A9.3) parked two at once and named it.
 
 Verb 5 (T5.1) is not a service request but the user image's allocator
 speaking: when the running pass's own arena — the 64 KiB block the

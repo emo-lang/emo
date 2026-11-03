@@ -102,6 +102,17 @@ SECTIONS
   . = KOFF + 0x87005000;
   .emo_fs (NOLOAD) : AT(ADDR(.emo_fs) - KOFF) { *(.emo_fs) } :tick
 
+  /* The console's staging page (T8.15), a page above the compositor's:
+     the four request slots the gate fills for the write verb — busy
+     lengths and the bytes, one slot per parked writer, the slot's
+     index in a per-pid cell the service reads and clears — the race
+     two concurrent writers named (the frame callback's beat parked
+     two at once, and the one stage buffer printed the second writer's
+     bytes for both). The slots end at +0x2010; the per-pid cells run
+     to +0x2100. */
+  . = KOFF + 0x87009000;
+  .emo_console (NOLOAD) : AT(ADDR(.emo_console) - KOFF) { *(.emo_console) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

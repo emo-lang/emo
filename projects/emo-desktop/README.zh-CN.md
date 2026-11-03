@@ -25,7 +25,7 @@ English version: [`README.md`](README.md).
 | --- | --- | --- |
 | M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | complete |
 | M8 — 字形与指针 | 位图字体、指针精灵、输入合并、金属上的 Elm 循环 | complete |
-| M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启 | — |
+| M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启、生长契约的五增量 | complete |
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | — |
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查 | — |
 

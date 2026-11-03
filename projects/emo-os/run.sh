@@ -412,8 +412,13 @@ PYEOF
   # copy at (0,0) is background again (the paint carries its row in the
   # blue lane, 0x57494E00 + row) — with the pointer's sprite over it all
   # at the center the beat put it at, hidden around the walk and shown
-  # again. A wrong pixel anywhere is the loud end — and a dead check
-  # kills the machine first, the survivor poisons the next run.
+  # again. The roles' substance (emo-desktop A9.3) rides the same walk:
+  # the popup hangs from the window at its (48,32) offset — (64,64) on
+  # the display after the parent's move, the parent-relative binding
+  # the model's arithmetic — the subsurface at (416,64), the panel the
+  # bottom strip the walk paints last over everything. A wrong pixel
+  # anywhere is the loud end — and a dead check kills the machine
+  # first, the survivor poisons the next run.
   await 'comp 16 32'
   hmp 'screendump .screen.ppm'
   if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF'
@@ -451,6 +456,12 @@ def want(x, y):
     s = sprite(x, y)
     if s is not None:
         return s
+    if 0 <= x < 1024 and 736 <= y < 768:
+        return (78, 76, y - 736)
+    if 64 <= x < 192 and 64 <= y < 128:
+        return (79, 80, y - 64)
+    if 416 <= x < 480 and 64 <= y < 128:
+        return (85, 66, y - 64)
     if 16 <= x < 528 and 32 <= y < 160:
         return (73, 78, y - 32)
     return (48, 48, 56)
@@ -486,12 +497,12 @@ PYEOF
   # old rect background — the walk cleared the carve and the surface is
   # off the stack — the pointer parked at (16,16) out of both rects.
   await 'comp 96 320 2102906880'
-  await 'client up 2'
+  await 'client up 5'
   await 'user fault 26 cause 15'
   await 'addr 0x20000000'
   printf 'c' >&3
   await 'comp reclaim 26'
-  await 'client up 3'
+  await 'client up 6'
   await 'comp 512 320 4174893056'
   abs 512 683
   sleep 1
@@ -640,23 +651,23 @@ PYEOF
     qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":'"$1"',"button":"left"}}]}}'
   }
   await 'desk range 32767 32767'
-  await 'desk b 5'
+  await 'desk b 8'
   await 'comp 576 384'
   hmp 'screendump .desk1.ppm'
   desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 'windows up'
   abs 3200 8534
   btn true
   btn false
-  await 'desk focus 4'
+  await 'desk focus 7'
   printf 'a' >&3
-  await 'desk key 4 1'
+  await 'desk key 7 1'
   abs 19200 16896
   btn true
-  await 'desk focus 5'
+  await 'desk focus 8'
   abs 11520 12118
   abs 3840 7339
   btn false
-  await 'desk drag 5 96 160'
+  await 'desk drag 8 96 160'
   abs 512 29867
   sleep 1
   hmp 'screendump .desk2.ppm'
@@ -666,9 +677,9 @@ PYEOF
   abs 12000 12000
   abs 19840 16896
   btn false
-  await 'desk drag 5 576 384'
+  await 'desk drag 8 576 384'
   printf 'a' >&3
-  await 'desk key 5 1'
+  await 'desk key 8 1'
   abs 512 29867
   sleep 1
   hmp 'screendump .desk3.ppm'
@@ -865,7 +876,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'role popup r4' 'role subsurface r4' 'role panel r4' 'present r4' 'win ok' 'win sum 2803875840' 'comp 0 0 2803875840' 'win shown' 'win moved' 'comp 16 32 2803875840' 'win focused' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 2' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 3' 'client back' 'desk range 32767 32767' 'desk a 4' 'desk b 5' 'comp 64 128' 'comp 576 384' 'desk focus 4' 'desk key 4 1' 'desk focus 5' 'desk drag 5 96 160' 'desk drag 5 576 384' 'desk key 5 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 104 66'; do
+  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 108 70'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -877,6 +888,23 @@ PYEOF
     fi
     prev=$pos
   done
+  # The frame callback's line (emo-desktop A9.3): the win pass's answer
+  # to its park — the composition the client's frame rode, so the line
+  # is the callback's proof. Its order against the dying client's lines
+  # is the scheduler's (the reply wakes both), so it is placed here,
+  # not in the list above: after the park's marker, before the era's
+  # end.
+  cbstart=$(grep -aboF -- 'win 0' "$log" | head -1 | cut -d: -f1)
+  cbend=$(grep -aboF -- 'client back' "$log" | head -1 | cut -d: -f1)
+  cbpos=$(grep -aboF -- 'cb ok' "$log" | head -1 | cut -d: -f1 || true)
+  if [ -z "$cbpos" ]; then
+    echo "run.sh: the console never delivered 'cb ok'; the frame callback never answered" >&2
+    exit 1
+  fi
+  if [ "$cbpos" -lt "$cbstart" ] || [ "$cbpos" -gt "$cbend" ]; then
+    echo "run.sh: 'cb ok' arrived outside its era (after byte $cbstart, before byte $cbend)" >&2
+    exit 1
+  fi
   # The loop's frames (emo-desktop A7.2, A7.3, A8.3): the pass's own
   # digest of the carve at every present, whole lines, in the corpus's
   # order — the four of `$frame_expected`, never a literal of this

@@ -86,6 +86,35 @@ stream's absolute reports is the device's own answer, verb 18,
 `input_info(index)` — the input side of the second seam; the outputs'
 enumeration has its twin.
 
+## The growth contract's increments (T8.15, emo-desktop A9.3)
+
+M9's five increments, each an addition under a new verb, each the
+assessment's seams made concrete. **The roles' substance** (the third
+seam grown): popup, subsurface and panel are implemented, not refused —
+verb 19, `win_parent(grant, parent)`, binds a popup or a subsurface to
+the toplevel it hangs from; its coordinates are the parent's from the
+binding on, the walk paints it immediately above its parent, a move of
+the parent carries it, and the parent's death takes it too (the stack's
+prune cascades). A panel stands alone as the walk's topmost strip —
+the shell's chrome no window covers — and refuses a parent by its role.
+The by-number refusal survives on the wire as the second declaration's
+(`role toplevel r4`) and the parent-binding's mismatches (`parent panel
+r4`, `parent gone r4`). **Format and scale are fields** (the fourth
+seam): verb 20, `win_format(grant, format)`, and verb 21,
+`win_scale(grant, scale)`, record the negotiation's words on the
+buffer's row — XRGB8888 (0) and scale 1 the first accepted values, the
+rest refused by their number; the shape exists, the values grow under
+it. **The frame callback** (the fifth seam): verb 22, `win_frame()`,
+parks the caller, and the compositor's answer is the tick — the next
+composition's completion, the flush that put a frame on the display; a
+ring of four parks full is the resource refusal. **The stream's
+version** (the fifth seam's other half): verb 23, `desktop_version()`,
+answers 1 — the gate's own answer, the negotiation's anchor. The proof
+chain runs all five on the wire (the popup riding its parent's move,
+the fields answered and refused, the callback's `cb ok` inside the
+client era, `protocol 1`), and the display model of the moved window's
+composition grew the four surfaces the walk now carries.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

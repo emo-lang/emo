@@ -70,8 +70,15 @@ const tick_ring = koff + 0x87000000
 // user address, read through the identity alias.
 const console_svc_cell = koff + 0x870020f0
 const process_svc_cell = koff + 0x870020f8
-const handoff_arga = koff + 0x870020e0
-const handoff_argb = koff + 0x870020e8
+// The console's write slots (T8.15): the gate stages each parked
+// writer's bytes whole — one slot per writer, the length at the head
+// and the bytes after, on the page the linker gives them
+// (.emo_console at 0x87009000), the slot's index in the per-pid cell
+// the gate writes and the service clears. A free slot's length is -1;
+// the sentinels are the console's own init.
+const con_slots = koff + 0x87009000
+const con_slot_size = 2056
+const con_slot_for = koff + 0x8700b100
 const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
 const user_program_cell = 0x87fff000
@@ -116,14 +123,33 @@ const comp_focus_cell = comp_page + 16
 const comp_mode_w = comp_page + 24
 const comp_mode_h = comp_page + 32
 const comp_stack = comp_page + 64
-const comp_entry = 32
+// The entry grew its parent word with the roles' substance (T8.15,
+// emo-desktop A9.3): grant, x, y, role, parent — a popup's or a
+// subsurface's coordinates are its parent's from the binding on, and
+// the walk paints it immediately above the parent it names.
+const comp_entry = 40
 const comp_entries = 8
 // The surface roles (T8.13, emo-desktop A9.1 — the protocol's third
 // seam): the vocabulary the gate bounds win_role to, and the one the
-// stack implements. A toplevel is the window the shell drags and
-// focuses; the other three are refused by their number until the
-// milestone that gives them substance.
+// stack implements — every one since T8.15 (A9.3). A toplevel is the
+// window the shell drags and focuses; a popup or a subsurface hangs
+// from one by verb 19 and paints at its position relative to the
+// parent's, immediately above it; a panel is the shell's strip, the
+// walk's topmost layer.
 const role_toplevel = 0
+const role_popup = 1
+const role_subsurface = 2
+const role_panel = 3
+// The frame callbacks (T8.15, A9.3 — the fifth seam): the pids parked
+// on verb 22, answered at the next composition's completion — the
+// tick's client side. Four deep; a fifth parks into a full ring is
+// the resource refusal, the caller's retry its own. Past the stash's
+// cells — the page's map grew twice (T8.13's entries, A9.2's dead
+// cell), and the dead cell's first seat (+448) was the stash's second
+// slot, the overlap the map's re-draw names.
+const comp_cb_count = comp_page + 480
+const comp_cb_cells = comp_page + 488
+const comp_cb_depth = 4
 // The desktop's background (T8.13): the word the composition clears
 // the carve to before the stack's walk — the color under every window,
 // what a moved window leaves behind. A slate the palette's roles stand
@@ -141,11 +167,23 @@ const comp_cursor_said = comp_page + 416
 const comp_svc_cell = koff + 0x87002e00
 const comp_sup_cell = koff + 0x87002e08
 const comp_args = koff + 0x87002e10
-// The dead-owner's cell (emo-desktop A9.2, T8.14): the trap shim writes
-// the dead pass's pid here on every user death (fault, heap, exit) and
-// the comp service's walk reclaims the dead owner's windows at its next
-// composition — the notice without a gate_post from the trap.
-const comp_dead_cell = comp_page + 448
+// The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
+// the trap shim writes the dead pass's pid into its own cell on every
+// user death (fault, heap, exit) and the comp service's walk reclaims
+// every owner it sees at its next composition — the notice without a
+// gate_post from the trap. One cell per pid, because a pass's exit can
+// now land between another pass's death and the next composition (the
+// frame callback's park carries the win pass across the client era):
+// a single seat held the last death and the first owner's windows
+// stuck — the reborn frame's carried sum named it. One write per pid
+// ever (a slot is never reused), so the service's clear cannot race
+// the write; the array's 256 pids are the bound, a death past it is
+// the reclaim that never runs, documented. Past the stash's cells:
+// the first seat (+448) was the stash's second slot — a second
+// stashed word would have walked over a dead pid, and a death between
+// two stashes never fired it.
+const comp_dead_cells = comp_page + 600
+const comp_dead_pids = 256
 
 
 // The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
@@ -167,9 +205,10 @@ const notice_op = 256
 // once — a second claimant is the refusal), and pokes the carve's
 // kernel address into the pending cell for space.emo's build to map
 // into the child's table before the child's first store. The pending
-// cell sits on the handoff page past the write's staging area
-// (gate.emo's stage_buf owns the free tail's first 2048 bytes — the
-// first boot caught the collision).
+// cell sits on the handoff page past the write's old one-buffer
+// staging (the staging grew into the console page's four slots,
+// T8.15 — the first boot caught the tail's collision, the slots the
+// two-writers race).
 const screen_cell = 0x87fff040
 const screen_pending_cell = koff + 0x870029e0
 
@@ -535,19 +574,34 @@ def screen_check(base Int64) Void {
 // service, the console the machine's output — so any message that is
 // not a write is a kernel bug, the loud end.
 def console_service(boss Pid) Void {
+  // The slots start free (T8.15): the linker's NOLOAD page zeros, and
+  // a zero length reads as pending — the free sentinel is this
+  // service's first act, before any writer can ask for a slot.
+  poke64(con_slots, -1)
+  poke64(con_slots + con_slot_size, -1)
+  poke64(con_slots + 2 * con_slot_size, -1)
+  poke64(con_slots + 3 * con_slot_size, -1)
   boss <- self_pid()
   while true {
     receive {
       w -> {
         var op = op_of(w)
         if op == 1 {
-          var buf = peek64(handoff_arga)
-          var len = peek64(handoff_argb)
+          // The write's bytes stage whole in the caller's slot (T8.15):
+          // the gate names it in the per-pid cell — a process parks per
+          // ecall, so the one cell is the whole of the race — the
+          // slot's head the length, the bytes after. Read here, the
+          // slot and the cell freed, the count answered.
+          var slot = peek64(con_slot_for + (caller_of(w) * 8))
+          var s = con_slots + (slot * con_slot_size)
+          var len = peek64(s)
           var i = 0
           while i < len {
-            console_put_byte(peek8(buf + i).to_int64())
+            console_put_byte(peek8(s + 8 + i).to_int64())
             i = i + 1
           }
+          poke64(s, -1)
+          poke64(con_slot_for + (caller_of(w) * 8), -1)
           gate_reply(caller_of(w), len)
         } else {
           println("console: the message is nobody's")
@@ -993,7 +1047,7 @@ def gpu_present(dev Int64, q Int64, gw Int64, gh Int64, x Int64, y Int64, w Int6
 def grant_row_pick() Int64 {
   var i = 0
   while i < 8 {
-    var row = grant_table + (i * 96)
+    var row = grant_table + (i * 112)
     if peek64(row) == 0 {
       return row
     }
@@ -1007,7 +1061,7 @@ def grant_row_pick() Int64 {
 def grant_row_of(id Int64) Int64 {
   var i = 0
   while i < 8 {
-    var row = grant_table + (i * 96)
+    var row = grant_table + (i * 112)
     if peek64(row) == id {
       return row
     }
@@ -1123,7 +1177,7 @@ def gpu_service(boss Pid) Void {
   println("gpu ${gw}x${gh} ready")
   // The grant table's reset (T8.5): the rows and the id counter start
   // empty — the service's own init, before any client can ask.
-  blk_zero(grant_table, 96)
+  blk_zero(grant_table, 112)
   poke64(grant_next_cell, 0)
   boss <- self_pid()
   while true {
@@ -1228,6 +1282,8 @@ def gpu_service(boss Pid) Void {
                   poke64(row + 32, ww)
                   poke64(row + 40, hh)
                   poke64(row + 56, 0)
+                  poke64(row + 96, 0)
+                  poke64(row + 104, 0)
                   // The answer's packing keeps the sign bit true: the
                   // base rides as its frame number (the byte address
                   // shifted left by 12 at the client) — a base above
@@ -1693,8 +1749,9 @@ def comp_stack_find(grant Int64) Int64 {
 }
 
 // A surface onto the stack's top (T8.13): the grant, the origin, the
-// role. A full stack answers 0 — the resource refusal is the caller's
-// to make, not the machine's end: the ninth surface is a client's ask.
+// role, no parent yet — verb 19 binds one (T8.15). A full stack
+// answers 0 — the resource refusal is the caller's to make, not the
+// machine's end: the ninth surface is a client's ask.
 def comp_stack_add(grant Int64, role Int64) Int64 {
   var top = peek64(comp_top_cell)
   if top >= comp_entries {
@@ -1705,6 +1762,7 @@ def comp_stack_add(grant Int64, role Int64) Int64 {
   poke64(entry + 8, 0)
   poke64(entry + 16, 0)
   poke64(entry + 24, role)
+  poke64(entry + 32, 0)
   poke64(comp_top_cell, top + 1)
   return entry
 }
@@ -1721,6 +1779,7 @@ def comp_stack_remove(entry Int64) Void {
     poke64(e + 8, peek64(e + comp_entry + 8))
     poke64(e + 16, peek64(e + comp_entry + 16))
     poke64(e + 24, peek64(e + comp_entry + 24))
+    poke64(e + 32, peek64(e + comp_entry + 32))
     e = e + comp_entry
   }
   poke64(comp_top_cell, top - 1)
@@ -1733,6 +1792,7 @@ def comp_stack_raise(entry Int64) Void {
   var x = peek64(entry + 8)
   var y = peek64(entry + 16)
   var role = peek64(entry + 24)
+  var parent = peek64(entry + 32)
   comp_stack_remove(entry)
   var top = peek64(comp_top_cell)
   var e = comp_stack + (top * comp_entry)
@@ -1740,6 +1800,7 @@ def comp_stack_raise(entry Int64) Void {
   poke64(e + 8, x)
   poke64(e + 16, y)
   poke64(e + 24, role)
+  poke64(e + 32, parent)
   poke64(comp_top_cell, top + 1)
 }
 
@@ -1747,15 +1808,34 @@ def comp_stack_raise(entry Int64) Void {
 // table no longer holds — the buffer closed, or its owner dead and its
 // rows reclaimed — leaves before the next walk or the next surface, so
 // the composition never reads a row that is nobody's and a closed
-// window never holds a slot.
+// window never holds a slot. A parent-relative entry whose parent's
+// entry is gone leaves with it (T8.15): the popups die with the
+// toplevel they hang from — and the passes repeat until the stack is
+// still, the binding's one-level rule (a parent is a toplevel, never
+// another popup) making one round of cascades the whole depth.
 def comp_stack_prune() Void {
-  var i = 0
-  while i < peek64(comp_top_cell) {
-    var entry = comp_stack + (i * comp_entry)
-    if grant_row_of(peek64(entry)) == 0 {
-      comp_stack_remove(entry)
-    } else {
-      i = i + 1
+  var changed = 1
+  while changed != 0 {
+    changed = 0
+    var i = 0
+    while i < peek64(comp_top_cell) {
+      var entry = comp_stack + (i * comp_entry)
+      var dead = 0
+      if grant_row_of(peek64(entry)) == 0 {
+        dead = 1
+      }
+      var par = peek64(entry + 32)
+      if par != 0 {
+        if comp_stack_find(par) == 0 {
+          dead = 1
+        }
+      }
+      if dead != 0 {
+        comp_stack_remove(entry)
+        changed = 1
+      } else {
+        i = i + 1
+      }
     }
   }
 }
@@ -1763,16 +1843,29 @@ def comp_stack_prune() Void {
 // The blit (T8.6): the window's rows into the carve at the stack's
 // position — word stores, the frame's scale priced at them (the
 // assessment's blit rule); the sum of the carried words answered, the
-// number the client's own sum line names — the blit's proof.
+// number the client's own sum line names — the blit's proof. The rect
+// is clipped to the mode (T8.15): a parent-relative surface rides its
+// parent's moves, and the walk carries only what the mode holds — the
+// rows and word-columns past an edge are nobody's to store.
 def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
   var sum = 0
   var r = 0
-  var half = w / 2
-  var stride = peek64(comp_mode_w) / 2
-  while r < h {
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  var half = cols / 2
+  var stride = mw / 2
+  while r < rows {
     var i = 0
     while i < half {
-      var v = peek64(base + (r * half + i) * 8)
+      var v = peek64(base + (r * (w / 2) + i) * 8)
       poke64(koff + screen_base + ((y + r) * stride + (x / 2) + i) * 8, v)
       sum = sum + v
       i = i + 1
@@ -1780,6 +1873,49 @@ def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
     r = r + 1
   }
   return sum
+}
+
+// The position a surface paints at (T8.15): its own, or its parent's
+// with its own beside — a popup's or a subsurface's coordinates are
+// the parent's from the binding on. The parent's entry is live at
+// every read (the prune drops the orphaned first), so the find's zero
+// never walks out of here.
+def comp_abs_pos(entry Int64, rx Int64, ry Int64) Int64 {
+  var ax = rx
+  var ay = ry
+  var par = peek64(entry + 32)
+  if par != 0 {
+    var pentry = comp_stack_find(par)
+    ax = peek64(pentry + 8) + ax
+    ay = peek64(pentry + 16) + ay
+  }
+  return (ax << 32) | ay
+}
+
+// The walk's blit of one entry (T8.15): the row the grant names, the
+// ready flag the walk's gate — a surface no client has presented yet
+// paints nothing, the composition's first frame the ready record's
+// reader.
+def comp_blit_entry(entry Int64, x Int64, y Int64) Int64 {
+  var row = grant_row_of(peek64(entry))
+  if peek64(row + 56) != 0 {
+    return comp_blit(peek64(row + 16), peek64(row + 32), peek64(row + 40), x, y)
+  }
+  return 0
+}
+
+// The parked callbacks answered (T8.15, A9.3 — the fifth seam): the
+// composition's completion is the tick, and every pid verb 22 left in
+// the ring wakes with it — the caller's own reply first, the
+// callbacks after, the ring empty for the next parker.
+def comp_cb_reply() Void {
+  var n = peek64(comp_cb_count)
+  var i = 0
+  while i < n {
+    gate_reply(peek64(comp_cb_cells + (i * 8)), 0)
+    i = i + 1
+  }
+  poke64(comp_cb_count, 0)
 }
 
 // The composition's stash (T8.6): the requests that arrive while the
@@ -1819,7 +1955,7 @@ def comp_reclaim(pid Int64) Void {
   var said = 0
   var i = 0
   while i < 8 {
-    var row = grant_table + (i * 96)
+    var row = grant_table + (i * 112)
     if peek64(row + 8) == pid {
       var base = peek64(row + 16)
       var n = peek64(row + 24)
@@ -1870,12 +2006,39 @@ def comp_compose(gpu Pid, me Pid) Int64 {
   }
   comp_clear()
   var sum = 0
+  // The walk (T8.13, T8.15): the free-standing surfaces in the stack's
+  // order — the last entry over the rest — each immediately followed by
+  // its parent-relative children at their offsets from it (a popup
+  // rides its toplevel above every other window, a subsurface the
+  // same), then the panels over everything: the shell's chrome is the
+  // one layer no window covers.
   var i = 0
-  while i < peek64(comp_top_cell) {
+  var top = peek64(comp_top_cell)
+  while i < top {
     var entry = comp_stack + (i * comp_entry)
-    var row = grant_row_of(peek64(entry))
-    if peek64(row + 56) != 0 {
-      sum = sum + comp_blit(peek64(row + 16), peek64(row + 32), peek64(row + 40), peek64(entry + 8), peek64(entry + 16))
+    if peek64(entry + 24) != role_toplevel {
+      i = i + 1
+      continue
+    }
+    var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+    sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+    var j = 0
+    while j < top {
+      var kid = comp_stack + (j * comp_entry)
+      if peek64(kid + 32) == peek64(entry) {
+        var kboth = comp_abs_pos(kid, peek64(kid + 8), peek64(kid + 16))
+        sum = sum + comp_blit_entry(kid, kboth >> 32, kboth & 4294967295)
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) == role_panel {
+      var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+      sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
     }
     i = i + 1
   }
@@ -2106,7 +2269,14 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         var row = grant_row_of(grant)
         var ww = peek64(row + 32)
         var hh = peek64(row + 40)
-        if (x % 2) != 0 || (x + ww) > peek64(comp_mode_w) || (y + hh) > peek64(comp_mode_h) {
+        // A parent-relative surface's move names its offset from the
+        // parent (T8.15): the bounds the absolute position answers to,
+        // the parity the word blit's own (the parent's is even, so the
+        // relative even keeps the sum even).
+        var both = comp_abs_pos(entry, x, y)
+        var ax = both >> 32
+        var ay = both & 4294967295
+        if (x % 2) != 0 || (ax + ww) > peek64(comp_mode_w) || (ay + hh) > peek64(comp_mode_h) {
           gate_reply(caller_of(w), -4)
         } else {
           poke64(entry + 8, x)
@@ -2123,10 +2293,15 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         // owner's cell read and cleared first: the reclaim gives the
         // dead owner's runs back and takes the surfaces off the stack
         // (emo-desktop A9.2).
-        var dead = peek64(comp_dead_cell)
-        if dead != 0 {
-          poke64(comp_dead_cell, 0)
-          comp_reclaim(dead)
+        // The dead owners in (T8.15's array): the clear before the
+        // reclaim, the write it cannot race (one per pid ever).
+        var p = 0
+        while p < comp_dead_pids {
+          if peek64(comp_dead_cells + (p * 8)) != 0 {
+            poke64(comp_dead_cells + (p * 8), 0)
+            comp_reclaim(p)
+          }
+          p = p + 1
         }
         comp_stack_prune()
         var grant = peek64(comp_args)
@@ -2134,8 +2309,9 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         if entry == 0 {
           gate_reply(caller_of(w), -4)
         } else {
-          var x = peek64(entry + 8)
-          var y = peek64(entry + 16)
+          var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+          var x = both >> 32
+          var y = both & 4294967295
           var row = grant_row_of(grant)
           poke64(row + 56, 1)
           var sum = comp_compose(gpu, me)
@@ -2145,38 +2321,82 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           poke64(row + 88, peek64(comp_args + 32))
           println("comp ${x} ${y} ${sum & 4294967295}")
           gate_reply(caller_of(w), 0)
+          comp_cb_reply()
         }
       } else {
         if op == 19 {
           // The role (T8.13, emo-desktop A9.1 — the third seam): the
           // buffer becomes a surface of that role, the stack's entry
           // made here and nowhere else. A surface's role does not
-          // change (a second declaration is refused); a role the
-          // stack does not implement — popup, subsurface, panel — is
-          // refused by its number, and the caller, who chose it, names
-          // it; a full stack is the resource refusal.
+          // change (a second declaration is refused); a full stack is
+          // the resource refusal. The vocabulary is implemented whole
+          // since T8.15 (A9.3): what a role means — free-standing,
+          // parent-relative, the shell's topmost strip — is the
+          // binding's and the walk's to say.
           var grant = peek64(comp_args)
           var role = peek64(comp_args + 8)
           if comp_stack_find(grant) != 0 {
             gate_reply(caller_of(w), -4)
           } else {
-            if role != role_toplevel {
-              gate_reply(caller_of(w), -4)
+            comp_stack_prune()
+            if comp_stack_add(grant, role) == 0 {
+              gate_reply(caller_of(w), -5)
             } else {
-              comp_stack_prune()
-              if comp_stack_add(grant, role) == 0 {
-                gate_reply(caller_of(w), -5)
-              } else {
-                gate_reply(caller_of(w), 0)
-              }
+              gate_reply(caller_of(w), 0)
             }
           }
         } else {
-          if op == pointer_op {
-            comp_cursor_place(gpu, me)
+          if op == 20 {
+            // The parent binding (T8.15, A9.3): a popup or a
+            // subsurface names the toplevel it hangs from — its
+            // coordinates the parent's from then on, the walk painting
+            // it immediately above the parent, the prune taking it
+            // when the parent goes. A surface with no entry, a role
+            // that takes no parent (toplevel, panel), a parent that is
+            // no live toplevel — each the argument refusal, by number.
+            var grant = peek64(comp_args)
+            var parent = peek64(comp_args + 8)
+            var entry = comp_stack_find(grant)
+            if entry == 0 {
+              gate_reply(caller_of(w), -4)
+            } else {
+              var role = peek64(entry + 24)
+              if role != role_popup && role != role_subsurface {
+                gate_reply(caller_of(w), -4)
+              } else {
+                var pentry = comp_stack_find(parent)
+                if pentry == 0 || peek64(pentry + 24) != role_toplevel {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  poke64(entry + 32, parent)
+                  gate_reply(caller_of(w), 0)
+                }
+              }
+            }
           } else {
-            println("comp: the verb is nobody's")
-            halt()
+            if op == 21 {
+              // The frame callback's park (T8.15, A9.3 — the fifth
+              // seam): the caller's pid into the ring, answered at the
+              // next composition's completion — the tick's client
+              // side, the animation story's hinge. No surface named:
+              // the callback rides the display's rhythm, not one
+              // window's. A full ring is the resource refusal, the
+              // retry the caller's.
+              var n = peek64(comp_cb_count)
+              if n >= comp_cb_depth {
+                gate_reply(caller_of(w), -5)
+              } else {
+                poke64(comp_cb_cells + (n * 8), caller_of(w))
+                poke64(comp_cb_count, n + 1)
+              }
+            } else {
+              if op == pointer_op {
+                comp_cursor_place(gpu, me)
+              } else {
+                println("comp: the verb is nobody's")
+                halt()
+              }
+            }
           }
         }
       }

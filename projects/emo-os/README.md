@@ -86,6 +86,7 @@ golden smoke, and the hand-driven boot up to the prompt — is
 | M6 — FS, shell, EmoUI | virtio-blk service, shell REPL, console UI | complete |
 | M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | complete |
 | M8 — Glyphs & pointer | the input merge, the pointer plane (the kernel side; the glyphs and the Elm loop are the desktop's) | complete |
+| M9 — Windows | the stack, the roles and the walk, the death-side reclaim, the growth contract's five increments | complete |
 
 Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 

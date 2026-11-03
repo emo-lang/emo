@@ -680,6 +680,16 @@ def inside(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64) Bool {
 // the number alone (the protocol carries no text, the seventh seam).
 def role_name_at(role Int64, pos Int64) Int64 {
   var p = pos
+  if role == 0 {
+    p = byte_at(p, 116) // t
+    p = byte_at(p, 111) // o
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 108) // l
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 118) // v
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 108) // l
+  }
   if role == 1 {
     p = byte_at(p, 112) // p
     p = byte_at(p, 111) // o
@@ -1049,6 +1059,234 @@ def win_closed_line() Void {
   gate_line(p)
 }
 
+// The growth contract's five increments (emo-desktop A9.3, EmoOS
+// T8.15): the wire's own names for them — the negotiation's fields
+// answered, the protocol's version, the roles' surfaces up and home,
+// the frame callback's arrival, the pass's own exit marker (the
+// callback's park moves the exit past the parent's wait, so the
+// marker is the pass's to say).
+def fmt_ok_line() Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def fmt_no_line() Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def scale_ok_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def scale_no_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 50) // 2
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def protocol_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def popup_up_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def sub_up_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def panel_up_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def parent_panel_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def parent_gone_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def popup_closed_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def sub_closed_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def panel_closed_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_zero_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def cb_ok_line() Void {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 // One event, as the pass's line: the machine's byte event (0x454D —
 // "EM") prints `byte <v>`, a device event `key <t> <c> <v>`.
 def input_line(ev Int64) Void {
@@ -1186,9 +1424,6 @@ if peek64(win_cell) != 0 {
     (R.ok, ans) -> {
       var id = win_id(ans)
       win_line(id)
-      role_refusal(id, 1)
-      role_refusal(id, 2)
-      role_refusal(id, 3)
       case syscall.present(id, 0, 0, 512, 128) {
         (R.error, why) -> { present_refused_line(reason_num(why)) }
         (R.ok, _) -> { mark() }
@@ -1197,6 +1432,7 @@ if peek64(win_cell) != 0 {
         (R.error, _) -> { mark() }
         (R.ok, _) -> {}
       }
+      role_refusal(id, 0)
       paint_win(win_base(ans), 128, 256, 0x57494E00)
       if win_verify(win_base(ans), 128, 256) {
         win_ok_line()
@@ -1216,9 +1452,117 @@ if peek64(win_cell) != 0 {
       sp = num_at(buffer_sum(win_base(ans), 128, 256) & 4294967295, sp)
       sp = byte_at(sp, 10)
       gate_line(sp)
+      // The negotiation's fields (emo-desktop A9.3, EmoOS T8.15): the
+      // buffer's format and scale are words on the row, named by the
+      // client and recorded by the gate — XRGB8888 (0) and scale 1 the
+      // first accepted values, the rest refused by their number — and
+      // the protocol's version the one word the gate answers itself.
+      case syscall.win_format(id, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { fmt_ok_line() }
+      }
+      case syscall.win_format(id, 1) {
+        (R.error, _) -> { fmt_no_line() }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.win_scale(id, 1) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { scale_ok_line() }
+      }
+      case syscall.win_scale(id, 2) {
+        (R.error, _) -> { scale_no_line() }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.desktop_version() {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { protocol_line() }
+      }
       case syscall.present(id, 0, 0, 512, 128) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { win_shown_line() }
+      }
+      // The roles' substance (emo-desktop A9.3): a popup and a
+      // subsurface hang from this toplevel by verb 19 — their
+      // coordinates the parent's from the binding on, the walk painting
+      // each immediately above it — and a panel stands alone as the
+      // walk's topmost strip, refusing a parent by its role. Each is
+      // painted, presented (the composition names its absolute place),
+      // and closed — the runs home before the pass moves its own.
+      var ppop = 0
+      case syscall.win_new(128, 64) {
+        (R.error, _) -> { mark() }
+        (R.ok, pans) -> {
+          ppop = win_id(pans)
+          case syscall.win_role(ppop, 1) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(ppop, id) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_move(ppop, 48, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(pans), 64, 64, 0x504F5000)
+          case syscall.present(ppop, 0, 0, 128, 64) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { popup_up_line() }
+          }
+        }
+      }
+      var psub = 0
+      case syscall.win_new(64, 64) {
+        (R.error, _) -> { mark() }
+        (R.ok, sans) -> {
+          psub = win_id(sans)
+          case syscall.win_role(psub, 2) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(psub, id) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_move(psub, 400, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(sans), 64, 32, 0x53554200)
+          case syscall.present(psub, 0, 0, 64, 64) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { sub_up_line() }
+          }
+        }
+      }
+      var ppan = 0
+      case syscall.win_new(1024, 32) {
+        (R.error, _) -> { mark() }
+        (R.ok, qans) -> {
+          ppan = win_id(qans)
+          case syscall.win_role(ppan, 3) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(ppan, id) {
+            (R.error, _) -> { parent_panel_line() }
+            (R.ok, _) -> { mark() }
+          }
+          case syscall.win_move(ppan, 0, 736) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(qans), 32, 512, 0x504E4C00)
+          case syscall.present(ppan, 0, 0, 1024, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { panel_up_line() }
+          }
+        }
+      }
+      case syscall.win_parent(ppop, 99) {
+        (R.error, _) -> { parent_gone_line() }
+        (R.ok, _) -> { mark() }
       }
       case syscall.win_move(id, 16, 32) {
         (R.error, _) -> { mark() }
@@ -1232,11 +1576,34 @@ if peek64(win_cell) != 0 {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { win_focused_line() }
       }
+      case syscall.win_close(ppop) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { popup_closed_line() }
+      }
+      case syscall.win_close(psub) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { sub_closed_line() }
+      }
+      case syscall.win_close(ppan) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { panel_closed_line() }
+      }
       case syscall.win_close(id) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { win_closed_line() }
       }
     }
+  }
+  // The pass's own exit marker (emo-desktop A9.3): the frame
+  // callback's park below moves this pass's exit past the parent's
+  // era — the wait that printed this line retired with it, the marker
+  // the pass's to say. Then the park: the answer is the machine's
+  // next composition (the client era's first frame carries it), and
+  // the line it wakes to is the callback's proof on the wire.
+  win_zero_line()
+  case syscall.win_frame() {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> { cb_ok_line() }
   }
   syscall.exit(0)
 }
@@ -1844,24 +2211,9 @@ case key_spawned {
 // home — the buffer's lifecycle whole, and its exit answering the
 // parent's wait.
 poke64(win_cell, 1)
-var win_spawned = syscall.spawn()
-case win_spawned {
+case syscall.spawn() {
   (R.error, _) -> { mark() }
-  (R.ok, wpid) -> {
-    var win_waited = syscall.wait(wpid)
-    case win_waited {
-      (R.error, _) -> { mark() }
-      (R.ok, code) -> {
-        var ep = byte_at(0, 119) // w
-        ep = byte_at(ep, 105) // i
-        ep = byte_at(ep, 110) // n
-        ep = byte_at(ep, 32) // space
-        ep = num_at(code, ep)
-        ep = byte_at(ep, 10)
-        gate_line(ep)
-      }
-    }
-  }
+  (R.ok, _) -> {}
 }
 
 // The client's kill and rebirth (emo-desktop A9.2): the entry parks on

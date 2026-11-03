@@ -465,8 +465,51 @@ tree's and EmoOS's, listed there.
   `run.sh` green under both timer transports, three consecutive
   rounds byte-identical on both, the ledger `frames 104 66`; `dune
   runtest` and `@fmt` green.
-- [ ] **A9.3** — The five M9 increments the growth contract adds
-  (with the assessment's seams as the spec).
+- [x] **A9.3** — The five M9 increments the growth contract adds
+  (with the assessment's seams as the spec). **Landed 2026-11-03**
+  (the kernel side is EmoOS T8.15; with it M9 is complete on both
+  sides of the gate). The five, each an addition under a new verb:
+  **the roles' substance** (the third seam grown — A9.1's standing
+  note cashed in): popup, subsurface and panel implemented, verb 19
+  `win_parent(grant, parent)` binding the first two to the toplevel
+  they hang from — the coordinates the parent's from the binding on,
+  the walk painting each immediately above its parent, a move of the
+  parent carrying it, the parent's death taking it (the prune
+  cascades), a panel standing alone as the walk's topmost strip and
+  refusing a parent by its role; **format is a field** (the fourth
+  seam): verb 20 `win_format(grant, format)`, XRGB8888 (0) the first
+  accepted value, the rest refused by their number; **scale is a
+  field** (the fourth seam's other half): verb 21
+  `win_scale(grant, scale)`, 1 accepted first; **the frame callback**
+  (the fifth seam): verb 22 `win_frame()`, the caller parked and the
+  compositor's answer the tick — the next composition's completion,
+  a ring of four full the resource refusal; **the stream's version**
+  (the fifth seam's other half): verb 23 `desktop_version()`, the
+  gate's own answer, 1. The pass asks for every one knowing the
+  answer: the popup presented at its parent's offset and carried by
+  the parent's move (the composition naming the absolute place, the
+  screendump's model doing the binding's arithmetic), the fields
+  answered and refused, the callback's `cb ok` landing inside the
+  client era — the pass parks past its own marker now, the parent's
+  inline wait retired, the exit code the machine's to keep. **Found
+  on the way, fixed, EmoOS T8.15's**: the console's one write stage
+  buffer printed the last stager's bytes for two writers parked at
+  once — the callback's beat parked two for the first time in the
+  machine's life — and the console grew the fs's request-slot shape
+  (four slots on the console's own page, the slot's index in a
+  per-pid cell); and the dead-owner cell held one death, the parked
+  pass's exit overwriting the client's fault before the next
+  composition — the dead owners now sit in per-pid cells, one write
+  per pid ever, the service's clear unable to race it. **The pins**:
+  the wire — `role toplevel r4`, `format 0 ok`, `format 1 r4`,
+  `scale 1 ok`, `scale 2 r4`, `protocol 1`, `comp 48 32 2619455488`,
+  `popup up`, `comp 400 32 1177728000`, `sub up`, `parent panel r4`,
+  `comp 0 736 3644232704`, `panel up`, `parent gone r4`, `cb ok`,
+  `client up 5`, `client up 6`; the moved window's composition read
+  against the model of all five surfaces; `run.sh` green under both
+  timer transports, three consecutive rounds byte-identical on both,
+  the ledger `frames 108 70`; `dune runtest` and `@fmt` green.
+  **With this M9 is complete on both sides of the gate.**
 
 ## M10 — the desktop (the desktop side)
 

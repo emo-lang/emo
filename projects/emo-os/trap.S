@@ -496,8 +496,16 @@ emo_os_trap_trampoline:
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid
-    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
-    sd t1, 0(t0)             # the comp service's walk reclaims it
+    # the dead pid's own cell (T8.14; the array T8.15 — one write per
+    # pid ever, so the service's clear cannot race it; a pid past the
+    # array's 256 is the reclaim that never runs, the documented bound)
+    li t0, 256
+    bge t1, t0, 5f
+    li t0, EMO_KOFF + 0x87008258  # the comp page's dead-owners' cells
+    slli t2, t1, 3
+    add t0, t0, t2
+    sd t1, 0(t0)
+5:
 5:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
@@ -566,8 +574,16 @@ emo_os_trap_trampoline:
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid
-    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
-    sd t1, 0(t0)             # the comp service's walk reclaims it
+    # the dead pid's own cell (T8.14; the array T8.15 — one write per
+    # pid ever, so the service's clear cannot race it; a pid past the
+    # array's 256 is the reclaim that never runs, the documented bound)
+    li t0, 256
+    bge t1, t0, 5f
+    li t0, EMO_KOFF + 0x87008258  # the comp page's dead-owners' cells
+    slli t2, t1, 3
+    add t0, t0, t2
+    sd t1, 0(t0)
+5:
 6:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
@@ -694,10 +710,14 @@ emo_os_trap_trampoline:
     or a1, a1, t2
     call emo_gate_post
     la t0, emo_cur_slot      # the exiting caller's slot (T8.14): the
-    ld t0, 0(t0)             #   dead pid rides to the comp page's cell —
-    ld t1, 8(t0)             #   an exit without win_close is the reclaim's
-    li t0, EMO_KOFF + 0x870081c0  # the comp page's dead-owner cell (T8.14)
-    sd t1, 0(t0)             #   trigger
+    ld t0, 0(t0)             #   dead pid rides to the comp page's own
+    ld t1, 8(t0)             #   cell — an exit without win_close is the
+    li t0, 256               #   reclaim's trigger (the array T8.15: one
+    bge t1, t0, 8f           #   write per pid ever; a pid past the 256
+    li t0, EMO_KOFF + 0x87008258  #   is the reclaim that never runs, the
+    slli t2, t1, 3           #   documented bound)
+    add t0, t0, t2
+    sd t1, 0(t0)
 8:  la t0, emo_cur_slot
     ld t0, 0(t0)             # the exiting caller's slot
     li t3, 3

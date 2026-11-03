@@ -159,6 +159,73 @@ def input_info(index Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The parent binding (EmoOS T8.15, verb 19, emo-desktop A9.3): a popup
+// or a subsurface declares the toplevel it hangs from — its position
+// is the parent's from then on, its own coordinates relative, the
+// walk painting it immediately above its parent, the parent's death
+// taking it too. The caller must own both grants; a panel or a
+// toplevel takes no parent, and a parent that is no live toplevel is
+// the compositor's refusal.
+def win_parent(grant Int64, parent Int64) (R, Int64) {
+  var answer = ecall(19, grant, parent, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The buffer's format (EmoOS T8.15, verb 20, emo-desktop A9.3): the
+// negotiation's field — the caller names the pixel format it painted,
+// the gate records it on the row. XRGB8888 (0) is the first accepted
+// value; a format the compositor does not carry is refused by its
+// number.
+def win_format(grant Int64, format Int64) (R, Int64) {
+  var answer = ecall(20, grant, format, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The surface's scale (EmoOS T8.15, verb 21, emo-desktop A9.3): the
+// negotiation's other field — the scale the compositor's walk honors
+// when it carries the buffer. Scale 1 is the first accepted value; the
+// shape exists, the values grow under it.
+def win_scale(grant Int64, scale Int64) (R, Int64) {
+  var answer = ecall(21, grant, scale, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
+// caller parks, and the answer is the tick — the next composition's
+// completion, the flush that put a frame on the display. The
+// animation story's client side: a program that redraws on this
+// answer paces itself by the compositor's rhythm, never by a
+// constant. Virtio-gpu has no vblank; the composition is the machine's
+// frame pulse.
+def win_frame() (R, Int64) {
+  var answer = ecall(22, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desktop protocol's version (EmoOS T8.15, verb 23, emo-desktop
+// A9.3): one word, the negotiation's anchor — the answer is 1, the
+// protocol the verbs 10..23 carry. A client that reads it before its
+// first desktop call knows every shape this document names.
+def desktop_version() (R, Int64) {
+  var answer = ecall(23, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.

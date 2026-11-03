@@ -25,7 +25,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | --- | --- | --- |
 | M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | complete |
 | M8 — Glyphs & pointer | bitmap fonts, the pointer sprite, the input merge, the Elm loop on metal | complete |
-| M9 — Windows | the composited window loop, drag, focus, kill-and-restart | — |
+| M9 — Windows | the composited window loop, drag, focus, kill-and-restart, the growth contract's five increments | complete |
 | M10 — The desktop | the EmoUI fb backend whole, the dock, the first apps | — |
 | M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks | — |
 
