@@ -70,14 +70,17 @@ build() {
 # the goldens and the probe are consumers and are built in place.
 sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
-  frame/counter.emo win/package.emo win/ui_fb_win.emo | cksum | awk '{print $1}')
+  frame/counter.emo win/package.emo win/ui_fb_win.emo \
+  "$UI/corpus/package.emo" "$UI/corpus/main.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
-  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0"
+  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0" \
+  "$REG/emo/ui_corpus/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
 cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
+cp "$UI/corpus/package.emo" "$UI/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
 cp win/package.emo win/ui_fb_win.emo "$REG/emo/ui_fb_win/0.1.0/"
 
 # --- the font's table is its drawing ------------------------------------
@@ -248,5 +251,15 @@ check_golden frame/golden frame/golden/expected.txt \
 
 check_golden win/golden win/golden/expected.txt \
   "$PWD/.emo-build/check/win" "window shell's twin" ocaml c typescript wasm beam
+
+# The convergence corpus (emo-desktop A10.1): the shared application
+# the other backend families run, required whole from `emo/ui_corpus`
+# and run through the Elm loop on the pixel surface — the whole node
+# vocabulary (the counter, the form, the scrolled list, the image, the
+# spacer) laid out and painted, the state transitions `update` says
+# interleaved with the frames' digests. The sixth backend family runs
+# what the other five run, the loop unchanged.
+check_golden corpus corpus/expected.txt \
+  "$PWD/.emo-build/check/corpus" "convergence corpus's twin" ocaml c typescript wasm beam
 
 exit $fail

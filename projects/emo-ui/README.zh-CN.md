@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)、原生 **`ui_macos` 后端及其自驱动语料**(T48.8)、**GTK 4 `ui_gtk` 后端**(T48.9)、浏览器 **`ui_browser` 后端及其 DOM 语料**(T48.10、T48.11)与**收敛语料**——同一个共享应用跑在每个后端上(T48.12)——都已落地。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)、原生 **`ui_macos` 后端及其自驱动语料**(T48.8)、**GTK 4 `ui_gtk` 后端**(T48.9)、浏览器 **`ui_browser` 后端及其 DOM 语料**(T48.10、T48.11)与**收敛语料**——同一个共享应用跑在每个后端上(T48.12)——都已落地;**帧缓冲 `ui_fb` 后端**是第六个运行时家族,住在 [`projects/emo-desktop`](../../emo-desktop),让同一份收敛语料经 Elm 循环跑在像素表面上——五个宿主目标加金属(emo-desktop A7–A10)。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 

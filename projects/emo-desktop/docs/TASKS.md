@@ -513,8 +513,28 @@ tree's and EmoOS's, listed there.
 
 ## M10 — the desktop (the desktop side)
 
-- [ ] **A10.1** — The EmoUI fb backend whole: `emo/ui_fb` as the
-  sixth backend family, the Elm loop unchanged.
+- [x] **A10.1** — The EmoUI fb backend whole: `emo/ui_fb` as the
+  sixth backend family, the Elm loop unchanged. **Landed 2026-11-03**:
+  the family's proof of membership is the convergence corpus — the
+  shared application the other five runtime families run (the counter,
+  the form, the scrolled list, the image, the spacer, the events),
+  required whole from `emo/ui_corpus` in the fb family's own entry
+  ([`fb/corpus/`](../fb/corpus), `emo/ui_fb_corpus_golden`), never
+  copied, and run through `ui.run` on the pixel surface — a canvas at
+  the baseline mode, the frame golden's Eye on it, the script `0,0,1,2`
+  the tui and the debug entries feed. The whole node vocabulary the
+  counter never touched — `TextInput`, `Scroll`, `Image`, `Spacer`,
+  a column's padding and a row's gap — lays out and paints under the
+  loop; every frame's digest prints beside `update`'s state
+  transitions (`inc 1` … `submit 1`, five frames, `dec 1` and
+  `submit 1` landing on the same count and the same digest as
+  `inc 1`), the interpreter's bytes are `expected.txt`, and all five
+  hosted targets produce them exactly — the fb gate checks the family
+  beside its siblings (staging `emo/ui_corpus` into its registry, the
+  checks 73 → 90 ok). The metal's leg is the one it has run since
+  A8.3: the same loop, the same backend interface, the carve for the
+  surface — `run.sh`'s screen pass and the corpus file the family's
+  digests live in. The EmoUI README names the family (EN + zh).
 - [ ] **A10.2** — The dock and the desktop shell (`emo_desktop`).
 - [ ] **A10.3** — The first apps: a counter, a file browser, an
   editor — each a corpus package, dual-run where hosted.
