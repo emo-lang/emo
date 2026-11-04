@@ -113,6 +113,18 @@ SECTIONS
   . = KOFF + 0x87009000;
   .emo_console (NOLOAD) : AT(ADDR(.emo_console) - KOFF) { *(.emo_console) } :tick
 
+  /* The exec page (emo-desktop A11.1), a page above the console's end:
+     the disk ELFs' kernel side — the per-pid image cells (the gate's
+     checks and the build's mapping read the caller's image record by
+     them; one write per pid ever, the dead-owners' discipline), the
+     eight image records (the segment table, the entry, the run), the
+     pending cell the exec's spawn consumes, the request's busy cell
+     and name, and the process service's request stash. The kernel's
+     Emo (gate.emo, exec.emo, main.emo) reads and writes every word by
+     its fixed constants. */
+  . = KOFF + 0x8700c000;
+  .emo_exec (NOLOAD) : AT(ADDR(.emo_exec) - KOFF) { *(.emo_exec) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

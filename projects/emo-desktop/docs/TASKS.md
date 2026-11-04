@@ -633,9 +633,50 @@ tree's and EmoOS's, listed there.
 
 ## M11 — honest multi-app (the desktop side)
 
-- [ ] **A11.1** — The corpus apps become disk ELFs in place: loaded
+- [x] **A11.1** — The corpus apps become disk ELFs in place: loaded
   by the filesystem, per-image segment tables, per-process gate
-  checks (the kernel-side tasks are EmoOS's Step 8).
+  checks (the kernel-side record is EmoOS's T8.16).
+  **Landed 2026-11-04**: the three corpus apps left the boot image —
+  each a program of its own, a disk ELF the machine installs and
+  execs. **The packages**: one program tree per app
+  ([`fb/apps/counter/`](../fb/apps/counter),
+  [`fb/apps/files/`](../fb/apps/files),
+  [`fb/apps/editor/`](../fb/apps/editor)) — a `main.emo` whose whole
+  body is the session the boot image's token branch ran (A10.3):
+  `win_new`'s window of its own, declared a toplevel, placed, the Elm
+  loop over the window buffer's surface, `win_close` behind the quit
+  key, the exit answering the parent's wait — plus one shared package,
+  [`fb/winbuf/`](../fb/winbuf) (`emo/ui_fb_winbuf`, riscv64 alone):
+  the window buffer's metal side — the raw pixel defs over a
+  `win_new` run, the byte table in the merged stream's seat, the
+  digest line (`frame <n>`, the corpus's own) the present says first —
+  the constructors defs, a riscv64 program naming no other module's
+  class in value position. The apps' sources of truth are unchanged:
+  `emo/ui_apps` still owns every model, update, and view; the golden's
+  bytes are the sessions' bytes. **The flow**: the parent (the boot
+  image's top level) execs each by name after the shell's quit, one
+  at a time — `syscall.exec("counter.elf")`, `wait`, the answer line
+  `app counter 0`, the golden's own closing line — the kernel reads
+  the volume, loads the image, and the window is the only one up, the
+  mount's frame on the wire the moment the loop mounts. **The disk is
+  their home**: the first boot installs the three images onto the
+  volume it formats (`installed <name> <size>`), the boots after find
+  them (`kept <name> <size>`) — the execs always load off the disk,
+  nothing of the apps remains embedded in the boot image (its
+  `package.emo` dropped `emo/ui_apps`, the image 18 KiB lighter). The
+  wire's sessions are the hosted twin's byte for byte: the counter's
+  mount, add, sub (the sub returning its mount's frame), the
+  browser's down and open, the editor's puts and newline, the
+  screendumps folding to the corpus's digests at the mount and the
+  session's last frame. **The pins**: `run.sh` green under both timer
+  transports, three consecutive rounds byte-identical on both; the
+  install/kept/image lines pinned by shape and place (the sizes are
+  the build's); `dune runtest` green (the smoke builds the three
+  program trees and winbuf into its registry); `@fmt` green;
+  `fb/check.sh` 134 ok (the winbuf and program lowerings pinned). The
+  kernel-side record — the verb, the loader, the per-image tables and
+  the per-process checks — is EmoOS's T8.16. **A11.2's two-image
+  desktop is the next acceptance.**
 - [ ] **A11.2** — The multi-image acceptance: two apps, two images,
   one desktop, the golden's hands (`sendkey`/`mouse_move`) driving
   both.

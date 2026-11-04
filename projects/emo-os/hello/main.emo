@@ -53,7 +53,6 @@ require "emo/ui_fb"
 require "emo/ui_fb_frame"
 require "emo/ui_fb_win"
 require "emo_desktop"
-require "emo/ui_apps"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -80,13 +79,6 @@ const desk_cell = buf + 2112
 // stack's reclaim proof — and the one reborn after it.
 const client_cell = buf + 2120
 const client2_cell = buf + 2128
-// The first apps' tokens (emo-desktop A10.3): the pass that opens its
-// own window and runs one of the corpus apps through the Elm loop —
-// the counter, the file browser, the editor — each read once, beside
-// the other passes'.
-const counter_cell = buf + 2136
-const files_cell = buf + 2144
-const editor_cell = buf + 2152
 // The screen grant's channel and the carve itself (T8.2): the token on
 // the user cells page — the one crossing every table maps, so the
 // kernel's spawn-side read sees the poke — and the carve's base by its
@@ -2047,104 +2039,11 @@ if peek64(desk_cell) != 0 {
   syscall.exit(0)
 }
 
-// The first apps (emo-desktop A10.3): the corpus apps on the machine,
-// each a pass of its own — a window of its own by `win_new`, declared a
-// toplevel, placed, and the Elm loop run over the window buffer's
-// surface with the app's defs as values and the merged stream in the
-// input's seat (`AppKeys`). The loop's `mount` paints the app's first
-// frame into the window's own words and the `present` says its digest
-// on the wire before the grant's present puts it on the display — the
-// compositor composites the whole stack with the app's frame in it and
-// flushes, the app's window the only one up. Every byte the stream
-// delivers is an event, the tree rebuilt and repainted — the pass's
-// arena holds the session (A8.3's per-event count, the sessions sized
-// to it) — until the quit key ends the loop, the window closed behind
-// it, the exit answering the parent's wait. The lines the passes print
-// are the hosted twin's (`apps/golden/`), byte for byte.
-if peek64(counter_cell) != 0 {
-  poke64(counter_cell, 0)
-  var gc = 0
-  var base_c = 0
-  case syscall.win_new(384, 128) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
-      gc = win_id(ans)
-      base_c = win_base(ans)
-    }
-  }
-  case syscall.win_role(gc, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  case syscall.win_move(gc, 160, 160) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  const wc = Win.new(grant: gc, base: base_c, width: 384, height: 128)
-  ui.run(ui_apps.counter.view, ui_apps.counter.update,
-    ui_apps.counter.initial(), ui_fb.backend(wc, AppKeys.new(bytes: [97, 98])))
-  case syscall.win_close(gc) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  syscall.exit(0)
-}
-if peek64(files_cell) != 0 {
-  poke64(files_cell, 0)
-  var gf = 0
-  var base_f = 0
-  case syscall.win_new(384, 128) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
-      gf = win_id(ans)
-      base_f = win_base(ans)
-    }
-  }
-  case syscall.win_role(gf, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  case syscall.win_move(gf, 224, 144) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  const wf = Win.new(grant: gf, base: base_f, width: 384, height: 128)
-  ui.run(ui_apps.files.view, ui_apps.files.update,
-    ui_apps.files.initial(), ui_fb.backend(wf, AppKeys.new(bytes: [106, 107, 111])))
-  case syscall.win_close(gf) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  syscall.exit(0)
-}
-if peek64(editor_cell) != 0 {
-  poke64(editor_cell, 0)
-  var ge = 0
-  var base_e = 0
-  case syscall.win_new(384, 128) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
-      ge = win_id(ans)
-      base_e = win_base(ans)
-    }
-  }
-  case syscall.win_role(ge, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  case syscall.win_move(ge, 288, 208) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  const we = Win.new(grant: ge, base: base_e, width: 384, height: 128)
-  ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(), ui_fb.backend(we, AppKeys.new(bytes: [97, 98, 10])))
-  case syscall.win_close(ge) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
-  }
-  syscall.exit(0)
-}
+// The first apps (emo-desktop A10.3) lived here as token branches of
+// this image — each a pass re-entering this top level. A11.1 moved
+// them out: each app is a disk ELF of its own (`fb/apps/counter/` and
+// its siblings, the sources of the images this image's kernel embeds),
+// exec'd by name in the parent's own flow below. No token, no branch.
 
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
@@ -2494,14 +2393,63 @@ def app_line(name_len Int64, code Int64) Void {
   gate_line(p)
 }
 
-// The first apps (emo-desktop A10.3): each pass spawned after the
-// shell's quit, one at a time, its window the only one up, the session
-// the hosted twin's bytes — and its exit answering the parent's wait,
-// the code on the wire. No start park: the pass's first frame is on
-// the wire the moment it spawns, the display settled during the desk
-// era's own end.
-poke64(counter_cell, 1)
-var app_spawned = syscall.spawn()
+// The exec names (emo-desktop A11.1): the file the volume holds, poked
+// at the scratch's head — the name the gate copies into the exec page
+// inside the trap, the filesystem service reads the volume by. The
+// answer line keeps the app's name; the file carries the .elf.
+def name_counter() Int64 {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 46) // .
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 102) // f
+  return p
+}
+
+def name_files() Int64 {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 46) // .
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 102) // f
+  return p
+}
+
+def name_editor() Int64 {
+  var p = byte_at(0, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 46) // .
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 102) // f
+  return p
+}
+
+// The first apps (emo-desktop A11.1): each a disk ELF the volume
+// holds, exec'd by name after the shell's quit, one at a time — the
+// kernel reads the file through the filesystem service, loads the
+// image into a run of its own, builds the child's table off its own
+// segments, and the child enters its own `main` — a window of its own,
+// the Elm loop over the window buffer's surface, the merged stream in
+// the input's seat. Its exit answers this wait, the code on the wire
+// (`app <name> <code>`, the hosted twin's closing line). No start
+// park: the app's first frame is on the wire the moment its image is
+// loaded, the display settled during the desk era's own end.
+var app_spawned = syscall.exec(buf, name_counter())
 case app_spawned {
   (R.error, _) -> { mark() }
   (R.ok, apid) -> {
@@ -2525,8 +2473,7 @@ case app_spawned {
     }
   }
 }
-poke64(files_cell, 1)
-var files_spawned = syscall.spawn()
+var files_spawned = syscall.exec(buf, name_files())
 case files_spawned {
   (R.error, _) -> { mark() }
   (R.ok, fpid) -> {
@@ -2548,8 +2495,7 @@ case files_spawned {
     }
   }
 }
-poke64(editor_cell, 1)
-var editor_spawned = syscall.spawn()
+var editor_spawned = syscall.exec(buf, name_editor())
 case editor_spawned {
   (R.error, _) -> { mark() }
   (R.ok, epid) -> {

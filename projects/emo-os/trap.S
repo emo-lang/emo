@@ -415,18 +415,62 @@ emo_os_trap_trampoline:
     ld t3, 8(t2)             # the leaver's pid
     li t1, 1
     beq t3, t1, .Larena_boot
-    ld t1, 0(t0)             # the running pass's cursor, the user's address
+    # the shared pair's owner (emo-desktop A11.1): the boot image's
+    # pointers until an exec's stub re-parks them, the exec'd image's
+    # after — a crossing pass hands its arena through the pair only
+    # when its image owns them, or the pair misfiles one image's
+    # cursor into another's words
+    li t1, 0x87fff060
+    ld t1, 0(t1)
+    beqz t1, .Larena_a       # no owner yet: the boot image's, every pass's
+    bne t1, t3, .Larena_saved # a stranger's crossing: nothing to save
+.Larena_a:
     li t4, EMO_KOFF
-    add t1, t1, t4           # the kernel's
+    add t4, t0, t4           # the pointer's kernel alias â the hand runs
+    ld t1, 0(t4)             # on the kernel's table here, and a disk
+                             # ELF's arena words sit in an allocator run
+                             # the low window of no single table names
+                             # whole (emo-desktop A11.1); the half is
+                             # mapped in every table, the alias reaches
+                             # any image's words
+    li t4, EMO_KOFF
+    add t1, t1, t4           # the running pass's cursor, the kernel's
     sd t1, 576(t2)
+    # the end goes with it (emo-desktop A11.1): a boot-image pass's end
+    # is its run's, dressed at the spawn and constant â but an exec'd
+    # image's arena is its own heap, whose end its runtime wrote over
+    # the run's at entry â the resume writes both words back, and an
+    # end the kernel slot kept from the spawn would be the run's, the
+    # arena's cursor the heap's: gone at its first allocation. The end
+    # rides beside the cursor, both worlds' words whole.
+    li t0, 0x87fff010
+    ld t0, 0(t0)
+    beqz t0, .Larena_saved
+    li t4, EMO_KOFF
+    add t4, t0, t4           # the same kernel alias
+    ld t1, 0(t4)
+    li t4, EMO_KOFF
+    add t1, t1, t4           # the running pass's end, the kernel's
+    sd t1, 584(t2)
     j .Larena_saved
 .Larena_boot:
-    ld t1, 0(t0)
+    # the boot pass's own pair of cells (emo-desktop A11.1): the boot
+    # image's pointers, parked by its stub beside the shared pair — a
+    # disk ELF's entry re-parks the shared ones, and the boot pass's
+    # hand must name the boot image's words forever after
+    li t0, 0x87fff050
+    ld t0, 0(t0)
+    beqz t0, .Larena_saved
+    li t4, EMO_KOFF
+    add t4, t0, t4           # the same kernel alias
+    ld t1, 0(t4)
     la t3, emo_os_boot_cur
     sd t1, 0(t3)
-    li t0, 0x87fff010
-    ld t0, 0(t0)             # the end word beside it
-    ld t1, 0(t0)
+    li t0, 0x87fff058
+    ld t0, 0(t0)
+    li t4, EMO_KOFF
+    add t4, t0, t4
+    ld t1, 0(t4)
     la t3, emo_os_boot_lim
     sd t1, 0(t3)
 .Larena_saved:
@@ -621,7 +665,8 @@ emo_os_trap_trampoline:
     li t3, 6
     bge t6, t3, .Lroute_fs   # ops 6..9 (the filesystem's, any slot)
     li t3, 3
-    bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
+    bge t6, t3, .Lroute_proc # ops 3 (spawn), 4 (wait) and 5 (exec, the
+                             # disk ELFs', emo-desktop A11.1)
     beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
     li t3, 2
     beq t6, t3, .Lroute_input # op 2, the read verb: the machine's
@@ -946,24 +991,44 @@ emo_os_trap_resume:
     ld t2, 8(t1)             # the passer's pid
     li t3, 1
     beq t2, t3, .Larena_boot_in
+    # the shared pair's owner (emo-desktop A11.1), the save's check
+    # mirrored: the incoming pass hands through the pair only when its
+    # image owns them — a stranger's resume would file its cursor into
+    # another image's words
+    li t3, 0x87fff060
+    ld t3, 0(t3)
+    beqz t3, .Larena_a_in    # no owner yet: the boot image's, every pass's
+    bne t3, t2, .Larena_ready # a stranger's resume: nothing to hand
+.Larena_a_in:
     li t4, EMO_KOFF
     ld t2, 576(t1)
-    sub t2, t2, t4           # the passer's cursor, as the user addresses it,
-    sd t2, 0(t0)             # becomes the arena's
+    sub t2, t2, t4           # the passer's cursor, as the user addresses
+    add t0, t0, t4           # it — through the pointer's kernel alias,
+    sd t2, 0(t0)             # the half every table maps: the resume runs
+                             # on the incoming pass's own table, and the
+                             # cells' image may be a disk ELF whose words
+                             # no other table maps at identity
+                             # (emo-desktop A11.1) — becomes the arena's
     li t0, 0x87fff010
     ld t0, 0(t0)             # and the end word beside it
     ld t2, 584(t1)
     sub t2, t2, t4
+    add t0, t0, t4
     sd t2, 0(t0)
     j .Larena_ready
 .Larena_boot_in:
+    li t4, EMO_KOFF
+    li t0, 0x87fff050        # the boot image's own pair (A11.1), not the
+    ld t0, 0(t0)             # shared cells a disk ELF's entry re-parked
     la t2, emo_os_boot_cur
     ld t2, 0(t2)
+    add t0, t0, t4           # the boot pair's words, the same alias
     sd t2, 0(t0)
-    li t0, 0x87fff010
+    li t0, 0x87fff058
     ld t0, 0(t0)
     la t2, emo_os_boot_lim
     ld t2, 0(t2)
+    add t0, t0, t4
     sd t2, 0(t0)
     j .Larena_ready
 .Lkernel_home:
@@ -1281,10 +1346,13 @@ emo_os_frames_given:
     .zero 8                  # padding: the bitmap opens at +64
     .globl emo_os_frames_claimed
 emo_os_frames_claimed:
-    .zero 64
-# The frame freelist (T6.1), at +128: the head, the count, and the
+    .zero 256
+# The frame freelist (T6.1), at +320: the head, the count, and the
 # blocks split so far — the page tables' 4 KiB unit, sixteen off a
-# block at a time.
+# block at a time. (The bitmap grew to 32 words — 2048 blocks, the
+# region the 64 MiB heap leaves — when the disk ELFs' round spent the
+# heap lever: at eight words the scan overran the bitmap into these
+# words and the freelist followed garbage.)
     .globl emo_os_frames_frame_head
 emo_os_frames_frame_head:
     .zero 8
@@ -1321,3 +1389,16 @@ emo_os_fs_stash:
     .globl emo_os_fs_slots
 emo_os_fs_slots:
     .zero 9216               # four slots of 2304 bytes
+
+# The exec page (emo-desktop A11.1): the disk ELFs' kernel side, at the
+# fixed address the kernel's linker script gives the section — the
+# per-pid image cells (one write per pid ever, the dead-owners'
+# discipline), the eight image records, the pending cell the exec's
+# spawn consumes, the request's busy cell and name, and the process
+# service's request stash. The kernel's Emo (gate.emo, exec.emo,
+# main.emo) reads and writes every word by its fixed constant; named
+# here so the forensics can read them.
+    .section .emo_exec, "aw", @nobits
+    .globl emo_os_exec_page
+emo_os_exec_page:
+    .zero 4096

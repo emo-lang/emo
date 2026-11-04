@@ -1341,6 +1341,12 @@ let raw_mem_bindings =
        admission rule. *)
     ( "pid_num",
       { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
+    (* pid_at (EmoOS T8.16): the conversion's other half — a service
+       that becomes a client of another service reads the cell that
+       names it (a number) and speaks to it: the box the send takes.
+       Same admission rule. *)
+    ( "pid_at",
+      { vtype = FuncType ([ ("n", Int64) ], Pid); is_var = false; depth = 0 } );
     (* sfence (EmoOS T8.5): the address-translation fence — the live
        page table's own discipline. A table a satp names (a window
        buffer's run mapped after the spawn) owes the hardware the
@@ -1353,7 +1359,7 @@ let raw_mem_bindings =
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
   | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "gate_reply"
-  | "gate_post" | "pid_num" | "sfence" ->
+  | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
       true
   | _ -> false
 

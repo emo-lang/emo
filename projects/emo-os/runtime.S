@@ -69,6 +69,27 @@ emo_start:
     la t0, emo_os_user_blob_end
     sd t0, 8(t1)
     sd zero, 16(t1)
+    # the disk ELFs' blobs (emo-desktop A11.1): the three apps' images
+    # ride beside the boot image, and their bounds go to the handoff
+    # page's free tail — the first boot installs them on the volume
+    # (the root writes each through the filesystem service when a probe
+    # says the file is missing), the boots after find the volume that
+    # carries them and exec from the disk
+    la t0, emo_os_user_blob_c
+    li t1, 0xFFFFFFC0870021d0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_c_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_f
+    li t1, 0xFFFFFFC0870021e0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_f_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_e
+    li t1, 0xFFFFFFC0870021f0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_e_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks
@@ -101,7 +122,7 @@ emo_start:
     la t0, emo_frames__take_run
     la t1, emo_arena_take_hook
     sd t0, 0(t1)
-    li t0, 2                    # frames.emo's arena_run
+    li t0, 4                    # frames.emo's arena_run
     la t1, emo_arena_run_len
     sd t0, 0(t1)
     # the address spaces (T6.2): the three space hooks go to the
@@ -127,6 +148,13 @@ emo_start:
     # it. Zero in every image whose stub leaves it.
     la t0, emo_os_death_notice
     la t1, emo_death_hook
+    sd t0, 0(t1)
+    # the image give hook (emo-desktop A11.1): an exec's child's death
+    # walks its image's run home through exec.emo's def — the pid's
+    # image cell names the record, the record the run's base and
+    # length. Zero in every image whose stub leaves it.
+    la t0, emo_exec__image_home
+    la t1, emo_image_give_hook
     sd t0, 0(t1)
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and

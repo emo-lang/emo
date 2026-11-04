@@ -27,11 +27,20 @@ EmoOS 是同一个编译器构建的两个 Emo 程序:用户镜像(shell 与机�
 $ (cd hello && EMO_REGISTRY=<staged 好的 registry> \
      ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o ../hello.elf)
+$ (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY=<registry> \
+     ../../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/counter.elf")
+$ (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY=<registry> \
+     ../../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/files.elf")
+$ (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY=<registry> \
+     ../../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/editor.elf")
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
-用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf`——ELF 必须先于内核链接存在。改了 `hello/`、内核自己的模块或 stage 进去的那些包之后,两个镜像都按这个顺序重建。
+用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf` 与三个应用的 ELF(emo-desktop A11.1)——它们都得先于内核链接存在。改了 `hello/`、应用的树、内核自己的模块或 stage 进去的那些包之后,五个镜像都按这个顺序重建。
 
 ## 金测一条龙
 

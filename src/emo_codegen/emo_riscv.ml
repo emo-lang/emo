@@ -1266,6 +1266,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       emit_expr env (d + 1) p;
       call_runtime env "emo_pid_num";
       if not env.native then box_result env "emo_box_i64"
+  | Builtin { name = "pid_at"; args = [ n ] } ->
+      (* T8.16: the conversion's other half — the cell's number boxed
+         into the Pid a send takes, the client that reads a service by
+         its cell and speaks to it. *)
+      emit_expr env (d + 1) n;
+      call_runtime env "emo_pid_at";
+      if not env.native then box_result env "emo_box_i64"
   | Builtin { name = "self_pid"; args = [] } -> call_runtime env "emo_self_pid"
   | Builtin { name = "fence"; args = [] } ->
       (* the full sequential-consistency barrier, ordinary and volatile
@@ -3456,9 +3463,54 @@ emo_start:
     # the arena cells (T5.1): the addresses of this image's own root
     # slot's arena cursor and end, parked where the kernel's trap shim
     # reads and writes them — every U-mode boundary crossing hands the
-    # running pass's arena to this image's allocator through them.
+    # running pass's arena to this image's allocator through them. The
+    # pointers are identity-addressed — the boot image's link address
+    # is its physical one — and a disk ELF's pages sit in an allocator
+    # run: the kernel's exec parks the image's translation (the run's
+    # base less the first page, emo-desktop A11.1) in the cells page's
+    # delta word, and the stub adds it — zero for the boot image, the
+    # run's offset for an exec'd one — so the hand lands in this
+    # image's own words whichever table satp named when it was parked.
+    # the raw address parks first (0x87fff068): this image's slot
+    # word's own link address, the same constant every image of this
+    # profile links — the base the kernel's exec adds the delta to
+    # when it parks the shared pair before the child's first run.
     la t0, emo_procs
     addi t0, t0, 576
+    li t1, 0x87fff068
+    sd t0, 0(t1)
+    li t2, 0x87fff048
+    ld t2, 0(t2)
+    add t0, t0, t2
+    la t1, emo_user_arena_cell
+    sd t0, 0(t1)
+    addi t0, t0, 8
+    la t1, emo_user_alim_cell
+    sd t0, 0(t1)
+    # the boot image's own pair (emo-desktop A11.1): the trap shim's
+    # boot-pass branches read these, not the shared cells — a disk
+    # ELF's entry re-parks the shared pair for its own arena words,
+    # and the boot pass's hand must name the boot image's own words
+    # forever after. The boot image's stub parks both pairs; an exec'd
+    # image's parks the shared pair only — the delta is the tell, zero
+    # for the boot image, the run's offset for a disk ELF.
+    la t0, emo_procs
+    addi t0, t0, 576
+    li t2, 0x87fff048
+    ld t2, 0(t2)
+    add t0, t0, t2
+    bnez t2, 5f
+    li t1, 0x87fff050
+    sd t0, 0(t1)
+    addi t0, t0, 8
+    li t1, 0x87fff058
+    sd t0, 0(t1)
+    la t0, emo_procs
+    addi t0, t0, 576
+    li t2, 0x87fff048
+    ld t2, 0(t2)
+    add t0, t0, t2
+5:
     la t1, emo_user_arena_cell
     sd t0, 0(t1)
     addi t0, t0, 8
@@ -3573,6 +3625,24 @@ emo_runtime_init:
     li t2, 1
     sd t2, 8(t1)            # the root's pid
     sd t2, 16(t1)           # alive
+    # the arena words (emo-desktop A11.1): the boot image's root runs on
+    # the image heap, and this store dresses them — but an exec'd disk
+    # ELF's arena is the run the spawn claimed, whose cursor and end
+    # the exec parked as values on the cells page (the identities the
+    # image's own table maps — the run sits at identity in it). The
+    # delta word is the tell: zero for the boot image, anything for an
+    # exec'd one.
+    li t2, 0x87fff048
+    ld t2, 0(t2)
+    beqz t2, 7f
+    li t2, 0x87fff070
+    ld t2, 0(t2)
+    sd t2, 576(t1)
+    li t2, 0x87fff078
+    ld t2, 0(t2)
+    sd t2, 584(t1)
+    j 8f
+7:
     la t0, emo_heap_start
     sd t0, 576(t1)          # the root's arena cursor — its end and the
                             #   const region ride the profile's tail
@@ -3580,6 +3650,7 @@ emo_runtime_init:
                             #   this blob), which also draws the root's
                             #   bump ceiling where the user image's const
                             #   region sits
+8:
     addi sp, sp, -16
     sd ra, 0(sp)
     call emo_runtime_init_tail
@@ -6623,6 +6694,17 @@ emo_arena_reap:
     ld t0, 16(a0)
     li t1, 3
     bne t0, t1, .Lreap_done     # only a done process reclaims
+    # the image's run (emo-desktop A11.1): an exec's child's image goes
+    # home through the kernel's own hook — the pid's image cell names
+    # the record, the record the run — before the stack and the arena,
+    # whose gives the same done state promises. One load where no hook
+    # is parked.
+    la t0, emo_image_give_hook
+    ld t0, 0(t0)
+    beqz t0, .Lreap_noimg
+    jalr t0                     # a0 = the slot, the kernel's def reads it
+    ld a0, 8(sp)
+.Lreap_noimg:
     ld t0, 864(a0)
     beqz t0, .Lreap_arena       # no stack block: a green process, or the root
     la t1, emo_block_give_hook
@@ -7110,6 +7192,24 @@ emo_mb_remove:
 emo_pid_num:
     andi a0, a0, -32
     ld a0, 8(a0)
+    ret
+
+# emo_pid_at: a0 = the pid number; a0 = the Pid word (emo-desktop
+# A11.1) — the conversion's other half. A service that becomes a client
+# of another reads the cell that names it and boxes the number into the
+# Pid the send takes; the box is self_pid's own shape, one payload word
+# on the caller's arena.
+    .globl emo_pid_at
+emo_pid_at:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    mv a1, a0                  # the number rides emo_alloc untouched
+    li a0, 1
+    call emo_alloc
+    sd a1, 8(a0)
+    ori a0, a0, 18
+    ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 
 # emo_gate_post: a0 = the service's raw pid, a1 = the request word —
@@ -7808,6 +7908,13 @@ emo_runtime_init_tail:
 emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
                             #   across the call
+    # the arena end (emo-desktop A11.1): the boot image's root ends at
+    # the const region's floor, but an exec'd disk ELF's arena is the
+    # run the spawn claimed — the delta word is the tell, and an exec'd
+    # image leaves the end the spawn wrote, the hand's words whole
+    li t0, 0x87fff048
+    ld t0, 0(t0)
+    bnez t0, 9f
     la t0, emo_heap_end
     li t2, -65544
     add t0, t0, t2
@@ -7818,6 +7925,7 @@ emo_runtime_init_tail:
                             #   carve is dead code in this image (the
                             #   hooks are parked), so no child ever
                             #   receives the region either
+9:
     sd zero, 592(t1)        # nothing sent; the root's arena is never
     sd zero, 600(t1)        # claimed, so nothing reclaims it (T5.2)
     sd zero, 864(t1)        # and its stack is the boot stack, no block (T5.3)
@@ -8016,7 +8124,7 @@ SECTIONS
 let stack_asm ~(profile : string) : string =
   let stack_bytes, heap_bytes =
     match profile with
-    | "kernel" -> (1048576, 100663296)
+    | "kernel" -> (1048576, 67108864)
     | "user" -> (65536, 8388608)
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
@@ -8176,6 +8284,21 @@ emo_space_write_hook:
 
     .globl emo_death_hook
 emo_death_hook:
+    .zero 8
+
+# ---- The image give hook (emo-desktop A11.1) ----
+#
+# An exec'd image's run, walked home at the death: one word in .bss,
+# zero in every image whose stub does not touch it, while a kernel
+# package's boot stub parks a typed Emo def the reaper calls with the
+# dead process's slot when the process is done. The kernel's def reads
+# the pid's image cell (one write per pid ever, the dead-owners'
+# discipline), gives the record's run back block by block, and clears
+# the cell and the record behind it. Zero in every image without the
+# exec world; the call costs one load where it is not parked.
+
+    .globl emo_image_give_hook
+emo_image_give_hook:
     .zero 8
 
 # ---- The console hook (EmoOS T3.5) ----

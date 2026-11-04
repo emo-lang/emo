@@ -165,8 +165,8 @@ let is_builtin = function
   | "println" | "printf" | "self_pid" | "halt" | "fence" | "expect_equal"
   | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
   | "peek64" | "poke64" | "peek32" | "poke32" | "device_wait" | "device_wake"
-  | "ecall" | "user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "sfence"
-    ->
+  | "ecall" | "user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "pid_at"
+  | "sfence" ->
       true
   | _ -> false
 

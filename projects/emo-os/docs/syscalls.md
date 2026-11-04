@@ -263,6 +263,33 @@ events unchanged — a reader that wants the pointer reads it here, and
 the sprite on the display is the compositor's (T8.11, the desktop ABI's
 sprite memory).
 
+The disk ELFs' verb (T8.16, emo-desktop A11.1, verb 24) is
+`exec(name, name_len)`: the program the filesystem names becomes a
+process of its own. The name is judged like the filesystem's — inside
+one writable segment of the caller's own (the per-process check: a
+disk ELF's caller is judged by its image's segments, the boot image's
+by its own) — copied into the exec page inside the trap, and routed to
+the process service, which reads the volume through the filesystem
+service, parses the image the boot loader's way (the magic, the
+class, the machine, the program-header table's shape), copies its
+loadable segments into a contiguous run of allocator blocks, builds
+the child's table off the image's own segments at the addresses it
+was linked to, and enters it at the ELF's entry. The answer is the
+child's pid number, `wait`'s argument; the child's exit answers it.
+"no such file" (reason 6) for a name the volume does not hold;
+reason 5 while another exec request is staged, past the image cells'
+256-pid bound, or when the machine cannot back the image or its
+scratch. The per-image world is the round's substance: the boot
+image's own segment table stays the global one it has always been,
+every exec'd image carries a record of its own (the count, the rows,
+the entry, the run), the gate's checks and the table builder read the
+caller's record by a per-pid cell (one write per pid ever — the
+dead-owners' discipline), and the death walks the image's run home
+block by block, the record and the cell cleared behind it. One exec
+request at a time (the busy cell, held from the staging to the
+pickup); one exec'd image's arena rides the shared cells at a time
+(the bound A11.2's two-desktop acceptance grows).
+
 ## The user surface
 
 User code does not spell the raw ecall. The `syscall` package — its

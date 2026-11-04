@@ -46,7 +46,9 @@ rebuilt from the name table at every mount.
 ## The disk
 
 The disk is the block device the driver found (T7.1): 512-byte
-sectors, 2048 of them on the 1 MiB image `run.sh` creates. The layout
+sectors — 8192 of them on the 4 MiB image `run.sh` creates (the disk
+ELFs' install, emo-desktop A11.1, names three whole images the
+volume's business). The layout
 is fixed by sector number:
 
 | Sectors | Contents |
@@ -250,7 +252,10 @@ the gate (the write verb's discipline, T6.2):
 | 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
 
 A name is 1 to 24 bytes and carries no NUL and no newline (reason 4
-otherwise); a write is at most 2048 bytes (reason 4); a name no entry
+otherwise); a gate write is at most 2048 bytes (reason 4 — the
+request slot's staging), a kernel client's write at most 1 MiB (the
+format's own bound, the disk ELFs' install the caller it names); a
+name no entry
 holds is **reason 6, no such file** — a reason the table did not have
 and the `syscall` package names (`"no such file"`); a full name table
 or a data region with no run long enough is reason 5.
@@ -304,7 +309,8 @@ wait.
 ## Bounds
 
 - One disk, one volume, a flat namespace, whole-file operations; 64
-  files of up to 24-byte names; 2048 bytes per write; a file is one
+  files of up to 24-byte names; 2048 bytes per gate write (1 MiB per
+  kernel client's); a file is one
   contiguous extent.
 - Durability is the device's completion: there is no flush verb and
   the driver issues no flush, so a host that caches the image is the
@@ -358,4 +364,4 @@ A request slot:
 | 24 | the write's length, or the read's and the list's capacity |
 | 32 | the caller's buffer, for the read and the list |
 | 64 | the name, 32 bytes |
-| 256 | the write's bytes, 2048 bytes |
+| 256 | the write's bytes, 2048 bytes (gate clients) |

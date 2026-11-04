@@ -10,7 +10,7 @@ English version: [`README.md`](README.md).
 
 - **Wayland/Quartz 形状,QNX Screen 谱系。** 一个合成器拥有 scanout;客户端在授权缓冲里渲染再 present;输入是统一的事件流。这与 EmoOS 微内核已认的谱系同宗,用在像素上。
 - **包的集合,不是第二个镜像。** 内核只嵌一个用户镜像;M7–M10 期间桌面以包的形态骑在该镜像上(boot image `require`,`syscall` stub 包的先例)。到 M11、程序从文件系统以 ELF 装载时,应用原地变成磁盘 ELF——结构不变。
-- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.1 起带着项目自己的位图字体,自 A8.2 起带着指针精灵)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口),连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`,`emo/ui_apps`——计数器、文件浏览器、编辑器,各自都是一个 corpus 包,由本项目自己的 gate 与家族同跑)和 shell 的 chrome(`fb/desktop/`,`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
+- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.1 起带着项目自己的位图字体,自 A8.2 起带着指针精灵)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口),连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`,`emo/ui_apps`——计数器、文件浏览器、编辑器,各自都是一个 corpus 包,由本项目自己的 gate 与家族同跑)、应用自己的程序树(`fb/apps/counter/` 及其兄弟——磁盘 ELF 的来源,各自一个 `main.emo` 会话)与它们共享的金属包(`fb/winbuf/`,`emo/ui_fb_winbuf`——窗口缓冲的 raw 垫片、输入座上的字节表),以及 shell 的 chrome(`fb/desktop/`,`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
 
 ## 命名——已定
 
@@ -28,7 +28,7 @@ English version: [`README.md`](README.md).
 | M8 — 字形与指针 | 位图字体、指针精灵、输入合并、金属上的 Elm 循环 | complete |
 | M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启、生长契约的五增量 | complete |
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | complete |
-| M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查 | — |
+| M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查 | complete（一次一个；A11.2 的双镜像桌面是下一个验收） |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

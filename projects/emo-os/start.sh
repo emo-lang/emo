@@ -25,11 +25,14 @@ cd "$(dirname "$0")"
 # (emo-desktop A7.2): EmoUI's core, the fb backend's core, the first
 # frame with the counter the screen pass runs (A8.3), the window
 # shell's windows (A9.1), the desktop shell's dock (A10.2), and the
-# first apps (A10.3), from their own trees. They are staged into a registry named for the sources' content
+# window buffer's metal side (A11.1), from their own trees. They are staged into a registry named for the sources' content
 # — the way every gate in the tree stages one — and the build reads it
 # through EMO_REGISTRY, which names the one registry a build resolves
 # from, so the stub is staged beside them out of the compiler's own
-# tree; a change in any of them is a stale user image.
+# tree; a change in any of them is a stale user image. The apps' corpus
+# (emo/ui_apps, A10.3) is staged for the three app programs, which are
+# build roots of their own — the boot image execs them by name and no
+# longer carries them (A11.1).
 
 user_elf='hello.elf'
 elf='main.elf'
@@ -44,14 +47,19 @@ frame_src="$fb_dir/frame/package.emo $fb_dir/frame/ui_fb_frame.emo $fb_dir/frame
 win_src="$fb_dir/win/package.emo $fb_dir/win/ui_fb_win.emo"
 desktop_src="$fb_dir/desktop/package.emo $fb_dir/desktop/emo_desktop.emo"
 apps_src="$fb_dir/apps/package.emo $fb_dir/apps/ui_apps.emo $fb_dir/apps/counter.emo $fb_dir/apps/files.emo $fb_dir/apps/editor.emo"
+winbuf_src="$fb_dir/winbuf/package.emo $fb_dir/winbuf/ui_fb_winbuf.emo"
+counter_src="$fb_dir/apps/counter/package.emo $fb_dir/apps/counter/main.emo"
+files_src="$fb_dir/apps/files/package.emo $fb_dir/apps/files/main.emo"
+editor_src="$fb_dir/apps/editor/package.emo $fb_dir/apps/editor/main.emo"
 
 registry() {
   local sum
   # shellcheck disable=SC2086
-  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src | cksum | awk '{print $1}')
+  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src | cksum | awk '{print $1}')
   local reg="$PWD/.emo-build/registry-$sum"
   mkdir -p "$reg/syscall/0.1.0" "$reg/emo/ui/0.1.0" "$reg/emo/ui_fb/0.1.0" \
-    "$reg/emo/ui_fb_frame/0.1.0" "$reg/emo/ui_fb_win/0.1.0" "$reg/emo/ui_apps/0.1.0"
+    "$reg/emo/ui_fb_frame/0.1.0" "$reg/emo/ui_fb_win/0.1.0" "$reg/emo/ui_apps/0.1.0" \
+    "$reg/emo/ui_fb_winbuf/0.1.0"
   # shellcheck disable=SC2086
   cp $syscall_src "$reg/syscall/0.1.0/"
   # shellcheck disable=SC2086
@@ -66,6 +74,8 @@ registry() {
   cp $desktop_src "$reg/emo_desktop/0.1.0/"
   # shellcheck disable=SC2086
   cp $apps_src "$reg/emo/ui_apps/0.1.0/"
+  # shellcheck disable=SC2086
+  cp $winbuf_src "$reg/emo/ui_fb_winbuf/0.1.0/"
   printf '%s' "$reg"
 }
 
@@ -90,8 +100,11 @@ stale() {
 }
 
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src ||
-   stale "$elf" *.emo *.S link.ld "$user_elf"; then
+if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src ||
+   stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
+   stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
+   stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -115,14 +128,19 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
   fi
   echo "start.sh: building the images with $emo" >&2
   reg=$(registry)
+  here=$PWD
   (cd hello && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "../$user_elf")
+  (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/counter.elf")
+  (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/files.elf")
+  (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/editor.elf")
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 
-# The disk is a raw 1 MiB image; the filesystem formats a blank one at
-# its first mount and keeps its files across boots. The volume is kept
-# between sessions — the files survive the poweroff — and --fresh
-# trades it for a blank one.
+# The disk is a raw 4 MiB image; the filesystem formats a blank one at
+# its first mount, installs the apps' images on it (emo-desktop A11.1),
+# and keeps its files across boots. The volume is kept between sessions
+# — the files survive the poweroff — and --fresh trades it for a blank
+# one (the next boot installs the images again).
 img='.blk.img'
 if [ ! -f "$img" ] || [ "${1:-}" = '--fresh' ]; then
   dd if=/dev/zero of="$img" bs=1048576 count=1 status=none

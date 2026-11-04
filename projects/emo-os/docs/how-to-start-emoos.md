@@ -45,14 +45,24 @@ From `projects/emo-os/`:
 $ (cd hello && EMO_REGISTRY=<the staged registry> \
      ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o ../hello.elf)
+$ (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY=<the registry> \
+     ../../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/counter.elf")
+$ (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY=<the registry> \
+     ../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/files.elf")
+$ (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY=<the registry> \
+     ../../../_build/default/src/emo_cli/emo.exe build main.emo \
+     --target riscv64 --profile user -o "$OLDPWD/editor.elf")
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
 The user image builds first: the kernel's build assembles `user.S`,
-which embeds `hello.elf` — the ELF has to exist before the kernel
-links. After any change to `hello/`, to the kernel's own modules, or
-to the staged packages, rebuild both, in that order.
+which embeds `hello.elf` and the three apps' ELFs (emo-desktop A11.1)
+— they all have to exist before the kernel links. After any change
+to `hello/`, to the apps' trees, to the kernel's own modules, or to
+the staged packages, rebuild all five, in that order.
 
 ## The golden smoke
 

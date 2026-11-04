@@ -239,6 +239,24 @@ def spawn() (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// A program from the disk (emo-desktop A11.1, verb 24): the ELF the
+// name_len bytes at name name — a file on the volume, read through the
+// filesystem service — becomes its own image and its own process: the
+// kernel loads it into a run of its own, builds the child's table off
+// the image's own segments (per-image segment tables), and enters it
+// at the ELF's entry. The answer is (R.ok, the child's pid number),
+// the number wait takes; the child's exit answers it. "no such file"
+// for a name the volume does not hold; "the kernel is out of a
+// resource" while another exec request is staged or the machine
+// cannot back the image.
+def exec(name Int64, name_len Int64) (R, Int64) {
+  var answer = ecall(24, name, name_len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The exit of the child with that pid number, blocking until it
 // happens. The answer is (R.ok, the child's exit code) or
 // (R.error, why).

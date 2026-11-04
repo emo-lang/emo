@@ -81,6 +81,24 @@ const con_slot_size = 2056
 const con_slot_for = koff + 0x8700b100
 const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
+
+// The disk ELFs' blobs (emo-desktop A11.1): the three apps' images,
+// embedded beside the boot image (user.S), their bounds parked at the
+// handoff page's free tail (runtime.S). The first boot writes each
+// onto the volume when a probe says the file is missing — the machine
+// installs its own apps — and every exec after loads from the disk.
+const app_blob_c = koff + 0x870021d0
+const app_blob_c_end = koff + 0x870021d8
+const app_blob_f = koff + 0x870021e0
+const app_blob_f_end = koff + 0x870021e8
+const app_blob_e = koff + 0x870021f0
+const app_blob_e_end = koff + 0x870021f8
+
+// The process service's screen-pass state (T8.2), on the exec page's
+// tail: the granted child's pid and the carve's base, across requests —
+// the exit that answers them is the proof's moment.
+const svc_screen_pid = koff + 0x8700c000 + 3992
+const svc_screen_base = koff + 0x8700c000 + 4000
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -429,11 +447,6 @@ def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
   console_put_byte(10)
 }
 
-// The heap's death report (T5.1): a user pass whose own arena ran dry
-// — announced by the user image's allocator through the gate (verb 5),
-// printed by the supervisor on the offender's own stack, zero
-// allocation. The shim ends the pass after this returns; the machine
-// continues.
 def heap_report(pid Int64) Void {
   console_put_byte(117) // u
   console_put_byte(115) // s
@@ -634,15 +647,17 @@ def console_service(boss Pid) Void {
 // in the service's own words across the transactions, and the exit
 // that answers them is the proof's moment: the pattern read back
 // through the kernel's half before the waiting parent is answered.
-def process_service(boss Pid) Void {
-  boss <- self_pid()
-  var screen_pid = 0
-  var screen_base = 0
-  while true {
-    receive {
-      w -> {
-        var op = op_of(w)
-        if op == 3 {
+// One request, whichever door it came from (the stash or the
+// mailbox): the op dispatch the fs service's serve_gate shapes. The
+// word rides in as the parameter — a raw gate word is a tagged big
+// int, and the conversion a store into a local takes is a deref the
+// word cannot survive; passed as the argument the typed def takes, it
+// lands raw (the fs service's own discipline). The screen pass's pid
+// and base live on the exec page's tail: state across requests, the
+// cells the service's own.
+def process_serve(w Int64) Void {
+    var op = op_of(w)
+    if op == 3 {
           // A spawn is backed before it is served: the stack block plus
           // the arena's run (arena_run) — a spawn the allocator cannot
           // back is the refusal the caller sees, never the runtime's
@@ -665,8 +680,8 @@ def process_service(boss Pid) Void {
               }
               var child = user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block)
               if screen != 0 {
-                screen_pid = child
-                screen_base = screen
+                poke64(svc_screen_pid, child)
+                poke64(svc_screen_base, screen)
                 // The authorization table's first entry (T8.4): the
                 // carve's grant names its holder — the gate's present
                 // check reads it. The slots are never reused, so a
@@ -676,8 +691,8 @@ def process_service(boss Pid) Void {
               gate_reply(caller_of(w), child)
             }
           }
-        } else {
-          if op == 4 {
+    } else {
+      if op == 4 {
             var n0 = peek64(exit_count)
             var i0 = 0
             var hit = -1
@@ -694,27 +709,83 @@ def process_service(boss Pid) Void {
               poke64(pending_target, peek64(proc_arga))
               poke64(pending_flag, 1)
             }
+      } else {
+        if op == 5 {
+          // exec (emo-desktop A11.1): the disk ELF the staged name
+          // names. The machine is backed for the runtime's own takes
+          // first (the stack and the arena — a failure inside
+          // user_spawn is the loud end, never a refusal), the name
+          // copied out of the staging at the pickup — the busy cell
+          // held from the staging to here is spent — and the
+          // transaction reads the volume, loads the image and starts
+          // it. A refusal is the reason number, the caller's to name.
+          if frames.spare() < 1 + arena_run {
+            gate_reply(caller_of(w), -5)
           } else {
-            var pid = peek64(proc_argb)
-            var code = peek64(proc_arga)
-            var n = peek64(exit_count)
-            if n < 8 {
-              poke64(exit_pids + (n * 8), pid)
-              poke64(exit_codes + (n * 8), code)
-              poke64(exit_count, n + 1)
+            var fsn = peek64(fs_pid_cell)
+            if fsn == 0 {
+              gate_reply(caller_of(w), -5)
+            } else {
+              exec.copy_name(exec.name_buf())
+              exec.clear_busy()
+              var ans = exec.transaction(pid_at(fsn), exec.name_buf(),
+                exec.name_len())
+              gate_reply(caller_of(w), ans)
             }
-            if screen_pid != 0 {
-              if pid == screen_pid {
-                screen_pid = 0
-                screen_check(screen_base)
-              }
+          }
+        } else {
+          var pid = peek64(proc_argb)
+          var code = peek64(proc_arga)
+          var n = peek64(exit_count)
+          if n < 8 {
+            poke64(exit_pids + (n * 8), pid)
+            poke64(exit_codes + (n * 8), code)
+            poke64(exit_count, n + 1)
+          }
+          var spid = peek64(svc_screen_pid)
+          if spid != 0 {
+            if pid == spid {
+              poke64(svc_screen_pid, 0)
+              screen_check(peek64(svc_screen_base))
             }
-            if peek64(pending_flag) == 1 {
-              if peek64(pending_target) == pid {
-                poke64(pending_flag, 0)
-                gate_reply(peek64(pending_waiter), code)
-              }
+          }
+          if peek64(pending_flag) == 1 {
+            if peek64(pending_target) == pid {
+              poke64(pending_flag, 0)
+              gate_reply(peek64(pending_waiter), code)
             }
+          }
+        }
+      }
+    }
+}
+
+def process_service(boss Pid) Void {
+  boss <- self_pid()
+  // The exec page's request state is boot-zeroed, but a restart (or a
+  // first run after a stale image) must not inherit a held busy cell —
+  // every exec would be refused forever. The stash count and the
+  // screen cells go with it.
+  poke64(exec.busy_addr(), 0)
+  poke64(exec.stash_count_addr(), 0)
+  poke64(svc_screen_pid, 0)
+  poke64(svc_screen_base, 0)
+  while true {
+    // The stash first (the fs service's shape): a word set aside while
+    // an exec transaction waited on the filesystem's reply is served
+    // before the mailbox is touched. A tuple at this loop is nobody
+    // the service knows — the loud end.
+    var w = exec.stash_pop()
+    if w != 0 {
+      process_serve(w)
+    } else {
+      receive {
+        x -> {
+          if op_of(x) >= 0 {
+            process_serve(x)
+          } else {
+            println("process: a stranger in the mailbox")
+            halt()
           }
         }
       }
@@ -762,7 +833,8 @@ def blk_zero(a Int64, words Int64) Void {
 // discipline, descriptors 0..2 reused. Op 3 writes the sector from
 // the buffer, op 4 reads it into the buffer; the answer is the sector
 // number, the echo the client checks.
-def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
+def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64,
+               dlen Int64) Int64 {
   var hdr = q + 0x3000
   var stat = q + 0x3400
   var ty = 0
@@ -779,7 +851,7 @@ def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
   poke64(q, sv39.pa_of(hdr))
   poke64(q + 8, 16 | (1 << 32) | (1 << 48))
   poke64(q + 16, sv39.pa_of(buf))
-  poke64(q + 24, 512 | (dflags << 32) | (2 << 48))
+  poke64(q + 24, dlen | (dflags << 32) | (2 << 48))
   poke64(q + 32, sv39.pa_of(stat))
   poke64(q + 40, 1 | (2 << 32))
   var avail = q + 0x1000
@@ -870,16 +942,27 @@ def blk_service(boss Pid) Void {
   mmio32(dev + 0x070, 15)
   var cap = peek64(dev + 0x100)
   println("blk ${cap} ready")
+  // The run's chunk (emo-desktop A11.1): the device's own size_max
+  // word — the config's second field, read beside the capacity —
+  // bounds one data descriptor; a word the device does not state or
+  // states wildly is the sector's own 2048, the legacy bound.
+  var smax = mmio32r(dev + 0x108)
+  if smax == 0 || smax > 65536 || (smax % 512) != 0 {
+    smax = 2048
+  }
+  var blk_chunk = smax / 512
   boss <- self_pid()
   var from = boss
   while true {
     var w = 0
     var d = 0
+    var n = 0
     receive {
-      (x, f, y) -> {
+      (x, f, y, c) -> {
         w = x
         from = f
         d = y
+        n = c
       }
     }
     var op = w >> 32
@@ -887,7 +970,28 @@ def blk_service(boss Pid) Void {
     if op == 5 {
       from <- cap
     } else {
-      from <- blk_submit(dev, q, op, sector, d)
+      // The request's sectors are one contiguous run of the caller's
+      // buffer (the gate checked it so; the disk ELFs' install made
+      // the run the unit — one message per file, not one per sector,
+      // the per-sector message storm the install named being the leak
+      // that drained a service's arena) — and the driver splits the
+      // run into the device's own chunks, the data descriptor's length
+      // bounded by the size_max word read at init, the completions
+      // polled per request, no allocation per chunk.
+      var left = n
+      var at = sector
+      var off = 0
+      while left > 0 {
+        var take = left
+        if take > blk_chunk {
+          take = blk_chunk
+        }
+        blk_submit(dev, q, op, at, d + off, take * 512)
+        at = at + take
+        off = off + take * 512
+        left = left - take
+      }
+      from <- sector
     }
   }
 }
@@ -2739,6 +2843,92 @@ receive { done1 -> {} }
 receive { done2 -> {} }
 receive { done3 -> {} }
 receive { done4 -> {} }
+
+// The disk ELFs' install (emo-desktop A11.1): the three apps' images,
+// embedded in this image, written onto the volume through the first
+// instance when a probe says the file is missing — the machine
+// installs its own apps — and named on the wire either way. The boots
+// after find the volume that carries them (`kept`, the size the name
+// table holds) and exec from the disk; nothing re-writes an image
+// that is already there.
+def put_counter_name(a Int64) Int64 {
+  poke8(a, 99B)      // c
+  poke8(a + 1, 111B) // o
+  poke8(a + 2, 117B) // u
+  poke8(a + 3, 110B) // n
+  poke8(a + 4, 116B) // t
+  poke8(a + 5, 101B) // e
+  poke8(a + 6, 114B) // r
+  poke8(a + 7, 46B)  // .
+  poke8(a + 8, 101B) // e
+  poke8(a + 9, 108B) // l
+  poke8(a + 10, 102B) // f
+  return 11
+}
+
+def put_files_name(a Int64) Int64 {
+  poke8(a, 102B)     // f
+  poke8(a + 1, 105B) // i
+  poke8(a + 2, 108B) // l
+  poke8(a + 3, 101B) // e
+  poke8(a + 4, 115B) // s
+  poke8(a + 5, 46B)  // .
+  poke8(a + 6, 101B) // e
+  poke8(a + 7, 108B) // l
+  poke8(a + 8, 102B) // f
+  return 9
+}
+
+def put_editor_name(a Int64) Int64 {
+  poke8(a, 101B)     // e
+  poke8(a + 1, 100B) // d
+  poke8(a + 2, 105B) // i
+  poke8(a + 3, 116B) // t
+  poke8(a + 4, 111B) // o
+  poke8(a + 5, 114B) // r
+  poke8(a + 6, 46B)  // .
+  poke8(a + 7, 101B) // e
+  poke8(a + 8, 108B) // l
+  poke8(a + 9, 102B) // f
+  return 10
+}
+
+def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
+    label String) Void {
+  var me2 = self_pid()
+  fs <- (7, me2, namea, nlen, namea, 0)
+  receive { ans -> {
+    if ans < 0 {
+      var size = blobend - bloba
+      fs <- (6, me2, namea, nlen, bloba, size)
+      receive { wrote -> {
+        if wrote != size {
+          println("fs: the install wrote ${wrote}, not ${size}")
+          halt()
+        }
+      } }
+      println("installed ${label} ${size}")
+    } else {
+      println("kept ${label} ${ans}")
+    }
+  } }
+}
+
+var install_scratch = frames.take()
+if install_scratch == 0 {
+  println("fs: no block for the install")
+  halt()
+}
+var cn = put_counter_name(install_scratch)
+install_img(fs_svc, install_scratch, cn, peek64(app_blob_c),
+  peek64(app_blob_c_end), "counter.elf")
+var fn = put_files_name(install_scratch)
+install_img(fs_svc, install_scratch, fn, peek64(app_blob_f),
+  peek64(app_blob_f_end), "files.elf")
+var en = put_editor_name(install_scratch)
+install_img(fs_svc, install_scratch, en, peek64(app_blob_e),
+  peek64(app_blob_e_end), "editor.elf")
+frames.give(install_scratch)
 
 // The restart proof (T7.2, docs/fs.md): a file written through the
 // first instance of the filesystem service, the stop — a death the

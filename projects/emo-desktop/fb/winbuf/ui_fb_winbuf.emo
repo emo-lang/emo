@@ -1,0 +1,276 @@
+require "syscall"
+require "emo/ui_fb"
+
+// The window buffer's metal side (emo-desktop A11.1): the package an
+// application program requires to run as its own image — the raw shim
+// between the fb core and a `win_new` buffer, the byte table in the
+// merged stream's seat, and the few line helpers a session speaks
+// through the console verb. The boot image carries its own copy of
+// every def here (the shell and the desk pass predate the package);
+// the apps' images are the package's consumers, and the corpus's
+// digests are what keep the two from drifting — both print
+// `frame <digest>` for the same paint, the number the hosted twin's
+// file pins.
+//
+// A pixel is a 32-bit word at the identity the grant mapped — `poke32`
+// the store, `peek32` the load, no verb and no copy between the core
+// and the buffer's memory. The pixel loops live in the typed defs
+// below the classes, not in their methods: on this target a method's
+// body is the dynamic convention — every computed Int64 a boxed cell
+// in the arena, and the value kinds carry no claims for the pool to
+// reclaim — so a loop over a frame's pixels inside a method is the
+// heap gone before the first row ends. A fully typed top-level def
+// computes in raw registers and allocates nothing; the method hands it
+// the words once per rectangle, which is a dozen times a frame, and
+// once per glyph cell, which is a hundred.
+
+// The session's scratch, in the image's own writable segment: the
+// lines the helpers below build ride it through the write verb.
+const buf = 0x87200000
+
+// One byte into the scratch buffer; the cursor comes back.
+def byte_at(pos Int64, b Int64) Int64 {
+  poke8(buf + pos, b.to_byte())
+  return pos + 1
+}
+
+// The decimal digits of n, poked at the cursor; the cursor comes back.
+def num_at(n Int64, pos Int64) Int64 {
+  var p = pos
+  if n >= 10 {
+    p = num_at(n / 10, p)
+  }
+  poke8(buf + p, (48 + (n % 10)).to_byte())
+  return p + 1
+}
+
+// A line through the console service, from the scratch buffer. The
+// one ride that cannot refuse is the mark: a '?' from this image's
+// own writable segment, sent when a line the gate should have carried
+// comes back refused — the loud wrongness of it is the point.
+def mark() Void {
+  poke8(buf, 63B)
+  var r = syscall.write(buf, 1)
+  case r {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+}
+
+def line(len Int64) Void {
+  var r = syscall.write(buf, len)
+  case r {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+}
+
+// The frame's digest line, `frame <n>`: the corpus's own line, the
+// number the hosted twin prints for the same paint and the
+// screendump's fold over the window's rectangle answers.
+def frame_line(d Int64) Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32)
+  p = num_at(d, p)
+  p = byte_at(p, 10)
+  line(p)
+}
+
+// The merged stream's event words, decoded in typed defs — a method's
+// body is the dynamic convention on this target, so the class's `next`
+// hands each event down whole (the shell's own discipline).
+def ev_type(e Int64) Int64 {
+  return (e >> 48) & 65535
+}
+
+def ev_code(e Int64) Int64 {
+  return (e >> 32) & 65535
+}
+
+def ev_value(e Int64) Int64 {
+  return e & 4294967295
+}
+
+// The byte table in the input's seat: one tag per byte, the tag its
+// index in the table names — the table the app's own registration
+// order keeps (`a` first, `b` second, and so on, the same tags the
+// golden's script names) — and `q` the loop's end, the quit byte every
+// seat's session ends on. Every other byte is dropped, never guessed
+// at; the pointer's reports ride the same stream and are not an app's.
+class Keys {
+  def init(bytes Array[Int64]) {
+    self.bytes = bytes
+  }
+
+  def next() (R, Int64) {
+    var tag = -1
+    while tag < 0 {
+      const ev = syscall.input_read()
+      if ev_type(ev) == 17741 {
+        const b = ev_value(ev)
+        if b == 113 {
+          return (R.error, 0)
+        }
+        var i = 0
+        while tag < 0 && i < self.bytes.length() {
+          if self.bytes[i] == b {
+            tag = i
+          }
+          i = i + 1
+        }
+      }
+    }
+    return (R.ok, tag)
+  }
+}
+
+// The buffer's raw pixel lanes: the carve's own shapes over a smaller
+// rectangle, the same typed loops the boot image's surface runs.
+def carve_at(base Int64, width Int64, x Int64, y Int64) Int64 {
+  return peek32(base + (y * width + x) * 4)
+}
+
+def carve_fill(base Int64, width Int64, x Int64, y Int64, w Int64,
+               h Int64, word Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      poke32(base + (row * width + col) * 4, word)
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
+                h Int64, color Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      var i = base + (row * width + col) * 4
+      poke32(i, ui_fb.over(color, peek32(i)))
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+// A glyph's set bits as stores, each pixel checked against the
+// buffer's bounds: the row byte is `ui_fb.glyph_row`'s, the same bit
+// for the same pixel the hosted canvas reads, and a clear row costs no
+// column walk.
+def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
+                top Int64, bottom Int64, word Int64) Void {
+  var r = 0
+  while r < 16 {
+    const bits = ui_fb.glyph_row(top, bottom, r)
+    const py = y + r
+    if bits != 0 && py >= 0 && py < height {
+      var c = 0
+      while c < 8 {
+        const px = x + c
+        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
+          poke32(base + (py * width + px) * 4, word)
+        }
+        c = c + 1
+      }
+    }
+    r = r + 1
+  }
+}
+
+// The frame's digest off the buffer's own words — the fold
+// `d = (d * 31 + word) mod 2^32` over every pixel in row-major order,
+// in a typed loop over `peek32` rather than through the surface's
+// `at`: a method call per pixel would box its answer into the arena
+// hundreds of times. The hosted twin folds through the canvas; the
+// screendump's Python folds the display's bytes; the three agree on
+// one number or on none (run.sh).
+def carve_digest(base Int64, width Int64, height Int64) Int64 {
+  var d = 0
+  var row = 0
+  while row < height {
+    var col = 0
+    while col < width {
+      d = (d * 31 + peek32(base + (row * width + col) * 4)) & 4294967295
+      col = col + 1
+    }
+    row = row + 1
+  }
+  return d
+}
+
+// A window's buffer as the fb core's `Surface`: the run `win_new`
+// handed, mapped into this pass's own table at the identity of its
+// physical addresses, and the grant the buffer is named by ever after.
+// `present` is the window's commit: the frame's digest off the
+// buffer's own words on the wire first (`frame <n>`, the corpus's
+// line), then the grant's present — the gate checks the owner and the
+// rect, the compositor composites the whole stack with this frame in
+// it and flushes — and the compositor's own line is the answer's echo;
+// the app says nothing after.
+class Win {
+  def init(grant Int64, base Int64, width Int64, height Int64) {
+    self.grant = grant
+    self.base = base
+    self.width = width
+    self.height = height
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return carve_at(self.base, self.width, x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_fill(self.base, self.width, r.x(), r.y(), r.w(), r.h(),
+      color & 0xFFFFFF)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
+      color & 0xFFFFFF)
+  }
+
+  def present() {
+    frame_line(carve_digest(self.base, self.width, self.height))
+    case syscall.present(self.grant, 0, 0, self.width, self.height) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The constructors, as defs: a riscv64 program names no other module's
+// class in value position (the emitter's type-reference rule), so a
+// consumer takes the surface and the seat from these two — the canvas
+// factory's own shape.
+def win(grant Int64, base Int64, width Int64, height Int64) Win {
+  return Win.new(grant: grant, base: base, width: width, height: height)
+}
+
+def keys(bytes Array[Int64]) Keys {
+  return Keys.new(bytes: bytes)
+}

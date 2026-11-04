@@ -1,0 +1,13 @@
+package {
+  name = "counter"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "syscall" = "0.1.0"
+    "emo/ui" = "0.1.0"
+    "emo/ui_fb" = "0.1.0"
+    "emo/ui_apps" = "0.1.0"
+    "emo/ui_fb_winbuf" = "0.1.0"
+  }
+}

@@ -1,0 +1,10 @@
+package {
+  name = "emo/ui_fb_winbuf"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "syscall" = "0.1.0"
+    "emo/ui_fb" = "0.1.0"
+  }
+}

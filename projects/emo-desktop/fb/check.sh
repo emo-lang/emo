@@ -26,6 +26,7 @@ EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
 
 UI=$(cd ../../emo-ui && pwd)
+SYSCALL_SRC="$PWD/../../../stdlib/registry/syscall/0.1.0"
 RUNNER=$UI/wasm-runner.mjs
 mkdir -p .emo-build/check
 OUT=$PWD/.emo-build/check/out
@@ -74,11 +75,17 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo f
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
   desktop/package.emo desktop/emo_desktop.emo \
   apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
+  winbuf/package.emo winbuf/ui_fb_winbuf.emo \
+  apps/counter/package.emo apps/counter/main.emo \
+  apps/files/package.emo apps/files/main.emo \
+  apps/editor/package.emo apps/editor/main.emo \
+  "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" \
   "$UI/corpus/package.emo" "$UI/corpus/main.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0" \
-  "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0"
+  "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0" \
+  "$REG/emo/ui_fb_winbuf/0.1.0" "$REG/syscall/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
@@ -88,6 +95,8 @@ cp "$UI/corpus/package.emo" "$UI/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
 cp win/package.emo win/ui_fb_win.emo "$REG/emo/ui_fb_win/0.1.0/"
 cp apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
   "$REG/emo/ui_apps/0.1.0/"
+cp winbuf/package.emo winbuf/ui_fb_winbuf.emo "$REG/emo/ui_fb_winbuf/0.1.0/"
+cp "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" "$REG/syscall/0.1.0/"
 
 # --- the font's table is its drawing ------------------------------------
 #
@@ -191,6 +200,14 @@ if command -v riscv64-elf-ld >/dev/null 2>&1 || \
   expect 0 "the file browser app lowers for a riscv64 user program" "$rc"
   build apps editor.emo riscv64 --profile user && rc=0 || rc=$?
   expect 0 "the editor app lowers for a riscv64 user program" "$rc"
+  build apps/counter main.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the counter's program lowers for a riscv64 user image" "$rc"
+  build apps/files main.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the file browser's program lowers for a riscv64 user image" "$rc"
+  build apps/editor main.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the editor's program lowers for a riscv64 user image" "$rc"
+  build winbuf ui_fb_winbuf.emo riscv64 --profile user && rc=0 || rc=$?
+  expect 0 "the window buffer's metal side lowers for a riscv64 user image" "$rc"
 else
   printf 'skip the metal probe: no riscv64-elf binutils on PATH\n'
 fi

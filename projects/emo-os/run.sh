@@ -155,13 +155,15 @@ if [ ! -f "$pointer_sprite" ]; then
   exit 1
 fi
 
-# The block device's backing (T7.1): a raw 1 MiB image, written zero
+# The block device's backing (T7.1): a raw 4 MiB image, written zero
 # before the first boot (T7.2) — so the two boots below are one story:
-# the first finds a blank disk and the filesystem formats it, the
-# second finds the volume the first left and mounts it. A dirty image
-# from an earlier run changes nothing.
+# the first finds a blank disk, the filesystem formats it, and the
+# machine installs its own apps onto the volume (emo-desktop A11.1:
+# three disk ELFs, the disk their home); the second finds the volume
+# the first left and mounts it. A dirty image from an earlier run
+# changes nothing.
 img='.blk.img'
-dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
+dd if=/dev/zero of="$img" bs=4194304 count=1 status=none
 
 # One boot: the named CPU config, the serial input on a named pipe
 # written only after the kernel is ready — the tick proof's checksum is
@@ -214,7 +216,7 @@ dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
 # root's one; the second boot's instances count the two files the
 # first boot left.
 boot() {
-  local cpu="$1" mode="$2" log="$3" mount1="$4" mount2="$5" formats="$6"
+  local cpu="$1" mode="$2" log="$3" mount1="$4" mount2="$5" formats="$6" inst="$7"
   local fifo
   fifo=$(mktemp -u /tmp/emoos-serial.XXXXXX)
   mkfifo "$fifo"
@@ -1080,7 +1082,7 @@ PYEOF
   # compositor instances, every table, the cache block, and the queues
   # keep theirs. The byte offsets are the serial order.
   local prev=0 pos line
-  for line in 'sv39 8 0x8' 'blk 2048 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 2' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 160 160' 'add 1' 'sub 0' 'app counter 0' 'comp 224 144' 'sel files.emo' 'open files.emo' 'app files 0' 'comp 288 208' 'put a' 'newline' 'put b' 'app editor 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 132 91'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 5' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 160 160' 'add 1' 'sub 0' 'app counter 0' 'comp 224 144' 'sel files.emo' 'open files.emo' 'app files 0' 'comp 288 208' 'put a' 'newline' 'put b' 'app editor 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'commands: help echo ls cat write rm counter poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'dma 0xffffffc08' 'frames 795 734'; do
     pos=$(grep -aboF -- "$line" "$log" | head -1 | cut -d: -f1 || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line'; a reader's byte is lost" >&2
@@ -1092,6 +1094,50 @@ PYEOF
     fi
     prev=$pos
   done
+  # The disk ELFs' install lines (emo-desktop A11.1): the three images
+  # named on the wire between the console deliveries and the restart's
+  # mount — `installed <name> <size>` on the boot that formats (the
+  # machine writes its own apps onto the blank volume), `kept <name>
+  # <size>` on the boot that finds the volume (the size the name table
+  # holds, the disk's copy whole). The sizes are the build's, so the
+  # lines are matched by their shape and placed, never by literal.
+  local rstart rpos m2pos appname
+  rstart=$(grep -aboF -- '4:101' "$log" | head -1 | cut -d: -f1)
+  m2pos=$(grep -aboF -- "$mount2" "$log" | head -1 | cut -d: -f1)
+  for appname in counter.elf files.elf editor.elf; do
+    rpos=$(grep -aboE -- "^$inst $appname [0-9]+$" "$log" | cut -d: -f1 | awk -v p="$rstart" '$1 > p { print; exit }' || true)
+    if [ -z "$rpos" ]; then
+      echo "run.sh: the install never said '$inst $appname <size>' after byte $rstart" >&2
+      exit 1
+    fi
+    if [ "$rpos" -gt "$m2pos" ]; then
+      echo "run.sh: '$inst $appname' arrived after the restart's mount" >&2
+      exit 1
+    fi
+    rstart=$rpos
+  done
+  # The exec's load lines (emo-desktop A11.1): the process service's
+  # `image <bytes> <blocks>` as each disk ELF comes off the volume —
+  # one per app era, the size the file on the disk carries. The shape
+  # and the place, never a literal: each between its era's start and
+  # the app's first frame.
+  image_line_between() {
+    local a="$1" b="$2" apos bpos ipos
+    apos=$(grep -aboF -- "$a" "$log" | head -1 | cut -d: -f1)
+    bpos=$(grep -aboE -- "^$b\$" "$log" | head -1 | cut -d: -f1)
+    ipos=$(grep -aboE -- '^image [0-9]+ bytes, [0-9]+ blocks$' "$log" | cut -d: -f1 | awk -v p="$apos" '$1 > p { print; exit }' || true)
+    if [ -z "$ipos" ]; then
+      echo "run.sh: no 'image' line came after '$a'" >&2
+      exit 1
+    fi
+    if [ "$ipos" -gt "$bpos" ]; then
+      echo "run.sh: the 'image' line arrived after '$b'" >&2
+      exit 1
+    fi
+  }
+  image_line_between 'desk 0' "frame $(app_line 1)"
+  image_line_between 'app counter 0' "frame $(app_line 4)"
+  image_line_between 'app files 0' "frame $(app_line 7)"
   # The frame callback's line (emo-desktop A9.3): the win pass's answer
   # to its park — the composition the client's frame rode, so the line
   # is the callback's proof. Its order against the dying client's lines
@@ -1241,6 +1287,15 @@ PYEOF
     echo "run.sh: the shell's write never made the list" >&2
     exit 1
   fi
+  # the disk ELFs in the shell's list (emo-desktop A11.1): the volume's
+  # three images named beside the boot file and hello's, the ls's own
+  # order, whole lines
+  for f in files.elf editor.elf boot.txt hello.txt; do
+    if ! grep -A4 '^counter.elf$' "$log" | grep -q "^$f\$"; then
+      echo "run.sh: the shell's list never named $f beside counter.elf" >&2
+      exit 1
+    fi
+  done
   # The DMA proof's line, whole: the block the allocator answered at the
   # machine's end was block-aligned (the tail 0000) and named by its
   # kernel alias. The fragments above pin the line's place — its start
@@ -1291,12 +1346,14 @@ PYEOF
 }
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
-# The first boot meets the blank disk: the filesystem formats it, and
-# its restarted instance counts the root's one file.
-boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 1' 1
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, shell, counter, frames, self-exit"
+# The first boot meets the blank disk: the filesystem formats it, the
+# machine installs its apps, and its restarted instance counts the four
+# files (the three images and the boot file).
+boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 4' 1 installed
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, install, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, exec, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
-# the first left — two files, the root's and hello's — and formats
-# nothing: the mount table came off the disk.
-boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 2' 'fs gen 4 files 2' 0
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, shell, counter, frames, self-exit, 1 ecall"
+# the first left — the five files the first boot wrote (the three
+# images, the boot file, and hello's own) — keeps the images (`kept`
+# naming each), and formats nothing: the mount table came off the disk.
+boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 5' 'fs gen 4 files 5' 0 kept
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, install kept, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, exec, frames, self-exit, 1 ecall"

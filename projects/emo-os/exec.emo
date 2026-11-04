@@ -1,0 +1,530 @@
+// The disk ELFs' loader (emo-desktop A11.1): the kernel side of exec —
+// the verb that starts a program the filesystem names. The image's
+// bytes are read from the volume through the filesystem service into a
+// scratch run, parsed the boot loader's way (user.emo's checks — the
+// magic, the class, the machine, the program-header table's shape),
+// and its loadable segments are copied into a run of the allocator's
+// blocks: one contiguous run for the whole image, each segment at the
+// offset its link address names, mapped into the child's own table at
+// those addresses (space.emo's per-image half — per-image segment
+// tables, the honest-multi-app milestone's substance). The record the
+// build and the gate read lives on the exec page: the segment rows in
+// the handoff table's own shape (the count at the head, 24-byte rows
+// of start, end, flags beside it), the entry, and the run's base and
+// length — the death hook walks the run home block by block when the
+// image's process dies, the pass's own blocks' discipline, and clears
+// the record and the pid's image cell behind it.
+//
+// The per-pid image cells are the dead-owners' discipline (T8.15): one
+// write per pid ever — the build writes the cell at the spawn it
+// consumed the pending record for — so the gate's check and the
+// death's walk can never race each other. A pid past the 256-cell
+// array is the documented bound (a slot is never reused, and 64 spawns
+// are the table's ceiling; the exec refuses a caller past the bound
+// the way the reclaim never runs).
+//
+// Everything here is the raw-memory discipline: Int64 addresses,
+// peek/poke, fully typed defs, zero allocation. The service runs on
+// the kernel's own table; the scratch and the run are the allocator's
+// kernel addresses; the child's table maps their physical identities.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The exec page (link.ld's .emo_exec, 0x8700c000): the per-pid image
+// cells first (2048 bytes), the eight image records next (224 bytes
+// each — the count, eight 24-byte segment rows, the entry, the run's
+// physical base and its length in blocks), then the pending cell the
+// spawn's build consumes, the request's busy cell and name, and the
+// service's request stash.
+const img_for = koff + 0x8700c000
+const records = img_for + 2048
+const record_size = 224
+const record_count = 8
+const seg_slots = 8
+const exec_pending = records + record_count * record_size
+const exec_busy = exec_pending + 8
+const exec_name = exec_busy + 8
+const exec_nlen = exec_name + 24
+const exec_stash_count = exec_nlen + 8
+const exec_stash = exec_stash_count + 8
+
+// The image's bounds: the load addresses the user profile's linker
+// script fixes (user.emo's own check).
+const user_base = 0x87100000
+const user_top = 0x88000000
+
+// The block and the page table's unit, and the request word's parts —
+// the gate's raw words positive, the tuples and every heap pointer
+// negative: the sign is the first decode.
+const flag_x = 1
+const flag_w = 2
+const flag_r = 4
+const block = 65536
+const page = 4096
+
+def op_of(w Int64) Int64 {
+  return w >> 32
+}
+
+def caller_of(w Int64) Int64 {
+  return w & 4294967295
+}
+
+def rd8(a Int64) Int64 {
+  return peek8(a).to_int64()
+}
+
+def rd16(a Int64) Int64 {
+  return rd8(a) + (rd8(a + 1) << 8)
+}
+
+def rd32(a Int64) Int64 {
+  return rd16(a) + (rd16(a + 2) << 16)
+}
+
+// The service's stash of raw request words (the fs service's own
+// shape): an exec transaction waits on the filesystem's reply, and a
+// gate word that lands in the mailbox while it waits is served in
+// order after the transaction — the stash and the mailbox one FIFO.
+def stash_push(w Int64) Void {
+  var n = peek64(exec_stash_count)
+  if n >= 8 {
+    println("exec: the stash overflowed")
+    halt()
+  }
+  poke64(exec_stash + n * 8, w)
+  poke64(exec_stash_count, n + 1)
+}
+
+def stash_pop() Int64 {
+  var n = peek64(exec_stash_count)
+  if n == 0 {
+    return 0
+  }
+  var w = peek64(exec_stash)
+  var i = 1
+  while i < n {
+    poke64(exec_stash + (i - 1) * 8, peek64(exec_stash + i * 8))
+    i = i + 1
+  }
+  poke64(exec_stash_count, n - 1)
+  return w
+}
+
+// A free record, or 0: the count word at its head is the busy flag the
+// take sets first — a record is held from the moment the parse
+// begins, and the death or a refusal clears it.
+def record_take() Int64 {
+  var i = 0
+  while i < record_count {
+    var r = records + i * record_size
+    if peek64(r) == 0 {
+      poke64(r, 1)
+      return r
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+// Parse the scratch's ELF and fill the record's rows and entry: the
+// segment rows in the handoff table's shape (the count at the head,
+// the rows beside it), the entry at +200. The answer is the image's
+// span — its last segment's end past the first page, the number the
+// caller sizes the run by — or 0 with the record released when any
+// check refuses. Every refusal says which.
+def measure(rec Int64, scratch Int64, size Int64) Int64 {
+  if size < 64 {
+    println("exec: the file is no image")
+    poke64(rec, 0)
+    return 0
+  }
+  if rd8(scratch) != 127 || rd8(scratch + 1) != 69 || rd8(scratch + 2) != 76 || rd8(scratch + 3) != 70 {
+    println("exec: not an ELF image")
+    poke64(rec, 0)
+    return 0
+  }
+  if rd8(scratch + 4) != 2 {
+    println("exec: not a 64-bit image")
+    poke64(rec, 0)
+    return 0
+  }
+  if rd16(scratch + 18) != 243 {
+    println("exec: not a RISC-V image")
+    poke64(rec, 0)
+    return 0
+  }
+  var entry = peek64(scratch + 24)
+  var phoff = peek64(scratch + 32)
+  var phentsize = rd16(scratch + 54)
+  var phnum = rd16(scratch + 56)
+  if phentsize != 56 || phnum < 1 || phnum > 16 {
+    println("exec: the program-header table is not sane")
+    poke64(rec, 0)
+    return 0
+  }
+  if entry < user_base || entry >= user_top {
+    println("exec: the entry lands outside the user window")
+    poke64(rec, 0)
+    return 0
+  }
+  // The rows are filled in the program headers' order; the image's
+  // first page is the floor the run maps from, and every segment must
+  // sit at or after it — the span the run must hold is the last
+  // segment's end past that floor. The bounds themselves are the
+  // window's: a segment outside it is a refusal before any byte moves.
+  var first_ph = scratch + phoff
+  var i = 0
+  var floor = 0
+  var span = 0
+  var rows = 0
+  while i < phnum {
+    var ph = first_ph + (i * phentsize)
+    if rd32(ph) == 1 {
+      var vaddr = peek64(ph + 16)
+      var memsz = peek64(ph + 40)
+      if rows == seg_slots {
+        println("exec: too many loadable segments for the record")
+        poke64(rec, 0)
+        return 0
+      }
+      if rows == 0 {
+        floor = (vaddr / page) * page
+      }
+      if vaddr < floor || vaddr < user_base || (vaddr + memsz) > user_top || memsz < peek64(ph + 32) {
+        println("exec: a segment lands outside the user window")
+        poke64(rec, 0)
+        return 0
+      }
+      var slot = rec + 8 + (rows * 24)
+      poke64(slot, vaddr)
+      poke64(slot + 8, vaddr + memsz)
+      poke64(slot + 16, rd32(ph + 4))
+      rows = rows + 1
+      var end_off = vaddr + memsz - floor
+      if end_off > span {
+        span = end_off
+      }
+    }
+    i = i + 1
+  }
+  if rows == 0 {
+    println("exec: no loadable segment")
+    poke64(rec, 0)
+    return 0
+  }
+  poke64(rec, rows)
+  poke64(rec + 200, entry)
+  return span
+}
+
+// One loadable segment, by its program header and its own row: copy
+// the file's bytes from the scratch to the run at the offset the
+// segment's link address names from the image's first page. The tail
+// past the file's bytes is the image's .bss — the entry stub clears it
+// (the heap and the process world live there, NOBITS), so the loader
+// copies what the file carries and leaves the rest to the stub.
+def load_segment(scratch Int64, ph Int64, row Int64, run_base Int64, floor Int64) Bool {
+  var vaddr = peek64(row)
+  if vaddr != peek64(ph + 16) {
+    println("exec: a segment's row does not name its header")
+    return false
+  }
+  var off = peek64(ph + 8)
+  var filesz = peek64(ph + 32)
+  var dst = run_base + (vaddr - floor)
+  var i = 0
+  while i < filesz {
+    poke8(dst + i, peek8(scratch + off + i))
+    i = i + 1
+  }
+  return true
+}
+
+// Copy the image's segments into its run and finish the record: the
+// run's physical base and length in blocks at +208 and +216, the count
+// word the row count. The answer is 1 when the copy is whole, 0 with
+// the record released otherwise. The caller checked the span against
+// the run before calling.
+def load(rec Int64, scratch Int64, run_base Int64, run_blocks Int64) Int64 {
+  var rows = peek64(rec)
+  var floor = (peek64(rec + 8) / page) * page
+  var span = peek64(rec + 8 + ((rows - 1) * 24) + 8) - floor
+  if span > run_blocks * block {
+    println("exec: the image does not fit its run")
+    poke64(rec, 0)
+    return 0
+  }
+  var phoff = peek64(scratch + 32)
+  var phentsize = rd16(scratch + 54)
+  var phnum = rd16(scratch + 56)
+  var first_ph = scratch + phoff
+  var i = 0
+  var done = 0
+  while i < phnum {
+    var ph = first_ph + (i * phentsize)
+    if rd32(ph) == 1 {
+      if !load_segment(scratch, ph, rec + 8 + (done * 24), run_base, floor) {
+        poke64(rec, 0)
+        return 0
+      }
+      done = done + 1
+    }
+    i = i + 1
+  }
+  poke64(rec, done)
+  poke64(rec + 208, run_base)
+  poke64(rec + 216, run_blocks)
+  return 1
+}
+
+// The request word the exec arm serves: the name copied at the gate
+// into the page's cells, read back here.
+def name_len() Int64 {
+  return peek64(exec_nlen)
+}
+
+def copy_name(dst Int64) Void {
+  var n = peek64(exec_nlen)
+  var i = 0
+  while i < n {
+    poke8(dst + i, peek8(exec_name + i))
+    i = i + 1
+  }
+}
+
+// The busy cell: the dispatch holds it from the staging to the pickup,
+// so a request staged behind a transaction in flight cannot overwrite
+// the name the older request is still waiting to be served by. The
+// service clears it the moment it has the name in its own buffer. The
+// address answers itself for the service's init (the constants are
+// this module's own).
+def busy() Int64 {
+  return peek64(exec_busy)
+}
+
+def busy_addr() Int64 {
+  return exec_busy
+}
+
+def stash_count_addr() Int64 {
+  return exec_stash_count
+}
+
+def clear_busy() Void {
+  poke64(exec_busy, 0)
+}
+
+// The request's name buffer, on the exec page's tail: the service
+// copies the staged name here at the pickup, and the cells behind the
+// busy flag are free for the next request from that moment. The
+// address answers itself — a caller names no other module's constant
+// in value position (the emitter's type-reference rule).
+const exec_namebuf = exec_stash + 64
+
+def name_buf() Int64 {
+  return exec_namebuf
+}
+
+// The image delta (emo-desktop A11.1): the cells page's free word the
+// exec parks the loaded image's translation in — the run's physical
+// base less the image's first page — before the child is spawned. The
+// trap shim's arena hand reaches the running image's arena words
+// through the cells the stub parked, and those pointers are
+// identity-addressed: true words for the boot image, whose link
+// address is its physical one, and nonsense for a disk ELF, whose
+// pages sit in an allocator run. The stub adds the delta to every
+// pointer it parks — zero for the boot image, the run's offset for an
+// exec'd one — and the hand lands in the image's own words again.
+const exec_delta_cell = 0x87fff048
+
+// A run of blocks walks home block by block, the give's strictness per
+// block. The base is the allocator's kernel address, as take_run
+// answered it.
+def give_run(base Int64, blocks Int64) Void {
+  var i = 0
+  while i < blocks {
+    frames.give(base + i * block)
+    i = i + 1
+  }
+}
+
+// The exec transaction (emo-desktop A11.1): the file read from the
+// volume through the filesystem service — the kernel client's tuple
+// protocol, op 10 the read whose reply is a tuple (a raw word of any
+// other kind is indistinguishable from a gate word in this mailbox) —
+// into a scratch run, parsed into a record, copied into the image's
+// run, and started: the pending cell poked, the stack taken, the
+// child spawned at the image's own entry. The answer is the child's
+// pid, or the refusal's reason (−4 the file is no image, −5 the
+// machine cannot back it, −6 no such file). Every refusal puts every
+// block it took back before it answers.
+//
+// The transaction's receives are catch-alls with the sign for the
+// tuple test (a raw word under any pattern but a catch-all reads as a
+// pointer, T7.2's warning): a gate word that lands while the service
+// waits — another pass's spawn, a death — goes to the stash, served in
+// order after the transaction, the stash and the mailbox one FIFO.
+def transaction(fs Pid, name Int64, nlen Int64) Int64 {
+  // The probe: the size off the name table, no bytes copied — the
+  // number the scratch is sized by, or the refusal the caller sees.
+  var me = self_pid()
+  fs <- (10, me, name, nlen, name, 0)
+  var size = 0
+  var got = false
+  while !got {
+    receive {
+      x -> {
+        if op_of(x) >= 0 {
+          stash_push(x)
+        } else {
+          case x {
+            (mk, sz) -> {
+              if mk != 10 {
+                println("exec: a stranger answered the transaction")
+                halt()
+              }
+              size = sz
+              got = true
+            }
+          }
+        }
+      }
+    }
+  }
+  if size < 0 {
+    return size
+  }
+  var sb = (size + block - 1) / block
+  var scratch = frames.take_run(sb)
+  if scratch == 0 {
+    return -5
+  }
+  // The read: the file's bytes whole into the scratch.
+  fs <- (10, me, name, nlen, scratch, size)
+  var got2 = false
+  while !got2 {
+    receive {
+      x -> {
+        if op_of(x) >= 0 {
+          stash_push(x)
+        } else {
+          case x {
+            (mk, sz) -> {
+              if mk != 10 {
+                println("exec: a stranger answered the transaction")
+                halt()
+              }
+              size = sz
+              got2 = true
+            }
+          }
+        }
+      }
+    }
+  }
+  if size < 0 {
+    give_run(scratch, sb)
+    return size
+  }
+  var rec = record_take()
+  if rec == 0 {
+    give_run(scratch, sb)
+    return -5
+  }
+  var span = measure(rec, scratch, size)
+  if span == 0 {
+    give_run(scratch, sb)
+    return -4
+  }
+  var ib = (span + block - 1) / block
+  var run = frames.take_run(ib)
+  if run == 0 {
+    poke64(rec, 0)
+    give_run(scratch, sb)
+    return -5
+  }
+  if load(rec, scratch, sv39.pa_of(run), ib) == 0 {
+    give_run(run, ib)
+    give_run(scratch, sb)
+    return -4
+  }
+  // The scratch is copied out; its blocks go home before the child is
+  // even queued. The image's delta goes to the cells page's word — the
+  // translation the child's stub adds to the arena pointers it parks —
+  // and the shared arena-pointer cells go empty: the child's first
+  // resume would otherwise hand its run cursor through pointers that
+  // still name the boot image's words (the child's stub re-parks the
+  // pair for its own image the moment it enters, and the hand skips an
+  // empty pointer until then). The pending cell carries the record to
+  // the build.
+  var floor_va = (peek64(rec + 8) / page) * page
+  var delta = sv39.pa_of(run) - floor_va
+  poke64(exec_delta_cell, delta)
+  // The shared pointer pair goes empty (emo-desktop A11.1): the first
+  // hand-in skips it, the stub parks it with this image's own pointers
+  // at entry, and every crossing after serves the run's cursor through
+  // them. The child's arena crosses as values, written by the build
+  // from the slot's own words (space.emo) — the spawn's take, not
+  // this transaction's.
+  poke64(0x87fff008, 0)
+  poke64(0x87fff010, 0)
+  // the boot image's own entry and console hook go aside (emo-desktop
+  // A11.1): the child's stub re-parks the shared cells for its own
+  // image — the program cell the spawn verb reads, the hook every
+  // println rides — and the death puts both back, the addresses the
+  // boot image's own shapes answer to
+  poke64(0x87fff080, peek64(0x87fff000))
+  poke64(0x87fff088, peek64(0x87fff018))
+  give_run(scratch, sb)
+  println("image ${size} bytes, ${ib} blocks")
+  poke64(exec_pending, rec)
+  var stack = frames.take()
+  if stack == 0 {
+    poke64(exec_pending, 0)
+    poke64(rec, 0)
+    give_run(run, ib)
+    return -5
+  }
+  var entry = peek64(rec + 200)
+  var child = user_spawn(entry, sv39.pa_of(stack) + block)
+  return child
+}
+
+// The death hook (the runtime's emo_image_give_hook, parked beside the
+// death notice): the slot's process is done — if it was an exec's
+// child, its image's run walks home block by block, the record and the
+// pid's cell cleared behind it. The base is physical (the record keeps
+// the pa the build mapped by); frames.give translates a positive base
+// itself. A pid past the cells' 256 is the documented bound: the walk
+// that never runs, the leak the bound names.
+def image_home(slot Int64) Void {
+  var pid = peek64(slot + 8)
+  if pid < 256 {
+    var rec = peek64(img_for + pid * 8)
+    if rec != 0 {
+      poke64(img_for + pid * 8, 0)
+      var base = peek64(rec + 208)
+      var blocks = peek64(rec + 216)
+      poke64(rec, 0)
+      // the exec's cells go with it (emo-desktop A11.1): the delta
+      // word, the arena values, the pair's owner \u2014 and the pair goes
+      // back to the boot image's own pointers, the identity addresses
+      // the raw cell parked at boot, the shape every crossing the boot
+      // image's passes make serves from here on
+      poke64(0x87fff048, 0)
+      poke64(0x87fff070, 0)
+      poke64(0x87fff078, 0)
+      poke64(0x87fff060, 0)
+      poke64(0x87fff008, peek64(0x87fff068))
+      poke64(0x87fff010, peek64(0x87fff068) + 8)
+      poke64(0x87fff000, peek64(0x87fff080))
+      poke64(0x87fff018, peek64(0x87fff088))
+      var i = 0
+      while i < blocks {
+        frames.give(base + i * block)
+        i = i + 1
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+require "syscall"
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_apps"
+require "emo/ui_fb_winbuf"
+
+// The counter as its own program (emo-desktop A11.1): the app's image
+// is a disk ELF the desktop's parent execs by name — the kernel reads
+// the volume through the filesystem service, loads the image into a
+// run of its own, builds this process's table off its own segments,
+// and enters it here. The session is the one the boot image's pass
+// ran (A10.3): a window of its own by `win_new`, declared a toplevel,
+// placed, and the Elm loop run over the window buffer's surface with
+// the app's defs as values and the merged stream in the input's seat
+// — the mount's frame on the wire the moment the loop mounts, then
+// the keys, each transition `update` says landing before the frame
+// that carries it, until the quit key ends the loop. The window is
+// closed behind it and the exit answers the parent's wait (`app
+// counter 0`, the golden's own closing line) — the whole program, one
+// image, no tokens.
+def main() {
+  var gc = 0
+  var base_c = 0
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, ans) -> {
+      gc = ans & 4294967295
+      base_c = (ans >> 32) << 12
+    }
+  }
+  case syscall.win_role(gc, 0) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gc, 160, 160) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  const wc = ui_fb_winbuf.win(gc, base_c, 384, 128)
+  ui.run(ui_apps.counter.view, ui_apps.counter.update,
+    ui_apps.counter.initial(), ui_fb.backend(wc, ui_fb_winbuf.keys([97, 98])))
+  case syscall.win_close(gc) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+
+main()

@@ -87,6 +87,7 @@ golden smoke, and the hand-driven boot up to the prompt — is
 | M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | complete |
 | M8 — Glyphs & pointer | the input merge, the pointer plane (the kernel side; the glyphs and the Elm loop are the desktop's) | complete |
 | M9 — Windows | the stack, the roles and the walk, the death-side reclaim, the growth contract's five increments | complete |
+| M11 — Honest multi-app | the disk ELFs: `exec` loading images off the filesystem, per-image segment tables, per-process gate checks (the apps themselves are the desktop's) | complete |
 
 Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 
@@ -97,6 +98,8 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 - [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
 - [`docs/shell.md`](docs/shell.md) — the shell REPL: the line, the seven commands, the strictness the surface carries, the bounds.
 - [`docs/ui.md`](docs/ui.md) — the console renderer: EmoUI's spine at the console's currency, the frame, the Elm loop, the counter demo, the bounds.
+- [`docs/syscalls.md`](docs/syscalls.md) — the gate's verb set: the ABI, the refusals' reasons, the checks, `exec` (verb 24) the disk ELFs' door.
+- [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
 - [`docs/desktop-abi.md`](docs/desktop-abi.md) — the desktop protocol's stability contract: the frozen ABI, the relocatable implementations, the additions, the eight seams. The desktop itself is [`projects/emo-desktop`](../emo-desktop).
 - [`docs/atomics.md`](../../docs/atomics.md) — the atomic memory model: sequential consistency only, the op set, the per-target matrix, the data-race semantics.
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — the real-time boundary, in the Emo tree.

@@ -54,6 +54,18 @@ const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
 const handoff_caller = koff + 0x87002110
 
+// The exec page (emo-desktop A11.1, link.ld's .emo_exec): the per-pid
+// image cells the checks and the build read, and the exec request's
+// staging — the busy cell, the name. The image cells are the
+// dead-owners' discipline (one write per pid ever, at the spawn the
+// build consumed the record for); a zero cell names the boot image's
+// own table, every pass's before A11.1 and the boot image's forever.
+const img_for = koff + 0x8700c000
+const img_bound = 256
+const exec_busy = koff + 0x8700c000 + 3848
+const exec_name = koff + 0x8700c000 + 3856
+const exec_nlen = koff + 0x8700c000 + 3880
+
 // The write's staging page (T6.2): the gate copies the caller's buffer
 // here, inside the same trap that checked it, and the console service
 // prints from the copy on the kernel's own table. The page's free tail
@@ -166,6 +178,7 @@ const route_console_write = -1001
 const route_input_byte = -1002
 const route_process_spawn = -1003
 const route_process_wait = -1004
+const route_process_exec = -1005
 const route_desktop_present = -1010
 const route_output_info = -1011
 const route_input_event = -1012
@@ -196,6 +209,23 @@ def covers(start Int64, endp Int64, buf Int64, len Int64) Bool {
   return true
 }
 
+// The caller's own segment table (emo-desktop A11.1): the boot image's
+// global table for every pass whose image cell is zero — all of them,
+// before A11.1 and the boot image's forever — or the record of the
+// image the caller was exec'd from. The per-process gate check is this
+// routing: a pointer argument is judged by the segments of the image
+// the caller actually runs, never by another image's.
+def caller_table() Int64 {
+  var me = peek64(handoff_caller)
+  if me < img_bound {
+    var rec = peek64(img_for + me * 8)
+    if rec != 0 {
+      return rec
+    }
+  }
+  return seg_count_addr
+}
+
 // The write's pointer checks: the whole range inside one segment, and
 // that segment writable. The answer is 0, or the refusal's reason —
 // permission when a segment covers the range but cannot be written,
@@ -204,11 +234,12 @@ def check_write(buf Int64, len Int64) Int64 {
   if len < 0 {
     return reason_argument
   }
+  var tbl = caller_table()
   var covered = false
   var i = 0
-  var n = peek64(seg_count_addr)
+  var n = peek64(tbl)
   while i < n {
-    var slot = seg_table + (i * 24)
+    var slot = tbl + 8 + (i * 24)
     if covers(peek64(slot), peek64(slot + 8), buf, len) {
       if (peek64(slot + 16) & flag_w) != 0 {
         return 0
@@ -223,17 +254,28 @@ def check_write(buf Int64, len Int64) Int64 {
   return reason_range
 }
 
+// The caller's memory, translated (emo-desktop A11.1): a disk ELF's
+// addresses are its own table's, and the kernel's low window reaches
+// only the boot image's identity — every byte the kernel lifts from
+// the caller's memory walks the caller's own table, the space word the
+// shim stages at every ecall. The answer is the physical address of
+// the byte's page; the walk is the hardware's own, in software.
+def caller_pa(va Int64) Int64 {
+  return sv39.lookup(peek64(caller_space_cell), va)
+}
+
 // One byte from the caller's buffer into the kernel's staging, the
 // whole range at once: the check above has already bounded it inside
-// one writable segment, and this runs in that same trap, on the
-// caller's own table with SUM — one volatile byte load and store per
-// step, nothing allocated, nothing deferred to a context that cannot
-// see the caller's memory (T6.2). The console's write stages on the
-// handoff page; the filesystem's requests stage in their slots.
+// one writable segment, and this runs in that same trap — the caller's
+// bytes lift through its own table's walk (caller_pa), one page a
+// lookup, the raw-memory discipline of one volatile byte load and
+// store per step, nothing allocated, nothing deferred to a context
+// that cannot see the caller's memory (T6.2). The console's write
+// stages on its page; the filesystem's requests stage in their slots.
 def copy_to(dst Int64, buf Int64, len Int64) Void {
   var i = 0
   while i < len {
-    poke8(dst + i, peek8(buf + i))
+    poke8(dst + i, peek8(caller_pa(buf + i)))
     i = i + 1
   }
 }
@@ -253,7 +295,10 @@ def fs_slot_pick() Int64 {
 
 // A filesystem request's slot, filled and busy: the caller's pid (the
 // supervisor refuses it by this at a restart), the lengths, the
-// caller's buffer, the name copied in; the answer is the slot's base.
+// caller's buffer, the caller's space word (the read's answer lands in
+// the caller's memory, and a disk ELF's memory is its own table's —
+// the service walks it by this root), the name copied in; the answer
+// is the slot's base.
 def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   var s = fs_slots + k * fs_slot_size
   poke64(s, 1)
@@ -261,6 +306,7 @@ def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   poke64(s + 16, nlen)
   poke64(s + 24, len)
   poke64(s + 32, buf)
+  poke64(s + 40, peek64(caller_space_cell))
   copy_to(s + 64, name, nlen)
   return s
 }
@@ -644,6 +690,38 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 3 {
     return route_process_spawn
+  }
+  if n == 24 {
+    // exec(name, nlen) (emo-desktop A11.1): the disk ELF's name — the
+    // program the filesystem holds, loaded into its own image and
+    // started as its own process. The name is judged like the
+    // filesystem's (inside one writable segment of the caller's own —
+    // the per-process check, the caller_table routing), copied into
+    // the exec page's cells inside this trap, and the request routed
+    // to the process service. One request at a time: the busy cell is
+    // held from this staging to the service's pickup, so a request
+    // staged behind a transaction in flight cannot overwrite the name
+    // the older one still waits to be served by — a second is the
+    // resource refusal, the fs's fifth-slot rule. A caller past the
+    // image cells' bound is the same refusal: its child could never be
+    // recorded.
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    var vn = check_write(r0, r1)
+    if vn != 0 {
+      return -vn
+    }
+    if peek64(handoff_caller) >= img_bound {
+      return -reason_resource
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    copy_to(exec_name, r0, r1)
+    poke64(exec_nlen, r1)
+    poke64(exec_busy, 1)
+    return route_process_exec
   }
   if n == 4 {
     var me = peek64(handoff_caller)

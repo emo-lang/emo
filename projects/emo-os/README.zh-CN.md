@@ -83,6 +83,7 @@ $ ./start.sh
 | M7 — 屏幕 | virtio-gpu 路径、screen carve、第一帧全屏、present | complete |
 | M8 — 字形与指针 | 输入合并、指针平面(内核侧;字形与 Elm 循环是桌面侧的) | complete |
 | M9 — 窗口 | 栈、角色与走栈、死亡侧回收、生长契约的五增量 | complete |
+| M11 — 诚实的多应用 | 磁盘 ELF：`exec` 从文件系统加载镜像、每镜像段表、按进程的门检查（应用本体在桌面侧） | complete |
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。
 
