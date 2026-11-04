@@ -56,15 +56,17 @@ const handoff_caller = koff + 0x87002110
 
 // The exec page (emo-desktop A11.1, link.ld's .emo_exec): the per-pid
 // image cells the checks and the build read, and the exec request's
-// staging — the busy cell, the name. The image cells are the
+// staging — the busy cell, the name. The offsets answer exec.emo's own
+// layout (the records grew their private-page word in A11.2: 2048 +
+// 8×232 = 3904, the pending cell beside it). The image cells are the
 // dead-owners' discipline (one write per pid ever, at the spawn the
 // build consumed the record for); a zero cell names the boot image's
-// own table, every pass's before A11.1 and the boot image's forever.
+// own table, every pass whose image cell is zero.
 const img_for = koff + 0x8700c000
 const img_bound = 256
-const exec_busy = koff + 0x8700c000 + 3848
-const exec_name = koff + 0x8700c000 + 3856
-const exec_nlen = koff + 0x8700c000 + 3880
+const exec_busy = koff + 0x8700c000 + 3912
+const exec_name = koff + 0x8700c000 + 3920
+const exec_nlen = koff + 0x8700c000 + 3944
 
 // The write's staging page (T6.2): the gate copies the caller's buffer
 // here, inside the same trap that checked it, and the console service
@@ -131,13 +133,16 @@ const grant_row = 112
 // argument cells those requests stage (the grant, the position, the
 // damage rect; T8.13: win_role's role beside the grant) — the
 // compositor's own, like every service's, because its transactions and
-// the display service's can sit parked at once.
-const comp_svc_cell = koff + 0x87002e00
-const comp_args = koff + 0x87002e10
+// the display service's can sit parked at once. The cells sit past the
+// grant table's true end (eight rows of 112 bytes end at +0x2e80): a
+// staged request's words were the ghost rows the focus's judge read
+// before the move (emo-desktop A11.2).
+const comp_svc_cell = koff + 0x87002e80
+const comp_args = koff + 0x87002e90
 
 // The input service's argument cell (T8.13): input_info's index — the
 // one word the enumeration verb stages, past the pointer's cells.
-const input_args = koff + 0x87002e78
+const input_args = koff + 0x87002ef8
 
 // The surface roles (T8.13, emo-desktop A9.1 — the protocol's third
 // seam): the vocabulary win_role names a surface by. The gate bounds

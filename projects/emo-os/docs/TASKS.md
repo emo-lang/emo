@@ -249,3 +249,65 @@ numbering rule the day they land.
   packages, the sessions' bytes, the parent's exec flow — is
   emo-desktop's tracker, A11.1; **A11.2's two-image desktop is the
   next acceptance**. Decision record: CHECK.md, 2026-11-04.
+- [x] **T8.17** — The multi-image desktop's kernel side (M11's kernel
+  half, emo-desktop A11.2): two exec'd images resident at once, the
+  focus routing, and the input stream served to the focused reader
+  alone. Landed 2026-11-04: **the handoff goes private, the death
+  goes per-pid, and the stream learns an owner.** **The private
+  handoff page**: a 4 KiB frame per exec'd image (the transaction's
+  own take, the record's word at +224), the build mapping it at the
+  cells page's vaddr in the child's table — the classic cells page
+  stays the boot image's, its stub's parks never stolen, and two
+  images hand their arenas side by side, each through its own page
+  (the delta word, the arena values, the program cell, the console
+  hook — every cell the stub parks, on the image's own frame; the
+  A11.1 shared-cell owner and the exec's aside/restores retired).
+  **The trap shim's arena hand per-pid**: the save and the resume
+  read the leaver's (or passer's) record by its pid through the exec
+  page's high-half alias and serve the image's own pair on its frame
+  — a zero record the classic cells, the boot-in path patient of the
+  first mid-.bss-clear ticks (the zero guard its A11.1 shape lacked);
+  `exec.entry_for` names each spawn's entry off its own image; the
+  exec page's layout grew the records to 232 bytes (the private-page
+  word) and moved the pending cell and the display's svc_screen cells
+  with it; `image_home` walks the run home and drops the private
+  frame (the frame allocator's no-return bound — the documented 4 KiB
+  against the image's 196). **The focus routing**: the input
+  service's hold cells (four seats on the handoff page's tail) park a
+  read the focus does not name, the entitlement judge reads the
+  compositor's focus cell through the grant table's row's owner (a
+  dead focus serves whoever asks first), `input_peek_type` and
+  `input_take_head` judge the head before the consume (keyboard SYNs
+  ride past unseen), the compositor's press-raise (the pointer
+  driver's press cell, the dirty poke, the walk's topmost hit) is the
+  click-to-focus, and the kicks — the display's close and the comp's
+  reclaim `gate_post`ing the input service — are the re-judgment a
+  death waits for. The gate_post wake reaches a device-waiting
+  service (state 4) beside the receiving one, and the ISR's second
+  wake (`emo_sched_wake_input`) reaches a receive-parked input
+  service beside the device-waiters. **Found on the way, fixed on
+  the way — the ghost rows**: the routing cells (`comp_svc_cell`,
+  `comp_args`, the pointer cells, `input_args`) sat inside the grant
+  table's span (the table's eight 112-byte rows end at +0x2e80; the
+  cells started at +0x2e00) — every compositor verb staged its
+  arguments into rows 6 and 7, and the entitlement judge's
+  `grant_row_of` matched a staged present's grant as a live row owned
+  by nobody, holding the unfocused reader's read forever after the
+  real row's close zeroed it. The cells moved past the table's true
+  end (+0x80; trap.S's two hardcoded routes — the compositor's pid
+  cell, the supervisor's — with them). The input service's park stays
+  the receive (a device-wait park starves the mailbox: a reader's ask
+  queued behind busy seats never dispatches — found, reverted); the
+  judgment rides the mailbox's words (every reader's ask, the kicks),
+  the loop's comment saying exactly that. **The pins**: the machine's
+  wire — the duo's compositions (`comp 224 144`, `comp 576 384`), the
+  counter's `add 1`/`sub 0` on the serial's bytes, the browser's
+  `sel files.emo`/`open files.emo` after the click, `app counter 0`
+  before `app files 0` (the waits' own order), the editor's era
+  beside them; the ledger `frames 795 734` unchanged;
+  `run.sh` green under both timer transports, three consecutive
+  rounds byte-identical on both; `dune runtest` green (340);
+  `@fmt` green; the fb gate 134 ok. The desktop-side record — the
+  duo's sessions, the hosted twin's replay, the golden's hands — is
+  emo-desktop's tracker, A11.2; **with this M11 is complete on both
+  sides of the gate**. Decision record: CHECK.md, 2026-11-04.

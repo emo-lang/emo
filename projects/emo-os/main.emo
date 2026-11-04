@@ -96,9 +96,11 @@ const app_blob_e_end = koff + 0x870021f8
 
 // The process service's screen-pass state (T8.2), on the exec page's
 // tail: the granted child's pid and the carve's base, across requests —
-// the exit that answers them is the proof's moment.
-const svc_screen_pid = koff + 0x8700c000 + 3992
-const svc_screen_base = koff + 0x8700c000 + 4000
+// the exit that answers them is the proof's moment. (The tail moved
+// when the image records grew their private-page word, A11.2: the
+// cells sit past the exec's name buffer now.)
+const svc_screen_pid = koff + 0x8700c000 + 4072
+const svc_screen_base = koff + 0x8700c000 + 4080
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -133,7 +135,11 @@ const plic_enable = koff + 0x0c002080
 // surface's role — the position the blit places a window at and the
 // kind of surface it is, the policy the compositor holds; the stack's
 // order is the composition's, the last entry on top). The routing
-// cells ride the handoff page's tail beside the grant table.
+// cells ride the handoff page's tail past the grant table's true end
+// (eight rows of 112 bytes from +0x2b00 end at +0x2e80; the cells
+// started at +0x2e00 once, and a staged request's words were the ghost
+// rows the focus's judge read — the cells moved past the table's end,
+// emo-desktop A11.2).
 const comp_page = koff + 0x87008000
 const comp_gen_cell = comp_page
 const comp_top_cell = comp_page + 8
@@ -182,9 +188,9 @@ const comp_cursor_y = comp_page + 392
 const comp_cursor_shown = comp_page + 400
 const comp_cursor_gen = comp_page + 408
 const comp_cursor_said = comp_page + 416
-const comp_svc_cell = koff + 0x87002e00
-const comp_sup_cell = koff + 0x87002e08
-const comp_args = koff + 0x87002e10
+const comp_svc_cell = koff + 0x87002e80
+const comp_sup_cell = koff + 0x87002e88
+const comp_args = koff + 0x87002e90
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -256,19 +262,31 @@ const input_irq_cell = koff + 0x870029f0
 const pointer_ring_prod = koff + 0x87001800
 const pointer_ring_cons = koff + 0x87001808
 const pointer_ring = koff + 0x87001810
-const pointer_x_cell = koff + 0x87002e40
-const pointer_y_cell = koff + 0x87002e48
-const pointer_max_x_cell = koff + 0x87002e50
-const pointer_max_y_cell = koff + 0x87002e58
-const pointer_gen_cell = koff + 0x87002e60
-const pointer_notice_cell = koff + 0x87002e68
-const pointer_dirty_cell = koff + 0x87002e70
+const pointer_x_cell = koff + 0x87002ec0
+const pointer_y_cell = koff + 0x87002ec8
+const pointer_max_x_cell = koff + 0x87002ed0
+const pointer_max_y_cell = koff + 0x87002ed8
+const pointer_gen_cell = koff + 0x87002ee0
+const pointer_notice_cell = koff + 0x87002ee8
+const pointer_dirty_cell = koff + 0x87002ef0
+const pointer_press_cell = koff + 0x87002f00
+// The held reads (emo-desktop A11.2): the multi-image desktop's
+// readers park on the same stream, and the bytes and keys are the
+// focused surface's owner's — a reader the focus does not name has
+// its read held here, unanswered, the reader asleep at its gate-wait
+// (nothing crosses, nothing allocates) until the focus names it or
+// its row dies with the window it closed. Four seats, the pid word
+// zero when free — on the handoff page's tail, past the pointer's and
+// the input argument's (the frame allocator's page is the next up).
+const input_hold = koff + 0x87002f10
+const input_hold_seats = 4
+const input_hold_seat = 16
 const pointer_op = 18
 // The input service's argument cell (T8.13, emo-desktop A9.1): the
 // index input_info (verb 18) stages — the pointer's axes are the
 // device's answer the compositor already scales by, and this verb hands
 // them to a client that scales the stream's reports itself.
-const input_args = koff + 0x87002e78
+const input_args = koff + 0x87002ef8
 
 // The desktop segment's cells (T8.4, T8.5): the display service's pid
 // cell the gate routes the desktop verbs by; the authorization table's
@@ -678,7 +696,8 @@ def process_serve(w Int64) Void {
               if screen != 0 {
                 poke64(screen_pending_cell, screen)
               }
-              var child = user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block)
+              var child = user_spawn(exec.entry_for(caller_of(w)),
+                sv39.pa_of(stack) + block)
               if screen != 0 {
                 poke64(svc_screen_pid, child)
                 poke64(svc_screen_base, screen)
@@ -1413,6 +1432,14 @@ def gpu_service(boss Pid) Void {
                     i = i + 1
                   }
                   blk_zero(row, 12)
+                  // the closed row's kick (emo-desktop A11.2): the
+                  // focus's surface died — a read the focus held may
+                  // now be entitled, and the input service's judgment
+                  // waits for exactly this news
+                  var isvc = peek64(input_svc_cell)
+                  if isvc != 0 {
+                    gate_post(isvc, 13 << 32)
+                  }
                   gate_reply(caller_of(w), 0)
                 }
               } else {
@@ -1533,37 +1560,26 @@ def pointer_ring_take() Int64 {
   return e
 }
 
-// The merged stream's next event: the serial's byte if the ring holds
-// one (the byte event), else the keyboard's next event, else the
-// pointer ring's, else the device-wait park — the wake is the UART's
-// ISR or an input line's, any one lands.
-def input_event(dev Int64, q Int64) Int64 {
-  var got = 0
-  var done = false
-  while !done {
-    if peek64(in_cons) != peek64(in_prod) {
-      var cons = peek64(in_cons)
-      var b = peek8(in_ring + (cons % 128)).to_int64()
-      poke64(in_cons, cons + 1)
-      got = (0x454D << 48) | b
-      done = true
-    } else {
-      var e = eventq_take(dev, q)
-      if e != 0 {
-        got = e
-        done = true
-      } else {
-        var p = pointer_ring_take()
-        if p != 0 {
-          got = p
-          done = true
-        } else {
-          device_wait()
-        }
-      }
-    }
+// The merged stream's head, taken from the source the peek named
+// (emo-desktop A11.2): the routing judges the head's type before it
+// is consumed, so the consume must be the head's own — the byte off
+// the UART's ring, the keyboard's eventq word (its SYN reports ride
+// the same queue, type zero), or the pointer ring's entry. The old
+// walk (bytes, then the keyboard, then the pointer, then the park)
+// was the merge's shape when the only reader was the merge's own
+// consumer; a routing that decides before it consumes needs the head
+// and the decision to name the same event.
+def input_take_head(dev Int64, q Int64, ty Int64) Int64 {
+  if ty == 17741 {
+    var cons = peek64(in_cons)
+    var b = peek8(in_ring + (cons % 128)).to_int64()
+    poke64(in_cons, cons + 1)
+    return (0x454D << 48) | b
   }
-  return got
+  if eventq_pending(q) {
+    return eventq_take(dev, q)
+  }
+  return pointer_ring_take()
 }
 
 // One virtio-input device's bring-up (T8.3, shared by the two drivers
@@ -1663,6 +1679,143 @@ def input_find(pointer Bool) Int64 {
   return found
 }
 
+// The focus's verdict on a reader (emo-desktop A11.2): the focused
+// surface's owner is the reader the stream's bytes and keys serve; a
+// reader the focus does not name waits, its request stashed, served
+// when the focus has come around. A dead focus — no focused surface,
+// or its row gone with the window it closed — serves whoever asks
+// first.
+def input_entitled(pid Int64) Bool {
+  var fid = peek64(comp_focus_cell)
+  if fid == 0 {
+    return true
+  }
+  var row = grant_row_of(fid)
+  if row == 0 {
+    return true
+  }
+  return peek64(row + 8) == pid
+}
+
+// The next event's type, seen and not taken (emo-desktop A11.2): the
+// serial's bytes first, then the keyboard's, then the pointer's — the
+// merge's own order, read at each source's cursor. The answer is the
+// type word, or −1 when no source holds an event. The pointer ring's
+// separator reads as its zero: the serving loop consumes it unseen.
+def input_peek_type(dev Int64, q Int64) Int64 {
+  if peek64(in_cons) != peek64(in_prod) {
+    return 17741
+  }
+  if eventq_pending(q) {
+    var used = q + 0x2000
+    var handled = peek64(q + 0x3f00)
+    var entry = used + 4 + ((handled % 16) * 8)
+    var id = peek32(entry)
+    var buf = q + 0x3000 + (id * 8)
+    return peek16r(buf)
+  }
+  if peek64(pointer_ring_cons) != peek64(pointer_ring_prod) {
+    var e = peek64(pointer_ring + ((peek64(pointer_ring_cons) % 32) * 8))
+    return (e >> 48) & 65535
+  }
+  return -1
+}
+
+// The held reads, judged and served (emo-desktop A11.2): a read the
+// focus does not name is held, not answered — the reader sleeps at
+// its gate-wait until the focus names it, or until its row dies with
+// the window it closed, the hold dropped. The head of the stream is
+// judged at the consume, a keyboard SYN riding past unseen. The
+// judgment re-runs at the service's loop top — after every mailbox
+// word: a reader's own ask, the close's kick, the reclaim's kick —
+// which is what a held read waits on; a device line's wake of a
+// receive park (the ISR's emo_sched_wake_input) re-scans the mailbox
+// alone and re-parks, a spurious pass and nothing more.
+def input_hold_put(pid Int64, w Int64) Bool {
+  var i = 0
+  while i < input_hold_seats {
+    var seat = input_hold + (i * input_hold_seat)
+    if peek64(seat) == 0 {
+      poke64(seat, pid)
+      poke64(seat + 8, w)
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def input_hold_serve(dev Int64, q Int64) Void {
+  var i = 0
+  while i < input_hold_seats {
+    var seat = input_hold + (i * input_hold_seat)
+    var pid = peek64(seat)
+    if pid != 0 {
+      if peek64(comp_dead_cells + (pid * 8)) != 0 {
+        poke64(seat, 0)
+      } else {
+        if input_entitled(pid) {
+          var w = peek64(seat + 8)
+          poke64(seat, 0)
+          input_serve_read(w, dev, q)
+        }
+      }
+    }
+    i = i + 1
+  }
+}
+
+def input_serve_read(w Int64, dev Int64, q Int64) Void {
+  var served = false
+  while !served {
+    var ty = input_peek_type(dev, q)
+    if ty < 0 {
+      device_wait()
+    } else {
+      if ty == 0 {
+        input_take_head(dev, q, ty)
+      } else {
+        var e = input_take_head(dev, q, ty)
+        gate_reply(caller_of(w), e)
+        served = true
+      }
+    }
+  }
+}
+
+def input_parked(w Int64, dev Int64, q Int64) Void {
+  var op = op_of(w)
+  if op == 12 {
+    var pid = caller_of(w)
+    if !input_hold_put(pid, w) {
+      println("input: the hold overflowed")
+      halt()
+    }
+  } else {
+    if op == 2 {
+      gate_reply(caller_of(w), input_byte())
+    } else {
+      if op == 13 {
+        // the re-judgment's kick (emo-desktop A11.2): the focus's
+        // world moved — the held reads are judged by the loop's next
+        // pass, nothing to answer
+      } else {
+      if op == 18 {
+        // input_info (T8.13): the index-th pointer's axes, the
+        // maxima the pointer driver read off its config, packed
+        // X above Y; one pointer is the first answer, and an
+        // index past it is the argument refusal.
+        if peek64(input_args) == 0 {
+          gate_reply(caller_of(w), (peek64(pointer_max_x_cell) << 32) | peek64(pointer_max_y_cell))
+        } else {
+          gate_reply(caller_of(w), -4)
+        }
+      }
+      }
+    }
+  }
+}
+
 def input_service(boss Pid) Void {
   var dev = input_find(false)
   if dev == 0 {
@@ -1678,29 +1831,25 @@ def input_service(boss Pid) Void {
   println("input ready")
   boss <- self_pid()
   while true {
+    // The held reads first (emo-desktop A11.2): a death or a focus
+    // that moved names one of them now. The park itself is the
+    // receive, and the mailbox's words are what drive it: every
+    // reader's ask and every kick dispatches, and each dispatch's
+    // loop-top pass re-judges the seats — the focused reader's own
+    // asks keep that pass coming while a session runs, and the
+    // close's and the reclaim's kicks are the ones a death waits
+    // for. The gate's words go to the typed dispatch, and the
+    // readers' bare pid messages (T8.3 — the read that is the
+    // sender's own pid) go back a byte, the one send only a dynamic
+    // binding carries.
+    input_hold_serve(dev, q)
     receive {
-      w -> {
-        var op = op_of(w)
-        if op == 2 {
-          gate_reply(caller_of(w), input_byte())
+      x -> {
+        var op = op_of(x)
+        if op == 2 || op == 12 || op == 13 || op == 18 {
+          input_parked(x, dev, q)
         } else {
-          if op == 12 {
-            gate_reply(caller_of(w), input_event(dev, q))
-          } else {
-            if op == 18 {
-              // input_info (T8.13): the index-th pointer's axes, the
-              // maxima the pointer driver read off its config, packed
-              // X above Y; one pointer is the first answer, and an
-              // index past it is the argument refusal.
-              if peek64(input_args) == 0 {
-                gate_reply(caller_of(w), (peek64(pointer_max_x_cell) << 32) | peek64(pointer_max_y_cell))
-              } else {
-                gate_reply(caller_of(w), -4)
-              }
-            } else {
-              w <- input_byte()
-            }
-          }
+          x <- input_byte()
         }
       }
     }
@@ -1762,6 +1911,18 @@ def pointer_drain(dev Int64, q Int64) Void {
     } else {
       pointer_ring_push(e)
       pushed = true
+      if ev_type_of(e) == 1 {
+        // the button's rising edge (emo-desktop A11.2): one word for
+        // the compositor — the press is the click-to-focus's ear, the
+        // raise judged at the notice's position. The releases ride
+        // the ring and nothing else. The press dirties the report:
+        // a click that moves no axis would otherwise post no notice
+        // at all, and the raise rides the notice like the moves do.
+        if ev_code_of(e) == 272 && ev_value_of(e) == 1 {
+          poke64(pointer_press_cell, 1)
+          poke64(pointer_dirty_cell, 1)
+        }
+      }
       if ev_type_of(e) == 3 {
         var code = ev_code_of(e)
         if code == 0 {
@@ -1800,6 +1961,7 @@ def pointer_service(boss Pid) Void {
   poke64(pointer_gen_cell, 0)
   poke64(pointer_notice_cell, 0)
   poke64(pointer_dirty_cell, 0)
+  poke64(pointer_press_cell, 0)
   input_dev_init(dev, q)
   println("pointer ready")
   boss <- self_pid()
@@ -2075,6 +2237,13 @@ def comp_reclaim(pid Int64) Void {
   }
   comp_stack_prune()
   if said != 0 {
+    // the reclaimed rows' kick (emo-desktop A11.2): a read the focus
+    // held may now be entitled — the dead owner's windows died with
+    // it, and the input service's judgment waits for the news
+    var isvc = peek64(input_svc_cell)
+    if isvc != 0 {
+      gate_post(isvc, 13 << 32)
+    }
     println("comp reclaim ${pid}")
   }
 }
@@ -2289,7 +2458,43 @@ def comp_await_flush() Void {
 // places lie in presented, and the plane's first line on the wire once
 // (`pointer <x> <y>`, the hotspot's place: the ride would drown in a
 // line per move).
+// The press's raise (emo-desktop A11.2): the click-to-focus's other
+// half — the press cell's word judged at the notice's position, the
+// stack walked topmost first, the window or panel the point lands in
+// raised to the stack's top and named the focused one. A press on the
+// background names nothing; the focus is then whose it was.
+def comp_press_raise() Void {
+  var hx = (peek64(pointer_x_cell) * peek64(comp_mode_w)) / (peek64(pointer_max_x_cell) + 1)
+  var hy = (peek64(pointer_y_cell) * peek64(comp_mode_h)) / (peek64(pointer_max_y_cell) + 1)
+  var hit = 0
+  var i = peek64(comp_top_cell)
+  while i > 0 && hit == 0 {
+    i = i - 1
+    var entry = comp_stack + (i * comp_entry)
+    var role = peek64(entry + 24)
+    if role == role_toplevel || role == role_panel {
+      var row = grant_row_of(peek64(entry))
+      if row != 0 {
+        var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+        var ax = both >> 32
+        var ay = both & 4294967295
+        if hx >= ax && hx < ax + peek64(row + 32) && hy >= ay && hy < ay + peek64(row + 40) {
+          poke64(comp_focus_cell, peek64(entry))
+          comp_stack_raise(entry)
+          hit = 1
+        }
+      }
+    }
+  }
+}
+
 def comp_cursor_place(gpu Pid, me Pid) Void {
+  // the press first (emo-desktop A11.2): a click is a raise before it
+  // is a move of the sprite
+  if peek64(pointer_press_cell) != 0 {
+    poke64(pointer_press_cell, 0)
+    comp_press_raise()
+  }
   poke64(pointer_notice_cell, 0)
   poke64(comp_cursor_gen, peek64(pointer_gen_cell))
   var mw = peek64(comp_mode_w)

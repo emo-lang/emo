@@ -123,12 +123,16 @@ const screen_size = 0x400000 // 4 MiB, frames.emo's carve
 // the child's own image cell (one write per pid ever, the pid already
 // dressed in the slot), and the table is built off that image's own
 // segments — the per-image half, the boot image's global table the
-// zero cell's answer.
-const exec_pending = koff + 0x8700c000 + 3840
+// zero cell's answer. The record's tail word (+224, exec.emo's
+// record_page) is the image's private handoff page (emo-desktop
+// A11.2): the frame the transaction took, the build maps it at the
+// cells page's vaddr in the child's table and parks the child's arena
+// values on it — the classic cells page stays the boot image's, its
+// stub's parks never stolen, and two images hand their arenas side by
+// side, each through its own page.
+const exec_pending = koff + 0x8700c000 + 3904
 const img_for = koff + 0x8700c000
-const cells_owner = 0x87fff060 // the shared arena cells' image's pid
-const cells_arena_cur = 0x87fff070 // the exec'd child's arena cursor, physical
-const cells_arena_end = 0x87fff078 // and its end
+const record_page = 224
 
 // One 4 KiB page into a user table, unioning with what is there: the
 // image's segments share their boundary page (the text's last page
@@ -150,16 +154,19 @@ def map_page(root Int64, va Int64, pa Int64, flags Int64) Void {
   }
 }
 
-// The user's half of a table: the kernel's half, the cells page and
-// the boot pass's trap page — everything but the image's segments, the
-// two builders' shared part. One helper for the three builders — the
-// boot pass's (user.emo's stage, which knows the segments before
-// anything spawns), each spawned pass's (build, off the boot image's
-// global table), and an exec's child's (build, off the child's own
-// image's record).
+// The user's half of a table: the kernel's half and the boot pass's
+// trap page — everything but the image's segments and the handoff
+// page, the two builders' shared part. One helper for the three
+// builders — the boot pass's (user.emo's stage, which knows the
+// segments before anything spawns), each spawned pass's (build, off
+// the boot image's global table), and an exec's child's (build, off
+// the child's own image's record). The cells page's vaddr is each
+// builder's own: the boot image's table maps the classic cells page
+// (its stub's parks — the identity the kernel's low window reads), an
+// exec'd image's maps its private handoff page (image_base's, the
+// frame the record names).
 def base_common(root Int64) Void {
   sv39.map_kernel(root, false)
-  map_page(root, cells_page, cells_page, rwu)
   map_page(root, boot_trap_page, boot_trap_page, rw)
 }
 
@@ -169,6 +176,7 @@ def base_common(root Int64) Void {
 // of the boot image shares those physical pages.
 def base(root Int64) Void {
   base_common(root)
+  map_page(root, cells_page, cells_page, rwu)
   var n = peek64(seg_count_addr)
   var i = 0
   while i < n {
@@ -231,6 +239,13 @@ def image_base(root Int64, rec Int64) Void {
     }
     i = i + 1
   }
+  // the private handoff page (emo-desktop A11.2): the cells page's
+  // vaddr maps the image's own frame — the stub's parks, the delta the
+  // transaction poked, the arena values the build parks, every cell
+  // the stub and the runtime's init read, land here and nowhere else.
+  // The record's word is the kernel's alias; the PTE takes the
+  // physical.
+  map_page(root, cells_page, sv39.pa_of(peek64(rec + record_page)), rwu)
 }
 
 // The boot pass's adoption: its root's physical address, into the
@@ -269,28 +284,18 @@ def build(slot Int64) Void {
     var pid = peek64(slot + 8)
     if pid < 256 {
       poke64(img_for + pid * 8, rec)
-      // the shared cells' owner (emo-desktop A11.1): the exec'd
-      // image's stub re-parks the pair at entry, and the trap shim's
-      // hands serve its crossings by this pid — a stranger's crossing
-      // skips the pair, the boot pass's its own cells beside them
-      poke64(cells_owner, pid)
-      // the child's arena crosses as values: the slot's own run, the
-      // cursor and end the spawn dressed, physical — the identities
-      // the image's own table maps — read here, after the dress, by
-      // the runtime's init (the delta word its tell)
-      poke64(cells_arena_cur, sv39.pa_of(peek64(slot + slot_arena_base)))
-      poke64(cells_arena_end, sv39.pa_of(peek64(slot + slot_arena_end)))
     }
+    // the child's arena crosses as values on its own private page
+    // (emo-desktop A11.2): the slot's own run, the cursor and end the
+    // spawn dressed, physical — the identities the image's own table
+    // maps — read here, after the dress, by the runtime's init (the
+    // delta word its tell). The record's page word is the kernel's
+    // alias, as the allocator answered it.
+    var hp = peek64(rec + record_page)
+    poke64(hp + 0x70, sv39.pa_of(peek64(slot + slot_arena_base)))
+    poke64(hp + 0x78, sv39.pa_of(peek64(slot + slot_arena_end)))
     image_base(root, rec)
   } else {
-    // a boot-image spawn (emo-desktop A11.1): the exec's cells are not
-    // this pass's — the delta word its init reads, the values beside
-    // it, the owner the shim's hands serve — all cleared, the boot
-    // image's own shapes restored for every crossing it makes
-    poke64(0x87fff048, 0)
-    poke64(cells_arena_cur, 0)
-    poke64(cells_arena_end, 0)
-    poke64(cells_owner, 0)
     base(root)
   }
   var stack = peek64(slot + slot_stack)

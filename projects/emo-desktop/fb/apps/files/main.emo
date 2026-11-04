@@ -31,6 +31,12 @@ def main() {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }
+  // the mount takes the focus (emo-desktop A11.2): the newest window
+  // up is the one the stream's keys serve until a click names another
+  case syscall.win_focus(gf) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
   const wf = ui_fb_winbuf.win(gf, base_f, 384, 128)
   ui.run(ui_apps.files.view, ui_apps.files.update,
     ui_apps.files.initial(), ui_fb.backend(wf, ui_fb_winbuf.keys([106, 107, 111])))

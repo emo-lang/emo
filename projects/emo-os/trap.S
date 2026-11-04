@@ -407,26 +407,44 @@ emo_os_trap_trampoline:
     srli t0, t0, 8
     andi t0, t0, 1           # sstatus.SPP: 0 = the trap came from U-mode
     bnez t0, .Larena_saved
-    li t0, 0x87fff008        # the user stub parked the address of its
-    ld t0, 0(t0)             # root slot's arena cursor word here
-    beqz t0, .Larena_saved   # nothing staged: nothing to save
     la t2, emo_cur_slot
     ld t2, 0(t2)
     ld t3, 8(t2)             # the leaver's pid
     li t1, 1
     beq t3, t1, .Larena_boot
-    # the shared pair's owner (emo-desktop A11.1): the boot image's
-    # pointers until an exec's stub re-parks them, the exec'd image's
-    # after — a crossing pass hands its arena through the pair only
-    # when its image owns them, or the pair misfiles one image's
-    # cursor into another's words
-    li t1, 0x87fff060
-    ld t1, 0(t1)
-    beqz t1, .Larena_a       # no owner yet: the boot image's, every pass's
-    bne t1, t3, .Larena_saved # a stranger's crossing: nothing to save
-.Larena_a:
+    # the leaver's image's own pair (emo-desktop A11.2): the per-pid
+    # record names the image's private handoff page — the cells the
+    # image's stub parked at its entry, its pair among them — and the
+    # page's vaddrs map that one frame in the image's tables. A zero
+    # record is a pass of the boot image: the classic cells, whose
+    # parks no exec'd stub has touched since the private pages took
+    # the exec'd images' hands over (the owner cell of A11.1 retired —
+    # one image's parks can no longer stand in another's place).
+    li t1, 256
+    bge t3, t1, .Larena_saved
+    li t5, 0xFFFFFFC08700C000  # the exec page, the high half's alias
+    slli t6, t3, 3
+    add t5, t5, t6
+    ld t5, 0(t5)             # the record, or 0
+    beqz t5, .Larena_classic
+    ld t5, 224(t5)           # the private handoff page, the
+                             # kernel's alias as the allocator
+                             # answered it — read raw, no second
+                             # offset
+    addi t5, t5, 8           # its pair's cursor cell
+    j .Larena_pair
+.Larena_classic:
+    li t5, 0x87fff008        # the classic pair's cursor cell, the low
+                             # window's identity — a boot-image pass's
+                             # table maps the page, and this read runs
+                             # before the table swap on kernel traps or
+                             # on the kernel's own table after it
+.Larena_pair:
+    ld t0, 0(t5)             # the arena cursor word's address, the
+                             # image's own (identity, the stub's park)
+    beqz t0, .Larena_saved   # nothing staged: nothing to save
     li t4, EMO_KOFF
-    add t4, t0, t4           # the pointer's kernel alias â the hand runs
+    add t4, t0, t4           # the pointer's kernel alias — the hand runs
     ld t1, 0(t4)             # on the kernel's table here, and a disk
                              # ELF's arena words sit in an allocator run
                              # the low window of no single table names
@@ -437,14 +455,13 @@ emo_os_trap_trampoline:
     add t1, t1, t4           # the running pass's cursor, the kernel's
     sd t1, 576(t2)
     # the end goes with it (emo-desktop A11.1): a boot-image pass's end
-    # is its run's, dressed at the spawn and constant â but an exec'd
+    # is its run's, dressed at the spawn and constant — but an exec'd
     # image's arena is its own heap, whose end its runtime wrote over
-    # the run's at entry â the resume writes both words back, and an
+    # the run's at entry — the resume writes both words back, and an
     # end the kernel slot kept from the spawn would be the run's, the
     # arena's cursor the heap's: gone at its first allocation. The end
     # rides beside the cursor, both worlds' words whole.
-    li t0, 0x87fff010
-    ld t0, 0(t0)
+    ld t0, 8(t5)             # the pair's end cell, beside the cursor's
     beqz t0, .Larena_saved
     li t4, EMO_KOFF
     add t4, t0, t4           # the same kernel alias
@@ -696,7 +713,9 @@ emo_os_trap_trampoline:
                                   # service's pid cell (T8.4)
     j .Lroute_post
 .Lroute_comp:
-    li a0, EMO_KOFF + 0x87002e00  # the compositor's pid cell (T8.6)
+    li a0, EMO_KOFF + 0x87002e80  # the compositor's pid cell (T8.6;
+                                  # A11.2 moved the routing cells past
+                                  # the grant table's true end)
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
@@ -866,6 +885,7 @@ emo_os_console_irq:
     # device could raise (found with the pointer, T8.11).
     sd a0, 8(sp)
     call emo_sched_wake_console
+    call emo_sched_wake_input
     ld a0, 8(sp)
     li t0, EMO_KOFF + 0x0c201004
     sw a0, 0(t0)             # complete the claim
@@ -894,6 +914,7 @@ emo_os_console_irq:
     j .Lcons_drain
 .Lcons_wake:
     call emo_sched_wake_console
+    call emo_sched_wake_input
     li t0, EMO_KOFF + 0x0c201004
     li t1, 10
     sw t1, 0(t0)             # complete the claim
@@ -983,34 +1004,49 @@ emo_os_trap_resume:
     ld t1, 0(t1)
     jalr t1                  # the swap, fences included
 3:
-    li t0, 0x87fff008
-    ld t0, 0(t0)             # the user image's arena cursor word
-    beqz t0, .Larena_ready   # nothing staged: nothing to hand over
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t2, 8(t1)             # the passer's pid
     li t3, 1
     beq t2, t3, .Larena_boot_in
-    # the shared pair's owner (emo-desktop A11.1), the save's check
-    # mirrored: the incoming pass hands through the pair only when its
-    # image owns them — a stranger's resume would file its cursor into
-    # another image's words
-    li t3, 0x87fff060
-    ld t3, 0(t3)
-    beqz t3, .Larena_a_in    # no owner yet: the boot image's, every pass's
-    bne t3, t2, .Larena_ready # a stranger's resume: nothing to hand
-.Larena_a_in:
+    # the passer's image's own pair (emo-desktop A11.2), the save's
+    # lookup mirrored: the record names the image's private handoff
+    # page, a zero record the boot image's classic cells. The reads
+    # here run on the incoming pass's own table — the record and the
+    # private page through the high half's alias, every table's; the
+    # classic cells at the low identity, which only a boot-image
+    # passer's table (or the kernel's) maps to the classic page, the
+    # only table shapes this branch serves.
+    li t3, 256
+    bge t2, t3, .Larena_ready
+    li t3, 0xFFFFFFC08700C000  # the exec page, the high half's alias
+    slli t4, t2, 3
+    add t3, t3, t4
+    ld t3, 0(t3)             # the record, or 0
+    beqz t3, .Larena_classic_in
+    ld t3, 224(t3)           # the private handoff page, the
+                             # kernel's alias as the allocator
+                             # answered it — read raw, no second
+                             # offset
+    addi t3, t3, 8           # its pair's cursor cell
+    j .Larena_pair_in
+.Larena_classic_in:
+    li t3, 0x87fff008        # the classic pair's cursor cell, the low
+                             # window's identity
+.Larena_pair_in:
+    ld t0, 0(t3)             # the arena cursor word's address
+    beqz t0, .Larena_ready   # nothing staged: nothing to hand over
     li t4, EMO_KOFF
     ld t2, 576(t1)
     sub t2, t2, t4           # the passer's cursor, as the user addresses
     add t0, t0, t4           # it — through the pointer's kernel alias,
-    sd t2, 0(t0)             # the half every table maps: the resume runs
-                             # on the incoming pass's own table, and the
-                             # cells' image may be a disk ELF whose words
-                             # no other table maps at identity
-                             # (emo-desktop A11.1) — becomes the arena's
-    li t0, 0x87fff010
-    ld t0, 0(t0)             # and the end word beside it
+    sd t2, 0(t0)             # the resume runs on the incoming pass's own
+                             # table, and the cells' image may be a disk
+                             # ELF whose words no other table maps at
+                             # identity (emo-desktop A11.1) — becomes the
+                             # arena's
+    ld t0, 8(t3)             # and the end word beside it
+    beqz t0, .Larena_ready
     ld t2, 584(t1)
     sub t2, t2, t4
     add t0, t0, t4
@@ -1019,13 +1055,18 @@ emo_os_trap_resume:
 .Larena_boot_in:
     li t4, EMO_KOFF
     li t0, 0x87fff050        # the boot image's own pair (A11.1), not the
-    ld t0, 0(t0)             # shared cells a disk ELF's entry re-parked
+    ld t0, 0(t0)             # private page's a disk ELF's stub parked
+    beqz t0, .Larena_ready   # nothing staged: the boot pass's own hand
+                             # waits for its stub's parks — the first
+                             # ticks of the .bss clear land here, before
+                             # any pointer exists
     la t2, emo_os_boot_cur
     ld t2, 0(t2)
     add t0, t0, t4           # the boot pair's words, the same alias
     sd t2, 0(t0)
     li t0, 0x87fff058
     ld t0, 0(t0)
+    beqz t0, .Larena_ready   # the same patience for the end cell
     la t2, emo_os_boot_lim
     ld t2, 0(t2)
     add t0, t0, t4
@@ -1181,8 +1222,9 @@ emo_os_death_notice:
     or a1, a1, a0            # 256 << 32 | the dead pid
     mv a0, t1
     call emo_gate_post
-3:  li t0, EMO_KOFF + 0x87002e08  # the compositor's supervisor's cell
-                                  # (T8.6): every death reaches it too
+3:  li t0, EMO_KOFF + 0x87002e88  # the compositor's supervisor's cell
+                                  # (T8.6; A11.2's move past the grant
+                                  # table): every death reaches it too
                                   # — its own instance's death is the
                                   # restart, any other drops (T8.14: a
                                   # user pass's windows go home through

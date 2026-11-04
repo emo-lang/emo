@@ -176,6 +176,84 @@ Pending design decisions — deliberately kept out of the README until they are 
 - The dock and the desktop shell (emo-desktop A10.2): **landed (2026-11-03) — `emo_desktop`, the shell's chrome as a package, and the machine's desktop wearing a dock.** The decisions, in order. **The package** is the flat name the placement round decided (`emo_desktop`, `fb/desktop/`), targets all six, deps `emo/ui_fb` alone; the dock paints direct (fills and glyphs through the `Surface`, no tree — the window package's arena reason), the strip a panel surface at the display's bottom edge, the role A9.3 gave substance — the walk's topmost, no window over it. **The press policy is a pure def** (`press(x, y, w, h, count)` → the tile or −1), the shell's pointer handler asking it before the window hit test: a strip press names a tile, the tile names its app, `win_focus` raises it, the dock repaints with the tile lit; a strip press never starts a drag (the drag's grab conditions grew the below-the-strip guard — a window dragged to the bottom edge must not mistake a dock press for its own bar), and no window beneath is consulted. **The hosted twin paints the dock buffer's own size** (1024×40, not the mode): the digest the golden pins is the digest the screendump's rect fold meets — the same identity the window golden's frames carry — in the three states the desk era lives (none focused, alpha lit, beta) with the policy's probes beside; the fb gate stages `emo_desktop` and checks the family (90 → 107 ok). **The desk pass wears the dock**: the panel surface beside its two windows, the initial paint unlit, the repaints riding the one focus-change block, the three digest lines pinned by a corpus-file loop seeded past the desk era's start (the pointer-line positioning's shape), `desk_is` growing the strip's rectangle — skipped in the walk, folded to the corpus's digest, the fold generalized to per-rect dimensions — and the beta focus beat moved from a press inside the window to a press on beta's tile (`abs 2048 31979`), the drag's bar press after it finding beta already focused. The ledger `frames 111 73` (the dock's three blocks, home at its close); the smoke grew `emo_desktop`'s staging and `DOCK_EXPECTED` (the first run named the missing file, the loud end the corpus discipline wants). Pins: `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; `fb/check.sh` 107 ok; `dune runtest` and `@fmt` green.
 - The first apps (emo-desktop A10.3): **landed (2026-11-03) — the counter, the file browser and the editor as corpus packages (`emo/ui_apps`), dual-run: the hosted families' bytes and the machine's three app passes, one discipline both seats.** The decisions, in order. **One family package, three submodules**: `fb/apps/` is `emo/ui_apps` (targets all six, deps `emo/ui` alone), the front door `ui_apps.emo` naming the discipline, the apps `counter`/`files`/`editor` reached as `ui_apps.counter.view` — the `ui_fb_frame.counter` shape; a require binds the package's *entry* (`main.emo` or the short name's file), which is why the family has a front door at all. Each app is a corpus package in `emo/ui_corpus`'s: portable defs, nothing platform-naming, `update` saying each transition, the tags registered in the view's own order (add/sub; down/up/open; put_a/put_b/newline) — the browser's listing the model's data (the seed names the desktop's own three sources; the disk's answer is M11's), the editor's cursor row the put's target. The trees are the metal's measured budget — the sessions sized to the pass's 128 KiB arena (A8.3's per-event count). **The metal leg is three passes**, each a window of its own by `win_new` and the Elm loop over the window buffer's surface (the desk pass's `Win`), `AppKeys` the byte table whose tag is an index and `q` the loop's end, spawned after the shell's quit one at a time, the exit answering the parent's wait (`app <name> 0`, the golden's own closing line — the two seats print the same bytes). **The user profile's print was silent — fixed**: `println` lowered for riscv64 since ever, but a user pass's bytes fell into the legacy SBI ecall whose `a0` the gate reads as a buffer address and refuses — the silence A7.2's first frame found and left (`emo_fail`'s announce unheard since; the first app session's frames moved and its words didn't, which named it). The user boot stub now parks the console hook (T3.5's own mechanism): every byte the runtime prints rides the gate's write verb from a one-byte scratch in the image's .bss. **The scratch's first home was wrong**: `.emo_ucall` — the cells page — is not a segment, and the gate's `check_write` admits only the caller's own; the byte died at the range check and the wire stayed silent until the scratch moved into the .bss, the writable segment the check admits. The gate's copy runs interrupt-masked, so no other pass's byte lands between the store and the read; one byte per crossing is the whole of the protocol. **`ArrayBuilder` is not lowered on riscv64 — found-not-fixed, the compiler track's**: the browser's and editor's first drafts grew their arrays with it and the emitter refuses by name; the apps went to literals of their own fixed shapes (the seed catalog and the two-row buffer are fixed data). **The pins**: the hosted golden at the app window's own size (384×128), the sessions' bytes `expected.txt`, all five hosted targets the same; `run.sh`'s ordered list carrying the three eras' transitions and exits (the wire's own words — `add 1`, `sel files.emo`, `put b`, `app editor 0` — the browser's seed names renamed off the shell's `ls` answers after `hello.txt` arrived out of order), the ten frames pinned by the corpus-file scan seeded past the desk's exit and ending before the editor's (the repeated number — the counter's sub returning its mount's frame — the search past the last, the ordered list's first-occurrence scan unable to carry a twice-printed digest), `app_is` folding each app's rectangle at the mount and the last frame with the pointer parked off every app's place; the ledger `frames 132 91`; `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; `fb/check.sh` 130 ok (the three apps' type-checks and riscv64 lowerings pinned beside the goldens); `dune runtest` and `@fmt` green. **With this M10 is complete.**
 
+## 2026-11-04 — The multi-image desktop (emo-desktop A11.2)
+
+- The acceptance landed: two apps, two disk ELFs, one desktop, the
+  golden's hands driving both. The duo — the browser's image and the
+  counter's exec'd in sequence, both resident, both windows composited
+  side by side — with the focus routing as the keystone: each app
+  focuses itself at its mount (the newest window up), the click
+  raises (the compositor's press cell, the walk's topmost hit), and
+  the stream's bytes and keys are the focused surface's owner's — the
+  input service's hold cells (four seats on the handoff page's tail)
+  park a read the focus does not name, the entitlement judge (the
+  compositor's focus cell through the grant table's owner) names the
+  served one, and the close's and the reclaim's kicks re-run the
+  judgment when a focused surface dies. The counter's keys ride the
+  serial's bytes, the click is the other hand, and the exits answer
+  the parent's waits in the waits' own order (`app counter 0` first,
+  `app files 0` after — the hosted twin's closing lines). The kernel
+  side the round before this had already built (the WIP entry this
+  replaces recorded it): the exec'd image's private handoff page (a
+  4 KiB frame per image, the record's word at +224, the build mapping
+  it at the cells page's vaddr — the classic cells page the boot
+  image's alone, two images handing their arenas side by side), the
+  trap shim's arena hand per-pid through the record (the A11.1 owner
+  cell and boot saves retired; the boot-in path gained the zero guard
+  its A11.1 shape lacked), `exec.entry_for` (the spawn entry
+  per-caller), the exec page's layout shift (records 232, pending
+  3904, the display's svc_screen cells at 4072/4080), `image_home`
+  giving the run home and dropping the private frame, the gate_post
+  wake grown to state 4 (a request reaching a device-waiting
+  service), and `emo_sched_wake_input` (the ISR's second wake).
+- **The round's find — the ghost rows**: the golden wedged at `app
+  counter 0`, and the trace (`dbg scan/op/kick/ent` lines, since
+  removed) named it — after files' close zeroed its row and kicked,
+  the input service's dispatch ran and the judgment STILL said hold:
+  `dbg ent 30 fid 10 owner 0`, and the table's dump showed row 7
+  carrying `10, 0`. The routing cells sat **inside the grant table's
+  span**: the table is eight rows of 112 bytes from +0x2b00 and ends
+  at +0x2e80, and the compositor's staging (`comp_svc_cell` at
+  +0x2e00, `comp_args` at +0x2e10 — the head word of row 7), the
+  pointer cells (+0x2e40..+0x2e70 — row 7's tail), and `input_args`
+  (+0x2e78) had been written into rows 6 and 7 since the compositor's
+  verbs first staged. The ghost was files' own last present: the gate
+  staged `(grant 10, x 0, …)` into `comp_args`, and `grant_row_of`
+  matched the staged grant as a live row owned by nobody — the
+  entitlement judge read the owner word (the present's x) as not the
+  reader's and held counter's read forever. **The fix moves the
+  routing cells past the table's true end** (+0x80: `comp_svc_cell`
+  +0x2e80, `comp_sup_cell` +0x2e88, `comp_args` +0x2e90, the pointer
+  cells +0x2ec0..+0x2ef0, the press cell +0x2f00, `input_args`
+  +0x2ef8, the hold cells +0x2f10 — the frame allocator's page at
+  +0x87003000 clear past them), trap.S's two hardcoded routes (the
+  compositor's pid cell, the supervisor's) moving with them.
+- **Found on the way, reverted**: parking the input service on the
+  device world while it holds reads — the receive park's resume
+  re-scans the mailbox alone (the ISR's state-2 wake re-parks, a
+  spurious pass and nothing more), so a device-park looked like the
+  way to make stream news re-run the judgment — starved the mailbox:
+  a reader's second ask queued behind the busy seats' park and never
+  dispatched, and the duo's first key beat lost its byte. The receive
+  park is the right shape: the mailbox's words (every reader's ask,
+  the close's kick, the reclaim's kick) are what drive the judgment,
+  and the focused reader's own asks keep them coming while a session
+  runs. The loop's comment now says exactly that.
+- **Found on the way, fixed, run.sh's**: the wire-order check took
+  each line's first occurrence, and the desk era's beta window and
+  the duo's counter share `comp 576 384` — the check now searches
+  each line past the previous match's byte, the frames' checks' rule.
+  (The WIP never reached this check; the wedge hid it.)
+- **Found on the way the round before (the WIP's), recorded here**:
+  the codes' row in winbuf's Keys — O=24, P=25, N=49, M=50 (the first
+  draft had O/P/N/M shifted); and the hosted apps golden replays the
+  duo (both mounted before either session runs, the counter's keys
+  first).
+- **The pins**: `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both; the ledger `frames 795
+  734` unchanged; `dune runtest` 340 green; `@fmt` green; the fb gate
+  134 ok. **With this A11.2 is complete and M11 with it.**
+
 ## 2026-11-04 — The disk ELFs (emo-desktop A11.1, EmoOS T8.16)
 
 - The corpus apps became disk ELFs: three program trees

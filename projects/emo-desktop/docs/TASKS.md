@@ -677,6 +677,38 @@ tree's and EmoOS's, listed there.
   kernel-side record — the verb, the loader, the per-image tables and
   the per-process checks — is EmoOS's T8.16. **A11.2's two-image
   desktop is the next acceptance.**
-- [ ] **A11.2** — The multi-image acceptance: two apps, two images,
+- [x] **A11.2** — The multi-image acceptance: two apps, two images,
   one desktop, the golden's hands (`sendkey`/`mouse_move`) driving
-  both.
+  both. **Landed 2026-11-04**: the duo — the browser's image and the
+  counter's exec'd in sequence, both resident, both windows
+  composited side by side. The focus routing is the keystone: each
+  app focuses itself at its mount, the click raises through the
+  compositor's press cell and the walk's topmost hit, and the
+  stream's bytes and keys are the focused surface's owner's — the
+  input service holds a read the focus does not name (four seats on
+  the handoff page's tail), judges by the focus's grant row's owner,
+  and re-judges at the kicks (the display's close and the comp's
+  reclaim `gate_post` the input service; the gate_post wake reaches a
+  device-waiting service too). The golden drives both sessions — the
+  counter's keys on the serial's bytes, the click the other hand, the
+  exits answering the parent's waits in the waits' own order (`app
+  counter 0`, `app files 0`, the hosted twin's closing lines) — and
+  the editor's era runs alone after. The kernel side is EmoOS T8.16's
+  growth (the private handoff page per image, the shim's arena hand
+  per-pid through the record, `exec.entry_for`, the exec page's
+  layout shift). **The round's find — the ghost rows**: the
+  compositor's staging cells (`comp_svc_cell`, `comp_args`, the
+  pointer cells, `input_args`) sat inside the grant table's span (the
+  table's eight 112-byte rows end at +0x2e80; the cells started at
+  +0x2e00) — every compositor verb staged its arguments into rows 6
+  and 7, and the judge's `grant_row_of` matched a staged present's
+  grant as a live row owned by nobody, holding the unfocused
+  reader's read forever after the real row's close. The routing
+  cells moved past the table's true end (+0x80; trap.S's two
+  hardcoded routes with them), and run.sh's wire-order check learned
+  the frames' rule (each line searched past the previous match — the
+  desk era's beta and the duo's counter share `comp 576 384`). The
+  pins: `run.sh` green under both timer transports, three consecutive
+  rounds byte-identical on both; the ledger `frames 795 734`
+  unchanged; `dune runtest` 340 green; `@fmt` green; the fb gate 134
+  ok. **With this M11 is complete on both sides of the gate.**

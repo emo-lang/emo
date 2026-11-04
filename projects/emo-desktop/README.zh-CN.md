@@ -28,7 +28,7 @@ English version: [`README.md`](README.md).
 | M8 — 字形与指针 | 位图字体、指针精灵、输入合并、金属上的 Elm 循环 | complete |
 | M9 — 窗口 | 合成窗口循环、拖动、聚焦、击杀重启、生长契约的五增量 | complete |
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | complete |
-| M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查 | complete（一次一个；A11.2 的双镜像桌面是下一个验收） |
+| M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查、一个桌面上两个镜像 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

@@ -28,7 +28,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M8 — Glyphs & pointer | bitmap fonts, the pointer sprite, the input merge, the Elm loop on metal | complete |
 | M9 — Windows | the composited window loop, drag, focus, kill-and-restart, the growth contract's five increments | complete |
 | M10 — The desktop | the EmoUI fb backend whole, the dock, the first apps | complete |
-| M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks | complete (one at a time; A11.2's two-image desktop is next) |
+| M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks, two images on one desktop | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

@@ -6638,6 +6638,50 @@ emo_device_wake:
 # (interrupts hardware-masked); scans the 64 slots; a park that already
 # ended (state not 4) is simply not found, and the byte the ISR
 # enqueued waits in the ring.
+# emo_sched_wake_input: the device world's second wake (emo-desktop
+# A11.2) — the input service whose held reads wait on the stream's news
+# parks at the receive (state 2, a park the device lines alone would
+# never reach): a device event is exactly the news its judgment waits
+# for, so the ISR wakes that one slot beside the device-waiters. The
+# service's pid rides the cell the gate routes by; a zero cell (the
+# service dead between instances) or a slot at any other state is
+# simply not found.
+    .globl emo_sched_wake_input
+emo_sched_wake_input:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li t0, 0x870029e8         # the input service's pid cell, the
+                              #   gate's own constant (A11.2: the low
+                              #   window's identity, the kernel's table
+                              #   maps it)
+    ld a0, 0(t0)
+    beqz a0, .Lwakei_none
+    la t0, emo_procs
+    li t1, 0
+.Lwakei_scan:
+    li t2, 64
+    bgeu t1, t2, .Lwakei_none
+    li t3, 888
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    bne t5, a0, .Lwakei_next
+    ld t5, 16(t4)
+    li t6, 2
+    bne t5, t6, .Lwakei_none
+    li t5, 1
+    sd t5, 16(t4)            # alive: the held reads' judgment runs
+    mv a0, t4
+    call emo_runq_push
+    j .Lwakei_none
+.Lwakei_next:
+    addi t1, t1, 1
+    j .Lwakei_scan
+.Lwakei_none:
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
     .globl emo_sched_wake_console
 emo_sched_wake_console:
     addi sp, sp, -16
@@ -7270,9 +7314,16 @@ emo_gate_post:
     sd t1, 32(t4)
     ld t5, 16(t4)
     li t6, 2
+    beq t5, t6, .Lgp_wake
+    li t6, 4
     bne t5, t6, .Lgp_done
+.Lgp_wake:
     li t5, 1
-    sd t5, 16(t4)               # the service wakes
+    sd t5, 16(t4)               # the service wakes — a request reaching a
+                                # service parked on its device world is
+                                # the wake its held reads wait for
+                                # (the input service's hold cells,
+                                # emo-desktop A11.2)
     mv a0, t4
     call emo_runq_push
 .Lgp_done:

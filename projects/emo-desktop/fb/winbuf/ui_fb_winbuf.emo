@@ -95,12 +95,47 @@ def ev_value(e Int64) Int64 {
   return e & 4294967295
 }
 
+// The keyboard's half in bytes (emo-desktop A11.2): the golden's hand
+// is the monitor's sendkey, whose events ride the merged stream as the
+// keyboard's device reports — the key's HID code, a press and a
+// release — and the applications speak bytes. The stream stays raw
+// (the input beat's own assertion reads a device report whole); the
+// translation lives here, in the seat the apps share: the letters'
+// codes are an irregular row (one literal, the pairs code-then-byte),
+// the digits' a contiguous run, the enter the newline byte's own.
+const key_pairs = [30, 97, 31, 115, 32, 100, 33, 102, 34, 103, 35, 104,
+  36, 106, 37, 107, 38, 108, 44, 122, 45, 120, 46, 99, 47, 118, 48, 98,
+  49, 110, 50, 109, 24, 111, 25, 112, 16, 113, 17, 119, 18, 101, 19,
+  114, 20, 116, 21, 121, 22, 117, 23, 105]
+
+def key_byte(code Int64) Int64 {
+  var i = 0
+  while i < 52 {
+    if key_pairs[i] == code {
+      return key_pairs[i + 1]
+    }
+    i = i + 2
+  }
+  if code >= 2 && code <= 10 {
+    return 47 + code
+  }
+  if code == 11 {
+    return 48
+  }
+  if code == 28 {
+    return 10
+  }
+  return -1
+}
+
 // The byte table in the input's seat: one tag per byte, the tag its
 // index in the table names — the table the app's own registration
 // order keeps (`a` first, `b` second, and so on, the same tags the
 // golden's script names) — and `q` the loop's end, the quit byte every
 // seat's session ends on. Every other byte is dropped, never guessed
-// at; the pointer's reports ride the same stream and are not an app's.
+// at. The stream's device reports come too: the keyboard's press is
+// the key it names (the translation above), the pointer's reports are
+// not an app's and ride past.
 class Keys {
   def init(bytes Array[Int64]) {
     self.bytes = bytes
@@ -110,18 +145,23 @@ class Keys {
     var tag = -1
     while tag < 0 {
       const ev = syscall.input_read()
+      var b = -1
       if ev_type(ev) == 17741 {
-        const b = ev_value(ev)
-        if b == 113 {
-          return (R.error, 0)
+        b = ev_value(ev)
+      } else {
+        if ev_type(ev) == 1 && ev_value(ev) == 1 {
+          b = key_byte(ev_code(ev))
         }
-        var i = 0
-        while tag < 0 && i < self.bytes.length() {
-          if self.bytes[i] == b {
-            tag = i
-          }
-          i = i + 1
+      }
+      if b == 113 {
+        return (R.error, 0)
+      }
+      var i = 0
+      while tag < 0 && b >= 0 && i < self.bytes.length() {
+        if self.bytes[i] == b {
+          tag = i
         }
+        i = i + 1
       }
     }
     return (R.ok, tag)

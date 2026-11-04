@@ -87,7 +87,7 @@ golden smoke, and the hand-driven boot up to the prompt — is
 | M7 — The screen | the virtio-gpu path, the screen carve, the first full-screen frame, present | complete |
 | M8 — Glyphs & pointer | the input merge, the pointer plane (the kernel side; the glyphs and the Elm loop are the desktop's) | complete |
 | M9 — Windows | the stack, the roles and the walk, the death-side reclaim, the growth contract's five increments | complete |
-| M11 — Honest multi-app | the disk ELFs: `exec` loading images off the filesystem, per-image segment tables, per-process gate checks (the apps themselves are the desktop's) | complete |
+| M11 — Honest multi-app | the disk ELFs: `exec` loading images off the filesystem, per-image segment tables, per-process gate checks, two images' private handoff pages and the focus routing (the apps themselves are the desktop's) | complete |
 
 Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 

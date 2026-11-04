@@ -143,7 +143,7 @@ fi
 # one (the next boot installs the images again).
 img='.blk.img'
 if [ ! -f "$img" ] || [ "${1:-}" = '--fresh' ]; then
-  dd if=/dev/zero of="$img" bs=1048576 count=1 status=none
+  dd if=/dev/zero of="$img" bs=4194304 count=1 status=none
 fi
 
 if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then

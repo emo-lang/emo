@@ -1,14 +1,14 @@
+frame 674216584
 frame 3379408
 add 1
 frame 2473942144
 sub 0
 frame 3379408
-app counter 0
-frame 674216584
 sel files.emo
 frame 2335363800
 open files.emo
 frame 2335363800
+app counter 0
 app files 0
 frame 2213672848
 put a

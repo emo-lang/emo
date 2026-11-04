@@ -31,16 +31,17 @@
 const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 
 // The exec page (link.ld's .emo_exec, 0x8700c000): the per-pid image
-// cells first (2048 bytes), the eight image records next (224 bytes
+// cells first (2048 bytes), the eight image records next (232 bytes
 // each — the count, eight 24-byte segment rows, the entry, the run's
-// physical base and its length in blocks), then the pending cell the
-// spawn's build consumes, the request's busy cell and name, and the
-// service's request stash.
+// physical base and its length in blocks, and the image's private
+// handoff page), then the pending cell the spawn's build consumes, the
+// request's busy cell and name, and the service's request stash.
 const img_for = koff + 0x8700c000
 const records = img_for + 2048
-const record_size = 224
+const record_size = 232
 const record_count = 8
 const seg_slots = 8
+const record_page = 224
 const exec_pending = records + record_count * record_size
 const exec_busy = exec_pending + 8
 const exec_name = exec_busy + 8
@@ -319,24 +320,30 @@ def clear_busy() Void {
 // copies the staged name here at the pickup, and the cells behind the
 // busy flag are free for the next request from that moment. The
 // address answers itself — a caller names no other module's constant
-// in value position (the emitter's type-reference rule).
+// in value position (the emitter's type-reference rule). The page's
+// last words past it are the process service's screen-pass state
+// (main.emo's own constants).
 const exec_namebuf = exec_stash + 64
 
 def name_buf() Int64 {
   return exec_namebuf
 }
 
-// The image delta (emo-desktop A11.1): the cells page's free word the
-// exec parks the loaded image's translation in — the run's physical
-// base less the image's first page — before the child is spawned. The
-// trap shim's arena hand reaches the running image's arena words
-// through the cells the stub parked, and those pointers are
-// identity-addressed: true words for the boot image, whose link
-// address is its physical one, and nonsense for a disk ELF, whose
-// pages sit in an allocator run. The stub adds the delta to every
-// pointer it parks — zero for the boot image, the run's offset for an
-// exec'd one — and the hand lands in the image's own words again.
-const exec_delta_cell = 0x87fff048
+// The image delta (emo-desktop A11.2): the private handoff page's
+// delta cell (vaddr 0x87fff048, the cells page's classic seat — the
+// page the image's own table maps there). The exec parks the loaded
+// image's translation in it — the run's physical base less the image's
+// first page — before the child is spawned. The trap shim's arena hand
+// reaches the running image's arena words through the cells the stub
+// parked, and those pointers are identity-addressed: true words for
+// the boot image, whose link address is its physical one, and nonsense
+// for a disk ELF, whose pages sit in an allocator run. The stub adds
+// the delta to every pointer it parks — zero for the boot image, the
+// run's offset for an exec'd one — and the hand lands in the image's
+// own words again.
+const page_delta = 0x48
+const page_cur_value = 0x70
+const page_end_value = 0x78
 
 // A run of blocks walks home block by block, the give's strictness per
 // block. The base is the allocator's kernel address, as take_run
@@ -450,32 +457,26 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
     return -4
   }
   // The scratch is copied out; its blocks go home before the child is
-  // even queued. The image's delta goes to the cells page's word — the
-  // translation the child's stub adds to the arena pointers it parks —
-  // and the shared arena-pointer cells go empty: the child's first
-  // resume would otherwise hand its run cursor through pointers that
-  // still name the boot image's words (the child's stub re-parks the
-  // pair for its own image the moment it enters, and the hand skips an
-  // empty pointer until then). The pending cell carries the record to
-  // the build.
+  // even queued. The image's private handoff page (emo-desktop A11.2):
+  // a frame of its own, mapped by the build at the cells page's vaddr
+  // in the child's table — the classic cells page stays the boot
+  // image's, its stub's parks never stolen, so two images hand their
+  // arenas side by side, each through its own page. The delta goes to
+  // the page's cell — the translation the child's stub adds to the
+  // arena pointers it parks — and the record keeps the page's physical
+  // address for the shim's hand, the build's mapping, and the death's
+  // walk. The pending cell carries the record to the build.
   var floor_va = (peek64(rec + 8) / page) * page
   var delta = sv39.pa_of(run) - floor_va
-  poke64(exec_delta_cell, delta)
-  // The shared pointer pair goes empty (emo-desktop A11.1): the first
-  // hand-in skips it, the stub parks it with this image's own pointers
-  // at entry, and every crossing after serves the run's cursor through
-  // them. The child's arena crosses as values, written by the build
-  // from the slot's own words (space.emo) — the spawn's take, not
-  // this transaction's.
-  poke64(0x87fff008, 0)
-  poke64(0x87fff010, 0)
-  // the boot image's own entry and console hook go aside (emo-desktop
-  // A11.1): the child's stub re-parks the shared cells for its own
-  // image — the program cell the spawn verb reads, the hook every
-  // println rides — and the death puts both back, the addresses the
-  // boot image's own shapes answer to
-  poke64(0x87fff080, peek64(0x87fff000))
-  poke64(0x87fff088, peek64(0x87fff018))
+  var hp = frames.frame_take()
+  if hp == 0 {
+    poke64(rec, 0)
+    give_run(run, ib)
+    give_run(scratch, sb)
+    return -5
+  }
+  poke64(hp + page_delta, delta)
+  poke64(rec + record_page, hp)
   give_run(scratch, sb)
   println("image ${size} bytes, ${ib} blocks")
   poke64(exec_pending, rec)
@@ -483,6 +484,7 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   if stack == 0 {
     poke64(exec_pending, 0)
     poke64(rec, 0)
+    frames.give(hp)
     give_run(run, ib)
     return -5
   }
@@ -507,19 +509,10 @@ def image_home(slot Int64) Void {
       var base = peek64(rec + 208)
       var blocks = peek64(rec + 216)
       poke64(rec, 0)
-      // the exec's cells go with it (emo-desktop A11.1): the delta
-      // word, the arena values, the pair's owner \u2014 and the pair goes
-      // back to the boot image's own pointers, the identity addresses
-      // the raw cell parked at boot, the shape every crossing the boot
-      // image's passes make serves from here on
-      poke64(0x87fff048, 0)
-      poke64(0x87fff070, 0)
-      poke64(0x87fff078, 0)
-      poke64(0x87fff060, 0)
-      poke64(0x87fff008, peek64(0x87fff068))
-      poke64(0x87fff010, peek64(0x87fff068) + 8)
-      poke64(0x87fff000, peek64(0x87fff080))
-      poke64(0x87fff018, peek64(0x87fff088))
+      // the private handoff page rides the frame allocator's own
+      // bound: a frame never rejoins its block (the page tables' rule),
+      // so the 4 KiB a dead image held is the exec's documented leak,
+      // four KiB against the image's 196 blocks
       var i = 0
       while i < blocks {
         frames.give(base + i * block)
@@ -527,4 +520,21 @@ def image_home(slot Int64) Void {
       }
     }
   }
+}
+
+// The entry a spawn of that caller's image starts at (emo-desktop
+// A11.2): the program cell the image's own stub parked — the caller's
+// private handoff page's first word for an exec'd image, the cells
+// page's classic cell for the boot image's passes (its stub parked it
+// at boot, and no exec'd stub ever touches the classic page again).
+// The record's page word is the kernel's alias, as the allocator
+// answered it.
+def entry_for(pid Int64) Int64 {
+  if pid < 256 {
+    var rec = peek64(img_for + pid * 8)
+    if rec != 0 {
+      return peek64(peek64(rec + record_page))
+    }
+  }
+  return peek64(0x87fff000)
 }
