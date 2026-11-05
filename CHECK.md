@@ -224,11 +224,20 @@ step claims them yet:**
   an interface call boxes every `Int64` it carries, ~3 KiB a node
   and 600 B a glyph on the metal).
 
-**emo-ui — no scheduled tasks.** The two open questions are design's,
-not tasks', and live where undecided design lives
-([`docs/emo-ui-composition.md`](docs/emo-ui-composition.md)): the
-child-list array literal's own spelling, and where the `.emoui`
-translator sits in the C-versus-D question. Neither blocks anything.
+**emo-ui — [the open questions](projects/emo-ui/docs/TASKS.md)
+(registered 2026-11-05):**
+
+- [ ] **Q1** — whether the array-children spelling earns a literal at
+  all (C, D, or neither); the evidence in hand is the spelling spike's
+  measurement, the standing order "B, landed; then D if the ergonomics
+  still hurt; C only if D's second toolchain costs more".
+- [ ] **Q2** — where the `.emoui` translator (the working D prototype)
+  sits until Q1 decides: a demo, or the seed of a shipped D — its
+  editor support and span-accurate error mapping still undone.
+
+The two are design decisions, not scheduled tasks; they settle in
+[`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
+nothing.
 
 ## 2026-11-05 — The tick as the device world's heartbeat (EmoOS T8.18)
 
