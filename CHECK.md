@@ -222,11 +222,13 @@ claims them.
   closed in the packages themselves.
 - [x] **T8.25** — `ArrayBuilder` on riscv64; golden
   `examples/array_builder`.
-- [ ] **T8.26** — typed method bodies: the code is whole and every
-  compiler golden passes (the full dune suite green), but the EmoOS
-  boot acceptance is red — an unresolved, layout-sensitive jump
-  through zero at the screen pass's first paint. The hunt's matrix is
-  in the dated section below; the task stays open.
+- [x] **T8.26** — typed method bodies, complete 2026-11-05: the
+  boot acceptance's red was two roots — the interface tables' rows
+  all carried the first class's slots (the class was missing from the
+  lookup key), and the exec'd child's handoff page reached the trap
+  shim's first-entry arena hand carrying its recycled frame's stale
+  bytes. Neither was the typed-body machinery; the resolution in the
+  dated section below.
 
 **emo-ui — [the open questions](projects/emo-ui/docs/TASKS.md)
 (registered 2026-11-05):**
@@ -242,6 +244,70 @@ claims them.
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
 nothing.
+
+## 2026-11-05 — The two roots of the red boot (EmoOS T8.26 closed)
+
+- The matrix's survivors were wrong, and the reason they could be is
+  the round's own lesson: **the red was two roots, and the levers the
+  matrix pulled (typed methods off at the loop, the tables, the IR)
+  turned neither of them off.** The hunt this round ran on the
+  untouched tree — reproduce, then a hardware breakpoint on the
+  kernel's `fault_report` (gdb over QEMU's stub, `hbreak`: a software
+  breakpoint cannot write into the high half before the kernel's
+  table exists) — and the trap frame named the jump in one shot:
+  `ra` at the call site, the dispatch's `t2` register reading zero.
+- **The first root, the emitter's:** the screen pass's first paint
+  called `mount` through the `ui.Backend` interface table on the `Fb`
+  receiver (class id 24), and the slot was zero **in the file** — the
+  interface tables' emission had lost the class on its way through
+  the T8.26 restructuring. The slot decisions were hoisted (the
+  per-slot adapters are text, the tables are data, so the decision
+  has to run before the `.data` section opens), but the lookup
+  consumed them keyed by (interface, method index) alone —
+  `iface_slot` took no class, the emission loop's class parameter was
+  literally `_` — so **every row of a table carried the first
+  class's decision**: `ui.Backend`'s first class has no `mount`, so
+  the whole table emitted zeros and the first interface call jumped
+  through it; `ui_fb.Surface`'s first class matched all seven names,
+  so its table emitted 29 copies of one row. The fix is the rows
+  themselves: `iface_rows` keeps one row per class (in `pclasses`
+  order, the class id's own order, so the dispatch's class-id stride
+  indexes the row its class owns), each slot the class's own
+  implementation or adapter. Beside it, the `is` test's interface
+  arm still read its row at a stride of one slot — the table was one
+  slot per method before this family, and the arm never caught up; it
+  now scales by the interface's own method count, the same stride the
+  dispatch rides.
+- **The second root, the kernel's — and the mechanism behind the
+  whole "layout sensitivity":** with the tables right, the boot ran
+  green through the screen pass, the windows, the desk and the duo —
+  and died at the *editor's* exec, in the kernel, a store to
+  koff+5. The trap frame's pair pointer led to the exec'd child's
+  private handoff page, and the page held its recycled frame's last
+  owner's bytes (a dead app's heap strings — image text and rodata
+  pointers, the grant-looking 5 among them). **The child's stub parks
+  the handoff pair the trap shim's arena hand reads, and the child's
+  *first entry* runs the hand before the stub does.** A zero pair is
+  the honest "nothing staged" the hand skips — the kernel slot's
+  spawn-dressed words are already what the child adopts — but a
+  stale nonzero word is a pointer the kernel follows, and the end
+  cell's 5 sent the resume's write to koff+5. The counter and the
+  browser survived their execs because their recycled pair cells
+  happened to read zero. **The exec now clears the page when it
+  stages it** (`sv39.clear`, the page-table discipline reused), and
+  the pair protocol starts unstaged every time. This is why the
+  matrix's dead-text experiment flipped the boot: unreferenced
+  runtime text shifts image sizes, image sizes shift the frame
+  allocator's history, and the frame history decides whether a
+  recycled handoff page happens to carry zeros — dead code cannot
+  misexecute, but it can move everyone else's garbage.
+- The acceptance, the whole gate: `run.sh` both transports, **three
+  consecutive boots byte-identical** (and a fourth after `dune fmt`,
+  which only rewrapped this round's own emitter text), the ledger
+  `frames 507 446` unchanged (the clear is CPU, not frames), the full
+  dune suite (352) and @fmt green. The app images kept their sizes
+  (counter, files, editor 210496; the rows' labels live in the
+  tables' own bytes).
 
 ## 2026-11-05 — The signatures the metal asked for (EmoOS T8.23–T8.26)
 

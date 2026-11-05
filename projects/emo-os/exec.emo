@@ -475,6 +475,14 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
     give_run(scratch, sb)
     return -5
   }
+  // The page's protocol starts unstaged: a recycled frame carries its
+  // last owner's bytes, and the trap shim's arena hand reads the pair
+  // cells at the child's first entry — before the child's own stub has
+  // parked them. A zero pair is the honest "nothing staged" the hand
+  // skips; a stale nonzero word is a pointer the kernel would follow.
+  // The delta, the build's arena values, and the stub's parks all land
+  // on the zero page after this.
+  sv39.clear(hp)
   poke64(hp + page_delta, delta)
   poke64(rec + record_page, hp)
   give_run(scratch, sb)

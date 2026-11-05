@@ -2167,8 +2167,14 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
           put env "    slli t0, t0, 4\n    addi t0, t0, 1\n    mv a0, t0\n"
       | None -> (
           match List.assoc_opt target env.ifaces with
-          | Some _ ->
+          | Some sigs ->
               put env "    la t1, emo_iface_%s\n" (Emo_ir.sanitize_ident target);
+              (* the row's width is the interface's own method count —
+                 the same stride the dispatch rides; slot 0 of the
+                 receiver's row names an implementation (or an adapter)
+                 exactly when the class implements the interface *)
+              put env "    li t3, %d\n" (List.length sigs);
+              put env "    mul t0, t0, t3\n";
               put env "    slli t0, t0, 3\n";
               put env "    add t1, t1, t0\n";
               put env "    ld t2, 0(t1)\n";
@@ -2519,8 +2525,8 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
                    implementation that crosses differently carries a
                    per-slot adapter on the table *)
                 match
-                  (if !Clargs.no_typed_ifaces then None
-                   else List.assoc_opt display env.iface_sigs)
+                  if !Clargs.no_typed_ifaces then None
+                  else List.assoc_opt display env.iface_sigs
                 with
                 | Some dsigs when idx < List.length dsigs ->
                     let _, params, result = List.nth dsigs idx in
@@ -9881,67 +9887,60 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           | None -> ())
         c.Emo_ir.cmethods)
     program.pclasses;
-  (* the vtable's slots: the implementation itself when its convention
+  (* the vtable's rows: the implementation itself when its convention
      is the interface's, an adapter when it is not — the decision made
-     here, consumed by the table emission below *)
-  let iface_slots =
-    List.concat_map
+     here, one row per class in `pclasses` order (the class id's own
+     order, so the dispatch's `class id × row width` indexes the row
+     the receiver's class owns), consumed row by row by the table
+     emission below *)
+  let iface_rows =
+    List.map
       (fun (iname, dsigs) ->
-        List.concat_map
-          (fun (c : Emo_ir.class_) ->
-            let info = class_of env c.Emo_ir.cdisplay in
-            List.mapi
-              (fun idx ((m, _, _) as dsig) ->
-                match
-                  List.find_opt
-                    (fun (d, _) -> String.equal d m)
-                    info.cls_methods
-                with
-                | Some (_, mangled) -> (
-                    let _, params, result = dsig in
-                    let dconv =
-                      if !Clargs.no_typed_ifaces then
-                        dynamic_conv (1 + List.length params)
-                      else declared_conv params result
-                    in
-                    match
-                      Option.bind (List.assoc_opt mangled env.mfuncs) conv_of
-                    with
-                    | Some conv when conv = dconv ->
-                        (iname, idx, func_label mangled)
-                    | _ when !Clargs.no_typed_ifaces ->
-                        (iname, idx, func_label mangled)
-                    | impl_conv ->
-                        let label =
-                          Printf.sprintf "emo_dthunk_%s_%d_%d"
-                            (Emo_ir.sanitize_ident iname)
-                            info.cls_id idx
-                        in
-                        let impl_dst =
-                          match
-                            (List.assoc_opt mangled env.mfuncs, impl_conv)
-                          with
-                          | Some impl, Some conv -> conv
-                          | Some impl, None ->
-                              dynamic_conv (List.length impl.Emo_ir.fparams)
-                          | None, _ -> dynamic_conv (1 + List.length params)
-                        in
-                        emit_conv_adapter ~label ~src:dconv ~dst:impl_dst
-                          ~target:(func_label mangled);
-                        (iname, idx, label))
-                | None -> (iname, idx, "0"))
-              dsigs)
-          program.pclasses)
+        ( iname,
+          List.map
+            (fun (c : Emo_ir.class_) ->
+              let info = class_of env c.Emo_ir.cdisplay in
+              List.mapi
+                (fun idx ((m, _, _) as dsig) ->
+                  match
+                    List.find_opt
+                      (fun (d, _) -> String.equal d m)
+                      info.cls_methods
+                  with
+                  | Some (_, mangled) -> (
+                      let _, params, result = dsig in
+                      let dconv =
+                        if !Clargs.no_typed_ifaces then
+                          dynamic_conv (1 + List.length params)
+                        else declared_conv params result
+                      in
+                      match
+                        Option.bind (List.assoc_opt mangled env.mfuncs) conv_of
+                      with
+                      | Some conv when conv = dconv -> func_label mangled
+                      | _ when !Clargs.no_typed_ifaces -> func_label mangled
+                      | impl_conv ->
+                          let label =
+                            Printf.sprintf "emo_dthunk_%s_%d_%d"
+                              (Emo_ir.sanitize_ident iname)
+                              info.cls_id idx
+                          in
+                          let impl_dst =
+                            match
+                              (List.assoc_opt mangled env.mfuncs, impl_conv)
+                            with
+                            | Some impl, Some conv -> conv
+                            | Some impl, None ->
+                                dynamic_conv (List.length impl.Emo_ir.fparams)
+                            | None, _ -> dynamic_conv (1 + List.length params)
+                          in
+                          emit_conv_adapter ~label ~src:dconv ~dst:impl_dst
+                            ~target:(func_label mangled);
+                          label)
+                  | None -> "0")
+                dsigs)
+            program.pclasses ))
       env.iface_sigs
-  in
-  let iface_slot iname idx =
-    match
-      List.find_opt
-        (fun (i, k, _) -> String.equal i iname && k = idx)
-        iface_slots
-    with
-    | Some (_, _, label) -> label
-    | None -> "0"
   in
   (* Dispatch tables in .data: per-interface vtables (one slot per
      class), per-class field-name and method-name tables for the
@@ -9954,7 +9953,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       \    .section .data\n\
       \    .align 3\n";
     List.iter
-      (fun (name, dsigs) ->
+      (fun (name, rows) ->
         gput env "    .globl emo_iface_%s\n" (Emo_ir.sanitize_ident name);
         gput env "emo_iface_%s:\n" (Emo_ir.sanitize_ident name);
         (* one row per class, one slot per interface method in the
@@ -9963,13 +9962,10 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
            the implementation when its convention is the interface's
            own, the per-slot adapter when it is not (T8.26) *)
         List.iter
-          (fun (_ : Emo_ir.class_) ->
-            List.iteri
-              (fun idx (_ : string * (string * Emo_check.t) list * Emo_check.t)
-                 -> gput env "    .dword %s\n" (iface_slot name idx))
-              dsigs)
-          program.pclasses)
-      env.iface_sigs
+          (fun row ->
+            List.iter (fun label -> gput env "    .dword %s\n" label) row)
+          rows)
+      iface_rows
   end;
   (* The const thunks' memo slots: one flag/value word pair each, in
      .data, read by [emit_const_function]. *)

@@ -450,29 +450,39 @@ mirrors it beside the desktop's and the compiler's.
   builder's own `ArrayBuilder[a, b]` — over one shared join core.
   Golden `examples/array_builder` on riscv64, byte-identical.
   Decision record: CHECK.md, 2026-11-05.
-- [ ] **T8.26** — Typed method bodies, the arena's lever: **the code
-  is whole and every compiler golden passes — `examples/typed_methods`
-  runs the direct, interface and by-name paths to the same answers
-  with a Float64 bank crossing and two million typed calls whose
-  numeric arguments cross raw, and the full dune suite is green — but
-  the EmoOS boot acceptance is red and the task stays open**: the
-  machine's `run.sh` dies at the screen pass's first paint (a jump
-  through zero) under every variation tried, while the same boots
-  pass at the HEAD emitter and — decisive — at the HEAD emitter
-  carrying this round's IR changes, and fail again at the HEAD
-  emitter plus nothing but this round's dead runtime text. The hunt's
-  experiment matrix, the two contamination finds it had to discount
-  (stale app images serving boots between rebuilds, and a test
-  fixture's registry shadowing the staging one in manual probes), and
-  the surviving suspects are recorded in CHECK.md, 2026-11-05 — the
-  next round starts there. The landed pieces, all
-  compiler-verified: the IR's `self` carries its class (it was
-  hardwired to Unknown, which alone kept every method dynamic); a
-  method whose signature resolves emits a native body on its own
-  convention; the class-typed direct call rides the callee's own
-  convention; the interface call the interface's declared one, the
-  call site and every vtable slot sharing it; the by-name dispatch a
-  tag-adapting thunk on the method table; one generalized convention
-  adapter (`emit_conv_adapter`) serves both tables, the
+- [x] **T8.26** — Typed method bodies, the arena's lever — **complete
+  2026-11-05, the boot acceptance green: the round after the matrix
+  found the red was two roots, neither of them the typed-body
+  machinery**. The first: the interface tables' emission looked up
+  its slots by (interface, method index) alone — the class never
+  entered the key — so every row of a table carried the first class's
+  decision: `ui.Backend`'s whole table zeros (its first class has no
+  `mount`), the first interface call through it a jump through zero
+  at the screen pass's first paint. The rows now carry their own
+  class's slots (`iface_rows`, one row per class in the class id's
+  order), and the `is` test scales its row by the interface's own
+  method count — the same stride the dispatch rides. The second: the
+  exec'd child's private handoff page reached the trap shim's arena
+  hand at the child's first entry carrying its recycled frame's last
+  owner's bytes — the child's stub parks the pair the hand reads, and
+  the first entry runs before the stub does; a zero pair is the
+  honest "nothing staged" the hand skips, a stale nonzero word is a
+  pointer the kernel follows (the editor's third-exec crash: the end
+  cell held a 5, the store went to koff+5). The exec now clears the
+  page when it stages it — which is also why the hunt's matrix read
+  as layout sensitivity: unreferenced runtime text shifts image
+  sizes, image sizes shift the frame history, and the frame history
+  decides whether the recycled pair cells happen to read zero. The
+  landed pieces, all compiler-verified: the IR's `self` carries its
+  class (it was hardwired to Unknown, which alone kept every method
+  dynamic); a method whose signature resolves emits a native body on
+  its own convention; the class-typed direct call rides the callee's
+  own convention; the interface call the interface's declared one,
+  the call site and every vtable slot sharing it; the by-name
+  dispatch a tag-adapting thunk on the method table; one generalized
+  convention adapter (`emit_conv_adapter`) serves both tables, the
   Float64-across-Int64 shapes refused loudly. Constructors and
-  closures keep the dynamic convention.
+  closures keep the dynamic convention. The acceptance: `run.sh`
+  both transports, three consecutive boots byte-identical, the
+  ledger `frames 507 446` unchanged; the full dune suite (352) and
+  @fmt green. Decision record: CHECK.md, 2026-11-05.
