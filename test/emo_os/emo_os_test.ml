@@ -312,11 +312,14 @@ let smoke_tests =
         let app_build name =
           let exit_code =
             in_dir (Filename.concat scratch name) (fun () ->
+                (* The app profile (emo-desktop A12.1): the disk ELF's
+                   smaller heap, the image run's span off the allocator's
+                   back. *)
                 Emo_cli.build_file ~entry:"main.emo"
                   ~output:(Filename.concat scratch (name ^ ".elf"))
                   ~specialize:false ~cclibs:[]
                   ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                  ~profile:"user")
+                  ~profile:"app")
           in
           Alcotest.(check int) (name ^ " build exit") 0 exit_code
         in

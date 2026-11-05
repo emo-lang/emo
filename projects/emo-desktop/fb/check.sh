@@ -200,12 +200,12 @@ if command -v riscv64-elf-ld >/dev/null 2>&1 || \
   expect 0 "the file browser app lowers for a riscv64 user program" "$rc"
   build apps editor.emo riscv64 --profile user && rc=0 || rc=$?
   expect 0 "the editor app lowers for a riscv64 user program" "$rc"
-  build apps/counter main.emo riscv64 --profile user && rc=0 || rc=$?
-  expect 0 "the counter's program lowers for a riscv64 user image" "$rc"
-  build apps/files main.emo riscv64 --profile user && rc=0 || rc=$?
-  expect 0 "the file browser's program lowers for a riscv64 user image" "$rc"
-  build apps/editor main.emo riscv64 --profile user && rc=0 || rc=$?
-  expect 0 "the editor's program lowers for a riscv64 user image" "$rc"
+  build apps/counter main.emo riscv64 --profile app && rc=0 || rc=$?
+  expect 0 "the counter's program lowers for a riscv64 app image" "$rc"
+  build apps/files main.emo riscv64 --profile app && rc=0 || rc=$?
+  expect 0 "the file browser's program lowers for a riscv64 app image" "$rc"
+  build apps/editor main.emo riscv64 --profile app && rc=0 || rc=$?
+  expect 0 "the editor's program lowers for a riscv64 app image" "$rc"
   build winbuf ui_fb_winbuf.emo riscv64 --profile user && rc=0 || rc=$?
   expect 0 "the window buffer's metal side lowers for a riscv64 user image" "$rc"
 else

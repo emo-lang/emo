@@ -130,9 +130,9 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
   reg=$(registry)
   here=$PWD
   (cd hello && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "../$user_elf")
-  (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/counter.elf")
-  (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/files.elf")
-  (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile user -o "$here/editor.elf")
+  (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/counter.elf")
+  (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/files.elf")
+  (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/editor.elf")
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 

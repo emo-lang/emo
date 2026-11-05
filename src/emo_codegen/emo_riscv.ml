@@ -7878,7 +7878,12 @@ emo_fail:
     wfi
     j .Lfail_park
 |asm}
-  | "user" ->
+  (* The app profile is the user world's shape in every byte but the
+     sizing (emo-desktop A12.1): a disk ELF's arena is the run the
+     spawn claimed, so its .bss heap is the const region's host and
+     little more — the smaller reservation keeps the image's span, and
+     with it the exec's image run, off the allocator's back. *)
+  | "user" | "app" ->
       {asm|
     .section .text
     .globl emo_fail
@@ -7954,7 +7959,7 @@ emo_runtime_init_tail:
     sd t0, 0(t1)            # and its floor, 64 KiB down
     ret
 |asm}
-  | "user" ->
+  | "user" | "app" ->
       {asm|
 emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
@@ -8073,7 +8078,7 @@ emo_print_dec:
     addi sp, sp, 16
     ret
 |asm}
-  | "user" ->
+  | "user" | "app" ->
       {asm|
     .section .text
 emo_arena_gone:
@@ -8095,7 +8100,10 @@ emo_arena_gone:
    one load address the kernel's ELF loader copies segments to (EmoOS
    T4.1): a page above the kernel's fixed rings, under the top of the
    board's 128 MiB. SV39 replaces the fixed window with per-process
-   address spaces (M5). Two read-only segments and one read-write, so
+   address spaces (M5). The app profile links there too — a disk ELF's
+   load address is the loader's own (EmoOS T8.16), the exec's delta
+   word the same whatever the heap's size. Two read-only segments and
+   one read-write, so
    the loader sees honest permissions; .bss is NOBITS — the entry stub
    clears it, which is also why the stack and the value heap live there
    (no image weight). *)
@@ -8103,7 +8111,7 @@ let linker_script ~(profile : string) : string =
   let base, extra =
     match profile with
     | "kernel" -> ("0x80200000", "")
-    | "user" ->
+    | "user" | "app" ->
         (* The user-program cell (T4.4): the user stub parks its own
            emo_program here, so the kernel's process service can start a
            spawned process at the program's top level — the one address
@@ -8177,6 +8185,18 @@ let stack_asm ~(profile : string) : string =
     match profile with
     | "kernel" -> (1048576, 67108864)
     | "user" -> (65536, 8388608)
+    (* The app profile's 2 MiB (emo-desktop A12.1): a disk ELF's arena is
+       the run the spawn claimed (T8.9's hooks), so the .bss heap hosts
+       the const region's 64 KiB and the raw scratch the packages poke —
+       the winbuf's `0x87200000` must stay inside the image's span — and
+       nothing else. Eight MiB of it was the span's dead weight: the
+       counter's image measured 12.24 MiB, a 196-block image run per
+       resident app against the region's ~500; two MiB measures 6.24 MiB,
+       a 100-block run — three residents beside the desktop's own
+       surfaces, the process world's 64 slots and its 4 MiB of
+       per-process stacks the next lever (its 64-slot bound sits at ten
+       asm sites, a round of its own if a fourth resident ever asks). *)
+    | "app" -> (65536, 2097152)
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
   Printf.sprintf
@@ -8590,15 +8610,17 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
    package-provided `runtime.S` (EmoOS T3.1) replaces it: the image's
    entry is the package's, the runtime body and the program are the
    compiler's. [profile] is the image shape (EmoOS T4.1): "kernel", the
-   boot-profile-A image OpenSBI enters in S-mode, or "user", the U-mode
-   ELF the kernel loads — its own stub, its own sizing, its own load
-   address. A package's stub and linker script ride in above either. *)
+   boot-profile-A image OpenSBI enters in S-mode, "user", the U-mode
+   ELF the kernel loads, or "app" (emo-desktop A12.1), the disk ELF's
+   shape — the user world's stub and load address over a smaller heap,
+   the span the exec's image run carries. A package's stub and linker
+   script ride in above either. *)
 let emit ?(boot_stub : bool = true) ~(profile : string)
     (program : Emo_ir.program) : string =
   let profile_stub =
     match profile with
     | "kernel" -> boot_stub_asm
-    | "user" -> user_boot_stub_asm
+    | "user" | "app" -> user_boot_stub_asm
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
   if program.pglobals <> [] then refuse "module-level `var`";
@@ -8669,7 +8691,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
             | None -> None)
           program.pfuncs;
       native = false;
-      region = profile = "user";
+      region = profile = "user" || profile = "app";
       spawns = [];
       defvals = [];
       owned = [];
@@ -8972,6 +8994,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       (List.rev env.cells)
   end;
   gput env "%s" (stack_asm ~profile);
-  if profile = "user" then gput env "%s" user_cell_asm;
-  if profile = "user" then gput env "%s" user_console_hook_asm;
+  if profile = "user" || profile = "app" then gput env "%s" user_cell_asm;
+  if profile = "user" || profile = "app" then
+    gput env "%s" user_console_hook_asm;
   Buffer.contents env.buf
