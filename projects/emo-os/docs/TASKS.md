@@ -311,3 +311,51 @@ numbering rule the day they land.
   duo's sessions, the hosted twin's replay, the golden's hands — is
   emo-desktop's tracker, A11.2; **with this M11 is complete on both
   sides of the gate**. Decision record: CHECK.md, 2026-11-04.
+- [x] **T8.18** — The tick's wake sweep: the lost-wake window at the
+  device park closed. Landed 2026-11-05: **the tick re-issues the
+  device wakes, so a delivery landing in the park's entry window costs
+  a delay of one tick, never a lost reader.** The find — the desktop
+  shell's second tile press arriving intermittently (thirty-odd rounds
+  of the golden naming it, the pristine kernel reproducing it on the
+  same script: a standing bug, not the round that found it): every
+  device reader (`input_serve_read`, `input_byte`, the pointer
+  driver's loop) asks its queues **with interrupts open** and only
+  then calls `device_wait` — the park masks, writes state 4, switches
+  — so a delivery landing between the peek's "empty" and the state
+  word meets an ISR whose `emo_sched_wake_console` scans for a 4 that
+  has not been written yet (the slot still reads 1, "a park that
+  already ended is simply not found"), and the byte waits in the ring
+  for a sleeper nothing ever wakes again. The receive park has no such
+  window — `emo_gate_post` and `emo_send` enqueue masked, so the
+  park's own protocol never splits a check from its sleep — and the
+  device park cannot copy it: the check is typed Emo logic
+  (`input_peek_type` over three sources) that cannot move into the
+  generic stub. The input service's receive park carries the sibling
+  window (its `input_hold_serve` judgment to the park, the ISR's
+  `emo_sched_wake_input` finding state 1, the event in the ring with
+  nobody to judge it), and the one sweep covers both — the re-issued
+  wake's spurious pass is the broadcast discipline the wakes already
+  promise (a waiter the event was not for re-checks and parks again).
+  The sweep lives in the timer's ISR (`trap.S`'s `.Ltrap_ticked`):
+  `emo_sched_wake_console` and `emo_sched_wake_input` before
+  `emo_sched_tick`, whose return value the wakes' a0 must not spend.
+  The candidates weighed: serve-never-parks (the held read's serve
+  stopping at state 4 is the shape A11.2 tried and reverted — a
+  device-wait park starves the mailbox — and returning to the receive
+  park re-opens the sibling window the sweep closes); UART-ISR
+  re-peek (the ISR cannot tell a slot about to park from one long
+  running — both read state 1; the window is the park's side, not the
+  wake's). **Found standing, not fixed — the mailbox's own send-send
+  window**: `emo_mb_count` reads unmasked and `emo_send` leaves a
+  word for a running target without a wake ("a live-but-running
+  target needs nothing"), so a send landing between a receiver's scan
+  and its state-2 write parks the receiver with a word queued — the
+  harm differs (the sender yields, so an emptied run queue is the
+  loud deadlock rather than a silent stall, and any later message
+  wakes the pair), no reproduction exists, and the fix is its own
+  round. The pins: `run.sh` green under both timer transports,
+  thirteen consecutive rounds byte-identical on both (three plus
+  ten); the ledger `frames 507 446` unchanged (the sweep's spurious
+  passes allocate nothing); `dune runtest` green with the smoke;
+  `@fmt` green; the fb gate green. Decision record: CHECK.md,
+  2026-11-05.

@@ -832,8 +832,19 @@ emo_os_trap_trampoline:
     addi t6, t6, 1
     sd t6, 0(t5)
 .Ltrap_ticked:
-    # the wake: the quota step, then — a spent slice — the preemption,
-    # which dispatches the next process and never comes back
+    # the device world's heartbeat first: a reader's peek runs
+    # unmasked, so a delivery can land in the handful of instructions
+    # between the peek's "empty" and the park's state word — the wake
+    # scanning before the 4 is written finds the slot alive and moves
+    # on, the byte waits in the ring, and the sleeper never rises.
+    # The tick re-issues both wakes, so a lost pass becomes a spurious
+    # one (a waiter the event was not for re-checks and parks again —
+    # the broadcast discipline the wakes already promise) and the
+    # window costs a delay of one tick, never a loss. Then the quota
+    # step, then — a spent slice — the preemption, which dispatches
+    # the next process and never comes back
+    call emo_sched_wake_console
+    call emo_sched_wake_input
     call emo_sched_tick
     beqz a0, .Ltrap_home
     la t0, emo_os_trap_frame
