@@ -5,22 +5,22 @@ require "emo/ui_fb_frame"
 require "emo/ui_apps"
 
 // The desktop's first apps, the hosted twin (emo-desktop A10.3, the
-// duo's replay A11.2): the counter, the file browser and the editor —
-// the corpus packages required whole from `emo/ui_apps`, never copied
-// — each run through `ui.run`'s parts on a canvas the app window's own
-// size (384x128, the window shell's) with a script in the input's
-// seat: the tags the apps' registration order fixes, the session the
-// metal's passes run byte for byte. The browser and the counter are
-// the duo — both mounted before either session runs, the counter's
-// keys first (the newest mount holds the focus), the browser's after
-// — and the editor's is the put, the newline and the put. Every
-// frame's digest prints as the backend presents it, beside the state
-// transitions `update` says, and the exits close the duo's block in
-// the parent's waits' own order (`app counter 0`, `app files 0`,
-// `app editor 0`); the interpreter's bytes are `expected.txt`, and
-// every hosted target prints the same. The metal's pass prints the
-// same lines in the same order, its frames the digests `run.sh` folds
-// the display's rectangles to.
+// launcher's replay A12.1): the counter, the file browser and the
+// editor — the corpus packages required whole from `emo/ui_apps`,
+// never copied — each run through `ui.run`'s parts on a canvas the app
+// window's own size (384x128, the window shell's) with a script in the
+// input's seat: the tags the apps' registration order fixes, the
+// session the metal's passes run byte for byte. The launcher's order
+// is the execs': the counter's tile first (its session whole), the
+// browser's tile second, the editor's the REPL's own `exec` command —
+// mount, keys, mount, keys, mount, keys. Every frame's digest prints
+// as the backend presents it, beside the state transitions `update`
+// says, and the exits close the block in the quits' own order — the
+// deaths ride the stream to their parent now (`desktop <name> exit
+// 0`, emo-desktop A12.1); the interpreter's bytes are `expected.txt`,
+// and every hosted target prints the same. The metal's pass prints
+// the same lines in the same order, its frames the digests `run.sh`
+// folds the display's rectangles to.
 //
 //   emo run main.emo
 
@@ -61,32 +61,31 @@ class Eye {
 }
 
 def main() {
-  // The duo's replay (emo-desktop A11.2): both windows mounted before
-  // either session runs — the browser's mount frame, the counter's,
-  // then the counter's keys (the newest mount holds the focus) and
-  // the browser's after — the metal's line order, byte for byte. The
-  // exit lines are the parent's waits' own order: both after the
-  // sessions end, the counter's wait first.
+  // The launcher's replay (emo-desktop A12.1): the counter's tile
+  // first — its mount frame, its two keys — then the browser's tile,
+  // then the editor's exec, each session whole before the next mount.
+  // The exit lines are the desktop's own, the quits' order after the
+  // sessions end.
   const ceye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
-  const feye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   const cbackend = ui_fb.backend(ceye, ui_fb.script([0, 1]))
+  const capp = ui.App.new(view: ui_apps.counter.view,
+    update: ui_apps.counter.update, model: ui_apps.counter.initial(),
+    backend: cbackend)
+  cbackend.mount(capp.root(), capp)
+  cbackend.run()
+  const feye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   const fbackend = ui_fb.backend(feye, ui_fb.script([0, 2]))
   const fapp = ui.App.new(view: ui_apps.files.view,
     update: ui_apps.files.update, model: ui_apps.files.initial(),
     backend: fbackend)
-  const capp = ui.App.new(view: ui_apps.counter.view,
-    update: ui_apps.counter.update, model: ui_apps.counter.initial(),
-    backend: cbackend)
   fbackend.mount(fapp.root(), fapp)
-  cbackend.mount(capp.root(), capp)
-  cbackend.run()
   fbackend.run()
-  println("app counter 0")
-  println("app files 0")
   const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
     ui_apps.editor.initial(), ui_fb.backend(e, ui_fb.script([0, 2, 1])))
-  println("app editor 0")
+  println("desktop counter exit 0")
+  println("desktop files exit 0")
+  println("desktop editor exit 0")
 }
 
 main()

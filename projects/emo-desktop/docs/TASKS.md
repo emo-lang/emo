@@ -734,16 +734,34 @@ follows beside the kernel's and the compiler's.
   decision record — including the next lever parked there (the
   process world's 64 slots and 4 MiB per-process stacks, ten asm
   sites) — is CHECK.md's (2026-11-05).
-- [ ] **A12.2** — The desktop shell era, the desktop side's
+- [x] **A12.2** — The desktop shell era, the desktop side's
   acceptance: three tiles on the dock launching the three disk ELFs
   by the click, the exit event ring lighting each tile while its app
   runs and extinguishing it at the exit, the shell's REPL growing
   the feed/exec commands, and `run.sh` carrying the era's golden —
-  the tile click → `up` → session → exit lines. The whole shape is
-  the prototype's, complete and archived (2026-11-05,
-  `protected/tmp/20261105-a12-prototype/`); the kernel-side half —
-  `parent_for`, the exit ring, the death kick, the comp verbs' slot
-  staging that closes the `comp_args` race — is EmoOS T8.19, and
-  the landing begins by re-running the prototype's script: its
-  standing blocker (the second tile's press lost intermittently) is
-  the lost-wake window EmoOS T8.18 closed.
+  the tile click → `up` → session → exit lines. Landed 2026-11-06
+  from the archived prototype (2026-11-05,
+  `protected/tmp/20261105-a12-prototype/`) beside EmoOS T8.19, the
+  kernel-side half of the same era: the desktop takes the foreground
+  for its life after the desk pass's exit — the banner and the
+  prompt its own face, the dock's three tiles the whole launcher, a
+  tile's click the counter's session, the REPL's `exec` the other
+  two, each `up` line and dot on the wire, the exits
+  `desktop <name> exit 0` riding the merged stream to a shell that
+  never waits. The dock learned residency: `paint`'s running mask,
+  a 4×4 ink dot at a running tile's foot (the hosted twin's seven
+  residency digests beside the desk era's three), and the press
+  policy widened to three tiles. The shell's line assembly became
+  the feed — the byte-at-a-time shape the blocking read rode, driven
+  by the desktop loop's stream events now, the echo included. The
+  landing's finds on the desktop's side: the editor's window kept
+  the duo's place (the launcher's is `48, 272`), and the shell's
+  text cells overlapped once `exec` grew the help line past the
+  prompt's seat (every text from the prompt on moved eight up, and
+  `m_badarg`'s first byte was a typo in the archived table). The
+  pins: `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both, the trio and the
+  empty-dock screendumps folded against the corpus; the ledger
+  `frames 510 446`; `dune runtest` green with the smoke (352);
+  `@fmt` green; the fb gate green (112). **With this M12 is
+  complete.** Decision record: CHECK.md, 2026-11-06.

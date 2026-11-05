@@ -150,17 +150,18 @@ order, feeding whichever reader comes next: the proof chain's answers
 come out wrong, and the shell's first command arrives prefixed with
 them. Type only in the windows, and only what they ask for.
 
-The prompt answers eight commands, lowercase and exact:
+The prompt answers nine commands, lowercase and exact:
 
 | Command | Effect |
 | --- | --- |
-| `help` | names the eight |
+| `help` | names the nine |
 | `echo TEXT` | prints the text back |
 | `ls` | lists the volume's files, one per line |
 | `cat NAME` | prints a file's bytes |
 | `write NAME TEXT` | makes the file the text's bytes; quiet on success |
 | `rm NAME` | removes the file; quiet on success |
 | `counter` | starts the machine's program — the console renderer: the frames paint on the console, `a`/`b` add and subtract, `q` returns to the prompt |
+| `exec NAME.elf` | starts a disk ELF on the desktop — the dock's tiles are the same door by click |
 | `poweroff` | ends the machine — the exit route's `dma` line and frames account, then QEMU exits on its own |
 
 `write`/`ls`/`cat`/`rm` are the filesystem's roundtrip — the files

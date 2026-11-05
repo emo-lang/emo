@@ -1,15 +1,13 @@
-frame 674216584
 frame 3379408
 add 1
 frame 2473942144
 sub 0
 frame 3379408
+frame 674216584
 sel files.emo
 frame 2335363800
 open files.emo
 frame 2335363800
-app counter 0
-app files 0
 frame 2213672848
 put a
 frame 3833761840
@@ -17,4 +15,6 @@ newline
 frame 2579954656
 put b
 frame 3914186896
-app editor 0
+desktop counter exit 0
+desktop files exit 0
+desktop editor exit 0

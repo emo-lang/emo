@@ -81,8 +81,12 @@ def tile_x(i Int64) Int64 {
 // one tile per app — the face in its steel, the initial one pad in
 // and centered on the tile. `labels` are the apps' initials in tile
 // order, `focused` the lit tile's index or -1 when no app holds the
-// focus.
-def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64) Void {
+// focus, and `running` the residency's bitmask — bit i set when the
+// i-th app has a live process — the launcher's one visible fact
+// (emo-desktop A12.1): a running app's tile wears the 4×4 ink dot at
+// its foot, centered, two pixels above the tile's bottom edge, the
+// mark a macOS dock keeps under a running application's icon.
+def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64, running Int64) Void {
   s.fill(0, h - strip_height(), w, strip_height(), paper())
   var i = 0
   while i < labels.length() {
@@ -90,6 +94,9 @@ def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64
     const ty = h - strip_height() + 4
     s.fill(tx, ty, tile_size(), tile_size(), tile_color(i == focused))
     ui_fb.text(labels[i], tx + 12, ty + 8, ink(), s)
+    if (running >> i) & 1 == 1 {
+      s.fill(tx + 14, ty + 26, 4, 4, ink())
+    }
     i = i + 1
   }
 }

@@ -86,17 +86,18 @@ $ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
 
 在这三个窗口之外敲的键不是简单地丢掉。OpenSBI 在自己运行时排空 UART,它剩下的字节留在 FIFO 里,直到内核的驱动收走——字节晚些时候按序冒出来,喂给下一个读者:证明链的应答变得不对,shell 的第一条命令前面缀着它们。只在窗口里敲,只敲窗口要的量。
 
-提示符应答八个命令,小写、精确匹配:
+提示符应答九个命令,小写、精确匹配:
 
 | 命令 | 效果 |
 | --- | --- |
-| `help` | 列出八个 |
+| `help` | 列出九个 |
 | `echo TEXT` | 把文本原样打回 |
 | `ls` | 一行一个列出卷上的文件 |
 | `cat NAME` | 打印文件的字节 |
 | `write NAME TEXT` | 让文件成为文本的字节;成功时安静 |
 | `rm NAME` | 删除文件;成功时安静 |
 | `counter` | 启动机器的程序——控制台渲染器:帧画在控制台上,`a`/`b` 加减,`q` 回到提示符 |
+| `exec NAME.elf` | 在桌面上启动一个磁盘 ELF——dock 的 tile 是同一扇门的点击形态 |
 | `poweroff` | 结束机器——exit 路由的 `dma` 行与 frames 账目,然后 QEMU 自己退出 |
 
 `write`/`ls`/`cat`/`rm` 是文件系统的往返——文件在盘上、跨 poweroff 存活。会话以别的方式结束:**Ctrl-A X** 杀掉 QEMU。

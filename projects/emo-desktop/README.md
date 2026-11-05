@@ -29,6 +29,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M9 — Windows | the composited window loop, drag, focus, kill-and-restart, the growth contract's five increments | complete |
 | M10 — The desktop | the EmoUI fb backend whole, the dock, the first apps | complete |
 | M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks, two images on one desktop | complete |
+| M12 — The desktop shell era | the dock's tiles launching the disk ELFs, the exits riding the merged stream to a shell that never waits, the REPL's feed and `exec` | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

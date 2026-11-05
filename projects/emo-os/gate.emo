@@ -139,6 +139,35 @@ const grant_row = 112
 // before the move (emo-desktop A11.2).
 const comp_svc_cell = koff + 0x87002e80
 const comp_args = koff + 0x87002e90
+// The compositor's argument slots (emo-desktop A12.1): one seat per
+// in-flight verb, the grant word the claim (zero = free), five words
+// an envelope. The single comp_args cell staged every verb's arguments
+// at the same address, and two concurrent clients — the shell's dock
+// present and the launched app's win_move — raced it: the dispatch
+// read the other client's staged words and moved one window with the
+// other's grant. The slot's index rides the route (the filesystem's
+// request slot's own shape, −(1000 + op + 32·slot)), the seat freed
+// the dispatch reads it. Four seats, the desktop's four clients.
+const comp_slot_cell = koff + 0x87002eb8
+const comp_slots = koff + 0x87008000 + 2704
+const comp_slot_count = 4
+const comp_slot_bytes = 40
+
+// One free seat, named in the handoff cell the trap's route word
+// carries; none, and the resource refusal — a client's own verbs
+// serialize on the gate's reply, so a seat is held only from the
+// staging to the compositor's dispatch.
+def comp_slot_take() Int64 {
+  var i = 0
+  while i < comp_slot_count {
+    if peek64(comp_slots + (i * comp_slot_bytes)) == 0 {
+      poke64(comp_slot_cell, i)
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
 
 // The input service's argument cell (T8.13): input_info's index — the
 // one word the enumeration verb stages, past the pointer's cells.
@@ -453,12 +482,17 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       if (r1 + r3) > peek64(row + 32) || (r2 + r4) > peek64(row + 40) {
         return -reason_argument
       }
-      poke64(comp_args, r0)
-      poke64(comp_args + 8, r1)
-      poke64(comp_args + 16, r2)
-      poke64(comp_args + 24, r3)
-      poke64(comp_args + 32, r4)
-      return route_comp_present
+      var slot = comp_slot_take()
+      if slot < 0 {
+        return -reason_resource
+      }
+      var seat = comp_slots + (slot * comp_slot_bytes)
+      poke64(seat, r0)
+      poke64(seat + 8, r1)
+      poke64(seat + 16, r2)
+      poke64(seat + 24, r3)
+      poke64(seat + 32, r4)
+      return route_comp_present - (32 * slot)
     } else {
       if peek64(screen_grant_cell) != peek64(handoff_caller) {
         return -reason_permission
@@ -524,8 +558,13 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    poke64(comp_args, r0)
-    return route_win_focus
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    return route_win_focus - (32 * slot)
   }
   if n == 16 {
     // win_move(grant, x, y) (T8.6): the position the compositor's
@@ -546,10 +585,15 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    poke64(comp_args, r0)
-    poke64(comp_args + 8, r1)
-    poke64(comp_args + 16, r2)
-    return route_win_move
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    poke64(seat + 16, r2)
+    return route_win_move - (32 * slot)
   }
   if n == 17 {
     // win_role(grant, role) (T8.13, emo-desktop A9.1): the surface the
@@ -573,9 +617,14 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    poke64(comp_args, r0)
-    poke64(comp_args + 8, r1)
-    return route_win_role
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    return route_win_role - (32 * slot)
   }
   if n == 18 {
     // input_info(index) (T8.13, emo-desktop A9.1): the index-th
@@ -614,9 +663,14 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (qidx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    poke64(comp_args, r0)
-    poke64(comp_args + 8, r1)
-    return route_win_parent
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    return route_win_parent - (32 * slot)
   }
   if n == 20 {
     // win_format(grant, format) (T8.15, emo-desktop A9.3): the

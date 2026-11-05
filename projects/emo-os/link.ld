@@ -125,6 +125,17 @@ SECTIONS
   . = KOFF + 0x8700c000;
   .emo_exec (NOLOAD) : AT(ADDR(.emo_exec) - KOFF) { *(.emo_exec) } :tick
 
+  /* The process page (emo-desktop A12.1, EmoOS T8.19), a page above the
+     exec's: the per-pid parent cells — the spawner's pid written at
+     every spawn and every exec, one write per pid ever (the
+     dead-owners' discipline) — the record a child's death reads when
+     the exit event names its reader in the merged stream. The kernel's
+     Emo (main.emo) reads and writes every word by its fixed constants;
+     the exits' ring itself stays on the handoff page's tail, beside
+     the held reads it serves. */
+  . = KOFF + 0x8700d000;
+  .emo_proc (NOLOAD) : AT(ADDR(.emo_proc) - KOFF) { *(.emo_proc) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

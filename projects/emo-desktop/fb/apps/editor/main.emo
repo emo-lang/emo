@@ -27,7 +27,7 @@ def main() {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }
-  case syscall.win_move(ge, 288, 208) {
+  case syscall.win_move(ge, 48, 272) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }

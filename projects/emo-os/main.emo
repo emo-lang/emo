@@ -191,6 +191,13 @@ const comp_cursor_said = comp_page + 416
 const comp_svc_cell = koff + 0x87002e80
 const comp_sup_cell = koff + 0x87002e88
 const comp_args = koff + 0x87002e90
+// The compositor's argument slots (emo-desktop A12.1, gate.emo's own
+// note): one seat per in-flight verb, its index the route carried (the
+// filesystem's request slot's shape) — the op field of the request
+// word is op + 32·seat, the seat freed when the dispatch has read it.
+const comp_slots = comp_page + 2704
+const comp_slot_bytes = 40
+const comp_panel_cell = comp_page + 40
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -288,6 +295,30 @@ const pointer_op = 18
 // them to a client that scales the stream's reports itself.
 const input_args = koff + 0x87002ef8
 
+// The exits' word in the merged stream's side channel (emo-desktop
+// A12.1, EmoOS T8.19): a child's death rides to its parent — the
+// desktop's shell, a reader that never waits, is how an application's
+// end is heard. The ring is the death's seat between the reaper's
+// push and the parent's read: eight seats of two words, the parent's
+// pid then the packed event (type 0x4558 "EX" — the machine types'
+// own family, 0x454D "EM" being the serial bytes' — the child's pid
+// in the code field, the exit code in the value), on the handoff
+// page's tail past the held reads. A full ring drops the event; the
+// exit table still answers the wait verb.
+const exit_ring_head = koff + 0x87002f50
+const exit_ring_tail = koff + 0x87002f58
+const exit_ring = koff + 0x87002f60
+const exit_ring_seats = 8
+const exit_ring_seat = 16
+const ev_exit = 0x4558
+
+// The parents (emo-desktop A12.1): one cell per pid, the spawner's
+// pid written at the spawn and at the exec — one write per pid ever,
+// the dead-owners' discipline. The death reads its own cell and the
+// ring entry names its reader (.emo_proc, 0x8700d000).
+const parent_for = koff + 0x8700d000
+const parent_bound = 256
+
 // The desktop segment's cells (T8.4, T8.5): the display service's pid
 // cell the gate routes the desktop verbs by; the authorization table's
 // first entry — the screen carve's grant, the pid the process service
@@ -357,6 +388,20 @@ const sv39_satp = koff + 0x87004008
 
 def op_of(w Int64) Int64 {
   return w >> 32
+}
+
+// The compositor's request word carries its seat beside the op (the
+// gate's route did the packing, the filesystem's request slot's own
+// shape): the op field is op + 32·seat, the seat names the argument
+// envelope the dispatch reads and frees.
+def comp_slot_of(w Int64) Int64 {
+  var t = op_of(w)
+  return t / 32
+}
+
+def comp_op_of(w Int64) Int64 {
+  var t = op_of(w)
+  return t - (t / 32) * 32
 }
 
 def caller_of(w Int64) Int64 {
@@ -707,6 +752,13 @@ def process_serve(w Int64) Void {
                 // dead holder's pid can never match a new caller.
                 poke64(screen_grant_cell, child)
               }
+              // the parent's own cell (emo-desktop A12.1, EmoOS
+              // T8.19): the spawner's pid, one write per pid ever —
+              // the dead-owners' discipline, the exit event's reader
+              // named at the birth
+              if child < parent_bound {
+                poke64(parent_for + (child * 8), caller_of(w))
+              }
               gate_reply(caller_of(w), child)
             }
           }
@@ -749,6 +801,15 @@ def process_serve(w Int64) Void {
               exec.clear_busy()
               var ans = exec.transaction(pid_at(fsn), exec.name_buf(),
                 exec.name_len())
+              // the parent's own cell (emo-desktop A12.1, EmoOS
+              // T8.19): the exec's caller is the child's parent — the
+              // spawn's own write at the disk ELF's door, one write
+              // per pid ever
+              if ans >= 0 {
+                if ans < parent_bound {
+                  poke64(parent_for + (ans * 8), caller_of(w))
+                }
+              }
               gate_reply(caller_of(w), ans)
             }
           }
@@ -760,6 +821,28 @@ def process_serve(w Int64) Void {
             poke64(exit_pids + (n * 8), pid)
             poke64(exit_codes + (n * 8), code)
             poke64(exit_count, n + 1)
+          }
+          // The death's word to its parent (emo-desktop A12.1, EmoOS
+          // T8.19): the exit table answers the waits; the ring answers
+          // the readers that never wait — the desktop's shell among
+          // them. The parent's cell names the reader, the event the
+          // packed word the stream carries (the child's pid in the
+          // code field, the exit code in the value), and the input
+          // service's kick the wake: a held read of the parent's is
+          // judged the next pass, a serve-parked one wakes to find
+          // the event at its loop's top — gate_post wakes both parks.
+          if pid > 0 {
+            if pid < parent_bound {
+              var parent = peek64(parent_for + (pid * 8))
+              if parent > 0 {
+                exit_event_push(parent,
+                  (ev_exit << 48) | (pid << 32) | code)
+                var isvc = peek64(input_svc_cell)
+                if isvc != 0 {
+                  gate_post(isvc, 13 << 32)
+                }
+              }
+            }
           }
           var spid = peek64(svc_screen_pid)
           if spid != 0 {
@@ -1697,6 +1780,98 @@ def input_entitled(pid Int64) Bool {
   return peek64(row + 8) == pid
 }
 
+// The head's own verdict on a reader (emo-desktop A12.1, EmoOS T8.19):
+// a pointer's absolute report is no window's — the launcher tracks
+// the pointer the windows ignore, the press that names a tile riding
+// the position the moves kept current. While a panel lives, its owner
+// is who the moves serve; no panel, and every head — the moves beside
+// the rest — falls to the focus's verdict, the A11.2 shape.
+def input_entitled_for(pid Int64, ty Int64) Bool {
+  if ty == 3 {
+    var panel = peek64(comp_panel_cell)
+    if panel != 0 {
+      var prow = grant_row_of(panel)
+      if prow != 0 {
+        return peek64(prow + 8) == pid
+      }
+    }
+  }
+  return input_entitled(pid)
+}
+
+// The exit ring's push (emo-desktop A12.1, EmoOS T8.19): the reaper's
+// word — the parent's pid, then the packed event — into the tail's
+// seat. A full ring drops the event: the exit table still answers the
+// wait verb, and the bound is the table's own.
+def exit_event_push(parent Int64, w Int64) Void {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  if tail - head < exit_ring_seats {
+    var seat = exit_ring + ((tail % exit_ring_seats) * exit_ring_seat)
+    poke64(seat, parent)
+    poke64(seat + 8, w)
+    poke64(exit_ring_tail, tail + 1)
+  }
+}
+
+// Whether the ring holds an exit event whose parent waits in the
+// hold (emo-desktop A12.1, EmoOS T8.19): the judgment owes that seat a
+// pass. A serve parked on the device world asks this when a wake
+// brings its own reader nothing — the death's kick is a mailbox word,
+// and a serve that parks again swallows it, the held parent's read
+// waiting for a pass only the service loop's top runs.
+def exit_event_for_held() Bool {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  var i = head
+  while i != tail {
+    var seat = exit_ring + ((i % exit_ring_seats) * exit_ring_seat)
+    var parent = peek64(seat)
+    var j = 0
+    while j < input_hold_seats {
+      var hseat = input_hold + (j * input_hold_seat)
+      if peek64(hseat) == parent {
+        return true
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The exit ring's take (emo-desktop A12.1): the oldest event whose
+// parent names this reader, removed and answered packed as it was
+// pushed; no event of this reader's, and the answer is −1. The seat's
+// removal closes its gap — the entries between the head and the seat
+// shift down one, the order the deaths happened in kept.
+def exit_event_take(pid Int64) Int64 {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  if head == tail {
+    return -1
+  }
+  var i = head
+  while i != tail {
+    var seat = exit_ring + ((i % exit_ring_seats) * exit_ring_seat)
+    if peek64(seat) == pid {
+      var w = peek64(seat + 8)
+      var j = i
+      while j > head {
+        var dst = exit_ring + ((j % exit_ring_seats) * exit_ring_seat)
+        var src = exit_ring + (((j - 1) % exit_ring_seats) * exit_ring_seat)
+        poke64(dst, peek64(src))
+        poke64(dst + 8, peek64(src + 8))
+        j = j - 1
+      }
+      poke64(exit_ring_head, head + 1)
+      return w
+    }
+    i = i + 1
+  }
+  return -1
+}
+
 // The next event's type, seen and not taken (emo-desktop A11.2): the
 // serial's bytes first, then the keyboard's, then the pointer's — the
 // merge's own order, read at each source's cursor. The answer is the
@@ -1746,50 +1921,124 @@ def input_hold_put(pid Int64, w Int64) Bool {
 }
 
 def input_hold_serve(dev Int64, q Int64) Void {
-  var i = 0
-  while i < input_hold_seats {
-    var seat = input_hold + (i * input_hold_seat)
-    var pid = peek64(seat)
-    if pid != 0 {
-      if peek64(comp_dead_cells + (pid * 8)) != 0 {
-        poke64(seat, 0)
-      } else {
-        if input_entitled(pid) {
-          var w = peek64(seat + 8)
+  // the held reads, judged and served (emo-desktop A11.2), the A12.1
+  // exit-take beside it: a seat whose death (the cell) or whose
+  // parent's exit event (the ring) has news is answered first; the
+  // rest are judged per seat against the head the stream holds then —
+  // the head's own verdict (a move is the panel's owner's). A serve
+  // that hands its read back (the head that arrived while it parked
+  // was another reader's) restarts the scan: the head's own reader
+  // may sit behind the cursor the park froze, and only a mailbox word
+  // would reach it — a reader parked at its gate-wait sends none. A
+  // serve that yields — a wake brought its reader nothing while the
+  // ring holds an exit event a held seat waits on — hands its read
+  // back and lets the scan carry on: the seat the news names may sit
+  // behind the cursor, and a scan that stopped at the yield would
+  // starve it; the parking pass comes round again on the next loop.
+  var again = true
+  while again {
+    again = false
+    var i = 0
+    while i < input_hold_seats {
+      var seat = input_hold + (i * input_hold_seat)
+      var pid = peek64(seat)
+      if pid != 0 {
+        if peek64(comp_dead_cells + (pid * 8)) != 0 {
           poke64(seat, 0)
-          input_serve_read(w, dev, q)
+        } else {
+          var e = exit_event_take(pid)
+          if e >= 0 {
+            var w = peek64(seat + 8)
+            poke64(seat, 0)
+            gate_reply(caller_of(w), e)
+          } else {
+            if input_entitled_for(pid, input_peek_type(dev, q)) {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              var r = input_serve_read(w, dev, q)
+              if r == 1 {
+                again = true
+              }
+            }
+          }
         }
       }
+      i = i + 1
     }
-    i = i + 1
   }
 }
 
-def input_serve_read(w Int64, dev Int64, q Int64) Void {
+def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
+  // The A11.2 serve, the A12.1 exit-check beside it (emo-desktop
+  // A12.1): the stream's judgment at the ask, the empty stream parked
+  // on the device world — and per wake, the death's word first: an
+  // exit event whose parent names this reader is answered before the
+  // stream's judgment runs, the parent hearing its child ended
+  // whatever the focus is. The answer names the serve's end: 0 the
+  // read answered, 1 the read back in the hold — the head that
+  // arrived is another reader's (a move the panel owns), the seat it
+  // left behind the seat it takes back, the caller's scan restarting
+  // to hand the head to its own reader — and 2 the serve's own yield:
+  // a wake brought this reader nothing while the ring holds an exit
+  // event a held seat waits on, so the service loop's mailbox must
+  // run before this reader parks again — a kick's word is the held
+  // reads' only judgment, and a serve parked on the device world
+  // swallows it.
   var served = false
   while !served {
-    var ty = input_peek_type(dev, q)
-    if ty < 0 {
-      device_wait()
+    var ex = exit_event_take(caller_of(w))
+    if ex >= 0 {
+      gate_reply(caller_of(w), ex)
+      served = true
     } else {
-      if ty == 0 {
-        input_take_head(dev, q, ty)
+      var ty = input_peek_type(dev, q)
+      if ty < 0 {
+        device_wait()
+        if input_peek_type(dev, q) < 0 {
+          if exit_event_for_held() {
+            if !input_hold_put(caller_of(w), w) {
+              println("input: the hold overflowed")
+              halt()
+            }
+            return 2
+          }
+        }
       } else {
-        var e = input_take_head(dev, q, ty)
-        gate_reply(caller_of(w), e)
-        served = true
+        if !input_entitled_for(caller_of(w), ty) {
+          if !input_hold_put(caller_of(w), w) {
+            println("input: the hold overflowed")
+            halt()
+          }
+          return 1
+        } else {
+          if ty == 0 {
+            input_take_head(dev, q, ty)
+          } else {
+            var e = input_take_head(dev, q, ty)
+            gate_reply(caller_of(w), e)
+            served = true
+          }
+        }
       }
     }
   }
+  return 0
 }
 
 def input_parked(w Int64, dev Int64, q Int64) Void {
   var op = op_of(w)
   if op == 12 {
     var pid = caller_of(w)
-    if !input_hold_put(pid, w) {
-      println("input: the hold overflowed")
-      halt()
+    // the death's word first (emo-desktop A12.1): an exit event whose
+    // parent names this reader is answered now, the read never parked
+    var e = exit_event_take(pid)
+    if e >= 0 {
+      gate_reply(caller_of(w), e)
+    } else {
+      if !input_hold_put(pid, w) {
+        println("input: the hold overflowed")
+        halt()
+      }
     }
   } else {
     if op == 2 {
@@ -2490,10 +2739,14 @@ def comp_press_raise() Void {
 
 def comp_cursor_place(gpu Pid, me Pid) Void {
   // the press first (emo-desktop A11.2): a click is a raise before it
-  // is a move of the sprite
+  // is a move of the sprite — raised before the cell's clear
+  // (emo-desktop A12.1): the cell is the press's anchor, and a serve
+  // waking between the clear and the raise would judge the head by the
+  // old focus and eat the click; raised first, the cell's clearing is
+  // the delivery's own signal
   if peek64(pointer_press_cell) != 0 {
-    poke64(pointer_press_cell, 0)
     comp_press_raise()
+    poke64(pointer_press_cell, 0)
   }
   poke64(pointer_notice_cell, 0)
   poke64(comp_cursor_gen, peek64(pointer_gen_cell))
@@ -2553,28 +2806,41 @@ def comp_cursor_place(gpu Pid, me Pid) Void {
 // (`comp_compose`), the row's damage rect recorded, and the answer
 // after the flush: the frame lands whole (the protocol's sixth seam).
 def comp_word(w Int64, gpu Pid, me Pid) Void {
-  var op = op_of(w)
+  var op = comp_op_of(w)
   if op == 15 {
     // The focus (T8.6, T8.13): the surface recorded as the focused one
     // and raised to the stack's top — the next composition paints it
-    // over the rest.
-    var entry = comp_stack_find(peek64(comp_args))
+    // over the rest. The held reads' judgment waits for the news
+    // (emo-desktop A12.1): a focus that moved is a reader the stream
+    // may name now, the input service's kick the wake.
+    var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+    var grant = peek64(seat)
+    poke64(seat, 0)
+    var entry = comp_stack_find(grant)
     if entry == 0 {
       gate_reply(caller_of(w), -4)
     } else {
-      poke64(comp_focus_cell, peek64(comp_args))
+      poke64(comp_focus_cell, grant)
+      comp_stack_raise(entry)
+      var isvc = peek64(input_svc_cell)
+      if isvc != 0 {
+        gate_post(isvc, 13 << 32)
+      }
+      device_wake()
       comp_stack_raise(entry)
       gate_reply(caller_of(w), 0)
     }
   } else {
     if op == 16 {
-      var grant = peek64(comp_args)
+      var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+      var grant = peek64(seat)
+      var x = peek64(seat + 8)
+      var y = peek64(seat + 16)
+      poke64(seat, 0)
       var entry = comp_stack_find(grant)
       if entry == 0 {
         gate_reply(caller_of(w), -4)
       } else {
-        var x = peek64(comp_args + 8)
-        var y = peek64(comp_args + 16)
         var row = grant_row_of(grant)
         var ww = peek64(row + 32)
         var hh = peek64(row + 40)
@@ -2613,7 +2879,13 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           p = p + 1
         }
         comp_stack_prune()
-        var grant = peek64(comp_args)
+        var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+        var grant = peek64(seat)
+        var rx = peek64(seat + 8)
+        var ry = peek64(seat + 16)
+        var rw = peek64(seat + 24)
+        var rh = peek64(seat + 32)
+        poke64(seat, 0)
         var entry = comp_stack_find(grant)
         if entry == 0 {
           gate_reply(caller_of(w), -4)
@@ -2624,10 +2896,10 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           var row = grant_row_of(grant)
           poke64(row + 56, 1)
           var sum = comp_compose(gpu, me)
-          poke64(row + 64, peek64(comp_args + 8))
-          poke64(row + 72, peek64(comp_args + 16))
-          poke64(row + 80, peek64(comp_args + 24))
-          poke64(row + 88, peek64(comp_args + 32))
+          poke64(row + 64, rx)
+          poke64(row + 72, ry)
+          poke64(row + 80, rw)
+          poke64(row + 88, rh)
           println("comp ${x} ${y} ${sum & 4294967295}")
           gate_reply(caller_of(w), 0)
           comp_cb_reply()
@@ -2642,8 +2914,10 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           // since T8.15 (A9.3): what a role means — free-standing,
           // parent-relative, the shell's topmost strip — is the
           // binding's and the walk's to say.
-          var grant = peek64(comp_args)
-          var role = peek64(comp_args + 8)
+          var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+          var grant = peek64(seat)
+          var role = peek64(seat + 8)
+          poke64(seat, 0)
           if comp_stack_find(grant) != 0 {
             gate_reply(caller_of(w), -4)
           } else {
@@ -2651,6 +2925,12 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
             if comp_stack_add(grant, role) == 0 {
               gate_reply(caller_of(w), -5)
             } else {
+              // the panel's grant, named at its declaration
+              // (emo-desktop A12.1): the pointer's moves are the
+              // desktop's, and the panel's owner is who they serve
+              if role == 3 {
+                poke64(comp_panel_cell, grant)
+              }
               gate_reply(caller_of(w), 0)
             }
           }
@@ -2663,8 +2943,10 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
             // when the parent goes. A surface with no entry, a role
             // that takes no parent (toplevel, panel), a parent that is
             // no live toplevel — each the argument refusal, by number.
-            var grant = peek64(comp_args)
-            var parent = peek64(comp_args + 8)
+            var pseat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+            var grant = peek64(pseat)
+            var parent = peek64(pseat + 8)
+            poke64(pseat, 0)
             var entry = comp_stack_find(grant)
             if entry == 0 {
               gate_reply(caller_of(w), -4)

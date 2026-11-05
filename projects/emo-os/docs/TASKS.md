@@ -367,7 +367,7 @@ open on this side of the gate, given numbers so the remaining work
 can carry progress; CHECK.md's "remaining work" list (2026-11-05)
 mirrors it beside the desktop's and the compiler's.
 
-- [ ] **T8.19** — The desktop shell era, the kernel side: the
+- [x] **T8.19** — The desktop shell era, the kernel side: the
   `parent_for` table (`0x8700d000`), the exit event ring
   (`0x87002f50+`, eight 16-byte slots, the type word `0x4558`),
   the death's kick and broadcast, `comp_panel_cell` (`comp_page+40`),
@@ -375,15 +375,38 @@ mirrors it beside the desktop's and the compiler's.
   (`comp_slot_take`, the route `-(1000+op+32*slot)`, the five-word
   envelope at `comp_page+2704`) — closing the `comp_args` single-cell
   staging race two concurrent clients can lose, the prototype's
-  'moved 10 to 0,0' the proof. The prototype is complete and
-  archived (2026-11-05, `protected/tmp/20261105-a12-prototype/`):
-  its first tile click runs the counter's session end to end and
-  answers the parent's wait (`desktop counter exit 0`). Its standing
-  blocker — the second tile's press lost intermittently over
-  thirty-odd golden rounds — is the lost-wake window T8.18 closed,
-  so the landing begins by re-running the prototype's script and
-  confirming the blocker is gone. The desktop-side acceptance is
-  emo-desktop's A12.2.
+  'moved 10 to 0,0' the proof. Landed 2026-11-06 from the archived
+  prototype (2026-11-05, `protected/tmp/20261105-a12-prototype/`),
+  whose standing blocker — the second tile's press lost over
+  thirty-odd rounds — T8.18's sweep had already closed: the landing's
+  first golden ran the press through. The archive proved a mid-work
+  snapshot, and the landing wrote what it lacked. The death's half:
+  the parent's cell written at the spawn and the exec (one write per
+  pid ever), the death branch pushing the packed event
+  (`0x4558 << 48 | pid << 32 | code`) and kicking the input service —
+  the wait verb's table untouched beside it. The launcher's pointer:
+  while a panel lives its owner is who the moves serve
+  (`input_entitled_for`, the head's own verdict at every judgment) —
+  without it the launcher's `px, py` age behind the focus's turns and
+  a press names a tile the pointer left. The serve's ends: a serve
+  parked on the device world swallows a kick — a mailbox word it
+  never reads — so a wake that brings its reader nothing while the
+  ring holds an exit event a held seat waits on hands the read back
+  and lets the scan carry on (a head another reader's restarts it;
+  the seat the news names may sit behind the cursor either way). The
+  landing's finds: the editor's window still placed at the duo's
+  spot (the launcher's is `48, 272`, the archived trio's own fold the
+  proof), the shell's prompt cell inside the help text's new span
+  (`exec` grew it past the prompt's seat — every text from the
+  prompt on moved eight up), `m_badarg`'s first byte a typo in the
+  archived byte table, and `run.sh`'s image and frame searches
+  anchored to whole lines the REPL's echoes now share. The pins: the
+  golden green under both timer transports, three consecutive rounds
+  byte-identical on both; the ledger `frames 510 446` (the era's
+  residents the honest count); `dune runtest` green with the smoke
+  (352); `@fmt` green; the fb gate green (112). The desktop-side
+  acceptance is emo-desktop's A12.2, landed the same round. Decision
+  record: CHECK.md, 2026-11-06.
 - [ ] **T8.20** — The mailbox's send-send window, found standing at
   T8.18 and left by decision as its own round: `emo_mb_count` scans
   the mailbox unmasked and `emo_send` deliberately leaves a word for

@@ -186,12 +186,11 @@ claims them.
 
 **EmoOS — [Step 8's open tail](projects/emo-os/docs/TASKS.md):**
 
-- [ ] **T8.19** — the desktop shell era, kernel side: `parent_for`,
+- [x] **T8.19** — the desktop shell era, kernel side: `parent_for`,
   the exit event ring, the death kick, the comp verbs' slot staging
-  (closing the `comp_args` race). The prototype is complete and
-  archived (`protected/tmp/20261105-a12-prototype/`); the first step
-  of the landing is re-running its script — the press-loss blocker
-  is the lost-wake window T8.18 closed.
+  (closing the `comp_args` race). Landed 2026-11-06 from the archived
+  prototype (`protected/tmp/20261105-a12-prototype/`) — which proved a
+  mid-work snapshot; the record is the dated section below.
 - [ ] **T8.20** — the mailbox's send-send window (found standing at
   T8.18; no reproduction; the sender yields on the spot, so the harm
   is a loud deadlock, not a silent stall; its own round).
@@ -200,14 +199,15 @@ claims them.
 - [ ] **T8.22** — generic IPC — the honest four's fourth (build when
   a measured path demands it). Unscheduled.
 
-**emo-desktop — [M12 opened](projects/emo-desktop/docs/TASKS.md):**
+**emo-desktop — [M12 complete](projects/emo-desktop/docs/TASKS.md):**
 
 - [x] A12.1 — the app image profile, landed 2026-11-05 (`9f7eaa4`;
   the ledger `frames 507 446`).
-- [ ] **A12.2** — the desktop shell era's landing and acceptance (the
+- [x] **A12.2** — the desktop shell era's landing and acceptance (the
   kernel half is T8.19): the tiles launch the disk ELFs, the exits
   light the tiles out, the REPL grows feed/exec, `run.sh` carries
-  the era's golden.
+  the era's golden. Landed 2026-11-06 with T8.19; the ledger of the
+  era is `frames 510 446`.
 
 **The compiler track — the four debts the metal surfaced, landed
 2026-11-05 as [EmoOS T8.23–T8.26](projects/emo-os/docs/TASKS.md)
@@ -244,6 +244,76 @@ claims them.
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
 nothing.
+
+## 2026-11-06 — The desktop shell era landed (EmoOS T8.19, emo-desktop A12.2)
+
+- The landing began as the TASKS entry prescribed: re-run the archived
+  prototype's script first. **T8.18's verdict held** — the second
+  press went through on the first try; the lost-wake window is gone.
+  What the run found instead is that **the archive was a mid-work
+  snapshot**: its kernel carried the exit ring's take machinery and
+  the comp slots whole, but the push half — the death branch's
+  `exit_event_push`, the `parent_for` writes at the spawn and the
+  exec, the death's kick — existed only as TASKS' words, and the
+  panel-routed moves (`input_entitled_for`) were a def no path
+  called. The landing wrote them.
+- The era's pointer rule, in one sentence: **while a panel lives, its
+  owner is who the moves serve** — the launcher tracks the pointer
+  the windows ignore, because the press that names a tile rides the
+  position the moves kept current. Without the rule the launcher's
+  `px, py` age behind the focus's turns, and a press that reaches it
+  while an app holds the focus names a tile the pointer left (the
+  golden's counter relaunch, the first symptom).
+- **The round's find, worth the section: a serve parked on the
+  device world swallows a kick.** The A11.2 judgment economy runs at
+  the input service's loop top — after every mailbox word — and the
+  death's kick is a mailbox word. But the service spends its life
+  inside `input_serve_read`, parked on `device_wait`; `gate_post`
+  wakes the park (state 4 is a wake it answers), the serve loop
+  re-peeks an empty stream, and parks again — the kick's word sits in
+  the mailbox unread, and the held seat the event was for is never
+  judged. The fix is the serve's third end: a wake that brings its
+  reader nothing while the ring holds an exit event a held seat waits
+  on (`exit_event_for_held`) hands the read back and lets the seat
+  scan carry on — the seat the news names may sit behind the cursor
+  the park froze. The scan's other end: a head that is another
+  reader's (a panel-owned move) restarts it, the head's own reader
+  behind the cursor — the restart's own deadlock (scan parked mid-
+  sweep, no mailbox word ever coming) is the shape that motivated it.
+- The archived prototype carried three desktop-side slips the golden
+  caught one by one: **the editor's window still at the duo's place**
+  (the launcher's is `48, 272`; the archive's own trio screendump,
+  folded at the new rect, digests to the corpus's tenth frame — the
+  position proof), **the prompt's cell inside the help text's grown
+  span** (`exec` made the help line 57 bytes, past `sh_prompt`'s seat
+  — the prompt's first byte, an `e`, printed as the help's last;
+  every text from the prompt on moved eight up), and **`m_badarg`'s
+  first byte a typo** (`aad argument` — 97 for 98 in the hand-built
+  byte table; all sixteen tables verified against their comments
+  after).
+- The golden's own assertions needed the era's lesson: **the REPL's
+  echoes share the serial with the launches**, an `image` line riding
+  the prompt's own — the line-anchored searches (`^frame …$`) for the
+  exec loads, the apps' frames, and the launcher's dock digests lost
+  their matches. The anchors came off (the searches bounded by the
+  previous match and the era's windows, as the wire list already
+  was).
+- The ledger of the era is `frames 510 446` — three blocks over
+  A12.1's: the desktop's own residents at the poweroff (the golden's
+  number is what the machine says; the assertion follows the truth).
+- The pins: `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both; `dune runtest` green
+  with the smoke (352); `@fmt` green; the fb gate green (112 ok, 0
+  fail — the apps golden in the launcher's order with the `desktop
+  <name> exit 0` lines, the dock golden's seven residency digests,
+  every hosted target byte-identical).
+- The files: `projects/emo-os/{main.emo, gate.emo, link.ld, run.sh,
+  hello/main.emo, hello/shell.emo}`,
+  `projects/emo-desktop/fb/desktop/{emo_desktop.emo, golden/}`,
+  `projects/emo-desktop/fb/apps/golden/`,
+  `fb/apps/editor/main.emo` (the position), the trackers, the
+  READMEs' M12 row, and `shell.md`/`shell.zh-CN.md` (the ninth
+  command, the feed, the desktop's foreground).
 
 ## 2026-11-05 — The two roots of the red boot (EmoOS T8.26 closed)
 
