@@ -1,0 +1,76 @@
+// The typed method bodies (EmoOS T8.26): a method whose signature
+// resolves emits a native body on its own convention — the receiver a
+// word parameter, every Int64 raw in the integer bank, every Float64
+// raw in the float bank — and all three call paths cross it: the
+// class-typed direct call rides the callee's own convention, the
+// interface call the interface's declared one, and the by-name
+// dispatch (an Unknown receiver) a tag-adapting thunk on the method
+// table. The corpus is plain Emo and answers byte for byte on every
+// target; on riscv64 the allocation pin is the lever's own proof — a
+// typed call site passes its numbers raw, where the old convention
+// boxed every numeric argument a method call carried.
+//
+//   emo run main.emo
+
+class Gauge {
+  def init(base Int64) {
+    self.base = base
+  }
+
+  def add(x Int64, y Int64) Int64 {
+    return self.base + x + y
+  }
+
+  def mix(a Float64, b Float64) Float64 {
+    return a * b
+  }
+}
+
+interface Meter {
+  def add(x Int64, y Int64) Int64
+  def mix(a Float64, b Float64) Float64
+}
+
+const g = Gauge.new(100)
+
+// ---- 1 · the direct call, the callee's own convention ----
+
+println(g.add(1, 2))
+println(g.mix(1.5, 4.0))
+
+// ---- 2 · the interface call, the declared convention ----
+
+def via_meter(m Meter, a Int64, b Int64) Int64 {
+  return m.add(a, b)
+}
+
+def via_meter_mix(m Meter, a Float64, b Float64) Float64 {
+  return m.mix(a, b)
+}
+
+println(via_meter(g, 3, 4))
+println(via_meter_mix(g, 2.5, 2.0))
+
+// ---- 3 · the by-name dispatch, the tag-adapting thunk ----
+// (`Block` is the checker's Unknown: the instance rides through
+// gradually and the runtime resolves `add` from the method table)
+
+def via_block(m Block, a Int64, b Int64) Int64 {
+  return m.add(a, b)
+}
+
+println(via_block(g, 5, 6))
+
+// ---- 4 · the allocation pin: two million typed calls ----
+// Four million numeric arguments cross raw (peek_poke's burn
+// discipline: an argument that boxed would spend the heap first).
+
+def hammer(g Gauge, rounds Int64) Int64 {
+  var acc = 0
+  for var i = 0; i < rounds; i = i + 1 {
+    acc = acc + g.add(1, 2)
+  }
+  return acc
+}
+
+println(hammer(g, 2000000))

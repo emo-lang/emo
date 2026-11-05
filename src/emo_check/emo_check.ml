@@ -2340,6 +2340,32 @@ and check_method_call ctx env span recv mname args : t =
     BuilderType Unknown)
   else if
     match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Bytes", "new" -> true
+    | _ -> false
+  then (
+    (* Bytes.new(n) — the zero-filled byte buffer, one Int64 length.
+       The constructor's own answer carries the Bytes type (T8.24): a
+       receiver the emitters can key on, where it was Unknown before and
+       only the eval and the c backend answered by the node's shape. *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    match arg_values with
+    | [ (None, Int64) ] | [ (Some "n", Int64) ] -> Bytes
+    | [ (_, vt) ] ->
+        report ctx span "E4004"
+          (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
+             (to_string vt));
+        Bytes
+    | _ ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Bytes.new` expects 1 argument, got %d"
+             (List.length arg_values));
+        Bytes)
+  else if
+    match (recv.Ast.desc, mname) with
     | Ast.Type_ident "Exception", "new" -> true
     | _ -> false
   then (

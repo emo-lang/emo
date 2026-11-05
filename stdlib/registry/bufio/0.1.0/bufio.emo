@@ -65,6 +65,17 @@ class BytesReader {
 // an exact-length buffer — linear — and leaves the deque intact by
 // rotating it (pop the front, push it back), so the call is not
 // draining.
+// A chunk's bytes through a typed signature: the deque's element type
+// stays gradual (an empty seed pins nothing), so the chunk crosses as
+// Unknown and the checker cannot hold the flow's types itself — this
+// def's Bytes result is the contract instead. (T8.24's Bytes.new
+// typing surfaced the gap: the receiver once Unknown left `out.set`
+// unchecked; typed, its Int64 argument check lit up and the gradual
+// flow refused.)
+def chunk_bytes(chunk String) Bytes {
+  return chunk.to_bytes()
+}
+
 class BytesSink {
   def init() {
     self.chunks = List.new([])
@@ -85,7 +96,7 @@ class BytesSink {
     var at = 0
     for var i = 0; i < n; i = i + 1 {
       const chunk = self.chunks.pop_front()
-      const data = chunk.to_bytes()
+      const data = chunk_bytes(chunk)
       for var j = 0; j < data.length(); j = j + 1 {
         out.set(at, data.get(j))
         at = at + 1

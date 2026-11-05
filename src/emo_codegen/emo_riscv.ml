@@ -11,16 +11,19 @@
    The value model (T19.2/T19.3): a dynamic value is one tagged machine
    word. Heap pointers carry their kind in bits 4:1 (bit 0 clear) — 0
    Int64 cell, 1 Float64 cell, 2 String, 3 Tuple, 4 Array, 5 Box,
-   6 Closure, 7 Instance, 8 Atomic — so every block is 32-byte aligned
+   6 Closure, 7 Instance, 8 Atomic, 9 Pid, 10 Bytes, 11 ArrayBuilder —
+   so every block is 32-byte aligned
    and the five low bits are free; every block is [header word][payload],
    the header naming the payload size for a future precise GC:
 
      Int64/Float64  [header][bits]
      String         [header][length][bytes padded to 8]
+     Bytes          [header][length][bytes padded to 8] (mutable, kind 10)
      Tuple/Array    [header][length][elements...]
      Box/Atomic     [header][value]
      Closure        [header][code][captures...]
      Instance       [header][class id][fields...]
+     ArrayBuilder   [header=2][size, raw][backing Array word] (kind 11)
 
   Bool, Char, Byte, and enum members are immediates (bit 0 set; kind in
   bits 3:1: 0 Bool, 1 Char, 2 Enum — enum members carry a program-wide
@@ -107,6 +110,31 @@ let conv_of (f : Emo_ir.func) : conv option =
           | _ -> R_word);
       }
 
+(* The kinds an interface's declared signature spells (T8.26): the
+   receiver rides first as a word, the declared parameters and result
+   follow conv_of's own rule. The vtable's slots and every interface
+   call site share this one convention; an implementation whose own
+   convention differs gets a per-slot adapter. *)
+let declared_conv (params : (string * Emo_check.t) list) (result : Emo_check.t)
+    : conv =
+  {
+    cparams =
+      P_word
+      :: List.map
+           (fun (_, t) ->
+             match t with
+             | Emo_check.Int64 -> P_int64
+             | Emo_check.Float64 -> P_float64
+             | _ -> P_word)
+           params;
+    cresult =
+      (match result with
+      | Emo_check.Int64 -> R_int64
+      | Emo_check.Float64 -> R_float64
+      | Emo_check.Void -> R_void
+      | _ -> R_word);
+  }
+
 (* Each parameter's bank register: the integer bank counts the
    non-float parameters, the float bank the Float64 ones, each from
    zero — the psABI's two independent banks. *)
@@ -192,8 +220,17 @@ type env = {
       (* `foreign def` names: the binding is skipped, a call refuses *)
   fsigs : (string * conv) list;
       (* mangled def name -> its typed calling convention; a name absent
-         here (a method, a constructor, a closure, a dynamic-signature
-         def) uses the dynamic convention (T2.1) *)
+         here (a constructor, a closure, a dynamic-signature def) uses
+         the dynamic convention (T2.1) — the typed methods joined it
+         with T8.26 *)
+  mfuncs : (string * Emo_ir.func) list;
+      (* mangled method name -> its IR record (T8.26): the direct call
+         site reads the callee's convention off it *)
+  iface_sigs :
+    (string * (string * (string * Emo_check.t) list * Emo_check.t) list) list;
+      (* interface display -> each method's name, declared params and
+         result (T8.26): the interface call site and its vtable slots
+         share the declared convention *)
   mutable native : bool;
       (* emitting a typed body right now (T2.2): expressions follow the
          representation rule — Int64 raw in a0, Float64 raw in fa0,
@@ -242,6 +279,15 @@ let put env fmt =
 let refuse what =
   raise
     (Emo_ir.Lower_error ("the riscv64 target does not support " ^ what ^ " yet"))
+
+(* A bisect lever (T8.26's hunt): true forces every method back onto
+   the dynamic convention while the rest of the typed-method machinery
+   (the call arms, the tables' adapters) stays — never set in a real
+   build. *)
+module Clargs = struct
+  let no_native_methods = ref false
+  let no_typed_ifaces = ref false
+end
 
 (* ---- Tags and immediates ---- *)
 
@@ -915,6 +961,19 @@ let unbox_if_numeric env (t : Emo_check.t) : unit =
         put env "    fld fa0, 8(t0)\n"
     | _ -> ()
 
+(* A native frame's raw result reconciled with the value it returns:
+   the typed convention promised the bank register raw, but an
+   Unknown-typed expression — a bare Atomic's method result, a dynamic
+   call's answer — still reaches the exit tagged (T8.23's find: the
+   annotated result made the def native while the body's own type
+   stayed gradual). *)
+let unbox_result_mismatch env (result : result_kind) (t : Emo_check.t) =
+  if env.native then
+    match (result, t) with
+    | R_int64, Emo_check.Unknown -> unbox_if_numeric env Emo_check.Int64
+    | R_float64, Emo_check.Unknown -> unbox_if_numeric env Emo_check.Float64
+    | _ -> ()
+
 let rec emit_expr env d (e : Emo_ir.expr) : unit =
   match e.Emo_ir.desc with
   | Const (Emo_ast.L_int i) ->
@@ -1389,6 +1448,17 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    ld a0, %d(sp)\n" addr_slot;
         call_runtime env "emo_poke32"
       end
+  | Bytes_new n ->
+      (* the zero-filled byte buffer, a String-layout block of its own
+         kind (T8.24); the length crosses as the tagged cell every
+         helper convention shares *)
+      emit_expr env (d + 1) n;
+      box_if_numeric env n.Emo_ir.ety;
+      call_runtime env "emo_bytes_new"
+  | Builder_new ->
+      (* the growing array's empty birth (T8.25): one backing Array of
+         no elements, one cell holding zero and it *)
+      call_runtime env "emo_builder_new"
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
@@ -1473,9 +1543,10 @@ and emit_unbox_result env (r : result_kind) : unit =
       put env "    fld fa0, 8(t0)\n"
   | R_word | R_void -> ()
 
-and emit_typed_call env d (func : string) (conv : conv)
-    (args : Emo_ir.expr list) : unit =
-  if List.length args > 8 then refuse "a call with more than eight arguments";
+and emit_typed_args env d (conv : conv) (args : Emo_ir.expr list) : unit =
+  (* the spills and the bank loads of a typed call, without the call
+     itself — the shared shape of a direct call and the interface
+     dispatch's table walk (T8.26) *)
   let n = List.length args in
   if env.native then begin
     List.iteri
@@ -1486,8 +1557,7 @@ and emit_typed_call env d (func : string) (conv : conv)
         | Emo_check.Float64 -> put env "    fsd fa0, %d(sp)\n" spill
         | _ -> put env "    sd a0, %d(sp)\n" spill)
       args;
-    emit_typed_regs_native env d conv.cparams;
-    put env "    call %s\n" (func_label func)
+    emit_typed_regs_native env d conv.cparams
   end
   else begin
     List.iteri
@@ -1496,10 +1566,15 @@ and emit_typed_call env d (func : string) (conv : conv)
         emit_expr env (d + n) arg;
         put env "    sd a0, %d(sp)\n" spill)
       args;
-    emit_typed_regs env d conv.cparams;
-    put env "    call %s\n" (func_label func);
-    emit_box_result env conv.cresult
+    emit_typed_regs env d conv.cparams
   end
+
+and emit_typed_call env d (func : string) (conv : conv)
+    (args : Emo_ir.expr list) : unit =
+  if List.length args > 8 then refuse "a call with more than eight arguments";
+  emit_typed_args env d conv args;
+  put env "    call %s\n" (func_label func);
+  if not env.native then emit_box_result env conv.cresult
 
 (* A Tuple or Array literal: the elements evaluate first (each spilled —
    boxed at the container boundary first), then one block is allocated
@@ -2205,6 +2280,12 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_string_index_of";
               if boxed then box_result env "emo_box_i64"
+          | "to_bytes", [] ->
+              (* the raw reinterpretation: the same bytes as a fresh
+                 Bytes block (T8.24); the answer is a tagged word both
+                 conventions share *)
+              emit_expr env d self_;
+              call_runtime env "emo_string_to_bytes"
           | "length", [] ->
               (* the byte count, read on the block — the dynamic dispatch
                  answers the boxed cell the interpreter's convention wants,
@@ -2337,19 +2418,84 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_array_append"
           | _ -> refuse (Printf.sprintf "the Array method `%s`" name))
-      | Emo_check.ClassType display -> (
-          let c = class_of env display in
-          match List.assoc_opt (Emo_ir.sanitize_ident name) c.cls_methods with
-          | Some mangled ->
+      | Emo_check.Bytes -> (
+          (* the mutable byte buffer (T8.24): every accessor is a
+             runtime helper over the bounds-checked byte pointer, the
+             receiver spilled across the arguments' evaluation the
+             Atomic family's way. The word accessors answer — and the
+             sets return — the masked value, the interpreter's own
+             answers; a dynamic frame's boxed Int64 crosses back raw
+             for a native one. The dynamic by-name dispatch keeps the
+             String precedent's partial surface: only the static
+             receiver reaches these, an Unknown one's ask fails by
+             name at the run. *)
+          let get_helper =
+            match name with
+            | "get" -> Some "emo_bytes_get"
+            | "get_u16_le" -> Some "emo_bytes_get_u16_le"
+            | "get_u32_le" -> Some "emo_bytes_get_u32_le"
+            | "get_u64_le" -> Some "emo_bytes_get_u64_le"
+            | _ -> None
+          in
+          let set_helper =
+            match name with
+            | "set" -> Some "emo_bytes_set"
+            | "set_u16_le" -> Some "emo_bytes_set_u16_le"
+            | "set_u32_le" -> Some "emo_bytes_set_u32_le"
+            | "set_u64_le" -> Some "emo_bytes_set_u64_le"
+            | _ -> None
+          in
+          match (name, args) with
+          | "length", [] ->
+              emit_expr env d self_;
+              put env "    andi a0, a0, -32\n";
+              put env "    ld a0, 8(a0)\n";
+              if boxed then box_result env "emo_box_i64"
+          | _, [ _ ] when get_helper <> None ->
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
               emit_args_from env (d + 1) ~from:1 args;
               put env "    ld a0, %d(sp)\n" self_slot;
-              put env "    call %s\n" (func_label mangled);
-              (* the callee is a dynamic-convention body: its tagged
-                 result crosses back through the boundary *)
+              call_runtime env (Option.get get_helper);
               if not boxed then unbox_if_numeric env ty
+          | _, [ _; _ ] when set_helper <> None ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_args_from env (d + 1) ~from:1 args;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env (Option.get set_helper);
+              if not boxed then unbox_if_numeric env ty
+          | "to_string", [] ->
+              (* the reinterpretation back: the same bytes as a fresh
+                 String *)
+              emit_expr env d self_;
+              call_runtime env "emo_bytes_to_string"
+          | _ -> refuse (Printf.sprintf "the Bytes method `%s`" name))
+      | Emo_check.ClassType display -> (
+          let c = class_of env display in
+          match List.assoc_opt (Emo_ir.sanitize_ident name) c.cls_methods with
+          | Some mangled -> (
+              match Option.bind (List.assoc_opt mangled env.mfuncs) conv_of with
+              | Some conv ->
+                  (* a typed callee (T8.26): the receiver and the
+                     arguments ride its banks, the result its register —
+                     raw across a native frame, boxed back for a dynamic
+                     one *)
+                  if 1 + List.length args > 8 then
+                    refuse "a call with more than eight arguments";
+                  emit_typed_call env d mangled conv (self_ :: args)
+              | None ->
+                  let self_slot = temp_offset env d in
+                  emit_expr env (d + 1) self_;
+                  put env "    sd a0, %d(sp)\n" self_slot;
+                  emit_args_from env (d + 1) ~from:1 args;
+                  put env "    ld a0, %d(sp)\n" self_slot;
+                  put env "    call %s\n" (func_label mangled);
+                  (* the callee is a dynamic-convention body: its tagged
+                     result crosses back through the boundary *)
+                  if not boxed then unbox_if_numeric env ty)
           | None ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display))
       | Emo_check.InterfaceType display -> (
@@ -2357,24 +2503,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
           | Some sigs
             when List.exists
                    (fun (m, _) -> String.equal m (Emo_ir.sanitize_ident name))
-                   sigs ->
-              let self_slot = temp_offset env d in
-              emit_expr env (d + 1) self_;
-              put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
-              put env "    ld a0, %d(sp)\n" self_slot;
-              put env "    ld t0, %d(sp)\n" self_slot;
-              put env "    andi t0, t0, -32\n";
-              put env "    ld t1, 8(t0)\n";
-              put env "    la t2, emo_iface_%s\n"
-                (Emo_ir.sanitize_ident display);
-              (* the table is one row of per-class slots, a slot per
-                 interface method in the interface's own order — the row
-                 for the receiver's class, the slot for this method *)
-              put env "    li t3, %d\n" (List.length sigs);
-              put env "    mul t1, t1, t3\n";
-              put env "    slli t1, t1, 3\n";
-              put env "    add t2, t2, t1\n";
+                   sigs -> (
               let idx =
                 let rec go i = function
                   | [] -> 0
@@ -2384,18 +2513,93 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
                 in
                 go 0 sigs
               in
-              put env "    ld t2, %d(t2)\n" (idx * 8);
-              put env "    jalr t2\n";
-              if not boxed then unbox_if_numeric env ty
+              let declared =
+                (* the interface's own signature is the convention every
+                   call site and every vtable slot share (T8.26); an
+                   implementation that crosses differently carries a
+                   per-slot adapter on the table *)
+                match
+                  (if !Clargs.no_typed_ifaces then None
+                   else List.assoc_opt display env.iface_sigs)
+                with
+                | Some dsigs when idx < List.length dsigs ->
+                    let _, params, result = List.nth dsigs idx in
+                    Some (declared_conv params result)
+                | _ -> None
+              in
+              match declared with
+              | Some dconv ->
+                  if 1 + List.length args > 8 then
+                    refuse "a call with more than eight arguments";
+                  emit_typed_args env d dconv (self_ :: args);
+                  (* the receiver rides a0, its class id walks the table
+                     to the slot — the call itself the slot's jalr *)
+                  put env "    mv t0, a0\n";
+                  put env "    andi t0, t0, -32\n";
+                  put env "    ld t1, 8(t0)\n";
+                  put env "    la t2, emo_iface_%s\n"
+                    (Emo_ir.sanitize_ident display);
+                  put env "    li t3, %d\n" (List.length sigs);
+                  put env "    mul t1, t1, t3\n";
+                  put env "    slli t1, t1, 3\n";
+                  put env "    add t2, t2, t1\n";
+                  put env "    ld t2, %d(t2)\n" (idx * 8);
+                  put env "    jalr t2\n";
+                  (* the slot answers the declared convention: raw for a
+                     native frame, boxed back for a dynamic one *)
+                  if not env.native then emit_box_result env dconv.cresult
+              | None ->
+                  let self_slot = temp_offset env d in
+                  emit_expr env (d + 1) self_;
+                  put env "    sd a0, %d(sp)\n" self_slot;
+                  emit_args_from env (d + 1) ~from:1 args;
+                  put env "    ld a0, %d(sp)\n" self_slot;
+                  put env "    ld t0, %d(sp)\n" self_slot;
+                  put env "    andi t0, t0, -32\n";
+                  put env "    ld t1, 8(t0)\n";
+                  put env "    la t2, emo_iface_%s\n"
+                    (Emo_ir.sanitize_ident display);
+                  put env "    li t3, %d\n" (List.length sigs);
+                  put env "    mul t1, t1, t3\n";
+                  put env "    slli t1, t1, 3\n";
+                  put env "    add t2, t2, t1\n";
+                  put env "    ld t2, %d(t2)\n" (idx * 8);
+                  put env "    jalr t2\n";
+                  if not boxed then unbox_if_numeric env ty)
           | Some _ ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display)
           | None -> refuse (Printf.sprintf "the interface `%s`" display))
-      | Emo_check.BuilderType _ ->
-          (* `ArrayBuilder.new` refuses at the construction site, so a
-             builder value cannot be built here; one still arrives as a
-             parameter's annotation, which is why the methods refuse by
-             name rather than falling through to the dynamic dispatch. *)
-          refuse (Printf.sprintf "the ArrayBuilder method `%s`" name)
+      | Emo_check.BuilderType _ -> (
+          (* the growing array (T8.25): push answers the builder itself
+             so the pushes chain, get is bounds-checked against the
+             size, and to_array hands out an exact copy — the dynamic
+             by-name dispatch keeps the partial surface the String and
+             the Bytes set: an Unknown receiver's ask fails by name at
+             the run *)
+          match (name, args) with
+          | "length", [] ->
+              emit_expr env d self_;
+              put env "    andi a0, a0, -32\n";
+              put env "    ld a0, 8(a0)\n";
+              if boxed then box_result env "emo_box_i64"
+          | "push", [ _ ] ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_args_from env (d + 1) ~from:1 args;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env "emo_builder_push"
+          | "get", [ _ ] ->
+              let self_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" self_slot;
+              emit_args_from env (d + 1) ~from:1 args;
+              put env "    ld a0, %d(sp)\n" self_slot;
+              call_runtime env "emo_builder_get"
+          | "to_array", [] ->
+              emit_expr env d self_;
+              call_runtime env "emo_builder_to_array"
+          | _ -> refuse (Printf.sprintf "the ArrayBuilder method `%s`" name))
       | _ -> dynamic ())
 
 (* ---- Statement emission ---- *)
@@ -2789,6 +2993,9 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       if emit_tail env e then ()
       else begin
         emit_expr env 0 e;
+        (match env.cur with
+        | Some f -> unbox_result_mismatch env f.fconv.cresult e.Emo_ir.ety
+        | None -> ());
         (* the claim rides home to the caller, whose site pools it *)
         (match env.cur with
         | Some f when f.fconv.cresult = R_word && may_own e.Emo_ir.ety ->
@@ -3262,6 +3469,10 @@ let emit_function env ~(label : string) ~(fname : string)
      native body); a Void body just returns. The result's claim rides
      home to the caller — taken only when the body's last statement
      really is a value expression of a claimable type (T8.7's pool). *)
+  (match (conv.cresult, List.rev body) with
+  | (R_int64 | R_float64), Emo_ir.Effect e :: _ ->
+      unbox_result_mismatch env conv.cresult e.Emo_ir.ety
+  | _ -> ());
   if conv.cresult = R_word then begin
     (* a trailing expression whose type names a claimable kind hands
        its value to the caller; an Unknown one — println and friends
@@ -4820,6 +5031,518 @@ emo_string_eq:
     andi a1, a1, -32
     tail emo_str_content
 
+# ---- Bytes (T8.24): the mutable byte buffer ----
+# A Bytes block is a String-layout block of kind 10 — [header][length]
+# [bytes padded to 8] — the mutability the difference: copy_deep copies
+# it (the generic container walk its payload count already serves), eq
+# compares it by content (the String's own comparator), and it carries
+# no refcount (not an identity kind).
+
+# emo_alloc_bytes: a0 = length; a0 = a zeroed, tagged Bytes.
+    .globl emo_alloc_bytes
+emo_alloc_bytes:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    addi t0, a0, 7
+    srli t0, t0, 3
+    addi t0, t0, 1
+    mv a0, t0
+    call emo_alloc
+    ld t1, 8(sp)
+    sd t1, 8(a0)
+    addi t0, t1, 7           # zero the payload words: the interpreter's
+    srli t0, t0, 3           #   Bytes.new is a zero-filled buffer
+    add t2, a0, 16
+.Lab_zero:
+    beqz t0, .Lab_zdone
+    sd zero, 0(t2)
+    addi t2, t2, 8
+    addi t0, t0, -1
+    j .Lab_zero
+.Lab_zdone:
+    ori a0, a0, 20
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_bytes_new: a0 = the tagged length; a0 = a zeroed Bytes of it.
+    .globl emo_bytes_new
+emo_bytes_new:
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    tail emo_alloc_bytes
+
+# emo_bytes_at: a0 = a Bytes, a1 = the tagged index, a2 = the raw
+# width; t0 = the address of byte a1, or the named failure. A leaf —
+# t1..t3 spend themselves here.
+    .globl emo_bytes_at
+emo_bytes_at:
+    andi t0, a0, -32
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    ld t2, 8(t0)
+    blt t1, zero, .Lb_at_fail
+    add t3, t1, a2
+    bgt t3, t2, .Lb_at_fail
+    addi t0, t0, 16
+    add t0, t0, t1
+    ret
+.Lb_at_fail:
+    la a0, msg_bytes_range
+    la a1, msg_bytes_range_end
+    tail emo_fail
+
+# emo_bytes_get: a0 = a Bytes, a1 = the tagged index; a0 = the byte,
+# zero-extended, as a tagged Int64.
+    .globl emo_bytes_get
+emo_bytes_get:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a2, 1
+    call emo_bytes_at
+    lbu a0, 0(t0)
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_bytes_get_u16_le / u32_le / u64_le: the little-endian loads, the
+# bytes assembled explicitly (no unaligned word lanes on this machine's
+# contract).
+    .globl emo_bytes_get_u16_le
+emo_bytes_get_u16_le:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a2, 2
+    call emo_bytes_at
+    lbu t1, 0(t0)
+    lbu t2, 1(t0)
+    slli t2, t2, 8
+    or a0, t1, t2
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+    .globl emo_bytes_get_u32_le
+emo_bytes_get_u32_le:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a2, 4
+    call emo_bytes_at
+    lbu t1, 0(t0)
+    lbu t2, 1(t0)
+    slli t2, t2, 8
+    or t1, t1, t2
+    lbu t2, 2(t0)
+    slli t2, t2, 16
+    or t1, t1, t2
+    lbu t2, 3(t0)
+    slli t2, t2, 24
+    or a0, t1, t2
+    call emo_box_i64
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+    .globl emo_bytes_get_u64_le
+emo_bytes_get_u64_le:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    li a2, 8
+    call emo_bytes_at
+    li s0, 0                # the accumulator
+    li t1, 0                # the shift
+.Lb_u64l:
+    lbu t2, 0(t0)
+    sll t2, t2, t1
+    or s0, s0, t2
+    addi t0, t0, 1
+    addi t1, t1, 8
+    li t2, 64
+    bne t1, t2, .Lb_u64l
+    mv a0, s0
+    call emo_box_i64
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_bytes_set / set_u16_le / set_u32_le / set_u64_le: a0 = a Bytes,
+# a1 = the tagged index, a2 = the tagged value; the masked bytes land,
+# a0 = the masked value as a tagged Int64 (the interpreter's own
+# answer).
+    .globl emo_bytes_set
+emo_bytes_set:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    mv s0, a2
+    li a2, 1
+    call emo_bytes_at
+    andi t1, s0, -32
+    ld t1, 8(t1)
+    andi t1, t1, 255
+    sb t1, 0(t0)
+    mv a0, t1
+    call emo_box_i64
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
+    ret
+
+    .globl emo_bytes_set_u16_le
+emo_bytes_set_u16_le:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a2
+    li a2, 2
+    call emo_bytes_at
+    andi s1, s0, -32
+    ld s1, 8(s1)
+    li t1, 0xFFFF
+    and s1, s1, t1
+    li t2, 0                # the shift
+.Lb_s16l:
+    srl t3, s1, t2
+    andi t3, t3, 255
+    sb t3, 0(t0)
+    addi t0, t0, 1
+    addi t2, t2, 8
+    li t3, 16
+    bne t2, t3, .Lb_s16l
+    mv a0, s1
+    call emo_box_i64
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+
+    .globl emo_bytes_set_u32_le
+emo_bytes_set_u32_le:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a2
+    li a2, 4
+    call emo_bytes_at
+    andi s1, s0, -32
+    ld s1, 8(s1)
+    li t1, -1
+    slli t1, t1, 32
+    srli t1, t1, 32         # 0xFFFFFFFF
+    and s1, s1, t1
+    li t2, 0
+.Lb_s32l:
+    srl t3, s1, t2
+    andi t3, t3, 255
+    sb t3, 0(t0)
+    addi t0, t0, 1
+    addi t2, t2, 8
+    li t3, 32
+    bne t2, t3, .Lb_s32l
+    mv a0, s1
+    call emo_box_i64
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+
+    .globl emo_bytes_set_u64_le
+emo_bytes_set_u64_le:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    mv s0, a2
+    li a2, 8
+    call emo_bytes_at
+    andi t1, s0, -32
+    ld s1, 8(t1)
+    li t2, 0
+.Lb_s64l:
+    srl t3, s1, t2
+    andi t3, t3, 255
+    sb t3, 0(t0)
+    addi t0, t0, 1
+    addi t2, t2, 8
+    li t3, 64
+    bne t2, t3, .Lb_s64l
+    mv a0, s1
+    call emo_box_i64
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_string_to_bytes: a0 = a String; a0 = the same bytes as a fresh
+# Bytes (the raw reinterpretation, String.to_bytes).
+    .globl emo_string_to_bytes
+emo_string_to_bytes:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    andi s0, a0, -32
+    ld a0, 8(s0)
+    call emo_alloc_bytes
+    andi t0, a0, -32
+    ld t1, 8(s0)
+    addi t2, s0, 16
+    addi t3, t0, 16
+    beqz t1, .Lstb_done
+.Lstb_loop:
+    lbu t4, 0(t2)
+    sb t4, 0(t3)
+    addi t2, t2, 1
+    addi t3, t3, 1
+    addi t1, t1, -1
+    bnez t1, .Lstb_loop
+.Lstb_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_bytes_to_string: a0 = a Bytes; a0 = the same bytes as a fresh
+# String (the reinterpretation back, Bytes.to_string).
+    .globl emo_bytes_to_string
+emo_bytes_to_string:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    andi s0, a0, -32
+    ld a0, 8(s0)
+    call emo_alloc_string
+    andi t0, a0, -32
+    ld t1, 8(s0)
+    addi t2, s0, 16
+    addi t3, t0, 16
+    beqz t1, .Lbts_done
+.Lbts_loop:
+    lbu t4, 0(t2)
+    sb t4, 0(t3)
+    addi t2, t2, 1
+    addi t3, t3, 1
+    addi t1, t1, -1
+    bnez t1, .Lbts_loop
+.Lbts_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
+    ret
+
+# ---- ArrayBuilder (T8.25): the growing array ----
+# A builder block is kind 11 — [header=2][size, raw][the backing Array
+# word] — growth a fresh double-sized Array whose live elements copy
+# over and whose word the builder swaps (an Array carries no count, so
+# the abandoned backing stays arena-resident with nothing to release).
+# The elements are the values the pushes left, their claims the
+# construction's (the pool exempts the container kinds).
+
+# emo_builder_new: a0 = an empty builder.
+    .globl emo_builder_new
+emo_builder_new:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a0, 1
+    call emo_alloc            # the empty backing: payload 1 (the length)
+    sd zero, 8(a0)
+    ori a0, a0, 8
+    sd a0, 8(sp)
+    li a0, 2
+    call emo_alloc            # the builder cell: payload 2
+    sd zero, 8(a0)            # size = 0
+    ld t0, 8(sp)
+    sd t0, 16(a0)
+    ori a0, a0, 22
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_builder_push: a0 = a builder, a1 = the value; the value lands,
+# a0 = the builder (the pushes chain).
+    .globl emo_builder_push
+emo_builder_push:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 16(sp)             # the builder word
+    sd s1, 24(sp)             # the value
+    sd s2, 32(sp)             # the backing block
+    sd s3, 40(sp)             # the size
+    mv s0, a0
+    mv s1, a1
+    andi t0, s0, -32
+    ld s3, 8(t0)
+    ld t1, 16(t0)
+    andi s2, t1, -32
+    ld t2, 8(s2)              # the capacity
+    bne s3, t2, .Lbp_have
+    # grow: one or double, the live elements copied over
+    li a0, 1
+    beqz t2, 3f
+    slli a0, t2, 1
+3:  mv t5, a0                 # the new capacity (t5 survives the alloc)
+    addi a0, a0, 1            # payload = the length word + the capacity
+    call emo_alloc
+    andi t1, a0, -32
+    sd t5, 8(t1)              # the length word = the capacity
+    ori a0, a0, 8
+    sd a0, 8(sp)              # the new backing word
+    beqz s3, .Lbp_swap
+    mv t3, s3
+    addi t4, s2, 16
+    andi t2, a0, -32
+    addi t2, t2, 16
+4:  ld t5, 0(t4)
+    sd t5, 0(t2)
+    addi t4, t4, 8
+    addi t2, t2, 8
+    addi t3, t3, -1
+    bnez t3, 4b
+.Lbp_swap:
+    ld t1, 8(sp)
+    andi t0, s0, -32
+    sd t1, 16(t0)             # the builder's backing swaps
+    andi t1, t1, -32
+    addi t2, t1, 16
+    j .Lbp_put
+.Lbp_have:
+    addi t2, s2, 16
+.Lbp_put:
+    slli t3, s3, 3
+    add t2, t2, t3            # &elements[size]
+    sd s1, 0(t2)
+    addi t3, s3, 1
+    andi t0, s0, -32
+    sd t3, 8(t0)              # size + 1
+    mv a0, s0
+    ld ra, 0(sp)
+    ld s0, 16(sp)
+    ld s1, 24(sp)
+    ld s2, 32(sp)
+    ld s3, 40(sp)
+    addi sp, sp, 48
+    ret
+
+# emo_builder_get: a0 = a builder, a1 = the tagged index; a0 = the
+# element's word. A leaf — the bounds check fails loudly.
+    .globl emo_builder_get
+emo_builder_get:
+    andi t0, a0, -32
+    ld t1, 8(t0)              # the size
+    andi t2, a1, -32
+    ld t3, 8(t2)              # the index, raw
+    blt t3, zero, .Lbg_fail
+    bge t3, t1, .Lbg_fail
+    ld t4, 16(t0)
+    andi t4, t4, -32
+    slli t5, t3, 3
+    add t5, t4, t5
+    addi t5, t5, 16
+    ld a0, 0(t5)
+    ret
+.Lbg_fail:
+    la a0, msg_builder_range
+    la a1, msg_builder_range_end
+    tail emo_fail
+
+# emo_builder_to_array: a0 = a builder; a0 = a fresh Array of exactly
+# the builder's size (the builder keeps growing untouched).
+    .globl emo_builder_to_array
+emo_builder_to_array:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)              # the builder word
+    sd s1, 16(sp)             # the source cursor
+    sd s2, 24(sp)             # the count left
+    andi t0, a0, -32
+    mv s0, a0
+    ld s2, 8(t0)
+    ld t1, 16(t0)
+    andi t1, t1, -32
+    addi s1, t1, 16
+    addi a0, s2, 1            # payload = the length word + the size
+    call emo_alloc
+    andi t2, a0, -32
+    sd s2, 8(t2)              # the length = the size
+    beqz s2, .Lbta_done
+    addi t3, t2, 16
+5:  ld t5, 0(s1)
+    sd t5, 0(t3)
+    addi s1, s1, 8
+    addi t3, t3, 8
+    addi s2, s2, -1
+    bnez s2, 5b
+.Lbta_done:
+    ori a0, a0, 8
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_join_string: a0 = the opening String, a1 = the first element's
+# address, a2 = the element count, a3 = the closing String; a0 = the
+# joined rendering — each element's own to_string, ", " between, the
+# opening and the closing verbatim (the interpreter's own Array and
+# ArrayBuilder displays).
+    .globl emo_join_string
+emo_join_string:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)              # the accumulator
+    sd s1, 16(sp)             # the cursor
+    sd s2, 24(sp)             # the count left
+    sd s3, 32(sp)             # the first element yet?
+    sd s4, 40(sp)             # the closing String
+    mv s0, a0
+    mv s1, a1
+    mv s2, a2
+    mv s4, a3
+    li s3, 1
+.Ljs_loop:
+    beqz s2, .Ljs_close
+    beqz s3, .Ljs_comma
+.Ljs_after:
+    ld a0, 0(s1)
+    call emo_to_string
+    mv a1, a0
+    mv a0, s0
+    call emo_string_concat
+    mv s0, a0
+    li s3, 0
+    addi s1, s1, 8
+    addi s2, s2, -1
+    j .Ljs_loop
+.Ljs_comma:
+    la a0, msg_commasp
+    li a1, 2
+    call emo_string_lit
+    mv a1, a0
+    mv a0, s0
+    call emo_string_concat
+    mv s0, a0
+    j .Ljs_after
+.Ljs_close:
+    mv a1, s4
+    mv a0, s0
+    call emo_string_concat
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    addi sp, sp, 48
+    ret
+
 # emo_string_substring: a0 = a String, a1 = start, a2 = length (raw
 # Int64s); a0 = a fresh String holding those bytes. A negative start or
 # length, or an end past the receiver's byte count, is the interpreter's
@@ -4980,7 +5703,12 @@ emo_eq_deep:
     li t0, 16
     beq t2, t0, .Leq_atomic
     li t0, 18
-    beq t2, t0, .Leq_cell
+    beq t0, t2, .Leq_cell
+    li t0, 20
+    beq t0, t2, .Leq_str     # a Bytes: content equality over the same
+                             #   [length][bytes] layout the String rides
+    li t0, 22
+    beq t0, t2, .Leq_builder # a builder: element-wise, the size first
     j .Leq_inst
 .Leq_cell:
     ld t0, 8(s0)
@@ -5011,6 +5739,30 @@ emo_eq_deep:
     addi s3, s3, 8
     addi s4, s4, -1
     bnez s4, .Leq_seq_loop
+    j .Leq_yes
+.Leq_builder:
+    # the size first, then the backing arrays' elements pairwise
+    ld t0, 8(s0)
+    ld t1, 8(s1)
+    bne t0, t1, .Leq_no
+    ld t2, 16(s0)
+    andi t2, t2, -32
+    ld t3, 16(s1)
+    andi t3, t3, -32
+    mv s4, t0
+    beqz s4, .Leq_yes
+    addi s2, t2, 16
+    addi s3, t3, 16
+.Leq_bld_loop:
+    ld a0, 0(s2)
+    ld a1, 0(s3)
+    call emo_eq_deep
+    andi t0, a0, 16
+    beqz t0, .Leq_no
+    addi s2, s2, 8
+    addi s3, s3, 8
+    addi s4, s4, -1
+    bnez s4, .Leq_bld_loop
     j .Leq_yes
 .Leq_box:
     ld a0, 8(s0)
@@ -5568,6 +6320,12 @@ emo_to_string:
     beq t0, t1, .Lts_atomic
     li t1, 18
     beq t0, t1, .Lts_pid
+    li t1, 20
+    beq t0, t1, .Lts_bytes
+    li t1, 8
+    beq t0, t1, .Lts_array
+    li t1, 22
+    beq t0, t1, .Lts_builder
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
@@ -5630,6 +6388,73 @@ emo_to_string:
     sb t5, 0(t4)
     ld ra, 0(sp)            # this arm's own frame — .Lts_done pops only
     addi sp, sp, 16         # the entry frame, so restore ours first
+    j .Lts_done
+.Lts_bytes:
+    # the interpreter's own display: Bytes[<length>]
+    andi a0, a0, -32
+    addi sp, sp, -16         # this arm's own frame — .Lts_done pops only
+    sd a0, 0(sp)             #   the entry frame, so restore ours first
+    ld a0, 8(a0)
+    call emo_i64_to_string
+    sd a0, 8(sp)
+    la a0, msg_bytes_open
+    li a1, 6
+    call emo_string_lit
+    mv a1, a0
+    ld a0, 8(sp)
+    call emo_string_concat
+    sd a0, 8(sp)
+    la a0, msg_bytes_close
+    li a1, 1
+    call emo_string_lit
+    mv a1, a0
+    ld a0, 8(sp)
+    call emo_string_concat
+    addi sp, sp, 16
+    j .Lts_done
+.Lts_array:
+    # the interpreter's own display: [e1, e2, …]
+    addi sp, sp, -32         # this arm's own frame — .Lts_done pops only
+    sd ra, 0(sp)             #   the entry frame, so restore ours first
+    sd s0, 8(sp)
+    andi s0, a0, -32
+    la a0, msg_rbrack
+    li a1, 1
+    call emo_string_lit
+    sd a0, 16(sp)
+    la a0, msg_lbrack
+    li a1, 1
+    call emo_string_lit
+    ld a3, 16(sp)            # the closing
+    addi a1, s0, 16          # the elements
+    ld a2, 8(s0)             # the count
+    call emo_join_string
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
+    j .Lts_done
+.Lts_builder:
+    # ArrayBuilder[e1, e2, …] — the elements live on the backing array
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    andi s0, a0, -32
+    la a0, msg_rbrack
+    li a1, 1
+    call emo_string_lit
+    sd a0, 16(sp)
+    la a0, msg_abopen
+    li a1, 13
+    call emo_string_lit
+    ld a3, 16(sp)
+    ld t0, 16(s0)
+    andi t0, t0, -32
+    addi a1, t0, 16          # the elements
+    ld a2, 8(s0)             # the size
+    call emo_join_string
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    addi sp, sp, 32
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -6203,6 +7028,24 @@ msg_byte_range_end:
 msg_substring_range:
     .ascii "`substring` needs a range inside the String"
 msg_substring_range_end:
+msg_bytes_range:
+    .ascii "the byte range is outside the Bytes"
+msg_bytes_range_end:
+msg_bytes_open:
+    .ascii "Bytes["
+msg_bytes_close:
+    .ascii "]"
+msg_builder_range:
+    .ascii "the index is outside the ArrayBuilder"
+msg_builder_range_end:
+msg_lbrack:
+    .ascii "["
+msg_rbrack:
+    .ascii "]"
+msg_commasp:
+    .ascii ", "
+msg_abopen:
+    .ascii "ArrayBuilder["
 msg_poke32_range:
     .ascii "`poke32` needs a value in 0-4294967295"
 msg_poke32_range_end:
@@ -7634,6 +8477,14 @@ emo_copy_deep:
     beq t0, t1, .Lcd_asis       # a Pid (identity)
     li t1, 10
     beq t0, t1, .Lcd_box
+    li t1, 20
+    beq t0, t1, .Lcd_bytes   # a Bytes: mutable bytes, a verbatim clone —
+                             #   the payload is bytes, not values, so the
+                             #   generic word walk cannot serve it (the
+                             #   String shares because it is immutable)
+    li t1, 22
+    beq t0, t1, .Lcd_builder # an ArrayBuilder: the size word is raw, no
+                             #   value the generic walk could copy
     # 6 Tuple, 8 Array, 14 instance: a fresh block, verbatim header and
     # length/class word, every element or field copied. The clone's
     # header carries no refcount — the claims are the containers', taken
@@ -7682,6 +8533,47 @@ emo_copy_deep:
     addi t6, t6, 1
     sd t6, 40(sp)
     j .Lcd_loop
+.Lcd_bytes:
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld t3, 0(t2)
+    addi a0, t3, 1              # header + every payload word
+    call emo_alloc
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t3, 0(t2)
+    addi t3, t3, 1
+    li t6, 0
+1:  bgeu t6, t3, 2f
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a1, 0(t5)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a1, 0(t5)
+    addi t6, t6, 1
+    j 1b
+2:  sd a0, 16(sp)
+    j .Lcd_wrap                 # 48(sp) already holds the tag (20)
+.Lcd_builder:
+    # the builder's clone: the size word verbatim, the array deep
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld a0, 16(t2)
+    call emo_copy_deep
+    sd a0, 56(sp)
+    li a0, 2
+    call emo_alloc
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the size, verbatim
+    ld t5, 56(sp)
+    sd t5, 16(t4)               # the fresh array word
+    sd a0, 16(sp)
+    li t0, 22
+    sd t0, 48(sp)
+    j .Lcd_wrap
 .Lcd_wrap:
     ld a0, 16(sp)
     ld t2, 48(sp)
@@ -7723,8 +8615,14 @@ emo_copy_out:
     j .Lco_asis
 2:  li t1, 4
     beq t0, t1, .Lco_string
+    li t1, 20
+    beq t0, t1, .Lco_string  # a Bytes: the byte payload clones verbatim,
+                             #   the String's own walk (T8.24)
     li t1, 10
     beq t0, t1, .Lco_box
+    li t1, 22
+    beq t0, t1, .Lco_builder # an ArrayBuilder: the size word is raw, no
+                             #   value the generic walk could copy (T8.25)
     # 0, 2, 6, 8, 12, 14, 18: the block clone — verbatim header and
     # first word, every further word recursed (an Int64 cell, a Float64
     # cell, and a Pid all carry header 1, so the clone is the fresh
@@ -7816,6 +8714,25 @@ emo_copy_out:
     call emo_copy_out
     call emo_box_new
     j .Lco_ret
+.Lco_builder:
+    # the builder's forced copy: the size word verbatim, the array deep
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld a0, 16(t2)
+    call emo_copy_out
+    sd a0, 56(sp)
+    li a0, 2
+    call emo_alloc
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t5, 8(t2)
+    sd t5, 8(t4)                # the size, verbatim
+    ld t5, 56(sp)
+    sd t5, 16(t4)               # the fresh array word
+    sd a0, 16(sp)
+    li t0, 22
+    sd t0, 48(sp)
+    j .Lco_wrap
 .Lco_asis:
 .Lco_ret:
     ld ra, 0(sp)
@@ -8617,6 +9534,12 @@ and walk_pattern_enum env (p : Emo_ast.pattern) : unit =
    script ride in above either. *)
 let emit ?(boot_stub : bool = true) ~(profile : string)
     (program : Emo_ir.program) : string =
+  (* the bisect lever, an environment switch so one binary serves both
+     halves of the experiment *)
+  if Sys.getenv_opt "EMO_NO_NATIVE_METHODS" <> None then
+    Clargs.no_native_methods := true;
+  if Sys.getenv_opt "EMO_NO_TYPED_IFACES" <> None then
+    Clargs.no_typed_ifaces := true;
   let profile_stub =
     match profile with
     | "kernel" -> boot_stub_asm
@@ -8689,7 +9612,26 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
             match conv_of f with
             | Some conv -> Some (f.Emo_ir.fname, conv)
             | None -> None)
-          program.pfuncs;
+          program.pfuncs
+        @ List.concat_map
+            (fun (c : Emo_ir.class_) ->
+              List.filter_map
+                (fun (m : Emo_ir.func) ->
+                  match conv_of m with
+                  | Some conv -> Some (m.Emo_ir.fname, conv)
+                  | None -> None)
+                c.Emo_ir.cmethods)
+            program.pclasses;
+      mfuncs =
+        (if !Clargs.no_native_methods then []
+         else
+           List.concat_map
+             (fun (c : Emo_ir.class_) ->
+               List.map
+                 (fun (m : Emo_ir.func) -> (m.Emo_ir.fname, m))
+                 c.Emo_ir.cmethods)
+             program.pclasses);
+      iface_sigs = program.piface_sigs;
       native = false;
       region = profile = "user" || profile = "app";
       spawns = [];
@@ -8748,11 +9690,20 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       List.iter
         (fun (m : Emo_ir.func) ->
           env.fclass <- Some c.Emo_ir.cdisplay;
+          (* T8.26: a method whose signature resolves emits a native
+             body on its own convention, like any def — the receiver is
+             the first word parameter; the tables' slots adapt where
+             the callers' conventions differ *)
+          let mconv = conv_of m in
+          let mconv = if !Clargs.no_native_methods then None else mconv in
           emit_function env
             ~label:(func_label m.Emo_ir.fname)
             ~fname:m.Emo_ir.fname ~params:m.Emo_ir.fparams ~captures:[]
-            ~conv:(dynamic_conv (List.length m.Emo_ir.fparams))
-            ~native:false ~body:m.Emo_ir.fbody;
+            ~conv:
+              (match mconv with
+              | Some conv -> conv
+              | None -> dynamic_conv (List.length m.Emo_ir.fparams))
+            ~native:(mconv <> None) ~body:m.Emo_ir.fbody;
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
@@ -8842,6 +9793,156 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
     gput env "    ld ra, 8(sp)\n    addi sp, sp, 16\n    ret\n"
   in
   List.iter emit_defval_thunk (List.rev env.defvals);
+  (* T8.26: the dispatch adapters — where a table's convention meets an
+     implementation that crosses differently. The by-name mtable serves
+     the dynamic convention (tagged words), so a native method's slot is
+     a thunk that unboxes into its banks and boxes its answer; the
+     interface vtable serves the interface's declared convention, so an
+     implementation that is dynamic — or typed with another shape, the
+     gradual conformance — carries a per-slot adapter. *)
+  let emit_conv_adapter ~label ~(src : conv) ~(dst : conv) ~(target : string) =
+    let n = List.length src.cparams in
+    let frame = (16 + (8 * n) + 15) / 16 * 16 in
+    gput env "    .globl %s\n%s:\n" label label;
+    gput env "    addi sp, sp, -%d\n" frame;
+    gput env "    sd ra, 0(sp)\n";
+    (* the incoming banks spill to the frame first — the reload below
+       reads them back per the callee's own convention *)
+    List.iteri
+      (fun i (k, reg) ->
+        match k with
+        | P_float64 -> gput env "    fsd fa%d, %d(sp)\n" reg (8 + (8 * i))
+        | _ -> gput env "    sd a%d, %d(sp)\n" reg (8 + (8 * i)))
+      (bank_assign src.cparams);
+    let src_kinds = List.map fst (bank_assign src.cparams) in
+    List.iteri
+      (fun i (k, reg) ->
+        let slot = 8 + (8 * i) in
+        let from = List.nth src_kinds i in
+        match (from, k) with
+        | P_float64, P_float64 -> gput env "    fld fa%d, %d(sp)\n" reg slot
+        | (P_int64 | P_word), P_int64 ->
+            gput env "    ld a%d, %d(sp)\n" reg slot;
+            if from = P_word then begin
+              gput env "    andi a%d, a%d, -32\n" reg reg;
+              gput env "    ld a%d, 8(a%d)\n" reg reg
+            end
+        | P_float64, P_word ->
+            gput env "    fld fa0, %d(sp)\n" slot;
+            gput env "    call emo_box_f64\n";
+            gput env "    mv a%d, a0\n" reg
+        | P_int64, P_word ->
+            gput env "    ld a0, %d(sp)\n" slot;
+            gput env "    call emo_box_i64\n";
+            gput env "    mv a%d, a0\n" reg
+        | P_word, P_word -> gput env "    ld a%d, %d(sp)\n" reg slot
+        | P_word, P_float64 ->
+            gput env "    ld t0, %d(sp)\n" slot;
+            gput env "    andi t0, t0, -32\n";
+            gput env "    fld fa%d, 8(t0)\n" reg
+        | P_int64, P_float64 | P_float64, P_int64 ->
+            refuse
+              "an interface conformance whose Float64 crosses an Int64 \
+               parameter")
+      (bank_assign dst.cparams);
+    gput env "    call %s\n" target;
+    (match (dst.cresult, src.cresult) with
+    | R_word, R_int64 ->
+        gput env "    andi a0, a0, -32\n";
+        gput env "    ld a0, 8(a0)\n"
+    | R_word, R_float64 ->
+        gput env "    andi t0, a0, -32\n";
+        gput env "    fld fa0, 8(t0)\n"
+    | R_int64, R_word -> gput env "    call emo_box_i64\n"
+    | R_float64, R_word -> gput env "    call emo_box_f64\n"
+    | R_void, R_word -> gput env "    li a0, %d\n" bool_false
+    | R_int64, R_int64
+    | R_float64, R_float64
+    | R_word, R_word
+    | R_void, R_void
+    | _, R_void
+    | R_void, _ ->
+        ()
+    | R_int64, R_float64 | R_float64, R_int64 ->
+        refuse "an interface conformance whose result kinds disagree");
+    gput env "    ld ra, 0(sp)\n    addi sp, sp, %d\n    ret\n" frame
+  in
+  List.iter
+    (fun (c : Emo_ir.class_) ->
+      List.iter
+        (fun (m : Emo_ir.func) ->
+          match conv_of m with
+          | Some conv ->
+              emit_conv_adapter
+                ~label:("emo_mthunk_" ^ Emo_ir.sanitize_ident m.Emo_ir.fname)
+                ~src:(dynamic_conv (List.length m.Emo_ir.fparams))
+                ~dst:conv
+                ~target:(func_label m.Emo_ir.fname)
+          | None -> ())
+        c.Emo_ir.cmethods)
+    program.pclasses;
+  (* the vtable's slots: the implementation itself when its convention
+     is the interface's, an adapter when it is not — the decision made
+     here, consumed by the table emission below *)
+  let iface_slots =
+    List.concat_map
+      (fun (iname, dsigs) ->
+        List.concat_map
+          (fun (c : Emo_ir.class_) ->
+            let info = class_of env c.Emo_ir.cdisplay in
+            List.mapi
+              (fun idx ((m, _, _) as dsig) ->
+                match
+                  List.find_opt
+                    (fun (d, _) -> String.equal d m)
+                    info.cls_methods
+                with
+                | Some (_, mangled) -> (
+                    let _, params, result = dsig in
+                    let dconv =
+                      if !Clargs.no_typed_ifaces then
+                        dynamic_conv (1 + List.length params)
+                      else declared_conv params result
+                    in
+                    match
+                      Option.bind (List.assoc_opt mangled env.mfuncs) conv_of
+                    with
+                    | Some conv when conv = dconv ->
+                        (iname, idx, func_label mangled)
+                    | _ when !Clargs.no_typed_ifaces ->
+                        (iname, idx, func_label mangled)
+                    | impl_conv ->
+                        let label =
+                          Printf.sprintf "emo_dthunk_%s_%d_%d"
+                            (Emo_ir.sanitize_ident iname)
+                            info.cls_id idx
+                        in
+                        let impl_dst =
+                          match
+                            (List.assoc_opt mangled env.mfuncs, impl_conv)
+                          with
+                          | Some impl, Some conv -> conv
+                          | Some impl, None ->
+                              dynamic_conv (List.length impl.Emo_ir.fparams)
+                          | None, _ -> dynamic_conv (1 + List.length params)
+                        in
+                        emit_conv_adapter ~label ~src:dconv ~dst:impl_dst
+                          ~target:(func_label mangled);
+                        (iname, idx, label))
+                | None -> (iname, idx, "0"))
+              dsigs)
+          program.pclasses)
+      env.iface_sigs
+  in
+  let iface_slot iname idx =
+    match
+      List.find_opt
+        (fun (i, k, _) -> String.equal i iname && k = idx)
+        iface_slots
+    with
+    | Some (_, _, label) -> label
+    | None -> "0"
+  in
   (* Dispatch tables in .data: per-interface vtables (one slot per
      class), per-class field-name and method-name tables for the
      dynamic paths, and the per-class pointer tables the runtime
@@ -8853,28 +9954,22 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       \    .section .data\n\
       \    .align 3\n";
     List.iter
-      (fun (name, sigs) ->
+      (fun (name, dsigs) ->
         gput env "    .globl emo_iface_%s\n" (Emo_ir.sanitize_ident name);
         gput env "emo_iface_%s:\n" (Emo_ir.sanitize_ident name);
         (* one row per class, one slot per interface method in the
            interface's own order — the dispatch multiplies the class id
-           by the row's width and reads the method's slot *)
+           by the row's width and reads the method's slot; the slot is
+           the implementation when its convention is the interface's
+           own, the per-slot adapter when it is not (T8.26) *)
         List.iter
-          (fun (c : Emo_ir.class_) ->
-            let info = class_of env c.Emo_ir.cdisplay in
-            List.iter
-              (fun (m, _) ->
-                match
-                  List.find_opt
-                    (fun (d, _) -> String.equal d m)
-                    info.cls_methods
-                with
-                | Some (_, mangled) ->
-                    gput env "    .dword %s\n" (func_label mangled)
-                | None -> gput env "    .dword 0\n")
-              sigs)
+          (fun (_ : Emo_ir.class_) ->
+            List.iteri
+              (fun idx (_ : string * (string * Emo_check.t) list * Emo_check.t)
+                 -> gput env "    .dword %s\n" (iface_slot name idx))
+              dsigs)
           program.pclasses)
-      program.pinterfaces
+      env.iface_sigs
   end;
   (* The const thunks' memo slots: one flag/value word pair each, in
      .data, read by [emit_const_function]. *)
@@ -8924,7 +10019,17 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
           let rows =
             List.map
               (fun (m, mangled) ->
-                (string_label env m, String.length m, func_label mangled))
+                (* a native method's by-name entry is its tag-adapting
+                   thunk — the mtable serves the dynamic convention
+                   (T8.26) *)
+                let target =
+                  match
+                    Option.bind (List.assoc_opt mangled env.mfuncs) conv_of
+                  with
+                  | Some _ -> "emo_mthunk_" ^ Emo_ir.sanitize_ident mangled
+                  | None -> func_label mangled
+                in
+                (string_label env m, String.length m, target))
               info.cls_methods
           in
           (info, rows))

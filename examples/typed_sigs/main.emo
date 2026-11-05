@@ -1,0 +1,105 @@
+// The signatures the IR used to collapse (EmoOS T8.23): a Byte
+// parameter, the applied annotations (Array[Int64], Box[Int64]), a
+// class and an interface in a signature — decl_type resolved none of
+// them, so each of these defs stayed on the dynamic convention
+// whatever its annotations said. The corpus is plain Emo and answers
+// byte for byte on every target; on riscv64 each def crosses on the
+// typed convention now, the byte and the compounds riding the tagged
+// word the two conventions share.
+//
+//   emo run main.emo
+
+// ---- 1 · Byte params and results ----
+
+def widen(b Byte) Int64 {
+  return b.to_int64() * 3
+}
+
+def twice(b Byte) Byte {
+  return b + b
+}
+
+println(widen(7B))
+println(widen(200B))
+println(twice(100B).to_int64())
+println(twice(twice(50B)).to_int64())
+
+// ---- 2 · An Array[Int64] parameter: the indexed loop is a native body ----
+
+def total(xs Array[Int64], n Int64) Int64 {
+  var acc = 0
+  for var i = 0; i < n; i = i + 1 {
+    acc = acc + xs[i]
+  }
+  return acc
+}
+
+const xs = [3, 14, 159, 2653, 5897]
+println(total(xs, 5))
+println(total(xs, 0))
+
+// The allocation pin (peek_poke's burn discipline): three and a half
+// million indexed reads through the typed convention — a read that
+// boxed would spend the heap before the end.
+def grind(xs Array[Int64], rounds Int64) Int64 {
+  var acc = 0
+  for var r = 0; r < rounds; r = r + 1 {
+    acc = acc + total(xs, 5) - 9067
+  }
+  return acc
+}
+
+println(grind(xs, 700000))
+
+// ---- 3 · A Box[Int64] parameter ----
+
+def boxed_add(bx Box[Int64], by Int64) Int64 {
+  bx.replace(bx.read() + by)
+  return bx.read()
+}
+
+const cell = Box.new(40)
+println(boxed_add(cell, 2))
+println(boxed_add(cell, 6))
+
+// ---- 4 · A class parameter ----
+
+class Rect {
+  def init(w Int64, h Int64) {
+    self.w = w
+    self.h = h
+  }
+
+  def area() Int64 {
+    return self.w * self.h
+  }
+}
+
+def area_of(r Rect) Int64 {
+  return r.area() + r.w
+}
+
+const rect = Rect.new(6, 7)
+println(area_of(rect))
+
+// ---- 5 · An interface parameter ----
+
+interface Shape {
+  def area() Int64
+}
+
+class Square {
+  def init(side Int64) {
+    self.side = side
+  }
+
+  def area() Int64 {
+    return self.side * self.side
+  }
+}
+
+def area_twice(s Shape) Int64 {
+  return s.area() * 2
+}
+
+println(area_twice(Square.new(9)))

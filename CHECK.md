@@ -209,20 +209,24 @@ claims them.
   light the tiles out, the REPL grows feed/exec, `run.sh` carries
   the era's golden.
 
-**The compiler track — standing debts the metal surfaced, no plan
-step claims them yet:**
+**The compiler track — the four debts the metal surfaced, landed
+2026-11-05 as [EmoOS T8.23–T8.26](projects/emo-os/docs/TASKS.md)
+(their decision records in the dated section below):**
 
-- [ ] `ArrayBuilder` is not lowered on riscv64 (A10.3's find; the
-  apps carry literals of fixed shapes around it).
-- [ ] `Bytes`' accessors are not lowered on riscv64 — `Bytes.new`
-  alone is (A7.1's find; the hosted canvas is a package of its own
-  for exactly this).
-- [ ] The IR's `decl_type` maps `Byte` and every applied annotation
-  to `Unknown`, so such signatures stay on the dynamic convention
-  (T2.2's find; enriching it touches every backend's `fparams`).
-- [ ] Typed method bodies — the arena's lever (A8.3's standing note:
-  an interface call boxes every `Int64` it carries, ~3 KiB a node
-  and 600 B a glyph on the metal).
+- [x] **T8.23** — `decl_type` enriched (Byte, applied annotations,
+  declared names); the return/fall-off representation reconciliation
+  it surfaced; golden `examples/typed_sigs`.
+- [x] **T8.24** — `Bytes` whole on riscv64 (the earlier note that
+  "`Bytes.new` alone is lowered" was wrong: nothing of Bytes was);
+  golden `examples/bytes`, the bufio/plot gradual holes it exposed
+  closed in the packages themselves.
+- [x] **T8.25** — `ArrayBuilder` on riscv64; golden
+  `examples/array_builder`.
+- [ ] **T8.26** — typed method bodies: the code is whole and every
+  compiler golden passes (the full dune suite green), but the EmoOS
+  boot acceptance is red — an unresolved, layout-sensitive jump
+  through zero at the screen pass's first paint. The hunt's matrix is
+  in the dated section below; the task stays open.
 
 **emo-ui — [the open questions](projects/emo-ui/docs/TASKS.md)
 (registered 2026-11-05):**
@@ -238,6 +242,100 @@ step claims them yet:**
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
 nothing.
+
+## 2026-11-05 — The signatures the metal asked for (EmoOS T8.23–T8.26)
+
+- **`decl_type` enriched (T8.23):** the IR's own read of a written
+  annotation now mirrors the checker's `decl_to_type` over the IR's
+  symbol tables — `Byte`, the applied annotations (`Array[T]`,
+  `Box[T]`, `Atomic[T]`, `List[T]`, `ArrayBuilder[T]`, `Map[K,V]`),
+  tuples, and the declared class, interface and enum names resolve to
+  their real types; `Block` and the unresolvable stay Unknown. The
+  find of the round: **a native frame's result had to be reconciled
+  with the value it returns** — a def annotated `Int64` whose body's
+  last expression types Unknown (a bare `Atomic`'s method result, a
+  dynamic call's answer) left the tagged word where the typed exit
+  promised the raw bank register; `unbox_result_mismatch` now unboxes
+  at the return statement and the fall-off, the proof
+  `atomic_riscv64` printing a heap address (2150695872) where 42
+  belonged. The c backend's signatures ride `c_type` (total over the
+  kinds); the ocaml specialization stays gated by `is_native`; wasm,
+  beam and ts are type-blind.
+- **`Bytes` on riscv64 (T8.24):** a String-layout block of kind 10 —
+  `[header][length][bytes]` — zero-filled at birth, the word
+  accessors as bounds-checked helpers (a set answers the masked
+  value, the interpreter's contract), `to_bytes`/`to_string` the raw
+  reinterpretation both ways, content equality over the String's own
+  comparator, and **byte-payload clones in both copy walkers**: the
+  generic container walk recurses per payload *value*, so bytes —
+  not values — needed their own verbatim-copy arms in
+  `emo_copy_deep` and `emo_copy_out` (a latent corruption no golden
+  could see: no program sends a Bytes across a message yet). Two
+  upstream finds: the checker had **no `Bytes.new` constructor arm**
+  — the expression typed Unknown and only the eval and the c backend
+  answered by the node's shape, so a receiver-keyed arm never
+  matched (fixed: the constructor types `Bytes`); and that typing
+  **lit up `out.set`'s Int64 check inside stdlib code that had flowed
+  gradual all along** — bufio's `BytesSink.to_string` and plot's
+  internal buffer, where the chunk deque's empty seed pins no element
+  type — fixed in the packages by carrying the bytes across a typed
+  def's signature (`chunk_bytes`, the signature as the contract), a
+  second pass crossing the already-encoded values through a typed
+  identity (`as_bytes`). The consumers' locks regenerated
+  (`emo deps resolve`).
+- **`ArrayBuilder` on riscv64 (T8.25):** a builder block of kind 11 —
+  `[header][size, raw][the backing Array word]` — growth a fresh
+  double-sized backing with the live elements copied (an Array
+  carries no count, so the abandoned backing stays arena-resident),
+  push answering the builder for chaining, `get` bounds-checked
+  against the size, `to_array` an exact copy, element-wise equality,
+  deep copies in both walkers (the size word is raw — no value the
+  generic walk could copy). The renderer grew the displays the
+  interpreter always had and the metal lacked — an Array's `[a, b]`
+  and the builder's `ArrayBuilder[a, b]` — over one shared join core;
+  the round's lesson in its smallest form: `"ArrayBuilder["` is
+  thirteen characters, and a fourteenth read the next label's first
+  byte (a backtick) into every rendering.
+- **Typed method bodies (T8.26), the arena's lever — code whole,
+  compiler-verified, EmoOS acceptance red, task open:** a method whose
+  signature resolves emits a native body on its own convention — the
+  IR's `self` carries its class (it was hardwired to Unknown, which
+  alone kept every method dynamic) — and the three call paths cross
+  it: the class-typed direct call rides the callee's own convention;
+  the interface call the interface's **declared** convention, the
+  call site and every vtable slot sharing it; the by-name dispatch a
+  tag-adapting thunk on the method table. One generalized convention
+  adapter (`emit_conv_adapter`) serves both tables — it spills the
+  incoming banks and reloads per the callee's, a word boxing into a
+  numeric bank and back, the Float64-across-Int64 shapes refused
+  loudly. Constructors and closures keep the dynamic convention.
+  **The open find — a layout-sensitive jump through zero at the
+  screen pass's first paint** (`run.sh` dies waiting for its first
+  `present ok`; the pass faults at pc 0). The experiment matrix, all
+  boots under the same rebuilt images unless noted: the HEAD emitter
+  in a clean worktree, six boots green; the HEAD emitter plus this
+  round's IR (`decl_type`, the interface sigs, the `self` typing),
+  three rounds byte-identical green; the HEAD emitter plus **nothing
+  but this round's unreferenced runtime text** (the Bytes and
+  ArrayBuilder helper families, dead code), red — which is why the
+  hunt could not pin the mechanism: dead text cannot misexecute, so
+  the failure rides image layout, and every lever that disabled the
+  typed-method machinery (native methods off at the loop, at the
+  tables, at the IR) stayed red while the compiler goldens for all
+  three dispatch paths pass. Two contaminations were found and
+  discounted along the way: boots between experiments ran **stale
+  app images** when a rebuild aborted mid-sequence (the `installed
+  <name> <size>` wire line names the sizes — a green reference is
+  counter 203304/editor 203336 under this round's IR, 208936 under
+  HEAD's), and a test fixture's staging registry
+  (`.emo-build/registry-r1check`) shadows the content-named ones in
+  alphabetical `ls` probes. The surviving suspects for the next
+  round: an emission-shape assumption that trips only past a code
+  or data alignment the dead text shifts (the frame-size immediate
+  boundary is the family precedent), or a kernel-side positional
+  assumption the image growth crosses. The ledger `frames 507 446`
+  was unchanged in every green boot — the cell-level savings stay
+  inside the blocks the arena runs already hold.
 
 ## 2026-11-05 — The tick as the device world's heartbeat (EmoOS T8.18)
 

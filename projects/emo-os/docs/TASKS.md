@@ -407,3 +407,72 @@ mirrors it beside the desktop's and the compiler's.
   services will want it; the assessment's rule is to build it when a
   measured path demands it, never before. Unscheduled until that
   path exists and is named here.
+- [x] **T8.23** — `decl_type` enriched: the checker's `decl_to_type`
+  mirrored over the IR's own symbol tables, so a signature's `Byte`,
+  its applied annotations (`Array[T]`, `Box[T]`, …) and its declared
+  class, interface and enum names reach the backends as the real
+  types instead of Unknown — `Block` and the unresolvable stay
+  Unknown, the dynamic convention's honest answer. Landed 2026-11-05
+  with the round's find: a native frame's raw result had to be
+  reconciled with the value it returns — an Unknown-typed expression
+  (a bare Atomic's method, a dynamic call) reached the typed exit
+  still tagged, so `unbox_result_mismatch` now unboxes at the return
+  and the fall-off; the proof was `atomic_riscv64` printing a heap
+  address where 42 belonged. Golden `examples/typed_sigs` — Byte
+  roundtrips, an Array[Int64] parameter's indexed loop with the
+  3.5-million-read allocation pin, Box, class and interface
+  parameters — on every target including the QEMU leg. Decision
+  record: CHECK.md, 2026-11-05.
+- [x] **T8.24** — `Bytes` whole on riscv64: a String-layout block of
+  its own kind (`[header][length][bytes]`, kind 10), `Bytes.new`
+  zero-filled, the word accessors as bounds-checked helpers (the
+  sets answering the masked value, the interpreter's own contract),
+  `to_bytes`/`to_string` the raw reinterpretation both ways, content
+  equality on the String's own comparator, and byte-payload clones
+  in both `emo_copy_deep` and `emo_copy_out` — the generic word walk
+  recurses per value, and bytes are not values. Two finds on the
+  way: the checker had no `Bytes.new` constructor arm (its answer
+  was Unknown; only the eval and the c backend answered by the
+  node's shape), and that typing lit up `out.set`'s Int64 check
+  inside stdlib code that had flowed gradual all along — bufio's
+  and plot's chunk deques, fixed by carrying the bytes across a
+  typed def's signature (`chunk_bytes`). Golden `examples/bytes` on
+  riscv64, byte-identical. Decision record: CHECK.md, 2026-11-05.
+- [x] **T8.25** — `ArrayBuilder` on riscv64: a builder block of kind
+  11 (`[header][size raw][the backing Array word]`), growth a fresh
+  double-sized backing whose live elements copy over (an Array
+  carries no count, so the abandoned backing stays arena-resident),
+  `push` answering the builder for chaining, `get` bounds-checked
+  against the size, `to_array` an exact copy, element-wise equality,
+  and the deep copies in both walkers (the size word is raw, no
+  value the generic walk could copy). The renderer grew the two
+  displays the interpreter always had — an Array's `[a, b]` and the
+  builder's own `ArrayBuilder[a, b]` — over one shared join core.
+  Golden `examples/array_builder` on riscv64, byte-identical.
+  Decision record: CHECK.md, 2026-11-05.
+- [ ] **T8.26** — Typed method bodies, the arena's lever: **the code
+  is whole and every compiler golden passes — `examples/typed_methods`
+  runs the direct, interface and by-name paths to the same answers
+  with a Float64 bank crossing and two million typed calls whose
+  numeric arguments cross raw, and the full dune suite is green — but
+  the EmoOS boot acceptance is red and the task stays open**: the
+  machine's `run.sh` dies at the screen pass's first paint (a jump
+  through zero) under every variation tried, while the same boots
+  pass at the HEAD emitter and — decisive — at the HEAD emitter
+  carrying this round's IR changes, and fail again at the HEAD
+  emitter plus nothing but this round's dead runtime text. The hunt's
+  experiment matrix, the two contamination finds it had to discount
+  (stale app images serving boots between rebuilds, and a test
+  fixture's registry shadowing the staging one in manual probes), and
+  the surviving suspects are recorded in CHECK.md, 2026-11-05 — the
+  next round starts there. The landed pieces, all
+  compiler-verified: the IR's `self` carries its class (it was
+  hardwired to Unknown, which alone kept every method dynamic); a
+  method whose signature resolves emits a native body on its own
+  convention; the class-typed direct call rides the callee's own
+  convention; the interface call the interface's declared one, the
+  call site and every vtable slot sharing it; the by-name dispatch a
+  tag-adapting thunk on the method table; one generalized convention
+  adapter (`emit_conv_adapter`) serves both tables, the
+  Float64-across-Int64 shapes refused loudly. Constructors and
+  closures keep the dynamic convention.

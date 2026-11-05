@@ -376,6 +376,8 @@ let wasm_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -442,6 +444,8 @@ let beam_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -669,6 +673,8 @@ let c_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
@@ -3045,6 +3051,10 @@ let riscv64_examples_tests =
       "atomic_cell";
       "peek_poke";
       "typed_calls";
+      "typed_sigs";
+      "typed_methods";
+      "bytes";
+      "array_builder";
       "native_image";
       "processes";
       "arena_gone";
@@ -3113,11 +3123,14 @@ let riscv64_refusal_tests =
                   (contains message "does not support"
                   && contains message fragment))
           [
-            ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
             ( "a String method the metal does not lower",
               {|println("a b".split(" ").length())|},
               "the String method `split`" );
+            ( "the List deque the metal does not lower",
+              {|const l = List.new([1])
+println(l.length())|},
+              "List" );
           ]);
   ]
 

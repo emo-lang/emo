@@ -843,17 +843,28 @@ and collect_pattern_locals (p : Ast.pattern) env =
 
 (* A def lowers with its signature's types. *)
 and lower_func env ~(module_path : string list) ~(mangled : string)
-    ~(self : bool) (d : Ast.fun_def) : func =
-  let self_param = if self then [ ("self", Emo_check.Unknown) ] else [] in
+    ~(self : Emo_check.t option) (d : Ast.fun_def) : func =
+  (* the receiver carries its class (T8.26): a method whose signature
+     resolves can cross on the typed convention like any def — the
+     Unknown it was hardwired to kept every method dynamic whatever its
+     annotations said *)
+  let self_param =
+    match self with
+    | Some t ->
+        if Sys.getenv_opt "EMO_NO_SELF_TYPING" <> None then
+          [ ("self", Emo_check.Unknown) ]
+        else [ ("self", t) ]
+    | None -> []
+  in
   let saved = env.locals in
   env.locals <-
     List.map (fun p -> p.Ast.param_name) d.Ast.def_params
-    @ (if self then [ "self" ] else [])
+    @ (match self with Some _ -> [ "self" ] | None -> [])
     @ env.locals;
   let param_types =
     self_param
     @ List.map
-        (fun p -> (p.Ast.param_name, decl_type p.Ast.param_type))
+        (fun p -> (p.Ast.param_name, decl_type env p.Ast.param_type))
         d.Ast.def_params
   in
   let fbody = lower_stmts env d.Ast.def_body in
@@ -864,23 +875,59 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
     fparams = param_types;
     fresult =
       (match d.Ast.def_return with
-      | Some r -> decl_type r
+      | Some r -> decl_type env r
       | None -> Emo_check.Void);
     fbody;
     fspecializable = false;
     fforeign = None;
   }
 
-and decl_type (a : Ast.type_decl) : Emo_check.t =
+(* The IR's own read of a written type annotation — the checker's
+   decl_to_type mirrored over the IR's symbol tables, so a signature's
+   Byte, its applied annotations (Array[T], Box[T], …) and its declared
+   names reach the backends as the real types instead of Unknown (T2.2's
+   find, closed by T8.23). `Block` and anything that cannot resolve here
+   stay Unknown — the dynamic convention's honest answer, the checker's
+   lenient read. *)
+and decl_type env (a : Ast.type_decl) : Emo_check.t =
   match a.Ast.type_desc with
   | Ast.Named_type "Int64" -> Emo_check.Int64
+  | Ast.Named_type "Byte" -> Emo_check.Byte
   | Ast.Named_type "Float64" -> Emo_check.Float64
   | Ast.Named_type "Bool" -> Emo_check.Bool
   | Ast.Named_type "Char" -> Emo_check.Char
   | Ast.Named_type "String" -> Emo_check.String
+  | Ast.Named_type "Bytes" -> Emo_check.Bytes
   | Ast.Named_type "Pid" -> Emo_check.Pid
+  | Ast.Named_type "TcpConn" -> Emo_check.TcpConn
+  | Ast.Named_type "TcpListener" -> Emo_check.TcpListener
+  | Ast.Named_type "UdpSocket" -> Emo_check.UdpSocket
   | Ast.Named_type "Void" -> Emo_check.Void
-  | _ -> Emo_check.Unknown
+  | Ast.Named_type "Block" -> Emo_check.Unknown
+  | Ast.Named_type "Box" -> Emo_check.BoxType Unknown
+  | Ast.Named_type "Atomic" -> Emo_check.AtomicType Unknown
+  | Ast.Named_type "List" -> Emo_check.ListType Unknown
+  | Ast.Named_type "ArrayBuilder" -> Emo_check.BuilderType Unknown
+  | Ast.Named_type "Map" -> Emo_check.MapType (Unknown, Unknown)
+  | Ast.Named_type name -> (
+      match resolve_type_ref env name with
+      | Some (_, q, S_interface) -> Emo_check.InterfaceType q
+      | Some (_, q, S_class _) -> Emo_check.ClassType q
+      | Some (_, q, S_enum) -> Emo_check.EnumType q
+      | _ -> Emo_check.Unknown)
+  | Ast.Applied_type ("Array", [ elem ]) ->
+      Emo_check.ArrayType (decl_type env elem)
+  | Ast.Applied_type ("Box", [ elem ]) -> Emo_check.BoxType (decl_type env elem)
+  | Ast.Applied_type ("Atomic", [ elem ]) ->
+      Emo_check.AtomicType (decl_type env elem)
+  | Ast.Applied_type ("List", [ elem ]) ->
+      Emo_check.ListType (decl_type env elem)
+  | Ast.Applied_type ("ArrayBuilder", [ elem ]) ->
+      Emo_check.BuilderType (decl_type env elem)
+  | Ast.Applied_type ("Map", [ key; value ]) ->
+      Emo_check.MapType (decl_type env key, decl_type env value)
+  | Ast.Applied_type (_, _) -> Emo_check.Unknown
+  | Ast.Tuple_type ts -> Emo_check.TupleType (List.map (decl_type env) ts)
 
 (* ---- Stage B completeness ----
 
@@ -1405,16 +1452,19 @@ let lower (input : input) : program =
               funcs :=
                 lower_func env ~module_path:m.mpath
                   ~mangled:(mangle m.mpath d.Ast.def_name)
-                  ~self:false d
+                  ~self:None d
                 :: !funcs
           | Ast.Item_class c ->
               let display = c.Ast.class_name in
+              let self_type =
+                Some (Emo_check.ClassType (qualify_name m.mpath display))
+              in
               let init =
                 Option.map
                   (fun d ->
                     lower_func env ~module_path:m.mpath
                       ~mangled:(mangle m.mpath (display ^ "__init"))
-                      ~self:true d)
+                      ~self:self_type d)
                   c.Ast.class_init
               in
               let methods =
@@ -1424,7 +1474,7 @@ let lower (input : input) : program =
                       ~mangled:
                         (mangle m.mpath
                            (display ^ "__" ^ sanitize_ident d.Ast.def_name))
-                      ~self:true d)
+                      ~self:self_type d)
                   c.Ast.class_methods
               in
               classes :=
@@ -1445,7 +1495,7 @@ let lower (input : input) : program =
                       ~mangled:
                         (mangle m.mpath
                            (g.Ast.group_name ^ "__" ^ d.Ast.def_name))
-                      ~self:false d
+                      ~self:None d
                     :: !funcs)
                 g.Ast.group_defs;
               List.iter
@@ -1479,7 +1529,7 @@ let lower (input : input) : program =
                   (* the thunk returns the const's value: Unknown, like
                      every other const binding (Void would lose it) *)
                   let thunk =
-                    lower_func env ~module_path:m.mpath ~mangled ~self:false
+                    lower_func env ~module_path:m.mpath ~mangled ~self:None
                       thunk_def
                   in
                   funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
@@ -1487,19 +1537,18 @@ let lower (input : input) : program =
           | Ast.Item_foreign f ->
               (* The FFI carrier types stay what they are — an interface
                  is the callback pair, a class or a tuple is a C struct
-                 shape — instead of degrading to Unknown (decl_type has
-                 no type tables). Tuple shapes recurse: a nested tuple
-                 is a struct within the struct. *)
+                 shape. Tuple shapes recurse: a nested tuple is a struct
+                 within the struct. *)
               let rec foreign_ffi_type (a : Ast.type_decl) : Emo_check.t =
                 match a.Ast.type_desc with
                 | Ast.Named_type name -> (
                     match resolve_type_ref env name with
                     | Some (_, q, S_interface) -> Emo_check.InterfaceType q
                     | Some (_, q, S_class _) -> Emo_check.ClassType q
-                    | _ -> decl_type a)
+                    | _ -> decl_type env a)
                 | Ast.Tuple_type ts ->
                     Emo_check.TupleType (List.map foreign_ffi_type ts)
-                | _ -> decl_type a
+                | _ -> decl_type env a
               in
               let foreign_param_type (p : Ast.param) : Emo_check.t =
                 foreign_ffi_type p.Ast.param_type
@@ -1532,9 +1581,9 @@ let lower (input : input) : program =
                       ( s.Ast.sig_name,
                         List.map
                           (fun p ->
-                            (p.Ast.param_name, decl_type p.Ast.param_type))
+                            (p.Ast.param_name, decl_type env p.Ast.param_type))
                           s.Ast.sig_params,
-                        decl_type s.Ast.sig_return ))
+                        decl_type env s.Ast.sig_return ))
                     i.Ast.interface_methods )
                 :: !iface_sigs
           | _ -> ())
