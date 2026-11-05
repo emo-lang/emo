@@ -712,3 +712,38 @@ tree's and EmoOS's, listed there.
   rounds byte-identical on both; the ledger `frames 795 734`
   unchanged; `dune runtest` 340 green; `@fmt` green; the fb gate 134
   ok. **With this M11 is complete on both sides of the gate.**
+
+## M12 — the desktop shell era (opened 2026-11-05)
+
+A12.1 served this milestone before the section existed — the app
+image profile, the sizing the exec world's structure asked for — and
+the era the archived prototype carries is the desktop's own: the
+dock's tiles launching the disk ELFs, the exits lighting the tiles
+out. The README's milestone rows wait for completion (the trackers'
+rule); CHECK.md's "remaining work" list (2026-11-05) mirrors what
+follows beside the kernel's and the compiler's.
+
+- [x] **A12.1** — The app image profile: the disk ELF's own image
+  shape — the user world's stub, load address and linker script over
+  a 2 MiB heap, `--profile app` at the three build sites — the
+  counter's span 12.24 → 6.24 MiB, the image run 196 → 100 blocks of
+  the region's ~500, three residents fitting beside the desktop's
+  own surfaces; the ledger 795 734 → 507 446. Landed 2026-11-05
+  (`9f7eaa4`), the golden byte-identical under both timer transports
+  across three consecutive runs and `dune runtest` 340 green; the
+  decision record — including the next lever parked there (the
+  process world's 64 slots and 4 MiB per-process stacks, ten asm
+  sites) — is CHECK.md's (2026-11-05).
+- [ ] **A12.2** — The desktop shell era, the desktop side's
+  acceptance: three tiles on the dock launching the three disk ELFs
+  by the click, the exit event ring lighting each tile while its app
+  runs and extinguishing it at the exit, the shell's REPL growing
+  the feed/exec commands, and `run.sh` carrying the era's golden —
+  the tile click → `up` → session → exit lines. The whole shape is
+  the prototype's, complete and archived (2026-11-05,
+  `protected/tmp/20261105-a12-prototype/`); the kernel-side half —
+  `parent_for`, the exit ring, the death kick, the comp verbs' slot
+  staging that closes the `comp_args` race — is EmoOS T8.19, and
+  the landing begins by re-running the prototype's script: its
+  standing blocker (the second tile's press lost intermittently) is
+  the lost-wake window EmoOS T8.18 closed.

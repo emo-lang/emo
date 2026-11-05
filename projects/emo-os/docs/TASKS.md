@@ -33,7 +33,7 @@ with its own ground rules, but every task is tracked here.
 | M2 — Cooperative kernel | 3 | `spawn`/`send`/`receive` on metal, the round-robin scheduler, the interrupt-driven UART console, and the dual-run parity harness. | complete |
 | M3 — User mode | 4 | U-mode user ELFs behind the ecall gate, the syscall stub package, a user program runs — and fails alone. | complete |
 | M4 — Process memory | 5 | Per-process arenas with quotas, reclaim on death, the physical frame allocator. | complete |
-| M5 — SV39 | 6 | Per-process address spaces, the trampoline, a page fault kills only the offender. | — |
+| M5 — SV39 | 6 | Per-process address spaces, the trampoline, a page fault kills only the offender. | complete |
 | M6 — FS, shell, EmoUI | 7 | The virtio-blk filesystem service, the shell REPL, the EmoUI console — the single-language closure demo. | complete |
 | M7 — The screen | 8 | The virtio-gpu driver as a process, the screen carve, `present` as the flush, the desktop's gate verbs. | complete |
 | M8 — Glyphs & pointer | 8 | The bitmap font, the pointer sprite and driver, the input merge — the Elm loop on the metal. | complete |
@@ -359,3 +359,51 @@ numbering rule the day they land.
   passes allocate nothing); `dune runtest` green with the smoke;
   `@fmt` green; the fb gate green. Decision record: CHECK.md,
   2026-11-05.
+
+## Step 8 — the open tail (recorded 2026-11-05)
+
+The tasks above are M7–M11, all landed. What follows is everything
+open on this side of the gate, given numbers so the remaining work
+can carry progress; CHECK.md's "remaining work" list (2026-11-05)
+mirrors it beside the desktop's and the compiler's.
+
+- [ ] **T8.19** — The desktop shell era, the kernel side: the
+  `parent_for` table (`0x8700d000`), the exit event ring
+  (`0x87002f50+`, eight 16-byte slots, the type word `0x4558`),
+  the death's kick and broadcast, `comp_panel_cell` (`comp_page+40`),
+  and the gate stub's slot staging for the compositor verbs
+  (`comp_slot_take`, the route `-(1000+op+32*slot)`, the five-word
+  envelope at `comp_page+2704`) — closing the `comp_args` single-cell
+  staging race two concurrent clients can lose, the prototype's
+  'moved 10 to 0,0' the proof. The prototype is complete and
+  archived (2026-11-05, `protected/tmp/20261105-a12-prototype/`):
+  its first tile click runs the counter's session end to end and
+  answers the parent's wait (`desktop counter exit 0`). Its standing
+  blocker — the second tile's press lost intermittently over
+  thirty-odd golden rounds — is the lost-wake window T8.18 closed,
+  so the landing begins by re-running the prototype's script and
+  confirming the blocker is gone. The desktop-side acceptance is
+  emo-desktop's A12.2.
+- [ ] **T8.20** — The mailbox's send-send window, found standing at
+  T8.18 and left by decision as its own round: `emo_mb_count` scans
+  the mailbox unmasked and `emo_send` deliberately leaves a word for
+  a running target without a wake, so a send landing between a
+  receiver's scan and its state-2 write parks the receiver with a
+  word already queued. No reproduction exists; the harm differs from
+  the device park's — the sender yields on the spot, so an emptied
+  run queue is the scheduler's loud deadlock, not a silent stall,
+  and any later message wakes the pair. The fix shapes weighed: a
+  masked re-scan at the park, or the tick sweeping state 2 as T8.18
+  sweeps state 4.
+- [ ] **T8.21** — Preemption, the honest four's remaining one (the
+  [assessment](../../emo-desktop/docs/assessment.md)): the hart is
+  cooperative and a busy app freezes the desktop — "the pool and
+  preemption together are what make an honest multi-app", and the
+  pool is landed (T8.7). Tick preemption is the shape; `-smp` stays
+  parked, not impossible. Unscheduled: this entry exists so the debt
+  carries a number and a trigger — the desktop's eras name the
+  acceptance that needs it.
+- [ ] **T8.22** — Generic IPC, the honest four's fourth: portal-class
+  services will want it; the assessment's rule is to build it when a
+  measured path demands it, never before. Unscheduled until that
+  path exists and is named here.
