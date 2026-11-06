@@ -80,11 +80,22 @@ registry() {
   printf '%s' "$reg"
 }
 
-if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ "$1" != '--fresh' ]; }; then
-  echo "usage: $0 [--fresh]" >&2
+if [ $# -gt 2 ]; then
+  echo "usage: $0 [--fresh] [--hand]" >&2
   echo '  --fresh  re-create the disk before booting (a fresh volume loses its files)' >&2
+  echo '  --hand   skip the auto-ride and drive the proof chain'"'"'s windows by hand' >&2
   exit 2
 fi
+
+fresh=no
+hand=no
+for arg in "$@"; do
+  case $arg in
+    --fresh) fresh=yes ;;
+    --hand) hand=yes ;;
+    *) echo "usage: $0 [--fresh] [--hand]" >&2; exit 2 ;;
+  esac
+done
 
 stale() {
   local img="$1"; shift
@@ -145,7 +156,7 @@ fi
 # — the files survive the poweroff — and --fresh trades it for a blank
 # one (the next boot installs the images again).
 img='.blk.img'
-if [ ! -f "$img" ] || [ "${1:-}" = '--fresh' ]; then
+if [ ! -f "$img" ] || [ "$fresh" = yes ]; then
   dd if=/dev/zero of="$img" bs=4194304 count=1 status=none
 fi
 
@@ -154,26 +165,130 @@ if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
-echo '  the boot stops four times for keys on its way to the emo-os> prompt:' >&2
-echo '    five keys once the fs mount line has gone by (the console delivery test)' >&2
-echo '    one key when "gate 500500 r3 r2" appears (the read proof)' >&2
-echo '    the counter'"'"'s keys once its panel is on the window: a adds, b subtracts, q ends it' >&2
-echo '    the window shell once its two windows are up: click a window to focus it, drag it' >&2
-echo '      by its bar, a counts a key in the focused one, q closes them' >&2
-echo '  type nothing else before the prompt — early bytes surface later and garble the exchange' >&2
-echo '  the kill reports on the way are the proof chain working, not trouble' >&2
-echo '  the pointer follows the mouse over the window once the counter has ended' >&2
-echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
+# The ride drives itself: the proof chain's windows are fed their bytes
+# automatically — the same beats `run.sh` asserts — so the machine
+# boots to the desktop hands-free and the terminal becomes the REPL's
+# console at the prompt. `--hand` keeps the old ride: the windows listed
+# in docs/how-to-start-emoos.md, typed by you.
+if [ "$hand" = yes ]; then
+  echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
+  echo '  the proof chain stops for keys on its way to the desktop — the windows and' >&2
+  echo '  their bytes are listed in docs/how-to-start-emoos.md (driving it by hand)' >&2
+  echo '  until the desktop composes, the screen holds the boot'"'"'s own gradient flush —' >&2
+  echo '  the banded colors are the machine waiting, not a fault' >&2
+  echo '  the kill reports on the way are the proof chain working, not trouble' >&2
+  echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
+  exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
+    -global virtio-mmio.force-legacy=false \
+    -drive file="$img",format=raw,if=none,id=emoos-blk \
+    -device virtio-blk-device,drive=emoos-blk \
+    -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-keyboard-device \
+    -device virtio-tablet-device \
+    -kernel "$elf"
+fi
 
-# -display cocoa: the display leg's window (T8.8); -serial mon:stdio
-# keeps the serial-and-monitor mux -nographic used to hold, so the
-# console hand-feel is unchanged.
-exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
+echo 'EmoOS: the machine'"'"'s screen is the window that opens; the boot drives itself to' >&2
+echo '  the desktop — the proof chain'"'"'s windows are fed automatically. At the prompt' >&2
+echo '  this terminal is the REPL'"'"'s console: poweroff ends the machine, Ctrl-A X kills QEMU.' >&2
+
+# The serial rides a FIFO so the ride's feeder and, after the prompt,
+# the terminal relay both write it; the serial's bytes land in
+# .ride.log for the feeder's greps (the file, not a tee — a tee's block
+# buffering would lag the greps) and `tail -f` shows them live on the
+# terminal. The pointer beat rides QMP's input-send-event (the absolute
+# report the cocoa mouse also delivers, here without the grab).
+log='.ride.log'
+fifo=$(mktemp -u /tmp/emoos-serial.XXXXXX)
+mkfifo "$fifo"
+qmp_sock=$(mktemp -u /tmp/emoos-qmp.XXXXXX)
+qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
   -global virtio-mmio.force-legacy=false \
   -drive file="$img",format=raw,if=none,id=emoos-blk \
   -device virtio-blk-device,drive=emoos-blk \
   -device virtio-gpu-device,xres=1024,yres=768 \
   -device virtio-keyboard-device \
   -device virtio-tablet-device \
-  -kernel "$elf"
+  -qmp unix:"$qmp_sock",server,nowait \
+  -kernel "$elf" <"$fifo" >"$log" 2>&1 &
+qemu_pid=$!
+tail -f "$log" -n +1 >&2 &
+tail_pid=$!
+trap 'kill "$qemu_pid" "$tail_pid" 2>/dev/null || true' EXIT
+exec 3>"$fifo"
+
+ride_wait() {
+  local pat="$1" n=0
+  while [ "$n" -lt 400 ]; do
+    if grep -qF -- "$pat" "$log" 2>/dev/null; then
+      return 0
+    fi
+    kill -0 "$qemu_pid" 2>/dev/null || return 1
+    sleep 0.25
+    n=$((n + 1))
+  done
+  return 1
+}
+
+ride_type() {
+  printf '%s' "$1" >&3
+}
+
+ride_move() {
+  python3 - "$qmp_sock" <<'PYEOF'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1]); f = s.makefile('rw')
+f.readline()
+f.write(json.dumps({"execute": "qmp_capabilities"}) + "\n"); f.flush(); f.readline()
+f.write(json.dumps({"execute": "input-send-event", "arguments": {"events": [
+    {"type": "abs", "data": {"axis": "x", "value": 16384}},
+    {"type": "abs", "data": {"axis": "y", "value": 16384}}]}}) + "\n")
+f.flush()
+json.loads(f.readline())
+s.close()
+PYEOF
+}
+
+# The beats, run.sh's own feeding discipline: each window waited for on
+# the log, its bytes fed when it asks. A beat that never comes (the
+# machine wedged, or a beat the tree outgrew) is not the ride's death —
+# the relay starts anyway and the hand-driven sequence takes over.
+ride() {
+  ride_wait '4999999950000000' && ride_type 'abcde' || return 1
+  ride_wait 'gate 500500 r3 r2' && ride_type 'X' || return 1
+  ride_wait 'present ok' && ride_type 'a' || return 1
+  sleep 1 && ride_type 'a'
+  sleep 1 && ride_type 'b'
+  sleep 1 && ride_type 'q'
+  ride_wait 'keys?' && { ride_type 'q'; sleep 1; ride_type 'K'; } || return 1
+  ride_wait 'byte 75' || return 1
+  ride_move
+  ride_wait 'pointer 512 384' || return 1
+  ride_wait 'comp 16 32' || return 1
+  ride_wait 'win 0' && ride_type 'c' || return 1
+  ride_wait 'addr 0x20000000' && ride_type 'c' || return 1
+  sleep 5 && ride_type 'c'
+  ride_wait 'client back' && ride_type 'z' || return 1
+  sleep 3
+  ride_wait 'desk range 32767 32767' || return 1
+  sleep 3 && ride_type 'q'
+  ride_wait 'desk 0' || return 1
+  ride_wait 'emo-os>'
+}
+
+if ride; then
+  echo 'EmoOS: the desktop is up — this terminal is the REPL'"'"'s console now.' >&2
+  echo '  poweroff ends the machine; Ctrl-D or Ctrl-A X also quit.' >&2
+else
+  echo 'EmoOS: the auto-ride stalled — drive the remaining windows by hand;' >&2
+  echo '  docs/how-to-start-emoos.md lists them in order.' >&2
+fi
+
+# The hand-off: the terminal's bytes ride to the machine byte for byte
+# (`cat`, not a `read -n1` loop — the read eats the newline that ends
+# the REPL's line, and a poweroff without its newline never runs); the
+# feeder is done, fd 3 is the terminal's alone from here.
+cat >&3
+kill "$qemu_pid" 2>/dev/null || true
+wait "$qemu_pid" 2>/dev/null || true

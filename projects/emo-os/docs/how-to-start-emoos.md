@@ -88,15 +88,18 @@ byte-identical is the bar the tracker's tasks are held to.
 
 `start.sh` is this section in one command: it builds the images when
 they are missing or stale, creates the disk when it is missing
-(`--fresh` trades the volume for a blank one), prints the three windows
-below, and boots. The raw steps follow.
+(`--fresh` trades the volume for a blank one), **feeds the proof
+chain's windows automatically** — the same beats the golden asserts —
+and boots to the desktop; the terminal becomes the REPL's console at
+the prompt. `--hand` keeps the raw ride, and the raw steps follow for
+anyone driving by hand.
 
-The disk is a raw 1 MiB image. The filesystem formats a blank one at
+The disk is a raw 4 MiB image. The filesystem formats a blank one at
 its first mount and keeps its files across boots, so create it once
 and re-create it whenever a fresh volume is wanted:
 
 ```console
-$ dd if=/dev/zero of=.blk.img bs=1048576 count=1
+$ dd if=/dev/zero of=.blk.img bs=4194304 count=1
 $ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
     -global virtio-mmio.force-legacy=false \
     -drive file=.blk.img,format=raw,if=none,id=emoos-blk \
@@ -115,7 +118,9 @@ serial console stays the terminal (`-serial mon:stdio` holds the mux
 OpenSBI's banner goes by, the
 kernel boots paged on the table it built (the `sv39 8 0x…` line), the
 block device and the filesystem report — and the chain stops for keys
-three times on its way to the prompt:
+on its way to the desktop. **Until the desktop composes, the screen
+holds the boot's own gradient flush** — the banded colors are the
+machine waiting for its keys, not a fault. The windows, in order:
 
 - **five keys once the filesystem's mount line has gone by** — the
   console service's delivery test reads five bytes off the wire
@@ -128,12 +133,25 @@ three times on its way to the prompt:
   (emo-desktop A8.3): `a` adds, `b` subtracts, each key repaints the
   frame and says its digest on the serial line (`frame …`,
   `present ok`), and `q` ends the loop; the keys are the serial
-  console's, not the window's, and any other byte is dropped.
+  console's, not the window's, and any other byte is dropped;
+- **two keys when `keys?` appears** — the merged stream's proof: `q`
+  then `K` (the first answers the key beat, the second the byte's —
+  `byte 75` on the wire);
+- **one move of the mouse across the QEMU window** — the pointer
+  plane's first placement (`pointer 512 384` on the wire);
+- **`c` when the window compositions settle** (`win 0` on the wire);
+- **`c` after the client fault's beats** (`addr 0x20000000` on the
+  wire, the reborn client's frame a few seconds later);
+- **`c` once more, then `z` after `client back`**;
+- **`q` in the desk era** — two windows (`alpha`, `beta`) on the
+  screen; the shell's quit is `desk 0` on the wire.
 
 The four kill reports before the counter are the proof chain doing
 its job — misbehaving passes dying alone (one of them by its own
 allocator's exhaustion) while the machine goes on — not trouble. Then
-the banner, and the prompt (the `O` and `S` arrive in ANSI cyan):
+the desktop composes — the wallpaper, the header bar, the dock and
+the volume's icons on it (emo-desktop A13) — and the banner and the
+prompt arrive (the `O` and `S` in ANSI cyan):
 
     _____                      ____     ____
    | ____|  __  __    ____    / __ \   / ___|
