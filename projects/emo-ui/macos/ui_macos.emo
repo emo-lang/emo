@@ -24,6 +24,19 @@ foreign def ui_root() Int64 = "ui_root"
 foreign def ui_run(events ui.Events) Void = "ui_run"
 foreign def ui_autotest_arm(script String) Void = "ui_autotest_arm"
 
+// The sink before `mount`. A backend is built before the loop hands it
+// the application, and a `Box` is typed by what it is born holding, so
+// the cell starts as an `Events` that delivers to no one — never as a
+// number that could not later become one.
+class Unmounted {
+  def deliver(tag Int64) Void {
+  }
+}
+
+def unmounted() ui.Events {
+  return Unmounted.new()
+}
+
 // The backend itself. A window is a size in points, which this backend
 // takes as an argument today; reading it from the screen and reflowing
 // on resize is the same interaction work `ui_tui` leaves to T48.5.
@@ -38,7 +51,7 @@ class Mac {
     self.width = width
     self.height = height
     self.script = script
-    self.sink = Box.new(0)
+    self.sink = Box.new(unmounted())
   }
 
   def mount(root ui.Node, events ui.Events) {

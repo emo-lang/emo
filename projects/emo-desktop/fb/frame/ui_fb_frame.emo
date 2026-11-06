@@ -1,0 +1,40 @@
+require "emo/ui"
+require "emo/ui_fb"
+
+// The first frame (emo-desktop A7.2, A8.3): the tree the machine's
+// screen pass paints first, and the digest the golden's eye reads off
+// any surface. Since A8.3 the first frame is the counter's — the view
+// at the initial model, the frame the Elm loop's `mount` paints before
+// the first event (`counter.emo`) — and `tree` is that tree as a value,
+// for the probe that measures it and the reader who wants the first
+// picture in one line. Three readings answer the one number — the
+// pass's own read-back of the carve it painted, the hosted canvas's
+// render of the same tree (`golden/`), and the monitor's screendump of
+// the display (`run.sh`) — or the frame is not on the screen.
+//
+// The picture is the counter's panel over the whole display — the box
+// model lays the root into whatever rectangle the surface is, so the
+// width and height are the display's answer, never a constant here —
+// with the count and the two buttons inside its padding, in M8's
+// glyphs. M7's first picture, the title strip, the body and the dock,
+// cost the metal 42 KiB of boxed numbers per frame; the panel's is the
+// size the arena keeps a session of (`counter.emo`).
+
+def tree() ui.Node {
+  return counter.view(ui.Registry.new(), counter.initial())
+}
+
+// Every pixel in row-major order folded into one 32-bit number,
+// `d = (d * 31 + word) mod 2^32`. Order-sensitive — a frame shifted by
+// one pixel digests to something else — and integer arithmetic every
+// target and the golden's Python reproduce exactly, so the readings
+// agree on one number or on none.
+def digest(s ui_fb.Surface) Int64 {
+  var d = 0
+  for var y = 0; y < s.height(); y = y + 1 {
+    for var x = 0; x < s.width(); x = x + 1 {
+      d = (d * 31 + s.at(x, y)) & 0xFFFFFFFF
+    }
+  }
+  return d
+}

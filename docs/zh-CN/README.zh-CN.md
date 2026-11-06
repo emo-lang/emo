@@ -90,6 +90,8 @@ Emo 的触角伸到操作系统层：这门语言有能力写内核，于是 Emo
 
 EmoOS 是 [`../../projects/emo-os/`](../../projects/emo-os) 下的独立项目——定案设计与任务追踪都在它的 [README](../../projects/emo-os/README.zh-CN.md) 里。
 
+其上的桌面也是独立项目:[`projects/emo-desktop/`](../../projects/emo-desktop)——EmoOS 门上的合成窗口 GUI,单语言闭环的下一段路。
+
 `riscv64` 编译目标是裸机目标。它假设没有 OS、没有 libc、没有默认运行时；构建 freestanding 的 RISC-V 镜像——内核开发循环是编译、启动、调试，不需要硬件。QEMU 只是这个循环的默认运行器，不属于目标本身；同一镜像可原样运行在真实 RISC-V 硬件上。
 
 写内核从四个方面塑造语言：

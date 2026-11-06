@@ -1,0 +1,611 @@
+require "emo/ui"
+
+// The framebuffer backend's hosted core (emo-desktop A7.1): the terminal
+// backend's pixel twin. The box model is `ui_tui`'s to the letter — a
+// column stacks, a row lines up, and `padding`, `gap`, `align`, `grow`,
+// `width` and `height` place every child — only the unit is a pixel
+// where the terminal's was a cell, and a leaf's own size is its label
+// measured in glyph cells of the bitmap font's fixed cell. Painting is
+// rectangles and glyphs: every box fills the rectangle it was placed in,
+// in its role's color, parents under children, and a leaf's label lands
+// over its box in the bitmap font (`font.emo`, A8.1), one cell per
+// character, in the role's ink. That is M7's picture with M8's glyphs on
+// it; the pointer and the windows build on the same verbs (M8, M9).
+//
+// The core splits where the assessment drew the line: measure, place,
+// clip and blend are pure Emo against the `Surface` interface and run
+// hosted in the corpus; what sits behind a `Surface` is the host's own
+// business — `ui_fb_canvas` keeps one in a `Bytes` for the hosted
+// targets, and the metal's is the screen carve reached through the raw
+// shim, riscv64's alone (A7.2). The core never sees a byte: it hands a
+// surface clipped rectangles, glyph cells and colors, and reads words
+// back through `at`.
+//
+// A pixel is one `Int64` word, `0x00RRGGBB` — XRGB8888, the carve's
+// format (D5), red in bits 23..16 and blue in the low byte. A color
+// handed to `blend` carries its coverage in the top byte, `0xAARRGGBB`;
+// a stored word never does, so `fill`, `glyph` and `over` all mask it
+// away.
+
+// ---- the box model: positions in pixels ----
+
+// A layout result: the width and height a node measures to, in pixels.
+class Extent {
+  def init(w Int64, h Int64) {
+    self.w = w
+    self.h = h
+  }
+
+  def w() Int64 {
+    return self.w
+  }
+
+  def h() Int64 {
+    return self.h
+  }
+}
+
+// A rectangle on a surface: what is left of one after `clip`.
+class Rect {
+  def init(x Int64, y Int64, w Int64, h Int64) {
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+  }
+
+  def x() Int64 {
+    return self.x
+  }
+
+  def y() Int64 {
+    return self.y
+  }
+
+  def w() Int64 {
+    return self.w
+  }
+
+  def h() Int64 {
+    return self.h
+  }
+}
+
+// The glyph cell: the bitmap font's fixed 8x16 (`font.emo`). A label
+// measures to the cells it occupies, so the layout a frame gets is the
+// layout its text lands in.
+def glyph_w() Int64 {
+  return font.cell_w()
+}
+
+def glyph_h() Int64 {
+  return font.cell_h()
+}
+
+// The palette: one color per box role, the muted platinum of the
+// early-90s workstation the assessment names as the honest feel. Each
+// role leans on a different channel so a swapped byte order shows up in
+// a golden as the wrong tint, not as a matching gray. `Text` fills no
+// box — its glyphs are ink on whatever it sits on — and `Spacer` paints
+// nothing at all.
+def color_of(n ui.Node) Int64 {
+  if n.is(ui.Column) {
+    return 0xD8D0C0
+  }
+  if n.is(ui.Row) {
+    return 0xC0C8D8
+  }
+  if n.is(ui.Scroll) {
+    return 0xC8D8C0
+  }
+  if n.is(ui.Button) {
+    return 0x7088A8
+  }
+  if n.is(ui.TextInput) {
+    return 0xF8F8F0
+  }
+  if n.is(ui.Image) {
+    return 0xA89888
+  }
+  return 0
+}
+
+// The ink a label's glyphs take: the dark of the panel's text, the
+// input's paper and the image's caption, light on a button's steel.
+def ink_of(n ui.Node) Int64 {
+  if n.is(ui.Button) {
+    return 0xF8F8F0
+  }
+  return 0x282830
+}
+
+def paints_box(n ui.Node) Bool {
+  return !n.is(ui.Spacer) && !n.is(ui.Text)
+}
+
+// A fixed extent from the style's `(R, Float64)` slot: `(R.ok, n)` is n
+// pixels, `(R.error, _)` is the node's own size — the pair exactly as
+// the core's `Style` carries it.
+def fixed(slot (R, Float64)) Int64 {
+  case slot {
+    (R.ok, v) -> { return v.to_int64() }
+    (R.error, _) -> { return -1 }
+  }
+}
+
+// The label a leaf measures by — the terminal backend's own, so a tree
+// lays out to the same cell grid on both: a button is bracketed with a
+// space either side, a text input carries one trailing cell for the
+// cursor, an image shows its source. `Spacer` has no label and no
+// paint, so it measures to nothing unless the style gives it an extent.
+def label_of(n ui.Node) String {
+  if n.is(ui.Text) {
+    return n.body()
+  }
+  if n.is(ui.Button) {
+    return "[ " + n.label() + " ]"
+  }
+  if n.is(ui.TextInput) {
+    return n.value() + " "
+  }
+  if n.is(ui.Image) {
+    return "[" + n.src() + "]"
+  }
+  return ""
+}
+
+def intrinsic(n ui.Node) Extent {
+  if n.is(ui.Spacer) {
+    return Extent.new(w: 0, h: 0)
+  }
+  return Extent.new(w: label_of(n).length() * glyph_w(), h: glyph_h())
+}
+
+// A node's own size: the style's fixed width/height when set, the
+// intrinsic size otherwise. `avail_w` is the width the parent has to
+// offer (-1 when unbounded), which a column needs to measure its
+// children against.
+def measure(n ui.Node, avail_w Int64) Extent {
+  const s = n.style()
+  const fw = fixed(s.width())
+  const fh = fixed(s.height())
+  if n.is(ui.Column) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  // A `Scroll` is a vertical box at a fixed viewport height: without a
+  // scroll offset it measures and places exactly like a column, and the
+  // surface's own bounds are what clip it.
+  if n.is(ui.Scroll) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  if n.is(ui.Row) {
+    return measure_row(n, s, fw, fh)
+  }
+  const e = intrinsic(n)
+  const w = if fw >= 0 { fw } else { e.w() }
+  const h = if fh >= 0 { fh } else { e.h() }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_column(n ui.Node, s ui.Style, fw Int64, fh Int64,
+                   avail_w Int64) Extent {
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  const inner = if avail_w >= 0 { avail_w - pad * 2 } else { -1 }
+  var maxw = 0
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner)
+    if e.w() > maxw {
+      maxw = e.w()
+    }
+    total = total + e.h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  const w = if fw >= 0 { fw } else { maxw + pad * 2 }
+  const h = if fh >= 0 { fh } else { total + pad * 2 }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  var total = 0
+  var maxh = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], -1)
+    total = total + e.w()
+    if e.h() > maxh {
+      maxh = e.h()
+    }
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  const w = if fw >= 0 { fw } else { total + pad * 2 }
+  const h = if fh >= 0 { fh } else { maxh + pad * 2 }
+  return Extent.new(w: w, h: h)
+}
+
+// ---- the buffer seam ----
+
+// What the core paints into. `fill` stores a color over a rectangle,
+// `blend` composites one over it with `over`, and `glyph` stores a color
+// through one 8x16 cell of the bitmap font — the cell's sixteen rows as
+// two words, `top` rows 0 to 7 and `bottom` rows 8 to 15, each row a
+// byte with the top row in the high byte and the left pixel in the high
+// bit (`glyph_row` reads them), a set bit the color and a clear bit the
+// surface left alone. All three take their rectangle unclipped and keep
+// to their own bounds, and `at` outside the surface answers 0, so a
+// caller that skips `clip` is wrong by nothing worse than wasted work.
+// A `Surface` is the one thing a host provides: `ui_fb_canvas`'s keeps
+// words in a `Bytes`, the metal's are the carve's own words behind the
+// raw shim, and the core cannot tell them apart.
+//
+// The glyph is a verb of its own, not sixteen rows of `fill`, for the
+// metal's sake: an interface call there boxes every Int64 it carries
+// into a cell the pool never reclaims, so a frame of text that painted
+// its glyphs pixel by pixel — thousands of calls — would spend the
+// arena before its first line ended; one call per cell is the shape a
+// first frame survives.
+//
+// `present` commits a painted frame (A8.3): the backend calls it once
+// after every paint, and what it means is the surface's own business —
+// the metal's carve flushes itself to the display through the gate's
+// verb (the assessment's "present is only the flush", D2), the hosted
+// canvas has nothing to commit and does nothing. A frame lands whole or
+// not at all, the stability contract's sixth seam.
+interface Surface {
+  def width() Int64
+  def height() Int64
+  def at(x Int64, y Int64) Int64
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) Void
+  def present() Void
+}
+
+// Row `r` of a glyph cell, 0 to 15, as its byte: the left pixel in bit
+// 7. The arithmetic every `Surface` paints a glyph by, kept here so the
+// hosted canvas and the carve read the same bit for the same pixel.
+def glyph_row(top Int64, bottom Int64, r Int64) Int64 {
+  const word = if r < 8 { top } else { bottom }
+  return (word >> (8 * (7 - (r & 7)))) & 0xFF
+}
+
+// ---- clip and blend: the pixel arithmetic ----
+
+// The part of `(x, y, w, h)` that lies inside a `bounds_w` x `bounds_h`
+// surface: the origin pulled in to the edge it crossed, the extent
+// shortened by the same amount, and an extent that went negative — a
+// rectangle wholly outside — clamped to zero, which every painter treats
+// as nothing to do. Clipping lives here, not in a surface, because the
+// windows (M9) and a damage rectangle (`present`) clip against bounds
+// that are not a surface's own.
+def clip(x Int64, y Int64, w Int64, h Int64, bounds_w Int64,
+         bounds_h Int64) Rect {
+  var cx = x
+  var cy = y
+  var cw = w
+  var ch = h
+  if cx < 0 {
+    cw = cw + cx
+    cx = 0
+  }
+  if cy < 0 {
+    ch = ch + cy
+    cy = 0
+  }
+  if cx + cw > bounds_w {
+    cw = bounds_w - cx
+  }
+  if cy + ch > bounds_h {
+    ch = bounds_h - cy
+  }
+  if cw < 0 {
+    cw = 0
+  }
+  if ch < 0 {
+    ch = 0
+  }
+  return Rect.new(x: cx, y: cy, w: cw, h: ch)
+}
+
+// One channel of source-over, rounded to nearest: `s` over `d` at
+// coverage `a` out of 255. Integer throughout, so every target lands
+// on the same byte.
+def mix(s Int64, d Int64, a Int64) Int64 {
+  return (s * a + d * (255 - a) + 127) / 255
+}
+
+// One pixel of source-over: `src` carries its coverage in the top byte,
+// `dst` is the word a surface holds. Full coverage is the source itself
+// and none is the destination, both without touching a channel; between
+// them each channel mixes on its own. The answer is a storable word,
+// top byte clear.
+def over(src Int64, dst Int64) Int64 {
+  const a = (src >> 24) & 0xFF
+  if a >= 255 {
+    return src & 0xFFFFFF
+  }
+  if a <= 0 {
+    return dst & 0xFFFFFF
+  }
+  const r = mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF, a)
+  const g = mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
+  const b = mix(src & 0xFF, dst & 0xFF, a)
+  return (r << 16) | (g << 8) | b
+}
+
+// ---- place: the tree onto the surface ----
+
+// Lay one node into the rectangle `(x, y, w, h)` of `s`: its own box
+// filled first, clipped to the surface and in its role's color, then —
+// for a container — its children's, so every child lands over its
+// parent, and then — for a leaf — its label's glyphs over its box, from
+// the rectangle's top-left corner. The walk paints as it goes rather
+// than collecting a draw list first: a frame then allocates nothing
+// beyond the tree it was handed, which is what the arena on the metal
+// can afford per event — the tree's nodes go back through the pool at
+// the event's end, and the walk's own boxed numbers are the frame's
+// residue (A8.3's count).
+def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
+  if paints_box(n) {
+    const r = clip(x, y, w, h, s.width(), s.height())
+    if r.w() > 0 && r.h() > 0 {
+      s.fill(r.x(), r.y(), r.w(), r.h(), color_of(n))
+    }
+  }
+  if n.is(ui.Column) {
+    place_column(n, x, y, w, h, s)
+  }
+  // `Scroll`, as above: a vertical box, not yet a viewport with an offset.
+  if n.is(ui.Scroll) {
+    place_column(n, x, y, w, h, s)
+  }
+  if n.is(ui.Row) {
+    place_row(n, x, y, w, h, s)
+  }
+  const label = label_of(n)
+  if label.length() > 0 {
+    text(label, x, y, ink_of(n), s)
+  }
+}
+
+// A label's glyphs along one line from `(x, y)`, a cell per byte of the
+// label, each through the surface's `glyph` in the font's drawing of
+// that byte — the terminal backend's own rule, where a label is laid
+// into the frame cell by cell and only the frame's edge cuts it: the
+// surface's bounds are what clip a cell, never the node's rectangle, so
+// a label wider than its box runs on as the terminal's does. A byte the
+// font has no glyph for shows the hollow cell (`font.glyph_of`).
+def text(label String, x Int64, y Int64, ink Int64, s Surface) {
+  for var i = 0; i < label.length(); i = i + 1 {
+    const g = font.glyph_of(label.substring(i, 1))
+    s.glyph(x + i * glyph_w(), y, font.top_rows(g), font.bottom_rows(g), ink)
+  }
+}
+
+// A column's children stack downward inside its padding, one gap apart.
+// A child with `grow` takes an equal share of the height the column has
+// left over; the last one takes the remainder so the box stays flush.
+// The column's `align` places each child across its width.
+def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
+                 s Surface) {
+  const st = n.style()
+  const pad = st.padding().to_int64()
+  const gap = st.gap().to_int64()
+  const kids = n.children()
+  const inner_w = w - pad * 2
+  const inner_h = h - pad * 2
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], inner_w).h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  var growers = 0
+  var last_grower = -1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_h - total
+  const align = st.align()
+  var cursor = y + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner_w)
+    var ch = e.h()
+    if growers > 0 && kids[i].style().grow() {
+      ch = ch + leftover / growers
+      if i == last_grower {
+        ch = ch + leftover - leftover / growers * growers
+      }
+    }
+    var cw = e.w()
+    var cx = x + pad
+    if align == ui.Align.center {
+      cx = x + pad + (inner_w - cw) / 2
+    }
+    if align == ui.Align.end {
+      cx = x + pad + (inner_w - cw)
+    }
+    if align == ui.Align.stretch {
+      cw = inner_w
+    }
+    place(kids[i], cx, cursor, cw, ch, s)
+    cursor = cursor + ch + gap
+  }
+}
+
+// A row's children line up to the right inside its padding, one gap
+// apart, with `grow` and the leftover share working across the width and
+// `align` placing each child down the row's height.
+def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
+  const st = n.style()
+  const pad = st.padding().to_int64()
+  const gap = st.gap().to_int64()
+  const kids = n.children()
+  const inner_w = w - pad * 2
+  const inner_h = h - pad * 2
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], -1).w()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  var growers = 0
+  var last_grower = -1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_w - total
+  const align = st.align()
+  var cursor = x + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], -1)
+    var cw = e.w()
+    if growers > 0 && kids[i].style().grow() {
+      cw = cw + leftover / growers
+      if i == last_grower {
+        cw = cw + leftover - leftover / growers * growers
+      }
+    }
+    var ch = e.h()
+    var cy = y + pad
+    if align == ui.Align.center {
+      cy = y + pad + (inner_h - ch) / 2
+    }
+    if align == ui.Align.end {
+      cy = y + pad + (inner_h - ch)
+    }
+    if align == ui.Align.stretch {
+      ch = inner_h
+    }
+    place(kids[i], cursor, cy, cw, ch, s)
+    cursor = cursor + cw + gap
+  }
+}
+
+// A tree onto a surface: laid into the surface's whole rectangle and
+// painted from the root down. Every frame paints from scratch — the
+// pixel twin of the terminal's repaint, and what the full-screen pass
+// (A7.2) calls once before it presents.
+def paint(root ui.Node, s Surface) {
+  place(root, 0, 0, s.width(), s.height(), s)
+}
+
+// The surface as PPM text (P3): the header, then one pixel per line as
+// `r g b`, read back through `at`. The pixel twin of the terminal's
+// frame-as-rows — what a test compares as values and a golden pins as
+// bytes — and the format QEMU's `screendump` writes of the metal's
+// screen, so the one eye reads both.
+def ppm(s Surface) String {
+  var out = "P3\n${s.width()} ${s.height()}\n255\n"
+  for var y = 0; y < s.height(); y = y + 1 {
+    for var x = 0; x < s.width(); x = x + 1 {
+      const p = s.at(x, y)
+      out = out + "${(p >> 16) & 0xFF} ${(p >> 8) & 0xFF} ${p & 0xFF}\n"
+    }
+  }
+  return out
+}
+
+// ---- the backend and its input ----
+
+// Where a backend's events come from. On the metal the stream is the
+// input service's merge of the virtio keyboard and the serial line
+// (M8's: the screen pass maps its bytes onto the application's tags and
+// ends the loop on the quit key, A8.3); a backend only needs a stream of
+// event tags, so the seam is here and `Script` is the source a golden
+// runs on — no device, no timing, the same bytes every time.
+interface Input {
+  def next() (R, Int64)
+}
+
+// A fixed list of tags, consumed once, then `(R.error, _)` forever.
+class Script {
+  def init(tags Array[Int64]) {
+    self.tags = tags
+    self.pos = Box.new(0)
+  }
+
+  def next() (R, Int64) {
+    if self.pos.read() >= self.tags.length() {
+      return (R.error, 0)
+    }
+    const tag = self.tags[self.pos.read()]
+    self.pos.replace(self.pos.read() + 1)
+    return (R.ok, tag)
+  }
+}
+
+def script(tags Array[Int64]) Input {
+  return Script.new(tags: tags)
+}
+
+// The sink before `mount`. A backend is built before the loop hands it
+// the application, and a `Box` is typed by what it is born holding, so
+// the cell starts as an `Events` that delivers to no one — never as a
+// number that could not later become one.
+class Unmounted {
+  def deliver(tag Int64) Void {
+  }
+}
+
+def unmounted() ui.Events {
+  return Unmounted.new()
+}
+
+// The backend itself. `mount` and `patch` paint the tree onto the
+// surface — every frame from scratch, the terminal's discipline — and
+// present it, one commit per frame; `run` pulls the input and hands each
+// tag to the loop's sink, which is the whole of what a backend knows
+// about the application (`ui.Events`, one integer per event). The
+// surface is the caller's: the hosted canvas, or the carve a full-screen
+// pass was authorized (A7.2). The backend allocates no screen, and
+// whoever owns the surface reads the frame back.
+class Fb {
+  def init(surface Surface, input Input) {
+    self.surface = surface
+    self.input = input
+    self.sink = Box.new(unmounted())
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    paint(root, self.surface)
+    self.surface.present()
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    paint(next, self.surface)
+    self.surface.present()
+  }
+
+  def run() {
+    var more = true
+    while more {
+      const step = self.input.next()
+      case step {
+        (R.ok, tag) -> { self.sink.read().deliver(tag) }
+        (R.error, _) -> { more = false }
+      }
+    }
+  }
+}
+
+def backend(surface Surface, input Input) ui.Backend {
+  return Fb.new(surface: surface, input: input)
+}

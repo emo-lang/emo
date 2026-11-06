@@ -32,6 +32,200 @@ def read() Int64 {
   return ecall(2, 0, 0, 0, 0, 0, 0)
 }
 
+// The next event of the machine's merged input stream (EmoOS T8.3,
+// the desktop segment's first verb), blocking until one exists. The
+// answer packs the event into one word: the type in bits 48..63 (the
+// device's own event types — 0 the separator, 1 a key, 2 a relative
+// move, 3 an absolute one — and 0x454D the machine's byte event), the
+// code in bits 32..47, the value in bits 0..31. The stream merges the
+// virtio-input device's events with the serial console's bytes, the
+// bytes first; one reader at a time.
+def input_read() Int64 {
+  return ecall(12, 0, 0, 0, 0, 0, 0)
+}
+
+// The desktop segment's commit (EmoOS T8.4): the buffer the grant
+// names lands whole — the damage rect (x, y, w, h) is what the device
+// takes and what the scanout shows, the transfer and the flush both
+// complete before the answer. The grant id 0 is the screen carve's —
+// the caller must be the holder the kernel's authorization table
+// names (reason 3 otherwise); a grant id the table does not hold is
+// reason 4 until the window grants land; a rect outside the display,
+// or empty, reason 4 as well. Answers (R.ok, 0) or (R.error, why).
+def present(grant Int64, x Int64, y Int64, w Int64, h Int64) (R, Int64) {
+  var answer = ecall(10, grant, x, y, w, h, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desktop segment's enumeration (EmoOS T8.4): the index-th
+// output's rectangle, packed (the width in bits 32..63, the height in
+// bits 0..31). An index no output answers is (R.error, "bad
+// argument") — one display is the first answer, not the only shape.
+def output_info(index Int64) (R, Int64) {
+  var answer = ecall(11, index, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// A window buffer of the given size (EmoOS T8.5, verb 13): a
+// contiguous run of the allocator's blocks, mapped into this process's
+// own table at the identity of its physical addresses, owned by the
+// grant the answer names. The answer packs the buffer's location above
+// the grant id: the base's frame number in bits 32..63 — the byte
+// address this program paints is it shifted left by 12 (the frame
+// number keeps the word's sign bit true) — and the grant id in bits
+// 0..31; the id is what present and win_close name the buffer by.
+// (R.error, "the kernel is out of a resource") when the machine
+// cannot back the run or the table has no row left; "bad argument"
+// for a size past a window's bound.
+def win_new(w Int64, h Int64) (R, Int64) {
+  var answer = ecall(13, w, h, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The window buffer's release (EmoOS T8.5, verb 14): the run back to
+// the allocator, the grant gone. Closing a grant this process does not
+// own is (R.error, "not writable"); an id no grant holds is "bad
+// argument".
+def win_close(grant Int64) (R, Int64) {
+  var answer = ecall(14, grant, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The compositor's focus (EmoOS T8.6, verb 15): the stack records the
+// window as the focused one — the input routing the focus will drive
+// is the desktop side's. The owner and the id are the gate's checks.
+def win_focus(grant Int64) (R, Int64) {
+  var answer = ecall(15, grant, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The compositor's move (EmoOS T8.6, verb 16): the position the
+// composition blits the window's frame at. The x rides the blit's
+// word granularity (even, or "bad argument"); the bounds against the
+// display's mode are the compositor's to judge ("bad argument"
+// outside).
+def win_move(grant Int64, x Int64, y Int64) (R, Int64) {
+  var answer = ecall(16, grant, x, y, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The surface's role (EmoOS T8.13, verb 17 — the desktop protocol's
+// third seam): the window buffer the grant names becomes a surface of
+// that role on the compositor's stack — 0 a toplevel, 1 a popup, 2 a
+// subsurface, 3 a panel — and the stack's verbs and the present act on
+// surfaces alone: a buffer with no role declared meets "bad argument"
+// at all of them. Toplevel is the role the compositor implements; the
+// other three are refused with "bad argument" too, by their number —
+// the caller, who chose the role, is the one to name it — as is a role
+// past the vocabulary, or a second declaration for one surface. A full
+// stack is "the kernel is out of a resource".
+def win_role(grant Int64, role Int64) (R, Int64) {
+  var answer = ecall(17, grant, role, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The pointer devices' enumeration (EmoOS T8.13, verb 18): the index-th
+// pointer's axes — the maxima the device's own config states, the X's
+// in bits 32..63 and the Y's in bits 0..31 — the range a program scales
+// the stream's absolute reports to the display by, as the compositor
+// scales its cursor. An index no device answers is (R.error, "bad
+// argument") — one pointer is the first answer, not the only shape.
+def input_info(index Int64) (R, Int64) {
+  var answer = ecall(18, index, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The parent binding (EmoOS T8.15, verb 19, emo-desktop A9.3): a popup
+// or a subsurface declares the toplevel it hangs from — its position
+// is the parent's from then on, its own coordinates relative, the
+// walk painting it immediately above its parent, the parent's death
+// taking it too. The caller must own both grants; a panel or a
+// toplevel takes no parent, and a parent that is no live toplevel is
+// the compositor's refusal.
+def win_parent(grant Int64, parent Int64) (R, Int64) {
+  var answer = ecall(19, grant, parent, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The buffer's format (EmoOS T8.15, verb 20, emo-desktop A9.3): the
+// negotiation's field — the caller names the pixel format it painted,
+// the gate records it on the row. XRGB8888 (0) is the first accepted
+// value; a format the compositor does not carry is refused by its
+// number.
+def win_format(grant Int64, format Int64) (R, Int64) {
+  var answer = ecall(20, grant, format, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The surface's scale (EmoOS T8.15, verb 21, emo-desktop A9.3): the
+// negotiation's other field — the scale the compositor's walk honors
+// when it carries the buffer. Scale 1 is the first accepted value; the
+// shape exists, the values grow under it.
+def win_scale(grant Int64, scale Int64) (R, Int64) {
+  var answer = ecall(21, grant, scale, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
+// caller parks, and the answer is the tick — the next composition's
+// completion, the flush that put a frame on the display. The
+// animation story's client side: a program that redraws on this
+// answer paces itself by the compositor's rhythm, never by a
+// constant. Virtio-gpu has no vblank; the composition is the machine's
+// frame pulse.
+def win_frame() (R, Int64) {
+  var answer = ecall(22, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desktop protocol's version (EmoOS T8.15, verb 23, emo-desktop
+// A9.3): one word, the negotiation's anchor — the answer is 1, the
+// protocol the verbs 10..23 carry. A client that reads it before its
+// first desktop call knows every shape this document names.
+def desktop_version() (R, Int64) {
+  var answer = ecall(23, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // A new process enters this program's top level on a fresh stack —
 // the image's consts are its consts (they are the image's memory), so
 // the first process's const is how the child knows it is the child.
@@ -39,6 +233,24 @@ def read() Int64 {
 // (R.ok, the child's pid number) — the number wait takes.
 def spawn() (R, Int64) {
   var answer = ecall(3, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// A program from the disk (emo-desktop A11.1, verb 24): the ELF the
+// name_len bytes at name name — a file on the volume, read through the
+// filesystem service — becomes its own image and its own process: the
+// kernel loads it into a run of its own, builds the child's table off
+// the image's own segments (per-image segment tables), and enters it
+// at the ELF's entry. The answer is (R.ok, the child's pid number),
+// the number wait takes; the child's exit answers it. "no such file"
+// for a name the volume does not hold; "the kernel is out of a
+// resource" while another exec request is staged or the machine
+// cannot back the image.
+def exec(name Int64, name_len Int64) (R, Int64) {
+  var answer = ecall(24, name, name_len, 0, 0, 0, 0)
   if answer >= 0 {
     return (R.ok, answer)
   }

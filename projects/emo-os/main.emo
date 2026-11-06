@@ -21,7 +21,17 @@
 // filesystem service above it (fs.emo, the design in docs/fs.md) and
 // the supervisor that owns the service's life — the cache block, the
 // spawn, the restart on the death notice the runtime's death hook
-// posts, the parked clients refused at the restart.
+// posts, the parked clients refused at the restart. T8.2 cuts the
+// screen carve from the allocator's region's top (frames.emo) and
+// hands it once, at the spawn: the cells-page token is the grant's
+// channel, the process service takes the hand and pokes the pending
+// cell, space.emo's build maps the carve into the child's table, and
+// the child's exit is the pattern's readback — the first full-screen
+// pass's proof. T8.1 adds the display's driver, a process on the
+// blk_service's shape: the virtio-gpu's control queue on one allocator
+// block, the 2D path the whole need — create, attach the carve as the
+// backing, scanout, transfer, flush — the mode read from the device
+// and never a constant, and the root's flush smoke riding the mailbox.
 //
 //   emo build main.emo --target riscv64
 
@@ -60,10 +70,40 @@ const tick_ring = koff + 0x87000000
 // user address, read through the identity alias.
 const console_svc_cell = koff + 0x870020f0
 const process_svc_cell = koff + 0x870020f8
-const handoff_arga = koff + 0x870020e0
-const handoff_argb = koff + 0x870020e8
+// The console's write slots (T8.15): the gate stages each parked
+// writer's bytes whole — one slot per writer, the length at the head
+// and the bytes after, on the page the linker gives them
+// (.emo_console at 0x87009000), the slot's index in the per-pid cell
+// the gate writes and the service clears. A free slot's length is -1;
+// the sentinels are the console's own init.
+const con_slots = koff + 0x87009000
+const con_slot_size = 2056
+const con_slot_for = koff + 0x8700b100
 const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
+
+// The disk ELFs' blobs (emo-desktop A11.1): the three apps' images,
+// embedded beside the boot image (user.S), their bounds parked at the
+// handoff page's free tail (runtime.S) — and, since T8.21, the
+// spinner's beside them. The first boot writes each onto the volume
+// when a probe says the file is missing — the machine installs its own
+// apps — and every exec after loads from the disk.
+const app_blob_c = koff + 0x870021d0
+const app_blob_c_end = koff + 0x870021d8
+const app_blob_f = koff + 0x870021e0
+const app_blob_f_end = koff + 0x870021e8
+const app_blob_e = koff + 0x870021f0
+const app_blob_e_end = koff + 0x870021f8
+const app_blob_s = koff + 0x87002200
+const app_blob_s_end = koff + 0x87002208
+
+// The process service's screen-pass state (T8.2), on the exec page's
+// tail: the granted child's pid and the carve's base, across requests —
+// the exit that answers them is the proof's moment. (The tail moved
+// when the image records grew their private-page word, A11.2: the
+// cells sit past the exec's name buffer now.)
+const svc_screen_pid = koff + 0x8700c000 + 4072
+const svc_screen_base = koff + 0x8700c000 + 4080
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -78,10 +118,120 @@ const pending_target = koff + 0x870021a8
 // the driver's own discipline, the FDT walk's shape). IRQ 1..8 stay
 // unwired: the completion wait is polled (the console's
 // pre-interrupt discipline); the interrupt-driven wait is a later
-// piece — nothing in the filesystem's work (T7.2) demanded it.
+// piece — nothing in the filesystem's work (T7.2) demanded it. The
+// input device (T8.3) is the first whose line is wired: its events
+// arrive without a request to poll for, and the wake is the whole ISR.
 const virtio_base = koff + 0x10001000
 const pending_waiter = koff + 0x870021c0
 const block = 65536
+
+// The PLIC's registers the input service's init writes (T8.3): the
+// per-IRQ priority, and S-mode context 1's enable word for IRQs
+// 0..31 — the UART's bit 10 already set by the shim's init (T3.7), so
+// the enable is a read-modify-write.
+const plic = koff + 0x0c000000
+const plic_enable = koff + 0x0c002080
+// The compositor's page (T8.6, the link.ld section .emo_comp at
+// 0x87008000): the state that outlives the instances — the generation
+// the restart increments, the display's mode (the init's query), and
+// the window stack (eight entries of grant, x, y and, since T8.13, the
+// surface's role — the position the blit places a window at and the
+// kind of surface it is, the policy the compositor holds; the stack's
+// order is the composition's, the last entry on top). The routing
+// cells ride the handoff page's tail past the grant table's true end
+// (eight rows of 112 bytes from +0x2b00 end at +0x2e80; the cells
+// started at +0x2e00 once, and a staged request's words were the ghost
+// rows the focus's judge read — the cells moved past the table's end,
+// emo-desktop A11.2).
+const comp_page = koff + 0x87008000
+const comp_gen_cell = comp_page
+const comp_top_cell = comp_page + 8
+const comp_focus_cell = comp_page + 16
+const comp_mode_w = comp_page + 24
+const comp_mode_h = comp_page + 32
+const comp_stack = comp_page + 64
+// The entry grew its parent word with the roles' substance (T8.15,
+// emo-desktop A9.3): grant, x, y, role, parent — a popup's or a
+// subsurface's coordinates are its parent's from the binding on, and
+// the walk paints it immediately above the parent it names.
+const comp_entry = 40
+const comp_entries = 8
+// The surface roles (T8.13, emo-desktop A9.1 — the protocol's third
+// seam): the vocabulary the gate bounds win_role to, and the one the
+// stack implements — every one since T8.15 (A9.3). A toplevel is the
+// window the shell drags and focuses; a popup or a subsurface hangs
+// from one by verb 19 and paints at its position relative to the
+// parent's, immediately above it; a panel is the shell's strip, the
+// walk's topmost layer.
+const role_toplevel = 0
+const role_popup = 1
+const role_subsurface = 2
+const role_panel = 3
+// The desktop's own canvas (T8.27, emo-desktop A13): the full-screen
+// surface the walk paints under every window — the wallpaper and the
+// desktop's icons ride it. One to a machine: a second declaration is
+// the argument refusal. It is never raised and never focused by a hit
+// — the press that lands on it (no window, no panel) names it the
+// focused one, so the desktop's owner hears the click.
+const role_wallpaper = 4
+// The frame callbacks (T8.15, A9.3 — the fifth seam): the pids parked
+// on verb 22, answered at the next composition's completion — the
+// tick's client side. Four deep; a fifth parks into a full ring is
+// the resource refusal, the caller's retry its own. Past the stash's
+// cells — the page's map grew twice (T8.13's entries, A9.2's dead
+// cell), and the dead cell's first seat (+448) was the stash's second
+// slot, the overlap the map's re-draw names.
+const comp_cb_count = comp_page + 480
+const comp_cb_cells = comp_page + 488
+const comp_cb_depth = 4
+// The desktop's background (T8.13): the word the composition clears
+// the carve to before the stack's walk — the color under every window,
+// what a moved window leaves behind. A slate the palette's roles stand
+// out of; `run.sh`'s model of the display names the same bytes.
+const comp_background = 0x303038
+// The cursor plane's state (T8.11), on the same page so a restarted
+// instance finds the sprite where the last one left it: the drawn
+// sprite's top-left corner, whether it is on the carve, the pointer
+// generation it shows, and whether the plane's first line is out.
+const comp_cursor_x = comp_page + 384
+const comp_cursor_y = comp_page + 392
+const comp_cursor_shown = comp_page + 400
+const comp_cursor_gen = comp_page + 408
+const comp_cursor_said = comp_page + 416
+const comp_svc_cell = koff + 0x87002e80
+const comp_sup_cell = koff + 0x87002e88
+const comp_args = koff + 0x87002e90
+// The compositor's argument slots (emo-desktop A12.1, gate.emo's own
+// note): one seat per in-flight verb, its index the route carried (the
+// filesystem's request slot's shape) — the op field of the request
+// word is op + 32·seat, the seat freed when the dispatch has read it.
+const comp_slots = comp_page + 2704
+const comp_slot_bytes = 40
+const comp_panel_cell = comp_page + 40
+// The wallpaper's grant (T8.27, emo-desktop A13), named at its role's
+// declaration like the panel's — the one surface the walk paints under
+// the rest and the one a background press focuses. In the gap past the
+// dead cells' 256 seats (+600..+2648) and before the argument slots
+// (+2704).
+const comp_wallpaper_cell = comp_page + 2648
+// The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
+// the trap shim writes the dead pass's pid into its own cell on every
+// user death (fault, heap, exit) and the comp service's walk reclaims
+// every owner it sees at its next composition — the notice without a
+// gate_post from the trap. One cell per pid, because a pass's exit can
+// now land between another pass's death and the next composition (the
+// frame callback's park carries the win pass across the client era):
+// a single seat held the last death and the first owner's windows
+// stuck — the reborn frame's carried sum named it. One write per pid
+// ever (a slot is never reused), so the service's clear cannot race
+// the write; the array's 256 pids are the bound, a death past it is
+// the reclaim that never runs, documented. Past the stash's cells:
+// the first seat (+448) was the stash's second slot — a second
+// stashed word would have walked over a dead pid, and a death between
+// two stashes never fired it.
+const comp_dead_cells = comp_page + 600
+const comp_dead_pids = 256
+
 
 // The filesystem's pages (T7.2, docs/fs.md): the service's pid cell
 // the gate routes by — cleared by the death notice the moment the
@@ -91,6 +241,153 @@ const block = 65536
 const fs_pid_cell = koff + 0x87005000
 const supervisor_cell = koff + 0x87005008
 const notice_op = 256
+
+
+// The screen carve's grant channel (T8.2): the token cell on the user
+// cells page — the one crossing every table maps, so any spawner (the
+// proof chain today, the shell's desktop command tomorrow) pokes it
+// and the claimed pass reads it — and the pending cell on the handoff
+// page the spawn-side half rides in: the process service reads the
+// token at the spawn, takes the carve's hand (frames.screen_take,
+// once — a second claimant is the refusal), and pokes the carve's
+// kernel address into the pending cell for space.emo's build to map
+// into the child's table before the child's first store. The pending
+// cell sits on the handoff page past the write's old one-buffer
+// staging (the staging grew into the console page's four slots,
+// T8.15 — the first boot caught the tail's collision, the slots the
+// two-writers race).
+const screen_cell = 0x87fff040
+const screen_pending_cell = koff + 0x870029e0
+
+
+// The input service's cells (T8.3): the pid cell the gate routes the
+// read verb and the input_read verb by, and the IRQ cell the input
+// drivers park their transports' PLIC numbers in — a mask of bits, one
+// per wired line (T8.11: the keyboard's and the pointer's), which the
+// trap shim's external branch tests the claim against (0 = nothing
+// wired, the loud end it always was). Both live on the handoff page
+// past the staging area and the screen's pending cell.
+const input_svc_cell = koff + 0x870029e8
+const input_irq_cell = koff + 0x870029f0
+
+// The pointer's cells (T8.11, emo-desktop A8.2): the pointer driver's
+// half of the merged stream and of the cursor plane. The ring the
+// driver fills and the input service drains — the producer cursor, the
+// consumer cursor, then 32 packed-event entries, on the input ring's
+// page past the serial's ring (the UART's bytes and the pointer's
+// events reach the merge the same way: a ring the ISR's wake drains);
+// the position cells — the device's last absolute X and Y, the axes'
+// maxima read off its config, the generation the driver counts at each
+// report's separator — the compositor scales to the mode; and the
+// notice flag: one notice word in the compositor's mailbox at a time,
+// set by the driver when it posts, cleared by the compositor when it
+// reads the position, so a burst of reports is one composition.
+const pointer_ring_prod = koff + 0x87001800
+const pointer_ring_cons = koff + 0x87001808
+const pointer_ring = koff + 0x87001810
+const pointer_x_cell = koff + 0x87002ec0
+const pointer_y_cell = koff + 0x87002ec8
+const pointer_max_x_cell = koff + 0x87002ed0
+const pointer_max_y_cell = koff + 0x87002ed8
+const pointer_gen_cell = koff + 0x87002ee0
+const pointer_notice_cell = koff + 0x87002ee8
+const pointer_dirty_cell = koff + 0x87002ef0
+const pointer_press_cell = koff + 0x87002f00
+// The held reads (emo-desktop A11.2): the multi-image desktop's
+// readers park on the same stream, and the bytes and keys are the
+// focused surface's owner's — a reader the focus does not name has
+// its read held here, unanswered, the reader asleep at its gate-wait
+// (nothing crosses, nothing allocates) until the focus names it or
+// its row dies with the window it closed. Four seats, the pid word
+// zero when free — on the handoff page's tail, past the pointer's and
+// the input argument's (the frame allocator's page is the next up).
+const input_hold = koff + 0x87002f10
+const input_hold_seats = 4
+const input_hold_seat = 16
+const pointer_op = 18
+// The input service's argument cell (T8.13, emo-desktop A9.1): the
+// index input_info (verb 18) stages — the pointer's axes are the
+// device's answer the compositor already scales by, and this verb hands
+// them to a client that scales the stream's reports itself.
+const input_args = koff + 0x87002ef8
+
+// The exits' word in the merged stream's side channel (emo-desktop
+// A12.1, EmoOS T8.19): a child's death rides to its parent — the
+// desktop's shell, a reader that never waits, is how an application's
+// end is heard. The ring is the death's seat between the reaper's
+// push and the parent's read: eight seats of two words, the parent's
+// pid then the packed event (type 0x4558 "EX" — the machine types'
+// own family, 0x454D "EM" being the serial bytes' — the child's pid
+// in the code field, the exit code in the value), on the handoff
+// page's tail past the held reads. A full ring drops the event; the
+// exit table still answers the wait verb.
+const exit_ring_head = koff + 0x87002f50
+const exit_ring_tail = koff + 0x87002f58
+const exit_ring = koff + 0x87002f60
+const exit_ring_seats = 8
+const exit_ring_seat = 16
+const ev_exit = 0x4558
+
+// The parents (emo-desktop A12.1): one cell per pid, the spawner's
+// pid written at the spawn and at the exec — one write per pid ever,
+// the dead-owners' discipline. The death reads its own cell and the
+// ring entry names its reader (.emo_proc, 0x8700d000).
+const parent_for = koff + 0x8700d000
+const parent_bound = 256
+
+// The desktop segment's cells (T8.4, T8.5): the display service's pid
+// cell the gate routes the desktop verbs by; the authorization table's
+// first entry — the screen carve's grant, the pid the process service
+// parked the moment it handed the carve out (a dead pid never matches:
+// the slots are never reused, and the grant is the machine's desktop
+// for its life); the five argument cells the gate fills for the
+// desktop verbs (the grant id, the damage rect, win_new's w and h);
+// the caller's space word the shim stages at every ecall and the
+// gate's dispatch copies into the arguments (win_new's mapping
+// target); the grant id the next win_new answers; and the
+// window grants' rows — twelve words each, eight of them, zero = a
+// free row. All past the staging area's tail.
+const gpu_svc_cell = koff + 0x870029f8
+const screen_grant_cell = koff + 0x87002a00
+const gpu_args = koff + 0x87002a08
+const caller_space_cell = koff + 0x87002a40
+const grant_next_cell = koff + 0x87002a38
+const grant_table = koff + 0x87002b00
+
+
+// The display (T8.1): the virtio-gpu device rides the same eight mmio
+// transports the block driver scans — DeviceID 16 — and the screen
+// carve's physical address is the backing the 2D resource attaches:
+// the device reads the framebuffer the pass paints straight out of the
+// carve (frames.emo owns the region's exclusion, T8.2). The format is
+// XRGB8888 — B8G8R8X8 in the device's naming — the decided baseline's
+// own; the mode itself is the device's to say (GET_DISPLAY_INFO's
+// answer, never a constant — the protocol's second seam).
+const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA view
+const screen_size = 0x400000
+const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
+
+// The cursor plane's sprite memory (T8.11, emo-desktop A8.2): the
+// carve's last 64 KiB, past any framebuffer the carve can hold — the
+// MiB beside the baseline's buffer T8.2 set aside for it. The desktop
+// writes the sprite there (the full-screen pass, which has the carve
+// mapped): past the block's first line — T8.2's proof pattern pokes the
+// first word of every 64 KiB of the carve, this block's included, so
+// the sprite starts at +64 — the header's four 32-bit words: the width,
+// the height, the hotspot's x and y; then width × height ARGB8888
+// words, a top byte of 0xFF an opaque pixel and 0 a clear one; the
+// header written last so a torn read sees no sprite. The compositor
+// reads the sprite from there at every composition and keeps the pixels
+// it covers in the save-under half, kernel-private (docs/desktop-abi.md).
+const sprite_base = screen_base + screen_size - 65536
+const sprite_header = sprite_base + 64
+const sprite_pixels = sprite_base + 80
+const sprite_under = sprite_base + 0x8000
+
+// The arena's run (T8.9): the blocks one child's arena takes — a
+// contiguous run claimed in one take at the spawn (frames.emo's
+// arena_run, the stub parks it in the runtime's emo_arena_run_len).
+const arena_run = 2
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
@@ -107,6 +404,20 @@ const sv39_satp = koff + 0x87004008
 
 def op_of(w Int64) Int64 {
   return w >> 32
+}
+
+// The compositor's request word carries its seat beside the op (the
+// gate's route did the packing, the filesystem's request slot's own
+// shape): the op field is op + 32·seat, the seat names the argument
+// envelope the dispatch reads and frees.
+def comp_slot_of(w Int64) Int64 {
+  var t = op_of(w)
+  return t / 32
+}
+
+def comp_op_of(w Int64) Int64 {
+  var t = op_of(w)
+  return t - (t / 32) * 32
 }
 
 def caller_of(w Int64) Int64 {
@@ -203,14 +514,18 @@ def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
   console_put_byte(48)  // 0
   console_put_byte(120) // x
   fault_hex(addr)
+  // TEMPORARY (T8.5 debug): the live satp at the fault, staged by the
+  // shim — the hardware's own root beside the software's.
+  console_put_byte(32)  // space
+  console_put_byte(115) // s
+  console_put_byte(97)  // a
+  console_put_byte(116) // t
+  console_put_byte(112) // p
+  console_put_byte(32)  // space
+  fault_hex(peek64(koff + 0x87002a48))
   console_put_byte(10)
 }
 
-// The heap's death report (T5.1): a user pass whose own arena ran dry
-// — announced by the user image's allocator through the gate (verb 5),
-// printed by the supervisor on the offender's own stack, zero
-// allocation. The shim ends the pass after this returns; the machine
-// continues.
 def heap_report(pid Int64) Void {
   console_put_byte(117) // u
   console_put_byte(115) // s
@@ -311,50 +626,78 @@ def dma_report() Void {
   console_put_byte(10)
 }
 
-// One byte from the input ring: sleep until the device world has one,
-// then hand it over. The console service's read half and the boot
-// demo's readers all land here.
-def take_byte() Int64 {
-  if peek64(in_cons) == peek64(in_prod) {
-    device_wait()
+// The screen carve's proof (T8.2): the machine's first full-screen pass
+// painted its pattern through its own table into the carve — one word
+// per 64 KiB across the whole 4 MiB — and exited; the process service
+// reads the same words back through the kernel's high alias. One RAM,
+// two tables: the words are the hand's proof, and the line names the
+// base the pass painted — the physical address, the identity its table
+// mapped and the number the display's device will scan out (T8.1). A
+// wrong word is a kernel bug, the loud end.
+def screen_check(base Int64) Void {
+  var i = 0
+  while i < 64 {
+    if peek64(base + (i * 65536)) != 0x7363726E + i {
+      println("screen: the pattern did not land")
+      halt()
+    }
+    i = i + 1
   }
-  var cons = peek64(in_cons)
-  var b = peek8(in_ring + (cons % 128)).to_int64()
-  poke64(in_cons, cons + 1)
-  return b
+  console_put_byte(115) // s
+  console_put_byte(99)  // c
+  console_put_byte(114) // r
+  console_put_byte(101) // e
+  console_put_byte(101) // e
+  console_put_byte(110) // n
+  console_put_byte(32)  // space
+  console_put_byte(48)  // 0
+  console_put_byte(120) // x
+  fault_hex(sv39.pa_of(base))
+  console_put_byte(32)  // space
+  console_put_byte(111) // o
+  console_put_byte(107) // k
+  console_put_byte(10)
 }
 
-// The console service (T3.7/T4.4): the byte channel's one process.
-// The gate's write verb prints its buffer through the polled driver
-// and answers the count; the gate's read verb answers the next byte,
-// sleeping in the device-wait while the ring is empty; the boot
-// demo's readers speak the older protocol — a bare pid — and get the
-// byte by mailbox. The kinds separate by magnitude: a gate request
-// rides op << 32, a pid word never reaches that high. The announce
-// goes to the boss, whose pid is passed — a `do` bound to a value is
-// a lowering this tree does not trust (T3.7's note).
+// The console service (T3.7/T4.4), the machine's output since T8.3:
+// the gate's write verb prints its buffer through the polled driver
+// and answers the count. The read verb and the boot demo's readers
+// moved to the input service (T8.3) — the machine's input is one
+// service, the console the machine's output — so any message that is
+// not a write is a kernel bug, the loud end.
 def console_service(boss Pid) Void {
+  // The slots start free (T8.15): the linker's NOLOAD page zeros, and
+  // a zero length reads as pending — the free sentinel is this
+  // service's first act, before any writer can ask for a slot.
+  poke64(con_slots, -1)
+  poke64(con_slots + con_slot_size, -1)
+  poke64(con_slots + 2 * con_slot_size, -1)
+  poke64(con_slots + 3 * con_slot_size, -1)
   boss <- self_pid()
   while true {
     receive {
       w -> {
         var op = op_of(w)
         if op == 1 {
-          var buf = peek64(handoff_arga)
-          var len = peek64(handoff_argb)
+          // The write's bytes stage whole in the caller's slot (T8.15):
+          // the gate names it in the per-pid cell — a process parks per
+          // ecall, so the one cell is the whole of the race — the
+          // slot's head the length, the bytes after. Read here, the
+          // slot and the cell freed, the count answered.
+          var slot = peek64(con_slot_for + (caller_of(w) * 8))
+          var s = con_slots + (slot * con_slot_size)
+          var len = peek64(s)
           var i = 0
           while i < len {
-            console_put_byte(peek8(buf + i).to_int64())
+            console_put_byte(peek8(s + 8 + i).to_int64())
             i = i + 1
           }
+          poke64(s, -1)
+          poke64(con_slot_for + (caller_of(w) * 8), -1)
           gate_reply(caller_of(w), len)
         } else {
-          if op == 2 {
-            gate_reply(caller_of(w), take_byte())
-          } else {
-            var b = take_byte()
-            w <- b
-          }
+          println("console: the message is nobody's")
+          halt()
         }
       }
     }
@@ -372,21 +715,71 @@ def console_service(boss Pid) Void {
 // transaction runs at a time, so the one pending-wait pair of cells is
 // the whole of the waiting bookkeeping; the request's arguments live in
 // this service's own cells (proc_arga/proc_argb), not the console's.
-def process_service(boss Pid) Void {
-  boss <- self_pid()
-  while true {
-    receive {
-      w -> {
-        var op = op_of(w)
-        if op == 3 {
-          if frames.spare() < 2 {
+//
+// The screen carve's grant rides the spawn (T8.2): the cells-page
+// token poked by the spawner is read here, at the spawn — the carve's
+// mapping must exist before the child's first store, and the build
+// (space.emo) runs inside user_spawn, so the grant crosses in the
+// pending cell. The hand is taken at the token: a second claimant's
+// spawn is the resource refusal (−5) before anything is staged, the
+// stack untouched. The granted child's pid and the carve's base stay
+// in the service's own words across the transactions, and the exit
+// that answers them is the proof's moment: the pattern read back
+// through the kernel's half before the waiting parent is answered.
+// One request, whichever door it came from (the stash or the
+// mailbox): the op dispatch the fs service's serve_gate shapes. The
+// word rides in as the parameter — a raw gate word is a tagged big
+// int, and the conversion a store into a local takes is a deref the
+// word cannot survive; passed as the argument the typed def takes, it
+// lands raw (the fs service's own discipline). The screen pass's pid
+// and base live on the exec page's tail: state across requests, the
+// cells the service's own.
+def process_serve(w Int64) Void {
+    var op = op_of(w)
+    if op == 3 {
+          // A spawn is backed before it is served: the stack block plus
+          // the arena's run (arena_run) — a spawn the allocator cannot
+          // back is the refusal the caller sees, never the runtime's
+          // loud end.
+          if frames.spare() < 1 + arena_run {
             gate_reply(caller_of(w), -5)
           } else {
-            var stack = frames.take()
-            gate_reply(caller_of(w), user_spawn(peek64(user_program_cell), sv39.pa_of(stack) + block))
+            var screen = 0
+            var ok = true
+            if peek64(screen_cell) != 0 {
+              screen = frames.screen_take()
+              ok = screen != 0
+            }
+            if !ok {
+              gate_reply(caller_of(w), -5)
+            } else {
+              var stack = frames.take()
+              if screen != 0 {
+                poke64(screen_pending_cell, screen)
+              }
+              var child = user_spawn(exec.entry_for(caller_of(w)),
+                sv39.pa_of(stack) + block)
+              if screen != 0 {
+                poke64(svc_screen_pid, child)
+                poke64(svc_screen_base, screen)
+                // The authorization table's first entry (T8.4): the
+                // carve's grant names its holder — the gate's present
+                // check reads it. The slots are never reused, so a
+                // dead holder's pid can never match a new caller.
+                poke64(screen_grant_cell, child)
+              }
+              // the parent's own cell (emo-desktop A12.1, EmoOS
+              // T8.19): the spawner's pid, one write per pid ever —
+              // the dead-owners' discipline, the exit event's reader
+              // named at the birth
+              if child < parent_bound {
+                poke64(parent_for + (child * 8), caller_of(w))
+              }
+              gate_reply(caller_of(w), child)
+            }
           }
-        } else {
-          if op == 4 {
+    } else {
+      if op == 4 {
             var n0 = peek64(exit_count)
             var i0 = 0
             var hit = -1
@@ -403,21 +796,114 @@ def process_service(boss Pid) Void {
               poke64(pending_target, peek64(proc_arga))
               poke64(pending_flag, 1)
             }
+      } else {
+        if op == 5 {
+          // exec (emo-desktop A11.1): the disk ELF the staged name
+          // names. The machine is backed for the runtime's own takes
+          // first (the stack and the arena — a failure inside
+          // user_spawn is the loud end, never a refusal), the name
+          // copied out of the staging at the pickup — the busy cell
+          // held from the staging to here is spent — and the
+          // transaction reads the volume, loads the image and starts
+          // it. A refusal is the reason number, the caller's to name.
+          if frames.spare() < 1 + arena_run {
+            gate_reply(caller_of(w), -5)
           } else {
-            var pid = peek64(proc_argb)
-            var code = peek64(proc_arga)
-            var n = peek64(exit_count)
-            if n < 8 {
-              poke64(exit_pids + (n * 8), pid)
-              poke64(exit_codes + (n * 8), code)
-              poke64(exit_count, n + 1)
+            var fsn = peek64(fs_pid_cell)
+            if fsn == 0 {
+              gate_reply(caller_of(w), -5)
+            } else {
+              exec.copy_name(exec.name_buf())
+              exec.clear_busy()
+              var ans = exec.transaction(pid_at(fsn), exec.name_buf(),
+                exec.name_len())
+              // the parent's own cell (emo-desktop A12.1, EmoOS
+              // T8.19): the exec's caller is the child's parent — the
+              // spawn's own write at the disk ELF's door, one write
+              // per pid ever
+              if ans >= 0 {
+                if ans < parent_bound {
+                  poke64(parent_for + (ans * 8), caller_of(w))
+                }
+              }
+              gate_reply(caller_of(w), ans)
             }
-            if peek64(pending_flag) == 1 {
-              if peek64(pending_target) == pid {
-                poke64(pending_flag, 0)
-                gate_reply(peek64(pending_waiter), code)
+          }
+        } else {
+          var pid = peek64(proc_argb)
+          var code = peek64(proc_arga)
+          var n = peek64(exit_count)
+          if n < 8 {
+            poke64(exit_pids + (n * 8), pid)
+            poke64(exit_codes + (n * 8), code)
+            poke64(exit_count, n + 1)
+          }
+          // The death's word to its parent (emo-desktop A12.1, EmoOS
+          // T8.19): the exit table answers the waits; the ring answers
+          // the readers that never wait — the desktop's shell among
+          // them. The parent's cell names the reader, the event the
+          // packed word the stream carries (the child's pid in the
+          // code field, the exit code in the value), and the input
+          // service's kick the wake: a held read of the parent's is
+          // judged the next pass, a serve-parked one wakes to find
+          // the event at its loop's top — gate_post wakes both parks.
+          if pid > 0 {
+            if pid < parent_bound {
+              var parent = peek64(parent_for + (pid * 8))
+              if parent > 0 {
+                exit_event_push(parent,
+                  (ev_exit << 48) | (pid << 32) | code)
+                var isvc = peek64(input_svc_cell)
+                if isvc != 0 {
+                  gate_post(isvc, 13 << 32)
+                }
               }
             }
+          }
+          var spid = peek64(svc_screen_pid)
+          if spid != 0 {
+            if pid == spid {
+              poke64(svc_screen_pid, 0)
+              screen_check(peek64(svc_screen_base))
+            }
+          }
+          if peek64(pending_flag) == 1 {
+            if peek64(pending_target) == pid {
+              poke64(pending_flag, 0)
+              gate_reply(peek64(pending_waiter), code)
+            }
+          }
+        }
+      }
+    }
+}
+
+def process_service(boss Pid) Void {
+  boss <- self_pid()
+  // The exec page's request state is boot-zeroed, but a restart (or a
+  // first run after a stale image) must not inherit a held busy cell —
+  // every exec would be refused forever. The stash count and the
+  // screen cells go with it.
+  poke64(exec.busy_addr(), 0)
+  poke64(exec.stash_count_addr(), 0)
+  poke64(svc_screen_pid, 0)
+  poke64(svc_screen_base, 0)
+  while true {
+    // The stash first (the fs service's shape): a word set aside while
+    // an exec transaction waited on the filesystem's reply is served
+    // before the mailbox is touched. A tuple at this loop is nobody
+    // the service knows — the loud end.
+    var w = exec.stash_pop()
+    if w != 0 {
+      process_serve(w)
+    } else {
+      receive {
+        x -> {
+          if op_of(x) >= 0 {
+            process_serve(x)
+          } else {
+            println("process: a stranger in the mailbox")
+            halt()
           }
         }
       }
@@ -465,7 +951,8 @@ def blk_zero(a Int64, words Int64) Void {
 // discipline, descriptors 0..2 reused. Op 3 writes the sector from
 // the buffer, op 4 reads it into the buffer; the answer is the sector
 // number, the echo the client checks.
-def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
+def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64,
+               dlen Int64) Int64 {
   var hdr = q + 0x3000
   var stat = q + 0x3400
   var ty = 0
@@ -482,7 +969,7 @@ def blk_submit(dev Int64, q Int64, op Int64, sector Int64, buf Int64) Int64 {
   poke64(q, sv39.pa_of(hdr))
   poke64(q + 8, 16 | (1 << 32) | (1 << 48))
   poke64(q + 16, sv39.pa_of(buf))
-  poke64(q + 24, 512 | (dflags << 32) | (2 << 48))
+  poke64(q + 24, dlen | (dflags << 32) | (2 << 48))
   poke64(q + 32, sv39.pa_of(stat))
   poke64(q + 40, 1 | (2 << 32))
   var avail = q + 0x1000
@@ -573,16 +1060,27 @@ def blk_service(boss Pid) Void {
   mmio32(dev + 0x070, 15)
   var cap = peek64(dev + 0x100)
   println("blk ${cap} ready")
+  // The run's chunk (emo-desktop A11.1): the device's own size_max
+  // word — the config's second field, read beside the capacity —
+  // bounds one data descriptor; a word the device does not state or
+  // states wildly is the sector's own 2048, the legacy bound.
+  var smax = mmio32r(dev + 0x108)
+  if smax == 0 || smax > 65536 || (smax % 512) != 0 {
+    smax = 2048
+  }
+  var blk_chunk = smax / 512
   boss <- self_pid()
   var from = boss
   while true {
     var w = 0
     var d = 0
+    var n = 0
     receive {
-      (x, f, y) -> {
+      (x, f, y, c) -> {
         w = x
         from = f
         d = y
+        n = c
       }
     }
     var op = w >> 32
@@ -590,8 +1088,1151 @@ def blk_service(boss Pid) Void {
     if op == 5 {
       from <- cap
     } else {
-      from <- blk_submit(dev, q, op, sector, d)
+      // The request's sectors are one contiguous run of the caller's
+      // buffer (the gate checked it so; the disk ELFs' install made
+      // the run the unit — one message per file, not one per sector,
+      // the per-sector message storm the install named being the leak
+      // that drained a service's arena) — and the driver splits the
+      // run into the device's own chunks, the data descriptor's length
+      // bounded by the size_max word read at init, the completions
+      // polled per request, no allocation per chunk.
+      var left = n
+      var at = sector
+      var off = 0
+      while left > 0 {
+        var take = left
+        if take > blk_chunk {
+          take = blk_chunk
+        }
+        blk_submit(dev, q, op, at, d + off, take * 512)
+        at = at + take
+        off = off + take * 512
+        left = left - take
+      }
+      from <- sector
     }
+  }
+}
+
+// The display's driver (T8.1), a process like the block driver: it owns
+// the virtio-gpu's control queue — one 64 KiB block from the frame
+// allocator, held for the service's life — and speaks the 2D path, the
+// whole need at M7: create the resource, attach the screen carve as its
+// backing, point scanout 0 at it, and (on request) transfer the painted
+// pixels to the host and flush them to the display. The queue is the
+// blk_service's shape: descriptors 0..1 reused, one command in flight,
+// the doorbell after a fence, the completion polled and bounded — the
+// interrupt-driven wait is the later piece the console's T3.7 note
+// names, and the GPU's IRQ stays unwired. The mode is never a constant:
+// GET_DISPLAY_INFO's answer is the real one (the protocol's second
+// seam), and the resource, the scanout, and the flush all take its
+// rectangle. The mailbox: op 0 flushes (the whole rect, transfer then
+// flush, the request word echoed back), op 1 answers the mode packed —
+// the output_info verb's kernel side will ride it (T8.4) — and an op
+// the driver does not serve comes back negated; any OK the device
+// refuses is the loud end.
+def gpu_hdr(a Int64, ty Int64) Void {
+  poke32(a, ty)
+  poke32(a + 4, 0)
+  poke64(a + 8, 0)
+  poke64(a + 16, 0)
+}
+
+def gpu_rect(a Int64, x Int64, y Int64, w Int64, h Int64) Void {
+  poke32(a, x)
+  poke32(a + 4, y)
+  poke32(a + 8, w)
+  poke32(a + 12, h)
+}
+
+// One command through the control queue: the request at +0x3000 is one
+// descriptor (device-read), the 512-byte response buffer at +0x3400 the
+// second (device-written — the display info's response is 408 bytes,
+// the largest the protocol answers, and every command may offer the
+// whole of it); the avail index, the doorbell, the bounded poll of the
+// used index, and the response's type word back. The type is the
+// caller's to judge — OK_NODATA (0x1100) for the setup and flush
+// commands, OK_DISPLAY_INFO (0x1101) for the display info.
+def gpu_submit(dev Int64, q Int64, req_len Int64) Int64 {
+  poke64(q, sv39.pa_of(q + 0x3000))
+  poke64(q + 8, req_len | (1 << 32) | (1 << 48))
+  poke64(q + 16, sv39.pa_of(q + 0x3400))
+  poke64(q + 24, 512 | (2 << 32))
+  var avail = q + 0x1000
+  var nidx = peek16r(avail + 2) + 1
+  poke64(avail, nidx << 16)
+  fence()
+  mmio32(dev + 0x050, 0)
+  var used = q + 0x2000
+  var spins = 0
+  var seen = peek16r(used + 2)
+  while seen != nidx {
+    spins = spins + 1
+    if spins > 10000000 {
+      println("gpu: the device never answered")
+      halt()
+    }
+    seen = peek16r(used + 2)
+  }
+  return peek32(q + 0x3400)
+}
+
+// The flush smoke's paint (T8.1): the framebuffer's rows, a
+// deterministic gradient — one color per row, both pixels of every
+// 8-byte pair the same — written through the kernel's high alias of
+// the carve. A fully typed native body over raw words: zero
+// allocation, the frame's scale priced at word stores (the
+// assessment's blit rule — a bytewise copy cannot survive TCG).
+def gpu_paint(base Int64, rows Int64, row_words Int64) Void {
+  var r = 0
+  while r < rows {
+    var c = 0xFF000000 | (((r * 5) & 255) << 16) | (((r * 3) & 255) << 8) | 64
+    var word = c | (c << 32)
+    var w = 0
+    while w < row_words {
+      poke64(base + (r * row_words + w) * 8, word)
+      w = w + 1
+    }
+    r = r + 1
+  }
+}
+
+// The mode answer's halves (T8.1): the width rides the op half, the
+// height the caller half — one packed word, decoded by typed defs like
+// every mailbox word (the riscv64 emitter refuses the operators on a
+// dynamic value, T7.2's discipline).
+def gpu_width(w Int64) Int64 {
+  return w >> 32
+}
+
+def gpu_height(w Int64) Int64 {
+  return w & 4294967295
+}
+
+// A rectangle in one word (T8.11): the compositor's rect flush rides
+// the mailbox tuple's third word — x in bits 48..63, y in 32..47, the
+// width in 16..31, the height in 0..15 — decoded by typed defs like
+// every mailbox word.
+def rect_word(x Int64, y Int64, w Int64, h Int64) Int64 {
+  return (x << 48) | (y << 32) | (w << 16) | h
+}
+
+def rect_x(r Int64) Int64 {
+  return (r >> 48) & 65535
+}
+
+def rect_y(r Int64) Int64 {
+  return (r >> 32) & 65535
+}
+
+def rect_w(r Int64) Int64 {
+  return (r >> 16) & 65535
+}
+
+def rect_h(r Int64) Int64 {
+  return r & 65535
+}
+
+// The atomic commit (T8.4): the damage rect's transfer to the host
+// resource, then the flush to the display — the two device commands
+// complete before the answer, so a frame lands whole or the machine
+// ends loudly; the scanout shows the old frame until the flush's own
+// completion. The rect is the mode's to judge: outside it, or empty,
+// is the argument refusal the caller's stub names.
+def gpu_present(dev Int64, q Int64, gw Int64, gh Int64, x Int64, y Int64, w Int64, h Int64) Int64 {
+  if x < 0 || y < 0 || w < 1 || h < 1 {
+    return -4
+  }
+  if (x + w) > gw || (y + h) > gh {
+    return -4
+  }
+  gpu_hdr(q + 0x3000, 0x0105)
+  gpu_rect(q + 0x3018, x, y, w, h)
+  poke64(q + 0x3028, (y * gw + x) * 4)
+  poke32(q + 0x3030, 1)
+  if gpu_submit(dev, q, 56) != 0x1100 {
+    println("gpu: the transfer refused")
+    halt()
+  }
+  gpu_hdr(q + 0x3000, 0x0104)
+  gpu_rect(q + 0x3018, x, y, w, h)
+  poke32(q + 0x3028, 1)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the flush refused")
+    halt()
+  }
+  return 0
+}
+
+// The grant table's first free row, or 0 (T8.5) — the id word's zero
+// is a free row's mark.
+def grant_row_pick() Int64 {
+  var i = 0
+  while i < 8 {
+    var row = grant_table + (i * 112)
+    if peek64(row) == 0 {
+      return row
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+// The grant table's row for that id, or 0 (T8.5) — the window
+// present's ready record and the close's release both find it here.
+def grant_row_of(id Int64) Int64 {
+  var i = 0
+  while i < 8 {
+    var row = grant_table + (i * 112)
+    if peek64(row) == id {
+      return row
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+def gpu_service(boss Pid) Void {
+  // The slot scan: a transport answers with the magic and the version
+  // whether or not a device rides it; the display device is DeviceID 16.
+  var dev = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 16 {
+        dev = cand
+      }
+    }
+    slot = slot + 1
+  }
+  if dev == 0 {
+    println("gpu: no display device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("gpu: no block for the queue")
+    halt()
+  }
+  blk_zero(q, 16)
+  blk_zero(q + 0x1000, 3)
+  blk_zero(q + 0x2000, 9)
+  blk_zero(q + 0x3000, 16)
+  blk_zero(q + 0x3400, 64)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  // The features: VIRTIO_F_VERSION_1 alone, offered through the sel
+  // register the 64-bit poke rides (T7.1's byte-composition note) —
+  // no VIRGL, no EDID: the 2D path needs neither.
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("gpu: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 8 {
+    println("gpu: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 8)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  // The mode is the device's answer, not a constant (the protocol's
+  // second seam): the display info's response is the header plus one
+  // pmode per scanout — rect first, the enabled flag after — and
+  // scanout 0's rectangle is what the resource, the scanout, and every
+  // flush take.
+  gpu_hdr(q + 0x3000, 0x0100)
+  if gpu_submit(dev, q, 24) != 0x1101 {
+    println("gpu: the display info refused")
+    halt()
+  }
+  var pmode = peek32(q + 0x3400 + 40)
+  if pmode != 1 {
+    println("gpu: no enabled display")
+    halt()
+  }
+  var gw = peek32(q + 0x3400 + 32)
+  var gh = peek32(q + 0x3400 + 36)
+  // RESOURCE_CREATE_2D (40 bytes): the resource is the baseline's
+  // format at the display's size. Every payload starts at +0x18, the
+  // header's 24 bytes behind it.
+  gpu_hdr(q + 0x3000, 0x0101)
+  poke32(q + 0x3018, 1)
+  poke32(q + 0x301c, gpu_format_bgrx)
+  poke32(q + 0x3020, gw)
+  poke32(q + 0x3024, gh)
+  if gpu_submit(dev, q, 40) != 0x1100 {
+    println("gpu: the resource refused")
+    halt()
+  }
+  // RESOURCE_ATTACH_BACKING (32 bytes plus one 16-byte entry): the
+  // screen carve, physical, the whole 4 MiB the transfers read from
+  // (T6.5's DMA discipline: one contiguous range the allocator's
+  // exclusion keeps so).
+  gpu_hdr(q + 0x3000, 0x0106)
+  poke32(q + 0x3018, 1)
+  poke32(q + 0x301c, 1)
+  poke64(q + 0x3020, screen_base)
+  poke64(q + 0x3028, screen_size)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the backing refused")
+    halt()
+  }
+  // SET_SCANOUT (48 bytes): scanout 0 shows the resource at the
+  // display's rect — the rect comes first, the two ids after it.
+  gpu_hdr(q + 0x3000, 0x0103)
+  gpu_rect(q + 0x3018, 0, 0, gw, gh)
+  poke32(q + 0x3028, 0)
+  poke32(q + 0x302c, 1)
+  if gpu_submit(dev, q, 48) != 0x1100 {
+    println("gpu: the scanout refused")
+    halt()
+  }
+  println("gpu ${gw}x${gh} ready")
+  // The grant table's reset (T8.5): the rows and the id counter start
+  // empty — the service's own init, before any client can ask.
+  blk_zero(grant_table, 112)
+  poke64(grant_next_cell, 0)
+  boss <- self_pid()
+  while true {
+    receive {
+      (a, b, c) -> {
+        // The kernel's own mailbox (the boot smoke's protocol): op 0
+        // the whole-screen flush, op 1 the mode packed, op 2 a rect
+        // flush (T8.11: the compositor's cursor plane presents the
+        // rectangle it touched — the rect rides the third word, and
+        // the answer is 0 or the present's refusal). The bindings are
+        // tagged words — the stores into these typed locals are the
+        // conversion (T7.2's lesson), which lets the typed op_of see
+        // the raw payload instead of a pointer; the sender rides a Pid
+        // local the same way.
+        var aw = 0
+        var from = boss
+        var cw = 0
+        aw = a
+        from = b
+        cw = c
+        var op = op_of(aw)
+        if op == 0 {
+          var v = gpu_present(dev, q, gw, gh, 0, 0, gw, gh)
+          if v == 0 {
+            from <- aw
+          } else {
+            from <- v
+          }
+        } else {
+          if op == 1 {
+            from <- (gw << 32) | gh
+          } else {
+            if op == 2 {
+              from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
+            } else {
+              from <- 0 - aw
+            }
+          }
+        }
+      }
+      w -> {
+        // The gate's posts (T8.4, T8.5): verb 10 present — the
+        // fullscreen commit is the device's (the rect the mode's to
+        // judge), a window's commit is the ready flag and the damage
+        // rect the compositor finds on its tick (T8.6); verb 11
+        // output_info, the mode packed; verb 13 win_new, the run and
+        // the row and the mapping; verb 14 win_close, the release.
+        // The gate has checked every grant's owner; the table here is
+        // the record those checks read.
+        var op = op_of(w)
+        if op == 10 {
+          var grant = peek64(gpu_args)
+          if grant == 0 {
+            var v = gpu_present(dev, q, gw, gh, peek64(gpu_args + 8), peek64(gpu_args + 16), peek64(gpu_args + 24), peek64(gpu_args + 32))
+            gate_reply(caller_of(w), v)
+          } else {
+            var row = grant_row_of(grant)
+            if row == 0 {
+              gate_reply(caller_of(w), -4)
+            } else {
+              poke64(row + 56, 1)
+              poke64(row + 64, peek64(gpu_args + 8))
+              poke64(row + 72, peek64(gpu_args + 16))
+              poke64(row + 80, peek64(gpu_args + 24))
+              poke64(row + 88, peek64(gpu_args + 32))
+              gate_reply(caller_of(w), 0)
+            }
+          }
+        } else {
+          if op == 11 {
+            gate_reply(caller_of(w), (gw << 32) | gh)
+          } else {
+            if op == 13 {
+              // win_new (T8.5): the run the allocator hands, the row
+              // the table gains, the mapping into the caller's own
+              // table — the space word the shim staged. The answer
+              // packs the buffer's base (the physical, the identity
+              // the client paints) above the grant id.
+              var ww = peek64(gpu_args)
+              var hh = peek64(gpu_args + 8)
+              var n = ((ww * hh * 4) + block - 1) / block
+              var base = frames.take_run(n)
+              if base == 0 {
+                gate_reply(caller_of(w), -5)
+              } else {
+                var row = grant_row_pick()
+                if row == 0 {
+                  var i = 0
+                  while i < n {
+                    frames.give(base + (i * block))
+                    i = i + 1
+                  }
+                  gate_reply(caller_of(w), -5)
+                } else {
+                  space.map_run(peek64(gpu_args + 40), sv39.pa_of(base), n * block)
+                  var id = peek64(grant_next_cell) + 1
+                  poke64(grant_next_cell, id)
+                  poke64(row, id)
+                  poke64(row + 8, caller_of(w))
+                  poke64(row + 16, base)
+                  poke64(row + 24, n)
+                  poke64(row + 32, ww)
+                  poke64(row + 40, hh)
+                  poke64(row + 56, 0)
+                  poke64(row + 96, 0)
+                  poke64(row + 104, 0)
+                  // The answer's packing keeps the sign bit true: the
+                  // base rides as its frame number (the byte address
+                  // shifted left by 12 at the client) — a base above
+                  // 0x7fffffff would sign-extend the word otherwise,
+                  // and the stub would read the grant as a refusal.
+                  gate_reply(caller_of(w), ((sv39.pa_of(base) >> 12) << 32) | id)
+                }
+              }
+            } else {
+              if op == 14 {
+                // win_close (T8.5): the run back to the allocator
+                // block by block, the row to the table — the owner is
+                // the gate's check.
+                var row = grant_row_of(peek64(gpu_args))
+                if row == 0 {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  var base = peek64(row + 16)
+                  var n = peek64(row + 24)
+                  var i = 0
+                  while i < n {
+                    frames.give(base + (i * block))
+                    i = i + 1
+                  }
+                  blk_zero(row, 12)
+                  // the closed row's kick (emo-desktop A11.2): the
+                  // focus's surface died — a read the focus held may
+                  // now be entitled, and the input service's judgment
+                  // waits for exactly this news
+                  var isvc = peek64(input_svc_cell)
+                  if isvc != 0 {
+                    gate_post(isvc, 13 << 32)
+                  }
+                  gate_reply(caller_of(w), 0)
+                }
+              } else {
+                println("gpu: the verb is nobody's")
+                halt()
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The input service (T8.3): the machine's input, one process — the
+// virtio-input keyboard's event stream (DeviceID 18) merged with the
+// serial console's bytes and, since T8.11, with the pointer driver's
+// events. The UART's input ring (T3.7) is this service's to drain now:
+// the read verb (gate verb 2) and the boot demo's bare-pid readers take
+// the next byte from it, the device-wait park moving here with the
+// ownership — the shim's wake (the runtime's emo_sched_wake_console,
+// the name it booted with) wakes every state-4 slot, and this service
+// and the pointer driver are the machine's device-waiters. The
+// input_read verb (verb 12) takes the next event of the merged stream:
+// the bytes first, then the keyboard's, then the pointer's — the one
+// order the sources can name without a clock, and the rule
+// docs/syscalls.md states. A byte event rides type 0x454D ("EM"), code
+// 0, the byte in the value; a device event its own type, code, and
+// value — the packed word (type << 48 | code << 32 | value) the ABI
+// fixed. The keyboard half: the eventq (queue 0) with sixteen 8-byte
+// buffers pre-posted on one allocator block, the completion wired — the
+// transport's PLIC IRQ a bit in the shim's mask cell, the PLIC's
+// priority and enable set — so the device's events wake the machine the
+// serial's bytes do; the ISR's whole duty on that line is the wake (the
+// eventq holds the events), and the drain recycles each buffer through
+// the avail ring. The pointer half is the driver's below: its own
+// eventq, its events into the pointer ring this merge reads. The
+// statusq (queue 1) of either device is untouched.
+def input_byte() Int64 {
+  var got = 0
+  var done = false
+  while !done {
+    if peek64(in_cons) != peek64(in_prod) {
+      var cons = peek64(in_cons)
+      got = peek8(in_ring + (cons % 128)).to_int64()
+      poke64(in_cons, cons + 1)
+      done = true
+    } else {
+      device_wait()
+    }
+  }
+  return got
+}
+
+// Whether the device's used ring holds an event this queue has not
+// taken (T8.11): the pointer's drain walks the ring to its end on every
+// wake, and a separator packs to the same zero `eventq_take` answers
+// for an empty ring, so the drain asks the ring, not the answer.
+def eventq_pending(q Int64) Bool {
+  return peek16r(q + 0x2000 + 2) != peek64(q + 0x3f00)
+}
+
+// One event from the device's used ring, or 0 when none is pending.
+// The buffer's id names the descriptor the device filled; the event is
+// read, the buffer recycled through the avail ring (the entry, then
+// the index behind it, the fence and the doorbell after), and the
+// packed word answered. The drain's cursors ride the queue block —
+// the used index this service has consumed, the avail index the next
+// recycled buffer takes — raw words, the untyped-memory discipline.
+def eventq_take(dev Int64, q Int64) Int64 {
+  var used = q + 0x2000
+  var uidx = peek16r(used + 2)
+  var handled = peek64(q + 0x3f00)
+  if uidx == handled {
+    return 0
+  }
+  var entry = used + 4 + ((handled % 16) * 8)
+  var id = peek32(entry)
+  var buf = q + 0x3000 + (id * 8)
+  var ty = peek16r(buf)
+  var code = peek16r(buf + 2)
+  var value = peek32(buf + 4)
+  var avail = q + 0x1000
+  var nxt = peek64(q + 0x3f08)
+  var at = avail + 4 + ((nxt % 16) * 2)
+  poke8(at, (id & 255).to_byte())
+  poke8(at + 1, ((id >> 8) & 255).to_byte())
+  var after = nxt + 1
+  poke8(avail + 2, (after & 255).to_byte())
+  poke8(avail + 3, ((after >> 8) & 255).to_byte())
+  poke64(q + 0x3f08, after)
+  poke64(q + 0x3f00, handled + 1)
+  fence()
+  mmio32(dev + 0x050, 0)
+  return (ty << 48) | (code << 32) | value
+}
+
+// The pointer ring (T8.11): the pointer driver's events on their way
+// into the merged stream — the producer the driver, the consumer the
+// input service, 32 entries, a full ring dropping the event (the
+// eventq's own rule); the entry lands before the cursor.
+def pointer_ring_push(e Int64) Void {
+  var prod = peek64(pointer_ring_prod)
+  if prod - peek64(pointer_ring_cons) < 32 {
+    poke64(pointer_ring + ((prod % 32) * 8), e)
+    fence()
+    poke64(pointer_ring_prod, prod + 1)
+  }
+}
+
+def pointer_ring_take() Int64 {
+  var cons = peek64(pointer_ring_cons)
+  if cons == peek64(pointer_ring_prod) {
+    return 0
+  }
+  var e = peek64(pointer_ring + ((cons % 32) * 8))
+  poke64(pointer_ring_cons, cons + 1)
+  return e
+}
+
+// The merged stream's head, taken from the source the peek named
+// (emo-desktop A11.2): the routing judges the head's type before it
+// is consumed, so the consume must be the head's own — the byte off
+// the UART's ring, the keyboard's eventq word (its SYN reports ride
+// the same queue, type zero), or the pointer ring's entry. The old
+// walk (bytes, then the keyboard, then the pointer, then the park)
+// was the merge's shape when the only reader was the merge's own
+// consumer; a routing that decides before it consumes needs the head
+// and the decision to name the same event.
+def input_take_head(dev Int64, q Int64, ty Int64) Int64 {
+  if ty == 17741 {
+    var cons = peek64(in_cons)
+    var b = peek8(in_ring + (cons % 128)).to_int64()
+    poke64(in_cons, cons + 1)
+    return (0x454D << 48) | b
+  }
+  if eventq_pending(q) {
+    return eventq_take(dev, q)
+  }
+  return pointer_ring_take()
+}
+
+// One virtio-input device's bring-up (T8.3, shared by the two drivers
+// since T8.11): the queue block's rings zeroed, the modern negotiation
+// (VIRTIO_F_VERSION_1 alone — the input device offers no features),
+// the eventq's sixteen 8-byte buffers posted, the drain's cursors set,
+// and the transport's line wired — its PLIC number a bit in the shim's
+// mask cell, the PLIC's priority and the enable bit (a read-modify-
+// write, the UART's bit already set).
+def input_dev_init(dev Int64, q Int64) Void {
+  blk_zero(q, 32)
+  blk_zero(q + 0x1000, 5)
+  blk_zero(q + 0x2000, 17)
+  mmio32(dev + 0x070, 0)
+  mmio32(dev + 0x070, 1)
+  mmio32(dev + 0x070, 3)
+  poke64(dev + 0x020, 1 << 32)
+  poke64(dev + 0x020, (1 << 32) | 1)
+  mmio32(dev + 0x070, 11)
+  if (mmio32r(dev + 0x070) & 8) == 0 {
+    println("input: the device refused our features")
+    halt()
+  }
+  mmio32(dev + 0x030, 0)
+  if mmio32r(dev + 0x034) < 16 {
+    println("input: the queue is too small")
+    halt()
+  }
+  mmio32(dev + 0x038, 16)
+  poke64(dev + 0x080, sv39.pa_of(q))
+  poke64(dev + 0x090, sv39.pa_of(q + 0x1000))
+  poke64(dev + 0x0a0, sv39.pa_of(q + 0x2000))
+  mmio32(dev + 0x044, 1)
+  mmio32(dev + 0x070, 15)
+  // Sixteen 8-byte event buffers, one descriptor each (device-written,
+  // no next), pre-posted on the avail ring after DRIVER_OK: the
+  // entries, the fence, the index behind them, the doorbell. When
+  // every buffer is out and the device has another event, the event
+  // is the drop — the drain keeps the ring fed.
+  var i = 0
+  while i < 16 {
+    poke64(q + (i * 16), sv39.pa_of(q + 0x3000 + (i * 8)))
+    poke64(q + (i * 16) + 8, 8 | (2 << 32))
+    i = i + 1
+  }
+  i = 0
+  while i < 4 {
+    poke64(q + 0x1004 + (i * 8), (i * 4) | ((i * 4 + 1) << 16) | ((i * 4 + 2) << 32) | ((i * 4 + 3) << 48))
+    i = i + 1
+  }
+  fence()
+  poke8(q + 0x1002, 16B)
+  poke8(q + 0x1003, 0B)
+  fence()
+  mmio32(dev + 0x050, 0)
+  // The drain's cursors: the used index this driver has consumed, the
+  // avail index the next recycled buffer takes.
+  poke64(q + 0x3f00, 0)
+  poke64(q + 0x3f08, 16)
+  var irq = ((dev - virtio_base) / 0x1000) + 1
+  poke64(input_irq_cell, peek64(input_irq_cell) | (1 << irq))
+  poke32(plic + (irq * 4), 1)
+  poke32(plic_enable, peek32(plic_enable) | (1 << irq))
+}
+
+// An absolute axis's maximum, read off the device's config space
+// (T8.11): the select byte names ABS_INFO, the subselect the axis, and
+// the size byte says whether the device has the axis at all — the
+// keyboard answers none, the pointer its range — so the axis is also
+// how the two DeviceID-18 transports are told apart. -1 when absent.
+def input_abs_max(dev Int64, axis Int64) Int64 {
+  poke8(dev + 0x100, 18B)
+  poke8(dev + 0x101, axis.to_byte())
+  if peek8(dev + 0x102).to_int64() == 0 {
+    return -1
+  }
+  return peek32(dev + 0x10c)
+}
+
+// The slot scan for an input transport: DeviceID 18 with an absolute X
+// axis (the pointer) or without one (the keyboard); 0 when none.
+def input_find(pointer Bool) Int64 {
+  var found = 0
+  var slot = 0
+  while slot < 8 {
+    var cand = virtio_base + slot * 0x1000
+    if peek64(cand) == 0x274726976 {
+      if (peek64(cand + 8) & 0xFFFFFFFF) == 18 {
+        var abs = input_abs_max(cand, 0) >= 0
+        if abs == pointer {
+          found = cand
+        }
+      }
+    }
+    slot = slot + 1
+  }
+  return found
+}
+
+// The focus's verdict on a reader (emo-desktop A11.2): the focused
+// surface's owner is the reader the stream's bytes and keys serve; a
+// reader the focus does not name waits, its request stashed, served
+// when the focus has come around. A dead focus — no focused surface,
+// or its row gone with the window it closed — serves whoever asks
+// first.
+def input_entitled(pid Int64) Bool {
+  var fid = peek64(comp_focus_cell)
+  if fid == 0 {
+    return true
+  }
+  var row = grant_row_of(fid)
+  if row == 0 {
+    return true
+  }
+  return peek64(row + 8) == pid
+}
+
+// The head's own verdict on a reader (emo-desktop A12.1, EmoOS T8.19):
+// a pointer's absolute report is no window's — the launcher tracks
+// the pointer the windows ignore, the press that names a tile riding
+// the position the moves kept current. While a panel lives, its owner
+// is who the moves serve; no panel, and every head — the moves beside
+// the rest — falls to the focus's verdict, the A11.2 shape.
+def input_entitled_for(pid Int64, ty Int64) Bool {
+  if ty == 3 {
+    var panel = peek64(comp_panel_cell)
+    if panel != 0 {
+      var prow = grant_row_of(panel)
+      if prow != 0 {
+        return peek64(prow + 8) == pid
+      }
+    }
+  }
+  return input_entitled(pid)
+}
+
+// The exit ring's push (emo-desktop A12.1, EmoOS T8.19): the reaper's
+// word — the parent's pid, then the packed event — into the tail's
+// seat. A full ring drops the event: the exit table still answers the
+// wait verb, and the bound is the table's own.
+def exit_event_push(parent Int64, w Int64) Void {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  if tail - head < exit_ring_seats {
+    var seat = exit_ring + ((tail % exit_ring_seats) * exit_ring_seat)
+    poke64(seat, parent)
+    poke64(seat + 8, w)
+    poke64(exit_ring_tail, tail + 1)
+  }
+}
+
+// Whether the ring holds an exit event whose parent waits in the
+// hold (emo-desktop A12.1, EmoOS T8.19): the judgment owes that seat a
+// pass. A serve parked on the device world asks this when a wake
+// brings its own reader nothing — the death's kick is a mailbox word,
+// and a serve that parks again swallows it, the held parent's read
+// waiting for a pass only the service loop's top runs.
+def exit_event_for_held() Bool {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  var i = head
+  while i != tail {
+    var seat = exit_ring + ((i % exit_ring_seats) * exit_ring_seat)
+    var parent = peek64(seat)
+    var j = 0
+    while j < input_hold_seats {
+      var hseat = input_hold + (j * input_hold_seat)
+      if peek64(hseat) == parent {
+        return true
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The exit ring's take (emo-desktop A12.1): the oldest event whose
+// parent names this reader, removed and answered packed as it was
+// pushed; no event of this reader's, and the answer is −1. The seat's
+// removal closes its gap — the entries between the head and the seat
+// shift down one, the order the deaths happened in kept.
+def exit_event_take(pid Int64) Int64 {
+  var head = peek64(exit_ring_head)
+  var tail = peek64(exit_ring_tail)
+  if head == tail {
+    return -1
+  }
+  var i = head
+  while i != tail {
+    var seat = exit_ring + ((i % exit_ring_seats) * exit_ring_seat)
+    if peek64(seat) == pid {
+      var w = peek64(seat + 8)
+      var j = i
+      while j > head {
+        var dst = exit_ring + ((j % exit_ring_seats) * exit_ring_seat)
+        var src = exit_ring + (((j - 1) % exit_ring_seats) * exit_ring_seat)
+        poke64(dst, peek64(src))
+        poke64(dst + 8, peek64(src + 8))
+        j = j - 1
+      }
+      poke64(exit_ring_head, head + 1)
+      return w
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// The next event's type, seen and not taken (emo-desktop A11.2): the
+// serial's bytes first, then the keyboard's, then the pointer's — the
+// merge's own order, read at each source's cursor. The answer is the
+// type word, or −1 when no source holds an event. The pointer ring's
+// separator reads as its zero: the serving loop consumes it unseen.
+def input_peek_type(dev Int64, q Int64) Int64 {
+  if peek64(in_cons) != peek64(in_prod) {
+    return 17741
+  }
+  if eventq_pending(q) {
+    var used = q + 0x2000
+    var handled = peek64(q + 0x3f00)
+    var entry = used + 4 + ((handled % 16) * 8)
+    var id = peek32(entry)
+    var buf = q + 0x3000 + (id * 8)
+    return peek16r(buf)
+  }
+  if peek64(pointer_ring_cons) != peek64(pointer_ring_prod) {
+    var e = peek64(pointer_ring + ((peek64(pointer_ring_cons) % 32) * 8))
+    return (e >> 48) & 65535
+  }
+  return -1
+}
+
+// The held reads, judged and served (emo-desktop A11.2): a read the
+// focus does not name is held, not answered — the reader sleeps at
+// its gate-wait until the focus names it, or until its row dies with
+// the window it closed, the hold dropped. The head of the stream is
+// judged at the consume, a keyboard SYN riding past unseen. The
+// judgment re-runs at the service's loop top — after every mailbox
+// word: a reader's own ask, the close's kick, the reclaim's kick —
+// which is what a held read waits on; a device line's wake of a
+// receive park (the ISR's emo_sched_wake_input) re-scans the mailbox
+// alone and re-parks, a spurious pass and nothing more.
+def input_hold_put(pid Int64, w Int64) Bool {
+  var i = 0
+  while i < input_hold_seats {
+    var seat = input_hold + (i * input_hold_seat)
+    if peek64(seat) == 0 {
+      poke64(seat, pid)
+      poke64(seat + 8, w)
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def input_hold_serve(dev Int64, q Int64) Void {
+  // the held reads, judged and served (emo-desktop A11.2), the A12.1
+  // exit-take beside it: a seat whose death (the cell) or whose
+  // parent's exit event (the ring) has news is answered first; the
+  // rest are judged per seat against the head the stream holds then —
+  // the head's own verdict (a move is the panel's owner's). A serve
+  // that hands its read back (the head that arrived while it parked
+  // was another reader's) restarts the scan: the head's own reader
+  // may sit behind the cursor the park froze, and only a mailbox word
+  // would reach it — a reader parked at its gate-wait sends none. A
+  // serve that yields — a wake brought its reader nothing while the
+  // ring holds an exit event a held seat waits on — hands its read
+  // back and lets the scan carry on: the seat the news names may sit
+  // behind the cursor, and a scan that stopped at the yield would
+  // starve it; the parking pass comes round again on the next loop.
+  var again = true
+  while again {
+    again = false
+    var i = 0
+    while i < input_hold_seats {
+      var seat = input_hold + (i * input_hold_seat)
+      var pid = peek64(seat)
+      if pid != 0 {
+        if peek64(comp_dead_cells + (pid * 8)) != 0 {
+          poke64(seat, 0)
+        } else {
+          var e = exit_event_take(pid)
+          if e >= 0 {
+            var w = peek64(seat + 8)
+            poke64(seat, 0)
+            gate_reply(caller_of(w), e)
+          } else {
+            if input_entitled_for(pid, input_peek_type(dev, q)) {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              var r = input_serve_read(w, dev, q)
+              if r == 1 {
+                again = true
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+  }
+}
+
+def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
+  // The A11.2 serve, the A12.1 exit-check beside it (emo-desktop
+  // A12.1): the stream's judgment at the ask, the empty stream parked
+  // on the device world — and per wake, the death's word first: an
+  // exit event whose parent names this reader is answered before the
+  // stream's judgment runs, the parent hearing its child ended
+  // whatever the focus is. The answer names the serve's end: 0 the
+  // read answered, 1 the read back in the hold — the head that
+  // arrived is another reader's (a move the panel owns), the seat it
+  // left behind the seat it takes back, the caller's scan restarting
+  // to hand the head to its own reader — and 2 the serve's own yield:
+  // a wake brought this reader nothing while the ring holds an exit
+  // event a held seat waits on, so the service loop's mailbox must
+  // run before this reader parks again — a kick's word is the held
+  // reads' only judgment, and a serve parked on the device world
+  // swallows it.
+  var served = false
+  while !served {
+    var ex = exit_event_take(caller_of(w))
+    if ex >= 0 {
+      gate_reply(caller_of(w), ex)
+      served = true
+    } else {
+      var ty = input_peek_type(dev, q)
+      if ty < 0 {
+        device_wait()
+        if input_peek_type(dev, q) < 0 {
+          if exit_event_for_held() {
+            if !input_hold_put(caller_of(w), w) {
+              println("input: the hold overflowed")
+              halt()
+            }
+            return 2
+          }
+        }
+      } else {
+        if !input_entitled_for(caller_of(w), ty) {
+          if !input_hold_put(caller_of(w), w) {
+            println("input: the hold overflowed")
+            halt()
+          }
+          return 1
+        } else {
+          if ty == 0 {
+            input_take_head(dev, q, ty)
+          } else {
+            var e = input_take_head(dev, q, ty)
+            gate_reply(caller_of(w), e)
+            served = true
+          }
+        }
+      }
+    }
+  }
+  return 0
+}
+
+def input_parked(w Int64, dev Int64, q Int64) Void {
+  var op = op_of(w)
+  if op == 12 {
+    var pid = caller_of(w)
+    // the death's word first (emo-desktop A12.1): an exit event whose
+    // parent names this reader is answered now, the read never parked
+    var e = exit_event_take(pid)
+    if e >= 0 {
+      gate_reply(caller_of(w), e)
+    } else {
+      if !input_hold_put(pid, w) {
+        println("input: the hold overflowed")
+        halt()
+      }
+    }
+  } else {
+    if op == 2 {
+      gate_reply(caller_of(w), input_byte())
+    } else {
+      if op == 13 {
+        // the re-judgment's kick (emo-desktop A11.2): the focus's
+        // world moved — the held reads are judged by the loop's next
+        // pass, nothing to answer
+      } else {
+      if op == 18 {
+        // input_info (T8.13): the index-th pointer's axes, the
+        // maxima the pointer driver read off its config, packed
+        // X above Y; one pointer is the first answer, and an
+        // index past it is the argument refusal.
+        if peek64(input_args) == 0 {
+          gate_reply(caller_of(w), (peek64(pointer_max_x_cell) << 32) | peek64(pointer_max_y_cell))
+        } else {
+          gate_reply(caller_of(w), -4)
+        }
+      }
+      }
+    }
+  }
+}
+
+def input_service(boss Pid) Void {
+  var dev = input_find(false)
+  if dev == 0 {
+    println("input: no keyboard on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("input: no block for the queue")
+    halt()
+  }
+  input_dev_init(dev, q)
+  println("input ready")
+  boss <- self_pid()
+  while true {
+    // The held reads first (emo-desktop A11.2): a death or a focus
+    // that moved names one of them now. The park itself is the
+    // receive, and the mailbox's words are what drive it: every
+    // reader's ask and every kick dispatches, and each dispatch's
+    // loop-top pass re-judges the seats — the focused reader's own
+    // asks keep that pass coming while a session runs, and the
+    // close's and the reclaim's kicks are the ones a death waits
+    // for. The gate's words go to the typed dispatch, and the
+    // readers' bare pid messages (T8.3 — the read that is the
+    // sender's own pid) go back a byte, the one send only a dynamic
+    // binding carries.
+    input_hold_serve(dev, q)
+    receive {
+      x -> {
+        var op = op_of(x)
+        if op == 2 || op == 12 || op == 13 || op == 18 {
+          input_parked(x, dev, q)
+        } else {
+          x <- input_byte()
+        }
+      }
+    }
+  }
+}
+
+// The pointer's driver (T8.11, emo-desktop A8.2): the second
+// virtio-input device, the tablet — absolute axes, so the position the
+// run's hand names (the monitor's mouse_move) is the position the
+// device reports — a process of its own, because the merge above
+// drains its keyboard only while a read is parked on it, and the
+// pointer must move whether or not anyone is reading. The driver parks
+// on the device world and on every wake walks its used ring to the
+// end: each event into the pointer ring for the merged stream, each
+// absolute X or Y into the position cells, and at each report's
+// separator a generation step and one notice to the compositor — one
+// at a time, the notice flag the coalescing — whose cursor plane reads
+// the position and composites the sprite (the compositor's piece,
+// below). The axes' maxima come off the device's config, never a
+// constant: the compositor scales the position to the mode with them.
+def ev_type_of(e Int64) Int64 {
+  return (e >> 48) & 65535
+}
+
+def ev_code_of(e Int64) Int64 {
+  return (e >> 32) & 65535
+}
+
+def ev_value_of(e Int64) Int64 {
+  return e & 4294967295
+}
+
+def pointer_notify() Void {
+  if peek64(pointer_notice_cell) == 0 {
+    var comp = peek64(comp_svc_cell)
+    if comp != 0 {
+      poke64(pointer_notice_cell, 1)
+      gate_post(comp, pointer_op << 32)
+    }
+  }
+}
+
+// The wake's drain (T8.11): the used ring to its end, each event into
+// the pointer ring and the merge's device-waiter woken for it — the
+// input service may be parked on the device world with a reader
+// waiting, and nothing but a wake brings it back to look at the ring —
+// each absolute X or Y into the position cells, and the separator the
+// report's end: the generation steps and the compositor is told once.
+def pointer_drain(dev Int64, q Int64) Void {
+  var pushed = false
+  while eventq_pending(q) {
+    var e = eventq_take(dev, q)
+    if e == 0 {
+      if peek64(pointer_dirty_cell) != 0 {
+        poke64(pointer_dirty_cell, 0)
+        poke64(pointer_gen_cell, peek64(pointer_gen_cell) + 1)
+        pointer_notify()
+      }
+    } else {
+      pointer_ring_push(e)
+      pushed = true
+      if ev_type_of(e) == 1 {
+        // the button's rising edge (emo-desktop A11.2): one word for
+        // the compositor — the press is the click-to-focus's ear, the
+        // raise judged at the notice's position. The releases ride
+        // the ring and nothing else. The press dirties the report:
+        // a click that moves no axis would otherwise post no notice
+        // at all, and the raise rides the notice like the moves do.
+        if ev_code_of(e) == 272 && ev_value_of(e) == 1 {
+          poke64(pointer_press_cell, 1)
+          poke64(pointer_dirty_cell, 1)
+        }
+      }
+      if ev_type_of(e) == 3 {
+        var code = ev_code_of(e)
+        if code == 0 {
+          poke64(pointer_x_cell, ev_value_of(e))
+          poke64(pointer_dirty_cell, 1)
+        }
+        if code == 1 {
+          poke64(pointer_y_cell, ev_value_of(e))
+          poke64(pointer_dirty_cell, 1)
+        }
+      }
+    }
+  }
+  if pushed {
+    device_wake()
+  }
+}
+
+def pointer_service(boss Pid) Void {
+  var dev = input_find(true)
+  if dev == 0 {
+    println("pointer: no pointer device on the virtio buses")
+    halt()
+  }
+  var q = frames.take()
+  if q == 0 {
+    println("pointer: no block for the queue")
+    halt()
+  }
+  poke64(pointer_ring_prod, 0)
+  poke64(pointer_ring_cons, 0)
+  poke64(pointer_x_cell, 0)
+  poke64(pointer_y_cell, 0)
+  poke64(pointer_max_x_cell, input_abs_max(dev, 0))
+  poke64(pointer_max_y_cell, input_abs_max(dev, 1))
+  poke64(pointer_gen_cell, 0)
+  poke64(pointer_notice_cell, 0)
+  poke64(pointer_dirty_cell, 0)
+  poke64(pointer_press_cell, 0)
+  input_dev_init(dev, q)
+  println("pointer ready")
+  boss <- self_pid()
+  while true {
+    device_wait()
+    pointer_drain(dev, q)
   }
 }
 
@@ -608,6 +2249,943 @@ def blk_service(boss Pid) Void {
 // the death and the parking — the death notice cleared it inside the
 // death's own masked region — and the gate sets aside what arrives in
 // the gap, into the stash the next instance serves first.
+// The compositor (T8.6, T8.13): the window stack's owner and the
+// machine's compositor — the fs.emo lineage, a service process whose
+// state outlives its instances (the pages the restart reads back),
+// whose verbs are the stack's (win_role, win_focus, win_move) and
+// whose composition is the walk: the carve cleared to the desktop's
+// background, every ready surface's frame carried into it at the
+// stack's position in the stack's order, word stores, and the display
+// service's flush putting the whole on the display. The window
+// present's composition request rides the route the gate's verb-10
+// window path answers; the answer follows the flush, the frame landing
+// whole (the protocol's sixth seam). A surface is made by its role
+// (verb 17, the third seam): the stack's entry is created there and
+// nowhere else, so a buffer with no role declared has no place on the
+// stack — its present, move and focus are the argument refusal.
+
+// The stack's entry for that grant, or 0: the surface its role made,
+// the position the blit places it at. The scan stops at the top — the
+// slots past it are what removals left.
+def comp_stack_find(grant Int64) Int64 {
+  var i = 0
+  while i < peek64(comp_top_cell) {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry) == grant {
+      return entry
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+// A surface onto the stack's top (T8.13): the grant, the origin, the
+// role, no parent yet — verb 19 binds one (T8.15). A full stack
+// answers 0 — the resource refusal is the caller's to make, not the
+// machine's end: the ninth surface is a client's ask.
+def comp_stack_add(grant Int64, role Int64) Int64 {
+  var top = peek64(comp_top_cell)
+  if top >= comp_entries {
+    return 0
+  }
+  var entry = comp_stack + (top * comp_entry)
+  poke64(entry, grant)
+  poke64(entry + 8, 0)
+  poke64(entry + 16, 0)
+  poke64(entry + 24, role)
+  poke64(entry + 32, 0)
+  poke64(comp_top_cell, top + 1)
+  return entry
+}
+
+// Whether the stack already holds a surface of that role (T8.27): the
+// one-role-one-surface check — the wallpaper is a machine's, not a
+// client's, and a second declaration is the argument refusal. The scan
+// is the live stack's, so a dead owner's pruned entry frees the name.
+def comp_stack_has_role(r Int64) Bool {
+  var i = 0
+  var top = peek64(comp_top_cell)
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) == r {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// An entry out of the stack: the ones above it shift down a slot, the
+// top comes down one — the order of the rest is kept, which is the
+// order the walk paints in.
+def comp_stack_remove(entry Int64) Void {
+  var top = peek64(comp_top_cell)
+  var e = entry
+  var last = comp_stack + ((top - 1) * comp_entry)
+  while e < last {
+    poke64(e, peek64(e + comp_entry))
+    poke64(e + 8, peek64(e + comp_entry + 8))
+    poke64(e + 16, peek64(e + comp_entry + 16))
+    poke64(e + 24, peek64(e + comp_entry + 24))
+    poke64(e + 32, peek64(e + comp_entry + 32))
+    e = e + comp_entry
+  }
+  poke64(comp_top_cell, top - 1)
+}
+
+// An entry to the stack's top (T8.13): the raise a focus is — the
+// focused surface composites last, over every other.
+def comp_stack_raise(entry Int64) Void {
+  var grant = peek64(entry)
+  var x = peek64(entry + 8)
+  var y = peek64(entry + 16)
+  var role = peek64(entry + 24)
+  var parent = peek64(entry + 32)
+  comp_stack_remove(entry)
+  var top = peek64(comp_top_cell)
+  var e = comp_stack + (top * comp_entry)
+  poke64(e, grant)
+  poke64(e + 8, x)
+  poke64(e + 16, y)
+  poke64(e + 24, role)
+  poke64(e + 32, parent)
+  poke64(comp_top_cell, top + 1)
+}
+
+// The dead surfaces out of the stack (T8.13): an entry whose grant the
+// table no longer holds — the buffer closed, or its owner dead and its
+// rows reclaimed — leaves before the next walk or the next surface, so
+// the composition never reads a row that is nobody's and a closed
+// window never holds a slot. A parent-relative entry whose parent's
+// entry is gone leaves with it (T8.15): the popups die with the
+// toplevel they hang from — and the passes repeat until the stack is
+// still, the binding's one-level rule (a parent is a toplevel, never
+// another popup) making one round of cascades the whole depth.
+def comp_stack_prune() Void {
+  var changed = 1
+  while changed != 0 {
+    changed = 0
+    var i = 0
+    while i < peek64(comp_top_cell) {
+      var entry = comp_stack + (i * comp_entry)
+      var dead = 0
+      if grant_row_of(peek64(entry)) == 0 {
+        dead = 1
+      }
+      var par = peek64(entry + 32)
+      if par != 0 {
+        if comp_stack_find(par) == 0 {
+          dead = 1
+        }
+      }
+      if dead != 0 {
+        comp_stack_remove(entry)
+        changed = 1
+      } else {
+        i = i + 1
+      }
+    }
+  }
+}
+
+// The blit (T8.6): the window's rows into the carve at the stack's
+// position — word stores, the frame's scale priced at them (the
+// assessment's blit rule); the sum of the carried words answered, the
+// number the client's own sum line names — the blit's proof. The rect
+// is clipped to the mode (T8.15): a parent-relative surface rides its
+// parent's moves, and the walk carries only what the mode holds — the
+// rows and word-columns past an edge are nobody's to store.
+def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var r = 0
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  var half = cols / 2
+  var stride = mw / 2
+  while r < rows {
+    var i = 0
+    while i < half {
+      var v = peek64(base + (r * (w / 2) + i) * 8)
+      poke64(koff + screen_base + ((y + r) * stride + (x / 2) + i) * 8, v)
+      sum = sum + v
+      i = i + 1
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The position a surface paints at (T8.15): its own, or its parent's
+// with its own beside — a popup's or a subsurface's coordinates are
+// the parent's from the binding on. The parent's entry is live at
+// every read (the prune drops the orphaned first), so the find's zero
+// never walks out of here.
+def comp_abs_pos(entry Int64, rx Int64, ry Int64) Int64 {
+  var ax = rx
+  var ay = ry
+  var par = peek64(entry + 32)
+  if par != 0 {
+    var pentry = comp_stack_find(par)
+    ax = peek64(pentry + 8) + ax
+    ay = peek64(pentry + 16) + ay
+  }
+  return (ax << 32) | ay
+}
+
+// The walk's blit of one entry (T8.15): the row the grant names, the
+// ready flag the walk's gate — a surface no client has presented yet
+// paints nothing, the composition's first frame the ready record's
+// reader.
+def comp_blit_entry(entry Int64, x Int64, y Int64) Int64 {
+  var row = grant_row_of(peek64(entry))
+  if peek64(row + 56) != 0 {
+    return comp_blit(peek64(row + 16), peek64(row + 32), peek64(row + 40), x, y)
+  }
+  return 0
+}
+
+// The parked callbacks answered (T8.15, A9.3 — the fifth seam): the
+// composition's completion is the tick, and every pid verb 22 left in
+// the ring wakes with it — the caller's own reply first, the
+// callbacks after, the ring empty for the next parker.
+def comp_cb_reply() Void {
+  var n = peek64(comp_cb_count)
+  var i = 0
+  while i < n {
+    gate_reply(peek64(comp_cb_cells + (i * 8)), 0)
+    i = i + 1
+  }
+  poke64(comp_cb_count, 0)
+}
+
+// The composition's stash (T8.6): the requests that arrive while the
+// display service's flush is in flight, served after it — the fs's
+// stash discipline; four deep, more is a kernel bug (nobody's era
+// holds four window presents inside one flush). Past the cursor
+// plane's cells since the stack's entries grew (T8.13).
+const comp_stash_count = comp_page + 432
+const comp_stash_cells = comp_page + 440
+
+def comp_stash_push(w Int64) Void {
+  var n = peek64(comp_stash_count)
+  if n >= 4 {
+    println("comp: the stash is full")
+    halt()
+  }
+  poke64(comp_stash_cells + (n * 8), w)
+  poke64(comp_stash_count, n + 1)
+}
+
+def comp_stash_pop() Int64 {
+  var n = peek64(comp_stash_count)
+  if n == 0 {
+    return 0
+  }
+  var w = peek64(comp_stash_cells + ((n - 1) * 8))
+  poke64(comp_stash_count, n - 1)
+  return w
+}
+
+// The dead owner's windows (T8.5's stated bound's payoff): the runs
+// back to the allocator, the rows to the table — the death notice's
+// other half, the supervisor's to do — and the surfaces off the stack
+// (T8.13), so the stack a client leaves behind is the stack without
+// it.
+def comp_reclaim(pid Int64) Void {
+  var said = 0
+  var i = 0
+  while i < 8 {
+    var row = grant_table + (i * 112)
+    if peek64(row + 8) == pid {
+      var base = peek64(row + 16)
+      var n = peek64(row + 24)
+      var j = 0
+      while j < n {
+        frames.give(base + (j * block))
+        j = j + 1
+      }
+      blk_zero(row, 12)
+      said = 1
+    }
+    i = i + 1
+  }
+  comp_stack_prune()
+  if said != 0 {
+    // the reclaimed rows' kick (emo-desktop A11.2): a read the focus
+    // held may now be entitled — the dead owner's windows died with
+    // it, and the input service's judgment waits for the news
+    var isvc = peek64(input_svc_cell)
+    if isvc != 0 {
+      gate_post(isvc, 13 << 32)
+    }
+    println("comp reclaim ${pid}")
+  }
+}
+
+// The carve cleared to the desktop's background (T8.13): word stores
+// over the whole mode, pairs the blit's granularity, before the stack's
+// walk — what a window leaves behind when it moves is the background,
+// not its last frame. A typed loop, the rule.
+def comp_clear() Void {
+  var pairs = (peek64(comp_mode_w) * peek64(comp_mode_h)) / 2
+  var pair = comp_background | (comp_background << 32)
+  var i = 0
+  while i < pairs {
+    poke64(koff + screen_base + (i * 8), pair)
+    i = i + 1
+  }
+}
+
+// The composition (T8.6, T8.13): the whole stack, bottom to top — the
+// sprite hidden, the carve cleared to the background, every surface
+// whose row is ready blitted at its position in the stack's order (the
+// last entry over the rest, a moved window's old place the background
+// again), the sprite shown, the display service's flush — the gate's
+// words that arrive while it is in flight stashed and served after —
+// and the sum of every word carried, the blit's proof. The stack is
+// pruned before the walk by the caller, so every entry's row is live;
+// the ready flag is the walk's gate, a surface whose buffer no client
+// has presented yet is not painted.
+def comp_compose(gpu Pid, me Pid) Int64 {
+  var shown = peek64(comp_cursor_shown)
+  if shown != 0 {
+    cursor_hide(peek64(comp_cursor_x), peek64(comp_cursor_y))
+  }
+  var sum = 0
+  // The wallpaper's pass (T8.27, emo-desktop A13): the desktop's own
+  // canvas, painted before the walk under every window. A ready
+  // surface that covers the whole mode makes the clear its to skip —
+  // the walk lays it and nothing beneath it; not ready yet, no
+  // wallpaper declared, a dead owner's pruned entry, or a surface
+  // that fails to cover (the client's own strictness, the compositor
+  // not assuming): the clear runs and the slate stays what it was.
+  var wg = peek64(comp_wallpaper_cell)
+  var wentry = 0
+  var wrow = 0
+  if wg != 0 {
+    wentry = comp_stack_find(wg)
+    if wentry != 0 {
+      wrow = grant_row_of(wg)
+    }
+  }
+  var wready = 0
+  var wcovers = 0
+  if wrow != 0 && peek64(wrow + 56) != 0 {
+    wready = 1
+    var wboth = comp_abs_pos(wentry, peek64(wentry + 8), peek64(wentry + 16))
+    if wboth >> 32 == 0 && wboth & 4294967295 == 0 && peek64(wrow + 32) >= peek64(comp_mode_w) && peek64(wrow + 40) >= peek64(comp_mode_h) {
+      wcovers = 1
+    }
+  }
+  if wcovers == 0 {
+    comp_clear()
+  }
+  if wready == 1 {
+    var wboth = comp_abs_pos(wentry, peek64(wentry + 8), peek64(wentry + 16))
+    sum = sum + comp_blit_entry(wentry, wboth >> 32, wboth & 4294967295)
+  }
+  // The walk (T8.13, T8.15): the free-standing surfaces in the stack's
+  // order — the last entry over the rest — each immediately followed by
+  // its parent-relative children at their offsets from it (a popup
+  // rides its toplevel above every other window, a subsurface the
+  // same), then the panels over everything: the shell's chrome is the
+  // one layer no window covers.
+  var i = 0
+  var top = peek64(comp_top_cell)
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) != role_toplevel {
+      i = i + 1
+      continue
+    }
+    var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+    sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+    var j = 0
+    while j < top {
+      var kid = comp_stack + (j * comp_entry)
+      if peek64(kid + 32) == peek64(entry) {
+        var kboth = comp_abs_pos(kid, peek64(kid + 8), peek64(kid + 16))
+        sum = sum + comp_blit_entry(kid, kboth >> 32, kboth & 4294967295)
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) == role_panel {
+      var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+      sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+    }
+    i = i + 1
+  }
+  if shown != 0 {
+    cursor_show(peek64(comp_cursor_x), peek64(comp_cursor_y))
+  }
+  gpu <- (0, me, 0)
+  comp_await_flush()
+  return sum
+}
+
+// The cursor plane (T8.11, emo-desktop A8.2): the compositor's second
+// plane, composited in software — the display's screendump is the
+// golden's eye, and a device cursor never reaches a screendump, so the
+// pointer the golden can see is the one the carve holds. The sprite is
+// the desktop's, read from the carve's sprite memory at each
+// composition (the full-screen pass uploads it; a zero width is no
+// sprite yet); the plane's own state is the save-under — the carve's
+// words under the sprite, kept in the sprite memory's kernel half — and
+// the cells on the compositor's page that say where the sprite stands.
+// A move hides the sprite (the saved words back), shows it at the new
+// place (the words under it saved, its opaque pixels stored), and
+// presents the one rectangle both places lie in; a window's composition
+// hides the sprite around its blit, so the save-under never holds a
+// window's stale words. Pixel loops in typed defs, the rule.
+def sprite_w() Int64 {
+  return peek32(koff + sprite_header)
+}
+
+def sprite_h() Int64 {
+  return peek32(koff + sprite_header + 4)
+}
+
+def sprite_hot_x() Int64 {
+  return peek32(koff + sprite_header + 8)
+}
+
+def sprite_hot_y() Int64 {
+  return peek32(koff + sprite_header + 12)
+}
+
+def cursor_show(x Int64, y Int64) Void {
+  var w = sprite_w()
+  var h = sprite_h()
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var r = 0
+  while r < h {
+    var c = 0
+    while c < w {
+      var px = x + c
+      var py = y + r
+      if px >= 0 && px < mw && py >= 0 && py < mh {
+        var at = koff + screen_base + ((py * mw) + px) * 4
+        var i = ((r * w) + c) * 4
+        poke32(koff + sprite_under + i, peek32(at))
+        var s = peek32(koff + sprite_pixels + i)
+        if (s >> 24) != 0 {
+          poke32(at, s & 16777215)
+        }
+      }
+      c = c + 1
+    }
+    r = r + 1
+  }
+}
+
+def cursor_hide(x Int64, y Int64) Void {
+  var w = sprite_w()
+  var h = sprite_h()
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var r = 0
+  while r < h {
+    var c = 0
+    while c < w {
+      var px = x + c
+      var py = y + r
+      if px >= 0 && px < mw && py >= 0 && py < mh {
+        poke32(koff + screen_base + ((py * mw) + px) * 4, peek32(koff + sprite_under + ((r * w) + c) * 4))
+      }
+      c = c + 1
+    }
+    r = r + 1
+  }
+}
+
+// The rectangle from one corner to the other, clipped to the mode, as
+// the flush's word — 0 when nothing of it is on the carve.
+def cursor_rect(x0 Int64, y0 Int64, x1 Int64, y1 Int64) Int64 {
+  var ax = x0
+  var ay = y0
+  var bx = x1
+  var by = y1
+  if ax < 0 {
+    ax = 0
+  }
+  if ay < 0 {
+    ay = 0
+  }
+  if bx > peek64(comp_mode_w) {
+    bx = peek64(comp_mode_w)
+  }
+  if by > peek64(comp_mode_h) {
+    by = peek64(comp_mode_h)
+  }
+  if bx <= ax || by <= ay {
+    return 0
+  }
+  return rect_word(ax, ay, bx - ax, by - ay)
+}
+
+// The display service's flush answered (T8.6): the gate's words that
+// arrive while it is in flight are stashed and served after; the stop's
+// tuples do not race the flush — the loud end names one. The op_of
+// dispatch goes first (T8.14): the gate's words are raw — a notice's
+// `op << 32` carries the Int64 tag in its low bits — and an `==` on
+// the Unknown binding would walk into the word as if it were a cell;
+// only the kernel's own sends are cells, and the `== 0` on them is the
+// flush's reply.
+def comp_await_flush() Void {
+  var flushed = false
+  while !flushed {
+    receive {
+      r -> {
+        if op_of(r) >= 0 {
+          comp_stash_push(r)
+        } else {
+          if r == 0 {
+            flushed = true
+          } else {
+            println("comp: the stop does not race the flush")
+            halt()
+          }
+        }
+      }
+    }
+  }
+}
+
+// The pointer's notice (op 18): the flag cleared first — a report that
+// lands after this read is the next notice — then the position scaled
+// to the mode by the axes' maxima, the sprite moved, the rectangle both
+// places lie in presented, and the plane's first line on the wire once
+// (`pointer <x> <y>`, the hotspot's place: the ride would drown in a
+// line per move).
+// The press's raise (emo-desktop A11.2): the click-to-focus's other
+// half — the press cell's word judged at the notice's position, the
+// stack walked topmost first, the window or panel the point lands in
+// raised to the stack's top and named the focused one. A press on the
+// background names nothing; the focus is then whose it was.
+def comp_press_raise() Void {
+  var hx = (peek64(pointer_x_cell) * peek64(comp_mode_w)) / (peek64(pointer_max_x_cell) + 1)
+  var hy = (peek64(pointer_y_cell) * peek64(comp_mode_h)) / (peek64(pointer_max_y_cell) + 1)
+  var hit = 0
+  var i = peek64(comp_top_cell)
+  while i > 0 && hit == 0 {
+    i = i - 1
+    var entry = comp_stack + (i * comp_entry)
+    var role = peek64(entry + 24)
+    if role == role_toplevel || role == role_panel {
+      var row = grant_row_of(peek64(entry))
+      if row != 0 {
+        var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+        var ax = both >> 32
+        var ay = both & 4294967295
+        if hx >= ax && hx < ax + peek64(row + 32) && hy >= ay && hy < ay + peek64(row + 40) {
+          poke64(comp_focus_cell, peek64(entry))
+          comp_stack_raise(entry)
+          hit = 1
+        }
+      }
+    }
+  }
+  // The background's press (T8.27, emo-desktop A13): a click no window
+  // and no panel answers is the desktop's — the wallpaper named the
+  // focused one, its owner (the desktop's own process) the reader the
+  // stream's bytes and buttons serve from then on, the windows all
+  // unfocused the way a click on bare desktop unfocuses. Never raised:
+  // the wallpaper is the walk's undermost layer, and no stack shift
+  // ever says otherwise. No wallpaper, dead owner: the focus is then
+  // whose it was, the shape before this change.
+  if hit == 0 {
+    var wg = peek64(comp_wallpaper_cell)
+    if wg != 0 {
+      var wrow = grant_row_of(wg)
+      if wrow != 0 {
+        poke64(comp_focus_cell, wg)
+      }
+    }
+  }
+}
+
+def comp_cursor_place(gpu Pid, me Pid) Void {
+  // the press first (emo-desktop A11.2): a click is a raise before it
+  // is a move of the sprite — raised before the cell's clear
+  // (emo-desktop A12.1): the cell is the press's anchor, and a serve
+  // waking between the clear and the raise would judge the head by the
+  // old focus and eat the click; raised first, the cell's clearing is
+  // the delivery's own signal
+  if peek64(pointer_press_cell) != 0 {
+    comp_press_raise()
+    poke64(pointer_press_cell, 0)
+  }
+  poke64(pointer_notice_cell, 0)
+  poke64(comp_cursor_gen, peek64(pointer_gen_cell))
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var hx = (peek64(pointer_x_cell) * mw) / (peek64(pointer_max_x_cell) + 1)
+  var hy = (peek64(pointer_y_cell) * mh) / (peek64(pointer_max_y_cell) + 1)
+  var w = sprite_w()
+  var h = sprite_h()
+  if w != 0 && h != 0 {
+    var nx = hx - sprite_hot_x()
+    var ny = hy - sprite_hot_y()
+    var x0 = nx
+    var y0 = ny
+    var x1 = nx + w
+    var y1 = ny + h
+    if peek64(comp_cursor_shown) != 0 {
+      var ox = peek64(comp_cursor_x)
+      var oy = peek64(comp_cursor_y)
+      cursor_hide(ox, oy)
+      if ox < x0 {
+        x0 = ox
+      }
+      if oy < y0 {
+        y0 = oy
+      }
+      if ox + w > x1 {
+        x1 = ox + w
+      }
+      if oy + h > y1 {
+        y1 = oy + h
+      }
+    }
+    cursor_show(nx, ny)
+    poke64(comp_cursor_x, nx)
+    poke64(comp_cursor_y, ny)
+    poke64(comp_cursor_shown, 1)
+    var rect = cursor_rect(x0, y0, x1, y1)
+    if rect != 0 {
+      gpu <- (2 << 32, me, rect)
+      comp_await_flush()
+    }
+    if peek64(comp_cursor_said) == 0 {
+      poke64(comp_cursor_said, 1)
+      println("pointer ${hx} ${hy}")
+    }
+  }
+}
+
+// The compositor's word handling (T8.6, T8.13): the stack's verbs (15
+// focus, 16 move, 19 role — verb 17's request, on the mailbox number
+// past the pointer's), the composition requests (op 17, the route the
+// window present answers), and the pointer's notices (op 18, T8.11). A
+// grant with no surface — no role declared — is the argument refusal
+// on every stack verb and on the present. The composition: the
+// presenting surface's row ready from this commit on, the walk
+// (`comp_compose`), the row's damage rect recorded, and the answer
+// after the flush: the frame lands whole (the protocol's sixth seam).
+def comp_word(w Int64, gpu Pid, me Pid) Void {
+  var op = comp_op_of(w)
+  if op == 15 {
+    // The focus (T8.6, T8.13): the surface recorded as the focused one
+    // and raised to the stack's top — the next composition paints it
+    // over the rest. The held reads' judgment waits for the news
+    // (emo-desktop A12.1): a focus that moved is a reader the stream
+    // may name now, the input service's kick the wake.
+    var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+    var grant = peek64(seat)
+    poke64(seat, 0)
+    var entry = comp_stack_find(grant)
+    if entry == 0 {
+      gate_reply(caller_of(w), -4)
+    } else {
+      // The wallpaper is no client's to focus (T8.27): the desktop's
+      // undermost layer is named the focused one only by the
+      // background press, never by verb 15 — the argument refusal.
+      if peek64(entry + 24) == role_wallpaper {
+        gate_reply(caller_of(w), -4)
+      } else {
+        poke64(comp_focus_cell, grant)
+        comp_stack_raise(entry)
+        var isvc = peek64(input_svc_cell)
+        if isvc != 0 {
+          gate_post(isvc, 13 << 32)
+        }
+        device_wake()
+        gate_reply(caller_of(w), 0)
+      }
+    }
+  } else {
+    if op == 16 {
+      var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+      var grant = peek64(seat)
+      var x = peek64(seat + 8)
+      var y = peek64(seat + 16)
+      poke64(seat, 0)
+      var entry = comp_stack_find(grant)
+      if entry == 0 {
+        gate_reply(caller_of(w), -4)
+      } else {
+        var row = grant_row_of(grant)
+        var ww = peek64(row + 32)
+        var hh = peek64(row + 40)
+        // A parent-relative surface's move names its offset from the
+        // parent (T8.15): the bounds the absolute position answers to,
+        // the parity the word blit's own (the parent's is even, so the
+        // relative even keeps the sum even).
+        var both = comp_abs_pos(entry, x, y)
+        var ax = both >> 32
+        var ay = both & 4294967295
+        if (x % 2) != 0 || (ax + ww) > peek64(comp_mode_w) || (ay + hh) > peek64(comp_mode_h) {
+          gate_reply(caller_of(w), -4)
+        } else {
+          poke64(entry + 8, x)
+          poke64(entry + 16, y)
+          gate_reply(caller_of(w), 0)
+        }
+      }
+    } else {
+      if op == 17 {
+        // The stack pruned first, so the walk's rows are live and the
+        // entry found is the one the walk paints at; its position read
+        // before the walk — the flush's wait is a yield, and a death
+        // notice served in it may shift the entries below. The dead
+        // owner's cell read and cleared first: the reclaim gives the
+        // dead owner's runs back and takes the surfaces off the stack
+        // (emo-desktop A9.2).
+        // The dead owners in (T8.15's array): the clear before the
+        // reclaim, the write it cannot race (one per pid ever).
+        var p = 0
+        while p < comp_dead_pids {
+          if peek64(comp_dead_cells + (p * 8)) != 0 {
+            poke64(comp_dead_cells + (p * 8), 0)
+            comp_reclaim(p)
+          }
+          p = p + 1
+        }
+        comp_stack_prune()
+        var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+        var grant = peek64(seat)
+        var rx = peek64(seat + 8)
+        var ry = peek64(seat + 16)
+        var rw = peek64(seat + 24)
+        var rh = peek64(seat + 32)
+        poke64(seat, 0)
+        var entry = comp_stack_find(grant)
+        if entry == 0 {
+          gate_reply(caller_of(w), -4)
+        } else {
+          var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+          var x = both >> 32
+          var y = both & 4294967295
+          var row = grant_row_of(grant)
+          poke64(row + 56, 1)
+          var sum = comp_compose(gpu, me)
+          poke64(row + 64, rx)
+          poke64(row + 72, ry)
+          poke64(row + 80, rw)
+          poke64(row + 88, rh)
+          println("comp ${x} ${y} ${sum & 4294967295}")
+          gate_reply(caller_of(w), 0)
+          comp_cb_reply()
+        }
+      } else {
+        if op == 19 {
+          // The role (T8.13, emo-desktop A9.1 — the third seam): the
+          // buffer becomes a surface of that role, the stack's entry
+          // made here and nowhere else. A surface's role does not
+          // change (a second declaration is refused); a full stack is
+          // the resource refusal. The vocabulary is implemented whole
+          // since T8.15 (A9.3): what a role means — free-standing,
+          // parent-relative, the shell's topmost strip — is the
+          // binding's and the walk's to say.
+          var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+          var grant = peek64(seat)
+          var role = peek64(seat + 8)
+          poke64(seat, 0)
+          if comp_stack_find(grant) != 0 {
+            gate_reply(caller_of(w), -4)
+          } else {
+            // one wallpaper to a machine (T8.27): the role's surface
+            // exists once, so the second declaration is the argument
+            // refusal — the stack's scan is the verdict
+            if role == role_wallpaper && comp_stack_has_role(role_wallpaper) {
+              gate_reply(caller_of(w), -4)
+            } else {
+              comp_stack_prune()
+              if comp_stack_add(grant, role) == 0 {
+                gate_reply(caller_of(w), -5)
+              } else {
+                // the panel's grant, named at its declaration
+                // (emo-desktop A12.1): the pointer's moves are the
+                // desktop's, and the panel's owner is who they serve
+                if role == 3 {
+                  poke64(comp_panel_cell, grant)
+                }
+                // the wallpaper's grant, named the same way (T8.27):
+                // the walk's undermost layer and the background
+                // press's focus — the cell is how both find it
+                if role == role_wallpaper {
+                  poke64(comp_wallpaper_cell, grant)
+                }
+                gate_reply(caller_of(w), 0)
+              }
+            }
+          }
+        } else {
+          if op == 20 {
+            // The parent binding (T8.15, A9.3): a popup or a
+            // subsurface names the toplevel it hangs from — its
+            // coordinates the parent's from then on, the walk painting
+            // it immediately above the parent, the prune taking it
+            // when the parent goes. A surface with no entry, a role
+            // that takes no parent (toplevel, panel), a parent that is
+            // no live toplevel — each the argument refusal, by number.
+            var pseat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+            var grant = peek64(pseat)
+            var parent = peek64(pseat + 8)
+            poke64(pseat, 0)
+            var entry = comp_stack_find(grant)
+            if entry == 0 {
+              gate_reply(caller_of(w), -4)
+            } else {
+              var role = peek64(entry + 24)
+              if role != role_popup && role != role_subsurface {
+                gate_reply(caller_of(w), -4)
+              } else {
+                var pentry = comp_stack_find(parent)
+                if pentry == 0 || peek64(pentry + 24) != role_toplevel {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  poke64(entry + 32, parent)
+                  gate_reply(caller_of(w), 0)
+                }
+              }
+            }
+          } else {
+            if op == 21 {
+              // The frame callback's park (T8.15, A9.3 — the fifth
+              // seam): the caller's pid into the ring, answered at the
+              // next composition's completion — the tick's client
+              // side, the animation story's hinge. No surface named:
+              // the callback rides the display's rhythm, not one
+              // window's. A full ring is the resource refusal, the
+              // retry the caller's.
+              var n = peek64(comp_cb_count)
+              if n >= comp_cb_depth {
+                gate_reply(caller_of(w), -5)
+              } else {
+                poke64(comp_cb_cells + (n * 8), caller_of(w))
+                poke64(comp_cb_count, n + 1)
+              }
+            } else {
+              if op == pointer_op {
+                comp_cursor_place(gpu, me)
+              } else {
+                println("comp: the verb is nobody's")
+                halt()
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The compositor's service (T8.6): the gen line (the pages outlive
+// the instances — the restart reads back what the last one left and
+// increments it), the display's mode queried once (never a constant —
+// the protocol's second seam; the blit's stride and the move's bounds
+// ride it), then the loop: the stash first (the flush's stragglers),
+// the receive's dynamic binding decoding the kernel client's tuples
+// (the stop) and handing the raw words to the word handling.
+def comp_service(boss Pid, gpu Pid) Void {
+  var me2 = self_pid()
+  var gen = peek64(comp_gen_cell) + 1
+  poke64(comp_gen_cell, gen)
+  gpu <- (1 << 32, me2, 0)
+  receive {
+    m -> {
+      var mw = 0
+      mw = m
+      poke64(comp_mode_w, op_of(mw))
+      poke64(comp_mode_h, caller_of(mw))
+    }
+  }
+  println("comp gen ${gen}")
+  // The cursor plane across the restart (T8.11): a notice the dead
+  // instance never read, or a pointer generation past the one the
+  // sprite shows, is a composition the new instance owes before it
+  // announces — the pages say where the sprite stands.
+  if peek64(pointer_notice_cell) != 0 || peek64(pointer_gen_cell) != peek64(comp_cursor_gen) {
+    comp_cursor_place(gpu, me2)
+  }
+  boss <- self_pid()
+  var running = true
+  while running {
+    var w = comp_stash_pop()
+    if w != 0 {
+      comp_word(w, gpu, me2)
+    } else {
+      receive {
+        x -> {
+          if op_of(x) >= 0 {
+            comp_word(x, gpu, me2)
+          } else {
+            var kop = 0
+            case x {
+              (a, b, c, d, e, f) -> { kop = a }
+            }
+            if kop == 0 {
+              running = false
+            } else {
+              println("comp: the message is nobody's")
+              halt()
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def comp_run(boss Pid, gpu Pid) Void {
+  comp_service(boss, gpu)
+}
+
+// The compositor's supervisor (T8.6): the filesystem supervisor's
+// shape — the pages outlive the instances, the spawn, the death
+// notice the shim's hook posts, the restart. The notices a user
+// pass's death posts drop here (T8.14): the dead owner's windows go
+// home through the comp page's dead-owner cell, read at the next
+// composition inside the service — the stack's walk and the reclaim
+// never race.
+def comp_supervisor(boss Pid, gpu Pid) Void {
+  var me3 = self_pid()
+  poke64(comp_sup_cell, pid_num(me3))
+  do comp_run(me3, gpu)
+  var inst = wait_pid()
+  poke64(comp_svc_cell, pid_num(inst))
+  boss <- inst
+  while true {
+    receive {
+      w -> {
+        if op_of(w) == notice_op {
+          if caller_of(w) == pid_num(inst) {
+            do comp_run(me3, gpu)
+            inst = wait_pid()
+            poke64(comp_svc_cell, pid_num(inst))
+            boss <- inst
+          }
+        }
+      }
+    }
+  }
+}
+
 def fs_run(boss Pid, blk Pid, cache Int64) Void {
   fs.service(boss, blk, cache)
 }
@@ -773,10 +3351,19 @@ def tick_proof() Void {
 var me = self_pid()
 var console_svc = me
 var blk_svc = me
+var gpu_svc = me
+var input_svc = me
+var comp_svc = me
 var fs_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
+do gpu_service(me)
+// The input lines' mask is the two drivers' to fill, bit by bit (T8.11):
+// empty before either runs.
+poke64(input_irq_cell, 0)
+do input_service(me)
+do pointer_service(me)
 uart_init()
 println("Hello, EmoOS!")
 sv39_report()
@@ -787,18 +3374,163 @@ receive { c1 -> {
 } }
 receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 -> { blk_svc = c3 } }
+receive { g1 -> {
+  poke64(gpu_svc_cell, pid_num(g1))
+  gpu_svc = g1
+} }
+receive { i1 -> {
+  poke64(input_svc_cell, pid_num(i1))
+  input_svc = i1
+} }
+receive { p1 -> {} }
+
+// The display's flush smoke (T8.1): the root asks the driver for the
+// mode (the answer that verb 11 will one day route), paints the
+// framebuffer a deterministic row gradient through the kernel's high
+// alias of the carve at the mode the device itself reported, then asks
+// for the whole-rect transfer + flush — the device's two OK replies
+// are the proof that the pipeline end to end took the paint: the
+// device read the carve's physical bytes (attach_backing named it),
+// copied them to the host resource, and put them on the display.
+gpu_svc <- (1 << 32, me, 0)
+var mode = 0
+receive {
+  m -> { mode = m }
+}
+gpu_paint(koff + screen_base, gpu_height(mode), gpu_width(mode) / 2)
+gpu_svc <- (0, me, 0)
+receive {
+  g2 -> {
+    if g2 != 0 {
+      println("gpu: the flush answered ${g2}")
+      halt()
+    }
+  }
+}
+println("gpu flush ok")
+
+// The compositor comes up through its supervisor (T8.6): the fs
+// lineage's shape — the spawn, the pages' generation, the death
+// notice the restart answers.
+do comp_supervisor(me, gpu_svc)
+receive { n1 -> {
+  poke64(comp_svc_cell, pid_num(n1))
+  comp_svc = n1
+} }
+
 do supervisor(me, blk_svc)
 receive { f1 -> { fs_svc = f1 } }
-do reader(console_svc, me, 1)
-do reader(console_svc, me, 2)
-do reader(console_svc, me, 3)
-do reader(console_svc, me, 4)
-var root_b = read_byte(console_svc)
+do reader(input_svc, me, 1)
+do reader(input_svc, me, 2)
+do reader(input_svc, me, 3)
+do reader(input_svc, me, 4)
+var root_b = read_byte(input_svc)
 println("0:${root_b}")
 receive { done1 -> {} }
 receive { done2 -> {} }
 receive { done3 -> {} }
 receive { done4 -> {} }
+
+// The disk ELFs' install (emo-desktop A11.1): the three apps' images,
+// embedded in this image, written onto the volume through the first
+// instance when a probe says the file is missing — the machine
+// installs its own apps — and named on the wire either way. The boots
+// after find the volume that carries them (`kept`, the size the name
+// table holds) and exec from the disk; nothing re-writes an image
+// that is already there.
+def put_counter_name(a Int64) Int64 {
+  poke8(a, 99B)      // c
+  poke8(a + 1, 111B) // o
+  poke8(a + 2, 117B) // u
+  poke8(a + 3, 110B) // n
+  poke8(a + 4, 116B) // t
+  poke8(a + 5, 101B) // e
+  poke8(a + 6, 114B) // r
+  poke8(a + 7, 46B)  // .
+  poke8(a + 8, 101B) // e
+  poke8(a + 9, 108B) // l
+  poke8(a + 10, 102B) // f
+  return 11
+}
+
+def put_files_name(a Int64) Int64 {
+  poke8(a, 102B)     // f
+  poke8(a + 1, 105B) // i
+  poke8(a + 2, 108B) // l
+  poke8(a + 3, 101B) // e
+  poke8(a + 4, 115B) // s
+  poke8(a + 5, 46B)  // .
+  poke8(a + 6, 101B) // e
+  poke8(a + 7, 108B) // l
+  poke8(a + 8, 102B) // f
+  return 9
+}
+
+def put_editor_name(a Int64) Int64 {
+  poke8(a, 101B)     // e
+  poke8(a + 1, 100B) // d
+  poke8(a + 2, 105B) // i
+  poke8(a + 3, 116B) // t
+  poke8(a + 4, 111B) // o
+  poke8(a + 5, 114B) // r
+  poke8(a + 6, 46B)  // .
+  poke8(a + 7, 101B) // e
+  poke8(a + 8, 108B) // l
+  poke8(a + 9, 102B) // f
+  return 10
+}
+
+def put_spin_name(a Int64) Int64 {
+  poke8(a, 115B)     // s
+  poke8(a + 1, 112B) // p
+  poke8(a + 2, 105B) // i
+  poke8(a + 3, 110B) // n
+  poke8(a + 4, 46B)  // .
+  poke8(a + 5, 101B) // e
+  poke8(a + 6, 108B) // l
+  poke8(a + 7, 102B) // f
+  return 8
+}
+
+def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
+    label String) Void {
+  var me2 = self_pid()
+  fs <- (7, me2, namea, nlen, namea, 0)
+  receive { ans -> {
+    if ans < 0 {
+      var size = blobend - bloba
+      fs <- (6, me2, namea, nlen, bloba, size)
+      receive { wrote -> {
+        if wrote != size {
+          println("fs: the install wrote ${wrote}, not ${size}")
+          halt()
+        }
+      } }
+      println("installed ${label} ${size}")
+    } else {
+      println("kept ${label} ${ans}")
+    }
+  } }
+}
+
+var install_scratch = frames.take()
+if install_scratch == 0 {
+  println("fs: no block for the install")
+  halt()
+}
+var cn = put_counter_name(install_scratch)
+install_img(fs_svc, install_scratch, cn, peek64(app_blob_c),
+  peek64(app_blob_c_end), "counter.elf")
+var fn = put_files_name(install_scratch)
+install_img(fs_svc, install_scratch, fn, peek64(app_blob_f),
+  peek64(app_blob_f_end), "files.elf")
+var en = put_editor_name(install_scratch)
+install_img(fs_svc, install_scratch, en, peek64(app_blob_e),
+  peek64(app_blob_e_end), "editor.elf")
+var sn = put_spin_name(install_scratch)
+install_img(fs_svc, install_scratch, sn, peek64(app_blob_s),
+  peek64(app_blob_s_end), "spin.elf")
+frames.give(install_scratch)
 
 // The restart proof (T7.2, docs/fs.md): a file written through the
 // first instance of the filesystem service, the stop — a death the
@@ -841,11 +3573,26 @@ if !same_bytes(scratch + 64, scratch + 1024, boot_len) {
 frames.give(scratch)
 println("fs restart ok")
 
+// The compositor's restart proof (T8.6): the stop — a death the shim's
+// hook tells the supervisor of, answered with the next instance and
+// the pages' generation one higher — the state the restart reads
+// back, the fs's cache-rebuild analog.
+comp_svc <- (0, me, 0, 0, 0, 0)
+receive { n2 -> {
+  poke64(comp_svc_cell, pid_num(n2))
+  comp_svc = n2
+} }
+
 // The kernel's program is done: stage the user image (T4.1). The boot
 // stub reads the staged entry once this returns, srets into U-mode,
 // and the user program runs — its own greeting is the proof on the
 // serial line. A refusal already said why; the entry word stays zero
-// and the stub powers the machine off.
+// and the stub powers the machine off. The screen token's cell (T8.2)
+// and the carve grant's entry (T8.4) are established before the image
+// runs: the machine starts with the token unpoked and the grant held
+// by nobody.
+poke64(screen_cell, 0)
+poke64(screen_grant_cell, 0)
 var staged = user.stage()
 if staged > 0 {
   println("user: staged ${staged}")

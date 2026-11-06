@@ -19,6 +19,9 @@
  (alias runtest)
  (deps
   (source_tree ../../projects/emo-os)
+  (source_tree ../../projects/emo-ui)
+  (source_tree ../../projects/emo-desktop/fb)
+  (source_tree ../../stdlib/registry/syscall)
   (source_tree ../../examples/parity_fake)
   (source_tree ../../examples/parity_metal)
   emo_os_test.exe)

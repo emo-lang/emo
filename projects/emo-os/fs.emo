@@ -50,7 +50,12 @@ const sector = 512
 const magic = 0x31302D53466F6D45 // "EmoFS-01", the bytes read in order
 const entries = 64
 const name_max = 24
-const write_max = 2048
+// The write's bound is the caller's: a gate client's write stages in a
+// request slot (2048 bytes, the gate's own check), while a kernel
+// client's write streams from its buffer through the cache's one
+// sector staging — the disk ELFs' install (emo-desktop A11.1) is the
+// first write bigger than a slot, and the bound is theirs to name.
+const write_max = 1048576
 
 // The cache block: the superblock copy, the name table copy (eight
 // sectors), the free map (2048 bits in 32 words), and the sector
@@ -143,9 +148,13 @@ def stash_pop() Int64 {
 // buffer, 4 reads it into the buffer, 5 answers the capacity. The
 // reply is awaited under the stash discipline, and for the sector ops
 // it must echo the sector — anything else in its place is a message
-// this service cannot have been sent, and the machine ends on it.
-def io(blk Pid, op Int64, sec Int64, buf Int64) Int64 {
-  blk <- ((op << 32) | sec, self_pid(), buf)
+// this service cannot have been sent, and the machine ends on it. The
+// sender's own pid rides in from the caller (the service's, boxed
+// once for its life), and the run's length rides the request's fourth
+// word — one sector for the small paths, a chunk for the bulk runs
+// below.
+def io(me Pid, blk Pid, op Int64, sec Int64, buf Int64) Int64 {
+  blk <- ((op << 32) | sec, me, buf, 1)
   var reply = 0
   var done = false
   while !done {
@@ -167,6 +176,36 @@ def io(blk Pid, op Int64, sec Int64, buf Int64) Int64 {
     }
   }
   return reply
+}
+
+// A run of sectors in one message (emo-desktop A11.1): the disk ELFs'
+// install wrote whole images through this service, and one message per
+// sector was the leak that killed the first attempt — every send's
+// tuple lives on this arena for the instance's life, and four hundred
+// sectors a file spent it before the second file ended. The run is one
+// request: the device DMAs the caller's own contiguous buffer (a gate
+// client's is one checked segment; a kernel client's is its own RAM),
+// thirty-two sectors a chunk, a size the device's bounds carry.
+const io_chunk = 32
+
+def io_run(me Pid, blk Pid, op Int64, sec Int64, buf Int64, n Int64) Void {
+  blk <- ((op << 32) | sec, me, buf, n)
+  var done = false
+  while !done {
+    receive {
+      x -> {
+        if op_of(x) >= 0 {
+          stash_push(x)
+        } else {
+          if x != sec {
+            println("fs: the driver's reply is not ours")
+            halt()
+          }
+          done = true
+        }
+      }
+    }
+  }
 }
 
 // The free map, one bit per sector of the disk.
@@ -198,10 +237,14 @@ def map_run(cache Int64, first Int64, n Int64, used Bool) Void {
 
 // The map is a function of the name table: everything below the data
 // region is used, every named entry's extent is used, the rest is
-// free. Derived at every mount, never read from the disk.
+// free. Derived at every mount, never read from the disk. The map's
+// width is the disk's own answer (the capacity word), one bit per
+// sector — a 4 MiB disk is 128 words, and the cache's gap between the
+// map and the sector staging carries eight times that.
 def rebuild_map(cache Int64) Void {
+  var words = (peek64(cache + c_super + 16) + 63) / 64
   var i = 0
-  while i < 32 {
+  while i < words {
     poke64(cache + c_map + i * 8, 0)
     i = i + 1
   }
@@ -317,16 +360,19 @@ def count_files(cache Int64) Int64 {
 
 // The entry's sector back to the disk: the commit point of a write
 // and of a remove.
-def commit_entry(blk Pid, cache Int64, e Int64) Void {
+def commit_entry(me Pid, blk Pid, cache Int64, e Int64) Void {
   var s = e / 8
-  io(blk, 3, nt_first(cache) + s, cache + c_names + s * sector)
+  io(me, blk, 3, nt_first(cache) + s, cache + c_names + s * sector)
 }
 
-// The whole file: the extent allocated, the bytes written sector by
-// sector (the last one's tail zero), then the entry — the commit —
+// The whole file: the extent allocated, the full-chunk runs written
+// straight from the caller's buffer (the device DMAs them, one message
+// a chunk — the install-sized writes the disk ELFs brought are what a
+// sector-a-message arena cannot carry), the tail sector's bytes staged
+// through the cache with its tail zero, then the entry — the commit —
 // then the old extent freed in memory. A refusal before the first
 // sector write leaves the disk untouched.
-def write_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int64) Int64 {
+def write_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int64, root Int64) Int64 {
   if !valid_name(name, nlen) || len < 0 || len > write_max {
     return -4
   }
@@ -345,7 +391,25 @@ def write_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int6
     if first == 0 {
       return -5
     }
-    var s = 0
+    // The full chunks: the caller's bytes as the device's own data,
+    // one message a chunk. The len bytes end mid-sector only in the
+    // tail, which the cache path below stages.
+    // The bulk runs carry physical addresses: a write bigger than the
+    // gate's staging is a kernel client's, its buffer the kernel's own
+    // (negative, the physical straight off), contiguous by the DMA
+    // discipline the block the cache lives in keeps.
+    // The bulk runs name the buffer in the kernel's own alias (the
+    // driver translates by its discipline): a write bigger than the
+    // gate's staging is a kernel client's, its buffer the kernel's own
+    // already; the word passes through untouched.
+    var chunks = n / io_chunk
+    var c = 0
+    while c < chunks {
+      io_run(me, blk, 3, first + c * io_chunk, buf + c * io_chunk * sector,
+        io_chunk)
+      c = c + 1
+    }
+    var s = chunks * io_chunk
     while s < n {
       var k = 0
       while k < sector {
@@ -357,7 +421,7 @@ def write_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int6
         }
         k = k + 1
       }
-      io(blk, 3, first + s, cache + c_data)
+      io(me, blk, 3, first + s, cache + c_data)
       s = s + 1
     }
   }
@@ -374,7 +438,7 @@ def write_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int6
   poke64(a + 32, first)
   poke64(a + 40, n)
   poke64(a + 48, peek64(cache + c_super + 8))
-  commit_entry(blk, cache, e)
+  commit_entry(me, blk, cache, e)
   if old >= 0 {
     map_run(cache, old_first, old_count, false)
   }
@@ -383,8 +447,15 @@ def write_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, len Int6
 
 // The whole file into the caller's buffer, at most cap bytes of it;
 // the answer is the file's size, so a caller whose buffer was short
-// knows it.
-def read_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, cap Int64) Int64 {
+// knows it. A cap past the size ends the walk — and a size past the
+// cap reads nothing at all: the size comes off the name table, so the
+// cap-zero probe the exec's transaction opens its work with crosses
+// no sector (the disk ELFs' size ask is free, the read that follows
+// pays for the bytes). The whole sectors the cap and the size both
+// reach ride the bulk runs — the device DMAs the caller's own buffer —
+// and the tail (a partial sector of bytes, or a cap that ends
+// mid-sector) stages through the cache.
+def read_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, cap Int64, root Int64) Int64 {
   if !valid_name(name, nlen) || cap < 0 {
     return -4
   }
@@ -396,13 +467,39 @@ def read_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, cap Int64
   var size = peek64(a + 24)
   var first = peek64(a + 32)
   var count = peek64(a + 40)
+  var want = size
+  if cap < want {
+    want = cap
+  }
   var copied = 0
   var s = 0
+  // The full chunks, while both the file and the cap still carry a
+  // whole chunk of sectors: the device lands them in the caller's
+  // buffer at its physical address, one lookup at the chunk's head and
+  // one at its tail — equal spans, one contiguous run the device can
+  // name (a disk ELF's buffer is its own table's, the run the exec
+  // loaded it into); a buffer that does not walk to one span is the
+  // loud end, never a silent scatter.
+  while copied + io_chunk * sector <= want && s + io_chunk <= count {
+    var big = io_chunk * sector
+    var pa = buf_pa(buf + copied, root)
+    var pa2 = buf_pa(buf + copied + big - 1, root)
+    if pa2 - pa != big - 1 {
+      println("fs: the caller's buffer is not one run")
+      halt()
+    }
+    io_run(me, blk, 4, first + s, sv39.va_of(pa), io_chunk)
+    copied = copied + big
+    s = s + io_chunk
+  }
+  // The tail: one sector a message, the bytes copied out one at a
+  // time up to the file's end and the cap's, each landing through the
+  // caller's own walk.
   while s < count && copied < size && copied < cap {
-    io(blk, 4, first + s, cache + c_data)
+    io(me, blk, 4, first + s, cache + c_data)
     var k = 0
     while k < sector && copied < size && copied < cap {
-      poke8(buf + copied, peek8(cache + c_data + k))
+      poke8(buf_pa(buf + copied, root), peek8(cache + c_data + k))
       copied = copied + 1
       k = k + 1
     }
@@ -414,7 +511,7 @@ def read_file(blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, cap Int64
 // The names, each followed by a newline, into the caller's buffer; a
 // name that would not fit is left out with everything after it. The
 // answer is the bytes written.
-def list_files(cache Int64, buf Int64, cap Int64) Int64 {
+def list_files(cache Int64, buf Int64, cap Int64, root Int64) Int64 {
   if cap < 0 {
     return -4
   }
@@ -430,10 +527,10 @@ def list_files(cache Int64, buf Int64, cap Int64) Int64 {
       } else {
         var i = 0
         while i < n {
-          poke8(buf + pos + i, peek8(a + i))
+          poke8(buf_pa(buf + pos + i, root), peek8(a + i))
           i = i + 1
         }
-        poke8(buf + pos + n, 10B)
+        poke8(buf_pa(buf + pos + n, root), 10B)
         pos = pos + n + 1
       }
     }
@@ -442,7 +539,7 @@ def list_files(cache Int64, buf Int64, cap Int64) Int64 {
   return pos
 }
 
-def remove_file(blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
+def remove_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
   if !valid_name(name, nlen) {
     return -4
   }
@@ -454,7 +551,7 @@ def remove_file(blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
   var first = peek64(a + 32)
   var count = peek64(a + 40)
   zero(a, 64)
-  commit_entry(blk, cache, e)
+  commit_entry(me, blk, cache, e)
   map_run(cache, first, count, false)
   return 0
 }
@@ -467,16 +564,16 @@ def remove_file(blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
 // wire counts the instances the disk has seen; the name table read;
 // the free map rebuilt from it. Nothing of a previous instance
 // survives into this one: the cache is the disk's picture, taken now.
-def mount(blk Pid, cache Int64) Void {
+def mount(me Pid, blk Pid, cache Int64) Void {
   var super = cache + c_super
-  io(blk, 4, 0, super)
+  io(me, blk, 4, 0, super)
   var formatted = false
   if peek64(super) != magic {
-    var cap = io(blk, 5, 0, 0)
+    var cap = io(me, blk, 5, 0, 0)
     zero(cache + c_data, sector)
     var s = 0
     while s < 8 {
-      io(blk, 3, 1 + s, cache + c_data)
+      io(me, blk, 3, 1 + s, cache + c_data)
       s = s + 1
     }
     zero(super, sector)
@@ -496,7 +593,7 @@ def mount(blk Pid, cache Int64) Void {
   }
   var gen = peek64(super + 8) + 1
   poke64(super + 8, gen)
-  io(blk, 3, 0, super)
+  io(me, blk, 3, 0, super)
   var first = nt_first(cache)
   var count = nt_count(cache)
   if count != 8 || data_lo(cache) != first + count {
@@ -505,7 +602,7 @@ def mount(blk Pid, cache Int64) Void {
   }
   var t = 0
   while t < count {
-    io(blk, 4, first + t, cache + c_names + t * sector)
+    io(me, blk, 4, first + t, cache + c_names + t * sector)
     t = t + 1
   }
   rebuild_map(cache)
@@ -515,34 +612,70 @@ def mount(blk Pid, cache Int64) Void {
   println("fs gen ${gen} files ${count_files(cache)}")
 }
 
+// The caller's memory, translated (emo-desktop A11.1): the read's and
+// the list's bytes land in the caller's buffer, and a disk ELF's
+// buffer is its own table's — the service walks the caller's table by
+// the space word the gate staged into the request slot, while a
+// kernel client's addresses are the kernel's own (negative, the heap
+// pointer's sign), the physical straight off. The lookup is the
+// hardware's own walk, in software, over the kernel's alias of the
+// caller's table frames.
+def buf_pa(buf Int64, root Int64) Int64 {
+  if buf < 0 {
+    return sv39.pa_of(buf)
+  }
+  return sv39.lookup(root, buf)
+}
+
 // One request, whichever side it came from: the gate's slot (the
 // write's bytes are in the slot; the read's and the list's land in the
-// caller's buffer through the supervisor's low window, the range the
-// gate checked) or a kernel client's addresses.
-def serve(blk Pid, cache Int64, op Int64, name Int64, nlen Int64, buf Int64, len Int64) Int64 {
+// caller's buffer through the space word the slot carries) or a kernel
+// client's addresses â whose own are the kernel's (negative, the
+// physical straight off), no root to walk. The gate word's decoding
+// rides the whole request word: a call carries eight arguments on this
+// target, and the two shapes split here. Op 10 is op 7's kernel-client
+// shape with a tuple reply (emo-desktop A11.1): the process service's
+// mailbox holds gate words beside the reply â a raw word of either
+// is a small positive, indistinguishable â while a tuple is a heap
+// pointer, negative as every pointer is, and the waiting transaction
+// can tell its answer by the sign alone.
+def serve_client(me Pid, blk Pid, cache Int64, op Int64, name Int64, nlen Int64, buf Int64, len Int64) Int64 {
   if op == 6 {
-    return write_file(blk, cache, name, nlen, buf, len)
+    return write_file(me, blk, cache, name, nlen, buf, len, 0)
   }
-  if op == 7 {
-    return read_file(blk, cache, name, nlen, buf, len)
+  if op == 7 || op == 10 {
+    return read_file(me, blk, cache, name, nlen, buf, len, 0)
   }
   if op == 8 {
-    return list_files(cache, buf, len)
+    return list_files(cache, buf, len, 0)
   }
   if op == 9 {
-    return remove_file(blk, cache, name, nlen)
+    return remove_file(me, blk, cache, name, nlen)
   }
   return -1
 }
 
-def serve_gate(blk Pid, cache Int64, w Int64) Void {
+def serve_gate(me Pid, blk Pid, cache Int64, w Int64) Void {
   var s = slots + slot_of(w) * slot_size
   var op = verb_of(w)
   var buf = s + 256
   if op == 7 || op == 8 {
     buf = peek64(s + 32)
   }
-  var answer = serve(blk, cache, op, s + 64, peek64(s + 16), buf, peek64(s + 24))
+  var root = peek64(s + 40)
+  var answer = 0
+  if op == 6 {
+    answer = write_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
+  }
+  if op == 7 || op == 10 {
+    answer = read_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
+  }
+  if op == 8 {
+    answer = list_files(cache, buf, peek64(s + 24), root)
+  }
+  if op == 9 {
+    answer = remove_file(me, blk, cache, s + 64, peek64(s + 16))
+  }
   poke64(s, 0)
   gate_reply(caller_of(w), answer)
 }
@@ -569,18 +702,19 @@ def abandon() Void {
 // the stop: the loop ends, the process returns, and the death the
 // supervisor is told of is a restart.
 def service(boss Pid, blk Pid, cache Int64) Void {
-  mount(blk, cache)
-  boss <- self_pid()
+  var me = self_pid()
+  mount(me, blk, cache)
+  boss <- me
   var running = true
   while running {
     var w = stash_pop()
     if w != 0 {
-      serve_gate(blk, cache, w)
+      serve_gate(me, blk, cache, w)
     } else {
       receive {
         x -> {
           if op_of(x) >= 0 {
-            serve_gate(blk, cache, x)
+            serve_gate(me, blk, cache, x)
           } else {
             // a kernel client's tuple: the bindings are tagged words,
             // and the typed defs below take raw ones — the stores into
@@ -605,7 +739,11 @@ def service(boss Pid, blk Pid, cache Int64) Void {
             if kop == 0 {
               running = false
             } else {
-              from <- serve(blk, cache, kop, name, nlen, buf, len)
+              if kop == 10 {
+                from <- (10, serve_client(me, blk, cache, 7, name, nlen, buf, len))
+              } else {
+                from <- serve_client(me, blk, cache, kop, name, nlen, buf, len)
+              }
             }
           }
         }

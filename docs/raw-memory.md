@@ -25,6 +25,18 @@ names — given a checked surface instead of an escape hatch.
 | `poke32(addr, v)` | `Int64 → Int64 → Void` | a volatile 32-bit store; the value must fit 32 bits (0–4294967295), the loud end otherwise |
 | `peek64(addr)` | `Int64 → Int64` | a volatile word load |
 | `poke64(addr, v)` | `Int64 → Int64 → Void` | a volatile word store |
+| `sfence()` | `→ Void` | the address-translation fence: the whole TLB, every address space (EmoOS T8.5) |
+
+The translation fence joined with EmoOS T8.5 (2026-10-31), the window
+buffer's demand: a page table a `satp` names — a window buffer's run
+mapped into its owner's table after the spawn — owes the hardware the
+flush before its walks may be trusted, the same discipline the `satp`
+switch's own fences keep for the writes they make. The spawn-time build
+owes nothing: it writes a table nothing walks yet. The instruction is
+`sfence.vma zero, zero` — the whole TLB, every address space — and the
+target rule is the family's: a target admits `sfence` iff the program
+owns the address space (the per-target matrix below carries it with the
+lanes).
 
 The 32-bit line joined with EmoOS T7.1 (2026-10-30), the virtio-blk
 driver's demand: MMIO registers are four bytes, and neither of the two

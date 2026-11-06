@@ -152,4 +152,737 @@ Pending design decisions — deliberately kept out of the README until they are 
 - The console renderer (EmoOS T7.4): **implemented (2026-10-31) — EmoUI's console backend on EmoOS: a user pass between the proof chain and the shell that builds a declarative node tree, lays it into a cell grid, and repaints per key, every byte through the gate — the machine's third kind of resident (an application, after the services and the shell), and the closure demo's last piece: kernel, shell, and UI in one language.** The decisions, in order. **The spine is the hosted core's, carried to the console's currency** (`projects/emo-ui`'s portable core remains the design's standing record): `Node` as the one tree type (the hosted C2), `Column`/`Row`/`Text`/`Button` as the spine's kinds, the four lowercase factories so `.new` never appears in a tree — and because the riscv64 String surface is equality only, a `Text`'s body is an **address and a length** (byte-array literals poked into the image's writable segment at start, the shell's discipline; no String-to-bytes path exists to reach for, no array-element assignment anywhere, the target refuses it). **What stayed hosted, on purpose**: `Align`, `grow`, fixed widths and heights, `Scroll`, `TextInput`, `Image`, `Spacer` — a carried value the renderer would ignore is a silent fallback and a node kind nothing renders is a construct without its place; the style carries whole-cell `padding` and `gap` alone, and the layout is the TUI backend's box model minus the parts the console has no consumer for (a column stacks, a row lines up, sizes intrinsic, the walk narrows with `is()` — the interface dispatch table the T3.8 fix built, exercised on metal for the first time; `ArrayBuilder` is refused at its construction site on this target, so children are array literals and nothing in the spine reaches for the builder). **The frame is one write**: a `32×8` grid in raw memory, `(width + 1)` bytes per row, the last byte of every row a newline poked once at start, so the whole frame — `height` lines of exactly `width` bytes, trailing spaces the frame's own — rides the write verb at once (264 bytes against the staging bound's 2048); each repaint clears the cells, walks the tree, and clips at the grid's edge (the renderer's job, the frame's own bound, not a silent fallback). **The loop is the Elm loop, typed** — model, `update(model, tag)`, `view(model)` — with the console's event source in the loop's seat: one blocking byte from the read verb, mapped by the application onto a tag; the tags are the application's constants (a full repaint needs no tag stability — the TUI's own "a terminal never diffs" decision — so the hosted loop's Registry machinery stays hosted), the unmapped byte is dropped by name (the shell's rule), and nothing echoes: **the frame is the answer**. The loop ends on the application's quit tag, the TUI run loop's input-exhaustion shape; the pass's exit answers the parent's wait, and the REPL's first read waits behind it — the console's one-reader discipline is the pass's alone while it runs. **The demo is the counter** — the Elm architecture's own example at the console's scale: the title, the count, the three buttons `[a plus]  [b minus]  [q quit]`, `a`/`b` through update (the count clamped at 0 and 999 — a fourth digit is a frame the currency cannot show, the clamp the honest answer, not a silent wrap), `q` ending the pass. **The kernel changes nothing**: the gate routes the read and write verbs it has routed since T4.2; the whole task is user-side (`hello/ui.emo` beside `shell.emo`, the token-cell branch and the spawn/wait in `main.emo`), `run.sh`, and the note. **Two finds on the way, both the frame's own bytes naming them**: the first frame on the wire showed `EmoUI nn EmoOS` — the title literal had dropped the `on`'s `o` (14 bytes either way, the text wrong — the golden's byte-exact assertions are why it cannot hide); and the buttons rendered `[a plus ]` — the closing bracket placed at `x + 2 + len`, one cell past the span the intrinsic width (`len + 2`) promised, leaving a gap cell inside the bracket. **Bounds stated**: the pass's arena is 64 KiB and no collector exists — the tree rebuilds per event and nothing reclaims; the demo's session is the golden's three keys, and a session that paints forever is the exhaustion kill (the lifetime bound every user pass lives under); the renderer owns the console exclusively while it runs; the frame clips at its edge. Pins: `run.sh`'s chain under both timer transports, three consecutive rounds byte-identical — grown by the pass's exchange between `wait 7` and the REPL's first prompt (the first frame the moment the pass is spawned — the title line, `count 000`, the buttons row — `count 001` after the first key, the quit key ending the pass, the second `count 000` unasserted: the first occurrence already proves the frame), the keys fed one byte at a time (no chunking — the overrun risk is a burst's), and the ledger `frames 33 19` — thirty plus the pass's stack and arena taken at the spawn and given back at its clean exit, its table splitting the sixth table block. `dune runtest` green (the `emo_os` smoke with `ui.emo` in its scratch tree); `@fmt` green. The standing records: `projects/emo-os/docs/ui.md` (zh-CN mirror alongside), the READMEs (EN + zh) state the console renderer.
 
 - The close-out (EmoOS T7.5): **implemented (2026-10-31) — the full-boot golden's beats are the boot's own order, and the decision the shell had deferred is made: the REPL starts the machine's program.** The full-boot golden — power on, the prompt, a user program runs, a filesystem roundtrip — had one beat inverted: the console renderer pass (T7.4) ran between the proof chain and the shell, before any prompt. **The move is the task's substance: the shell's `counter` command starts the pass** by the proof chain's own spawn discipline — the token cell poked (`sh_ui_cell`, the value of main.emo's `ui_cell`; two modules declaring one address of the shared image, as `buf` itself already is), the child re-entering the image's top level and claiming it, `ui.run()` painting and answering keys until the quit key, the exit answering the shell's `wait` — because the spawn verb carries no arguments and the image is the one program the machine has; the command names what it runs, and a second program reopens the name (a `run` with nothing honest to run would be a construct without its place — the bound the shell note stated when it deferred the question). **The proof chain's UI spawn block retires** — the pass, its token branch, and its scratch untouched; the console's one-reader discipline holds by the same shape (the REPL parked at the wait while the program owns the console), and the feed's `help` queued behind the quit key rides the FIFO order: the child's read takes the `q` and quits, the REPL's read takes the rest — the handoff needs nothing but the ring. **The help line is the eight commands now** (`commands: help echo ls cat write rm counter poweroff`, 52 bytes), and the byte-exact golden caught the layout sin the growth committed: the help text at its old slot overran the prompt's by four bytes (88 + 52 past 136), and the wire showed the tail `powe` followed by the prompt's own `emo>` — the later texts' slots shifted eight bytes apart, the length and the slots now agreed. **The harness learned to die cleanly**: an `await` failure now kills the machine before exiting — the survivor's fifo, log, and disk poisoned the next run (a stale QEMU holding the serial log while the new run's output sat unflushed in its stdio buffer, the SIGPIPE naming the dead fifo). **The ledger is untouched by the move**: the same take/give events, later in the boot — `frames 33 19`, the counter pass's stack and arena taken at the spawn and given at its exit, its table splitting the sixth block. **Step 7 complete — M6 complete: the single-language closure demo is the machine.** Pins: `run.sh`'s chain under both timer transports, three consecutive rounds byte-identical — the first prompt, the `counter` exchange (the frames, the keys, the prompt's return), the eight-command help line, the filesystem roundtrip (`write`/`ls`/`cat`/`rm`), `poweroff` reaching the exit route, the DMA line and the account. `dune runtest` green (the `emo_os` smoke with the new exchange); `@fmt` green. The records: `projects/emo-os/docs/shell.md` and `docs/ui.md` (zh-CN mirrors alongside) state the command and the moved pass; the READMEs (EN + zh) state the closed milestone; the milestone tables (TASKS.md and both READMEs) carry M6 complete.
-- An `Array` literal past ~253 elements stops assembling on `riscv64`: **found 2026-10-31 (the EmoOS boot banner), dodged by splitting, not fixed.** The banner's byte text went out as one 265-element `Array[Byte]` literal and the user image's build died in the assembler — `sd a0,2048(sp)`, `addi sp,sp,-2144`, illegal operands. An array literal materializes through a stack frame the emitter sizes from the literal's length, and each element's store addresses its slot with a 12-bit immediate: the frame crossed 2048 bytes and every store past offset 2047 refused. The 175-element literal it replaced had sat under the bound; the examples' largest literal is far under it, which is why six passing suites never noticed. The banner now goes out five row literals of 53 (`hello/shell.emo`), poked to consecutive offsets. The backend owes the honest fix: the element stores want a register-plus-`addi` address (or chunked stores) once the literal's span leaves the immediate's reach, with a probe golden over the bound.
+- An `Array` literal past ~253 elements stops assembling on `riscv64`: **found 2026-10-31 (the EmoOS boot banner), dodged by splitting, not fixed.** The banner's byte text went out as one 265-element `Array[Byte]` literal and the user image's build died in the assembler — `sd a0,2048(sp)`, `addi sp,sp,-2144`, illegal operands. An array literal materializes through a stack frame the emitter sizes from the literal's length, and each element's store addresses its slot with a 12-bit immediate: the frame crossed 2048 bytes and every store past offset 2047 refused. The 175-element literal it replaced had sat under the bound; the examples' largest literal is far under it, which is why six passing suites never noticed. The banner now goes out five row literals of 53 (`hello/shell.emo`), poked to consecutive offsets. **Fixed 2026-11-01 (T8.7's first piece, the font blocker's recommended route) — exactly the fix the entry predicted, plus the sites it did not name.** Three sites carry the 12-bit bound: the literal's spill stores (`sd a0, off(sp)`), the container's fill stores (`sd t0, 16+8i(a0)`), and — the banner's own first failure — the frame's prologue and epilogue (`addi sp,sp,∓size`; the 265-element banner's frame was 2144 bytes). The emitter grew two shapes: `sp_frame_adjust` (the frame size past 2047 rides `li t6`/`sub sp`) and `sp_store` (a spill past 2047 goes through the same scratch — t6, which no emitted path holds across an instruction), and the wide literal's fill walks the spilled elements into the block through two pointers (a `seqfill` loop, O(1) text for any n) while every literal that fits the immediate keeps today's unrolled stores byte for byte. The tail-call sites' frame unwind (`ld ra; addi sp; tail`) rides the same adjust. One emitter find on the way: the prologues write the module buffer (`gput`) while the bodies and epilogues write the frame's own (`put`) — the const thunk's adjust landed at the function's end until the helper took the buffer choice, and the first wide image jumped through a zero return address. The probe golden `examples/wide_literal` (a 600-element `Array[Int64]` summed, indexed at both ends, beside a 253-element literal on the unrolled path) runs the interpreter-identical bar under QEMU in the riscv64 examples list; the EmoOS golden's own proof chain (the fault reports' epcs shifted with the new code shape) rides the same compiler.
+- The screen carve (EmoOS T8.2): **implemented (2026-10-31) — a fixed 4 MiB cut at the top of the frame allocator's region, display memory the kernel hands out whole and once.** The decisions, in order. **The size is the assessment's floor, sized to the decided baseline**: the resolution decision point is 1024×768 XRGB8888 — a 3 MiB buffer — and the carve is the floor of the assessment's 4–8 MiB range, the buffer with a MiB beside it (the cursor plane's sprite memory when M8 asks); the base is `0x86c00000`, physical, 2 MiB-aligned, and no `frame_w`/`frame_h` constant exists anywhere — the real mode is the enumeration verb's to carry (T8.4, the protocol's second seam), the carve's size is the one place the decision touches. **The hand is the allocator's one-shot**: `frames.screen_take()` answers the carve's kernel address once (a flag word on the allocator's own page, boot-zeroed with the rest) and 0 after; there is no give — the full-screen pass is the machine's desktop for the machine's life, and a restart would be the compositor's own piece (T8.6), not the allocator's. **The grant's channel is the cells page's token cell** (`0x87fff040`) — the one crossing every table maps, so any spawner (the proof chain today, the shell's desktop command tomorrow) pokes it and the claimed pass reads it — and the process service reads it **at the spawn**, because the carve's mapping must exist before the child's first store and the build runs inside `user_spawn`; the grant crosses in a pending cell, and a second claimant's spawn is the resource refusal (−5) before anything is staged, the stack block untouched. **The mapping is the build's**: the carve at the identity of its physical addresses — the pass paints where the display's device will scan out (T8.1) — RW with U, megapages (both ends 2 MiB-aligned, and no block of the region can sit there — the carve is the region's exclusion — so the two megapage leaves cost no table beyond the entries the low half's middle already carries); a spawn without the grant builds a table that maps none of it, and a pass that paints anyway dies of the store page fault that kills any offender. **Found on the first boot, fixed on the first boot**: the pending cell went at `0x870021d0` — inside `gate.emo`'s write staging area (`stage_buf`, the handoff page's free tail) — so user bytes landed in the cell, the build mapped a phantom grant, and `sv39`'s range check was the loud end; the cell moved past the staging area (`0x870029e0`) and the collision is named at both declarations. **The proof is the chain's first full-screen pass**: the token poked, the spawn granted, the child claims the token, paints one pattern word per 64 KiB across the whole 4 MiB, and exits; the process service reads the words back through the kernel's high alias — one RAM, two tables — and prints `screen 0x86c00000 ok` before the waiting parent is answered; the second screen spawn is refused (`screen r5`, the reason number on the wire), the pass that would have claimed it never runs, the token cleared by the hand that poked it. Pins: the ledger `frames 36 21` (the screen pass's stack, arena, and the seventh table block taken; its two blocks given at its clean exit; the carve in no count — the region's exclusion, never a take); the DMA line's tail now a regex check (the screen line ends the same way, the fragment could not stay); three consecutive rounds byte-identical under both timer transports. `dune runtest` green with the smoke; `@fmt` green.
+- The virtio-gpu driver (EmoOS T8.1): **implemented (2026-10-31) — the display's driver is a kernel process on the block driver's shape, and the machine's first pixels have crossed the device.** The decisions, in order. **The shape is the blk_service's, on DeviceID 16**: the same eight-transport slot scan, the modern negotiation with `VIRTIO_F_VERSION_1` alone (no VIRGL, no EDID — the 2D path needs neither; the feature rides the sel-register dance the 64-bit poke performs, T7.1's byte-composition note), the control queue on one 64 KiB block held for the service's life, the completion wait polled (descriptors 0..1 reused, one command in flight, the doorbell after a fence, a bounded used-ring poll); the cursor queue is untouched — the pointer plane is M8's, the interrupt-driven wait the later piece the console's note names. **The mode is the device's answer, never a constant** (the protocol's second seam): `GET_DISPLAY_INFO` comes first, the resource, the scanout, and every flush take its first pmode's rectangle; `RESOURCE_CREATE_2D` at the baseline's format (B8G8R8X8 — XRGB8888); `RESOURCE_ATTACH_BACKING` hands the device one mem entry — the screen carve, physical, the whole 4 MiB (T6.5's DMA discipline); `SET_SCANOUT` points scanout 0 at the display's rect; a flush request runs `TRANSFER_TO_HOST_2D` (the whole rect, offset 0) then `RESOURCE_FLUSH` — present is the flush, the M7 shape's whole of it. **Found on the way, all named by the response's own bytes**: the protocol's structs carry fields the command names hide — `transfer_to_host_2d` is 56 bytes (rect, offset, resource_id), `resource_flush` 48 (rect, resource_id), `set_scanout` puts the rect first and the two ids after it, and `resp_display_info` has **no `num_displays` field**: the header plus sixteen pmodes, 408 bytes — QEMU's build assertions are the truth, the first parse's phantom field answered garbage, and the response buffer is 512 now, the protocol's largest answer. **The resolution baseline lives in the device properties**: this QEMU's display default is 1280×800 — the assessment's decision point is the platform's `-device virtio-gpu-device,xres=1024,yres=768`, the driver still reading whatever the device says (the golden pins the device's answer, 1024×768). **The mailbox**: op 0 flushes (the request word echoed), op 1 answers the mode packed — the `output_info` verb's kernel side will ride it (T8.4) — an unserved op comes back negated, any OK the device refuses is the loud end; the mode's halves decode in typed defs (the riscv64 emitter refuses the operators on a dynamic value — T7.2's discipline, caught at the first build). **The root's flush smoke** is the proof: the mode from the driver's answer, a deterministic row-gradient paint through the kernel's high alias of the carve (a fully typed native body — zero allocation, the frame's scale priced at word stores, the assessment's blit rule), the flush through the mailbox, and the device's two OK replies naming the pipeline whole — the pixels left the carve's physical bytes and reached the display (`gpu 1024x768 ready`, `gpu flush ok` on the chain; the screendump leg is T8.8). Pins: the kill pids shifted one (the driver is the fourth green service), the ledger `frames 38 21` (the driver's arena and queue block, held for its life); three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke; `@fmt` green.
+- The input service (EmoOS T8.3): **implemented (2026-10-31) — the machine's input is one service, the console the machine's output, and the desktop segment's first verb is on the wire.** The decisions, in order. **The input service owns both sources**: the UART's input ring (T3.7) moves to it — the read verb (gate verb 2) and the boot demo's bare-pid readers take the next byte from it, the device-wait park moving with the ownership, the shim's wake (`emo_sched_wake_console`, the name it booted with) waking the first state-4 slot, of which this service is now the machine's one; the console service keeps the write verb and refuses any other message as the kernel bug it is. **The device half**: DeviceID 18 on the drivers' shape (the slot scan, the modern negotiation — the input device offers no features), the eventq with sixteen 8-byte buffers pre-posted on one allocator block held for the service's life, the statusq untouched (the pointer sprite's M8 piece). **The merge is the one order the two sources can name without a clock — the bytes first, then the device's** — and verb 12 (`input_read`, the desktop segment's first, the number frozen the day it landed) answers the next event of that stream packed into one word: the type in bits 48..63, the code above the low word, the value in it; the device's types verbatim (0 the separator, 1 a key, 2 a relative move, 3 an absolute one) and 0x454D ("EM") the machine's byte event. **The device's line is wired — the first virtio IRQ the machine answers**: the driver parks its transport's PLIC number in a cell the shim's external branch reads (0 = not wired, the loud end it always was), sets the PLIC's priority and enable (the read-modify-write — the UART's bit already set), and the ISR's whole duty on that line is the wake — the eventq holds the events, and the drain recycles each buffer through the avail ring. The check-then-park bound the console lived under holds here too: a read parks before the delivery (the goldens' await discipline); an event the sixteen buffers cannot hold at the moment it fires is the one event the service loses. **The gate**: verb 2 routes to the input service's cell, verb 12 beside it (−1012); the rest of 10..16 refused by name until their verbs land. **The stub**: `syscall.input_read()` — the package's tenth body — and a resolve lesson named: **the bundled registry rides dune's `_build` copy, so a stub change needs the compiler rebuilt before the resolve sees it** (the first resolve after the edit answered the stale checksum, the second the true one). **Two finds on the way, both the machine's own silence naming them**: the input service's first receive wore the drivers' tuple pattern, but the gate posts bare words and the readers send bare pids — nothing ever matched, and the deadlock scan was the loud end; and the root consumed the input service's announce without parking its pid in the gate's routing cell, so verb 2's first caller parked forever — the scan again. **The proof is the chain's input pass**: parked on the merged stream (`keys?`), the monitor socket is run.sh's hand now (`-monitor unix:…`, one HMP `sendkey q`) — the device's key event arriving through the wired IRQ (`key 1 16 1` — EV_KEY, KEY_Q, pressed), then the serial's byte riding the same stream (`byte 75`, fed after the key, the bytes-first rule holding): one stream, two sources, one reader. The console deliveries, the echo, and the shell's every byte flow through the new owner byte-identically. Pins: the kill pids shifted one (the fifth green service), the ledger `frames 43 23` (the driver's arena and queue block held for its life; the input pass's stack, arena, and the eighth table block given back at its clean exit); three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke; `@fmt` green.
+- The desktop segment's verbs (EmoOS T8.4): **implemented (2026-10-31) — the desktop segment's commit and enumeration are on the wire, and the authorization table has its first entry.** The decisions, in order. **The verbs that land are the ones the milestones' substance has earned**: verb 10 and 11 here (12 landed with T8.3); 13..16 — the window verbs — wait for the window buffers (T8.5) and the compositor's mechanism (T8.6), the task's own "as they land" — a route that refused everything would be the construct without its place. **Verb 10, `present(grant, x, y, w, h)`, freezes with the damage rect aboard** (the assessment's client paragraph — "presents it with a damage rectangle" — is the protocol's shape, not a later bolt-on): the gate checks the rect's sanity (empty or negative-coordinate is reason 4) and the authorization; the display service judges the rect against the mode (reason 4, its reply — the bounds are the driver's knowledge); the commit is atomic — the transfer to the host resource and the flush to the scanout complete before the answer, a frame whole on the display or the machine ends loudly, the old frame showing until the flush's own completion. **The authorization table's first entry is the screen carve's grant**: the holder's pid, parked by the process service at the very moment T8.2's hand answered (the hand's gate-side half); a non-holder's present is reason 3, and the slots are never reused so a dead holder's pid never matches a new caller; a grant id the table does not hold is reason 4 — the window grants' namespace is T8.5's, the segment's numbers frozen, the table's growth additions-only. **Verb 11, `output_info(index)`, is the enumeration's shape from day one** (the protocol's second seam — the list is not a constant): the answer packs the output's rect (width bits 32..63, height bits 0..31), an index no output answers is reason 4; one display is the first answer, not the only shape. **The routing**: −1010 and −1011 post to the display service's own pid cell (the shim's desktop decode splits the segment — 12 to the input service, 10 and 11 to the display service, the gate refusing the rest by name); the present's five arguments stage in the display service's own arg cells (a present and a write can sit parked at once — T4.4's per-service rule). **The display service grew the gate's arms** beside its kernel-mailbox tuple arm — the two-arm receive (the tuple world and the word world each their own) — and the flush is the factored `gpu_present` the boot smoke and the verb share, the rect's bounds its own judgment. **The stubs**: `syscall.present` and `syscall.output_info` — the package's twelfth body; the lockfile refreshed with T8.3's `_build` registry lesson holding (the compiler rebuilt before the resolve saw the stubs). **The proof rides the chain's passes**: the screen pass asks the mode (`output 1024x768`), commits the frame it painted (`present ok` — the pixels on the display before the readback verify names the carve), and the input pass — no display grant — meets the table's edge (`present r3`). The ledger and the pids are untouched by the verbs (cells, not blocks); three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke; `@fmt` green.
+- The window buffers (EmoOS T8.5): **implemented (2026-10-31) — a client's display memory is a grant, and the buffer's whole lifecycle is on the wire.** The decisions, in order. **`frames.take_run(n)` reads the claimed bitmap as the free map** (a zero bit is a block on the freelist — the invariant take and give keep), scanning the region's indices for the first n consecutive zeros, claiming them, and unlinking them in one pass over the freelist; the give-back is the block give, per block, the claimed-bit checks making each strict. **The mapping into a live table is its own discipline**: `space.map_run` maps the run at the identity, RW with U, into the owner's table — the new entries whole words the hardware walk either misses or sees complete — and ends with **`sfence`, the raw family's address-translation fence**, the builtin this task added to the compiler (riscv64 alone, the family's admission rule; the spawn-time build owes no fence — it writes a table nothing walks yet; the docs/raw-memory.md surface grew the row). **The grant rides the request, not a global cell**: the shim stages the caller's space word at every ecall, and the gate's dispatch — inside the caller's own trap — copies it into the request's arguments; the staged cell alone would race (the parent's wait beside the child's win_new — the first boot's map landed in the parent's table, and the child's paint was the store fault that named it). **The gate's window checks**: win_new's size bound (four megapixels, reason 4), win_close's owner (reason 3) and id (reason 4), and present's window path — the row's owner and the damage rect within the buffer's extent. **The display service owns the lifecycle**: win_new takes the run, picks the row (the authorization table's eight rows: id, owner, base, blocks, w, h, ready, the damage rect), maps, and answers the buffer's **frame number** above the grant id — the byte address would sign-extend the word (a base above 0x7fffffff) and the stub would read the grant as a refusal, the second boot's mark caught it; a window present records the ready flag and the damage rect (the compositor's tick, T8.6, is the reader); win_close gives the run back and empties the row. **Two finds on the way, both the machine's own silence naming them**: the gate's `grant_row_of` returned the row's address — the kernel's alias, negative as every kernel address is — and the caller's `row < 0` not-found check read every matched row as a failure (the present's phantom refusal; the function returns the row's **index** now, the address the caller's to compute); and the display service's first receive wore the drivers' tuple pattern until the gate's bare words taught it the catch-all (T8.3's lesson, re-learned at the second service). **The proof is the chain's window pass**: `win 1` (the grant), `win ok` (the buffer painted and read back — the mapping is the proof), `win shown` (the commit recorded), `win closed` (the run home) — the lifecycle's four lines and the clean exit; the input pass's `close r4` pins the unknown-grant refusal. Pins: the ledger `frames 50 29` (the window pass's stack, arena, and the ninth table block beside the run's four, taken at win_new and given at its close); three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke and the checker's new sfence case; `@fmt` green.
+- The compositor's mechanism (EmoOS T8.6): **implemented (2026-10-31) — the compositor is a kernel service whose state outlives its instances, whose stack's verbs are on the wire, and whose composition carries a window's frame into the carve.** The decisions, in order. **The fixed pages** (the link.ld section .emo_comp at 0x87008000): the generation the restart increments, the display's mode (the init's query to the display service — never a constant, the protocol's second seam), and the window stack (eight entries of grant, x, y). **The request slots**: the compositor's own argument cells, and the gate's routing: verbs 15/16 (win_focus/win_move — the x even, the blit's word granularity) route to the compositor's pid cell, and verb 10's window path reroutes (−1017) — the gate's window checks stand, the composition request lands at the compositor. **The composition**: the stack's entry (created at the first present, position 0,0), the blit (the window's rows into the carve at the stack's position, word stores — the assessment's blit rule), the display service's flush (through the display service's own mailbox protocol), the mid-flush requests stashed and served after (the fs's stash discipline, four deep), the row's ready flag and damage rect recorded, and the answer after the flush — the frame lands whole (the protocol's sixth seam). **The blit's proof**: the window pass prints its buffer's sum, the compositor prints the carried sum — the numbers match, and the move's recomposition names the new position — one sum, two views, one RAM. **The supervisor's restart**: the shim's death hook posts every death to the compositor's supervisor too; its own instance's death is the restart (the pages' generation one higher), any other death the dead owner's windows reclaimed (T8.5's stated bound's payoff). **Found on the way, the machine's own silence naming them**: the shim's death routine carried the dead pid in a0 across its first post's call — the callee owning a0 — so the second post's notice word carried the clobbered register and the compositor supervisor's instance check silently failed (the restart skipped, the deadlock the scan named); the routine keeps the pid on its own frame now. And the compositor's init receive bound the mode reply straight into a typed callee — the tagged binding reaching op_of as a pointer, the mode words garbage (T7.2's lesson, re-learned at the third service: the stores into typed locals are the conversion). And the display service's tuple arm carried the same lesson (the catch-all's debug line printing a raw gate word crashed emo_to_string on an unhandled kind — the debug lines stripped, the conversion stores in place). Pins: `comp gen 1`/`comp gen 2` (the restart), `comp 0 0 2803875840`/`comp 16 32 2803875840` (the compositions, the move's), the window lifecycle's lines beside them; the ledger `frames 53 30` (the compositor supervisor's and the compositor's two instances' arenas — the first given at its stop); three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke; `@fmt` green.
+- The golden's eyes and the display's legs (EmoOS T8.8): **implemented (2026-11-01) — the golden's assertions reach the screen itself: the monitor's screendump takes the display's PPM and every one of the 786,432 pixels reads back against the composition history's union, and the ride shows the machine's screen live in a window.** The decisions, in order. **The eyes are a whole-screen model, not spot checks**: after the compositor's moved copy lands (`comp 16 32` on the wire), the HMP `screendump` writes the PPM (the 16-byte `P6 1024 768 255` header plus 1024×768×3 bytes — the dump names the mode the device answered, the golden's own pin of the baseline), and a python check walks every pixel against what the boot's writers wrote, in order: the flush smoke's gradient beneath (blue 64, red and green the row's masked multiples), the screen carve's proof pattern over it — the T8.2 pass's words, written after the smoke (the golden's own line order is the history), one per 64 KiB at (0, 16·i), the display's first 3 MiB making i = 8..47 visible (i ≥ 48 sits past the resource's extent, a row past the scanout's last) — and the window's two copies over both: the first at (0,0), its rows surviving wherever the move's blit does not reach (the blit never erases — the union's own lesson), the second at (16,32), written last, holding the overlap; the window's blue lane is its row (0x57494E00 + row). A wrong pixel anywhere is the loud end, the message naming the coordinate, the got, and the model's word. **Three finds on the way, all the model's first run naming them**: the PPM's red channel read 0x49 where the pattern word starts 0x57 — the word's bytes meet the format's BGRX and the PPM's RGB in opposite orders, the 0x57 the pad byte the PPM never shows; the first check's failure at (0,128) was the model missing a writer — the pattern words stand on the display because every window present's flush is whole-screen (the display service's op 0 transfers (0,0,gw,gh)), a damage-rect-only flush would have left the smoke's gradient the last word over them — the pixels prove the flush's shape; and each pattern word's second pixel is black — the pass's 64-bit store carries its 32-bit pattern in the low word alone, the zero high half a real pixel, the one writer on the machine whose 8-byte pair is not `c | (c << 32)`. **The hands grow only where a consumer stands**: `sendkey` already rode the golden (T8.3); `mouse_move` waits for its plane — the pointer has no sprite and no cursor queue serviced (T8.1's deferral, M8's), an injection nothing reads would be a hand waving at nobody. **The legs are named where they belong**: the asserted leg's QEMU line says `-display none` outright — the screen has no window, its truth is the screendump; the ride's (start.sh) says `-display cocoa -serial mon:stdio` — the machine's screen is a cocoa window (the same baseline the golden asserts), the serial console stays the terminal on the mux `-nographic` used to keep (Ctrl-A C the monitor, Ctrl-A X the exit). **The keyboard rides because the boot demands it**: the input service's slot scan ends loudly without a DeviceID 18 (`input: no input device on the virtio buses`) — start.sh's ride, device-less since the machine grew one, had been broken by T8.3's own leg; the gpu and keyboard devices aboard, the ride boots again (a find of the ride's own return). **The failure discipline is await's from birth**: a dead pixel check kills the machine before exiting — the survivor's fifo, log, and disk poison the next run (T7.5's lesson, the new check wears it from birth); the screendump is a gitignored artifact beside the block image (`.screen.ppm`). Pins: the whole-screen model's zero mismatches (the first run's one-pixel failure the calibration that built it), the PPM header and size pinned, three consecutive rounds byte-identical under both timer transports; `dune runtest` green with the smoke; `@fmt` green.
+- The N-block arena's first shape (EmoOS T8.7, after the literal fix): **built, debugged to the architecture, and taken back out 2026-11-01 — found-not-fixed, the design's honest route named.** The shape: the spawn's take hook called N times, the blocks threaded through their first words (the last word's link 0), the slot's head word naming the first block — the allocator's exhaustion walking to the successor (`emo_arena_next`: the current block is the cursor aligned down to the block size, the blocks 64 KiB aligned) and the reap walking the chain home. **What the attempt taught**: under EmoOS the arena crosses **two slot records** — the kernel's, where the gate spawn dresses the child, and the user image's, whose slot 0 is the cell pair (`0x87fff008`/`0x87fff010`) the trap shim hands through every U-mode boundary — so a chain the runtime builds must be mapped whole by the kernel's build (space.build maps one block) and its length known to both sides; the honest route is the kernel side answering a contiguous run (`frames.take_run`, T8.5's own machinery) at the spawn, the run's length a kernel-side decision — a decision point, not a runtime-side chain. **Two finds on the way, both real**: the process table's `.bss` size was hardcoded to 64×880 while the stride widened (`emo_procs: .zero 56320` — slot 63's tail overlapped the stacks; sized by the stride now, and the stride itself came back out with the chain); and the chain-existence marker is load-bearing — a one-block arena whose head word is set walks its own first allocation's header as a link (the reap gave a child's cell home and jumped through it). The debugging left the TEMPORARY deadlock dump machinery (emo_dbg_hex/emo_fail_blocked) once more load-bearing; it came back out 2026-11-01 with that debugging behind it — the shape lives in the T8.6 commit should a deadlock ever need it again. The pool's port is scoped beside it: the c model's shape (refcounts on the identity kinds — Instance, Closure, Box, Atomic — via the header word's repurpose, a freelist for freed cells, `emo_pool_enter`/`emo_autorelease`/`emo_drain` per statement and frame) with the emitter's retain/release discipline at Stage B's escape points; the escape analysis refusing what escapes is what makes the drain sound. Goldens: the literal fix's rounds byte-identical under both timer transports, `dune runtest` green with the probe, `@fmt` green.
+- The frame-scoped autorelease pool on riscv64 (EmoOS T8.7's second piece): **implemented 2026-11-01 — the c model's reclamation shape crossed whole to the metal, every riscv64 golden byte-identical and the EmoOS chain green on both timer transports.** The identity kinds (Box, Closure, Instance) carry the refcount in the header word's height (rc bits 32..63, the payload word count below — a value kind's header reads as refcount 0), `emo_ident_new` serving cells from a per-arena freelist whose head lives in the arena itself (the word at the end minus 8 — the head travels with the arena, so no boundary crossing ever carries it; `emo_alloc` reserves the word, the three spawn paths zero it, and the carve migrates the root's head down out of the carved range); `emo_retain`/`emo_release` walk the identity kinds alone (a Box its payload, a Closure its captures, an Instance its fields) — **never a Tuple or an Array**: the value kinds are shared by value with no count of their own, so the identity words they store keep the claims their construction took (the documented leak, the c model's cycle leak's sibling) and their blocks stay arena-resident; an Atomic carries no count (the cell crosses processes). Each generated body keeps a fixed pool area in its own frame (`[count][items...]` past the last slot, zeroed in the prologue) with `emo_pool_put` at every birth and `emo_drain` at every statement boundary — **unconditionally**: the runtime drain answers at once on an empty pool, and the emission's live counter is a running estimate, never the gate. The emitter's discipline: births pool their own claim (`pool_result`), reads claim a word of the reader's own (`read_claim` — the holder's claim never covered the reading statement), every escape into longer-lived storage retains (container fills, closure captures, Set_field and `Box.replace` through the write barrier — the new claim landing before the old drops, the field's address riding a3 across the calls), bindings release at scope exit (the owned stack, a re-binding of an outer name taking the barrier instead), returns hand the caller a claim — **the result riding a5 across the unwind and the drain whatever its kind** — and **every method answers a claimed word**: the Emo methods retain at return, the Atomic helpers take their own (`load`, `store` answering the cell, `exchange` and the fetch family the previous, `compare_exchange` the actual riding home in the tuple), the Box accessors answer borrows the site claims (the dynamic dispatch's `read`/`replace` by name). **Self-tail recursion runs as a rebind loop**: the parameters take their own claims at entry and give them up at exit, the rebind's barriers keep the slots balanced, and the body starts again past the prologue — `count_down(1000000)` on a constant stack; the non-self tail concedes one claim per link. **The kernel's raw words are the one shape the claims must see through**: the gate's requests and the death notices are `op << 32 | pid`, posted into mailboxes and bound by receive patterns like any value — a pid whose low bits spell an identity kind would read as a Box — so retain and release first ask whether the word is a RAM address at all (the height zero with bit 31 set, or the kernel's high alias `0xffffffc0`), and a raw word carries no claim. **Nine finds on the way, each the golden's own bytes naming it**: `emo_ident_new` saved the pool word over its saved ra; the frame pool word started as dirty stack memory; `emo_drain` kept the pool pointer in a5 — the register the callers' own barriers hold values across; the ctor's fresh self pooled its birth into the frame pool, whose first statement-boundary drain freed the object under construction (the birth claim is the owned stack's now); every reader of the header word as a payload count (`emo_eq_deep`'s instance branch, `emo_copy_deep`, `emo_copy_out`) read the refcount's height as a giant length until the count masks landed; `emo_box_new` and `emo_atomic_new` answered their payload instead of the cell after the payload's claim; the release's Tuple/Array arm read its block pointer out of the register the kind comparison had just overwritten (and had no business walking a value kind at all); the function epilogue saved only a tagged result across the drain, so a typed `Int64` result with a pool behind it — the kernel's `read_byte` — answered its own pool address; and the mailbox remove lost its length load in a revert, the shift loop running on a caller's leftover register. The release of a ring word through the sender's freelist (`emo_release_in`) was built, debugged, and taken back out: the send's claim on the snapshot is the documented-perpetual one until the mailbox design owes the walk home. Goldens: all sixteen riscv64 examples byte-identical under QEMU (`processes` and `survivors` among them — the two that held out longest, the mailbox and the typed-result finds); the EmoOS chain three consecutive rounds byte-identical under both timer transports, the ledger `frames 53 30` exact; `dune runtest` 336 of 336 with the smoke; `@fmt` green.
+- The N-block arena's home (EmoOS T8.7's third piece): **settled (2026-11-01) — the kernel-side decision point becomes its own task, T8.9; T8.7's box stays open until it lands.** The first attempt's conclusion is the design the task carries: the honest route is the kernel side answering a contiguous run (`frames.take_run`'s machinery, T8.5) at the spawn — the build mapping the run whole before the child's first fetch, the run's length the kernel's to decide and known to both sides (the kernel's spawn hook and the runtime's allocator and reap) — never a runtime-side chain across the two slot records (the kernel's, where the spawn dresses the child, and the user image's, whose slot 0 is the cell pair the shim hands through every U-mode boundary). Two of T8.7's three pieces are landed and recorded above (the wide-literal fix, the frame-scoped autorelease pool); the third leaves the compiler track with its conclusion named.
+- The arena's run and its length (EmoOS T8.9): **landed (2026-11-01) — a child's arena is a contiguous run the kernel hands at the spawn, the length a word the kernel's own stub parks, and the mechanism carries any length unchanged.** The decisions, in order. **The hook pair is the kernel's decision made literal**: `emo_arena_take_hook` parks `frames.take_run`'s entry and `emo_arena_run_len` parks the length, both written by the same stub that parks the block hooks — the runtime never guesses a length, and no image whose stub leaves the words zero changes shape (the pool and the carve keep their one-block arenas, the reap's walk serving them in its first iteration). **The length channel resolved itself**: the first attempt's "length known to both sides" is the slot record's own two words — the base the spawn writes at offset 880 (the slot table's first growth since T3.3, the stride 888, the `.bss` sized with it) and the end the shim already hands across every boundary — the kernel's build maps base to end, the allocator bumps within them, the reap walks them home block by block (the hook address reloaded after every give: the callee owns its t-registers). **The field find: the region is 71 blocks.** The first constant, four (256 KiB), booted the machine whole and was refused at the window pass's `win_new` — reason 5, the resource refusal, the probe reading `s17/114/71`: 17 free, 114 taken, **71 blocks in the region** — because the kernel profile's 96 MiB heap (the T2.1 headroom, "the headroom stays") leaves the allocator 4.4 MiB between the image's end and the screen carve. **The landed constant is two** (128 KiB); the ledger moved `frames 53 30` → `frames 77 45` and every other line of the chain held (`comp 16 32 2803875840` landing, the window lifecycle whole, the screendump's model at zero mismatches; five consecutive rounds green under both transports, the PPM byte-identical across three). **Left open, deliberately: the region's budget.** Four is the number the region asks for — arenas beside every resident's stack, table, and buffer run overrun 71 blocks at today's spawn count — and the lever is the kernel profile's heap, whose 96 MiB the kernel's own program never approaches; shrinking it is a kernel-profile decision (the T2.1 headroom is a recorded rationale, not this task's to overturn), and until it is made, two blocks carry the machine. The process service's spare test rides the constant (`1 + arena_run`): a spawn the allocator cannot back is the refusal the caller sees, never the runtime's loud end. And the window pass's refusal arm prints its reason now (`win r<n>`), the neighbors' pattern, the mark's bare `?` no longer the only answer a refusal can give.
+- EmoUI's backend sinks after the class-field typing: **found 2026-11-02 (emo-desktop A7.1, the first EmoUI consumer since) — fixed the same day (T48.14).** Every backend in `projects/emo-ui` parks the loop's sink as `self.sink = Box.new(0)` and has `mount` replace it with the `ui.Events` the loop hands over — `debug.emo`, `tui/ui_tui.emo`, `ssr/ui_ssr.emo`, `browser/ui_browser.emo`, `macos/ui_macos.emo`, `gtk/ui_gtk.emo`, and `translator/demo`'s copy of the debug backend. Since `8171d0d` (2026-10-18, "Type class fields precisely") a field carries its initializer's type, so the cell is a `Box[Int64]` and the `replace` is E4004, the `read().deliver(tag)` E4001; that commit migrated the stdlib's `plot` and `json` and did not reach `projects/emo-ui`, whose gates (`check.sh`, `tui/check.sh`, `corpus/check.sh`, the platform packages' own) are not under `dune runtest` — so `emo check` of the core package itself has failed for two weeks, every consumer with it, unnoticed. The fix is the shape the fb backend lands with: a `Box` born holding an `Events` that delivers to no one (`Box.new(unmounted())`, `unmounted()` a def declared to return `ui.Events`, so the cell is `Box[ui.Events]` from `init`), carried by each of the six backends, the translator demo's copy and the core test's recorders (T48.14). The fb gate stages the core as `ui.emo` alone, the one module the fb backend names, and is unaffected either way. **The re-run after two weeks found two more things**, both fixed with T48.14: the core gate's `enum_print` probe still pinned the pre-2026-10-19 divergence (`typescript` qualifying the tag, `beam` raising) while the probe program's own comment described the fix — the pins now expect the bare form on both; and the SSR golden's `— 世界` came back as U+FFFD on `typescript` alone, because `ui_ssr`'s `escape` rebuilt text byte by byte through `substring(i, 1)` on the strength of a comment calling the slice byte-preserving, where the TS runtime's documented contract is that a cut inside a multi-byte sequence decodes to U+FFFD (a JS string cannot carry a partial byte) and only the byte targets keep the raw bytes. The escape now copies whole runs between the five ASCII specials — a cut beside one is always on a character boundary — and probes each position only for equality against them; the byte targets' bytes are unchanged. **The lesson for a byte-walking string rewrite**: a one-byte `substring` is safe to compare against ASCII and unsafe to append; append runs. (The `wasm` refusal pins did not need moving: with a backend class in the program the lowering reaches `printf` as before — only a program with no `ui.Backend` implementor at all, the fb core before its backend, is refused earlier, on dispatch.) Two emitter facts the same task met, both as designed and recorded so the next backend does not re-learn them: **an interface call lowers on `beam` and `wasm` only against the classes in the program that implement the method** — a core-only program with no `ui.Backend` implementor is refused (`method patch has no dispatch`), which is why the fb package carries its backend class rather than deferring it; and **riscv64 lowers neither `ArrayBuilder` nor `Bytes`' accessors yet**, which moved the fb painter from a collected draw list to a walk that paints as it goes and put the `Bytes` canvas in a module the metal's registry leaves out — after which the core module lowers to a user ELF by hand, the manifest lines (A7.2's) the only thing between it and the carve.
+- The first frame on the metal (emo-desktop A7.2): **landed (2026-11-02) — the fb core paints the desktop's first frame into the screen carve from a user pass, and three readings of one digest are the proof: the pass's fold over the carve it painted (`frame 1234944000` on the wire), the hosted canvas's fold over the same tree (`fb/frame/golden`), and `run.sh`'s fold over the monitor's screendump at the present.** The decisions and the finds, in order. **Pixel loops live in fully typed top-level defs, never in a method's body**: on riscv64 a method keeps the dynamic convention, so every computed `Int64` in its body is a boxed cell in the arena, and the value kinds carry no claims for the pool to reclaim (T8.7's pool is the identity kinds') — the first paint, with the fill loop inside `Carve.fill`, was `user heap 22 gone` before the first row ended; a typed def computes raw and allocates nothing, so the `Surface` methods hand their words to `carve_fill`/`carve_blend`/`carve_at` once per rectangle, and the digest is a typed loop over `peek32` rather than a method call per pixel (which would box its answer 786,432 times). This is the rule for every pixel loop on the metal until typed method bodies land. **`Float64.to_int64` was not lowered on riscv64** — the static table knew `Byte.to_int64` alone and the dynamic dispatch knows `to_string` and `length`, so the box model's first `padding().to_int64()` was an `emo_fail` — and is now: `fcvt.l.d … rtz`, the truncation toward zero every hosted target answers, on the raw double in fa0 (native) or the boxed cell's bits, pinned in `examples/floats` (the riscv64 golden; EmoOS T8.10). **A user pass's `emo_fail` says nothing on the wire** — found, not fixed: the user runtime's failure path prints through `emo_console_emit`, which never reaches the gate from U-mode, then parks on `wfi`, which U-mode may not execute — so the kernel's `user fault <pid> cause 2 … addr 0x10500073` (the `wfi`'s encoding as tval) is the only trace a runtime failure leaves, and the two finds above were located by stage marks through the write verb. The honest fix is the user profile's `emo_fail` saying its message through the gate's write verb; it is the compiler track's. **A package names the targets every module it carries compiles on**: the canvas (a `Bytes`) became its own package, `emo/ui_fb_canvas`, so `emo/ui_fb` and `emo/ui_fb_frame` could declare `riscv64` truthfully, and EmoUI's core declares it for the modules a consumer reaches (`ui.emo`, `debug.emo` lower; its test drives the loop with def values, which the emitter refuses — the gate pins the metal through a probe consumer, `fb/probe/metal/`, built and never run). **`beam` and `wasm` pin through consumers for an interface-only package**: the core alone has no `Surface` implementor, and those emitters refuse a directory build of it by the dispatch rule above; the goldens, which bring the canvas, are the pin. **A build resolves from one registry**: `EMO_REGISTRY` replaces the embedded one, so the user image's staging carries the `syscall` stub beside the three desktop packages — in `start.sh`, in the `dune` smoke, and in the how-to. **A module path is claimed once in a program**: `hello/ui.emo`, the console renderer, collided with the dependency's `ui` (E5005) and is `console_ui.emo`. **Three gaps the emitter names, standing**: program-wide def values (`the riscv64 target does not support program-wide def values yet` — the loop's `ui.run(view, update, …)` is written that way, so the Elm loop on the metal, A8.3, waits on it), `ArrayBuilder`, and `Bytes`' accessors. Pins: `run.sh` under both transports, three rounds byte-identical, the ledger `frames 77 45` unchanged; the fb gate 51 ok; `dune runtest` 336 and the `emo_os` smoke green; `@fmt` green.
+- The bitmap font renderer through the fb core (emo-desktop A8.1): **landed (2026-11-02) — the desktop's labels render in the project's own 8×16 bitmap font on the hosted canvas and on the metal, one digest from the carve, the canvas and the screendump (`frame 3285341944`).** The decisions and the finds, in order. **The font's home is the code (D3)**: the glyphs are drawn in `fb/glyphs/glyphs.txt` and `fb/glyphs/gen.py` writes them into `fb/font.emo`'s `const rows` table, which the gate checks against the drawing; the table is four 32-bit words per glyph (four rows to a word, the top row in the high byte, the left pixel the high bit) because an Array literal's elements are boxed cells on the metal — a row per element would be 1,536 cells, 36 KiB of a 128 KiB arena, four rows per word is 384 — and 32-bit words are the literal width every emitter carries unsigned; `font.glyph_of` finds a one-byte String in the alphabet with `index_of`, the missing glyph (a hollow cell) answering every other byte on every target alike. **`Surface` grows a `glyph` verb** — one call per cell, `(x, y, top, bottom, color)`, the row arithmetic shared in `ui_fb.glyph_row` — because an interface call on the metal boxes every Int64 it carries into a cell the pool never reclaims (the value kinds carry no claims): a glyph as sixteen rows of `fill`, or worse a pixel each, is thousands of calls and the arena spent before the first line; the cell is the unit a first frame survives. `Text` fills no box now, its glyphs are ink on its parent, and the surface's bounds alone clip a cell (the terminal's rule — the node's rectangle never cuts a label). **The riscv64 emitter lowered `substring` and `index_of`** for a static String receiver (runtime helpers over the String block: the byte count at 8, the bytes from 16; a substring out of range is the named failure the interpreter's E3004 is) — the character walk the font needs, the methods the metal first asked for beyond `length`. **Found on the way, three emitter bugs, all fixed**: ① `length` on a static String receiver in a native frame went through the dynamic dispatch, which answers the boxed cell, and the frame took the cell for the raw word it trusts — `i < s.length()` in a typed def walked past the String's end; the static receiver reads the count on the block now, and the String methods the metal does not lower refuse by name at the build instead of the nameless `no such method` at run time; ② an `Index` read in a native frame — and a class field read, the same shape — left the element's tagged cell where every consumer in the frame reads raw: never exposed, because a def with an Array parameter is dynamic (`conv_of` sees the parameter's type as unknown) and no native def had indexed anything until a typed def over a module-level const table, the font's `word`, did — the first frame on the metal drew every glyph as its cells' own addresses, the four-row period of a pointer visible in the screendump; the element unboxes by its type now, the rule-1 adapter the `Call` case already had; ③ an index expression in a native frame was boxed only to be read back — a 16-byte birth per read the pool never holds — and is read raw. `examples/glyph_lookup` pins the walk whole on the interpreter and under QEMU (the riscv64 list), and the refusal test pins `split`'s refusal. **The convention under all three**: a def is native only when every parameter and its result are `Int64`/`Float64`/`Bool`/`Char`/`String`/`Pid`/`Void` — `decl_type` in the IR maps every other annotation to the dynamic kind — so an Array, class or interface parameter makes the whole frame dynamic: the core's `place`/`measure` (`ui.Node`) and the label walk `text` (its `Surface`) box every computed Int64, which is why the per-pixel work stays in all-numeric typed defs (`carve_glyph`, A7.2's rule) and why `pick2(xs Array[Int64], i Int64)` never saw the index bug that `pick(i Int64)` over a const table did. Pins: the fb gate 52 ok (the core's test 32, the canvas's 28, the table check, the probe painting the first frame through a counting surface for the metal, both goldens on every target); `run.sh` green under both transports with the ledger `frames 77 45` unchanged; `dune runtest` 338 and the `emo_os` smoke green; `@fmt` green. **Standing**: a glyph's five boxed arguments, the label walk's own temporaries (`text` is a dynamic frame, above) and the per-character `substring` (a String the pool does not hold) are arena births per frame — the Elm loop's accounting (A8.3), on the compiler track's schedule with the def values it already waits on.
+- The pointer plane (emo-desktop A8.2, EmoOS T8.11): **landed (2026-11-02) — the desktop's sprite is on the display at the position the run's hand named, composited by the compositor's software cursor plane, and the tablet's reports ride the merged stream after the keyboard's.** The decisions and the finds, in order. **Software, not the device's cursor queue**: the display's screendump is the golden's eye, and QEMU composites a device cursor in its UI, never into the scanout a screendump reads — so the plane the golden can see is the carve's own: save-under, the opaque pixels stored, hidden around every window blit, one rect flush per move (the display service's mailbox op 2, the rect in the tuple's third word). **The sprite is the desktop's**, written by the screen pass into the carve's last 64 KiB (`fb/pointer.emo`'s rows of cells; the header after the pixels; past the proof pattern's line, because T8.2's pass pokes the first word of every 64 KiB of the carve, that block's included — the first layout collided with it on paper) and read by the compositor at each composition; `run.sh`'s model reads the same rows. **The tablet is a driver process of its own**: the input service drains its keyboard only inside a parked read, so a pointer that must move with nobody reading is a device-waiter of its own, feeding the merge through a ring the way the UART's bytes do; the two DeviceID-18 transports are told apart by ABS_INFO's size byte in their config, and the axes' maxima read there are what the position is scaled by. **Three things the machine refused before the plane moved, each named on the wire or by its silence**: ① `gate_reply` from the driver to the compositor killed the driver — `a service replied with no gate caller waiting`: the reply helper serves a user caller parked in the gate alone, and a kernel service telling another needs the shim's own post — `gate_post(pid, word)` joined the kernel's surface (`emo_gate_post` masked, from process context); ② the merge's device-waiter never saw the ring — the ISR's wake had come and gone before the driver pushed, and a send does not wake a 4 — so `device_wake()` joined beside `device_wait()` (the ISR's wake from process context), and the runtime's wake became a broadcast over every state-4 slot (two device-waiters on one line; the first-only wake starved the second); ③ the monitor's `mouse_move` moved nothing: HMP queues relative motion, an absolute device has no handler for it and QEMU drops the event — the hand is QMP's `input-send-event` over a second socket. **Found beneath them, fixed**: the shim's input branch completed the PLIC claim with `a0` after the wake call had clobbered it — the first input interrupt was the last the device could raise, invisible to a golden that reads one key press and fatal to a moving pointer; the claim id rides the frame now, and the input IRQ cell is a mask, one bit per wired line. **The scheduler's order is not the wire's**: the compositor's `pointer 512 384` and the pass's `move` lines come from two processes woken by one report, so the golden places the compositor's line between the byte and the window pass on its own rather than in the ordered list. Pins: `run.sh` green under both transports, the second screendump's model grown by the sprite at zero mismatches, `frames 80 45` (the driver's two-block run and its queue block), the offenders' pids one higher; the fb gate 52 ok (39 core, 35 canvas, the probe painting the pointer); `dune runtest` and the smoke green (the smoke pointed at the sprite's file beside the frame's); `@fmt` green. **Standing**: a rect flush per report and the whole sprite redrawn each move — the ride's cost, a device cursor Tier B's relocation when a display the golden cannot see earns it; `eventq_take` answers 0 for an empty ring and for a separator alike, so separators never reach the stream (the ABI's type 0 is documented, never delivered) — the pointer's drain tells them apart by asking the ring, the merge does not.
+- The Elm loop on the metal (emo-desktop A8.3, EmoOS T8.12): **landed (2026-11-03) — the screen pass runs EmoUI's loop unchanged, `ui.run(counter.view, counter.update, counter.initial(), backend)`, with the carve as the surface and the merged input stream in the input's seat; four frames on the wire and on the display, the first the corpus's first line and the fourth its last, the tree rebuilt per key and the frame before it back through the pool.** The decisions and the finds, in order. **The riscv64 target lowers program-wide def values**: a def named without its call is a capture-less closure record over the def (the c target's shape — `emo_closure_new(&f__dyn, 0, NULL)`), born through `emo_ident_new` with the frame pool's claim like a block literal's; its code is the def itself when the signature is all tagged words — a def ignores the record in t0 and takes its words in a0.. as a closure body does — and the adapter thunk `emo_defval_<f>` otherwise: the caller's words unbox into the typed banks in ascending index order (a target register never sits past its source), the def is called, a raw answer boxes back, and a Void def answers the false immediate, because a dynamic caller pools whatever a `Block` answered and must never pool a stale word. `examples/def_values` pins the shapes. **`Surface` grows `present`** — the commit the fb backend makes after every paint, where the hosted canvas does nothing and the carve says its digest and flushes through the gate — because the backend is the one place that knows a frame is whole, and the first frame on the metal is the loop's mount now (the race the pass's own pre-loop present would have had against the hand's screendump is gone: nothing presents until a key arrives). **The count, on the arena**: the gdb-read bump cursor at each present of the probe under the kernel profile — the pool takes the identity kinds back (the nodes, the styles, the extents, the clip rectangles; about a kibibyte a frame), and the residue is the dynamic convention's: every method's and every `Node`-, `Surface`- or `Array`-taking def's body boxes its computed Int64s, so a node costs about 3 KiB a frame (two measures and a place) and a glyph about 600 bytes (the substring, the font lookups' boxed answers, the cell's arithmetic, the loop's own) — the first picture (the title strip, the body and the dock, 65 glyphs) left 42 KiB per event and the 128 KiB arena died on the third key; the counter is the panel, the count and two buttons (four nodes, 28 glyphs), 18 KiB per event, the four-frame session at 90 KiB. The lever is typed method bodies and typed `Node`/`Surface` parameters (T2.2's second half), not the pool: the compiler track's next piece, measured. **Four emitter finds on the way, all fixed, all pinned**: ① the tail call through a block (`return f(x)`) reloaded only its owning arguments after the unwind and the drain, which spend a0 — a raw Int64 in a0 reached the callee as the drain's pool address (every argument reloads from its spill now, the named tail call's rule since T8.7); ② a static Box receiver's `read` and `replace` claimed at their own site in `emit_method` and again in the `Method` wrapper keyed on the payload's type — a `Block` payload twice retained and twice pooled (the loud `identity pool overflow` the pre-pass's count cannot cover), an instance or interface payload retained once and pooled twice (the Elm loop's sink and current tree released one claim too many per event, silent until the arena reused them) — the wrapper leaves a static Box receiver alone now; ③ a const thunk's `return <call>` was tail-called past its memo store, so a module-level const built by a constructor was a fresh instance on every read from a def (`1 1 1` where the interpreter says `1 2 3`) — `emit_tail` refuses inside a const thunk; ④ **a field store and a Box `replace` kept the old word in t1 across `emo_retain` and the new word in t2 across `emo_release`, and both helpers spend t0–t2 and t0–t6 respectively**: for a value payload the retain returns before it touches t1, and the release of a zero returns before it touches t2, which is why every field the kernel writes (numbers, strings) and the counter's `Box[Block]`s (a one-word payload, whose clobbered header is odd and reads as an immediate) worked — but an instance whose payload count is even has a header the release decodes, and the field held `3`: the Holder's `t`, the App's `registry`, the counter's `model`, every object a field has held on the metal was reached through this store for the first time by the loop; the new word rides a5 and the old is read off the field after the retain, the write barrier's order. ①–④ are pinned by `examples/def_values` and the riscv64 goldens; ④ by every instance the loop holds. **Found on the way to the finds**: OpenSBI sets `stvec` to the payload's entry before it hands over, so a delegated fault in a kernel-profile image is a silent restart from `emo_start` — the program prints its first lines again, forever — and the way to see it is QEMU's `-d int` (the cause, the epc and the tval on every trap) or the gdb stub. **Not changed**: the kernel (the loop reads verb 12 and presents through verb 10 as T8.3 and T8.4 left them), the pool's discipline, the arena's run. Pins: the fb gate 52 ok (the loop golden four lines on the interpreter and five hosted targets, the probe running the loop for the metal — `looped 4 frames` under QEMU); `run.sh` green under both timer transports, three rounds byte-identical, the ledger `frames 80 45` unchanged; `dune runtest` and `@fmt` green.
+- The window shell (emo-desktop A9.1, EmoOS T8.13): **landed (2026-11-03) — two toplevel surfaces on the machine's display, focus raising them, drag moving them through `win_move`, keys routed to the focused one, the compositor walking the whole stack over a cleared carve, and the display verified three ways at every beat.** The decisions and the finds, in order. **The role makes the surface**: `win_role(grant, role)` (verb 17, routed to the compositor on mailbox op 19 — the route numbers are the mailbox's, not the verb's: op 17 is the window present's composition and op 18 the pointer's notice) makes the stack's entry there and nowhere else; a grant that declared no role meets reason 4 at focus, move and present alike (`present r4` is the surface's absence, the gate's checks having passed); popup, subsurface and panel are refused **by their number**, the protocol carrying no text (the seventh seam) — the caller who chose the role names it (`role popup r4`), and the machine's window pass asks for each knowing the answer. **The composition is the walk**: the carve cleared to the compositor's own background before the walk, every ready surface blitted in the stack's order, the last entry over the rest — a moved window leaves the background behind it, the counter's full-screen frame and the proof pattern leave the display at the first window present, and the T8.8-era model of the screen is rebuilt for the truth (background, the window's pattern rows, the sprite; the erasure is the walk's own act, the era boundary the first composition is). **The focus raises**: the entry moves to the stack's top, the next composition painting it forward. **The walk prunes**: an entry whose grant the table no longer holds leaves before the walk (a closed window's or a dead owner's surface never holds a slot), and the death notice's reclaim drops the dead owner's surfaces in the same pass. **The pointer's scale is a verb**: `input_info(0)` answers the tablet's axes — the input side of the second seam, the range the shell scales the stream's absolute reports by never a constant (the shell's formula the compositor's own, `(v * mode) / (max + 1)`). **The shell parks before its first frame** (the counter's shape): the desk pass waits for the run's first byte before painting, because a composition now erases the era before it, and the window-era screendump must land on a still display — the beat between the eras is a byte on the merged stream. **Three compiler finds, all fixed, all one root — the image's static memory is shared by every pass, so a static that parks an arena pointer dangles when its builder dies**: ① the const thunks' memos (a `.data` flag/value pair per const, A8.3's tail-call find touched them) parked the builder's heap — the machine's second consumer of the font's memo (the desk pass; the first consumer, the screen pass that built the alphabet and the glyph table, had exited and its arena gone home) read a dead pass's heap and the load page fault named it; the gdb walk that found it also found how the walk misleads (the faulting table's l1 entry was a megapage leaf RWU — the *satp's* table was not the dying pass's; `emo_cur_slot`'s space word named the real root, whose l1 slot was empty); ② the fix is the **const region**: the image heap's top 64 KiB — in the user image the root's arena ends at the region's floor, so no spawn's carve ever hands a child the region (the carve is dead code under the parked hooks) while the kernel profile keeps the root's end at the heap's end, its bare-metal spawn carving live blocks from there and the region built once at startup above the few KiB the root bumps (the split is `init_tail_asm`; the kernel-side shrink first hung every bare-metal spawn example, the carve's block landed fine but the found mechanism stayed open, and the per-profile split is what landed) — `emo_alloc_const` bumping down 32-aligned — **the alignment is load-bearing: the tagged words' low bits are the tag's** (`ori a0, a0, 8`), a block from a merely 16-aligned cursor put the tag bits into the address, the reader's `andi -32` untagged to a different block, and the first boot died of `index out of bounds` and `user heap gone` before its first frame; the const twins of the string, boxing, string-alloc and concat helpers (`emo_string_lit_const`, `emo_box_*_const`, `emo_alloc_string_const`, `emo_string_concat_const`) and the const-aware `box_result` at every emitter box site (eleven raw sites plus the typed-call conversions) plus const bodies always dynamic (numerics as static cells) complete it; ③ the **user profile's `emo_fail` crossed the gate at last** (A7.2's silence, found not fixed): the message rides the write verb whole and the tail takes the heap-death route — which is what said why, when the first const-region boot died before its first frame (`user heap 23 gone` where the old tail's `wfi` had been the only trace; the kernel profile's tail stays the SBI poweroff). **The same fix's second half, found a boot later**: a const body runs dynamic now, and a dynamic body's def value is a pooled record — the thunk's memo took its own claim **after** the statement boundary's drain, which had already released the record, so the memo parked a freelist cell and `examples/processes` (the def-values family) hung their spawns; the thunk's retain precedes the drain now. And the thunk's store unboxes a **Pid** result to the raw pid: `const me = self_pid()` parked the dynamic build's boxed cell and every send to `me` aimed at the pointer. And the const-aware box routing had to stay out of the **def-value thunks** — their bodies emit through `gput` (the module buffer, no frame), the frame-bound `put` answered `riscv: no function frame`, and the def-value family's builds refused until the thunk kept its own `gput` box calls (the arena's helpers, as always there). The split's tail (`init_tail_asm`) is a **called** function of its own — `call` spends `ra`, a leaf `runtime_init` doesn't save, and the tail's first cut read the caller's `t1` (emo_procs) through the call and then clobbered it with the −65544 immediate before storing the root's end — the machine's root faulted at −64960 on its first boot line; both branches name `emo_procs` and the offset in their own registers now. **With every const birth in the region the greedy pass's wire line is `user heap 19 gone` again.** **Found beneath them, fixed (EmoOS T8.13's)**: the display service's rect transfer posted offset 0 — the fullscreen transfers it had only ever served were correct by coincidence, the cursor plane's op-2 rect flushes copied the carve's top-left bytes into the host canvas at the sprite's rectangle, and the uniform backgrounds every earlier golden composited over hid it until the windowed desktop's first drag, whose screendump showed a window twice (once truncated, once at the transfer's offset) — `offset = (y * width + x) * 4`. **The debugging that found the dangling memo, recorded for the next one**: gdb against the machine (`-s -S`, a `file main.elf`, a `hbreak` for anything in the staged user image — a software breakpoint is overwritten by the loader's copy) walked the faulting address's table entries; the walk misleads unless you know **the satp's table is the dying pass's only at a fault** (at a breakpoint inside the fault report it still is, but `emo_cur_slot`'s space word is the ground truth), and a level-1 entry that reads as a valid RWU megapage over the faulting address means the walk succeeds now — the fault happened under an earlier table state or a different satp, so dump the slot record (space at 872, arena at 880, stride 888) before believing a PTE. **The scheduling facts the windowed golden grew**: the pointer's abs/btn events are QMP's `input-send-event` (a display position P is P*32 on x and the first value at or past P*128/3 on y; the left button a `btn` event, BTN_LEFT 272 in the stream); a drag's release is the present that shows where it went (the moves are state alone, the compositor's comp line prints at each composition); the focus's raise is invisible until the next composition, so the shell repaints the chrome it changed and presents; and the desk pass's start park (the counter's shape) exists because a composition erases the era before it. Pins: the fb gate 73 ok (the windows' package checked, its targets built, the window golden's nine lines byte-identical from the interpreter and all five hosted targets, the probe painting a window for the metal); `run.sh` green under both timer transports, three consecutive rounds byte-identical on both (218 lines a boot), the ledger `frames 90 54`; `dune runtest` and `@fmt` green. **Standing**: the surfaces' other roles refused by name until a milestone gives them substance; the shell one process owning two windows — the kill-and-restart acceptance (A9.2) is where the stack's reclamation earns its place; a const body that calls an allocating def still builds in the caller's arena (no such const exists in the tree; the region covers the literal, block, boxing and concat sites, the inventory CHECK.md keeps).
+- The kill-and-restart acceptance (emo-desktop A9.2, EmoOS T8.14): **landed (2026-11-03) — a client dies without closing its window, the compositor reclaims its frames and surfaces at the next composition, a reborn client proves the stack whole, and the machine never blinks.** The decisions and the find, in order. **The dead-owner cell** (the comp page's own, +448): the trap shim's three death routes — the fault kill, the heap kill, the exit — write the dead pid there before the reap, inside the death's own masked region (one store, no notices posted, the gate untouched), and the compositor reads and clears the cell at the op-17 walk's head — the one place the service's whole state (the rows, the stack's entries) is quiescent — so `comp_reclaim` gives the dead owner's runs back block by block, empties the rows, and the prune the walk runs anyway takes the surfaces off the stack; the wire names the work only when there was any (`comp reclaim <pid>`, silent when the dead owner held nothing). T8.6's "any other death is the reclaim" was the supervisor's half of the debt and never had its arm; the cell is where it landed instead — inside the service, where the walk cannot race the reclaim. **The address find**: the first cut wrote the cell at `0x87002e08 + 0x48`, the process pages' neighborhood, and landed on the pointer driver's max-x cell — `pointer 512 384` broke; the comp page's +448 is the address, and the routes carry it whole. **The find of the session — the flush wait's Unknown `==`**: the desk era's first composition died between the frame's digest and the comp line, an S-mode load page fault at `emo_eq_deep+0x74` with `tval 0x1200000008` — the pointer notice word (`18 << 32`) plus a payload offset, the machine ending loudly through `emo_fail`. The chain: `run.sh` feeds the pointer's abs park immediately after the desk era's gate byte; the tablet's report becomes the driver's notice — a raw `op << 32` word — and lands in the compositor's mailbox while a flush is in flight; `comp_await_flush` (T8.6's stash discipline) tested `r == 0` on the Unknown receive binding **before** `op_of(r)`, `==` on Unknown lowers to `emo_eq_deep(boxed literal, raw)`, and the raw notice wears the Int64 tag in its low five bits — `eq_deep` walked into it as a cell and loaded its "payload" at `0x1200000008`. The bug is as old as the flush await (T8.6) and the notices (T8.11); no earlier beat ever fed a pointer report inside a flush's window, and the A9.2 ordering did. Three reclaim designs (a gate-post notice to the supervisor, one to the service, a supervisor-side arm) crashed identically before the disassembly settled it: the crash was never the reclaim's mechanism, it was the timing the new beats exposed. The walk that found it: the fault trace's epc → `nm` → `emo_eq_deep` → its four callers (`comp_await_flush` one site, `emo_program` three, `emo_atomic_compare_exchange` dead code) → the call site's shape (`emo_box_i64(0)` then `eq_deep`) → the Emo source's `if r == 0` first. (A stale disassembly in `/tmp` misled once — it showed the pre-fix cell address; regenerate before reading.) **The fix**: op_of dispatches first — `op_of(r) >= 0` is a raw gate word (request, notice) and stashes; the reply test stays on the kernel-cell branch (`op_of < 0`: the kernel's own sends are cells, their pointers' arithmetic shift negative) where every word walked into is a real cell. **The metal discipline this names: a raw word posted beside Emo's own sends must never meet `==` on an Unknown binding — op_of is the only question a raw word answers safely.** The comp service's dead op-256 arm (an earlier design's) is gone, and the stale comments (the supervisor's "any other death is the reclaim", the death routine's) name the cell now. **The client era on the wire**: the parent's spawns gated by its `read()` yields (the win pass's shape); client1 opens a toplevel at (96, 320), pattern `0x57494E00`, declares, paints, presents — `comp 96 320 2102906880`, the client's frame alone — says `client up 2`, and dies by the kill store to `0x20000000` its table maps nothing (`user fault 26 cause 15`, `addr 0x20000000`); the rebirth opens at (512, 320), pattern `0x52454200`, grant 3 — `comp reclaim 26` at its composition's head, `comp 512 320 4174893056` the reborn frame alone (a stuck surface would double the carried sum — the arithmetic proof), `client up 3`, the clean `win_close` and exit answering the parent's wait as `client back`; the desk grants renumbered 4 and 5 behind them. The screendump is the model's: the reborn window's rows where it stands, the dead client's old rect the background — the walk cleared the carve and the surface is off the stack — the sprite parked out of both rects. **The ledger's arithmetic closed exactly**: `frames 104 66` (+14 taken, +12 given: each client's spawn takes its arena run, stack and table block, each `win_new` its four-block run; the dead one's every block home through the fault's reap and the reclaim, the reborn one's through its exit and its close). Pins: `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; the ledger `frames 104 66`; `dune runtest` (340) green with the smoke; `@fmt` green. **Standing**: the surfaces' other roles refused by name until a milestone gives them substance (A9.3's increments); the flush wait's lesson applies to every future raw-word poster (the notices are the only ones today).
+- The growth contract's five increments (emo-desktop A9.3, EmoOS T8.15): **landed (2026-11-03) — the roles' substance, the negotiation's fields, the frame callback, the protocol's version, one verb each, M9 complete on both sides of the gate.** The derivation, recorded since the assessment leaves the five to the trackers: the seams M9's window work still owed after A9.1/A9.2 — the third seam's growth (A9.1's standing note: "the surfaces' other roles are refused by name until a milestone gives them substance"), the fourth seam's two fields, the fifth seam's callback and version. **The roles' substance** (verb 19 `win_parent(grant, parent)`, mailbox op 20, route −1020): a popup's or a subsurface's entry takes the parent word (entries 32 → 40 bytes), the walk paints free-standing surfaces in stack order with their children immediately above them at their offsets, then the panels over everything, the blit clipped to the mode (a parent-relative surface rides its parent's moves; the clip's sum is the words actually carried), the prune cascades (an orphaned child leaves with its parent, the passes until still — the binding's one-level rule making one round the whole depth), the move's bounds and the comp line speak the absolute position, a second binding re-points (a surface's role does not change; its parent is not its role), a panel and a toplevel refuse a parent by their role, and the by-number refusal survives on the wire as the second declaration's `role toplevel r4` (`role_name_at` grew the toplevel's name). **The fields** (verbs 20/21): the gate answers itself — the negotiation's shape is the front door's, no service between — recording format (+96) and scale (+104) on the row, the row 96 → 112 bytes (three hardcoded strides and the zero in main.emo with the const), the fresh row's fields zeroed at `win_new`. **The callback** (verb 22 `win_frame()`, mailbox op 21, route −1021): no grant — the callback rides the display's rhythm; the ring four deep at the comp page's +480/+488, a fifth the resource refusal, the composition's completion answering every parker after the presenting caller. **The version** (verb 23): the gate answers 1. **The pass parks past its marker now**: the callback's answer needs a composition from another client, so the win pass self-prints `win 0` (the parent's inline wait retired — a parked pass's exit must not gate an era; the exit code goes unreaped, the exit table's bound) and parks; `cb ok` lands inside the client era, its order against the dying client's lines the scheduler's — a positioned check (after `win 0`, before `client back`), the pointer line's precedent. **The console's one write stage buffer, named by two writers**: the callback's beat parked two console writers at once for the first time in the machine's life, and the single stage buffer printed the last stager's bytes for both — `client up` never reached the wire wearing its own name (the wire showed `cb ok` twice and no client line). The console grew the fs's request-slot shape: four slots on the console's own page (link.ld's `.emo_console` at 0x87009000, above the allocator region's end — never handed out; the sentinels the console service's first act, a NOLOAD page's zeros reading as pending otherwise), the gate's pick refusing a fifth writer (reason 5), **the slot's index NOT riding the route** — the fs's `op + 16 × slot` seats would collide with the compositor's mailbox ops 15 to 21 (the first cut's seat `17` swallowed the composition route: every window present was answered by the console with a slot length — `present r1`, no comp lines; the wire named it) — the route stays −1001 whole and the index sits in a per-pid cell the gate writes and the service reads and clears; a process parks per ecall, one cell per pid is the whole of the race. (The fs's own slot ≥ 1 routes would have hit the same desktop-decode seat — its callers have always serialized, the latent mis-route never fired; the per-pid cell sidesteps it for the console and leaves the fs's shape untouched.) **And the dead-owner cell held one death**: the parked pass's exit landed between the client's fault and the next composition, its death overwriting the client's in the one seat — client1's windows stuck in the stack, the reborn frame's carried sum the doubled arithmetic (`1982832640 = (2102906880 + 4174893056) mod 2³²`; the composition must not drown, so the reclaim of a window-less pid is silent). The dead owners sit in per-pid cells now (256, the comp page's +600, the shim's three writes bounds-checked — the fault/heap/exit routes; a first-seat hazard also retired: +448 had been the stash's second slot since A9.2, a second stashed word would have walked over a dead pid): one write per pid ever — a slot is never reused — so the service's clear cannot race it; a death past the array is the reclaim that never runs, the documented bound. **The grant pins moved with the verbs**: the win pass's three extra buffers (one, one and two blocks) shifted every grant after (the clients' 5 and 6, the desk's 7 and 8), the ledger `frames 108 70` (+4/+4), and the window-present comp lines print before the flush while the client's line prints after its answer — the list's `win shown`/`comp 0 0` order flipped from the T8.6-era listing. Pins: `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; the ledger `frames 108 70`; `dune runtest` (340) green with the smoke; `@fmt` green; `syscalls.md` and `desktop-abi.md` state the verbs and the slots (EN + zh), both READMEs' M9 rows complete — **M9 complete on both sides of the gate**. **Standing**: the fields' values grow under their shapes (a second format, scale 2, are the walk's to honor when a milestone asks); the callback's ring is four deep; the death array's 256 pids are the session's bound.
+- The fb backend's family membership (emo-desktop A10.1): **landed (2026-11-03) — the convergence corpus runs through the Elm loop on the pixel surface, the sixth runtime family running what the other five run.** The shape: the shared application required whole from `emo/ui_corpus` (`fb/corpus/`, the package `emo/ui_fb_corpus_golden`, deps ui + ui_fb + ui_fb_canvas + ui_fb_frame + ui_corpus — the digest helper living beside the counter module is the frame golden's own precedent), the Eye over the canvas at the baseline mode, the script `0,0,1,2` the tui and debug entries feed, every frame's digest printed beside `update`'s transitions. The whole node vocabulary the counter never touched — TextInput, Scroll, Image, Spacer, the column's padding and the row's gap — laid out and painted under the loop with no fault: A7.1's box model coverage held. The digests carry the corpus's own arithmetic: `dec 1` and `submit 1` land on the same count as `inc 1` and the same digest. The fb gate stages `emo/ui_corpus` into its registry (the content-named sum growing — every staged registry in the tree restages on the sources' change, so the first run's lock writes are the expected kind) and checks the family beside its siblings, 73 → 90 ok. The metal's leg is unchanged: the same loop on the carve since A8.3, `run.sh`'s screen pass. Pins: `fb/check.sh` 90 ok under the opam env; `dune runtest` untouched (no src change); the EmoUI README names the family (EN + zh).
+- The dock and the desktop shell (emo-desktop A10.2): **landed (2026-11-03) — `emo_desktop`, the shell's chrome as a package, and the machine's desktop wearing a dock.** The decisions, in order. **The package** is the flat name the placement round decided (`emo_desktop`, `fb/desktop/`), targets all six, deps `emo/ui_fb` alone; the dock paints direct (fills and glyphs through the `Surface`, no tree — the window package's arena reason), the strip a panel surface at the display's bottom edge, the role A9.3 gave substance — the walk's topmost, no window over it. **The press policy is a pure def** (`press(x, y, w, h, count)` → the tile or −1), the shell's pointer handler asking it before the window hit test: a strip press names a tile, the tile names its app, `win_focus` raises it, the dock repaints with the tile lit; a strip press never starts a drag (the drag's grab conditions grew the below-the-strip guard — a window dragged to the bottom edge must not mistake a dock press for its own bar), and no window beneath is consulted. **The hosted twin paints the dock buffer's own size** (1024×40, not the mode): the digest the golden pins is the digest the screendump's rect fold meets — the same identity the window golden's frames carry — in the three states the desk era lives (none focused, alpha lit, beta) with the policy's probes beside; the fb gate stages `emo_desktop` and checks the family (90 → 107 ok). **The desk pass wears the dock**: the panel surface beside its two windows, the initial paint unlit, the repaints riding the one focus-change block, the three digest lines pinned by a corpus-file loop seeded past the desk era's start (the pointer-line positioning's shape), `desk_is` growing the strip's rectangle — skipped in the walk, folded to the corpus's digest, the fold generalized to per-rect dimensions — and the beta focus beat moved from a press inside the window to a press on beta's tile (`abs 2048 31979`), the drag's bar press after it finding beta already focused. The ledger `frames 111 73` (the dock's three blocks, home at its close); the smoke grew `emo_desktop`'s staging and `DOCK_EXPECTED` (the first run named the missing file, the loud end the corpus discipline wants). Pins: `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; `fb/check.sh` 107 ok; `dune runtest` and `@fmt` green.
+- The first apps (emo-desktop A10.3): **landed (2026-11-03) — the counter, the file browser and the editor as corpus packages (`emo/ui_apps`), dual-run: the hosted families' bytes and the machine's three app passes, one discipline both seats.** The decisions, in order. **One family package, three submodules**: `fb/apps/` is `emo/ui_apps` (targets all six, deps `emo/ui` alone), the front door `ui_apps.emo` naming the discipline, the apps `counter`/`files`/`editor` reached as `ui_apps.counter.view` — the `ui_fb_frame.counter` shape; a require binds the package's *entry* (`main.emo` or the short name's file), which is why the family has a front door at all. Each app is a corpus package in `emo/ui_corpus`'s: portable defs, nothing platform-naming, `update` saying each transition, the tags registered in the view's own order (add/sub; down/up/open; put_a/put_b/newline) — the browser's listing the model's data (the seed names the desktop's own three sources; the disk's answer is M11's), the editor's cursor row the put's target. The trees are the metal's measured budget — the sessions sized to the pass's 128 KiB arena (A8.3's per-event count). **The metal leg is three passes**, each a window of its own by `win_new` and the Elm loop over the window buffer's surface (the desk pass's `Win`), `AppKeys` the byte table whose tag is an index and `q` the loop's end, spawned after the shell's quit one at a time, the exit answering the parent's wait (`app <name> 0`, the golden's own closing line — the two seats print the same bytes). **The user profile's print was silent — fixed**: `println` lowered for riscv64 since ever, but a user pass's bytes fell into the legacy SBI ecall whose `a0` the gate reads as a buffer address and refuses — the silence A7.2's first frame found and left (`emo_fail`'s announce unheard since; the first app session's frames moved and its words didn't, which named it). The user boot stub now parks the console hook (T3.5's own mechanism): every byte the runtime prints rides the gate's write verb from a one-byte scratch in the image's .bss. **The scratch's first home was wrong**: `.emo_ucall` — the cells page — is not a segment, and the gate's `check_write` admits only the caller's own; the byte died at the range check and the wire stayed silent until the scratch moved into the .bss, the writable segment the check admits. The gate's copy runs interrupt-masked, so no other pass's byte lands between the store and the read; one byte per crossing is the whole of the protocol. **`ArrayBuilder` is not lowered on riscv64 — found-not-fixed, the compiler track's**: the browser's and editor's first drafts grew their arrays with it and the emitter refuses by name; the apps went to literals of their own fixed shapes (the seed catalog and the two-row buffer are fixed data). **The pins**: the hosted golden at the app window's own size (384×128), the sessions' bytes `expected.txt`, all five hosted targets the same; `run.sh`'s ordered list carrying the three eras' transitions and exits (the wire's own words — `add 1`, `sel files.emo`, `put b`, `app editor 0` — the browser's seed names renamed off the shell's `ls` answers after `hello.txt` arrived out of order), the ten frames pinned by the corpus-file scan seeded past the desk's exit and ending before the editor's (the repeated number — the counter's sub returning its mount's frame — the search past the last, the ordered list's first-occurrence scan unable to carry a twice-printed digest), `app_is` folding each app's rectangle at the mount and the last frame with the pointer parked off every app's place; the ledger `frames 132 91`; `run.sh` green under both timer transports, three consecutive rounds byte-identical on both; `fb/check.sh` 130 ok (the three apps' type-checks and riscv64 lowerings pinned beside the goldens); `dune runtest` and `@fmt` green. **With this M10 is complete.**
+
+## The remaining work — one list (recorded 2026-11-05)
+
+Every open task in one place, mirrored from the tracker it belongs
+to; an item is checked off here the day its tracker entry is. The
+compiler's standing debts carry no plan step yet — they are listed
+here so they cannot drift, and enter `docs/TASKS.md` when a step
+claims them.
+
+**EmoOS — [Step 8's open tail](projects/emo-os/docs/TASKS.md),
+closed 2026-11-06:**
+
+- [x] **T8.19** — the desktop shell era, kernel side: `parent_for`,
+  the exit event ring, the death kick, the comp verbs' slot staging
+  (closing the `comp_args` race). Landed 2026-11-06 from the archived
+  prototype (`protected/tmp/20261105-a12-prototype/`) — which proved a
+  mid-work snapshot; the record is the dated section below.
+- [x] **T8.20** — the mailbox's send-send window, closed at the park
+  (the compare against the scan's own count under the mask; landed
+  2026-11-06 with the forced interleaver's reproduction — the record
+  is the dated section below).
+- [x] **T8.21** — preemption — the honest four's remaining one (the
+  boot stub assigns the root's slice, every process inherits it, the
+  spinner is the busy app the golden proves it with; landed
+  2026-11-06 — the record is the dated section below).
+- [x] **T8.22** — generic IPC — the honest four's fourth — measured
+  2026-11-06 and closed: no path demands it; the rule stays standing
+  law with the reopen trigger named (the record is the dated section
+  below). Step 8 whole.
+
+**emo-desktop — [M12 complete](projects/emo-desktop/docs/TASKS.md):**
+
+- [x] A12.1 — the app image profile, landed 2026-11-05 (`9f7eaa4`;
+  the ledger `frames 507 446`).
+- [x] **A12.2** — the desktop shell era's landing and acceptance (the
+  kernel half is T8.19): the tiles launch the disk ELFs, the exits
+  light the tiles out, the REPL grows feed/exec, `run.sh` carries
+  the era's golden. Landed 2026-11-06 with T8.19; the ledger of the
+  era is `frames 510 446`.
+
+**The compiler track — the four debts the metal surfaced, landed
+2026-11-05 as [EmoOS T8.23–T8.26](projects/emo-os/docs/TASKS.md)
+(their decision records in the dated section below):**
+
+- [x] **T8.23** — `decl_type` enriched (Byte, applied annotations,
+  declared names); the return/fall-off representation reconciliation
+  it surfaced; golden `examples/typed_sigs`.
+- [x] **T8.24** — `Bytes` whole on riscv64 (the earlier note that
+  "`Bytes.new` alone is lowered" was wrong: nothing of Bytes was);
+  golden `examples/bytes`, the bufio/plot gradual holes it exposed
+  closed in the packages themselves.
+- [x] **T8.25** — `ArrayBuilder` on riscv64; golden
+  `examples/array_builder`.
+- [x] **T8.26** — typed method bodies, complete 2026-11-05: the
+  boot acceptance's red was two roots — the interface tables' rows
+  all carried the first class's slots (the class was missing from the
+  lookup key), and the exec'd child's handoff page reached the trap
+  shim's first-entry arena hand carrying its recycled frame's stale
+  bytes. Neither was the typed-body machinery; the resolution in the
+  dated section below.
+
+**emo-ui — [the open questions](projects/emo-ui/docs/TASKS.md)
+(registered 2026-11-05):**
+
+- [x] **Q1** — whether the array-children spelling earns a literal at
+  all — settled 2026-11-06: **neither earns its place.** B landed on
+  every target (T8.25); the real views in the tree are small and
+  mostly fixed lists, the builder appearing in exactly one view in
+  the wild; D's editor half and build place have no customer; C is
+  dominated. The reopen trigger is named in the composition record's
+  dated update: a real screen whose builder statements outnumber its
+  widget calls.
+- [x] **Q2** — where the `.emoui` translator (the working D prototype)
+  sits — settled 2026-11-06, following Q1: **the standing is the
+  demo's.** It ships nothing and grows nothing until Q1's named
+  trigger fires (a real screen whose builder statements outnumber its
+  widget calls); then it becomes the seed of a shipped D, and its
+  undone editor support and span-accurate error mapping are the first
+  work.
+
+The two are design decisions, not scheduled tasks; they settle in
+[`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
+nothing.
+
+**emo-desktop — [A13, the macOS face](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-06 (the kernel half is [EmoOS T8.27](projects/emo-os/docs/TASKS.md)):**
+
+- [x] **A13** — the wallpaper (role 4), the header bar, and the
+  desktop's icons — the volume's documents and prefix-folders,
+  selected, entered, left by `..`, refolded after every
+  volume-touching command. The round's find (the repaint that weighed
+  a boot) in the dated section below.
+
+## 2026-11-06 — The desktop's macOS face (emo-desktop A13, EmoOS T8.27)
+
+- The desktop after boot looks like a desktop: a header bar at the
+  top edge (the wordmark in the boot banner's cyan, the running count
+  its one live fact — the wall clock and the foreground app's name
+  the machine does not know, and the bar does not pretend), the dock
+  at the foot, and a wallpaper carrying the desktop's icons — the
+  volume's own files as documents, a name's `/` prefix as the folder
+  that prefix names, entered by a press, left by the `..` cell the
+  view grows, `.elf` never on the desktop (the dock names apps). The
+  kernel's half is small on purpose: role 4 joins the vocabulary (one
+  wallpaper to a machine, never raised, `win_focus` on it refused),
+  the walk paints it under every window — a ready one that covers the
+  mode is the clear's replacement — and a press that lands on no
+  window and no panel names the wallpaper the focused surface, so the
+  background click is the desktop owner's and the windows unfocus the
+  way macOS unfocuses them. Panels needed nothing: a second panel was
+  never refused, and the header is one.
+- **The round's find: the repaint that weighed a boot.** The first
+  icon press died pid 1 on the second wallpaper repaint — `user heap
+  1 gone`. The `Surface`'s methods are class bodies, and a class body
+  boxes every word it computes into the arena *for good* (the pool
+  reclaims the identities at the statement boundaries; the boxing
+  never comes back — "a few KiB of boxed numbers left in the arena
+  per repaint" was the dock's own comment, and the dock repaints
+  through ~15 calls where the wallpaper paints through ~2,200). The
+  metal's painting moved to typed top-level defs stamping the buffer's
+  bytes through the carve's own primitives (`carve_fill`, `carve_blend`,
+  `carve_glyph`, `carve_digest`), the shapes the package's words — and
+  a repaint costs no arena at all; the shell repaints for a living.
+  The lesson generalizes the A10.2 rule: on the metal, *any* per-pixel
+  or per-call-hot path goes through typed defs, and a class-body call
+  is an arena spend.
+- The second find, smaller: entering a folder at the root wrote the
+  child's prefix one byte past the buffer's head — the `/` separator's
+  slot taken when no prefix stood there to separate — and the child
+  view matched nothing (the folder held only `..`). The separator
+  writes only when a prefix separates.
+- The `win_focus` handler had raised its entry twice since A12.2 —
+  A9.1's original raise left standing behind A12.2's inserted one; the
+  second raise re-read the same slot after the first had shifted the
+  stack and promoted the *old* top over the window being focused.
+  Dormant while every client focused a fresh top; fixed by deletion.
+- The acceptance: `run.sh` both transports — the desktop era's
+  screendumps (duo, trio, desk-out, the entered folder) modeled to the
+  pixel, the model drawing the names and the wordmark from the font's
+  own table and dividing the metal's way (the ribbon slopes run
+  negative, and the metal truncates where python floors) — the fb gate
+  green (134, untouched; the golden's new painters pinned under
+  `wall`/`bar`/`icon` tags so the dock's digest list stays the dock's),
+  dune's runtest with the smoke. The ledger `frames 666 551` — the
+  wallpaper's 48-block run and the header's two are the +50, held for
+  the machine's life.
+
+## 2026-11-06 — The honest four's fourth measured and closed (EmoOS T8.22)
+
+- The rule was "build it when a measured path demands it, never
+  before", and the round's work is the measurement. The machine's
+  message economy, read off the committed golden boot (the serial's
+  7,735 bytes the session's whole console output; the install lines'
+  arithmetic for the bulk) and against the ABI's actual shapes: **the
+  bulk never rides a mailbox anywhere**. The gate's write stages up
+  to 2048 bytes in one message and answers in one; a file read or
+  write is one request whose bytes the service lays into the caller's
+  own buffer through the caller-table translation; the block driver's
+  sector requests carry a pointer, not the bytes; the desktop's
+  pixels live in the window buffer's carve and
+  `present(grant, x, y, w, h)` is six words — **the portal pattern,
+  share plus doorbell, is already the shape wherever bulk matters**,
+  built per path where each path earned it.
+- The one chatty boundary is fs↔driver, one request per sector: a
+  boot that installs and then execs the four images moves their 2,618
+  sectors twice — about 2,600 request-and-reply pairs, some 5,200
+  messages, across the boot's
+  minutes, tens of round-trips a second at the bursts, three
+  orders of magnitude under anything a 10 ms tick could feel, and
+  every message a pointer-and-words pair the copy discipline never
+  fattens. The demand the desktop era actually surfaced — two
+  clients' verbs colliding in the compositor's one staging cell, the
+  `comp_args` race the prototype lost tiles to — the gate absorbed
+  with slot staging inside the verb protocol (T8.15, A12.1): the
+  generalization's real demand arrived, and the existing mechanism
+  took it without a new IPC class.
+- The verdict, then, is the rule applied to itself: generic IPC is
+  built never, measured now. **The rule stays the tree's standing
+  law** — the assessment's scalability contract keeps it — and the
+  trigger that reopens the question is named: a portal-class service
+  arriving (a network stack's per-connection namespaces, a second
+  compositor family, a client-visible portal object) is the measured
+  path the rule waits for. Until one exists, generic IPC has no
+  client and earns no place — the design philosophy's own test, the
+  construct refusing itself.
+- Pins: no machine byte changed — the round touches the trackers and
+  the honest-four paragraphs alone; the committed tree's pins stand
+  (`1e570c4`: the golden byte-identical three rounds on both
+  transports, the ledger `frames 616 551`, dune's 352, the fb gate
+  134).
+
+## 2026-11-06 — The tick's slice assigned at the machine's door (EmoOS T8.21)
+
+- Preemption's machinery has been in the tree since T3.6 and has run
+  on every boot since — the timer ISR's tail calls `emo_sched_tick`
+  (the quota step), and on a spent slice hands the trap frame's
+  switch section to `emo_sched_preempt`, which re-queues the victim
+  and picks the next — but no surface ever wrote a slot's quota word,
+  so it was 0 everywhere, the step answered dormant every tick, and
+  nothing was ever preempted. The landing is deliberately one store:
+  the boot stub assigns the root slot's quota — five ticks, 50 ms of
+  the 10 ms tick — immediately after `emo_runtime_init` dresses the
+  root (the root runs unassigned until its first park's return arms
+  the load at the pick — the first burst's quota is not spent on the
+  boot's own work), and every process inherits its parent's policy
+  words at the spawn, the copy `emo_user_spawn` has always made. No
+  surface sets a different quota yet; the uniform slice is the honest
+  round-robin the desktop's acceptance needs — a busy app keeps the
+  hart no longer than one slice, and a wake it never yields to runs
+  within the next.
+- The proof is a busy app with nowhere to hide: the spinner
+  (`fb/apps/spin/`, the fourth disk ELF), a counted loop with no
+  window, no message, and no yield — the exec is the REPL's own
+  command, so the busy app is begun the way the desktop's users begin
+  one. Its one announce (`spin done`) prints only when the count is
+  out, and the count is sized past the echo's drain on purpose: the
+  runtime's `println` is a write ecall per byte and the shell's echo
+  is the same transaction granularity, so a line printed while the
+  desktop loop echoes a fed line weaves with it byte by byte — two
+  printers alternating at the gate — and never forms its literal. The
+  golden's assertion is the order: `echo spin still` is fed while the
+  loop runs, and its answer can only come from the tick spending the
+  spinner's slice and the pick dispatching the shell — under the
+  cooperative hart the echo would sit in the stream FIFO until the
+  count was out. The pins are literal: `spin still` whole on the
+  wire, `spin done` absent at that instant, `spin done` whole after.
+  The reproduction is the committed tree with the stub's store
+  reverted: the golden fails at exactly that await — the exec's image
+  line on the wire, `spin still` never delivered — the busy app
+  frozen desktop the assessment named, on cue.
+- Found on the way, fixed — **the boot's entry shim ran its table
+  switch unmasked, a race older than the quota**: `emo_os_user_boot`
+  wrote the boot pass's table to `satp` and then approached the
+  `sret` with interrupts live — a few hundred nanoseconds of S-mode
+  on a table that maps none of the kernel's low window. A tick
+  landing there ran the ISR's wake reads on that table, and the load
+  page fault at the input service's pid cell (`0x870029e8`, cause 13)
+  was the kernel's loud end. The window had existed since T6.3 —
+  every prior boot missed it by microseconds — and the round's boot
+  timing finally put a tick inside one: the spinner's eight bytes
+  moved the image, the image moved the boot's tick phase, and round
+  two's sstc boot died at `user: staged`. The fix is the pick's own
+  mask discipline at the shim: `csrci sstatus, 2` at entry, the whole
+  switch-and-arm masked, the `sret` restoring SIE from the frame's
+  SPIE (the one place that restore belongs), the no-entry return
+  unmasking on its way out. A tick whose deadline passes under the
+  mask stays pending and fires in U-mode the sret's SPIE opens —
+  the trampoline's user path, on the pass's own anchor, the sound
+  route.
+- Found on the way: the runtime's `emo_procs` had never been named
+  outside the runtime body — the stub's quota store was the first
+  cross-object reference to it and the kernel link refused with an
+  undefined reference — now `.globl` beside the other process-world
+  words. The spinner joins the machine's own furniture: the stub
+  parks its blob's bounds at the handoff page's `0x87002200` pair
+  (the free tail past the three apps'), the kernel's install list
+  grows the fourth name, the volume carries it from the first boot,
+  and the shell's `ls` names it. The dune smoke's scratch tree grows
+  the spinner's build root beside the three apps'.
+- The ledger's arithmetic, stated so the pin is checkable: the
+  spinner's cycle takes the file's scratch (1), the 99-block image
+  run (the app image's span is its second segment's 6.4 MiB
+  reservation — the `image 37304 bytes, 99 blocks` line is the
+  loader's honest span, not the file's size), the spawn's four-block
+  arena run, the stack, and one split for the private handoff page
+  (+106 taken), and gives everything home at the exit but the
+  handoff page (+105 given, the exec's documented leak — a frame
+  never rejoins its block). `frames 616 551`.
+- The pins: the golden green under both timer transports, three
+  consecutive rounds byte-identical on both (run.sh zeroes its disk
+  per round, so every round's first boot meets the blank volume);
+  `dune runtest` green with the smoke (352) — the smoke's command
+  deadline grew with the golden, 120 s to 480 s, the two boots' four
+  minutes now carrying the spinner's loop; `@fmt` green; the fb
+  gate green (134, untouched — the spinner is not a corpus tree).
+
+## 2026-11-06 — The mailbox's send-send window closed at the park (EmoOS T8.20)
+
+- The fix is at the window's own door: the receive site passes the
+  scan's own count (`mv a0, s0` — the scan index, which reaches the
+  park only when it has met that count; the mailbox's length can only
+  grow across a park-bound scan, for the scanner alone removes) and
+  `emo_park_receive`, already masked from its first instruction, reads
+  the mailbox's length once more before writing state 2. Grown past
+  the scan's count, a word landed in the window between the scan's
+  last read and the mask — the call simply returns, no park, and the
+  receive site's scan restarts onto it; equal, nothing landed since
+  the read (the mask runs on through the state write, so no producer
+  can slip past the check) and the words queued are the scan's own
+  rejects — the selective receive's honest sleep. The invariant the
+  compare buys — a state-2 slot's mailbox holds only words its scan
+  saw — is what the send's and the gate post's state-2 wakes rest on;
+  the compare is producer-agnostic, so both are covered.
+- The rejected shape, with its reason: **the tick sweeping state 2 as
+  it sweeps 4** cannot work — a sweep cannot tell a lost wake from a
+  selective wait (both are state 2 with words queued, and the parked
+  count is the scanner's own, so only the park knows it), so it would
+  wake every selective sleeper whose mailbox holds its own rejects, a
+  spurious pass every tick forever, and buy a one-tick delay where
+  the compare costs one load. This is the reason T8.18 itself
+  recorded: the sweep is the remedy for a park whose check cannot
+  move into the stub, and the receive park's check is one word in the
+  slot.
+- **The window was also named latent this round**: no surface sets
+  the slots' quota word, so it is 0 everywhere and the tick's quota
+  step answers dormant — nothing is ever preempted until T8.21 lands
+  preemption — and no ISR-side producer enqueues mailbox words, so
+  no honest run can open the window; no reproduction existed because
+  the interleaver does not exist yet. The round built one: a debug
+  `call emo_yield` emitted between the drain and the park call (the
+  count argument refreshed after — the yield spends a0), against a
+  scenario of a receiver, a sender of N messages, and a root waiting
+  for both announces (`protected/tmp/20261106-t820-scenario/`, its
+  README the emission). Pre-fix, N=2001: `sender done`, then the loud
+  deadlock — `all processes are blocked; no message will ever arrive`
+  — the receiver parked holding its last message, every run;
+  N=2000's parity met the other recorded harm, any later message
+  waking the pair and the run completing. Post-fix, the same forced
+  window: clean, three rounds at both N. The knob removed; the
+  shipped code is the compare alone, and the scenario runs clean on
+  it three rounds.
+- Found on the way, fixed: the fb gate's dock section was red before
+  this round's first byte — every leg's build refused with E5007, the
+  `desktop/golden/package.lock`'s `emo_desktop 0.1.0` checksum
+  (1b8df285…) disagreeing with the registry's content (4b7f63d6…).
+  The lock had not been regenerated when 785625f grew
+  `emo_desktop.emo` — the T8.19 round's "fb gate green (112)" pin
+  predates the source's final state, and the committed tree has been
+  red since. The stale lock moved to
+  `protected/tmp/20261106-080447-package.lock`, the toolchain wrote a
+  fresh
+  one, the dock's legs went green (the interpreter's bytes the
+  expected file's own), and the gate's count is the honest 134.
+- The pins: `dune runtest` green with the smoke (352); `@fmt` green;
+  `run.sh` green under both timer transports, three consecutive
+  rounds byte-identical on both; the fb gate green (134, the dock's
+  lock refreshed); the ledger `frames 510 446` unchanged (the
+  compare allocates nothing).
+
+## 2026-11-06 — The desktop shell era landed (EmoOS T8.19, emo-desktop A12.2)
+
+- The landing began as the TASKS entry prescribed: re-run the archived
+  prototype's script first. **T8.18's verdict held** — the second
+  press went through on the first try; the lost-wake window is gone.
+  What the run found instead is that **the archive was a mid-work
+  snapshot**: its kernel carried the exit ring's take machinery and
+  the comp slots whole, but the push half — the death branch's
+  `exit_event_push`, the `parent_for` writes at the spawn and the
+  exec, the death's kick — existed only as TASKS' words, and the
+  panel-routed moves (`input_entitled_for`) were a def no path
+  called. The landing wrote them.
+- The era's pointer rule, in one sentence: **while a panel lives, its
+  owner is who the moves serve** — the launcher tracks the pointer
+  the windows ignore, because the press that names a tile rides the
+  position the moves kept current. Without the rule the launcher's
+  `px, py` age behind the focus's turns, and a press that reaches it
+  while an app holds the focus names a tile the pointer left (the
+  golden's counter relaunch, the first symptom).
+- **The round's find, worth the section: a serve parked on the
+  device world swallows a kick.** The A11.2 judgment economy runs at
+  the input service's loop top — after every mailbox word — and the
+  death's kick is a mailbox word. But the service spends its life
+  inside `input_serve_read`, parked on `device_wait`; `gate_post`
+  wakes the park (state 4 is a wake it answers), the serve loop
+  re-peeks an empty stream, and parks again — the kick's word sits in
+  the mailbox unread, and the held seat the event was for is never
+  judged. The fix is the serve's third end: a wake that brings its
+  reader nothing while the ring holds an exit event a held seat waits
+  on (`exit_event_for_held`) hands the read back and lets the seat
+  scan carry on — the seat the news names may sit behind the cursor
+  the park froze. The scan's other end: a head that is another
+  reader's (a panel-owned move) restarts it, the head's own reader
+  behind the cursor — the restart's own deadlock (scan parked mid-
+  sweep, no mailbox word ever coming) is the shape that motivated it.
+- The archived prototype carried three desktop-side slips the golden
+  caught one by one: **the editor's window still at the duo's place**
+  (the launcher's is `48, 272`; the archive's own trio screendump,
+  folded at the new rect, digests to the corpus's tenth frame — the
+  position proof), **the prompt's cell inside the help text's grown
+  span** (`exec` made the help line 57 bytes, past `sh_prompt`'s seat
+  — the prompt's first byte, an `e`, printed as the help's last;
+  every text from the prompt on moved eight up), and **`m_badarg`'s
+  first byte a typo** (`aad argument` — 97 for 98 in the hand-built
+  byte table; all sixteen tables verified against their comments
+  after).
+- The golden's own assertions needed the era's lesson: **the REPL's
+  echoes share the serial with the launches**, an `image` line riding
+  the prompt's own — the line-anchored searches (`^frame …$`) for the
+  exec loads, the apps' frames, and the launcher's dock digests lost
+  their matches. The anchors came off (the searches bounded by the
+  previous match and the era's windows, as the wire list already
+  was).
+- The ledger of the era is `frames 510 446` — three blocks over
+  A12.1's: the desktop's own residents at the poweroff (the golden's
+  number is what the machine says; the assertion follows the truth).
+- The pins: `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both; `dune runtest` green
+  with the smoke (352); `@fmt` green; the fb gate green (112 ok, 0
+  fail — the apps golden in the launcher's order with the `desktop
+  <name> exit 0` lines, the dock golden's seven residency digests,
+  every hosted target byte-identical).
+- The files: `projects/emo-os/{main.emo, gate.emo, link.ld, run.sh,
+  hello/main.emo, hello/shell.emo}`,
+  `projects/emo-desktop/fb/desktop/{emo_desktop.emo, golden/}`,
+  `projects/emo-desktop/fb/apps/golden/`,
+  `fb/apps/editor/main.emo` (the position), the trackers, the
+  READMEs' M12 row, and `shell.md`/`shell.zh-CN.md` (the ninth
+  command, the feed, the desktop's foreground).
+
+## 2026-11-05 — The two roots of the red boot (EmoOS T8.26 closed)
+
+- The matrix's survivors were wrong, and the reason they could be is
+  the round's own lesson: **the red was two roots, and the levers the
+  matrix pulled (typed methods off at the loop, the tables, the IR)
+  turned neither of them off.** The hunt this round ran on the
+  untouched tree — reproduce, then a hardware breakpoint on the
+  kernel's `fault_report` (gdb over QEMU's stub, `hbreak`: a software
+  breakpoint cannot write into the high half before the kernel's
+  table exists) — and the trap frame named the jump in one shot:
+  `ra` at the call site, the dispatch's `t2` register reading zero.
+- **The first root, the emitter's:** the screen pass's first paint
+  called `mount` through the `ui.Backend` interface table on the `Fb`
+  receiver (class id 24), and the slot was zero **in the file** — the
+  interface tables' emission had lost the class on its way through
+  the T8.26 restructuring. The slot decisions were hoisted (the
+  per-slot adapters are text, the tables are data, so the decision
+  has to run before the `.data` section opens), but the lookup
+  consumed them keyed by (interface, method index) alone —
+  `iface_slot` took no class, the emission loop's class parameter was
+  literally `_` — so **every row of a table carried the first
+  class's decision**: `ui.Backend`'s first class has no `mount`, so
+  the whole table emitted zeros and the first interface call jumped
+  through it; `ui_fb.Surface`'s first class matched all seven names,
+  so its table emitted 29 copies of one row. The fix is the rows
+  themselves: `iface_rows` keeps one row per class (in `pclasses`
+  order, the class id's own order, so the dispatch's class-id stride
+  indexes the row its class owns), each slot the class's own
+  implementation or adapter. Beside it, the `is` test's interface
+  arm still read its row at a stride of one slot — the table was one
+  slot per method before this family, and the arm never caught up; it
+  now scales by the interface's own method count, the same stride the
+  dispatch rides.
+- **The second root, the kernel's — and the mechanism behind the
+  whole "layout sensitivity":** with the tables right, the boot ran
+  green through the screen pass, the windows, the desk and the duo —
+  and died at the *editor's* exec, in the kernel, a store to
+  koff+5. The trap frame's pair pointer led to the exec'd child's
+  private handoff page, and the page held its recycled frame's last
+  owner's bytes (a dead app's heap strings — image text and rodata
+  pointers, the grant-looking 5 among them). **The child's stub parks
+  the handoff pair the trap shim's arena hand reads, and the child's
+  *first entry* runs the hand before the stub does.** A zero pair is
+  the honest "nothing staged" the hand skips — the kernel slot's
+  spawn-dressed words are already what the child adopts — but a
+  stale nonzero word is a pointer the kernel follows, and the end
+  cell's 5 sent the resume's write to koff+5. The counter and the
+  browser survived their execs because their recycled pair cells
+  happened to read zero. **The exec now clears the page when it
+  stages it** (`sv39.clear`, the page-table discipline reused), and
+  the pair protocol starts unstaged every time. This is why the
+  matrix's dead-text experiment flipped the boot: unreferenced
+  runtime text shifts image sizes, image sizes shift the frame
+  allocator's history, and the frame history decides whether a
+  recycled handoff page happens to carry zeros — dead code cannot
+  misexecute, but it can move everyone else's garbage.
+- The acceptance, the whole gate: `run.sh` both transports, **three
+  consecutive boots byte-identical** (and a fourth after `dune fmt`,
+  which only rewrapped this round's own emitter text), the ledger
+  `frames 507 446` unchanged (the clear is CPU, not frames), the full
+  dune suite (352) and @fmt green. The app images kept their sizes
+  (counter, files, editor 210496; the rows' labels live in the
+  tables' own bytes).
+
+## 2026-11-05 — The signatures the metal asked for (EmoOS T8.23–T8.26)
+
+- **`decl_type` enriched (T8.23):** the IR's own read of a written
+  annotation now mirrors the checker's `decl_to_type` over the IR's
+  symbol tables — `Byte`, the applied annotations (`Array[T]`,
+  `Box[T]`, `Atomic[T]`, `List[T]`, `ArrayBuilder[T]`, `Map[K,V]`),
+  tuples, and the declared class, interface and enum names resolve to
+  their real types; `Block` and the unresolvable stay Unknown. The
+  find of the round: **a native frame's result had to be reconciled
+  with the value it returns** — a def annotated `Int64` whose body's
+  last expression types Unknown (a bare `Atomic`'s method result, a
+  dynamic call's answer) left the tagged word where the typed exit
+  promised the raw bank register; `unbox_result_mismatch` now unboxes
+  at the return statement and the fall-off, the proof
+  `atomic_riscv64` printing a heap address (2150695872) where 42
+  belonged. The c backend's signatures ride `c_type` (total over the
+  kinds); the ocaml specialization stays gated by `is_native`; wasm,
+  beam and ts are type-blind.
+- **`Bytes` on riscv64 (T8.24):** a String-layout block of kind 10 —
+  `[header][length][bytes]` — zero-filled at birth, the word
+  accessors as bounds-checked helpers (a set answers the masked
+  value, the interpreter's contract), `to_bytes`/`to_string` the raw
+  reinterpretation both ways, content equality over the String's own
+  comparator, and **byte-payload clones in both copy walkers**: the
+  generic container walk recurses per payload *value*, so bytes —
+  not values — needed their own verbatim-copy arms in
+  `emo_copy_deep` and `emo_copy_out` (a latent corruption no golden
+  could see: no program sends a Bytes across a message yet). Two
+  upstream finds: the checker had **no `Bytes.new` constructor arm**
+  — the expression typed Unknown and only the eval and the c backend
+  answered by the node's shape, so a receiver-keyed arm never
+  matched (fixed: the constructor types `Bytes`); and that typing
+  **lit up `out.set`'s Int64 check inside stdlib code that had flowed
+  gradual all along** — bufio's `BytesSink.to_string` and plot's
+  internal buffer, where the chunk deque's empty seed pins no element
+  type — fixed in the packages by carrying the bytes across a typed
+  def's signature (`chunk_bytes`, the signature as the contract), a
+  second pass crossing the already-encoded values through a typed
+  identity (`as_bytes`). The consumers' locks regenerated
+  (`emo deps resolve`).
+- **`ArrayBuilder` on riscv64 (T8.25):** a builder block of kind 11 —
+  `[header][size, raw][the backing Array word]` — growth a fresh
+  double-sized backing with the live elements copied (an Array
+  carries no count, so the abandoned backing stays arena-resident),
+  push answering the builder for chaining, `get` bounds-checked
+  against the size, `to_array` an exact copy, element-wise equality,
+  deep copies in both walkers (the size word is raw — no value the
+  generic walk could copy). The renderer grew the displays the
+  interpreter always had and the metal lacked — an Array's `[a, b]`
+  and the builder's `ArrayBuilder[a, b]` — over one shared join core;
+  the round's lesson in its smallest form: `"ArrayBuilder["` is
+  thirteen characters, and a fourteenth read the next label's first
+  byte (a backtick) into every rendering.
+- **Typed method bodies (T8.26), the arena's lever — code whole,
+  compiler-verified, EmoOS acceptance red, task open:** a method whose
+  signature resolves emits a native body on its own convention — the
+  IR's `self` carries its class (it was hardwired to Unknown, which
+  alone kept every method dynamic) — and the three call paths cross
+  it: the class-typed direct call rides the callee's own convention;
+  the interface call the interface's **declared** convention, the
+  call site and every vtable slot sharing it; the by-name dispatch a
+  tag-adapting thunk on the method table. One generalized convention
+  adapter (`emit_conv_adapter`) serves both tables — it spills the
+  incoming banks and reloads per the callee's, a word boxing into a
+  numeric bank and back, the Float64-across-Int64 shapes refused
+  loudly. Constructors and closures keep the dynamic convention.
+  **The open find — a layout-sensitive jump through zero at the
+  screen pass's first paint** (`run.sh` dies waiting for its first
+  `present ok`; the pass faults at pc 0). The experiment matrix, all
+  boots under the same rebuilt images unless noted: the HEAD emitter
+  in a clean worktree, six boots green; the HEAD emitter plus this
+  round's IR (`decl_type`, the interface sigs, the `self` typing),
+  three rounds byte-identical green; the HEAD emitter plus **nothing
+  but this round's unreferenced runtime text** (the Bytes and
+  ArrayBuilder helper families, dead code), red — which is why the
+  hunt could not pin the mechanism: dead text cannot misexecute, so
+  the failure rides image layout, and every lever that disabled the
+  typed-method machinery (native methods off at the loop, at the
+  tables, at the IR) stayed red while the compiler goldens for all
+  three dispatch paths pass. Two contaminations were found and
+  discounted along the way: boots between experiments ran **stale
+  app images** when a rebuild aborted mid-sequence (the `installed
+  <name> <size>` wire line names the sizes — a green reference is
+  counter 203304/editor 203336 under this round's IR, 208936 under
+  HEAD's), and a test fixture's staging registry
+  (`.emo-build/registry-r1check`) shadows the content-named ones in
+  alphabetical `ls` probes. The surviving suspects for the next
+  round: an emission-shape assumption that trips only past a code
+  or data alignment the dead text shifts (the frame-size immediate
+  boundary is the family precedent), or a kernel-side positional
+  assumption the image growth crosses. The ledger `frames 507 446`
+  was unchanged in every green boot — the cell-level savings stay
+  inside the blocks the arena runs already hold.
+
+## 2026-11-05 — The tick as the device world's heartbeat (EmoOS T8.18)
+
+- The lost wake at the device park: **landed (2026-11-05) — the timer's ISR re-issues the device wakes, so a delivery landing in a park's entry window costs a delay of one tick, never a lost reader.** The bug (the desktop shell's second tile press, intermittent over thirty-odd golden rounds, the pristine kernel reproducing it on the same script — standing, not the round's): every device reader (`input_serve_read`, `input_byte`, the pointer driver) checks its sources with interrupts open and only then calls `device_wait`, whose stub masks, writes state 4, and switches — so an ISR delivery landing between the peek's "empty" and the state word enqueues its byte into a ring whose sleeper the wake then cannot find ("a park that already ended is simply not found"), and nothing ever wakes the sleeper again: the reader had peeked, the byte waits, the machine stalls until the next unrelated event. The protocol's own contrast names the honest fix's shape: `emo_gate_post` and `emo_send` enqueue **masked**, which is why the receive park has no such window — its check (the mailbox scan) never splits from its sleep — but the device park's check is typed Emo logic (`input_peek_type` over the serial ring, the keyboard's eventq, the pointer ring) and cannot move into the generic stub; re-issuing the wake from the tick is the same guarantee bought the other way (the check is re-run at most one tick later, and a spurious pass is the broadcast discipline the wakes already document — "a waiter the event was not for re-checks its own queue and parks again, so a broadcast costs a spurious pass and loses nothing"). The sweep covers both park shapes the input world uses — the state-4 device parks and the input service's state-2 receive park (whose sibling window is `input_hold_serve`'s judgment running to the park while the ISR's `emo_sched_wake_input` finds state 1: the event sits in the ring with nobody to judge it; the swept service returns to its loop top and re-judges) — and sits before `emo_sched_tick` in `trap.S`'s `.Ltrap_ticked`, whose return value the wakes' a0 must not spend. The two rejected candidates, recorded with their reasons: **serve-never-parks** (the held read's serve stopping at state 4 is the exact shape A11.2 tried and reverted — a device-wait park starves the mailbox, a queued reader's ask never dispatching — and parking at the receive instead re-opens the sibling window the sweep exists to close); **UART-ISR re-peek** (the wake's side cannot see the race: a slot about to park and a slot long running both read state 1, so an ISR-side re-check distinguishes nothing — the window belongs to the park, and only the park's side or a periodic sweep can close it). **Standing, found-not-fixed — the mailbox's own send-send window**, the same shape one level up: `emo_mb_count` reads the mailbox unmasked and `emo_send` deliberately leaves a word for a running target without a wake ("a live-but-running target needs nothing"), so a send landing between a receiver's scan and its state-2 write parks the receiver with a word already queued. No reproduction exists and the harm differs — the sender yields on the spot, so an emptied run queue is the scheduler's loud deadlock rather than a silent stall, and any later message wakes the pair — but the window is real, and closing it (a masked re-scan at the park, or the tick sweeping state 2 as it sweeps 4) is its own round. Pins: `run.sh` green under both timer transports, thirteen consecutive rounds byte-identical on both (three plus ten); the ledger `frames 507 446` unchanged (a spurious pass allocates nothing — the loop top's judgment reads and writes fixed cells); `dune runtest` green with the smoke; `@fmt` green; the fb gate green.
+
+## 2026-11-05 — The app image profile (emo-desktop A12.1)
+
+- The disk ELF's own image shape: **the `app` build profile** — the user
+  world's stub, load address, linker script and console hook over a
+  2 MiB heap (from the user profile's 8 MiB). The decision rests on the
+  exec world's structure: a disk ELF's arena is the run the spawn
+  claimed (EmoOS T8.9's hooks), so the .bss heap of an exec'd image
+  hosts the const region's 64 KiB and nothing else — eight MiB of it was
+  the span's dead weight, and the span is the exec's image run, 196
+  blocks of the region's ~500 per resident app. The counter's image
+  measures 12.24 MiB at `user` and 6.24 MiB at `app`: the run falls to
+  100 blocks, three residents fit beside the desktop's own surfaces,
+  and the region's next lever is the process world's 64 slots and their
+  4 MiB of per-process stacks (its 64-slot bound sits at ten asm sites,
+  a round of its own if a fourth resident ever asks). **The pins:** the
+  golden under both timer transports, three consecutive runs
+  byte-identical on both; the ledger `frames 507 446` (was
+  `frames 795 734` — the fall is exactly the three apps' 288 blocks);
+  `dune runtest` 340 green; `@fmt` green. **The boundary:** the three
+  build sites (start.sh, the fb gate, the dune smoke) pass
+  `--profile app`; the profiles are kernel, user, app.
+
+## 2026-11-04 — The multi-image desktop (emo-desktop A11.2)
+
+- The acceptance landed: two apps, two disk ELFs, one desktop, the
+  golden's hands driving both. The duo — the browser's image and the
+  counter's exec'd in sequence, both resident, both windows composited
+  side by side — with the focus routing as the keystone: each app
+  focuses itself at its mount (the newest window up), the click
+  raises (the compositor's press cell, the walk's topmost hit), and
+  the stream's bytes and keys are the focused surface's owner's — the
+  input service's hold cells (four seats on the handoff page's tail)
+  park a read the focus does not name, the entitlement judge (the
+  compositor's focus cell through the grant table's owner) names the
+  served one, and the close's and the reclaim's kicks re-run the
+  judgment when a focused surface dies. The counter's keys ride the
+  serial's bytes, the click is the other hand, and the exits answer
+  the parent's waits in the waits' own order (`app counter 0` first,
+  `app files 0` after — the hosted twin's closing lines). The kernel
+  side the round before this had already built (the WIP entry this
+  replaces recorded it): the exec'd image's private handoff page (a
+  4 KiB frame per image, the record's word at +224, the build mapping
+  it at the cells page's vaddr — the classic cells page the boot
+  image's alone, two images handing their arenas side by side), the
+  trap shim's arena hand per-pid through the record (the A11.1 owner
+  cell and boot saves retired; the boot-in path gained the zero guard
+  its A11.1 shape lacked), `exec.entry_for` (the spawn entry
+  per-caller), the exec page's layout shift (records 232, pending
+  3904, the display's svc_screen cells at 4072/4080), `image_home`
+  giving the run home and dropping the private frame, the gate_post
+  wake grown to state 4 (a request reaching a device-waiting
+  service), and `emo_sched_wake_input` (the ISR's second wake).
+- **The round's find — the ghost rows**: the golden wedged at `app
+  counter 0`, and the trace (`dbg scan/op/kick/ent` lines, since
+  removed) named it — after files' close zeroed its row and kicked,
+  the input service's dispatch ran and the judgment STILL said hold:
+  `dbg ent 30 fid 10 owner 0`, and the table's dump showed row 7
+  carrying `10, 0`. The routing cells sat **inside the grant table's
+  span**: the table is eight rows of 112 bytes from +0x2b00 and ends
+  at +0x2e80, and the compositor's staging (`comp_svc_cell` at
+  +0x2e00, `comp_args` at +0x2e10 — the head word of row 7), the
+  pointer cells (+0x2e40..+0x2e70 — row 7's tail), and `input_args`
+  (+0x2e78) had been written into rows 6 and 7 since the compositor's
+  verbs first staged. The ghost was files' own last present: the gate
+  staged `(grant 10, x 0, …)` into `comp_args`, and `grant_row_of`
+  matched the staged grant as a live row owned by nobody — the
+  entitlement judge read the owner word (the present's x) as not the
+  reader's and held counter's read forever. **The fix moves the
+  routing cells past the table's true end** (+0x80: `comp_svc_cell`
+  +0x2e80, `comp_sup_cell` +0x2e88, `comp_args` +0x2e90, the pointer
+  cells +0x2ec0..+0x2ef0, the press cell +0x2f00, `input_args`
+  +0x2ef8, the hold cells +0x2f10 — the frame allocator's page at
+  +0x87003000 clear past them), trap.S's two hardcoded routes (the
+  compositor's pid cell, the supervisor's) moving with them.
+- **Found on the way, reverted**: parking the input service on the
+  device world while it holds reads — the receive park's resume
+  re-scans the mailbox alone (the ISR's state-2 wake re-parks, a
+  spurious pass and nothing more), so a device-park looked like the
+  way to make stream news re-run the judgment — starved the mailbox:
+  a reader's second ask queued behind the busy seats' park and never
+  dispatched, and the duo's first key beat lost its byte. The receive
+  park is the right shape: the mailbox's words (every reader's ask,
+  the close's kick, the reclaim's kick) are what drive the judgment,
+  and the focused reader's own asks keep them coming while a session
+  runs. The loop's comment now says exactly that.
+- **Found on the way, fixed, run.sh's**: the wire-order check took
+  each line's first occurrence, and the desk era's beta window and
+  the duo's counter share `comp 576 384` — the check now searches
+  each line past the previous match's byte, the frames' checks' rule.
+  (The WIP never reached this check; the wedge hid it.)
+- **Found on the way the round before (the WIP's), recorded here**:
+  the codes' row in winbuf's Keys — O=24, P=25, N=49, M=50 (the first
+  draft had O/P/N/M shifted); and the hosted apps golden replays the
+  duo (both mounted before either session runs, the counter's keys
+  first).
+- **The pins**: `run.sh` green under both timer transports, three
+  consecutive rounds byte-identical on both; the ledger `frames 795
+  734` unchanged; `dune runtest` 340 green; `@fmt` green; the fb gate
+  134 ok. **With this A11.2 is complete and M11 with it.**
+
+## 2026-11-04 — The disk ELFs (emo-desktop A11.1, EmoOS T8.16)
+
+- The corpus apps became disk ELFs: three program trees
+  (`fb/apps/{counter,files,editor}`) and one shared metal package
+  (`fb/winbuf`, `emo/ui_fb_winbuf`) on the desktop side; the exec verb
+  (24), the loader, the per-image segment tables, and the per-process
+  gate checks on the kernel side. The decision recorded here is the
+  heap lever's spend, named and reserved at T8.9: **the kernel heap is
+  64 MiB (from 96)**, the region ~500 blocks, an exec's image run (the
+  app images' ~12.7 MB span, 196 blocks) fitting beside every
+  resident; the arena run moved 2 → 4 (256 KiB) with the fs service's
+  per-sector message leak the install named (each send's tuple lives
+  on the sender's arena for the instance's life — the fs now sends one
+  message per file's chunk, the driver splitting into the device's own
+  `size_max` chunks, and the sector-a-message shape was the leak that
+  killed the first install mid-write). **The claimed bitmap grew 8 →
+  32 words** (2048 blocks): at eight words the wider region's scan
+  overran the bitmap into the frame freelist's words and the machine
+  followed garbage. **The disk is 4 MiB** (8192 sectors; the free
+  map's width the capacity's own, derived at every mount). The ledger
+  is `frames 795 734`; `run.sh` green under both timer transports,
+  three consecutive rounds byte-identical on both; `dune runtest` 340
+  green; `@fmt` green; `fb/check.sh` 134 ok.
+- The per-image world's shape: the exec'd image's record (the handoff
+  table's own shape) names its segments, entry, and run; the build
+  maps the rows at the run's offsets; the gate's pointer checks and
+  the death's walk-home read the caller's record by a per-pid cell
+  (one write per pid ever — the dead-owners' discipline). Every
+  kernel touch of caller memory translates through the caller's own
+  table (a disk ELF's addresses are its own table's; the low window
+  reaches only the boot image's identity). The exec'd image's arena
+  crosses as values (the slot's own run, physical) its runtime's init
+  reads in, the delta word the tell; the image-give hook walks the
+  run home at the death and restores the boot image's own cells (the
+  pair, the program cell, the console hook — every shared cell the
+  child's stub re-parked).
+- The bound stated: one exec request at a time (the busy cell); one
+  exec'd image's arena rides the shared cells at a time — A11.2's
+  two-image desktop is the acceptance that grows it.
+

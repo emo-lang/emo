@@ -2,6 +2,24 @@
 // pieces), so writing is linear and `to_string` joins once — the same
 // shape `bufio.BytesSink` uses, kept private here because `plot` rides
 // all five targets and `bufio` is native-only.
+
+// A chunk's bytes through a typed signature: the deque's element type
+// stays gradual (an empty seed pins nothing), so a chunk crossed as
+// Unknown once left `out.set` unchecked — typed (T8.24's Bytes.new),
+// its Int64 argument check lit up and the gradual flow refused. This
+// def's Bytes result is the contract the checker holds instead — the
+// same bridge bufio.BytesSink crosses.
+def chunk_bytes(chunk String) Bytes {
+  return chunk.to_bytes()
+}
+
+// The deque's second pass crosses values already encoded: the typed
+// identity that carries them back over the gradual element type, the
+// same contract the first pass's encoding def holds.
+def as_bytes(b Bytes) Bytes {
+  return b
+}
+
 class Buffer {
   def init() {
     self.chunks = List.new([])
@@ -38,14 +56,14 @@ class Buffer {
     var total = 0
     for var i = 0; i < n; i = i + 1 {
       const chunk = self.chunks.pop_front()
-      const data = chunk.to_bytes()
+      const data = chunk_bytes(chunk)
       total = total + data.length()
       parts.push_back(data)
     }
     const out = Bytes.new(total)
     var at = 0
     for var i = 0; i < n; i = i + 1 {
-      const data = parts.pop_front()
+      const data = as_bytes(parts.pop_front())
       for var j = 0; j < data.length(); j = j + 1 {
         out.set(at, data.get(j))
         at = at + 1
@@ -64,14 +82,14 @@ class Buffer {
     var total = 0
     for var i = 0; i < n; i = i + 1 {
       const chunk = self.chunks.pop_front()
-      const data = chunk.to_bytes()
+      const data = chunk_bytes(chunk)
       total = total + data.length()
       parts.push_back(data)
     }
     const out = Bytes.new(total)
     var at = 0
     for var i = 0; i < n; i = i + 1 {
-      const data = parts.pop_front()
+      const data = as_bytes(parts.pop_front())
       for var j = 0; j < data.length(); j = j + 1 {
         out.set(at, data.get(j))
         at = at + 1

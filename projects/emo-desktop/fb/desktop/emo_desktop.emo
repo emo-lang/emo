@@ -1,0 +1,373 @@
+require "emo/ui_fb"
+
+// The desktop shell's dock (emo-desktop A10.2): the machine's desktop
+// chrome, painted direct — fills and glyphs through the `Surface`, no
+// tree, the window package's shape and reason (the shell repaints the
+// dock per focus change, and every node of a tree is a few KiB of
+// boxed numbers left in the arena per repaint on the metal). The dock
+// is a panel surface at the display's bottom edge — the walk's
+// topmost strip, no window over it (T8.15) — one tile per app the
+// shell runs, the focused app's tile in the steel a focused window's
+// bar wears, the one visible fact a focus changes. A press names the
+// tile it landed on, or none: the policy the shell's pointer handler
+// asks before its window hit test, the click it answers with the
+// app's own focus.
+//
+// The tiles sit left to right, one per app in the shell's own order;
+// a tile carries the app's initial in the bitmap font. The strip's
+// paper is a slate darker than the desktop's background — chrome
+// under everything's chrome.
+
+def strip_height() Int64 {
+  return 40
+}
+
+def tile_size() Int64 {
+  return 32
+}
+
+def tile_gap() Int64 {
+  return 8
+}
+
+def tile_margin() Int64 {
+  return 8
+}
+
+def paper() Int64 {
+  return 0x24242C
+}
+
+def ink() Int64 {
+  return 0xF8F8F0
+}
+
+// A tile's steel: the focused window's bar's when the tile is the
+// focused app's, a quiet slate when it is not — a different byte in
+// every channel, so a swapped focus shows.
+def tile_color(focused Bool) Int64 {
+  if focused {
+    return 0x7088A8
+  }
+  return 0x3A3A46
+}
+
+// The tile index at a display position, or -1: outside the strip is
+// no dock's business, and a gap between tiles names no app. `count`
+// is the shell's app count, `w` and `h` the display's mode.
+def press(x Int64, y Int64, w Int64, h Int64, count Int64) Int64 {
+  if y < h - strip_height() {
+    return -1
+  }
+  var i = 0
+  while i < count {
+    const tx = tile_margin() + (i * (tile_size() + tile_gap()))
+    if x >= tx && x < tx + tile_size() {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// A tile's left edge in the display's own coordinates — the shell's
+// to map a tile back to its window, and the model's to name the rect
+// a screendump folds.
+def tile_x(i Int64) Int64 {
+  return tile_margin() + (i * (tile_size() + tile_gap()))
+}
+
+// The strip onto its own surface, whole from scratch: the paper, then
+// one tile per app — the face in its steel, the initial one pad in
+// and centered on the tile. `labels` are the apps' initials in tile
+// order, `focused` the lit tile's index or -1 when no app holds the
+// focus, and `running` the residency's bitmask — bit i set when the
+// i-th app has a live process — the launcher's one visible fact
+// (emo-desktop A12.1): a running app's tile wears the 4×4 ink dot at
+// its foot, centered, two pixels above the tile's bottom edge, the
+// mark a macOS dock keeps under a running application's icon.
+def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64, running Int64) Void {
+  s.fill(0, h - strip_height(), w, strip_height(), paper())
+  var i = 0
+  while i < labels.length() {
+    const tx = tile_x(i)
+    const ty = h - strip_height() + 4
+    s.fill(tx, ty, tile_size(), tile_size(), tile_color(i == focused))
+    ui_fb.text(labels[i], tx + 12, ty + 8, ink(), s)
+    if (running >> i) & 1 == 1 {
+      s.fill(tx + 14, ty + 26, 4, 4, ink())
+    }
+    i = i + 1
+  }
+}
+
+// ---- the desktop's own canvas (emo-desktop A13) ----
+//
+// The macOS-like desktop's three surfaces: the wallpaper (role 4, the
+// walk's undermost layer), the header bar (a panel at the top edge),
+// and the icons the desktop shows for the volume's files — folders by
+// the name's prefix, documents for the rest, a selection highlight the
+// press moves. Painted direct like the dock, for the reason the dock
+// is: a tree's boxed numbers per repaint are the arena's to carry, and
+// a wallpaper repaint is the desktop's most common frame. Every number
+// here is integer and fixed, so the screendump's bytes are the
+// formula's and the hosted golden's digest is the metal's.
+
+// The header bar's height — the panel strip at the display's top edge.
+def header_height() Int64 {
+  return 24
+}
+
+// The icon grid's metrics: cells run from the display's top-right
+// corner downward and the columns leftward, the way macOS lays a
+// desktop's icons; the top edge sits under the header, the bottom edge
+// above the dock. A cell is the icon's box plus the name's line under
+// it, padded — the press's hit area is the cell, the pen's is the box.
+def icon_cell_w() Int64 {
+  return 96
+}
+
+def icon_cell_h() Int64 {
+  return 76
+}
+
+def icon_size() Int64 {
+  return 44
+}
+
+def icon_margin() Int64 {
+  return 8
+}
+
+def icon_top() Int64 {
+  return 32
+}
+
+def icon_bottom() Int64 {
+  return 48
+}
+
+// One integer square root, Newton's, rounded down — the ribbon
+// geometry's helper and nothing else's customer today. All positive:
+// the caller's shapes are radii squared.
+def isqrt(n Int64) Int64 {
+  if n <= 0 {
+    return 0
+  }
+  var x = n
+  var y = (x + 1) / 2
+  while y < x {
+    x = y
+    y = (x + n / x) / 2
+  }
+  return x
+}
+
+// One byte's glyph cell at (x, y): the font's drawing of that byte's
+// own arithmetic — the index is the byte's position past space, the
+// hollow cell for a byte the font has no drawing of, the same rule the
+// String walk's (`font.glyph_of`). The desktop's names come from the
+// volume as bytes through the fs, and a String is never built of them:
+// the shell reads the scratch buffer's bytes straight into this.
+def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Void {
+  var i = b - 32
+  if i < 0 || i > 94 {
+    i = 95
+  }
+  s.glyph(x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), ink_color)
+}
+
+// The wallpaper's colors: a deep navy at the top running into a dusky
+// violet at the bottom, the gradient the composition sits under
+// everything.
+def wall_top() Int64 {
+  return 0x101C3C
+}
+
+def wall_bottom() Int64 {
+  return 0x40306A
+}
+
+// One translucent ribbon: a diagonal band, one blended row at a time —
+// the row's left edge a line `(m·y)/d + c`, the width fixed, the ink a
+// blend word, the coverage in its top byte the surface's own rule.
+// `span` packs the band's rows, `y0` above `y1` — the riscv64 call
+// takes eight arguments, and the ribbon's shape fits in them. `d` is
+// never zero (the caller's slopes are honest fractions).
+def ribbon(s ui_fb.Surface, h Int64, span Int64, m Int64, d Int64, c Int64, width Int64, ink_color Int64) Void {
+  var y = span >> 32
+  if y < 0 {
+    y = 0
+  }
+  var ye = span & 4294967295
+  if ye > h {
+    ye = h
+  }
+  while y < ye {
+    const x = c + (m * y) / d
+    s.blend(x, y, width, 1, ink_color)
+    y = y + 1
+  }
+}
+
+// The wallpaper whole: the gradient row by row (each channel a
+// positive-weight lerp between the two anchors, so the division is the
+// positive kind every target rounds the same), then the three ribbons
+// over it — teal from the upper left, rose through the middle, violet
+// from the lower right, macOS's abstract poster in the surface's own
+// primitives. One call per boot: the shell paints the icons over this
+// before the wallpaper's first present.
+def wallpaper(s ui_fb.Surface, w Int64, h Int64) Void {
+  const denom = h - 1
+  const tr = (wall_top() >> 16) & 0xFF
+  const tg = (wall_top() >> 8) & 0xFF
+  const tb = wall_top() & 0xFF
+  const br = (wall_bottom() >> 16) & 0xFF
+  const bg = (wall_bottom() >> 8) & 0xFF
+  const bb = wall_bottom() & 0xFF
+  var y = 0
+  while y < h {
+    const r = (tr * (denom - y) + br * y) / denom
+    const g = (tg * (denom - y) + bg * y) / denom
+    const b = (tb * (denom - y) + bb * y) / denom
+    s.fill(0, y, w, 1, (r << 16) | (g << 8) | b)
+    y = y + 1
+  }
+  ribbon(s, h, (0 << 32) | 480, 3, 4, -200, 460, (0x28 << 24) | 0x30B8C8)
+  ribbon(s, h, (160 << 32) | 720, 1, 2, 60, 400, (0x20 << 24) | 0xE86890)
+  ribbon(s, h, (340 << 32) | 768, -1, 4, 900, 540, (0x18 << 24) | 0x8868E8)
+}
+
+// The header bar's colors: a slate darker than the dock's paper —
+// chrome over everything's chrome — the wordmark in the boot banner's
+// cyan, the count in the quiet ink.
+def header_paper() Int64 {
+  return 0x1E1E26
+}
+
+def header_ink() Int64 {
+  return 0xC8C8D0
+}
+
+def header_accent() Int64 {
+  return 0x40C8C8
+}
+
+// `<n> apps` ending one pad short of `right`, drawn byte by byte — the
+// count is a number the shell keeps, not a String the image carries.
+// The x the text starts at comes back, the caller's to center against.
+def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) Int64 {
+  var digits = 1
+  var t = n / 10
+  while t > 0 {
+    digits = digits + 1
+    t = t / 10
+  }
+  const total = digits + 5
+  const x = right - total * 8
+  ui_fb.text(" apps", x + digits * 8, y, ink_color, s)
+  var div = 1
+  var k = 1
+  while k < digits {
+    div = div * 10
+    k = k + 1
+  }
+  var p = x
+  while div > 0 {
+    text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
+    p = p + 8
+    div = div / 10
+  }
+  return x
+}
+
+// The header bar onto its own surface, whole from scratch: the paper,
+// the wordmark one pad in, the running count at the right edge — the
+// one live fact the bar carries (the desktop knows its own children's
+// residency; the wall clock and the foreground app's name it does not
+// know, and the bar does not pretend to).
+def paint_header(s ui_fb.Surface, w Int64, running Int64) Void {
+  s.fill(0, 0, w, header_height(), header_paper())
+  ui_fb.text("EmoOS", 8, 4, header_accent(), s)
+  count_text(s, w - icon_margin(), 4, running, header_ink())
+}
+
+// The selection's blend word: the tile steel at a low coverage laid
+// over the wallpaper behind an icon's cell — the rounded rect a macOS
+// selection wears, in the one shape the surface has.
+def select_ink() Int64 {
+  return 0x587088A8
+}
+
+// The icon's box at its cell's heart: the pen's offsets — the
+// package's painters' and the metal's typed twins' shared arithmetic.
+def icon_off_x() Int64 {
+  return 26
+}
+
+def icon_off_y() Int64 {
+  return 4
+}
+
+// A cell's origin in the display's own coordinates, packed x above y —
+// the layout's one address, the painters and the hit test and the
+// shell's press handler all reading the same arithmetic. Cells run
+// down from the top-right, the columns leftward; index 0 is the
+// display's top-right corner cell.
+def icon_cell(i Int64, w Int64, h Int64) Int64 {
+  const rows = (h - icon_top() - icon_bottom()) / icon_cell_h()
+  const col = i / rows
+  const row = i - col * rows
+  const x = w - icon_margin() - (col + 1) * icon_cell_w()
+  const y = icon_top() + row * icon_cell_h()
+  return (x << 32) | y
+}
+
+// The cell a press landed in, or -1: the gap between cells is no
+// icon's business, and past the last cell is the desktop's.
+def icon_hit(px Int64, py Int64, count Int64, w Int64, h Int64) Int64 {
+  var i = 0
+  while i < count {
+    const cell = icon_cell(i, w, h)
+    const x = cell >> 32
+    const y = cell & 4294967295
+    if px >= x && px < x + icon_cell_w() && py >= y && py < y + icon_cell_h() {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// A document icon: the page with its folded corner and three text
+// lines — the volume's flat files, drawn in the 44×44 box at the
+// cell's heart (`cx`, `cy` the cell's origin). The selection's blend
+// goes down first, the icon over it.
+def paint_icon_doc(s ui_fb.Surface, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    s.blend(cx + 2, cy + 1, 92, 74, select_ink())
+  }
+  const ix = cx + icon_off_x()
+  const iy = cy + icon_off_y()
+  s.fill(ix + 8, iy + 2, 28, 40, 0xE8E8F0)
+  s.fill(ix + 28, iy + 2, 8, 8, 0xC2C8D4)
+  s.fill(ix + 14, iy + 16, 16, 3, 0x98A0B0)
+  s.fill(ix + 14, iy + 24, 16, 3, 0x98A0B0)
+  s.fill(ix + 14, iy + 32, 10, 3, 0x98A0B0)
+}
+
+// A folder icon: the tab and body in the folder blue, a light along
+// the top and a shade at the foot — a name prefix's cell on the
+// desktop (`a/one.txt` shows as the folder `a`), entered by a press,
+// left by the `..` cell the view grows when entered.
+def paint_icon_folder(s ui_fb.Surface, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    s.blend(cx + 2, cy + 1, 92, 74, select_ink())
+  }
+  const ix = cx + icon_off_x()
+  const iy = cy + icon_off_y()
+  s.fill(ix + 6, iy + 8, 16, 7, 0x4098E0)
+  s.fill(ix + 4, iy + 13, 36, 25, 0x4098E0)
+  s.fill(ix + 4, iy + 13, 36, 3, 0x5FA8E8)
+  s.fill(ix + 4, iy + 32, 36, 6, 0x327FC2)
+}

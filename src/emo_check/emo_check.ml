@@ -1277,6 +1277,12 @@ let raw_mem_bindings =
        wakes it — the ISR side of an interrupt-driven driver. Same
        admission rule: only the target that owns the machine. *)
     ("device_wait", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    (* device_wake (EmoOS T8.11): the device world's wake from a process
+       — every device-waiter re-joins the run queue, as the ISR's wake
+       brings them back — for a driver that hands another device-waiter
+       its events through a ring: a send does not wake a device-waiter,
+       and the ISR that woke the driver is gone. Same admission rule. *)
+    ("device_wake", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
     (* ecall (EmoOS T4.2): the machine's syscall instruction, raw — the
        user side of the gate. The verb and its six words ride a7 and
        a0..a5 on the other side of the instruction; the answer comes
@@ -1319,16 +1325,41 @@ let raw_mem_bindings =
         is_var = false;
         depth = 0;
       } );
+    (* gate_post (EmoOS T8.11): a request word into a service's mailbox
+       by its raw pid — the post the shim makes for a gate route, from a
+       kernel process: one service telling another by the cell that
+       names it, the word the receiver's loop decodes like a gate's.
+       Same admission rule. *)
+    ( "gate_post",
+      {
+        vtype = FuncType ([ ("target", Int64); ("word", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+      } );
     (* pid_num (EmoOS T4.4): the raw machine sees a pid as its number —
        the kernel's handoff cells carry numbers, not Pid words. Same
        admission rule. *)
     ( "pid_num",
       { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
+    (* pid_at (EmoOS T8.16): the conversion's other half — a service
+       that becomes a client of another service reads the cell that
+       names it (a number) and speaks to it: the box the send takes.
+       Same admission rule. *)
+    ( "pid_at",
+      { vtype = FuncType ([ ("n", Int64) ], Pid); is_var = false; depth = 0 } );
+    (* sfence (EmoOS T8.5): the address-translation fence — the live
+       page table's own discipline. A table a satp names (a window
+       buffer's run mapped after the spawn) owes the hardware the
+       flush before its walks may be trusted; the spawn-time build
+       writes a table nothing walks yet and owes nothing. Same
+       admission rule as the rest of raw memory. *)
+    ("sfence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
   ]
 
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-  | "device_wait" | "ecall" | "user_spawn" | "gate_reply" | "pid_num" ->
+  | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "gate_reply"
+  | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
       true
   | _ -> false
 
@@ -2307,6 +2338,32 @@ and check_method_call ctx env span recv mname args : t =
         (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
            (List.length args));
     BuilderType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Bytes", "new" -> true
+    | _ -> false
+  then (
+    (* Bytes.new(n) — the zero-filled byte buffer, one Int64 length.
+       The constructor's own answer carries the Bytes type (T8.24): a
+       receiver the emitters can key on, where it was Unknown before and
+       only the eval and the c backend answered by the node's shape. *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    match arg_values with
+    | [ (None, Int64) ] | [ (Some "n", Int64) ] -> Bytes
+    | [ (_, vt) ] ->
+        report ctx span "E4004"
+          (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
+             (to_string vt));
+        Bytes
+    | _ ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Bytes.new` expects 1 argument, got %d"
+             (List.length arg_values));
+        Bytes)
   else if
     match (recv.Ast.desc, mname) with
     | Ast.Type_ident "Exception", "new" -> true

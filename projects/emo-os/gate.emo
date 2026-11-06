@@ -50,19 +50,44 @@
 const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 const seg_count_addr = koff + 0x87002018
 const seg_table = koff + 0x87002020
-const handoff_arga = koff + 0x870020e0
-const handoff_argb = koff + 0x870020e8
 const proc_arga = koff + 0x870021b0
 const proc_argb = koff + 0x870021b8
 const handoff_caller = koff + 0x87002110
+
+// The exec page (emo-desktop A11.1, link.ld's .emo_exec): the per-pid
+// image cells the checks and the build read, and the exec request's
+// staging — the busy cell, the name. The offsets answer exec.emo's own
+// layout (the records grew their private-page word in A11.2: 2048 +
+// 8×232 = 3904, the pending cell beside it). The image cells are the
+// dead-owners' discipline (one write per pid ever, at the spawn the
+// build consumed the record for); a zero cell names the boot image's
+// own table, every pass whose image cell is zero.
+const img_for = koff + 0x8700c000
+const img_bound = 256
+const exec_busy = koff + 0x8700c000 + 3912
+const exec_name = koff + 0x8700c000 + 3920
+const exec_nlen = koff + 0x8700c000 + 3944
 
 // The write's staging page (T6.2): the gate copies the caller's buffer
 // here, inside the same trap that checked it, and the console service
 // prints from the copy on the kernel's own table. The page's free tail
 // past the fixed cells is the staging area; a write longer than it is
 // refused (reason 4) before anything is copied.
-const stage_buf = koff + 0x870021d0
 const stage_cap = 2048
+// The console's write slots (T8.15): four staging runs on the page
+// the linker gives them (0x87009000) — a pending length at the head,
+// the bytes after — one per parked writer, the pick refusing a fifth
+// (reason 5) as the fs's slots do. A free slot's length is -1; the
+// console's own init writes the sentinels. The slot's index does not
+// ride the route — the route is −1001 whole, the mailbox ops 15..21
+// the compositor's, the fs's op+16×slot shape colliding with them —
+// it sits in the per-pid cell the gate writes and the service reads
+// and clears: a process parks per ecall, so one cell per pid is the
+// whole of the race.
+const con_slots = koff + 0x87009000
+const con_slot_count = 4
+const con_slot_size = 2056
+const con_slot_for = koff + 0x8700b100
 
 // The filesystem's pages (T7.2, docs/fs.md): the service's pid cell —
 // zero while no instance is parked, and the gate stashes then — and
@@ -77,6 +102,86 @@ const fs_slot_size = 2304
 const fs_slot_count = 4
 const name_max = 24
 
+// The desktop segment's cells (T8.4, T8.5): the display service's pid
+// cell the routes post by; the authorization table's first entry — the
+// screen carve's grant, the holder's pid the process service parked
+// when it handed the carve out; the five argument cells the desktop
+// verbs stage (the grant id, the damage rect, win_new's w and h); the
+// caller's space word the shim stages at every ecall and the dispatch
+// copies into the arguments (win_new's mapping target — the staging
+// cell and the arguments' slot are different words, or the copy would
+// be the no-op the first boot caught); the grant id the next win_new
+// answers; and the
+// window grants' rows — twelve words each (id, owner, base, blocks,
+// w, h, spare, ready, the damage rect's four), eight of them, zero =
+// a free row. All past the staging area's tail.
+const gpu_svc_cell = koff + 0x870029f8
+const screen_grant_cell = koff + 0x87002a00
+const gpu_args = koff + 0x87002a08
+const caller_space_cell = koff + 0x87002a40
+const grant_next_cell = koff + 0x87002a38
+const grant_table = koff + 0x87002b00
+const grant_rows = 8
+// The row grew with the negotiation's fields (T8.15, emo-desktop
+// A9.3): the buffer's format at +96 and its scale at +104, the gate's
+// to record when the verbs name them, beside the eight words T8.5
+// laid out (id, owner, base, blocks, w, h, ready, the damage rect).
+const grant_row = 112
+
+// The compositor's cells (T8.6): the pid cell the gate routes the
+// stack's verbs and the window present's composition by, and the five
+// argument cells those requests stage (the grant, the position, the
+// damage rect; T8.13: win_role's role beside the grant) — the
+// compositor's own, like every service's, because its transactions and
+// the display service's can sit parked at once. The cells sit past the
+// grant table's true end (eight rows of 112 bytes end at +0x2e80): a
+// staged request's words were the ghost rows the focus's judge read
+// before the move (emo-desktop A11.2).
+const comp_svc_cell = koff + 0x87002e80
+const comp_args = koff + 0x87002e90
+// The compositor's argument slots (emo-desktop A12.1): one seat per
+// in-flight verb, the grant word the claim (zero = free), five words
+// an envelope. The single comp_args cell staged every verb's arguments
+// at the same address, and two concurrent clients — the shell's dock
+// present and the launched app's win_move — raced it: the dispatch
+// read the other client's staged words and moved one window with the
+// other's grant. The slot's index rides the route (the filesystem's
+// request slot's own shape, −(1000 + op + 32·slot)), the seat freed
+// the dispatch reads it. Four seats, the desktop's four clients.
+const comp_slot_cell = koff + 0x87002eb8
+const comp_slots = koff + 0x87008000 + 2704
+const comp_slot_count = 4
+const comp_slot_bytes = 40
+
+// One free seat, named in the handoff cell the trap's route word
+// carries; none, and the resource refusal — a client's own verbs
+// serialize on the gate's reply, so a seat is held only from the
+// staging to the compositor's dispatch.
+def comp_slot_take() Int64 {
+  var i = 0
+  while i < comp_slot_count {
+    if peek64(comp_slots + (i * comp_slot_bytes)) == 0 {
+      poke64(comp_slot_cell, i)
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// The input service's argument cell (T8.13): input_info's index — the
+// one word the enumeration verb stages, past the pointer's cells.
+const input_args = koff + 0x87002ef8
+
+// The surface roles (T8.13, emo-desktop A9.1 — the protocol's third
+// seam): the vocabulary win_role names a surface by. The gate bounds
+// the number to the vocabulary; which roles the compositor implements
+// is the compositor's answer — every one since T8.15 (A9.3): toplevel
+// free-standing, popup and subsurface parent-relative (verb 19 binds
+// the parent), panel the shell's topmost strip, wallpaper the
+// desktop's own canvas under every window (T8.27, emo-desktop A13).
+const role_count = 5
+
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1
 const reason_range = 2
@@ -85,20 +190,42 @@ const reason_argument = 4
 const reason_resource = 5
 
 // The routes: -(1000 + op). The shim decodes the op, posts to the
-// service (1 and 2 are the console's; 0, 3 and 4 the process
-// service's; 6 to 9 the filesystem's, the request slot's index riding
-// above the op), and parks the caller. -103 is the root's exit: the
-// machine ends at the shim, no service involved. -104 is the heap's
-// death: the caller's own allocator reported its arena exhausted (the
-// user image's verb 5 — the runtime issues it, though nothing stops a
+// service (1 the console's; 2 the input service's — T8.3 moved the
+// machine's input to one service, the console the machine's output; 0,
+// 3 and 4 the process service's; 6 to 9 the filesystem's, the request
+// slot's index riding above the op; 12 the input service's — the
+// desktop segment's first verb, the number frozen the day it landed),
+// and parks the caller. -103 is the root's exit: the machine ends at
+// the shim, no service involved. -104 is the heap's death: the
+// caller's own allocator reported its arena exhausted (the user
+// image's verb 5 — the runtime issues it, though nothing stops a
 // program from saying it of itself), and the shim ends the caller the
 // fault route ends a user program: the loud report, the slot done,
-// the machine continuing.
+// the machine continuing. The route's op is a mailbox number, not the
+// verb's: the window present's composition rides op 17 (a derivative
+// of verb 10, T8.6), so verb 17's role request rides op 19 and verb
+// 18's enumeration op 18 — the compositor's mailbox holds 15 to 17 and
+// the pointer's notice at 18 (T8.11), the input service's holds 2, 12
+// and 18 (T8.13); T8.15 grows it to 20 (the parent binding, verb 19's)
+// and 21 (the frame callback, verb 22's).
 const route_process_exit = -1000
 const route_console_write = -1001
-const route_console_read = -1002
+const route_input_byte = -1002
 const route_process_spawn = -1003
 const route_process_wait = -1004
+const route_process_exec = -1005
+const route_desktop_present = -1010
+const route_output_info = -1011
+const route_input_event = -1012
+const route_win_new = -1013
+const route_win_close = -1014
+const route_win_focus = -1015
+const route_win_move = -1016
+const route_comp_present = -1017
+const route_input_info = -1018
+const route_win_role = -1019
+const route_win_parent = -1020
+const route_win_frame = -1021
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -117,6 +244,23 @@ def covers(start Int64, endp Int64, buf Int64, len Int64) Bool {
   return true
 }
 
+// The caller's own segment table (emo-desktop A11.1): the boot image's
+// global table for every pass whose image cell is zero — all of them,
+// before A11.1 and the boot image's forever — or the record of the
+// image the caller was exec'd from. The per-process gate check is this
+// routing: a pointer argument is judged by the segments of the image
+// the caller actually runs, never by another image's.
+def caller_table() Int64 {
+  var me = peek64(handoff_caller)
+  if me < img_bound {
+    var rec = peek64(img_for + me * 8)
+    if rec != 0 {
+      return rec
+    }
+  }
+  return seg_count_addr
+}
+
 // The write's pointer checks: the whole range inside one segment, and
 // that segment writable. The answer is 0, or the refusal's reason —
 // permission when a segment covers the range but cannot be written,
@@ -125,11 +269,12 @@ def check_write(buf Int64, len Int64) Int64 {
   if len < 0 {
     return reason_argument
   }
+  var tbl = caller_table()
   var covered = false
   var i = 0
-  var n = peek64(seg_count_addr)
+  var n = peek64(tbl)
   while i < n {
-    var slot = seg_table + (i * 24)
+    var slot = tbl + 8 + (i * 24)
     if covers(peek64(slot), peek64(slot + 8), buf, len) {
       if (peek64(slot + 16) & flag_w) != 0 {
         return 0
@@ -144,17 +289,28 @@ def check_write(buf Int64, len Int64) Int64 {
   return reason_range
 }
 
+// The caller's memory, translated (emo-desktop A11.1): a disk ELF's
+// addresses are its own table's, and the kernel's low window reaches
+// only the boot image's identity — every byte the kernel lifts from
+// the caller's memory walks the caller's own table, the space word the
+// shim stages at every ecall. The answer is the physical address of
+// the byte's page; the walk is the hardware's own, in software.
+def caller_pa(va Int64) Int64 {
+  return sv39.lookup(peek64(caller_space_cell), va)
+}
+
 // One byte from the caller's buffer into the kernel's staging, the
 // whole range at once: the check above has already bounded it inside
-// one writable segment, and this runs in that same trap, on the
-// caller's own table with SUM — one volatile byte load and store per
-// step, nothing allocated, nothing deferred to a context that cannot
-// see the caller's memory (T6.2). The console's write stages on the
-// handoff page; the filesystem's requests stage in their slots.
+// one writable segment, and this runs in that same trap — the caller's
+// bytes lift through its own table's walk (caller_pa), one page a
+// lookup, the raw-memory discipline of one volatile byte load and
+// store per step, nothing allocated, nothing deferred to a context
+// that cannot see the caller's memory (T6.2). The console's write
+// stages on its page; the filesystem's requests stage in their slots.
 def copy_to(dst Int64, buf Int64, len Int64) Void {
   var i = 0
   while i < len {
-    poke8(dst + i, peek8(buf + i))
+    poke8(dst + i, peek8(caller_pa(buf + i)))
     i = i + 1
   }
 }
@@ -174,7 +330,10 @@ def fs_slot_pick() Int64 {
 
 // A filesystem request's slot, filled and busy: the caller's pid (the
 // supervisor refuses it by this at a restart), the lengths, the
-// caller's buffer, the name copied in; the answer is the slot's base.
+// caller's buffer, the caller's space word (the read's answer lands in
+// the caller's memory, and a disk ELF's memory is its own table's —
+// the service walks it by this root), the name copied in; the answer
+// is the slot's base.
 def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   var s = fs_slots + k * fs_slot_size
   poke64(s, 1)
@@ -182,8 +341,24 @@ def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   poke64(s + 16, nlen)
   poke64(s + 24, len)
   poke64(s + 32, buf)
+  poke64(s + 40, peek64(caller_space_cell))
   copy_to(s + 64, name, nlen)
   return s
+}
+
+// The window grant's row for that id, or -1 (T8.5): the table the
+// display service fills at win_new and empties at win_close, the
+// present's authorization read. The scan is eight peeks in the trap —
+// no allocation, the gate's discipline.
+def grant_row_of(id Int64) Int64 {
+  var i = 0
+  while i < grant_rows {
+    if peek64(grant_table + (i * grant_row)) == id {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
 }
 
 // The filesystem verbs (T7.2): every pointer argument inside one
@@ -256,19 +431,357 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if verdict != 0 {
       return -verdict
     }
-    copy_to(stage_buf, r0, r1)
-    poke64(handoff_arga, stage_buf)
-    poke64(handoff_argb, r1)
-    return route_console_write
+    // The write stages whole (T8.15): a slot per parked writer, the
+    // slot's index in the caller's own cell — two writers parked at
+    // once print their own bytes, not the last stager's.
+    var k = 0
+    while k < con_slot_count {
+      if peek64(con_slots + (k * con_slot_size)) < 0 {
+        copy_to(con_slots + (k * con_slot_size) + 8, r0, r1)
+        poke64(con_slots + (k * con_slot_size), r1)
+        poke64(con_slot_for + (peek64(handoff_caller) * 8), k)
+        return route_console_write
+      }
+      k = k + 1
+    }
+    return -reason_resource
   }
   if n >= 6 && n <= 9 {
     return fs_dispatch(n, r0, r1, r2, r3)
   }
   if n == 2 {
-    return route_console_read
+    return route_input_byte
+  }
+  if n == 10 {
+    // The desktop segment's commit (T8.4, T8.5): present(grant, x, y,
+    // w, h) — the buffer the grant names, the damage rect. The grant
+    // id 0 is the screen carve's, the authorization table's first
+    // entry: the caller must be the holder the process service parked
+    // (a dead holder's pid never matches — the slots are never
+    // reused). A window grant (T8.5) is the row's to authorize: the
+    // owner and the row's extent — the rect within the buffer the id
+    // names. The rect's sanity here, its fullscreen bounds the display
+    // service's to judge against the mode; the atomic commit is the
+    // service's — the transfer and the flush complete before the
+    // answer, and a window's commit is the ready flag the compositor
+    // finds (T8.6's tick).
+    poke64(koff + 0x87002a68, r0)
+    poke64(koff + 0x87002a70, r3)
+    if r1 < 0 || r2 < 0 || r3 < 1 || r4 < 1 {
+      poke64(koff + 0x87002a48, 111)
+      return -reason_argument
+    }
+    if r0 != 0 {
+      var idx = grant_row_of(r0)
+      if idx < 0 {
+        return -reason_argument
+      }
+      var row = grant_table + (idx * grant_row)
+      if peek64(row + 8) != peek64(handoff_caller) {
+        return -reason_permission
+      }
+      if (r1 + r3) > peek64(row + 32) || (r2 + r4) > peek64(row + 40) {
+        return -reason_argument
+      }
+      var slot = comp_slot_take()
+      if slot < 0 {
+        return -reason_resource
+      }
+      var seat = comp_slots + (slot * comp_slot_bytes)
+      poke64(seat, r0)
+      poke64(seat + 8, r1)
+      poke64(seat + 16, r2)
+      poke64(seat + 24, r3)
+      poke64(seat + 32, r4)
+      return route_comp_present - (32 * slot)
+    } else {
+      if peek64(screen_grant_cell) != peek64(handoff_caller) {
+        return -reason_permission
+      }
+    }
+    poke64(gpu_args, r0)
+    poke64(gpu_args + 8, r1)
+    poke64(gpu_args + 16, r2)
+    poke64(gpu_args + 24, r3)
+    poke64(gpu_args + 32, r4)
+    return route_desktop_present
+  }
+  if n == 11 {
+    // The desktop segment's enumeration (T8.4): output_info(index) —
+    // the index-th output's rect, the answer the display service
+    // packs; an index no output answers is the service's argument
+    // refusal (one display is the first answer, not the only shape).
+    return route_output_info
+  }
+  if n == 12 {
+    // The desktop segment's first verb (T8.3): the next event of the
+    // input service's merged stream — the serial's bytes first, then
+    // the device's. No arguments; the ABI in docs/syscalls.md.
+    return route_input_event
+  }
+  if n == 13 {
+    // win_new(w, h) (T8.5): the window buffer's creation — the run the
+    // allocator hands (contiguous, frames.take_run), the grant row the
+    // table gains, the mapping into the caller's own table (the space
+    // word the shim stages at every ecall). The answer packs the
+    // buffer's base — the client paints its own mapping — above the
+    // grant id. A size past a window's bound is the argument refusal;
+    // a run or a row the machine cannot back is the resource refusal,
+    // the service's.
+    if r0 < 1 || r1 < 1 || (r0 * r1) > 4194304 {
+      return -reason_argument
+    }
+    poke64(gpu_args, r0)
+    poke64(gpu_args + 8, r1)
+    // The caller's space word rides the request (T8.5): the shim
+    // stages it at every ecall, and this dispatch — inside the
+    // caller's own trap — copies it into the arguments, where the
+    // service reads it. The staged cell alone would race: the service
+    // runs after the park, and a later ecall (the parent's wait
+    // beside the child's win_new) would have overwritten it — the
+    // first boot's map landed in the parent's table, and the child's
+    // paint was the store fault that named it.
+    poke64(gpu_args + 40, peek64(caller_space_cell))
+    return route_win_new
+  }
+  if n == 15 {
+    // win_focus(grant) (T8.6): the compositor's stack records the
+    // focused window and raises it to the stack's top (T8.13) — the
+    // input routing the focus drives is the desktop side's (emo-desktop
+    // A9.1). The owner is the gate's check, as win_close's is.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    return route_win_focus - (32 * slot)
+  }
+  if n == 16 {
+    // win_move(grant, x, y) (T8.6): the position the compositor's
+    // blit places the window at. The x rides the blit's word
+    // granularity (even, reason 4); the bounds against the display's
+    // mode are the compositor's to judge (the mode is its init's
+    // query).
+    if r0 == 0 {
+      return -reason_argument
+    }
+    if r1 < 0 || (r1 % 2) != 0 || r2 < 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    poke64(seat + 16, r2)
+    return route_win_move - (32 * slot)
+  }
+  if n == 17 {
+    // win_role(grant, role) (T8.13, emo-desktop A9.1): the surface the
+    // buffer becomes on the compositor's stack, named by its role —
+    // the protocol's third seam. The gate bounds the role to the
+    // vocabulary (0 toplevel, 1 popup, 2 subsurface, 3 panel; past it
+    // reason 4) and checks the owner and the id as the stack's other
+    // verbs do; which roles the compositor implements is its answer —
+    // toplevel is, the rest are refused by their number, and the
+    // caller names what it asked for.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    if r1 < 0 || r1 >= role_count {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    return route_win_role - (32 * slot)
+  }
+  if n == 18 {
+    // input_info(index) (T8.13, emo-desktop A9.1): the index-th
+    // pointer device's axes, packed — the input side of the second
+    // seam, the range a client scales the stream's absolute reports by
+    // never a constant of its own. The index is the enumeration's
+    // shape; an index no device answers is the input service's reason
+    // 4 (one pointer is the first answer, not the only shape).
+    if r0 < 0 {
+      return -reason_argument
+    }
+    poke64(input_args, r0)
+    return route_input_info
+  }
+  if n == 19 {
+    // win_parent(grant, parent) (T8.15, emo-desktop A9.3): the roles'
+    // substance — a popup or a subsurface is parent-relative, and this
+    // is the binding that says to what. The gate checks the caller
+    // owns both grants and that they are two; which roles take a
+    // parent and whether the parent is a live toplevel is the
+    // compositor's answer (its stack knows the roles).
+    if r0 == 0 || r1 == 0 || r0 == r1 {
+      return -reason_argument
+    }
+    var pidx = grant_row_of(r0)
+    if pidx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (pidx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var qidx = grant_row_of(r1)
+    if qidx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (qidx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var slot = comp_slot_take()
+    if slot < 0 {
+      return -reason_resource
+    }
+    var seat = comp_slots + (slot * comp_slot_bytes)
+    poke64(seat, r0)
+    poke64(seat + 8, r1)
+    return route_win_parent - (32 * slot)
+  }
+  if n == 20 {
+    // win_format(grant, format) (T8.15, emo-desktop A9.3): the
+    // negotiation's field (the fourth seam) — the buffer's format is a
+    // word on the row, named by the client and recorded by the gate.
+    // XRGB8888 (0) is the first accepted value and the shape exists
+    // from the first day; a format the compositor does not carry is
+    // refused by its number, as every refusal is — the protocol
+    // carries no text.
+    var fidx = grant_row_of(r0)
+    if fidx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (fidx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    if r1 != 0 {
+      return -reason_argument
+    }
+    poke64(grant_table + (fidx * grant_row) + 96, r1)
+    return 0
+  }
+  if n == 21 {
+    // win_scale(grant, scale) (T8.15, emo-desktop A9.3): the fourth
+    // seam's other field — the surface's scale on the row, the
+    // compositor's walk to honor when it carries the buffer. Scale 1
+    // is the first accepted value; the shape exists, the values grow
+    // under it.
+    var sidx = grant_row_of(r0)
+    if sidx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (sidx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    if r1 != 1 {
+      return -reason_argument
+    }
+    poke64(grant_table + (sidx * grant_row) + 104, r1)
+    return 0
+  }
+  if n == 22 {
+    // win_frame() (T8.15, emo-desktop A9.3): the frame callback (the
+    // fifth seam) — the caller parks, and the compositor's answer is
+    // the tick: the next composition's completion, the flush that put
+    // a frame on the display. virtio-gpu has no vblank; the
+    // compositor's composition is the machine's frame pulse, and this
+    // verb is the animation story's client side. No arguments: the
+    // callback rides the display's rhythm, not one surface's.
+    return route_win_frame
+  }
+  if n == 23 {
+    // desktop_version() (T8.15, emo-desktop A9.3): the fifth seam's
+    // other half — the stream is versioned, and this one word is the
+    // negotiation's anchor. The gate answers itself: the version is
+    // the protocol's, the front door's to state.
+    return 1
+  }
+  if n == 14 {
+    // win_close(grant) (T8.5): the buffer's release — the run back to
+    // the allocator block by block, the row to the table. The owner is
+    // the gate's check (reason 3); an id the table does not hold is
+    // reason 4.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    var idx = grant_row_of(r0)
+    if idx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (idx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    poke64(gpu_args, r0)
+    return route_win_close
   }
   if n == 3 {
     return route_process_spawn
+  }
+  if n == 24 {
+    // exec(name, nlen) (emo-desktop A11.1): the disk ELF's name — the
+    // program the filesystem holds, loaded into its own image and
+    // started as its own process. The name is judged like the
+    // filesystem's (inside one writable segment of the caller's own —
+    // the per-process check, the caller_table routing), copied into
+    // the exec page's cells inside this trap, and the request routed
+    // to the process service. One request at a time: the busy cell is
+    // held from this staging to the service's pickup, so a request
+    // staged behind a transaction in flight cannot overwrite the name
+    // the older one still waits to be served by — a second is the
+    // resource refusal, the fs's fifth-slot rule. A caller past the
+    // image cells' bound is the same refusal: its child could never be
+    // recorded.
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    var vn = check_write(r0, r1)
+    if vn != 0 {
+      return -vn
+    }
+    if peek64(handoff_caller) >= img_bound {
+      return -reason_resource
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    copy_to(exec_name, r0, r1)
+    poke64(exec_nlen, r1)
+    poke64(exec_busy, 1)
+    return route_process_exec
   }
   if n == 4 {
     var me = peek64(handoff_caller)

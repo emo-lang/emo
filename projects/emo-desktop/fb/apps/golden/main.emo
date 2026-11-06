@@ -1,0 +1,91 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo/ui_apps"
+
+// The desktop's first apps, the hosted twin (emo-desktop A10.3, the
+// launcher's replay A12.1): the counter, the file browser and the
+// editor — the corpus packages required whole from `emo/ui_apps`,
+// never copied — each run through `ui.run`'s parts on a canvas the app
+// window's own size (384x128, the window shell's) with a script in the
+// input's seat: the tags the apps' registration order fixes, the
+// session the metal's passes run byte for byte. The launcher's order
+// is the execs': the counter's tile first (its session whole), the
+// browser's tile second, the editor's the REPL's own `exec` command —
+// mount, keys, mount, keys, mount, keys. Every frame's digest prints
+// as the backend presents it, beside the state transitions `update`
+// says, and the exits close the block in the quits' own order — the
+// deaths ride the stream to their parent now (`desktop <name> exit
+// 0`, emo-desktop A12.1); the interpreter's bytes are `expected.txt`,
+// and every hosted target prints the same. The metal's pass prints
+// the same lines in the same order, its frames the digests `run.sh`
+// folds the display's rectangles to.
+//
+//   emo run main.emo
+
+// The eye on the canvas: the frame golden's, verb for verb —
+// `present` is where the digest is read and said.
+class Eye {
+  def init(canvas ui_fb.Surface) {
+    self.canvas = canvas
+  }
+
+  def width() Int64 {
+    return self.canvas.width()
+  }
+
+  def height() Int64 {
+    return self.canvas.height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.canvas.at(x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.fill(x, y, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.blend(x, y, w, h, color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    self.canvas.glyph(x, y, top, bottom, color)
+  }
+
+  def present() {
+    println("frame ${ui_fb_frame.digest(self.canvas)}")
+  }
+}
+
+def main() {
+  // The launcher's replay (emo-desktop A12.1): the counter's tile
+  // first — its mount frame, its two keys — then the browser's tile,
+  // then the editor's exec, each session whole before the next mount.
+  // The exit lines are the desktop's own, the quits' order after the
+  // sessions end.
+  const ceye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  const cbackend = ui_fb.backend(ceye, ui_fb.script([0, 1]))
+  const capp = ui.App.new(view: ui_apps.counter.view,
+    update: ui_apps.counter.update, model: ui_apps.counter.initial(),
+    backend: cbackend)
+  cbackend.mount(capp.root(), capp)
+  cbackend.run()
+  const feye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  const fbackend = ui_fb.backend(feye, ui_fb.script([0, 2]))
+  const fapp = ui.App.new(view: ui_apps.files.view,
+    update: ui_apps.files.update, model: ui_apps.files.initial(),
+    backend: fbackend)
+  fbackend.mount(fapp.root(), fapp)
+  fbackend.run()
+  const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
+  ui.run(ui_apps.editor.view, ui_apps.editor.update,
+    ui_apps.editor.initial(), ui_fb.backend(e, ui_fb.script([0, 2, 1])))
+  println("desktop counter exit 0")
+  println("desktop files exit 0")
+  println("desktop editor exit 0")
+}
+
+main()

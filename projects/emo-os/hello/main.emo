@@ -18,20 +18,41 @@
 // address, mapped without U, the permission the walk refuses),
 // `born`/`wait 7` (the
 // spawn and wait round trip — the child re-enters this top level,
-// finds the token, and exits 7). Then the shell (T7.3, shell.emo, its
+// finds the token, and exits 7), the screen carve's proof (T8.2 — the
+// machine's first full-screen pass paints the carve its spawn was
+// granted, the service reads the pattern back, and the second screen
+// spawn is the resource refusal — and, since emo-desktop A7.2, the
+// pass's first act is the desktop's first frame: the tree the fb core
+// lays out and paints into the carve, its digest on the wire, the
+// grant's present putting it on the display), and then the shell (T7.3,
+// shell.emo, its
 // design in docs/shell.md) takes the machine's foreground: the top
 // level enters the REPL instead of exiting, and the machine ends the
 // way the proof's exit did — the poweroff command's verb 0, the boot
-// pass's exit landing in the kernel. The counter pass (T7.4, ui.emo,
+// pass's exit landing in the kernel. The counter pass (T7.4, console_ui.emo,
 // its design in docs/ui.md) is the machine's program: the shell's
 // `counter` command (T7.5) pokes ui_cell, spawns it, and waits for
 // its exit — a user program begun from the prompt, the closure
-// demo's last beat.
+// demo's last beat. The window shell (emo-desktop A9.1, desk_cell)
+// puts two toplevel surfaces up after the proof chain: windows of its
+// own, focus and drag through the compositor's verbs, keys routed to
+// the focused window, the merged stream in its seat.
 //
-//   cd hello && emo build main.emo --target riscv64 \
-//        --profile user -o ../hello.elf
+// The image requires the desktop's packages beside the syscall stub —
+// EmoUI's core, the fb backend's core, the first frame, the
+// window shell's windows and the first apps — staged
+// into a registry from their trees, the way start.sh does before it
+// builds:
+//
+//   cd hello && EMO_REGISTRY=<the staged registry> emo build main.emo \
+//        --target riscv64 --profile user -o ../hello.elf
 
 require "syscall"
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_frame"
+require "emo/ui_fb_win"
+require "emo_desktop"
 
 // A scratch page inside this image's read-write segment — the buffer
 // every line is built in and sent from, with the two token cells the
@@ -46,6 +67,26 @@ const greedy_cell = buf + 2064
 const smash_cell = buf + 2072
 const reach_cell = buf + 2080
 const ui_cell = buf + 2088
+// The input pass's token (T8.3): the cells the spawned passes read,
+// each poked once before the parent parks.
+const key_cell = buf + 2096
+// The window pass's token (T8.5), beside them.
+const win_cell = buf + 2104
+// The window shell's token (emo-desktop A9.1), beside it.
+const desk_cell = buf + 2112
+// The client's token and the rebirth's (emo-desktop A9.2): the pass
+// that opens a toplevel, presents, and dies without closing — the
+// stack's reclaim proof — and the one reborn after it.
+const client_cell = buf + 2120
+const client2_cell = buf + 2128
+// The screen grant's channel and the carve itself (T8.2): the token on
+// the user cells page — the one crossing every table maps, so the
+// kernel's spawn-side read sees the poke — and the carve's base by its
+// physical address, the identity this pass paints when the token is
+// its own (the table the kernel's build made carries the carve, RW
+// with U; a pass without the grant maps none of it).
+const screen_cell = 0x87fff040
+const screen_base = 0x86c00000
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 // The filesystem proof's buffers (T7.2), further up the same scratch
@@ -277,6 +318,1418 @@ if peek64(reach_cell) != 0 {
   syscall.exit(1)
 }
 
+// The screen branch (T8.2, emo-desktop A7.2, A8.3): the machine's first
+// full-screen pass, and its first event-driven program. The cells-page
+// token is the grant's channel — the kernel's spawn-side read handed
+// the carve into this pass's table at the spawn (the identity of the
+// carve's physical addresses, RW with U, frames.emo's one hand). The
+// pass claims the token and runs the desktop's counter through EmoUI's
+// Elm loop, unchanged from the hosted backends': the mode is the
+// device's own answer (T8.4's output_info), the carve at that mode is
+// the fb core's surface, the sprite goes into the carve's sprite memory
+// first (A8.2), and `ui.run` takes the counter's defs as values — the
+// loop's `mount` paints the first frame through the core into the
+// carve's own words and the carve's `present` says its digest on the
+// wire before the grant's present puts the frame on the display (the
+// gate checks the carve's holder, the display service judges the rect,
+// and the pixels reach the display before the line does); then every
+// byte the merged stream delivers (`Keys`) is an event, the tree is
+// rebuilt, repainted and presented — the frame before it going back to
+// the arena through the pool — until the quit key ends the loop. Then
+// T8.2's proof: one pattern word per 64 KiB across the whole 4 MiB,
+// poked over the last frame after its present — the exit is when the
+// process service reads them back through the kernel's half, and the
+// display already holds what the presents transferred (every later
+// whole-screen flush shows the words again, over the frame). A pass
+// whose spawn carried no grant maps none of the carve: its first store
+// here is the page fault that kills it.
+if peek64(screen_cell) != 0 {
+  poke64(screen_cell, 0)
+  case syscall.output_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, mode) -> {
+      output_line(mode)
+      const screen = Carve.new(base: screen_base, width: out_w(mode),
+        height: out_h(mode))
+      sprite_upload()
+      ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
+        ui_fb_frame.counter.initial(), ui_fb.backend(screen, Keys.new()))
+    }
+  }
+  var k = 0
+  while k < 64 {
+    poke64(screen_base + (k * 65536), 0x7363726E + k)
+    k = k + 1
+  }
+  syscall.exit(0)
+}
+
+// The merged event stream as the loop's input (emo-desktop A8.3): the
+// fb backend pulls one tag per `next`, and this is where the machine's
+// bytes become the counter's events, by the application's own rule —
+// the console renderer's (docs/ui.md): `a` is the add, `b` the sub, `q`
+// ends the loop (the input's end, `(R.error, _)`, is how a backend's run
+// ends), and every other event is dropped, never guessed at — the
+// device's key reports and the pointer's moves ride the same stream
+// (T8.3, T8.11) and are not this program's. Each byte the loop consumes
+// is said on the wire (`byte <n>`), the record of what drove the
+// session. A method's body is the dynamic convention on this target,
+// so the event decodes through the typed defs below.
+class Keys {
+  def next() (R, Int64) {
+    var tag = -1
+    while tag < 0 {
+      const ev = syscall.input_read()
+      if ev_type(ev) == 17741 {
+        input_line(ev)
+        const b = ev_value(ev)
+        if b == 113 {
+          return (R.error, 0)
+        }
+        if b == 97 {
+          tag = 0
+        }
+        if b == 98 {
+          tag = 1
+        }
+      }
+    }
+    return (R.ok, tag)
+  }
+}
+
+// The first apps' keys (emo-desktop A10.3): the byte table in the
+// input's seat, one tag per byte — the tag its index in the table
+// names, and the table the app's own registration order keeps (`a`
+// first, `b` second, and so on, the same tags the golden's script
+// names) — and `q` the loop's end, the quit byte every seat's session
+// ends on. Every other byte is dropped, never guessed at; the pointer's
+// reports ride the same stream and are not an app's.
+class AppKeys {
+  def init(bytes Array[Int64]) {
+    self.bytes = bytes
+  }
+
+  def next() (R, Int64) {
+    var tag = -1
+    while tag < 0 {
+      const ev = syscall.input_read()
+      if ev_type(ev) == 17741 {
+        const b = ev_value(ev)
+        if b == 113 {
+          return (R.error, 0)
+        }
+        var i = 0
+        while tag < 0 && i < self.bytes.length() {
+          if self.bytes[i] == b {
+            tag = i
+          }
+          i = i + 1
+        }
+      }
+    }
+    return (R.ok, tag)
+  }
+}
+
+// The carve as the fb core's `Surface` (emo-desktop A7.2): the raw shim
+// the assessment keeps on the metal's side alone. A pixel is a 32-bit
+// word at the identity the grant mapped — `poke32` the store, `peek32`
+// the load, no verb and no copy between the core and the display's
+// memory — and the width and height are the display's answer, never a
+// constant. The hosted twin is `emo/ui_fb_canvas`, the same words in a
+// `Bytes`; the core cannot tell them apart.
+//
+// The pixel loops live in the typed defs below the class, not in its
+// methods: on this target a method's body is the dynamic convention —
+// every computed Int64 a boxed cell in the arena, and the value kinds
+// carry no claims for the pool to reclaim — so a loop over 786,432
+// pixels inside a method is the heap gone before the first row ends.
+// A fully typed top-level def computes in raw registers and allocates
+// nothing; the method hands it the words once per rectangle, which is
+// a dozen times a frame, and once per glyph cell (A8.1), which is a
+// hundred.
+class Carve {
+  def init(base Int64, width Int64, height Int64) {
+    self.base = base
+    self.width = width
+    self.height = height
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return carve_at(self.base, self.width, x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_fill(self.base, self.width, r.x(), r.y(), r.w(), r.h(),
+      color & 0xFFFFFF)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
+  }
+
+  // One glyph cell (emo-desktop A8.1): the sixteen rows in two words,
+  // handed down whole — the cell is the unit the core calls in, once per
+  // character, because every Int64 an interface call carries is a boxed
+  // cell on this target.
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
+      color & 0xFFFFFF)
+  }
+
+  // The commit (emo-desktop A8.3): the backend calls it after every
+  // paint. The frame's digest off the carve's own words goes on the
+  // wire first (`frame <n>`, the number the hosted twin prints and the
+  // screendump digests to), then the grant's present puts the frame on
+  // the display — the gate checks the carve's holder, the display
+  // service judges the rect, the transfer and the flush complete — and
+  // `present ok` says so after.
+  def present() {
+    frame_line(carve_digest(self.base, self.width, self.height))
+    case syscall.present(0, 0, 0, self.width, self.height) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> { present_ok() }
+    }
+  }
+}
+
+def carve_at(base Int64, width Int64, x Int64, y Int64) Int64 {
+  return peek32(base + (y * width + x) * 4)
+}
+
+def carve_fill(base Int64, width Int64, x Int64, y Int64, w Int64,
+               h Int64, word Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      poke32(base + (row * width + col) * 4, word)
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
+                h Int64, color Int64) Void {
+  var row = y
+  while row < y + h {
+    var col = x
+    while col < x + w {
+      var i = base + (row * width + col) * 4
+      poke32(i, ui_fb.over(color, peek32(i)))
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
+// A glyph's set bits as stores, each pixel checked against the carve's
+// bounds: the row byte is `ui_fb.glyph_row`'s, the same bit for the same
+// pixel the hosted canvas reads, and a clear row costs no column walk.
+def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
+                top Int64, bottom Int64, word Int64) Void {
+  var r = 0
+  while r < 16 {
+    const bits = ui_fb.glyph_row(top, bottom, r)
+    const py = y + r
+    if bits != 0 && py >= 0 && py < height {
+      var c = 0
+      while c < 8 {
+        const px = x + c
+        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
+          poke32(base + (py * width + px) * 4, word)
+        }
+        c = c + 1
+      }
+    }
+    r = r + 1
+  }
+}
+
+// The pointer sprite into the carve's sprite memory (emo-desktop A8.2,
+// EmoOS T8.11): the desktop's drawing — `ui_fb.pointer`'s rows, read
+// cell by cell — as ARGB words, the outline's ink and the body's paper
+// opaque (the top byte 0xFF) and the clear cells 0, then the header
+// last — the width, the height, the hotspot — so the compositor's
+// cursor plane, which reads the header at each composition, sees no
+// sprite until the pixels are whole. The memory is the carve's last
+// 64 KiB, which this pass has mapped with the rest of the carve; the
+// sprite starts past the block's first line, where T8.2's proof pattern
+// below lands its word (docs/desktop-abi.md).
+def sprite_upload() Void {
+  const header = screen_base + 0x400000 - 65536 + 64
+  const w = ui_fb.pointer.width()
+  const h = ui_fb.pointer.height()
+  var r = 0
+  while r < h {
+    const line = ui_fb.pointer.row(r)
+    var c = 0
+    while c < w {
+      const cell = line.substring(c, 1)
+      var word = 0
+      if cell == "#" {
+        word = 0xFF000000
+      }
+      if cell == "o" {
+        word = 0xFFFFFFFF
+      }
+      poke32(header + 16 + ((r * w) + c) * 4, word)
+      c = c + 1
+    }
+    r = r + 1
+  }
+  poke32(header + 8, ui_fb.pointer.hot_x())
+  poke32(header + 12, ui_fb.pointer.hot_y())
+  poke32(header + 4, h)
+  poke32(header, w)
+}
+
+// The frame's digest off the carve's own words — `ui_fb_frame.digest`'s
+// fold, `d = (d * 31 + word) mod 2^32` over every pixel in row-major
+// order, in a typed loop over `peek32` rather than through the
+// surface's `at`: a method call per pixel would box its answer into the
+// arena 786,432 times. The hosted twin folds through the canvas; the
+// screendump's Python folds the display's bytes; the three agree on one
+// number or on none (run.sh).
+def carve_digest(base Int64, width Int64, height Int64) Int64 {
+  var d = 0
+  var row = 0
+  while row < height {
+    var col = 0
+    while col < width {
+      d = (d * 31 + peek32(base + (row * width + col) * 4)) & 4294967295
+      col = col + 1
+    }
+    row = row + 1
+  }
+  return d
+}
+
+// A window's buffer as the fb core's `Surface` (emo-desktop A9.1): the
+// run win_new handed, mapped into this pass's own table at the identity
+// of its physical addresses — the carve's shape over a smaller
+// rectangle, the same typed pixel loops behind the verbs, and the
+// grant the buffer is named by ever after. `present` is the window's
+// commit: the frame's digest off the buffer's own words on the wire
+// first (`frame <n>`, the number the hosted twin prints for the same
+// paint and the screendump's fold over the window's rectangle answers),
+// then the grant's present — the gate checks the owner and the rect,
+// the compositor composites the whole stack with this frame in it and
+// flushes — and the compositor's own line is the answer's echo; the
+// pass says nothing after, so the carve's four `present ok` stay the
+// loop's count.
+class Win {
+  def init(grant Int64, base Int64, width Int64, height Int64) {
+    self.grant = grant
+    self.base = base
+    self.width = width
+    self.height = height
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    if x < 0 || x >= self.width || y < 0 || y >= self.height {
+      return 0
+    }
+    return carve_at(self.base, self.width, x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_fill(self.base, self.width, r.x(), r.y(), r.w(), r.h(),
+      color & 0xFFFFFF)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
+      color & 0xFFFFFF)
+  }
+
+  def present() {
+    frame_line(carve_digest(self.base, self.width, self.height))
+    case syscall.present(self.grant, 0, 0, self.width, self.height) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The pointer's report scaled to the display (emo-desktop A9.1): the
+// device's value over its axis's range, the compositor's own arithmetic
+// for its cursor — the range is the device's answer through input_info,
+// never a constant of this pass's.
+def scaled(v Int64, mode Int64, max Int64) Int64 {
+  return (v * mode) / (max + 1)
+}
+
+// The drag's next coordinate: the pointer less the grab offset, kept
+// on the display, and — for x — on the blit's word granularity the
+// move verb insists on.
+def dragged(p Int64, grab Int64, extent Int64, mode Int64, even Bool) Int64 {
+  var n = p - grab
+  if n < 0 {
+    n = 0
+  }
+  if n + extent > mode {
+    n = mode - extent
+  }
+  if even {
+    n = n - (n % 2)
+  }
+  return n
+}
+
+def inside(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64) Bool {
+  return px >= x && px < x + w && py >= y && py < y + h
+}
+
+// The role refusals' lines (emo-desktop A9.1): `role <name> r<n>` — the
+// caller chose the role, so the caller names it; the kernel refuses by
+// the number alone (the protocol carries no text, the seventh seam).
+def role_name_at(role Int64, pos Int64) Int64 {
+  var p = pos
+  if role == 0 {
+    p = byte_at(p, 116) // t
+    p = byte_at(p, 111) // o
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 108) // l
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 118) // v
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 108) // l
+  }
+  if role == 1 {
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 111) // o
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 112) // p
+  }
+  if role == 2 {
+    p = byte_at(p, 115) // s
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 98) // b
+    p = byte_at(p, 115) // s
+    p = byte_at(p, 117) // u
+    p = byte_at(p, 114) // r
+    p = byte_at(p, 102) // f
+    p = byte_at(p, 97) // a
+    p = byte_at(p, 99) // c
+    p = byte_at(p, 101) // e
+  }
+  if role == 3 {
+    p = byte_at(p, 112) // p
+    p = byte_at(p, 97) // a
+    p = byte_at(p, 110) // n
+    p = byte_at(p, 101) // e
+    p = byte_at(p, 108) // l
+  }
+  return p
+}
+
+def role_refused_line(role Int64, reason Int64) Void {
+  var p = byte_at(0, 114) // r
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = role_name_at(role, p)
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 114) // r
+  p = num_at(reason, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// A role the compositor refuses, asked for and named: the pass asks
+// for it knowing the answer, the way the input pass asks for a present
+// it has no grant for — the refusal is the proof.
+def role_refusal(grant Int64, role Int64) Void {
+  case syscall.win_role(grant, role) {
+    (R.error, why) -> { role_refused_line(role, reason_num(why)) }
+    (R.ok, _) -> { mark() }
+  }
+}
+
+// The present's refusal line: `present r<n>` — the input pass's
+// permission refusal (T8.4) and the window pass's surface-less one
+// (A9.1) share it.
+def present_refused_line(reason Int64) Void {
+  var gp = byte_at(0, 112) // p
+  gp = byte_at(gp, 114) // r
+  gp = byte_at(gp, 101) // e
+  gp = byte_at(gp, 115) // s
+  gp = byte_at(gp, 101) // e
+  gp = byte_at(gp, 110) // n
+  gp = byte_at(gp, 116) // t
+  gp = byte_at(gp, 32) // space
+  gp = byte_at(gp, 114) // r
+  gp = num_at(reason, gp)
+  gp = byte_at(gp, 10)
+  gate_line(gp)
+}
+
+// The window shell's lines (emo-desktop A9.1), each `desk ` and a fact:
+// the pointer's range (verb 18's answer), a window's grant by its
+// letter, the focus, a key routed, a drag's end.
+def desk_at() Int64 {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 32) // space
+  return p
+}
+
+def desk_range_line(mx Int64, my Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = num_at(mx, p)
+  p = byte_at(p, 32)
+  p = num_at(my, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_win_line(letter Int64, id Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, letter)
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_focus_line(id Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_key_line(id Int64, n Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 121) // y
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 32)
+  p = num_at(n, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_drag_line(id Int64, x Int64, y Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 32)
+  p = num_at(x, p)
+  p = byte_at(p, 32)
+  p = num_at(y, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The frame's digest, as the pass's line: `frame <digest>` — the number
+// the hosted twin prints and the screendump digests to (run.sh).
+def frame_line(d Int64) Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) // space
+  p = num_at(d, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The merged event's halves (T8.3): the type in bits 48..63, the code
+// above the low word, the value in it — the decode in typed defs (the
+// riscv64 emitter refuses the operators on a dynamic value).
+def ev_type(e Int64) Int64 {
+  return e >> 48
+}
+
+def ev_code(e Int64) Int64 {
+  return (e >> 32) & 65535
+}
+
+def ev_value(e Int64) Int64 {
+  return e & 4294967295
+}
+
+// The display's answer's halves (T8.4): the width above, the height
+// below — the decode in typed defs, as every mailbox word's.
+def out_w(m Int64) Int64 {
+  return m >> 32
+}
+
+def out_h(m Int64) Int64 {
+  return m & 4294967295
+}
+
+// The enumeration's answer, as the pass's line: `output <w>x<h>` —
+// the mode the device itself reports (the verb's index 0; the one
+// display is the first answer, not the only shape).
+def output_line(m Int64) Void {
+  var p = byte_at(0, 111) // o
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = num_at(out_w(m), p)
+  p = byte_at(p, 120) // x
+  p = num_at(out_h(m), p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The commit's answer, as the pass's line: `present ok` — the device's
+// transfer and flush both complete before the answer lands.
+def present_ok() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The window answer's halves (T8.5): the buffer's frame number above
+// (the byte address shifted left by 12 — the frame number keeps the
+// word's sign bit true), the grant id below.
+def win_id(ans Int64) Int64 {
+  return ans & 4294967295
+}
+
+def win_base(ans Int64) Int64 {
+  return (ans >> 32) << 12
+}
+
+// The buffer's paint: one pattern word per 8 bytes, the row's number
+// in the word's low three bytes over the caller's base — the
+// deterministic pattern the readback verifies and the display model
+// recomputes.
+def paint_win(base Int64, rows Int64, row_words Int64, word_base Int64) Void {
+  var r = 0
+  while r < rows {
+    var word = word_base + r
+    var pair = word | (word << 32)
+    var i = 0
+    while i < row_words {
+      poke64(base + (r * row_words + i) * 8, pair)
+      i = i + 1
+    }
+    r = r + 1
+  }
+}
+
+// The frame's sum (T8.6): every word the buffer holds — the number
+// the compositor's composition line carries, the blit's proof.
+def buffer_sum(base Int64, rows Int64, row_words Int64) Int64 {
+  var sum = 0
+  var r = 0
+  while r < rows {
+    var i = 0
+    while i < row_words {
+      sum = sum + peek64(base + (r * row_words + i) * 8)
+      i = i + 1
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The readback: every word the paint wrote, compared.
+def win_verify(base Int64, rows Int64, row_words Int64) Bool {
+  var r = 0
+  var ok = true
+  while r < rows {
+    var word = 0x57494E00 + r
+    var pair = word | (word << 32)
+    var i = 0
+    while i < row_words {
+      if peek64(base + (r * row_words + i) * 8) != pair {
+        ok = false
+      }
+      i = i + 1
+    }
+    r = r + 1
+  }
+  return ok
+}
+
+// The lifecycle's lines (T8.5): the grant, the verified paint, the
+// commit, the release.
+def win_line(id Int64) Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_ok_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_shown_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 104) // h
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 119) // w
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_moved_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 118) // v
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_focused_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_closed_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The growth contract's five increments (emo-desktop A9.3, EmoOS
+// T8.15): the wire's own names for them — the negotiation's fields
+// answered, the protocol's version, the roles' surfaces up and home,
+// the frame callback's arrival, the pass's own exit marker (the
+// callback's park moves the exit past the parent's wait, so the
+// marker is the pass's to say).
+def fmt_ok_line() Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def fmt_no_line() Void {
+  var p = byte_at(0, 102) // f
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 109) // m
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def scale_ok_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def scale_no_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 50) // 2
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def protocol_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def popup_up_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def sub_up_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def panel_up_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def parent_panel_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def parent_gone_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def popup_closed_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def sub_closed_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def panel_closed_line() Void {
+  var p = byte_at(0, 112) // p
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def win_zero_line() Void {
+  var p = byte_at(0, 119) // w
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def cb_ok_line() Void {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 98) // b
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// One event, as the pass's line: the machine's byte event (0x454D —
+// "EM") prints `byte <v>`, a device event `key <t> <c> <v>`.
+def input_line(ev Int64) Void {
+  if ev_type(ev) == 17741 {
+    var bp = byte_at(0, 98) // b
+    bp = byte_at(bp, 121) // y
+    bp = byte_at(bp, 116) // t
+    bp = byte_at(bp, 101) // e
+    bp = byte_at(bp, 32) // space
+    bp = num_at(ev_value(ev), bp)
+    bp = byte_at(bp, 10)
+    gate_line(bp)
+  } else {
+    var tp = byte_at(0, 107) // k
+    tp = byte_at(tp, 101) // e
+    tp = byte_at(tp, 121) // y
+    tp = byte_at(tp, 32) // space
+    tp = num_at(ev_type(ev), tp)
+    tp = byte_at(tp, 32)
+    tp = num_at(ev_code(ev), tp)
+    tp = byte_at(tp, 32)
+    tp = num_at(ev_value(ev), tp)
+    tp = byte_at(tp, 10)
+    gate_line(tp)
+  }
+}
+
+// The pointer's absolute event as the pass's line (T8.11): `move <axis>
+// <value>` — the axis code (0 X, 1 Y) and the device's own value.
+def move_line(ev Int64) Void {
+  var mp = byte_at(0, 109) // m
+  mp = byte_at(mp, 111) // o
+  mp = byte_at(mp, 118) // v
+  mp = byte_at(mp, 101) // e
+  mp = byte_at(mp, 32) // space
+  mp = num_at(ev_code(ev), mp)
+  mp = byte_at(mp, 32)
+  mp = num_at(ev_value(ev), mp)
+  mp = byte_at(mp, 10)
+  gate_line(mp)
+}
+
+// The input branch (T8.3, T8.11): a pass parked on the machine's merged
+// input stream — `keys?` on the wire as it waits. The run's hands (the
+// monitor's sendkey) deliver the device's key event, and the serial's
+// byte rides the same stream after it: one stream, the bytes first.
+// The key's release and the reports' separators ride the stream too,
+// unasserted — the pass reads on to the byte. Then the pointer's half
+// (T8.11): the monitor's mouse_move moves the tablet, and its absolute
+// report comes through the same stream after the keyboard's events —
+// the X and the Y in the device's own order, each on the wire — the
+// pass reading until the Y lands. Three sources, one stream. Every
+// line through the gate; the pass ends and the parent's wait answers.
+if peek64(key_cell) != 0 {
+  poke64(key_cell, 0)
+  var kp = byte_at(0, 107) // k
+  kp = byte_at(kp, 101) // e
+  kp = byte_at(kp, 121) // y
+  kp = byte_at(kp, 115) // s
+  kp = byte_at(kp, 63) // ?
+  kp = byte_at(kp, 10)
+  gate_line(kp)
+  input_line(syscall.input_read())
+  var byte_seen = false
+  while !byte_seen {
+    const ev = syscall.input_read()
+    if ev_type(ev) == 17741 {
+      input_line(ev)
+      byte_seen = true
+    }
+  }
+  var y_seen = false
+  while !y_seen {
+    const ev = syscall.input_read()
+    if ev_type(ev) == 3 {
+      move_line(ev)
+      if ev_code(ev) == 1 {
+        y_seen = true
+      }
+    }
+  }
+  // The grant's edge (T8.4): the pass holds no display grant — the
+  // present is the permission refusal, the reason number on the wire.
+  case syscall.present(0, 0, 0, 1, 1) {
+    (R.error, why) -> { present_refused_line(reason_num(why)) }
+    (R.ok, _) -> { mark() }
+  }
+  // The grant table's edge (T8.5): no window exists yet — the close
+  // is the argument refusal, the unknown grant the table cannot name.
+  case syscall.win_close(1) {
+    (R.error, why) -> {
+      var cp = byte_at(0, 99) // c
+      cp = byte_at(cp, 108) // l
+      cp = byte_at(cp, 111) // o
+      cp = byte_at(cp, 115) // s
+      cp = byte_at(cp, 101) // e
+      cp = byte_at(cp, 32) // space
+      cp = byte_at(cp, 114) // r
+      cp = num_at(reason_num(why), cp)
+      cp = byte_at(cp, 10)
+      gate_line(cp)
+    }
+    (R.ok, _) -> { mark() }
+  }
+  syscall.exit(0)
+}
+
+// The window branch (T8.5, emo-desktop A9.1): a pass holding its own
+// buffer — the run win_new handed, mapped into this pass's own table at
+// the identity of its physical addresses. The buffer is no surface yet:
+// the pass asks for the three roles the compositor does not implement
+// and names each refusal (`role popup r4`, `role subsurface r4`, `role
+// panel r4` — the kernel refuses by the number, the caller who chose
+// the role names it), presents the role-less buffer and meets the
+// surface's absence (`present r4` — the gate's checks pass, the
+// compositor's stack has no entry for it), then declares the toplevel
+// role, and from there the buffer is a window: the pass paints it,
+// reads it back (the mapping is the proof), commits it (the compositor's
+// walk carries it into the carve), moves it, commits again, focuses it
+// (the stack's raise), and closes it (the run home, the grant gone) —
+// the buffer's whole lifecycle, every state named on the wire.
+if peek64(win_cell) != 0 {
+  poke64(win_cell, 0)
+  case syscall.win_new(512, 128) {
+    (R.error, why) -> {
+      var wp = byte_at(0, 119) // w
+      wp = byte_at(wp, 105) // i
+      wp = byte_at(wp, 110) // n
+      wp = byte_at(wp, 32) // space
+      wp = byte_at(wp, 114) // r
+      wp = num_at(reason_num(why), wp)
+      wp = byte_at(wp, 10)
+      gate_line(wp)
+    }
+    (R.ok, ans) -> {
+      var id = win_id(ans)
+      win_line(id)
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, why) -> { present_refused_line(reason_num(why)) }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.win_role(id, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      role_refusal(id, 0)
+      paint_win(win_base(ans), 128, 256, 0x57494E00)
+      if win_verify(win_base(ans), 128, 256) {
+        win_ok_line()
+      } else {
+        mark()
+      }
+      // The frame's sum on the wire (T8.6): the compositor's
+      // composition line carries the same number — the blit's proof.
+      var sp = byte_at(0, 119) // w
+      sp = byte_at(sp, 105) // i
+      sp = byte_at(sp, 110) // n
+      sp = byte_at(sp, 32) // space
+      sp = byte_at(sp, 115) // s
+      sp = byte_at(sp, 117) // u
+      sp = byte_at(sp, 109) // m
+      sp = byte_at(sp, 32) // space
+      sp = num_at(buffer_sum(win_base(ans), 128, 256) & 4294967295, sp)
+      sp = byte_at(sp, 10)
+      gate_line(sp)
+      // The negotiation's fields (emo-desktop A9.3, EmoOS T8.15): the
+      // buffer's format and scale are words on the row, named by the
+      // client and recorded by the gate — XRGB8888 (0) and scale 1 the
+      // first accepted values, the rest refused by their number — and
+      // the protocol's version the one word the gate answers itself.
+      case syscall.win_format(id, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { fmt_ok_line() }
+      }
+      case syscall.win_format(id, 1) {
+        (R.error, _) -> { fmt_no_line() }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.win_scale(id, 1) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { scale_ok_line() }
+      }
+      case syscall.win_scale(id, 2) {
+        (R.error, _) -> { scale_no_line() }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.desktop_version() {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { protocol_line() }
+      }
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_shown_line() }
+      }
+      // The roles' substance (emo-desktop A9.3): a popup and a
+      // subsurface hang from this toplevel by verb 19 — their
+      // coordinates the parent's from the binding on, the walk painting
+      // each immediately above it — and a panel stands alone as the
+      // walk's topmost strip, refusing a parent by its role. Each is
+      // painted, presented (the composition names its absolute place),
+      // and closed — the runs home before the pass moves its own.
+      var ppop = 0
+      case syscall.win_new(128, 64) {
+        (R.error, _) -> { mark() }
+        (R.ok, pans) -> {
+          ppop = win_id(pans)
+          case syscall.win_role(ppop, 1) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(ppop, id) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_move(ppop, 48, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(pans), 64, 64, 0x504F5000)
+          case syscall.present(ppop, 0, 0, 128, 64) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { popup_up_line() }
+          }
+        }
+      }
+      var psub = 0
+      case syscall.win_new(64, 64) {
+        (R.error, _) -> { mark() }
+        (R.ok, sans) -> {
+          psub = win_id(sans)
+          case syscall.win_role(psub, 2) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(psub, id) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_move(psub, 400, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(sans), 64, 32, 0x53554200)
+          case syscall.present(psub, 0, 0, 64, 64) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { sub_up_line() }
+          }
+        }
+      }
+      var ppan = 0
+      case syscall.win_new(1024, 32) {
+        (R.error, _) -> { mark() }
+        (R.ok, qans) -> {
+          ppan = win_id(qans)
+          case syscall.win_role(ppan, 3) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          case syscall.win_parent(ppan, id) {
+            (R.error, _) -> { parent_panel_line() }
+            (R.ok, _) -> { mark() }
+          }
+          case syscall.win_move(ppan, 0, 736) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          paint_win(win_base(qans), 32, 512, 0x504E4C00)
+          case syscall.present(ppan, 0, 0, 1024, 32) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> { panel_up_line() }
+          }
+        }
+      }
+      case syscall.win_parent(ppop, 99) {
+        (R.error, _) -> { parent_gone_line() }
+        (R.ok, _) -> { mark() }
+      }
+      case syscall.win_move(id, 16, 32) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_moved_line() }
+      }
+      case syscall.present(id, 0, 0, 512, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_focus(id) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_focused_line() }
+      }
+      case syscall.win_close(ppop) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { popup_closed_line() }
+      }
+      case syscall.win_close(psub) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { sub_closed_line() }
+      }
+      case syscall.win_close(ppan) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { panel_closed_line() }
+      }
+      case syscall.win_close(id) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { win_closed_line() }
+      }
+    }
+  }
+  // The pass's own exit marker (emo-desktop A9.3): the frame
+  // callback's park below moves this pass's exit past the parent's
+  // era — the wait that printed this line retired with it, the marker
+  // the pass's to say. Then the park: the answer is the machine's
+  // next composition (the client era's first frame carries it), and
+  // the line it wakes to is the callback's proof on the wire.
+  win_zero_line()
+  case syscall.win_frame() {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> { cb_ok_line() }
+  }
+  syscall.exit(0)
+}
+
+// The client's line (emo-desktop A9.2): `client up <grant>` — the
+// surface is on the stack and its frame is on the display.
+def client_up_line(id Int64) Void {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) // space
+  p = num_at(id, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The client branch (emo-desktop A9.2): a pass of its own that opens a
+// toplevel surface — win_new, win_role(toplevel), win_move to its
+// place, the raw pattern painted into its own buffer, the present
+// putting it on the stack — and says `client up <grant>`. The first
+// client then stores where its table maps nothing and dies without
+// closing: the fault route reaps the pass and writes the comp page's
+// dead-owner cell (T8.14), and the compositor's next composition reads
+// it — the run back to the allocator, the row emptied, the surface off
+// the stack — the acceptance the rebirth proves. The reborn client
+// takes a different place and a different pattern, closes cleanly and
+// exits, so the parent's wait answers and the chain moves on with the
+// machine whole.
+if peek64(client_cell) != 0 {
+  poke64(client_cell, 0)
+  var cplace_x = 96
+  var cword = 0x57494E00
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, cans) -> {
+      var cid = win_id(cans)
+      case syscall.win_role(cid, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_move(cid, cplace_x, 320) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      paint_win(win_base(cans), 128, 192, cword)
+      case syscall.present(cid, 0, 0, 384, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      client_up_line(cid)
+      poke64(0x20000000, 0) // the kill: a store the table maps nothing —
+                           //   the fault the death-side reclaim waits for
+    }
+  }
+  syscall.exit(1) // unreachable — the store above faults first
+}
+if peek64(client2_cell) != 0 {
+  poke64(client2_cell, 0)
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { mark() }
+    (R.ok, cans) -> {
+      var cid = win_id(cans)
+      case syscall.win_role(cid, 0) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      case syscall.win_move(cid, 512, 320) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      paint_win(win_base(cans), 128, 192, 0x52454200)
+      case syscall.present(cid, 0, 0, 384, 128) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      client_up_line(cid)
+      case syscall.win_close(cid) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+    }
+  }
+  syscall.exit(0)
+}
+
 // The UI branch (T7.4, docs/ui.md): a spawned pass renders the
 // counter's frame and answers the console's keys until the quit key
 // ends it — the machine's third kind of resident, an application, and
@@ -285,9 +1738,312 @@ if peek64(reach_cell) != 0 {
 // the console after it.
 if peek64(ui_cell) != 0 {
   poke64(ui_cell, 0)
-  ui.run()
+  console_ui.run()
   syscall.exit(0)
 }
+
+// The window shell (emo-desktop A9.1, EmoOS T8.13): the desktop's first
+// windows — two toplevel surfaces, `alpha` and `beta`, each a buffer of
+// this pass's own, declared a toplevel by its role, placed by the move
+// verb, painted through `ui_fb_win` into its own words and committed by
+// its present, which the compositor answers with the whole stack
+// composited into the carve. Then the pass owns the merged stream and
+// is the desktop's policy over it: a press inside a window focuses it
+// (the focus verb, which raises it to the stack's top; the bar's steel
+// says which one is focused — the window that was focused repaints
+// dim, the new one repaints focused), a press on a window's bar begins
+// a drag — every report of the pointer moves the window with the
+// pointer through the move verb, its x kept on the blit's word
+// granularity and the window kept on the display — and the release is
+// the present that puts the moved window where the drag left it; a key
+// byte `a` is routed to the focused window alone, which counts it on
+// its body line; `q` ends the shell, the windows closed behind it. The
+// pointer's reports are scaled to the display by the device's own range
+// (verb 18's answer, never a constant). Every state on the wire: the
+// range, the grants, each focus, each key routed, each drag's end — the
+// `run.sh` beats, and the frames' digests (`frame <n>`) the hosted
+// twin's file names in the same order.
+if peek64(desk_cell) != 0 {
+  poke64(desk_cell, 0)
+  var mode = 0
+  case syscall.output_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, m) -> { mode = m }
+  }
+  // The pointer's axes, packed as the display's mode is: the X's
+  // maximum above the Y's.
+  var range = 0
+  case syscall.input_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, r) -> { range = r }
+  }
+  const mw = out_w(mode)
+  const mh = out_h(mode)
+  const max_x = out_w(range)
+  const max_y = out_h(range)
+  desk_range_line(max_x, max_y)
+  const ww = ui_fb_win.width()
+  const wh = ui_fb_win.height()
+  var ga = 0
+  var base_a = 0
+  case syscall.win_new(ww, wh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      ga = win_id(ans)
+      base_a = win_base(ans)
+    }
+  }
+  var gb = 0
+  var base_b = 0
+  case syscall.win_new(ww, wh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gb = win_id(ans)
+      base_b = win_base(ans)
+    }
+  }
+  // The shell's dock (emo-desktop A10.2): a panel surface at the
+  // display's bottom edge — the walk's topmost strip, no window over
+  // it — one tile per app, the focused app's lit.
+  const dw = mw
+  const dh = emo_desktop.strip_height()
+  var gd = 0
+  var base_d = 0
+  case syscall.win_new(dw, dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gd = win_id(ans)
+      base_d = win_base(ans)
+    }
+  }
+  desk_win_line(97, ga) // a
+  desk_win_line(98, gb) // b
+  case syscall.win_role(ga, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_role(gb, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_role(gd, 3) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  var ax = 64
+  var ay = 128
+  var bx = 576
+  var by = 384
+  case syscall.win_move(ga, ax, ay) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gb, bx, by) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gd, 0, mh - dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  // The start's park (the counter's shape): the pass waits for the
+  // run's first byte before its first frame — the beat between the
+  // window pass's era on the display and this one's, which `run.sh`'s
+  // screendump of the window's moved copy needs to be still. The byte
+  // itself is nothing: the loop's drop rules name what counts.
+  var wake = syscall.input_read()
+  const wa = Win.new(grant: ga, base: base_a, width: ww, height: wh)
+  const wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
+  const wd = Win.new(grant: gd, base: base_d, width: dw, height: dh)
+  const labels = ["a", "b"]
+  // The focus: none until a press names a window; the top of the
+  // stack as this pass knows it — beta, declared last, until a focus
+  // raises the other — is the one the hit test asks first.
+  var focused = 0
+  var top = gb
+  var keys_a = 0
+  var keys_b = 0
+  ui_fb_win.paint(wa, ui_fb_win.title_a(), false, keys_a)
+  wa.present()
+  ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
+  wb.present()
+  emo_desktop.paint(wd, dw, dh, labels, -1, 0)
+  wd.present()
+  var px = 0
+  var py = 0
+  var drag = 0
+  var gdx = 0
+  var gdy = 0
+  var running = true
+  while running {
+    const ev = syscall.input_read()
+    const t = ev_type(ev)
+    if t == 17741 {
+      const b = ev_value(ev)
+      if b == 113 {
+        running = false
+      }
+      if b == 97 && focused != 0 {
+        if focused == ga {
+          keys_a = keys_a + 1
+          ui_fb_win.paint(wa, ui_fb_win.title_a(), true, keys_a)
+          wa.present()
+          desk_key_line(ga, keys_a)
+        } else {
+          keys_b = keys_b + 1
+          ui_fb_win.paint(wb, ui_fb_win.title_b(), true, keys_b)
+          wb.present()
+          desk_key_line(gb, keys_b)
+        }
+      }
+    }
+    if t == 3 {
+      if ev_code(ev) == 0 {
+        px = scaled(ev_value(ev), mw, max_x)
+      }
+      if ev_code(ev) == 1 {
+        py = scaled(ev_value(ev), mh, max_y)
+      }
+      if drag == ga {
+        const nx = dragged(px, gdx, ww, mw, true)
+        const ny = dragged(py, gdy, wh, mh, false)
+        if nx != ax || ny != ay {
+          case syscall.win_move(ga, nx, ny) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {
+              ax = nx
+              ay = ny
+            }
+          }
+        }
+      }
+      if drag == gb {
+        const nx = dragged(px, gdx, ww, mw, true)
+        const ny = dragged(py, gdy, wh, mh, false)
+        if nx != bx || ny != by {
+          case syscall.win_move(gb, nx, ny) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {
+              bx = nx
+              by = ny
+            }
+          }
+        }
+      }
+    }
+    // The tablet's left button (BTN_LEFT, 272): the press is the hit
+    // test — the stack's top first — and the release ends a drag with
+    // the present that shows where it went.
+    if t == 1 && ev_code(ev) == 272 {
+      if ev_value(ev) == 1 {
+        var hit = 0
+        if py >= mh - dh {
+          // The strip is the dock's: a press there names a tile, and
+          // the tile names its app — no window beneath is consulted,
+          // and no drag begins (the dock is topmost; the walk paints
+          // it over everything).
+          const tile = emo_desktop.press(px, py, mw, mh, 2)
+          if tile == 0 {
+            hit = ga
+          }
+          if tile == 1 {
+            hit = gb
+          }
+        } else {
+          if top == gb {
+            if inside(px, py, bx, by, ww, wh) {
+              hit = gb
+            } else {
+              if inside(px, py, ax, ay, ww, wh) {
+                hit = ga
+              }
+            }
+          } else {
+            if inside(px, py, ax, ay, ww, wh) {
+              hit = ga
+            } else {
+              if inside(px, py, bx, by, ww, wh) {
+                hit = gb
+              }
+            }
+          }
+        }
+        if hit != 0 && hit != focused {
+          case syscall.win_focus(hit) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+          if focused == ga {
+            ui_fb_win.paint(wa, ui_fb_win.title_a(), false, keys_a)
+            wa.present()
+          }
+          if focused == gb {
+            ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
+            wb.present()
+          }
+          focused = hit
+          top = hit
+          if hit == ga {
+            ui_fb_win.paint(wa, ui_fb_win.title_a(), true, keys_a)
+            wa.present()
+          } else {
+            ui_fb_win.paint(wb, ui_fb_win.title_b(), true, keys_b)
+            wb.present()
+          }
+          var lit = -1
+          if hit == ga {
+            lit = 0
+          }
+          if hit == gb {
+            lit = 1
+          }
+          emo_desktop.paint(wd, dw, dh, labels, lit, 0)
+          wd.present()
+          desk_focus_line(hit)
+        }
+        if hit == ga && py < mh - dh && (py - ay) < ui_fb_win.bar_height() {
+          drag = ga
+          gdx = px - ax
+          gdy = py - ay
+        }
+        if hit == gb && py < mh - dh && (py - by) < ui_fb_win.bar_height() {
+          drag = gb
+          gdx = px - bx
+          gdy = py - by
+        }
+      } else {
+        if drag == ga {
+          wa.present()
+          desk_drag_line(ga, ax, ay)
+        }
+        if drag == gb {
+          wb.present()
+          desk_drag_line(gb, bx, by)
+        }
+        drag = 0
+      }
+    }
+  }
+  case syscall.win_close(ga) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_close(gb) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_close(gd) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+
+// The first apps (emo-desktop A10.3) lived here as token branches of
+// this image — each a pass re-entering this top level. A11.1 moved
+// them out: each app is a disk ELF of its own (`fb/apps/counter/` and
+// its siblings, the sources of the images this image's kernel embeds),
+// exec'd by name in the parent's own flow below. No token, no branch.
 
 // The child branch (T4.4): a spawned process re-enters this top level
 // sharing the image — its runtime state, its consts, this cell — so
@@ -484,7 +2240,1077 @@ case spawned {
   }
 }
 
-// The shell takes the foreground (T7.3): the REPL loop never returns —
-// the poweroff command's exit verb is what ends the machine now, and
-// the `counter` command (T7.5) is how a program begins from it.
-shell.run()
+// The screen carve's proof (T8.2): the machine's first full-screen
+// pass. The token poked, the spawn's kernel side reads it and hands
+// the carve into the child's table; the child paints its pattern
+// across the whole carve and exits, the process service reads the
+// words back through the kernel's half — `screen 0x86c00000 ok` on the
+// wire — and the parent's wait is answered after the line. The carve
+// was handed once: the second screen spawn is the resource refusal
+// (the reason number on the wire, `screen r5`), the pass that would
+// have claimed it never runs, and the token is cleared by the hand
+// that poked it.
+poke64(screen_cell, 1)
+var screen_spawned = syscall.spawn()
+case screen_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, spid) -> {
+    var screen_waited = syscall.wait(spid)
+    case screen_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+poke64(screen_cell, 1)
+var screen_again = syscall.spawn()
+case screen_again {
+  (R.error, why) -> {
+    poke64(screen_cell, 0)
+    var scp = byte_at(0, 115) // s
+    scp = byte_at(scp, 99) // c
+    scp = byte_at(scp, 114) // r
+    scp = byte_at(scp, 101) // e
+    scp = byte_at(scp, 101) // e
+    scp = byte_at(scp, 110) // n
+    scp = byte_at(scp, 32) // space
+    scp = byte_at(scp, 114) // r
+    scp = num_at(reason_num(why), scp)
+    scp = byte_at(scp, 10)
+    gate_line(scp)
+  }
+  (R.ok, _) -> { mark() }
+}
+
+// The input merge's proof (T8.3): the machine's keyboard beyond the
+// serial. The pass above claims the token and parks on the merged
+// stream — the run's hands answer it (the monitor's sendkey, then the
+// serial's byte on the same stream) and its exit answers the parent's
+// wait.
+poke64(key_cell, 1)
+var key_spawned = syscall.spawn()
+case key_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, kpid) -> {
+    var key_waited = syscall.wait(kpid)
+    case key_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The window buffer's proof (T8.5): the pass above — the run handed,
+// the mapping painted and read back, the commit recorded, the release
+// home — the buffer's lifecycle whole, and its exit answering the
+// parent's wait.
+poke64(win_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+
+// The client's kill and rebirth (emo-desktop A9.2): the entry parks on
+// the console read first — the era gate, the byte itself nothing — and
+// the run's hand opens it only when the previous era's display beat is
+// done. Then the first client presents its surface and dies without
+// closing — the death notice drops the surface and the run — and the
+// entry parks again until the hand says the reclaim landed. Then the
+// rebirth: a fresh pass, a fresh grant, a different place and pattern,
+// closed cleanly, its exit answering the wait.
+var cgate = syscall.read()
+poke64(client_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, _) -> {}
+}
+var cwalk = syscall.read()
+poke64(client2_cell, 1)
+case syscall.spawn() {
+  (R.error, _) -> { mark() }
+  (R.ok, c2pid) -> {
+    var c2wait = syscall.wait(c2pid)
+    case c2wait {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        if code == 0 {
+          var bp = byte_at(0, 99) // c
+          bp = byte_at(bp, 108) // l
+          bp = byte_at(bp, 105) // i
+          bp = byte_at(bp, 101) // e
+          bp = byte_at(bp, 110) // n
+          bp = byte_at(bp, 116) // t
+          bp = byte_at(bp, 32) // space
+          bp = byte_at(bp, 98) // b
+          bp = byte_at(bp, 97) // a
+          bp = byte_at(bp, 99) // c
+          bp = byte_at(bp, 107) // k
+          bp = byte_at(bp, 10)
+          gate_line(bp)
+        } else {
+          mark()
+        }
+      }
+    }
+  }
+}
+
+var cgate3 = syscall.read() // the third era gate: the run's hand has
+                            //   parked the pointer and read the client's
+                            //   display beat — only then does the desk era
+                            //   begin, so its start park takes the queued
+                            //   pointer event, never an early wake
+
+// The window shell (emo-desktop A9.1): the pass above — two toplevel
+// windows up, the run's hands focusing, dragging and keying them until
+// the quit byte — and its exit answering the parent's wait (`desk 0`).
+poke64(desk_cell, 1)
+var desk_spawned = syscall.spawn()
+case desk_spawned {
+  (R.error, _) -> { mark() }
+  (R.ok, dpid) -> {
+    var desk_waited = syscall.wait(dpid)
+    case desk_waited {
+      (R.error, _) -> { mark() }
+      (R.ok, code) -> {
+        var dp = desk_at()
+        dp = num_at(code, dp)
+        dp = byte_at(dp, 10)
+        gate_line(dp)
+      }
+    }
+  }
+}
+
+// The desktop (emo-desktop A12.1, EmoOS T8.19): the shell becomes the
+// machine's desktop. The desk pass has handed the display over and
+// its exit answered: the top level takes the foreground for its life,
+// the launcher's dock its panel and the merged stream its ear — no
+// wait verb anywhere, the exits riding the stream to their parent
+// now, a launch and a death the same loop's ordinary events. A press
+// on the strip names a tile and the tile launches its app (the exec
+// verb, the disk ELF); a byte names the REPL line and the line names
+// its command (the shell's own assembly, `feed` — the serial's bytes
+// ride the stream as 0x454D events, and the focus is the gate they
+// pass: the desktop hears them when the dock holds the focus, an
+// application when its window does, the missing echo the tell). The
+// dock knows residency, not focus — no wire tells the shell a focus
+// moved, so no tile wears the focused steel; the running dot is the
+// launcher's one visible fact. The machine ends as the proof's exit
+// did: the poweroff command is the boot pass's exit verb.
+
+// The exits' type, the stream's own marker family: 0x4558 ("EX"),
+// beside the serial bytes' 0x454D ("EM") — the small types the
+// keyboards and tablets carry can never name it. The code field is
+// the child's pid, the value the exit code.
+const ev_exit = 0x4558
+
+// The launcher's scratch (emo-desktop A12.1): the three app slots
+// above the shell's texts, buf-offsets — the file names the exec verb
+// loads poked once at the era's start (twelve bytes a row), one pid
+// word a slot beside them. A slot's pid is the live process's, zero
+// the not-resident's; the dot, the refusal and the exit line all read
+// it.
+const desk_names = 9216
+const desk_pids = 9264
+
+def desk_flen(slot Int64) Int64 {
+  if slot == 1 {
+    return 9
+  }
+  if slot == 2 {
+    return 10
+  }
+  return 11
+}
+
+// The bare name the lines print: the file's own with the `.elf` off.
+def desk_nlen(slot Int64) Int64 {
+  return desk_flen(slot) - 4
+}
+
+// `desktop <name>` at the scratch's head, the cursor back — the three
+// desktop lines' shared prefix, the name the slot's row holds (the
+// bare name) or the line's own bytes (the exec command's argument).
+def desk_line_name(name Int64, nlen Int64) Int64 {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32)
+  var i = 0
+  while i < nlen {
+    p = byte_at(p, peek8(name + i).to_int64())
+    i = i + 1
+  }
+  return p
+}
+
+def desk_up_line(name Int64, nlen Int64) Void {
+  var p = desk_line_name(name, nlen)
+  p = byte_at(p, 32)
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_running_line(name Int64, nlen Int64) Void {
+  var p = desk_line_name(name, nlen)
+  p = byte_at(p, 32)
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_exit_line(name Int64, nlen Int64, code Int64) Void {
+  var p = desk_line_name(name, nlen)
+  p = byte_at(p, 32)
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 120) // x
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32)
+  p = num_at(code, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def desk_running_mask() Int64 {
+  var m = 0
+  if peek64(buf + desk_pids) != 0 {
+    m = m | 1
+  }
+  if peek64(buf + desk_pids + 8) != 0 {
+    m = m | 2
+  }
+  if peek64(buf + desk_pids + 16) != 0 {
+    m = m | 4
+  }
+  return m
+}
+
+// The typed name against the slots' file rows — the exec command's
+// argument naming a slot the tile's press names too.
+def desk_slot_of(name Int64, nlen Int64) Int64 {
+  var slot = 0
+  while slot < 3 {
+    if nlen == desk_flen(slot) {
+      var row = buf + desk_names + (slot * 12)
+      var same = true
+      var i = 0
+      while i < nlen {
+        if peek8(name + i).to_int64() != peek8(row + i).to_int64() {
+          same = false
+        }
+        i = i + 1
+      }
+      if same {
+        return slot
+      }
+    }
+    slot = slot + 1
+  }
+  return -1
+}
+
+// The launcher's dock, repainted whole: the tiles with their dots.
+def desk_dock(wd Win, dw Int64, dh Int64, labels Array[String]) Void {
+  emo_desktop.paint(wd, dw, dh, labels, -1, desk_running_mask())
+  wd.present()
+}
+
+// The launcher's one launch (emo-desktop A12.1): the slot's exec by
+// its own row — the pid lands in the slot, the dock repaints with the
+// tile's dot lit, `desktop <name> up` on the wire. A live slot
+// refuses (`desktop <name> running` — the tiles name apps, not
+// instances), and an exec the machine refuses speaks the stub's
+// message, `desktop: <the reason>`.
+def desk_launch(slot Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Void {
+  var name = buf + desk_names + (slot * 12)
+  if peek64(buf + desk_pids + (slot * 8)) != 0 {
+    desk_running_line(name, desk_nlen(slot))
+  } else {
+    case syscall.exec(name, desk_flen(slot)) {
+      (R.error, why) -> { shell.desk_err(why) }
+      (R.ok, child) -> {
+        poke64(buf + desk_pids + (slot * 8), child)
+        desk_up_line(name, desk_nlen(slot))
+        desk_dock(wd, dw, dh, labels)
+        desk_chrome()
+      }
+    }
+  }
+}
+
+// The exec command's half (emo-desktop A12.1): the line's name, the
+// launcher's bookkeeping when it names one of the slots' own — the
+// same dot a tile press lights — and the volume's own when it does
+// not (the exec answers; a foreign image's success is silent, the
+// Unix convention the file commands keep).
+def desk_exec_cmd(e Int64, n Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Void {
+  var ns = shell.skip_spaces(e, n)
+  var ne = shell.word_end(ns, n)
+  if ns == n || shell.skip_spaces(ne, n) < n {
+    shell.exec_badarg()
+  } else {
+    var name = shell.line_ptr() + ns
+    var nlen = ne - ns
+    var slot = desk_slot_of(name, nlen)
+    if slot >= 0 && peek64(buf + desk_pids + (slot * 8)) != 0 {
+      desk_running_line(buf + desk_names + (slot * 12), desk_nlen(slot))
+    } else {
+      case syscall.exec(name, nlen) {
+        (R.error, why) -> { shell.desk_err(why) }
+        (R.ok, child) -> {
+          if slot >= 0 {
+            poke64(buf + desk_pids + (slot * 8), child)
+            desk_up_line(buf + desk_names + (slot * 12), desk_nlen(slot))
+            desk_dock(wd, dw, dh, labels)
+            desk_chrome()
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- the desktop's icons (emo-desktop A13) ----
+//
+// The volume's own files as the desktop shows them: a flat file a
+// document, a name's `/` prefix the folder that prefix names, the
+// `.elf` apps never on the desktop — the dock's tiles name apps, the
+// desktop's icons name the volume's papers and folders, the way macOS
+// keeps them apart. The listing is the fs's answer; the view is its
+// parse; the selection and the current folder are the two words of
+// state a press moves. All of it scratch cells and typed loops — the
+// view is rebuilt whole on every change (a boot, a command that
+// touches the volume, a folder entered or left), and a rebuild is a
+// few hundred bytes of pokes, not a tree.
+//
+//   entry: the name's bytes [0..24), its length at +24, its kind at +32
+//     — 0 a document, 1 a folder, 2 the `..` way up. 40 bytes, and the
+//     fs's own 64-entry table the bound the view never outgrows.
+const desk_list = 9344 // the listing's bytes, the fs's newline form
+const desk_list_len = 11392 // the bytes the answer wrote
+const desk_list_fold = 11400 // the listing's fold, the change detector
+const desk_view = 11408 // the view's entries
+const desk_view_count = 13968
+const desk_folder = 13976 // the current folder's prefix bytes
+const desk_folder_len = 14000
+const desk_sel = 14008 // the selected entry, -1 none
+const desk_tmp = 14016 // the re-list's scratch, the fold's input
+const desk_wall_grant = 16064 // the wallpaper's grant and base — the
+const desk_wall_base = 16072 // surfaces rebuilt from these at a repaint
+const desk_bar_grant = 16080 // the header panel's grant and base
+const desk_bar_base = 16088
+const desk_mode_cell = 16096 // the display's mode packed, w above h
+
+// Whether a name is an app's: the `.elf` the dock's slots carry, off
+// the desktop.
+def desk_is_elf(namep Int64, nlen Int64) Bool {
+  if nlen < 4 {
+    return false
+  }
+  return peek8(namep + nlen - 4) == 46B && peek8(namep + nlen - 3) == 101B && peek8(namep + nlen - 2) == 108B && peek8(namep + nlen - 1) == 102B
+}
+
+// One view entry written from a name's bytes; the next index back.
+def desk_view_put(idx Int64, namep Int64, nlen Int64, kind Int64) Int64 {
+  const e = buf + desk_view + (idx * 40)
+  var i = 0
+  while i < nlen {
+    poke8(e + i, peek8(namep + i))
+    i = i + 1
+  }
+  poke64(e + 24, nlen)
+  poke64(e + 32, kind)
+  return idx + 1
+}
+
+// Whether the view grown so far already shows that folder: two folders
+// of one prefix are one icon, the dedupe the parse's own.
+def desk_view_has(count Int64, namep Int64, nlen Int64) Bool {
+  var i = 0
+  while i < count {
+    const e = buf + desk_view + (i * 40)
+    if peek64(e + 24) == nlen && peek64(e + 32) == 1 {
+      var same = true
+      var k = 0
+      while k < nlen {
+        if peek8(e + k) != peek8(namep + k) {
+          same = false
+          k = nlen
+        } else {
+          k = k + 1
+        }
+      }
+      if same {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The listing through the view's grammar, whole from scratch. At the
+// root: a flat name a document, a prefixed name its folder once, the
+// `.elf` rows skipped. Inside a folder F: the `..` way up first, then
+// each name under F — the rest after `F/` a document of its own, or
+// the subfolder its own prefix names, deduped the same way. A folder
+// and a flat file of one spelling are both shown: they are two
+// entries of the volume, and the view hides nothing.
+def desk_view_build() Void {
+  var count = 0
+  const flen = peek64(buf + desk_list_len)
+  const folder_len = peek64(buf + desk_folder_len)
+  if folder_len > 0 {
+    const e = buf + desk_view
+    poke8(e, 46B)
+    poke8(e + 1, 46B)
+    poke64(e + 24, 2)
+    poke64(e + 32, 2)
+    count = 1
+  }
+  var pos = 0
+  while pos < flen {
+    var n = pos
+    while n < flen && peek8(buf + desk_list + n) != 10B {
+      n = n + 1
+    }
+    const nlen = n - pos
+    const namep = buf + desk_list + pos
+    if !desk_is_elf(namep, nlen) {
+      // the first slash, or -1: the name's folder membership
+      var slash = -1
+      var k = 0
+      while k < nlen {
+        if peek8(namep + k) == 47B {
+          slash = k
+          k = nlen
+        } else {
+          k = k + 1
+        }
+      }
+      if folder_len == 0 {
+        if slash < 0 {
+          count = desk_view_put(count, namep, nlen, 0)
+        } else {
+          if !desk_view_has(count, namep, slash) {
+            count = desk_view_put(count, namep, slash, 1)
+          }
+        }
+      } else {
+        // under F: the name is F's own bytes, the slash, the child
+        var under = true
+        var k2 = 0
+        while k2 < folder_len {
+          if peek8(namep + k2) != peek8(buf + desk_folder + k2) {
+            under = false
+            k2 = folder_len
+          } else {
+            k2 = k2 + 1
+          }
+        }
+        if under && slash == folder_len && nlen > folder_len + 1 {
+          const restp = namep + folder_len + 1
+          const rest = nlen - folder_len - 1
+          var sub = -1
+          var k3 = 0
+          while k3 < rest {
+            if peek8(restp + k3) == 47B {
+              sub = k3
+              k3 = rest
+            } else {
+              k3 = k3 + 1
+            }
+          }
+          if sub < 0 {
+            count = desk_view_put(count, restp, rest, 0)
+          } else {
+            if !desk_view_has(count, restp, sub) {
+              count = desk_view_put(count, restp, sub, 1)
+            }
+          }
+        }
+      }
+    }
+    pos = n + 1
+  }
+  poke64(buf + desk_view_count, count)
+  // a selection past the view is no selection
+  if peek64(buf + desk_sel) >= count {
+    poke64(buf + desk_sel, -1)
+  }
+}
+
+// The listing taken and its fold kept — the boot's one load, the
+// refresh's comparison the command loop's.
+def desk_list_load() Void {
+  case syscall.file_list(buf + desk_list, 2048) {
+    (R.error, _) -> { mark() }
+    (R.ok, n) -> {
+      poke64(buf + desk_list_len, n)
+      var d = 0
+      var i = 0
+      while i < n {
+        d = (d * 31 + peek8(buf + desk_list + i).to_int64()) & 4294967295
+        i = i + 1
+      }
+      poke64(buf + desk_list_fold, d)
+    }
+  }
+}
+
+// ---- the metal's own painting (emo-desktop A13) ----
+//
+// The wallpaper and its icons are painted straight onto the buffer's
+// bytes through the typed stores — the carve's own rule, and the
+// round's find: the `Surface`'s methods are class bodies, and a class
+// body boxes every word it computes into the arena for good (the pool
+// reclaims the identities, the boxing never comes back — "left in the
+// arena per repaint" is the dock's own comment). The first icon press
+// died the second repaint: one surface-path repaint weighed as much as
+// the boot had left. These defs are typed top-level ones, so a repaint
+// costs no arena at all and the desktop repaints for a living. The
+// shapes are the package's words (`emo_desktop.wall_top` and kin — the
+// hosted canvas paints the same formula), so the golden's digest and
+// the screendump's bytes are one design.
+
+// One clipped span packed x above w — the ribbon row's store span, the
+// clip the package's `blend` gets from `ui_fb.clip` and the raw stores
+// must do themselves (a negative x would walk the store off the row).
+def desk_span_clip(x Int64, w Int64, mw Int64) Int64 {
+  var x0 = x
+  var w0 = w
+  if x0 < 0 {
+    w0 = w0 + x0
+    x0 = 0
+  }
+  if x0 + w0 > mw {
+    w0 = mw - x0
+  }
+  if w0 < 0 {
+    w0 = 0
+  }
+  return (x0 << 32) | w0
+}
+
+// One ribbon row blended: the span the clip packed, one pixel tall.
+def desk_ribbon_row(base Int64, mw Int64, y Int64, x Int64, w Int64, ink_color Int64) Void {
+  const span = desk_span_clip(x, w, mw)
+  const x0 = span >> 32
+  const w0 = span & 4294967295
+  if w0 > 0 {
+    carve_blend(base, mw, x0, y, w0, 1, ink_color)
+  }
+}
+
+// The wallpaper's art, whole: the gradient row by row (each channel a
+// positive-weight lerp between the package's two anchors), then the
+// three ribbons over it — the same slopes and inks the package's
+// `wallpaper` lays on the hosted canvas, mirrored here because the
+// call that paints must be the call that stays typed.
+def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
+  const denom = mh - 1
+  const tr = (emo_desktop.wall_top() >> 16) & 255
+  const tg = (emo_desktop.wall_top() >> 8) & 255
+  const tb = emo_desktop.wall_top() & 255
+  const br = (emo_desktop.wall_bottom() >> 16) & 255
+  const bg = (emo_desktop.wall_bottom() >> 8) & 255
+  const bb = emo_desktop.wall_bottom() & 255
+  var y = 0
+  while y < mh {
+    const r = (tr * (denom - y) + br * y) / denom
+    const g = (tg * (denom - y) + bg * y) / denom
+    const b = (tb * (denom - y) + bb * y) / denom
+    carve_fill(base, mw, 0, y, mw, 1, (r << 16) | (g << 8) | b)
+    y = y + 1
+  }
+  var t = 0
+  while t < 480 {
+    desk_ribbon_row(base, mw, t, -200 + (3 * t) / 4, 460, 0x2830B8C8)
+    t = t + 1
+  }
+  var u = 160
+  while u < 720 {
+    desk_ribbon_row(base, mw, u, 60 + u / 2, 400, 0x20E86890)
+    u = u + 1
+  }
+  var v = 340
+  while v < mh {
+    desk_ribbon_row(base, mw, v, 900 - v / 4, 540, 0x188868E8)
+    v = v + 1
+  }
+}
+
+// The name's byte under the box: the font's drawing of that byte's own
+// arithmetic, the hollow cell past the printable span — the package's
+// `text_byte` rule, through the carve's typed stamp.
+def desk_name_byte(base Int64, mw Int64, mh Int64, x Int64, y Int64, b Int64) Void {
+  var i = b - 32
+  if i < 0 || i > 94 {
+    i = 95
+  }
+  carve_glyph(base, mw, mh, x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), 0xF8F8F0)
+}
+
+// A document icon at its cell: the selection's blend first, then the
+// page with its folded corner and three text lines — the package's
+// `paint_icon_doc` shapes, at the cell origin the package's `icon_cell`
+// packed.
+def desk_icon_doc(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+  }
+  const ix = cx + emo_desktop.icon_off_x()
+  const iy = cy + emo_desktop.icon_off_y()
+  carve_fill(base, mw, ix + 8, iy + 2, 28, 40, 0xE8E8F0)
+  carve_fill(base, mw, ix + 28, iy + 2, 8, 8, 0xC2C8D4)
+  carve_fill(base, mw, ix + 14, iy + 16, 16, 3, 0x98A0B0)
+  carve_fill(base, mw, ix + 14, iy + 24, 16, 3, 0x98A0B0)
+  carve_fill(base, mw, ix + 14, iy + 32, 10, 3, 0x98A0B0)
+}
+
+// A folder icon at its cell: the tab and body in the folder blue, the
+// light along the top, the shade at the foot — the package's
+// `paint_icon_folder` shapes.
+def desk_icon_folder(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+  }
+  const ix = cx + emo_desktop.icon_off_x()
+  const iy = cy + emo_desktop.icon_off_y()
+  carve_fill(base, mw, ix + 6, iy + 8, 16, 7, 0x4098E0)
+  carve_fill(base, mw, ix + 4, iy + 13, 36, 25, 0x4098E0)
+  carve_fill(base, mw, ix + 4, iy + 13, 36, 3, 0x5FA8E8)
+  carve_fill(base, mw, ix + 4, iy + 32, 36, 6, 0x327FC2)
+}
+
+// The view's icons over the wallpaper: a document or a folder per
+// entry, the selection's blend behind the one selected, the name's
+// bytes under the box — ten cells of it shown (a display name's cut;
+// the volume's own spelling is what the commands read).
+def desk_icons_paint(base Int64, mw Int64, mh Int64) Void {
+  const count = peek64(buf + desk_view_count)
+  const sel = peek64(buf + desk_sel)
+  var i = 0
+  while i < count {
+    const cell = emo_desktop.icon_cell(i, mw, mh)
+    const cx = cell >> 32
+    const cy = cell & 4294967295
+    const e = buf + desk_view + (i * 40)
+    const kind = peek64(e + 32)
+    if kind == 0 {
+      desk_icon_doc(base, mw, cx, cy, i == sel)
+    } else {
+      desk_icon_folder(base, mw, cx, cy, i == sel)
+    }
+    var shown = peek64(e + 24)
+    if shown > 10 {
+      shown = 10
+    }
+    var k = 0
+    while k < shown {
+      desk_name_byte(base, mw, mh, cx + 8 + k * 8, cy + 56, peek8(e + k).to_int64())
+      k = k + 1
+    }
+    i = i + 1
+  }
+}
+
+// The wallpaper whole, repainted: the art, the icons, the digest's
+// frame line, the present — the surface nothing but its grant and its
+// bytes, no class, no interface, no arena spent.
+def desk_wall_repaint() Void {
+  const base = peek64(buf + desk_wall_base)
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const mh = mode & 4294967295
+  desk_wallpaper_paint(base, mw, mh)
+  desk_icons_paint(base, mw, mh)
+  frame_line(carve_digest(base, mw, mh))
+  case syscall.present(peek64(buf + desk_wall_grant), 0, 0, mw, mh) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+}
+
+// The header bar repainted: the running count is its one live fact,
+// and a launch or a death is the news it carries.
+def desk_chrome() Void {
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const bar = Win.new(grant: peek64(buf + desk_bar_grant), base: peek64(buf + desk_bar_base), width: mw, height: emo_desktop.header_height())
+  const m = desk_running_mask()
+  var running = 0
+  if (m & 1) == 1 {
+    running = running + 1
+  }
+  if (m & 2) == 2 {
+    running = running + 1
+  }
+  if (m & 4) == 4 {
+    running = running + 1
+  }
+  emo_desktop.paint_header(bar, mw, running)
+  bar.present()
+}
+
+// A press on the desktop's own ground: an icon's cell, or the bare
+// wallpaper. A document the selection moves (and the repaint only when
+// it moved); a folder the door into its prefix; the `..` the way up —
+// the prefix's last part struck. A bare press clears the selection,
+// the way a click on bare desktop does; nothing to clear, nothing to
+// repaint.
+def desk_icon_press(hit Int64) Void {
+  if hit < 0 {
+    if peek64(buf + desk_sel) != -1 {
+      poke64(buf + desk_sel, -1)
+      desk_wall_repaint()
+    }
+  } else {
+    const e = buf + desk_view + (hit * 40)
+    const kind = peek64(e + 32)
+    if kind == 0 {
+      if peek64(buf + desk_sel) != hit {
+        poke64(buf + desk_sel, hit)
+        desk_wall_repaint()
+      }
+    } else {
+      // the folder's door, both ways
+      const nlen = peek64(e + 24)
+      const flen = peek64(buf + desk_folder_len)
+      if kind == 1 {
+        // in: the view's name appended to the current prefix, `/`
+        // between — the separator's slot only when a prefix is there
+        // to separate (the root's child starts at the buffer's head)
+        var at = flen
+        if flen > 0 {
+          poke8(buf + desk_folder + flen, 47B)
+          at = flen + 1
+        }
+        var i = 0
+        while i < nlen {
+          poke8(buf + desk_folder + at + i, peek8(e + i))
+          i = i + 1
+        }
+        poke64(buf + desk_folder_len, at + nlen)
+      } else {
+        // up: the prefix's last part struck, the root when none is left
+        if flen > 0 {
+          var last = -1
+          var k = 0
+          while k < flen {
+            if peek8(buf + desk_folder + k) == 47B {
+              last = k
+            }
+            k = k + 1
+          }
+          if last < 0 {
+            poke64(buf + desk_folder_len, 0)
+          } else {
+            poke64(buf + desk_folder_len, last)
+          }
+        }
+      }
+      poke64(buf + desk_sel, -1)
+      desk_view_build()
+      desk_wall_repaint()
+    }
+  }
+}
+
+// The volume may have changed under a command (`write`, `rm`): the
+// re-list's fold is the change detector, the copy, the rebuild and the
+// repaint the answer. An unchanged fold is the common case, and it
+// costs one list and one fold — no present, no frame.
+def desk_icons_refresh() Void {
+  case syscall.file_list(buf + desk_tmp, 2048) {
+    (R.error, _) -> { mark() }
+    (R.ok, n) -> {
+      var d = 0
+      var i = 0
+      while i < n {
+        d = (d * 31 + peek8(buf + desk_tmp + i).to_int64()) & 4294967295
+        i = i + 1
+      }
+      if d != peek64(buf + desk_list_fold) {
+        var j = 0
+        while j < n {
+          poke8(buf + desk_list + j, peek8(buf + desk_tmp + j))
+          j = j + 1
+        }
+        poke64(buf + desk_list_len, n)
+        poke64(buf + desk_list_fold, d)
+        desk_view_build()
+        desk_wall_repaint()
+      }
+    }
+  }
+}
+
+// `desktop icons <n>` — the wallpaper's first present's annotation,
+// the count the view grew.
+def desk_icons_line() Void {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 32) // space
+  p = num_at(peek64(buf + desk_view_count), p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The desktop's own body (emo-desktop A12.1): the dock's panel up,
+// the slots' names poked, the banner and the prompt — then the loop
+// that never returns.
+def desktop() Void {
+  shell.sh_init()
+  var nb = byte_at(desk_names, 99) // counter.elf
+  nb = byte_at(nb, 111)
+  nb = byte_at(nb, 117)
+  nb = byte_at(nb, 110)
+  nb = byte_at(nb, 116)
+  nb = byte_at(nb, 101)
+  nb = byte_at(nb, 114)
+  nb = byte_at(nb, 46)
+  nb = byte_at(nb, 101)
+  nb = byte_at(nb, 108)
+  nb = byte_at(nb, 102)
+  nb = byte_at(desk_names + 12, 102) // files.elf
+  nb = byte_at(nb, 105)
+  nb = byte_at(nb, 108)
+  nb = byte_at(nb, 101)
+  nb = byte_at(nb, 115)
+  nb = byte_at(nb, 46)
+  nb = byte_at(nb, 101)
+  nb = byte_at(nb, 108)
+  nb = byte_at(nb, 102)
+  nb = byte_at(desk_names + 24, 101) // editor.elf
+  nb = byte_at(nb, 100)
+  nb = byte_at(nb, 105)
+  nb = byte_at(nb, 116)
+  nb = byte_at(nb, 111)
+  nb = byte_at(nb, 114)
+  nb = byte_at(nb, 46)
+  nb = byte_at(nb, 101)
+  nb = byte_at(nb, 108)
+  nb = byte_at(nb, 102)
+  poke64(buf + desk_pids, 0)
+  poke64(buf + desk_pids + 8, 0)
+  poke64(buf + desk_pids + 16, 0)
+  var mode = 0
+  case syscall.output_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, m) -> { mode = m }
+  }
+  const mw = out_w(mode)
+  const mh = out_h(mode)
+  const dw = mw
+  const dh = emo_desktop.strip_height()
+  poke64(buf + desk_mode_cell, (mw << 32) | mh)
+  // The desktop's own canvas (emo-desktop A13): the volume's listing
+  // taken, the view grown from it — the icons the wallpaper carries —
+  // then the wallpaper itself (role 4, the walk's undermost layer) and
+  // the header bar (a panel at the top edge) before the dock, so the
+  // first composition of every surface already has the desktop whole.
+  poke64(buf + desk_folder_len, 0)
+  poke64(buf + desk_sel, -1)
+  desk_list_load()
+  desk_view_build()
+  var gw = 0
+  var base_w = 0
+  case syscall.win_new(mw, mh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gw = win_id(ans)
+      base_w = win_base(ans)
+    }
+  }
+  case syscall.win_role(gw, 4) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gw, 0, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  poke64(buf + desk_wall_grant, gw)
+  poke64(buf + desk_wall_base, base_w)
+  desk_wall_repaint()
+  desk_icons_line()
+  var gh = 0
+  var base_h = 0
+  case syscall.win_new(mw, emo_desktop.header_height()) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gh = win_id(ans)
+      base_h = win_base(ans)
+    }
+  }
+  case syscall.win_role(gh, 3) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gh, 0, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  poke64(buf + desk_bar_grant, gh)
+  poke64(buf + desk_bar_base, base_h)
+  desk_chrome()
+  var gd = 0
+  var base_d = 0
+  case syscall.win_new(dw, dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gd = win_id(ans)
+      base_d = win_base(ans)
+    }
+  }
+  case syscall.win_role(gd, 3) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gd, 0, mh - dh) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  const wd = Win.new(grant: gd, base: base_d, width: dw, height: dh)
+  const labels = ["c", "f", "e"]
+  desk_dock(wd, dw, dh, labels)
+  shell.banner()
+  shell.prompt()
+  // The pointer's axes, packed as the display's mode is: the X's
+  // maximum above the Y's — the press's position the shell scales
+  // itself, the tile the strip's own policy names.
+  var range = 0
+  case syscall.input_info(0) {
+    (R.error, _) -> { mark() }
+    (R.ok, r) -> { range = r }
+  }
+  const max_x = out_w(range)
+  const max_y = out_h(range)
+  var px = 0
+  var py = 0
+  while true {
+    const ev = syscall.input_read()
+    const t = ev_type(ev)
+    // The death's word (emo-desktop A12.1): type 0x4558, the child's
+    // pid in the code, its exit code in the value. A slot's pid ends
+    // and the slot empties — the dot goes out, the dock repaints,
+    // `desktop <name> exit <code>` on the wire. The proof chain's own
+    // deaths ride the same ring to the same parent and name no slot:
+    // the silent drops are the drain.
+    if t == ev_exit {
+      const child = ev_code(ev)
+      const code = ev_value(ev)
+      var slot = -1
+      if child == peek64(buf + desk_pids) {
+        slot = 0
+      }
+      if child == peek64(buf + desk_pids + 8) {
+        slot = 1
+      }
+      if child == peek64(buf + desk_pids + 16) {
+        slot = 2
+      }
+      if slot == 0 {
+        poke64(buf + desk_pids, 0)
+        desk_exit_line(buf + desk_names, desk_nlen(0), code)
+        desk_dock(wd, dw, dh, labels)
+        desk_chrome()
+      }
+      if slot == 1 {
+        poke64(buf + desk_pids + 8, 0)
+        desk_exit_line(buf + desk_names + 12, desk_nlen(1), code)
+        desk_dock(wd, dw, dh, labels)
+        desk_chrome()
+      }
+      if slot == 2 {
+        poke64(buf + desk_pids + 16, 0)
+        desk_exit_line(buf + desk_names + 24, desk_nlen(2), code)
+        desk_dock(wd, dw, dh, labels)
+        desk_chrome()
+      }
+    }
+    // The serial's byte: the line's feed, the command when the line
+    // ends — `exec` the launcher's own dispatch, the rest the shell's.
+    if t == 17741 {
+      const n = shell.feed(ev_value(ev))
+      if n >= 0 {
+        const s = shell.skip_spaces(0, n)
+        const e = shell.word_end(s, n)
+        if shell.exec_p(s, e - s) {
+          desk_exec_cmd(e, n, wd, dw, dh, labels)
+        } else {
+          shell.execute(n)
+          // the volume may have changed under the command (the write,
+          // the rm): the fold's comparison is the refresh's whole cost
+          // when it did not (emo-desktop A13)
+          desk_icons_refresh()
+        }
+        shell.prompt()
+      }
+    }
+    if t == 3 {
+      if ev_code(ev) == 0 {
+        px = scaled(ev_value(ev), mw, max_x)
+      }
+      if ev_code(ev) == 1 {
+        py = scaled(ev_value(ev), mh, max_y)
+      }
+    }
+    // The tablet's left button (BTN_LEFT, 272): a press on the strip
+    // names a tile, and the tile names its app — the launcher's whole
+    // answer; a press above the strip is the desktop's own ground or
+    // the windows' world, the press-raise the compositor's own. The
+    // bar's press is no one's here: the compositor gave the focus to
+    // the desktop already (T8.27). An icon's cell the hit test names —
+    // the selection moved, the folder's door, the way up; the bare
+    // wallpaper the selection's clear (emo-desktop A13).
+    if t == 1 && ev_code(ev) == 272 {
+      if ev_value(ev) == 1 {
+        const tile = emo_desktop.press(px, py, mw, mh, 3)
+        if tile == 0 {
+          desk_launch(0, wd, dw, dh, labels)
+        }
+        if tile == 1 {
+          desk_launch(1, wd, dw, dh, labels)
+        }
+        if tile == 2 {
+          desk_launch(2, wd, dw, dh, labels)
+        }
+        if tile == -1 && py >= emo_desktop.header_height() {
+          desk_icon_press(emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))
+        }
+      }
+    }
+  }
+}
+
+// The desktop takes the foreground (emo-desktop A12.1): the loop
+// never returns — the poweroff command's exit verb is what ends the
+// machine now, and the launcher's tiles are how a program begins.
+desktop()

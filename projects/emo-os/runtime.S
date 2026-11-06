@@ -69,6 +69,32 @@ emo_start:
     la t0, emo_os_user_blob_end
     sd t0, 8(t1)
     sd zero, 16(t1)
+    # the disk ELFs' blobs (emo-desktop A11.1): the three apps' images
+    # ride beside the boot image, and their bounds go to the handoff
+    # page's free tail — the first boot installs them on the volume
+    # (the root writes each through the filesystem service when a probe
+    # says the file is missing), the boots after find the volume that
+    # carries them and exec from the disk
+    la t0, emo_os_user_blob_c
+    li t1, 0xFFFFFFC0870021d0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_c_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_f
+    li t1, 0xFFFFFFC0870021e0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_f_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_e
+    li t1, 0xFFFFFFC0870021f0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_e_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_s
+    li t1, 0xFFFFFFC087002200
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_s_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks
@@ -92,6 +118,33 @@ emo_start:
     la t0, emo_frames__give
     la t1, emo_block_give_hook
     sd t0, 0(t1)
+    # the arena's run (T8.9): the arena hook goes to frames.emo's
+    # take_run — the window buffer's own machinery — and the run's
+    # length to the runtime's word beside it, both this stub's writes:
+    # a child's arena is a contiguous run of frames.arena_run blocks,
+    # claimed in one take at the spawn and walked home block by block
+    # at the death, the length never a runtime-side guess.
+    la t0, emo_frames__take_run
+    la t1, emo_arena_take_hook
+    sd t0, 0(t1)
+    li t0, 4                    # frames.emo's arena_run
+    la t1, emo_arena_run_len
+    sd t0, 0(t1)
+    # the tick's slice (T8.21): the root's quota word — the one policy
+    # word the machine's preemption rides on. 0 is the unassigned value
+    # the ISR's quota step answers dormant, so the stub assigns the
+    # root's slice and every child inherits it at the spawn (the spawn's
+    # own copy of the parent's policy words); five ticks — 50 ms of the
+    # 10 ms tick — the honest round-robin: a busy app keeps the hart no
+    # longer than one slice, and a wake it never yields to runs within
+    # the next. The quota loads at the pick, so the root's earliest
+    # work — everything before its first park's return — runs
+    # unassigned; from the first park on, the root shares the discipline
+    # with everything it spawns, and a round-robin of one spends its
+    # slice on itself.
+    la t1, emo_procs
+    li t0, 5
+    sd t0, 56(t1)
     # the address spaces (T6.2): the three space hooks go to the
     # runtime's words — the build (a spawned pass's table, built at the
     # end of emo_user_spawn from the slot's own words), the resolve (the
@@ -115,6 +168,13 @@ emo_start:
     # it. Zero in every image whose stub leaves it.
     la t0, emo_os_death_notice
     la t1, emo_death_hook
+    sd t0, 0(t1)
+    # the image give hook (emo-desktop A11.1): an exec's child's death
+    # walks its image's run home through exec.emo's def — the pid's
+    # image cell names the record, the record the run's base and
+    # length. Zero in every image whose stub leaves it.
+    la t0, emo_exec__image_home
+    la t1, emo_image_give_hook
     sd t0, 0(t1)
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and

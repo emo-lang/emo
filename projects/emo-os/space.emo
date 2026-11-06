@@ -2,7 +2,7 @@
 // its own Sv39 table, built at spawn — the image's segments (code RX,
 // data RW, a shared boundary page where the ELF's segments meet inside
 // one 4 KiB page, the union of the two), the process's own stack block
-// and arena block, the user cells page, each with U, and the kernel's
+// and arena run, the user cells page, each with U, and the kernel's
 // whole high half beside them with no U (sv39.map_kernel) — the boot
 // pass's trap page (T6.3) included, rw without U. U-mode's
 // world is exactly those pages: its code, its image's data (the passes
@@ -86,13 +86,53 @@ const rw = pte_r | pte_w
 const page = 4096
 const block = 65536
 
-// The slot words the build reads: the arena cursor at 576 (the block's
-// base, a kernel address), the stack block at 864 (its physical base —
-// the pass runs on the identity alias of its block), and the space
-// word at 872 the build answers into (the stride 880).
-const slot_arena = 576
+// The slot words the build reads: the arena's base at 880 (the run's
+// first block, a kernel address) and the arena's end at 584 (the run's
+// one-past end — between them the whole run the spawn claimed, the
+// length never this module's guess), the stack block at 864 (its
+// physical base — the pass runs on the identity alias of its block),
+// and the space word at 872 the build answers into (the stride 888).
+const slot_arena_base = 880
+const slot_arena_end = 584
 const slot_stack = 864
 const slot_space = 872
+
+// The screen carve's grant (T8.2): the cell on the handoff page the
+// process service pokes with the carve's kernel address when the spawn
+// it is serving is the machine's full-screen pass — the screen token's
+// other half, read at the spawn because the carve's mapping must exist
+// before the child's first store. The build consumes it: the cell is
+// zero again after the one build that mapped the carve, and a spawn
+// without the grant builds a table that maps none of it. The mapping
+// is the identity of the carve's physical addresses — RW with U,
+// megapages — both ends 2 MiB-aligned, and no block of the allocator's
+// region can sit there (the carve is the region's exclusion,
+// frames.emo's), so the two megapage leaves cost no table beyond the
+// entries the low half's middle already carries. The cell sits past
+// the write's staging area (gate.emo's stage_buf, the handoff page's
+// free tail) — the first boot caught the collision: user bytes landed
+// in the cell and the build mapped a phantom grant, the range check
+// the loud end.
+const screen_pending = koff + 0x870029e0
+const screen_size = 0x400000 // 4 MiB, frames.emo's carve
+
+// The exec's pending record (emo-desktop A11.1): the cell the process
+// service pokes with the image record's address right before the spawn
+// that starts it — the grant's shape again, the record's mapping
+// existing before the child's first fetch. The build consumes it into
+// the child's own image cell (one write per pid ever, the pid already
+// dressed in the slot), and the table is built off that image's own
+// segments — the per-image half, the boot image's global table the
+// zero cell's answer. The record's tail word (+224, exec.emo's
+// record_page) is the image's private handoff page (emo-desktop
+// A11.2): the frame the transaction took, the build maps it at the
+// cells page's vaddr in the child's table and parks the child's arena
+// values on it — the classic cells page stays the boot image's, its
+// stub's parks never stolen, and two images hand their arenas side by
+// side, each through its own page.
+const exec_pending = koff + 0x8700c000 + 3904
+const img_for = koff + 0x8700c000
+const record_page = 224
 
 // One 4 KiB page into a user table, unioning with what is there: the
 // image's segments share their boundary page (the text's last page
@@ -114,14 +154,29 @@ def map_page(root Int64, va Int64, pa Int64, flags Int64) Void {
   }
 }
 
-// The user's half of a table: the image's segments by page-union
-// permission, then the cells page. One shared helper for the two
+// The user's half of a table: the kernel's half and the boot pass's
+// trap page — everything but the image's segments and the handoff
+// page, the two builders' shared part. One helper for the three
 // builders — the boot pass's (user.emo's stage, which knows the
-// segments before anything spawns) and each spawned pass's (build).
-// The permissions are the segment's own, translated, plus U: code RX,
-// data RW — and where one page carries both, both.
-def base(root Int64) Void {
+// segments before anything spawns), each spawned pass's (build, off
+// the boot image's global table), and an exec's child's (build, off
+// the child's own image's record). The cells page's vaddr is each
+// builder's own: the boot image's table maps the classic cells page
+// (its stub's parks — the identity the kernel's low window reads), an
+// exec'd image's maps its private handoff page (image_base's, the
+// frame the record names).
+def base_common(root Int64) Void {
   sv39.map_kernel(root, false)
+  map_page(root, boot_trap_page, boot_trap_page, rw)
+}
+
+// The boot image's segments: the global table the loader parked (the
+// gate's constants), each page at the identity of its address — the
+// image was copied to its link addresses at stage time, and every pass
+// of the boot image shares those physical pages.
+def base(root Int64) Void {
+  base_common(root)
+  map_page(root, cells_page, cells_page, rwu)
   var n = peek64(seg_count_addr)
   var i = 0
   while i < n {
@@ -129,17 +184,7 @@ def base(root Int64) Void {
     var start = peek64(slot)
     var endp = peek64(slot + 8)
     var pf = peek64(slot + 16)
-    var flags = 0
-    if (pf & flag_r) != 0 {
-      flags = flags | pte_r
-    }
-    if (pf & flag_w) != 0 {
-      flags = flags | pte_w
-    }
-    if (pf & flag_x) != 0 {
-      flags = flags | pte_x
-    }
-    flags = flags | pte_u
+    var flags = seg_flags(pf)
     var va = (start / page) * page
     while va < endp {
       map_page(root, va, va, flags)
@@ -147,8 +192,60 @@ def base(root Int64) Void {
     }
     i = i + 1
   }
-  map_page(root, cells_page, cells_page, rwu)
-  map_page(root, boot_trap_page, boot_trap_page, rw)
+}
+
+// The ELF's p_flags translated to the PTE's permission bits, U on top:
+// code RX, data RW — and where one page carries both, both.
+def seg_flags(pf Int64) Int64 {
+  var flags = 0
+  if (pf & flag_r) != 0 {
+    flags = flags | pte_r
+  }
+  if (pf & flag_w) != 0 {
+    flags = flags | pte_w
+  }
+  if (pf & flag_x) != 0 {
+    flags = flags | pte_x
+  }
+  return flags | pte_u
+}
+
+// An exec'd image's segments (emo-desktop A11.1): the record the
+// loader filled — the segment rows in the handoff table's own shape,
+// the run's physical base and length beside them. Each page maps at
+// the run's identity of its offset: the image's first page sits at the
+// run's base, every link address at the base plus its offset — the
+// per-image segment table, each image's world its own physical pages
+// at the addresses it was linked to. The count word doubles as the
+// live flag; the record the caller names was consumed from the
+// pending cell, and the pid's image cell was written beside it (one
+// write per pid ever — the gate's checks and the death's walk read
+// it).
+def image_base(root Int64, rec Int64) Void {
+  base_common(root)
+  var n = peek64(rec)
+  var floor = (peek64(rec + 8) / page) * page
+  var run_base = peek64(rec + 208)
+  var i = 0
+  while i < n {
+    var slot = rec + 8 + (i * 24)
+    var start = peek64(slot)
+    var endp = peek64(slot + 8)
+    var flags = seg_flags(peek64(slot + 16))
+    var va = (start / page) * page
+    while va < endp {
+      map_page(root, va, run_base + (va - floor), flags)
+      va = va + page
+    }
+    i = i + 1
+  }
+  // the private handoff page (emo-desktop A11.2): the cells page's
+  // vaddr maps the image's own frame — the stub's parks, the delta the
+  // transaction poked, the arena values the build parks, every cell
+  // the stub and the runtime's init read, land here and nowhere else.
+  // The record's word is the kernel's alias; the PTE takes the
+  // physical.
+  map_page(root, cells_page, sv39.pa_of(peek64(rec + record_page)), rwu)
 }
 
 // The boot pass's adoption: its root's physical address, into the
@@ -163,7 +260,8 @@ def adopt(root_pa Int64) Void {
 // at the end of emo_user_spawn with the child's slot — every word the
 // build needs is already in it. The kernel's half, the image's
 // segments, the cells page (base), then the process's own: its stack
-// block and its arena block, each 64 KiB at the identity of its
+// block, and its arena whole — every block of the run from the base at
+// 880 up to the end at 584 (T8.9), each 4 KiB at the identity of its
 // physical address, RW with U. The root's physical address goes into
 // the slot's space word — what the switch resolves on every pick.
 // Frame exhaustion is the loud end, as the arena carve's is: the
@@ -174,7 +272,32 @@ def build(slot Int64) Void {
     sv39.die("sv39: no frame left for a process table")
   }
   sv39.clear(root)
-  base(root)
+  // The exec's pending record (emo-desktop A11.1): the one spawn that
+  // starts a disk ELF carries its record, and this build is the one
+  // consumer — the record goes into the child's own image cell, the
+  // table built off the image's own segments. Every other spawn finds
+  // the cell zero and builds off the boot image's global table, the
+  // shape every pass has carried since T6.2.
+  var rec = peek64(exec_pending)
+  if rec != 0 {
+    poke64(exec_pending, 0)
+    var pid = peek64(slot + 8)
+    if pid < 256 {
+      poke64(img_for + pid * 8, rec)
+    }
+    // the child's arena crosses as values on its own private page
+    // (emo-desktop A11.2): the slot's own run, the cursor and end the
+    // spawn dressed, physical — the identities the image's own table
+    // maps — read here, after the dress, by the runtime's init (the
+    // delta word its tell). The record's page word is the kernel's
+    // alias, as the allocator answered it.
+    var hp = peek64(rec + record_page)
+    poke64(hp + 0x70, sv39.pa_of(peek64(slot + slot_arena_base)))
+    poke64(hp + 0x78, sv39.pa_of(peek64(slot + slot_arena_end)))
+    image_base(root, rec)
+  } else {
+    base(root)
+  }
   var stack = peek64(slot + slot_stack)
   var va = stack
   var top = stack + block
@@ -182,12 +305,22 @@ def build(slot Int64) Void {
     map_page(root, va, va, rwu)
     va = va + page
   }
-  var arena = sv39.pa_of(peek64(slot + slot_arena))
+  var arena = sv39.pa_of(peek64(slot + slot_arena_base))
+  top = sv39.pa_of(peek64(slot + slot_arena_end))
   va = arena
-  top = arena + block
   while va < top {
     map_page(root, va, va, rwu)
     va = va + page
+  }
+  // The screen carve's grant (T8.2): the service poked the cell before
+  // the spawn; this build is the one consumer. The carve maps at the
+  // identity of its physical addresses — the pass paints it where the
+  // device will scan it out of — RW with U, megapages both ends.
+  var screen = peek64(screen_pending)
+  if screen != 0 {
+    poke64(screen_pending, 0)
+    var spa = sv39.pa_of(screen)
+    sv39.map_range(root, spa, spa, screen_size, rwu)
   }
   poke64(slot + slot_space, sv39.pa_of(root))
 }
@@ -209,4 +342,24 @@ def switch(w Int64) Int64 {
   }
   poke64(current_cell, target)
   return target
+}
+
+// A window buffer's run, mapped into its owner's table after the spawn
+// (T8.5) — the incremental half of the build: a table that exists
+// grows a mapping the way the spawn's built one. The run maps at the
+// identity of its physical addresses, RW with U — the same discipline
+// the stack and the arena blocks ride — megapages wherever the
+// alignment gives them (map_range's rule). The root arrives physical
+// (the gate stages the caller's space word into the request, the
+// shim's staging read inside the caller's own trap); the walk rides
+// the kernel's aliases of the table frames, and the new entries are
+// whole words the hardware walk either misses or sees complete. The
+// fence is the live table's own discipline — the spawn's build wrote
+// a table no satp named yet, and this one is installed: the sfence
+// after the last entry is what makes the mapping visible to the walks
+// the owner's next stores take.
+def map_run(root_pa Int64, base_pa Int64, len Int64) Void {
+  var root = sv39.va_of(root_pa)
+  sv39.map_range(root, base_pa, base_pa, len, rwu)
+  sfence()
 }

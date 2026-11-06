@@ -210,14 +210,99 @@ let smoke_tests =
             "sv39.S";
             "space.emo";
             "fs.emo";
+            "exec.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";
             "hello/shell.emo";
-            "hello/ui.emo";
+            "hello/console_ui.emo";
           ];
+        (* The apps' programs (emo-desktop A11.1, T8.21 added the
+           spinner): each its own build root in the scratch tree — the
+           boot image execs them by name, the kernel embeds the four
+           ELFs. *)
+        let apps_dir = "../../projects/emo-desktop/fb/apps" in
+        List.iter
+          (fun app ->
+            List.iter
+              (fun name ->
+                let source =
+                  read_file
+                    (Filename.concat (Filename.concat apps_dir app) name)
+                in
+                let path = Filename.concat (Filename.concat scratch app) name in
+                let dir = Filename.dirname path in
+                if not (Sys.file_exists dir) then
+                  ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+                let oc = open_out_bin path in
+                output_string oc source;
+                close_out oc)
+              [ "package.emo"; "main.emo" ])
+          [ "counter"; "files"; "editor"; "spin" ];
+        (* The user image requires the desktop's packages beside the
+           syscall stub (emo-desktop A7.2): EmoUI's core, the fb
+           backend's core with its bitmap font (A8.1) and pointer sprite
+           (A8.2), the first frame with the counter the screen pass
+           runs through the Elm loop (A8.3), the window shell's
+           windows (A9.1), the desktop shell's dock (A10.2), the apps'
+           corpus (A10.3) and the window buffer's metal side (A11.1).
+           They are staged into a
+           registry in the scratch tree — the files start.sh stages,
+           from the same trees — and the build reads it through
+           EMO_REGISTRY, which names the one registry a build resolves
+           from, so the stub is staged beside them. The kernel's own
+           package has no dependencies, so the setting is nothing to
+           its build. *)
+        let registry = Filename.concat scratch "registry" in
+        List.iter
+          (fun (src, dst, names) ->
+            let dir = Filename.concat registry dst in
+            ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+            List.iter
+              (fun name ->
+                let source = read_file (Filename.concat src name) in
+                let oc = open_out_bin (Filename.concat dir name) in
+                output_string oc source;
+                close_out oc)
+              names)
+          [
+            ( "../../stdlib/registry/syscall/0.1.0",
+              "syscall/0.1.0",
+              [ "package.emo"; "syscall.emo" ] );
+            ( "../../projects/emo-ui",
+              "emo/ui/0.1.0",
+              [ "package.emo"; "ui.emo"; "debug.emo" ] );
+            ( "../../projects/emo-desktop/fb",
+              "emo/ui_fb/0.1.0",
+              [ "package.emo"; "ui_fb.emo"; "font.emo"; "pointer.emo" ] );
+            ( "../../projects/emo-desktop/fb/frame",
+              "emo/ui_fb_frame/0.1.0",
+              [ "package.emo"; "ui_fb_frame.emo"; "counter.emo" ] );
+            ( "../../projects/emo-desktop/fb/win",
+              "emo/ui_fb_win/0.1.0",
+              [ "package.emo"; "ui_fb_win.emo" ] );
+            ( "../../projects/emo-desktop/fb/desktop",
+              "emo_desktop/0.1.0",
+              [ "package.emo"; "emo_desktop.emo" ] );
+            ( "../../projects/emo-desktop/fb/apps",
+              "emo/ui_apps/0.1.0",
+              [
+                "package.emo";
+                "ui_apps.emo";
+                "counter.emo";
+                "files.emo";
+                "editor.emo";
+              ] );
+            ( "../../projects/emo-desktop/fb/winbuf",
+              "emo/ui_fb_winbuf/0.1.0",
+              [ "package.emo"; "ui_fb_winbuf.emo" ] );
+          ];
+        Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
-           ELF has to exist before the kernel's .S assembles. *)
+           ELF has to exist before the kernel's .S assembles. The four
+           apps' images (emo-desktop A11.1, T8.21 the spinner's) ride
+           beside it — the boot image execs them by name, the kernel
+           embeds them. *)
         let hello_exit =
           in_dir (Filename.concat scratch "hello") (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"../hello.elf"
@@ -226,6 +311,24 @@ let smoke_tests =
                 ~profile:"user")
         in
         Alcotest.(check int) "user build exit" 0 hello_exit;
+        let app_build name =
+          let exit_code =
+            in_dir (Filename.concat scratch name) (fun () ->
+                (* The app profile (emo-desktop A12.1): the disk ELF's
+                   smaller heap, the image run's span off the allocator's
+                   back. *)
+                Emo_cli.build_file ~entry:"main.emo"
+                  ~output:(Filename.concat scratch (name ^ ".elf"))
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                  ~profile:"app")
+          in
+          Alcotest.(check int) (name ^ " build exit") 0 exit_code
+        in
+        app_build "counter";
+        app_build "files";
+        app_build "editor";
+        app_build "spin";
         let exit_code =
           in_dir scratch (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
@@ -234,7 +337,88 @@ let smoke_tests =
                 ~profile:"kernel")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let out, err, status = run_cmd (Filename.concat scratch "run.sh") in
+        (* The corpus leg (emo-desktop A7.3, A8.3): run.sh asserts the
+           loop's four frame digests out of the fb frame golden's
+           `expected.txt` — the file the fb gate pins across every
+           hosted target, the first line the first frame's — and the
+           scratch tree carries no fb tree, so the run is pointed at
+           the repository's file, absolute because run.sh changes into
+           its own directory first. *)
+        let frame_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/frame/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the first frame's corpus file is in the tree" true
+          (Sys.file_exists frame_expected);
+        (* The pointer's drawing (emo-desktop A8.2): run.sh's model of
+           the display composites the sprite out of `pointer.emo`'s
+           rows — the same file the user image writes into the carve —
+           and is pointed at the repository's the same way. *)
+        let pointer_sprite =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/pointer.emo"
+        in
+        Alcotest.(check bool)
+          "the pointer sprite's drawing is in the tree" true
+          (Sys.file_exists pointer_sprite);
+        (* The window shell's twin (emo-desktop A9.1): run.sh asserts
+           the shell pass's nine frame digests out of the fb window
+           golden's `expected.txt` and folds the display's windows to
+           its lines — pointed at the repository's file the same way. *)
+        let win_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/win/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the window shell's corpus file is in the tree" true
+          (Sys.file_exists win_expected);
+        (* The desktop shell's dock (emo-desktop A10.2): run.sh asserts
+           the strip's three state digests out of the dock golden's
+           `expected.txt` and folds the display's strip to its lines —
+           pointed at the repository's file the same way. *)
+        let dock_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/desktop/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the dock's corpus file is in the tree" true
+          (Sys.file_exists dock_expected);
+        (* The first apps' twin (emo-desktop A10.3): run.sh asserts the
+           three sessions' ten frame digests out of the apps golden's
+           `expected.txt` and folds each app's rectangle to its lines —
+           pointed at the repository's file the same way. *)
+        let apps_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/apps/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the apps' corpus file is in the tree" true
+          (Sys.file_exists apps_expected);
+        (* The bitmap font (emo-desktop A13): run.sh's model of the
+           display draws the header's wordmark and the icons' names from
+           `font.emo`'s table — the same table the user image stamps
+           with — and is pointed at the repository's the same way. *)
+        let font_src =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/font.emo"
+        in
+        Alcotest.(check bool)
+          "the bitmap font's table is in the tree" true
+          (Sys.file_exists font_src);
+        let out, err, status =
+          run_cmd ~timeout:480.0
+            (Printf.sprintf
+               "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
+                DOCK_EXPECTED=%s APPS_EXPECTED=%s FONT_SRC=%s %s"
+               (Filename.quote frame_expected)
+               (Filename.quote pointer_sprite)
+               (Filename.quote win_expected)
+               (Filename.quote dock_expected)
+               (Filename.quote apps_expected)
+               (Filename.quote font_src)
+               (Filename.quote (Filename.concat scratch "run.sh")))
+        in
         (match status with
         | Unix.WEXITED 0 -> ()
         | s ->

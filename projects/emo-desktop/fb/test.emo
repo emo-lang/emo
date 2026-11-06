@@ -1,0 +1,169 @@
+// The fb core's own test: the box model's arithmetic in pixels, the
+// clip and blend verbs, the font's lookup and rows, and the scripted
+// input, checked as values rather than as bytes — everything the core
+// can show without a surface. What needs one (the glyph verb, paint's
+// layering, `ppm`, the backend's repaint) is `canvas/test.emo`'s,
+// through the hosted canvas; the painted bytes are `golden/`'s.
+//
+//   emo run test.emo
+//
+// It is a module of the package, not a package of its own, so
+// `emo check ui_fb.emo` checks it and `./check.sh` runs it.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def extent_is(e ui_fb.Extent, w Int64, h Int64, what String) {
+  if e.w() == w && e.h() == h {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "${what}: measured ${e.w()}x${e.h()}, wanted ${w}x${h}")
+  }
+}
+
+def rect_is(r ui_fb.Rect, x Int64, y Int64, w Int64, h Int64, what String) {
+  if r.x() == x && r.y() == y && r.w() == w && r.h() == h {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "${what}: clipped to ${r.x()},${r.y()} ${r.w()}x${r.h()}, wanted ${x},${y} ${w}x${h}")
+  }
+}
+
+def word_is(got Int64, want Int64, what String) {
+  if got == want {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "${what}: got ${got}, wanted ${want}")
+  }
+}
+
+// ---- measure: a label is glyph cells, a box is its children ---------
+
+def padded() ui.Node {
+  return ui.column([
+    ui.text("ab", ui.style()),
+    ui.text("c", ui.style())
+  ], ui.style().with_padding(4.0).with_gap(2.0))
+}
+
+def paired() ui.Node {
+  return ui.row([
+    ui.button("a", 0, ui.style()),
+    ui.button("b", 1, ui.style())
+  ], ui.style().with_gap(8.0))
+}
+
+def measure_checks() {
+  extent_is(ui_fb.measure(padded(), -1), 24, 42,
+    "a column is its widest child plus padding, its children stacked a gap apart")
+  extent_is(ui_fb.measure(paired(), -1), 88, 16,
+    "a row lines its bracketed buttons up, one gap apart, one glyph row tall")
+  extent_is(ui_fb.measure(ui.text_input("n", ui.style().with_width(40.0)), -1),
+    40, 16, "a fixed width overrides the intrinsic one")
+  extent_is(ui_fb.measure(ui.scroll([ui.text("x", ui.style())],
+    ui.style().with_height(64.0)), -1), 8, 64,
+    "a scroll is as tall as its viewport, as wide as its content")
+  extent_is(ui_fb.measure(ui.spacer(ui.style()), -1), 0, 0,
+    "a spacer measures to nothing")
+}
+
+// ---- clip: the rectangle that lands on the surface ------------------
+
+def clip_checks() {
+  rect_is(ui_fb.clip(2, 3, 4, 5, 10, 10), 2, 3, 4, 5,
+    "a rectangle inside the bounds is itself")
+  rect_is(ui_fb.clip(-4, 0, 10, 2, 10, 10), 0, 0, 6, 2,
+    "crossing the left edge pulls the origin in and shortens the width")
+  rect_is(ui_fb.clip(8, 0, 10, 2, 10, 10), 8, 0, 2, 2,
+    "crossing the right edge shortens the width")
+  rect_is(ui_fb.clip(0, -1, 2, 20, 10, 10), 0, 0, 2, 10,
+    "crossing both the top and the bottom leaves the full height")
+  rect_is(ui_fb.clip(12, 0, 4, 4, 10, 10), 12, 0, 0, 4,
+    "a rectangle wholly outside clips to a zero width")
+  rect_is(ui_fb.clip(-5, -5, 30, 30, 10, 10), 0, 0, 10, 10,
+    "a rectangle around the bounds clips to the bounds")
+}
+
+// ---- over: one pixel of source-over, integer-exact --------------------
+
+def over_checks() {
+  word_is(ui_fb.over(0xFF123456, 0xFFFFFF), 0x123456,
+    "full coverage is the source, top byte cleared")
+  word_is(ui_fb.over(0x123456, 0xABCDEF), 0xABCDEF,
+    "no coverage is the destination")
+  word_is(ui_fb.over(0x80FF0000, 0x00FF00), 0x807F00,
+    "half red over green mixes each channel, rounded to nearest")
+  word_is(ui_fb.over(0x40000000, 0xFFFFFF), 0xBFBFBF,
+    "a quarter of black over white is three-quarters white")
+}
+
+// ---- the font: a character's glyph, and a glyph's rows ----------------
+//
+// The rows named here are the drawing's (`glyphs/glyphs.txt`): the `A`
+// is an apex of one pixel on row 2, a five-pixel bar on row 7 and two
+// legs on row 11; the missing glyph is the hollow cell.
+
+def font_checks() {
+  word_is(font.glyph_of(" "), 0, "the space is the first glyph")
+  word_is(font.glyph_of("A"), 33, "a character's glyph is its place in the alphabet")
+  word_is(font.glyph_of("~"), 94, "the tilde is the last printable one")
+  word_is(font.glyph_of("\n"), font.missing(),
+    "a character outside the table is the missing glyph")
+  check(font.top_rows(0) == 0 && font.bottom_rows(0) == 0, "the space has no ink")
+  const a = font.glyph_of("A")
+  const top = font.top_rows(a)
+  const bottom = font.bottom_rows(a)
+  word_is(ui_fb.glyph_row(top, bottom, 0), 0, "a capital's row 0 is clear")
+  word_is(ui_fb.glyph_row(top, bottom, 2), 0x10, "its apex is one pixel on row 2")
+  word_is(ui_fb.glyph_row(top, bottom, 7), 0x7C, "its bar spans five pixels on row 7")
+  word_is(ui_fb.glyph_row(top, bottom, 11), 0x44, "its legs stand on row 11")
+  word_is(ui_fb.glyph_row(top, bottom, 15), 0, "and row 15 is clear")
+  const m = font.missing()
+  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 2), 0x7C,
+    "the missing glyph is a hollow cell: its top edge")
+  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 6), 0x44,
+    "and its sides")
+  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1), 16, 16,
+    "a label measures to the font's cells")
+}
+
+// ---- the pointer: the drawing's shape ---------------------------------
+
+def pointer_checks() {
+  word_is(pointer.width(), 12, "the arrow is twelve cells wide")
+  word_is(pointer.height(), 17, "and seventeen tall")
+  check(pointer.hot_x() == 0 && pointer.hot_y() == 0,
+    "its hotspot is the tip, the top-left cell")
+  var even = true
+  for var r = 0; r < pointer.height(); r = r + 1 {
+    if pointer.row(r).length() != pointer.width() {
+      even = false
+    }
+  }
+  check(even, "every row of the drawing is the width")
+  check(pointer.row(0).substring(0, 1) == "#", "the tip is ink")
+  check(pointer.row(2).substring(1, 1) == "o", "the body is paper")
+  check(pointer.row(0).substring(1, 1) == ".", "and the rest of the first row is clear")
+}
+
+// ---- the scripted input ---------------------------------------------
+
+def script_checks() {
+  const s = ui_fb.script([4, 5])
+  check(s.next() == (R.ok, 4), "the script hands back the first tag")
+  check(s.next() == (R.ok, 5), "and the second")
+  check(s.next() == (R.error, 0), "then says there is no more")
+  check(s.next() == (R.error, 0), "and keeps saying it")
+}
+
+measure_checks()
+clip_checks()
+over_checks()
+font_checks()
+pointer_checks()
+script_checks()

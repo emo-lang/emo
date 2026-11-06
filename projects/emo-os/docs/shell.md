@@ -3,10 +3,13 @@
 How EmoOS ends its boot: the REPL process that takes the machine's
 foreground once the boot proof is done, the line it reads and the
 commands it answers, and the boundaries it states. Fixed as of T7.3
-(2026-10-31). Below it are the services the gate routes to — the
-console service (T3.7/T4.4) and the filesystem service (T7.2, its
-design in [`fs.md`](fs.md)); the verbs it speaks are
-[`syscalls.md`](syscalls.md)'s.
+(2026-10-31); the desktop era (emo-desktop A12.1, EmoOS T8.19,
+2026-11-06) made the shell the machine's desktop — the line's
+assembly driven by the merged stream's events, the `exec` command
+and the launcher's tiles the way a program begins. Below it are the
+services the gate routes to — the console service (T3.7/T4.4) and
+the filesystem service (T7.2, its design in [`fs.md`](fs.md)); the
+verbs it speaks are [`syscalls.md`](syscalls.md)'s.
 
 Chinese translation: [`shell.zh-CN.md`](shell.zh-CN.md).
 
@@ -15,11 +18,13 @@ Chinese translation: [`shell.zh-CN.md`](shell.zh-CN.md).
 The shell is a **user process** — the boot pass of the user image
 itself. The boot proof (the gate line, the echo, the filesystem
 roundtrip, the four killed passes, the spawn/wait round trip) is the
-top level's preamble; when it ends, the top level calls the REPL loop
-instead of exiting, and the machine stops ending by itself: the REPL
-is the foreground, and the way off it is the `poweroff` command — the
-boot pass's exit verb, the same route that ended the machine when the
-proof was the whole program.
+top level's preamble; when the desk pass that follows it exits, the
+top level takes the desktop era for its life instead of exiting, and
+the machine stops ending by itself: the desktop is the foreground —
+the dock's tiles the launcher, the REPL's line the keyboard's other
+face — and the way off it is the `poweroff` command, the boot pass's
+exit verb, the same route that ended the machine when the proof was
+the whole program.
 
 Everything the shell does crosses the gate: every byte it prints and
 reads rides the write and read verbs through the console service, and
@@ -37,9 +42,17 @@ lives under.
 
 ## The line
 
-The console is raw bytes — no line discipline below the shell — so the
-REPL builds the line itself, one byte at a time, each byte a blocking
-read through the gate:
+The console is raw bytes — no line discipline below the shell — so
+the line builds in the shell itself, one byte at a time. The desktop
+era (emo-desktop A12.1) moved the byte's source: the desktop loop
+reads the merged stream — serial bytes, keys, pointer reports, exit
+events, one `input_read` at a time — and feeds each serial byte to
+the line's assembly (`feed`); the echo, the erase, and the line's
+end are the shapes the blocking read rode, unchanged. While a
+launched application's window holds the focus the bytes are its, and
+the shell's line waits — a press on the dock hands the panel the
+focus and the bytes are the shell's again, the missing echo the
+tell.
 
 - **Printable ASCII (32–126)** joins the line and is echoed back —
   the terminal sees what it typed, because nothing else echoes.
@@ -77,17 +90,18 @@ The prompt is `emo-os> `, printed before each line is read.
 The line parses by one rule: leading spaces are skipped, the command
 word ends at the first space (or the line's end), and what follows
 after that one separating space is the argument — verbatim, spaces
-included. Commands are lowercase and exact. Eight:
+included. Commands are lowercase and exact. Nine:
 
 | Command | Argument | Effect | Output |
 | --- | --- | --- | --- |
-| `help` | none | — | one line naming the eight commands |
+| `help` | none | — | one line naming the nine commands |
 | `echo` | the text, verbatim | — | the text, then a newline; an empty argument is an empty line |
 | `ls` | none | `file_list` | the names, one per line, as the service lists them; an empty volume lists nothing |
 | `cat` | one name | `file_read` | the file's bytes, then a newline; the read's capacity is 2048, the write bound, so a whole file always fits |
 | `write` | one name, then the text | `file_write` | the file named becomes the text's bytes (an absent text is an empty file); quiet on success |
 | `rm` | one name | `file_remove` | the file is gone; quiet on success |
 | `counter` | none | the machine's program: `spawn` + `wait` | the console renderer pass (T7.4) runs to its quit key, the frames its whole output; silence on success, the prompt's return saying it is done |
+| `exec` | one file name | `exec`, the disk ELF's door (T8.16) | the named image starts on the desktop; a success the launcher's slots answer with `desktop <name> up`, a foreign image's with silence, a refusal with `desktop: <the reason>` |
 | `poweroff` | none | the boot pass's `exit` | the machine ends — the exit route's `dma` line and frames account, then the SBI poweroff |
 
 The strictness is the platform's, carried to the surface:
@@ -130,7 +144,7 @@ these):
 | `+6144` | the line, 128 bytes (the bound is 120) |
 | `+6272` | the list's buffer, 256 bytes |
 | `+6528` | the read's buffer, 2048 bytes |
-| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the eight command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
+| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the nine command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
 
 The texts ride byte-array literals because strings cannot: the
 riscv64 backend carries no String-to-bytes path, and the array literal
@@ -140,38 +154,40 @@ array is read, the destination is raw memory.
 
 ## The bounds
 
-- The command set is the eight above. Starting a program became one of
+- The command set is the nine above. Starting a program became one of
   them at T7.5, the decision the closure demo owed: `counter` starts
   the machine's one program — the console renderer pass — by the
   proof chain's own spawn discipline (the token cell poked, the child
   re-entering the top level, the exit answering the wait), because
   the spawn verb carries no arguments and the image is the one program
-  the machine has. The command names what it runs; a second program,
-  or a program loaded from the disk, reopens the name — a `run` with
-  nothing honest to run would be a construct without its place.
+  the machine has. The command names what it runs; a program loaded
+  from the disk reopened the name at the desktop era (A12.1): `exec`
+  starts a disk ELF by name, the launcher's tiles the same door by
+  click.
 - One volume, a flat namespace, whole files: the filesystem service's
   own bounds (T7.2). A name with a space in it is legal to the
   service and unreachable from the shell — the space is the
   separator.
 - No flags, no paths, no environment, no job control: the console is
   the whole world and the line is the whole input.
-- The REPL is the boot pass, and its exit is the machine's end: there
+- The desktop is the boot pass, and its exit is the machine's end: there
   is no shell to return to, because the shell is the last thing
   running.
 - One reader at a time, the console service's oldest-request
   discipline (T3.7): the proof chain's readers are done before the
-  REPL starts, and while the counter pass runs the REPL is parked at
-  the wait — the program owns the console until its exit, and the
-  bytes the feed queues behind the quit key are the REPL's.
+  desktop starts, and while a launched application's window holds
+  the focus its pass owns the stream's bytes — the exits reach the
+  launcher another way (the exit event ring, EmoOS T8.19), a parent
+  that never waits.
 
 ## The pins
 
-`run.sh`'s chain grows the REPL's exchange after the proof chain's
-last line, under both timer transports: the first prompt, the
-`counter` command starting the machine's program (the full-boot
-golden's beat — the frames, the keys, the quit key, the prompt's
-return; the pins are the console renderer's, [`ui.md`](ui.md)), the
-`help` line naming the eight commands, the echo command's echo, the
+`run.sh`'s chain grows the desktop's exchange after the proof chain's
+last line, under both timer transports: the era's banner and prompt,
+the tile click launching the counter (`desktop counter up`, the
+session, `desktop counter exit 0` — the exit event ring's line), the
+REPL's `exec` launching the other two, the quits' exit lines, the
+`help` line naming the nine commands, the echo command's echo, the
 `ls` naming `hello.txt`, the `cat boot.txt` naming the kernel's boot
 file's bytes (`EmoOS boots from disk`, written by the kernel root
 through the first instance — the disk's content read back by a user

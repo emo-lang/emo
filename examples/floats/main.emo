@@ -17,3 +17,13 @@ println(1000000.0 + 0.5)
 println(123456789.0 + 0.5)
 println(100.25)
 println("pi is about ${10.0 / 3.0}")
+
+// The truncating conversion, toward zero on either side of it. A box
+// model's pixel counts come out of a style's Float64 fields this way,
+// and the first frame on the metal (emo-desktop A7.2) is where this
+// target was first asked for it.
+const twelve = 12.75
+println(twelve.to_int64())
+println((0.0 - 3.9).to_int64())
+const sixteen = 16.0
+println(sixteen.to_int64())

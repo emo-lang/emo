@@ -30,7 +30,7 @@
 ## U-mode 能够及什么
 
 - **它自己的页,再无其他。** 镜像的各段——代码 RX、数据 RW(一个镜像的各 pass 共享它们:spawn 出来的 pass 重入顶层,找到父进程 poke 的 token)——它自己的 64 KiB 栈块与 arena 块,以及 cell 页。内核的半区映射在同一张表里但无 U:为 trap 而在,U-mode 够不到——boot pass 的 trap 页(`0x87ffe000`,T6.3)以同一份契约加入,那一页 scratch 不属于任何执行的记忆。其余每个地址都是一次缺页,supervisor 为此响亮地击杀肇事的 pass。
-- **raw 家族按 target 准入,不按 profile。** `peek`/`poke`、`ecall`、`device_wait` 在用户镜像里是合法拼写,按准入自身的原则——一个 target 准许 raw 家族,当且仅当程序拥有地址空间。自 T6.2 起,这条准许在两个方向上都诚实:拼写只够及该 pass 自己的页(其余一切是缺页),而内核自己的服务用的词汇(`user_spawn`、`gate_reply`、`pid_num`)仍在表层拒绝之处拒绝。第一个用户程序的问候在窗口存在时骑的就是这条准许——它直接 poke 16550A,`run.sh` 钉住那一行。自 T6.2 起,pass 的表不映射 UART,问候改走门,线上字节不变。
+- **raw 家族按 target 准入,不按 profile。** `peek`/`poke`、`ecall`、`device_wait`、`device_wake` 在用户镜像里是合法拼写,按准入自身的原则——一个 target 准许 raw 家族,当且仅当程序拥有地址空间。自 T6.2 起,这条准许在两个方向上都诚实:拼写只够及该 pass 自己的页(其余一切是缺页),而内核自己的服务用的词汇(`user_spawn`、`gate_reply`、`gate_post`、`pid_num`)仍在表层拒绝之处拒绝。第一个用户程序的问候在窗口存在时骑的就是这条准许——它直接 poke 16550A,`run.sh` 钉住那一行。自 T6.2 起,pass 的表不映射 UART,问候改走门,线上字节不变。
 - **门是被认可的门。** 来自 U-mode 的 `ecall` 永远 trap 进内核的 shim——从不进 OpenSBI——诸动词都骑在它上面。门拒绝的东西作为答案拒绝:调用者的寄存器原样往返,执行在 `ecall` 之后继续。write 的字节由检查范围的那同一个 trap 拷进内核的暂存页(T6.2)——service 读的是内核的拷贝,从不读调用者的内存。
 
 ## U-mode 够不到什么

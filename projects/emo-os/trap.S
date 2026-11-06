@@ -407,26 +407,87 @@ emo_os_trap_trampoline:
     srli t0, t0, 8
     andi t0, t0, 1           # sstatus.SPP: 0 = the trap came from U-mode
     bnez t0, .Larena_saved
-    li t0, 0x87fff008        # the user stub parked the address of its
-    ld t0, 0(t0)             # root slot's arena cursor word here
-    beqz t0, .Larena_saved   # nothing staged: nothing to save
     la t2, emo_cur_slot
     ld t2, 0(t2)
     ld t3, 8(t2)             # the leaver's pid
     li t1, 1
     beq t3, t1, .Larena_boot
-    ld t1, 0(t0)             # the running pass's cursor, the user's address
+    # the leaver's image's own pair (emo-desktop A11.2): the per-pid
+    # record names the image's private handoff page — the cells the
+    # image's stub parked at its entry, its pair among them — and the
+    # page's vaddrs map that one frame in the image's tables. A zero
+    # record is a pass of the boot image: the classic cells, whose
+    # parks no exec'd stub has touched since the private pages took
+    # the exec'd images' hands over (the owner cell of A11.1 retired —
+    # one image's parks can no longer stand in another's place).
+    li t1, 256
+    bge t3, t1, .Larena_saved
+    li t5, 0xFFFFFFC08700C000  # the exec page, the high half's alias
+    slli t6, t3, 3
+    add t5, t5, t6
+    ld t5, 0(t5)             # the record, or 0
+    beqz t5, .Larena_classic
+    ld t5, 224(t5)           # the private handoff page, the
+                             # kernel's alias as the allocator
+                             # answered it — read raw, no second
+                             # offset
+    addi t5, t5, 8           # its pair's cursor cell
+    j .Larena_pair
+.Larena_classic:
+    li t5, 0x87fff008        # the classic pair's cursor cell, the low
+                             # window's identity — a boot-image pass's
+                             # table maps the page, and this read runs
+                             # before the table swap on kernel traps or
+                             # on the kernel's own table after it
+.Larena_pair:
+    ld t0, 0(t5)             # the arena cursor word's address, the
+                             # image's own (identity, the stub's park)
+    beqz t0, .Larena_saved   # nothing staged: nothing to save
     li t4, EMO_KOFF
-    add t1, t1, t4           # the kernel's
+    add t4, t0, t4           # the pointer's kernel alias — the hand runs
+    ld t1, 0(t4)             # on the kernel's table here, and a disk
+                             # ELF's arena words sit in an allocator run
+                             # the low window of no single table names
+                             # whole (emo-desktop A11.1); the half is
+                             # mapped in every table, the alias reaches
+                             # any image's words
+    li t4, EMO_KOFF
+    add t1, t1, t4           # the running pass's cursor, the kernel's
     sd t1, 576(t2)
+    # the end goes with it (emo-desktop A11.1): a boot-image pass's end
+    # is its run's, dressed at the spawn and constant — but an exec'd
+    # image's arena is its own heap, whose end its runtime wrote over
+    # the run's at entry — the resume writes both words back, and an
+    # end the kernel slot kept from the spawn would be the run's, the
+    # arena's cursor the heap's: gone at its first allocation. The end
+    # rides beside the cursor, both worlds' words whole.
+    ld t0, 8(t5)             # the pair's end cell, beside the cursor's
+    beqz t0, .Larena_saved
+    li t4, EMO_KOFF
+    add t4, t0, t4           # the same kernel alias
+    ld t1, 0(t4)
+    li t4, EMO_KOFF
+    add t1, t1, t4           # the running pass's end, the kernel's
+    sd t1, 584(t2)
     j .Larena_saved
 .Larena_boot:
-    ld t1, 0(t0)
+    # the boot pass's own pair of cells (emo-desktop A11.1): the boot
+    # image's pointers, parked by its stub beside the shared pair — a
+    # disk ELF's entry re-parks the shared ones, and the boot pass's
+    # hand must name the boot image's words forever after
+    li t0, 0x87fff050
+    ld t0, 0(t0)
+    beqz t0, .Larena_saved
+    li t4, EMO_KOFF
+    add t4, t0, t4           # the same kernel alias
+    ld t1, 0(t4)
     la t3, emo_os_boot_cur
     sd t1, 0(t3)
-    li t0, 0x87fff010
-    ld t0, 0(t0)             # the end word beside it
-    ld t1, 0(t0)
+    li t0, 0x87fff058
+    ld t0, 0(t0)
+    li t4, EMO_KOFF
+    add t4, t0, t4
+    ld t1, 0(t4)
     la t3, emo_os_boot_lim
     sd t1, 0(t3)
 .Larena_saved:
@@ -493,7 +554,20 @@ emo_os_trap_trampoline:
     call emo_arena_reap      # the stack block and the arena go home
                              # unless a queued message still pins the
                              # arena (T5.2/T5.3)
-    ld t0, 8(s0)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    # the dead pid's own cell (T8.14; the array T8.15 — one write per
+    # pid ever, so the service's clear cannot race it; a pid past the
+    # array's 256 is the reclaim that never runs, the documented bound)
+    li t0, 256
+    bge t1, t0, 5f
+    li t0, EMO_KOFF + 0x87008258  # the comp page's dead-owners' cells
+    slli t2, t1, 3
+    add t0, t0, t2
+    sd t1, 0(t0)
+5:
+5:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit  # the root's death is the machine's end
     j emo_sched_pick
@@ -514,6 +588,14 @@ emo_os_trap_trampoline:
     ld t2, 8(t2)             # the caller's pid
     li t3, EMO_KOFF + 0x87002110  # the caller-pid cell (+272)
     sd t2, 0(t3)
+    la t2, emo_cur_slot
+    ld t2, 0(t2)
+    ld t3, 872(t2)           # the caller's space word (T8.5): the
+                             # physical root a win_new's mapping rides
+                             # into — staged at every ecall, like the
+                             # pid beside it
+    li t2, EMO_KOFF + 0x87002a40  # the caller-space cell
+    sd t3, 0(t2)
     ld a0, 136(t0)
     ld a1, 80(t0)
     ld a2, 88(t0)
@@ -547,7 +629,23 @@ emo_os_trap_trampoline:
     call emo_arena_reap         # the stack block and the arena go home
                                 # unless a queued message still pins the
                                 # arena (T5.2/T5.3)
-    ld t0, 8(s0)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t1, 8(t1)             # the dead pid
+    # the dead pid's own cell (T8.14; the array T8.15 — one write per
+    # pid ever, so the service's clear cannot race it; a pid past the
+    # array's 256 is the reclaim that never runs, the documented bound)
+    li t0, 256
+    bge t1, t0, 5f
+    li t0, EMO_KOFF + 0x87008258  # the comp page's dead-owners' cells
+    slli t2, t1, 3
+    add t0, t0, t2
+    sd t1, 0(t0)
+5:
+6:  ld t0, 8(s0)
     li t1, 1
     beq t0, t1, .Ltrap_exit     # the root's death is the machine's end
     j emo_sched_pick
@@ -577,13 +675,47 @@ emo_os_trap_trampoline:
     addi t6, t6, -1000       # the op — for the filesystem's routes the
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
+    li t3, 10
+    bge t6, t3, .Lroute_desktop # ops 10..: the desktop segment (T8.3
+                                # landed verb 12, T8.4 verbs 10 and 11;
+                                # the gate refuses the rest by name)
     li t3, 6
-    bge t6, t3, .Lroute_fs   # ops 6.. (the filesystem's, any slot)
+    bge t6, t3, .Lroute_fs   # ops 6..9 (the filesystem's, any slot)
     li t3, 3
-    bge t6, t3, .Lroute_proc # ops 3 (spawn) and 4 (wait)
+    bge t6, t3, .Lroute_proc # ops 3 (spawn), 4 (wait) and 5 (exec, the
+                             # disk ELFs', emo-desktop A11.1)
     beqz t6, .Lroute_exit    # op 0 (a child's exit): the death route
+    li t3, 2
+    beq t6, t3, .Lroute_input # op 2, the read verb: the machine's
+                              # input is the input service's (T8.3) —
+                              # the console is the machine's output
 .Lroute_cons:
     li a0, EMO_KOFF + 0x870020f0  # the console service's pid cell (+240)
+    j .Lroute_post
+.Lroute_input:
+    li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
+    j .Lroute_post
+.Lroute_desktop:
+    li t3, 18
+    beq t6, t3, .Lroute_input # op 18, input_info: the input service's
+                              # (T8.13 — the route's op, not the verb's
+                              # 18 by coincidence alone; the compositor's
+                              # 18 is the pointer's notice, which never
+                              # rides a route)
+    li t3, 15
+    bge t6, t3, .Lroute_comp  # ops 15..: the compositor's (T8.6 —
+                              # 15 and 16 the stack's, 17 the window
+                              # present's composition; T8.13 — 19 the
+                              # role request, verb 17's)
+    li t3, 12
+    beq t6, t3, .Lroute_input # verb 12, input_read: the input service's
+    li a0, EMO_KOFF + 0x870029f8  # verbs 10, 11, 13, 14: the display
+                                  # service's pid cell (T8.4)
+    j .Lroute_post
+.Lroute_comp:
+    li a0, EMO_KOFF + 0x87002e80  # the compositor's pid cell (T8.6;
+                                  # A11.2 moved the routing cells past
+                                  # the grant table's true end)
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
@@ -641,7 +773,16 @@ emo_os_trap_trampoline:
     ld t2, 8(t2)
     or a1, a1, t2
     call emo_gate_post
-    la t0, emo_cur_slot
+    la t0, emo_cur_slot      # the exiting caller's slot (T8.14): the
+    ld t0, 0(t0)             #   dead pid rides to the comp page's own
+    ld t1, 8(t0)             #   cell — an exit without win_close is the
+    li t0, 256               #   reclaim's trigger (the array T8.15: one
+    bge t1, t0, 8f           #   write per pid ever; a pid past the 256
+    li t0, EMO_KOFF + 0x87008258  #   is the reclaim that never runs, the
+    slli t2, t1, 3           #   documented bound)
+    add t0, t0, t2
+    sd t1, 0(t0)
+8:  la t0, emo_cur_slot
     ld t0, 0(t0)             # the exiting caller's slot
     li t3, 3
     sd t3, 16(t0)            # done
@@ -691,8 +832,19 @@ emo_os_trap_trampoline:
     addi t6, t6, 1
     sd t6, 0(t5)
 .Ltrap_ticked:
-    # the wake: the quota step, then — a spent slice — the preemption,
-    # which dispatches the next process and never comes back
+    # the device world's heartbeat first: a reader's peek runs
+    # unmasked, so a delivery can land in the handful of instructions
+    # between the peek's "empty" and the park's state word — the wake
+    # scanning before the 4 is written finds the slot alive and moves
+    # on, the byte waits in the ring, and the sleeper never rises.
+    # The tick re-issues both wakes, so a lost pass becomes a spurious
+    # one (a waiter the event was not for re-checks and parks again —
+    # the broadcast discipline the wakes already promise) and the
+    # window costs a delay of one tick, never a loss. Then the quota
+    # step, then — a spent slice — the preemption, which dispatches
+    # the next process and never comes back
+    call emo_sched_wake_console
+    call emo_sched_wake_input
     call emo_sched_tick
     beqz a0, .Ltrap_home
     la t0, emo_os_trap_frame
@@ -723,7 +875,32 @@ emo_os_console_irq:
     lw a0, 0(t0)
     beqz a0, .Lcons_done     # a spurious claim: nothing to complete
     li t1, 10
-    bne a0, t1, .Lcons_bad   # a device this kernel does not know
+    beq a0, t1, .Lcons_drain # the UART's line: the FIFO drains here
+    li t3, EMO_KOFF + 0x870029f0  # the input lines' mask (T8.3, T8.11):
+                                  # each input driver sets its
+                                  # transport's PLIC number as a bit —
+                                  # the keyboard's merge and the pointer's
+                                  # driver; 0 = nothing wired, the loud
+                                  # end this branch always was
+    ld t3, 0(t3)
+    beqz t3, .Lcons_bad
+    srl t4, t3, a0
+    andi t4, t4, 1
+    beqz t4, .Lcons_bad      # a device this kernel does not know
+    # An input device's line (T8.3): the eventq holds the events, so
+    # the ISR's whole duty is the wake — every device-waiter, each of
+    # which drains and recycles its own queue when it runs (T8.11). The
+    # claim id rides the frame across the call: the wake's return left
+    # its own word in a0, and completing the claim with that word
+    # completed nothing — the first event's interrupt was the last the
+    # device could raise (found with the pointer, T8.11).
+    sd a0, 8(sp)
+    call emo_sched_wake_console
+    call emo_sched_wake_input
+    ld a0, 8(sp)
+    li t0, EMO_KOFF + 0x0c201004
+    sw a0, 0(t0)             # complete the claim
+    j .Lcons_done
 .Lcons_drain:
     li t0, EMO_KOFF + 0x10000005  # the line-status register
     lbu t1, 0(t0)
@@ -748,6 +925,7 @@ emo_os_console_irq:
     j .Lcons_drain
 .Lcons_wake:
     call emo_sched_wake_console
+    call emo_sched_wake_input
     li t0, EMO_KOFF + 0x0c201004
     li t1, 10
     sw t1, 0(t0)             # complete the claim
@@ -837,32 +1015,72 @@ emo_os_trap_resume:
     ld t1, 0(t1)
     jalr t1                  # the swap, fences included
 3:
-    li t0, 0x87fff008
-    ld t0, 0(t0)             # the user image's arena cursor word
-    beqz t0, .Larena_ready   # nothing staged: nothing to hand over
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t2, 8(t1)             # the passer's pid
     li t3, 1
     beq t2, t3, .Larena_boot_in
+    # the passer's image's own pair (emo-desktop A11.2), the save's
+    # lookup mirrored: the record names the image's private handoff
+    # page, a zero record the boot image's classic cells. The reads
+    # here run on the incoming pass's own table — the record and the
+    # private page through the high half's alias, every table's; the
+    # classic cells at the low identity, which only a boot-image
+    # passer's table (or the kernel's) maps to the classic page, the
+    # only table shapes this branch serves.
+    li t3, 256
+    bge t2, t3, .Larena_ready
+    li t3, 0xFFFFFFC08700C000  # the exec page, the high half's alias
+    slli t4, t2, 3
+    add t3, t3, t4
+    ld t3, 0(t3)             # the record, or 0
+    beqz t3, .Larena_classic_in
+    ld t3, 224(t3)           # the private handoff page, the
+                             # kernel's alias as the allocator
+                             # answered it — read raw, no second
+                             # offset
+    addi t3, t3, 8           # its pair's cursor cell
+    j .Larena_pair_in
+.Larena_classic_in:
+    li t3, 0x87fff008        # the classic pair's cursor cell, the low
+                             # window's identity
+.Larena_pair_in:
+    ld t0, 0(t3)             # the arena cursor word's address
+    beqz t0, .Larena_ready   # nothing staged: nothing to hand over
     li t4, EMO_KOFF
     ld t2, 576(t1)
-    sub t2, t2, t4           # the passer's cursor, as the user addresses it,
-    sd t2, 0(t0)             # becomes the arena's
-    li t0, 0x87fff010
-    ld t0, 0(t0)             # and the end word beside it
+    sub t2, t2, t4           # the passer's cursor, as the user addresses
+    add t0, t0, t4           # it — through the pointer's kernel alias,
+    sd t2, 0(t0)             # the resume runs on the incoming pass's own
+                             # table, and the cells' image may be a disk
+                             # ELF whose words no other table maps at
+                             # identity (emo-desktop A11.1) — becomes the
+                             # arena's
+    ld t0, 8(t3)             # and the end word beside it
+    beqz t0, .Larena_ready
     ld t2, 584(t1)
     sub t2, t2, t4
+    add t0, t0, t4
     sd t2, 0(t0)
     j .Larena_ready
 .Larena_boot_in:
+    li t4, EMO_KOFF
+    li t0, 0x87fff050        # the boot image's own pair (A11.1), not the
+    ld t0, 0(t0)             # private page's a disk ELF's stub parked
+    beqz t0, .Larena_ready   # nothing staged: the boot pass's own hand
+                             # waits for its stub's parks — the first
+                             # ticks of the .bss clear land here, before
+                             # any pointer exists
     la t2, emo_os_boot_cur
     ld t2, 0(t2)
+    add t0, t0, t4           # the boot pair's words, the same alias
     sd t2, 0(t0)
-    li t0, 0x87fff010
+    li t0, 0x87fff058
     ld t0, 0(t0)
+    beqz t0, .Larena_ready   # the same patience for the end cell
     la t2, emo_os_boot_lim
     ld t2, 0(t2)
+    add t0, t0, t4
     sd t2, 0(t0)
     j .Larena_ready
 .Lkernel_home:
@@ -947,6 +1165,15 @@ emo_os_trap_resume:
 # trampoline's user path, on its own frame, like every pass's.
     .globl emo_os_user_boot
 emo_os_user_boot:
+    # the switch is the pick's own discipline (T8.21's find): from the
+    # satp write to the sret this shim runs S-mode on the pass's own
+    # table, which maps none of the kernel's low window — a tick
+    # landing there ran the ISR's wake reads (the input service's pid
+    # cell at the cells' 0x870029e8) on a table that does not map them,
+    # and the load page fault was the kernel's loud end. Masked, then:
+    # the sret restores SIE from the frame's SPIE, the one place that
+    # restore belongs, and the no-entry return unmasks on its way out.
+    csrci sstatus, 2
     la t0, emo_os_user_entry
     ld a0, 0(t0)
     beqz a0, 1f
@@ -975,7 +1202,8 @@ emo_os_user_boot:
     csrw sstatus, t1
     csrw sepc, a0
     sret
-1:  ret
+1:  csrsi sstatus, 2
+    ret
 
 # The death notice (T7.2): the runtime's death hook lands here with the
 # dead green process's pid in a0 — from emo_process_done (a service
@@ -994,24 +1222,45 @@ emo_os_death_notice:
     # zero here, inside the death's own masked region, so a request the
     # gate dispatches before the supervisor has parked the next
     # instance is set aside — the stash the next instance serves first
-    # — instead of posted into a dead mailbox nobody drains
+    # — instead of posted into a dead mailbox nobody drains. The dead
+    # pid rides the routine's own frame: the first post's callee owns
+    # a0, and the second post's notice word needs the pid the first
+    # one consumed (T8.6's restart silently skipped while the word
+    # carried the clobbered register).
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
     li t0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
     ld t1, 0(t0)
     bne t1, a0, 2f
     sd zero, 0(t0)
 2:  li t0, EMO_KOFF + 0x87005008  # the supervisor's pid cell
     ld t1, 0(t0)
-    beqz t1, 1f
-    addi sp, sp, -16
-    sd ra, 0(sp)
+    beqz t1, 3f
     li a1, 256
     slli a1, a1, 32
+    ld a0, 8(sp)
     or a1, a1, a0            # 256 << 32 | the dead pid
     mv a0, t1
     call emo_gate_post
-    ld ra, 0(sp)
-    addi sp, sp, 16
-1:  ret
+3:  li t0, EMO_KOFF + 0x87002e88  # the compositor's supervisor's cell
+                                  # (T8.6; A11.2's move past the grant
+                                  # table): every death reaches it too
+                                  # — its own instance's death is the
+                                  # restart, any other drops (T8.14: a
+                                  # user pass's windows go home through
+                                  # the comp page's dead-owner cell)
+    ld t1, 0(t0)
+    beqz t1, 1f
+    li a1, 256
+    slli a1, a1, 32
+    ld a0, 8(sp)
+    or a1, a1, a0
+    mv a0, t1
+    call emo_gate_post
+1:  ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
 
     .section .rodata
 msg_unexpected:
@@ -1160,10 +1409,13 @@ emo_os_frames_given:
     .zero 8                  # padding: the bitmap opens at +64
     .globl emo_os_frames_claimed
 emo_os_frames_claimed:
-    .zero 64
-# The frame freelist (T6.1), at +128: the head, the count, and the
+    .zero 256
+# The frame freelist (T6.1), at +320: the head, the count, and the
 # blocks split so far — the page tables' 4 KiB unit, sixteen off a
-# block at a time.
+# block at a time. (The bitmap grew to 32 words — 2048 blocks, the
+# region the 64 MiB heap leaves — when the disk ELFs' round spent the
+# heap lever: at eight words the scan overran the bitmap into these
+# words and the freelist followed garbage.)
     .globl emo_os_frames_frame_head
 emo_os_frames_frame_head:
     .zero 8
@@ -1200,3 +1452,16 @@ emo_os_fs_stash:
     .globl emo_os_fs_slots
 emo_os_fs_slots:
     .zero 9216               # four slots of 2304 bytes
+
+# The exec page (emo-desktop A11.1): the disk ELFs' kernel side, at the
+# fixed address the kernel's linker script gives the section — the
+# per-pid image cells (one write per pid ever, the dead-owners'
+# discipline), the eight image records, the pending cell the exec's
+# spawn consumes, the request's busy cell and name, and the process
+# service's request stash. The kernel's Emo (gate.emo, exec.emo,
+# main.emo) reads and writes every word by its fixed constant; named
+# here so the forensics can read them.
+    .section .emo_exec, "aw", @nobits
+    .globl emo_os_exec_page
+emo_os_exec_page:
+    .zero 4096

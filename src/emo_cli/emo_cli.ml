@@ -327,24 +327,25 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(native : Emo_project.native_inputs)
     ~(target : string) ~(profile : string) : int =
   (* The profile is the riscv64 image's shape (EmoOS T4.1): "kernel", the
-     boot-profile-A image, or "user", the U-mode ELF the kernel loads.
-     Any other name is refused, and so is the user profile off the one
-     target that has it — an image shape its target cannot emit is an
-     error, not a silently ignored flag. *)
+     boot-profile-A image, "user", the U-mode ELF the kernel loads, or
+     "app" (emo-desktop A12.1), the disk ELF's shape — the user world
+     over a smaller heap. Any other name is refused, and so are the user
+     and app profiles off the one target that has them — an image shape
+     its target cannot emit is an error, not a silently ignored flag. *)
   let profile_error =
     match (profile, target) with
-    | "kernel", _ | "user", "riscv64" -> None
-    | "user", other ->
+    | "kernel", _ | "user", "riscv64" | "app", "riscv64" -> None
+    | "user", other | "app", other ->
         Some
           (Printf.sprintf
-             "emo build: the user profile is the riscv64 image's — the %s \
-              target has no user profile"
-             other)
+             "emo build: the %s profile is the riscv64 image's — the %s target \
+              has no %s profile"
+             profile other profile)
     | other, _ ->
         Some
           (Printf.sprintf
              "emo build: unknown profile `%s` — the profiles are kernel (the \
-              default) and user"
+              default), user, and app"
              other)
   in
   match profile_error with
@@ -1069,8 +1070,10 @@ let build =
       value & opt string "kernel"
       & info [ "profile" ] ~docv:"PROFILE"
           ~doc:
-            "The riscv64 image shape: kernel (the default, boot profile A) or \
-             user (the U-mode ELF the kernel loads and enters).")
+            "The riscv64 image shape: kernel (the default, boot profile A), \
+             user (the U-mode ELF the kernel loads and enters), or app (the \
+             disk ELF the exec verb loads — the user world over a smaller \
+             heap).")
   in
   let build entry output no_specialize cclibs target profile locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());

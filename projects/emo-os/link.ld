@@ -102,5 +102,48 @@ SECTIONS
   . = KOFF + 0x87005000;
   .emo_fs (NOLOAD) : AT(ADDR(.emo_fs) - KOFF) { *(.emo_fs) } :tick
 
+  /* The console's staging page (T8.15), a page above the compositor's:
+     the four request slots the gate fills for the write verb — busy
+     lengths and the bytes, one slot per parked writer, the slot's
+     index in a per-pid cell the service reads and clears — the race
+     two concurrent writers named (the frame callback's beat parked
+     two at once, and the one stage buffer printed the second writer's
+     bytes for both). The slots end at +0x2010; the per-pid cells run
+     to +0x2100. */
+  . = KOFF + 0x87009000;
+  .emo_console (NOLOAD) : AT(ADDR(.emo_console) - KOFF) { *(.emo_console) } :tick
+
+  /* The exec page (emo-desktop A11.1), a page above the console's end:
+     the disk ELFs' kernel side — the per-pid image cells (the gate's
+     checks and the build's mapping read the caller's image record by
+     them; one write per pid ever, the dead-owners' discipline), the
+     eight image records (the segment table, the entry, the run), the
+     pending cell the exec's spawn consumes, the request's busy cell
+     and name, and the process service's request stash. The kernel's
+     Emo (gate.emo, exec.emo, main.emo) reads and writes every word by
+     its fixed constants. */
+  . = KOFF + 0x8700c000;
+  .emo_exec (NOLOAD) : AT(ADDR(.emo_exec) - KOFF) { *(.emo_exec) } :tick
+
+  /* The process page (emo-desktop A12.1, EmoOS T8.19), a page above the
+     exec's: the per-pid parent cells — the spawner's pid written at
+     every spawn and every exec, one write per pid ever (the
+     dead-owners' discipline) — the record a child's death reads when
+     the exit event names its reader in the merged stream. The kernel's
+     Emo (main.emo) reads and writes every word by its fixed constants;
+     the exits' ring itself stays on the handoff page's tail, beside
+     the held reads it serves. */
+  . = KOFF + 0x8700d000;
+  .emo_proc (NOLOAD) : AT(ADDR(.emo_proc) - KOFF) { *(.emo_proc) } :tick
+
+  /* The compositor's page (T8.6), a page above the filesystem's: the
+     generation, the mode the display service answered at init, and the
+     window stack (the position and focus the compositor's policy
+     holds) — the state that outlives the instances, the supervisor's
+     restart reading it back the way the filesystem's cache is rebuilt
+     from the disk. */
+  . = KOFF + 0x87008000;
+  .emo_comp (NOLOAD) : AT(ADDR(.emo_comp) - KOFF) { *(.emo_comp) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

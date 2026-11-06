@@ -57,8 +57,15 @@ expect 17 "all seventeen assertions pass" "$n"
 # --- which targets can compile the package -------------------------------
 #
 # The package is `ui.emo` plus `test.emo`, and the test is what calls
-# `ui.run` with two bare defs. Every target lowers it since `c` grew
-# def-as-value (T48.8), so the whole table builds.
+# `ui.run` with two bare defs. Every hosted target lowers it since `c`
+# grew def-as-value (T48.8), so the whole table builds. The manifest
+# names `riscv64` too (emo-desktop A7.2: the fb backend's metal
+# consumer requires the core), and that claim is for the modules a
+# consumer reaches — `ui.emo` and `debug.emo` lower for a riscv64 user
+# program, `test.emo` does not (the emitter has no program-wide def
+# values yet, `CHECK.md`) — so it is pinned where a consumer stands:
+# `projects/emo-desktop/fb/check.sh` builds one through its metal probe,
+# and `projects/emo-os/run.sh` runs the real one.
 
 for t in ocaml c typescript wasm beam; do
   build . ui.emo "$t" && rc=0 || rc=$?
@@ -130,20 +137,22 @@ expect 0 "eval_order --target ocaml builds" "$rc"
 got=$("$OUT" 2>&1 || true)
 expect "12 = 3" "eval_order -- ocaml evaluates operands left to right" "$got"
 
-# An enum's display form: bare on the interpreter, module-qualified on
-# `typescript`, and `beam` has no conversion for the kind and raises.
+# An enum's display form: the interpreter's bare-tag form on every
+# target since the 2026-10-19 fix (`CHECK.md`) — `typescript` once
+# qualified the tag and `beam` once raised for want of a conversion, and
+# the probe pins that neither does now.
 run_of probe/enum_print main.emo "red (ok, 12.5)"
 
 build probe/enum_print main.emo typescript && rc=0 || rc=$?
 got=$(node "$OUT.ts" 2>&1 || true)
-expect "main.Color.red (R.ok, 12.5)" "enum_print -- typescript qualifies the tag" "$got"
+expect "red (ok, 12.5)" "enum_print -- typescript prints the bare tag" "$got"
 
 build probe/enum_print main.emo beam && rc=0 || rc=$?
 ( cd "$(dirname "$OUT")" && ERL_CRASH_DUMP=/dev/null erl -noshell -pa . \
     -eval 'out:main(), erlang:halt(0).' ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
-expect 1 "enum_print -- beam raises rather than printing" "$rc"
-got=$(grep -o -m1 "emo_no_to_str" "$OUT.run" || true)
-expect "emo_no_to_str" "enum_print -- and names the conversion it lacks" "$got"
+expect 0 "enum_print -- beam prints rather than raising" "$rc"
+got=$(cat "$OUT.run" || true)
+expect "red (ok, 12.5)" "enum_print -- and prints the bare tag" "$got"
 
 # --- the golden: one screen, the same bytes from every target ------------
 #

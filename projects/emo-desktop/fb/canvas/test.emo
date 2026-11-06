@@ -1,0 +1,207 @@
+// The canvas package's own test: the hosted surface as a `ui_fb.Surface`,
+// and everything in the core that needs a surface to show itself — the
+// glyph verb, paint's layering and clipping with the labels' glyphs,
+// the pointer sprite, `ppm`, and the backend's repaint through the loop
+// — checked as values rather than as bytes. The core's own test covers
+// the arithmetic that needs no surface (measure, clip, over, the font's
+// rows, the pointer's drawing, the script); `../golden/` pins the
+// painted bytes.
+//
+//   emo run test.emo
+//
+// It is a module of the package, not a package of its own, so
+// `emo check ui_fb_canvas.emo` checks it and `../check.sh` runs it.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def word_is(got Int64, want Int64, what String) {
+  if got == want {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "${what}: got ${got}, wanted ${want}")
+  }
+}
+
+// ---- the canvas as a Surface ------------------------------------------
+
+def canvas_checks() {
+  const c = ui_fb_canvas.canvas(4, 3)
+  c.fill(1, 1, 2, 1, 0x112233)
+  check(c.at(1, 1) == 0x112233 && c.at(2, 1) == 0x112233,
+    "fill stores the word over the rectangle")
+  check(c.at(0, 1) == 0 && c.at(3, 1) == 0 && c.at(1, 0) == 0 && c.at(1, 2) == 0,
+    "and nowhere around it")
+  c.fill(0, 0, 1, 1, 0xFF445566)
+  word_is(c.at(0, 0), 0x445566, "fill clears the coverage byte")
+  c.fill(3, 2, 5, 5, 0xABCDEF)
+  check(c.at(3, 2) == 0xABCDEF, "a fill past the edge lands what is inside")
+  check(c.at(-1, 0) == 0 && c.at(0, -1) == 0 && c.at(4, 0) == 0 && c.at(0, 3) == 0,
+    "a read off the surface answers 0")
+
+  const b = ui_fb_canvas.canvas(2, 1)
+  b.fill(0, 0, 2, 1, 0x00FF00)
+  b.blend(0, 0, 1, 1, 0x80FF0000)
+  word_is(b.at(0, 0), 0x807F00, "blend composites over what is there")
+  word_is(b.at(1, 0), 0x00FF00, "and leaves the rest of the row alone")
+  b.blend(1, 0, 1, 1, 0xFF123456)
+  word_is(b.at(1, 0), 0x123456, "an opaque blend is a fill")
+}
+
+// ---- glyph: one cell of the font through the surface ------------------
+//
+// The pixels named here are the drawing's (`../glyphs/glyphs.txt`): the
+// `a` has its first ink on row 5, cells 2 to 5, and nothing in cell 0;
+// the `b` has its ascender in cell 1 from row 2.
+
+def glyph_checks() {
+  const c = ui_fb_canvas.canvas(10, 18)
+  c.fill(0, 0, 10, 18, 0x111111)
+  const a = ui_fb.font.glyph_of("a")
+  c.glyph(1, 1, ui_fb.font.top_rows(a), ui_fb.font.bottom_rows(a), 0xFFEEDDCC)
+  word_is(c.at(3, 6), 0xEEDDCC, "a set bit stores the ink, coverage byte cleared")
+  word_is(c.at(6, 6), 0xEEDDCC, "across the row's run")
+  word_is(c.at(1, 6), 0x111111, "a clear bit leaves the surface alone")
+  word_is(c.at(3, 1), 0x111111, "as does a clear row")
+
+  const corner = ui_fb_canvas.canvas(4, 4)
+  corner.glyph(-2, -4, ui_fb.font.top_rows(a), ui_fb.font.bottom_rows(a), 0xABCDEF)
+  check(corner.at(0, 1) == 0xABCDEF && corner.at(3, 1) == 0xABCDEF,
+    "a cell off the top-left corner lands what is inside")
+  check(corner.at(0, 0) == 0 && corner.at(0, 2) == 0,
+    "and nothing where the glyph is clear")
+
+  const edge = ui_fb_canvas.canvas(6, 6)
+  const b = ui_fb.font.glyph_of("b")
+  edge.glyph(2, 2, ui_fb.font.top_rows(b), ui_fb.font.bottom_rows(b), 0x123456)
+  check(edge.at(3, 4) == 0x123456 && edge.at(3, 5) == 0x123456,
+    "a cell over the bottom-right corner lands its ascender")
+  check(edge.at(4, 4) == 0 && edge.at(5, 5) == 0, "and nothing beside it")
+}
+
+// ---- paint: the tree onto the surface, parents under children --------
+
+def paint_checks() {
+  const panel = ui_fb_canvas.canvas(24, 20)
+  ui_fb.paint(ui.column([ui.text("a", ui.style())],
+    ui.style().with_padding(2.0)), panel)
+  check(panel.at(0, 0) == 0xD8D0C0 && panel.at(23, 19) == 0xD8D0C0,
+    "a column paints its panel over the whole rectangle it was given")
+  check(panel.at(4, 7) == 0x282830 && panel.at(7, 7) == 0x282830,
+    "and its child's glyph in ink over the panel, inside the padding")
+  check(panel.at(2, 2) == 0xD8D0C0 && panel.at(2, 7) == 0xD8D0C0,
+    "a text fills no box: the panel shows through the cell's clear pixels")
+  check(panel.at(10, 7) == 0xD8D0C0 && panel.at(4, 18) == 0xD8D0C0,
+    "the panel shows again past the child's extent")
+
+  const centered = ui_fb_canvas.canvas(24, 16)
+  ui_fb.paint(ui.column([ui.text("a", ui.style())],
+    ui.style().with_align(ui.Align.center)), centered)
+  check(centered.at(9, 5) == 0xD8D0C0 && centered.at(10, 5) == 0x282830
+    && centered.at(13, 5) == 0x282830 && centered.at(14, 5) == 0xD8D0C0,
+    "center places a narrower child in the middle of the column")
+
+  const grown = ui_fb_canvas.canvas(8, 40)
+  ui_fb.paint(ui.column([
+    ui.text("a", ui.style()),
+    ui.row([], ui.style().with_grow(true)),
+    ui.text("b", ui.style())
+  ], ui.style().with_align(ui.Align.stretch)), grown)
+  check(grown.at(2, 5) == 0x282830 && grown.at(0, 16) == 0xC0C8D8
+    && grown.at(0, 23) == 0xC0C8D8 && grown.at(1, 26) == 0x282830,
+    "grow hands a child the column's leftover height")
+
+  const spaced = ui_fb_canvas.canvas(8, 32)
+  ui_fb.paint(ui.column([
+    ui.text("a", ui.style()),
+    ui.spacer(ui.style().with_grow(true))
+  ], ui.style()), spaced)
+  check(spaced.at(0, 16) == 0xD8D0C0 && spaced.at(7, 31) == 0xD8D0C0,
+    "a spacer paints nothing, so the panel shows through it")
+
+  const small = ui_fb_canvas.canvas(8, 8)
+  ui_fb.paint(ui.text("abc", ui.style()), small)
+  check(small.at(2, 5) == 0x282830 && small.at(0, 0) == 0 && small.at(7, 7) == 0,
+    "a leaf larger than the surface is clipped to it, its glyphs the only ink")
+
+  const boxed = ui_fb_canvas.canvas(48, 16)
+  ui_fb.paint(ui.button("w", 0, ui.style()), boxed)
+  check(boxed.at(0, 0) == 0x7088A8 && boxed.at(47, 15) == 0x7088A8,
+    "a button fills its box in steel")
+  check(boxed.at(2, 2) == 0xF8F8F0 && boxed.at(16, 5) == 0xF8F8F0
+    && boxed.at(24, 2) == 0x7088A8,
+    "and its bracketed label in light ink over it")
+}
+
+// ---- the pointer sprite on a surface ----------------------------------
+//
+// The cells named here are the drawing's (`../pointer.emo`): the tip at
+// the top-left, the body's first paper cell on row 2, the tail's
+// outline on row 16 at cells 6 and 7.
+
+def pointer_checks() {
+  const c = ui_fb_canvas.canvas(20, 24)
+  c.fill(0, 0, 20, 24, 0x336699)
+  ui_fb.pointer.paint(c, 3, 3)
+  word_is(c.at(3, 3), 0x000000, "the tip's cell is ink")
+  word_is(c.at(4, 5), 0xFFFFFF, "the body's cells are paper")
+  word_is(c.at(8, 4), 0x336699, "a clear cell leaves the surface alone")
+  word_is(c.at(9, 19), 0x000000, "the tail's outline is ink")
+  word_is(c.at(2, 3), 0x336699, "and nothing lands left of the tip")
+
+  const corner = ui_fb_canvas.canvas(4, 4)
+  corner.fill(0, 0, 4, 4, 0x112233)
+  ui_fb.pointer.paint(corner, -1, -1)
+  word_is(corner.at(0, 0), 0x000000, "a sprite off the corner lands what is inside")
+  word_is(corner.at(0, 1), 0xFFFFFF, "its body with it")
+}
+
+// ---- ppm: the surface as text ----------------------------------------
+
+def ppm_checks() {
+  const c = ui_fb_canvas.canvas(2, 1)
+  c.fill(0, 0, 1, 1, 0xFF8040)
+  check(ui_fb.ppm(c) == "P3\n2 1\n255\n255 128 64\n0 0 0\n",
+    "ppm is the P3 header and one pixel per line")
+}
+
+// ---- the backend: mount paints, every event repaints ----------------
+//
+// The smallest loop that can show a repaint: one message, a model that
+// is the width of the title, and a view whose ink doubles when it flips.
+// The button carries the tag; the script presses it once.
+
+enum Msg { widen }
+
+def view(reg ui.Registry, wide Bool) ui.Node {
+  const widen = reg.on(Msg.widen)
+  const title = if wide { "ab" } else { "a" }
+  return ui.column([
+    ui.text(title, ui.style()),
+    ui.button("w", widen, ui.style())
+  ], ui.style())
+}
+
+def update(msg Msg, wide Bool) Bool {
+  return true
+}
+
+def backend_checks() {
+  const c = ui_fb_canvas.canvas(24, 32)
+  ui.run(view, update, false, ui_fb.backend(c, ui_fb.script([0])))
+  check(c.at(2, 5) == 0x282830 && c.at(9, 2) == 0x282830 && c.at(16, 5) == 0xD8D0C0
+    && c.at(0, 16) == 0x7088A8 && c.at(2, 18) == 0xF8F8F0,
+    "the backend paints on mount and repaints the event's tree")
+}
+
+canvas_checks()
+glyph_checks()
+paint_checks()
+pointer_checks()
+ppm_checks()
+backend_checks()

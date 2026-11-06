@@ -1,0 +1,64 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo/ui_corpus"
+
+// The framebuffer family's convergence-corpus entry (emo-desktop
+// A10.1): the shared application — the counter, the form, the list,
+// the events, the whole node vocabulary — required whole from
+// `emo/ui_corpus`, never copied, and run through `ui.run` on a canvas
+// the size of the display's baseline mode with a script in the input's
+// seat: inc, inc, dec, submit, the tags the corpus's `view` registers
+// (0, 1 and 2, its registration order fixing them). Every frame's
+// digest prints as the backend presents it, beside the state
+// transitions `update` says; the interpreter's bytes are
+// `expected.txt`, and every hosted target prints the same. The loop is
+// the corpus's own three blocks — the Elm loop unchanged, the sixth
+// backend family running what the other five run.
+//
+//   emo run main.emo
+
+// The canvas with the golden's eye on it: the frame golden's, verb
+// for verb — `present` is where the digest is read and said.
+class Eye {
+  def init(canvas ui_fb.Surface) {
+    self.canvas = canvas
+  }
+
+  def width() Int64 {
+    return self.canvas.width()
+  }
+
+  def height() Int64 {
+    return self.canvas.height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.canvas.at(x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.fill(x, y, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.blend(x, y, w, h, color)
+  }
+
+  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+    self.canvas.glyph(x, y, top, bottom, color)
+  }
+
+  def present() {
+    println("frame ${ui_fb_frame.digest(self.canvas)}")
+  }
+}
+
+def main() {
+  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1024, 768))
+  ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(),
+    ui_fb.backend(screen, ui_fb.script([0, 0, 1, 2])))
+}
+
+main()

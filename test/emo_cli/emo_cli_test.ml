@@ -376,6 +376,8 @@ let wasm_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -442,6 +444,8 @@ let beam_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     "sql_demo";
@@ -669,6 +673,8 @@ let c_goldens =
     "builtin_names";
     "to_string_render";
     "typed_calls";
+    "typed_sigs";
+    "typed_methods";
     "plot_demo";
     "png_demo";
     (* sqlite3_demo: the package's manifest `link` field and its
@@ -3045,11 +3051,18 @@ let riscv64_examples_tests =
       "atomic_cell";
       "peek_poke";
       "typed_calls";
+      "typed_sigs";
+      "typed_methods";
+      "bytes";
+      "array_builder";
       "native_image";
       "processes";
       "arena_gone";
       "outlives";
       "survivors";
+      "wide_literal";
+      "glyph_lookup";
+      "def_values";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -3110,8 +3123,14 @@ let riscv64_refusal_tests =
                   (contains message "does not support"
                   && contains message fragment))
           [
-            ("bytes", {|println(Bytes.new(4))|}, "Bytes");
             ("raise", {|raise Exception.new(message: "boom")|}, "raise");
+            ( "a String method the metal does not lower",
+              {|println("a b".split(" ").length())|},
+              "the String method `split`" );
+            ( "the List deque the metal does not lower",
+              {|const l = List.new([1])
+println(l.length())|},
+              "List" );
           ]);
   ]
 
@@ -3185,8 +3204,8 @@ let riscv64_profile_tests =
           "the kernel stub is the entry" true
           (contains kernel_asm "Boot profile A");
         Alcotest.(check bool)
-          "the kernel heap is unchanged" true
-          (contains kernel_asm ".zero 100663296"));
+          "the kernel heap is the 64 MiB the disk ELFs' round spent" true
+          (contains kernel_asm ".zero 67108864"));
     tc "the allocator charges the current process's arena" (fun () ->
         (* T5.1: the slot holds the cursor and the end (offsets 576 and
            584, the stride 592), emo_alloc reads them off the current
@@ -3228,11 +3247,12 @@ let riscv64_profile_tests =
                 "emo_user_arena_cell")));
     tc "the block hooks let a kernel back every block" (fun () ->
         (* T5.3: the runtime asks a parked frame allocator for every
-           64 KiB block — a spawn's arena, a user process's stack (the
-           slot's word at 864, the stride 880) — and the reaper gives
-           both back at the death; hookless, the pool and the carve
-           stay. The words ride both profiles, zero unless a kernel's
-           stub parks them. *)
+           64 KiB block — a spawn's arena (T8.9: a contiguous run of
+           the length the kernel parks, the base word at 880), a user
+           process's stack (the slot's word at 864, the stride 888) —
+           and the reaper gives both back at the death; hookless, the
+           pool and the carve stay. The words ride both profiles, zero
+           unless a kernel's stub parks them. *)
         let program = lower {|println("ok")|} in
         List.iter
           (fun profile ->
@@ -3246,13 +3266,25 @@ let riscv64_profile_tests =
               true
               (contains asm "emo_block_give_hook:");
             Alcotest.(check bool)
+              (profile ^ ": the arena hook rides beside the take")
+              true
+              (contains asm "emo_arena_take_hook:");
+            Alcotest.(check bool)
+              (profile ^ ": the run's length rides beside it")
+              true
+              (contains asm "emo_arena_run_len:");
+            Alcotest.(check bool)
               (profile ^ ": the stack block rides the slot")
               true
               (contains asm "sd t6, 864(t3)");
             Alcotest.(check bool)
+              (profile ^ ": the arena's base rides the slot")
+              true
+              (contains asm "sd a0, 880(t3)");
+            Alcotest.(check bool)
               (profile ^ ": the slot stride grew")
               true
-              (contains asm "li t3, 880");
+              (contains asm "li t3, 888");
             Alcotest.(check bool)
               (profile ^ ": the reaper gives through the hook")
               true
@@ -3302,7 +3334,7 @@ let riscv64_profile_tests =
             Alcotest.(check bool)
               (profile ^ ": the slot table grew with the word")
               true
-              (contains asm ".zero 56320"))
+              (contains asm ".zero 56832"))
           [ "kernel"; "user" ]);
     tc "the synthetic frame parks the initial sp at the anchor" (fun () ->
         (* T6.3: the frame the spawn builds sits at the block's bottom

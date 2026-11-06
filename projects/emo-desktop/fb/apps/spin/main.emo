@@ -1,0 +1,23 @@
+// The spinner (EmoOS T8.21): the busy app the preemption proof runs —
+// its own program, a disk ELF the REPL's exec command starts, with no
+// window, no message, and no yield: a counted loop that would hold the
+// hart for its whole count under the cooperative scheduler, and one
+// announce when the count is out. The announce waits for the loop's
+// end on purpose — the runtime's println is a write ecall per byte, so
+// a word printed mid-loop would interleave with whatever the desktop's
+// shell is printing that instant, and the golden's lines are read
+// whole. The golden's order between the REPL's echo and the done line
+// is the proof: the echo fed while the loop runs is answered only if
+// the tick's quota step spends the spinner's slice and the scheduler
+// dispatches the shell — the cooperative hart would leave the echo
+// nothing until the count was out. The program falls off its top level
+// behind the announce — the exit verb, the exit event's code 0.
+def main() {
+  var i = 0
+  while i < 4000000000 {
+    i = i + 1
+  }
+  println("spin done")
+}
+
+main()

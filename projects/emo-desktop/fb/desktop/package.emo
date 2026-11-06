@@ -1,0 +1,9 @@
+package {
+  name = "emo_desktop"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam", "riscv64"]
+
+  deps {
+    "emo/ui_fb" = "0.1.0"
+  }
+}

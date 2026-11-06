@@ -9,6 +9,14 @@
 #   (cd hello && emo build main.emo --target riscv64 --profile user \
 #        -o ../hello.elf)
 #   emo build main.emo --target riscv64
+#
+# The disk ELFs (emo-desktop A11.1) ride beside it: the three apps'
+# images, embedded the same way, their bounds parked at the handoff
+# page's free tail — and, since T8.21, the spinner's, the busy app the
+# preemption proof execs. The first boot writes each onto the volume
+# through the filesystem service when a probe says the file is missing
+# — the machine installs its own apps — and every exec after loads the
+# image from the disk.
 
     .section .rodata
     .globl emo_os_user_blob
@@ -16,3 +24,28 @@ emo_os_user_blob:
     .incbin "hello.elf"
     .globl emo_os_user_blob_end
 emo_os_user_blob_end:
+
+    .globl emo_os_user_blob_c
+emo_os_user_blob_c:
+    .incbin "counter.elf"
+    .globl emo_os_user_blob_c_end
+emo_os_user_blob_c_end:
+
+    .globl emo_os_user_blob_f
+emo_os_user_blob_f:
+    .incbin "files.elf"
+    .globl emo_os_user_blob_f_end
+emo_os_user_blob_f_end:
+
+    .globl emo_os_user_blob_e
+emo_os_user_blob_e:
+    .incbin "editor.elf"
+    .globl emo_os_user_blob_e_end
+emo_os_user_blob_e_end:
+
+    .globl emo_os_user_blob_s
+emo_os_user_blob_s:
+    .incbin "spin.elf"
+    .globl emo_os_user_blob_s_end
+emo_os_user_blob_s_end:
+

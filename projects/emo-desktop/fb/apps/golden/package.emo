@@ -1,0 +1,13 @@
+package {
+  name = "emo/ui_apps_golden"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_fb" = "0.1.0"
+    "emo/ui_fb_canvas" = "0.1.0"
+    "emo/ui_fb_frame" = "0.1.0"
+    "emo/ui_apps" = "0.1.0"
+  }
+}

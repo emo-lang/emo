@@ -12,6 +12,21 @@
 // single frames: the page tables' unit, split off a block sixteen at a
 // time onto their own freelist on the same page.
 //
+// The screen carve (T8.2): display memory is the kernel's to hand out,
+// and the carve is the one allocation bigger than a block — a fixed
+// 4 MiB cut at the region's top, never on the freelist (the boot loop
+// bounds at the region's end, which now sits at the carve's base). The
+// size is the assessment's decision point: the resolution baseline is
+// 1024×768 XRGB8888 — a 3 MiB buffer — and the carve is the floor of
+// the assessment's 4–8 MiB range, the buffer with a MiB beside it. The
+// hand below answers the whole carve once: the first full-screen pass's
+// grant, refused after — a second claimant is the process service's
+// resource refusal, before anything is staged. The base is named by
+// its physical address (the identity a pass runs it at, the number the
+// display's device will scan out); the hand answers the kernel's
+// address, the allocator's currency, and the kernel reads the same RAM
+// at its high alias like any RAM below the board's top.
+//
 // Every address here is a kernel address (T6.1): the kernel lives in
 // Sv39's high half, where every byte of the machine sits at its
 // physical address plus koff, so the region's bounds, the links, and
@@ -37,21 +52,44 @@ const lo = page + 24 // the region's base, block-aligned
 const hi = page + 32 // the region's end
 const taken = page + 40 // takes so far
 const given = page + 48 // gives so far
-const claimed = page + 64 // the claimed bitmap: one bit per block, eight words
-const frame_head = page + 128 // the frame freelist's head: a free frame, 0 = none
-const frame_free = page + 136 // frames on that list
-const frame_split = page + 144 // blocks split into frames so far
+const claimed = page + 64 // the claimed bitmap: one bit per block, 32 words
+const frame_head = page + 320 // the frame freelist's head: a free frame, 0 = none
+const frame_free = page + 328 // frames on that list
+const frame_split = page + 336 // blocks split into frames so far
 const block = 65536
 const frame = 4096
-const region_end = koff + 0x87000000
+
+// The arena's run (T8.9): the kernel's decision that a child's arena
+// is a contiguous run of this many blocks — 256 KiB — claimed in one
+// take_run at the spawn, mapped whole by the build, walked home block
+// by block at the death. The stub parks the number in the runtime's
+// emo_arena_run_len (runtime.S), and the process service's spare test
+// rides it (main.emo: a spawn backs the stack plus this run or is
+// refused). Two was what the region's budget carried from T8.9 to
+// A11.1: the image's 96 MiB heap left the region 71 blocks, and a
+// spawn's stack, table, and run had to fit beside every resident's.
+// The disk ELFs' round spent the lever that note reserved (CHECK.md,
+// 2026-11-01): the heap is 64 MiB, the region 500-odd blocks, an
+// exec's image run (the app images' 12.7 MB span, 196 blocks) fits
+// beside every resident — and the fs service's per-sector tuples (the
+// leak the install-sized writes named) have an arena to live in.
+const arena_run = 4
+// The screen carve (T8.2): the region's end moved down to the carve's
+// base — the carve, 4 MiB, is the memory between the two, the kernel's
+// to hand out whole and once (the hand below).
+const screen_base = 0x86c00000 // physical: the carve's base, 2 MiB-aligned
+const screen_size = 0x400000 // 4 MiB: the baseline's 3 MiB buffer, a MiB beside
+const screen_flag = page + 152 // the hand's one-shot word: 0 = the carve held
+const region_end = koff + screen_base
 const uart = koff + 0x10000000
 
 // Build the freelist at boot: the region runs from the image's end
 // (the boot stub passes `__emo_bss_end`, rounded up to a block) to the
-// tick ring's page, pushed top down so the first take answers the
-// lowest block. An image grown past the region leaves an empty
-// allocator — the first spawn is the loud end, the process table's
-// ceiling in memory.
+// screen carve's base (T8.2 — the tick ring's page sits above the
+// carve, both outside the region), pushed top down so the first take
+// answers the lowest block. An image grown past the region leaves an
+// empty allocator — the first spawn is the loud end, the process
+// table's ceiling in memory.
 def boot(bss_end Int64) Void {
   var p = page
   while p < page + 4096 {
@@ -161,6 +199,84 @@ def frame_take() Int64 {
   poke64(frame_head, peek64(f))
   poke64(frame_free, peek64(frame_free) - 1)
   return f
+}
+
+// The screen carve's hand (T8.2): the carve's whole base, once — the
+// first full-screen pass's grant. A second hand answers 0, and the
+// process service turns that into the spawn's resource refusal before
+// anything is staged. There is no give: the full-screen pass is the
+// machine's desktop for the machine's life, and a restart would be the
+// compositor's own piece (T8.6), not the allocator's. The answer is
+// the kernel's address, the allocator's currency; the taker translates
+// to the physical where the identity (the pass's table, the device)
+// needs it.
+def screen_take() Int64 {
+  if peek64(screen_flag) != 0 {
+    return 0
+  }
+  poke64(screen_flag, 1)
+  return koff + screen_base
+}
+
+// A contiguous run of n blocks — the window buffer's unit (T8.5): the
+// display memory a client's frame lives in, one range the device and
+// the compositor can name. The claimed bitmap is the free map (a zero
+// bit is a block on the freelist), so the scan walks the region's
+// indices for the first n consecutive zeros; the run's bits are
+// claimed, and one pass over the freelist unlinks them (a claimed bit
+// marks a node gone). The answer is the run's base, kernel address,
+// or 0 when no run of n sits free. The give-back is the block give,
+// one block at a time — the claimed-bit checks make each strict.
+def take_run(n Int64) Int64 {
+  var total_blocks = peek64(total)
+  var i = 0
+  var run = 0
+  var start = -1
+  while i < total_blocks {
+    var w = claimed + ((i / 64) * 8)
+    if (peek64(w) & (1 << (i % 64))) == 0 {
+      run = run + 1
+      if run == n {
+        start = i - n + 1
+      }
+    } else {
+      run = 0
+    }
+    i = i + 1
+  }
+  if start < 0 {
+    return 0
+  }
+  i = start
+  while i < start + n {
+    var w = claimed + ((i / 64) * 8)
+    poke64(w, peek64(w) | (1 << (i % 64)))
+    i = i + 1
+  }
+  var hd = peek64(head)
+  var prev = 0
+  while hd != 0 {
+    var nxt = peek64(hd)
+    var idx = (hd - peek64(lo)) / block
+    var w = claimed + ((idx / 64) * 8)
+    if (peek64(w) & (1 << (idx % 64))) == 0 {
+      if prev == 0 {
+        poke64(head, hd)
+      } else {
+        poke64(prev, hd)
+      }
+      prev = hd
+    }
+    hd = nxt
+  }
+  if prev == 0 {
+    poke64(head, 0)
+  } else {
+    poke64(prev, 0)
+  }
+  poke64(free, peek64(free) - n)
+  poke64(taken, peek64(taken) + n)
+  return peek64(lo) + (start * block)
 }
 
 // The account: `frames <taken> <given>` on the console — the machine's

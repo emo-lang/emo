@@ -50,7 +50,7 @@ undocumented ever acts.
 | --- | --- | --- |
 | 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` |
 | 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
-| 2 | `read()` | the next console byte, blocking until one exists; answers it (0–255) |
+| 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
@@ -58,6 +58,38 @@ undocumented ever acts.
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
 | 8 | `file_list(buf, cap)` | the names, each followed by a newline, land at `buf`; answers the bytes written |
 | 9 | `file_remove(name, name_len)` | the file is gone; answers 0 |
+| 10 | `present(grant, x, y, w, h)` | the buffer the grant names lands whole — the damage rect is what the device takes and what the scanout shows; answers 0 when the commit completed (T8.4, below) |
+| 11 | `output_info(index)` | the index-th output's rectangle, packed; an index no output answers is reason 4 (T8.4, below) |
+| 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
+| 13 | `win_new(w, h)` | a window buffer of the given size: a contiguous run of the allocator's blocks mapped into the caller's own table; answers the buffer's frame number and the grant id packed (T8.5, below) |
+| 14 | `win_close(grant)` | the buffer's release: the run back to the allocator, the grant gone; answers 0 (T8.5, below) |
+| 17 | `win_role(grant, role)` | the buffer becomes a surface of that role on the compositor's stack — 0 toplevel, 1 popup, 2 subsurface, 3 panel; toplevel is the role the compositor implements, the rest are refused with reason 4, as are a second declaration and a grant with no surface behind it; a full stack is reason 5 (T8.13, below) |
+| 18 | `input_info(index)` | the index-th pointer's axes, the maxima the device's own config states, packed (the X's above the Y's); an index no device answers is reason 4 (T8.13, below) |
+| 19 | `win_parent(grant, parent)` | a popup or a subsurface names the toplevel it hangs from — its coordinates the parent's from the binding on, the walk painting it immediately above the parent, the parent's death taking it; the caller must own both grants, a surface with no entry, a role that takes no parent (toplevel, panel), a parent that is no live toplevel, all reason 4 (T8.15, below) |
+| 20 | `win_format(grant, format)` | the buffer's format recorded on its row — XRGB8888 (0) is the first accepted value; a format the compositor does not carry is reason 4, by its number (T8.15, below) |
+| 21 | `win_scale(grant, scale)` | the surface's scale recorded on its row — 1 is the first accepted value; the rest are reason 4, by their number (T8.15, below) |
+| 22 | `win_frame()` | the frame callback: the caller parks, and the answer is the next composition's completion — the flush that put a frame on the display; a ring of four parks full is reason 5 (T8.15, below) |
+| 23 | `desktop_version()` | the desktop protocol's version word; answers 1 (T8.15, below) |
+
+Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
+numbering rule holds: reserved numbers carry no meaning until their
+verb lands, frozen from that day) — `present`, `output_info`,
+`input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
+[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10 to 14 have landed
+(T8.3, T8.4, T8.5); 15 and 16 — `win_focus` and `win_move`, the
+compositor's stack's verbs — stay reserved until the compositor's
+mechanism (T8.6) gives them their substance. Verbs 17 and 18 (T8.13,
+emo-desktop A9.1) grew the segment under the same rule — additions
+under new numbers, never rewrites — and the route numbers they ride
+are the mailbox's, not the verb's: the composition request a window
+present posts holds op 17 (a derivative of verb 10, T8.6) and the
+pointer's notice holds op 18 (T8.11), so win_role's request rides op
+19 and input_info's op 18 lands in the input service's mailbox, where
+2 and 12 were the only residents. Verbs 19 to 23 (T8.15, emo-desktop
+A9.3) grew it again — 19's binding riding mailbox op 20, 22's callback
+op 21, the gate answering 20, 21 and 23 itself (the negotiation's
+fields and the version are the protocol's front door's to state, no
+service between).
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),
@@ -70,6 +102,18 @@ parked is reason 5), and the slot's index rides the route, so the
 service's request word names it (`slot << 36 | op << 32 | pid`). The
 read's and the list's bytes land in the caller's buffer through the
 supervisor's low window while the caller is parked.
+
+Verb 1's bytes stage whole too (T8.15): the console grew the same
+request-slot shape — four slots on the console's own page
+(`.emo_console` at 0x87009000, a pending length at the head, the bytes
+after), one per parked writer, a fifth concurrent writer reason 5. The
+slot's index does not ride the route — the route stays −1001, and the
+compositor's mailbox ops 15 to 21 share the number space the fs's
+`op + 16 × slot` seats would collide with — it sits in a per-pid cell
+the gate writes and the service reads and clears: a process parks per
+ecall, so one cell per pid is the whole of the race. Two writers parked
+at once were print-the-last-stager's-bytes wrong before this; the frame
+callback's beat (A9.3) parked two at once and named it.
 
 Verb 5 (T5.1) is not a service request but the user image's allocator
 speaking: when the running pass's own arena — the 64 KiB block the
@@ -85,8 +129,10 @@ ends the machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own
-(1 and 2 to the console service, 0, 3 and 4 to the process service, 6
-to 9 to the filesystem service)
+(1 to the console service, 2 and 12 to the input service, 10, 11, 13
+and 14 to the display service, 15, 16 and the window present to the
+compositor, 0, 3 and 4
+to the process service, 6 to 9 to the filesystem service)
 ride the gate's routing — the request reaches its service, the caller
 parks, and the service's answer lands in the parked frame as if
 the `ecall` had answered directly. The exit is the routing's one
@@ -99,12 +145,158 @@ the gate as verb 8 — the filesystem's list since T7.2, which it
 reaches with a zero buffer and a zero capacity, refused as a range
 the caller's memory does not cover.)
 
+Verbs 10 and 11 (T8.4) are the display's, and the authorization
+table's first entry rides them. **Verb 10, `present(grant, x, y, w,
+h)`**, commits the buffer the grant names: the damage rect is what
+the device transfers and what the scanout shows, the transfer and the
+flush both completing before the answer — a frame lands whole, or the
+machine ends loudly, and the scanout shows the old frame until the
+flush's own completion. The grant id 0 is the screen carve's — the
+authorization table's first entry, the holder's pid the process
+service parked the moment it handed the carve out; a caller that is
+not the holder is reason 3 (the slots are never reused, so a dead
+holder's pid can never match a new caller). A grant id the table does
+not hold is reason 4 — the window grants are T8.5's. An empty rect,
+or one outside the display, is reason 4: the sanity is the gate's,
+the bounds the display service's to judge against the mode.
+**Verb 11, `output_info(index)`**, is the outputs list's verb — the
+protocol's second seam: the list is not a constant, and the index is
+the enumeration's shape. The answer packs the output's rectangle (the
+width in bits 32..63, the height in bits 0..31); an index no output
+answers is reason 4. One display is the first answer, not the only
+shape.
+
+Verbs 13 and 14 (T8.5) are the window buffer's lifecycle. **Verb 13,
+`win_new(w, h)`**, hands the caller its own display memory: a
+contiguous run of the allocator's blocks (`frames.take_run` — the
+run's base is block-aligned and its blocks consecutive, the range a
+device and a compositor can name), mapped into the **caller's own
+table** at the identity of the run's physical addresses, RW with U —
+the mapping into a table a `satp` already names is the live-table's
+own act, the new entries whole words and the `sfence` (the raw family's
+address-translation fence, `docs/raw-memory.md`) after them. The
+grant — the row the kernel's authorization table gains (id, owner,
+base, extent) — is the capability the buffer is named by ever after:
+`present` and `win_close` take the id, never an address. The answer
+packs the buffer's frame number (the byte address this program paints,
+shifted left by 12 at the client — the frame number keeps the word's
+sign bit true) above the grant id. A size past a window's bound (four
+megapixels) is reason 4; a run or a table row the machine cannot back
+is reason 5. **Verb 14, `win_close(grant)`**, is the release: the run
+back to the allocator block by block, the row to the table. The gate
+checks the caller against the row's owner (reason 3) and the id
+against the table (reason 4) before anything moves. A window whose
+owner dies without a close leaks its run until the compositor's
+reclamation (T8.6) — the stated bound, M9's killed-and-restarted
+acceptance is where the death-side reclamation earns its place. A
+window's `present` (verb 10, the grant id nonzero) is checked against
+the row — the owner and the damage rect within the buffer's extent —
+and routes to the **compositor** (T8.6): the stack's entry holds the
+position, the composition **blits** the window's frame into the screen
+carve at it (word stores), the display service's flush puts it on the
+display, and the answer follows the flush — the frame lands whole (the
+protocol's sixth seam). The row's ready flag and the recorded rect are
+the compositor's state; the requests that arrive while a flush is in
+flight are stashed and served after. **Verbs 15 and 16 (T8.6)** are the
+compositor's stack's verbs: `win_focus(grant)` records the focused
+window and — since T8.13 — raises it to the stack's top, the next
+composition painting it over the rest; `win_move(grant, x, y)` sets
+the blit's position — the x even (the blit's word granularity, reason
+4), the bounds against the display's mode the compositor's to judge
+(reason 4 outside). The owner and the id are the gate's checks on
+both, and — since T8.13 — every stack verb answers reason 4 for a
+grant that declared no role: the surface a role makes is the only
+thing the stack acts on. **Verb 17 (T8.13, emo-desktop A9.1)** is the
+role declaration the surface is: `win_role(grant, role)` makes the
+buffer a surface of that role on the compositor's stack, at the
+origin, until a move places it. The vocabulary is the gate's bounds
+(0 toplevel, 1 popup, 2 subsurface, 3 panel — past it reason 4) and
+the owner and the id are its checks; which roles the compositor
+implements is the compositor's answer — toplevel is, and popup,
+subsurface and panel are refused with reason 4, **by their number**:
+the protocol carries no text (the seventh seam), and the caller, who
+chose the role, is the one to name what it asked for. A second
+declaration for one surface is reason 4 (a surface's role does not
+change); a stack already holding eight surfaces is reason 5. The
+composition a window present posts walks the whole stack bottom to
+top over a carve cleared to the compositor's own background — the
+last entry over the rest, a moved window's old place the background
+again — carrying every surface whose row is ready, so the frame the
+client presented lands whole with the rest of the stack in it (the
+sixth seam). The death-side reclamation: a window whose owner dies
+without a close has its run reclaimed, its row emptied and its
+surface taken off the stack by the compositor's supervisor (T8.6's
+death-notice flow, T8.13's prune).
+
+**Verb 18 (T8.13, emo-desktop A9.1)** is the input side of the second
+seam: `input_info(index)` answers the index-th pointer's axes — the
+maxima the device's own config states, packed the way the display's
+mode is (the X's in bits 32..63, the Y's in bits 0..31) — the range a
+program scales the stream's absolute reports to the display by, as
+the compositor scales its cursor. One pointer is the first answer,
+not the only shape; an index past it is reason 4, the input service's.
+
+Verb 12 (T8.3, `input_read`) is the machine's input beyond the serial:
+the next event of the input service's merged stream, blocking until
+one exists. The answer packs the event into one word — the type in
+bits 48..63, the code in bits 32..47, the value in bits 0..31 — the
+virtio-input device's own event types riding verbatim (0 the
+separator, 1 a key, 2 a relative move, 3 an absolute one) and one
+machine type beside them: 0x454D ("EM") is the serial console's byte,
+the byte in the value, the code 0. The stream merges three sources in
+the one order they can name without a clock — the serial's bytes
+first, then the keyboard's events, then the pointer's (T8.11: the
+tablet's absolute reports — ABS_X and ABS_Y, codes 0 and 1, in the
+device's own range — and its buttons, through the pointer driver's
+ring, the way the serial's bytes reach the merge through theirs) —
+and the machine's standing discipline holds: one reader at a time
+(the service's mailbox is the wait queue; a read parks the caller and
+the service until the stream has something). The device halves are
+wired: each eventq's completion rides the PLIC (each input driver sets
+its transport's IRQ number as a bit of the shim's mask cell), so the
+devices' events wake the machine the serial's bytes do; an event the
+sixteen pre-posted buffers of a device cannot hold at the moment it
+fires is the one event that device loses. The pointer's reports also
+move the compositor's cursor plane, which is no part of this verb: the
+plane reads the driver's position cells and the stream carries the
+events unchanged — a reader that wants the pointer reads it here, and
+the sprite on the display is the compositor's (T8.11, the desktop ABI's
+sprite memory).
+
+The disk ELFs' verb (T8.16, emo-desktop A11.1, verb 24) is
+`exec(name, name_len)`: the program the filesystem names becomes a
+process of its own. The name is judged like the filesystem's — inside
+one writable segment of the caller's own (the per-process check: a
+disk ELF's caller is judged by its image's segments, the boot image's
+by its own) — copied into the exec page inside the trap, and routed to
+the process service, which reads the volume through the filesystem
+service, parses the image the boot loader's way (the magic, the
+class, the machine, the program-header table's shape), copies its
+loadable segments into a contiguous run of allocator blocks, builds
+the child's table off the image's own segments at the addresses it
+was linked to, and enters it at the ELF's entry. The answer is the
+child's pid number, `wait`'s argument; the child's exit answers it.
+"no such file" (reason 6) for a name the volume does not hold;
+reason 5 while another exec request is staged, past the image cells'
+256-pid bound, or when the machine cannot back the image or its
+scratch. The per-image world is the round's substance: the boot
+image's own segment table stays the global one it has always been,
+every exec'd image carries a record of its own (the count, the rows,
+the entry, the run), the gate's checks and the table builder read the
+caller's record by a per-pid cell (one write per pid ever — the
+dead-owners' discipline), and the death walks the image's run home
+block by block, the record and the cell cleared behind it. One exec
+request at a time (the busy cell, held from the staging to the
+pickup); one exec'd image's arena rides the shared cells at a time
+(the bound A11.2's two-desktop acceptance grows).
+
 ## The user surface
 
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its nine
+It admits the `riscv64` target alone; the raw `ecall` lives in its
+eighteen
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -116,7 +308,37 @@ bodies and nowhere else a user program writes.
   them (`"outside the caller's memory"`, `"not writable"`,
   `"bad argument"`, `"the kernel is out of a resource"`,
   `"unknown verb"`).
-- `syscall.read()` — the next console byte, blocking until one exists.
+- `syscall.read()` — the next input byte, blocking until one exists.
+- `syscall.input_read()` — the next event of the merged input stream
+  (T8.3, verb 12), blocking until one exists; the packed word the
+  verb's section above describes.
+- `syscall.present(grant, x, y, w, h)` — the desktop segment's commit
+  (T8.4, verb 10), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.output_info(index)` — the desktop segment's enumeration
+  (T8.4, verb 11), answering `(R.ok, the packed rect)` or
+  `(R.error, why)`.
+- `syscall.win_new(w, h)` — the window buffer's creation (T8.5,
+  verb 13), answering `(R.ok, the packed frame number and grant id)`
+  or `(R.error, why)`.
+- `syscall.win_close(grant)` — the window buffer's release (T8.5,
+  verb 14), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_focus(grant)` — the compositor's focus (T8.6, verb 15),
+  answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_move(grant, x, y)` — the compositor's move (T8.6,
+  verb 16), answering `(R.ok, 0)` or `(R.error, why)`.
+- `syscall.win_role(grant, role)` — the surface's role declaration
+  (T8.13, verb 17): the buffer becomes a toplevel (0) surface on the
+  compositor's stack, or `(R.error, "bad argument")` for the roles the
+  compositor refuses — popup (1), subsurface (2), panel (3), each by
+  its number; the caller who chose the role names it — as for a second
+  declaration, a role past the vocabulary, a grant that declared no
+  surface at any stack verb or present, or a roleless stack slot left
+  by `"the kernel is out of a resource"` at the ninth.
+- `syscall.input_info(index)` — the pointer devices' enumeration
+  (T8.13, verb 18): `(R.ok, the axes packed)` — the X's maximum in
+  bits 32..63, the Y's in bits 0..31, the device's own answer a client
+  scales the stream's absolute reports by — or `(R.error, "bad
+  argument")` for an index no device answers.
 - `syscall.spawn()` — a new process enters this image's top level on a
   fresh stack, answering `(R.ok, the child's pid number)`; the child
   knows it is the child by what the image's own memory holds (the

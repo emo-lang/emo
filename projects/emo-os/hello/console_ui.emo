@@ -17,6 +17,11 @@
 // gate at once. The layout is the TUI backend's box model minus the
 // parts the console has no consumer for: a column stacks, a row lines
 // up, padding insets, gap separates, sizes intrinsic.
+//
+// The module was `ui.emo` until the image took EmoUI's own core as a
+// dependency (emo-desktop A7.2, the fb backend's first frame), whose
+// module path is `ui`; a module path is claimed once in a program, so
+// the console renderer carries its own name.
 
 require "syscall"
 

@@ -1,0 +1,81 @@
+// The pointer sprite (emo-desktop A8.2): the desktop's cursor, drawn
+// here as rows of cells — `#` the outline's ink, `o` the fill's paper,
+// `.` clear — and read three ways off this one drawing: `paint` lays it
+// on any `Surface` (the hosted twin, and the tests' pixels), the metal's
+// full-screen pass writes it into the carve's sprite memory for the
+// compositor's cursor plane to composite (EmoOS T8.11, the plane that
+// moves it by the merged event stream), and `run.sh`'s model of the
+// display reads the rows off this file. The sprite is the desktop's the
+// way a Wayland client's cursor is the client's: the compositor carries
+// pixels and rectangles, never the drawing. The arrow is 12 cells wide
+// and 17 tall, a 1-pixel outline around a white body, the early-90s
+// workstation's; the hotspot is its tip, the top-left cell.
+
+const rows = [
+  "#...........",
+  "##..........",
+  "#o#.........",
+  "#oo#........",
+  "#ooo#.......",
+  "#oooo#......",
+  "#ooooo#.....",
+  "#oooooo#....",
+  "#ooooooo#...",
+  "#oooooooo#..",
+  "#ooooo#####.",
+  "#oo#oo#.....",
+  "#o#.#oo#....",
+  "##..#oo#....",
+  "#....#oo#...",
+  ".....#oo#...",
+  "......##...."
+]
+
+def width() Int64 {
+  return rows[0].length()
+}
+
+def height() Int64 {
+  return rows.length()
+}
+
+def hot_x() Int64 {
+  return 0
+}
+
+def hot_y() Int64 {
+  return 0
+}
+
+// One row of the drawing, `r` in 0..height()-1, as its string of cells.
+def row(r Int64) String {
+  return rows[r]
+}
+
+def ink() Int64 {
+  return 0x000000
+}
+
+def paper() Int64 {
+  return 0xFFFFFF
+}
+
+// The sprite onto a surface with its hotspot at `(x, y)`: the outline's
+// cells in ink, the body's in paper, the clear cells leaving the surface
+// alone — pixel by pixel through `fill`, the hosted twin of the
+// compositor's composite (which composites the same cells out of the
+// sprite memory, with the save-under the plane keeps).
+def paint(s ui_fb.Surface, x Int64, y Int64) {
+  for var r = 0; r < height(); r = r + 1 {
+    const line = row(r)
+    for var c = 0; c < width(); c = c + 1 {
+      const cell = line.substring(c, 1)
+      if cell == "#" {
+        s.fill(x - hot_x() + c, y - hot_y() + r, 1, 1, ink())
+      }
+      if cell == "o" {
+        s.fill(x - hot_x() + c, y - hot_y() + r, 1, 1, paper())
+      }
+    }
+  }
+}

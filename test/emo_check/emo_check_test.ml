@@ -1513,6 +1513,18 @@ poke8(0, 12)
 peek64()|}
         in
         Alcotest.(check int) "four refusals" 4 (List.length diagnostics));
+    tc "sfence: the address-translation fence is a raw lane" (fun () ->
+        let diagnostics = check {|println(sfence())|} in
+        Alcotest.(check int)
+          "one E4028 on the hosted default" 1
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4028")
+                diagnostics));
+        let clean = check_on "riscv64" {|sfence()|} in
+        Alcotest.(check int) "clean on riscv64" 0 (List.length clean);
+        let diagnostics = check_on "riscv64" {|sfence(1)|} in
+        Alcotest.(check int) "the arity refused" 1 (List.length diagnostics));
   ]
 
 let cross_module_tests =

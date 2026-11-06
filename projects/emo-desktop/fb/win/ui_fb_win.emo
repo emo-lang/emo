@@ -1,0 +1,66 @@
+require "emo/ui_fb"
+
+// The window shell's windows (emo-desktop A9.1): what a toplevel
+// surface looks like, painted once into the window's own buffer and
+// again whenever its state changes — the frame the compositor carries
+// into the carve at the stack's position (EmoOS T8.13). Two windows
+// are the shell's, `alpha` and `beta`, each a title bar and a body:
+// the bar in the steel the palette gives a button when the window is
+// the focused one and a dimmer steel when it is not — the one visible
+// fact a focus changes — with the title's glyphs on it, and the body
+// in the input's paper with one line of ink, the count of keys the
+// shell routed to this window because it was the focused one. The bar
+// is also the drag's handle: a press on it takes the window along with
+// the pointer until the release.
+//
+// The paint is direct — fills and glyphs through the `Surface`, no
+// tree — because on the metal every node of a tree is a few KiB of
+// boxed numbers left in the arena per repaint (A8.3's count), and the
+// shell repaints two windows per focus change and one per key; this
+// shape leaves the glyphs' share alone, a dozen per window. The
+// hosted twin (`golden/`) paints the same windows through the same
+// defs on the canvas and prints each frame's digest; `run.sh` asserts
+// the metal's frame lines against that file and folds the display's
+// screendump over each window's rectangle to the same numbers. One
+// drawing, one size, one pair of names — read here by both.
+
+def width() Int64 {
+  return 384
+}
+
+def height() Int64 {
+  return 128
+}
+
+def bar_height() Int64 {
+  return 24
+}
+
+def title_a() String {
+  return "alpha"
+}
+
+def title_b() String {
+  return "beta"
+}
+
+// The bar's steel: a button's when focused, dimmer when not — a
+// different byte in every channel, so a swapped order shows.
+def bar_color(focused Bool) Int64 {
+  if focused {
+    return 0x7088A8
+  }
+  return 0x98A0AC
+}
+
+// A window's frame onto its own surface, the whole buffer from scratch:
+// the bar, the title from its left edge one pad in and centered on the
+// bar's height, the body's paper, and the keys line one pad in from the
+// body's corner.
+def paint(s ui_fb.Surface, title String, focused Bool, keys Int64) Void {
+  const pad = 8
+  s.fill(0, 0, s.width(), bar_height(), bar_color(focused))
+  ui_fb.text(title, pad, (bar_height() - ui_fb.glyph_h()) / 2, 0x282830, s)
+  s.fill(0, bar_height(), s.width(), s.height() - bar_height(), 0xF8F8F0)
+  ui_fb.text("keys ${keys}", pad, bar_height() + pad, 0x282830, s)
+}

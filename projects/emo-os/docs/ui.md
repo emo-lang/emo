@@ -8,8 +8,8 @@ that drives it, and the bounds it states. Fixed as of T7.4
 T7.5. Around it: the shell ([`shell.md`](shell.md)) owns the console
 when the pass exits; the verbs it speaks are
 [`syscalls.md`](syscalls.md)'s; the portable core it mirrors is
-[`projects/emo-ui/`](../../../../projects/emo-ui/)
-(the main tree's [`docs/emo-ui.md`](../../../../docs/emo-ui.md) is the
+[`projects/emo-ui/`](../../../projects/emo-ui/)
+(the main tree's [`docs/emo-ui.md`](../../../docs/emo-ui.md) is the
 design's standing record — this note carries it to the machine the
 language booted).
 
@@ -172,3 +172,17 @@ prompt's return, the machine's foreground resuming before the roundtrip
 rides on. Three consecutive rounds byte-identical on each leg; the
 frame ledger grows by the pass's stack and arena — taken at the spawn,
 given back at the exit.
+
+## The next chapter
+
+The console's currency is the desktop's smallest one. The pixel
+successor — the framebuffer backend, the fonts, the shell, the apps —
+is its own project,
+[`projects/emo-desktop`](../../../projects/emo-desktop); the machine's
+side of that protocol — the desktop verb segment reserved at 10..16 —
+is [`docs/desktop-abi.md`](desktop-abi.md). This counter's pixel twin
+runs there since emo-desktop A8.3: the same model, update and view
+through EmoUI's own `ui.run`, unchanged from the hosted backends',
+painted by the fb core into the screen carve from the screen pass —
+the loop this note hand-wrote for the console, taken as values by the
+loop the core keeps.

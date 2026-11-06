@@ -66,12 +66,14 @@ and arena, the cells page, and the kernel's high half without U).
   page of scratch that is nobody's execution memory. Every other
   address is a page fault the supervisor kills the pass for.
 - **The raw family is admitted by target, not profile.** `peek`/`poke`,
-  `ecall`, and `device_wait` are legal spellings in a user image, by
+  `ecall`, `device_wait` and `device_wake` are legal spellings in a user
+  image, by
   the admission's own principle — a target admits the raw family iff
   the program owns the address space. Since T6.2 the admission is
   honest in both directions: the spellings reach only the pass's own
   pages (anything else is the page fault), and the vocabulary the
-  kernel's own services use (`user_spawn`, `gate_reply`, `pid_num`)
+  kernel's own services use (`user_spawn`, `gate_reply`, `gate_post`,
+  `pid_num`)
   still refuses where the surface refuses it. The first user
   program's greeting rode the admission while the window stood — it
   poked the 16550A directly, and `run.sh` pinned the line. Since T6.2

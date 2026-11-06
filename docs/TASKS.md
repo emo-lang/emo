@@ -2295,6 +2295,48 @@ required.
       behavior a caller can rely on, with an index. The Chinese
       translations of both READMEs and the two design docs were updated
       in step.
+- [x] **T48.14** — The backends' sinks typed from birth, and every
+      EmoUI gate re-run green. **Landed 2026-11-02.** The class-field
+      typing of 2026-10-18 (`8171d0d`, a field carries its initializer's
+      type) turned every backend's `self.sink = Box.new(0)` into a
+      `Box[Int64]` that `mount` could no longer `replace` with the loop's
+      `ui.Events` (E4004, then E4001 on the `deliver`): `debug.emo`,
+      `ui_tui`, `ui_ssr`, `ui_browser`, `ui_macos`, `ui_gtk`, the
+      translator demo's copy of the debug backend, and the core test's
+      two recorders. That commit migrated the stdlib's `plot` and `json`
+      and did not reach `projects/emo-ui`, whose gates are not under
+      `dune runtest`, so `emo check` of the core package itself failed
+      for two weeks unnoticed until the fb backend (emo-desktop A7.1)
+      became the first consumer since. **The fix is the fb backend's own
+      shape**: each backend carries an `Unmounted` whose `deliver` does
+      nothing and an `unmounted()` declared to return `ui.Events`, so
+      `Box.new(unmounted())` is a `Box[ui.Events]` from `init`; the core's
+      test reuses `debug.unmounted()`. **Re-running the gates after two
+      weeks found two more things.** The core gate's `enum_print` probe
+      still pinned the pre-2026-10-19 divergence — `typescript`
+      qualifying the tag, `beam` raising `emo_no_to_str` — while the
+      probe program's own comment already described the fix (`CHECK.md`,
+      the enum display form); the pins now expect the bare `red (ok,
+      12.5)` on both. And the SSR golden's `— 世界` came back as
+      replacement characters on `typescript` alone: `escape` rebuilt text
+      byte by byte through `substring(i, 1)`, trusting a comment that
+      called the slice byte-preserving, but the TS runtime's documented
+      contract is that a cut inside a multi-byte sequence decodes to
+      U+FFFD (a JS string cannot carry a partial byte) where the byte
+      targets keep the raw bytes. `escape` now copies whole runs between
+      the five ASCII specials — a cut beside one always falls on a
+      character boundary — probing each position only for equality
+      against them; the byte targets' bytes are unchanged and the TS
+      golden is the interpreter's. Eighteen consumer `package.lock`s were
+      regenerated with the new content digests. The umbrella gate
+      (`projects/emo-ui/check.sh`: the core and its probes, the golden,
+      the debug backend, `tui`, `ssr`, `macos` under AppKit with the
+      self-driving script, `gtk` compiled and run in the container,
+      `browser`, `corpus`) answers 218 ok and 0 FAIL; the translator demo,
+      `examples/ssr_page` and `examples/tui_menu` are green with it; the
+      fb gate is unaffected. The gates stay outside `dune runtest`, as
+      they need `node`, `erl`, `opam`, Docker and a logged-in session —
+      the two weeks are what that costs.
 
 ---
 

@@ -1,0 +1,50 @@
+require "syscall"
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_apps"
+require "emo/ui_fb_winbuf"
+
+// The file browser as its own program (emo-desktop A11.1): the app's
+// image is a disk ELF the desktop's parent execs by name — the kernel
+// reads the volume through the filesystem service, loads the image
+// into a run of its own, builds this process's table off its own
+// segments, and enters it here. The session is the one the boot
+// image's pass ran (A10.3): a window of its own, the loop over the
+// window buffer's surface, the selection down and the open through
+// `update` — the quit key ends the loop, the window closed behind it,
+// the exit answering the parent's wait (`app files 0`).
+def main() {
+  var gf = 0
+  var base_f = 0
+  case syscall.win_new(384, 128) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, ans) -> {
+      gf = ans & 4294967295
+      base_f = (ans >> 32) << 12
+    }
+  }
+  case syscall.win_role(gf, 0) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gf, 224, 144) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  // the mount takes the focus (emo-desktop A11.2): the newest window
+  // up is the one the stream's keys serve until a click names another
+  case syscall.win_focus(gf) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  const wf = ui_fb_winbuf.win(gf, base_f, 384, 128)
+  ui.run(ui_apps.files.view, ui_apps.files.update,
+    ui_apps.files.initial(), ui_fb.backend(wf, ui_fb_winbuf.keys([106, 107, 111])))
+  case syscall.win_close(gf) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, _) -> {}
+  }
+  syscall.exit(0)
+}
+
+main()
