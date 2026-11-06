@@ -1,0 +1,98 @@
+require "crypto"
+
+// The entropy package: the target's own source of random bytes, and a
+// deterministic stream for everything that must be reproducible. The
+// answers are Bytes — bytes are what entropy is, and a String cannot
+// carry them on every target (typescript's strings are UTF-8 text).
+// `rand` declares the targets that can honestly serve the source:
+// getentropy on the byte targets (`ocaml`, `c`), Node's CSPRNG on
+// `typescript`, crypto:strong_rand_bytes on `beam`; the wasm host
+// supplies no entropy, so the target list refuses it — a declared
+// refusal, not a runtime surprise. The deterministic stream is pure
+// Emo over crypto's byte doors and runs wherever the package does.
+
+// n bytes from the operating system's entropy source. A refused
+// source is the value (R.error, reason) under the `rand:` prefix; a
+// negative count is the caller's mistake and raises.
+def bytes(n Int64) (R, Bytes) {
+  if n < 0 {
+    raise Exception.new(message: "rand: a negative count asks for no bytes")
+  }
+  return rand_bytes(n)
+}
+
+// ---- The deterministic stream: SP 800-90A's HMAC-DRBG with SHA-256
+// in its one-shot shape — instantiate over the seed (the caller
+// concatenates entropy, nonce, and personalization into it), then the
+// first Generate; no reseed, no additional input. The same seed
+// answers the same bytes on every target, forever: the shape the
+// goldens ride, and fixtures' keys. The byte accesses go through
+// parameterized doors — constructors answer the gradual type,
+// parameters carry the static one.
+
+def fill_byte(b Bytes, v Int64) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, v)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+// a || byte(mid) || b — the Update step's input shape.
+def joined(a Bytes, mid Int64, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + 1 + b.length())
+  copy_into(out, a, 0)
+  set_byte(out, a.length(), mid)
+  copy_into(out, b, a.length() + 1)
+  return out
+}
+
+// Pour v into out from at, stopping at length; answers the new at.
+def pour(out Bytes, v Bytes, at Int64, length Int64) Int64 {
+  var i = 0
+  var cur = at
+  while i < v.length() && cur < length {
+    out.set(cur, v.get(i))
+    i = i + 1
+    cur = cur + 1
+  }
+  return cur
+}
+
+// The one-shot HMAC-DRBG-SHA-256 stream of length bytes from seed. A
+// negative length raises.
+def drbg_sha256(seed Bytes, length Int64) Bytes {
+  if length < 0 {
+    raise Exception.new(message: "rand: the stream length must not be negative")
+  }
+  const s = seed
+  const k0 = Bytes.new(32)
+  fill_byte(k0, 0)
+  const v0 = Bytes.new(32)
+  fill_byte(v0, 1)
+  var k = crypto.hash.hmac_sha256(k0, joined(v0, 0, s))
+  var v = crypto.hash.hmac_sha256(k, v0)
+  if s.length() > 0 {
+    k = crypto.hash.hmac_sha256(k, joined(v, 1, s))
+    v = crypto.hash.hmac_sha256(k, v)
+  }
+  const out = Bytes.new(length)
+  var made = 0
+  while made < length {
+    v = crypto.hash.hmac_sha256(k, v)
+    made = pour(out, v, made, length)
+  }
+  return out
+}

@@ -1,0 +1,115 @@
+// X25519 (RFC 7748 §5): the Montgomery ladder on Curve25519's
+// u-coordinate over internal.fe25519's field. The scalar is clamped
+// the RFC's way, the u-coordinate's top bit is ignored (the field's
+// from_bytes reads 255 bits, which is the RFC's mask), and the ladder
+// walks 255 steps from bit 254 down with the two working points
+// swapped through a mask — no branch and no index depends on the
+// scalar. The caller decides what an all-zero answer means; here it
+// is simply the bytes of x2/z2.
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v & 0xFF)
+}
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def scalar_bit(s Bytes, i Int64) Int64 {
+  return (s.get(i >> 3) >> (i & 7)) & 1
+}
+
+// The clamped scalar: the three low bits cleared, the top bit
+// cleared, bit 254 set.
+def clamp(k Bytes) Bytes {
+  const s = Bytes.new(32)
+  var i = 0
+  while i < 32 {
+    set_byte(s, i, get_byte(k, i))
+    i = i + 1
+  }
+  set_byte(s, 0, get_byte(s, 0) & 248)
+  set_byte(s, 31, (get_byte(s, 31) & 127) | 64)
+  return s
+}
+
+// The u-coordinate of the base point: 9.
+def base_u() Bytes {
+  const u = Bytes.new(32)
+  set_byte(u, 0, 9)
+  return u
+}
+
+// The u-coordinate of [k]P from the scalar bytes and P's
+// u-coordinate bytes, as 32 little-endian bytes.
+def ladder(scalar Bytes, u Bytes) Bytes {
+  const k = clamp(scalar)
+  const x1 = internal.fe25519.new()
+  const x2 = internal.fe25519.new()
+  const z2 = internal.fe25519.new()
+  const x3 = internal.fe25519.new()
+  const z3 = internal.fe25519.new()
+  const a24 = internal.fe25519.new()
+  internal.fe25519.from_bytes(x1, u)
+  internal.fe25519.one(x2)
+  internal.fe25519.zero(z2)
+  internal.fe25519.copy(x3, x1)
+  internal.fe25519.one(z3)
+  internal.fe25519.zero(a24)
+  internal.fe25519.set_limb(a24, 0, 121665)
+  const a = internal.fe25519.new()
+  const aa = internal.fe25519.new()
+  const b = internal.fe25519.new()
+  const bb = internal.fe25519.new()
+  const e = internal.fe25519.new()
+  const c = internal.fe25519.new()
+  const d = internal.fe25519.new()
+  const da = internal.fe25519.new()
+  const cb = internal.fe25519.new()
+  const t = internal.fe25519.new()
+  var swap = 0
+  var i = 254
+  while i >= 0 {
+    const kt = scalar_bit(k, i)
+    swap = swap ^ kt
+    internal.fe25519.cswap(x2, x3, swap)
+    internal.fe25519.cswap(z2, z3, swap)
+    swap = kt
+    internal.fe25519.add(a, x2, z2)
+    internal.fe25519.sq(aa, a)
+    internal.fe25519.sub(b, x2, z2)
+    internal.fe25519.sq(bb, b)
+    internal.fe25519.sub(e, aa, bb)
+    internal.fe25519.add(c, x3, z3)
+    internal.fe25519.sub(d, x3, z3)
+    internal.fe25519.mul(da, d, a)
+    internal.fe25519.mul(cb, c, b)
+    internal.fe25519.add(t, da, cb)
+    internal.fe25519.sq(x3, t)
+    internal.fe25519.sub(t, da, cb)
+    internal.fe25519.sq(t, t)
+    internal.fe25519.mul(z3, x1, t)
+    internal.fe25519.mul(x2, aa, bb)
+    internal.fe25519.mul(t, e, a24)
+    internal.fe25519.add(t, aa, t)
+    internal.fe25519.mul(z2, e, t)
+    i = i - 1
+  }
+  internal.fe25519.cswap(x2, x3, swap)
+  internal.fe25519.cswap(z2, z3, swap)
+  internal.fe25519.invert(z2, z2)
+  internal.fe25519.mul(x2, x2, z2)
+  return internal.fe25519.to_bytes(x2)
+}
+
+// Whether every byte is zero, all of them ORed together — the
+// contributory check RFC 7748 §6.1 describes.
+def all_zero(b Bytes) Bool {
+  var acc = 0
+  var i = 0
+  while i < b.length() {
+    acc = acc | get_byte(b, i)
+    i = i + 1
+  }
+  return acc == 0
+}

@@ -449,6 +449,8 @@ let global_env () =
     { bound = RuntimeImplFn "os_open_append"; mutable_ = false };
   Hashtbl.replace env.frame "os_read"
     { bound = RuntimeImplFn "os_read"; mutable_ = false };
+  Hashtbl.replace env.frame "rand_bytes"
+    { bound = RuntimeImplFn "rand_bytes"; mutable_ = false };
   Hashtbl.replace env.frame "os_write"
     { bound = RuntimeImplFn "os_write"; mutable_ = false };
   Hashtbl.replace env.frame "os_close"
@@ -2538,6 +2540,43 @@ and os_result span (f : unit -> value) : value =
   | exception Sys_error message ->
       Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
 
+(* The rand package's answer shape: the OS entropy source's failures are
+   data — the source refused — and the reason carries the package's own
+   prefix. *)
+and rand_result (f : unit -> value) : value =
+  match f () with
+  | v -> Tuple [ EnumMember ("R", "ok"); v ]
+  | exception Unix.Unix_error (e, fn, arg) ->
+      Tuple
+        [
+          EnumMember ("R", "error");
+          String
+            (Printf.sprintf "rand: %s%s: %s" fn
+               (if arg = "" then "" else " " ^ arg)
+               (Unix.error_message e));
+        ]
+  | exception Sys_error message ->
+      Tuple [ EnumMember ("R", "error"); String ("rand: " ^ message) ]
+
+(* The entropy source: /dev/urandom, read to the full count — the kernel
+   never answers short once the pool is seeded, and the loop keeps the
+   contract explicit. *)
+and read_entropy (n : int) : Bytes.t =
+  let fd = Unix.openfile "/dev/urandom" [ Unix.O_RDONLY ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () ->
+      let buf = Bytes.create n in
+      let rec fill got =
+        if got < n then begin
+          let read = Unix.read fd buf got (n - got) in
+          if read = 0 then raise (Sys_error "the entropy source closed early");
+          fill (got + read)
+        end
+      in
+      fill 0;
+      buf)
+
 (* ---- printf ----
 
    The renderer anchors on C17 §7.21.6.1: the numeric conversions go
@@ -3098,6 +3137,10 @@ and apply_runtime_impl span name args =
       error span "E3007"
         (Printf.sprintf "`os_open_append` expects (path String), got %d"
            (List.length vs))
+  | "rand_bytes", [ Int64 n ] ->
+      if n < 0L then
+        error span "E3007" "`rand_bytes` expects a non-negative count"
+      else rand_result (fun () -> Bytes (read_entropy (Int64.to_int n)))
   | "os_read", [ Int64 fd; Int64 n ] ->
       if n < 0L then error span "E3007" "`os_read` expects a non-negative count"
       else

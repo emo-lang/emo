@@ -1,0 +1,488 @@
+// Ed25519 (RFC 8032 §5.1): the twisted Edwards curve
+// −x² + y² = 1 + d·x²·y² over internal.fe25519's field, the group of
+// order 8·L, and the signature scheme over it. A point rides extended
+// homogeneous coordinates (X : Y : Z : T) with x = X/Z, y = Y/Z, and
+// T = X·Y/Z — four field boxes held by a class so the formulas read
+// as the RFC writes them. The scalar multiplication is
+// double-and-add-always with a masked select, 256 steps whatever the
+// scalar: no branch and no index depends on a secret. The scalars
+// modulo L ride sixteen 32-bit words, the product schoolbook and the
+// reduction a fixed count of masked trial subtractions.
+//
+// The constants are derived, not hand-copied: d, 2d, and sqrt(−1) as
+// limbs straight out of the mirror's from_bytes, the base point as
+// its own RFC encoding (y = 4/5, x even), L as its little-endian
+// words; the RFC's own vectors and the Go companions pin them in the
+// golden.
+
+const d_limbs = [-10913610, 13857413, -15372611, 6949391, 114729, -8787816, -6275908, -3247719, -18696448, -12055116]
+const d2_limbs = [-21827239, -5839606, -30745221, 13898782, 229458, 15978800, -12551817, -6495438, 29715968, 9444199]
+const sqrt_m1_limbs = [-32595792, -7943725, 9377950, 3500415, 12389472, -272473, -25146209, -2005654, 326686, 11406482]
+const l_words = [1559614445, 1477600026, 2734136534, 350157278, 0, 0, 0, 268435456]
+
+class Ge {
+  def init() {
+    self.x = internal.fe25519.new()
+    self.y = internal.fe25519.new()
+    self.z = internal.fe25519.new()
+    self.t = internal.fe25519.new()
+  }
+}
+
+def load_d(h Bytes) Void {
+  var i = 0
+  while i < 10 {
+    internal.fe25519.set_limb(h, i, d_limbs[i])
+    i = i + 1
+  }
+}
+
+def load_d2(h Bytes) Void {
+  var i = 0
+  while i < 10 {
+    internal.fe25519.set_limb(h, i, d2_limbs[i])
+    i = i + 1
+  }
+}
+
+def load_sqrt_m1(h Bytes) Void {
+  var i = 0
+  while i < 10 {
+    internal.fe25519.set_limb(h, i, sqrt_m1_limbs[i])
+    i = i + 1
+  }
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v & 0xFF)
+}
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def copy_range(dst Bytes, at Int64, src Bytes, from Int64, count Int64) Void {
+  var i = 0
+  while i < count {
+    set_byte(dst, at + i, get_byte(src, from + i))
+    i = i + 1
+  }
+}
+
+def slice(src Bytes, from Int64, count Int64) Bytes {
+  const out = Bytes.new(count)
+  copy_range(out, 0, src, from, count)
+  return out
+}
+
+def concat2(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_range(out, 0, a, 0, a.length())
+  copy_range(out, a.length(), b, 0, b.length())
+  return out
+}
+
+def concat3(a Bytes, b Bytes, c Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length() + c.length())
+  copy_range(out, 0, a, 0, a.length())
+  copy_range(out, a.length(), b, 0, b.length())
+  copy_range(out, a.length() + b.length(), c, 0, c.length())
+  return out
+}
+
+def bytes_equal(a Bytes, b Bytes) Bool {
+  var diff = a.length() ^ b.length()
+  var i = 0
+  while i < a.length() && i < b.length() {
+    diff = diff | (get_byte(a, i) ^ get_byte(b, i))
+    i = i + 1
+  }
+  return diff == 0
+}
+
+// ---- points
+
+def neutral(h Ge) Void {
+  internal.fe25519.zero(h.x)
+  internal.fe25519.one(h.y)
+  internal.fe25519.one(h.z)
+  internal.fe25519.zero(h.t)
+}
+
+def copy(h Ge, p Ge) Void {
+  internal.fe25519.copy(h.x, p.x)
+  internal.fe25519.copy(h.y, p.y)
+  internal.fe25519.copy(h.z, p.z)
+  internal.fe25519.copy(h.t, p.t)
+}
+
+// The base point B from its RFC encoding: y = 4/5 with the sign bit
+// clear, the byte 0x58 followed by thirty-one 0x66.
+def base(h Ge) Void {
+  const s = Bytes.new(32)
+  set_byte(s, 0, 0x58)
+  var i = 1
+  while i < 32 {
+    set_byte(s, i, 0x66)
+    i = i + 1
+  }
+  from_bytes(h, s)
+}
+
+// h = p + q (RFC 8032 §5.1.4): A = (Y1−X1)(Y2−X2), B = (Y1+X1)(Y2+X2),
+// C = T1·2d·T2, D = 2·Z1·Z2, then E = B−A, F = D−C, G = D+C, H = B+A
+// and X3 = E·F, Y3 = G·H, T3 = E·H, Z3 = F·G. Every read of p and q
+// precedes every write to h, so h may alias either.
+def add(h Ge, p Ge, q Ge) Void {
+  const a = internal.fe25519.new()
+  const b = internal.fe25519.new()
+  const c = internal.fe25519.new()
+  const dd = internal.fe25519.new()
+  const t1 = internal.fe25519.new()
+  internal.fe25519.sub(a, p.y, p.x)
+  internal.fe25519.sub(t1, q.y, q.x)
+  internal.fe25519.mul(a, a, t1)
+  internal.fe25519.add(b, p.y, p.x)
+  internal.fe25519.add(t1, q.y, q.x)
+  internal.fe25519.mul(b, b, t1)
+  load_d2(t1)
+  internal.fe25519.mul(c, p.t, q.t)
+  internal.fe25519.mul(c, c, t1)
+  internal.fe25519.mul(dd, p.z, q.z)
+  internal.fe25519.add(dd, dd, dd)
+  const e = internal.fe25519.new()
+  const f = internal.fe25519.new()
+  const g = internal.fe25519.new()
+  const hh = internal.fe25519.new()
+  internal.fe25519.sub(e, b, a)
+  internal.fe25519.sub(f, dd, c)
+  internal.fe25519.add(g, dd, c)
+  internal.fe25519.add(hh, b, a)
+  internal.fe25519.mul(h.x, e, f)
+  internal.fe25519.mul(h.y, g, hh)
+  internal.fe25519.mul(h.t, e, hh)
+  internal.fe25519.mul(h.z, f, g)
+}
+
+// h = 2p (RFC 8032 §5.1.4): A = X1², B = Y1², C = 2·Z1², H = A+B,
+// E = H−(X1+Y1)², G = A−B, F = C+G, the same four products at the
+// end. C is one product (Z1·2Z1) so F stays within the multiplier's
+// input bound.
+def double(h Ge, p Ge) Void {
+  const a = internal.fe25519.new()
+  const b = internal.fe25519.new()
+  const c = internal.fe25519.new()
+  const t1 = internal.fe25519.new()
+  internal.fe25519.sq(a, p.x)
+  internal.fe25519.sq(b, p.y)
+  internal.fe25519.add(t1, p.z, p.z)
+  internal.fe25519.mul(c, p.z, t1)
+  internal.fe25519.add(t1, p.x, p.y)
+  internal.fe25519.sq(t1, t1)
+  const e = internal.fe25519.new()
+  const f = internal.fe25519.new()
+  const g = internal.fe25519.new()
+  const hh = internal.fe25519.new()
+  internal.fe25519.add(hh, a, b)
+  internal.fe25519.sub(e, hh, t1)
+  internal.fe25519.sub(g, a, b)
+  internal.fe25519.add(f, c, g)
+  internal.fe25519.mul(h.x, e, f)
+  internal.fe25519.mul(h.y, g, hh)
+  internal.fe25519.mul(h.t, e, hh)
+  internal.fe25519.mul(h.z, f, g)
+}
+
+// h = −p: the x and t coordinates negated.
+def neg(h Ge, p Ge) Void {
+  internal.fe25519.neg(h.x, p.x)
+  internal.fe25519.copy(h.y, p.y)
+  internal.fe25519.copy(h.z, p.z)
+  internal.fe25519.neg(h.t, p.t)
+}
+
+def cmov(h Ge, p Ge, b Int64) Void {
+  internal.fe25519.cmov(h.x, p.x, b)
+  internal.fe25519.cmov(h.y, p.y, b)
+  internal.fe25519.cmov(h.z, p.z, b)
+  internal.fe25519.cmov(h.t, p.t, b)
+}
+
+def scalar_bit(s Bytes, i Int64) Int64 {
+  return (s.get(i >> 3) >> (i & 7)) & 1
+}
+
+// h = [s]p for a 32-byte little-endian scalar: from the top bit down,
+// double, add p, and keep the sum only when the bit is set — the
+// select through a mask, the add performed either way.
+def scalar_mul(h Ge, s Bytes, p Ge) Void {
+  const acc = Ge.new()
+  const sum = Ge.new()
+  neutral(acc)
+  var i = 255
+  while i >= 0 {
+    double(acc, acc)
+    add(sum, acc, p)
+    cmov(acc, sum, scalar_bit(s, i))
+    i = i - 1
+  }
+  copy(h, acc)
+}
+
+// The point from its 32-byte encoding (RFC 8032 §5.1.3): y from the
+// low 255 bits, x recovered as the square root of (y² − 1)/(d·y² + 1)
+// through u·v³·(u·v⁷)^((p−5)/8), corrected by sqrt(−1) when the
+// check lands on −u, refused when it lands on neither; x = 0 with the
+// sign bit set is refused; the sign bit then picks x or p − x. A
+// non-canonical y (p through 2^255 − 1) is accepted, the way the
+// field's from_bytes reads it and the way Go reads it.
+def from_bytes(h Ge, s Bytes) Bool {
+  internal.fe25519.from_bytes(h.y, s)
+  internal.fe25519.one(h.z)
+  const u = internal.fe25519.new()
+  const v = internal.fe25519.new()
+  internal.fe25519.sq(u, h.y)
+  load_d(v)
+  internal.fe25519.mul(v, v, u)
+  internal.fe25519.sub(u, u, h.z)
+  internal.fe25519.add(v, v, h.z)
+  const v3 = internal.fe25519.new()
+  internal.fe25519.sq(v3, v)
+  internal.fe25519.mul(v3, v3, v)
+  const x = internal.fe25519.new()
+  internal.fe25519.sq(x, v3)
+  internal.fe25519.mul(x, x, v)
+  internal.fe25519.mul(x, x, u)
+  internal.fe25519.pow22523(x, x)
+  internal.fe25519.mul(x, x, v3)
+  internal.fe25519.mul(x, x, u)
+  const vxx = internal.fe25519.new()
+  internal.fe25519.sq(vxx, x)
+  internal.fe25519.mul(vxx, vxx, v)
+  const check = internal.fe25519.new()
+  internal.fe25519.sub(check, vxx, u)
+  if !internal.fe25519.is_zero(check) {
+    internal.fe25519.add(check, vxx, u)
+    if !internal.fe25519.is_zero(check) {
+      return false
+    }
+    const sm1 = internal.fe25519.new()
+    load_sqrt_m1(sm1)
+    internal.fe25519.mul(x, x, sm1)
+  }
+  const sign = get_byte(s, 31) >> 7
+  if internal.fe25519.is_zero(x) && sign == 1 {
+    return false
+  }
+  if internal.fe25519.is_negative(x) != sign {
+    internal.fe25519.neg(x, x)
+  }
+  internal.fe25519.copy(h.x, x)
+  internal.fe25519.mul(h.t, h.x, h.y)
+  return true
+}
+
+// The 32-byte encoding: y canonical, the low bit of x in bit 255.
+def to_bytes(p Ge) Bytes {
+  const recip = internal.fe25519.new()
+  const x = internal.fe25519.new()
+  const y = internal.fe25519.new()
+  internal.fe25519.invert(recip, p.z)
+  internal.fe25519.mul(x, p.x, recip)
+  internal.fe25519.mul(y, p.y, recip)
+  const s = internal.fe25519.to_bytes(y)
+  set_byte(s, 31, get_byte(s, 31) ^ (internal.fe25519.is_negative(x) << 7))
+  return s
+}
+
+// ---- scalars modulo L, over little-endian 32-bit words
+
+def word(b Bytes, i Int64) Int64 {
+  return b.get_u32_le(i * 4)
+}
+
+def set_word(b Bytes, i Int64, v Int64) Void {
+  b.set_u32_le(i * 4, v & 0xFFFFFFFF)
+}
+
+// t = L << k as sixteen words (k at most 259 keeps it under 2^512).
+def shifted_l(t Bytes, k Int64) Void {
+  var i = 0
+  while i < 16 {
+    set_word(t, i, 0)
+    i = i + 1
+  }
+  const base = k >> 5
+  const sh = k & 31
+  var j = 0
+  while j < 8 {
+    const w = l_words[j]
+    set_word(t, j + base, word(t, j + base) | (w << sh))
+    if j + base + 1 < 16 {
+      set_word(t, j + base + 1, word(t, j + base + 1) | internal.word.lshr(w, 32 - sh))
+    }
+    j = j + 1
+  }
+}
+
+// x mod L in place, x sixteen words below 2^512: for k from 259 down
+// to 0, subtract L·2^k when x is at least that — the subtraction
+// computed every time, the result kept through a mask from the
+// borrow, 260 steps whatever x holds.
+def mod_l(x Bytes) Void {
+  const t = Bytes.new(64)
+  const diff = Bytes.new(64)
+  var k = 259
+  while k >= 0 {
+    shifted_l(t, k)
+    var borrow = 0
+    var j = 0
+    while j < 16 {
+      const v = word(x, j) - word(t, j) - borrow
+      set_word(diff, j, v)
+      borrow = (v >> 32) & 1
+      j = j + 1
+    }
+    const keep = 0 - borrow
+    j = 0
+    while j < 16 {
+      set_word(x, j, (word(x, j) & keep) | (word(diff, j) & ~keep))
+      j = j + 1
+    }
+    k = k - 1
+  }
+}
+
+// The 64-byte little-endian integer reduced modulo L, as 32 bytes.
+def reduce(s Bytes) Bytes {
+  const x = Bytes.new(64)
+  copy_range(x, 0, s, 0, 64)
+  mod_l(x)
+  return slice(x, 0, 32)
+}
+
+// (a·b + c) mod L for 32-byte little-endian a, b, c — a and b below
+// 2^256, c below L. The product is the 8×8 schoolbook: each word
+// product is exact as a 64-bit pattern, split into halves through
+// the logical shift, and the column sums stay under 2^35.
+def muladd(a Bytes, b Bytes, c Bytes) Bytes {
+  const x = Bytes.new(64)
+  var i = 0
+  while i < 8 {
+    const ai = word(a, i)
+    var carry = 0
+    var j = 0
+    while j < 8 {
+      const pr = ai * word(b, j)
+      const lo = pr & 0xFFFFFFFF
+      const hi = internal.word.lshr(pr, 32)
+      const t = word(x, i + j) + lo + carry
+      set_word(x, i + j, t)
+      carry = (t >> 32) + hi
+      j = j + 1
+    }
+    set_word(x, i + 8, carry)
+    i = i + 1
+  }
+  var carry = 0
+  i = 0
+  while i < 16 {
+    var cv = 0
+    if i < 8 {
+      cv = word(c, i)
+    }
+    const t = word(x, i) + cv + carry
+    set_word(x, i, t)
+    carry = t >> 32
+    i = i + 1
+  }
+  mod_l(x)
+  return slice(x, 0, 32)
+}
+
+// Whether the 32-byte scalar is below L — the canonical S the
+// verifier insists on, so a signature has exactly one accepted form.
+def is_canonical(s Bytes) Bool {
+  var i = 7
+  while i >= 0 {
+    const a = word(s, i)
+    const b = l_words[i]
+    if a < b {
+      return true
+    }
+    if a > b {
+      return false
+    }
+    i = i - 1
+  }
+  return false
+}
+
+// ---- the scheme (RFC 8032 §5.1.5–§5.1.7)
+
+// The secret scalar from the seed's SHA-512: the low 32 bytes with
+// the three low bits cleared, the top bit cleared, and bit 254 set.
+def clamp(h Bytes) Bytes {
+  const s = slice(h, 0, 32)
+  set_byte(s, 0, get_byte(s, 0) & 248)
+  set_byte(s, 31, (get_byte(s, 31) & 127) | 64)
+  return s
+}
+
+def public_key(seed Bytes) Bytes {
+  const s = clamp(sha2.sha512(seed))
+  const b = Ge.new()
+  base(b)
+  const a = Ge.new()
+  scalar_mul(a, s, b)
+  return to_bytes(a)
+}
+
+// R = [r]B with r = SHA-512(prefix ‖ M) mod L, then
+// S = (r + SHA-512(R ‖ A ‖ M)·s) mod L; the signature is R ‖ S.
+def sign(seed Bytes, message Bytes) Bytes {
+  const h = sha2.sha512(seed)
+  const s = clamp(h)
+  const prefix = slice(h, 32, 32)
+  const b = Ge.new()
+  base(b)
+  const a = Ge.new()
+  scalar_mul(a, s, b)
+  const a_bytes = to_bytes(a)
+  const r = reduce(sha2.sha512(concat2(prefix, message)))
+  const rp = Ge.new()
+  scalar_mul(rp, r, b)
+  const r_bytes = to_bytes(rp)
+  const k = reduce(sha2.sha512(concat3(r_bytes, a_bytes, message)))
+  return concat2(r_bytes, muladd(k, s, r))
+}
+
+// [S]B − [k]A re-encoded and compared with the signature's R, with
+// k = SHA-512(R ‖ A ‖ M) mod L — the equation without the cofactor,
+// the shape Go checks. A signature that is not 64 bytes, an S at or
+// above L, and a public key that does not decode all answer false.
+def verify(public Bytes, message Bytes, signature Bytes) Bool {
+  if signature.length() != 64 {
+    return false
+  }
+  const r_bytes = slice(signature, 0, 32)
+  const s_bytes = slice(signature, 32, 32)
+  if !is_canonical(s_bytes) {
+    return false
+  }
+  const a = Ge.new()
+  if !from_bytes(a, public) {
+    return false
+  }
+  const k = reduce(sha2.sha512(concat3(r_bytes, public, message)))
+  const b = Ge.new()
+  base(b)
+  const sb = Ge.new()
+  scalar_mul(sb, s_bytes, b)
+  const ka = Ge.new()
+  scalar_mul(ka, k, a)
+  neg(ka, ka)
+  const rp = Ge.new()
+  add(rp, sb, ka)
+  return bytes_equal(to_bytes(rp), r_bytes)
+}

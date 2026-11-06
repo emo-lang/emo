@@ -184,6 +184,7 @@ let is_runtime_impl = function
       (String.length name >= 4 && String.sub name 0 4 = "net_")
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
       || (String.length name >= 3 && String.sub name 0 3 = "os_")
+      || (String.length name >= 5 && String.sub name 0 5 = "rand_")
       || is_dom_impl name
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =

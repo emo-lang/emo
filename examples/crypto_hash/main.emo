@@ -1,0 +1,293 @@
+require "crypto"
+
+// The SHA-2, SHA-3, and legacy vectors: FIPS 180-4 / RFC 6234 / FIPS
+// 202 and RFC 1321's one-shot suites, the padding boundaries, a
+// high-bit byte sweep — every digest pinned against the value Go's
+// own packages answer for the same bytes — then the streaming
+// semantics, HMAC, HKDF, PBKDF2, and the hex codec's edges.
+
+def hex_fill(out Bytes, b Bytes, digits Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out.set(i * 2, digits.get((v >> 4) & 0xF))
+    out.set(i * 2 + 1, digits.get(v & 0xF))
+    i = i + 1
+  }
+}
+
+def hex_of(b Bytes) String {
+  const out = Bytes.new(b.length() * 2)
+  hex_fill(out, b, "0123456789abcdef".to_bytes())
+  return out.to_string()
+}
+
+// n bytes, every one carrying the value n — the lengths that sit on
+// the padding boundaries (55/56/57 around the first length slot,
+// 63/64/65 around a block, 111/112/113/127/128/129 around the wide
+// ones).
+def repeat_byte(n Int64) Bytes {
+  const b = Bytes.new(n)
+  var i = 0
+  while i < n {
+    b.set(i, n)
+    i = i + 1
+  }
+  return b
+}
+
+// count bytes rising from start.
+def seq_bytes(count Int64, start Int64) Bytes {
+  const b = Bytes.new(count)
+  var i = 0
+  while i < count {
+    b.set(i, start + i)
+    i = i + 1
+  }
+  return b
+}
+
+const long56 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_bytes()
+const long112 = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".to_bytes()
+const quick = "The quick brown fox jumps over the lazy dog".to_bytes()
+
+// ---- SHA-256 and SHA-224 (FIPS 180-4, RFC 6234)
+def both(label String, data Bytes) Void {
+  println("sha256 " + label + ": " + crypto.hex_encode(crypto.sha2.sha256(data)))
+  println("sha224 " + label + ": " + crypto.hex_encode(crypto.sha2.sha224(data)))
+}
+
+both("empty", Bytes.new(0))
+both("abc", "abc".to_bytes())
+both("56", long56)
+both("112", long112)
+both("quickbrown", quick)
+
+const edges = [1, 55, 56, 57, 63, 64, 65, 119, 120, 127, 128]
+for var e = 0; e < 11; e = e + 1 {
+  both("repeat " + edges[e].to_string(), repeat_byte(edges[e]))
+}
+
+const sweep = seq_bytes(256, 0)
+both("bytes 0..255", sweep)
+
+// ---- streaming: the same bytes through every chunk size answer the
+// one-shot digest, so each line below repeats `sha256 quickbrown`.
+const sizes = [1, 3, 7, 13, 64, 65]
+for var s = 0; s < 6; s = s + 1 {
+  const size = sizes[s]
+  const d = crypto.sha2.new()
+  var off = 0
+  while off < quick.length() {
+    var take = size
+    if quick.length() - off < take {
+      take = quick.length() - off
+    }
+    const piece = Bytes.new(take)
+    var j = 0
+    while j < take {
+      piece.set(j, quick.get(off + j))
+      j = j + 1
+    }
+    d.write(piece)
+    off = off + take
+  }
+  println("chunks " + size.to_string() + ": " + crypto.hex_encode(d.sum()))
+}
+
+// ---- sum leaves the state standing: two sums agree, a write after a
+// sum continues the stream, reset starts over. The lines repeat the
+// `abc` and `abcd` digests.
+const d = crypto.sha2.new()
+d.write("ab".to_bytes())
+d.write("c".to_bytes())
+println("sum once: " + crypto.hex_encode(d.sum()))
+println("sum twice: " + crypto.hex_encode(d.sum()))
+d.write("d".to_bytes())
+println("after more: " + crypto.hex_encode(d.sum()))
+d.reset()
+d.write("abc".to_bytes())
+println("after reset: " + crypto.hex_encode(d.sum()))
+println("size: " + d.size().to_string() + " block: " + d.block_size().to_string())
+const d224 = crypto.sha2.new224()
+d224.write("ab".to_bytes())
+d224.write("c".to_bytes())
+println("sha224 stream: " + crypto.hex_encode(d224.sum()))
+println("size224: " + d224.size().to_string() + " block: " + d224.block_size().to_string())
+
+// ---- the hex codec: the empty string both ways, both cases of a
+// digit accepted, and every rejection naming its offset.
+println("hex empty: [" + crypto.hex_encode(Bytes.new(0)) + "]")
+case crypto.hex_decode("") {
+  (R.ok, v) -> { println("hex empty decode: [" + crypto.hex_encode(v) + "]") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("BA7816bF") {
+  (R.ok, v) -> { println("hex mixed case: " + crypto.hex_encode(v)) }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("abc") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("zz") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("ab0g") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+case crypto.hex_decode("abz0") {
+  (R.ok, _) -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+
+// ---- the 64-bit family: the same messages through SHA-512,
+// SHA-384, SHA-512/224, SHA-512/256, each pinned against the value
+// Go's crypto/sha512 answers for the same bytes.
+def four(label String, data Bytes) Void {
+  println("sha512 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512(data)))
+  println("sha384 " + label + ": " + crypto.hex_encode(crypto.sha2.sha384(data)))
+  println("sha512_224 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512_224(data)))
+  println("sha512_256 " + label + ": " + crypto.hex_encode(crypto.sha2.sha512_256(data)))
+}
+
+four("abcd", "abcd".to_bytes())
+four("empty", Bytes.new(0))
+four("abc", "abc".to_bytes())
+four("56", long56)
+four("112", long112)
+four("quickbrown", quick)
+
+// the 64-bit hasher streams through the same discipline: the lines
+// repeat the `sha512 abc` and `sha512 abcd` digests above.
+const w = crypto.sha2.new512()
+w.write("ab".to_bytes())
+w.write("c".to_bytes())
+println("wide chunks: " + crypto.hex_encode(w.sum()))
+w.write("d".to_bytes())
+println("wide after more: " + crypto.hex_encode(w.sum()))
+w.reset()
+w.write("abc".to_bytes())
+println("wide after reset: " + crypto.hex_encode(w.sum()))
+println("size512: " + w.size().to_string() + " block: " + w.block_size().to_string())
+
+// the 64-bit padding boundaries.
+const wide_edges = [111, 112, 113, 127, 128, 129]
+for var we = 0; we < 6; we = we + 1 {
+  four("repeat " + wide_edges[we].to_string(), repeat_byte(wide_edges[we]))
+}
+
+four("bytes 0..255", sweep)
+
+// ---- the legacy pair, verified the same way: present for the
+// world's existing data, refused for every security purpose.
+def legacy(label String, data Bytes) Void {
+  println("sha1 " + label + ": " + crypto.hex_encode(crypto.legacy.sha1(data)))
+  println("md5 " + label + ": " + crypto.hex_encode(crypto.legacy.md5(data)))
+}
+
+legacy("empty", Bytes.new(0))
+legacy("abc", "abc".to_bytes())
+legacy("56", long56)
+legacy("112", long112)
+legacy("quickbrown", quick)
+legacy("bytes 0..255", sweep)
+
+// ---- HMAC (RFC 2104) over the SHA-2 family: RFC 4231's test cases,
+// each tag pinned against Go's crypto/hmac. tc6 and tc7 carry a
+// 131-byte key, forcing the hash-the-key path.
+def fill(count Int64, value Int64) Bytes {
+  const b = Bytes.new(count)
+  var i = 0
+  while i < count {
+    b.set(i, value)
+    i = i + 1
+  }
+  return b
+}
+
+def hmac_panel(label String, key Bytes, data Bytes) Void {
+  println("hmac256 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha256(key, data)))
+  println("hmac224 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha224(key, data)))
+  println("hmac384 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha384(key, data)))
+  println("hmac512 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512(key, data)))
+  println("hmac512_224 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512_224(key, data)))
+  println("hmac512_256 " + label + ": " + crypto.hex_encode(crypto.hash.hmac_sha512_256(key, data)))
+}
+
+hmac_panel("tc1", fill(20, 0x0b), "Hi There".to_bytes())
+hmac_panel("tc2", "Jefe".to_bytes(), "what do ya wanna know?".to_bytes())
+hmac_panel("tc3", fill(20, 0xaa), fill(50, 0xdd))
+const k4 = Bytes.new(25)
+for var i4 = 0; i4 < 25; i4 = i4 + 1 {
+  k4.set(i4, i4 + 1)
+}
+hmac_panel("tc4", k4, fill(50, 0xcd))
+hmac_panel("tc6", fill(131, 0xaa), "Test Using Larger Than Block-Size Key - Hash Key First".to_bytes())
+hmac_panel("tc7", fill(131, 0xaa), "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.".to_bytes())
+
+// ---- the interface: one function digests with any hasher the
+// package answers — the lines repeat `sha256 abc` and `sha512 abc`.
+def iface_digest(h crypto.hash.Hash) String {
+  h.write("ab".to_bytes())
+  h.write("c".to_bytes())
+  return crypto.hex_encode(h.sum())
+}
+println("iface256: " + iface_digest(crypto.sha2.new()))
+println("iface512: " + iface_digest(crypto.sha2.new512()))
+
+// ---- HKDF (RFC 5869): the SHA-256 test cases, the wide family on
+// tc1's inputs, and the expansion fed the RFC's own PRK through the
+// hex decoder — each output pinned against the Go oracle.
+def hex_str(text String) Bytes {
+  case crypto.hex_decode(text) {
+    (R.ok, v) -> { return v }
+    (R.error, why) -> { println(why) }
+  }
+  return Bytes.new(0)
+}
+
+const ikm22 = fill(22, 0x0b)
+const salt13 = seq_bytes(13, 0)
+const info10 = seq_bytes(10, 0xf0)
+
+println("hkdf256 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(ikm22, salt13, info10, 42)))
+println("hkdf512 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha512(ikm22, salt13, info10, 42)))
+println("hkdf384 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha384(ikm22, salt13, info10, 42)))
+println("hkdf512_256 tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha512_256(ikm22, salt13, info10, 42)))
+println("hkdf256 tc2: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(seq_bytes(80, 0), seq_bytes(80, 0x60), seq_bytes(16, 0xb0), 82)))
+println("hkdf256 tc3: " + crypto.hex_encode(crypto.kdf.hkdf_sha256(ikm22, Bytes.new(0), Bytes.new(0), 42)))
+println("hkdf256expand tc1: " + crypto.hex_encode(crypto.kdf.hkdf_sha256_expand(hex_str("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"), info10, 42)))
+
+// ---- PBKDF2 (RFC 8018): the light iterations here — RFC 7914's
+// vectors and the wide family beside them; the classic 4096 lives in
+// crypto_kdf, the compiled golden.
+println("pbkdf2_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd".to_bytes(), "salt".to_bytes(), 1, 64)))
+println("pbkdf2_256 c2: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("passwd".to_bytes(), "salt".to_bytes(), 2, 64)))
+println("pbkdf2_512 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512("passwd".to_bytes(), "salt".to_bytes(), 1, 64)))
+println("pbkdf2_512_256 c1: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512_256("passwd".to_bytes(), "salt".to_bytes(), 1, 64)))
+
+// ---- SHA-3 and SHAKE (FIPS 202): the sponge derived from the
+// compact reference — rho-pi walked in place, the round constants
+// from the 0x71 LFSR — each digest pinned against Go's crypto/sha3.
+def sha3_all(label String, data Bytes) Void {
+  println("sha3_224 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_224(data)))
+  println("sha3_256 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_256(data)))
+  println("sha3_384 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_384(data)))
+  println("sha3_512 " + label + ": " + crypto.hex_encode(crypto.sha3.sha3_512(data)))
+}
+
+sha3_all("empty", Bytes.new(0))
+sha3_all("abc", "abc".to_bytes())
+sha3_all("56", long56)
+sha3_all("112", long112)
+sha3_all("quickbrown", quick)
+sha3_all("bytes 0..255", sweep)
+println("shake128 abc 32: " + crypto.hex_encode(crypto.sha3.shake128("abc".to_bytes(), 32)))
+println("shake128 abc 137: " + crypto.hex_encode(crypto.sha3.shake128("abc".to_bytes(), 137)))
+println("shake128 empty 32: " + crypto.hex_encode(crypto.sha3.shake128(Bytes.new(0), 32)))
+println("shake256 abc 32: " + crypto.hex_encode(crypto.sha3.shake256("abc".to_bytes(), 32)))
+println("shake256 abc 137: " + crypto.hex_encode(crypto.sha3.shake256("abc".to_bytes(), 137)))
+println("shake256 empty 32: " + crypto.hex_encode(crypto.sha3.shake256(Bytes.new(0), 32)))

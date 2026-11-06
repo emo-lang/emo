@@ -1,0 +1,43 @@
+// The hash surface: the structural interface every hasher answers —
+// `crypto.sha2`'s `Digest` and `Wide` satisfy it by shape, so a
+// caller can hold any of them here — and HMAC (RFC 2104) over the
+// SHA-2 family. Bytes in, Bytes out; compare tags through
+// `crypto.constant_time_compare`, never `==`.
+
+interface Hash {
+  def write(data Bytes) Void
+  def sum() Bytes
+  def reset() Void
+  def size() Int64
+  def block_size() Int64
+}
+
+// The HMAC-SHA-256 tag of data under key.
+def hmac_sha256(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(1, 64, key, data)
+}
+
+// The HMAC-SHA-224 tag of data under key.
+def hmac_sha224(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(2, 64, key, data)
+}
+
+// The HMAC-SHA-512 tag of data under key.
+def hmac_sha512(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(3, 128, key, data)
+}
+
+// The HMAC-SHA-384 tag of data under key.
+def hmac_sha384(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(4, 128, key, data)
+}
+
+// The HMAC-SHA-512/224 tag of data under key.
+def hmac_sha512_224(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(5, 128, key, data)
+}
+
+// The HMAC-SHA-512/256 tag of data under key.
+def hmac_sha512_256(key Bytes, data Bytes) Bytes {
+  return internal.hmac.hmac(6, 128, key, data)
+}

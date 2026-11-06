@@ -1,0 +1,82 @@
+// The HMAC engine (RFC 2104): `H(opad_k || H(ipad_k || message))`
+// over the SHA-2 one-shots, the key prepared per the RFC — hashed
+// first when longer than the block, zero-padded to the block when
+// shorter. The variant rides in a code the caller names (the
+// wrappers in crypto.hash know their own), so this module rides
+// sha2's public surface and never references hash — the dependency
+// stays one-way (module cycles are refused). The message rides as
+// one concatenation; a streaming HMAC would want the interface
+// factory this language does not admit yet (provisional).
+
+// The engine over Bytes end to end, for all six variants: the key
+// hashed first when longer than the block, zero-padded to it either
+// way, the two pads around the data, per RFC 2104. The byte accesses
+// go through parameterized doors — constructors answer the gradual
+// type, parameters carry the static one.
+
+def zero_fill(b Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, 0)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def pad_bytes(kp Bytes, pad Int64) Bytes {
+  const out = Bytes.new(kp.length())
+  var i = 0
+  while i < kp.length() {
+    out.set(i, kp.get(i) ^ pad)
+    i = i + 1
+  }
+  return out
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
+}
+
+// The variant's one-shot digest, by code: 1 sha256, 2 sha224,
+// 3 sha512, 4 sha384, 5 sha512_224, 6 sha512_256.
+def oneshot(code Int64, data Bytes) Bytes {
+  if code == 1 {
+    return sha2.sha256(data)
+  }
+  if code == 2 {
+    return sha2.sha224(data)
+  }
+  if code == 3 {
+    return sha2.sha512(data)
+  }
+  if code == 4 {
+    return sha2.sha384(data)
+  }
+  if code == 5 {
+    return sha2.sha512_224(data)
+  }
+  return sha2.sha512_256(data)
+}
+
+// The HMAC tag for the code's variant, block width, key, and message.
+def hmac(code Int64, block Int64, key Bytes, data Bytes) Bytes {
+  var kk = key
+  if key.length() > block {
+    kk = oneshot(code, key)
+  }
+  const kp = Bytes.new(block)
+  zero_fill(kp)
+  copy_into(kp, kk, 0)
+  const mid = oneshot(code, concat_bytes(pad_bytes(kp, 0x36), data))
+  return oneshot(code, concat_bytes(pad_bytes(kp, 0x5c), mid))
+}

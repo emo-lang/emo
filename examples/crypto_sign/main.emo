@@ -1,0 +1,108 @@
+require "crypto"
+
+// Ed25519 (RFC 8032): the five §7.1 vectors — the public key derived
+// from the seed, the signature, and its verification — each line
+// pinned against the RFC's own value and Go's crypto/ed25519; then
+// the rejections a verifier owes: a flipped signature byte, a wrong
+// message, the malleable twin with S + L, a 63-byte signature, and
+// two public keys that do not decode (x = 0 with the sign bit set,
+// and a y with no square root). X25519 is examples/crypto_ecdh; the
+// Go-companion sweep over message lengths is
+// examples/crypto_sign_sweep, c-only — eleven seconds on the
+// interpreter, a tenth of a second compiled.
+
+def from_hex(text String) Bytes {
+  case crypto.hex_decode(text) {
+    (R.ok, v) -> { return v }
+    (R.error, why) -> { println(why) }
+  }
+  return Bytes.new(0)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def sub(src Bytes, at Int64, count Int64) Bytes {
+  const out = Bytes.new(count)
+  var i = 0
+  while i < count {
+    set_byte(out, i, get_byte(src, at + i))
+    i = i + 1
+  }
+  return out
+}
+
+def with_byte(src Bytes, extra Int64) Bytes {
+  const out = Bytes.new(src.length() + 1)
+  var i = 0
+  while i < src.length() {
+    set_byte(out, i, get_byte(src, i))
+    i = i + 1
+  }
+  set_byte(out, src.length(), extra)
+  return out
+}
+
+// The signature with L added to S: the same group equation, the
+// non-canonical scalar the verifier refuses.
+def with_high_s(sig Bytes) Bytes {
+  const l = from_hex("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010")
+  const out = sub(sig, 0, 64)
+  var carry = 0
+  var i = 0
+  while i < 32 {
+    const v = get_byte(sig, 32 + i) + get_byte(l, i) + carry
+    set_byte(out, 32 + i, v & 0xFF)
+    carry = v >> 8
+    i = i + 1
+  }
+  return out
+}
+
+const names = ["1", "2", "3", "1024", "SHA(abc)"]
+const seeds = [
+  "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+  "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+  "f5e5767cf153319517630f226876b86c8160cc583bc013744c6bf255f5cc0ee5",
+  "833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42"
+]
+const messages = [
+  "",
+  "72",
+  "af82",
+  "08b8b2b733424243760fe426a4b54908632110a66c2f6591eabd3345e3e4eb98fa6e264bf09efe12ee50f8f54e9f77b1e355f6c50544e23fb1433ddf73be84d879de7c0046dc4996d9e773f4bc9efe5738829adb26c81b37c93a1b270b20329d658675fc6ea534e0810a4432826bf58c941efb65d57a338bbd2e26640f89ffbc1a858efcb8550ee3a5e1998bd177e93a7363c344fe6b199ee5d02e82d522c4feba15452f80288a821a579116ec6dad2b3b310da903401aa62100ab5d1a36553e06203b33890cc9b832f79ef80560ccb9a39ce767967ed628c6ad573cb116dbefefd75499da96bd68a8a97b928a8bbc103b6621fcde2beca1231d206be6cd9ec7aff6f6c94fcd7204ed3455c68c83f4a41da4af2b74ef5c53f1d8ac70bdcb7ed185ce81bd84359d44254d95629e9855a94a7c1958d1f8ada5d0532ed8a5aa3fb2d17ba70eb6248e594e1a2297acbbb39d502f1a8c6eb6f1ce22b3de1a1f40cc24554119a831a9aad6079cad88425de6bde1a9187ebb6092cf67bf2b13fd65f27088d78b7e883c8759d2c4f5c65adb7553878ad575f9fad878e80a0c9ba63bcbcc2732e69485bbc9c90bfbd62481d9089beccf80cfe2df16a2cf65bd92dd597b0707e0917af48bbb75fed413d238f5555a7a569d80c3414a8d0859dc65a46128bab27af87a71314f318c782b23ebfe808b82b0ce26401d2e22f04d83d1255dc51addd3b75a2b1ae0784504df543af8969be3ea7082ff7fc9888c144da2af58429ec96031dbcad3dad9af0dcbaaaf268cb8fcffead94f3c7ca495e056a9b47acdb751fb73e666c6c655ade8297297d07ad1ba5e43f1bca32301651339e22904cc8c42f58c30c04aafdb038dda0847dd988dcda6f3bfd15c4b4c4525004aa06eeff8ca61783aacec57fb3d1f92b0fe2fd1a85f6724517b65e614ad6808d6f6ee34dff7310fdc82aebfd904b01e1dc54b2927094b2db68d6f903b68401adebf5a7e08d78ff4ef5d63653a65040cf9bfd4aca7984a74d37145986780fc0b16ac451649de6188a7dbdf191f64b5fc5e2ab47b57f7f7276cd419c17a3ca8e1b939ae49e488acba6b965610b5480109c8b17b80e1b7b750dfc7598d5d5011fd2dcc5600a32ef5b52a1ecc820e308aa342721aac0943bf6686b64b2579376504ccc493d97e6aed3fb0f9cd71a43dd497f01f17c0e2cb3797aa2a2f256656168e6c496afc5fb93246f6b1116398a346f1a641f3b041e989f7914f90cc2c7fff357876e506b50d334ba77c225bc307ba537152f3f1610e4eafe595f6d9d90d11faa933a15ef1369546868a7f3a45a96768d40fd9d03412c091c6315cf4fde7cb68606937380db2eaaa707b4c4185c32eddcdd306705e4dc1ffc872eeee475a64dfac86aba41c0618983f8741c5ef68d3a101e8a3b8cac60c905c15fc910840b94c00a0b9d0",
+  "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+]
+
+// ---- the RFC vectors: public key, signature, verification
+var i = 0
+while i < 5 {
+  const seed = from_hex(seeds[i])
+  const message = from_hex(messages[i])
+  const public = crypto.sign.ed25519_public(seed)
+  const signature = crypto.sign.ed25519_sign(seed, message)
+  println("pub " + names[i] + ": " + crypto.hex_encode(public))
+  println("sig " + names[i] + ": " + crypto.hex_encode(signature))
+  println("verify " + names[i] + ": " + crypto.sign.ed25519_verify(public, message, signature).to_string())
+  i = i + 1
+}
+
+// ---- the rejections, on TEST 1
+const seed1 = from_hex(seeds[0])
+const message1 = from_hex(messages[0])
+const public1 = crypto.sign.ed25519_public(seed1)
+const signature1 = crypto.sign.ed25519_sign(seed1, message1)
+const flipped = sub(signature1, 0, 64)
+set_byte(flipped, 0, get_byte(flipped, 0) ^ 1)
+println("flip 1: " + crypto.sign.ed25519_verify(public1, message1, flipped).to_string())
+println("wrong 1: " + crypto.sign.ed25519_verify(public1, with_byte(message1, 0), signature1).to_string())
+println("high S 1: " + crypto.sign.ed25519_verify(public1, message1, with_high_s(signature1)).to_string())
+println("short 1: " + crypto.sign.ed25519_verify(public1, message1, sub(signature1, 0, 63)).to_string())
+println("public x0: " + crypto.sign.ed25519_verify(from_hex("0100000000000000000000000000000000000000000000000000000000000080"), message1, signature1).to_string())
+println("public nonsquare: " + crypto.sign.ed25519_verify(from_hex("0200000000000000000000000000000000000000000000000000000000000000"), message1, signature1).to_string())

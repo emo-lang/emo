@@ -1,0 +1,264 @@
+// The SHA-2 family (FIPS 180-4): SHA-256 and SHA-224 — one-shot or
+// streaming. Bytes in, Bytes out; the hex rendering is
+// crypto.hex_encode. The machinery is internal.sha256's engine, one
+// compression function behind both widths.
+//
+// Emo's fields are assigned only inside init, so the hasher's mutable
+// state lives in one Bytes — the working words at 0, the pending
+// block at 32, the pending count at 96, the total byte count at 104 —
+// mutated through the word layer's stores, the same way plot's buffer
+// mutates the List it holds.
+
+class Digest {
+  def init(is224 Bool) {
+    self.is224 = is224
+    self.box = Bytes.new(112)
+    if is224 {
+      internal.sha256.iv224(self.box)
+    } else {
+      internal.sha256.iv256(self.box)
+    }
+  }
+
+  // Absorb data: fill the pending block, compress every full block,
+  // keep the tail. The byte count is the total across writes, and the
+  // bit length the spec wants is that count times eight mod 2^64 —
+  // the wrap is the spec, not an accident.
+  def write(data Bytes) Void {
+    const src = data
+    const n = src.length()
+    var i = 0
+    const buflen = internal.word.load_u64_be(self.box, 96)
+    if buflen > 0 {
+      var take = 64 - buflen
+      if n < take {
+        take = n
+      }
+      while i < take {
+        self.box.set(32 + buflen + i, src.get(i))
+        i = i + 1
+      }
+      const bl = buflen + take
+      internal.word.store_u64_be(self.box, 96, bl)
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + take)
+      if bl == 64 {
+        internal.sha256.compress(self.box, self.box, 32)
+        internal.word.store_u64_be(self.box, 96, 0)
+      }
+    }
+    while i + 64 <= n {
+      internal.sha256.compress(self.box, src, i)
+      i = i + 64
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + 64)
+    }
+    if i < n {
+      var j = 0
+      while j < n - i {
+        self.box.set(32 + j, src.get(i + j))
+        j = j + 1
+      }
+      internal.word.store_u64_be(self.box, 96, n - i)
+      internal.word.store_u64_be(self.box, 104, internal.word.load_u64_be(self.box, 104) + (n - i))
+    }
+  }
+
+  // The digest so far, leaving the state standing: sum twice and the
+  // answers agree, write after sum and the stream continues.
+  // The digest so far, the state standing: sum twice and the answers
+  // agree, write after sum and the stream continues.
+  def sum() Bytes {
+    if self.is224 {
+      return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 28)
+    }
+    return internal.sha256.finish(self.box, self.box, 32, internal.word.load_u64_be(self.box, 96), internal.word.load_u64_be(self.box, 104), 32)
+  }
+
+  def reset() Void {
+    if self.is224 {
+      internal.sha256.iv224(self.box)
+    } else {
+      internal.sha256.iv256(self.box)
+    }
+    internal.word.store_u64_be(self.box, 96, 0)
+    internal.word.store_u64_be(self.box, 104, 0)
+  }
+
+  // The digest length in bytes; the block length is the algorithm's
+  // 64 and carries no state.
+  def size() Int64 {
+    if self.is224 {
+      return 28
+    }
+    return 32
+  }
+
+  def block_size() Int64 {
+    return 64
+  }
+}
+
+// A fresh SHA-256 hasher.
+def new() Digest {
+  return Digest.new(false)
+}
+
+// A fresh SHA-224 hasher.
+def new224() Digest {
+  return Digest.new(true)
+}
+
+// The one-shot SHA-256 digest of data.
+def sha256(data Bytes) Bytes {
+  const d = Digest.new(false)
+  d.write(data)
+  return d.sum()
+}
+
+// The one-shot SHA-224 digest of data.
+def sha224(data Bytes) Bytes {
+  const d = Digest.new(true)
+  d.write(data)
+  return d.sum()
+}
+
+// The 64-bit family: SHA-512, SHA-384, SHA-512/224, SHA-512/256 —
+// 128-byte blocks, 80 rounds, 64-bit lanes. The variant rides in the
+// digest length, which is unique per variant (64/48/28/32) and picks
+// the initial words; the state box follows the same layout as
+// Digest's at the wider sizes — state at 0, the pending block at 64,
+// the pending count at 192, the total at 200.
+class Wide {
+  def init(outlen Int64) {
+    self.outlen = outlen
+    self.box = Bytes.new(208)
+    if outlen == 64 {
+      internal.sha512.iv512(self.box)
+    }
+    if outlen == 48 {
+      internal.sha512.iv384(self.box)
+    }
+    if outlen == 28 {
+      internal.sha512.iv512_224(self.box)
+    }
+    if outlen == 32 {
+      internal.sha512.iv512_256(self.box)
+    }
+  }
+
+  def write(data Bytes) Void {
+    const src = data
+    const n = src.length()
+    var i = 0
+    const buflen = internal.word.load_u64_be(self.box, 192)
+    if buflen > 0 {
+      var take = 128 - buflen
+      if n < take {
+        take = n
+      }
+      while i < take {
+        self.box.set(64 + buflen + i, src.get(i))
+        i = i + 1
+      }
+      const bl = buflen + take
+      internal.word.store_u64_be(self.box, 192, bl)
+      internal.word.store_u64_be(self.box, 200, internal.word.load_u64_be(self.box, 200) + take)
+      if bl == 128 {
+        internal.sha512.compress(self.box, self.box, 64)
+        internal.word.store_u64_be(self.box, 192, 0)
+      }
+    }
+    while i + 128 <= n {
+      internal.sha512.compress(self.box, src, i)
+      i = i + 128
+      internal.word.store_u64_be(self.box, 200, internal.word.load_u64_be(self.box, 200) + 128)
+    }
+    if i < n {
+      var j = 0
+      while j < n - i {
+        self.box.set(64 + j, src.get(i + j))
+        j = j + 1
+      }
+      internal.word.store_u64_be(self.box, 192, n - i)
+      internal.word.store_u64_be(self.box, 200, internal.word.load_u64_be(self.box, 200) + (n - i))
+    }
+  }
+
+  // The digest so far, leaving the state standing, as Digest.sum.
+  // The digest so far, the state standing, as Digest.sum.
+  def sum() Bytes {
+    return internal.sha512.finish(self.box, self.box, 64, internal.word.load_u64_be(self.box, 192), internal.word.load_u64_be(self.box, 200), self.outlen)
+  }
+
+  def reset() Void {
+    if self.outlen == 64 {
+      internal.sha512.iv512(self.box)
+    }
+    if self.outlen == 48 {
+      internal.sha512.iv384(self.box)
+    }
+    if self.outlen == 28 {
+      internal.sha512.iv512_224(self.box)
+    }
+    if self.outlen == 32 {
+      internal.sha512.iv512_256(self.box)
+    }
+    internal.word.store_u64_be(self.box, 192, 0)
+    internal.word.store_u64_be(self.box, 200, 0)
+  }
+
+  def size() Int64 {
+    return self.outlen
+  }
+
+  def block_size() Int64 {
+    return 128
+  }
+}
+
+// A fresh SHA-512 hasher.
+def new512() Wide {
+  return Wide.new(64)
+}
+
+// A fresh SHA-384 hasher.
+def new384() Wide {
+  return Wide.new(48)
+}
+
+// A fresh SHA-512/224 hasher.
+def new512_224() Wide {
+  return Wide.new(28)
+}
+
+// A fresh SHA-512/256 hasher.
+def new512_256() Wide {
+  return Wide.new(32)
+}
+
+// The one-shot SHA-512 digest of data.
+def sha512(data Bytes) Bytes {
+  const d = Wide.new(64)
+  d.write(data)
+  return d.sum()
+}
+
+// The one-shot SHA-384 digest of data.
+def sha384(data Bytes) Bytes {
+  const d = Wide.new(48)
+  d.write(data)
+  return d.sum()
+}
+
+// The one-shot SHA-512/224 digest of data.
+def sha512_224(data Bytes) Bytes {
+  const d = Wide.new(28)
+  d.write(data)
+  return d.sum()
+}
+
+// The one-shot SHA-512/256 digest of data.
+def sha512_256(data Bytes) Bytes {
+  const d = Wide.new(32)
+  d.write(data)
+  return d.sum()
+}

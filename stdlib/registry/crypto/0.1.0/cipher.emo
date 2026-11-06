@@ -1,0 +1,210 @@
+// ChaCha20-Poly1305 (RFC 8439): the stream cipher, the one-shot MAC,
+// and the AEAD pair. Bytes in, Bytes out. The lengths are contracts:
+// a key that is not 32 bytes, a nonce that is not 12, a counter past
+// 2^32 − 1 — the caller's mistakes, they raise. An authentication
+// failure is data: `open` answers the value
+// `(R.error, "crypto: authentication failed")`, the same answer for a
+// wrong tag, a truncated box, and a wrong key, the way a forgery
+// should be met. Nonce reuse breaks this construction irrecoverably —
+// that is the caller's contract, and the doc says so.
+
+// The ChaCha20 keystream XOR of data, from the counter.
+def chacha20(key Bytes, nonce Bytes, counter Int64, data Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20 nonce must be 12 bytes")
+  }
+  if counter < 0 || counter > 4294967295 {
+    raise Exception.new(message: "crypto: chacha20 counter must be in 0 to 4294967295")
+  }
+  return internal.chacha.chacha20(key, nonce, counter, data)
+}
+
+// The Poly1305 tag of message under the 32-byte key.
+def poly1305(key Bytes, message Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: poly1305 key must be 32 bytes")
+  }
+  return internal.poly1305.mac(key, message)
+}
+
+// The AEAD seal: the ciphertext followed by the 16-byte tag.
+def chacha20_poly1305_seal(key Bytes, nonce Bytes, plaintext Bytes, aad Bytes) Bytes {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 nonce must be 12 bytes")
+  }
+  return internal.aead.seal(key, nonce, plaintext, aad)
+}
+
+// The AEAD open: `(R.ok, plaintext)` when the tag verifies, the value
+// `(R.error, "crypto: authentication failed")` when it does not.
+def chacha20_poly1305_open(key Bytes, nonce Bytes, sealed Bytes, aad Bytes) (R, Bytes) {
+  if key.length() != 32 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 key must be 32 bytes")
+  }
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: chacha20_poly1305 nonce must be 12 bytes")
+  }
+  return internal.aead.open(key, nonce, sealed, aad)
+}
+
+// ---- AES (FIPS 197). SubBytes is a table lookup indexed by secret
+// bytes — the cache-timing caveat the package documents; the AES-NI C
+// shim is the later optional hardening for `c`. Keys are 16, 24, or
+// 32 bytes; anything else raises.
+
+def aes_check_key(key Bytes) Void {
+  if key.length() != 16 && key.length() != 24 && key.length() != 32 {
+    raise Exception.new(message: "crypto: aes key must be 16, 24, or 32 bytes")
+  }
+}
+
+// The cipher over one 16-byte block.
+def aes_encrypt_block(key Bytes, block Bytes) Bytes {
+  aes_check_key(key)
+  if block.length() != 16 {
+    raise Exception.new(message: "crypto: aes_encrypt_block takes one 16-byte block")
+  }
+  const rk = internal.aes.expand_key(key)
+  const out = Bytes.new(16)
+  internal.aes.encrypt_block(rk, internal.aes.rounds(key.length()), block, out)
+  return out
+}
+
+// The inverse cipher over one 16-byte block.
+def aes_decrypt_block(key Bytes, block Bytes) Bytes {
+  aes_check_key(key)
+  if block.length() != 16 {
+    raise Exception.new(message: "crypto: aes_decrypt_block takes one 16-byte block")
+  }
+  const rk = internal.aes.expand_key(key)
+  const out = Bytes.new(16)
+  internal.aes.decrypt_block(rk, internal.aes.rounds(key.length()), block, out)
+  return out
+}
+
+// The CTR stream (SP 800-38A): the sixteen-byte IV is the initial
+// counter block, the full 128 bits stepping big-endian per block.
+def aes_ctr(key Bytes, iv Bytes, data Bytes) Bytes {
+  aes_check_key(key)
+  if iv.length() != 16 {
+    raise Exception.new(message: "crypto: aes_ctr iv must be 16 bytes")
+  }
+  const rk = internal.aes.expand_key(key)
+  const counter = internal.modes.sub_bytes(iv, 0, 16)
+  const out = Bytes.new(data.length())
+  internal.modes.ctr_raw(rk, internal.aes.rounds(key.length()), counter, data, out)
+  return out
+}
+
+// The PKCS#7 pad: every pad byte carries the pad's own length.
+def pad_pkcs7(data Bytes) Bytes {
+  const pad = 16 - data.length() % 16
+  const out = Bytes.new(data.length() + pad)
+  internal.modes.copy_into(out, data, 0)
+  var i = 0
+  while i < pad {
+    internal.modes.set_byte(out, data.length() + i, pad)
+    i = i + 1
+  }
+  return out
+}
+
+// CBC encryption (SP 800-38A) over the PKCS#7 padding.
+def aes_cbc_encrypt(key Bytes, iv Bytes, plaintext Bytes) Bytes {
+  aes_check_key(key)
+  if iv.length() != 16 {
+    raise Exception.new(message: "crypto: aes_cbc iv must be 16 bytes")
+  }
+  const rk = internal.aes.expand_key(key)
+  const padded = pad_pkcs7(plaintext)
+  const out = Bytes.new(padded.length())
+  internal.modes.cbc_encrypt_raw(rk, internal.aes.rounds(key.length()), iv, padded, out)
+  return out
+}
+
+// CBC decryption: a length that is not a positive multiple of sixteen
+// is the caller's mistake and raises; padding that does not read back
+// is data and the value `(R.error, "crypto: invalid padding")`. Every
+// pad byte must carry the same count — a padded-oracle caveat the doc
+// states: CBC decryption answers padding failures without hiding the
+// timing, so callers needing hidden decisions must authenticate
+// before decrypting (encrypt-then-MAC, or just GCM).
+def aes_cbc_decrypt(key Bytes, iv Bytes, ciphertext Bytes) (R, Bytes) {
+  aes_check_key(key)
+  if iv.length() != 16 {
+    raise Exception.new(message: "crypto: aes_cbc iv must be 16 bytes")
+  }
+  if ciphertext.length() < 16 || ciphertext.length() % 16 != 0 {
+    raise Exception.new(message: "crypto: aes_cbc ciphertext must be a positive multiple of 16 bytes")
+  }
+  const rk = internal.aes.expand_key(key)
+  const padded = Bytes.new(ciphertext.length())
+  internal.modes.cbc_decrypt_raw(rk, internal.aes.rounds(key.length()), iv, ciphertext, padded)
+  const pad = internal.modes.get_byte(padded, ciphertext.length() - 1)
+  if pad < 1 || pad > 16 {
+    return (R.error, "crypto: invalid padding")
+  }
+  var i = ciphertext.length() - pad
+  while i < ciphertext.length() {
+    if internal.modes.get_byte(padded, i) != pad {
+      return (R.error, "crypto: invalid padding")
+    }
+    i = i + 1
+  }
+  return (R.ok, internal.modes.sub_bytes(padded, 0, ciphertext.length() - pad))
+}
+
+// The GCM seal (SP 800-38D): the ciphertext followed by the 16-byte
+// tag. The nonce is twelve bytes, every call its own — reuse breaks
+// the construction irrecoverably, the caller's contract.
+def aes_gcm_seal(key Bytes, nonce Bytes, plaintext Bytes, aad Bytes) Bytes {
+  aes_check_key(key)
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: aes_gcm nonce must be 12 bytes")
+  }
+  const rk = internal.aes.expand_key(key)
+  const nr = internal.aes.rounds(key.length())
+  const (j0, j0e, hh, hl) = internal.modes.gcm_setup(rk, nr, nonce)
+  internal.modes.inc32(j0)
+  const ct = Bytes.new(plaintext.length())
+  internal.modes.gctr(rk, nr, j0, plaintext, ct)
+  const (sh, sl) = internal.modes.ghash(hh, hl, internal.modes.mac_data(aad, ct))
+  const tag = Bytes.new(16)
+  internal.word.store_u64_be(tag, 0, internal.word.load_u64_be(j0e, 0) ^ sh)
+  internal.word.store_u64_be(tag, 8, internal.word.load_u64_be(j0e, 8) ^ sl)
+  return internal.modes.concat_bytes(ct, tag)
+}
+
+// The GCM open: `(R.ok, plaintext)` when the tag verifies, the value
+// `(R.error, "crypto: authentication failed")` when it does not.
+def aes_gcm_open(key Bytes, nonce Bytes, sealed Bytes, aad Bytes) (R, Bytes) {
+  aes_check_key(key)
+  if nonce.length() != 12 {
+    raise Exception.new(message: "crypto: aes_gcm nonce must be 12 bytes")
+  }
+  if sealed.length() < 16 {
+    return (R.error, "crypto: authentication failed")
+  }
+  const rk = internal.aes.expand_key(key)
+  const nr = internal.aes.rounds(key.length())
+  const (j0, j0e, hh, hl) = internal.modes.gcm_setup(rk, nr, nonce)
+  const ct = internal.modes.sub_bytes(sealed, 0, sealed.length() - 16)
+  const tag = internal.modes.sub_bytes(sealed, sealed.length() - 16, 16)
+  const (sh, sl) = internal.modes.ghash(hh, hl, internal.modes.mac_data(aad, ct))
+  const tag2 = Bytes.new(16)
+  internal.word.store_u64_be(tag2, 0, internal.word.load_u64_be(j0e, 0) ^ sh)
+  internal.word.store_u64_be(tag2, 8, internal.word.load_u64_be(j0e, 8) ^ sl)
+  if crypto.constant_time_compare(tag, tag2) {
+    internal.modes.inc32(j0)
+    const pt = Bytes.new(ct.length())
+    internal.modes.gctr(rk, nr, j0, ct, pt)
+    return (R.ok, pt)
+  }
+  return (R.error, "crypto: authentication failed")
+}

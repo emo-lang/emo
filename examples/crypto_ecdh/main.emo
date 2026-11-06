@@ -1,0 +1,78 @@
+require "crypto"
+
+// X25519 (RFC 7748): the §5.2 vectors, the §6.1 Diffie-Hellman
+// exchange both ways, the first iteration of the §5.2 ladder, the
+// low-order points the contributory check refuses (u = 0 and u = 1),
+// and the Go-companion sweep — each line pinned against the RFC's
+// own value and Go's crypto/ecdh. The thousand-iteration vector is
+// examples/crypto_ecdh_iterated, c-only.
+
+def seq(n Int64, start Int64) Bytes {
+  const b = Bytes.new(n)
+  var i = 0
+  while i < n {
+    b.set(i, (start + i) & 0xFF)
+    i = i + 1
+  }
+  return b
+}
+
+def from_hex(text String) Bytes {
+  case crypto.hex_decode(text) {
+    (R.ok, v) -> { return v }
+    (R.error, why) -> { println(why) }
+  }
+  return Bytes.new(0)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def shared(label String, scalar Bytes, point Bytes) Void {
+  case crypto.ecdh.x25519(scalar, point) {
+    (R.ok, v) -> { println(label + ": " + crypto.hex_encode(v)) }
+    (R.error, why) -> {
+      println(label + ": refused")
+      println(label + " reason: " + why)
+    }
+  }
+}
+
+// ---- §5.2
+shared("x25519 5.2 1", from_hex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"), from_hex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"))
+shared("x25519 5.2 2", from_hex("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"), from_hex("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"))
+
+// ---- §6.1: the exchange
+const a = from_hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+const b = from_hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
+const public_a = crypto.ecdh.x25519_public(a)
+const public_b = crypto.ecdh.x25519_public(b)
+println("public a: " + crypto.hex_encode(public_a))
+println("public b: " + crypto.hex_encode(public_b))
+shared("shared ab", a, public_b)
+shared("shared ba", b, public_a)
+
+// ---- the ladder's first iteration: k = u = 9
+const base = Bytes.new(32)
+set_byte(base, 0, 9)
+shared("iterate 1", base, base)
+
+// ---- the low-order points
+const zero_point = Bytes.new(32)
+shared("low order 0", a, zero_point)
+const one_point = Bytes.new(32)
+set_byte(one_point, 0, 1)
+shared("low order 1", a, one_point)
+
+// ---- the Go-companion sweep: scalars from the byte sweep, the
+// shared secret against Bob's public key
+var k = 1
+while k <= 4 {
+  const scalar = seq(32, k * 0x11)
+  case crypto.ecdh.x25519(scalar, public_b) {
+    (R.ok, v) -> { println("sweep " + k.to_string() + ": " + crypto.hex_encode(crypto.ecdh.x25519_public(scalar)) + " " + crypto.hex_encode(v)) }
+    (R.error, why) -> { println(why) }
+  }
+  k = k + 1
+}

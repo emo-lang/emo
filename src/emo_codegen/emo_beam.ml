@@ -564,6 +564,17 @@ let rec expr env (x : Emo_ir.expr) : unit =
       spawn_registered env
         (Printf.sprintf "apply %s (%s)" f_code (String.concat ", " arg_locals))
   | Builtin { name; args } -> builtin env name args
+  | Runtime_impl { name = "rand_bytes"; args = [ n ] } ->
+      (* the rand package's entropy source: crypto:strong_rand_bytes
+         answers a binary, parked under a fresh ref the way
+         emo_bytes_new parks its own — the Bytes shape — and the
+         answer rides the (R.ok, …) pair; a negative count is the
+         package's own raise, upstream *)
+      put env
+        "let <_rand_k> = call 'erlang':'make_ref'() in do call \
+         'erlang':'put'(_rand_k, call 'crypto':'strong_rand_bytes'(";
+      expr env n;
+      put env ")) { {'emo_enum', 'R', 'ok'}, {'emo_bytes', _rand_k} }"
   | Runtime_impl { name; _ } ->
       raise
         (Emo_ir.Lower_error

@@ -1,0 +1,34 @@
+// X25519 (RFC 7748): the Diffie-Hellman function on Curve25519. A
+// private key is any 32 bytes (clamped on the way in, so entropy is
+// all a caller needs); the public key is `x25519_public`, the shared
+// secret `x25519` of one's own scalar and the other's public key.
+// Bytes in, Bytes out. A scalar or a point that is not 32 bytes is
+// the caller's mistake and raises. An all-zero shared secret — the
+// other side's point was of small order, so the secret carries no
+// contribution from this side — is the value
+// `(R.error, "crypto: x25519 low-order point")`, the contributory
+// check RFC 7748 §6.1 describes and Go's ecdh performs. The machinery
+// is internal.x25519 over internal.fe25519.
+
+// The shared secret of the scalar and the point's u-coordinate.
+def x25519(scalar Bytes, point Bytes) (R, Bytes) {
+  if scalar.length() != 32 {
+    raise Exception.new(message: "crypto: x25519 scalar must be 32 bytes")
+  }
+  if point.length() != 32 {
+    raise Exception.new(message: "crypto: x25519 point must be 32 bytes")
+  }
+  const out = internal.x25519.ladder(scalar, point)
+  if internal.x25519.all_zero(out) {
+    return (R.error, "crypto: x25519 low-order point")
+  }
+  return (R.ok, out)
+}
+
+// The public key of the scalar: its multiple of the base point.
+def x25519_public(scalar Bytes) Bytes {
+  if scalar.length() != 32 {
+    raise Exception.new(message: "crypto: x25519 scalar must be 32 bytes")
+  }
+  return internal.x25519.ladder(scalar, internal.x25519.base_u())
+}

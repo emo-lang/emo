@@ -1,0 +1,110 @@
+// The AEAD construction (RFC 8439 §2.8): the Poly1305 one-time key is
+// the first 32 bytes of the counter-0 block, the ciphertext runs from
+// counter 1, and the MAC reads the AAD and the ciphertext with their
+// pad16 fillers and little-endian lengths. The tag comparison is the
+// constant-time XOR-accumulate, local to this module so the dependency
+// stays one-way.
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def set_u64(b Bytes, i Int64, v Int64) Void {
+  b.set_u64_le(i, v)
+}
+
+def zero_fill(b Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, 0)
+    i = i + 1
+  }
+}
+
+def copy_into(dst Bytes, src Bytes, at Int64) Void {
+  var i = 0
+  while i < src.length() {
+    dst.set(at + i, src.get(i))
+    i = i + 1
+  }
+}
+
+def concat_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  copy_into(out, a, 0)
+  copy_into(out, b, a.length())
+  return out
+}
+
+def sub_bytes(src Bytes, at Int64, count Int64) Bytes {
+  const out = Bytes.new(count)
+  var i = 0
+  while i < count {
+    out.set(i, get_byte(src, at + i))
+    i = i + 1
+  }
+  return out
+}
+
+// The MAC input: aad || pad16(aad) || ciphertext || pad16(ct) ||
+// le64(len(aad)) || le64(len(ct)).
+def mac_data(aad Bytes, ct Bytes) Bytes {
+  const apad = (16 - aad.length() % 16) % 16
+  const cpad = (16 - ct.length() % 16) % 16
+  const total = aad.length() + apad + ct.length() + cpad + 16
+  const out = Bytes.new(total)
+  zero_fill(out)
+  copy_into(out, aad, 0)
+  copy_into(out, ct, aad.length() + apad)
+  const tail = aad.length() + apad + ct.length() + cpad
+  set_u64(out, tail, aad.length())
+  set_u64(out, tail + 8, ct.length())
+  return out
+}
+
+// The one-time Poly1305 key: the counter-0 block's first 32 bytes.
+def poly_key(key Bytes, nonce Bytes) Bytes {
+  const blk = Bytes.new(64)
+  internal.chacha.block(key, nonce, 0, blk)
+  return sub_bytes(blk, 0, 32)
+}
+
+// The constant-time equality, the same discipline the root's
+// constant_time_compare carries.
+def tags_equal(a Bytes, b Bytes) Bool {
+  var diff = a.length() ^ b.length()
+  var i = 0
+  while i < a.length() && i < b.length() {
+    diff = diff | (a.get(i) ^ b.get(i))
+    i = i + 1
+  }
+  return diff == 0
+}
+
+// The sealed box: ciphertext then tag.
+def seal(key Bytes, nonce Bytes, plaintext Bytes, aad Bytes) Bytes {
+  const ct = internal.chacha.chacha20(key, nonce, 1, plaintext)
+  const tag = internal.poly1305.mac(poly_key(key, nonce), mac_data(aad, ct))
+  return concat_bytes(ct, tag)
+}
+
+// The opened plaintext, or the authentication failure as the value
+// `(R.error, "crypto: authentication failed")` — a wrong tag, a
+// truncated box, a wrong key: every one of them the same answer, the
+// way a forgery should be met.
+def open(key Bytes, nonce Bytes, sealed Bytes, aad Bytes) (R, Bytes) {
+  if sealed.length() < 16 {
+    return (R.error, "crypto: authentication failed")
+  }
+  const ct = sub_bytes(sealed, 0, sealed.length() - 16)
+  const tag = sub_bytes(sealed, sealed.length() - 16, 16)
+  const expect = internal.poly1305.mac(poly_key(key, nonce), mac_data(aad, ct))
+  if tags_equal(tag, expect) {
+    return (R.ok, internal.chacha.chacha20(key, nonce, 1, ct))
+  }
+  return (R.error, "crypto: authentication failed")
+}

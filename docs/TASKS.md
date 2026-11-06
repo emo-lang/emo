@@ -45,6 +45,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
 | M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
 | M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — the `fastmath` package binding `math`'s scalar surface to the host libm on `c`/`ocaml`, and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
+| M21 — The crypto package | 55 | The portable primitives layer as one pure-Emo package, `crypto` — SHA-2, SHA-3 and SHAKE, HMAC, HKDF and PBKDF2, the constant-time comparison, ChaCha20-Poly1305, AES with CTR, CBC, and GCM, Ed25519 and X25519, SHA-1 and MD5 behind `crypto.legacy` — byte-identical on all five hosted targets with every golden a diff against the RFC and NIST vectors and Go's own answers; the `rand` package beside it binding the entropy source per target and carrying the deterministic HMAC-DRBG stream; the error split per the house rule, Bytes as the carrier, and the docs stating constant time as a source-level discipline with each target's honest status. RSA waits on a bignum foundation; TLS, x509, and the post-quantum set stay out. |
 
 ## Design gates
 
@@ -2879,3 +2880,342 @@ stays byte-identical; `dune test` green; the docs carry both.
       `docs/math-netlib.md`'s stage table marked with stages 1–2 landed
       and stage 3 still parked, with its zh-CN mirror;
       `plan/README.md`'s status table.
+
+## M21 — The crypto package
+
+The Go survey (`pkg.go.dev/crypto@go1.27.3`, 26 packages) set the
+scope by subtraction. Go keeps the broken past — DES, RC4, DSA, MD4 —
+only because legacy data still needs decrypting; a new standard
+library has no such liability and declines them. Half of Go's
+packages are protocol plumbing — `tls`, `x509`, `asn1` — and that
+layer already has its answer in step 51: `net`'s TLS rides the system
+OpenSSL/LibreSSL, not an Emo-side stack. What remains is the portable
+primitives layer, and the pure-Emo rule is the point rather than a
+compromise: `math` 0.1.0 established that fixed-order source is
+byte-identical on all five hosted targets, and RFC and NIST test
+vectors then pin every target to the same answer — cross-checked bit
+for bit against Go's own packages, generated on this machine and
+frozen into the goldens, so the interop claim is a diff. The step
+lands one package, `crypto` — hashes (SHA-2, SHA-3, SHAKE; MD5 and
+SHA-1 behind `crypto.legacy`, the name the warning), HMAC, HKDF and
+PBKDF2, the constant-time compares, ChaCha20-Poly1305, AES with GCM
+and the block modes, and Ed25519/X25519 — plus its own `rand`
+package, because entropy is the one thing pure Emo cannot conjure and
+binding it per target would split `crypto`'s target list. The error
+split follows the house rule: a wrong key length raises, a failed tag
+verifies as `(R.error, "crypto: authentication failed")`. Two honesty
+sections ride the docs: AES lands as T-tables first with the
+cache-timing caveat stated in the same breath (the AES-NI shim is
+later optional hardening on `c`; GHASH is bitwise and carries no such
+caveat), and constant-time is promised as a source-level discipline —
+no secret-dependent branches or table indices — with each backend's
+guarantee documented per target rather than overstated. RSA waits for
+an internal bignum foundation; Ed25519 covers signing with fixed-limb
+field arithmetic. TLS, x509, and the post-quantum set stay out; each
+is its own future step. Every task keeps the idle-time sizing
+discipline: after each one `dune test` is green and every existing
+golden is byte-identical.
+
+### Step 55 — The standard library: `crypto` · `plan/step-55-stdlib-crypto.md`
+
+**Prereq:** none (`base64` is the byte-discipline working example;
+`math` 0.1.0 proves the pure-Emo series discipline carries real
+algorithms).
+**Done when:** every pure function answers byte-identically on every
+target its golden rides; the RFC/NIST vectors and the Go-generated
+companions are pinned as diffs; Project Wycheproof cases sit at the
+sampled boundaries; every existing golden on every target stays
+byte-identical; `dune test` green; the docs carry the surface, the
+error split, and the honesty sections.
+
+- [x] **T55.1** — The word discipline and the package skeleton: the
+      probe first — `>>` measured arithmetic (sign-extending) and
+      `<<` wrapping modulo 2^64 on the interpreter, byte-identical on
+      `c`; `internal/word.emo` with the mask-idiom logical right
+      shift (`(x >> n) & ((1 << (64 - n)) - 1)` for constant
+      `n > 0`), `rotl`/`rotr` in both widths, and the big-endian
+      u32/u64 `Bytes` load/store; `stdlib/registry/crypto/0.1.0` —
+      the manifest over all five targets, the root `crypto.emo`
+      carrying `subtle` (the constant-time equality the MACs verify
+      through); the 29 probe vectors verified against an independent
+      computation and pinned from T55.2 on through the digest
+      goldens — an example cannot reach `internal/`. The probe also
+      flushed a c-target corner: a module bound to a name
+      (`const word = word`) answers dynamic at its use sites, and
+      the dynamic world refuses the bitwise operators — the
+      package's modules call their internals through the direct
+      qualified path (`word.lshr(…)`), never through a wiring const.
+- [x] **T55.2** — SHA-256 and SHA-224 (FIPS 180-4): the compression
+      function over 32-bit words held in `Int64` (masked, so every
+      shift is exact), the message schedule through a 16-word rolling
+      window, the padding; streaming (write/sum/reset/size) and
+      one-shot in `crypto.sha2` over `internal/sha256.emo`'s engine —
+      one class, its mutable state riding one `Bytes` (fields are
+      assigned only inside init, so the box carries the working
+      words, the pending block, and the two counts, mutated through
+      the word layer's stores); the golden `examples/crypto_hash`
+      takes the RFC 6234 suite — "abc", the 56-byte dual-block
+      boundary, the 112-byte two-block vector, the padding edges at
+      55/56/57/63/64/65/119/120/127/128, the 0x00–0xFF byte sweep —
+      every digest generated by Go's `crypto/sha256` on this machine
+      and frozen into `expected.txt` after agreement, plus the
+      streaming-equivalence panel (chunk sizes 1 through 65), the
+      sum-leaves-the-state-standing and reset panels, and the hex
+      codec's edges; `examples/crypto_hash_million` rides RFC 6234's
+      million-`a` vector through the streaming path — nineteen
+      seconds on the interpreter, a quarter second compiled, so it is
+      a c-only golden; `crypto.hex_encode`/`hex_decode` joined the
+      root as the digests' rendering (strict, offset-bearing).
+      Byte-identical interpreter to `c`; `dune test` green.
+- [x] **T55.3** — The SHA-512 family and the legacy pair:
+      SHA-512/384/512-224/512-256 in `internal/sha512.emo` — 128-byte
+      blocks, 80 rounds, 64-bit lanes that wrap natively (no masking;
+      only T55.1's logical shift and rotations), the constants derived
+      from the spec's definitions and checked against the reference
+      digests rather than hand-copied (the /224 and /256 initial
+      words through §5.3.6's generation function — derivation, not
+      memory, which had three of those eight words wrong); the public
+      surface rides `crypto.sha2`'s `Wide` class, the digest length
+      picking the variant (64/48/28/32), factories `new512`/`new384`/
+      `new512_224`/`new512_256` and one-shots beside the 32-bit
+      family's; SHA-1 and MD5 in `internal/sha1.emo`/`internal/
+      md5.emo` behind `crypto.legacy` — one-shot only, documented as
+      broken for every security purpose, MD5 little-endian through
+      and through; the golden grows to 98 Go-agreed vectors (the
+      64-bit family over the five messages, the 111/112/113/127/128/
+      129 padding edges, the sweep; the legacy pair over the same
+      five and the sweep) plus the 64-bit streaming/reset panels; and
+      the step flushed a real backend bug: crypto carries the first
+      Int64 constants past 2^63, and the OCaml emitter's
+      unparenthesized negative literal (`Emo_eval.Int64 -…L`) parsed
+      as subtraction — every `%LdL` emission site now goes through a
+      parenthesizing helper (`emo_codegen.ml`), ocaml target
+      byte-identical like interpreter and `c`; `dune test` green.
+- [x] **T55.4** — The `Hash` interface and HMAC (RFC 2104): the
+      structural interface (`write`/`sum`/`reset`/`size`/
+      `block_size`) in `crypto.hash`, `Digest` and `Wide` satisfying
+      it by shape — the golden holds both through one function taking
+      the interface; HMAC over the SHA-2 family in `internal/
+      hmac.emo` — the RFC's key preparation (hashed first when longer
+      than the block, zero-padded when shorter, the 0x36/0x5c pads),
+      the variant riding a code the wrapper names so the engine rides
+      sha2's one-shots and the dependency stays one-way (module
+      cycles are refused, and the interface-factory shape a streaming
+      HMAC would want does not exist yet, so HMAC is one-shot —
+      provisional); tags compared through
+      `crypto.constant_time_compare` per the docs, never `==`; the
+      golden grows to 134
+      Go-agreed vectors — RFC 4231's tc1–tc4, tc6 and tc7 (the
+      131-byte keys forcing the hash-the-key path) across all six
+      algorithms; interpreter, `c`, and ocaml byte-identical;
+      `dune test` green.
+- [x] **T55.5** — HKDF (RFC 5869) and PBKDF2 (RFC 8018) in
+      `crypto.kdf` over `internal/kdf.emo`: the combined HKDF and
+      its expand step for all six SHA-2 variants, extract documented
+      as the HMAC call it is (not re-exported) with the absent salt
+      as hash-length zero bytes; the output-length cap (255 hash
+      lengths), a negative length, and an iteration count below one
+      raise — the construction's own rules — while the count itself
+      is a plain `Int64` argument, no work-factor policy in the
+      package; the engine rides internal.hmac's one-shots, the
+      dependency one-way; the golden grows to 145 Go-agreed lines —
+      RFC 5869's tc1–tc3 across the family (tc2's 80-byte inputs
+      included), the expansion fed the RFC's own PRK through the hex
+      decoder, RFC 7914's PBKDF2 vectors plus the wide family — and
+      `examples/crypto_kdf` (c-only, like the million-`a`) pins the
+      classic 4096 iterations, the shape every off-by-one turns
+      wrong first: a minute interpreted, two seconds compiled;
+      interpreter, `c`, and ocaml byte-identical; `dune test` green.
+- [x] **T55.6** — SHA-3 and SHAKE (FIPS 202) in `crypto.sha3` over
+      `internal/keccak.emo`: Keccak-f[1600] after the Keccak team's
+      compact reference — rho-pi walked in place carrying the rotated
+      lane (no offset table) and the round constants from the 0x71
+      LFSR one bit at a time (no constant table) — derived, not
+      hand-copied, and proven against the reference digests; the four
+      fixed-output hashes and SHAKE128/256 with the length the caller
+      names, one-shot for now (provisional — the streaming shape
+      waits for a consumer); the golden grows to 175 Go-agreed lines
+      (the four hashes over the five messages and the sweep, SHAKE at
+      32 and at 137 — across the rate, so the squeeze refills); and
+      the step flushed two language walls: `Bytes.new` answers the
+      gradual type, so a static receiver's strict `set` refuses
+      gradual arguments — the byte accesses go through six
+      parameterized door helpers, base64's `fill_encode` shape — and
+      E3005 refuses shift counts the checker cannot prove
+      non-negative, so the word layer's rotators carry `n <= 0`
+      narrowing guards (rho's rotation amount is dynamic);
+      interpreter, `c`, and ocaml byte-identical; `dune test` green.
+- [x] **T55.7** — The `rand` package: the entropy source bound per
+      hosted target through one runtime implementation, `rand_bytes`
+      — the `rand_` prefix joins the IR's runtime-impl table, the
+      checker's signature table, the interpreter and the standalone
+      OCaml runtime (`/dev/urandom`, read to the count), the C runtime
+      (`getentropy`, 256 bytes a call), the Node host
+      (`crypto.randomBytes`), and the beam emitter
+      (`crypto:strong_rand_bytes`, parked under a ref the way
+      `emo_bytes_new` parks its own); the wasm host supplies no entropy
+      and the target list refuses it, a declared refusal. The surface
+      is `rand.bytes(n)` answering `(R, Bytes)` — the `plot.png`
+      precedent: bytes are what entropy is, and a String cannot carry
+      them on typescript — a negative count raising, a refused source
+      the `(R.error, "rand: …")` value. The deterministic stream is
+      `rand.drbg_sha256(seed, length)` — SP 800-90A's HMAC-DRBG,
+      SHA-256, the one-shot shape — answering `Bytes` byte-identically
+      on every target, which needed crypto's first byte doors:
+      `sha2.sha256_bytes`, `hash.hmac_sha256_bytes`, and
+      `write_bytes`/`sum_bytes` on `Digest` and `Wide` (the engines'
+      `finish` now answers `Bytes`, the String door its `to_string`).
+      The golden `examples/rand_demo` pins the stream (verified against
+      the formula in Python) and smoke-tests the source for length and
+      a differing second draw — on the interpreter, `c`, ocaml,
+      typescript, and beam, all five lists. **Found, not fixed, in
+      `CHECK.md`:** the crypto String surface is unsound on
+      typescript (U+FFFD where a digest byte passes 0x80; the
+      131-byte-key HMAC crashes) — the Bytes doors are the fix's
+      proven shape, the surface migration a pending decision.
+- [x] **T55.8** — The surface in Bytes: every door of `crypto`
+      takes and answers `Bytes` — the SHA-2 one-shots and the
+      `Digest`/`Wide` classes (`write`/`sum`), the `Hash` interface,
+      HMAC, HKDF and PBKDF2 (an absent salt now an empty `Bytes`),
+      SHA-3 and SHAKE, the legacy pair, `constant_time_compare`, and
+      `rand.drbg_sha256`'s seed — with text staying text: `hex_encode`
+      answers String and `hex_decode` reads it, and a caller hashing
+      text hands over `text.to_bytes()`. The decision (2026-11-01)
+      revises T55.2's String-at-the-surface rule for the reason
+      `plot.png` settled in step 45: a String cannot carry raw bytes
+      on typescript. The internal engines were already Bytes; the
+      String plumbing (the HMAC and KDF String engines, the
+      `_bytes` twins) is gone, not doubled. Every golden's
+      `expected.txt` is byte-identical before and after — the
+      algorithms did not move — and `crypto_hash` joins the
+      typescript golden list, passing where it printed U+FFFD and
+      crashed the day before; `CHECK.md`'s entry carries the
+      resolution.
+- [x] **T55.9** — ChaCha20-Poly1305 (RFC 8439) in `crypto.cipher`:
+      the block function and keystream XOR (`chacha20(key, nonce,
+      counter, data)`), the one-shot Poly1305 (`poly1305(key,
+      message)` — five 26-bit limbs, Donna's 32-bit radix, every
+      product under 2^56), and the AEAD pair —
+      `chacha20_poly1305_seal` answering ciphertext then tag,
+      `chacha20_poly1305_open` answering `(R.ok, plaintext)` or
+      `(R.error, "crypto: authentication failed")`, the same answer
+      for a flipped byte, a wrong AAD, and a truncated box; wrong
+      key/nonce/counter raise. The golden `examples/crypto_aead` pins
+      the keystream block, the §2.4.2 stream, the §2.5.2 tag, the
+      §2.8.2 box and its open, the three forgeries, and the
+      block/pad16 boundary sizes — against the RFC's own vectors and
+      a Python reference written from the RFC and self-checked
+      against it first (Go keeps the construction behind
+      x/crypto) — and rides all five lists byte-identically. The step
+      flushed the typescript `get_u32_le` signed-read bug
+      (`CHECK.md`, fixed) and two block-boundary flaws in the new
+      code itself.
+- [x] **T55.10** — AES and GCM in `crypto.cipher`: the block cipher
+      landed S-box byte-oriented rather than T-tables — one derived
+      table instead of five, the same SubBytes lookup caveat
+      documented in the same breath (branchless xtime and the field
+      multiply; the AES-NI C shim stays the later optional hardening
+      for `c`) — with the key expansion for 128/192/256, the cipher
+      and its inverse, CTR (full 128-bit big-endian counter, the
+      caller's IV copied), CBC with PKCS#7 (a bad padding the value
+      `(R.error, "crypto: invalid padding")`, the padded-oracle caveat
+      stated), and GCM — GHASH pure bitwise (branchless, no tables,
+      no such caveat), the 12-byte nonce, the 16-byte tag, nonce
+      reuse the caller's irrecoverable contract violation. The S-box
+      and its inverse were derived from the GF(2^8) inversion and the
+      affine map, proven through a Python AES against all three
+      FIPS 197 Appendix C known answers before landing. The golden
+      `examples/crypto_aead` grows the AES panel — the three KATs and
+      their decrypts, GCM's NIST cases 1 and 2, nine GCM sizes across
+      the block and pad16 boundaries, CBC and CTR at six lengths each
+      and a counter carry past the low byte — all fifty Go lines
+      agreeing byte for byte; five lists byte-identically. Found on
+      the way and fixed: `aes_ctr` mutated the caller's IV — the
+      counter block is copied now.
+- [x] **T55.11** — Ed25519 and X25519 (RFC 8032, RFC 7748): the
+      probe first — `Int128` is E4005, `2^32 · 2^32` answers 0
+      (multiplication wraps modulo 2^64; there is no 128-bit
+      product), `(2^51 − 1)²` wraps — so the five-limb radix 2^51 is
+      out and the field rides ten signed `Int64` limbs in the
+      alternating radix 2^26/2^25, ref10's 32-bit shape, in
+      `internal/fe25519.emo`: every limb product under 2^53, the
+      wrapped terms times 19 and the odd-by-odd terms times 2, the
+      ten-term sums under 2^63; the multiplier's sums generated from
+      that rule and the whole limb layer mirrored in Python and
+      fuzzed against big-integer arithmetic over three thousand pairs
+      before transliteration (the generator's first draft dropped the
+      odd-by-odd factor 2 — limbs 0 and 1 came out right and the even
+      limbs from 2 up wrong, and the limb-level diff found it in one
+      round); the rounding carry pass, `from_bytes` ignoring bit 255,
+      `to_bytes` through the quotient estimate, the inversion and
+      (p − 5)/8 chains, masked `cmov`/`cswap`; the hot path reads and
+      writes the limb box directly with the carry inline — the smoke
+      panel went from 2.8 to 1.4 seconds interpreted, byte-identical.
+      `internal/ed25519.emo`: the point a class of four field boxes in
+      extended coordinates, §5.1.4's add and double (2d and Z·2Z as
+      single products so every multiplier input stays within the
+      bound), scalar multiplication double-and-add-always with a
+      masked select over 256 bits, decoding through
+      u·v³·(u·v⁷)^((p−5)/8) with the sqrt(−1) correction and the
+      x = 0-with-sign-bit refusal (a non-canonical y accepted, the way
+      Go reads it), the scalars modulo L over sixteen 32-bit words —
+      the schoolbook product with each word product exact as a 64-bit
+      pattern and split through the logical shift, the reduction 260
+      masked trial subtractions — and the scheme: the public key, the
+      signature, and verification as [S]B − [k]A re-encoded against R
+      (the equation without the cofactor, Go's shape), an S at or
+      above L refused. `internal/x25519.emo`: the Montgomery ladder,
+      255 steps with masked swaps, the clamping, the top bit ignored
+      by the field's own `from_bytes`. The constants derived, not
+      hand-copied: d, 2d, and sqrt(−1) as limbs, the base point as
+      its encoding, L as its words. The surface: `crypto.sign` —
+      `ed25519_public(seed)`, `ed25519_sign(seed, message)`,
+      `ed25519_verify(public, message, signature)` answering `Bool`,
+      the same false for a wrong message, a flipped byte, a signature
+      that is not 64 bytes, an S at or above L, and a public key that
+      does not decode, a seed or public key that is not 32 bytes
+      raising — and `crypto.ecdh` — `x25519(scalar, point)` answering
+      `(R, Bytes)`, the all-zero shared secret the value
+      `(R.error, "crypto: x25519 low-order point")`, and
+      `x25519_public(scalar)`. The goldens: `examples/crypto_sign`
+      takes the five §7.1 vectors (public key, signature,
+      verification) and the rejections (a flipped byte, a wrong
+      message, S + L, a 63-byte signature, x = 0 with the sign bit, a
+      y with no root) — 21 lines agreeing with Go's `crypto/ed25519`,
+      five seconds interpreted; `examples/crypto_ecdh` takes §5.2,
+      §6.1 both ways, the first iteration, u = 0 and u = 1 refused
+      with the reason pinned, and a sweep — agreeing with Go's
+      `crypto/ecdh`; both ride all five lists byte-identically;
+      `examples/crypto_sign_sweep` (thirteen message lengths — eleven
+      seconds interpreted, a tenth of a second compiled) and
+      `examples/crypto_ecdh_iterated` (RFC 7748's thousand
+      iterations — eighty seconds interpreted, 0.6 s compiled) are
+      c-only. The step flushed a typescript emitter
+      gap: a local named `public`, emitted verbatim, is a reserved
+      word in strict-mode JavaScript — `ts_local` now guards the
+      JS/TS reserved words with a `$` suffix no Emo identifier can
+      carry, the C emitter's `c_ident` shape (`CHECK.md`, fixed).
+- [x] **T55.12** — The docs: `docs/stdlib/crypto.md` and
+      `docs/stdlib/rand.md` (EN + zh-CN) — the full surface of the
+      root and the eight submodules with every signature, the
+      raise/error split spelled per function (and tabulated for
+      `rand`), the Bytes-carrier rule, the two caller's contracts the
+      constructions cannot enforce (nonce reuse, the CBC padding
+      oracle), the constant-time section stating the source-level
+      discipline, its two documented exceptions (AES's S-box lookup,
+      the comparisons on public data), and per target what `Int64`
+      is and what the discipline becomes — a guarantee on none of
+      them, no target measured for leakage — and the legacy warning
+      with the refused algorithms named; `docs/stdlib.md`'s rows and
+      sections for `crypto` and `rand`, EN and zh-CN; the README's
+      reference list. The golden lists completed as the targets had
+      landed them: `crypto_hash` onto the beam list and the four
+      crypto goldens onto the wasm list — all byte-identical, so every
+      one of the package's five declared targets is now
+      golden-exercised. Two small corrections on the way: SHAKE's
+      negative length raises with the package's own message (it had
+      surfaced as `Bytes.new`'s E3004 from inside the engine), and the
+      c-only goldens' interpreter costs are now measured, not
+      estimated — the sign sweep is eleven seconds, the thousand
+      X25519 iterations eighty. `plan/README.md`'s row reads done;
+      M21 complete.

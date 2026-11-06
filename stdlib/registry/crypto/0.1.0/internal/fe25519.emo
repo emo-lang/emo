@@ -1,0 +1,623 @@
+// The field GF(2^255 − 19) beneath Ed25519 and X25519: an element is
+// ten signed Int64 limbs in the alternating radix 2^26/2^25 — limb i
+// sits at bit 26·ceil(i/2) + 25·floor(i/2), the even limbs 26 bits
+// wide and the odd ones 25 — the shape ref10 chose for 32-bit words.
+// The width was decided by measurement (T55.11's probe): Int64
+// multiplication wraps modulo 2^64 and there is no 128-bit product,
+// so the five-limb radix 2^51 is out; in this radix every product of
+// two limbs is under 2^53, the wrapped terms carry a factor 19 and the
+// odd-by-odd terms a factor 2, and the ten-term sums stay under 2^63.
+//
+// A field element is a box of 80 bytes, limb i at i·8 little-endian,
+// the sign riding the full word. Construction stays at the boundary
+// (`new`) and every mutation goes through a parameter — the door shape
+// of T55.6. The limbs are signed and only weakly reduced: the carry
+// pass after a multiplication rounds them into ±2^25/±2^24, additions
+// and subtractions do not carry at all, and `to_bytes` is the one
+// place a canonical value is produced. The bounds discipline is
+// ref10's: a product's inputs are at most a sum of three reduced
+// elements, which is what the curve formulas need and no more.
+
+def new() Bytes {
+  return Bytes.new(80)
+}
+
+def limb(f Bytes, i Int64) Int64 {
+  return f.get_u64_le(i * 8)
+}
+
+def set_limb(h Bytes, i Int64, v Int64) Void {
+  h.set_u64_le(i * 8, v)
+}
+
+def zero(h Bytes) Void {
+  h.set_u64_le(0, 0)
+  h.set_u64_le(8, 0)
+  h.set_u64_le(16, 0)
+  h.set_u64_le(24, 0)
+  h.set_u64_le(32, 0)
+  h.set_u64_le(40, 0)
+  h.set_u64_le(48, 0)
+  h.set_u64_le(56, 0)
+  h.set_u64_le(64, 0)
+  h.set_u64_le(72, 0)
+}
+
+def one(h Bytes) Void {
+  h.set_u64_le(0, 1)
+  h.set_u64_le(8, 0)
+  h.set_u64_le(16, 0)
+  h.set_u64_le(24, 0)
+  h.set_u64_le(32, 0)
+  h.set_u64_le(40, 0)
+  h.set_u64_le(48, 0)
+  h.set_u64_le(56, 0)
+  h.set_u64_le(64, 0)
+  h.set_u64_le(72, 0)
+}
+
+def copy(h Bytes, f Bytes) Void {
+  h.set_u64_le(0, f.get_u64_le(0))
+  h.set_u64_le(8, f.get_u64_le(8))
+  h.set_u64_le(16, f.get_u64_le(16))
+  h.set_u64_le(24, f.get_u64_le(24))
+  h.set_u64_le(32, f.get_u64_le(32))
+  h.set_u64_le(40, f.get_u64_le(40))
+  h.set_u64_le(48, f.get_u64_le(48))
+  h.set_u64_le(56, f.get_u64_le(56))
+  h.set_u64_le(64, f.get_u64_le(64))
+  h.set_u64_le(72, f.get_u64_le(72))
+}
+
+def load3(s Bytes, i Int64) Int64 {
+  return s.get(i) | (s.get(i + 1) << 8) | (s.get(i + 2) << 16)
+}
+
+def load4(s Bytes, i Int64) Int64 {
+  return s.get(i) | (s.get(i + 1) << 8) | (s.get(i + 2) << 16) | (s.get(i + 3) << 24)
+}
+
+// The rounding carry pass, in ref10's order: each limb hands its
+// excess up, the top limb's excess wraps to limb 0 times 19, and the
+// limbs land in ±2^25 (even) and ±2^24 (odd).
+def reduce(h Bytes) Void {
+  var h0 = limb(h, 0)
+  var h1 = limb(h, 1)
+  var h2 = limb(h, 2)
+  var h3 = limb(h, 3)
+  var h4 = limb(h, 4)
+  var h5 = limb(h, 5)
+  var h6 = limb(h, 6)
+  var h7 = limb(h, 7)
+  var h8 = limb(h, 8)
+  var h9 = limb(h, 9)
+  var c = (h0 + 0x2000000) >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  c = (h4 + 0x2000000) >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = (h1 + 0x1000000) >> 25
+  h2 = h2 + c
+  h1 = h1 - (c << 25)
+  c = (h5 + 0x1000000) >> 25
+  h6 = h6 + c
+  h5 = h5 - (c << 25)
+  c = (h2 + 0x2000000) >> 26
+  h3 = h3 + c
+  h2 = h2 - (c << 26)
+  c = (h6 + 0x2000000) >> 26
+  h7 = h7 + c
+  h6 = h6 - (c << 26)
+  c = (h3 + 0x1000000) >> 25
+  h4 = h4 + c
+  h3 = h3 - (c << 25)
+  c = (h7 + 0x1000000) >> 25
+  h8 = h8 + c
+  h7 = h7 - (c << 25)
+  c = (h4 + 0x2000000) >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = (h8 + 0x2000000) >> 26
+  h9 = h9 + c
+  h8 = h8 - (c << 26)
+  c = (h9 + 0x1000000) >> 25
+  h0 = h0 + c * 19
+  h9 = h9 - (c << 25)
+  c = (h0 + 0x2000000) >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  set_limb(h, 0, h0)
+  set_limb(h, 1, h1)
+  set_limb(h, 2, h2)
+  set_limb(h, 3, h3)
+  set_limb(h, 4, h4)
+  set_limb(h, 5, h5)
+  set_limb(h, 6, h6)
+  set_limb(h, 7, h7)
+  set_limb(h, 8, h8)
+  set_limb(h, 9, h9)
+}
+
+// The 32 little-endian bytes as a field element; bit 255 is ignored,
+// the way both RFC 7748's u-coordinate and RFC 8032's y-coordinate
+// want it.
+def from_bytes(h Bytes, s Bytes) Void {
+  var h0 = load4(s, 0)
+  var h1 = load3(s, 4) << 6
+  var h2 = load3(s, 7) << 5
+  var h3 = load3(s, 10) << 3
+  var h4 = load3(s, 13) << 2
+  var h5 = load4(s, 16)
+  var h6 = load3(s, 20) << 7
+  var h7 = load3(s, 23) << 5
+  var h8 = load3(s, 26) << 4
+  var h9 = (load3(s, 29) & 0x7FFFFF) << 2
+  var c = (h9 + 0x1000000) >> 25
+  h0 = h0 + c * 19
+  h9 = h9 - (c << 25)
+  c = (h1 + 0x1000000) >> 25
+  h2 = h2 + c
+  h1 = h1 - (c << 25)
+  c = (h3 + 0x1000000) >> 25
+  h4 = h4 + c
+  h3 = h3 - (c << 25)
+  c = (h5 + 0x1000000) >> 25
+  h6 = h6 + c
+  h5 = h5 - (c << 25)
+  c = (h7 + 0x1000000) >> 25
+  h8 = h8 + c
+  h7 = h7 - (c << 25)
+  c = (h0 + 0x2000000) >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  c = (h2 + 0x2000000) >> 26
+  h3 = h3 + c
+  h2 = h2 - (c << 26)
+  c = (h4 + 0x2000000) >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = (h6 + 0x2000000) >> 26
+  h7 = h7 + c
+  h6 = h6 - (c << 26)
+  c = (h8 + 0x2000000) >> 26
+  h9 = h9 + c
+  h8 = h8 - (c << 26)
+  set_limb(h, 0, h0)
+  set_limb(h, 1, h1)
+  set_limb(h, 2, h2)
+  set_limb(h, 3, h3)
+  set_limb(h, 4, h4)
+  set_limb(h, 5, h5)
+  set_limb(h, 6, h6)
+  set_limb(h, 7, h7)
+  set_limb(h, 8, h8)
+  set_limb(h, 9, h9)
+}
+
+def set_byte(s Bytes, i Int64, v Int64) Void {
+  s.set(i, v & 0xFF)
+}
+
+// The canonical 32 little-endian bytes of the element, in [0, p):
+// the limbs are carried first, then ref10's estimate of the quotient
+// q = floor(h / p) is folded in as 19·q at the bottom, and the second
+// carry pass drops the 2^255 the estimate left behind.
+def to_bytes(f Bytes) Bytes {
+  const t = new()
+  copy(t, f)
+  reduce(t)
+  var h0 = limb(t, 0)
+  var h1 = limb(t, 1)
+  var h2 = limb(t, 2)
+  var h3 = limb(t, 3)
+  var h4 = limb(t, 4)
+  var h5 = limb(t, 5)
+  var h6 = limb(t, 6)
+  var h7 = limb(t, 7)
+  var h8 = limb(t, 8)
+  var h9 = limb(t, 9)
+  var q = (19 * h9 + 0x1000000) >> 25
+  q = (h0 + q) >> 26
+  q = (h1 + q) >> 25
+  q = (h2 + q) >> 26
+  q = (h3 + q) >> 25
+  q = (h4 + q) >> 26
+  q = (h5 + q) >> 25
+  q = (h6 + q) >> 26
+  q = (h7 + q) >> 25
+  q = (h8 + q) >> 26
+  q = (h9 + q) >> 25
+  h0 = h0 + 19 * q
+  var c = h0 >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  c = h1 >> 25
+  h2 = h2 + c
+  h1 = h1 - (c << 25)
+  c = h2 >> 26
+  h3 = h3 + c
+  h2 = h2 - (c << 26)
+  c = h3 >> 25
+  h4 = h4 + c
+  h3 = h3 - (c << 25)
+  c = h4 >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = h5 >> 25
+  h6 = h6 + c
+  h5 = h5 - (c << 25)
+  c = h6 >> 26
+  h7 = h7 + c
+  h6 = h6 - (c << 26)
+  c = h7 >> 25
+  h8 = h8 + c
+  h7 = h7 - (c << 25)
+  c = h8 >> 26
+  h9 = h9 + c
+  h8 = h8 - (c << 26)
+  c = h9 >> 25
+  h9 = h9 - (c << 25)
+  const s = Bytes.new(32)
+  set_byte(s, 0, h0)
+  set_byte(s, 1, h0 >> 8)
+  set_byte(s, 2, h0 >> 16)
+  set_byte(s, 3, (h0 >> 24) | (h1 << 2))
+  set_byte(s, 4, h1 >> 6)
+  set_byte(s, 5, h1 >> 14)
+  set_byte(s, 6, (h1 >> 22) | (h2 << 3))
+  set_byte(s, 7, h2 >> 5)
+  set_byte(s, 8, h2 >> 13)
+  set_byte(s, 9, (h2 >> 21) | (h3 << 5))
+  set_byte(s, 10, h3 >> 3)
+  set_byte(s, 11, h3 >> 11)
+  set_byte(s, 12, (h3 >> 19) | (h4 << 6))
+  set_byte(s, 13, h4 >> 2)
+  set_byte(s, 14, h4 >> 10)
+  set_byte(s, 15, h4 >> 18)
+  set_byte(s, 16, h5)
+  set_byte(s, 17, h5 >> 8)
+  set_byte(s, 18, h5 >> 16)
+  set_byte(s, 19, (h5 >> 24) | (h6 << 1))
+  set_byte(s, 20, h6 >> 7)
+  set_byte(s, 21, h6 >> 15)
+  set_byte(s, 22, (h6 >> 23) | (h7 << 3))
+  set_byte(s, 23, h7 >> 5)
+  set_byte(s, 24, h7 >> 13)
+  set_byte(s, 25, (h7 >> 21) | (h8 << 4))
+  set_byte(s, 26, h8 >> 4)
+  set_byte(s, 27, h8 >> 12)
+  set_byte(s, 28, (h8 >> 20) | (h9 << 6))
+  set_byte(s, 29, h9 >> 2)
+  set_byte(s, 30, h9 >> 10)
+  set_byte(s, 31, h9 >> 18)
+  return s
+}
+
+def add(h Bytes, f Bytes, g Bytes) Void {
+  h.set_u64_le(0, f.get_u64_le(0) + g.get_u64_le(0))
+  h.set_u64_le(8, f.get_u64_le(8) + g.get_u64_le(8))
+  h.set_u64_le(16, f.get_u64_le(16) + g.get_u64_le(16))
+  h.set_u64_le(24, f.get_u64_le(24) + g.get_u64_le(24))
+  h.set_u64_le(32, f.get_u64_le(32) + g.get_u64_le(32))
+  h.set_u64_le(40, f.get_u64_le(40) + g.get_u64_le(40))
+  h.set_u64_le(48, f.get_u64_le(48) + g.get_u64_le(48))
+  h.set_u64_le(56, f.get_u64_le(56) + g.get_u64_le(56))
+  h.set_u64_le(64, f.get_u64_le(64) + g.get_u64_le(64))
+  h.set_u64_le(72, f.get_u64_le(72) + g.get_u64_le(72))
+}
+
+def sub(h Bytes, f Bytes, g Bytes) Void {
+  h.set_u64_le(0, f.get_u64_le(0) - g.get_u64_le(0))
+  h.set_u64_le(8, f.get_u64_le(8) - g.get_u64_le(8))
+  h.set_u64_le(16, f.get_u64_le(16) - g.get_u64_le(16))
+  h.set_u64_le(24, f.get_u64_le(24) - g.get_u64_le(24))
+  h.set_u64_le(32, f.get_u64_le(32) - g.get_u64_le(32))
+  h.set_u64_le(40, f.get_u64_le(40) - g.get_u64_le(40))
+  h.set_u64_le(48, f.get_u64_le(48) - g.get_u64_le(48))
+  h.set_u64_le(56, f.get_u64_le(56) - g.get_u64_le(56))
+  h.set_u64_le(64, f.get_u64_le(64) - g.get_u64_le(64))
+  h.set_u64_le(72, f.get_u64_le(72) - g.get_u64_le(72))
+}
+
+def neg(h Bytes, f Bytes) Void {
+  h.set_u64_le(0, 0 - f.get_u64_le(0))
+  h.set_u64_le(8, 0 - f.get_u64_le(8))
+  h.set_u64_le(16, 0 - f.get_u64_le(16))
+  h.set_u64_le(24, 0 - f.get_u64_le(24))
+  h.set_u64_le(32, 0 - f.get_u64_le(32))
+  h.set_u64_le(40, 0 - f.get_u64_le(40))
+  h.set_u64_le(48, 0 - f.get_u64_le(48))
+  h.set_u64_le(56, 0 - f.get_u64_le(56))
+  h.set_u64_le(64, 0 - f.get_u64_le(64))
+  h.set_u64_le(72, 0 - f.get_u64_le(72))
+}
+
+// h = f · g. The term f_i·g_j lands in limb (i + j) mod 10, times 19
+// when it wrapped past 2^255 and times 2 when both limbs sit at 25-bit
+// positions; the sums are generated from that rule, not hand-copied,
+// and the mirror in Python agreed with big-integer arithmetic over
+// three thousand random pairs before this transliteration. The carry
+// pass is `reduce`'s, inline, and the limbs are read and written
+// directly — this is the hot path, and every door call counts on the
+// interpreter. Every limb is loaded before any is stored, so h may
+// alias f or g.
+def mul(h Bytes, f Bytes, g Bytes) Void {
+  const f0 = f.get_u64_le(0)
+  const f1 = f.get_u64_le(8)
+  const f2 = f.get_u64_le(16)
+  const f3 = f.get_u64_le(24)
+  const f4 = f.get_u64_le(32)
+  const f5 = f.get_u64_le(40)
+  const f6 = f.get_u64_le(48)
+  const f7 = f.get_u64_le(56)
+  const f8 = f.get_u64_le(64)
+  const f9 = f.get_u64_le(72)
+  const g0 = g.get_u64_le(0)
+  const g1 = g.get_u64_le(8)
+  const g2 = g.get_u64_le(16)
+  const g3 = g.get_u64_le(24)
+  const g4 = g.get_u64_le(32)
+  const g5 = g.get_u64_le(40)
+  const g6 = g.get_u64_le(48)
+  const g7 = g.get_u64_le(56)
+  const g8 = g.get_u64_le(64)
+  const g9 = g.get_u64_le(72)
+  const f1_2 = f1 * 2
+  const f3_2 = f3 * 2
+  const f5_2 = f5 * 2
+  const f7_2 = f7 * 2
+  const f9_2 = f9 * 2
+  const g1_19 = g1 * 19
+  const g2_19 = g2 * 19
+  const g3_19 = g3 * 19
+  const g4_19 = g4 * 19
+  const g5_19 = g5 * 19
+  const g6_19 = g6 * 19
+  const g7_19 = g7 * 19
+  const g8_19 = g8 * 19
+  const g9_19 = g9 * 19
+  var h0 = f0 * g0 + f1_2 * g9_19 + f2 * g8_19 + f3_2 * g7_19 + f4 * g6_19 + f5_2 * g5_19 + f6 * g4_19 + f7_2 * g3_19 + f8 * g2_19 + f9_2 * g1_19
+  var h1 = f0 * g1 + f1 * g0 + f2 * g9_19 + f3 * g8_19 + f4 * g7_19 + f5 * g6_19 + f6 * g5_19 + f7 * g4_19 + f8 * g3_19 + f9 * g2_19
+  var h2 = f0 * g2 + f1_2 * g1 + f2 * g0 + f3_2 * g9_19 + f4 * g8_19 + f5_2 * g7_19 + f6 * g6_19 + f7_2 * g5_19 + f8 * g4_19 + f9_2 * g3_19
+  var h3 = f0 * g3 + f1 * g2 + f2 * g1 + f3 * g0 + f4 * g9_19 + f5 * g8_19 + f6 * g7_19 + f7 * g6_19 + f8 * g5_19 + f9 * g4_19
+  var h4 = f0 * g4 + f1_2 * g3 + f2 * g2 + f3_2 * g1 + f4 * g0 + f5_2 * g9_19 + f6 * g8_19 + f7_2 * g7_19 + f8 * g6_19 + f9_2 * g5_19
+  var h5 = f0 * g5 + f1 * g4 + f2 * g3 + f3 * g2 + f4 * g1 + f5 * g0 + f6 * g9_19 + f7 * g8_19 + f8 * g7_19 + f9 * g6_19
+  var h6 = f0 * g6 + f1_2 * g5 + f2 * g4 + f3_2 * g3 + f4 * g2 + f5_2 * g1 + f6 * g0 + f7_2 * g9_19 + f8 * g8_19 + f9_2 * g7_19
+  var h7 = f0 * g7 + f1 * g6 + f2 * g5 + f3 * g4 + f4 * g3 + f5 * g2 + f6 * g1 + f7 * g0 + f8 * g9_19 + f9 * g8_19
+  var h8 = f0 * g8 + f1_2 * g7 + f2 * g6 + f3_2 * g5 + f4 * g4 + f5_2 * g3 + f6 * g2 + f7_2 * g1 + f8 * g0 + f9_2 * g9_19
+  var h9 = f0 * g9 + f1 * g8 + f2 * g7 + f3 * g6 + f4 * g5 + f5 * g4 + f6 * g3 + f7 * g2 + f8 * g1 + f9 * g0
+  var c = (h0 + 0x2000000) >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  c = (h4 + 0x2000000) >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = (h1 + 0x1000000) >> 25
+  h2 = h2 + c
+  h1 = h1 - (c << 25)
+  c = (h5 + 0x1000000) >> 25
+  h6 = h6 + c
+  h5 = h5 - (c << 25)
+  c = (h2 + 0x2000000) >> 26
+  h3 = h3 + c
+  h2 = h2 - (c << 26)
+  c = (h6 + 0x2000000) >> 26
+  h7 = h7 + c
+  h6 = h6 - (c << 26)
+  c = (h3 + 0x1000000) >> 25
+  h4 = h4 + c
+  h3 = h3 - (c << 25)
+  c = (h7 + 0x1000000) >> 25
+  h8 = h8 + c
+  h7 = h7 - (c << 25)
+  c = (h4 + 0x2000000) >> 26
+  h5 = h5 + c
+  h4 = h4 - (c << 26)
+  c = (h8 + 0x2000000) >> 26
+  h9 = h9 + c
+  h8 = h8 - (c << 26)
+  c = (h9 + 0x1000000) >> 25
+  h0 = h0 + c * 19
+  h9 = h9 - (c << 25)
+  c = (h0 + 0x2000000) >> 26
+  h1 = h1 + c
+  h0 = h0 - (c << 26)
+  h.set_u64_le(0, h0)
+  h.set_u64_le(8, h1)
+  h.set_u64_le(16, h2)
+  h.set_u64_le(24, h3)
+  h.set_u64_le(32, h4)
+  h.set_u64_le(40, h5)
+  h.set_u64_le(48, h6)
+  h.set_u64_le(56, h7)
+  h.set_u64_le(64, h8)
+  h.set_u64_le(72, h9)
+}
+
+def sq(h Bytes, f Bytes) Void {
+  mul(h, f, f)
+}
+
+def sq_n(h Bytes, f Bytes, n Int64) Void {
+  copy(h, f)
+  var i = 0
+  while i < n {
+    mul(h, h, h)
+    i = i + 1
+  }
+}
+
+// f = g when b is 1, f unchanged when b is 0 — through a mask, no
+// branch on b.
+def cmov(f Bytes, g Bytes, b Int64) Void {
+  const mask = 0 - b
+  const x0 = f.get_u64_le(0)
+  f.set_u64_le(0, x0 ^ ((x0 ^ g.get_u64_le(0)) & mask))
+  const x1 = f.get_u64_le(8)
+  f.set_u64_le(8, x1 ^ ((x1 ^ g.get_u64_le(8)) & mask))
+  const x2 = f.get_u64_le(16)
+  f.set_u64_le(16, x2 ^ ((x2 ^ g.get_u64_le(16)) & mask))
+  const x3 = f.get_u64_le(24)
+  f.set_u64_le(24, x3 ^ ((x3 ^ g.get_u64_le(24)) & mask))
+  const x4 = f.get_u64_le(32)
+  f.set_u64_le(32, x4 ^ ((x4 ^ g.get_u64_le(32)) & mask))
+  const x5 = f.get_u64_le(40)
+  f.set_u64_le(40, x5 ^ ((x5 ^ g.get_u64_le(40)) & mask))
+  const x6 = f.get_u64_le(48)
+  f.set_u64_le(48, x6 ^ ((x6 ^ g.get_u64_le(48)) & mask))
+  const x7 = f.get_u64_le(56)
+  f.set_u64_le(56, x7 ^ ((x7 ^ g.get_u64_le(56)) & mask))
+  const x8 = f.get_u64_le(64)
+  f.set_u64_le(64, x8 ^ ((x8 ^ g.get_u64_le(64)) & mask))
+  const x9 = f.get_u64_le(72)
+  f.set_u64_le(72, x9 ^ ((x9 ^ g.get_u64_le(72)) & mask))
+}
+
+// f and g swapped when b is 1, both unchanged when b is 0.
+def cswap(f Bytes, g Bytes, b Int64) Void {
+  const mask = 0 - b
+  const x0 = f.get_u64_le(0)
+  const y0 = g.get_u64_le(0)
+  const t0 = (x0 ^ y0) & mask
+  f.set_u64_le(0, x0 ^ t0)
+  g.set_u64_le(0, y0 ^ t0)
+  const x1 = f.get_u64_le(8)
+  const y1 = g.get_u64_le(8)
+  const t1 = (x1 ^ y1) & mask
+  f.set_u64_le(8, x1 ^ t1)
+  g.set_u64_le(8, y1 ^ t1)
+  const x2 = f.get_u64_le(16)
+  const y2 = g.get_u64_le(16)
+  const t2 = (x2 ^ y2) & mask
+  f.set_u64_le(16, x2 ^ t2)
+  g.set_u64_le(16, y2 ^ t2)
+  const x3 = f.get_u64_le(24)
+  const y3 = g.get_u64_le(24)
+  const t3 = (x3 ^ y3) & mask
+  f.set_u64_le(24, x3 ^ t3)
+  g.set_u64_le(24, y3 ^ t3)
+  const x4 = f.get_u64_le(32)
+  const y4 = g.get_u64_le(32)
+  const t4 = (x4 ^ y4) & mask
+  f.set_u64_le(32, x4 ^ t4)
+  g.set_u64_le(32, y4 ^ t4)
+  const x5 = f.get_u64_le(40)
+  const y5 = g.get_u64_le(40)
+  const t5 = (x5 ^ y5) & mask
+  f.set_u64_le(40, x5 ^ t5)
+  g.set_u64_le(40, y5 ^ t5)
+  const x6 = f.get_u64_le(48)
+  const y6 = g.get_u64_le(48)
+  const t6 = (x6 ^ y6) & mask
+  f.set_u64_le(48, x6 ^ t6)
+  g.set_u64_le(48, y6 ^ t6)
+  const x7 = f.get_u64_le(56)
+  const y7 = g.get_u64_le(56)
+  const t7 = (x7 ^ y7) & mask
+  f.set_u64_le(56, x7 ^ t7)
+  g.set_u64_le(56, y7 ^ t7)
+  const x8 = f.get_u64_le(64)
+  const y8 = g.get_u64_le(64)
+  const t8 = (x8 ^ y8) & mask
+  f.set_u64_le(64, x8 ^ t8)
+  g.set_u64_le(64, y8 ^ t8)
+  const x9 = f.get_u64_le(72)
+  const y9 = g.get_u64_le(72)
+  const t9 = (x9 ^ y9) & mask
+  f.set_u64_le(72, x9 ^ t9)
+  g.set_u64_le(72, y9 ^ t9)
+}
+
+// h = z^(p − 2) = z^(2^255 − 21), ref10's addition chain: the
+// 2^k − 1 ladder up to 2^250 − 1, then five squarings and the
+// z^11 that was set aside at the start.
+def invert(h Bytes, z Bytes) Void {
+  const t0 = new()
+  const t1 = new()
+  const t2 = new()
+  const t3 = new()
+  sq(t0, z)
+  sq_n(t1, t0, 2)
+  mul(t1, z, t1)
+  mul(t0, t0, t1)
+  sq(t2, t0)
+  mul(t1, t1, t2)
+  sq_n(t2, t1, 5)
+  mul(t1, t2, t1)
+  sq_n(t2, t1, 10)
+  mul(t2, t2, t1)
+  sq_n(t3, t2, 20)
+  mul(t2, t3, t2)
+  sq_n(t2, t2, 10)
+  mul(t1, t2, t1)
+  sq_n(t2, t1, 50)
+  mul(t2, t2, t1)
+  sq_n(t3, t2, 100)
+  mul(t2, t3, t2)
+  sq_n(t2, t2, 50)
+  mul(t1, t2, t1)
+  sq_n(t1, t1, 5)
+  mul(h, t1, t0)
+}
+
+// h = z^((p − 5) / 8) = z^(2^252 − 3), the exponent the square root
+// in point decoding rides.
+def pow22523(h Bytes, z Bytes) Void {
+  const t0 = new()
+  const t1 = new()
+  const t2 = new()
+  sq(t0, z)
+  sq_n(t1, t0, 2)
+  mul(t1, z, t1)
+  mul(t0, t0, t1)
+  sq(t0, t0)
+  mul(t0, t1, t0)
+  sq_n(t1, t0, 5)
+  mul(t0, t1, t0)
+  sq_n(t1, t0, 10)
+  mul(t1, t1, t0)
+  sq_n(t2, t1, 20)
+  mul(t1, t2, t1)
+  sq_n(t1, t1, 10)
+  mul(t0, t1, t0)
+  sq_n(t1, t0, 50)
+  mul(t1, t1, t0)
+  sq_n(t2, t1, 100)
+  mul(t1, t2, t1)
+  sq_n(t1, t1, 50)
+  mul(t0, t1, t0)
+  sq_n(t0, t0, 2)
+  mul(h, t0, z)
+}
+
+// The low bit of the canonical value: the sign Ed25519 encodes.
+def is_negative(f Bytes) Int64 {
+  const s = to_bytes(f)
+  return s.get(0) & 1
+}
+
+// Whether the canonical value is zero, all 32 bytes ORed together.
+def is_zero(f Bytes) Bool {
+  const s = to_bytes(f)
+  var acc = 0
+  var i = 0
+  while i < 32 {
+    acc = acc | s.get(i)
+    i = i + 1
+  }
+  return acc == 0
+}
+
+// Whether two elements carry the same value, compared canonically.
+def equal(f Bytes, g Bytes) Bool {
+  const a = to_bytes(f)
+  const b = to_bytes(g)
+  var acc = 0
+  var i = 0
+  while i < 32 {
+    acc = acc | (a.get(i) ^ b.get(i))
+    i = i + 1
+  }
+  return acc == 0
+}

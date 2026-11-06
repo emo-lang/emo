@@ -1,0 +1,45 @@
+// The SHA-3 family and SHAKE (FIPS 202): the four fixed-output
+// hashes and the two extendable-output functions with the length the
+// caller names. One-shot only for now — the streaming shape follows
+// the Hash interface in a later task if a consumer needs it
+// (provisional). The sponge and permutation are internal.keccak's,
+// derived from the compact reference rather than tables. Bytes in,
+// Bytes out; render with crypto.hex_encode.
+
+// The SHA3-224 digest of data, twenty-eight bytes.
+def sha3_224(data Bytes) Bytes {
+  return internal.keccak.sponge(144, 0x06, 28, data)
+}
+
+// The SHA3-256 digest of data, thirty-two bytes.
+def sha3_256(data Bytes) Bytes {
+  return internal.keccak.sponge(136, 0x06, 32, data)
+}
+
+// The SHA3-384 digest of data, forty-eight bytes.
+def sha3_384(data Bytes) Bytes {
+  return internal.keccak.sponge(104, 0x06, 48, data)
+}
+
+// The SHA3-512 digest of data, sixty-four bytes.
+def sha3_512(data Bytes) Bytes {
+  return internal.keccak.sponge(72, 0x06, 64, data)
+}
+
+// The SHAKE128 output of length bytes over data; a negative length is
+// the caller's mistake and raises.
+def shake128(data Bytes, length Int64) Bytes {
+  if length < 0 {
+    raise Exception.new(message: "crypto: shake length must not be negative")
+  }
+  return internal.keccak.sponge(168, 0x1f, length, data)
+}
+
+// The SHAKE256 output of length bytes over data; a negative length is
+// the caller's mistake and raises.
+def shake256(data Bytes, length Int64) Bytes {
+  if length < 0 {
+    raise Exception.new(message: "crypto: shake length must not be negative")
+  }
+  return internal.keccak.sponge(136, 0x1f, length, data)
+}

@@ -1,0 +1,57 @@
+require "rand"
+
+// The rand package: the deterministic stream pinned byte for byte
+// (SP 800-90A HMAC-DRBG, SHA-256, the one-shot shape — the same seed
+// answers the same bytes on every target), and the operating system's
+// source smoke-tested for the one thing a golden can hold it to: the
+// length, and that two draws differ. The hex is the example's own,
+// over Bytes — a String cannot carry these bytes on typescript.
+
+def hex_fill(out Bytes, b Bytes, digits Bytes) Void {
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out.set(i * 2, digits.get((v >> 4) & 0xF))
+    out.set(i * 2 + 1, digits.get(v & 0xF))
+    i = i + 1
+  }
+}
+
+def hex_of(b Bytes) String {
+  const out = Bytes.new(b.length() * 2)
+  hex_fill(out, b, "0123456789abcdef".to_bytes())
+  return out.to_string()
+}
+
+// ---- the deterministic stream: the empty seed, a seed at one block,
+// two blocks, a partial block, the same seed again, another seed, and
+// the zero-length stream.
+println("drbg empty 32: " + hex_of(rand.drbg_sha256(Bytes.new(0), 32)))
+println("drbg seed 32: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 32)))
+println("drbg seed 64: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 64)))
+println("drbg seed 33: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 33)))
+println("drbg again 32: " + hex_of(rand.drbg_sha256("emo rand seed".to_bytes(), 32)))
+println("drbg other 32: " + hex_of(rand.drbg_sha256("another seed".to_bytes(), 32)))
+println("drbg zero: [" + hex_of(rand.drbg_sha256("x".to_bytes(), 0)) + "]")
+
+// ---- the operating system's source
+case rand.bytes(32) {
+  (R.ok, a) -> {
+    println("os length: " + a.length().to_string())
+    case rand.bytes(32) {
+      (R.ok, b) -> {
+        if hex_of(a) == hex_of(b) {
+          println("os draws differ: false")
+        } else {
+          println("os draws differ: true")
+        }
+      }
+      (R.error, why) -> { println(why) }
+    }
+  }
+  (R.error, why) -> { println(why) }
+}
+case rand.bytes(0) {
+  (R.ok, e) -> { println("os zero: " + e.length().to_string()) }
+  (R.error, why) -> { println(why) }
+}

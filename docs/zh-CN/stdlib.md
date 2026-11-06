@@ -33,6 +33,8 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
+| [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
+| [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam` |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
@@ -336,6 +338,47 @@ def decode(text String) (R, String)
 `encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表,填充只在最后一个量子,RFC 要求为零的填充位必须真的是零——`QR==` 是错误,不是 `QQ==` 的同义词。不容忍空白,不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回,带出错字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
+
+## crypto 包
+
+原语层:哈希、MAC、密钥派生、AEAD 密码、一个签名方案、一个密钥协商——纯 Emo 写在 `Int64` 与 `Bytes` 之上,每个目标都给出相同的字节,每个 golden 都是对 RFC 与 NIST 向量、以及(凡 Go 标准库带有该原语之处)对 Go 自家答案的一次 diff。一个根模块加八个子模块,按限定名调用:
+
+```emo
+def constant_time_compare(a Bytes, b Bytes) Bool
+def hex_encode(data Bytes) String
+def hex_decode(text String) (R, Bytes)
+
+// crypto.sha2:   sha256、sha224、sha512、sha384、sha512_224、sha512_256,
+//                以及流式的 Digest 与 Wide 类
+// crypto.sha3:   sha3_224、sha3_256、sha3_384、sha3_512、shake128、shake256
+// crypto.hash:   interface Hash;hmac_<alg>(key, data)
+// crypto.kdf:    hkdf_<alg>(ikm, salt, info, length)、hkdf_<alg>_expand、
+//                pbkdf2_<alg>(password, salt, iterations, length)
+// crypto.cipher: chacha20、poly1305、chacha20_poly1305_seal/open、
+//                aes_encrypt_block/decrypt_block、aes_ctr、
+//                aes_cbc_encrypt/decrypt、aes_gcm_seal/open
+// crypto.sign:   ed25519_public(seed)、ed25519_sign(seed, message)、
+//                ed25519_verify(public, message, signature)
+// crypto.ecdh:   x25519(scalar, point)、x25519_public(scalar)
+// crypto.legacy: sha1、md5
+```
+
+Bytes 进、Bytes 出;文本只在 hex 编解码处保持为文本。错误二分是标准库的那条:长度或计数不对 raise,数据原因是值——验不过的 tag 无论何种伪造都是 `(R.error, "crypto: authentication failed")`,坏签名是 `false`,全零的共享密钥是 `(R.error, "crypto: x25519 low-order point")`。常量时间是源码级纪律——没有取决于秘密的分支或下标,AES 的 S-box 查表是写明的例外——参考文档逐 target 说明这条纪律变成了什么,而在任何一个 target 上它都不是保证。SHA-1 与 MD5 收在 `crypto.legacy` 之后,对一切安全用途都是坏的,只为既有数据而存在。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/crypto.md`](stdlib/crypto.md) · 示例:`examples/crypto_hash`、`examples/crypto_aead`、`examples/crypto_sign`、`examples/crypto_ecdh`,以及仅 c 的 `examples/crypto_hash_million`、`examples/crypto_kdf`、`examples/crypto_sign_sweep`、`examples/crypto_ecdh_iterated`。
+
+## rand 包
+
+熵,以及一条可复现的流:给密钥与 seed 用的操作系统随机字节,和一次式形状的 SP 800-90A HMAC-DRBG(SHA-256),给一切必须每次回答相同字节的东西。
+
+```emo
+def bytes(n Int64) (R, Bytes)
+def drbg_sha256(seed Bytes, length Int64) Bytes
+```
+
+`bytes` 按目标从 `/dev/urandom`、`getentropy`、Node 的 `crypto.randomBytes` 或 `crypto:strong_rand_bytes` 回答 `(R.ok, bytes)`,来源拒绝时回答 `(R.error, "rand: …")`;负计数 raise。`drbg_sha256` 回答只取决于 seed 的 `length` 个字节,在每个目标上永远相同——fixture 与测试密钥的生成器,不是秘密的来源。
+
+目标:`ocaml`、`c`、`typescript`、`beam`——wasm 宿主不提供熵,所以 manifest 直接拒绝,而不是运行时才失败。参考:[`docs/zh-CN/stdlib/rand.md`](stdlib/rand.md) · 示例:`examples/rand_demo`。
 
 ## csv 包
 

@@ -1,0 +1,30 @@
+require "crypto"
+
+// X25519 (RFC 7748 §5.2): the iterated vector — k and u start at the
+// base point's 9, and each round sets k to X25519(k, u) and u to the
+// old k. The RFC pins the value after 1 and after 1000 rounds; a
+// thousand ladders is eighty seconds on the interpreter and 0.6 s
+// compiled, so this golden is c-only.
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+var k = Bytes.new(32)
+set_byte(k, 0, 9)
+var u = Bytes.new(32)
+set_byte(u, 0, 9)
+var i = 1
+while i <= 1000 {
+  case crypto.ecdh.x25519(k, u) {
+    (R.ok, next) -> {
+      u = k
+      k = next
+    }
+    (R.error, why) -> { println(why) }
+  }
+  if i == 1 || i == 1000 {
+    println("iterate " + i.to_string() + ": " + crypto.hex_encode(k))
+  }
+  i = i + 1
+}

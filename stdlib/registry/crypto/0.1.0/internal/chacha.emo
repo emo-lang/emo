@@ -1,0 +1,111 @@
+// ChaCha20 (RFC 8439 §2): the block function and the keystream XOR.
+// The state rides one 64-byte buffer of little-endian 32-bit words;
+// the quarter round rotates through internal.word.rotl32, which is
+// exact because every word stays masked to 32 bits. The byte accesses
+// go through parameterized doors — constructors answer the gradual
+// type, parameters carry the static one.
+
+def get_u32(b Bytes, i Int64) Int64 {
+  return b.get_u32_le(i)
+}
+
+def set_u32(b Bytes, i Int64, v Int64) Void {
+  b.set_u32_le(i, v)
+}
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def add32(x Int64, y Int64) Int64 {
+  return (x + y) & 0xFFFFFFFF
+}
+
+// The quarter round on the words at a, b, c, d (indices 0..15).
+def qr(w Bytes, a Int64, b Int64, c Int64, d Int64) Void {
+  var wa = get_u32(w, a * 4)
+  var wb = get_u32(w, b * 4)
+  var wc = get_u32(w, c * 4)
+  var wd = get_u32(w, d * 4)
+  wa = add32(wa, wb)
+  wd = internal.word.rotl32(wd ^ wa, 16)
+  wc = add32(wc, wd)
+  wb = internal.word.rotl32(wb ^ wc, 12)
+  wa = add32(wa, wb)
+  wd = internal.word.rotl32(wd ^ wa, 8)
+  wc = add32(wc, wd)
+  wb = internal.word.rotl32(wb ^ wc, 7)
+  set_u32(w, a * 4, wa)
+  set_u32(w, b * 4, wb)
+  set_u32(w, c * 4, wc)
+  set_u32(w, d * 4, wd)
+}
+
+// The keystream block for key, counter, and nonce, written to out.
+def block(key Bytes, nonce Bytes, counter Int64, out Bytes) Void {
+  const s = Bytes.new(64)
+  set_u32(s, 0, 0x61707865)
+  set_u32(s, 4, 0x3320646e)
+  set_u32(s, 8, 0x79622d32)
+  set_u32(s, 12, 0x6b206574)
+  var i = 0
+  while i < 8 {
+    set_u32(s, 16 + i * 4, get_u32(key, i * 4))
+    i = i + 1
+  }
+  set_u32(s, 48, counter & 0xFFFFFFFF)
+  set_u32(s, 52, get_u32(nonce, 0))
+  set_u32(s, 56, get_u32(nonce, 4))
+  set_u32(s, 60, get_u32(nonce, 8))
+  const w = Bytes.new(64)
+  i = 0
+  while i < 64 {
+    set_byte(w, i, get_byte(s, i))
+    i = i + 1
+  }
+  var r = 0
+  while r < 10 {
+    qr(w, 0, 4, 8, 12)
+    qr(w, 1, 5, 9, 13)
+    qr(w, 2, 6, 10, 14)
+    qr(w, 3, 7, 11, 15)
+    qr(w, 0, 5, 10, 15)
+    qr(w, 1, 6, 11, 12)
+    qr(w, 2, 7, 8, 13)
+    qr(w, 3, 4, 9, 14)
+    r = r + 1
+  }
+  i = 0
+  while i < 16 {
+    set_u32(out, i * 4, add32(get_u32(w, i * 4), get_u32(s, i * 4)))
+    i = i + 1
+  }
+}
+
+// The keystream XOR over data, from counter, into out.
+def xor_stream(key Bytes, nonce Bytes, counter Int64, data Bytes, out Bytes) Void {
+  const ks = Bytes.new(64)
+  var off = 0
+  var ctr = counter
+  while off < data.length() {
+    block(key, nonce, ctr, ks)
+    var i = 0
+    while i < 64 && off + i < data.length() {
+      set_byte(out, off + i, get_byte(data, off + i) ^ get_byte(ks, i))
+      i = i + 1
+    }
+    off = off + 64
+    ctr = ctr + 1
+  }
+}
+
+// The keystream XOR of data — the stream cipher itself.
+def chacha20(key Bytes, nonce Bytes, counter Int64, data Bytes) Bytes {
+  const out = Bytes.new(data.length())
+  xor_stream(key, nonce, counter, data, out)
+  return out
+}

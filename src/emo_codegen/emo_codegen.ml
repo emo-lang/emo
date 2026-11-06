@@ -13,10 +13,18 @@ module Riscv = Emo_riscv
    never linked from the host build tree. *)
 let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
 
+(* An Int64 literal, parenthesized when negative: after a constructor
+   or an operator, `Int64 -9223372036854775808L` parses as
+   subtraction (crypto_hash's SHA-512/256 initial words — the first
+   Int64 constants past 2^63 — flushed it). *)
+let i64_lit (n : int64) : string =
+  if Int64.compare n 0L < 0 then Printf.sprintf "(%LdL)" n
+  else Printf.sprintf "%LdL" n
+
 (* A float literal as its exact bit pattern, so no decimal rendering
    loses precision near the extremes. *)
 let float_lit (f : float) : string =
-  Printf.sprintf "(Int64.float_of_bits %LdL)" (Int64.bits_of_float f)
+  Printf.sprintf "(Int64.float_of_bits %s)" (i64_lit (Int64.bits_of_float f))
 
 (* Stage A/B backend: emits OCaml source from the IR, compiled by the
    OCaml toolchain into a single binary linked against emo_runtime (the
@@ -329,7 +337,7 @@ and emit_pattern (p : Emo_ast.pattern) : string =
   (* Bindings are recovered from [payload] by position (see the arm
      bodies), so the capture itself stays anonymous. *)
   | Ast.Pattern_binding _ -> "_"
-  | Ast.Pattern_literal (L_int n) -> Printf.sprintf "Emo_eval.Int64 %LdL" n
+  | Ast.Pattern_literal (L_int n) -> "Emo_eval.Int64 " ^ i64_lit n
   | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Ast.Pattern_literal (L_float f) -> Printf.sprintf "Emo_eval.Float %g" f
   | Ast.Pattern_literal (L_string s) -> Printf.sprintf "Emo_eval.String %S" s
@@ -447,9 +455,8 @@ and emit_receive env branches ~tail =
 and emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Emo_ir.Const (L_int n) ->
-      if env.native && e.Emo_ir.ety = Emo_check.Int64 then
-        Printf.sprintf "%LdL" n
-      else Printf.sprintf "Emo_eval.Int64 %LdL" n
+      if env.native && e.Emo_ir.ety = Emo_check.Int64 then i64_lit n
+      else "Emo_eval.Int64 " ^ i64_lit n
   | Emo_ir.Const (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Emo_ir.Const (L_float f) ->
       if env.native && e.Emo_ir.ety = Emo_check.Float64 then float_lit f
@@ -702,7 +709,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(if %s then (%s) else (%s))" (emit_native_expr env c)
         (emit_native_expr env t)
         (emit_native_expr env else_)
-  | Emo_ir.Const (L_int n) -> Printf.sprintf "%LdL" n
+  | Emo_ir.Const (L_int n) -> i64_lit n
   | Emo_ir.Const (L_float f) -> float_lit f
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
   | Emo_ir.Const (L_char c) -> Printf.sprintf "%C" c
@@ -871,7 +878,7 @@ let rec emit_native_pattern env (p : Emo_ast.pattern) : string =
       let v = "v_" ^ Emo_ir.sanitize_ident name in
       env.refs <- v :: env.refs;
       v
-  | Emo_ast.Pattern_literal (L_int n) -> Printf.sprintf "%LdL" n
+  | Emo_ast.Pattern_literal (L_int n) -> i64_lit n
   | Emo_ast.Pattern_literal (L_bool b) -> if b then "true" else "false"
   | Emo_ast.Enum_member (t, m) ->
       Printf.sprintf "(Emo_eval.EnumMember (%S, %S))" t m

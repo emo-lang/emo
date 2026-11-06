@@ -1,0 +1,31 @@
+require "crypto"
+
+// Ed25519 (RFC 8032): the Go-companion sweep — a seed and a message
+// from the byte sweep at each of thirteen lengths around the SHA-512
+// block boundaries, the public key, the signature, and the
+// verification pinned against Go's crypto/ed25519. Thirteen rounds of
+// key derivation, signing, and verification are eleven seconds on the
+// interpreter and a tenth of a second compiled, so this golden is
+// c-only.
+
+def seq(n Int64, start Int64) Bytes {
+  const b = Bytes.new(n)
+  var i = 0
+  while i < n {
+    b.set(i, (start + i) & 0xFF)
+    i = i + 1
+  }
+  return b
+}
+
+const lengths = [0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 255, 256, 1000]
+var s = 0
+while s < 13 {
+  const n = lengths[s]
+  const seed = seq(32, n + 1)
+  const message = seq(n, 0x40)
+  const public = crypto.sign.ed25519_public(seed)
+  const signature = crypto.sign.ed25519_sign(seed, message)
+  println("sweep " + n.to_string() + ": " + crypto.hex_encode(public) + " " + crypto.hex_encode(signature) + " " + crypto.sign.ed25519_verify(public, message, signature).to_string())
+  s = s + 1
+}

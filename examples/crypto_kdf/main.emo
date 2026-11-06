@@ -1,0 +1,9 @@
+require "crypto"
+
+// PBKDF2 at the classic 4096 iterations, the shape every off-by-one
+// in the iteration loop turns wrong first. Sixty seconds on the
+// tree-walking interpreter is the interpreter's business, not the
+// algorithm's — this golden rides the compiled lists only.
+
+println("pbkdf2_256 c4096: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha256("password".to_bytes(), "salt".to_bytes(), 4096, 32)))
+println("pbkdf2_512 c4096: " + crypto.hex_encode(crypto.kdf.pbkdf2_sha512("password".to_bytes(), "salt".to_bytes(), 4096, 32)))

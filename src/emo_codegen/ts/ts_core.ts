@@ -1567,7 +1567,10 @@ const E: any = {
           const i = idx(name);
           let acc = 0;
           for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
-          return BigInt(acc);
+          // the shifts run in int32, so a four-byte value with its high
+          // bit set lands negative — `>>> 0` reads it back unsigned
+          // (chacha20's words flushed this).
+          return BigInt(acc >>> 0);
         }
         if (name === "set_u16_le" || name === "set_u32_le") {
           const w = name === "set_u16_le" ? 2 : 4;

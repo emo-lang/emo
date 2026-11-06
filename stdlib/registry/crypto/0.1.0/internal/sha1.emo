@@ -1,0 +1,99 @@
+// SHA-1 (FIPS 180-4, withdrawn): the whole-message one-shot the
+// legacy surface asks for. Thirty-two-bit words in Int64, masked at
+// every addition; the block discipline is the 64-byte SHA shape. The
+// algorithm is broken — colliding by construction since 2017 — and
+// lives only to verify the world's existing data.
+
+// The addition mod 2^32, as the 32-bit engine's.
+def add32(x Int64, y Int64) Int64 {
+  return (x + y) & 0xFFFFFFFF
+}
+
+// One compression step over the 64-byte block at off: the expansion
+// `W[t] = rotl1(W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16])` through a
+// 16-word rolling window and the 80 rounds in their four phases.
+def compress(state Bytes, block Bytes, off Int64) Void {
+  var a = internal.word.load_u32_be(state, 0)
+  var b = internal.word.load_u32_be(state, 4)
+  var c = internal.word.load_u32_be(state, 8)
+  var d = internal.word.load_u32_be(state, 12)
+  var e = internal.word.load_u32_be(state, 16)
+  const w = Bytes.new(64)
+  var t = 0
+  while t < 16 {
+    internal.word.store_u32_be(w, t * 4, internal.word.load_u32_be(block, off + t * 4))
+    t = t + 1
+  }
+  t = 0
+  while t < 80 {
+    if t >= 16 {
+      const wi = (t & 15) * 4
+      const mixed = internal.word.load_u32_be(w, ((t + 13) & 15) * 4) ^ internal.word.load_u32_be(w, ((t + 8) & 15) * 4) ^ internal.word.load_u32_be(w, ((t + 2) & 15) * 4) ^ internal.word.load_u32_be(w, wi)
+      internal.word.store_u32_be(w, wi, internal.word.rotl32(mixed, 1))
+    }
+    var fx = 0
+    var kk = 0
+    if t < 20 {
+      fx = (b & c) | (~b & d)
+      kk = 0x5a827999
+    }
+    if t >= 20 && t < 40 {
+      fx = b ^ c ^ d
+      kk = 0x6ed9eba1
+    }
+    if t >= 40 && t < 60 {
+      fx = (b & c) | (b & d) | (c & d)
+      kk = 0x8f1bbcdc
+    }
+    if t >= 60 {
+      fx = b ^ c ^ d
+      kk = 0xca62c1d6
+    }
+    const temp = add32(add32(add32(add32(internal.word.rotl32(a, 5), fx), e), kk), internal.word.load_u32_be(w, (t & 15) * 4))
+    e = d
+    d = c
+    c = internal.word.rotl32(b, 30)
+    b = a
+    a = temp
+    t = t + 1
+  }
+  internal.word.store_u32_be(state, 0, add32(internal.word.load_u32_be(state, 0), a))
+  internal.word.store_u32_be(state, 4, add32(internal.word.load_u32_be(state, 4), b))
+  internal.word.store_u32_be(state, 8, add32(internal.word.load_u32_be(state, 8), c))
+  internal.word.store_u32_be(state, 12, add32(internal.word.load_u32_be(state, 12), d))
+  internal.word.store_u32_be(state, 16, add32(internal.word.load_u32_be(state, 16), e))
+}
+
+// The 20-byte digest of data, message in one pass: the padding block
+// discipline (0x80, the zero run, the bit length big-endian) laid out
+// fresh, every block compressed, the state bytes answering.
+def digest(data Bytes) Bytes {
+  const msg = data
+  const n = msg.length()
+  const blocks = (n + 9 + 63) / 64
+  const pad = Bytes.new(blocks * 64)
+  var i = 0
+  while i < blocks * 64 {
+    pad.set(i, 0)
+    i = i + 1
+  }
+  i = 0
+  while i < n {
+    pad.set(i, msg.get(i))
+    i = i + 1
+  }
+  pad.set(n, 0x80)
+  internal.word.store_u64_be(pad, blocks * 64 - 8, n << 3)
+  const st = Bytes.new(20)
+  internal.word.store_u32_be(st, 0, 0x67452301)
+  internal.word.store_u32_be(st, 4, 0xefcdab89)
+  internal.word.store_u32_be(st, 8, 0x98badcfe)
+  internal.word.store_u32_be(st, 12, 0x10325476)
+  internal.word.store_u32_be(st, 16, 0xc3d2e1f0)
+  var bi = 0
+  while bi < blocks {
+    compress(st, pad, bi * 64)
+    bi = bi + 1
+  }
+  return st
+}

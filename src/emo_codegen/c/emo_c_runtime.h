@@ -500,6 +500,7 @@ emo_value emo_os_open_read(emo_str path);
 emo_value emo_os_open_write(emo_str path);
 emo_value emo_os_open_append(emo_str path);
 emo_value emo_os_read(int64_t fd, int64_t n);
+emo_value emo_rand_bytes(int64_t n);
 emo_value emo_os_write(int64_t fd, emo_str data);
 emo_value emo_os_close(int64_t fd);
 emo_value emo_os_list_dir(emo_str path);

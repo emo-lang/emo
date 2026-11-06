@@ -1,0 +1,162 @@
+// Poly1305 (RFC 8439 §2.5): the one-shot MAC. The accumulator is five
+// 26-bit limbs of the 130-bit field element, the radix Donna's 32-bit
+// variant chooses so every product stays under 2^56 — Int64 arithmetic
+// never overflows, never goes negative on a value. The limbs are plain
+// Int64 locals; the byte loads ride parameterized doors.
+
+def get_u32(b Bytes, i Int64) Int64 {
+  return b.get_u32_le(i)
+}
+
+def set_u32(b Bytes, i Int64, v Int64) Void {
+  b.set_u32_le(i, v)
+}
+
+def set_byte(b Bytes, i Int64, v Int64) Void {
+  b.set(i, v)
+}
+
+def get_byte(b Bytes, i Int64) Int64 {
+  return b.get(i)
+}
+
+def fill_byte(b Bytes, v Int64) Void {
+  var i = 0
+  while i < b.length() {
+    b.set(i, v)
+    i = i + 1
+  }
+}
+
+def copy_range(dst Bytes, src Bytes, src_at Int64, count Int64) Void {
+  var i = 0
+  while i < count {
+    set_byte(dst, i, get_byte(src, src_at + i))
+    i = i + 1
+  }
+}
+
+// The 16-byte tag of message under the 32-byte key.
+def mac(key Bytes, msg Bytes) Bytes {
+  // r, clamped, as five 26-bit limbs; the multipliers s_i are r_i * 5.
+  const r0 = get_u32(key, 0) & 0x3ffffff
+  const r1 = (get_u32(key, 3) >> 2) & 0x3ffff03
+  const r2 = (get_u32(key, 6) >> 4) & 0x3ffc0ff
+  const r3 = (get_u32(key, 9) >> 6) & 0x3f03fff
+  const r4 = (get_u32(key, 12) >> 8) & 0x00fffff
+  const s1 = r1 * 5
+  const s2 = r2 * 5
+  const s3 = r3 * 5
+  const s4 = r4 * 5
+  var h0 = 0
+  var h1 = 0
+  var h2 = 0
+  var h3 = 0
+  var h4 = 0
+  const n = msg.length()
+  const blk = Bytes.new(16)
+  var c = 0
+  var off = 0
+  while off < n {
+    var take = 16
+    if n - off < 16 {
+      take = n - off
+    }
+    fill_byte(blk, 0)
+    copy_range(blk, msg, off, take)
+    if take < 16 {
+      set_byte(blk, take, 1)
+    }
+    var hibit = 1 << 24
+    if take < 16 {
+      hibit = 0
+    }
+    h0 = h0 + (get_u32(blk, 0) & 0x3ffffff)
+    h1 = h1 + ((get_u32(blk, 3) >> 2) & 0x3ffffff)
+    h2 = h2 + ((get_u32(blk, 6) >> 4) & 0x3ffffff)
+    h3 = h3 + ((get_u32(blk, 9) >> 6) & 0x3ffffff)
+    h4 = h4 + ((get_u32(blk, 12) >> 8) | hibit)
+    const d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
+    const d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
+    const d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
+    const d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4
+    const d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
+    c = d0 >> 26
+    h0 = d0 & 0x3ffffff
+    const e1 = d1 + c
+    c = e1 >> 26
+    h1 = e1 & 0x3ffffff
+    const e2 = d2 + c
+    c = e2 >> 26
+    h2 = e2 & 0x3ffffff
+    const e3 = d3 + c
+    c = e3 >> 26
+    h3 = e3 & 0x3ffffff
+    const e4 = d4 + c
+    c = e4 >> 26
+    h4 = e4 & 0x3ffffff
+    h0 = h0 + c * 5
+    c = h0 >> 26
+    h0 = h0 & 0x3ffffff
+    h1 = h1 + c
+    off = off + take
+  }
+  // the full carry
+  c = h1 >> 26
+  h1 = h1 & 0x3ffffff
+  h2 = h2 + c
+  c = h2 >> 26
+  h2 = h2 & 0x3ffffff
+  h3 = h3 + c
+  c = h3 >> 26
+  h3 = h3 & 0x3ffffff
+  h4 = h4 + c
+  c = h4 >> 26
+  h4 = h4 & 0x3ffffff
+  h0 = h0 + c * 5
+  c = h0 >> 26
+  h0 = h0 & 0x3ffffff
+  h1 = h1 + c
+  // h + -p, selected when h >= p: the constant-time branch Donna's
+  // shape uses, the mask from an unsigned look at g4's sign bit.
+  var g0 = h0 + 5
+  c = g0 >> 26
+  g0 = g0 & 0x3ffffff
+  var g1 = h1 + c
+  c = g1 >> 26
+  g1 = g1 & 0x3ffffff
+  var g2 = h2 + c
+  c = g2 >> 26
+  g2 = g2 & 0x3ffffff
+  var g3 = h3 + c
+  c = g3 >> 26
+  g3 = g3 & 0x3ffffff
+  var g4 = h4 + c - (1 << 26)
+  const mask = internal.word.lshr(g4, 63) - 1
+  const nmask = ~mask
+  h0 = (h0 & nmask) | (g0 & mask)
+  h1 = (h1 & nmask) | (g1 & mask)
+  h2 = (h2 & nmask) | (g2 & mask)
+  h3 = (h3 & nmask) | (g3 & mask)
+  h4 = (h4 & nmask) | (g4 & mask)
+  // h mod 2^128, as four little-endian words
+  const u0 = (h0 | (h1 << 26)) & 0xFFFFFFFF
+  const u1 = ((h1 >> 6) | (h2 << 20)) & 0xFFFFFFFF
+  const u2 = ((h2 >> 12) | (h3 << 14)) & 0xFFFFFFFF
+  const u3 = ((h3 >> 18) | (h4 << 8)) & 0xFFFFFFFF
+  // the tag is h + s mod 2^128
+  var f = u0 + get_u32(key, 16)
+  const t0 = f & 0xFFFFFFFF
+  f = u1 + get_u32(key, 20) + (f >> 32)
+  const t1 = f & 0xFFFFFFFF
+  f = u2 + get_u32(key, 24) + (f >> 32)
+  const t2 = f & 0xFFFFFFFF
+  f = u3 + get_u32(key, 28) + (f >> 32)
+  const t3 = f & 0xFFFFFFFF
+  const tag = Bytes.new(16)
+  set_u32(tag, 0, t0)
+  set_u32(tag, 4, t1)
+  set_u32(tag, 8, t2)
+  set_u32(tag, 12, t3)
+  return tag
+}

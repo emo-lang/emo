@@ -589,6 +589,7 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "file_write" ->
       Printf.sprintf "emo_file_write(%s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.String)
+  | "rand_bytes" -> Printf.sprintf "emo_rand_bytes(%s)" (arg 0 Emo_check.Int64)
   | "net_listen" ->
       Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.Int64)
