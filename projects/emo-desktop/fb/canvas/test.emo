@@ -161,6 +161,70 @@ def pointer_checks() {
   word_is(corner.at(0, 1), 0xFFFFFF, "its body with it")
 }
 
+// ---- the shapes: rounded, stroke and shadow (A14.1) ------------------
+//
+// Every value named here is the shapes section's arithmetic worked by
+// hand: a pixel's center against the edge in 256ths, the ramp, the
+// smoothstep, `over` — the golden pins the painted bytes whole.
+
+def shape_checks() {
+  const plain = ui_fb_canvas.canvas(6, 4)
+  plain.rounded(1, 1, 3, 2, 0, 0xFF112233, 0xFF112233)
+  check(plain.at(1, 1) == 0x112233 && plain.at(3, 1) == 0x112233
+    && plain.at(1, 2) == 0x112233 && plain.at(3, 2) == 0x112233,
+    "a rounded rectangle of radius 0 covers its corners whole")
+  check(plain.at(0, 1) == 0 && plain.at(4, 1) == 0 && plain.at(1, 0) == 0
+    && plain.at(1, 3) == 0, "and nothing around it")
+
+  const disc = ui_fb_canvas.canvas(9, 9)
+  disc.rounded(0, 0, 9, 9, 4, 0xFFFFFFFF, 0xFFFFFFFF)
+  word_is(disc.at(4, 4), 0xFFFFFF, "a rounded square's middle is whole")
+  word_is(disc.at(0, 4), 0xFFFFFF, "as is its straight edge's pixel")
+  word_is(disc.at(0, 0), 0x000000, "its corner pixel lies outside the arc")
+  word_is(disc.at(1, 1), 0xF6F6F6, "and the arc covers the next one 246 of 255")
+
+  const ramp = ui_fb_canvas.canvas(1, 5)
+  ramp.rounded(0, 0, 1, 5, 0, 0xFF000000, 0xFFFF0080)
+  word_is(ramp.at(0, 0), 0x000000, "a grade's first row is its top color")
+  word_is(ramp.at(0, 2), 0x800040, "its middle row halfway, rounded to nearest")
+  word_is(ramp.at(0, 4), 0xFF0080, "its last row its bottom color")
+
+  const glass = ui_fb_canvas.canvas(2, 1)
+  glass.fill(0, 0, 2, 1, 0x00FF00)
+  glass.rounded(0, 0, 2, 1, 0, 0x80FF0000, 0x80FF0000)
+  word_is(glass.at(1, 0), 0x807F00, "a translucent fill composites like blend")
+
+  const edge = ui_fb_canvas.canvas(4, 4)
+  edge.rounded(-3, -3, 6, 6, 3, 0xFFFFFFFF, 0xFFFFFFFF)
+  word_is(edge.at(0, 0), 0xFFFFFF, "a shape off the corner lands what is inside")
+  word_is(edge.at(1, 1), 0xFFFFFF, "its arc's inner pixels whole")
+  word_is(edge.at(2, 2), 0x000000, "and its corner's outside clear")
+
+  const ring = ui_fb_canvas.canvas(6, 6)
+  ring.stroke(1, 1, 4, 4, 0, 1, 0xFFFFFFFF)
+  check(ring.at(1, 1) == 0xFFFFFF && ring.at(4, 1) == 0xFFFFFF
+    && ring.at(1, 4) == 0xFFFFFF && ring.at(4, 3) == 0xFFFFFF,
+    "a stroke one pixel wide covers the edge's pixels whole")
+  check(ring.at(2, 2) == 0 && ring.at(3, 3) == 0,
+    "and leaves the interior alone")
+  check(ring.at(0, 0) == 0 && ring.at(5, 5) == 0, "and the outside")
+
+  const shade = ui_fb_canvas.canvas(20, 20)
+  shade.shadow(5, 5, 10, 10, 0, 4, 0xFFFFFFFF)
+  word_is(shade.at(10, 10), 0xFFFFFF, "a shadow's middle is its color whole")
+  word_is(shade.at(7, 10), 0xFFFFFF, "from half its softness inside the edge")
+  word_is(shade.at(5, 10), 0xAEAEAE, "the edge's inner pixel 174 of 255")
+  word_is(shade.at(4, 10), 0x515151, "its outer pixel 81, the smoothstep's mirror")
+  word_is(shade.at(2, 10), 0x000000, "and clear half its softness outside")
+
+  const none = ui_fb_canvas.canvas(3, 3)
+  none.rounded(1, 1, 0, 2, 0, 0xFFFFFFFF, 0xFFFFFFFF)
+  none.stroke(0, 0, 3, 3, 0, 0, 0xFFFFFFFF)
+  none.shadow(1, 1, 2, 0, 0, 2, 0xFFFFFFFF)
+  check(none.at(0, 0) == 0 && none.at(1, 1) == 0 && none.at(2, 2) == 0,
+    "an empty shape or a stroke of no width paints nothing")
+}
+
 // ---- ppm: the surface as text ----------------------------------------
 
 def ppm_checks() {
@@ -203,5 +267,6 @@ canvas_checks()
 glyph_checks()
 paint_checks()
 pointer_checks()
+shape_checks()
 ppm_checks()
 backend_checks()

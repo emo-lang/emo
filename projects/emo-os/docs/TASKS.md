@@ -651,3 +651,42 @@ closed — the whole of Step 8 complete.
   ribbons, the header bar, the icons' names in the font's own table),
   the ledger `frames 666 551` (the wallpaper's 48-block run and the
   header's two the +50). The desktop's side is emo-desktop A13.
+
+## Step 9 — the HD desktop's kernel side (M14, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-06. The desktop's half is emo-desktop M14, whose
+tracker records the milestone's decisions (D6–D9); the reasoning is
+CHECK.md's (2026-11-06). The milestone's row joins the table above at
+its completion.
+
+- [ ] **T9.1** — The mode: the machine's display at 1920×1080
+  (`start.sh` and `run.sh` name it on the device; the driver's
+  `gpu 1920x1080 ready` stays the device's answer). The carve grows
+  to 8 MiB — the frame's 7.91 MiB with the cursor plane's last 64 KiB
+  past it — downward from the fixed cells at `0x87000000`: its base
+  moves to `0x86800000`, nothing above it moves, and the region gives
+  the carve its 64 blocks. The region's budget at the mode is measured
+  before anything else: the wallpaper's surface alone grows from 48
+  blocks to 127, the header's, the dock's and the windows' with it,
+  beside the three residents' image runs. The levers on record — the
+  kernel's heap, a second region above `0x88000000` with the machine's
+  `-m` raised — are the round's decision on those numbers. `run.sh`'s
+  screendump model at the mode; the ledger re-pinned.
+- [ ] **T9.2** — The compositor's corners and shadows: the walk masks
+  each toplevel's corners and lays its shadow beneath it — the
+  coverage arithmetic emo-desktop A14.1 pinned, in the kernel's own
+  copy (the kernel requires no desktop package) — and the cursor plane
+  blends its sprite by coverage where it stored opaque pixels.
+  `run.sh`'s model grows the same arithmetic.
+- [ ] **T9.3** — `win_close` releases a run it leaves mapped: verb 14
+  gives the buffer's blocks back to the allocator and clears the row,
+  but the owner's table keeps the identity leaves — the closer can
+  still write frames the allocator may already have handed to another
+  process, and the same process's next `win_new` over reused blocks
+  ends the machine (`sv39: an address mapped twice`). Found by
+  emo-desktop A14.1's metal probe, the first program to close a window
+  and open another in one life; latent since T8.5, because every app
+  closed its one window at its exit, where the death's teardown takes
+  the whole table. The fix: the close unmaps the run's leaves from the
+  owner's table and flushes its translations; a golden beat that
+  closes and reopens pins it.

@@ -19,7 +19,7 @@ tree's and EmoOS's, listed there.
 - [x] **D4** — The pool's scheduling: beside M7 — M8's Elm loops
   need it.
 - [x] **D5** — The resolution baseline: 1024×768 XRGB8888, the
-  carve sized to it.
+  carve sized to it. M14's D6 supersedes it.
 
 ## M7 — the screen (the desktop side)
 
@@ -801,3 +801,106 @@ background press's focus).
   shapes and the names from the font's own table — and the folder
   beats drive the entered state's screendump. The fb gate green (134,
   untouched); the golden byte-identical across every hosted target.
+
+## M14 — the HD desktop (opened 2026-11-06)
+
+The pixel era's face becomes a modern one: antialiased type from real
+typefaces, rounded and shaded surfaces, translucent chrome, at
+1920×1080. A13 took the ladder's thirteenth rung as a single task, so
+the milestone is the fourteenth. The kernel's half is
+[EmoOS Step 9](../../emo-os/docs/TASKS.md). The tasks run in order,
+each leaving the tree green and every golden re-pinned to its own
+pixels; the reasoning behind the decisions is CHECK.md's (2026-11-06).
+
+The decisions (2026-11-06):
+
+- [x] **D6** — The mode: 1920×1080 XRGB8888, superseding D5. The
+  carve is sized to it, and every size the desktop paints derives from
+  the mode — never a constant.
+- [x] **D7** — The type: real typefaces rasterized at generation time
+  into 8-bit coverage tables — Inter (SIL OFL 1.1) for the interface,
+  an OFL-licensed monospace face where the cell arithmetic lives (the
+  shell, the editor). Pillow's FreeType is the rasterizer and the
+  rasterizer's dependency alone: it writes a reviewable coverage grid,
+  the stdlib generator writes the tables from the grid, and the gate's
+  drift check never needs Pillow.
+- [x] **D8** — Translucency without blur: chrome over the wallpaper
+  computes the wallpaper's own formula under a scrim. No blur pass
+  anywhere; the wallpaper stays procedural.
+- [x] **D9** — Motion deferred: stills first. Animation is a milestone
+  of its own once a 1080p repaint's cost is measured.
+
+- [x] **A14.1** — The primitives — **complete 2026-11-07**. The
+  `Surface` grows three verbs over one shape, the rounded rectangle (a
+  plain rectangle at radius 0, a pill at half its height, a circle when
+  square at half its side): `rounded` composites one graded from `top`
+  down to `bottom`, `stroke` the ring `width` pixels deep inside one's
+  edge, `shadow` one whose edge fades over `soft` pixels — colors
+  carrying their opacity in the top byte, as `blend`'s do. `ui_fb`'s
+  shapes section holds the arithmetic every surface asks per pixel:
+  the signed distance from a pixel's center to the edge in 256ths
+  (`shape_sd`, the corners' arcs through an integer square root), a
+  fill's one-pixel ramp, a stroke as the fill less the fill pulled in
+  by its width, a shadow's smoothstep (its position in 4096ths, so the
+  cube fits 64 bits at any softness), the per-channel grade. Each
+  surface walks a row in from both ends while its pixels are partly
+  covered and stores the whole ones between as one span — the hosted
+  canvas over its `Bytes`, the window buffer package over raw words
+  (`ui_fb_winbuf.carve_rounded` and kin, two coordinates packed to a
+  word under the target's eight-word call). The boot image's `Carve`
+  and `Win` call the package's walks rather than copying them — the
+  first metal code the boot image shares instead of mirroring; it
+  gains the dependency the launcher's registry and the dune smoke
+  already staged. Two pieces moved: the coverage blit to A14.2 (its
+  data's layout is the glyph tables'), and the general ellipse out —
+  the circle and the pill are the rounded rectangle, and every shape
+  is four copies (the canvas, the carve, `run.sh`'s model, the
+  compositor's own for T9.2). The acceptance: `fb/shapes/`, one card
+  painted in eight stages — plain, graded, translucent, fading, the
+  title bar's three circles, three strokes, two shadows, every clipped
+  edge and the degenerate shapes — the same eight `shapes <digest>`
+  lines from the interpreter and all five hosted targets; the core's
+  assertions 39 → 69 and the canvas's 35 → 57, every expected value
+  worked by hand; and on the metal, a scratch tree whose counter ELF
+  painted the card through `Win`, exec'd from the desktop's REPL,
+  printed the golden's eight lines byte for byte. The cost on the
+  metal (QEMU's TCG on the development Mac, ten passes over 1024×512
+  per verb): opaque fills about 15–19 ms a megapixel, translucent
+  compositing about 290 — `over`'s three divisions by 255 per pixel;
+  the chrome that wants to be cheap is opaque (D8), and the lever is
+  on record in CHECK.md. The round's finds: the beam emitter let an
+  `if` arm's or a `receive` branch's bindings into its siblings' loops
+  (fixed and pinned — `examples/branch_var`, a beam receive test), and
+  `win_close` leaves the closed run mapped (EmoOS T9.3). The pins: the
+  fb gate 151 ok (134 before); `dune runtest` 371 green with the
+  smoke; `@fmt` green; `run.sh` green under both timer transports in
+  three consecutive rounds, the serial logs identical line for line
+  with the unchanged tree's but for the apps' image sizes and where
+  the REPL's prompt lands against the editor's `comp 48 272` line — a
+  race the unchanged tree shows across its own rounds (CHECK.md); the
+  ledger `frames 666 551` unchanged. Decision record: CHECK.md,
+  2026-11-07.
+- [ ] **A14.2** — The type: the coverage blit (an 8-bit alpha mask in
+  one color — A14.1 left it here, its data's layout being the glyph
+  tables' to decide), D7's pipeline whole (the rasterizer, the
+  coverage grid, the generator and its `--check`), two sizes of the
+  interface face and one of the monospace face, the license texts
+  beside the tables. Proportional advances (no kerning) replace the
+  fixed 8×16 cell in the box model's measure; every text the desktop
+  paints moves onto the coverage blit. `run.sh`'s display model reads
+  the same tables.
+- [ ] **A14.3** — The mode, the desktop's side (the kernel's is EmoOS
+  T9.1): every size the desktop paints derived from the mode — the
+  header bar, the dock, the icon cells, the windows' places — and
+  every golden re-pinned at 1920×1080.
+- [ ] **A14.4** — The chrome: the header bar and the dock as
+  translucent material over the wallpaper by D8's formula, the dock a
+  rounded shelf with its shadow, the apps' tiles drawn icons (rounded
+  squares, gradients, a glyph — no image assets), the desktop's
+  document and folder icons drawn the same way, the wallpaper a
+  procedural gradient the chrome can recompute.
+- [ ] **A14.5** — The windows (the kernel's half is EmoOS T9.2): a
+  shared title bar — the three buttons, the title in the interface
+  face, the focused and unfocused states — the counter, the browser
+  and the editor reskinned onto it, and the pointer redrawn as an
+  antialiased sprite.

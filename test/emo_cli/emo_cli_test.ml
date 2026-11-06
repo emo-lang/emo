@@ -967,6 +967,52 @@ main()
                 "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
                 (Filename.quote dir)))
           "3\n104\n");
+    (* The receive's branches each start from the receive's own scope:
+       the first branch's pattern and its `const` were once threaded
+       into the second branch's loop, where nothing bound them (the
+       `if` arm's twin is examples/branch_var's `arm_loops`). *)
+    tc "a name one receive branch binds stays out of the next one's loop"
+      (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let source =
+          {|
+def drain() {
+  receive {
+    (tag, n) -> {
+      const step = n * 2
+      for var i = 0; i < 2; i = i + 1 {
+        println(tag + i * step)
+      }
+    }
+    "done" -> {
+      for var i = 0; i < 2; i = i + 1 {
+        println(i)
+      }
+    }
+  }
+}
+
+def main() {
+  const me = self_pid()
+  me <- (100, 5)
+  me <- "done"
+  drain()
+  drain()
+}
+main()
+|}
+        in
+        let entry = scratch_entry "beam-receive-scope" source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "100\n110\n0\n1\n");
   ]
 
 let root_end_tests =

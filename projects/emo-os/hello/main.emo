@@ -52,6 +52,7 @@ require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_frame"
 require "emo/ui_fb_win"
+require "emo/ui_fb_winbuf"
 require "emo_desktop"
 
 // A scratch page inside this image's read-write segment — the buffer
@@ -491,6 +492,30 @@ class Carve {
       color & 0xFFFFFF)
   }
 
+  // The shapes (emo-desktop A14.1): the window buffer package's typed
+  // walks, one copy for every metal surface — the carve's shape is
+  // theirs, the words packed two to one for the call.
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    ui_fb_winbuf.carve_rounded(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    ui_fb_winbuf.carve_stroke(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    ui_fb_winbuf.carve_shadow(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, soft, color)
+  }
+
   // The commit (emo-desktop A8.3): the backend calls it after every
   // paint. The frame's digest off the carve's own words goes on the
   // wire first (`frame <n>`, the number the hosted twin prints and the
@@ -670,6 +695,27 @@ class Win {
   def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
     carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
       color & 0xFFFFFF)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    ui_fb_winbuf.carve_rounded(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    ui_fb_winbuf.carve_stroke(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    ui_fb_winbuf.carve_shadow(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
+      ui_fb_winbuf.pack(w, h), radius, soft, color)
   }
 
   def present() {

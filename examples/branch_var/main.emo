@@ -38,6 +38,23 @@ def even_sum(n Int64) Int64 {
   return acc
 }
 
+// The other direction: a name an arm declares is that arm's alone, so
+// the sibling arm's own loop never reaches for it — the beam target
+// once threaded the first arm's `step` into the second arm's loop,
+// where nothing bound it.
+def arm_loops(n Int64, wide Bool) {
+  if wide {
+    const step = n * 2
+    for var i = 0; i < 2; i = i + 1 {
+      println(i * step)
+    }
+  } else {
+    for var i = 0; i < 2; i = i + 1 {
+      println(i + n)
+    }
+  }
+}
+
 println(sign(5))
 println(sign(0 - 5))
 println(sign(0))
@@ -45,3 +62,5 @@ println(bucket(0))
 println(bucket(1))
 println(bucket(9))
 println(even_sum(6))
+arm_loops(5, true)
+arm_loops(5, false)

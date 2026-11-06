@@ -59,6 +59,18 @@ class Tally {
     self.glyphs.replace(self.glyphs.read() + 1)
   }
 
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+  }
+
   def present() {
     self.presents.replace(self.presents.read() + 1)
   }

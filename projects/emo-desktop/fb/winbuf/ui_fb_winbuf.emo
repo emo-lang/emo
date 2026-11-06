@@ -246,6 +246,206 @@ def carve_digest(base Int64, width Int64, height Int64) Int64 {
   return d
 }
 
+// ---- the shapes on the carve (emo-desktop A14.1) ----
+//
+// The canvas's walks over raw words: each row walked in from both ends
+// while its pixels are partly covered, the whole pixels between one
+// span — the arithmetic per pixel `ui_fb`'s shapes section, so the
+// carve and the hosted canvas cover every pixel alike. A shape is more
+// words than a call carries (eight at most on this target), so the
+// buffer's extent, the shape's corner and its extent ride two to a word
+// (`pack`); the clip is the loops' own integers, never `ui_fb.clip`'s
+// instance.
+
+// Two coordinates in one word, the first above the second; a negative
+// coordinate survives the trip.
+def pack(a Int64, b Int64) Int64 {
+  return a * 4294967296 + (b & 4294967295)
+}
+
+def high(p Int64) Int64 {
+  return (p - (p & 4294967295)) / 4294967296
+}
+
+def low(p Int64) Int64 {
+  const lo = p & 4294967295
+  if lo >= 2147483648 {
+    return lo - 4294967296
+  }
+  return lo
+}
+
+// The word at address `i` composited through `ui_fb.over` — nothing
+// read or written when the color covers nothing.
+def carve_blend_at(i Int64, color Int64) Void {
+  if ((color >> 24) & 255) > 0 {
+    poke32(i, ui_fb.over(color, peek32(i)))
+  }
+}
+
+// Columns `from` to `to` of the row at address `line` in one color:
+// stored when it is opaque, composited when it is not.
+def carve_span(line Int64, from Int64, to Int64, color Int64) Void {
+  var col = from
+  if ((color >> 24) & 255) >= 255 {
+    const word = color & 0xFFFFFF
+    while col <= to {
+      poke32(line + col * 4, word)
+      col = col + 1
+    }
+  } else {
+    while col <= to {
+      carve_blend_at(line + col * 4, color)
+      col = col + 1
+    }
+  }
+}
+
+// The first visible column or row of a span that starts at `at`.
+def clip_from(at Int64) Int64 {
+  if at < 0 {
+    return 0
+  }
+  return at
+}
+
+// The column or row past a span's last visible one: its end, held to
+// the buffer's `limit`.
+def clip_to(end Int64, limit Int64) Int64 {
+  if end > limit {
+    return limit
+  }
+  return end
+}
+
+// A rounded rectangle graded from `top` to `bottom`, the canvas's
+// `rounded` over the carve.
+def carve_rounded(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                  top Int64, bottom Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  const x1 = clip_to(x + w, width)
+  const y1 = clip_to(y + h, low(dims))
+  var row = clip_from(y)
+  while row < y1 {
+    const color = ui_fb.grade(top, bottom, row - y, h)
+    const line = base + row * width * 4
+    var k = clip_from(x)
+    var j = x1 - 1
+    if ((color >> 24) & 255) == 0 {
+      k = j + 1
+    }
+    while k <= j {
+      const c = ui_fb.fill_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad))
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const c = ui_fb.fill_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad))
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
+    }
+    carve_span(line, k, j, color)
+    row = row + 1
+  }
+}
+
+// The ring `stroke` pixels deep inside a rounded rectangle's edge, the
+// canvas's `stroke` over the carve.
+def carve_stroke(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                 stroke Int64, color Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  var x1 = clip_to(x + w, width)
+  if stroke <= 0 {
+    x1 = 0
+  }
+  const y1 = clip_to(y + h, low(dims))
+  var row = clip_from(y)
+  while row < y1 {
+    const line = base + row * width * 4
+    var k = clip_from(x)
+    var j = x1 - 1
+    while k <= j {
+      const sd = ui_fb.shape_sd(k, row, x, y, w, h, rad)
+      const c = ui_fb.stroke_cover(sd, stroke)
+      if c == 0 && sd < 0 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const sd = ui_fb.shape_sd(j, row, x, y, w, h, rad)
+      const c = ui_fb.stroke_cover(sd, stroke)
+      if c == 0 && sd < 0 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
+    }
+    row = row + 1
+  }
+}
+
+// A rounded rectangle whose edge fades over `soft` pixels, the canvas's
+// `shadow` over the carve.
+def carve_shadow(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                 soft Int64, color Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  const pad = ui_fb.shadow_pad(soft)
+  var x1 = clip_to(x + w + pad, width)
+  if w <= 0 || h <= 0 {
+    x1 = 0
+  }
+  const y1 = clip_to(y + h + pad, low(dims))
+  var row = clip_from(y - pad)
+  while row < y1 {
+    const line = base + row * width * 4
+    var k = clip_from(x - pad)
+    var j = x1 - 1
+    while k <= j {
+      const c = ui_fb.shadow_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad),
+        soft)
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const c = ui_fb.shadow_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad),
+        soft)
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
+    }
+    carve_span(line, k, j, color)
+    row = row + 1
+  }
+}
+
 // A window's buffer as the fb core's `Surface`: the run `win_new`
 // handed, mapped into this pass's own table at the identity of its
 // physical addresses, and the grant the buffer is named by ever after.
@@ -292,6 +492,24 @@ class Win {
   def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
     carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
       color & 0xFFFFFF)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    carve_rounded(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    carve_stroke(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    carve_shadow(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, soft, color)
   }
 
   def present() {

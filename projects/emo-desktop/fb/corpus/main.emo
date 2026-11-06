@@ -50,6 +50,21 @@ class Eye {
     self.canvas.glyph(x, y, top, bottom, color)
   }
 
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.canvas.rounded(x, y, w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.canvas.stroke(x, y, w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.canvas.shadow(x, y, w, h, radius, soft, color)
+  }
+
   def present() {
     println("frame ${ui_fb_frame.digest(self.canvas)}")
   }

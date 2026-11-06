@@ -102,6 +102,54 @@ def over_checks() {
     "a quarter of black over white is three-quarters white")
 }
 
+// ---- the shapes' arithmetic (A14.1): distance, coverage, grade -------
+//
+// The shape is (0, 0, 9, 9) at radius 4 where a pixel is named: a
+// pixel's center against the edge in 256ths, worked by hand.
+
+def shape_checks() {
+  word_is(ui_fb.isqrt(0), 0, "the square root of 0 is 0")
+  word_is(ui_fb.isqrt(15), 3, "a root is floored")
+  word_is(ui_fb.isqrt(16), 4, "an exact square's root is exact")
+  word_is(ui_fb.isqrt(819200), 905, "a corner's distance is floored")
+  word_is(ui_fb.isqrt(4611686018427387904), 2147483648,
+    "the top bit's square root is exact")
+  word_is(ui_fb.isqrt(4611686018427387903), 2147483647,
+    "and one below it floors")
+  word_is(ui_fb.radius_in(4, 9, 9), 4, "a radius inside the shape stands")
+  word_is(ui_fb.radius_in(10, 9, 20), 4, "a radius past half the shorter side is half")
+  word_is(ui_fb.radius_in(-1, 5, 5), 0, "a negative radius is none")
+  word_is(ui_fb.shape_sd(4, 4, 0, 0, 9, 9, 4), -1152,
+    "the middle's center lies four and a half pixels in")
+  word_is(ui_fb.shape_sd(0, 4, 0, 0, 9, 9, 4), -128,
+    "a straight edge's pixel lies half a pixel in")
+  word_is(ui_fb.shape_sd(0, 0, 0, 0, 9, 9, 4), 243,
+    "the corner pixel lies outside the arc")
+  word_is(ui_fb.shape_sd(1, 1, 0, 0, 9, 9, 4), -119,
+    "the next one just inside it")
+  word_is(ui_fb.fill_cover(-128), 255, "a fill covers half a pixel in whole")
+  word_is(ui_fb.fill_cover(0), 128, "the edge itself half")
+  word_is(ui_fb.fill_cover(128), 0, "half a pixel out not at all")
+  word_is(ui_fb.stroke_cover(-128, 1), 255, "a stroke covers the edge's pixel")
+  word_is(ui_fb.stroke_cover(-384, 1), 0, "and not the one past its width")
+  word_is(ui_fb.shadow_cover(0, 4), 128, "a shadow's edge is half its color")
+  word_is(ui_fb.shadow_cover(-128, 4), 174, "eased in on the smoothstep")
+  word_is(ui_fb.shadow_cover(128, 4), 81, "and out on its mirror")
+  word_is(ui_fb.shadow_cover(-640, 4), 255, "whole past half its softness in")
+  word_is(ui_fb.shadow_cover(640, 4), 0, "clear past half its softness out")
+  word_is(ui_fb.shadow_cover(0, 0), ui_fb.shadow_cover(0, 1),
+    "a softness under one pixel is one pixel")
+  word_is(ui_fb.shadow_pad(4), 3, "a shadow reaches half its softness and one past its edge")
+  word_is(ui_fb.cover(0xFFFFFFFF, 128), 0x80FFFFFF, "coverage scales the opacity")
+  word_is(ui_fb.cover(0x80123456, 255), 0x80123456, "whole coverage keeps it")
+  word_is(ui_fb.grade(0xFF000000, 0xFFFF0080, 2, 5), 0xFF800040,
+    "a grade's middle row is halfway in every channel")
+  word_is(ui_fb.grade(0xFF000000, 0xFFFF0080, 4, 5), 0xFFFF0080,
+    "its last row is its bottom")
+  word_is(ui_fb.grade(0x40112233, 0xFF000000, 0, 1), 0x40112233,
+    "a grade one row tall is its top")
+}
+
 // ---- the font: a character's glyph, and a glyph's rows ----------------
 //
 // The rows named here are the drawing's (`glyphs/glyphs.txt`): the `A`
@@ -164,6 +212,7 @@ def script_checks() {
 measure_checks()
 clip_checks()
 over_checks()
+shape_checks()
 font_checks()
 pointer_checks()
 script_checks()

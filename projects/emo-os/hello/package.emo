@@ -9,6 +9,7 @@ package {
     "emo/ui_fb" = "0.1.0"
     "emo/ui_fb_frame" = "0.1.0"
     "emo/ui_fb_win" = "0.1.0"
+    "emo/ui_fb_winbuf" = "0.1.0"
     "emo_desktop" = "0.1.0"
   }
 }

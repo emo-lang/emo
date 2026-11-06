@@ -253,6 +253,14 @@ def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
 // arena before its first line ended; one call per cell is the shape a
 // first frame survives.
 //
+// The shapes are verbs of their own for the same reason (emo-desktop
+// A14.1): `rounded` composites a rounded rectangle graded from `top`
+// down to `bottom`, `stroke` the ring `width` pixels deep inside one's
+// edge, `shadow` one whose edge fades over `soft` pixels — all three
+// with antialiased edges, their colors carrying their opacity in the
+// top byte the way `blend`'s do, and their arithmetic the shapes
+// section's below, so every surface covers every pixel alike.
+//
 // `present` commits a painted frame (A8.3): the backend calls it once
 // after every paint, and what it means is the surface's own business —
 // the metal's carve flushes itself to the display through the gate's
@@ -266,6 +274,12 @@ interface Surface {
   def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) Void
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) Void
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) Void
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) Void
   def present() Void
 }
 
@@ -339,6 +353,190 @@ def over(src Int64, dst Int64) Int64 {
   const g = mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
   const b = mix(src & 0xFF, dst & 0xFF, a)
   return (r << 16) | (g << 8) | b
+}
+
+// ---- shapes: one rounded rectangle, three ways (emo-desktop A14.1) ----
+//
+// The modern face is drawn with one shape, the rounded rectangle — a
+// plain rectangle at radius 0, a pill at half its height, a circle when
+// it is square at half its side — and one function decides how much of
+// a pixel it covers: the signed distance from the pixel's center to the
+// shape's edge, negative inside, in 256ths of a pixel. A fill covers a
+// pixel by how far inside its center lies, over one pixel's ramp; a
+// stroke is the fill less the fill drawn `width` pixels further in; a
+// shadow is the fill's ramp stretched over `soft` pixels on a
+// smoothstep. Integers throughout, so every surface — the hosted
+// canvas, the carve's typed loops, `run.sh`'s model — lands on the same
+// byte. The loops that walk a shape's rows are each surface's own; the
+// arithmetic they ask of each pixel is here.
+//
+// A row of a fill or a shadow rises to full coverage, stays there and
+// falls again — the shape is convex — so a surface walks in from both
+// ends asking each pixel until one is whole, and stores everything
+// between as one span. A stroke's row rises and falls twice, the
+// interior between untouched, so its walks stop where a pixel is clear
+// with its center inside.
+
+// The largest `s` with `s * s <= n`, for `n >= 0`: digit by digit, two
+// bits a step — no division and no float, the same steps on every
+// target.
+def isqrt(n Int64) Int64 {
+  var rem = n
+  var root = 0
+  var bit = 1 << 62
+  while bit > rem {
+    bit = bit >> 2
+  }
+  while bit != 0 {
+    if rem >= root + bit {
+      rem = rem - (root + bit)
+      root = (root >> 1) + bit
+    } else {
+      root = root >> 1
+    }
+    bit = bit >> 2
+  }
+  return root
+}
+
+// The radius a `w` by `h` shape can carry: never negative, never past
+// half the shorter side — the circle's.
+def radius_in(radius Int64, w Int64, h Int64) Int64 {
+  var r = radius
+  if r < 0 {
+    r = 0
+  }
+  if r * 2 > w {
+    r = w / 2
+  }
+  if r * 2 > h {
+    r = h / 2
+  }
+  return r
+}
+
+// The signed distance from the center of pixel `(px, py)` to the edge
+// of the shape `(x, y, w, h)` with corner radius `radius` (within the
+// shape — `radius_in`'s), in 256ths of a pixel: the corners' arcs exact
+// to the square root's floor, the straight edges exact.
+def shape_sd(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64,
+             radius Int64) Int64 {
+  const cx = px * 256 + 128
+  const cy = py * 256 + 128
+  const rr = radius * 256
+  var sx = x * 256 + rr - cx
+  const sx_right = cx - ((x + w) * 256 - rr)
+  if sx_right > sx {
+    sx = sx_right
+  }
+  var sy = y * 256 + rr - cy
+  const sy_bottom = cy - ((y + h) * 256 - rr)
+  if sy_bottom > sy {
+    sy = sy_bottom
+  }
+  var outside = 0
+  if sx > 0 && sy > 0 {
+    outside = isqrt(sx * sx + sy * sy)
+  } else {
+    if sx > 0 {
+      outside = sx
+    }
+    if sy > 0 {
+      outside = sy
+    }
+  }
+  var inside = sx
+  if sy > inside {
+    inside = sy
+  }
+  if inside > 0 {
+    inside = 0
+  }
+  return outside + inside - rr
+}
+
+// `v` held to one pixel's ramp, 0 to 256.
+def ramp(v Int64) Int64 {
+  if v < 0 {
+    return 0
+  }
+  if v > 256 {
+    return 256
+  }
+  return v
+}
+
+// A fill's coverage of a pixel, out of 255: whole half a pixel inside
+// the edge, none half a pixel outside, a straight ramp between.
+def fill_cover(sd Int64) Int64 {
+  return (ramp(128 - sd) * 255 + 128) / 256
+}
+
+// A stroke's coverage, out of 255: the fill's less the fill's of the
+// edge pulled `width` pixels in.
+def stroke_cover(sd Int64, width Int64) Int64 {
+  const outer = ramp(128 - sd)
+  const inner = ramp(128 - sd - width * 256)
+  return ((outer - inner) * 255 + 128) / 256
+}
+
+// A shadow's coverage, out of 255: the ramp spread over `soft` pixels
+// (one at least) centered on the edge, eased on a smoothstep — the
+// position along it in 4096ths, so the cube stays inside 64 bits
+// however soft the edge.
+def shadow_cover(sd Int64, soft Int64) Int64 {
+  var s = soft
+  if s < 1 {
+    s = 1
+  }
+  const span = s * 256
+  const c = s * 128 - sd
+  if c <= 0 {
+    return 0
+  }
+  if c >= span {
+    return 255
+  }
+  const t = (c * 4096) / span
+  return (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+}
+
+// `color` at `coverage` out of 255 of its own opacity: the top byte
+// scaled, the channels untouched — what `over` composites.
+def cover(color Int64, coverage Int64) Int64 {
+  const a = (((color >> 24) & 0xFF) * coverage + 127) / 255
+  return (a << 24) | (color & 0xFFFFFF)
+}
+
+// One channel at step `i` of a `d`-step line from `a` to `b`, rounded
+// to nearest.
+def lerp8(a Int64, b Int64, i Int64, d Int64) Int64 {
+  return ((a & 0xFF) * (d - i) + (b & 0xFF) * i + d / 2) / d
+}
+
+// Row `i` of an `n`-row grade from `top` to `bottom`: every channel,
+// the opacity with them, on its own straight line — `top` on the first
+// row, `bottom` on the last.
+def grade(top Int64, bottom Int64, i Int64, n Int64) Int64 {
+  if n <= 1 || top == bottom {
+    return top
+  }
+  const d = n - 1
+  const a = lerp8(top >> 24, bottom >> 24, i, d)
+  const r = lerp8(top >> 16, bottom >> 16, i, d)
+  const g = lerp8(top >> 8, bottom >> 8, i, d)
+  const b = lerp8(top, bottom, i, d)
+  return (a << 24) | (r << 16) | (g << 8) | b
+}
+
+// How far a shadow's ramp reaches past its shape's edge, in whole
+// pixels: half its softness and one more — every pixel past it is
+// clear.
+def shadow_pad(soft Int64) Int64 {
+  if soft < 1 {
+    return 1
+  }
+  return soft / 2 + 1
 }
 
 // ---- place: the tree onto the surface ----
