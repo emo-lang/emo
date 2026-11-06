@@ -416,6 +416,33 @@ lives elsewhere, in editor support for `.emoui` and span-accurate
 error mapping, both still undone. The mechanisms this note closes stay
 closed: the lowering emits into a named builder, never into a context.
 
+**A decision, 2026-11-06: neither earns its place.** The evidence gap
+the note asked for filled itself — the tree now carries real views in
+the B spelling at real scale, and B's last missing piece landed on the
+metal (`ArrayBuilder` on `riscv64`, T8.25, 2026-11-05), so the
+spelling is one on every target. What the real code shows: the tree's
+EmoUI views are the corpus application and the desktop's three apps,
+each a five-to-nine-node tree; fixed child lists are array literals,
+which is the clearest spelling for fixed data; and the builder — the
+one thing B adds — appears in exactly one view in the wild (the
+corpus's scroll items, three pushes exercising the vocabulary on
+purpose), five lines. The spike's feared 44-of-95 builder proportion
+never showed up in real code, because real screens so far have small
+and mostly fixed child lists. D's prototype stands as it stood (its
+demo's 52-vs-65 delta unchanged), and its real costs are still
+unpaid: editor support for `.emoui`, span-accurate error mapping, a
+place in the build, and a second syntax documented across six
+backends — real money with no customer in the tree. So the standing
+order answers itself: **B, landed; the ergonomics do not still hurt;
+D stays a prototype; C stays out.** The question reopens with a
+measurable trigger, named here so it cannot drift: **a real screen
+whose data-driven child lists make builder statements outnumber
+widget calls** — the spike's 44-of-95 shape appearing in real code.
+At that point D ships (the prototype grows the editor half and a
+build place), and C is priced again only against D's then-realized
+toolchain cost. Q2's disposition follows: the translator's standing
+is the demo's.
+
 ## References
 
 - [`emo-ui.md`](emo-ui.md) — the assessment; Layer 1 is the composition

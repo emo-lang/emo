@@ -19,26 +19,31 @@ package references beside this file.
 
 ## The open questions (recorded 2026-11-05)
 
-- [ ] **Q1** — Whether the array-children spelling earns a literal at
-  all. The settled base is explicit `Array[Node]` children (the
-  assessment's decision 3) with `ArrayBuilder` as the dynamic
-  collector (settled 2026-10-15, T49.3 — option B's missing piece, no
-  longer missing), so the question stands exactly as the composition
-  record narrows it: does Emo's grammar grow markup-aware (C), does
-  EmoUI ship a second syntax (D), or does neither earn its place. The
-  evidence in hand is the `spike/emo-ui-spelling` measurement
-  (2026-10-15): A is 95 lines against B's 40 for byte-identical
-  renders, and 44 of A's 95 are iteration builders a literal
-  inherits — a tree literal deletes brackets (72 tokens to 18) and
-  nothing else, no `children:` label among them — so C's price
-  (parser, checker, six backends, formatter, LSP) buys the brackets
-  and leaves the builders, earning it only if the literal also grows
-  a loop form, at which point the thing being priced is no longer a
-  tree literal. The record's standing order: B, landed; then D if the
-  ergonomics still hurt; C only if D's second toolchain turns out to
-  cost more than a markup-aware grammar. Settling is a dated update to
-  the composition record's "What is closed, and what is open", and
-  this line checks off.
+- [x] **Q1** — Whether the array-children spelling earns a literal at
+  all. Settled 2026-11-06: **neither earns its place.** The standing
+  order's gate was "then D if the ergonomics still hurt", and the
+  evidence gap the composition record named — real code in the
+  spelling — has filled itself: the tree's EmoUI views are the corpus
+  application and the desktop's three apps, five-to-nine-node trees
+  whose fixed child lists are array literals (the clearest spelling
+  for fixed data) and whose builder statements appear in exactly one
+  view in the wild (the corpus's scroll items, exercising the
+  vocabulary on purpose), five lines — the spike's feared 44-of-95
+  builder proportion never showed up in real code. B's last missing
+  piece landed on the metal (T8.25, 2026-11-05), so the spelling is
+  one on every target. D's costs are still what the 2026-10-18
+  prototype named — editor support, span-accurate error mapping, a
+  place in the build, a second syntax documented across six backends
+  — real money with no customer in the tree; C's price buys brackets
+  only and is dominated. So: B, landed; the ergonomics do not still
+  hurt; D stays a prototype (its demo unchanged), C stays out. The
+  question reopens with a measurable trigger, named in the
+  composition record's dated update: a real screen whose data-driven
+  child lists make builder statements outnumber widget calls — the
+  spike's 44-of-95 shape appearing in real code. Settling is the
+  composition record's dated update ("A decision, 2026-11-06") and
+  this line checks off. Q2's disposition follows: the translator's
+  standing is the demo's.
 - [ ] **Q2** — Where the `.emoui` translator sits in that question. D
   exists as a working prototype (2026-10-18,
   [`translator/`](../translator)): a stdin-to-stdout filter, 1,239

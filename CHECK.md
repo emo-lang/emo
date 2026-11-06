@@ -239,13 +239,19 @@ closed 2026-11-06:**
 **emo-ui — [the open questions](projects/emo-ui/docs/TASKS.md)
 (registered 2026-11-05):**
 
-- [ ] **Q1** — whether the array-children spelling earns a literal at
-  all (C, D, or neither); the evidence in hand is the spelling spike's
-  measurement, the standing order "B, landed; then D if the ergonomics
-  still hurt; C only if D's second toolchain costs more".
+- [x] **Q1** — whether the array-children spelling earns a literal at
+  all — settled 2026-11-06: **neither earns its place.** B landed on
+  every target (T8.25); the real views in the tree are small and
+  mostly fixed lists, the builder appearing in exactly one view in
+  the wild; D's editor half and build place have no customer; C is
+  dominated. The reopen trigger is named in the composition record's
+  dated update: a real screen whose builder statements outnumber its
+  widget calls.
 - [ ] **Q2** — where the `.emoui` translator (the working D prototype)
   sits until Q1 decides: a demo, or the seed of a shipped D — its
-  editor support and span-accurate error mapping still undone.
+  editor support and span-accurate error mapping still undone. (Q1's
+  decision answers the question — the standing is the demo's — but
+  the line stays for its own check-off.)
 
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block

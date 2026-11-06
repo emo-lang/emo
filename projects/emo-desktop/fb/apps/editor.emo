@@ -41,8 +41,9 @@ def initial() Model {
 // The buffer with `s` typed into the row the cursor is on: a new rows
 // array, the cursor's row grown, the other carried — the model's value
 // discipline, the before never touched. A literal of the buffer's own
-// two-row shape — the metal lowers no `ArrayBuilder` (A10.3's
-// found-not-fixed), and the buffer is fixed data.
+// two-row shape — the buffer is fixed data, and a literal is the
+// clearer spelling for it (Q1's verdict: builders for dynamic lists,
+// literals for fixed ones).
 def typed(m Model, s String) Model {
   if m.row() == 0 {
     return Model.new(rows: [m.rows()[0] + s, m.rows()[1]], row: 0)

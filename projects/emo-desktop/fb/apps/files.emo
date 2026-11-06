@@ -68,8 +68,9 @@ def view(reg ui.Registry, m Model) ui.Node {
   // the input's tags alone — the metal's keys, the golden's script —
   // no visible node carries them; `open` is the one button, the click
   // affordance the hosted families share. The children are a literal
-  // of the catalog's own shape — the metal lowers no `ArrayBuilder`
-  // (A10.3's found-not-fixed), and the seed catalog is fixed data.
+  // of the catalog's own shape — the seed catalog is fixed data, and
+  // a literal is the clearer spelling for it (Q1's verdict: builders
+  // for dynamic lists, literals for fixed ones).
   const down = reg.on(Msg.down)
   const up = reg.on(Msg.up)
   const open = reg.on(Msg.open)
