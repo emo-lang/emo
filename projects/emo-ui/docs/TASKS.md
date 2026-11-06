@@ -44,8 +44,9 @@ package references beside this file.
   composition record's dated update ("A decision, 2026-11-06") and
   this line checks off. Q2's disposition follows: the translator's
   standing is the demo's.
-- [ ] **Q2** — Where the `.emoui` translator sits in that question. D
-  exists as a working prototype (2026-10-18,
+- [x] **Q2** — Where the `.emoui` translator sits in that question.
+  Settled 2026-11-06, following Q1: **the translator's standing is the
+  demo's.** D exists as a working prototype (2026-10-18,
   [`translator/`](../translator)): a stdin-to-stdout filter, 1,239
   lines of Emo across four modules, no compiler change, its demo
   holding the literal form to the A spelling through `debug.render`
@@ -53,8 +54,11 @@ package references beside this file.
   prototype settled that the translator itself stays cheap — leaf
   expressions are opaque spans, it never parses Emo — and that D's
   real cost lives elsewhere: editor support for `.emoui` and
-  span-accurate error mapping, both still undone. Where it sits — a
-  demo until Q1 decides, or the seed of a shipped D growing the
-  editor half and a place in the build — follows Q1; this entry
-  exists so the prototype's standing is on the record rather than
-  implied.
+  span-accurate error mapping, both still undone. Q1's verdict (same
+  day: neither earns its place) leaves those costs without a customer,
+  so the prototype ships nothing and grows nothing — it stays in the
+  tree exactly as it is, the working answer to "what would D look
+  like", kept green by its own demo gate. It becomes the seed of a
+  shipped D only when Q1's named trigger fires (a real screen whose
+  builder statements outnumber its widget calls), at which point this
+  verdict is the first thing to revisit.

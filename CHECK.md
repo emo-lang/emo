@@ -247,11 +247,13 @@ closed 2026-11-06:**
   dominated. The reopen trigger is named in the composition record's
   dated update: a real screen whose builder statements outnumber its
   widget calls.
-- [ ] **Q2** — where the `.emoui` translator (the working D prototype)
-  sits until Q1 decides: a demo, or the seed of a shipped D — its
-  editor support and span-accurate error mapping still undone. (Q1's
-  decision answers the question — the standing is the demo's — but
-  the line stays for its own check-off.)
+- [x] **Q2** — where the `.emoui` translator (the working D prototype)
+  sits — settled 2026-11-06, following Q1: **the standing is the
+  demo's.** It ships nothing and grows nothing until Q1's named
+  trigger fires (a real screen whose builder statements outnumber its
+  widget calls); then it becomes the seed of a shipped D, and its
+  undone editor support and span-accurate error mapping are the first
+  work.
 
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
