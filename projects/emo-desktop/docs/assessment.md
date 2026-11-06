@@ -174,7 +174,11 @@ no-reclaim arena (the pool is a precondition, not a parallel), the
 cooperative single hart (preemption must land; `-smp` is parked, not
 impossible), the single image with many passes (M11), and generic IPC
 (portal-class services will want it; build it when a measured path
-demands it).
+demands it). All four have their endings now: the pool landed (T8.7),
+preemption landed (EmoOS T8.21, 2026-11-06), the single image landed
+(M11), and generic IPC measured and closed (EmoOS T8.22, 2026-11-06 —
+no path demands it; the rule stays, and a portal-class service is the
+named trigger that reopens it).
 
 M7 and M9's specs take five increments each from this contract —
 recorded with their tasks in the trackers.

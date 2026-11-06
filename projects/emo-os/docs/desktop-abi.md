@@ -151,7 +151,10 @@ the next piece), the cooperative single hart (tick preemption landed
 2026-11-06 — the boot stub assigns the root's slice and every process
 inherits it; `-smp` is parked, not impossible), the single image with
 many passes
-(M11's own work), and generic IPC (portal-class services will want
-it; it is built when a measured path demands it). None of these is a
-protocol change; all four are machine- and language-side work,
-tracked in this project's Step 8.
+(M11's own work), and generic IPC (measured 2026-11-06: no path
+demands it — the bulk already crosses shared memory behind six-word
+control, and the desktop era's real contention was absorbed by the
+verb protocol's slot staging; the rule stays standing law and a
+portal-class service is the named trigger that reopens it). None of
+these is a protocol change; all four are machine- and language-side
+work, tracked in this project's Step 8.

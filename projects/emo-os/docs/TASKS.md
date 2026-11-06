@@ -360,12 +360,14 @@ numbering rule the day they land.
   `@fmt` green; the fb gate green. Decision record: CHECK.md,
   2026-11-05.
 
-## Step 8 — the open tail (recorded 2026-11-05)
+## Step 8 — the open tail (recorded 2026-11-05, closed 2026-11-06)
 
-The tasks above are M7–M11, all landed. What follows is everything
+The tasks above are M7–M11, all landed. What follows was everything
 open on this side of the gate, given numbers so the remaining work
-can carry progress; CHECK.md's "remaining work" list (2026-11-05)
-mirrors it beside the desktop's and the compiler's.
+could carry progress; CHECK.md's "remaining work" list (2026-11-05)
+mirrored it beside the desktop's and the compiler's. The tail is
+closed 2026-11-06: T8.19, T8.20 and T8.21 landed, T8.22 measured and
+closed — the whole of Step 8 complete.
 
 - [x] **T8.19** — The desktop shell era, the kernel side: the
   `parent_for` table (`0x8700d000`), the exit event ring
@@ -513,10 +515,39 @@ mirrors it beside the desktop's and the compiler's.
   leak, the +1 held); `dune runtest` green with the smoke (352);
   `@fmt` green; the fb gate green (134). Decision record: CHECK.md,
   2026-11-06.
-- [ ] **T8.22** — Generic IPC, the honest four's fourth: portal-class
-  services will want it; the assessment's rule is to build it when a
-  measured path demands it, never before. Unscheduled until that
-  path exists and is named here.
+- [x] **T8.22** — Generic IPC, the honest four's fourth — measured
+  2026-11-06 and closed: no path demands it. The measurement is the
+  machine's own traffic, read off the committed golden boot's serial
+  (7,735 bytes, the session's whole console output) and the install
+  lines' arithmetic, against the message economy the ABI actually
+  runs. The bulk never rides a mailbox anywhere: the gate's write
+  stages up to 2048 bytes in one message and answers in one; a file
+  read or write is one request whose bytes the service lays into the
+  caller's own buffer through the caller-table translation; the
+  driver's sector requests carry a pointer, not the bytes (fs.md's
+  ops 3/4); the desktop's pixels live in the window buffer's carve
+  and `present(grant, x, y, w, h)` is six words — the portal pattern,
+  share plus doorbell, already the shape wherever bulk matters. The
+  one chatty boundary is fs↔driver, one request per sector: a boot
+  that installs and then execs the four images moves their 2,618
+  sectors twice — about 2,600 request-and-reply pairs, some 5,200
+  messages, across the boot's
+  minutes — tens of round-trips a second at the bursts, three orders
+  under anything a 10 ms tick could feel, every message a
+  pointer-and-words pair the copy discipline never fattens. The
+  demand the desktop era actually surfaced — two clients' verbs
+  colliding in the compositor's one staging cell — the gate absorbed
+  with slot staging inside the verb protocol (T8.15, A12.1): the
+  generalization's real demand arrived, and the existing mechanism
+  took it. So the fourth closes the way the assessment's rule says it
+  must: built never, measured now. The rule stays the tree's standing
+  law, and the trigger that reopens the question is named — a
+  portal-class service arriving (a network stack's per-connection
+  namespaces, a second compositor family, a client-visible portal
+  object) is the measured path the rule waits for; until one exists,
+  generic IPC has no client and earns no place. No machine byte
+  changed; the committed round's pins stand (`1e570c4`). Decision
+  record: CHECK.md, 2026-11-06.
 - [x] **T8.23** — `decl_type` enriched: the checker's `decl_to_type`
   mirrored over the IR's own symbol tables, so a signature's `Byte`,
   its applied annotations (`Array[T]`, `Box[T]`, …) and its declared

@@ -184,7 +184,8 @@ compiler's standing debts carry no plan step yet — they are listed
 here so they cannot drift, and enter `docs/TASKS.md` when a step
 claims them.
 
-**EmoOS — [Step 8's open tail](projects/emo-os/docs/TASKS.md):**
+**EmoOS — [Step 8's open tail](projects/emo-os/docs/TASKS.md),
+closed 2026-11-06:**
 
 - [x] **T8.19** — the desktop shell era, kernel side: `parent_for`,
   the exit event ring, the death kick, the comp verbs' slot staging
@@ -199,8 +200,10 @@ claims them.
   boot stub assigns the root's slice, every process inherits it, the
   spinner is the busy app the golden proves it with; landed
   2026-11-06 — the record is the dated section below).
-- [ ] **T8.22** — generic IPC — the honest four's fourth (build when
-  a measured path demands it). Unscheduled.
+- [x] **T8.22** — generic IPC — the honest four's fourth — measured
+  2026-11-06 and closed: no path demands it; the rule stays standing
+  law with the reopen trigger named (the record is the dated section
+  below). Step 8 whole.
 
 **emo-desktop — [M12 complete](projects/emo-desktop/docs/TASKS.md):**
 
@@ -247,6 +250,50 @@ claims them.
 The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
 nothing.
+
+## 2026-11-06 — The honest four's fourth measured and closed (EmoOS T8.22)
+
+- The rule was "build it when a measured path demands it, never
+  before", and the round's work is the measurement. The machine's
+  message economy, read off the committed golden boot (the serial's
+  7,735 bytes the session's whole console output; the install lines'
+  arithmetic for the bulk) and against the ABI's actual shapes: **the
+  bulk never rides a mailbox anywhere**. The gate's write stages up
+  to 2048 bytes in one message and answers in one; a file read or
+  write is one request whose bytes the service lays into the caller's
+  own buffer through the caller-table translation; the block driver's
+  sector requests carry a pointer, not the bytes; the desktop's
+  pixels live in the window buffer's carve and
+  `present(grant, x, y, w, h)` is six words — **the portal pattern,
+  share plus doorbell, is already the shape wherever bulk matters**,
+  built per path where each path earned it.
+- The one chatty boundary is fs↔driver, one request per sector: a
+  boot that installs and then execs the four images moves their 2,618
+  sectors twice — about 2,600 request-and-reply pairs, some 5,200
+  messages, across the boot's
+  minutes, tens of round-trips a second at the bursts, three
+  orders of magnitude under anything a 10 ms tick could feel, and
+  every message a pointer-and-words pair the copy discipline never
+  fattens. The demand the desktop era actually surfaced — two
+  clients' verbs colliding in the compositor's one staging cell, the
+  `comp_args` race the prototype lost tiles to — the gate absorbed
+  with slot staging inside the verb protocol (T8.15, A12.1): the
+  generalization's real demand arrived, and the existing mechanism
+  took it without a new IPC class.
+- The verdict, then, is the rule applied to itself: generic IPC is
+  built never, measured now. **The rule stays the tree's standing
+  law** — the assessment's scalability contract keeps it — and the
+  trigger that reopens the question is named: a portal-class service
+  arriving (a network stack's per-connection namespaces, a second
+  compositor family, a client-visible portal object) is the measured
+  path the rule waits for. Until one exists, generic IPC has no
+  client and earns no place — the design philosophy's own test, the
+  construct refusing itself.
+- Pins: no machine byte changed — the round touches the trackers and
+  the honest-four paragraphs alone; the committed tree's pins stand
+  (`1e570c4`: the golden byte-identical three rounds on both
+  transports, the ledger `frames 616 551`, dune's 352, the fb gate
+  134).
 
 ## 2026-11-06 — The tick's slice assigned at the machine's door (EmoOS T8.21)
 
