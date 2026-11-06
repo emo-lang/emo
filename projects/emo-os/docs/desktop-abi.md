@@ -147,8 +147,10 @@ The arena's residue (the autorelease pool landed as the Elm loop's
 precondition and the loop runs on it, emo-desktop A8.3 — what bounds
 a session now is the dynamic convention's boxed numbers, about 3 KiB
 a node and 600 bytes a glyph per frame, and typed method bodies are
-the next piece), the cooperative single hart (preemption must land;
-`-smp` is parked, not impossible), the single image with many passes
+the next piece), the cooperative single hart (tick preemption landed
+2026-11-06 — the boot stub assigns the root's slice and every process
+inherits it; `-smp` is parked, not impossible), the single image with
+many passes
 (M11's own work), and generic IPC (portal-class services will want
 it; it is built when a measured path demands it). None of these is a
 protocol change; all four are machine- and language-side work,

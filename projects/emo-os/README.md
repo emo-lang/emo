@@ -8,7 +8,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 
 ## Position
 
-- **xv6-class — not FreeRTOS-class, not production.** Soft real-time, cooperative-first. Hard real time and functional-safety certification are out of scope; the boundary is analyzed in the Emo tree's [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md).
+- **xv6-class — not FreeRTOS-class, not production.** Soft real-time, cooperative-first with tick preemption (the boot stub assigns every process a slice; a busy app no longer freezes the desktop). Hard real time and functional-safety certification are out of scope; the boundary is analyzed in the Emo tree's [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md).
 - **The point is closure.** One compiler emits the kernel image and the user programs; the shell and the console UI are Emo with EmoUI. No second language crosses the privilege boundary.
 
 ## Architecture — the structured microkernel

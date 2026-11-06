@@ -8,7 +8,7 @@ English version: [`README.md`](README.md).
 
 ## 定位
 
-- **xv6 量级——不是 FreeRTOS 量级，不是生产系统。** 软实时、协作式优先。硬实时与功能安全认证不在范围内；边界分析在 Emo 主树的 [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md)。
+- **xv6 量级——不是 FreeRTOS 量级，不是生产系统。** 软实时、协作式优先，叠加 tick 抢占（boot stub 给每个进程指派时间片；忙碌的应用不再冻住桌面）。硬实时与功能安全认证不在范围内；边界分析在 Emo 主树的 [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md)。
 - **核心价值是闭环。** 同一个编译器产出内核镜像与用户程序；shell 和控制台 UI 是 Emo + EmoUI。特权边界两侧没有第二门语言。
 
 ## 架构——结构化微内核

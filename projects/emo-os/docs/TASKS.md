@@ -407,25 +407,112 @@ mirrors it beside the desktop's and the compiler's.
   (352); `@fmt` green; the fb gate green (112). The desktop-side
   acceptance is emo-desktop's A12.2, landed the same round. Decision
   record: CHECK.md, 2026-11-06.
-- [ ] **T8.20** — The mailbox's send-send window, found standing at
-  T8.18 and left by decision as its own round: `emo_mb_count` scans
-  the mailbox unmasked and `emo_send` deliberately leaves a word for
-  a running target without a wake, so a send landing between a
-  receiver's scan and its state-2 write parks the receiver with a
-  word already queued. No reproduction exists; the harm differs from
-  the device park's — the sender yields on the spot, so an emptied
-  run queue is the scheduler's loud deadlock, not a silent stall,
-  and any later message wakes the pair. The fix shapes weighed: a
-  masked re-scan at the park, or the tick sweeping state 2 as T8.18
-  sweeps state 4.
-- [ ] **T8.21** — Preemption, the honest four's remaining one (the
-  [assessment](../../emo-desktop/docs/assessment.md)): the hart is
-  cooperative and a busy app freezes the desktop — "the pool and
-  preemption together are what make an honest multi-app", and the
-  pool is landed (T8.7). Tick preemption is the shape; `-smp` stays
-  parked, not impossible. Unscheduled: this entry exists so the debt
-  carries a number and a trigger — the desktop's eras name the
-  acceptance that needs it.
+- [x] **T8.20** — The mailbox's send-send window, found standing at
+  T8.18 and closed at the park itself: the receive site passes the
+  scan's own count (`s0`, which reaches the park only when it has met
+  that count — the mailbox's length can only grow across a park-bound
+  scan, for the scanner alone removes) and `emo_park_receive` —
+  masked from its first instruction — reads the mailbox's length once
+  more before writing state 2. Grown past the scan's count, a word
+  landed in the window between the scan's last read and the mask, and
+  the call simply returns — no park, the receive site's scan restarts
+  and the word is examined; equal, nothing landed since the read (the
+  mask runs on through the state write, so no producer can slip past
+  the check) and the words queued are the scan's own rejects — the
+  selective receive's honest sleep, waiting for one its patterns
+  accept. The compare is what the tick sweep could never be: a sweep
+  of state 2 cannot tell a lost wake from a selective wait — both are
+  state 2 with words queued, and the parked count is the scanner's
+  own, so the sweep would wake every selective sleeper whose mailbox
+  holds its own rejects, a spurious pass every tick forever, and buy
+  a one-tick delay where the compare costs one load — the sweep
+  rejected by the reason T8.18 itself recorded, the sweep is the
+  remedy for a park whose check cannot move into the stub, and the
+  receive park's check is one word in the slot. The new invariant — a
+  state-2 slot's mailbox holds only words its scan saw — is what the
+  send's and the gate post's state-2 wakes rest on, both producers
+  covered (the compare is producer-agnostic). The window was also
+  named latent this round: no surface sets the slots' quota word, so
+  it is 0 everywhere and the tick's quota step answers dormant —
+  nothing is ever preempted until T8.21 lands preemption — and no
+  ISR-side producer enqueues mailbox words, so no honest run can open
+  it — no reproduction existed because the interleaver does not exist
+  yet. The round built one: a debug `call emo_yield` emitted between
+  the drain and the park call (the count argument refreshed after —
+  the yield spends a0), the window's own interleaver, against a
+  scenario of a receiver, a sender of N messages and a root waiting
+  for both announces. Pre-fix, N=2001: `sender done`, then the loud
+  deadlock — `all processes are blocked; no message will ever arrive`
+  — the receiver parked holding its last message, every run;
+  N=2000's parity met the other recorded harm, any later message
+  waking the pair and the run completing. Post-fix, the same forced
+  window: clean, three rounds at both N. The knob removed; the
+  shipped code is the compare alone, and the scenario runs clean on
+  it three rounds. The scenario archived at
+  `protected/tmp/20261106-t820-scenario/` (its README carries the
+  debug emission). Found on the way, fixed: the fb gate's dock
+  section was red before this round's first byte — every leg's build
+  refused with E5007, `desktop/golden/package.lock`'s
+  `emo_desktop 0.1.0` checksum disagreeing with the registry's
+  content, the lock never regenerated when 785625f grew
+  `emo_desktop.emo` (the T8.19 round's "fb gate green (112)" pin
+  predates the source's final state, and the committed tree has been
+  red since) — the stale lock moved aside, the toolchain wrote a
+  fresh one, and the gate's count is the honest 134. The pins:
+  `dune runtest` green with the smoke (352); `@fmt` green; `run.sh`
+  green under both timer transports, three consecutive rounds
+  byte-identical on both; the fb gate green (134, the dock's lock
+  refreshed); the ledger `frames 510 446` unchanged (the compare
+  allocates nothing). Decision record: CHECK.md, 2026-11-06.
+- [x] **T8.21** — Preemption, the honest four's remaining one: the
+  quota word the machinery has read since T3.6 is finally written.
+  The machinery was whole and dormant — the tick's ISR has run the
+  quota step and the preemption since T3.6 (`emo_sched_tick`
+  answering 1 when the slice is spent, `emo_sched_preempt` re-queuing
+  the victim at its trap frame and picking the next, the pick loading
+  the incoming slot's quota into `emo_slice_left`, the spawn copying
+  the parent's policy words) — but no surface set any slot's quota,
+  so it was 0 everywhere and the step answered dormant. The landing
+  is the store at the machine's door: the boot stub assigns the root
+  slot's quota — five ticks, 50 ms of the 10 ms tick — right after
+  `emo_runtime_init` dresses the root, and every process inherits it
+  at the spawn. The proof is a busy app, the spinner
+  (`fb/apps/spin/`, the fourth disk ELF — the stub parks its bounds
+  at the handoff page's `0x87002200` pair, the first boot installs it
+  beside the three, the volume carries it): a counted loop with no
+  window, no message, and no yield, exec'd from the REPL's own
+  command, its one announce only when the count is out. The
+  announce's timing is the point: the runtime's println is a write
+  ecall per byte and the shell's echo the same transaction
+  granularity, so a line landing mid-echo weaves with the echo's
+  bytes and never forms its literal — the count is sized past the
+  echo's drain. The golden's order is the assertion: `echo spin
+  still` fed while the loop runs is answered only because the tick
+  spends the spinner's slice and the pick dispatches the shell — the
+  cooperative hart would leave the echo nothing until the count was
+  out; the golden demands the answer on the wire while `spin done` is
+  absent, the done whole only after, and the pre-fix boot (the
+  stub's store reverted) fails exactly there. Found on the way, two
+  pieces: the runtime's `emo_procs` was table-local — the stub's
+  quota store was the first cross-object reference to it and the
+  kernel link refused — now `.globl`; and the boot's entry shim ran
+  its table switch unmasked, a race older than the quota —
+  `emo_os_user_boot` was S-mode on the pass's own table from the
+  `satp` write to the `sret` with interrupts live, and a tick landing
+  in the window ran the ISR's low-window wake reads on a table that
+  maps none of them, the load page fault the kernel's loud end. Every
+  boot since T6.3 had missed the window by microseconds; the
+  spinner's eight bytes moved the boot's tick phase and the round's
+  sstc boot died at `user: staged` — the fix is the pick's own mask
+  discipline at the shim, the `sret` restoring SIE from the frame's
+  SPIE. The pins: the golden green under both timer
+  transports, three consecutive rounds byte-identical on both; the
+  ledger `frames 616 551` (the spinner's cycle: the file's scratch,
+  the 99-block image run, the spawn's four-block arena run and the
+  stack all home at the exit; the handoff page the exec's documented
+  leak, the +1 held); `dune runtest` green with the smoke (352);
+  `@fmt` green; the fb gate green (134). Decision record: CHECK.md,
+  2026-11-06.
 - [ ] **T8.22** — Generic IPC, the honest four's fourth: portal-class
   services will want it; the assessment's rule is to build it when a
   measured path demands it, never before. Unscheduled until that

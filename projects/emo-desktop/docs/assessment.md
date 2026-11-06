@@ -84,7 +84,9 @@ The pieces, as researched:
 3. **Cooperative, one hart, no tick preemption.** A busy app freezes
    the desktop. The pool and preemption together are what make an
    honest multi-app M11; until then the discipline is the one the
-   shell already keeps.
+   shell already keeps. (Landed 2026-11-06: EmoOS T8.21 — the boot
+   stub assigns every process a slice, the tick preempts a spent one,
+   and the busy spinner is the golden's proof.)
 
 ## The phasing
 

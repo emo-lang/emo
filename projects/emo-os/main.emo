@@ -84,15 +84,18 @@ const proc_argb = koff + 0x870021b8
 
 // The disk ELFs' blobs (emo-desktop A11.1): the three apps' images,
 // embedded beside the boot image (user.S), their bounds parked at the
-// handoff page's free tail (runtime.S). The first boot writes each
-// onto the volume when a probe says the file is missing — the machine
-// installs its own apps — and every exec after loads from the disk.
+// handoff page's free tail (runtime.S) — and, since T8.21, the
+// spinner's beside them. The first boot writes each onto the volume
+// when a probe says the file is missing — the machine installs its own
+// apps — and every exec after loads from the disk.
 const app_blob_c = koff + 0x870021d0
 const app_blob_c_end = koff + 0x870021d8
 const app_blob_f = koff + 0x870021e0
 const app_blob_f_end = koff + 0x870021e8
 const app_blob_e = koff + 0x870021f0
 const app_blob_e_end = koff + 0x870021f8
+const app_blob_s = koff + 0x87002200
+const app_blob_s_end = koff + 0x87002208
 
 // The process service's screen-pass state (T8.2), on the exec page's
 // tail: the granted child's pid and the carve's base, across requests —
@@ -3380,6 +3383,18 @@ def put_editor_name(a Int64) Int64 {
   return 10
 }
 
+def put_spin_name(a Int64) Int64 {
+  poke8(a, 115B)     // s
+  poke8(a + 1, 112B) // p
+  poke8(a + 2, 105B) // i
+  poke8(a + 3, 110B) // n
+  poke8(a + 4, 46B)  // .
+  poke8(a + 5, 101B) // e
+  poke8(a + 6, 108B) // l
+  poke8(a + 7, 102B) // f
+  return 8
+}
+
 def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
     label String) Void {
   var me2 = self_pid()
@@ -3415,6 +3430,9 @@ install_img(fs_svc, install_scratch, fn, peek64(app_blob_f),
 var en = put_editor_name(install_scratch)
 install_img(fs_svc, install_scratch, en, peek64(app_blob_e),
   peek64(app_blob_e_end), "editor.elf")
+var sn = put_spin_name(install_scratch)
+install_img(fs_svc, install_scratch, sn, peek64(app_blob_s),
+  peek64(app_blob_s_end), "spin.elf")
 frames.give(install_scratch)
 
 // The restart proof (T7.2, docs/fs.md): a file written through the

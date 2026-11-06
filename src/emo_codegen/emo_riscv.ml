@@ -3150,6 +3150,9 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       (match env.cur with
       | Some f -> pool_drain env f (* the failed candidates, together *)
       | None -> ());
+      (* the park's argument: the scan's own count — s0 met it at the
+         park, the word the stub re-checks under the mask (T8.20) *)
+      put env "    mv a0, s0\n";
       put env "    call emo_park_receive\n";
       put env "    li s0, 0\n";
       put env "    j %s\n" l_test;
@@ -7407,11 +7410,28 @@ emo_yield:
     addi sp, sp, 16
     ret
 
-# emo_park_receive: the current process waits for its mailbox; it
-# leaves the run queue, so only a send can put it back. Masked (T3.6);
-# the switch away records the mask, and the wake resumes through this
-# call's own exit — the unmask before the ret, so the scan the receive
-# site runs next is unmasked, as the ISR expects.
+# emo_park_receive: a0 = the count the receive site's scan last read —
+# the scan index itself, which reaches the park only when it has met
+# that count. The current process waits for its mailbox; it leaves the
+# run queue, so only a send can put it back. Masked (T3.6); the switch
+# away records the mask, and the wake resumes through this call's own
+# exit — the unmask before the ret, so the scan the receive site runs
+# next is unmasked, as the ISR expects. The send-send window (T8.20)
+# closes here: a send enqueues masked and deliberately leaves a word
+# for a running target without a wake, so a send landing between the
+# scan's last count read and this park's mask would park the receiver
+# on a word already queued, nobody left to wake it. Under the mask the
+# mailbox's length is read once more: grown past the scan's count, the
+# word landed in that window and the call simply returns — no park,
+# the receive site's scan restarts and the word is examined; equal,
+# nothing landed since the read (the mask runs on through the state
+# write, so no producer can slip past this check) and the words queued
+# are the scan's own rejects — the selective receive's honest sleep,
+# waiting for one its patterns accept. The compare is what a tick
+# sweep of state 2 could never be: the parked count is the scanner's
+# own, so a state-2 slot's mailbox holds only words its scan saw, and
+# every word that lands after the park wakes its sleeper the same
+# masked breath.
     .globl emo_park_receive
 emo_park_receive:
     csrci sstatus, 2
@@ -7419,9 +7439,15 @@ emo_park_receive:
     sd ra, 0(sp)
     la t0, emo_cur_slot
     ld t1, 0(t0)
+    ld t3, 32(t1)               # the mailbox's length, now; the scan's
+                                #   own count is a0
+    bltu a0, t3, .Lparkr_live   # grown past the scan: a word landed in
+                                #   the window — no park, the scan
+                                #   restarts onto it
     li t2, 2
     sd t2, 16(t1)
     call emo_schedule
+.Lparkr_live:
     csrsi sstatus, 2
     ld ra, 0(sp)
     addi sp, sp, 16
@@ -7937,7 +7963,9 @@ emo_send:
     bge t6, t5, .Lsend_wake
     sd t5, 48(t4)
 .Lsend_wake:
-    # wake a receiver; a live-but-running target needs nothing
+    # wake a receiver; a live-but-running target needs nothing — its
+    #   park re-checks the mailbox's length under the mask (T8.20), so
+    #   a word left here is picked up at the park, never slept on
     ld t5, 16(t4)
     li t6, 2
     bne t5, t6, .Lsend_drop
@@ -9160,6 +9188,7 @@ emo_const_lim:
 # image carries none of it.
 
     .align 8
+    .globl emo_procs
 emo_procs:
     .zero 56832
 emo_pstacks:

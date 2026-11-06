@@ -217,9 +217,10 @@ let smoke_tests =
             "hello/shell.emo";
             "hello/console_ui.emo";
           ];
-        (* The three apps' programs (emo-desktop A11.1): each its own
-           build root in the scratch tree — the boot image execs them
-           by name, the kernel embeds the four ELFs. *)
+        (* The apps' programs (emo-desktop A11.1, T8.21 added the
+           spinner): each its own build root in the scratch tree — the
+           boot image execs them by name, the kernel embeds the four
+           ELFs. *)
         let apps_dir = "../../projects/emo-desktop/fb/apps" in
         List.iter
           (fun app ->
@@ -237,7 +238,7 @@ let smoke_tests =
                 output_string oc source;
                 close_out oc)
               [ "package.emo"; "main.emo" ])
-          [ "counter"; "files"; "editor" ];
+          [ "counter"; "files"; "editor"; "spin" ];
         (* The user image requires the desktop's packages beside the
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
            backend's core with its bitmap font (A8.1) and pointer sprite
@@ -298,9 +299,10 @@ let smoke_tests =
           ];
         Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
-           ELF has to exist before the kernel's .S assembles. The three
-           apps' images (emo-desktop A11.1) ride beside it — the boot
-           image execs them by name, the kernel embeds all four. *)
+           ELF has to exist before the kernel's .S assembles. The four
+           apps' images (emo-desktop A11.1, T8.21 the spinner's) ride
+           beside it — the boot image execs them by name, the kernel
+           embeds them. *)
         let hello_exit =
           in_dir (Filename.concat scratch "hello") (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"../hello.elf"
@@ -326,6 +328,7 @@ let smoke_tests =
         app_build "counter";
         app_build "files";
         app_build "editor";
+        app_build "spin";
         let exit_code =
           in_dir scratch (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
@@ -393,7 +396,7 @@ let smoke_tests =
           "the apps' corpus file is in the tree" true
           (Sys.file_exists apps_expected);
         let out, err, status =
-          run_cmd
+          run_cmd ~timeout:480.0
             (Printf.sprintf
                "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
                 DOCK_EXPECTED=%s APPS_EXPECTED=%s %s"

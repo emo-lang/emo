@@ -1002,6 +1002,51 @@ PYEOF
   await 'exec: bad argument'
   feed 'exec bogus.elf'
   await 'desktop: no such file'
+  # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
+  # disk ELF with no window, no message, no yield, and no announce
+  # until its loop is out (the runtime's println is a write ecall per
+  # byte, so a word printed mid-loop would interleave with whatever the
+  # shell prints that instant) — exec'd from the REPL's own command.
+  # The echo fed while the loop runs is the proof the tick's quota step
+  # spends the spinner's slice and the scheduler dispatches the shell:
+  # the cooperative hart would leave the echo nothing until the count
+  # was out — the spinner is spawned before the exec's reply, so the
+  # first pick after the answer is the spinner's, and its silence ends
+  # only at the loop's end. The order is the assertion — the answer on
+  # the wire while `spin done` is not, the done only after the loop.
+  # The echo rides behind the exec's own feed: the desktop loop's read
+  # drains the stream FIFO, the line-2 bytes wait for the exec's
+  # answer, and the back-to-back feeds are the golden's own
+  # established shape.
+  feed 'exec spin.elf'
+  feed 'echo spin still'
+  await 'spin still'
+  if grep -qF -- 'spin done' "$log" 2>/dev/null; then
+    echo "run.sh: the spinner's done preceded the REPL's echo — the hart was never preempted" >&2
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
+  # the done's own budget, past the echo's deadline: the loop's end is
+  # the machine's own pace, and the count is sized so it lands after the
+  # shell's echo has drained whole (the runtime's println is a write
+  # ecall per byte — a line landing mid-echo weaves with the echo's
+  # bytes and never forms its literal). 600 rounds, 60 s: the loop's
+  # end is the machine's own pace, the host's TCG speed the only
+  # weather.
+  local spin_done=0
+  for _ in $(seq 1 600); do
+    if grep -qF -- 'spin done' "$log" 2>/dev/null; then
+      spin_done=1
+      break
+    fi
+    kill -0 "$qemu_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ "$spin_done" -ne 1 ]; then
+    echo "run.sh: the spinner never finished its loop" >&2
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
   # The counter command (T7.5, docs/ui.md): the machine's program —
   # the console renderer pass (T7.4) — begun from the prompt, the
   # full-boot golden's beat between the shell and the filesystem
@@ -1157,7 +1202,11 @@ PYEOF
   # win_new and given back at its win_close), the clients' two (A9.2:
   # each spawn's arena and table and each win_new's run, the dead
   # one's every block back through the compositor's reclaim, the
-  # reborn one's through its close), the DMA check's block,
+  # reborn one's through its close), the spinner's exec (T8.21: the
+  # image's 99-block run, the spawn's four-block arena run, the stack,
+  # and the file's scratch all home at the exit — the handoff page the
+  # exec's documented leak, a frame never rejoins its block, the +1
+  # held), the DMA check's block,
   # and the block driver's
   # queue block (T7.1) beside the display driver's (T8.1), the input
   # driver's (T8.3) and the pointer driver's (T8.11 — its two-block
@@ -1172,6 +1221,7 @@ PYEOF
   # pass's, the input pass's, and the window pass's at their clean
   # exits, and the clients': the dead one's to the fault's reap and
   # the compositor's reclaim, the reborn one's to its exit), the
+  # spinner's run and stack at its exit, the
   # window buffer's run at its close, and the DMA check's
   # block home; the services, the supervisors, the live filesystem and
   # compositor instances, every table, the cache block, and the queues
@@ -1181,7 +1231,7 @@ PYEOF
   # frames' checks' rule): a line the wire says twice — the desk pass's
   # beta window and the duo's counter share 'comp 576 384' — is two
   # beats, each in its era's place.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 5' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 576 384' 'add 1' 'sub 0' 'desktop files up' 'comp 224 144' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 48 272' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'desktop files exit 0' 'desktop editor exit 0' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 510 446'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 576 384' 'add 1' 'sub 0' 'desktop files up' 'comp 224 144' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 48 272' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'desktop files exit 0' 'desktop editor exit 0' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'EmoOS boots from disk' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 616 551'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
@@ -1189,7 +1239,7 @@ PYEOF
     fi
     prev=$pos
   done
-  # The disk ELFs' install lines (emo-desktop A11.1): the three images
+  # The disk ELFs' install lines (emo-desktop A11.1): the four images
   # named on the wire between the console deliveries and the restart's
   # mount — `installed <name> <size>` on the boot that formats (the
   # machine writes its own apps onto the blank volume), `kept <name>
@@ -1199,7 +1249,7 @@ PYEOF
   local rstart rpos m2pos appname
   rstart=$(grep -aboF -- '4:101' "$log" | head -1 | cut -d: -f1)
   m2pos=$(grep -aboF -- "$mount2" "$log" | head -1 | cut -d: -f1)
-  for appname in counter.elf files.elf editor.elf; do
+  for appname in counter.elf files.elf editor.elf spin.elf; do
     rpos=$(grep -aboE -- "^$inst $appname [0-9]+$" "$log" | cut -d: -f1 | awk -v p="$rstart" '$1 > p { print; exit }' || true)
     if [ -z "$rpos" ]; then
       echo "run.sh: the install never said '$inst $appname <size>' after byte $rstart" >&2
@@ -1407,10 +1457,10 @@ PYEOF
     exit 1
   fi
   # the disk ELFs in the shell's list (emo-desktop A11.1): the volume's
-  # three images named beside the boot file and hello's, the ls's own
+  # four images named beside the boot file and hello's, the ls's own
   # order, whole lines
-  for f in files.elf editor.elf boot.txt hello.txt; do
-    if ! grep -A4 '^counter.elf$' "$log" | grep -q "^$f\$"; then
+  for f in files.elf editor.elf spin.elf boot.txt hello.txt; do
+    if ! grep -A5 '^counter.elf$' "$log" | grep -q "^$f\$"; then
       echo "run.sh: the shell's list never named $f beside counter.elf" >&2
       exit 1
     fi
@@ -1466,13 +1516,13 @@ PYEOF
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 # The first boot meets the blank disk: the filesystem formats it, the
-# machine installs its apps, and its restarted instance counts the four
-# files (the three images and the boot file).
-boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 4' 1 installed
-echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, install, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, frames, self-exit"
+# machine installs its apps, and its restarted instance counts the five
+# files (the four images and the boot file).
+boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 5' 1 installed
+echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, install, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, spinner, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
-# the first left — the five files the first boot wrote (the three
+# the first left — the six files the first boot wrote (the four
 # images, the boot file, and hello's own) — keeps the images (`kept`
 # naming each), and formats nothing: the mount table came off the disk.
-boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 5' 'fs gen 4 files 5' 0 kept
-echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, install kept, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, frames, self-exit, 1 ecall"
+boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 6' 'fs gen 4 files 6' 0 kept
+echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, install kept, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, spinner, frames, self-exit, 1 ecall"

@@ -1165,6 +1165,15 @@ emo_os_trap_resume:
 # trampoline's user path, on its own frame, like every pass's.
     .globl emo_os_user_boot
 emo_os_user_boot:
+    # the switch is the pick's own discipline (T8.21's find): from the
+    # satp write to the sret this shim runs S-mode on the pass's own
+    # table, which maps none of the kernel's low window — a tick
+    # landing there ran the ISR's wake reads (the input service's pid
+    # cell at the cells' 0x870029e8) on a table that does not map them,
+    # and the load page fault was the kernel's loud end. Masked, then:
+    # the sret restores SIE from the frame's SPIE, the one place that
+    # restore belongs, and the no-entry return unmasks on its way out.
+    csrci sstatus, 2
     la t0, emo_os_user_entry
     ld a0, 0(t0)
     beqz a0, 1f
@@ -1193,7 +1202,8 @@ emo_os_user_boot:
     csrw sstatus, t1
     csrw sepc, a0
     sret
-1:  ret
+1:  csrsi sstatus, 2
+    ret
 
 # The death notice (T7.2): the runtime's death hook lands here with the
 # dead green process's pid in a0 — from emo_process_done (a service

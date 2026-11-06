@@ -90,6 +90,11 @@ emo_start:
     sd t0, 0(t1)
     la t0, emo_os_user_blob_e_end
     sd t0, 8(t1)
+    la t0, emo_os_user_blob_s
+    li t1, 0xFFFFFFC087002200
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_s_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks
@@ -125,6 +130,21 @@ emo_start:
     li t0, 4                    # frames.emo's arena_run
     la t1, emo_arena_run_len
     sd t0, 0(t1)
+    # the tick's slice (T8.21): the root's quota word — the one policy
+    # word the machine's preemption rides on. 0 is the unassigned value
+    # the ISR's quota step answers dormant, so the stub assigns the
+    # root's slice and every child inherits it at the spawn (the spawn's
+    # own copy of the parent's policy words); five ticks — 50 ms of the
+    # 10 ms tick — the honest round-robin: a busy app keeps the hart no
+    # longer than one slice, and a wake it never yields to runs within
+    # the next. The quota loads at the pick, so the root's earliest
+    # work — everything before its first park's return — runs
+    # unassigned; from the first park on, the root shares the discipline
+    # with everything it spawns, and a round-robin of one spends its
+    # slice on itself.
+    la t1, emo_procs
+    li t0, 5
+    sd t0, 56(t1)
     # the address spaces (T6.2): the three space hooks go to the
     # runtime's words — the build (a spawned pass's table, built at the
     # end of emo_user_spawn from the slot's own words), the resolve (the

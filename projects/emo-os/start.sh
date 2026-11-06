@@ -51,6 +51,7 @@ winbuf_src="$fb_dir/winbuf/package.emo $fb_dir/winbuf/ui_fb_winbuf.emo"
 counter_src="$fb_dir/apps/counter/package.emo $fb_dir/apps/counter/main.emo"
 files_src="$fb_dir/apps/files/package.emo $fb_dir/apps/files/main.emo"
 editor_src="$fb_dir/apps/editor/package.emo $fb_dir/apps/editor/main.emo"
+spin_src="$fb_dir/apps/spin/package.emo $fb_dir/apps/spin/main.emo"
 
 registry() {
   local sum
@@ -104,7 +105,8 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
    stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf; then
+   stale spin.elf $spin_src ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -133,6 +135,7 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
   (cd ../emo-desktop/fb/apps/counter && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/counter.elf")
   (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/files.elf")
   (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/editor.elf")
+  (cd ../emo-desktop/fb/apps/spin && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/spin.elf")
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 
