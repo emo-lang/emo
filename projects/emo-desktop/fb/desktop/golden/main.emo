@@ -46,6 +46,51 @@ def main() {
   println("tile ${emo_desktop.press(16, 750, 1024, 768, 3)}")
   println("tile ${emo_desktop.press(64, 750, 1024, 768, 3)}")
   println("tile ${emo_desktop.press(96, 750, 1024, 768, 3)}")
+
+  // The desktop's own canvas (emo-desktop A13): the wallpaper whole on
+  // a quarter-mode canvas — the gradient's rows, the three ribbons —
+  // then the header bar with two apps running and with none, the
+  // icons' four states on a canvas two cells tall, a name drawn byte
+  // by byte the way the shell draws the volume's, and beside them the
+  // square root's probes, the layout's cell origins, and the hit
+  // test's verdicts.
+  const wall = ui_fb_canvas.canvas(256, 192)
+  emo_desktop.wallpaper(wall, 256, 192)
+  println("wall ${ui_fb_frame.digest(wall)}")
+  const bar = ui_fb_canvas.canvas(256, 24)
+  emo_desktop.paint_header(bar, 256, 2)
+  println("bar ${ui_fb_frame.digest(bar)}")
+  emo_desktop.paint_header(bar, 256, 0)
+  println("bar ${ui_fb_frame.digest(bar)}")
+  const icons = ui_fb_canvas.canvas(384, 256)
+  emo_desktop.paint_icon_doc(icons, 280, 32, false)
+  emo_desktop.paint_icon_folder(icons, 280, 108, false)
+  emo_desktop.paint_icon_doc(icons, 184, 32, true)
+  emo_desktop.paint_icon_folder(icons, 184, 108, true)
+  println("icon ${ui_fb_frame.digest(icons)}")
+  // the name's bytes: `boot.txt` under the first cell — the byte walk
+  // the shell reads the volume's names through, then one byte the font
+  // has no drawing of for the hollow cell
+  const name = [98, 111, 111, 116, 46, 116, 120, 116] // boot.txt
+  var k = 0
+  while k < name.length() {
+    emo_desktop.text_byte(icons, 288 + k * 8, 90, name[k], 0xF8F8F0)
+    k = k + 1
+  }
+  emo_desktop.text_byte(icons, 352, 90, 7, 0xF8F8F0)
+  println("icon ${ui_fb_frame.digest(icons)}")
+  println("isqrt ${emo_desktop.isqrt(0)}")
+  println("isqrt ${emo_desktop.isqrt(1)}")
+  println("isqrt ${emo_desktop.isqrt(15)}")
+  println("isqrt ${emo_desktop.isqrt(16)}")
+  println("isqrt ${emo_desktop.isqrt(9801)}")
+  println("cell ${emo_desktop.icon_cell(0, 1024, 768)}")
+  println("cell ${emo_desktop.icon_cell(8, 1024, 768)}")
+  println("cell ${emo_desktop.icon_cell(9, 1024, 768)}")
+  println("hit ${emo_desktop.icon_hit(950, 40, 2, 1024, 768)}")
+  println("hit ${emo_desktop.icon_hit(850, 107, 2, 1024, 768)}")
+  println("hit ${emo_desktop.icon_hit(920, 108, 2, 1024, 768)}")
+  println("hit ${emo_desktop.icon_hit(100, 400, 2, 1024, 768)}")
 }
 
 main()

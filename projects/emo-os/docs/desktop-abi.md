@@ -67,24 +67,39 @@ research record, with the reasoning behind each seam, is the
 The third seam's landing: a buffer becomes a surface when its client
 declares a role for it — verb 17, `win_role(grant, role)` — and the
 compositor's stack acts on surfaces alone. The vocabulary is frozen:
-0 toplevel, 1 popup, 2 subsurface, 3 panel. Toplevel is the role the
-compositor implements; the other three are refused with reason 4, by
-their number — the protocol carries no text (the seventh seam), so
-the caller, who chose the role, is the one to name what it asked for
-(`role popup r4` on the machine's wire). A surface's role does not
-change; a second declaration is refused. A surface's stack entry
-carries its grant, its position and its role; `win_focus` raises it
-to the stack's top, `win_move` places it, and the composition a
-window present posts is the whole stack walked bottom to top over a
-carve cleared to the compositor's own background — the last entry
-over the rest, a moved window's old place the background again, every
-surface whose row is ready carried, and the presenting client's
-answer after the flush (the sixth seam). The wire carries each
-composition as `comp <x> <y> <sum>` — the presenting surface's
-position and the words the walk carried. A client's scale for the
-stream's absolute reports is the device's own answer, verb 18,
-`input_info(index)` — the input side of the second seam; the outputs'
-enumeration has its twin.
+0 toplevel, 1 popup, 2 subsurface, 3 panel, 4 wallpaper (T8.27,
+emo-desktop A13). Toplevel is the role the compositor implements; the
+other three are refused with reason 4, by their number — the protocol
+carries no text (the seventh seam), so the caller, who chose the role,
+is the one to name what it asked for (`role popup r4` on the machine's
+wire). A surface's role does not change; a second declaration is
+refused. A surface's stack entry carries its grant, its position and
+its role; `win_focus` raises it to the stack's top, `win_move` places
+it, and the composition a window present posts is the whole stack
+walked bottom to top over a carve cleared to the compositor's own
+background — the last entry over the rest, a moved window's old place
+the background again, every surface whose row is ready carried, and
+the presenting client's answer after the flush (the sixth seam). The
+wire carries each composition as `comp <x> <y> <sum>` — the
+presenting surface's position and the words the walk carried. A
+client's scale for the stream's absolute reports is the device's own
+answer, verb 18, `input_info(index)` — the input side of the second
+seam; the outputs' enumeration has its twin.
+
+## The wallpaper (T8.27, emo-desktop A13)
+
+The desktop's own canvas: role 4 names a surface the walk paints
+under every window — the gradient and the desktop's icons ride it —
+and the machine holds one. A second wallpaper declaration is the
+argument refusal; `win_focus` on it is refused too (the wallpaper is
+no client's to raise), and a press that lands on no window and no
+panel names the wallpaper the focused surface — the background click
+is the desktop's owner's, the way a click on bare desktop unfocuses
+the windows. A ready wallpaper that covers the whole mode is the
+clear's replacement: the walk lays it and nothing beneath it; until
+then (the first present, a dead owner) the carve clears to the
+compositor's background as before, so the slate stays what a machine
+without a desktop paints.
 
 ## The growth contract's increments (T8.15, emo-desktop A9.3)
 

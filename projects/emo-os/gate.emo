@@ -178,8 +178,9 @@ const input_args = koff + 0x87002ef8
 // the number to the vocabulary; which roles the compositor implements
 // is the compositor's answer — every one since T8.15 (A9.3): toplevel
 // free-standing, popup and subsurface parent-relative (verb 19 binds
-// the parent), panel the shell's topmost strip.
-const role_count = 4
+// the parent), panel the shell's topmost strip, wallpaper the
+// desktop's own canvas under every window (T8.27, emo-desktop A13).
+const role_count = 5
 
 // The refusal reasons, part of the ABI.
 const reason_unknown = 1

@@ -765,3 +765,39 @@ follows beside the kernel's and the compiler's.
   `frames 510 446`; `dune runtest` green with the smoke (352);
   `@fmt` green; the fb gate green (112). **With this M12 is
   complete.** Decision record: CHECK.md, 2026-11-06.
+
+## A13 — the macOS face: wallpaper, header bar, desktop icons (opened 2026-11-06)
+
+The desktop after boot looks like a desktop: a header bar at the top
+edge, the dock at the foot, a wallpaper with the desktop's icons on it
+— the volume's own files as documents, a name's `/` prefix as the
+folder that prefix names, entered by a press and left by the `..` cell
+the view grows. The kernel's half is EmoOS's T8.27 (role 4, the
+background press's focus).
+
+- [x] **A13** — The desktop's own canvas: the wallpaper (role 4, the
+  walk's undermost layer — the gradient and the ribbons the package
+  paints, the icons over it), the header bar (a second panel, the
+  wordmark in the boot banner's cyan, the running count its one live
+  fact), and the icon view whole: the volume's listing parsed into
+  documents and prefix-folders, `.elf` never on the desktop (the dock
+  names apps), a press selecting a document, entering a folder, or
+  leaving by `..`, the listing refolded after every volume-touching
+  command with an unchanged fold costing one list and one fold. The
+  round's find: the first icon press died the second repaint — the
+  `Surface`'s methods are class bodies, and a class body's boxes stay
+  in the arena for good ("left in the arena per repaint" was the
+  dock's own warning); the metal's painting moved to typed top-level
+  defs stamping the buffer's bytes through the carve's own primitives,
+  and a repaint costs no arena at all. A folder entered at the root
+  wrote its prefix one byte past the buffer's head — the separator's
+  slot taken when no prefix stood there — and the child view matched
+  nothing; the separator writes only when a prefix separates. The
+  golden grew the package's new painters (wallpaper, header, icons,
+  the byte-name walk, the square root, the cell layout and the hit
+  test) on the hosted canvas; `run.sh`'s display model grew the same
+  arithmetic — the gradient, the ribbons (the metal's division
+  truncates, the model divides the metal's way), the header, the
+  shapes and the names from the font's own table — and the folder
+  beats drive the entered state's screendump. The fb gate green (134,
+  untouched); the golden byte-identical across every hosted target.

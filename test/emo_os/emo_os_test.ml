@@ -395,16 +395,28 @@ let smoke_tests =
         Alcotest.(check bool)
           "the apps' corpus file is in the tree" true
           (Sys.file_exists apps_expected);
+        (* The bitmap font (emo-desktop A13): run.sh's model of the
+           display draws the header's wordmark and the icons' names from
+           `font.emo`'s table — the same table the user image stamps
+           with — and is pointed at the repository's the same way. *)
+        let font_src =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/font.emo"
+        in
+        Alcotest.(check bool)
+          "the bitmap font's table is in the tree" true
+          (Sys.file_exists font_src);
         let out, err, status =
           run_cmd ~timeout:480.0
             (Printf.sprintf
                "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
-                DOCK_EXPECTED=%s APPS_EXPECTED=%s %s"
+                DOCK_EXPECTED=%s APPS_EXPECTED=%s FONT_SRC=%s %s"
                (Filename.quote frame_expected)
                (Filename.quote pointer_sprite)
                (Filename.quote win_expected)
                (Filename.quote dock_expected)
                (Filename.quote apps_expected)
+               (Filename.quote font_src)
                (Filename.quote (Filename.concat scratch "run.sh")))
         in
         (match status with

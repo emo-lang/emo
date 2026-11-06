@@ -167,6 +167,13 @@ const role_toplevel = 0
 const role_popup = 1
 const role_subsurface = 2
 const role_panel = 3
+// The desktop's own canvas (T8.27, emo-desktop A13): the full-screen
+// surface the walk paints under every window — the wallpaper and the
+// desktop's icons ride it. One to a machine: a second declaration is
+// the argument refusal. It is never raised and never focused by a hit
+// — the press that lands on it (no window, no panel) names it the
+// focused one, so the desktop's owner hears the click.
+const role_wallpaper = 4
 // The frame callbacks (T8.15, A9.3 — the fifth seam): the pids parked
 // on verb 22, answered at the next composition's completion — the
 // tick's client side. Four deep; a fifth parks into a full ring is
@@ -201,6 +208,12 @@ const comp_args = koff + 0x87002e90
 const comp_slots = comp_page + 2704
 const comp_slot_bytes = 40
 const comp_panel_cell = comp_page + 40
+// The wallpaper's grant (T8.27, emo-desktop A13), named at its role's
+// declaration like the panel's — the one surface the walk paints under
+// the rest and the one a background press focuses. In the gap past the
+// dead cells' 256 seats (+600..+2648) and before the argument slots
+// (+2704).
+const comp_wallpaper_cell = comp_page + 2648
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -2285,6 +2298,23 @@ def comp_stack_add(grant Int64, role Int64) Int64 {
   return entry
 }
 
+// Whether the stack already holds a surface of that role (T8.27): the
+// one-role-one-surface check — the wallpaper is a machine's, not a
+// client's, and a second declaration is the argument refusal. The scan
+// is the live stack's, so a dead owner's pruned entry frees the name.
+def comp_stack_has_role(r Int64) Bool {
+  var i = 0
+  var top = peek64(comp_top_cell)
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) == r {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
 // An entry out of the stack: the ones above it shift down a slot, the
 // top comes down one — the order of the rest is kept, which is the
 // order the walk paints in.
@@ -2529,8 +2559,39 @@ def comp_compose(gpu Pid, me Pid) Int64 {
   if shown != 0 {
     cursor_hide(peek64(comp_cursor_x), peek64(comp_cursor_y))
   }
-  comp_clear()
   var sum = 0
+  // The wallpaper's pass (T8.27, emo-desktop A13): the desktop's own
+  // canvas, painted before the walk under every window. A ready
+  // surface that covers the whole mode makes the clear its to skip —
+  // the walk lays it and nothing beneath it; not ready yet, no
+  // wallpaper declared, a dead owner's pruned entry, or a surface
+  // that fails to cover (the client's own strictness, the compositor
+  // not assuming): the clear runs and the slate stays what it was.
+  var wg = peek64(comp_wallpaper_cell)
+  var wentry = 0
+  var wrow = 0
+  if wg != 0 {
+    wentry = comp_stack_find(wg)
+    if wentry != 0 {
+      wrow = grant_row_of(wg)
+    }
+  }
+  var wready = 0
+  var wcovers = 0
+  if wrow != 0 && peek64(wrow + 56) != 0 {
+    wready = 1
+    var wboth = comp_abs_pos(wentry, peek64(wentry + 8), peek64(wentry + 16))
+    if wboth >> 32 == 0 && wboth & 4294967295 == 0 && peek64(wrow + 32) >= peek64(comp_mode_w) && peek64(wrow + 40) >= peek64(comp_mode_h) {
+      wcovers = 1
+    }
+  }
+  if wcovers == 0 {
+    comp_clear()
+  }
+  if wready == 1 {
+    var wboth = comp_abs_pos(wentry, peek64(wentry + 8), peek64(wentry + 16))
+    sum = sum + comp_blit_entry(wentry, wboth >> 32, wboth & 4294967295)
+  }
   // The walk (T8.13, T8.15): the free-standing surfaces in the stack's
   // order — the last entry over the rest — each immediately followed by
   // its parent-relative children at their offsets from it (a popup
@@ -2738,6 +2799,23 @@ def comp_press_raise() Void {
       }
     }
   }
+  // The background's press (T8.27, emo-desktop A13): a click no window
+  // and no panel answers is the desktop's — the wallpaper named the
+  // focused one, its owner (the desktop's own process) the reader the
+  // stream's bytes and buttons serve from then on, the windows all
+  // unfocused the way a click on bare desktop unfocuses. Never raised:
+  // the wallpaper is the walk's undermost layer, and no stack shift
+  // ever says otherwise. No wallpaper, dead owner: the focus is then
+  // whose it was, the shape before this change.
+  if hit == 0 {
+    var wg = peek64(comp_wallpaper_cell)
+    if wg != 0 {
+      var wrow = grant_row_of(wg)
+      if wrow != 0 {
+        poke64(comp_focus_cell, wg)
+      }
+    }
+  }
 }
 
 def comp_cursor_place(gpu Pid, me Pid) Void {
@@ -2823,15 +2901,21 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
     if entry == 0 {
       gate_reply(caller_of(w), -4)
     } else {
-      poke64(comp_focus_cell, grant)
-      comp_stack_raise(entry)
-      var isvc = peek64(input_svc_cell)
-      if isvc != 0 {
-        gate_post(isvc, 13 << 32)
+      // The wallpaper is no client's to focus (T8.27): the desktop's
+      // undermost layer is named the focused one only by the
+      // background press, never by verb 15 — the argument refusal.
+      if peek64(entry + 24) == role_wallpaper {
+        gate_reply(caller_of(w), -4)
+      } else {
+        poke64(comp_focus_cell, grant)
+        comp_stack_raise(entry)
+        var isvc = peek64(input_svc_cell)
+        if isvc != 0 {
+          gate_post(isvc, 13 << 32)
+        }
+        device_wake()
+        gate_reply(caller_of(w), 0)
       }
-      device_wake()
-      comp_stack_raise(entry)
-      gate_reply(caller_of(w), 0)
     }
   } else {
     if op == 16 {
@@ -2924,17 +3008,30 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           if comp_stack_find(grant) != 0 {
             gate_reply(caller_of(w), -4)
           } else {
-            comp_stack_prune()
-            if comp_stack_add(grant, role) == 0 {
-              gate_reply(caller_of(w), -5)
+            // one wallpaper to a machine (T8.27): the role's surface
+            // exists once, so the second declaration is the argument
+            // refusal — the stack's scan is the verdict
+            if role == role_wallpaper && comp_stack_has_role(role_wallpaper) {
+              gate_reply(caller_of(w), -4)
             } else {
-              // the panel's grant, named at its declaration
-              // (emo-desktop A12.1): the pointer's moves are the
-              // desktop's, and the panel's owner is who they serve
-              if role == 3 {
-                poke64(comp_panel_cell, grant)
+              comp_stack_prune()
+              if comp_stack_add(grant, role) == 0 {
+                gate_reply(caller_of(w), -5)
+              } else {
+                // the panel's grant, named at its declaration
+                // (emo-desktop A12.1): the pointer's moves are the
+                // desktop's, and the panel's owner is who they serve
+                if role == 3 {
+                  poke64(comp_panel_cell, grant)
+                }
+                // the wallpaper's grant, named the same way (T8.27):
+                // the walk's undermost layer and the background
+                // press's focus — the cell is how both find it
+                if role == role_wallpaper {
+                  poke64(comp_wallpaper_cell, grant)
+                }
+                gate_reply(caller_of(w), 0)
               }
-              gate_reply(caller_of(w), 0)
             }
           }
         } else {

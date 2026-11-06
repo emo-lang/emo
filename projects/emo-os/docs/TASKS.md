@@ -627,3 +627,27 @@ closed — the whole of Step 8 complete.
   both transports, three consecutive boots byte-identical, the
   ledger `frames 507 446` unchanged; the full dune suite (352) and
   @fmt green. Decision record: CHECK.md, 2026-11-05.
+
+- [x] **T8.27** — The desktop's macOS face, the kernel's half —
+  **complete 2026-11-06: role 4 wallpaper, the background press's
+  focus, and the double raise the focus verb had carried since
+  A12.2**. The vocabulary grows its fifth word: the wallpaper is the
+  surface the walk paints under every window — one to a machine (a
+  second declaration the argument refusal), never raised, `win_focus`
+  on it refused, and a ready one that covers the whole mode is the
+  clear's replacement (the walk lays it and nothing beneath it; until
+  then the slate stays what it was). The press that lands on no window
+  and no panel names the wallpaper the focused surface — the
+  background click is the desktop owner's, the keys and buttons that
+  follow serving it, the windows unfocused the way a click on bare
+  desktop unfocuses. The round's find rode alongside: the focus
+  handler raised its entry twice — A9.1's original raise left standing
+  behind A12.2's inserted one, and the second raise shifted the stack
+  before re-reading the same slot, promoting the *old* top over the
+  window being focused; dormant while every client focused a fresh
+  top, loud the day anything focused below. The stale raise is gone.
+  The acceptance: `run.sh` both transports, the desktop era's
+  screendumps modeled to the pixel (the wallpaper's gradient and
+  ribbons, the header bar, the icons' names in the font's own table),
+  the ledger `frames 666 551` (the wallpaper's 48-block run and the
+  header's two the +50). The desktop's side is emo-desktop A13.

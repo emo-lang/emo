@@ -259,6 +259,69 @@ The two are design decisions, not scheduled tasks; they settle in
 [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) and block
 nothing.
 
+**emo-desktop — [A13, the macOS face](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-06 (the kernel half is [EmoOS T8.27](projects/emo-os/docs/TASKS.md)):**
+
+- [x] **A13** — the wallpaper (role 4), the header bar, and the
+  desktop's icons — the volume's documents and prefix-folders,
+  selected, entered, left by `..`, refolded after every
+  volume-touching command. The round's find (the repaint that weighed
+  a boot) in the dated section below.
+
+## 2026-11-06 — The desktop's macOS face (emo-desktop A13, EmoOS T8.27)
+
+- The desktop after boot looks like a desktop: a header bar at the
+  top edge (the wordmark in the boot banner's cyan, the running count
+  its one live fact — the wall clock and the foreground app's name
+  the machine does not know, and the bar does not pretend), the dock
+  at the foot, and a wallpaper carrying the desktop's icons — the
+  volume's own files as documents, a name's `/` prefix as the folder
+  that prefix names, entered by a press, left by the `..` cell the
+  view grows, `.elf` never on the desktop (the dock names apps). The
+  kernel's half is small on purpose: role 4 joins the vocabulary (one
+  wallpaper to a machine, never raised, `win_focus` on it refused),
+  the walk paints it under every window — a ready one that covers the
+  mode is the clear's replacement — and a press that lands on no
+  window and no panel names the wallpaper the focused surface, so the
+  background click is the desktop owner's and the windows unfocus the
+  way macOS unfocuses them. Panels needed nothing: a second panel was
+  never refused, and the header is one.
+- **The round's find: the repaint that weighed a boot.** The first
+  icon press died pid 1 on the second wallpaper repaint — `user heap
+  1 gone`. The `Surface`'s methods are class bodies, and a class body
+  boxes every word it computes into the arena *for good* (the pool
+  reclaims the identities at the statement boundaries; the boxing
+  never comes back — "a few KiB of boxed numbers left in the arena
+  per repaint" was the dock's own comment, and the dock repaints
+  through ~15 calls where the wallpaper paints through ~2,200). The
+  metal's painting moved to typed top-level defs stamping the buffer's
+  bytes through the carve's own primitives (`carve_fill`, `carve_blend`,
+  `carve_glyph`, `carve_digest`), the shapes the package's words — and
+  a repaint costs no arena at all; the shell repaints for a living.
+  The lesson generalizes the A10.2 rule: on the metal, *any* per-pixel
+  or per-call-hot path goes through typed defs, and a class-body call
+  is an arena spend.
+- The second find, smaller: entering a folder at the root wrote the
+  child's prefix one byte past the buffer's head — the `/` separator's
+  slot taken when no prefix stood there to separate — and the child
+  view matched nothing (the folder held only `..`). The separator
+  writes only when a prefix separates.
+- The `win_focus` handler had raised its entry twice since A12.2 —
+  A9.1's original raise left standing behind A12.2's inserted one; the
+  second raise re-read the same slot after the first had shifted the
+  stack and promoted the *old* top over the window being focused.
+  Dormant while every client focused a fresh top; fixed by deletion.
+- The acceptance: `run.sh` both transports — the desktop era's
+  screendumps (duo, trio, desk-out, the entered folder) modeled to the
+  pixel, the model drawing the names and the wordmark from the font's
+  own table and dividing the metal's way (the ribbon slopes run
+  negative, and the metal truncates where python floors) — the fb gate
+  green (134, untouched; the golden's new painters pinned under
+  `wall`/`bar`/`icon` tags so the dock's digest list stays the dock's),
+  dune's runtest with the smoke. The ledger `frames 666 551` — the
+  wallpaper's 48-block run and the header's two are the +50, held for
+  the machine's life.
+
 ## 2026-11-06 — The honest four's fourth measured and closed (EmoOS T8.22)
 
 - The rule was "build it when a measured path demands it, never

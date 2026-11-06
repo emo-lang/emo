@@ -1,6 +1,6 @@
 # emo-desktop
 
-The desktop above the gate: a composited-window GUI for EmoOS, written in Emo — the screen, the pointer, the glyphs, the windows, the dock, and the apps on it, one language from power-on to the desktop. It is the continuation of EmoOS's single-language closure into the last layer the machine has: after the kernel, the services, the shell, and the console UI, the desktop is the proof's next mile.
+The desktop above the gate: a composited-window GUI for EmoOS, written in Emo — the screen, the pointer, the glyphs, the windows, the dock, the desktop's own face (the wallpaper, the header bar, the icons on it), and the apps, one language from power-on to the desktop. It is the continuation of EmoOS's single-language closure into the last layer the machine has: after the kernel, the services, the shell, and the console UI, the desktop is the proof's next mile.
 
 emo-desktop is a project of its own beside [`projects/emo-os`](../emo-os) and [`projects/emo-ui`](../emo-ui), and the boundary between them is the machine's own: **the gate.** Everything below the gate — device drivers, the compositor's mechanism, gate verbs, address-space and frame plumbing, the ABI's stability contract, the smoke's display leg — is EmoOS's and lives in the EmoOS tree. Everything above the gate — the framebuffer backend, the fonts, the desktop shell, the apps, their hosted corpus — is this project's.
 

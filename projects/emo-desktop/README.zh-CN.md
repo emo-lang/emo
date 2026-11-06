@@ -1,6 +1,6 @@
 # emo-desktop
 
-门之上的桌面:EmoOS 的合成窗口 GUI,用 Emo 写成——屏幕、指针、字形、窗口、dock 与其上的应用,一门语言从上电走到桌面。它是 EmoOS 单语言闭环的延续,抵达机器剩下的最后一层:内核、服务、shell、控制台 UI 之后,桌面是证明的下一段路。
+门之上的桌面:EmoOS 的合成窗口 GUI,用 Emo 写成——屏幕、指针、字形、窗口、dock、桌面自己的脸面(壁纸、顶栏与桌面图标)与其上的应用,一门语言从上电走到桌面。它是 EmoOS 单语言闭环的延续,抵达机器剩下的最后一层:内核、服务、shell、控制台 UI 之后,桌面是证明的下一段路。
 
 emo-desktop 是与 [`projects/emo-os`](../emo-os)、[`projects/emo-ui`](../emo-ui) 并列的独立项目,而它们之间的边界就是机器自己的边界:**门(ecall gate)。** 门以下的一切——设备驱动、合成器的机制、gate 动词、地址空间与帧的管线、ABI 的稳定性契约、冒烟测试的 display 腿——属于 EmoOS,住在 EmoOS 树里。门以上的一切——framebuffer backend、字体、桌面 shell、应用、它们的 hosted 语料——属于本项目。
 

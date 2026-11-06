@@ -2546,6 +2546,7 @@ def desk_launch(slot Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Vo
         poke64(buf + desk_pids + (slot * 8), child)
         desk_up_line(name, desk_nlen(slot))
         desk_dock(wd, dw, dh, labels)
+        desk_chrome()
       }
     }
   }
@@ -2575,11 +2576,510 @@ def desk_exec_cmd(e Int64, n Int64, wd Win, dw Int64, dh Int64, labels Array[Str
             poke64(buf + desk_pids + (slot * 8), child)
             desk_up_line(buf + desk_names + (slot * 12), desk_nlen(slot))
             desk_dock(wd, dw, dh, labels)
+            desk_chrome()
           }
         }
       }
     }
   }
+}
+
+// ---- the desktop's icons (emo-desktop A13) ----
+//
+// The volume's own files as the desktop shows them: a flat file a
+// document, a name's `/` prefix the folder that prefix names, the
+// `.elf` apps never on the desktop — the dock's tiles name apps, the
+// desktop's icons name the volume's papers and folders, the way macOS
+// keeps them apart. The listing is the fs's answer; the view is its
+// parse; the selection and the current folder are the two words of
+// state a press moves. All of it scratch cells and typed loops — the
+// view is rebuilt whole on every change (a boot, a command that
+// touches the volume, a folder entered or left), and a rebuild is a
+// few hundred bytes of pokes, not a tree.
+//
+//   entry: the name's bytes [0..24), its length at +24, its kind at +32
+//     — 0 a document, 1 a folder, 2 the `..` way up. 40 bytes, and the
+//     fs's own 64-entry table the bound the view never outgrows.
+const desk_list = 9344 // the listing's bytes, the fs's newline form
+const desk_list_len = 11392 // the bytes the answer wrote
+const desk_list_fold = 11400 // the listing's fold, the change detector
+const desk_view = 11408 // the view's entries
+const desk_view_count = 13968
+const desk_folder = 13976 // the current folder's prefix bytes
+const desk_folder_len = 14000
+const desk_sel = 14008 // the selected entry, -1 none
+const desk_tmp = 14016 // the re-list's scratch, the fold's input
+const desk_wall_grant = 16064 // the wallpaper's grant and base — the
+const desk_wall_base = 16072 // surfaces rebuilt from these at a repaint
+const desk_bar_grant = 16080 // the header panel's grant and base
+const desk_bar_base = 16088
+const desk_mode_cell = 16096 // the display's mode packed, w above h
+
+// Whether a name is an app's: the `.elf` the dock's slots carry, off
+// the desktop.
+def desk_is_elf(namep Int64, nlen Int64) Bool {
+  if nlen < 4 {
+    return false
+  }
+  return peek8(namep + nlen - 4) == 46B && peek8(namep + nlen - 3) == 101B && peek8(namep + nlen - 2) == 108B && peek8(namep + nlen - 1) == 102B
+}
+
+// One view entry written from a name's bytes; the next index back.
+def desk_view_put(idx Int64, namep Int64, nlen Int64, kind Int64) Int64 {
+  const e = buf + desk_view + (idx * 40)
+  var i = 0
+  while i < nlen {
+    poke8(e + i, peek8(namep + i))
+    i = i + 1
+  }
+  poke64(e + 24, nlen)
+  poke64(e + 32, kind)
+  return idx + 1
+}
+
+// Whether the view grown so far already shows that folder: two folders
+// of one prefix are one icon, the dedupe the parse's own.
+def desk_view_has(count Int64, namep Int64, nlen Int64) Bool {
+  var i = 0
+  while i < count {
+    const e = buf + desk_view + (i * 40)
+    if peek64(e + 24) == nlen && peek64(e + 32) == 1 {
+      var same = true
+      var k = 0
+      while k < nlen {
+        if peek8(e + k) != peek8(namep + k) {
+          same = false
+          k = nlen
+        } else {
+          k = k + 1
+        }
+      }
+      if same {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The listing through the view's grammar, whole from scratch. At the
+// root: a flat name a document, a prefixed name its folder once, the
+// `.elf` rows skipped. Inside a folder F: the `..` way up first, then
+// each name under F — the rest after `F/` a document of its own, or
+// the subfolder its own prefix names, deduped the same way. A folder
+// and a flat file of one spelling are both shown: they are two
+// entries of the volume, and the view hides nothing.
+def desk_view_build() Void {
+  var count = 0
+  const flen = peek64(buf + desk_list_len)
+  const folder_len = peek64(buf + desk_folder_len)
+  if folder_len > 0 {
+    const e = buf + desk_view
+    poke8(e, 46B)
+    poke8(e + 1, 46B)
+    poke64(e + 24, 2)
+    poke64(e + 32, 2)
+    count = 1
+  }
+  var pos = 0
+  while pos < flen {
+    var n = pos
+    while n < flen && peek8(buf + desk_list + n) != 10B {
+      n = n + 1
+    }
+    const nlen = n - pos
+    const namep = buf + desk_list + pos
+    if !desk_is_elf(namep, nlen) {
+      // the first slash, or -1: the name's folder membership
+      var slash = -1
+      var k = 0
+      while k < nlen {
+        if peek8(namep + k) == 47B {
+          slash = k
+          k = nlen
+        } else {
+          k = k + 1
+        }
+      }
+      if folder_len == 0 {
+        if slash < 0 {
+          count = desk_view_put(count, namep, nlen, 0)
+        } else {
+          if !desk_view_has(count, namep, slash) {
+            count = desk_view_put(count, namep, slash, 1)
+          }
+        }
+      } else {
+        // under F: the name is F's own bytes, the slash, the child
+        var under = true
+        var k2 = 0
+        while k2 < folder_len {
+          if peek8(namep + k2) != peek8(buf + desk_folder + k2) {
+            under = false
+            k2 = folder_len
+          } else {
+            k2 = k2 + 1
+          }
+        }
+        if under && slash == folder_len && nlen > folder_len + 1 {
+          const restp = namep + folder_len + 1
+          const rest = nlen - folder_len - 1
+          var sub = -1
+          var k3 = 0
+          while k3 < rest {
+            if peek8(restp + k3) == 47B {
+              sub = k3
+              k3 = rest
+            } else {
+              k3 = k3 + 1
+            }
+          }
+          if sub < 0 {
+            count = desk_view_put(count, restp, rest, 0)
+          } else {
+            if !desk_view_has(count, restp, sub) {
+              count = desk_view_put(count, restp, sub, 1)
+            }
+          }
+        }
+      }
+    }
+    pos = n + 1
+  }
+  poke64(buf + desk_view_count, count)
+  // a selection past the view is no selection
+  if peek64(buf + desk_sel) >= count {
+    poke64(buf + desk_sel, -1)
+  }
+}
+
+// The listing taken and its fold kept — the boot's one load, the
+// refresh's comparison the command loop's.
+def desk_list_load() Void {
+  case syscall.file_list(buf + desk_list, 2048) {
+    (R.error, _) -> { mark() }
+    (R.ok, n) -> {
+      poke64(buf + desk_list_len, n)
+      var d = 0
+      var i = 0
+      while i < n {
+        d = (d * 31 + peek8(buf + desk_list + i).to_int64()) & 4294967295
+        i = i + 1
+      }
+      poke64(buf + desk_list_fold, d)
+    }
+  }
+}
+
+// ---- the metal's own painting (emo-desktop A13) ----
+//
+// The wallpaper and its icons are painted straight onto the buffer's
+// bytes through the typed stores — the carve's own rule, and the
+// round's find: the `Surface`'s methods are class bodies, and a class
+// body boxes every word it computes into the arena for good (the pool
+// reclaims the identities, the boxing never comes back — "left in the
+// arena per repaint" is the dock's own comment). The first icon press
+// died the second repaint: one surface-path repaint weighed as much as
+// the boot had left. These defs are typed top-level ones, so a repaint
+// costs no arena at all and the desktop repaints for a living. The
+// shapes are the package's words (`emo_desktop.wall_top` and kin — the
+// hosted canvas paints the same formula), so the golden's digest and
+// the screendump's bytes are one design.
+
+// One clipped span packed x above w — the ribbon row's store span, the
+// clip the package's `blend` gets from `ui_fb.clip` and the raw stores
+// must do themselves (a negative x would walk the store off the row).
+def desk_span_clip(x Int64, w Int64, mw Int64) Int64 {
+  var x0 = x
+  var w0 = w
+  if x0 < 0 {
+    w0 = w0 + x0
+    x0 = 0
+  }
+  if x0 + w0 > mw {
+    w0 = mw - x0
+  }
+  if w0 < 0 {
+    w0 = 0
+  }
+  return (x0 << 32) | w0
+}
+
+// One ribbon row blended: the span the clip packed, one pixel tall.
+def desk_ribbon_row(base Int64, mw Int64, y Int64, x Int64, w Int64, ink_color Int64) Void {
+  const span = desk_span_clip(x, w, mw)
+  const x0 = span >> 32
+  const w0 = span & 4294967295
+  if w0 > 0 {
+    carve_blend(base, mw, x0, y, w0, 1, ink_color)
+  }
+}
+
+// The wallpaper's art, whole: the gradient row by row (each channel a
+// positive-weight lerp between the package's two anchors), then the
+// three ribbons over it — the same slopes and inks the package's
+// `wallpaper` lays on the hosted canvas, mirrored here because the
+// call that paints must be the call that stays typed.
+def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
+  const denom = mh - 1
+  const tr = (emo_desktop.wall_top() >> 16) & 255
+  const tg = (emo_desktop.wall_top() >> 8) & 255
+  const tb = emo_desktop.wall_top() & 255
+  const br = (emo_desktop.wall_bottom() >> 16) & 255
+  const bg = (emo_desktop.wall_bottom() >> 8) & 255
+  const bb = emo_desktop.wall_bottom() & 255
+  var y = 0
+  while y < mh {
+    const r = (tr * (denom - y) + br * y) / denom
+    const g = (tg * (denom - y) + bg * y) / denom
+    const b = (tb * (denom - y) + bb * y) / denom
+    carve_fill(base, mw, 0, y, mw, 1, (r << 16) | (g << 8) | b)
+    y = y + 1
+  }
+  var t = 0
+  while t < 480 {
+    desk_ribbon_row(base, mw, t, -200 + (3 * t) / 4, 460, 0x2830B8C8)
+    t = t + 1
+  }
+  var u = 160
+  while u < 720 {
+    desk_ribbon_row(base, mw, u, 60 + u / 2, 400, 0x20E86890)
+    u = u + 1
+  }
+  var v = 340
+  while v < mh {
+    desk_ribbon_row(base, mw, v, 900 - v / 4, 540, 0x188868E8)
+    v = v + 1
+  }
+}
+
+// The name's byte under the box: the font's drawing of that byte's own
+// arithmetic, the hollow cell past the printable span — the package's
+// `text_byte` rule, through the carve's typed stamp.
+def desk_name_byte(base Int64, mw Int64, mh Int64, x Int64, y Int64, b Int64) Void {
+  var i = b - 32
+  if i < 0 || i > 94 {
+    i = 95
+  }
+  carve_glyph(base, mw, mh, x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), 0xF8F8F0)
+}
+
+// A document icon at its cell: the selection's blend first, then the
+// page with its folded corner and three text lines — the package's
+// `paint_icon_doc` shapes, at the cell origin the package's `icon_cell`
+// packed.
+def desk_icon_doc(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+  }
+  const ix = cx + emo_desktop.icon_off_x()
+  const iy = cy + emo_desktop.icon_off_y()
+  carve_fill(base, mw, ix + 8, iy + 2, 28, 40, 0xE8E8F0)
+  carve_fill(base, mw, ix + 28, iy + 2, 8, 8, 0xC2C8D4)
+  carve_fill(base, mw, ix + 14, iy + 16, 16, 3, 0x98A0B0)
+  carve_fill(base, mw, ix + 14, iy + 24, 16, 3, 0x98A0B0)
+  carve_fill(base, mw, ix + 14, iy + 32, 10, 3, 0x98A0B0)
+}
+
+// A folder icon at its cell: the tab and body in the folder blue, the
+// light along the top, the shade at the foot — the package's
+// `paint_icon_folder` shapes.
+def desk_icon_folder(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+  if selected {
+    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+  }
+  const ix = cx + emo_desktop.icon_off_x()
+  const iy = cy + emo_desktop.icon_off_y()
+  carve_fill(base, mw, ix + 6, iy + 8, 16, 7, 0x4098E0)
+  carve_fill(base, mw, ix + 4, iy + 13, 36, 25, 0x4098E0)
+  carve_fill(base, mw, ix + 4, iy + 13, 36, 3, 0x5FA8E8)
+  carve_fill(base, mw, ix + 4, iy + 32, 36, 6, 0x327FC2)
+}
+
+// The view's icons over the wallpaper: a document or a folder per
+// entry, the selection's blend behind the one selected, the name's
+// bytes under the box — ten cells of it shown (a display name's cut;
+// the volume's own spelling is what the commands read).
+def desk_icons_paint(base Int64, mw Int64, mh Int64) Void {
+  const count = peek64(buf + desk_view_count)
+  const sel = peek64(buf + desk_sel)
+  var i = 0
+  while i < count {
+    const cell = emo_desktop.icon_cell(i, mw, mh)
+    const cx = cell >> 32
+    const cy = cell & 4294967295
+    const e = buf + desk_view + (i * 40)
+    const kind = peek64(e + 32)
+    if kind == 0 {
+      desk_icon_doc(base, mw, cx, cy, i == sel)
+    } else {
+      desk_icon_folder(base, mw, cx, cy, i == sel)
+    }
+    var shown = peek64(e + 24)
+    if shown > 10 {
+      shown = 10
+    }
+    var k = 0
+    while k < shown {
+      desk_name_byte(base, mw, mh, cx + 8 + k * 8, cy + 56, peek8(e + k).to_int64())
+      k = k + 1
+    }
+    i = i + 1
+  }
+}
+
+// The wallpaper whole, repainted: the art, the icons, the digest's
+// frame line, the present — the surface nothing but its grant and its
+// bytes, no class, no interface, no arena spent.
+def desk_wall_repaint() Void {
+  const base = peek64(buf + desk_wall_base)
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const mh = mode & 4294967295
+  desk_wallpaper_paint(base, mw, mh)
+  desk_icons_paint(base, mw, mh)
+  frame_line(carve_digest(base, mw, mh))
+  case syscall.present(peek64(buf + desk_wall_grant), 0, 0, mw, mh) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+}
+
+// The header bar repainted: the running count is its one live fact,
+// and a launch or a death is the news it carries.
+def desk_chrome() Void {
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const bar = Win.new(grant: peek64(buf + desk_bar_grant), base: peek64(buf + desk_bar_base), width: mw, height: emo_desktop.header_height())
+  const m = desk_running_mask()
+  var running = 0
+  if (m & 1) == 1 {
+    running = running + 1
+  }
+  if (m & 2) == 2 {
+    running = running + 1
+  }
+  if (m & 4) == 4 {
+    running = running + 1
+  }
+  emo_desktop.paint_header(bar, mw, running)
+  bar.present()
+}
+
+// A press on the desktop's own ground: an icon's cell, or the bare
+// wallpaper. A document the selection moves (and the repaint only when
+// it moved); a folder the door into its prefix; the `..` the way up —
+// the prefix's last part struck. A bare press clears the selection,
+// the way a click on bare desktop does; nothing to clear, nothing to
+// repaint.
+def desk_icon_press(hit Int64) Void {
+  if hit < 0 {
+    if peek64(buf + desk_sel) != -1 {
+      poke64(buf + desk_sel, -1)
+      desk_wall_repaint()
+    }
+  } else {
+    const e = buf + desk_view + (hit * 40)
+    const kind = peek64(e + 32)
+    if kind == 0 {
+      if peek64(buf + desk_sel) != hit {
+        poke64(buf + desk_sel, hit)
+        desk_wall_repaint()
+      }
+    } else {
+      // the folder's door, both ways
+      const nlen = peek64(e + 24)
+      const flen = peek64(buf + desk_folder_len)
+      if kind == 1 {
+        // in: the view's name appended to the current prefix, `/`
+        // between — the separator's slot only when a prefix is there
+        // to separate (the root's child starts at the buffer's head)
+        var at = flen
+        if flen > 0 {
+          poke8(buf + desk_folder + flen, 47B)
+          at = flen + 1
+        }
+        var i = 0
+        while i < nlen {
+          poke8(buf + desk_folder + at + i, peek8(e + i))
+          i = i + 1
+        }
+        poke64(buf + desk_folder_len, at + nlen)
+      } else {
+        // up: the prefix's last part struck, the root when none is left
+        if flen > 0 {
+          var last = -1
+          var k = 0
+          while k < flen {
+            if peek8(buf + desk_folder + k) == 47B {
+              last = k
+            }
+            k = k + 1
+          }
+          if last < 0 {
+            poke64(buf + desk_folder_len, 0)
+          } else {
+            poke64(buf + desk_folder_len, last)
+          }
+        }
+      }
+      poke64(buf + desk_sel, -1)
+      desk_view_build()
+      desk_wall_repaint()
+    }
+  }
+}
+
+// The volume may have changed under a command (`write`, `rm`): the
+// re-list's fold is the change detector, the copy, the rebuild and the
+// repaint the answer. An unchanged fold is the common case, and it
+// costs one list and one fold — no present, no frame.
+def desk_icons_refresh() Void {
+  case syscall.file_list(buf + desk_tmp, 2048) {
+    (R.error, _) -> { mark() }
+    (R.ok, n) -> {
+      var d = 0
+      var i = 0
+      while i < n {
+        d = (d * 31 + peek8(buf + desk_tmp + i).to_int64()) & 4294967295
+        i = i + 1
+      }
+      if d != peek64(buf + desk_list_fold) {
+        var j = 0
+        while j < n {
+          poke8(buf + desk_list + j, peek8(buf + desk_tmp + j))
+          j = j + 1
+        }
+        poke64(buf + desk_list_len, n)
+        poke64(buf + desk_list_fold, d)
+        desk_view_build()
+        desk_wall_repaint()
+      }
+    }
+  }
+}
+
+// `desktop icons <n>` — the wallpaper's first present's annotation,
+// the count the view grew.
+def desk_icons_line() Void {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32) // space
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 32) // space
+  p = num_at(peek64(buf + desk_view_count), p)
+  p = byte_at(p, 10)
+  gate_line(p)
 }
 
 // The desktop's own body (emo-desktop A12.1): the dock's panel up,
@@ -2629,6 +3129,57 @@ def desktop() Void {
   const mh = out_h(mode)
   const dw = mw
   const dh = emo_desktop.strip_height()
+  poke64(buf + desk_mode_cell, (mw << 32) | mh)
+  // The desktop's own canvas (emo-desktop A13): the volume's listing
+  // taken, the view grown from it — the icons the wallpaper carries —
+  // then the wallpaper itself (role 4, the walk's undermost layer) and
+  // the header bar (a panel at the top edge) before the dock, so the
+  // first composition of every surface already has the desktop whole.
+  poke64(buf + desk_folder_len, 0)
+  poke64(buf + desk_sel, -1)
+  desk_list_load()
+  desk_view_build()
+  var gw = 0
+  var base_w = 0
+  case syscall.win_new(mw, mh) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gw = win_id(ans)
+      base_w = win_base(ans)
+    }
+  }
+  case syscall.win_role(gw, 4) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gw, 0, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  poke64(buf + desk_wall_grant, gw)
+  poke64(buf + desk_wall_base, base_w)
+  desk_wall_repaint()
+  desk_icons_line()
+  var gh = 0
+  var base_h = 0
+  case syscall.win_new(mw, emo_desktop.header_height()) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      gh = win_id(ans)
+      base_h = win_base(ans)
+    }
+  }
+  case syscall.win_role(gh, 3) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  case syscall.win_move(gh, 0, 0) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+  poke64(buf + desk_bar_grant, gh)
+  poke64(buf + desk_bar_base, base_h)
+  desk_chrome()
   var gd = 0
   var base_d = 0
   case syscall.win_new(dw, dh) {
@@ -2689,16 +3240,19 @@ def desktop() Void {
         poke64(buf + desk_pids, 0)
         desk_exit_line(buf + desk_names, desk_nlen(0), code)
         desk_dock(wd, dw, dh, labels)
+        desk_chrome()
       }
       if slot == 1 {
         poke64(buf + desk_pids + 8, 0)
         desk_exit_line(buf + desk_names + 12, desk_nlen(1), code)
         desk_dock(wd, dw, dh, labels)
+        desk_chrome()
       }
       if slot == 2 {
         poke64(buf + desk_pids + 16, 0)
         desk_exit_line(buf + desk_names + 24, desk_nlen(2), code)
         desk_dock(wd, dw, dh, labels)
+        desk_chrome()
       }
     }
     // The serial's byte: the line's feed, the command when the line
@@ -2712,6 +3266,10 @@ def desktop() Void {
           desk_exec_cmd(e, n, wd, dw, dh, labels)
         } else {
           shell.execute(n)
+          // the volume may have changed under the command (the write,
+          // the rm): the fold's comparison is the refresh's whole cost
+          // when it did not (emo-desktop A13)
+          desk_icons_refresh()
         }
         shell.prompt()
       }
@@ -2726,8 +3284,12 @@ def desktop() Void {
     }
     // The tablet's left button (BTN_LEFT, 272): a press on the strip
     // names a tile, and the tile names its app — the launcher's whole
-    // answer; a press anywhere else is the windows' world, the
-    // press-raise the compositor's own.
+    // answer; a press above the strip is the desktop's own ground or
+    // the windows' world, the press-raise the compositor's own. The
+    // bar's press is no one's here: the compositor gave the focus to
+    // the desktop already (T8.27). An icon's cell the hit test names —
+    // the selection moved, the folder's door, the way up; the bare
+    // wallpaper the selection's clear (emo-desktop A13).
     if t == 1 && ev_code(ev) == 272 {
       if ev_value(ev) == 1 {
         const tile = emo_desktop.press(px, py, mw, mh, 3)
@@ -2739,6 +3301,9 @@ def desktop() Void {
         }
         if tile == 2 {
           desk_launch(2, wd, dw, dh, labels)
+        }
+        if tile == -1 && py >= emo_desktop.header_height() {
+          desk_icon_press(emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))
         }
       }
     }

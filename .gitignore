@@ -58,7 +58,7 @@ projects/emo-os/.blk.img
 # the counter's last frame, taken at the loop's fourth; A9.2: the
 # client era's, the reborn window over the dead owner's background;
 # A12.1: the desktop era's — the two-up beat, the trio, and the
-# empty dock after the quits
+# empty dock after the quits; A13: the entered folder
 projects/emo-os/.screen.ppm
 projects/emo-os/.frame.ppm
 projects/emo-os/.counter.ppm
@@ -69,4 +69,5 @@ projects/emo-os/.client.ppm
 projects/emo-os/.duo1.ppm
 projects/emo-os/.trio.ppm
 projects/emo-os/.deskout.ppm
+projects/emo-os/.folder.ppm
 projects/emo-os/.blk.img.gdb

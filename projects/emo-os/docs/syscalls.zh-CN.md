@@ -59,7 +59,7 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 | 14 | `win_close(grant)` | 缓冲的释放:运行归还分配器,grant 消失;应答 0(T8.5,见下) |
 | 15 | `win_focus(grant)` | 合成器的栈记录该窗口为焦点;应答 0(T8.6,见下) |
 | 16 | `win_move(grant, x, y)` | 合成器的 blit 把窗口帧放到该位置;应答 0(T8.6,见下) |
-| 17 | `win_role(grant, role)` | 缓冲成为合成器栈上该角色的表面——0 toplevel、1 popup、2 subsurface、3 panel;合成器实现的是 toplevel,其余按原因 4 拒绝,第二次声明与没有表面在背后的 grant 同罪;栈满为原因 5(T8.13,见下) |
+| 17 | `win_role(grant, role)` | 缓冲成为合成器栈上该角色的表面——0 toplevel、1 popup、2 subsurface、3 panel、4 wallpaper(T8.27,emo-desktop A13——一块机器只有一份、永不抬升的画布,走栈画在每个窗口之下);合成器实现的是 toplevel,其余按原因 4 拒绝,第二次声明与没有表面在背后的 grant 同罪;栈满为原因 5(T8.13,见下) |
 | 18 | `input_info(index)` | 第 index 个指针的轴,打包的设备自报量程(X 在上、Y 在下);没有设备应答的索引为原因 4(T8.13,见下) |
 | 19 | `win_parent(grant, parent)` | popup 或 subsurface 点名它挂靠的 toplevel——自绑定起其坐标即父面的坐标,走栈把它画在父面正上方,父面死亡时随之而去;调用者须拥有两个 grant,无条目的表面、不带父面的角色(toplevel、panel)、非活 toplevel 的父面,一律原因 4(T8.15,见下) |
 | 20 | `win_format(grant, format)` | 缓冲的格式记入其行——XRGB8888(0)是第一个接受的值;合成器不携带的格式按其号码拒为原因 4(T8.15,见下) |
