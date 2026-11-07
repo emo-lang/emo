@@ -87,7 +87,8 @@ const client2_cell = buf + 2128
 // its own (the table the kernel's build made carries the carve, RW
 // with U; a pass without the grant maps none of it).
 const screen_cell = 0x87fff040
-const screen_base = 0x86c00000
+const screen_base = 0x86800000
+const screen_size = 0x800000
 const text_seg = 0x87100000
 const kernel_mem = 0x80200000
 // The filesystem proof's buffers (T7.2), further up the same scratch
@@ -575,7 +576,7 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
 // sprite starts past the block's first line, where T8.2's proof pattern
 // below lands its word (docs/desktop-abi.md).
 def sprite_upload() Void {
-  const header = screen_base + 0x400000 - 65536 + 64
+  const header = screen_base + screen_size - 65536 + 64
   const w = ui_fb.pointer.width()
   const h = ui_fb.pointer.height()
   var r = 0
@@ -1596,7 +1597,19 @@ if peek64(win_cell) != 0 {
         }
       }
       var ppan = 0
-      case syscall.win_new(1024, 32) {
+      // the panel is the walk's topmost strip: the mode's own width at
+      // the display's bottom edge (A14.3 — the shape derives, the mode
+      // the device's answer)
+      var pmw = 0
+      var pmh = 0
+      case syscall.output_info(0) {
+        (R.error, _) -> { mark() }
+        (R.ok, m) -> {
+            pmw = m >> 32
+            pmh = m & 4294967295
+          }
+      }
+      case syscall.win_new(pmw, 32) {
         (R.error, _) -> { mark() }
         (R.ok, qans) -> {
           ppan = win_id(qans)
@@ -1608,12 +1621,12 @@ if peek64(win_cell) != 0 {
             (R.error, _) -> { parent_panel_line() }
             (R.ok, _) -> { mark() }
           }
-          case syscall.win_move(ppan, 0, 736) {
+          case syscall.win_move(ppan, 0, pmh - 32) {
             (R.error, _) -> { mark() }
             (R.ok, _) -> {}
           }
-          paint_win(win_base(qans), 32, 512, 0x504E4C00)
-          case syscall.present(ppan, 0, 0, 1024, 32) {
+          paint_win(win_base(qans), 32, pmw / 2, 0x504E4C00)
+          case syscall.present(ppan, 0, 0, pmw, 32) {
             (R.error, _) -> { mark() }
             (R.ok, _) -> { panel_up_line() }
           }
@@ -2862,18 +2875,21 @@ def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
     y = y + 1
   }
   var t = 0
-  while t < 480 {
-    desk_ribbon_row(base, mw, t, -200 + (3 * t) / 4, 460, 0x2830B8C8)
+  while t < (5 * mh) / 8 {
+    desk_ribbon_row(base, mw, t, -((25 * mw) / 128) + (3 * t) / 4,
+      (115 * mw) / 256, 0x2830B8C8)
     t = t + 1
   }
-  var u = 160
-  while u < 720 {
-    desk_ribbon_row(base, mw, u, 60 + u / 2, 400, 0x20E86890)
+  var u = (5 * mh) / 24
+  while u < (15 * mh) / 16 {
+    desk_ribbon_row(base, mw, u, (15 * mw) / 256 + u / 2, (25 * mw) / 64,
+      0x20E86890)
     u = u + 1
   }
-  var v = 340
+  var v = (85 * mh) / 192
   while v < mh {
-    desk_ribbon_row(base, mw, v, 900 - v / 4, 540, 0x188868E8)
+    desk_ribbon_row(base, mw, v, (225 * mw) / 256 - v / 4, (135 * mw) / 256,
+      0x188868E8)
     v = v + 1
   }
 }

@@ -914,10 +914,30 @@ The decisions (2026-11-06):
   2026-11-07): two of the compositor's old sum pins split and were
   remapped by place; the tables lower as code and static cells, ~288
   KiB an image — the compiler lever is on record.
-- [ ] **A14.3** — The mode, the desktop's side (the kernel's is EmoOS
-  T9.1): every size the desktop paints derived from the mode — the
-  header bar, the dock, the icon cells, the windows' places — and
-  every golden re-pinned at 1920×1080.
+- [x] **A14.3** — The mode, the desktop's side — **complete
+  2026-11-07** (the kernel's half is EmoOS T9.1). Every mode-shaped
+  size the desktop paints derives from the mode now: the wallpaper's
+  ribbons are fractions of w and h whose 256ths and 128ths reproduce
+  the 1024×768 drawing they were tuned at exactly (the slopes stay the
+  art's own), the same formula in the metal's typed mirror and
+  `run.sh`'s model; the panel proof's strip is the mode's own width at
+  the display's bottom edge; and the apps place their windows from
+  `output_info` — the counter dead center, the browser and the editor
+  its upper-left and lower-left quadrants. The chrome's own sizes (the
+  24px header, the 40px dock, the 96×76 icon cells) stay the face's
+  design sizes — A14.4 redraws them; the desk pass's two demo windows
+  keep their absolute places, and the drag targets with them. The
+  goldens re-pinned at 1920×1080: the frame golden and the corpus's
+  canvases, the dock's strip, the wallpaper's digest, the cell and hit
+  probes — the frame digests the metal prints still come off the same
+  files. The finds: the bare pins (`comp 576 384`) had been
+  prefix-matching the compositor's summed lines all along, so the
+  remap split the desk window's and the counter's by position; the
+  screendump header grew a byte (`P6\n1920 1080\n` — offset 16 → 17).
+  The acceptance: `run.sh` at the mode green under both transports
+  three rounds, the launch-era and desktop-era screendumps modeled to
+  the pixel, the fb gate green, the ledger `frames 771 573`. Decision
+  record: CHECK.md, 2026-11-07.
 - [ ] **A14.4** — The chrome: the header bar and the dock as
   translucent material over the wallpaper by D8's formula, the dock a
   rounded shelf with its shadow, the apps' tiles drawn icons (rounded

@@ -73,7 +73,7 @@ class Eye {
 }
 
 def main() {
-  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1024, 768))
+  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1920, 1080))
   ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
     ui_fb_frame.counter.initial(),
     ui_fb.backend(screen, ui_fb.script([0, 0, 1])))

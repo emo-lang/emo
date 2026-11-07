@@ -3289,8 +3289,8 @@ let riscv64_profile_tests =
           "the kernel stub is the entry" true
           (contains kernel_asm "Boot profile A");
         Alcotest.(check bool)
-          "the kernel heap is the 64 MiB the disk ELFs' round spent" true
-          (contains kernel_asm ".zero 67108864"));
+          "the kernel heap is the 32 MiB the HD desktop's round spent" true
+          (contains kernel_asm ".zero 33554432"));
     tc "the allocator charges the current process's arena" (fun () ->
         (* T5.1: the slot holds the cursor and the end (offsets 576 and
            584, the stride 592), emo_alloc reads them off the current

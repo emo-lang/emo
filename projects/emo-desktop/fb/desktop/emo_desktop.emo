@@ -236,9 +236,15 @@ def wallpaper(s ui_fb.Surface, w Int64, h Int64) Void {
     s.fill(0, y, w, 1, (r << 16) | (g << 8) | b)
     y = y + 1
   }
-  ribbon(s, h, (0 << 32) | 480, 3, 4, -200, 460, (0x28 << 24) | 0x30B8C8)
-  ribbon(s, h, (160 << 32) | 720, 1, 2, 60, 400, (0x20 << 24) | 0xE86890)
-  ribbon(s, h, (340 << 32) | 768, -1, 4, 900, 540, (0x18 << 24) | 0x8868E8)
+  // The ribbons' bands, offsets and widths derive from the mode (A14.3
+  // — fractions of w and h whose 256ths and 128ths reproduce the 1024x768
+  // drawing they were tuned at exactly); the slopes stay the art's own.
+  ribbon(s, h, (0 << 32) | ((5 * h) / 8), 3, 4, -((25 * w) / 128),
+    (115 * w) / 256, (0x28 << 24) | 0x30B8C8)
+  ribbon(s, h, (((5 * h) / 24) << 32) | ((15 * h) / 16), 1, 2, (15 * w) / 256,
+    (25 * w) / 64, (0x20 << 24) | 0xE86890)
+  ribbon(s, h, (((85 * h) / 192) << 32) | h, -1, 4, (225 * w) / 256,
+    (135 * w) / 256, (0x18 << 24) | 0x8868E8)
 }
 
 // The header bar's colors: a slate darker than the dock's paper —

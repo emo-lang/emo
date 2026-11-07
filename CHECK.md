@@ -279,10 +279,13 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   generation time into a sixteen-level grid, `ink` the coverage blit,
   proportional advances in the measure. Landed 2026-11-07; the record
   is the dated section below.
-- [ ] **A14.3** — the mode, the desktop's side: every size from the
-  mode, the goldens at 1920×1080.
-- [ ] **T9.1** — the mode, the kernel's side: the carve at 8 MiB
-  grown downward, the region's budget measured and its lever chosen.
+- [x] **A14.3** — the mode, the desktop's side: the wallpaper's art
+  and the windows' places from the mode, the goldens at 1920×1080.
+  Landed 2026-11-07; the record is the dated section below.
+- [x] **T9.1** — the mode, the kernel's side: the carve at 8 MiB grown
+  downward, the budget measured, the kernel heap 64 → 32 MiB the
+  round's lever. Landed 2026-11-07; the record is the dated section
+  below.
 - [ ] **A14.4** — the chrome: the header and the dock translucent by
   the wallpaper's formula, the icons drawn.
 - [ ] **A14.5** — the windows: the shared title bar, the apps
@@ -296,6 +299,76 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   lever): integer-literal aggregates fill from a `.rodata` blob of
   their static cells. Landed 2026-11-07; the record is the dated
   section below.
+
+## 2026-11-07 — The mode (emo-desktop A14.3, EmoOS T9.1)
+
+- **The budget question answered on the machine.** The mode's demands
+  were known (the wallpaper's window buffer 48 → 127 blocks, the
+  header's and the dock's with it, +82 the desktop's own; the carve
+  8 MiB = 128 blocks grown downward off the region's top); what the
+  paper could not say was whether the region still held the desktop
+  plus three residents. The machine answered at the editor's exec —
+  `desktop: the kernel is out of a resource`, the take_run that could
+  not find its 102 contiguous blocks. The disk ELFs' round (A11.1)
+  had spent the kernel heap 96 → 64 MiB to grow the region for the
+  three residents; the mode spent the region again, and **the round's
+  lever is the same one: the kernel heap 64 → 32 MiB**. The heap's
+  live users are the root's bump (a few KiB) and the const region at
+  its top — the hooks serve every spawned pass from the region, so
+  the bare-metal spawn's carve the heap once backed is dead code —
+  and 512 blocks come back. No `-m` (the memory map's top stays
+  `0x88000000`, QEMU's 128 MiB default holding it exactly), no second
+  region, no allocator surgery. The dune pin (`.zero 67108864`) moved
+  with it. The trio now fits with room beside it, and the ledger's
+  arithmetic says so: `frames 685 569` → `771 573` (+86 taken, +4
+  given — the desktop's own +82 are live surfaces at poweroff, never
+  given).
+- **The art scales, the design constants stay.** The wallpaper's
+  gradient already derived from h; its three ribbons were tuned at
+  1024×768 with raw pixel constants. The landed form expresses every
+  band's rows, offsets and widths as fractions of w and h whose
+  denominators (256, 128, 24, 16, 8, 192) reproduce the tuned values
+  exactly at 1024×768 — `(5·h)/8` is 480 there, `(115·w)/256` is 460 —
+  and stretch them at the mode. The slopes stay the art's own, and
+  the truncation discipline held: the metal's typed mirror, the
+  hosted canvas and `run.sh`'s model divide the same way, and the
+  launch-era and desktop-era screendumps model to the pixel at
+  1920×1080. The chrome's own sizes — the 24px header, the 40px dock,
+  the 96×76 icon cells — are the face's design, not the mode's; A14.4
+  redraws them.
+- **The places derive; the proofs keep theirs.** The apps read the
+  mode through `output_info` and place their windows — the counter
+  dead center, the browser and editor its quadrants. The panel proof
+  (T8.15's full-width strip) takes the mode's own width at the
+  display's bottom edge. The desk pass's two demo windows keep their
+  absolute places (they are the drag proof's fixtures, and the drag
+  targets with them), and every `abs` beat's device value was
+  recomputed for the new axes with the compositor's own scale checked
+  (`floor(v·mode/32768) = pixel`).
+- **Two finds in the pins.** The bare comp pins (`comp 576 384`) had
+  been prefix-matching the compositor's summed lines all along — the
+  desk window's mount and the counter's were never bare — so the
+  remap split them by position in the list, and the comment that said
+  they "shared" the line now says why they stopped. The screendump
+  header `P6\n1920 1080\n255\n` is 17 bytes where the 768p one was
+  16 — five `data[:16]`/`data[16:]` pixel models read past their own
+  headers until the first digest failure named it.
+- **A self-inflicted wound, caught by the lockfile.** A scratch
+  render's heredoc ran after a failed `cd`, and its `package.emo`
+  landed on the fb core's own manifest — the next build refused by
+  checksum (`the lockfile records … but the registry serves …`),
+  exactly the drift check E5007 is for. The strays moved to
+  `protected/tmp/`, the manifest restored from git, the registry
+  re-staged; the render that caused it was killed mid-paint.
+- Pins: `run.sh` green under both transports in three consecutive
+  rounds at the mode (the legacy rounds byte-identical), the
+  screendumps modeled to the pixel, the ledger `frames 771 573`; the
+  fb gate and the full dune suite green; `@fmt` green. **The gate's
+  own cost at the mode**: the beam goldens' digest folds are
+  per-pixel, and 1920×1080 is 2.8× the pixels — the frame golden's
+  beam run alone took ~40 minutes of CPU (the whole gate ~50). A
+  strike-downsized digest (the metal's own chunks at the hosted
+  twins' scale) is the lever if the gate's wall-time starts mattering.
 
 ## 2026-11-07 — The constant fill (EmoOS T9.4, the compiler's side)
 

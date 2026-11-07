@@ -204,7 +204,7 @@ dd if=/dev/zero of="$img" bs=4194304 count=1 status=none
 # carve on the wire as `frame <n>`, and the display's screendump at the
 # present digests to the same number — the number the hosted twin
 # prints) — the
-# desktop segment's verbs (T8.4: `output 1024x768`, the mode the
+# desktop segment's verbs (T8.4: `output 1920x1080`, the mode the
 # device's own answer, and `present ok`, the grant's commit — the
 # transfer and the flush complete before the line; the unauthorized
 # `present r3` the input pass's refusal) — the
@@ -249,7 +249,7 @@ boot() {
   # register layout the driver speaks — 64-bit queue addresses, no
   # guest page size); a transitional device would answer version 1
   # and the driver's loud end names it. The display's mode is the
-  # assessment's decided baseline (1024x768 XRGB8888) — the device
+  # assessment's decided baseline (1920x1080 XRGB8888) — the device
   # property is where that decision lives, and the driver still reads
   # whatever the device answers (T8.1; this QEMU's own default is
   # 1280x800, the golden would name it). The display itself has no
@@ -264,7 +264,7 @@ boot() {
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
-    -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-gpu-device,xres=1920,yres=1080 \
     -device virtio-keyboard-device \
     -device virtio-tablet-device \
     -monitor unix:"$mon",server,nowait \
@@ -406,9 +406,9 @@ import os
 import sys
 
 data = open(os.environ['PPM'], 'rb').read()
-if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit(f"run.sh: the {os.environ['WHAT']}'s screendump is not the mode's P6 1024x768")
-px = data[16:]
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit(f"run.sh: the {os.environ['WHAT']}'s screendump is not the mode's P6 1920x1080")
+px = data[17:]
 d = 0
 for i in range(0, len(px), 3):
     d = (d * 31 + ((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])) & 0xFFFFFFFF
@@ -477,7 +477,7 @@ PYEOF
   # sprite's pixels are the second screendump's below.
   qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":16384}},{"type":"abs","data":{"axis":"y","value":16384}}]}}'
   await 'move 1 16384'
-  await 'pointer 512 384'
+  await 'pointer 960 540'
   # The golden's eyes (T8.8, T8.13): the compositor's compositions
   # carried the window's frame into the carve and flushed — the monitor's
   # screendump takes the display's PPM and every pixel is read back
@@ -503,13 +503,13 @@ PYEOF
 import sys
 
 data = open('.screen.ppm', 'rb').read()
-if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit("run.sh: the screendump is not the mode's P6 1024x768")
-px = data[16:]
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit("run.sh: the screendump is not the mode's P6 1920x1080")
+px = data[17:]
 
 # The pointer sprite (T8.11, emo-desktop A8.2): the drawing's rows read
 # off pointer.emo — the quoted strings of `.`, `#` and `o` — composited
-# over everything at the hotspot the beat put it at, (512, 384): ink
+# over everything at the hotspot the beat put it at, (960, 540): ink
 # black, paper white, a clear cell the pixel beneath. The compositor hid
 # it around the walk and showed it again, so it lies over the background
 # untouched by the blit.
@@ -521,7 +521,7 @@ if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {os.environ['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
 def sprite(x, y):
-    r, c = y - 384, x - 512
+    r, c = y - 540, x - 960
     if 0 <= r < 17 and 0 <= c < 12:
         cell = rows[r][c]
         if cell == '#':
@@ -534,8 +534,8 @@ def want(x, y):
     s = sprite(x, y)
     if s is not None:
         return s
-    if 0 <= x < 1024 and 736 <= y < 768:
-        return (78, 76, y - 736)
+    if 0 <= x < 1920 and 1048 <= y < 1080:
+        return (78, 76, y - 1048)
     if 64 <= x < 192 and 64 <= y < 128:
         return (79, 80, y - 64)
     if 416 <= x < 480 and 64 <= y < 128:
@@ -544,9 +544,9 @@ def want(x, y):
         return (73, 78, y - 32)
     return (48, 48, 56)
 
-for y in range(768):
-    row = px[y * 3072:(y + 1) * 3072]
-    for x in range(1024):
+for y in range(1080):
+    row = px[y * 5760:(y + 1) * 5760]
+    for x in range(1920):
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
         if got != want(x, y):
             sys.exit(f'run.sh: the pixel at ({x},{y}) is {got}, the model says {want(x, y)}')
@@ -582,7 +582,7 @@ PYEOF
   await 'comp reclaim 26'
   await 'client up 6'
   await 'comp 512 320 4174893056'
-  abs 512 683
+  abs 274 486
   sleep 1
   hmp 'screendump .client.ppm'
   if ! POINTER_SPRITE="$pointer_sprite" python3 - <<'PYEOF2'
@@ -592,9 +592,9 @@ import sys
 
 e = os.environ
 data = open('.client.ppm', 'rb').read()
-if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit("run.sh: the client screendump is not the mode's P6 1024x768")
-px = data[16:]
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit("run.sh: the client screendump is not the mode's P6 1920x1080")
+px = data[17:]
 
 rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
@@ -618,9 +618,9 @@ def want(x, y):
         return (69, 66, y - 320)
     return (48, 48, 56)
 
-for y in range(768):
-    row = px[y * 3072:(y + 1) * 3072]
-    for x in range(1024):
+for y in range(1080):
+    row = px[y * 5760:(y + 1) * 5760]
+    for x in range(1920):
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
         if got != want(x, y):
             sys.exit(f'run.sh: the pixel at ({x},{y}) is {got}, the model says {want(x, y)}')
@@ -668,15 +668,15 @@ import sys
 
 e = os.environ
 data = open(e['PPM'], 'rb').read()
-if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1024x768")
-px = data[16:]
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1920x1080")
+px = data[17:]
 ax, ay, bx, by = int(e['AX']), int(e['AY']), int(e['BX']), int(e['BY'])
 cx, cy = int(e['CX']), int(e['CY'])
 W, H = 384, 128
 # The dock (emo-desktop A10.2): the shell's strip at the bottom edge,
 # the walk's topmost — no window over it, the sprite parked out of it.
-DX, DY, DW, DH = 0, 728, 1024, 40
+DX, DY, DW, DH = 0, 1040, 1920, 40
 
 rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
@@ -695,9 +695,9 @@ def sprite(x, y):
 def inside(x, y, wx, wy):
     return wx <= x < wx + W and wy <= y < wy + H
 
-for y in range(768):
-    row = px[y * 3072:(y + 1) * 3072]
-    for x in range(1024):
+for y in range(1080):
+    row = px[y * 5760:(y + 1) * 5760]
+    for x in range(1920):
         if inside(x, y, ax, ay) or inside(x, y, bx, by):
             continue
         if DX <= x < DX + DW and DY <= y < DY + DH:
@@ -710,7 +710,7 @@ for y in range(768):
 def fold(wx, wy, fw, fh):
     d = 0
     for y in range(wy, wy + fh):
-        o = (y * 1024 + wx) * 3
+        o = (y * 1920 + wx) * 3
         for x in range(fw):
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
@@ -753,14 +753,14 @@ import sys
 
 e = os.environ
 data = open(e['PPM'], 'rb').read()
-if data[:16] != b'P6\n1024 768\n255\n' or len(data) != 16 + 1024 * 768 * 3:
-    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1024x768")
-px = data[16:]
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1920x1080")
+px = data[17:]
 W, H = 384, 128
 # The dock (emo-desktop A10.2): the launcher's strip at the bottom
 # edge, the walk's topmost — no window over it, the sprite parked out
 # of it. Folded below, skipped in the walk.
-DX, DY, DW, DH = 0, 728, 1024, 40
+DX, DY, DW, DH = 0, 1040, 1920, 40
 
 rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
@@ -801,10 +801,10 @@ def advance(label, s=0):
 # own `over` does, channel by channel.
 TR, TG, TB = 0x10, 0x1C, 0x3C
 BR, BG, BB = 0x40, 0x30, 0x6A
-DEN = 767
-RIBBONS = [(0, 480, 3, 4, -200, 460, 0x2830B8C8),
-           (160, 720, 1, 2, 60, 400, 0x20E86890),
-           (340, 768, -1, 4, 900, 540, 0x188868E8)]
+DEN = 1079
+RIBBONS = [(0, (5 * 1080) // 8, 3, 4, -((25 * 1920) // 128), (115 * 1920) // 256, 0x2830B8C8),
+           ((5 * 1080) // 24, (15 * 1080) // 16, 1, 2, (15 * 1920) // 256, (25 * 1920) // 64, 0x20E86890),
+           ((85 * 1080) // 192, 1080, -1, 4, (225 * 1920) // 256, (135 * 1920) // 256, 0x188868E8)]
 
 def mix(s, d, a):
     return (s * a + d * (255 - a) + 127) // 255
@@ -838,8 +838,8 @@ def wall(x, y):
             if x0 < 0:
                 w0 += x0
                 x0 = 0
-            if x0 + w0 > 1024:
-                w0 = 1024 - x0
+            if x0 + w0 > 1920:
+                w0 = 1920 - x0
             if x0 <= x < x0 + w0:
                 p = over(ink, p)
     return ((p >> 16) & 255, (p >> 8) & 255, p & 255)
@@ -848,9 +848,9 @@ def wall(x, y):
 # corner down, the columns leftward — the shapes and the names the
 # paint lays, stamped over the wallpaper.
 def icon_cell(i):
-    rws = (768 - 32 - 48) // 76
+    rws = (1080 - 32 - 48) // 76
     col, row = i // rws, i % rws
-    return 1024 - 8 - (col + 1) * 96, 32 + row * 76
+    return 1920 - 8 - (col + 1) * 96, 32 + row * 76
 
 overlay = {}
 
@@ -907,11 +907,11 @@ for k, spec in enumerate(e['ICONS'].split(',')):
 # The header (emo-desktop A13, A14.2): the paper, the wordmark one pad
 # in, the running count ending one pad short of the right edge, the
 # text centered on the bar's height by the line box's own.
-stamp_rect(0, 0, 1024, 24, 0x1E1E26)
+stamp_rect(0, 0, 1920, 24, 0x1E1E26)
 ty = (24 - line_boxes[0]) // 2
 stamp_text('EmoOS', 8, ty, 0x40C8C8)
 rn = str(int(e['RUNNING']))
-x0 = 1016 - advance(rn) - advance(' apps')
+x0 = 1912 - advance(rn) - advance(' apps')
 stamp_text(rn, x0, ty, 0xC8C8D0)
 stamp_text(' apps', x0 + advance(rn), ty, 0xC8C8D0)
 
@@ -938,9 +938,9 @@ def inrect(x, y):
             return True
     return False
 
-for y in range(768):
-    row = px[y * 3072:(y + 1) * 3072]
-    for x in range(1024):
+for y in range(1080):
+    row = px[y * 5760:(y + 1) * 5760]
+    for x in range(1920):
         if inrect(x, y):
             continue
         if DX <= x < DX + DW and DY <= y < DY + DH:
@@ -959,7 +959,7 @@ for y in range(768):
 def fold(wx, wy):
     d = 0
     for y in range(wy, wy + H):
-        o = (y * 1024 + wx) * 3
+        o = (y * 1920 + wx) * 3
         for x in range(W):
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
@@ -968,7 +968,7 @@ def fold(wx, wy):
 def fold_strip():
     d = 0
     for y in range(DY, DY + DH):
-        o = (y * 1024 + DX) * 3
+        o = (y * 1920 + DX) * 3
         for x in range(DW):
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
@@ -998,43 +998,43 @@ PYEOF
   # The dock's first frame (emo-desktop A10.2): the strip's own
   # present, its composition the walk's carrying of it — the panel
   # over everything, the model's bottom strip skipped for it.
-  await 'comp 0 728'
+  await 'comp 0 1040'
   hmp 'screendump .desk1.ppm'
-  desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 512 384 "$(dock_line 1)" 'windows up'
-  abs 3200 8534
+  desk_is .desk1.ppm 64 128 576 384 "$(win_line 1)" '' "$(win_line 2)" 960 540 "$(dock_line 1)" 'windows up'
+  abs 1707 6069
   btn true
   btn false
   await 'desk focus 7'
-  await 'comp 0 728'
+  await 'comp 0 1040'
   printf 'a' >&3
   await 'desk key 7 1'
   # The beta focus rides the dock's tile (emo-desktop A10.2): a press
   # on the strip names the tile, the tile names its app, the dock
   # repaints with the tile lit.
-  abs 2048 31979
+  abs 1093 32162
   btn true
   btn false
   await 'desk focus 8'
-  await 'comp 0 728'
-  abs 19200 16896
+  await 'comp 0 1040'
+  abs 10240 12015
   btn true
-  abs 11520 12118
-  abs 3840 7339
+  abs 6144 8617
+  abs 2048 5219
   btn false
   await 'desk drag 8 96 160'
-  abs 512 29867
+  abs 274 21239
   sleep 1
   hmp 'screendump .desk2.ppm'
   desk_is .desk2.ppm 64 128 96 160 '' "$(win_line 5)" "$(win_line 6)" 16 700 "$(dock_line 3)" 'drag'
-  abs 4480 7339
+  abs 2390 5219
   btn true
-  abs 12000 12000
-  abs 19840 16896
+  abs 6400 6827
+  abs 10582 12015
   btn false
   await 'desk drag 8 576 384'
   printf 'a' >&3
   await 'desk key 8 1'
-  abs 512 29867
+  abs 274 21239
   sleep 1
   hmp 'screendump .desk3.ppm'
   desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 "$(dock_line 3)" 'drag back'
@@ -1062,17 +1062,17 @@ PYEOF
   # header bar's first, the dock's re-present over the wallpaper: the
   # three surfaces the composition carries from here on.
   await 'desktop icons 2'
-  await 'comp 0 0 63562221'
-  await 'comp 0 0 4081810905'
-  await 'comp 0 728 3786369038'
-  abs 768 31915
+  await 'comp 0 0 1324068029'
+  await 'comp 0 0 794789033'
+  await 'comp 0 1040 4289165022'
+  abs 410 32101
   btn true
   btn false
   await 'desktop counter up'
-  await 'comp 0 728 3886374238'
-  await 'comp 0 0 3757156786'
+  await 'comp 0 1040 94202926'
+  await 'comp 0 0 4259952770'
   await "frame $(app_line 1)"
-  await 'comp 576 384'
+  await 'comp 768 476'
   sleep 0.3
   printf 'a' >&3
   await 'add 1'
@@ -1084,16 +1084,16 @@ PYEOF
   # the second launch, the REPL's own exec: the dock's gap press
   # hands the panel the focus (the compositor's raise) and the serial
   # bytes are the shell's
-  abs 16000 31915
+  abs 8534 32101
   btn true
   btn false
   sleep 0.5
   feed 'exec files.elf'
   await 'desktop files up'
-  await 'comp 0 728 400416952'
-  await 'comp 0 0 488579572'
+  await 'comp 0 1040 903212936'
+  await 'comp 0 0 991375556'
   await "frame $(app_line 4)"
-  await 'comp 224 144'
+  await 'comp 384 238'
   # the browser's session rides the panel's focus: the press named it
   printf 'j' >&3
   await 'sel files.emo'
@@ -1101,22 +1101,22 @@ PYEOF
   printf 'o' >&3
   await 'open files.emo'
   await "frame $(app_line 6)"
-  abs 512 29867
+  abs 274 21239
   sleep 1
   hmp 'screendump .duo1.ppm'
-  apps_is .duo1.ppm 576 384 "$(app_line 3)" 224 144 "$(app_line 6)" 0 0 '' 16 700 "$(dock_line 6)" 'two up' 'doc:boot.txt,doc:hello.txt' 2
+  apps_is .duo1.ppm 768 476 "$(app_line 3)" 384 238 "$(app_line 6)" 0 0 '' 16 700 "$(dock_line 6)" 'two up' 'doc:boot.txt,doc:hello.txt' 2
   # the editor's exec, the REPL's own command: the dock's gap press
   # hands the panel the focus and the serial bytes are the shell's
-  abs 16000 31915
+  abs 8534 32101
   btn true
   btn false
   sleep 0.5
   feed 'exec editor.elf'
   await 'desktop editor up'
-  await 'comp 0 728 3395596193'
-  await 'comp 0 0 3408294242'
+  await 'comp 0 1040 3898392177'
+  await 'comp 0 0 3911090226'
   await "frame $(app_line 7)"
-  await 'comp 48 272'
+  await 'comp 384 476'
   sleep 0.3
   printf 'a' >&3
   await 'put a'
@@ -1128,43 +1128,43 @@ PYEOF
   printf 'b' >&3
   await 'put b'
   await "frame $(app_line 10)"
-  abs 512 29867
+  abs 274 21239
   sleep 1
   hmp 'screendump .trio.ppm'
-  apps_is .trio.ppm 576 384 "$(app_line 3)" 224 144 "$(app_line 6)" 48 272 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3
+  apps_is .trio.ppm 768 476 "$(app_line 3)" 384 238 "$(app_line 6)" 384 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3
   # the quits: each its window's focus first — the click raises, the
   # q ends the pass, the death rides the stream, the dot goes out.
   # the editor's quit-click at its own rect (the launcher's place)
-  abs 24576 19115
+  abs 13381 14928
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 2703212732'
-  abs 13312 8885
+  await 'comp 0 0 3206008716'
+  abs 7100 7950
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 4003000787'
-  abs 6400 12117
+  await 'comp 0 0 210829475'
+  abs 6827 15171
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop editor exit 0'
-  await 'comp 0 0 3786369038'
-  abs 512 29867
+  await 'comp 0 0 4289165022'
+  abs 274 21239
   sleep 1
   hmp 'screendump .deskout.ppm'
-  apps_is .deskout.ppm 576 384 '' 224 144 '' 0 0 '' 16 700 "$(dock_line 10)" 'all out' 'doc:boot.txt,doc:hello.txt' 0
+  apps_is .deskout.ppm 768 476 '' 384 238 '' 0 0 '' 16 700 "$(dock_line 10)" 'all out' 'doc:boot.txt,doc:hello.txt' 0
   # The REPL beats: the dock's gap focuses the panel, the serial's
   # bytes the shell's line — the commands the file work needs, the
   # launcher's own refusals among them. The `exec` command's success
   # was the editor's mount above; the refusals are the strictness.
-  abs 16000 31915
+  abs 8534 32101
   btn true
   btn false
   sleep 0.5
@@ -1177,13 +1177,13 @@ PYEOF
   feed 'write note.txt shell wrote this'
   # the icons' refresh (emo-desktop A13): the re-list's fold moved, the
   # wallpaper repainted — note.txt the third document on the desktop
-  await 'frame 1924783640'
-  await 'comp 0 0 3609114251'
+  await 'frame 2134252656'
+  await 'comp 0 0 4278913753'
   feed 'ls'
   feed 'cat boot.txt'
   await 'EmoOS boots from disk'
   feed 'rm note.txt'
-  await 'comp 0 0 3786369038'
+  await 'comp 0 0 4289165022'
   feed 'cat note.txt'
   await 'cat: no such file'
   feed 'bogus'
@@ -1200,21 +1200,21 @@ PYEOF
   # state's eye: the `..` and the file, the header's zero, the sprite
   # parked off the cells.
   feed 'write a/one.txt first inside'
-  await 'comp 0 0 879271160'
-  abs 30976 9386
+  await 'comp 0 0 1510668087'
+  abs 31574 6493
   btn true
   btn false
-  await 'comp 0 0 404219095'
-  abs 512 29867
+  await 'comp 0 0 888672448'
+  abs 274 21239
   sleep 1
   hmp 'screendump .folder.ppm'
   apps_is .folder.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 10)" 'inside the folder' 'folder:..,doc:one.txt' 0
-  abs 30976 2987
+  abs 31574 2124
   btn true
   btn false
-  await 'comp 0 0 879271160'
+  await 'comp 0 0 1510668087'
   feed 'rm a/one.txt'
-  await 'comp 0 0 3786369038'
+  await 'comp 0 0 4289165022'
   # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
   # disk ELF with no window, no message, no yield, and no announce
   # until its loop is out (the runtime's println is a write ecall per
@@ -1324,7 +1324,7 @@ PYEOF
   # negotiation, the control queue on one allocator block, the 2D path
   # whole: the resource created at the format the baseline decided, the
   # screen carve attached as the backing, scanout 0 pointed at it — and
-  # the mode is the device's own answer, 1024x768, never a constant),
+  # the mode is the device's own answer, 1920x1080, never a constant),
   # then the root's flush smoke (`gpu flush ok`: the paint rode the
   # mode the driver answered, the device's transfer and flush both came
   # back OK — the pixels left the carve's physical bytes and reached
@@ -1368,7 +1368,7 @@ PYEOF
   # 0x86c00000 ok`, the base asserted in full) — and the second screen
   # spawn refused, the carve handed once (`screen r5`, the resource
   # refusal's number). Then the desktop segment's verbs (T8.4):
-  # `output 1024x768` — the mode the device's own answer through verb
+  # `output 1920x1080` — the mode the device's own answer through verb
   # 11 — and `present ok`, the grant's commit through verb 10 (the
   # gate checked the carve's holder, the display service judged the
   # rect, the transfer and the flush completed before the line); the
@@ -1445,9 +1445,10 @@ PYEOF
   local prev=0 pos line
   # The search for each line starts past the previous match's byte (the
   # frames' checks' rule): a line the wire says twice — the desk pass's
-  # beta window and the duo's counter share 'comp 576 384' — is two
-  # beats, each in its era's place.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 0 0 63562221' 'desktop icons 2' 'comp 0 0 4081810905' 'comp 0 728 3786369038' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 728 3886374238' 'comp 0 0 3757156786' 'comp 576 384' 'add 1' 'sub 0' 'desktop files up' 'comp 0 728 400416952' 'comp 0 0 488579572' 'comp 224 144' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 728 3395596193' 'comp 0 0 3408294242' 'comp 48 272' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 728 2715910781' 'comp 0 0 2703212732' 'desktop files exit 0' 'comp 0 728 4091163407' 'comp 0 0 4003000787' 'desktop editor exit 0' 'comp 0 728 3657151586' 'comp 0 0 3786369038' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 3609114251' 'EmoOS boots from disk' 'comp 0 0 3786369038' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 879271160' 'comp 0 0 404219095' 'comp 0 0 879271160' 'comp 0 0 3786369038' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 685 569'; do
+  # beta window and the duo's counter both mounted where the old mode's
+  # center put them ('comp 576 384' twice) — is two beats, each in its
+  # era's place; A14.3's centered places split the pair.
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 1048 4191811584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 4191811584' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 0 0 1324068029' 'desktop icons 2' 'comp 0 0 794789033' 'comp 0 1040 4289165022' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 94202926' 'comp 0 0 4259952770' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 903212936' 'comp 0 0 991375556' 'comp 384 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 3898392177' 'comp 0 0 3911090226' 'comp 384 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 3218706765' 'comp 0 0 3206008716' 'desktop files exit 0' 'comp 0 1040 298992095' 'comp 0 0 210829475' 'desktop editor exit 0' 'comp 0 1040 4159947570' 'comp 0 0 4289165022' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 4278913753' 'EmoOS boots from disk' 'comp 0 0 4289165022' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 1510668087' 'comp 0 0 888672448' 'comp 0 0 1510668087' 'comp 0 0 4289165022' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 771 573'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
@@ -1528,9 +1529,9 @@ PYEOF
   # one both times, so the search for each starts past the last — and
   # the last before the carve's read-back, which is the loop's end.
   local fprev=-1 fpos opos ppos spos d
-  opos=$(grep -aboF -- 'output 1024x768' "$log" | head -1 | cut -d: -f1)
+  opos=$(grep -aboF -- 'output 1920x1080' "$log" | head -1 | cut -d: -f1)
   ppos=$(grep -aboF -- 'present ok' "$log" | head -1 | cut -d: -f1)
-  spos=$(grep -aboF -- 'screen 0x86c00000 ok' "$log" | head -1 | cut -d: -f1)
+  spos=$(grep -aboF -- 'screen 0x86800000 ok' "$log" | head -1 | cut -d: -f1)
   for d in $frame_digests; do
     fpos=$(grep -aboE -- "^frame $d\$" "$log" | cut -d: -f1 | awk -v p="$fprev" '$1 > p { print; exit }' || true)
     if [ -z "$fpos" ]; then
@@ -1647,15 +1648,15 @@ PYEOF
   # own `move` lines is the scheduler's, so it is placed here, not in
   # the list above.
   local qpos bpos wpos
-  qpos=$(grep -aboF -- 'pointer 512 384' "$log" | head -1 | cut -d: -f1 || true)
+  qpos=$(grep -aboF -- 'pointer 960 540' "$log" | head -1 | cut -d: -f1 || true)
   if [ -z "$qpos" ]; then
-    echo "run.sh: the compositor never delivered 'pointer 512 384'" >&2
+    echo "run.sh: the compositor never delivered 'pointer 960 540'" >&2
     exit 1
   fi
   bpos=$(grep -aboF -- 'byte 75' "$log" | head -1 | cut -d: -f1)
   wpos=$(grep -aboF -- 'win 1' "$log" | head -1 | cut -d: -f1)
   if [ "$qpos" -lt "$bpos" ] || [ "$qpos" -gt "$wpos" ]; then
-    echo "run.sh: 'pointer 512 384' arrived out of order" >&2
+    echo "run.sh: 'pointer 960 540' arrived out of order" >&2
     exit 1
   fi
   if [ "$(grep -c '^pointer ' "$log" || true)" -ne 2 ]; then
@@ -1693,7 +1694,7 @@ PYEOF
   # The screen carve's line, whole (T8.2): the base is the carve's
   # physical address, asserted in full — stable across builds, unlike
   # the dma block's.
-  if ! grep -qE '^screen 0x86c00000 ok$' "$log"; then
+  if ! grep -qE '^screen 0x86800000 ok$' "$log"; then
     echo "run.sh: the screen carve's line is not the carve's base" >&2
     exit 1
   fi

@@ -74,11 +74,13 @@ const frame = 4096
 // beside every resident — and the fs service's per-sector tuples (the
 // leak the install-sized writes named) have an arena to live in.
 const arena_run = 4
-// The screen carve (T8.2): the region's end moved down to the carve's
-// base — the carve, 4 MiB, is the memory between the two, the kernel's
-// to hand out whole and once (the hand below).
-const screen_base = 0x86c00000 // physical: the carve's base, 2 MiB-aligned
-const screen_size = 0x400000 // 4 MiB: the baseline's 3 MiB buffer, a MiB beside
+// The screen carve (T8.2, T9.1): the region's end moved down to the
+// carve's base — the carve, 8 MiB, is the memory between the two, the
+// kernel's to hand out whole and once (the hand below) — the 1080p
+// frame's 7.91 MiB with the cursor plane's last 64 KiB past it, grown
+// downward from the fixed cells at 0x87000000, which none of it moves.
+const screen_base = 0x86800000 // physical: the carve's base, 2 MiB-aligned
+const screen_size = 0x800000 // 8 MiB: the mode's frame, the sprite's tail
 const screen_flag = page + 152 // the hand's one-shot word: 0 = the carve held
 const region_end = koff + screen_base
 const uart = koff + 0x10000000

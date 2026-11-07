@@ -9202,7 +9202,13 @@ SECTIONS
 let stack_asm ~(profile : string) : string =
   let stack_bytes, heap_bytes =
     match profile with
-    | "kernel" -> (1048576, 67108864)
+    (* The kernel heap at 32 MiB (emo-desktop A14.3's T9.1 lever): the
+       heap's live users are the root's bump (a few KiB) and the const
+       region at its top — the hooks serve every spawned pass from the
+       region — so the disk ELFs' round's 64 MiB gives 32 back, and the
+       allocator region grows by the same 512 blocks the HD desktop's
+       surfaces and its three residents spend. *)
+    | "kernel" -> (1048576, 33554432)
     | "user" -> (65536, 8388608)
     (* The app profile's 2 MiB (emo-desktop A12.1): a disk ELF's arena is
        the run the spawn claimed (T8.9's hooks), so the .bss heap hosts

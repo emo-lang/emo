@@ -363,8 +363,8 @@ const grant_table = koff + 0x87002b00
 // XRGB8888 — B8G8R8X8 in the device's naming — the decided baseline's
 // own; the mode itself is the device's to say (GET_DISPLAY_INFO's
 // answer, never a constant — the protocol's second seam).
-const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA view
-const screen_size = 0x400000
+const screen_base = 0x86800000 // physical: frames.emo's carve, the device's DMA view
+const screen_size = 0x800000
 const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
 
 // The cursor plane's sprite memory (T8.11, emo-desktop A8.2): the

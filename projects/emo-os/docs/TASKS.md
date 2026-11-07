@@ -659,19 +659,28 @@ tracker records the milestone's decisions (D6–D9); the reasoning is
 CHECK.md's (2026-11-06). The milestone's row joins the table above at
 its completion.
 
-- [ ] **T9.1** — The mode: the machine's display at 1920×1080
-  (`start.sh` and `run.sh` name it on the device; the driver's
-  `gpu 1920x1080 ready` stays the device's answer). The carve grows
-  to 8 MiB — the frame's 7.91 MiB with the cursor plane's last 64 KiB
-  past it — downward from the fixed cells at `0x87000000`: its base
-  moves to `0x86800000`, nothing above it moves, and the region gives
-  the carve its 64 blocks. The region's budget at the mode is measured
-  before anything else: the wallpaper's surface alone grows from 48
-  blocks to 127, the header's, the dock's and the windows' with it,
-  beside the three residents' image runs. The levers on record — the
-  kernel's heap, a second region above `0x88000000` with the machine's
-  `-m` raised — are the round's decision on those numbers. `run.sh`'s
-  screendump model at the mode; the ledger re-pinned.
+- [x] **T9.1** — The mode — **complete 2026-11-07**. The machine's
+  display at 1920×1080 (`start.sh` and `run.sh` name it on the device;
+  the driver's `gpu 1920x1080 ready` stays the device's answer). The
+  carve grows to 8 MiB — the frame's 7.91 MiB with the cursor plane's
+  last 64 KiB past it — downward from the fixed cells at `0x87000000`:
+  its base moves to `0x86800000`, nothing above it moves, and the
+  region gives the carve its 64 more blocks. The budget measured on
+  the machine: the wallpaper's surface 48 → 127 blocks, the header's
+  and the dock's with it (+82 the desktop's own), and the editor's
+  exec died `the kernel is out of a resource` — the disk ELFs' round's
+  64 MiB kernel heap had spent the region the mode needed. **The
+  lever's decision: the kernel heap 64 → 32 MiB** — its live users are
+  the root's bump (a few KiB) and the const region at its top, the
+  hooks serving every spawned pass from the region — 512 blocks back,
+  no `-m` (the map's top stays `0x88000000`), and the trio fits with
+  room beside it. `run.sh`'s screendump models at the mode (the PPM
+  header's offset 16 → 17 bytes among the finds), the abs beats
+  recomputed for the device axes, the ledger `frames 685 569` →
+  `771 573` re-pinned. The acceptance: `run.sh` green under both
+  transports three rounds at the mode, the screendumps modeled to the
+  pixel, the dune pin (`.zero 33554432`) updated. Decision record:
+  CHECK.md, 2026-11-07.
 - [ ] **T9.2** — The compositor's corners and shadows: the walk masks
   each toplevel's corners and lays its shadow beneath it — the
   coverage arithmetic emo-desktop A14.1 pinned, in the kernel's own

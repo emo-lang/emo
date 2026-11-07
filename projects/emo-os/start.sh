@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 # docs/how-to-start-emoos.md in one command. run.sh is the golden smoke
 # that asserts the serial chain; this one asserts nothing and drives.
 # The display leg (T8.8): the machine's screen is a cocoa window — the
-# same virtio-gpu and 1024x768 baseline the golden asserts through the
+# same virtio-gpu and 1920x1080 baseline the golden asserts through the
 # monitor's screendump, here shown live — while the serial console
 # stays the terminal (`-serial mon:stdio`, the mux `-nographic` used
 # to keep). The keyboard rides along: without a DeviceID 18 on the
@@ -182,7 +182,7 @@ if [ "$hand" = yes ]; then
     -global virtio-mmio.force-legacy=false \
     -drive file="$img",format=raw,if=none,id=emoos-blk \
     -device virtio-blk-device,drive=emoos-blk \
-    -device virtio-gpu-device,xres=1024,yres=768 \
+    -device virtio-gpu-device,xres=1920,yres=1080 \
     -device virtio-keyboard-device \
     -device virtio-tablet-device \
     -kernel "$elf"
@@ -206,7 +206,7 @@ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
   -global virtio-mmio.force-legacy=false \
   -drive file="$img",format=raw,if=none,id=emoos-blk \
   -device virtio-blk-device,drive=emoos-blk \
-  -device virtio-gpu-device,xres=1024,yres=768 \
+  -device virtio-gpu-device,xres=1920,yres=1080 \
   -device virtio-keyboard-device \
   -device virtio-tablet-device \
   -qmp unix:"$qmp_sock",server,nowait \

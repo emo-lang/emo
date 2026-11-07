@@ -114,7 +114,7 @@ const slot_space = 872
 // in the cell and the build mapped a phantom grant, the range check
 // the loud end.
 const screen_pending = koff + 0x870029e0
-const screen_size = 0x400000 // 4 MiB, frames.emo's carve
+const screen_size = 0x800000 // 8 MiB, frames.emo's carve (T9.1)
 
 // The exec's pending record (emo-desktop A11.1): the cell the process
 // service pokes with the image record's address right before the spawn
