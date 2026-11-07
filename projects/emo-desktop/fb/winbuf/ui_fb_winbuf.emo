@@ -242,14 +242,37 @@ def carve_ink(base Int64, dims Int64, x Int64, y Int64, strike Int64,
 // one number or on none (run.sh).
 def carve_digest(base Int64, width Int64, height Int64) Int64 {
   var d = 0
-  var row = 0
-  while row < height {
-    var col = 0
-    while col < width {
-      d = (d * 31 + peek32(base + (row * width + col) * 4)) & 4294967295
-      col = col + 1
+  var y = 0
+  while y < height {
+    var x = 0
+    while x < width {
+      d = (d * 31 + peek32(base + ((y * width) + x) * 4)) & 4294967295
+      x = x + 1
     }
-    row = row + 1
+    y = y + 1
+  }
+  return d
+}
+
+// The round fold (EmoOS T9.2): `carve_digest` with the four corner
+// squares of `radius` set aside — the corners the walk's mask leaves to
+// whatever is beneath the toplevel, so a window's `frame` line is the
+// digest of the pixels the window itself can show, the same fold the
+// hosted twins print and `run.sh` takes over a screendump's rectangle.
+// The radius is the walk's own design constant (10).
+def round_digest(base Int64, width Int64, height Int64) Int64 {
+  const rad = 10
+  var d = 0
+  var y = 0
+  while y < height {
+    var x = 0
+    while x < width {
+      if (x >= rad) && (x < width - rad) || (y >= rad) && (y < height - rad) {
+        d = (d * 31 + peek32(base + ((y * width) + x) * 4)) & 4294967295
+      }
+      x = x + 1
+    }
+    y = y + 1
   }
   return d
 }
@@ -521,7 +544,7 @@ class Win {
   }
 
   def present() {
-    frame_line(carve_digest(self.base, self.width, self.height))
+    frame_line(round_digest(self.base, self.width, self.height))
     case syscall.present(self.grant, 0, 0, self.width, self.height) {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}

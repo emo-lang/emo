@@ -38,7 +38,7 @@ def main() {
     mh = m & 4294967295
   }
   }
-  case syscall.win_move(ge, (mw - 384) / 4, (mh - 128) / 2) {
+  case syscall.win_move(ge, (mw - 384) / 4 - 10, (mh - 128) / 2) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }

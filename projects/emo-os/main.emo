@@ -1516,7 +1516,12 @@ def gpu_service(boss Pid) Void {
               }
             } else {
               if op == 14 {
-                // win_close (T8.5): the run back to the allocator
+                // win_close (T8.5): the run's leaves out of the owner's
+                // table first (T9.3 — the close's other half; the map
+                // left standing let the closer write frames the
+                // allocator may already have handed another process,
+                // and its own next win_new over the reused blocks was
+                // the double map), then the run back to the allocator
                 // block by block, the row to the table — the owner is
                 // the gate's check.
                 var row = grant_row_of(peek64(gpu_args))
@@ -1525,6 +1530,7 @@ def gpu_service(boss Pid) Void {
                 } else {
                   var base = peek64(row + 16)
                   var n = peek64(row + 24)
+                  space.unmap_run(peek64(gpu_args + 40), sv39.pa_of(base), n * block)
                   var i = 0
                   while i < n {
                     frames.give(base + (i * block))
@@ -2452,6 +2458,361 @@ def comp_blit_entry(entry Int64, x Int64, y Int64) Int64 {
   return 0
 }
 
+// ---- the toplevels' corners and shadows (T9.2, emo-desktop A14.1) ----
+//
+// A toplevel is not a rectangle of stored words: its corners are
+// rounded and its shadow falls on what is beneath it. The coverage
+// arithmetic is the desktop's A14.1 pinned — the signed distance from
+// a pixel's center to a rounded rectangle's edge, the fill's and the
+// shadow's coverage of a pixel — copied here because the kernel
+// requires no desktop package; every constant and every division the
+// same, so the walk's byte is the hosted canvas's byte. The radius and
+// the softness are the face's design sizes (the shapes' golden's
+// card): every window rounds at 10 and shadows at 16, and a toplevel
+// that covers the mode — the machine's own fullscreen pass — is the
+// screen, and wears neither.
+
+const comp_win_radius = 10
+const comp_win_soft = 16
+const comp_shadow_ink = 0x80000000
+
+// The largest `s` with `s * s <= n`, for `n >= 0`: digit by digit, two
+// bits a step — no division and no float, the same steps on every
+// target.
+def comp_isqrt(n Int64) Int64 {
+  var rem = n
+  var root = 0
+  var bit = 1 << 62
+  while bit > rem {
+    bit = bit >> 2
+  }
+  while bit != 0 {
+    if rem >= root + bit {
+      rem = rem - (root + bit)
+      root = (root >> 1) + bit
+    } else {
+      root = root >> 1
+    }
+    bit = bit >> 2
+  }
+  return root
+}
+
+// The radius a `w` by `h` shape can carry: never negative, never past
+// half the shorter side — the circle's.
+def comp_radius_in(radius Int64, w Int64, h Int64) Int64 {
+  var r = radius
+  if r < 0 {
+    r = 0
+  }
+  if r * 2 > w {
+    r = w / 2
+  }
+  if r * 2 > h {
+    r = h / 2
+  }
+  return r
+}
+
+// The signed distance from the center of pixel `(px, py)` to the edge
+// of the shape `(x, y, w, h)` with corner radius `radius`, in 256ths
+// of a pixel: negative inside, the corners' arcs exact to the square
+// root's floor.
+def comp_shape_sd(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64, radius Int64) Int64 {
+  const cx = px * 256 + 128
+  const cy = py * 256 + 128
+  const rr = radius * 256
+  var sx = x * 256 + rr - cx
+  const sx_right = cx - ((x + w) * 256 - rr)
+  if sx_right > sx {
+    sx = sx_right
+  }
+  var sy = y * 256 + rr - cy
+  const sy_bottom = cy - ((y + h) * 256 - rr)
+  if sy_bottom > sy {
+    sy = sy_bottom
+  }
+  var outside = 0
+  if sx > 0 && sy > 0 {
+    outside = comp_isqrt(sx * sx + sy * sy)
+  } else {
+    if sx > 0 {
+      outside = sx
+    }
+    if sy > 0 {
+      outside = sy
+    }
+  }
+  var inside = sx
+  if sy > inside {
+    inside = sy
+  }
+  if inside > 0 {
+    inside = 0
+  }
+  return outside + inside - rr
+}
+
+// `v` held to one pixel's ramp, 0 to 256.
+def comp_ramp(v Int64) Int64 {
+  if v < 0 {
+    return 0
+  }
+  if v > 256 {
+    return 256
+  }
+  return v
+}
+
+// A fill's coverage of a pixel, out of 255: whole half a pixel inside
+// the edge, none half a pixel outside, a straight ramp between.
+def comp_fill_cover(sd Int64) Int64 {
+  return (comp_ramp(128 - sd) * 255 + 128) / 256
+}
+
+// A shadow's coverage, out of 255: the ramp spread over `soft` pixels
+// (one at least) centered on the edge, eased on a smoothstep — the
+// position along it in 4096ths, so the cube stays inside 64 bits.
+def comp_shadow_cover(sd Int64, soft Int64) Int64 {
+  var s = soft
+  if s < 1 {
+    s = 1
+  }
+  const span = s * 256
+  const c = s * 128 - sd
+  if c <= 0 {
+    return 0
+  }
+  if c >= span {
+    return 255
+  }
+  const t = (c * 4096) / span
+  return (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+}
+
+// How far a shadow's ramp reaches past its shape's edge, in whole
+// pixels: half its softness and one more.
+def comp_shadow_pad(soft Int64) Int64 {
+  if soft < 1 {
+    return 1
+  }
+  return soft / 2 + 1
+}
+
+// `color` at `coverage` out of 255 of its own opacity: the top byte
+// scaled, the channels untouched.
+def comp_cover(color Int64, coverage Int64) Int64 {
+  const a = (((color >> 24) & 0xFF) * coverage + 127) / 255
+  return (a << 24) | (color & 0xFFFFFF)
+}
+
+// One channel of source-over, rounded to nearest: `s` over `d` at
+// coverage `a` out of 255.
+def comp_mix(s Int64, d Int64, a Int64) Int64 {
+  return (s * a + d * (255 - a) + 127) / 255
+}
+
+// One pixel of source-over: `src` carries its coverage in the top
+// byte, `dst` is the word the carve holds.
+def comp_over(src Int64, dst Int64) Int64 {
+  const a = (src >> 24) & 0xFF
+  if a >= 255 {
+    return src & 0xFFFFFF
+  }
+  if a <= 0 {
+    return dst & 0xFFFFFF
+  }
+  const r = comp_mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF, a)
+  const g = comp_mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
+  const b = comp_mix(src & 0xFF, dst & 0xFF, a)
+  return (r << 16) | (g << 8) | b
+}
+
+// One span of the shadow laid beneath a toplevel, row `row`: every
+// pixel's coverage asked, the ink blended over what the carve shows,
+// the words stored counted into the sum. The walk never stores a
+// pixel the window will cover whole — the interior is the blit's.
+def comp_shadow_span(x0 Int64, x1 Int64, row Int64, w Int64, h Int64, x Int64, y Int64, rad Int64) Int64 {
+  var sum = 0
+  var mw = peek64(comp_mode_w)
+  var a = x0
+  if a < 0 {
+    a = 0
+  }
+  var b = x1
+  if b > mw {
+    b = mw
+  }
+  while a < b {
+    const c = comp_shadow_cover(comp_shape_sd(a, row, x, y, w, h, rad), comp_win_soft)
+    if c > 0 {
+      var at = koff + screen_base + ((row * mw) + a) * 4
+      var nv = comp_over(comp_cover(comp_shadow_ink, c), peek32(at))
+      poke32(at, nv)
+      sum = sum + nv
+    }
+    a = a + 1
+  }
+  return sum
+}
+
+// The shadow beneath one toplevel: the ring past its rect — the bands
+// above and below, the sides beside — and, inside the rect, the four
+// corner zones the window's own mask will leave showing, the shadow's
+// ramp under the arcs. The words stored counted into the sum.
+def comp_toplevel_shadow(w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var rad = comp_radius_in(comp_win_radius, w, h)
+  var pad = comp_shadow_pad(comp_win_soft)
+  var mh = peek64(comp_mode_h)
+  var row = y - pad
+  if row < 0 {
+    row = 0
+  }
+  var y1 = y + h + pad
+  if y1 > mh {
+    y1 = mh
+  }
+  while row < y1 {
+    if row < y || row >= y + h {
+      sum = sum + comp_shadow_span(x - pad, x + w + pad, row, w, h, x, y, rad)
+    } else {
+      sum = sum + comp_shadow_span(x - pad, x, row, w, h, x, y, rad)
+      sum = sum + comp_shadow_span(x + w, x + w + pad, row, w, h, x, y, rad)
+      if row < y + rad || row >= y + h - rad {
+        sum = sum + comp_shadow_span(x, x + rad, row, w, h, x, y, rad)
+        sum = sum + comp_shadow_span(x + w - rad, x + w, row, w, h, x, y, rad)
+      }
+    }
+    row = row + 1
+  }
+  return sum
+}
+
+// One pixel of the masked blit's corner zones: the window's coverage
+// of the pixel asked of the shape's arithmetic — whole the window's
+// word stored, partial the word blended over what the shadow left,
+// clear nothing stored. The answer into the sum.
+def comp_corner_pixel(base Int64, w Int64, h Int64, x Int64, y Int64, rad Int64, cx Int64, cy Int64) Int64 {
+  const c = comp_fill_cover(comp_shape_sd(x + cx, y + cy, x, y, w, h, rad))
+  if c <= 0 {
+    return 0
+  }
+  var mw = peek64(comp_mode_w)
+  var v = peek32(base + ((cy * w) + cx) * 4)
+  var at = koff + screen_base + (((y + cy) * mw) + x + cx) * 4
+  if c >= 255 {
+    poke32(at, v)
+    return v
+  }
+  // the window's word carries its own top byte — the client's to keep
+  // — so the coverage replaces it, never ORs it
+  var nv = comp_over((c << 24) | (v & 0xFFFFFF), peek32(at))
+  poke32(at, nv)
+  return nv
+}
+
+// The blit's masked shape (T9.2): the rows word-copied as the blit's
+// own where the shape is whole — every pixel of a straight edge sits
+// half a pixel inside it — and the four corner zones pixel by pixel,
+// the window's word at its coverage of each. A window too small for
+// its corner zones is every pixel its own verdict.
+def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var rad = comp_radius_in(comp_win_radius, w, h)
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  var r = 0
+  while r < rows {
+    if rad * 2 > w || rad * 2 > h || rad == 0 {
+      var c = 0
+      while c < cols {
+        sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, r)
+        c = c + 1
+      }
+    } else {
+      if r < rad || r >= h - rad {
+        var c = 0
+        while c < rad && c < cols {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, r)
+          c = c + 1
+        }
+        // the middle span [rad, w - rad) clipped to the mode's cols,
+        // word-copied — the shape is whole there, every pixel half a
+        // pixel inside a straight edge
+        var ms = w - rad
+        if ms > cols {
+          ms = cols
+        }
+        var half = (ms - rad) / 2
+        var i = 0
+        var stride = mw / 2
+        while i < half {
+          var v = peek64(base + (r * (w / 2) + (rad / 2 + i)) * 8)
+          poke64(koff + screen_base + ((y + r) * stride + (x + rad) / 2 + i) * 8, v)
+          sum = sum + v
+          i = i + 1
+        }
+        var tail = rad + half * 2
+        while tail < ms {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, tail, r)
+          tail = tail + 1
+        }
+        c = w - rad
+        if c < 0 {
+          c = 0
+        }
+        while c < cols {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, r)
+          c = c + 1
+        }
+      } else {
+        var half = cols / 2
+        var i = 0
+        var stride = mw / 2
+        while i < half {
+          var v = peek64(base + (r * (w / 2) + i) * 8)
+          poke64(koff + screen_base + ((y + r) * stride + (x / 2) + i) * 8, v)
+          sum = sum + v
+          i = i + 1
+        }
+      }
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The walk's blit of one toplevel (T9.2): the shadow beneath it and
+// the masked blit over the shadow — a surface that covers the mode is
+// the screen's own and wears neither (the machine's fullscreen pass,
+// the wallpaper beside it). The row the grant names, the ready flag
+// the walk's gate.
+def comp_toplevel_entry(entry Int64, x Int64, y Int64) Int64 {
+  var row = grant_row_of(peek64(entry))
+  if peek64(row + 56) != 0 {
+    var base = peek64(row + 16)
+    var w = peek64(row + 32)
+    var h = peek64(row + 40)
+    var mw = peek64(comp_mode_w)
+    var mh = peek64(comp_mode_h)
+    if x == 0 && y == 0 && w >= mw && h >= mh {
+      return comp_blit(base, w, h, x, y)
+    }
+    var sum = comp_toplevel_shadow(w, h, x, y)
+    return sum + comp_blit_masked(base, w, h, x, y)
+  }
+  return 0
+}
+
 // The parked callbacks answered (T8.15, A9.3 — the fifth seam): the
 // composition's completion is the tick, and every pid verb 22 left in
 // the ring wakes with it — the caller's own reply first, the
@@ -2607,7 +2968,7 @@ def comp_compose(gpu Pid, me Pid) Int64 {
       continue
     }
     var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
-    sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+    sum = sum + comp_toplevel_entry(entry, both >> 32, both & 4294967295)
     var j = 0
     while j < top {
       var kid = comp_stack + (j * comp_entry)
@@ -2682,8 +3043,11 @@ def cursor_show(x Int64, y Int64) Void {
         var i = ((r * w) + c) * 4
         poke32(koff + sprite_under + i, peek32(at))
         var s = peek32(koff + sprite_pixels + i)
+        // the sprite blends by its own coverage (T9.2): full the word
+        // stored, partial the word over what the screen shows, clear
+        // nothing — the source-over the surfaces speak
         if (s >> 24) != 0 {
-          poke32(at, s & 16777215)
+          poke32(at, comp_over(s, peek32(at)))
         }
       }
       c = c + 1

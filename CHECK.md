@@ -290,15 +290,120 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   the wallpaper's formula, the icons drawn.
 - [ ] **A14.5** — the windows: the shared title bar, the apps
   reskinned, the antialiased pointer.
-- [ ] **T9.2** — the compositor's corners and shadows, the cursor
-  plane's coverage blend.
-- [ ] **T9.3** — `win_close` leaves the closed run mapped in its
-  owner's table (found by A14.1's metal probe): unmap and flush at the
-  close, a golden beat that closes and reopens.
+- [x] **T9.2** — the compositor's corners and shadows, the cursor
+  plane's coverage blend. Landed 2026-11-07; the record is the dated
+  section below.
+- [x] **T9.3** — `win_close` unmaps the run's leaves from the owner's
+  table before the blocks go back, the translations fenced; the desk
+  pass's `c` closes and reopens, the map over the reused blocks the
+  proof. Landed 2026-11-07; the record is the dated section below.
 - [x] **T9.4** — the constant fill, the compiler's side (A14.2's
   lever): integer-literal aggregates fill from a `.rodata` blob of
   their static cells. Landed 2026-11-07; the record is the dated
   section below.
+
+## 2026-11-07 — The chrome, the corners, the close (emo-desktop A14.4, EmoOS T9.2+T9.3)
+
+- **The chrome is the wallpaper's own formula under a scrim.** D8's
+  material, made: the header and the dock recompute the wallpaper's
+  art at their rows — the gradient and every ribbon whose span reaches
+  them — under the panel's scrim (the header's 0xB41E1E26, the dock's
+  0xB424242C), row by row, three blends a row. The panel reads the
+  formula and never the pixels behind it, so the material is what the
+  chrome always believed the wallpaper was — a window sliding under
+  the dock changes nothing the dock shows (the standing note D8 made,
+  now the walk's topmost strip's actual behavior). The wallpaper's own
+  art is untouched: its digest `wall 1307018457` is the number A13
+  pinned.
+- **The dock is a shelf.** A translucent slab (6, 3, w−12, 34) at
+  radius 12 floats on the material — glass over the wallpaper's own
+  colors, graded 0x66484C5C down to 0x4C34363E — its soft shadow
+  (8 pixels, 0x80000000) beneath it, and the tiles drawn icons on it:
+  rounded squares 32×32 at radius 8, graded top to bottom (the focused
+  app's lit steel 0xFF7090B8→0xFF4A6288, the quiet tiles
+  0xFF50586A→0xFF3A4150), the app's initial centered in the interface
+  face, the running dot at the foot. The tiles start 20 pixels in — the
+  shelf's corner arcs own the first pixels — and the desktop's document
+  and folder icons are drawn the same way: the page a graded rounded
+  square with its folded corner and three line pills, the folder's tab
+  and graded body, the selection a rounded translucent card. No image
+  assets anywhere; the face is the shapes' own.
+- **The metal's painting stayed typed.** The chrome's repaint runs
+  through typed twins of the package's painters — `desk_chrome_row`
+  (the material's row: the gradient's fill, the ribbon's blend, the
+  scrim's blend), `desk_bar_paint`, `desk_dock_paint`,
+  `desk_strip_paint` — every call the carve's own (`carve_fill`,
+  `carve_blend`, `carve_shadow`, `carve_rounded`, `carve_ink`), no
+  interface call in a repaint, the A13 rule held: a class body's
+  boxing never comes back, and the dock repaints for a living.
+- **The round's find: the corner blend's alpha.** The masked blit's
+  partial pixels blended the window's word at its coverage —
+  `(c << 24) | v` — and the screendump's corner pixels came back "too
+  content" by an alpha no single coverage explained. Two kernel debug
+  prints settled it: the shadow's value under the corner was the
+  model's own, the corner's coverage and word were the model's own,
+  and the stored result was the model's over a *different* alpha —
+  the window word's own top byte, the client's to keep (the window
+  era's pattern rides `0x57` there), OR-ed into the coverage: 97 |
+  0x57 = 0x77 = 119. The fix is the mask: `(c << 24) | (v &
+  0xFFFFFF)` — the coverage replaces the client's byte, never ORs it.
+  The walk's own reproach: the model had the pixel right all along.
+- **The second find: the shadow's corner spans.** The shadow's pass
+  painted the left corner zones on the top rows and the right ones on
+  the bottom rows — the top-right and bottom-left corners' shadows
+  were missing, the slate showing where the ramp belonged. Both corner
+  zones on every corner row; the model caught it before any eye did.
+- **The folds are the window's own pixels.** A window's rectangle on
+  the screen now shows the background at its corners, so the corpus's
+  window digests became round folds — `round_digest(s, 10)` in the
+  hosted twins, the corner squares set aside — and the metal's frame
+  lines print the same fold over their buffers. The boot image's own
+  `Win` was the third site: the shell and the desk pass predate the
+  winbuf package, so the package's `present` fix alone changed nothing
+  on the metal — the boot image carries its own class, its present's
+  digest its own site. (The desk-era frames now match the corpus's
+  round lines; the debug print that proved it — the image's direct
+  `round_digest` answering the corpus's number while the class's
+  `present` answered the old full one — is the record's receipt.)
+  `run.sh`'s folds skip the same squares by the window's *local* row —
+  the first fold tested the screen's row and, for a window at y=128,
+  every row was "past the bottom corner" — and the dock's strip keeps
+  the plain fold: the walk masks toplevels only, and the panel's
+  digest is the panel's own.
+- **The neighbors' shadows.** The quadrant windows at `(mw − 384) / 4`
+  put the editor's right edge exactly at the counter's left edge, and
+  the shadow's nine-pixel ring fell inside the counter's fold — the
+  corpus's canvas cannot know a neighbor's shadow. The placement yields
+  the shadow its reach: `(mw − 384) / 4 − 10`, the ring's last pixel
+  one short of the neighbor. macOS windows shade each other; golden
+  windows keep their distance.
+- **T9.3: the close's other half.** The gate stages the caller's
+  space word with the close (as `win_new`'s does), and verb 14 unmaps
+  the run's leaves from the owner's table *before* the blocks go back
+  — `space.unmap_run` walks the exact sequence `map_range` mapped by,
+  every leaf checked a leaf of the very page taken back (the mapping
+  is the identity of its physical addresses, so the walk's every leaf
+  is one the map wrote; anything else is the loud end), the
+  translations fenced after. The golden beat is the desk pass's `c`:
+  beta closed and another window opened in the same life, the fresh
+  map riding the very blocks the close gave back — pre-fix, the
+  machine died `sv39: an address mapped twice` right there; post-fix
+  the reopen composes, the new grant's `desk b 10` on the wire. The
+  reopen's own find: the stack entry is made at the role verb, not at
+  `win_new` — a reopened window that skips `win_role` has no place on
+  the stack, and its present composes nothing; the beat declares the
+  role.
+- **The re-pin.** Every composition's sum changed (the shadows' words
+  in, the masked corners' out; the chrome's content; the drawn
+  icons): the comp lines re-pinned from the machine's own wire, the
+  ledger `frames 771 573` → `frames 774 576` (the images' new weight),
+  the desk-era comp ordering re-mapped (the rm's composition now lands
+  before the REPL's next refusals — the pacing moved with the
+  content).
+- Pins: `run.sh` under both transports three rounds; the fb gate
+  green (the dock's strip, the bar, the icons' goldens re-pinned on
+  the interpreter and all five hosted targets); `dune runtest` 371
+  green with the smoke; `@fmt` green.
 
 ## 2026-11-07 — The mode (emo-desktop A14.3, EmoOS T9.1)
 

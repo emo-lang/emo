@@ -71,7 +71,7 @@ class Eye {
   }
 
   def present() {
-    println("frame ${ui_fb_frame.digest(self.canvas)}")
+    println("frame ${ui_fb_frame.round_digest(self.canvas, 10)}")
   }
 }
 

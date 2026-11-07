@@ -30,11 +30,13 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M10 — The desktop | the EmoUI fb backend whole, the dock, the first apps | complete |
 | M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks, two images on one desktop | complete |
 | M12 — The desktop shell era | the dock's tiles launching the disk ELFs, the exits riding the merged stream to a shell that never waits, the REPL's feed and `exec` | complete |
+| M13 — The macOS face | the wallpaper's art, the header bar, the desktop's icons, the machine's desktop reads as one | complete |
+| M14 — The HD desktop | 1920×1080, real typefaces, the rounded-and-shadowed primitives, the translucent chrome and the drawn icons; the windows' reskin remains | the chrome lands |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 
 ## What the experience is — and is not
 
-Reachable: composited windows, drag, focus, the mouse, bitmap fonts, a dock, real apps (a counter, a file browser, an editor). Not reachable on this stack: GPU acceleration, antialiasing, animation-grade frame pacing, hard real time. The honest feel is an early-90s workstation with a Mac OS 9 temperament. The architecture's growth path beyond that is part of the record: [`docs/assessment.md`](docs/assessment.md) carries the scalability contract (what is frozen, what may move, what may be added) and the full research discussion, including the decision points, decided ahead of M7 (2026-10-31).
+Reachable: composited windows, drag, focus, the mouse, real typefaces with antialiased glyphs, rounded and shadowed shapes, translucent chrome over a procedural wallpaper, a dock, real apps (a counter, a file browser, an editor). Not reachable on this stack: GPU acceleration, blur, animation-grade frame pacing, hard real time. The honest feel is an early-90s workstation that grew a modern face. The architecture's growth path beyond that is part of the record: [`docs/assessment.md`](docs/assessment.md) carries the scalability contract (what is frozen, what may move, what may be added) and the full research discussion, including the decision points, decided ahead of M7 (2026-10-31).
 
 Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md). The kernel-side half of every milestone lives in [EmoOS's tracker](../emo-os/docs/TASKS.md); the ABI's stability contract is [EmoOS's document](../emo-os/docs/desktop-abi.md).

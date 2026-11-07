@@ -731,10 +731,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return 1
   }
   if n == 14 {
-    // win_close(grant) (T8.5): the buffer's release — the run back to
-    // the allocator block by block, the row to the table. The owner is
-    // the gate's check (reason 3); an id the table does not hold is
-    // reason 4.
+    // win_close(grant) (T8.5): the buffer's release — the run's leaves
+    // out of the owner's table (T9.3), the run back to the allocator
+    // block by block, the row to the table. The owner is the gate's
+    // check (reason 3); an id the table does not hold is reason 4. The
+    // caller's space word rides the request as win_new's does — the
+    // mapping the close unmaps is the closer's own.
     if r0 == 0 {
       return -reason_argument
     }
@@ -746,6 +748,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       return -reason_permission
     }
     poke64(gpu_args, r0)
+    poke64(gpu_args + 40, peek64(caller_space_cell))
     return route_win_close
   }
   if n == 3 {

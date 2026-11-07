@@ -681,24 +681,52 @@ its completion.
   transports three rounds at the mode, the screendumps modeled to the
   pixel, the dune pin (`.zero 33554432`) updated. Decision record:
   CHECK.md, 2026-11-07.
-- [ ] **T9.2** — The compositor's corners and shadows: the walk masks
-  each toplevel's corners and lays its shadow beneath it — the
-  coverage arithmetic emo-desktop A14.1 pinned, in the kernel's own
-  copy (the kernel requires no desktop package) — and the cursor plane
-  blends its sprite by coverage where it stored opaque pixels.
-  `run.sh`'s model grows the same arithmetic.
-- [ ] **T9.3** — `win_close` releases a run it leaves mapped: verb 14
-  gives the buffer's blocks back to the allocator and clears the row,
-  but the owner's table keeps the identity leaves — the closer can
-  still write frames the allocator may already have handed to another
-  process, and the same process's next `win_new` over reused blocks
-  ends the machine (`sv39: an address mapped twice`). Found by
-  emo-desktop A14.1's metal probe, the first program to close a window
-  and open another in one life; latent since T8.5, because every app
-  closed its one window at its exit, where the death's teardown takes
-  the whole table. The fix: the close unmaps the run's leaves from the
-  owner's table and flushes its translations; a golden beat that
-  closes and reopens pins it.
+- [x] **T9.2** — The compositor's corners and shadows — **complete
+  2026-11-07**. The walk masks each toplevel's corners at the face's
+  radius (10) and lays its shadow beneath it — the coverage arithmetic
+  emo-desktop A14.1 pinned, copied into the kernel's own hands (the
+  kernel requires no desktop package): the signed distance to a
+  rounded rectangle's edge, the fill's and shadow's coverage of a
+  pixel, the source-over. The shadow's ink 0x80000000 at 16 pixels'
+  softness paints the ring past the rect and, inside it, the four
+  corner zones the mask leaves showing — never the interior the
+  window covers whole; the blit word-copies the rows the shape makes
+  whole and asks the shape's arithmetic of the corner zones' pixels,
+  the window's word at its coverage of each over what the shadow
+  left. A toplevel that covers the mode — the machine's fullscreen
+  pass — is the screen and wears neither. The cursor plane blends its
+  sprite by coverage where it stored opaque pixels (the one-bit
+  sprite's bytes unchanged; the antialiased sprite's the next era's).
+  `run.sh`'s model grows the same arithmetic — the rings it reads,
+  the corner squares' clear pixels it verifies — and the window folds
+  are taken over the window's own pixels (`round_digest`, the corner
+  squares aside), the corpus pinning both. The finds (CHECK.md,
+  2026-11-07): the corner blend's coverage must replace the window
+  word's own top byte, never OR it — the client's pattern byte rode
+  the alpha and the arcs painted too content; the shadow's corner
+  spans need both corners on every corner row; the quadrant windows
+  yield their shadows the ten pixels that reach the neighbor. The
+  acceptance: `run.sh` under both transports three rounds (the
+  corner-zone pixels verified against the model at every beat, the
+  round folds over every window), the ledger `frames 774 576`.
+  Decision record: CHECK.md, 2026-11-07.
+- [x] **T9.3** — `win_close` releases a run it leaves mapped —
+  **complete 2026-11-07**. Verb 14 gives the buffer's blocks back to
+  the allocator and clears the row, but the owner's table kept the
+  identity leaves — the closer could still write frames the allocator
+  may already have handed to another process, and the same process's
+  next `win_new` over reused blocks ended the machine (`sv39: an
+  address mapped twice`). Found by emo-desktop A14.1's metal probe,
+  latent since T8.5. The fix: the gate stages the caller's space word
+  with the request (as `win_new`'s does) and the close unmaps the
+  run's leaves from the owner's table before the blocks go back —
+  `space.unmap_run` walks the exact sequence `map_range` mapped by,
+  every leaf checked a leaf of the very page taken back, the
+  translations fenced after — and the golden beat pins it: the desk
+  pass's `c` closes beta and opens another window in the same life,
+  the fresh map riding the very blocks the close gave back, the
+  machine's survival the proof (pre-fix, the reopen was the double
+  map). Decision record: CHECK.md, 2026-11-07.
 - [x] **T9.4** — The constant fill, the compiler's side — **complete
   2026-11-07**. An array literal whose every element is a plain
   integer literal fills from one `.rodata` blob of its

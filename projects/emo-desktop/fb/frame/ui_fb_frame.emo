@@ -38,3 +38,24 @@ def digest(s ui_fb.Surface) Int64 {
   }
   return d
 }
+
+// The fold over a window's own pixels (EmoOS T9.2): `digest` with the
+// four corner squares of `radius` set aside — the corners the walk's
+// mask leaves to whatever is beneath the toplevel, so a window canvas's
+// fold is taken over the pixels the window itself can show. The radius
+// is the walk's own design constant (10), the same number the metal's
+// mask and `run.sh`'s round fold carry.
+def round_digest(s ui_fb.Surface, radius Int64) Int64 {
+  var d = 0
+  const w = s.width()
+  const h = s.height()
+  for var y = 0; y < h; y = y + 1 {
+    for var x = 0; x < w; x = x + 1 {
+      if (x < radius || x >= w - radius) && (y < radius || y >= h - radius) {
+        continue
+      }
+      d = (d * 31 + s.at(x, y)) & 0xFFFFFFFF
+    }
+  }
+  return d
+}

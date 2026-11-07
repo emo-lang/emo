@@ -938,12 +938,37 @@ The decisions (2026-11-06):
   three rounds, the launch-era and desktop-era screendumps modeled to
   the pixel, the fb gate green, the ledger `frames 771 573`. Decision
   record: CHECK.md, 2026-11-07.
-- [ ] **A14.4** — The chrome: the header bar and the dock as
-  translucent material over the wallpaper by D8's formula, the dock a
-  rounded shelf with its shadow, the apps' tiles drawn icons (rounded
-  squares, gradients, a glyph — no image assets), the desktop's
-  document and folder icons drawn the same way, the wallpaper a
-  procedural gradient the chrome can recompute.
+- [x] **A14.4** — The chrome — **complete 2026-11-07** (the kernel's
+  half is EmoOS T9.2, with T9.3 beside it). The header bar and the
+  dock are translucent material over the wallpaper by D8's formula:
+  the chrome recomputes the wallpaper's own art at its rows — the
+  gradient and every ribbon whose span reaches it — under a scrim
+  (the header's 0xB41E1E26, the dock's 0xB424242C), sampling the
+  formula and never the pixels behind it, so a window that slides
+  under the chrome shows the wallpaper the chrome always believed was
+  there. The dock is a rounded shelf with its shadow: a translucent
+  slab (6, 3, w−12, 34) at radius 12 floating on the material, its
+  soft shadow beneath, the tiles drawn icons on it — rounded squares
+  graded top to bottom (the focused app's lit steel, the rest quiet
+  slate) carrying the app's initial in the interface face, the
+  running dot at the foot — no image assets anywhere. The desktop's
+  document and folder icons are drawn the same way (the page a graded
+  rounded square with its folded corner and line pills, the folder's
+  tab and graded body), the selection a rounded translucent card. The
+  wallpaper stays the art it was (its digest unchanged); the chrome
+  can recompute it, and does. The metal's painting moved to typed
+  twins of the package's painters (`desk_chrome_row`, `desk_bar_paint`,
+  `desk_dock_paint`, `desk_strip_paint` — the material's rows, the
+  shelf, the tiles, all through the carve's own primitives, no
+  interface call in a repaint), and the corpus's window digests became
+  the round fold (`round_digest`, the corner squares the walk masks
+  set aside). The pins: the dock's strip, the bar, the icons' goldens
+  re-pinned on the interpreter and all five hosted targets; the fb
+  gate green; `run.sh` under both transports three rounds — the
+  strip's fold matching the corpus's bytes on the metal's screen. The
+  finds (CHECK.md, 2026-11-07): the boot image's own `Win` predates
+  the winbuf package, its present's digest a site of its own; the
+  quadrant windows yield their shadows ten pixels of clearance.
 - [ ] **A14.5** — The windows (the kernel's half is EmoOS T9.2): a
   shared title bar — the three buttons, the title in the interface
   face, the focused and unfocused states — the counter, the browser

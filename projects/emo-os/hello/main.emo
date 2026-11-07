@@ -698,7 +698,7 @@ class Win {
   }
 
   def present() {
-    frame_line(carve_digest(self.base, self.width, self.height))
+    frame_line(ui_fb_winbuf.round_digest(self.base, self.width, self.height))
     case syscall.present(self.grant, 0, 0, self.width, self.height) {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}
@@ -1890,8 +1890,7 @@ if peek64(desk_cell) != 0 {
   // itself is nothing: the loop's drop rules name what counts.
   var wake = syscall.input_read()
   const wa = Win.new(grant: ga, base: base_a, width: ww, height: wh)
-  const wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
-  const wd = Win.new(grant: gd, base: base_d, width: dw, height: dh)
+  var wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
   const labels = ["a", "b"]
   // The focus: none until a press names a window; the top of the
   // stack as this pass knows it — beta, declared last, until a focus
@@ -1904,8 +1903,7 @@ if peek64(desk_cell) != 0 {
   wa.present()
   ui_fb_win.paint(wb, ui_fb_win.title_b(), false, keys_b)
   wb.present()
-  emo_desktop.paint(wd, dw, dh, labels, -1, 0)
-  wd.present()
+  desk_strip_paint(base_d, gd, dw, mh, labels, -1, 0)
   var px = 0
   var py = 0
   var drag = 0
@@ -1919,6 +1917,46 @@ if peek64(desk_cell) != 0 {
       const b = ev_value(ev)
       if b == 113 {
         running = false
+      }
+      // The close-and-reopen beat (EmoOS T9.3): beta closed and another
+      // window opened in the same life — the run's blocks back to the
+      // allocator and the owner's table keeping their leaves was the
+      // machine's end (`sv39: an address mapped twice`); the close's
+      // unmap is the other half, and the reopened window's map — over
+      // the very blocks the close gave back — is the proof it happened.
+      // Beta comes back where it stood, unfocused, its keys count the
+      // fresh window's own.
+      if b == 99 {
+        case syscall.win_close(gb) {
+          (R.error, _) -> { mark() }
+          (R.ok, _) -> {}
+        }
+        var ngb = 0
+        var nbase = 0
+        case syscall.win_new(ww, wh) {
+          (R.error, _) -> { mark() }
+          (R.ok, ans) -> {
+            ngb = win_id(ans)
+            nbase = win_base(ans)
+          }
+        }
+        gb = ngb
+        base_b = nbase
+        case syscall.win_role(gb, 0) {
+          (R.error, _) -> { mark() }
+          (R.ok, _) -> {}
+        }
+        case syscall.win_move(gb, bx, by) {
+          (R.error, _) -> { mark() }
+          (R.ok, _) -> {}
+        }
+        wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
+        ui_fb_win.paint(wb, ui_fb_win.title_b(), false, 0)
+        wb.present()
+        desk_win_line(98, gb)
+        focused = 0
+        top = gb
+        desk_strip_paint(base_d, gd, dw, mh, labels, -1, 0)
       }
       if b == 97 && focused != 0 {
         if focused == ga {
@@ -2034,8 +2072,7 @@ if peek64(desk_cell) != 0 {
           if hit == gb {
             lit = 1
           }
-          emo_desktop.paint(wd, dw, dh, labels, lit, 0)
-          wd.present()
+          desk_strip_paint(base_d, gd, dw, mh, labels, lit, 0)
           desk_focus_line(hit)
         }
         if hit == ga && py < mh - dh && (py - ay) < ui_fb_win.bar_height() {
@@ -2560,10 +2597,19 @@ def desk_slot_of(name Int64, nlen Int64) Int64 {
   return -1
 }
 
+const desk_wall_grant = 16064 // the wallpaper's grant and base — the
+const desk_wall_base = 16072 // surfaces rebuilt from these at a repaint
+const desk_bar_grant = 16080 // the header panel's grant and base
+const desk_bar_base = 16088
+const desk_mode_cell = 16096 // the display's mode packed, w above h
+const desk_dock_grant = 16104 // the dock panel's grant and base
+const desk_dock_base = 16112
+
 // The launcher's dock, repainted whole: the tiles with their dots.
-def desk_dock(wd Win, dw Int64, dh Int64, labels Array[String]) Void {
-  emo_desktop.paint(wd, dw, dh, labels, -1, desk_running_mask())
-  wd.present()
+def desk_dock(labels Array[String]) Void {
+  const mode = peek64(buf + desk_mode_cell)
+  desk_strip_paint(peek64(buf + desk_dock_base), peek64(buf + desk_dock_grant),
+    mode >> 32, mode & 4294967295, labels, -1, desk_running_mask())
 }
 
 // The launcher's one launch (emo-desktop A12.1): the slot's exec by
@@ -2572,7 +2618,7 @@ def desk_dock(wd Win, dw Int64, dh Int64, labels Array[String]) Void {
 // refuses (`desktop <name> running` — the tiles name apps, not
 // instances), and an exec the machine refuses speaks the stub's
 // message, `desktop: <the reason>`.
-def desk_launch(slot Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Void {
+def desk_launch(slot Int64, labels Array[String]) Void {
   var name = buf + desk_names + (slot * 12)
   if peek64(buf + desk_pids + (slot * 8)) != 0 {
     desk_running_line(name, desk_nlen(slot))
@@ -2582,7 +2628,7 @@ def desk_launch(slot Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Vo
       (R.ok, child) -> {
         poke64(buf + desk_pids + (slot * 8), child)
         desk_up_line(name, desk_nlen(slot))
-        desk_dock(wd, dw, dh, labels)
+        desk_dock(labels)
         desk_chrome()
       }
     }
@@ -2594,7 +2640,7 @@ def desk_launch(slot Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Vo
 // same dot a tile press lights — and the volume's own when it does
 // not (the exec answers; a foreign image's success is silent, the
 // Unix convention the file commands keep).
-def desk_exec_cmd(e Int64, n Int64, wd Win, dw Int64, dh Int64, labels Array[String]) Void {
+def desk_exec_cmd(e Int64, n Int64, labels Array[String]) Void {
   var ns = shell.skip_spaces(e, n)
   var ne = shell.word_end(ns, n)
   if ns == n || shell.skip_spaces(ne, n) < n {
@@ -2612,7 +2658,7 @@ def desk_exec_cmd(e Int64, n Int64, wd Win, dw Int64, dh Int64, labels Array[Str
           if slot >= 0 {
             poke64(buf + desk_pids + (slot * 8), child)
             desk_up_line(buf + desk_names + (slot * 12), desk_nlen(slot))
-            desk_dock(wd, dw, dh, labels)
+            desk_dock(labels)
             desk_chrome()
           }
         }
@@ -2646,12 +2692,6 @@ const desk_folder = 13976 // the current folder's prefix bytes
 const desk_folder_len = 14000
 const desk_sel = 14008 // the selected entry, -1 none
 const desk_tmp = 14016 // the re-list's scratch, the fold's input
-const desk_wall_grant = 16064 // the wallpaper's grant and base — the
-const desk_wall_base = 16072 // surfaces rebuilt from these at a repaint
-const desk_bar_grant = 16080 // the header panel's grant and base
-const desk_bar_base = 16088
-const desk_mode_cell = 16096 // the display's mode packed, w above h
-
 // Whether a name is an app's: the `.elf` the dock's slots carry, off
 // the desktop.
 def desk_is_elf(namep Int64, nlen Int64) Bool {
@@ -2894,6 +2934,148 @@ def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
   }
 }
 
+// One row of the chrome's material at the display row `gy`, painted at
+// the buffer's local `ly`: the wallpaper's gradient row, every ribbon
+// whose span holds the row over it, the scrim over the whole — the
+// package's `material_row` mirrored (D8: the chrome samples the
+// wallpaper's formula, it never reads the pixels behind it), the call
+// that paints the call that stays typed.
+def desk_chrome_row(base Int64, mw Int64, ly Int64, gy Int64, mh Int64, scrim Int64) Void {
+  const denom = mh - 1
+  const tr = (emo_desktop.wall_top() >> 16) & 255
+  const tg = (emo_desktop.wall_top() >> 8) & 255
+  const tb = emo_desktop.wall_top() & 255
+  const br = (emo_desktop.wall_bottom() >> 16) & 255
+  const bg = (emo_desktop.wall_bottom() >> 8) & 255
+  const bb = emo_desktop.wall_bottom() & 255
+  const r = (tr * (denom - gy) + br * gy) / denom
+  const g = (tg * (denom - gy) + bg * gy) / denom
+  const b = (tb * (denom - gy) + bb * gy) / denom
+  carve_fill(base, mw, 0, ly, mw, 1, (r << 16) | (g << 8) | b)
+  if gy < (5 * mh) / 8 {
+    desk_ribbon_row(base, mw, ly, -((25 * mw) / 128) + (3 * gy) / 4,
+      (115 * mw) / 256, 0x2830B8C8)
+  }
+  if gy >= (5 * mh) / 24 && gy < (15 * mh) / 16 {
+    desk_ribbon_row(base, mw, ly, (15 * mw) / 256 + gy / 2, (25 * mw) / 64,
+      0x20E86890)
+  }
+  if gy >= (85 * mh) / 192 {
+    desk_ribbon_row(base, mw, ly, (225 * mw) / 256 - gy / 4, (135 * mw) / 256,
+      0x188868E8)
+  }
+  carve_blend(base, mw, 0, ly, mw, 1, scrim)
+}
+
+// A label's glyphs along one line from `(x, y)`, the line box's
+// top-left — the package's `text` walk through the carve's typed ink,
+// one call a glyph, no interface between.
+def desk_text(base Int64, mw Int64, mh Int64, label String, x Int64, y Int64, ink_color Int64) Void {
+  const dims = ui_fb_winbuf.pack(mw, mh)
+  const strike = ui_fb.text_strike()
+  var pen = x
+  var i = 0
+  while i < label.length() {
+    const g = ui_fb.font.glyph_of(label.substring(i, 1))
+    ui_fb_winbuf.carve_ink(base, dims, pen, y, strike, g, ink_color)
+    pen = pen + ui_fb.font.advance(strike, g)
+    i = i + 1
+  }
+}
+
+// `<n> apps` ending one pad short of `right` — the package's
+// `count_text` mirrored, the digits' advances summed before they are
+// drawn.
+def desk_count_text(base Int64, mw Int64, mh Int64, right Int64, y Int64, n Int64, ink_color Int64) Void {
+  const dims = ui_fb_winbuf.pack(mw, mh)
+  const strike = ui_fb.text_strike()
+  var div = 1
+  while n / div >= 10 {
+    div = div * 10
+  }
+  var digits_w = 0
+  var d = div
+  while d > 0 {
+    digits_w = digits_w + ui_fb.font.advance(strike, 16 + ((n / d) % 10))
+    d = d / 10
+  }
+  var p = right - digits_w - ui_fb.text_width(" apps")
+  while div > 0 {
+    ui_fb_winbuf.carve_ink(base, dims, p, y, strike, 16 + ((n / div) % 10), ink_color)
+    p = p + ui_fb.font.advance(strike, 16 + ((n / div) % 10))
+    div = div / 10
+  }
+  desk_text(base, mw, mh, " apps", p, y, ink_color)
+}
+
+// The header bar whole: the material's rows, the wordmark one pad in,
+// the running count at the right edge — the package's `paint_header`
+// mirrored, every call the carve's own.
+def desk_bar_paint(base Int64, mw Int64, mh Int64, running Int64) Void {
+  var y = 0
+  while y < emo_desktop.header_height() {
+    desk_chrome_row(base, mw, y, y, mh, emo_desktop.header_scrim())
+    y = y + 1
+  }
+  const ty = (emo_desktop.header_height() - ui_fb.line_height()) / 2
+  desk_text(base, mw, emo_desktop.header_height(), "EmoOS", 8, ty, emo_desktop.header_accent())
+  desk_count_text(base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin(), ty, running, emo_desktop.header_ink())
+}
+
+// The dock's strip whole: the material's rows, the shelf's shadow and
+// the shelf over it, then one drawn icon per app — the rounded square
+// graded, the initial centered in it, the running dot at its foot —
+// the package's `paint` mirrored. `top` is the display row the strip's
+// first row stands on; the material samples the formula there.
+def desk_dock_paint(base Int64, mw Int64, top Int64, labels Array[String], focused Int64, running Int64) Void {
+  const sh = emo_desktop.strip_height()
+  const dims = ui_fb_winbuf.pack(mw, sh)
+  var ly = 0
+  while ly < sh {
+    desk_chrome_row(base, mw, ly, top + ly, top + sh, emo_desktop.dock_scrim())
+    ly = ly + 1
+  }
+  const sx = emo_desktop.shelf_pad()
+  const sy = emo_desktop.shelf_top_pad()
+  const sw = mw - emo_desktop.shelf_pad() * 2
+  const shh = emo_desktop.shelf_height()
+  ui_fb_winbuf.carve_shadow(base, dims, ui_fb_winbuf.pack(sx, sy),
+    ui_fb_winbuf.pack(sw, shh), emo_desktop.shelf_radius(),
+    emo_desktop.shelf_soft(), 0x80000000)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(sx, sy),
+    ui_fb_winbuf.pack(sw, shh), emo_desktop.shelf_radius(),
+    emo_desktop.shelf_top(), emo_desktop.shelf_bottom())
+  var i = 0
+  while i < labels.length() {
+    const tx = emo_desktop.tile_x(i)
+    const ty = emo_desktop.tile_y()
+    ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(tx, ty),
+      ui_fb_winbuf.pack(emo_desktop.tile_size(), emo_desktop.tile_size()), 8,
+      emo_desktop.tile_top(i == focused), emo_desktop.tile_bottom(i == focused))
+    const g = ui_fb.font.glyph_of(labels[i].substring(0, 1))
+    ui_fb_winbuf.carve_ink(base, dims, tx + (emo_desktop.tile_size() - ui_fb.text_width(labels[i])) / 2,
+      ty + (emo_desktop.tile_size() - ui_fb.line_height()) / 2, ui_fb.text_strike(), g,
+      emo_desktop.ink())
+    if (running >> i) & 1 == 1 {
+      ui_fb_winbuf.carve_fill(base, mw, tx + 14, ty + 26, 4, 4, emo_desktop.ink())
+    }
+    i = i + 1
+  }
+}
+
+// A dock strip repainted whole — the paint, the frame's digest line,
+// the present — the shape the launcher's dock repaints through and the
+// desk pass's with it; the buffer's own grant and base the caller
+// names.
+def desk_strip_paint(base Int64, grant Int64, mw Int64, mh Int64, labels Array[String], focused Int64, running Int64) Void {
+  desk_dock_paint(base, mw, mh - emo_desktop.strip_height(), labels, focused, running)
+  frame_line(carve_digest(base, mw, emo_desktop.strip_height()))
+  case syscall.present(grant, 0, 0, mw, emo_desktop.strip_height()) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
+}
+
 // The name's byte under the box: the type's glyph of that byte's own
 // arithmetic, the missing glyph past the printable span — the package's
 // `text_byte` rule, through the carve's typed walk — and the advance the
@@ -2908,36 +3090,47 @@ def desk_name_byte(base Int64, mw Int64, mh Int64, x Int64, y Int64, b Int64) In
   return ui_fb.font.advance(ui_fb.font.ui16(), i)
 }
 
-// A document icon at its cell: the selection's blend first, then the
-// page with its folded corner and three text lines — the package's
-// `paint_icon_doc` shapes, at the cell origin the package's `icon_cell`
-// packed.
-def desk_icon_doc(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+// A document icon at its cell: the selection's rounded blend first,
+// then the page a graded rounded square with its folded corner and
+// three text lines over it — the package's `paint_icon_doc` shapes,
+// at the cell origin the package's `icon_cell` packed.
+def desk_icon_doc(base Int64, mw Int64, mh Int64, cx Int64, cy Int64, selected Bool) Void {
+  const dims = ui_fb_winbuf.pack(mw, mh)
   if selected {
-    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+    ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(cx + 2, cy + 1),
+      ui_fb_winbuf.pack(92, 74), 10, emo_desktop.select_ink(),
+      emo_desktop.select_ink())
   }
   const ix = cx + emo_desktop.icon_off_x()
   const iy = cy + emo_desktop.icon_off_y()
-  carve_fill(base, mw, ix + 8, iy + 2, 28, 40, 0xE8E8F0)
-  carve_fill(base, mw, ix + 28, iy + 2, 8, 8, 0xC2C8D4)
-  carve_fill(base, mw, ix + 14, iy + 16, 16, 3, 0x98A0B0)
-  carve_fill(base, mw, ix + 14, iy + 24, 16, 3, 0x98A0B0)
-  carve_fill(base, mw, ix + 14, iy + 32, 10, 3, 0x98A0B0)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 8, iy + 2),
+    ui_fb_winbuf.pack(28, 40), 4, 0xFFF2F2F8, 0xFFD8DAE4)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 28, iy + 2),
+    ui_fb_winbuf.pack(8, 8), 2, 0xFFC2C8D4, 0xFFC2C8D4)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 14, iy + 16),
+    ui_fb_winbuf.pack(16, 3), 1, 0xFF98A0B0, 0xFF98A0B0)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 14, iy + 24),
+    ui_fb_winbuf.pack(16, 3), 1, 0xFF98A0B0, 0xFF98A0B0)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 14, iy + 32),
+    ui_fb_winbuf.pack(10, 3), 1, 0xFF98A0B0, 0xFF98A0B0)
 }
 
-// A folder icon at its cell: the tab and body in the folder blue, the
-// light along the top, the shade at the foot — the package's
-// `paint_icon_folder` shapes.
-def desk_icon_folder(base Int64, mw Int64, cx Int64, cy Int64, selected Bool) Void {
+// A folder icon at its cell: the tab and the body in the folder blue,
+// the body graded from its light along the top to its shade at the
+// foot — the package's `paint_icon_folder` shapes.
+def desk_icon_folder(base Int64, mw Int64, mh Int64, cx Int64, cy Int64, selected Bool) Void {
+  const dims = ui_fb_winbuf.pack(mw, mh)
   if selected {
-    carve_blend(base, mw, cx + 2, cy + 1, 92, 74, emo_desktop.select_ink())
+    ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(cx + 2, cy + 1),
+      ui_fb_winbuf.pack(92, 74), 10, emo_desktop.select_ink(),
+      emo_desktop.select_ink())
   }
   const ix = cx + emo_desktop.icon_off_x()
   const iy = cy + emo_desktop.icon_off_y()
-  carve_fill(base, mw, ix + 6, iy + 8, 16, 7, 0x4098E0)
-  carve_fill(base, mw, ix + 4, iy + 13, 36, 25, 0x4098E0)
-  carve_fill(base, mw, ix + 4, iy + 13, 36, 3, 0x5FA8E8)
-  carve_fill(base, mw, ix + 4, iy + 32, 36, 6, 0x327FC2)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 6, iy + 8),
+    ui_fb_winbuf.pack(16, 9), 3, 0xFF4098E0, 0xFF4098E0)
+  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(ix + 4, iy + 13),
+    ui_fb_winbuf.pack(36, 25), 4, 0xFF5FA8E8, 0xFF327FC2)
 }
 
 // The view's icons over the wallpaper: a document or a folder per
@@ -2955,9 +3148,9 @@ def desk_icons_paint(base Int64, mw Int64, mh Int64) Void {
     const e = buf + desk_view + (i * 40)
     const kind = peek64(e + 32)
     if kind == 0 {
-      desk_icon_doc(base, mw, cx, cy, i == sel)
+      desk_icon_doc(base, mw, mh, cx, cy, i == sel)
     } else {
-      desk_icon_folder(base, mw, cx, cy, i == sel)
+      desk_icon_folder(base, mw, mh, cx, cy, i == sel)
     }
     var shown = peek64(e + 24)
     if shown > 10 {
@@ -2995,7 +3188,7 @@ def desk_wall_repaint() Void {
 def desk_chrome() Void {
   const mode = peek64(buf + desk_mode_cell)
   const mw = mode >> 32
-  const bar = Win.new(grant: peek64(buf + desk_bar_grant), base: peek64(buf + desk_bar_base), width: mw, height: emo_desktop.header_height())
+  const mh = mode & 4294967295
   const m = desk_running_mask()
   var running = 0
   if (m & 1) == 1 {
@@ -3007,8 +3200,13 @@ def desk_chrome() Void {
   if (m & 4) == 4 {
     running = running + 1
   }
-  emo_desktop.paint_header(bar, mw, running)
-  bar.present()
+  const base = peek64(buf + desk_bar_base)
+  desk_bar_paint(base, mw, mh, running)
+  frame_line(carve_digest(base, mw, emo_desktop.header_height()))
+  case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw, emo_desktop.header_height()) {
+    (R.error, _) -> { mark() }
+    (R.ok, _) -> {}
+  }
 }
 
 // A press on the desktop's own ground: an icon's cell, or the bare
@@ -3241,9 +3439,10 @@ def desktop() Void {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
   }
-  const wd = Win.new(grant: gd, base: base_d, width: dw, height: dh)
+  poke64(buf + desk_dock_grant, gd)
+  poke64(buf + desk_dock_base, base_d)
   const labels = ["c", "f", "e"]
-  desk_dock(wd, dw, dh, labels)
+  desk_dock(labels)
   shell.banner()
   shell.prompt()
   // The pointer's axes, packed as the display's mode is: the X's
@@ -3283,19 +3482,19 @@ def desktop() Void {
       if slot == 0 {
         poke64(buf + desk_pids, 0)
         desk_exit_line(buf + desk_names, desk_nlen(0), code)
-        desk_dock(wd, dw, dh, labels)
+        desk_dock(labels)
         desk_chrome()
       }
       if slot == 1 {
         poke64(buf + desk_pids + 8, 0)
         desk_exit_line(buf + desk_names + 12, desk_nlen(1), code)
-        desk_dock(wd, dw, dh, labels)
+        desk_dock(labels)
         desk_chrome()
       }
       if slot == 2 {
         poke64(buf + desk_pids + 16, 0)
         desk_exit_line(buf + desk_names + 24, desk_nlen(2), code)
-        desk_dock(wd, dw, dh, labels)
+        desk_dock(labels)
         desk_chrome()
       }
     }
@@ -3307,7 +3506,7 @@ def desktop() Void {
         const s = shell.skip_spaces(0, n)
         const e = shell.word_end(s, n)
         if shell.exec_p(s, e - s) {
-          desk_exec_cmd(e, n, wd, dw, dh, labels)
+          desk_exec_cmd(e, n, labels)
         } else {
           shell.execute(n)
           // the volume may have changed under the command (the write,
@@ -3338,13 +3537,13 @@ def desktop() Void {
       if ev_value(ev) == 1 {
         const tile = emo_desktop.press(px, py, mw, mh, 3)
         if tile == 0 {
-          desk_launch(0, wd, dw, dh, labels)
+          desk_launch(0, labels)
         }
         if tile == 1 {
-          desk_launch(1, wd, dw, dh, labels)
+          desk_launch(1, labels)
         }
         if tile == 2 {
-          desk_launch(2, wd, dw, dh, labels)
+          desk_launch(2, labels)
         }
         if tile == -1 && py >= emo_desktop.header_height() {
           desk_icon_press(emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))

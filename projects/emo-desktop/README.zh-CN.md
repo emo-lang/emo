@@ -30,11 +30,13 @@ English version: [`README.md`](README.md).
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | complete |
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查、一个桌面上两个镜像 | complete |
 | M12 — 桌面 shell 时代 | dock 的 tile 启动磁盘 ELF、退出事件经合并流到达永不 wait 的 shell、REPL 的 feed 与 `exec` | complete |
+| M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标,机器的桌面读起来是一个整体 | complete |
+| M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome 与绘制图标;窗口换装尚余 | chrome 落地 |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 
 ## 体验是什么——不是什么
 
-可达:合成窗口、拖动、聚焦、鼠标、位图字体、dock、真实应用(计数器、文件浏览器、编辑器)。这套栈上不可达:GPU 加速、抗锯齿、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站带着 Mac OS 9 的脾气。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
+可达:合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、过程壁纸上的半透明 chrome、dock、真实应用(计数器、文件浏览器、编辑器)。这套栈上不可达:GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。每个里程碑的内核侧一半住在 [EmoOS 的追踪器](../emo-os/docs/TASKS.md);ABI 的稳定性契约是 [EmoOS 的文档](../emo-os/docs/desktop-abi.md)。

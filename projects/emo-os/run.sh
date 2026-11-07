@@ -530,6 +530,65 @@ def sprite(x, y):
             return (255, 255, 255)
     return None
 
+# The toplevel's corners and shadow (T9.2, emo-desktop A14.1): the
+# coverage arithmetic the walk carries, in the model's own copy — the
+# signed distance to a rounded rectangle's edge, the fill's and the
+# shadow's coverage of a pixel, the shadow's ink 0x80000000 at 16
+# pixels' softness under every toplevel, the corners masked at 10.
+RAD, SOFT = 10, 16
+PAD = SOFT // 2 + 1
+
+def isqrt(n):
+    rem, root, bit = n, 0, 1 << 62
+    while bit > rem:
+        bit >>= 2
+    while bit:
+        if rem >= root + bit:
+            rem -= root + bit
+            root = (root >> 1) + bit
+        else:
+            root >>= 1
+        bit >>= 2
+    return root
+
+def shape_sd(px, py, x, y, w, h, rad):
+    cx, cy, rr = px * 256 + 128, py * 256 + 128, rad * 256
+    sx = max(x * 256 + rr - cx, cx - ((x + w) * 256 - rr))
+    sy = max(y * 256 + rr - cy, cy - ((y + h) * 256 - rr))
+    if sx > 0 and sy > 0:
+        outside = isqrt(sx * sx + sy * sy)
+    elif sx > 0:
+        outside = sx
+    else:
+        outside = max(sy, 0)
+    inside = min(max(sx, sy), 0)
+    return outside + inside - rr
+
+def fill_cover(sd):
+    return (min(max(128 - sd, 0), 256) * 255 + 128) // 256
+
+def shadow_cover(sd, soft):
+    s = max(soft, 1)
+    span = s * 256
+    c = s * 128 - sd
+    if c <= 0:
+        return 0
+    if c >= span:
+        return 255
+    t = (c * 4096) // span
+    return (255 * t * t * (12288 - 2 * t) + 34359738368) // 68719476736
+
+def shadowed(base, c):
+    # the shadow's ink over `base` at its coverage: the channels are 0,
+    # so each channel sinks by the alpha the coverage carries
+    if c <= 0:
+        return base
+    a = (0x80 * c + 127) // 255
+    return tuple((d * (255 - a) + 127) // 255 for d in base)
+
+def shadow_at(x, y, wx, wy, w, h, base):
+    return shadowed(base, shadow_cover(shape_sd(x, y, wx, wy, w, h, RAD), SOFT))
+
 def want(x, y):
     s = sprite(x, y)
     if s is not None:
@@ -541,7 +600,18 @@ def want(x, y):
     if 416 <= x < 480 and 64 <= y < 128:
         return (85, 66, y - 64)
     if 16 <= x < 528 and 32 <= y < 160:
-        return (73, 78, y - 32)
+        # the window's own pixel at its coverage of this one — whole
+        # the window's word, partial the word over what the shadow
+        # left, clear the shadow alone
+        c = fill_cover(shape_sd(x, y, 16, 32, 512, 128, RAD))
+        if c >= 255:
+            return (73, 78, y - 32)
+        base = shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
+        if c == 0:
+            return base
+        return tuple(((73, 78, y - 32)[i] * c + base[i] * (255 - c) + 127) // 255 for i in range(3))
+    if 16 - PAD <= x < 528 + PAD and 32 - PAD <= y < 160 + PAD:
+        return shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
     return (48, 48, 56)
 
 for y in range(1080):
@@ -574,14 +644,14 @@ PYEOF
   # one: the reborn window's rows where it stands, the dead client's
   # old rect background — the walk cleared the carve and the surface is
   # off the stack — the pointer parked at (16,16) out of both rects.
-  await 'comp 96 320 2102906880'
+  await 'comp 96 320 168531364'
   await 'client up 5'
   await 'user fault 26 cause 15'
   await 'addr 0x20000000'
   printf 'c' >&3
   await 'comp reclaim 26'
   await 'client up 6'
-  await 'comp 512 320 4174893056'
+  await 'comp 512 320 129906084'
   abs 274 486
   sleep 1
   hmp 'screendump .client.ppm'
@@ -610,12 +680,75 @@ def sprite(x, y):
             return (255, 255, 255)
     return None
 
+# The toplevel's corners and shadow (T9.2): the same arithmetic the
+# window era's model carries — the reborn client's window masked and
+# shadowed, the dead client's old rect the bare slate.
+RAD, SOFT = 10, 16
+PAD = SOFT // 2 + 1
+
+def isqrt(n):
+    rem, root, bit = n, 0, 1 << 62
+    while bit > rem:
+        bit >>= 2
+    while bit:
+        if rem >= root + bit:
+            rem -= root + bit
+            root = (root >> 1) + bit
+        else:
+            root >>= 1
+        bit >>= 2
+    return root
+
+def shape_sd(px, py, x, y, w, h, rad):
+    cx, cy, rr = px * 256 + 128, py * 256 + 128, rad * 256
+    sx = max(x * 256 + rr - cx, cx - ((x + w) * 256 - rr))
+    sy = max(y * 256 + rr - cy, cy - ((y + h) * 256 - rr))
+    if sx > 0 and sy > 0:
+        outside = isqrt(sx * sx + sy * sy)
+    elif sx > 0:
+        outside = sx
+    else:
+        outside = max(sy, 0)
+    inside = min(max(sx, sy), 0)
+    return outside + inside - rr
+
+def fill_cover(sd):
+    return (min(max(128 - sd, 0), 256) * 255 + 128) // 256
+
+def shadow_cover(sd, soft):
+    s = max(soft, 1)
+    span = s * 256
+    c = s * 128 - sd
+    if c <= 0:
+        return 0
+    if c >= span:
+        return 255
+    t = (c * 4096) // span
+    return (255 * t * t * (12288 - 2 * t) + 34359738368) // 68719476736
+
+def shadowed(base, c):
+    if c <= 0:
+        return base
+    a = (0x80 * c + 127) // 255
+    return tuple((d * (255 - a) + 127) // 255 for d in base)
+
+def shadow_at(x, y, wx, wy, w, h, base):
+    return shadowed(base, shadow_cover(shape_sd(x, y, wx, wy, w, h, RAD), SOFT))
+
 def want(x, y):
     s = sprite(x, y)
     if s is not None:
         return s
     if 512 <= x < 896 and 320 <= y < 448:
-        return (69, 66, y - 320)
+        c = fill_cover(shape_sd(x, y, 512, 320, 384, 128, RAD))
+        if c >= 255:
+            return (69, 66, y - 320)
+        base = shadow_at(x, y, 512, 320, 384, 128, (48, 48, 56))
+        if c == 0:
+            return base
+        return tuple(((69, 66, y - 320)[i] * c + base[i] * (255 - c) + 127) // 255 for i in range(3))
+    if 512 - PAD <= x < 896 + PAD and 320 - PAD <= y < 448 + PAD:
+        return shadow_at(x, y, 512, 320, 384, 128, (48, 48, 56))
     return (48, 48, 56)
 
 for y in range(1080):
@@ -695,6 +828,62 @@ def sprite(x, y):
 def inside(x, y, wx, wy):
     return wx <= x < wx + W and wy <= y < wy + H
 
+# The toplevels' corners and shadow (T9.2): the coverage arithmetic the
+# walk carries — the windows masked at 10, the shadow's ink 0x80000000
+# at 16 pixels' softness laid beneath each, the later window's shadow
+# over the earlier's. The rectangles themselves are the windows' own
+# canvases (the corpus's digests, corner squares aside), so the walk
+# reads the ring around them and the folds skip the corners the mask
+# leaves to what is beneath.
+RAD, SOFT = 10, 16
+PAD = SOFT // 2 + 1
+
+def isqrt(n):
+    rem, root, bit = n, 0, 1 << 62
+    while bit > rem:
+        bit >>= 2
+    while bit:
+        if rem >= root + bit:
+            rem -= root + bit
+            root = (root >> 1) + bit
+        else:
+            root >>= 1
+        bit >>= 2
+    return root
+
+def shape_sd(px, py, x, y, w, h, rad):
+    cx, cy, rr = px * 256 + 128, py * 256 + 128, rad * 256
+    sx = max(x * 256 + rr - cx, cx - ((x + w) * 256 - rr))
+    sy = max(y * 256 + rr - cy, cy - ((y + h) * 256 - rr))
+    if sx > 0 and sy > 0:
+        outside = isqrt(sx * sx + sy * sy)
+    elif sx > 0:
+        outside = sx
+    else:
+        outside = max(sy, 0)
+    inside = min(max(sx, sy), 0)
+    return outside + inside - rr
+
+def shadow_cover(sd, soft):
+    s = max(soft, 1)
+    span = s * 256
+    c = s * 128 - sd
+    if c <= 0:
+        return 0
+    if c >= span:
+        return 255
+    t = (c * 4096) // span
+    return (255 * t * t * (12288 - 2 * t) + 34359738368) // 68719476736
+
+def shadowed(base, c):
+    if c <= 0:
+        return base
+    a = (0x80 * c + 127) // 255
+    return tuple((d * (255 - a) + 127) // 255 for d in base)
+
+def shadow_at(x, y, wx, wy, base):
+    return shadowed(base, shadow_cover(shape_sd(x, y, wx, wy, W, H, RAD), SOFT))
+
 for y in range(1080):
     row = px[y * 5760:(y + 1) * 5760]
     for x in range(1920):
@@ -703,22 +892,43 @@ for y in range(1080):
         if DX <= x < DX + DW and DY <= y < DY + DH:
             continue
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
-        want = sprite(x, y) or (48, 48, 56)
+        want = sprite(x, y)
+        if want is None:
+            want = (48, 48, 56)
+            for wx, wy in ((ax, ay), (bx, by)):
+                if wx - PAD <= x < wx + W + PAD and wy - PAD <= y < wy + H + PAD:
+                    want = shadow_at(x, y, wx, wy, want)
         if got != want:
             sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
 
 def fold(wx, wy, fw, fh):
+    # the round fold (T9.2): the four corner squares of the walk's own
+    # radius set aside — the corners the mask leaves to what is beneath
     d = 0
-    for y in range(wy, wy + fh):
-        o = (y * 1920 + wx) * 3
+    for ly in range(fh):
+        o = ((wy + ly) * 1920 + wx) * 3
         for x in range(fw):
+            if (x < RAD or x >= fw - RAD) and (ly < RAD or ly >= fh - RAD):
+                o += 3
+                continue
+            d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
+            o += 3
+    return d
+
+def fold_strip():
+    # the dock is a panel — the walk masks toplevels only — so the
+    # strip's fold is the plain one, the corpus's own digest
+    d = 0
+    for y in range(DY, DY + DH):
+        o = (y * 1920 + DX) * 3
+        for x in range(DW):
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
     return d
 
 fa = fold(ax, ay, W, H)
 fb = fold(bx, by, W, H)
-fd = fold(DX, DY, DW, DH)
+fd = fold_strip()
 if e['WANT_A'] and fa != int(e['WANT_A']):
     sys.exit(f"run.sh: at the {e['WHAT']} alpha's rectangle digests to {fa}; the corpus's is {e['WANT_A']}")
 if e['NOT_A'] and fa == int(e['NOT_A']):
@@ -844,9 +1054,11 @@ def wall(x, y):
                 p = over(ink, p)
     return ((p >> 16) & 255, (p >> 8) & 255, p & 255)
 
-# The icons (emo-desktop A13): the cells from the display's top-right
-# corner down, the columns leftward — the shapes and the names the
-# paint lays, stamped over the wallpaper.
+# The icons (emo-desktop A13, drawn A14.4): the cells from the display's
+# top-right corner down, the columns leftward — the shapes and the names
+# the paint lays, stamped over the wallpaper. The shapes are the
+# package's own rounded rectangles, the model carrying the same
+# coverage arithmetic the walk does (T9.2).
 def icon_cell(i):
     rws = (1080 - 32 - 48) // 76
     col, row = i // rws, i % rws
@@ -854,10 +1066,88 @@ def icon_cell(i):
 
 overlay = {}
 
-def stamp_rect(x0, y0, w0, h0, color):
-    for yy in range(y0, y0 + h0):
-        for xx in range(x0, x0 + w0):
-            overlay[(xx, yy)] = color
+RAD, SOFT = 10, 16
+PAD = SOFT // 2 + 1
+
+def isqrt(n):
+    rem, root, bit = n, 0, 1 << 62
+    while bit > rem:
+        bit >>= 2
+    while bit:
+        if rem >= root + bit:
+            rem -= root + bit
+            root = (root >> 1) + bit
+        else:
+            root >>= 1
+        bit >>= 2
+    return root
+
+def shape_sd(px, py, x, y, w, h, rad):
+    cx, cy, rr = px * 256 + 128, py * 256 + 128, rad * 256
+    sx = max(x * 256 + rr - cx, cx - ((x + w) * 256 - rr))
+    sy = max(y * 256 + rr - cy, cy - ((y + h) * 256 - rr))
+    if sx > 0 and sy > 0:
+        outside = isqrt(sx * sx + sy * sy)
+    elif sx > 0:
+        outside = sx
+    else:
+        outside = max(sy, 0)
+    inside = min(max(sx, sy), 0)
+    return outside + inside - rr
+
+def fill_cover(sd):
+    return (min(max(128 - sd, 0), 256) * 255 + 128) // 256
+
+def shadow_cover(sd, soft):
+    s = max(soft, 1)
+    span = s * 256
+    c = s * 128 - sd
+    if c <= 0:
+        return 0
+    if c >= span:
+        return 255
+    t = (c * 4096) // span
+    return (255 * t * t * (12288 - 2 * t) + 34359738368) // 68719476736
+
+def shadowed(base, c):
+    if c <= 0:
+        return base
+    a = (0x80 * c + 127) // 255
+    return tuple((d * (255 - a) + 127) // 255 for d in base)
+
+def radius_clamp(rad, w0, h0):
+    r = max(rad, 0)
+    if r * 2 > w0:
+        r = w0 // 2
+    if r * 2 > h0:
+        r = h0 // 2
+    return r
+
+def grade_row(top, bottom, i, n):
+    if n <= 1 or top == bottom:
+        return top
+    d = n - 1
+    def lerp(a, b):
+        return ((a & 255) * (d - i) + (b & 255) * i + d // 2) // d
+    return (lerp(top >> 24, bottom >> 24) << 24) | (lerp(top >> 16, bottom >> 16) << 16) | (lerp(top >> 8, bottom >> 8) << 8) | lerp(top, bottom)
+
+def stamp_rounded(x0, y0, w0, h0, rad, top, bottom):
+    r = radius_clamp(rad, w0, h0)
+    for yy in range(max(y0, 0), min(y0 + h0, 1080)):
+        col = grade_row(top, bottom, yy - y0, h0)
+        ca = (col >> 24) & 255
+        for xx in range(max(x0, 0), min(x0 + w0, 1920)):
+            c = fill_cover(shape_sd(xx, yy, x0, y0, w0, h0, r))
+            if c <= 0:
+                continue
+            xy = (xx, yy)
+            if xy in overlay:
+                under = overlay[xy]
+            else:
+                r0, g0, b0 = wall(*xy)
+                under = (r0 << 16) | (g0 << 8) | b0
+            a = (ca * c + 127) // 255
+            overlay[xy] = over((a << 24) | (col & 0xFFFFFF), under)
 
 def stamp_text(label, x0, y0, color, s=0):
     # each glyph's ink composited over what the pixel already shows —
@@ -880,19 +1170,17 @@ def stamp_text(label, x0, y0, color, s=0):
 
 def stamp_doc(cx, cy, name):
     ix, iy = cx + 26, cy + 4
-    stamp_rect(ix + 8, iy + 2, 28, 40, 0xE8E8F0)
-    stamp_rect(ix + 28, iy + 2, 8, 8, 0xC2C8D4)
-    stamp_rect(ix + 14, iy + 16, 16, 3, 0x98A0B0)
-    stamp_rect(ix + 14, iy + 24, 16, 3, 0x98A0B0)
-    stamp_rect(ix + 14, iy + 32, 10, 3, 0x98A0B0)
+    stamp_rounded(ix + 8, iy + 2, 28, 40, 4, 0xFFF2F2F8, 0xFFD8DAE4)
+    stamp_rounded(ix + 28, iy + 2, 8, 8, 2, 0xFFC2C8D4, 0xFFC2C8D4)
+    stamp_rounded(ix + 14, iy + 16, 16, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
+    stamp_rounded(ix + 14, iy + 24, 16, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
+    stamp_rounded(ix + 14, iy + 32, 10, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
     stamp_text(name[:10], cx + 8, cy + 56, 0xF8F8F0)
 
 def stamp_folder(cx, cy, name):
     ix, iy = cx + 26, cy + 4
-    stamp_rect(ix + 6, iy + 8, 16, 7, 0x4098E0)
-    stamp_rect(ix + 4, iy + 13, 36, 25, 0x4098E0)
-    stamp_rect(ix + 4, iy + 13, 36, 3, 0x5FA8E8)
-    stamp_rect(ix + 4, iy + 32, 36, 6, 0x327FC2)
+    stamp_rounded(ix + 6, iy + 8, 16, 9, 3, 0xFF4098E0, 0xFF4098E0)
+    stamp_rounded(ix + 4, iy + 13, 36, 25, 4, 0xFF5FA8E8, 0xFF327FC2)
     stamp_text(name[:10], cx + 8, cy + 56, 0xF8F8F0)
 
 for k, spec in enumerate(e['ICONS'].split(',')):
@@ -904,10 +1192,16 @@ for k, spec in enumerate(e['ICONS'].split(',')):
         else:
             stamp_folder(cx, cy, name)
 
-# The header (emo-desktop A13, A14.2): the paper, the wordmark one pad
-# in, the running count ending one pad short of the right edge, the
-# text centered on the bar's height by the line box's own.
-stamp_rect(0, 0, 1920, 24, 0x1E1E26)
+# The header (emo-desktop A13, the material A14.4): the wallpaper's own
+# formula under the header's scrim — D8's chrome, recomputed pixel by
+# pixel — then the wordmark one pad in, the running count ending one
+# pad short of the right edge, the text centered on the bar's height by
+# the line box's own.
+HEADER_SCRIM = 0xB41E1E26
+for yy in range(24):
+    for xx in range(1920):
+        r0, g0, b0 = wall(xx, yy)
+        overlay[(xx, yy)] = over(HEADER_SCRIM, (r0 << 16) | (g0 << 8) | b0)
 ty = (24 - line_boxes[0]) // 2
 stamp_text('EmoOS', 8, ty, 0x40C8C8)
 rn = str(int(e['RUNNING']))
@@ -932,35 +1226,59 @@ for name in ('A', 'B', 'C'):
     if e['W' + name]:
         rects.append((int(e[name + 'X']), int(e[name + 'Y'])))
 
-def inrect(x, y):
+# The toplevels' corners and shadow (T9.2): a pixel a window covers
+# whole is the window's own (the folds' business); a pixel the shadow
+# reaches — the ring past every rect, a corner square's clear pixels —
+# is the wallpaper or the overlay under each shadow in the stack's
+# order; a pixel a window covers partly is its word over the shadow,
+# the round fold's aside.
+def base_at(x, y):
+    if (x, y) in overlay:
+        c = overlay[(x, y)]
+        return (c >> 16) & 255, (c >> 8) & 255, c & 255
+    return wall(x, y)
+
+def window_want(x, y):
+    base = base_at(x, y)
+    own = False
     for wx, wy in rects:
-        if wx <= x < wx + W and wy <= y < wy + H:
-            return True
-    return False
+        if not (wx - PAD <= x < wx + W + PAD and wy - PAD <= y < wy + H + PAD):
+            continue
+        sd = shape_sd(x, y, wx, wy, W, H, RAD)
+        fc = fill_cover(sd)
+        if fc >= 255:
+            return None
+        base = shadowed(base, shadow_cover(sd, SOFT))
+        if fc > 0:
+            own = True
+    if own:
+        return None
+    return base
 
 for y in range(1080):
     row = px[y * 5760:(y + 1) * 5760]
     for x in range(1920):
-        if inrect(x, y):
-            continue
         if DX <= x < DX + DW and DY <= y < DY + DH:
             continue
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
         want = sprite(x, y)
         if want is None:
-            if (x, y) in overlay:
-                c = overlay[(x, y)]
-                want = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
-            else:
-                want = wall(x, y)
+            want = window_want(x, y)
+            if want is None:
+                continue
         if got != want:
             sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
 
 def fold(wx, wy):
+    # the round fold (T9.2): the four corner squares of the walk's own
+    # radius set aside — the corners the mask leaves to what is beneath
     d = 0
-    for y in range(wy, wy + H):
-        o = (y * 1920 + wx) * 3
+    for ly in range(H):
+        o = ((wy + ly) * 1920 + wx) * 3
         for x in range(W):
+            if (x < RAD or x >= W - RAD) and (ly < RAD or ly >= H - RAD):
+                o += 3
+                continue
             d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
             o += 3
     return d
@@ -1011,7 +1329,7 @@ PYEOF
   # The beta focus rides the dock's tile (emo-desktop A10.2): a press
   # on the strip names the tile, the tile names its app, the dock
   # repaints with the tile lit.
-  abs 1093 32162
+  abs 1297 32162
   btn true
   btn false
   await 'desk focus 8'
@@ -1038,6 +1356,20 @@ PYEOF
   sleep 1
   hmp 'screendump .desk3.ppm'
   desk_is .desk3.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 9)" 16 700 "$(dock_line 3)" 'drag back'
+  # The close-and-reopen beat (EmoOS T9.3): the `c` byte closes beta and
+  # opens another window in the same life — the run's blocks back to the
+  # allocator, the owner's table keeping their leaves was the machine's
+  # end (`sv39: an address mapped twice`, found by A14.1's metal probe,
+  # latent since T8.5); the close's unmap is the other half, and the
+  # reopened window's map over the very blocks the close gave back is
+  # the proof it happened. Beta comes back where it stood, unfocused,
+  # its keys count the fresh window's own; the dock's tiles go dark.
+  printf 'c' >&3
+  await 'desk b 10'
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .reopen.ppm'
+  desk_is .reopen.ppm 64 128 576 384 "$(win_line 5)" '' "$(win_line 2)" 16 700 "$(dock_line 1)" 'reopen'
   printf 'q' >&3
   await 'desk 0'
   # The desktop era (emo-desktop A12.1): the launcher's dock is up
@@ -1062,15 +1394,15 @@ PYEOF
   # header bar's first, the dock's re-present over the wallpaper: the
   # three surfaces the composition carries from here on.
   await 'desktop icons 2'
-  await 'comp 0 0 1324068029'
-  await 'comp 0 0 794789033'
-  await 'comp 0 1040 4289165022'
-  abs 410 32101
+  await 'comp 0 0 971552549'
+  await 'comp 0 0 3448435595'
+  await 'comp 0 1040 2442226545'
+  abs 614 32101
   btn true
   btn false
   await 'desktop counter up'
-  await 'comp 0 1040 94202926'
-  await 'comp 0 0 4259952770'
+  await 'comp 0 1040 2540901465'
+  await 'comp 0 0 2407683057'
   await "frame $(app_line 1)"
   await 'comp 768 476'
   sleep 0.3
@@ -1090,10 +1422,10 @@ PYEOF
   sleep 0.5
   feed 'exec files.elf'
   await 'desktop files up'
-  await 'comp 0 1040 903212936'
-  await 'comp 0 0 991375556'
+  await 'comp 0 1040 857791648'
+  await 'comp 0 0 948710579'
   await "frame $(app_line 4)"
-  await 'comp 384 238'
+  await 'comp 374 238'
   # the browser's session rides the panel's focus: the press named it
   printf 'j' >&3
   await 'sel files.emo'
@@ -1104,7 +1436,7 @@ PYEOF
   abs 274 21239
   sleep 1
   hmp 'screendump .duo1.ppm'
-  apps_is .duo1.ppm 768 476 "$(app_line 3)" 384 238 "$(app_line 6)" 0 0 '' 16 700 "$(dock_line 6)" 'two up' 'doc:boot.txt,doc:hello.txt' 2
+  apps_is .duo1.ppm 768 476 "$(app_line 3)" 374 238 "$(app_line 6)" 0 0 '' 16 700 "$(dock_line 6)" 'two up' 'doc:boot.txt,doc:hello.txt' 2
   # the editor's exec, the REPL's own command: the dock's gap press
   # hands the panel the focus and the serial bytes are the shell's
   abs 8534 32101
@@ -1113,10 +1445,10 @@ PYEOF
   sleep 0.5
   feed 'exec editor.elf'
   await 'desktop editor up'
-  await 'comp 0 1040 3898392177'
-  await 'comp 0 0 3911090226'
+  await 'comp 0 1040 3793264750'
+  await 'comp 0 0 3806486310'
   await "frame $(app_line 7)"
-  await 'comp 384 476'
+  await 'comp 374 476'
   sleep 0.3
   printf 'a' >&3
   await 'put a'
@@ -1131,7 +1463,7 @@ PYEOF
   abs 274 21239
   sleep 1
   hmp 'screendump .trio.ppm'
-  apps_is .trio.ppm 768 476 "$(app_line 3)" 384 238 "$(app_line 6)" 384 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3
+  apps_is .trio.ppm 768 476 "$(app_line 3)" 374 238 "$(app_line 6)" 374 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3
   # the quits: each its window's focus first — the click raises, the
   # q ends the pass, the death rides the stream, the dot goes out.
   # the editor's quit-click at its own rect (the launcher's place)
@@ -1141,25 +1473,25 @@ PYEOF
   sleep 1
   printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 3206008716'
+  await 'comp 0 0 3981923951'
   abs 7100 7950
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 210829475'
+  await 'comp 0 0 1046450849'
   abs 6827 15171
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop editor exit 0'
-  await 'comp 0 0 4289165022'
+  await 'comp 0 0 2442226545'
   abs 274 21239
   sleep 1
   hmp 'screendump .deskout.ppm'
-  apps_is .deskout.ppm 768 476 '' 384 238 '' 0 0 '' 16 700 "$(dock_line 10)" 'all out' 'doc:boot.txt,doc:hello.txt' 0
+  apps_is .deskout.ppm 768 476 '' 374 238 '' 0 0 '' 16 700 "$(dock_line 10)" 'all out' 'doc:boot.txt,doc:hello.txt' 0
   # The REPL beats: the dock's gap focuses the panel, the serial's
   # bytes the shell's line — the commands the file work needs, the
   # launcher's own refusals among them. The `exec` command's success
@@ -1177,13 +1509,13 @@ PYEOF
   feed 'write note.txt shell wrote this'
   # the icons' refresh (emo-desktop A13): the re-list's fold moved, the
   # wallpaper repainted — note.txt the third document on the desktop
-  await 'frame 2134252656'
-  await 'comp 0 0 4278913753'
+  await 'frame 5322588'
+  await 'comp 0 0 2257686717'
   feed 'ls'
   feed 'cat boot.txt'
   await 'EmoOS boots from disk'
   feed 'rm note.txt'
-  await 'comp 0 0 4289165022'
+  await 'comp 0 0 2442226545'
   feed 'cat note.txt'
   await 'cat: no such file'
   feed 'bogus'
@@ -1200,11 +1532,11 @@ PYEOF
   # state's eye: the `..` and the file, the header's zero, the sprite
   # parked off the cells.
   feed 'write a/one.txt first inside'
-  await 'comp 0 0 1510668087'
+  await 'comp 0 0 4175258563'
   abs 31574 6493
   btn true
   btn false
-  await 'comp 0 0 888672448'
+  await 'comp 0 0 3726696940'
   abs 274 21239
   sleep 1
   hmp 'screendump .folder.ppm'
@@ -1212,9 +1544,9 @@ PYEOF
   abs 31574 2124
   btn true
   btn false
-  await 'comp 0 0 1510668087'
+  await 'comp 0 0 4175258563'
   feed 'rm a/one.txt'
-  await 'comp 0 0 4289165022'
+  await 'comp 0 0 2442226545'
   # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
   # disk ELF with no window, no message, no yield, and no announce
   # until its loop is out (the runtime's println is a write ecall per
@@ -1448,7 +1780,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 1048 4191811584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 4191811584' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 0 0 1324068029' 'desktop icons 2' 'comp 0 0 794789033' 'comp 0 1040 4289165022' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 94202926' 'comp 0 0 4259952770' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 903212936' 'comp 0 0 991375556' 'comp 384 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 3898392177' 'comp 0 0 3911090226' 'comp 384 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 3218706765' 'comp 0 0 3206008716' 'desktop files exit 0' 'comp 0 1040 298992095' 'comp 0 0 210829475' 'desktop editor exit 0' 'comp 0 1040 4159947570' 'comp 0 0 4289165022' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 4278913753' 'EmoOS boots from disk' 'comp 0 0 4289165022' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 1510668087' 'comp 0 0 888672448' 'comp 0 0 1510668087' 'comp 0 0 4289165022' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 771 573'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 581302422' 'popup up' 'comp 400 32 3434542230' 'sub up' 'parent panel r4' 'comp 0 1048 2153658518' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3790164644' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 3448435595' 'comp 0 1040 2442226545' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 2540901465' 'comp 0 0 2407683057' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 857791648' 'comp 0 0 948710579' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 3793264750' 'comp 0 0 3806486310' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 3995145511' 'comp 0 0 3981923951' 'desktop files exit 0' 'comp 0 1040 1137369780' 'comp 0 0 1046450849' 'desktop editor exit 0' 'comp 0 1040 2309008137' 'comp 0 0 2442226545' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
