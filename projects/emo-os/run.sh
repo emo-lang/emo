@@ -516,19 +516,35 @@ px = data[17:]
 import os
 import re
 
-rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(os.environ['POINTER_SPRITE']).read(), re.M)
+rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(os.environ['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {os.environ['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
 def sprite(x, y):
+    # the sprite's word at the pixel, 0 for clear: `#` and `o` whole,
+    # the digits and letters the outline's ink at its coverage (the
+    # pointer's own decode) — the model blends it over what the pixel
+    # would show without it
     r, c = y - 540, x - 960
     if 0 <= r < 17 and 0 <= c < 12:
         cell = rows[r][c]
         if cell == '#':
-            return (0, 0, 0)
+            return (0, 0, 0), 255
         if cell == 'o':
-            return (255, 255, 255)
-    return None
+            return (255, 255, 255), 255
+        if cell != '.':
+            n = int(cell, 16) if cell.isdigit() else ord(cell) - 87
+            return (0, 0, 0), n * 17
+    return None, 0
+
+def with_sprite(x, y, base):
+    sp = sprite(x, y)
+    if sp is None or sp[0] is None:
+        return base
+    (sr, sg, sb), a = sp
+    if a <= 0:
+        return base
+    return tuple((sr * a + base[i] * (255 - a) + 127) // 255 for i in range(3))
 
 # The toplevel's corners and shadow (T9.2, emo-desktop A14.1): the
 # coverage arithmetic the walk carries, in the model's own copy — the
@@ -589,10 +605,7 @@ def shadowed(base, c):
 def shadow_at(x, y, wx, wy, w, h, base):
     return shadowed(base, shadow_cover(shape_sd(x, y, wx, wy, w, h, RAD), SOFT))
 
-def want(x, y):
-    s = sprite(x, y)
-    if s is not None:
-        return s
+def base_want(x, y):
     if 0 <= x < 1920 and 1048 <= y < 1080:
         return (78, 76, y - 1048)
     if 64 <= x < 192 and 64 <= y < 128:
@@ -613,6 +626,9 @@ def want(x, y):
     if 16 - PAD <= x < 528 + PAD and 32 - PAD <= y < 160 + PAD:
         return shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
     return (48, 48, 56)
+
+def want(x, y):
+    return with_sprite(x, y, base_want(x, y))
 
 for y in range(1080):
     row = px[y * 5760:(y + 1) * 5760]
@@ -666,7 +682,7 @@ if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
     sys.exit("run.sh: the client screendump is not the mode's P6 1920x1080")
 px = data[17:]
 
-rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
@@ -675,10 +691,22 @@ def sprite(x, y):
     if 0 <= r < 17 and 0 <= c < 12:
         cell = rows[r][c]
         if cell == '#':
-            return (0, 0, 0)
+            return (0, 0, 0), 255
         if cell == 'o':
-            return (255, 255, 255)
-    return None
+            return (255, 255, 255), 255
+        if cell != '.':
+            n = int(cell, 16) if cell.isdigit() else ord(cell) - 87
+            return (0, 0, 0), n * 17
+    return None, 0
+
+def with_sprite(x, y, base):
+    sp = sprite(x, y)
+    if sp is None or sp[0] is None:
+        return base
+    (sr, sg, sb), a = sp
+    if a <= 0:
+        return base
+    return tuple((sr * a + base[i] * (255 - a) + 127) // 255 for i in range(3))
 
 # The toplevel's corners and shadow (T9.2): the same arithmetic the
 # window era's model carries — the reborn client's window masked and
@@ -735,10 +763,7 @@ def shadowed(base, c):
 def shadow_at(x, y, wx, wy, w, h, base):
     return shadowed(base, shadow_cover(shape_sd(x, y, wx, wy, w, h, RAD), SOFT))
 
-def want(x, y):
-    s = sprite(x, y)
-    if s is not None:
-        return s
+def base_want(x, y):
     if 512 <= x < 896 and 320 <= y < 448:
         c = fill_cover(shape_sd(x, y, 512, 320, 384, 128, RAD))
         if c >= 255:
@@ -750,6 +775,9 @@ def want(x, y):
     if 512 - PAD <= x < 896 + PAD and 320 - PAD <= y < 448 + PAD:
         return shadow_at(x, y, 512, 320, 384, 128, (48, 48, 56))
     return (48, 48, 56)
+
+def want(x, y):
+    return with_sprite(x, y, base_want(x, y))
 
 for y in range(1080):
     row = px[y * 5760:(y + 1) * 5760]
@@ -811,7 +839,7 @@ W, H = 384, 128
 # the walk's topmost — no window over it, the sprite parked out of it.
 DX, DY, DW, DH = 0, 1040, 1920, 40
 
-rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
@@ -820,10 +848,22 @@ def sprite(x, y):
     if 0 <= r < 17 and 0 <= c < 12:
         cell = rows[r][c]
         if cell == '#':
-            return (0, 0, 0)
+            return (0, 0, 0), 255
         if cell == 'o':
-            return (255, 255, 255)
-    return None
+            return (255, 255, 255), 255
+        if cell != '.':
+            n = int(cell, 16) if cell.isdigit() else ord(cell) - 87
+            return (0, 0, 0), n * 17
+    return None, 0
+
+def with_sprite(x, y, base):
+    sp = sprite(x, y)
+    if sp is None or sp[0] is None:
+        return base
+    (sr, sg, sb), a = sp
+    if a <= 0:
+        return base
+    return tuple((sr * a + base[i] * (255 - a) + 127) // 255 for i in range(3))
 
 def inside(x, y, wx, wy):
     return wx <= x < wx + W and wy <= y < wy + H
@@ -892,12 +932,11 @@ for y in range(1080):
         if DX <= x < DX + DW and DY <= y < DY + DH:
             continue
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
-        want = sprite(x, y)
-        if want is None:
-            want = (48, 48, 56)
-            for wx, wy in ((ax, ay), (bx, by)):
-                if wx - PAD <= x < wx + W + PAD and wy - PAD <= y < wy + H + PAD:
-                    want = shadow_at(x, y, wx, wy, want)
+        want = (48, 48, 56)
+        for wx, wy in ((ax, ay), (bx, by)):
+            if wx - PAD <= x < wx + W + PAD and wy - PAD <= y < wy + H + PAD:
+                want = shadow_at(x, y, wx, wy, want)
+        want = with_sprite(x, y, want)
         if got != want:
             sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
 
@@ -972,7 +1011,7 @@ W, H = 384, 128
 # of it. Folded below, skipped in the walk.
 DX, DY, DW, DH = 0, 1040, 1920, 40
 
-rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
@@ -1216,10 +1255,22 @@ def sprite(x, y):
     if 0 <= r < 17 and 0 <= c < 12:
         cell = rows[r][c]
         if cell == '#':
-            return (0, 0, 0)
+            return (0, 0, 0), 255
         if cell == 'o':
-            return (255, 255, 255)
-    return None
+            return (255, 255, 255), 255
+        if cell != '.':
+            n = int(cell, 16) if cell.isdigit() else ord(cell) - 87
+            return (0, 0, 0), n * 17
+    return None, 0
+
+def with_sprite(x, y, base):
+    sp = sprite(x, y)
+    if sp is None or sp[0] is None:
+        return base
+    (sr, sg, sb), a = sp
+    if a <= 0:
+        return base
+    return tuple((sr * a + base[i] * (255 - a) + 127) // 255 for i in range(3))
 
 rects = []
 for name in ('A', 'B', 'C'):
@@ -1261,11 +1312,10 @@ for y in range(1080):
         if DX <= x < DX + DW and DY <= y < DY + DH:
             continue
         got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
-        want = sprite(x, y)
+        want = window_want(x, y)
         if want is None:
-            want = window_want(x, y)
-            if want is None:
-                continue
+            continue
+        want = with_sprite(x, y, want)
         if got != want:
             sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {want}")
 
@@ -1422,8 +1472,8 @@ PYEOF
   sleep 0.5
   feed 'exec files.elf'
   await 'desktop files up'
-  await 'comp 0 1040 857791648'
-  await 'comp 0 0 948710579'
+  await 'comp 0 1040 2834281412'
+  await 'comp 0 0 2925200343'
   await "frame $(app_line 4)"
   await 'comp 374 238'
   # the browser's session rides the panel's focus: the press named it
@@ -1445,8 +1495,8 @@ PYEOF
   sleep 0.5
   feed 'exec editor.elf'
   await 'desktop editor up'
-  await 'comp 0 1040 3793264750'
-  await 'comp 0 0 3806486310'
+  await 'comp 0 1040 1480115487'
+  await 'comp 0 0 1493337047'
   await "frame $(app_line 7)"
   await 'comp 374 476'
   sleep 0.3
@@ -1473,14 +1523,14 @@ PYEOF
   sleep 1
   printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 3981923951'
+  await 'comp 0 0 1951091294'
   abs 7100 7950
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 1046450849'
+  await 'comp 0 0 3305257219'
   abs 6827 15171
   btn true
   btn false
@@ -1780,7 +1830,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 581302422' 'popup up' 'comp 400 32 3434542230' 'sub up' 'parent panel r4' 'comp 0 1048 2153658518' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3790164644' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 3448435595' 'comp 0 1040 2442226545' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 2540901465' 'comp 0 0 2407683057' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 857791648' 'comp 0 0 948710579' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 3793264750' 'comp 0 0 3806486310' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 3995145511' 'comp 0 0 3981923951' 'desktop files exit 0' 'comp 0 1040 1137369780' 'comp 0 0 1046450849' 'desktop editor exit 0' 'comp 0 1040 2309008137' 'comp 0 0 2442226545' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 581302422' 'popup up' 'comp 400 32 3434542230' 'sub up' 'parent panel r4' 'comp 0 1048 2153658518' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3790164644' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 3448435595' 'comp 0 1040 2442226545' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 2540901465' 'comp 0 0 2407683057' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 2834281412' 'comp 0 0 2925200343' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 1480115487' 'comp 0 0 1493337047' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 1964312854' 'comp 0 0 1951091294' 'desktop files exit 0' 'comp 0 1040 3396176150' 'comp 0 0 3305257219' 'desktop editor exit 0' 'comp 0 1040 2309008137' 'comp 0 0 2442226545' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

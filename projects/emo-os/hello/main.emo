@@ -586,11 +586,47 @@ def sprite_upload() Void {
     while c < w {
       const cell = line.substring(c, 1)
       var word = 0
+      // the coverage the drawing's cell carries: `#` and `o` whole, the
+      // digits and letters the outline's partial ink (the pointer's own
+      // decode), the clear cells 0
       if cell == "#" {
         word = 0xFF000000
       }
       if cell == "o" {
         word = 0xFFFFFFFF
+      }
+      if cell == "1" {
+        word = 285212672
+      }
+      if cell == "2" {
+        word = 570425344
+      }
+      if cell == "3" {
+        word = 855638016
+      }
+      if cell == "4" {
+        word = 1140850688
+      }
+      if cell == "5" {
+        word = 1426063360
+      }
+      if cell == "6" {
+        word = 1711276032
+      }
+      if cell == "7" {
+        word = 1996488704
+      }
+      if cell == "8" {
+        word = 2281701376
+      }
+      if cell == "9" {
+        word = 2566914048
+      }
+      if cell == "a" {
+        word = 2852126720
+      }
+      if cell == "b" {
+        word = 3127339392
       }
       poke32(header + 16 + ((r * w) + c) * 4, word)
       c = c + 1

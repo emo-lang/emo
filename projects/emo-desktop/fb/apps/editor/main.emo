@@ -2,6 +2,7 @@ require "syscall"
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_apps"
+require "emo/ui_fb_win"
 require "emo/ui_fb_winbuf"
 
 // The editor as its own program (emo-desktop A11.1): the app's image
@@ -49,8 +50,9 @@ def main() {
     (R.ok, _) -> {}
   }
   const we = ui_fb_winbuf.win(ge, base_e, 384, 128)
+  const ch = ui_fb_win.chrome(we, "editor")
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(), ui_fb.backend(we, ui_fb_winbuf.keys([97, 98, 10])))
+    ui_apps.editor.initial(), ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10])))
   case syscall.win_close(ge) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}

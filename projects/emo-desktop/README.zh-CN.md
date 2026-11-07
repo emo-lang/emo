@@ -31,7 +31,7 @@ English version: [`README.md`](README.md).
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查、一个桌面上两个镜像 | complete |
 | M12 — 桌面 shell 时代 | dock 的 tile 启动磁盘 ELF、退出事件经合并流到达永不 wait 的 shell、REPL 的 feed 与 `exec` | complete |
 | M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标,机器的桌面读起来是一个整体 | complete |
-| M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome 与绘制图标;窗口换装尚余 | chrome 落地 |
+| M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome、绘制图标、共享标题栏与抗锯齿指针 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

@@ -1,26 +1,28 @@
 require "emo/ui_fb"
 
-// The window shell's windows (emo-desktop A9.1): what a toplevel
-// surface looks like, painted once into the window's own buffer and
-// again whenever its state changes — the frame the compositor carries
-// into the carve at the stack's position (EmoOS T8.13). Two windows
-// are the shell's, `alpha` and `beta`, each a title bar and a body:
-// the bar in the steel the palette gives a button when the window is
-// the focused one and a dimmer steel when it is not — the one visible
-// fact a focus changes — with the title's glyphs on it, and the body
-// in the input's paper with one line of ink, the count of keys the
-// shell routed to this window because it was the focused one. The bar
-// is also the drag's handle: a press on it takes the window along with
+// The window shell's windows (emo-desktop A9.1; the shared title bar
+// A14.5): what a toplevel surface looks like, painted once into the
+// window's own buffer and again whenever its state changes — the frame
+// the compositor carries into the carve at the stack's position (EmoOS
+// T8.13). The bar is the one chrome every window wears: the three
+// traffic-light buttons (close, mini, zoom — the shapes' card's own
+// three circles, full color when the window holds the focus, quiet
+// gray when it does not), the title in the interface face centered on
+// the bar, and a hairline divider at its foot. Two windows are the
+// shell's, `alpha` and `beta`, the bar and a body: the body in the
+// input's paper with one line of ink, the count of keys the shell
+// routed to this window because it was the focused one. The bar is
+// also the drag's handle: a press on it takes the window along with
 // the pointer until the release.
 //
 // The paint is direct — fills and glyphs through the `Surface`, no
 // tree — because on the metal every node of a tree is a few KiB of
 // boxed numbers left in the arena per repaint (A8.3's count), and the
 // shell repaints two windows per focus change and one per key; this
-// shape leaves the glyphs' share alone, a dozen per window. The
-// hosted twin (`golden/`) paints the same windows through the same
-// defs on the canvas and prints each frame's digest; `run.sh` asserts
-// the metal's frame lines against that file and folds the display's
+// shape leaves the glyphs' share alone, a dozen per window. The hosted
+// twin (`golden/`) paints the same windows through the same defs on
+// the canvas and prints each frame's digest; `run.sh` asserts the
+// metal's frame lines against that file and folds the display's
 // screendump over each window's rectangle to the same numbers. One
 // drawing, one size, one pair of names — read here by both.
 
@@ -44,23 +46,138 @@ def title_b() String {
   return "beta"
 }
 
-// The bar's steel: a button's when focused, dimmer when not — a
-// different byte in every channel, so a swapped order shows.
-def bar_color(focused Bool) Int64 {
+// The bar's papers and inks: the light card when the window holds the
+// focus, the dimmer one when it does not — a different byte in every
+// channel, so a swapped focus shows.
+def bar_paper(focused Bool) Int64 {
   if focused {
-    return 0x7088A8
+    return 0xFFF4F4F6
   }
-  return 0x98A0AC
+  return 0xFFE6E6EA
+}
+
+def bar_divider(focused Bool) Int64 {
+  if focused {
+    return 0xFFD8D8DC
+  }
+  return 0xFFC8C8CC
+}
+
+def bar_ink(focused Bool) Int64 {
+  if focused {
+    return 0xFF282830
+  }
+  return 0xFF98989E
+}
+
+// The traffic lights: the shapes' card's own three circles, full color
+// when the window holds the focus, one quiet gray when it does not.
+def button_color(i Int64, focused Bool) Int64 {
+  if focused {
+    if i == 0 {
+      return 0xFFFF5F57
+    }
+    if i == 1 {
+      return 0xFFFEBC2E
+    }
+    return 0xFF28C840
+  }
+  return 0xFFC0C0C6
+}
+
+// The shared title bar onto a surface's top strip: the paper, the
+// three buttons centered on the bar's height, the title centered on
+// the bar's width in the interface face, the hairline at the foot.
+def paint_bar(s ui_fb.Surface, title String, focused Bool) Void {
+  const bw = 12
+  const pad = 8
+  const gap = 6
+  s.fill(0, 0, s.width(), bar_height(), bar_paper(focused))
+  var i = 0
+  while i < 3 {
+    s.rounded(pad + (i * (bw + gap)), (bar_height() - bw) / 2, bw, bw, bw / 2,
+      button_color(i, focused), button_color(i, focused))
+    i = i + 1
+  }
+  ui_fb.text(title, (s.width() - ui_fb.text_width(title)) / 2,
+    (bar_height() - ui_fb.line_height()) / 2, bar_ink(focused), s)
+  s.fill(0, bar_height() - 1, s.width(), 1, bar_divider(focused))
 }
 
 // A window's frame onto its own surface, the whole buffer from scratch:
-// the bar, the title from its left edge one pad in and centered on the
-// bar's height, the body's paper, and the keys line one pad in from the
-// body's corner.
+// the shared bar, the body's paper, and the keys line one pad in from
+// the body's corner.
 def paint(s ui_fb.Surface, title String, focused Bool, keys Int64) Void {
   const pad = 8
-  s.fill(0, 0, s.width(), bar_height(), bar_color(focused))
-  ui_fb.text(title, pad, (bar_height() - ui_fb.line_height()) / 2, 0x282830, s)
+  paint_bar(s, title, focused)
   s.fill(0, bar_height(), s.width(), s.height() - bar_height(), 0xF8F8F0)
   ui_fb.text("keys ${keys}", pad, bar_height() + pad, 0x282830, s)
+}
+
+// The chrome a content surface wears (emo-desktop A14.5): the app's
+// view laid into the rectangle under the shared bar — every paint of
+// the app's lands `bar_height()` lower on the real surface, the bar
+// itself painted once at the mounting. The apps' sessions run their
+// Elm loops through this: the loop sees a surface of the content's own
+// size, the buffer carries the bar above the loop's frame. The state
+// the apps' bars wear is the launch's: the machine focuses the new
+// window's reader (the keys reach it before any click), and no wire
+// yet tells it when the focus moves on — the dock's lit tile carries
+// the same gap (A12.2).
+class Chrome {
+  def init(inner ui_fb.Surface, title String) {
+    self.inner = inner
+    self.title = title
+    paint_bar(self.inner, title, true)
+  }
+
+  def width() Int64 {
+    return self.inner.width()
+  }
+
+  def height() Int64 {
+    return self.inner.height() - bar_height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.inner.at(x, y + bar_height())
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.inner.fill(x, y + bar_height(), w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.inner.blend(x, y + bar_height(), w, h, color)
+  }
+
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    self.inner.ink(x, y + bar_height(), strike, glyph, color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.inner.rounded(x, y + bar_height(), w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.inner.stroke(x, y + bar_height(), w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.inner.shadow(x, y + bar_height(), w, h, radius, soft, color)
+  }
+
+  def present() {
+    self.inner.present()
+  }
+}
+
+// The constructor, as a def: a riscv64 program names no other module's
+// class in value position (the emitter's type-reference rule), so a
+// consumer takes the chrome from this — the window factory's own shape.
+def chrome(inner ui_fb.Surface, title String) Chrome {
+  return Chrome.new(inner: inner, title: title)
 }

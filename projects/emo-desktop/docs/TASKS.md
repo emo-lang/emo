@@ -969,8 +969,32 @@ The decisions (2026-11-06):
   finds (CHECK.md, 2026-11-07): the boot image's own `Win` predates
   the winbuf package, its present's digest a site of its own; the
   quadrant windows yield their shadows ten pixels of clearance.
-- [ ] **A14.5** — The windows (the kernel's half is EmoOS T9.2): a
-  shared title bar — the three buttons, the title in the interface
-  face, the focused and unfocused states — the counter, the browser
-  and the editor reskinned onto it, and the pointer redrawn as an
-  antialiased sprite.
+- [x] **A14.5** — The windows — **complete 2026-11-07** (the kernel's
+  half was EmoOS T9.2, landed with A14.4). The shared title bar: the
+  three traffic-light buttons (the shapes' card's own circles, full
+  color when the window holds the focus — 0xFFFF5F57, 0xFFFEBC2E,
+  0xFF28C840 — one quiet gray 0xFFC0C0C6 when it does not), the title
+  in the interface face centered on the bar, the bar's papers
+  0xFFF4F4F6 and 0xFFE6E6EA, the hairline at the foot — the two states
+  the shell's windows live in, both pinned by the window corpus's
+  session. The counter, the browser and the editor are reskinned onto
+  it through the `Chrome` — the content surface under the bar, every
+  paint of the app's landing `bar_height()` lower, the bar painted
+  once at the mounting, the Elm loop seeing a surface of the content's
+  own size; the state the apps' bars wear is the launch's (the machine
+  focuses the new window's reader — the keys reach it before any
+  click — and no wire yet tells it when the focus moves on, the dock's
+  lit tile's own gap). The pointer is redrawn as an antialiased
+  sprite: the grid speaks the font's sixteen levels of coverage, the
+  partial cells the outline's ink at its own coverage, the upload
+  writes `(coverage << 24) | ink` and the compositor's plane blends
+  (T9.2's arithmetic), the model of the display blending the same
+  words over its background arithmetic — the pixel walks verify the
+  partial cells at every beat. The finds (CHECK.md, 2026-11-07): the
+  upload's shift is the coverage's own, not the alpha's (`0xFF000000 +
+  coverage` put the coverage in the blue lane); the `apps_is` model's
+  sprite blends over what the pixel would show without it, shadow
+  rings included. The acceptance: the window and apps corpora
+  re-pinned on the interpreter and all five hosted targets, the fb
+  gate green, `run.sh` under both transports three rounds. M14
+  complete.

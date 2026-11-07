@@ -40,6 +40,7 @@ with its own ground rules, but every task is tracked here.
 | M9 — Windows | 8 | The compositor's composition walk, drag and focus, the kill-and-restart acceptance. | complete |
 | M10 — The desktop | 8 | The fb backend whole, the dock, the first apps. | complete |
 | M11 — Honest multi-app | 8 | The corpus apps as disk ELFs: loaded by the filesystem, per-image segment tables, per-process gate checks. | complete |
+| M14 — The HD desktop | 9 | The mode, the compositor's corners and shadows, the constant fill, `win_close`'s unmap — the kernel side of the desktop's HD face, with [`projects/emo-desktop`](../../emo-desktop) M14. | complete |
 
 ## Step 0 — Bare-metal bring-up (M1)
 

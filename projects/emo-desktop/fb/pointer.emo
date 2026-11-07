@@ -1,33 +1,39 @@
-// The pointer sprite (emo-desktop A8.2): the desktop's cursor, drawn
-// here as rows of cells — `#` the outline's ink, `o` the fill's paper,
-// `.` clear — and read three ways off this one drawing: `paint` lays it
-// on any `Surface` (the hosted twin, and the tests' pixels), the metal's
-// full-screen pass writes it into the carve's sprite memory for the
-// compositor's cursor plane to composite (EmoOS T8.11, the plane that
-// moves it by the merged event stream), and `run.sh`'s model of the
-// display reads the rows off this file. The sprite is the desktop's the
-// way a Wayland client's cursor is the client's: the compositor carries
-// pixels and rectangles, never the drawing. The arrow is 12 cells wide
-// and 17 tall, a 1-pixel outline around a white body, the early-90s
-// workstation's; the hotspot is its tip, the top-left cell.
+// The pointer sprite (emo-desktop A8.2; the antialiased drawing A14.5):
+// the desktop's cursor, drawn here as rows of cells read three ways off
+// this one drawing: `paint` lays it on any `Surface` (the hosted twin,
+// and the tests' pixels), the metal's full-screen pass writes it into
+// the carve's sprite memory for the compositor's cursor plane to
+// composite (EmoOS T8.11, the plane that moves it by the merged event
+// stream), and `run.sh`'s model of the display reads the rows off this
+// file. The sprite is the desktop's the way a Wayland client's cursor
+// is the client's: the compositor carries pixels and rectangles, never
+// the drawing.
+//
+// A cell is one character: `.` clear, `#` the outline's ink at full
+// coverage, `o` the body's paper at full coverage, and `1`–`9`, `a`–`f`
+// the outline's ink at the coverage the font's grid speaks (the nibble
+// times 17, A14.2's sixteen levels) — the antialiased edges, each
+// partial cell the outline's ink over whatever the surface shows
+// beneath. The arrow is 12 cells wide and 17 tall, the hotspot its tip,
+// the top-left cell.
 
 const rows = [
   "#...........",
   "##..........",
   "#o#.........",
+  "#o6#........",
   "#oo#........",
-  "#ooo#.......",
+  "#oo5#.......",
   "#oooo#......",
   "#ooooo#.....",
-  "#oooooo#....",
-  "#ooooooo#...",
-  "#oooooooo#..",
-  "#ooooo#####.",
+  "#oooo8#.....",
+  "#oooooo7#...",
+  "#ooooo####a.",
   "#oo#oo#.....",
-  "#o#.#oo#....",
-  "##..#oo#....",
-  "#....#oo#...",
-  ".....#oo#...",
+  "#o#.#o8#....",
+  "##..#o8#....",
+  "#....#o7#...",
+  ".....#o7#...",
   "......##...."
 ]
 
@@ -60,21 +66,79 @@ def paper() Int64 {
   return 0xFFFFFF
 }
 
-// The sprite onto a surface with its hotspot at `(x, y)`: the outline's
-// cells in ink, the body's in paper, the clear cells leaving the surface
-// alone — pixel by pixel through `fill`, the hosted twin of the
-// compositor's composite (which composites the same cells out of the
-// sprite memory, with the save-under the plane keeps).
+// One cell's coverage of its own color, out of 255: the sixteens the
+// font's grid speaks — the nibble times 17, `#` and `o` whole, `.`
+// clear. The partial cells are the outline's ink; the body's paper is
+// always whole inside the outline.
+def coverage(cell String) Int64 {
+  if cell == "#" {
+    return 255
+  }
+  if cell == "o" {
+    return 255
+  }
+  if cell == "." {
+    return 0
+  }
+  if cell == "1" {
+    return 17
+  }
+  if cell == "2" {
+    return 34
+  }
+  if cell == "3" {
+    return 51
+  }
+  if cell == "4" {
+    return 68
+  }
+  if cell == "5" {
+    return 85
+  }
+  if cell == "6" {
+    return 102
+  }
+  if cell == "7" {
+    return 119
+  }
+  if cell == "8" {
+    return 136
+  }
+  if cell == "9" {
+    return 153
+  }
+  if cell == "a" {
+    return 170
+  }
+  if cell == "b" {
+    return 187
+  }
+  return 0
+}
+
+// One cell's color: the outline's ink when the cell is partial, the
+// body's paper when it is `o`.
+def cell_color(cell String) Int64 {
+  if cell == "o" {
+    return paper()
+  }
+  return ink()
+}
+
+// The sprite onto a surface with its hotspot at `(x, y)`: each cell's
+// color at its own coverage through `blend`, the clear cells leaving
+// the surface alone — pixel by pixel, the hosted twin of the
+// compositor's composite (which blends the same words out of the
+// sprite memory, the plane's coverage arithmetic EmoOS T9.2 put
+// there).
 def paint(s ui_fb.Surface, x Int64, y Int64) {
   for var r = 0; r < height(); r = r + 1 {
     const line = row(r)
     for var c = 0; c < width(); c = c + 1 {
       const cell = line.substring(c, 1)
-      if cell == "#" {
-        s.fill(x - hot_x() + c, y - hot_y() + r, 1, 1, ink())
-      }
-      if cell == "o" {
-        s.fill(x - hot_x() + c, y - hot_y() + r, 1, 1, paper())
+      const cov = coverage(cell)
+      if cov > 0 {
+        s.blend(x - hot_x() + c, y - hot_y() + r, 1, 1, (cov << 24) | cell_color(cell))
       }
     }
   }

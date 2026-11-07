@@ -135,7 +135,7 @@ expect 0 "the canvas and its test type-check" "$rc"
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" run test.emo ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 57 "all fifty-seven canvas assertions pass" "$n"
+expect 58 "all fifty-eight canvas assertions pass" "$n"
 
 ( cd frame && EMO_REGISTRY="$REG" "$EMO" check ui_fb_frame.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the first frame type-checks" "$rc"

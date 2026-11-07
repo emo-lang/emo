@@ -2,6 +2,7 @@ require "syscall"
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_apps"
+require "emo/ui_fb_win"
 require "emo/ui_fb_winbuf"
 
 // The file browser as its own program (emo-desktop A11.1): the app's
@@ -49,8 +50,9 @@ def main() {
     (R.ok, _) -> {}
   }
   const wf = ui_fb_winbuf.win(gf, base_f, 384, 128)
+  const ch = ui_fb_win.chrome(wf, "files")
   ui.run(ui_apps.files.view, ui_apps.files.update,
-    ui_apps.files.initial(), ui_fb.backend(wf, ui_fb_winbuf.keys([106, 107, 111])))
+    ui_apps.files.initial(), ui_fb.backend(ch, ui_fb_winbuf.keys([106, 107, 111])))
   case syscall.win_close(gf) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}

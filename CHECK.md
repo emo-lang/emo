@@ -289,8 +289,9 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
 - [x] **A14.4** — the chrome: the header and the dock translucent by
   the wallpaper's formula, the icons drawn. Landed 2026-11-07; the
   record is the dated section below.
-- [ ] **A14.5** — the windows: the shared title bar, the apps
-  reskinned, the antialiased pointer.
+- [x] **A14.5** — the windows: the shared title bar, the apps
+  reskinned, the antialiased pointer. Landed 2026-11-07; the record is
+  the dated section below. M14 complete.
 - [x] **T9.2** — the compositor's corners and shadows, the cursor
   plane's coverage blend. Landed 2026-11-07; the record is the dated
   section below.
@@ -302,6 +303,46 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   lever): integer-literal aggregates fill from a `.rodata` blob of
   their static cells. Landed 2026-11-07; the record is the dated
   section below.
+
+## 2026-11-07 — The windows (emo-desktop A14.5, M14 complete)
+
+- **The shared title bar.** One bar every window wears: the three
+  traffic-light buttons (the shapes' card's own three circles — the
+  red, the yellow, the green when the window holds the focus, one
+  quiet gray when it does not), the title in the interface face
+  centered on the bar's width, the light papers 0xFFF4F4F6 and
+  0xFFE6E6EA with the hairline at the foot. The painter has the two
+  states and the shell's windows live in both — the window corpus's
+  session pins focused and unfocused alike.
+- **The Chrome.** The apps' views ride under it: a content surface
+  whose every paint lands `bar_height()` lower on the real buffer, the
+  bar painted once at the mounting, the Elm loop seeing a surface of
+  the content's own size — the counter, the browser and the editor
+  reskinned without their views knowing a window exists. The state the
+  apps' bars wear is the launch's own: the machine focuses the new
+  window's reader (the keys reach it before any click), and no wire
+  yet tells the app when the focus moves on — the dock's lit tile
+  carries the same gap (A12.2's record). The day the wire exists, the
+  bar has the other state waiting.
+- **The antialiased pointer.** The grid speaks the font's sixteen
+  levels of coverage (A14.2's alphabet), the partial cells the
+  outline's ink at its own coverage — the body's paper always whole
+  inside the outline. The upload writes `(coverage << 24) | ink`, the
+  compositor's plane blends (T9.2's source-over), and the model of the
+  display blends the same words over its own background arithmetic —
+  shadow rings included — so the screendump's every partial cell is
+  the model's to verify.
+- **Finds.** The upload's shift is the coverage's own, not the alpha's:
+  `0xFF000000 + coverage` put the coverage in the ink's blue lane and
+  the corners of the cursor painted opaque — the model caught it at
+  the first walk, the shift constants written whole. The models'
+  sprite sentinel is a word, not a pair — the `(None, 0)` tuple's
+  unpack was the TypeError the first walk died of.
+- Pins: the window and apps corpora re-pinned on the interpreter and
+  all five hosted targets (the fb gate green), `run.sh` under both
+  transports three rounds, `dune runtest` green with the smoke,
+  `@fmt` green. **M14 complete** — the HD desktop's arc, A14.1
+  through A14.5 with EmoOS Step 9 beside it.
 
 ## 2026-11-07 — The chrome, the corners, the close (emo-desktop A14.4, EmoOS T9.2+T9.3)
 

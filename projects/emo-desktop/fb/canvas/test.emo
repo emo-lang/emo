@@ -155,6 +155,10 @@ def pointer_checks() {
   word_is(c.at(8, 4), 0x336699, "a clear cell leaves the surface alone")
   word_is(c.at(9, 19), 0x000000, "the tail's outline is ink")
   word_is(c.at(2, 3), 0x336699, "and nothing lands left of the tip")
+  // a partial outline cell: the row-3 `6` at the sprite's (2, 3), the
+  // outline's ink at 102 over the surface's 0x336699 — the antialiased
+  // edge the surface's own blend carries
+  word_is(c.at(5, 6), 0x1F3D5C, "a partial outline cell blends at its coverage")
 
   const corner = ui_fb_canvas.canvas(4, 4)
   corner.fill(0, 0, 4, 4, 0x112233)

@@ -31,7 +31,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M11 — Honest multi-app | ELFs from the filesystem, per-image segment tables, per-process gate checks, two images on one desktop | complete |
 | M12 — The desktop shell era | the dock's tiles launching the disk ELFs, the exits riding the merged stream to a shell that never waits, the REPL's feed and `exec` | complete |
 | M13 — The macOS face | the wallpaper's art, the header bar, the desktop's icons, the machine's desktop reads as one | complete |
-| M14 — The HD desktop | 1920×1080, real typefaces, the rounded-and-shadowed primitives, the translucent chrome and the drawn icons; the windows' reskin remains | the chrome lands |
+| M14 — The HD desktop | 1920×1080, real typefaces, the rounded-and-shadowed primitives, the translucent chrome, the drawn icons, the shared title bar and the antialiased pointer | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

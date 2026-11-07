@@ -2,6 +2,7 @@ require "syscall"
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_apps"
+require "emo/ui_fb_win"
 require "emo/ui_fb_winbuf"
 
 // The counter as its own program (emo-desktop A11.1): the app's image
@@ -54,8 +55,9 @@ def main() {
     (R.ok, _) -> {}
   }
   const wc = ui_fb_winbuf.win(gc, base_c, 384, 128)
+  const ch = ui_fb_win.chrome(wc, "counter")
   ui.run(ui_apps.counter.view, ui_apps.counter.update,
-    ui_apps.counter.initial(), ui_fb.backend(wc, ui_fb_winbuf.keys([97, 98])))
+    ui_apps.counter.initial(), ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98])))
   case syscall.win_close(gc) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
