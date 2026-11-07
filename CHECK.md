@@ -286,8 +286,9 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   downward, the budget measured, the kernel heap 64 → 32 MiB the
   round's lever. Landed 2026-11-07; the record is the dated section
   below.
-- [ ] **A14.4** — the chrome: the header and the dock translucent by
-  the wallpaper's formula, the icons drawn.
+- [x] **A14.4** — the chrome: the header and the dock translucent by
+  the wallpaper's formula, the icons drawn. Landed 2026-11-07; the
+  record is the dated section below.
 - [ ] **A14.5** — the windows: the shared title bar, the apps
   reskinned, the antialiased pointer.
 - [x] **T9.2** — the compositor's corners and shadows, the cursor
