@@ -448,8 +448,8 @@ class AppKeys {
 // pixels inside a method is the heap gone before the first row ends.
 // A fully typed top-level def computes in raw registers and allocates
 // nothing; the method hands it the words once per rectangle, which is
-// a dozen times a frame, and once per glyph cell (A8.1), which is a
-// hundred.
+// a dozen times a frame, and once per glyph (A8.1's cell, A14.2's
+// type), which is a hundred.
 class Carve {
   def init(base Int64, width Int64, height Int64) {
     self.base = base
@@ -483,13 +483,14 @@ class Carve {
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
 
-  // One glyph cell (emo-desktop A8.1): the sixteen rows in two words,
-  // handed down whole — the cell is the unit the core calls in, once per
-  // character, because every Int64 an interface call carries is a boxed
-  // cell on this target.
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
-      color & 0xFFFFFF)
+  // One glyph of a strike (emo-desktop A14.2, A8.1's cell before it):
+  // handed down whole — the glyph is the unit the core calls in, once
+  // per character, because every Int64 an interface call carries is a
+  // boxed cell on this target — and inked by the window buffer
+  // package's typed walk, the one copy every metal surface shares.
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    ui_fb_winbuf.carve_ink(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), x, y, strike, glyph, color)
   }
 
   // The shapes (emo-desktop A14.1): the window buffer package's typed
@@ -560,29 +561,6 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
       col = col + 1
     }
     row = row + 1
-  }
-}
-
-// A glyph's set bits as stores, each pixel checked against the carve's
-// bounds: the row byte is `ui_fb.glyph_row`'s, the same bit for the same
-// pixel the hosted canvas reads, and a clear row costs no column walk.
-def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
-                top Int64, bottom Int64, word Int64) Void {
-  var r = 0
-  while r < 16 {
-    const bits = ui_fb.glyph_row(top, bottom, r)
-    const py = y + r
-    if bits != 0 && py >= 0 && py < height {
-      var c = 0
-      while c < 8 {
-        const px = x + c
-        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
-          poke32(base + (py * width + px) * 4, word)
-        }
-        c = c + 1
-      }
-    }
-    r = r + 1
   }
 }
 
@@ -692,9 +670,9 @@ class Win {
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
-      color & 0xFFFFFF)
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    ui_fb_winbuf.carve_ink(self.base,
+      ui_fb_winbuf.pack(self.width, self.height), x, y, strike, glyph, color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
@@ -2900,15 +2878,18 @@ def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
   }
 }
 
-// The name's byte under the box: the font's drawing of that byte's own
-// arithmetic, the hollow cell past the printable span — the package's
-// `text_byte` rule, through the carve's typed stamp.
-def desk_name_byte(base Int64, mw Int64, mh Int64, x Int64, y Int64, b Int64) Void {
+// The name's byte under the box: the type's glyph of that byte's own
+// arithmetic, the missing glyph past the printable span — the package's
+// `text_byte` rule, through the carve's typed walk — and the advance the
+// next byte's pen moves by.
+def desk_name_byte(base Int64, mw Int64, mh Int64, x Int64, y Int64, b Int64) Int64 {
   var i = b - 32
   if i < 0 || i > 94 {
-    i = 95
+    i = ui_fb.font.missing()
   }
-  carve_glyph(base, mw, mh, x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), 0xF8F8F0)
+  ui_fb_winbuf.carve_ink(base, ui_fb_winbuf.pack(mw, mh), x, y,
+    ui_fb.font.ui16(), i, 0xF8F8F0)
+  return ui_fb.font.advance(ui_fb.font.ui16(), i)
 }
 
 // A document icon at its cell: the selection's blend first, then the
@@ -2967,8 +2948,9 @@ def desk_icons_paint(base Int64, mw Int64, mh Int64) Void {
       shown = 10
     }
     var k = 0
+    var pen = cx + 8
     while k < shown {
-      desk_name_byte(base, mw, mh, cx + 8 + k * 8, cy + 56, peek8(e + k).to_int64())
+      pen = pen + desk_name_byte(base, mw, mh, pen, cy + 56, peek8(e + k).to_int64())
       k = k + 1
     }
     i = i + 1

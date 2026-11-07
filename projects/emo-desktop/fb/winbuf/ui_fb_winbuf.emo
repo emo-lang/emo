@@ -22,7 +22,7 @@ require "emo/ui_fb"
 // heap gone before the first row ends. A fully typed top-level def
 // computes in raw registers and allocates nothing; the method hands it
 // the words once per rectangle, which is a dozen times a frame, and
-// once per glyph cell, which is a hundred.
+// once per glyph, which is a hundred.
 
 // The session's scratch, in the image's own writable segment: the
 // lines the helpers below build ride it through the write verb.
@@ -201,27 +201,35 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
   }
 }
 
-// A glyph's set bits as stores, each pixel checked against the
-// buffer's bounds: the row byte is `ui_fb.glyph_row`'s, the same bit
-// for the same pixel the hosted canvas reads, and a clear row costs no
-// column walk.
-def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
-                top Int64, bottom Int64, word Int64) Void {
-  var r = 0
-  while r < 16 {
-    const bits = ui_fb.glyph_row(top, bottom, r)
-    const py = y + r
-    if bits != 0 && py >= 0 && py < height {
-      var c = 0
-      while c < 8 {
-        const px = x + c
-        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
-          poke32(base + (py * width + px) * 4, word)
-        }
-        c = c + 1
+// One glyph of a strike at the pen `(x, y)` (emo-desktop A14.2): the
+// coverage walked a word at a time — `font.word` hands eight pixels,
+// pixel p at bits 4p — each covered pixel inside the buffer composited
+// in the color's channels, the same pixels at the same coverage the
+// hosted canvas inks. The buffer's extent rides packed (`pack`).
+def carve_ink(base Int64, dims Int64, x Int64, y Int64, strike Int64,
+              glyph Int64, color Int64) Void {
+  const width = high(dims)
+  const height = low(dims)
+  const w = ui_fb.font.gw(strike, glyph)
+  const n = w * ui_fb.font.gh(strike, glyph)
+  const x0 = x + ui_fb.font.gleft(strike, glyph)
+  const y0 = y + ui_fb.font.gtop(strike, glyph)
+  var m = 0
+  var k = 0
+  while m < n {
+    const wd = ui_fb.font.word(strike, glyph, k)
+    var p = 0
+    while p < 8 && m < n {
+      const c = ((wd >> (p * 4)) & 15) * 17
+      const px = x0 + m % w
+      const py = y0 + m / w
+      if c > 0 && px >= 0 && px < width && py >= 0 && py < height {
+        carve_blend_at(base + (py * width + px) * 4, ui_fb.inked(color, c))
       }
+      m = m + 1
+      p = p + 1
     }
-    r = r + 1
+    k = k + 1
   }
 }
 
@@ -489,9 +497,9 @@ class Win {
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
-      color & 0xFFFFFF)
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    carve_ink(self.base, pack(self.width, self.height), x, y, strike, glyph,
+      color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,

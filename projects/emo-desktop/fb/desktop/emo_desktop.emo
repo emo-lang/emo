@@ -14,7 +14,7 @@ require "emo/ui_fb"
 // app's own focus.
 //
 // The tiles sit left to right, one per app in the shell's own order;
-// a tile carries the app's initial in the bitmap font. The strip's
+// a tile carries the app's initial in the labels' type. The strip's
 // paper is a slate darker than the desktop's background — chrome
 // under everything's chrome.
 
@@ -93,7 +93,8 @@ def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64
     const tx = tile_x(i)
     const ty = h - strip_height() + 4
     s.fill(tx, ty, tile_size(), tile_size(), tile_color(i == focused))
-    ui_fb.text(labels[i], tx + 12, ty + 8, ink(), s)
+    ui_fb.text(labels[i], tx + (tile_size() - ui_fb.text_width(labels[i])) / 2,
+      ty + (tile_size() - ui_fb.line_height()) / 2, ink(), s)
     if (running >> i) & 1 == 1 {
       s.fill(tx + 14, ty + 26, 4, 4, ink())
     }
@@ -163,18 +164,20 @@ def isqrt(n Int64) Int64 {
   return x
 }
 
-// One byte's glyph cell at (x, y): the font's drawing of that byte's
-// own arithmetic — the index is the byte's position past space, the
-// hollow cell for a byte the font has no drawing of, the same rule the
-// String walk's (`font.glyph_of`). The desktop's names come from the
-// volume as bytes through the fs, and a String is never built of them:
-// the shell reads the scratch buffer's bytes straight into this.
-def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Void {
+// One byte's glyph at the pen (x, y) in the labels' type (A14.2): the
+// index is the byte's position past space, the missing glyph for a byte
+// the font has no drawing of, the same rule the String walk's
+// (`font.glyph_of`). The desktop's names come from the volume as bytes
+// through the fs, and a String is never built of them: the shell reads
+// the scratch buffer's bytes straight into this. The advance the next
+// byte's pen moves by comes back.
+def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Int64 {
   var i = b - 32
   if i < 0 || i > 94 {
-    i = 95
+    i = ui_fb.font.missing()
   }
-  s.glyph(x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), ink_color)
+  s.ink(x, y, ui_fb.text_strike(), i, ink_color)
+  return ui_fb.font.advance(ui_fb.text_strike(), i)
 }
 
 // The wallpaper's colors: a deep navy at the top running into a dusky
@@ -255,29 +258,27 @@ def header_accent() Int64 {
 
 // `<n> apps` ending one pad short of `right`, drawn byte by byte — the
 // count is a number the shell keeps, not a String the image carries.
-// The x the text starts at comes back, the caller's to center against.
+// The digits' advances are summed before they are drawn, so the text
+// ends where it should whatever the digits are. The x the text starts
+// at comes back, the caller's to center against.
 def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) Int64 {
-  var digits = 1
-  var t = n / 10
-  while t > 0 {
-    digits = digits + 1
-    t = t / 10
-  }
-  const total = digits + 5
-  const x = right - total * 8
-  ui_fb.text(" apps", x + digits * 8, y, ink_color, s)
   var div = 1
-  var k = 1
-  while k < digits {
+  while n / div >= 10 {
     div = div * 10
-    k = k + 1
   }
+  var digits_w = 0
+  var d = div
+  while d > 0 {
+    digits_w = digits_w + ui_fb.font.advance(ui_fb.text_strike(), 16 + ((n / d) % 10))
+    d = d / 10
+  }
+  const x = right - digits_w - ui_fb.text_width(" apps")
   var p = x
   while div > 0 {
-    text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
-    p = p + 8
+    p = p + text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
     div = div / 10
   }
+  ui_fb.text(" apps", p, y, ink_color, s)
   return x
 }
 
@@ -285,11 +286,13 @@ def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) 
 // the wordmark one pad in, the running count at the right edge — the
 // one live fact the bar carries (the desktop knows its own children's
 // residency; the wall clock and the foreground app's name it does not
-// know, and the bar does not pretend to).
+// know, and the bar does not pretend to). The text sits centered in
+// the bar's height, the line box's own.
 def paint_header(s ui_fb.Surface, w Int64, running Int64) Void {
   s.fill(0, 0, w, header_height(), header_paper())
-  ui_fb.text("EmoOS", 8, 4, header_accent(), s)
-  count_text(s, w - icon_margin(), 4, running, header_ink())
+  const ty = (header_height() - ui_fb.line_height()) / 2
+  ui_fb.text("EmoOS", 8, ty, header_accent(), s)
+  count_text(s, w - icon_margin(), ty, running, header_ink())
 }
 
 // The selection's blend word: the tile steel at a low coverage laid

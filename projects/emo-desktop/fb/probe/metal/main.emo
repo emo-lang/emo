@@ -11,7 +11,8 @@ require "emo/ui_fb_win"
 // the backend, the tree and its digest, (A8.1) the paint walk whole: the
 // box fills, each label's glyphs through `font.glyph_of` — the one-byte
 // `substring` and the alphabet's `index_of` the metal lowers for it —
-// and the surface's `glyph` verb, (A8.2) the pointer's drawing read
+// and the surface's `ink` verb (A14.2's, the glyph cell's before it),
+// (A8.2) the pointer's drawing read
 // cell by cell, the walk the screen pass makes when it writes the sprite
 // into the carve, (A8.3) the Elm loop itself: `ui.run` with the
 // counter's defs as values — the registry, the app, the backend's
@@ -55,7 +56,7 @@ class Tally {
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
     self.glyphs.replace(self.glyphs.read() + 1)
   }
 

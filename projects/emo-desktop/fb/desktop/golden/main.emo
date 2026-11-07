@@ -69,15 +69,17 @@ def main() {
   emo_desktop.paint_icon_folder(icons, 184, 108, true)
   println("icon ${ui_fb_frame.digest(icons)}")
   // the name's bytes: `boot.txt` under the first cell — the byte walk
-  // the shell reads the volume's names through, then one byte the font
-  // has no drawing of for the hollow cell
+  // the shell reads the volume's names through, each byte's pen moved
+  // on by the last one's advance — then one byte the font has no
+  // drawing of for the missing glyph
   const name = [98, 111, 111, 116, 46, 116, 120, 116] // boot.txt
   var k = 0
+  var pen = 288
   while k < name.length() {
-    emo_desktop.text_byte(icons, 288 + k * 8, 90, name[k], 0xF8F8F0)
+    pen = pen + emo_desktop.text_byte(icons, pen, 90, name[k], 0xF8F8F0)
     k = k + 1
   }
-  emo_desktop.text_byte(icons, 352, 90, 7, 0xF8F8F0)
+  emo_desktop.text_byte(icons, pen, 90, 7, 0xF8F8F0)
   println("icon ${ui_fb_frame.digest(icons)}")
   println("isqrt ${emo_desktop.isqrt(0)}")
   println("isqrt ${emo_desktop.isqrt(1)}")

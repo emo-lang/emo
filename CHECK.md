@@ -275,9 +275,10 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   (`rounded`, `stroke`, `shadow`) — the hosted targets and the metal
   agreeing on the card's eight digests, the costs measured. Landed
   2026-11-07; the record is the dated section below.
-- [ ] **A14.2** — the type: Inter and a monospace face rasterized at
-  generation time, proportional advances in the measure, the coverage
-  blit (moved here from A14.1).
+- [x] **A14.2** — the type: Inter and JetBrains Mono rasterized at
+  generation time into a sixteen-level grid, `ink` the coverage blit,
+  proportional advances in the measure. Landed 2026-11-07; the record
+  is the dated section below.
 - [ ] **A14.3** — the mode, the desktop's side: every size from the
   mode, the goldens at 1920×1080.
 - [ ] **T9.1** — the mode, the kernel's side: the carve at 8 MiB
@@ -291,6 +292,113 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
 - [ ] **T9.3** — `win_close` leaves the closed run mapped in its
   owner's table (found by A14.1's metal probe): unmap and flush at the
   close, a golden beat that closes and reopens.
+- [x] **T9.4** — the constant fill, the compiler's side (A14.2's
+  lever): integer-literal aggregates fill from a `.rodata` blob of
+  their static cells. Landed 2026-11-07; the record is the dated
+  section below.
+
+## 2026-11-07 — The constant fill (EmoOS T9.4, the compiler's side)
+
+- **The design the existing pools allowed.** A14.2's record named the
+  lever as "a literal of integer constants emitted as `.rodata` words
+  and copied by the fill loop the string literals already use" —
+  reading the emitter showed the design already half-built:
+  `cell_label` mints one static read-only cell per distinct numeric
+  literal ([header word 1][payload], 32-byte aligned, deduped by
+  value) and the dynamic convention's literals evaluate to their
+  cells' addresses; only the *native* frames still emitted `li` +
+  `emo_box_i64` per element, and every array build spilled its
+  elements and walked them into the block. The landed fill keeps the
+  block's alloc and shape and replaces both the element evaluation and
+  the walk with one copy of a blob of the cells' tagged addresses —
+  eight bytes of image per element, a dozen instructions of text
+  whatever the count, and no box born at build time. The elements are
+  the same tagged words every convention reads, so the path is
+  frame-independent: native, dynamic and const-thunk builds take it
+  alike. Below four elements the per-element path is the shorter text,
+  so it stands. The predicate is the emitter's one copy
+  (`const_int_values`: every element `Const L_int`, typed Int64);
+  `expr_depth` keeps reserving the element temps, which now go unused —
+  teaching the pre-pass the same predicate was weighed and refused as
+  a second copy of the rule to keep in step.
+- **The numbers.** The kernel image −131 KiB (its const bodies were
+  the old native path whole), the user and app images −33 KiB each
+  (their const thunks already spilled static cells; the saving is the
+  per-element spill and walk), an app's exec'd image run 103 → 102
+  blocks, the ledger `frames 688 572` → `685 569` (run.sh's pin
+  remapped; the −3/−3 is the three execs' one block each — and the
+  boot image's own exec unchanged at 100). The mystery one-block of
+  A14.2's ledger note rides along (685 = 666 + 19 still carries it).
+- Pins: the riscv64 goldens green whole — all 22, `wide_literal` (the
+  600- and 253-element arrays) and `glyph_lookup` (the font's tables)
+  among them — byte-identical; `run.sh` green under both transports in
+  three consecutive rounds (the prompt's place the only mover); the fb
+  gate and the full dune suite green; `@fmt` green.
+
+## 2026-11-07 — The type (emo-desktop A14.2)
+
+- **Sixteen levels, one character a pixel.** The rasterizer could have
+  kept FreeType's 8-bit coverage; the grid would then need two
+  characters a pixel and stop reading like the drawing it replaces.
+  Sixteen levels (`.`, `1`–`9`, `a`–`f`) are the grayscale
+  antialiasing classic desktops shipped, keep the grid reviewable at a
+  glance, and halve the tables: two pixels a byte, eight a word, pixel
+  p of a word at bits 4p — the shift every walker (the canvas, the
+  carve, `run.sh`'s model) does the same way. The grid is committed,
+  so FreeType's version is the rasterizer's business alone: the gate
+  checks `font.emo` against the grid, never against a rendering.
+- **The layout the metal forced.** One meta word per glyph (the ink's
+  top and left, each +128 in eight bits — the `j` hangs one pixel left
+  of the pen — its width, height and advance, and a thirteen-bit base:
+  the first pack's twelve bits met a base of 4,101 and the generator
+  refused it by name), and the coverage in const arrays of 448 words:
+  on riscv64 a literal's elements are each evaluated into a stack temp
+  before the fill copies them, so one array of all 4,269 words would
+  have been a 34 KiB frame against a 64 KiB stack; ten arrays and a
+  ten-branch `word` cost nothing. The tables lower as code and static
+  cells — about sixty bytes a word — so every image carrying the core
+  grew about 288 KiB (an app's ELF 210 → 508 KiB, its run 100 → 103
+  blocks; the boot image 382 → 670 KiB). **The lever on record**: a
+  literal of integer constants emitted as `.rodata` words and copied
+  by the fill loop the string literals already use — O(1) text, eight
+  bytes a word — a compiler change that would also return the shapes'
+  and the pointer's tables; T9.1's budget is where it gets measured.
+- **`ink` replaces `glyph`.** The verb takes the strike and the glyph
+  index (the walk maps the byte once), inks at the pen with the line
+  box's top as the origin, and never reads the color's top byte: text
+  is opaque ink and every caller's color already lacked a coverage
+  byte, so treating it as an opacity would have made all of them
+  invisible. Removed with the cell: `glyph_row`, `glyph_w`,
+  `glyph_h`, `font.cell_w`/`cell_h`/`top_rows`/`bottom_rows`.
+- **The compositor's line is a sum, and two old pins were equal for a
+  reason not established.** `run.sh` pins the composition's carried
+  sum after each desktop event, and twice the old pins read the same
+  number on consecutive lines — the dock's present and the header's
+  right after it (the editor's launch, the counter's exit) — though
+  the header's count changed between them. It was not a blind spot of
+  the sum: the old `2` and `3` differ by one inked pixel. The likelier
+  reading is that the dock's composition walked a header the desk pass
+  had already repainted (a composition reads every buffer as it stands),
+  an ordering the text's extra work has moved; now the pairs differ,
+  three rounds agree on every new value, and those two were remapped by
+  their place in the list rather than by their old value. The
+  screendumps are what prove the pixels; the sums are the run's own
+  arithmetic, pinned from it.
+- **The ledger: `frames 666 551` → `688 572`**, the same on both
+  boots. Each exec takes a scratch run the ELF's size (4 → 8 blocks)
+  and an image run (100 → 103), both given back at the exit: +7/+7
+  each, three execs, +21/+21 exactly. One more block is taken and not
+  given in each boot. The boot that installs nothing (the second,
+  which keeps the volume) shows it too, so it is not the install's;
+  where it lives is open — the leading guess is a resident pass's
+  arena growing a block under the text work the desktop's
+  Surface-taking defs now box (A13's standing note), which A14.4's
+  move of the header and the dock onto typed paint would retire.
+- Pins: the fb gate 151 ok; `run.sh` green under both transports in
+  three consecutive rounds, the logs identical line for line but for
+  the prompt's place (the 2026-11-07 race); the screendumps modeled to
+  the pixel with the type's own tables; the core's assertions 76, the
+  canvas's 57.
 
 ## 2026-11-07 — The shapes (emo-desktop A14.1)
 

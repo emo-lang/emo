@@ -60,7 +60,7 @@ def bar_color(focused Bool) Int64 {
 def paint(s ui_fb.Surface, title String, focused Bool, keys Int64) Void {
   const pad = 8
   s.fill(0, 0, s.width(), bar_height(), bar_color(focused))
-  ui_fb.text(title, pad, (bar_height() - ui_fb.glyph_h()) / 2, 0x282830, s)
+  ui_fb.text(title, pad, (bar_height() - ui_fb.line_height()) / 2, 0x282830, s)
   s.fill(0, bar_height(), s.width(), s.height() - bar_height(), 0xF8F8F0)
   ui_fb.text("keys ${keys}", pad, bar_height() + pad, 0x282830, s)
 }

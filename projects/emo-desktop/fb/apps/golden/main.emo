@@ -51,8 +51,8 @@ class Eye {
     self.canvas.blend(x, y, w, h, color)
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    self.canvas.glyph(x, y, top, bottom, color)
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    self.canvas.ink(x, y, strike, glyph, color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,

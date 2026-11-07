@@ -880,15 +880,40 @@ The decisions (2026-11-06):
   race the unchanged tree shows across its own rounds (CHECK.md); the
   ledger `frames 666 551` unchanged. Decision record: CHECK.md,
   2026-11-07.
-- [ ] **A14.2** — The type: the coverage blit (an 8-bit alpha mask in
-  one color — A14.1 left it here, its data's layout being the glyph
-  tables' to decide), D7's pipeline whole (the rasterizer, the
-  coverage grid, the generator and its `--check`), two sizes of the
-  interface face and one of the monospace face, the license texts
-  beside the tables. Proportional advances (no kerning) replace the
-  fixed 8×16 cell in the box model's measure; every text the desktop
-  paints moves onto the coverage blit. `run.sh`'s display model reads
-  the same tables.
+- [x] **A14.2** — The type — **complete 2026-11-07**. D7's pipeline
+  whole: Inter 4.1's static Regular and JetBrains Mono 2.304's Regular
+  vendored in `fb/fonts/` beside their SIL OFL 1.1 texts and pinned by
+  SHA-256; `glyphs/rasterize.py` (Pillow's FreeType, run as
+  `uv run --with pillow`, never by the gate) renders three strikes —
+  `ui16`, `ui24`, `mono16` — into `glyphs/coverage.txt`, one character
+  a pixel at sixteen levels (`.` and `1`–`f`), the reviewable grid the
+  hand-drawn `glyphs.txt` was (retired with the cell it drew); and
+  `glyphs/gen.py`, the standard library alone, writes `font.emo` whole
+  from the grid — one meta word per glyph (advance, ink offsets, ink
+  size, base), the coverage two pixels a byte and eight a word, in
+  chunks of 448 words because a const array's elements spill through
+  one frame on the metal — with `--check` the gate's drift check. The
+  coverage blit landed as the `Surface`'s `ink(x, y, strike, glyph,
+  color)` in place of `glyph`: the glyph at the pen (the line box's
+  top-left), each pixel composited at its own coverage, the color's top
+  byte unread (opaque ink); the metal's walk takes a coverage word at a
+  time (`ui_fb_winbuf.carve_ink`, the boot image's surfaces delegating
+  as they do the shapes). The box model measures a label in its
+  glyphs' advances and the strike's line box (20 at `ui16`); the
+  desktop's tiles center their initials by the measure, the header
+  centers its text in the bar by the line box, the count sums its
+  digits' advances, and the names walk by advance. The acceptance:
+  the core's assertions 69 → 76 and the canvas's rewritten from the
+  grid (a capital `A` advancing 11 with its ink 11×12 four rows down,
+  a partial pixel composited to `0x877E75`), every value worked by
+  hand and passing on the first run; the fb gate 151 ok on all six
+  families; `run.sh`'s display model inks the same tables at the same
+  coverage over what each pixel already shows, and three rounds under
+  both transports are green, the screendumps modeled to the pixel; the
+  ledger `frames 666 551` → `688 572`. Finds and costs (CHECK.md,
+  2026-11-07): two of the compositor's old sum pins split and were
+  remapped by place; the tables lower as code and static cells, ~288
+  KiB an image — the compiler lever is on record.
 - [ ] **A14.3** — The mode, the desktop's side (the kernel's is EmoOS
   T9.1): every size the desktop paints derived from the mode — the
   header bar, the dock, the icon cells, the windows' places — and

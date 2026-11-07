@@ -690,3 +690,19 @@ its completion.
   the whole table. The fix: the close unmaps the run's leaves from the
   owner's table and flushes its translations; a golden beat that
   closes and reopens pins it.
+- [x] **T9.4** — The constant fill, the compiler's side — **complete
+  2026-11-07**. An array literal whose every element is a plain
+  integer literal fills from one `.rodata` blob of its
+  elements' static cells — the cells `cell_label` already mints for
+  the dynamic literals, deduped by value — one word of image per
+  element and a dozen instructions of text whatever the count, no box
+  born at build time, below four elements the per-element path the
+  shorter text. The frame's element temps (`expr_depth`'s count) stay
+  reserved and go unused — the pre-pass keeps the simple predicate
+  split. The images: the kernel −131 KiB, the user and app images −33
+  KiB each, the exec'd image runs 103 → 102 blocks, the ledger
+  `frames 688 572` → `685 569` (run.sh's pin remapped). The
+  acceptance: the riscv64 goldens green whole (the 22, `wide_literal`
+  and `glyph_lookup` among them), `run.sh` under both transports
+  three rounds, the fb gate (151), the full dune suite (371), `@fmt`
+  green. Decision record: CHECK.md, 2026-11-07.

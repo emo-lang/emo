@@ -163,14 +163,14 @@ if [ ! -f "$pointer_sprite" ]; then
   echo "  composites and this run's display model reads; POINTER_SPRITE names it)" >&2
   exit 1
 fi
-# The desktop's header and the icons' names draw the bitmap font's
-# glyphs, and the display model draws the same bytes from the same
-# table (emo-desktop A13) — one drawing, one file, the sprite's rule.
+# The desktop's header and the icons' names ink the type's glyphs, and
+# the display model inks the same coverage from the same tables
+# (emo-desktop A13, A14.2) — one drawing, one file, the sprite's rule.
 font_src=${FONT_SRC:-../emo-desktop/fb/font.emo}
 if [ ! -f "$font_src" ]; then
-  echo "run.sh: the bitmap font's table is missing: $font_src" >&2
+  echo "run.sh: the type's tables are missing: $font_src" >&2
   echo "  (projects/emo-desktop/fb/font.emo carries the glyphs the desktop" >&2
-  echo "  draws and this run's display model reads; FONT_SRC names it)" >&2
+  echo "  inks and this run's display model reads; FONT_SRC names it)" >&2
   exit 1
 fi
 
@@ -737,8 +737,8 @@ PYEOF
   # parked beat of the launcher's desktop — the wallpaper whole (the
   # gradient's rows and the three ribbons' spans, the exact integers
   # the typed paint stores), the header bar's paper, wordmark and
-  # running count, the view's icons with their names drawn in the
-  # bitmap font's own table, the sprite where the beat parked it —
+  # running count, the view's icons with their names inked from the
+  # type's own tables, the sprite where the beat parked it —
   # everything but the apps' own rectangles (each folded to the corpus
   # digest its window presents, up to three of them; an empty want is
   # no window's) and the dock's strip (folded to the corpus's
@@ -766,21 +766,35 @@ rows = re.findall(r'^\s*"([.#o]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
-# The bitmap font (emo-desktop A8.1): the 96 glyphs, four words each,
-# read straight out of font.emo — the names and the wordmark are the
-# model's to draw from the same table the metal stamps with.
-words = [int(w, 16) for w in re.findall(r'0x([0-9A-Fa-f]{8})', re.search(r'const rows = \[(.*?)\n\]', open(e['FONT_SRC']).read(), re.S).group(1))]
-if len(words) != 96 * 4:
-    sys.exit(f"run.sh: {e['FONT_SRC']} does not carry the 96-glyph table")
-
-def glyph(gi, r, c):
-    word = words[gi * 4 + r // 4]
-    byte = (word >> ((3 - (r % 4)) * 8)) & 0xFF
-    return (byte >> (7 - c)) & 1
+# The type (emo-desktop A14.2): the strikes' line boxes, one meta word
+# per glyph and the coverage data's chunks, read straight out of
+# font.emo — the names, the wordmark and the count are the model's to
+# ink from the same tables the metal walks, at the same coverage.
+font = open(e['FONT_SRC']).read()
+def table(name):
+    m = re.search(r'const ' + name + r' = \[(.*?)\]', font, re.S)
+    if not m:
+        sys.exit(f"run.sh: {e['FONT_SRC']} does not carry the type's `{name}` table")
+    return [int(v, 0) for v in re.findall(r'0x[0-9A-Fa-f]+|\d+', m.group(1))]
+line_boxes = table('line_boxes')
+meta = table('meta')
+chunks = sorted(int(n) for n in re.findall(r'const data(\d+) = \[', font))
+words = [w for n in chunks for w in table(f'data{n}')]
+if len(meta) != 3 * 96 or len(line_boxes) != 6:
+    sys.exit(f"run.sh: {e['FONT_SRC']} does not carry three 96-glyph strikes")
 
 def glyph_index(b):
     i = b - 32
     return i if 0 <= i <= 94 else 95
+
+def glyph_meta(s, gi):
+    m = meta[s * 96 + gi]
+    return {'base': m & 8191, 'advance': (m >> 13) & 255, 'h': (m >> 21) & 255,
+            'w': (m >> 29) & 255, 'left': ((m >> 37) & 255) - 128,
+            'top': ((m >> 45) & 255) - 128}
+
+def advance(label, s=0):
+    return sum(glyph_meta(s, glyph_index(ord(ch)))['advance'] for ch in label)
 
 # The wallpaper (emo-desktop A13): the gradient between the package's
 # two anchors and the three ribbons' spans, the blend the surface's
@@ -845,13 +859,24 @@ def stamp_rect(x0, y0, w0, h0, color):
         for xx in range(x0, x0 + w0):
             overlay[(xx, yy)] = color
 
-def stamp_text(label, x0, y0, color):
-    for k in range(len(label)):
-        gi = glyph_index(ord(label[k]))
-        for r in range(16):
-            for c in range(8):
-                if glyph(gi, r, c):
-                    overlay[(x0 + k * 8 + c, y0 + r)] = color
+def stamp_text(label, x0, y0, color, s=0):
+    # each glyph's ink composited over what the pixel already shows —
+    # the overlay's stamp, or the wallpaper's art — at its coverage,
+    # the pen moving on by the glyph's own advance
+    pen = x0
+    for ch in label:
+        g = glyph_meta(s, glyph_index(ord(ch)))
+        for m in range(g['w'] * g['h']):
+            c = ((words[g['base'] + m // 8] >> ((m % 8) * 4)) & 15) * 17
+            if c:
+                xy = (pen + g['left'] + m % g['w'], y0 + g['top'] + m // g['w'])
+                if xy in overlay:
+                    under = overlay[xy]
+                else:
+                    r0, g0, b0 = wall(*xy)
+                    under = (r0 << 16) | (g0 << 8) | b0
+                overlay[xy] = over((c << 24) | (color & 0xFFFFFF), under)
+        pen += g['advance']
 
 def stamp_doc(cx, cy, name):
     ix, iy = cx + 26, cy + 4
@@ -879,14 +904,16 @@ for k, spec in enumerate(e['ICONS'].split(',')):
         else:
             stamp_folder(cx, cy, name)
 
-# The header (emo-desktop A13): the paper, the wordmark one pad in,
-# the running count ending one pad short of the right edge.
+# The header (emo-desktop A13, A14.2): the paper, the wordmark one pad
+# in, the running count ending one pad short of the right edge, the
+# text centered on the bar's height by the line box's own.
 stamp_rect(0, 0, 1024, 24, 0x1E1E26)
-stamp_text('EmoOS', 8, 4, 0x40C8C8)
+ty = (24 - line_boxes[0]) // 2
+stamp_text('EmoOS', 8, ty, 0x40C8C8)
 rn = str(int(e['RUNNING']))
-x0 = 1016 - (len(rn) + 5) * 8
-stamp_text(rn, x0, 4, 0xC8C8D0)
-stamp_text(' apps', x0 + len(rn) * 8, 4, 0xC8C8D0)
+x0 = 1016 - advance(rn) - advance(' apps')
+stamp_text(rn, x0, ty, 0xC8C8D0)
+stamp_text(' apps', x0 + advance(rn), ty, 0xC8C8D0)
 
 sx, sy = int(e['SX']), int(e['SY'])
 
@@ -1035,15 +1062,15 @@ PYEOF
   # header bar's first, the dock's re-present over the wallpaper: the
   # three surfaces the composition carries from here on.
   await 'desktop icons 2'
-  await 'comp 0 0 2869611226'
-  await 'comp 0 0 1721887138'
-  await 'comp 0 728 1176103316'
+  await 'comp 0 0 63562221'
+  await 'comp 0 0 4081810905'
+  await 'comp 0 728 3786369038'
   abs 768 31915
   btn true
   btn false
   await 'desktop counter up'
-  await 'comp 0 728 1276108516'
-  await 'comp 0 0 1242554086'
+  await 'comp 0 728 3886374238'
+  await 'comp 0 0 3757156786'
   await "frame $(app_line 1)"
   await 'comp 576 384'
   sleep 0.3
@@ -1063,8 +1090,8 @@ PYEOF
   sleep 0.5
   feed 'exec files.elf'
   await 'desktop files up'
-  await 'comp 0 728 2605405318'
-  await 'comp 0 0 2638959748'
+  await 'comp 0 728 400416952'
+  await 'comp 0 0 488579572'
   await "frame $(app_line 4)"
   await 'comp 224 144'
   # the browser's session rides the panel's focus: the press named it
@@ -1086,8 +1113,8 @@ PYEOF
   sleep 0.5
   feed 'exec editor.elf'
   await 'desktop editor up'
-  await 'comp 0 728 2207259492'
-  await 'comp 0 0 2207259492'
+  await 'comp 0 728 3395596193'
+  await 'comp 0 0 3408294242'
   await "frame $(app_line 7)"
   await 'comp 48 272'
   sleep 0.3
@@ -1114,21 +1141,21 @@ PYEOF
   sleep 1
   printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 1752537620'
+  await 'comp 0 0 2703212732'
   abs 13312 8885
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 2150683446'
+  await 'comp 0 0 4003000787'
   abs 6400 12117
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop editor exit 0'
-  await 'comp 0 0 1176103316'
+  await 'comp 0 0 3786369038'
   abs 512 29867
   sleep 1
   hmp 'screendump .deskout.ppm'
@@ -1150,13 +1177,13 @@ PYEOF
   feed 'write note.txt shell wrote this'
   # the icons' refresh (emo-desktop A13): the re-list's fold moved, the
   # wallpaper repainted — note.txt the third document on the desktop
-  await 'frame 1945130804'
-  await 'comp 0 0 365891447'
+  await 'frame 1924783640'
+  await 'comp 0 0 3609114251'
   feed 'ls'
   feed 'cat boot.txt'
   await 'EmoOS boots from disk'
   feed 'rm note.txt'
-  await 'comp 0 0 1176103316'
+  await 'comp 0 0 3786369038'
   feed 'cat note.txt'
   await 'cat: no such file'
   feed 'bogus'
@@ -1173,11 +1200,11 @@ PYEOF
   # state's eye: the `..` and the file, the header's zero, the sprite
   # parked off the cells.
   feed 'write a/one.txt first inside'
-  await 'comp 0 0 2419368692'
+  await 'comp 0 0 879271160'
   abs 30976 9386
   btn true
   btn false
-  await 'comp 0 0 2977799435'
+  await 'comp 0 0 404219095'
   abs 512 29867
   sleep 1
   hmp 'screendump .folder.ppm'
@@ -1185,9 +1212,9 @@ PYEOF
   abs 30976 2987
   btn true
   btn false
-  await 'comp 0 0 2419368692'
+  await 'comp 0 0 879271160'
   feed 'rm a/one.txt'
-  await 'comp 0 0 1176103316'
+  await 'comp 0 0 3786369038'
   # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
   # disk ELF with no window, no message, no yield, and no announce
   # until its loop is out (the runtime's println is a write ecall per
@@ -1420,7 +1447,7 @@ PYEOF
   # frames' checks' rule): a line the wire says twice — the desk pass's
   # beta window and the duo's counter share 'comp 576 384' — is two
   # beats, each in its era's place.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 0 0 2869611226' 'desktop icons 2' 'comp 0 0 1721887138' 'comp 0 728 1176103316' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 728 1276108516' 'comp 0 0 1242554086' 'comp 576 384' 'add 1' 'sub 0' 'desktop files up' 'comp 0 728 2605405318' 'comp 0 0 2638959748' 'comp 224 144' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 728 2207259492' 'comp 0 0 2207259492' 'comp 48 272' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 728 1752537620' 'comp 0 0 1752537620' 'desktop files exit 0' 'comp 0 728 2184237876' 'comp 0 0 2150683446' 'desktop editor exit 0' 'comp 0 728 1142548886' 'comp 0 0 1176103316' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 365891447' 'EmoOS boots from disk' 'comp 0 0 1176103316' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 2419368692' 'comp 0 0 2977799435' 'comp 0 0 2419368692' 'comp 0 0 1176103316' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 666 551'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1024x768 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1024x768' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86c00000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 2803875840' 'win shown' 'comp 48 32 2619455488' 'popup up' 'comp 400 32 1177728000' 'sub up' 'parent panel r4' 'comp 0 736 3644232704' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3644232704' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 2102906880' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 4174893056' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk 0' 'comp 0 0 63562221' 'desktop icons 2' 'comp 0 0 4081810905' 'comp 0 728 3786369038' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 728 3886374238' 'comp 0 0 3757156786' 'comp 576 384' 'add 1' 'sub 0' 'desktop files up' 'comp 0 728 400416952' 'comp 0 0 488579572' 'comp 224 144' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 728 3395596193' 'comp 0 0 3408294242' 'comp 48 272' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 728 2715910781' 'comp 0 0 2703212732' 'desktop files exit 0' 'comp 0 728 4091163407' 'comp 0 0 4003000787' 'desktop editor exit 0' 'comp 0 728 3657151586' 'comp 0 0 3786369038' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 3609114251' 'EmoOS boots from disk' 'comp 0 0 3786369038' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 879271160' 'comp 0 0 404219095' 'comp 0 0 879271160' 'comp 0 0 3786369038' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 685 569'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
