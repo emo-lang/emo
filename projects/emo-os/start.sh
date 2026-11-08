@@ -264,7 +264,7 @@ ride() {
   ride_wait 'keys?' && { ride_type 'q'; sleep 1; ride_type 'K'; } || return 1
   ride_wait 'byte 75' || return 1
   ride_move
-  ride_wait 'pointer 512 384' || return 1
+  ride_wait 'pointer 960 540' || return 1
   ride_wait 'comp 16 32' || return 1
   ride_wait 'win 0' && ride_type 'c' || return 1
   ride_wait 'addr 0x20000000' && ride_type 'c' || return 1

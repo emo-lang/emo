@@ -744,3 +744,48 @@ its completion.
   and `glyph_lookup` among them), `run.sh` under both transports
   three rounds, the fb gate (151), the full dune suite (371), `@fmt`
   green. Decision record: CHECK.md, 2026-11-07.
+
+## Step 10 — motion's kernel side (M15, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-08. The desktop's half is emo-desktop M15, whose tracker
+records the milestone's decisions (D10); the reasoning is CHECK.md's
+(2026-11-08). The milestone's row joins the table above at its
+completion.
+
+- [x] **T10.1** — The compositor's damage rectangle — **complete
+  2026-11-08**. One bounding box (`comp_dmg_*` on the compositor's
+  page, zero width the empty box) accumulates between compositions
+  what has changed, and the composition walks and flushes only it:
+  `comp_dmg_mark` unions a rect in — the shadow's pad beside every
+  surface rect, the box even at both x edges (the blit's word pairs),
+  clipped to the mode. The marks sit at the ops that unmake or make
+  pixels: the present's own rect (op 17), the move's painted rect and
+  its new one (op 16 — the painted record, not the entry's seat, so a
+  drag's whole walk between two compositions marks only its two ends),
+  the raise's crossed range (op 15 — already the topmost toplevel,
+  nothing marked), and the prune's dead entries. The painted rect each
+  slot last covered lives beside the stack (`comp_paint_*`, packed two
+  words, riding the raise and the shifts) — the ops that unmake pixels
+  mark from it, because the row that held the surface's size is
+  theirs to lose. The generation's first composition marks the whole
+  mode (the slate it meets is nobody's); after it, only the box. The
+  walk clips itself in the blit, the masked blit (the word spans keep
+  the anchor's parity), the shadow's spans and the clear; the flush
+  carries the box — gpu op 3, the rect in the message's third word
+  (T8.11's shape), the reply the result — and the box serves empty.
+  The comp line's sum is the box's words; the pixels outside it are
+  what the last composition left, and every screendump model in
+  `run.sh` passes unchanged. **The find, fixed**: the raise copied the
+  entry to the top without its painted record, and the entry inherited
+  the removed slot's stale one — a closed window's shadow ring
+  survived its own death by one blend step, the client-era model's
+  pixel (23,25) naming it at (25,25,29) against the model's
+  (26,26,30). The pins: `run.sh` green under both timer transports
+  three consecutive rounds byte-identical on both — the comp sums
+  re-pinned (18 of the pinned literals changed, every full-mode
+  composition's unchanged, the ledger `frames 774 576` unchanged) —
+  the full `dune runtest` green, `@fmt` green. The damage world's
+  cost, measured by A15.1's probe on the scratch tree: a window-sized
+  composition 27–44 ms (median ~36) against the whole-screen 230 —
+  the record in CHECK.md, 2026-11-08. Decision record: CHECK.md,
+  2026-11-08.

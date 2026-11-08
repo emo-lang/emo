@@ -304,6 +304,144 @@ opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.
   their static cells. Landed 2026-11-07; the record is the dated
   section below.
 
+**emo-desktop — [M15, motion](projects/emo-desktop/docs/TASKS.md),
+opened 2026-11-08 (D9's deferral cashed in):**
+
+- [x] **D10** — the budget measured before anything moves: the
+  composition's own per-frame cost is what an animation rides, and it
+  is on record before any animation or compositor mechanism is
+  chosen. Landed 2026-11-08; the record is the dated section below.
+- [x] **A15.1** — the composition's cost measured (about 230 ms a
+  whole-screen composition at 1080p, the mailbox microseconds), the
+  blend's division retired at the four sites, sixteen locks
+  regenerated; the misapplied identity the goldens caught. Landed
+  2026-11-08; the record is the dated section below.
+
+**EmoOS — [Step 10, motion's kernel side](projects/emo-os/docs/TASKS.md),
+opened 2026-11-08 (the damage decision the number named):**
+
+- [x] **T10.1** — the compositor's damage rectangle: one bounding box
+  the ops mark and the composition walks and flushes only, the
+  painted records beside the stack, the generation's first composition
+  the whole mode; the raise's stale record the model's pixel caught.
+  Landed 2026-11-08; the record is the dated section below.
+
+## 2026-11-08 — The composition's cost, measured (emo-desktop M15 opened, A15.1)
+
+- **The number D9's milestone rides.** A14.1 measured what an app
+  pays to paint (the Surface's verbs, `fill` 19 ms a megapixel, an
+  opaque 1080p repaint 30–40 ms on QEMU's TCG); what an animation
+  actually rides is the composition — the walk over the whole stack
+  plus the flush — and that had never been timed. The probe: a
+  scratch windowed pass installed the disk ELFs' way (T8.21's path —
+  the blob beside the boot image, the bounds parked at the handoff
+  page's free tail `0x87002210`, the install line, `exec probe.elf`
+  from the REPL), its beats bracketed in serial markers — `m pre`/`m
+  post` around `win_move` (op 16, state alone, the reply before any
+  composition) and `pre`/`post` around `present` (op 17, whose reply
+  lands only after `comp_compose` returns and the flush completes;
+  the compositor's own `comp` line lands between the markers) — and a
+  host watcher stamping every serial line as it lands, the way A14.1
+  timestamped the lines. Ten compositions and ten moves over the
+  desktop's own stack (the wallpaper, the header, the dock, the
+  probe's 384×256 window dead center). **The numbers**: a whole-screen
+  composition **about 230 ms** (226–274, median 230.4); the full
+  present round trip median 235 ms; the client's own `round_digest`
+  about 4 ms; the mailbox round trip **6–17 µs** (the parity-refused
+  odd move about 130 µs, the walk's even-x discipline the probe's
+  step tripped on). The messaging is three to four orders under the
+  walk: **the composition's cost is the walk and the flush**. The
+  arithmetic on the number: about 2.2 M words walked in about 220 ms
+  of bracket, **about 100 ns a word** on TCG — a whole-screen
+  recomposition ~4 fps, no motion rides it; a 384×256 window's own
+  damage (two rects a step, ~0.2 M words) projects about 20 ms plus a
+  rect flush, roughly 30 fps within reach of damage rectangles. The
+  projection is arithmetic on the measured per-word cost, not a
+  measurement; the digest is no separate pass (the `comp` line's sum
+  accumulates during the walk). **The measured tree carried the
+  blend's first, misapplied form** — the same word counts and loop
+  shapes as the corrected one, one add apart per blended pixel — the
+  cost conclusion is unchanged.
+- **The blend's division retired, and the identity's own trap.** The
+  lever on record since A14.1 — `(v + 127) / 255 == ((v + 128) +
+  ((v + 128) >> 8)) >> 8` — adopted at the four sites that still
+  divided (`ui_fb.mix`, `ui_fb.cover`, the kernel's `comp_mix`,
+  `comp_cover`): `+128` **replaces** the `+127`, no extra temp. The
+  first application kept the `+127` *and* added the `+128` — the
+  identity's `v` is the value before the `+127` — a bias of half a
+  rounding step on most blended pixels, present on every target at
+  once (the form is portable Emo). The goldens named it twice: the fb
+  gate's corpus FAIL lines (lost to a truncated pipe read; the round
+  first misread the gate as green — the lesson: the gate's verdict is
+  its exit and its stderr, never a pipe's tail), and `run.sh`'s
+  first-frame digest, unmissable — the metal's frame 2525495889
+  against the corpus's 511863226, every boot. The diagnostic that
+  pinned it: a scratch bare-metal probe computing both forms over the
+  domain and counting mismatches — the standalone identity exact at
+  65,026 values, the misapplied mix wrong at 2,432 of the sampled
+  lattice (first at s=0, d=15, a=15: division 14, misapplied 15), the
+  corrected mix and cover exact across the lattice. The metal's
+  `frame` back at the corpus's number the moment the `+128` replaced
+  the `+127`. Sixteen consumers' locks regenerated with the sources
+  (the T8.20 lesson's shape, twice this round — the first
+  regeneration pinned the misapplied form and had to move aside
+  again).
+- **Found on the way, fixed: the ride's stale center.** `start.sh`'s
+  auto-ride still waited for `pointer 512 384` — the 1024×768-era
+  center, stale since T9.1's mode — so every 1080p boot stalled the
+  ride at the pointer beat and handed the windows to the hand. The
+  beat waits for `pointer 960 540` now, the mode's own center; the
+  scratch driver (the ride's beats verbatim) drove the whole chain to
+  the desktop and through the probe's session on the corrected beat.
+- **What the number decides next** (the milestone stays open): the
+  first animation's subject and whether the compositor grows damage
+  rectangles — EmoOS Step 10's candidate first task — are the
+  decisions the measurement now informs; neither is taken here.
+- **The damage decision taken (T10.1, the same day).** The number left
+  no third way: a whole-screen recomposition at ~230 ms carries no
+  motion, and the frame callback's rhythm is worthless if every beat
+  costs one. The shape is the smallest honest thing: **one bounding
+  box**, not a rect list — the drag-path over-approximation it implies
+  (a window's walk between two compositions marks its two ends, the
+  intermediate positions nothing ever showed) costs nothing until a
+  drag composes per frame, and the frame callback's world composes
+  per frame by construction. The marks sit at the ops that unmake or
+  make pixels — the present's rect, the move's painted-plus-new, the
+  raise's crossed range (the quiet case, the already-top toplevel,
+  marks nothing — the desktop's own focus beats), the prune's dead —
+  and they read **painted records kept beside the stack slots**, not
+  the rows, because the row that holds a surface's size is the close's
+  to clear first. The generation's first composition marks the whole
+  mode: the full clear's era erasure is the first composition's, and
+  after it the pixels outside the box are the last composition's own —
+  which is why every screendump model in `run.sh` passes unchanged
+  and only the comp line's sums moved (18 of the pinned literals; the
+  full-mode compositions' — the first frame, the wallpaper's own
+  presents, the desktop's refolds — identical by construction).
+  **The find the model caught**: the raise copied the entry to the
+  stack's top without its painted record, and the entry inherited the
+  removed slot's stale one — a closed window's shadow ring survived
+  its own death by one blend step, the client-era model's pixel at
+  (23,25) reading (25,25,29) against (26,26,30). The stale-slot shape
+  is the page-map's own history repeating (the dead cell's first seat
+  was the stash's second slot once); the records now ride the raise
+  the way the entries do. **The flush carries the box** — gpu op 3,
+  the rect packed in the message's third word (T8.11's shape), the
+  reply the result the await's word — the full-screen op 0 standing
+  behind it unused. **The damage world, measured** (A15.1's probe on
+  the scratch tree, the same beats): a window-sized composition
+  **27–44 ms, median ~36** — the walk's ~0.2 M word-pairs plus the
+  wallpaper's pixels inside the box plus a ~0.4 MB rect flush —
+  against the whole-screen 230: **six times the frames, ~25 fps
+  within reach of the first animation**, the projection's arithmetic
+  honest. The mailbox at its microseconds; the ledger `frames 774 576`
+  unchanged (the box is four words and a parallel array on the page
+  the compositor already owned).
+- **What the milestone still decides**: the first animation's subject
+  — the rhythm and the budget are now both real (the tick, the frame
+  callback, ~36 ms a window-sized frame); the desktop's half of M15
+  names it.
+
 ## 2026-11-07 — The windows (emo-desktop A14.5, M14 complete)
 
 - **The shared title bar.** One bar every window wears: the three

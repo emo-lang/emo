@@ -346,7 +346,8 @@ def clip(x Int64, y Int64, w Int64, h Int64, bounds_w Int64,
 // coverage `a` out of 255. Integer throughout, so every target lands
 // on the same byte.
 def mix(s Int64, d Int64, a Int64) Int64 {
-  return (s * a + d * (255 - a) + 127) / 255
+  const t = s * a + d * (255 - a) + 128
+  return (t + (t >> 8)) >> 8
 }
 
 // One pixel of source-over: `src` carries its coverage in the top byte,
@@ -517,7 +518,8 @@ def shadow_cover(sd Int64, soft Int64) Int64 {
 // `color` at `coverage` out of 255 of its own opacity: the top byte
 // scaled, the channels untouched — what `over` composites.
 def cover(color Int64, coverage Int64) Int64 {
-  const a = (((color >> 24) & 0xFF) * coverage + 127) / 255
+  const t = ((color >> 24) & 0xFF) * coverage + 128
+  const a = (t + (t >> 8)) >> 8
   return (a << 24) | (color & 0xFFFFFF)
 }
 

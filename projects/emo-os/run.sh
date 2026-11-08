@@ -1445,14 +1445,14 @@ PYEOF
   # three surfaces the composition carries from here on.
   await 'desktop icons 2'
   await 'comp 0 0 971552549'
-  await 'comp 0 0 3448435595'
-  await 'comp 0 1040 2442226545'
+  await 'comp 0 0 648757998'
+  await 'comp 0 1040 4273206946'
   abs 614 32101
   btn true
   btn false
   await 'desktop counter up'
-  await 'comp 0 1040 2540901465'
-  await 'comp 0 0 2407683057'
+  await 'comp 0 1040 76914570'
+  await 'comp 0 0 3830481707'
   await "frame $(app_line 1)"
   await 'comp 768 476'
   sleep 0.3
@@ -1472,8 +1472,8 @@ PYEOF
   sleep 0.5
   feed 'exec files.elf'
   await 'desktop files up'
-  await 'comp 0 1040 2834281412'
-  await 'comp 0 0 2925200343'
+  await 'comp 0 1040 175589490'
+  await 'comp 0 0 3054225086'
   await "frame $(app_line 4)"
   await 'comp 374 238'
   # the browser's session rides the panel's focus: the press named it
@@ -1495,8 +1495,8 @@ PYEOF
   sleep 0.5
   feed 'exec editor.elf'
   await 'desktop editor up'
-  await 'comp 0 1040 1480115487'
-  await 'comp 0 0 1493337047'
+  await 'comp 0 1040 274264410'
+  await 'comp 0 0 2718785857'
   await "frame $(app_line 7)"
   await 'comp 374 476'
   sleep 0.3
@@ -1523,21 +1523,21 @@ PYEOF
   sleep 1
   printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 1951091294'
+  await 'comp 0 0 606458521'
   abs 7100 7950
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 3305257219'
+  await 'comp 0 0 515539590'
   abs 6827 15171
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop editor exit 0'
-  await 'comp 0 0 2442226545'
+  await 'comp 0 0 648757998'
   abs 274 21239
   sleep 1
   hmp 'screendump .deskout.ppm'
@@ -1830,7 +1830,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 581302422' 'popup up' 'comp 400 32 3434542230' 'sub up' 'parent panel r4' 'comp 0 1048 2153658518' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 3790164644' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 3448435595' 'comp 0 1040 2442226545' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 2540901465' 'comp 0 0 2407683057' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 2834281412' 'comp 0 0 2925200343' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 1480115487' 'comp 0 0 1493337047' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 1964312854' 'comp 0 0 1951091294' 'desktop files exit 0' 'comp 0 1040 3396176150' 'comp 0 0 3305257219' 'desktop editor exit 0' 'comp 0 1040 2309008137' 'comp 0 0 2442226545' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 648757998' 'comp 0 1040 4273206946' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040 76914570' 'comp 0 0 3830481707' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040 175589490' 'comp 0 0 3054225086' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040 274264410' 'comp 0 0 2718785857' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 2473691465' 'comp 0 0 606458521' 'desktop files exit 0' 'comp 0 1040 3103233149' 'comp 0 0 515539590' 'desktop editor exit 0' 'comp 0 1040 1378767463' 'comp 0 0 648757998' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

@@ -998,3 +998,85 @@ The decisions (2026-11-06):
   re-pinned on the interpreter and all five hosted targets, the fb
   gate green, `run.sh` under both transports three rounds. M14
   complete.
+
+## M15 — motion (opened 2026-11-08)
+
+D9's deferral cashes in: the tick (EmoOS T8.18) and the frame callback
+(verb 22) are the rhythm an animation rides, and A14.1 put the app
+side's painting costs on record — but the number an animation actually
+lives on is the composition's own, and that was not measured. The
+milestone opens with the measurement; the first animation's subject and
+the damage question wait for it. The kernel's half, if the numbers name
+one, is [EmoOS Step 10](../../emo-os/docs/TASKS.md) — unopened until
+they do. The reasoning is CHECK.md's (2026-11-08).
+
+The decisions (2026-11-08):
+
+- [x] **D10** — The budget measured before anything moves: the
+  per-composition cost at 1080p is what every animation and every
+  compositor mechanism rides, and neither an animation's subject nor a
+  kernel mechanism is chosen before it is on record. A15.1 measured
+  it; whether the compositor grows damage rectangles, and what moves
+  first, are the decisions the number now informs.
+- [x] **D11** — The compositor grows the damage rectangle (EmoOS
+  [T10.1](../../emo-os/docs/TASKS.md), landed 2026-11-08): the number
+  named it and nothing else — a whole-screen recomposition at ~230 ms
+  carries no motion, and a window-sized one at 27–44 ms (median ~36)
+  does. The kernel's half is [EmoOS Step 10](../../emo-os/docs/TASKS.md);
+  the desktop's half — what moves first — is the milestone's remaining
+  decision.
+
+- [x] **A15.1** — The composition's cost, measured; the blend's
+  division retired — **complete 2026-11-08**. The measurement is the
+  machine's own beats, host-timestamped the way A14.1's probe was: a
+  scratch windowed pass (installed the disk ELFs' way — T8.21's path,
+  the blob beside the boot image, the handoff page's free tail at
+  `0x87002210`, the install line, `exec probe.elf` from the REPL)
+  brackets its work in serial markers — `m pre`/`m post` around a
+  `win_move` (state alone, op 16, the mailbox's own round trip) and
+  `pre`/`post` around a `present` (op 17, whose reply lands only after
+  the compositor has walked the stack and flushed) — and a watcher
+  stamps every serial line as it lands. The beats ran on the desktop's
+  own stack (wallpaper, header, dock, the probe's 384×256 window at
+  the mode's center), ten compositions and ten moves. **The numbers**:
+  a whole-screen composition costs **about 230 ms** (226–274 across
+  the ten beats, median 230.4) — a full present round trip median
+  235 ms, the client's own digest of its buffer about 4 ms, and the
+  mailbox round trip 6–17 µs (the parity-refused odd move about
+  130 µs) — three to four orders below the walk, so the composition's
+  cost is the walk and the flush, not the messaging. The arithmetic
+  the number implies: about 2.2 M words walked in about 220 ms of
+  bracket, **about 100 ns a word** under QEMU's TCG — so a whole-screen
+  recomposition is ~4 fps and carries no motion, while a 384×256
+  window's own damage (two rects a step, about 0.2 M words) projects
+  about 20 ms plus a rect flush — roughly 30 fps within reach of
+  damage rectangles (the projection is arithmetic on the measured
+  per-word cost, not a measurement). **The blend's division retired**:
+  the lever CHECK.md has carried since A14.1 —
+  `(v + 127) / 255 == ((v + 128) + ((v + 128) >> 8)) >> 8` for every
+  `v` the mixers see — adopted at the four sites that still divided
+  (`ui_fb.mix`, `ui_fb.cover`, the kernel's `comp_mix`, `comp_cover`):
+  `+128` **replaces** the `+127`, the shifts stand in its place, every
+  consumer's lock regenerated (sixteen, the T8.20 lesson's shape).
+  **The find that caught the first application**: the identity's `v`
+  is the value *before* the `+127` — the first edit kept the `+127`
+  and added the `+128` beside it, a bias of half a step on most
+  blended pixels, and the goldens named it — the fb corpus's bytes
+  differ on every hosted target (the gate's FAIL lines were lost to a
+  truncated pipe read and the round misread the gate as green), and
+  `run.sh`'s first-frame digest made it unmissable: the metal's frame
+  2525495889 against the corpus's 511863226. The diagnostic instrument
+  is a scratch bare-metal probe that computes both forms over the
+  domain and counts the mismatches: the standalone identity 0
+  mismatches at 65,026 values, the misapplied mix 2,432 at the sampled
+  lattice (first at s=0, d=15, a=15 — division 14, misapplied 15),
+  the corrected mix 0 across the lattice, cover 0 beside it. **Found
+  on the way, fixed**: `start.sh`'s auto-ride still waits for
+  `pointer 512 384` — the 1024×768-era center, stale since T9.1's
+  mode — and stalls the ride at the pointer beat on every 1080p boot;
+  the beat waits for `pointer 960 540` now, the mode's own center.
+  The pins: the fb gate green (151, sixteen locks regenerated),
+  `run.sh` green under both timer transports three consecutive rounds
+  byte-identical on both, the full `dune runtest` green, `@fmt` green.
+  The scratch instruments (the probe package, the install lines, the
+  driver, the stamps) are not committed; the numbers are the record's.
