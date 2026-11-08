@@ -1026,6 +1026,16 @@ The decisions (2026-11-08):
   the desktop's half — what moves first — is the milestone's remaining
   decision.
 
+- [x] **D12** — The animation's pacing is the present's own reply:
+  the composition's completion is what the reply waits for, the frame
+  budget the damage rectangle measured (~36 ms a window-sized frame).
+  The frame callback cannot pace a solo animation — its park answers
+  at the next composition's completion, and the only composer is the
+  parked client itself: a park before the first present waits on
+  itself. The callback's seat stays what T8.15 proved (a client that
+  has already presented reads the next completion); the rise rides the
+  reply.
+
 - [x] **A15.1** — The composition's cost, measured; the blend's
   division retired — **complete 2026-11-08**. The measurement is the
   machine's own beats, host-timestamped the way A14.1's probe was: a
@@ -1080,3 +1090,38 @@ The decisions (2026-11-08):
   byte-identical on both, the full `dune runtest` green, `@fmt` green.
   The scratch instruments (the probe package, the install lines, the
   driver, the stamps) are not committed; the numbers are the record's.
+
+- [x] **A15.2** — The first animation — **complete 2026-11-08**. The
+  three apps' windows rise into place on open and sink on close: the
+  window mounts a quarter of itself low, the landing frame the app's
+  own hand paints (the mount's tree through a throwaway registry —
+  the same walk, the corpus's digest unchanged), and the Win's own
+  `rise` eases it home across eight frames, the offset's square
+  decaying (the metal's division truncating the model's way), the
+  last move landing the final seat unpainted for the loop's mount;
+  `sink` is the mirror easing in, every frame on the wire, the window
+  a quarter low when the close takes it and the desktop's next
+  composition gives its rect to the wallpaper's. The rise is the
+  window's own height by four — the mode's arithmetic, never a
+  constant; the steps eight. The pacing is D12's: move, present, the
+  reply — each frame's composition the damage rectangle's own budget,
+  the machine's tick keeping the residents live under it. **The
+  golden's shape**: the slide's comp lines pinned with their sums —
+  single-client beats, identical across the transports — and the
+  launch-era dock and header re-presents pinned by position alone:
+  they race the rise's marks (the scheduler interleaves a client's
+  move into another's pending box), so their sums are the scheduler's
+  own, varying across rounds exactly there — A14.1's recorded race's
+  shape, the assertions indifferent. The mid-flight screendump was
+  tried and retired: the await's tenth-of-a-second poll and the
+  monitor's hundred-millisecond dump against frames ten to forty
+  milliseconds apart — the dump lands frames late, the wire's comp
+  lines are the intermediate frames' record. The finds (CHECK.md,
+  2026-11-08): the throwaway registry's tags register in the view's
+  own order, the indices the loop's registry agrees with; the launch
+  era's comps are the box's words, whoever's marks are pending. The
+  pins: `run.sh` green under both timer transports three consecutive
+  rounds (the slide's sums identical across both; the variance only
+  at the unpinned launch-era pair), the full `dune runtest` green,
+  `@fmt` green, the fb gate green (the winbuf's five consumer locks
+  regenerated). Decision record: CHECK.md, 2026-11-08. M15 complete.

@@ -326,6 +326,15 @@ opened 2026-11-08 (the damage decision the number named):**
   the whole mode; the raise's stale record the model's pixel caught.
   Landed 2026-11-08; the record is the dated section below.
 
+**emo-desktop — [A15.2, the first animation](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-08 (M15 complete):**
+
+- [x] **A15.2** — the three apps' windows rise into place and sink on
+  close, the pacing the present's own reply (D12: the frame callback's
+  park deadlocks a solo client), the slide's comp lines the golden's
+  record and the launch-era dock/header sums the scheduler's own.
+  Landed 2026-11-08; the record is the dated section below.
+
 ## 2026-11-08 — The composition's cost, measured (emo-desktop M15 opened, A15.1)
 
 - **The number D9's milestone rides.** A14.1 measured what an app
@@ -441,6 +450,50 @@ opened 2026-11-08 (the damage decision the number named):**
   — the rhythm and the budget are now both real (the tick, the frame
   callback, ~36 ms a window-sized frame); the desktop's half of M15
   names it.
+- **The animation, and what it rode (A15.2, the same day).** The
+  subject was never in doubt once the numbers stood — the app window's
+  own open and close, the desktop's most ordinary motion, the beat
+  every desktop's user knows. The shape: the window mounts a quarter
+  of itself low with the landing frame the app's own hand paints —
+  the mount's tree through a throwaway `ui.Registry`, whose tags
+  register in the view's own order, the indices the loop's registry
+  agrees with, the corpus's digest untouched — and `Win.rise` eases
+  it home: the offset's square decaying, the metal's division
+  truncating the model's way, the last move landing the final seat
+  unpainted for the loop's mount (the mount's own present closes the
+  rise, one frame fewer on the wire). `Win.sink` is the mirror easing
+  in, every frame presented, the window a quarter low when
+  `win_close` takes it. The rise is the window's own height by four,
+  the steps eight — a size the window derives, a count the animation
+  owns. **The pacing decision (D12)**: the frame callback cannot pace
+  a solo animation. Its park answers at the next composition's
+  completion, and the only composer is the parked client itself — a
+  park before the first present waits on itself, the deadlock the
+  semantics as designed produce. The animation rides the present's
+  own reply (op 17's lands after the walk and the flush), each frame
+  the damage rectangle's budget; the callback's seat stays what
+  T8.15 proved — a client that has already presented reads the next
+  completion, the multi-client's cadence instrument. **The race the
+  golden had to name**: the launch era runs three clients at once —
+  the app's rise, the dock's lit tile, the header's count — and a
+  composition's box is whoever's marks are pending: the editor's move
+  landed inside the dock's pending box, the dock's sum became the
+  scheduler's own, differing across the transports at the same beat.
+  The golden pins those beats by position alone (the box's words are
+  nobody's contract), keeps the slide's own sums (single-client,
+  identical across both transports), and the three rounds' serials
+  vary exactly there — A14.1's recorded race's shape, the assertions
+  indifferent. **The mid-flight screendump was tried and retired**:
+  the await's tenth-of-a-second poll and the monitor's
+  hundred-millisecond dump against frames ten to forty milliseconds
+  apart — the dump lands frames late, and the wire's comp lines, the
+  position and the box's words pinned per frame, are the intermediate
+  frames' record the dump cannot outpace. The pins: `run.sh` green
+  under both timer transports three consecutive rounds, the slide's
+  sums identical across both, the variance only at the unpinned
+  launch-era pair; the full `dune runtest` green; `@fmt` green; the
+  fb gate green, the winbuf's five consumer locks regenerated. **M15
+  complete.**
 
 ## 2026-11-07 — The windows (emo-desktop A14.5, M14 complete)
 

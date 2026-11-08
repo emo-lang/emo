@@ -39,7 +39,11 @@ def main() {
     mh = m & 4294967295
   }
   }
-  case syscall.win_move(ge, (mw - 384) / 4 - 10, (mh - 128) / 2) {
+  // the seat and the rise's start (emo-desktop A15.2): a quarter of
+  // the window low, the rise easing it home
+  var fx = (mw - 384) / 4 - 10
+  var fy = (mh - 128) / 2
+  case syscall.win_move(ge, fx, fy + 128 / 4) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }
@@ -51,8 +55,15 @@ def main() {
   }
   const we = ui_fb_winbuf.win(ge, base_e, 384, 128)
   const ch = ui_fb_win.chrome(we, "editor")
+  // the landing frame the app's own hand paints — the mount's tree,
+  // the same walk, on the wire low (emo-desktop A15.2)
+  const reg0 = ui.Registry.new()
+  ui_fb.paint(ui_apps.editor.view(reg0, ui_apps.editor.initial()), ch)
+  we.present()
+  we.rise(fx, fy)
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
     ui_apps.editor.initial(), ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10])))
+  we.sink(fx, fy)
   case syscall.win_close(ge) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
