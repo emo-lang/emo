@@ -3303,3 +3303,29 @@ runtest` green.
       bufio}.md` and the `docs/stdlib.md` index + zh mirrors; this
       step's plan file; `plan/README.md`'s row; the `CHECK.md` trail.
       `plan/README.md`'s row reads done; M22 complete.
+- [x] **T56.7** — The entropy source: `rand_bytes` joins the wasm
+      import table — `(i64 n) -> (tag, size)`, the payload riding
+      `fetch` (the entropy on the ok branch, the reason on the error
+      one), the host answering from Node's CSPRNG, the typescript
+      target's own source; `rand` declares `wasm` — the T55.7
+      refusal's premise ("the wasm host supplies no entropy") died
+      with the canonical host — and `rand_demo` joins the wasm golden
+      list byte-identical (its entropy lines are host-independent:
+      lengths, draw-divergence, zero). The docs flip the refusal
+      paragraphs (EN + zh: `rand.md`, the `stdlib.md` row, the
+      `demo-targets.md` import table and capability bullet).
+- [x] **T56.8** — The performance baseline: `benchmarks/run.sh` grows
+      the wasm rows through `benchmarks/wasm_driver.mjs` (which
+      reuses the canonical host's exported import factory; module
+      execution only, node startup excluded). The numbers: fib(30) at
+      c parity (38 ms vs 39), the straight-line loops at ~5–6× c,
+      the Bytes scan ~4× c — and the step-16 Int-unboxing follow-up
+      **declined on the evidence, the trigger named** (a real
+      workload whose profile shows box churn dominating; the plan
+      file holds the argument). The `http_echo` bench, still calling
+      the pre-M10 `net.listen` shape, repaired on the way.
+- [x] **T56.9** — The second engine: `devtools/wasmtime-smoke.sh`
+      compile-validates every wasm golden on wasmtime's cranelift —
+      49/49, zero deltas; Node stays the execution host (the wasmtime
+      CLI cannot supply a non-WASI module's custom imports; the
+      Rust-driver port of the canonical host is the named follow-up).

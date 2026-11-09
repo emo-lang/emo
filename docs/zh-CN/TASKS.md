@@ -1081,3 +1081,23 @@ wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器�
       + zh 镜像;`docs/stdlib/{file,os,bufio}.md` 与 `docs/stdlib.md`
       索引 + zh 镜像;本步的 plan 文件;`plan/README.md` 的行;
       `CHECK.md` 的轨迹。`plan/README.md` 的行写 done;M22 完成。
+- [x] **T56.7** — 熵源:`rand_bytes` 进 wasm import 表——`(i64 n) ->
+      (tag, size)`,payload 骑 `fetch`(ok 分支是熵字节,error 分支是
+      原因文本),宿主从 Node 的 CSPRNG 应答——即 typescript target
+      的同一来源;`rand` 声明 `wasm`——T55.7 拒绝的前提("wasm 宿主
+      供不出熵")随规范宿主而死——`rand_demo` 进 wasm 金测名单且逐
+      字节一致(它的熵行与宿主无关:长度、两次抽取不同、零)。文档
+      翻转拒绝段落(EN + zh:`rand.md`、`stdlib.md` 行、
+      `demo-targets.md` 的 import 表与能力 bullet)。
+- [x] **T56.8** — 性能基线:`benchmarks/run.sh` 经
+      `benchmarks/wasm_driver.mjs`(复用规范宿主导出的 import 工厂;
+      只计模块执行,不含 node 启动)长出 wasm 行。数字:fib(30) 与 c
+      持平(38 ms 对 39),两条直循环 ~5–6× c,Bytes 扫描 ~4×
+      c——step 16 记录的 Int unboxing follow-up **依证据谢绝,重开
+      触发器已点名**(某个真实工作负载的 profile 显示装箱搬运占主;
+     论证在 plan 文件)。顺手修复仍调 M10 前 `net.listen` 形状的
+      `http_echo` 基准。
+- [x] **T56.9** — 第二引擎:`devtools/wasmtime-smoke.sh` 把每个 wasm
+      golden 交给 wasmtime 的 cranelift 编译验证——49/49,零偏差;
+      执行宿主仍是 Node(wasmtime CLI 供不了非 WASI 模块的自定义
+      import;规范宿主的 Rust 驱动移植是已点名的后续)。

@@ -401,6 +401,7 @@ let wasm_goldens =
     "file_read";
     "bufio_demo";
     "os_fs_demo";
+    "rand_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)

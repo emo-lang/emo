@@ -36,7 +36,7 @@ def drbg_sha256(seed Bytes, length Int64) Bytes
 | `c` | `getentropy`,每次 256 字节 |
 | `typescript` | Node 的 `crypto.randomBytes` |
 | `beam` | `crypto:strong_rand_bytes` |
-| `wasm` | **被 target 名单拒绝**——WasmGC 宿主不提供熵,于是为 `wasm` 构建一个 require 了 `rand` 的程序会在解析阶段被拒,而不是运行时才吃惊 |
+| `wasm` | 经规范宿主的 `rand_bytes` import 走 Node 的 `crypto.randomBytes`(step 56 的 syscall 家族)——不实现该 import 的手写宿主跑不了取熵的程序,正如跳过 `file_read` 的宿主读不了文件 |
 
 一把密钥就是一次抽取,不需要别的:
 
@@ -85,6 +85,5 @@ const key = rand.drbg_sha256("fixture: tcp echo".to_bytes(), 32)
 
 ## Target
 
-`ocaml`、`c`、`typescript`、`beam`,加解释器。`wasm` 因上述原因被
-manifest 拒绝;确定性流是纯 Emo,本可以在那里跑,但一个包的 target 名单
-只有一张,声明式的拒绝才是诚实的形状。
+`ocaml`、`c`、`typescript`、`beam`、`wasm`,加解释器。确定性流是纯
+Emo,随包一起在 `wasm` 上跑。

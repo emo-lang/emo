@@ -59,7 +59,7 @@ The packages:
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
-| [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam` |
+| [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |

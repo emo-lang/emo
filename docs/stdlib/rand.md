@@ -44,7 +44,7 @@ honestly serve it:
 | `c` | `getentropy`, in 256-byte calls |
 | `typescript` | Node's `crypto.randomBytes` |
 | `beam` | `crypto:strong_rand_bytes` |
-| `wasm` | **refused by the target list** — the WasmGC host supplies no entropy, so a build of a program that requires `rand` for `wasm` is refused at resolution time, not surprised at run time |
+| `wasm` | Node's `crypto.randomBytes` through the canonical host's `rand_bytes` import (step 56's syscalls) — a hand-rolled host that does not implement the import cannot run a program that draws, the way one that skips `file_read` cannot read a file |
 
 A key is the draw, and nothing more is needed:
 

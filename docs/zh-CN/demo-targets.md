@@ -155,6 +155,7 @@ demo-wasm.wasm  demo-wasm.wat
 | `emo.os_rename` | `(i32 optr, i32 olen, i32 nptr, i32 nlen) -> (i32 tag, i64 zero)` | 重命名 |
 | `emo.os_getcwd` | `() -> (i32 tag, i32 size)` | 工作目录 |
 | `emo.os_chdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | 切换工作目录 |
+| `emo.rand_bytes` | `(i64 n) -> (i32 tag, i32 size)` | 从宿主熵源（Node 的 CSPRNG）取 n 字节，经 `fetch` 取走 |
 
 每个 syscall 都回答 `(tag, …)`——tag 0 成功、tag 1 出错——并把 payload（文件内容，或整条错误原因 `file: cannot read …: …` / `os: …: …`，由宿主拼好）暂存起来，等 guest 的 `fetch` 调用把它拷进 guest 自己 bump 出来的缓冲。描述符由宿主持有；0/1/2 是 stdio，文件从 3 起。
 
@@ -203,7 +204,8 @@ Hello, world!
 
 - 宿主必须支持 **WasmGC**（Node 22+ 的 V8 默认支持）。只支持 MVP 或只有 WASI 的运行时跑不了这个模块。
 - `mem` 在实例化之后才存在，而 `start` 段在实例化期间执行。宿主回调要放在闭包变量后面，等 `WebAssembly.instantiate` 完成后再赋值。
-- **文件系统就是宿主自己的**：`file`、`os` 的 fd/目录半边和 `bufio` 经 syscall 运行，错误原因与 `ocaml`、`c` target 逐字节一致。没有 argv、也没有网络——需要 socket（`net`、`http`）或 FFI（`sqlite3`）的包仍被解析门拒绝；`os` 的进程半边（`fork`、`execv`、`waitpid`、`pipe`、`getpid`、`getppid`、`_exit`）在调用点 raise 并点名能力：WasmGC 模块没有进程可 fork。
+- **文件系统就是宿主自己的**：`file`、`os` 的 fd/目录半边、`bufio` 与 `rand` 经 syscall 运行，错误原因与 `ocaml`、`c` target 逐字节一致。没有 argv、也没有网络——需要 socket（`net`、`http`）或 FFI（`sqlite3`）的包仍被解析门拒绝；`os` 的进程半边（`fork`、`execv`、`waitpid`、`pipe`、`getpid`、`getppid`、`_exit`）在调用点 raise 并点名能力：WasmGC 模块没有进程可 fork。
+- **第二个引擎为形状背书**：每个 wasm golden 都经 wasmtime CLI 编译验证（`devtools/wasmtime-smoke.sh`——cranelift 的验证器走完整模块：GC 类型层级、multi-value 签名、块嵌套）。执行宿主仍是 Node；wasmtime CLI 供不了非 WASI 模块需要的自定义 `emo` import。
 - 仓库里的 `runtime/wasm/` 是另一回事：它是用 Emo 写的 WebAssembly 解码/解释器，覆盖 MVP 和少数扩展。它明确**不能**运行 `emo build --target wasm` 发射的 GC 模块。
 
 ## `beam`

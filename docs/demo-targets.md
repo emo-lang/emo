@@ -155,6 +155,7 @@ The artifact is a **WasmGC** module (values are GC structs and arrays) plus a re
 | `emo.os_rename` | `(i32 optr, i32 olen, i32 nptr, i32 nlen) -> (i32 tag, i64 zero)` | rename |
 | `emo.os_getcwd` | `() -> (i32 tag, i32 size)` | the working directory |
 | `emo.os_chdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | change the working directory |
+| `emo.rand_bytes` | `(i64 n) -> (i32 tag, i32 size)` | n bytes from the host's entropy source (Node's CSPRNG), through `fetch` |
 
 Every syscall answers `(tag, …)` — tag 0 ok, tag 1 error — and stashes its payload (the file contents, or the whole reason text `file: cannot read …: …` / `os: …: …`, formatted by the host) for the guest's `fetch` call, which copies it into a buffer the guest bump-allocated. Descriptors live in the host; 0/1/2 are stdio, files count from 3.
 
@@ -203,7 +204,8 @@ Points to keep in mind:
 
 - The host must support **WasmGC** (Node 22+ enables it in V8 by default). An MVP-only runtime, or a WASI-only one, cannot run the module.
 - `mem` exists only after instantiation, while the `start` section runs during instantiation. Keep host callbacks behind a closure variable assigned after `WebAssembly.instantiate` resolves.
-- The **file system is the host's own**: `file`, `os`'s fd/directory half, and `bufio` run through the syscalls, with reasons byte-identical with the `ocaml` and `c` targets. There is no argv and no network — anything needing a socket (`net`, `http`) or FFI (`sqlite3`) is still refused by the resolution gate, and `os`'s process half (`fork`, `execv`, `waitpid`, `pipe`, `getpid`, `getppid`, `_exit`) raises at the call, naming the capability: a WasmGC module has no process to fork.
+- The **file system is the host's own**: `file`, `os`'s fd/directory half, `bufio`, and `rand` run through the syscalls, with reasons byte-identical with the `ocaml` and `c` targets. There is no argv and no network — anything needing a socket (`net`, `http`) or FFI (`sqlite3`) is still refused by the resolution gate, and `os`'s process half (`fork`, `execv`, `waitpid`, `pipe`, `getpid`, `getppid`, `_exit`) raises at the call, naming the capability: a WasmGC module has no process to fork.
+- **A second engine vouches for the shape**: every wasm golden is compile-validated by the wasmtime CLI (`devtools/wasmtime-smoke.sh` — cranelift's validator over the whole module: the GC type hierarchy, the multi-value signatures, the block nesting). Node stays the execution host; wasmtime's CLI cannot supply the custom `emo` imports a non-WASI module needs.
 - The in-repo `runtime/wasm/` is a different thing: an Emo-written WebAssembly decoder/interpreter covering the MVP and a few extensions. It explicitly cannot run the GC modules `emo build --target wasm` emits.
 
 ## `beam`

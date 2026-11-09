@@ -6,9 +6,8 @@ require "crypto"
 // carry them on every target (typescript's strings are UTF-8 text).
 // `rand` declares the targets that can honestly serve the source:
 // getentropy on the byte targets (`ocaml`, `c`), Node's CSPRNG on
-// `typescript`, crypto:strong_rand_bytes on `beam`; the wasm host
-// supplies no entropy, so the target list refuses it — a declared
-// refusal, not a runtime surprise. The deterministic stream is pure
+// `typescript` and on `wasm` (the canonical host carries it), and
+// crypto:strong_rand_bytes on `beam`. The deterministic stream is pure
 // Emo over crypto's byte doors and runs wherever the package does.
 
 // n bytes from the operating system's entropy source. A refused

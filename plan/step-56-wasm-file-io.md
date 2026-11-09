@@ -116,12 +116,45 @@ scratch — read its buffer before the next allocation):
       collision the audit looked for was real but secondary — the
       cursor never moved at all until the loop fix, and the grow-delta
       bug was what actually fired on long output).
+- [x] **T56.7** — The entropy source: `rand_bytes` joins the import
+      table (`(i64 n) -> (tag, size)`, one fetch serving the ok and
+      error branches — the payload is the entropy on one, the reason
+      on the other), the host answers it from Node's CSPRNG (the
+      typescript target's own source), and `rand` declares `wasm` —
+      the T55.7 refusal's premise ("the wasm host supplies no
+      entropy") died with the canonical host. `rand_demo` joins the
+      wasm golden list; the docs' refusal paragraphs flip.
 - [x] **T56.6** — Docs and close-out: `docs/demo-targets.md`'s wasm
       section (the import table, the run path, the capability story) +
       zh mirror; `docs/stdlib/{file,os,bufio}.md` and the
       `docs/stdlib.md` index + zh mirrors; this plan file;
       `docs/TASKS.md`'s Step 56 section + zh mirror; `plan/README.md`'s
       milestone row; `CHECK.md`'s trail.
+
+- [x] **T56.8** — The performance baseline: `benchmarks/run.sh` grows
+      the wasm rows (fib, the two loops, the Bytes scan, the json-ish
+      scan — module execution only, node's startup and the compile
+      excluded via `benchmarks/wasm_driver.mjs`, which reuses the
+      canonical host's import factory). The numbers: fib(30) at c
+      parity (38 ms vs the c target's 39), the straight-line loops at
+      ~5–6× c (172/178 ms vs 28/36), the Bytes scan ~4× c (983 vs
+      247). The recorded step-16 follow-up — Int unboxing — is
+      **declined on the evidence, the trigger named**: the box churn
+      shows only on straight-line loop workloads, fib's recursion
+      already hides it behind call overhead, and a WasmGC unboxing
+      pass (type analysis feeding i64 locals) is a codegen project
+      sized against a 5× gap on a portability target. Revisit when a
+      real workload's profile shows box churn dominating. The
+      harness's `http_echo` bench, still calling the pre-M10 `net.
+      listen` shape, was repaired on the way.
+- [x] **T56.9** — The second engine: `devtools/wasmtime-smoke.sh`
+      feeds every wasm golden to the wasmtime CLI's compiler, whose
+      cranelift validator checks the whole module against an
+      independent implementation — 49/49 validated, zero deltas.
+      Node stays the execution host: the wasmtime CLI cannot supply
+      the custom `emo` imports a non-WASI module needs (a Rust-driver
+      port of the canonical host is the named follow-up if execution
+      parity on a second engine ever earns its toolchain).
 
 ## Left open, deliberately
 

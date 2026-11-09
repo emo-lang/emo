@@ -43,6 +43,21 @@ build_c() {
         > /dev/null)
 }
 
+# build_wasm <dir> — the wasm target: a WasmGC module run by Node.
+build_wasm() {
+    dir=$1
+    (cd "benchmarks/$dir" && EMO_REGISTRY="$REGISTRY" \
+        "$EMO" build main.emo --target wasm \
+        -o "$ROOT/benchmarks/$dir/main.wasm-art" > /dev/null)
+}
+
+# wasm_ms <dir> — module execution alone: the driver compiles once and
+# times fresh instantiations (node's startup and the compile excluded),
+# the mean of 3 timed runs after one warmup.
+wasm_ms() {
+    node "$ROOT/benchmarks/wasm_driver.mjs" "$ROOT/benchmarks/$1/main.wasm-art.wasm" 2>&1 1>/dev/null
+}
+
 # time_ms <command...> — milliseconds per run over 3 timed runs (one
 # warmup, excluded). A single python process does the timing, so python's
 # own startup is not charged to short benchmarks.
@@ -96,6 +111,7 @@ echo "# Benchmark results" > "$RESULTS"
 echo "" >> "$RESULTS"
 echo "Recorded $DATE by benchmarks/run.sh (native builds via \`emo build\`)." >> "$RESULTS"
 echo "Baselines do the same work with \`cc -O3\` and plain \`ocamlopt\`." >> "$RESULTS"
+echo "The wasm rows run under Node's WasmGC — module execution only, node's own startup and the compile excluded (benchmarks/wasm_driver.mjs)." >> "$RESULTS"
 echo "" >> "$RESULTS"
 echo "| benchmark | metric | value |" >> "$RESULTS"
 echo "| --- | --- | --- |" >> "$RESULTS"
@@ -109,6 +125,8 @@ row "fib(30)" "ms per run, unspecialized build" "$(time_ms "$ROOT/benchmarks/fib
 row "fib(30)" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/fib/main.c-bin")"
 row "fib(30)" "ms per run, interpreter (emo run)" "$(interp_ms fib)"
 row "fib(30)" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/fib_ml")"
+build_wasm fib
+row "fib(30)" "ms per run, wasm target (Node WasmGC)" "$(wasm_ms fib)"
 
 # --- tail-recursive loop: the language's only iteration idiom ---
 build loops_tail
@@ -120,6 +138,8 @@ row "tail loop 10M" "ms per run, c target (emo build --target c)" "$(time_ms "$R
 row "tail loop 10M" "ms per run, interpreter (emo run)" "$(interp_ms loops_tail)"
 row "tail loop 10M" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/tail_loop_ml")"
 row "tail loop 10M" "ms per run, C baseline" "$(time_ms "$BLD/tail_loop_c")"
+build_wasm loops_tail
+row "tail loop 10M" "ms per run, wasm target (Node WasmGC)" "$(wasm_ms loops_tail)"
 
 # --- plain for-loop: the iteration statement; the ocaml target keeps
 # --- any loop-bearing function dynamic by construction ---
@@ -128,6 +148,8 @@ build_c plain_loop
 row "plain loop 10M" "ms per run, ocaml target (dynamic by construction)" "$(time_ms "$ROOT/benchmarks/plain_loop/main.emo-bin")"
 row "plain loop 10M" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/plain_loop/main.c-bin")"
 row "plain loop 10M" "ms per run, interpreter (emo run)" "$(interp_ms plain_loop)"
+build_wasm plain_loop
+row "plain loop 10M" "ms per run, wasm target (Node WasmGC)" "$(wasm_ms plain_loop)"
 
 # --- foreign call overhead: 10M C sqrt calls through `foreign def` ---
 build ffi_call --cclib m
@@ -143,6 +165,8 @@ row "bytes get 20M" "ms per run, dynamic Bytes.get" "$(time_ms "$ROOT/benchmarks
 row "bytes get 20M" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/bytes_scan/main.c-bin")"
 row "bytes get 20M" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/bytes_scan_ml")"
 row "bytes get 20M" "ms per run, C baseline" "$(time_ms "$BLD/bytes_scan_c")"
+build_wasm bytes_scan
+row "bytes get 20M" "ms per run, wasm target (Node WasmGC)" "$(wasm_ms bytes_scan)"
 
 # --- ping-pong: 40k messages between processes ---
 build ping_pong
@@ -153,6 +177,8 @@ build json_parse
 build_c json_parse
 row "json-ish scan" "wall ms" "$(time_ms "$ROOT/benchmarks/json_parse/main.emo-bin")"
 row "json-ish scan" "wall ms, c target" "$(time_ms "$ROOT/benchmarks/json_parse/main.c-bin")"
+build_wasm json_parse
+row "json-ish scan" "wall ms, wasm target (Node WasmGC)" "$(wasm_ms json_parse)"
 
 # --- http echo: requests per second over loopback ---
 build http_echo

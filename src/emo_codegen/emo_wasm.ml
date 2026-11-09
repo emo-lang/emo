@@ -68,6 +68,7 @@ let t_os_list_dir = 50
 let t_os_path = 51
 let t_os_rename = 52
 let t_os_getcwd = 53
+let t_rand_bytes = 54
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -214,6 +215,8 @@ let runtime_types : W.typ list =
     (* os_rename: (old ptr, old len, new ptr, new len) -> (tag, 0 | size) *)
     W.FuncT ([], [ W.I32; W.I32 ]);
     (* os_getcwd: () -> (tag, payload size) *)
+    W.FuncT ([ W.I64 ], [ W.I32; W.I32 ]);
+    (* rand_bytes: (n) -> (tag, payload size) *)
   ]
 
 let i_print = 0
@@ -233,9 +236,10 @@ let i_os_unlink = 13
 let i_os_rename = 14
 let i_os_getcwd = 15
 let i_os_chdir = 16
+let i_rand_bytes = 17
 
 (* Every defined function's index follows the imports. *)
-let import_count = 17
+let import_count = 18
 
 (* Runtime function indices: imports 0..import_count-1, then these —
    written relative to the import count, so a new host import shifts
@@ -1100,6 +1104,33 @@ let rec expr env (x : Emo_ir.expr) : unit =
                 ~ok:[ W.I64_const 0L; W.Struct_new t_vint ]
                 ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
             )
+      | "rand_bytes", [ n ] ->
+          (* one fetch serves both branches: the payload is the entropy
+             on the ok path, the reason text on the error path *)
+          let tag = fresh_local env "__sys_tag" W.I32 in
+          let size = fresh_local env "__sys_size" W.I32 in
+          let buf = fresh_local env "__sys_buf" W.I32 in
+          let payload =
+            [ W.Local_get buf; W.Local_get size; W.Call (rt "bytes_from_mem") ]
+          in
+          es env
+            (int64_of (expr_block env n)
+            @ [
+                W.Call i_rand_bytes;
+                W.Local_set size;
+                W.Local_set tag;
+                W.Local_get size;
+                W.Call (rt "alloc");
+                W.Local_set buf;
+                W.Local_get buf;
+                W.Local_get size;
+                W.Call i_fetch;
+                W.Drop;
+                W.Local_get tag;
+              ]
+            @ r_pair env
+                ~ok:(payload @ [ W.Struct_new t_vbytes ])
+                ~err:(payload @ [ W.Struct_new t_vstring ]))
       | ( ( "os_getpid" | "os_getppid" | "os_fork" | "os_waitpid" | "os_pipe"
           | "os_execv" | "os__exit" ),
           _ ) ->
@@ -8102,6 +8133,11 @@ let assemble (program : Emo_ir.program) : W.module_ =
         { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
         { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
         { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
+        {
+          W.imodule = "emo";
+          W.iname = "rand_bytes";
+          W.itype_idx = t_rand_bytes;
+        };
       ];
     funcs;
     memory = 2;

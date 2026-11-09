@@ -348,6 +348,42 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-09 — The wasm follow-ups: entropy, the baseline, the second engine (T56.7–T56.9)
+
+- The entropy refusal died with its premise: T55.7 kept `rand` off
+  wasm because "the wasm host supplies no entropy", and step 56's
+  canonical host *is* a wasm host with Node behind it. `rand_bytes`
+  joins the import table — `(i64 n) -> (tag, size)`, one `fetch`
+  serving both branches (the payload is the entropy on ok, the reason
+  text on error) — the host answers from Node's CSPRNG (the
+  typescript target's own source), `rand` declares `wasm`, and
+  `rand_demo` rides the wasm golden list byte-identical (its entropy
+  lines are host-independent: lengths, draw-divergence, zero).
+- The performance baseline landed: `benchmarks/run.sh` grows the wasm
+  rows (module execution only — the driver reuses the canonical
+  host's exported import factory and times fresh instantiations of a
+  once-compiled module). The numbers, against the same run's c
+  target: fib(30) **38 ms vs 39 — parity** (the box churn hides
+  behind call overhead); the straight-line loops **172/178 ms vs
+  28/36, ~5–6×**; the Bytes scan **983 vs 247, ~4×**; the json-ish
+  scan sub-millisecond. The step-16 recorded follow-up — Int
+  unboxing — is **declined on the evidence, the reopen trigger
+  named**: a real workload whose profile shows box churn dominating.
+  The argument lives in the step plan. The `http_echo` bench, still
+  calling the pre-M10 `net.listen` shape (the bench set had not been
+  re-run since 2026-10-11), was repaired on the way.
+- The second engine vouches for the shape: `devtools/wasmtime-smoke.sh`
+  feeds every wasm golden (49 examples) to the wasmtime CLI's
+  compiler — cranelift's validator checks the whole module against an
+  independent implementation: **49/49 validated, zero deltas**. Node
+  stays the execution host; the wasmtime CLI cannot supply a non-WASI
+  module's custom imports (the machine has no Rust toolchain — the
+  canonical host's Rust-driver port is the named follow-up if
+  execution parity ever earns it).
+- Pins: `dune runtest` green, `dune build @fmt` green;
+  `benchmarks/results.md` re-recorded in full by the extended harness
+  (five wasm rows); `devtools/wasmtime-smoke.sh` 49/49.
+
 ## 2026-11-08 — File IO lands on the wasm target (step 56, M22)
 
 - The wasm target's largest capability gap closed: `file`, `os` (the

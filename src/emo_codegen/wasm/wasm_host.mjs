@@ -18,7 +18,9 @@
 // below it stays the host's — float_str writes its answer at the fixed
 // scratch 60000 and the guest copies it back out.
 import { readFile } from "node:fs/promises";
-import { readFileSync, writeFileSync, writeSync, readSync, openSync, closeSync, readdirSync, mkdirSync, rmdirSync, unlinkSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync, readSync, openSync, closeSync, readdirSync, mkdirSync, rmdirSync, unlinkSync, renameSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 
 // stdout through writeSync: the abort path exits mid-stream, and a
 // buffered write lost to process.exit would truncate a program's own
@@ -66,38 +68,17 @@ let nextFd = 3;
 const strerror = (err) =>
   STRERROR[err.code] || String(err.code || err.message || err);
 
-const bytes = await readFile(process.argv[2]);
 let mem = null;
 let pending = null;
 const dec = new TextDecoder();
 const enc = new TextEncoder();
 
-// OCaml's %g — the rule the interpreter's `emo_to_string` follows, and
-// the same one the TS runtime's `g6` implements: six significant
-// digits, exponent form below 1e-4 or at 1e6 and above, exponent
-// spelled with a sign and two digits.
-const g6 = (x) => {
-  const exp = Math.floor(Math.log10(Math.abs(x)));
-  if (exp < -4 || exp >= 6) {
-    let r = Number((x / Math.pow(10, exp)).toFixed(5));
-    let e = exp;
-    if (Math.abs(r) >= 10) {
-      r = Number((r / 10).toFixed(5));
-      e += 1;
-    }
-    let ms = r.toFixed(5);
-    if (ms.includes(".")) ms = ms.replace(/0+$/, "").replace(/\.$/, "");
-    return ms + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
-  }
-  const decimals = Math.max(0, 5 - exp);
-  let s = x.toFixed(decimals);
-  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
-  return s;
-};
-const floatStr = (f) => (Object.is(f, -0) ? "-0.0" : Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
-
-const module_ = await WebAssembly.compile(bytes);
-const instance = await WebAssembly.instantiate(module_, { emo: {
+// The import object, exported for drivers that instantiate the module
+// themselves (the benchmark driver times fresh instantiations of one
+// compiled module — node's startup and the compile stay out of its
+// numbers). The closures close over this module's `mem`, assigned
+// through setMemory after each instantiate resolves.
+export const emoImports = () => ({
   println: (ptr, len) => {
     out(dec.decode(new Uint8Array(mem.buffer, ptr, len)) + "\n");
   },
@@ -108,8 +89,7 @@ const instance = await WebAssembly.instantiate(module_, { emo: {
   },
   float_str: (f) => {
     const encoded = enc.encode(floatStr(f));
-    const view = new Uint8Array(mem.buffer, 60000, encoded.length);
-    view.set(encoded);
+    new Uint8Array(mem.buffer, 60000, encoded.length).set(encoded);
     return [60000, encoded.length];
   },
   file_read: (ptr, len) => {
@@ -140,8 +120,6 @@ const instance = await WebAssembly.instantiate(module_, { emo: {
     pending = null;
     return n;
   },
-  // fd 0 read, 1 write, 2 write — the POSIX stdio the os package
-  // documents; real files land in the fds map.
   os_open: (ptr, len, mode) => {
     const path = dec.decode(new Uint8Array(mem.buffer, ptr, len));
     try {
@@ -269,6 +247,61 @@ const instance = await WebAssembly.instantiate(module_, { emo: {
       return [1, BigInt(pending.length)];
     }
   },
-}});
-mem = instance.exports.mem;
-instance.exports.main();
+  // The entropy the os half's host can actually supply: Node's CSPRNG,
+  // the same source the typescript target reads. A refused source is
+  // the (R.error, "rand: getentropy: …") value, the c runtime's text.
+  rand_bytes: (n) => {
+    try {
+      pending = randomBytes(n < 0n ? 0 : Number(n));
+      return [0, pending.length];
+    } catch (err) {
+      pending = enc.encode("rand: getentropy: " + String(err.message || err));
+      return [1, pending.length];
+    }
+  },
+});
+export const setMemory = (m) => {
+  mem = m;
+};
+
+// OCaml's %g — the rule the interpreter's `emo_to_string` follows, and
+// the same one the TS runtime's `g6` implements: six significant
+// digits, exponent form below 1e-4 or at 1e6 and above, exponent
+// spelled with a sign and two digits.
+const g6 = (x) => {
+  const exp = Math.floor(Math.log10(Math.abs(x)));
+  if (exp < -4 || exp >= 6) {
+    let r = Number((x / Math.pow(10, exp)).toFixed(5));
+    let e = exp;
+    if (Math.abs(r) >= 10) {
+      r = Number((r / 10).toFixed(5));
+      e += 1;
+    }
+    let ms = r.toFixed(5);
+    if (ms.includes(".")) ms = ms.replace(/0+$/, "").replace(/\.$/, "");
+    return ms + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
+  }
+  const decimals = Math.max(0, 5 - exp);
+  let s = x.toFixed(decimals);
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+};
+const floatStr = (f) => (Object.is(f, -0) ? "-0.0" : Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
+
+// Executed directly (node wasm_host.mjs <module.wasm>): compile the
+// artifact, supply the imports, run the entry. Imported (the benchmark
+// driver): only the exported factory and setter are used.
+// The argv path may differ from the specifier through a symlink
+// (/tmp on macOS resolves to /private/tmp), so both spellings count.
+const direct =
+  process.argv[1] !== undefined &&
+  (import.meta.url === pathToFileURL(process.argv[1]).href ||
+    import.meta.url ===
+      pathToFileURL(realpathSync(process.argv[1])).href);
+if (direct) {
+  const bytes = await readFile(process.argv[2]);
+  const module_ = await WebAssembly.compile(bytes);
+  const instance = await WebAssembly.instantiate(module_, { emo: emoImports() });
+  setMemory(instance.exports.mem);
+  instance.exports.main();
+}
