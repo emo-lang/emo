@@ -39,6 +39,14 @@ The value handed to a macro is the decorated def's tree; the value it returns is
 
 The worked example is [`examples/trace_demo`](../../examples/trace_demo/main.emo): a `trace` macro that moves the original def to a hidden name and makes the visible name a wrapper logging every call's arguments and answer — at every call site, including ones in other modules. The forwarding call is built from the wrapped declaration's own parameter trees, which is why it can never drift from the signature.
 
+## Class application
+
+The application seat widens to classes: `// @derive_eq` above a `class` hands the class tree to the macro, which reads the field list (`Syntax.fields`, `Syntax.field_name` — names; the AST does not carry field types) and returns the transformed class — `Syntax.with_methods(class, methods)` appends generated defs as ordinary methods, checked with the module like any other. `Syntax.name` answers a class's name; `Syntax.new_param`, `Syntax.named_type`, `Syntax.self_expr`, `Syntax.bin_eq`, `Syntax.bin_and`, and `Syntax.member` build the generated bodies. The role side stays def-only — `// #macro` above a class is an error, as is an application above any other item.
+
+The worked example is [`examples/derive_eq_demo`](../../examples/derive_eq_demo/main.emo): `@derive_eq` generates an `eq?` method comparing every field pairwise — the generated equality cannot forget a field the class declares, which is the drift this mechanism exists to remove.
+
+A macro body is self-contained: it names only its parameters, the `Syntax` namespace, and the builtins. The compiler checks the macro domain before any macro body runs — the `#macro` defs and the applications' compile-time arguments — and checks the whole module after expansion, which is where a call site naming a method the derivation does not produce fails.
+
 ## What macros are not
 
 Runtime code generation — `eval`, open classes, `method_missing` — is rejected as a language mechanism: generated code that does not exist at checking time cannot be checked, an evaluator in every runtime defeats the freestanding targets, and runtime structure defeats the type-feedback performance story. Emo's runtime extensibility units already exist: defs are first-class values (`Block`), dispatch tables are `Map`s, and the OS-level extension unit is a process. What macros add is the compile-time half — derivation, compile-time-checked DSLs, and the elimination of per-signature wrapper boilerplate that would otherwise drift.

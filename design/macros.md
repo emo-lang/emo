@@ -203,9 +203,97 @@ Constructors:
   `Syntax.return_stmt(e) -> Syntax` — statement wrappers
 - `Syntax.gensym(base) -> String` — a fresh, collision-free name
 
-The pilot macro (`examples/trace_demo`) is written entirely against this
-surface, which is the proof that the surface is complete enough to be
-useful.
+The pilot macros (`examples/trace_demo`, then `examples/memoize_demo`)
+are written entirely against this surface, which is the proof that the
+surface is complete enough to be useful.
+
+## Application arguments (step 2)
+
+A macro's signature is zero or more leading compile-time **scalar**
+parameters (`Int64`, `String`, `Bool`, `Float64`, `Byte`, `Char`) followed
+by exactly one trailing `Syntax` parameter (the decorated tree), returning
+`Syntax` — `def memoize(limit Int64, f Syntax) Syntax`. The application
+`// @memoize(2)` supplies the leading parameters: the parentheses touch
+the directive's name (E2034), the arguments are ordinary comma-separated
+Emo expressions on the directive's own line (E2033 when they drift), and
+role directives take none (E2035).
+
+The arguments are checked statically at the application site — arity
+(E4306) and, per argument, type conformance against the declared
+parameter (E4307) — in the builtins-only environment the expansion will
+evaluate them in, so a name the compile-time profile cannot see fails at
+checking with the same answer. They are then evaluated, in the protected
+compile-time profile, and bound to the leading parameters; the trailing
+`Syntax` parameter binds to the decorated tree. A macro body may `raise`
+to refuse a shape it cannot wrap (a multi-parameter def, a `Void` result)
+— the raise surfaces as the expansion's compile error (E4308) with the
+exception's message.
+
+## The quotation surface (step 2)
+
+`quote { ... }` is the macro author's template — a **contextual** spelling, not a keyword: the template only where `quote` sits in an operand-start position (`=`, `(`, `,`, `[`, `return`, `do`, `->`) and a brace follows on the same line; every other `quote` stays an ordinary name. The rule was driven by the corpus, twice over: the standard library's JSON escaper is *called* as `quote(self.value)` (a keyword breaks it), and sql's `data.get(i) == quote` *ends an if condition* whose `{` opens the body (brace-follow alone breaks it) — both real uses the first two cuts of the rule rejected. `foreign` is the item-position precedent — and the body parses as
+ordinary items over the quote's own token stream, so the tree carries the
+file's real spans, and each `${expr}` hole parses in place and leaves a
+compiler-owned placeholder identifier standing in the stream. When the
+quote evaluates — during expansion, inside the macro body — each hole's
+expression evaluates and its tree is substituted for the placeholder.
+Holes splice **expression trees**; a hole producing anything else is an
+error (E4309), and lifting stays explicit: `${Syntax.ident(name)}` for a
+name, `${Syntax.lit_int(limit)}` for a literal. Declaration structure
+inside the template is literal — a def's name, parameters, and result
+stay with the constructors — and string interpolation inside a quoted
+string stays the generated code's own runtime interpolation, so
+compile-time string composition goes through holes. A placeholder
+spelling (`__emo_quote_N`) is reserved inside quotes (E2036, which also
+covers unclosed quotes and holes), and `quote` outside a macro body is
+the ordinary compile-time-window error (E4301).
+
+`Syntax.new_def`'s body parameter takes either an array of statement
+trees or one whole quote (a sequence of item-level bindings lays out as
+the body's statements). `Syntax.seq` flattens: nesting sequences is
+concatenation, and a macro's splice result is the flat list of
+declarations it produces.
+
+## Class application and derivation (step 3)
+
+The application seat widens to classes: `// @derive_eq` above a `class`
+hands the class tree to the macro, which reads the field list and returns
+the transformed class — `Syntax.fields` / `Syntax.field_name` read the
+fields (names only; the AST does not carry field types, so a derivation
+needing them waits on the checker's table, recorded below), and
+`Syntax.with_methods(class, methods)` appends generated defs as ordinary
+methods, checked with the module like any other. `Syntax.name` answers a
+class's name. The supporting constructors: `Syntax.new_param`,
+`Syntax.named_type`, `Syntax.self_expr`, `Syntax.bin_eq`, `Syntax.bin_and`,
+`Syntax.member`. The role side stays def-only — `// #macro` above a class
+is E2031, applications above any other item stay E2031, and the duplicate
+rules (E2032) apply to classes like defs.
+
+The pilot is [`examples/derive_eq_demo`](../../examples/derive_eq_demo/main.emo):
+`@derive_eq` generates an `eq?` method comparing every field pairwise —
+the generated equality cannot forget a field the class declares, which is
+the drift this mechanism exists to remove — byte-identical across the
+interpreter, the c binary, and the TypeScript output.
+
+**The precheck narrowed with it.** Step 58's expansion prechecked the
+whole raw module; derive breaks that, because a call site naming a
+generated method would fail against the raw class before the macro ever
+ran. The gate is now `check_macro_domain`: the `#macro` defs' shape and
+bodies (quote holes included) plus every application's compile-time
+arguments against the macro's declared parameters — application carriers
+ride as hollow shells (signatures and directives intact, bodies emptied,
+return type dropped to Void so a hollow Int64 shell cannot trip the
+must-return rule). The module's full checking belongs to the expanded
+module, which is where a call site naming a method the derivation does
+not produce dies. One rule lands with the narrowing, stated as a
+constraint: **a macro body is self-contained** — it names only its
+parameters, the `Syntax` namespace, and the builtins; a helper def it
+needs is itself declared `#macro` (erased with the rest) or the logic
+moves inline.
+
+Cross-module macros — `@name` resolving through a require — stay the
+named follow-up: same-module derivation is the working core, and the
+preregistration tables are where the resolution rides when it comes.
 
 ## Pipeline mapping
 
@@ -229,21 +317,29 @@ derive step, where cross-package derivation is the actual use.
 
 ## The ladder
 
-1. **Step 1 — directive infrastructure + pilot `@trace`.** Lexer directive
-   capture, AST directive attachment, parser consumption with adjacency
-   rules, checker validation (the full strictness error set), the expansion
-   pipeline, the restricted compile-time interpreter profile, the `Syntax`
-   API above, and `examples/trace_demo` proving the chain: tree in, trees
-   out, call sites transparent, byte-identical output across targets.
-2. **Step 2 — `@memoize` + application arguments + quotation.** Proves
-   compile-time argument evaluation (`// @memoize(100)` — arguments are Emo
-   expressions, evaluated at compile time, checked against the macro's
-   declared parameter list) and generated runtime state (a private `Map`
-   const the wrapper consults), and lands the `quote` surface.
-3. **Step 3 — `@derive` on classes.** Application onto `class`
-   declarations, one macro generating several defs (equality, JSON) from
-   the field list — the highest-leverage step, and the one that pulls
-   cross-module macros in.
+1. **Step 1 — directive infrastructure + pilot `@trace`** (landed, step
+   58): lexer directive capture, AST directive attachment, parser
+   consumption with adjacency rules, checker validation (the full
+   strictness error set), the expansion pipeline, the restricted
+   compile-time interpreter profile, the `Syntax` API, and
+   `examples/trace_demo` proving the chain.
+2. **Step 2 — `@memoize` + application arguments + quotation** (landed,
+   step 59): compile-time argument evaluation against the macro's leading
+   parameters, generated runtime state (a private `Map` constant the
+   wrapper consults, with a drop-and-restart eviction policy at the
+   limit), and the `quote` surface — `examples/memoize_demo` shows a hit
+   skipping the computation and the eviction recomputing, byte-identical
+   across targets.
+3. **Step 3 — `@derive` on classes** (landed, step 60): application onto
+   `class` declarations, the class reader/constructor API, and
+   `examples/derive_eq_demo` — one macro generating the equality method
+   from the field list. The expansion precheck narrowed to the macro
+   domain (macro bodies + application arguments), because a generated
+   method's call site must not be checked against the raw class. Still
+   open in this step's territory: declaration-structure holes in the
+   quote surface (a JSON derivation wants `def ${name}(...)`), field
+   types on the class tree (the AST carries names only), and cross-module
+   macros — each named below.
 
 ## Trade-offs recorded
 
@@ -272,8 +368,13 @@ assignment time). Codes are finalized as the diagnostics land.
 
 ## Open questions (deliberately undecided)
 
-- The quotation surface (`quote { ... }`, hole semantics, whether holes
-  accept plain values in leaf positions) — designed when step 2 starts.
-- Application arguments' exact checking story — with step 2.
-- Cross-module macro tables — with step 3.
-- Macro application onto `class` and the derive API — with step 3.
+- Declaration-structure holes in the quote surface (`def ${name}(${params})
+  ${ret}`) and holes inside class bodies — the constructors cover them
+  today; the ergonomic surface waits for a derivation that actually needs
+  it (JSON, with field types).
+- Field types on the class tree — the AST carries field names only; a
+  type-aware derivation (JSON) rides on the checker's field-type table or
+  a richer field tree.
+- Cross-module macro tables — `@name` through a require.
+- JSON/string derivations beyond `eq?` — same shape, waits on the two
+  items above.

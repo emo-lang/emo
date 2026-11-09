@@ -3521,3 +3521,95 @@ loudly; `dune runtest` green.
       dies. Design decisions and the rejected alternatives (runtime
       eval, the `by` keyword, value decorators as a separate mechanism)
       live in `design/macros.md`.
+
+### Step 59 — Macro applications with arguments, and the quote surface · `design/macros.md`
+
+**Prereq:** Step 58 (the directive layer, the expansion pipeline, the
+compile-time profile). **Done when:** `examples/memoize_demo` runs
+byte-for-byte on the interpreter and the c and TypeScript binaries;
+`// @memoize(2)` checks its argument against the macro's declared
+parameter and evaluates it at expansion; `quote { ... }` lays a wrapper
+body out as ordinary code with `${...}` holes; the refusal paths
+(E2033–E2036, E4306–E4309) refuse loudly; `dune runtest` green.
+
+- [x] **T59.1** — Application arguments: the directive's argument list
+      lexes as ordinary tokens after the name (the raw-text capture
+      retired), so the args carry the file's real spans; the parentheses
+      must touch the name (E2034) and close on the directive's own line
+      (E2033); role directives take none (E2035); a macro's signature
+      generalizes to leading scalar compile-time parameters plus the
+      trailing `Syntax` tree parameter (E4302); arity (E4306) and
+      per-argument type conformance (E4307) check statically in the
+      builtins-only environment the expansion evaluates them in, and the
+      values bind to the leading parameters inside the protected profile.
+- [x] **T59.2** — The quote surface: `quote { ... }` is a contextual
+      spelling in expression position — operand-start seats (`=`, `(`,
+      `,`, `[`, `return`, `do`, `->`) with a same-line brace; every other
+      `quote` stays an ordinary name. The rule was corpus-driven twice:
+      the stdlib's JSON escaper is called as `quote(self.value)` (a
+      keyword broke it) and sql's `== quote {` ends an if condition
+      (brace-follow alone broke it); `foreign` is the precedent —
+      parseable only inside a macro body (E4301
+      elsewhere); the body parses as ordinary items over the quote's own
+      token stream — real spans, no error recovery inside — with each
+      `${expr}` hole parsed in place and a compiler-owned placeholder
+      identifier (spelling reserved, E2036) standing in the stream; the
+      placeholder spans the whole hole so the adjacency rules read it as
+      one token; the evaluator substitutes each hole's tree for its
+      placeholder, and a hole producing a non-expression tree is E4309.
+- [x] **T59.3** — Generated runtime state: `Syntax.const_item` +
+      `Syntax.empty_map` splice a module-level `Map` constant beside the
+      wrapper; `Syntax.new_def` takes a whole quote as its body;
+      `Syntax.seq` flattens, so nested sequences concatenate; `lit_int` /
+      `lit_bool` / `lit_float` lift compile-time values into literal
+      trees; a `raise` inside a macro body surfaces as the expansion's
+      compile error E4308 carrying the Exception's message.
+- [x] **T59.4** — The pilot: `examples/memoize_demo` — `@memoize(2)`
+      wraps a def that prints on every actual evaluation; the output
+      shows a cache hit skipping the computation, the table reaching the
+      limit and dropping, and the evicted arguments computing again —
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output.
+
+### Step 60 — `@derive` on classes · `design/macros.md`
+
+**Prereq:** Step 59 (application arguments, the quote surface). **Done
+when:** `examples/derive_eq_demo` runs byte-for-byte on the interpreter
+and the c and TypeScript binaries; `// @derive_eq` above a `class`
+generates the equality method from the field list; the raw module no
+longer gates the expansion (the macro-domain check replaces the
+whole-module precheck); the refusal paths stay loud; `dune runtest`
+green.
+
+- [x] **T60.1** — The class seat: the parser accepts applications above
+      `class` items (roles stay def-only, E2031 names the rule; the
+      duplicate rules E2032 apply to classes; other items still refuse),
+      and the expansion passes the class tree through unchanged
+      machinery — `Sx_item (Item_class _)` in, the macro's transformed
+      class out.
+- [x] **T60.2** — The class API: `Syntax.fields` /
+      `Syntax.field_name` read the field list (names; the AST carries no
+      field types — recorded as the named gap for a JSON derivation),
+      `Syntax.with_methods` appends generated defs as ordinary methods,
+      `Syntax.name` answers a class or def tree; the body constructors —
+      `new_param`, `named_type`, `self_expr`, `bin_eq`, `bin_and`,
+      `member` — plus the `Sx_field` tree variant.
+- [x] **T60.3** — The precheck narrowed to the macro domain: the
+      whole-raw-module gate of step 58 could not survive derive, because
+      a call site naming a generated method fails against the raw class
+      before the macro ever runs (found live: the first derive smoke
+      died exactly there, at the runtime NoMethodError the raw-module
+      precheck had been masking). `Emo_check.check_macro_domain` checks
+      the `#macro` defs' shape and bodies plus every application's
+      compile-time arguments — application carriers ride as hollow
+      shells (bodies emptied, return dropped to Void so a hollow shell
+      cannot trip the must-return rule) — and the expanded module's full
+      check is where a call site naming a method the derivation does not
+      produce dies. One constraint lands with it: a macro body is
+      self-contained (its parameters, `Syntax`, the builtins).
+- [x] **T60.4** — The pilot: `examples/derive_eq_demo` — `@derive_eq`
+      generates an `eq?` method comparing every field pairwise (`self`
+      against `other`, chained with `&&`, a fieldless class deriving the
+      constant `true`), on two classes (an Int64 pair and a String);
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output.

@@ -39,6 +39,14 @@ def double(n Int64) Int64 {
 
 完整实例在 [`examples/trace_demo`](../../examples/trace_demo/main.emo):一个 `trace` 宏,把原 def 挪到隐藏名字下,让可见名字变成记录每次调用的参数与应答的 wrapper——对每个调用点生效,包括其他模块里的。转发调用由被装饰声明自己的参数树构造,这正是它永远不会与签名漂移的原因。
 
+## 类应用
+
+应用的座位扩到类:`// @derive_eq` 写在 `class` 上方,把类树交给宏;宏读取字段列表(`Syntax.fields`、`Syntax.field_name`——名字;AST 不携带字段类型),返回变换后的类——`Syntax.with_methods(class, methods)` 把生成的 def 追加为普通方法,随模块一起检查。`Syntax.name` 应答类名;`Syntax.new_param`、`Syntax.named_type`、`Syntax.self_expr`、`Syntax.bin_eq`、`Syntax.bin_and`、`Syntax.member` 构造生成体。角色侧仍是 def 专属——`// #macro` 写在类上是错误,应用写在其他 item 上也是错误。
+
+完整实例在 [`examples/derive_eq_demo`](../../examples/derive_eq_demo/main.emo):`@derive_eq` 生成把每个字段成对比较的 `eq?` 方法——生成的判等不可能遗漏类声明的任何字段,这正是此机制要消除的漂移。
+
+宏体是自足的:只引用自己的参数、`Syntax` 命名空间与内置。编译器在任何宏体运行之前检查宏域(`#macro` def 与应用的编译期参数),展开之后检查整个模块——调用点引用了派生不产出的方法,就在那里失败。
+
 ## 宏不是什么
 
 运行期代码生成——`eval`、开放类、`method_missing`——被拒绝作为语言机制:检查时刻不存在的生成代码无法被检查,每个运行时背一个解释器会拖垮 freestanding target,运行期结构会废掉类型反馈的性能故事。Emo 的运行期扩展单元已经存在:def 是一等值(`Block`),分发表是 `Map`,操作系统级扩展单元是进程。宏补上的是编译期那一半——派生、编译期检查的 DSL,以及按签名手写 wrapper 的漂移样板。

@@ -1,0 +1,60 @@
+// Step three of the macro ladder (design/macros.md): a macro applied to a
+// class. `@derive_eq` reads the class's field list and appends one
+// generated method — `eq?` — comparing every field pairwise: `self` against
+// the `other` parameter, chained with `&&` (a fieldless class derives the
+// constant `true`). The class tree is transformed with
+// `Syntax.with_methods`, so the method lives inside the class like a
+// hand-written one — the checker checks it with the module, the evaluator
+// and every backend see it as an ordinary method, and a call site naming a
+// method the derivation does not produce fails the build. The comparison
+// chain is built per field with `Syntax.bin_eq` / `Syntax.bin_and` — the
+// generated equality can never forget a field the class declares, which is
+// the drift this mechanism exists to remove.
+//
+//   emo run main.emo
+
+// #macro
+def derive_eq(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const fields = Syntax.fields(f)
+  const po = Syntax.new_param("other", Syntax.named_type(name))
+  var acc = Syntax.lit_bool(true)
+  var have = false
+  var i = 0
+  while i < fields.length() {
+    const fname = Syntax.field_name(fields[i])
+    const cmp = Syntax.bin_eq(
+        Syntax.member(Syntax.self_expr(), fname),
+        Syntax.member(Syntax.ident("other"), fname))
+    acc = if have { Syntax.bin_and(acc, cmp) } else { cmp }
+    have = true
+    i = i + 1
+  }
+  const eq = Syntax.new_def("eq?", [po], Syntax.named_type("Bool"), [
+      Syntax.return_stmt(acc)
+    ])
+  return Syntax.with_methods(f, [eq])
+}
+
+// @derive_eq
+class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+// @derive_eq
+class Label {
+  def init(text String) {
+    self.text = text
+  }
+}
+
+const p1 = Point.new(x: 1, y: 2)
+const p2 = Point.new(x: 1, y: 2)
+const p3 = Point.new(x: 9, y: 2)
+println(p1.eq?(p2))
+println(p1.eq?(p3))
+println(Label.new(text: "hi").eq?(Label.new(text: "hi")))
+println(Label.new(text: "hi").eq?(Label.new(text: "bye")))

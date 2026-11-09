@@ -4256,6 +4256,60 @@ let check_module ~(modules : string list list)
   in
   (diagnostics, refs, requires)
 
+(* The expansion-time gate (design/macros.md): before a macro body ever
+   runs, the macro domain checks — the `#macro` defs' shape and bodies
+   (quote holes included), and every application's compile-time arguments
+   against the macro's declared leading parameters. The *rest* of the
+   module is deliberately not checked here: a macro application may grow
+   the declaration surface (a derived method the raw class does not
+   declare), so full checking belongs to the expanded module, not the raw
+   one. Application carriers ride as hollow shells — signatures and
+   directives intact, bodies emptied — so the argument checks see the
+   macro table without re-checking the call sites the expansion will
+   rewrite. *)
+let is_macro_item (item : Ast.item) : bool =
+  List.exists
+    (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+    item.Ast.directives
+
+let check_macro_domain ~(modules : string list list)
+    ?(packages : string list list = [])
+    ?(package_deps : (string list * string list) list = [])
+    ?(aliases : (string list * string list) list = []) ~(current : string list)
+    (items : Ast.item list) : Emo_support.Diagnostic.t list =
+  let hollow item =
+    match item.Ast.item_desc with
+    | Ast.Item_def d when is_macro_item item -> Some item
+    | Ast.Item_def d ->
+        Some
+          {
+            item with
+            Ast.item_desc =
+              Ast.Item_def { d with Ast.def_body = []; Ast.def_return = None };
+          }
+    | Ast.Item_class c ->
+        Some
+          {
+            item with
+            Ast.item_desc =
+              Ast.Item_class
+                {
+                  c with
+                  Ast.class_init = None;
+                  Ast.class_methods = [];
+                  Ast.class_fields = [];
+                };
+          }
+    | _ -> None
+  in
+  let domain = List.filter_map hollow items in
+  let diagnostics, _, _ =
+    check_module ~modules ~packages ~package_deps ~aliases ~current domain
+  in
+  diagnostics
+
+(* Checks pre-parsed items without module context. Every diagnostic found,
+   sorted by position. *)
 (* Checks pre-parsed items without module context. Every diagnostic found,
    sorted by position. *)
 let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =

@@ -965,32 +965,42 @@ and validate_and_attach pending item =
     let roles =
       List.filter (fun d -> d.Ast.directive_desc = Ast.Role_macro) pending
     in
+    let dup_check () =
+      let rec go seen = function
+        | [] -> ()
+        | d :: rest -> (
+            match d.Ast.directive_desc with
+            | Ast.Apply_macro (name, _) ->
+                if List.mem name seen then
+                  error "E2032" d.Ast.directive_span
+                    (Printf.sprintf "`@%s` is applied twice to this declaration"
+                       name)
+                else go (name :: seen) rest
+            | Ast.Role_macro -> go seen rest)
+      in
+      go [] pending
+    in
     (match item.Ast.item_desc with
     | Ast.Item_def _ ->
         if List.length roles > 1 then
           error "E2032" (List.nth roles 1).Ast.directive_span
             "`#macro` is declared twice on this declaration"
         else ();
-        let rec dup_check seen = function
-          | [] -> ()
-          | d :: rest -> (
-              match d.Ast.directive_desc with
-              | Ast.Apply_macro (name, _) ->
-                  if List.mem name seen then
-                    error "E2032" d.Ast.directive_span
-                      (Printf.sprintf
-                         "`@%s` is applied twice to this declaration" name)
-                  else dup_check (name :: seen) rest
-              | Ast.Role_macro -> dup_check seen rest)
-        in
-        dup_check [] pending
+        dup_check ()
+    | Ast.Item_class _ ->
+        (* the derive seat (design/macros.md, step 3): applications
+           transform the class; the role side stays def-only — a macro is
+           a def *)
+        if roles <> [] then
+          error "E2031" (List.hd roles).Ast.directive_span
+            "`#macro` declares a def a macro — a class takes applications only";
+        dup_check ()
     | Ast.Item_stmt _ ->
         error "E2031" first.Ast.directive_span
           "a directive attaches to a declaration, not to a statement"
     | _ ->
         error "E2031" first.Ast.directive_span
-          "a directive attaches to a def — class application arrives with a \
-           later step");
+          "a directive attaches to a def or class");
     { item with Ast.directives = pending }
 
 and parse_item st =

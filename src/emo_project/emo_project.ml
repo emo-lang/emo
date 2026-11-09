@@ -252,8 +252,8 @@ let parse_cached p (file : string) : Ast.item list =
         try
           Emo_eval.expand_macros
             ~precheck:(fun raw ->
-              let diags, _, _ =
-                Emo_check.check_module ~modules:(module_paths p)
+              let diags =
+                Emo_check.check_macro_domain ~modules:(module_paths p)
                   ~packages:p.packages ~package_deps:p.package_deps
                   ~aliases:p.aliases ~current:(unit_path_of p file) raw
               in
