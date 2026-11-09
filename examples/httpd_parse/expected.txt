@@ -1,0 +1,39 @@
+== minimal
+ok GET / path=/ proto=HTTP/1.1 headers=1
+   header Host: localhost
+== query
+ok GET /search?q=hello%20world&x=1&q=second path=/search proto=HTTP/1.1 headers=1
+   query q=hello world
+   query x=1
+   header Host: h
+== case-folding
+ok POST /users path=/users proto=HTTP/1.0 headers=3
+   header Content-Type: text/plain
+   header X-Trace: one
+   header X-Trace: two
+== chunked-head
+ok POST /upload path=/upload proto=HTTP/1.1 headers=2
+   header Host: h
+   header Transfer-Encoding: chunked
+== plus-is-space
+ok GET /find?q=a+b path=/find proto=HTTP/1.1 headers=1
+   query q=a b
+   header Host: h
+== blank-inside
+err httpd: bad request: a blank line inside the header block
+== no-equals
+err httpd: bad request: the query pair `k` carries no `=`
+== missing-host
+err httpd: bad request: an HTTP/1.1 request carries no Host header
+== bad-escape
+err httpd: bad request: the escape at byte 0 is not two hex digits
+== unprintable-escape
+err httpd: bad request: the escape at byte 3 decodes to byte 195, outside printable ASCII
+== bad-version
+err httpd: bad request: the protocol version is neither HTTP/1.1 nor HTTP/1.0, got `HTTP/2.0`
+== four-parts
+err httpd: bad request: the request line is `method SP target SP version`, got `GET /x HTTP/1.1 extra`
+== space-before-colon
+err httpd: bad request: the header name is not a token, got `Host `
+== truncated
+err httpd: bad request: the head block does not end with a blank line

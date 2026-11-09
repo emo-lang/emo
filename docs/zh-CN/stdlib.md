@@ -28,7 +28,8 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c`、`wasm`（fd/目录半边） |
 | [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c`、`wasm` |
 | [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
-| [`http`](#http-包) | HTTP 客户端与服务器 | `ocaml`、`c`、`typescript` |
+| [`http`](#http-包) | HTTP 客户端 | `ocaml`、`c`、`typescript` |
+| [`httpd`](#httpd-包) | HTTP 服务器 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
@@ -203,7 +204,7 @@ EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 以 reas
 
 ## http 包
 
-构建在 `net` 之上的纯 Emo HTTP 客户端与服务器。全程直接风格;每个请求一条连接,交换完成后关闭;重定向从不自动跟随——3xx 和其他响应一样。
+构建在 `net` 之上的纯 Emo HTTP 客户端。全程直接风格;每个请求一条连接,交换完成后关闭;重定向从不自动跟随——3xx 和其他响应一样。提供 HTTP 服务是 `httpd` 包的那半边。
 
 ```emo
 def get(url String) (R, HttpResponse)
@@ -223,28 +224,36 @@ class HttpResponse {
 }
 ```
 
-服务器侧是两个助手,处理者都以附着块给出:
-
-```emo
-http.serve(listener) -> (conn TcpConn) { ... }
-http.serve_requests(listener) -> (req HttpRequest) { ... }
-def response(status Int64, headers Array[(String, String)], body String) HttpResponse
-```
-
-`serve` 每条连接起一个进程,把裸连接交给处理者;`serve_requests` 把每个请求解析成 `HttpRequest`(`method`、`path`、`headers`、`body`,外加 `header(name)`),写回处理者的 `HttpResponse` 然后关闭。多数处理者要的是 `serve_requests`。监听者可以来自 `net.listen`,也可以来自 `net.listen_tls`/`net.listen_tls_with`——同一个处理者就以 HTTPS 提供服务。
-
-```emo
-require "http"
-require "net"
-
-const (R.ok, listener) = net.listen("127.0.0.1", 8902)
-
-http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [("Content-Type", "text/plain")], "hello from emo\n")
-}
-```
-
 目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。在 `c` 上覆盖范围继承自 `net`:TCP 与 TLS。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`、`examples/https_roundtrip`。
+
+## httpd 包
+
+构建在 `net` 之上的纯 Emo HTTP 服务器:每连接一进程,一个请求作为值进来、处理者用一个值应答——keep-alive、chunked 请求体、`100-continue`、每请求超时与尺寸限额、优雅关闭,全都住在包里,不住进每个程序的 accept 循环。客户端半边是 `http` 包。
+
+```emo
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello from emo\n")
+}
+
+server.stop()   // 关闭监听;在途连接跑完各自的事
+server.wait()   // 等待排干
+```
+
+`serve`(或带 `server_options()` 的 `serve_with`——读/空闲超时、头与体的限额对应 431/413、注入的 `Date` 时钟)立刻应答一个 `Server` 句柄;`wait()` 阻塞到排干完成。处理者收到一个完整的 `Request`——`method`、`path`、`query`、规范化过的 `headers`(大小写不敏感查找)、按 `Content-Length` 或 chunked 解出的 `body`(含 `100-continue`)、`params`——并应答一个 `Response` 值;线上恒带 `Content-Length`(派生,或处理者自带的),HEAD/204/304 去体,keep-alive 保持到对端说关。
+
+路由住在 `httpd.router()`,一次注册一条:
+
+```emo
+var r = httpd.router()
+r = r.get("/hello/{name}", greet)      // req.params["name"],已解码
+r = r.get("/files/{path...}", files)   // 路径剩余部分,一个捕获
+r = r.handle("/static/", serve_static) // 全方法,其下整棵子树
+const server = httpd.serve_routes(listener, r)
+```
+
+最具体的模式胜出(字面量 > 通配 > rest,共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本,连接关闭);语言没有时钟,响应默认不带 `Date`,除非经 `with_date` 注入。
+
+目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
 
 ## json 包
 

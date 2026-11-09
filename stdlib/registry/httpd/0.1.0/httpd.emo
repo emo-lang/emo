@@ -1,0 +1,1507 @@
+// The HTTP server package: HTTP/1.1 over the net surface, one process
+// per connection. Direct style throughout — a request arrives as a
+// value, the handler answers with one, and the connection's machinery
+// (keep-alive, limits, timeouts) is the package's own, not every
+// program's accept loop.
+//
+// The error split is the standard library's: the peer's malformed
+// bytes are expected data, and parse_head answers them as
+// (R.error, reason) — every parse reason is the 400 family, so the
+// reason alone carries the status the server answers with. A
+// programmer's mistake raises. Reasons begin `httpd:`.
+//
+// A String cannot carry raw bytes on every target (typescript's
+// strings are UTF-8 text), so percent-decoding is honest about that
+// boundary: an escape decoding into printable ASCII becomes text, and
+// an escape decoding anywhere else is refused with the byte named —
+// text that silently mojibakes is the failure this refuses to be.
+// Byte-exact query values wait on a public Bytes bridge and are the
+// named follow-up.
+//
+// The language has no clock primitive (the stance slog records), so
+// responses carry no Date header unless the caller grows one through
+// with_date — default output stays byte-deterministic.
+
+class Request {
+  def init(method String, target String, path String, query Map[String, String], proto String, headers Array[(String, String)], body String, params Map[String, String]) {
+    self.method = method
+    self.target = target
+    self.path = path
+    self.query = query
+    self.proto = proto
+    self.headers = headers
+    self.params = params
+    self.body = body
+  }
+
+  // The first value of the header, case-insensitively — "" when the
+  // header is absent.
+  def header(name String) String {
+    return first_header(self.headers, canonical_name(name), 0)
+  }
+
+  // Every value of the header, wire order — [] when absent.
+  def header_all(name String) Array[String] {
+    return all_headers(self.headers, canonical_name(name), 0, [])
+  }
+
+  // The request with a body attached: the server reads the head and
+  // the body apart and hands the handler one whole value.
+  def with_body(body String) Request {
+    return Request.new(method: self.method, target: self.target, path: self.path, query: self.query, proto: self.proto, headers: self.headers, body: body, params: self.params)
+  }
+
+  // The request with the router's wildcard captures filled in.
+  def with_params(params Map[String, String]) Request {
+    return Request.new(method: self.method, target: self.target, path: self.path, query: self.query, proto: self.proto, headers: self.headers, body: self.body, params: params)
+  }
+}
+
+class Response {
+  def init(status Int64, headers Array[(String, String)], body String) {
+    self.status = status
+    self.headers = headers
+    self.body = body
+  }
+}
+
+// The response constructor: status, headers in wire order, body.
+def response(status Int64, headers Array[(String, String)], body String) Response {
+  return Response.new(status: status, headers: headers, body: body)
+}
+
+// The error answer: a plain-text body carrying the message as it is —
+// the caller's words are the body, the content type set at write time.
+def error(status Int64, message String) Response {
+  return response(status, [("Content-Type", "text/plain; charset=utf-8")], message)
+}
+
+// ---- Parsing ----
+
+// The printable ASCII run, byte 0x20 to byte 0x7E — index `b - 32`
+// answers the character the byte names.
+const ascii_printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+// RFC 7230's tchars — the characters a method or a header name may be.
+const token_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~"
+
+const upper_case = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+const lower_case = "abcdefghijklmnopqrstuvwxyz"
+
+// The pure head parser: one request's head block as it rides the wire
+// — request line, header lines, the blank line — answered as a
+// Request with an empty body. Reading the block off a connection, and
+// the body after it, is the server loop's half.
+def parse_head(raw String) (R, Request) {
+  if !ends_with_blank_line(raw) {
+    return (R.error, "httpd: bad request: the head block does not end with a blank line")
+  }
+  const lines = raw.substring(0, raw.length() - 4).split("\r\n")
+  case parse_request_line(lines[0]) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)   -> {
+      case parse_header_lines(lines, 1, []) {
+        (R.error, why)  -> { return (R.error, why) }
+        (R.ok, headers) -> {
+          case require_host(headers, parts[2]) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _)      -> {
+              case split_target(parts[1]) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, split)  -> {
+                  return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: "", params: Map.new()))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The block must close with its own blank line — `CRLF CRLF` — the
+// terminator the reader stops at.
+def ends_with_blank_line(s String) Bool {
+  if s.length() < 4 {
+    return false
+  }
+  return s.substring(s.length() - 4, 4) == "\r\n\r\n"
+}
+
+// The request line: method SP request-target SP version, exactly one
+// space between the three — a fourth part is a malformed line, and
+// the version is HTTP/1.1 or HTTP/1.0 or it is refused.
+def parse_request_line(line String) (R, (String, String, String)) {
+  const parts = line.split(" ")
+  if parts.length() != 3 {
+    return (R.error, "httpd: bad request: the request line is `method SP target SP version`, got `" + line + "`")
+  }
+  if !is_token(parts[0]) {
+    return (R.error, "httpd: bad request: the method is not a token, got `" + parts[0] + "`")
+  }
+  if parts[2] == "HTTP/1.1" || parts[2] == "HTTP/1.0" {
+    return (R.ok, (parts[0], parts[1], parts[2]))
+  }
+  return (R.error, "httpd: bad request: the protocol version is neither HTTP/1.1 nor HTTP/1.0, got `" + parts[2] + "`")
+}
+
+// Header lines to the end of the block: a token name before the first
+// colon (so `Host : h` is refused — the space rides the name, and a
+// name is not a token), the value trimmed of surrounding whitespace,
+// the name canonicalized. A blank line inside the block is a malformed
+// head, not a second terminator.
+def parse_header_lines(lines Array[String], i Int64, acc Array[(String, String)]) (R, Array[(String, String)]) {
+  if i >= lines.length() {
+    return (R.ok, acc)
+  }
+  const line = lines[i]
+  if line == "" {
+    return (R.error, "httpd: bad request: a blank line inside the header block")
+  }
+  const colon = line.index_of(":")
+  if colon <= 0 {
+    return (R.error, "httpd: bad request: a header line carries no colon, got `" + line + "`")
+  }
+  const name = line.substring(0, colon)
+  if !is_token(name) {
+    return (R.error, "httpd: bad request: the header name is not a token, got `" + name + "`")
+  }
+  const value = line.substring(colon + 1, line.length() - colon - 1).trim()
+  return parse_header_lines(lines, i + 1, acc.append((canonical_name(name), value)))
+}
+
+// HTTP/1.1 names its authority on every request: a Host header must
+// be present. HTTP/1.0 predates the rule and stands without one.
+def require_host(headers Array[(String, String)], proto String) (R, Bool) {
+  if proto == "HTTP/1.1" {
+    for var i = 0; i < headers.length(); i = i + 1 {
+      if headers[i][0] == "Host" {
+        return (R.ok, true)
+      }
+    }
+    return (R.error, "httpd: bad request: an HTTP/1.1 request carries no Host header")
+  }
+  return (R.ok, true)
+}
+
+// The request-target: origin-form only — a path beginning `/`, an
+// optional `?query` after. The path stays as it arrived (the router
+// matches raw); the query parses to a map.
+def split_target(target String) (R, (String, Map[String, String])) {
+  if !target.starts_with("/") {
+    return (R.error, "httpd: bad request: the request-target must begin with `/`, got `" + target + "`")
+  }
+  const q = target.index_of("?")
+  if q < 0 {
+    return (R.ok, (target, Map.new()))
+  }
+  const path = target.substring(0, q)
+  case parse_query(target.substring(q + 1, target.length() - q - 1)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, query)  -> { return (R.ok, (path, query)) }
+  }
+}
+
+// The query string: `&`-separated pairs, each `key=value` — a pair
+// without `=` is refused. The first occurrence of a key wins; the
+// rest are the peer's to notice in the raw target.
+def parse_query(raw String) (R, Map[String, String]) {
+  const out = Map.new()
+  if raw == "" {
+    return (R.ok, out)
+  }
+  const pairs = raw.split("&")
+  for var i = 0; i < pairs.length(); i = i + 1 {
+    const pair = pairs[i]
+    const eq = pair.index_of("=")
+    if eq < 0 {
+      return (R.error, "httpd: bad request: the query pair `" + pair + "` carries no `=`")
+    }
+    case percent_decode(pair.substring(0, eq)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, key)    -> {
+        case percent_decode(pair.substring(eq + 1, pair.length() - eq - 1)) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, value)  -> {
+            if !out.has(key) {
+              out.set(key, value)
+            }
+          }
+        }
+      }
+    }
+  }
+  return (R.ok, out)
+}
+
+// Percent-decoding under the printable-ASCII discipline: `%XX` with
+// both nibbles hex becomes the byte it names, and that byte must sit
+// in 0x20..0x7E — the range every target carries identically in a
+// String. An escape decoding outside it (a UTF-8 sequence, a control
+// byte) is refused with the byte named. Literal characters pass
+// through as the text they already are.
+//
+// `+` is where the two spellings part: the query-string convention
+// reads it as a space (percent_decode), a path's `+` is a plus
+// (percent_decode_raw).
+def percent_decode(s String) (R, String) {
+  return percent_decode_with(s, true)
+}
+
+def percent_decode_raw(s String) (R, String) {
+  return percent_decode_with(s, false)
+}
+
+def percent_decode_with(s String, plus_space Bool) (R, String) {
+  var out = ""
+  var i = 0
+  while i < s.length() {
+    const ch = s.substring(i, 1)
+    if ch == "%" {
+      if i + 2 >= s.length() {
+        return (R.error, "httpd: bad request: a `%` at byte " + i.to_string() + " has no two-digit escape after it")
+      }
+      const hi = hex_value(s.substring(i + 1, 1))
+      const lo = hex_value(s.substring(i + 2, 1))
+      if hi < 0 || lo < 0 {
+        return (R.error, "httpd: bad request: the escape at byte " + i.to_string() + " is not two hex digits")
+      }
+      const b = hi * 16 + lo
+      if b < 32 || b > 126 {
+        return (R.error, "httpd: bad request: the escape at byte " + i.to_string() + " decodes to byte " + b.to_string() + ", outside printable ASCII")
+      }
+      out = out + ascii_printable.substring(b - 32, 1)
+      i = i + 3
+    } else {
+      if plus_space && ch == "+" {
+        out = out + " "
+      } else {
+        out = out + ch
+      }
+      i = i + 1
+    }
+  }
+  return (R.ok, out)
+}
+
+// The nibble's value 0-15, or -1 when the character is not a hex digit.
+def hex_value(ch String) Int64 {
+  return "0123456789abcdef".index_of(ch.lower())
+}
+
+// RFC 7230's token: tchars only, at least one.
+def is_token(s String) Bool {
+  if s == "" {
+    return false
+  }
+  return token_from(s, 0)
+}
+
+def token_from(s String, i Int64) Bool {
+  if i >= s.length() {
+    return true
+  }
+  if token_chars.index_of(s.substring(i, 1)) < 0 {
+    return false
+  }
+  return token_from(s, i + 1)
+}
+
+// The canonical header name: the first letter and every letter after
+// a hyphen uppercased, the rest lowercased — the wire's names arrive
+// in any case, lookups answer one spelling. The name is already a
+// token (the parser refused the rest), so the letters and hyphens are
+// the whole of it.
+def canonical_name(name String) String {
+  var out = ""
+  var upper_next = true
+  for var i = 0; i < name.length(); i = i + 1 {
+    const ch = name.substring(i, 1)
+    if ch == "-" {
+      out = out + "-"
+      upper_next = true
+    } else {
+      out = out + one_letter(ch, upper_next)
+      upper_next = false
+    }
+  }
+  return out
+}
+
+// The character capitalized when a capital is due (the name's first
+// letter, or a letter after a hyphen), lowered when it is not —
+// lookup tables, because the String surface carries no upper().
+def one_letter(ch String, upper_next Bool) String {
+  const low = ch.lower()
+  if !upper_next {
+    return low
+  }
+  const at = lower_case.index_of(low)
+  if at >= 0 {
+    return upper_case.substring(at, 1)
+  }
+  return low
+}
+
+// The first value of the canonical name, wire order — "" when absent.
+def first_header(headers Array[(String, String)], name String, i Int64) String {
+  if i >= headers.length() {
+    return ""
+  }
+  const pair = headers[i]
+  if pair[0] == name {
+    return pair[1]
+  }
+  return first_header(headers, name, i + 1)
+}
+
+// Every value of the canonical name, wire order — [] when absent.
+def all_headers(headers Array[(String, String)], name String, i Int64, acc Array[String]) Array[String] {
+  if i >= headers.length() {
+    return acc
+  }
+  const pair = headers[i]
+  if pair[0] == name {
+    return all_headers(headers, name, i + 1, acc.append(pair[1]))
+  }
+  return all_headers(headers, name, i + 1, acc)
+}
+
+// ---- Responses ----
+
+// The reason phrases the status line carries — the common registry's
+// names; a status the table misses answers "Unknown" and the code
+// speaks for itself.
+const reason_phrases = Map.new((100, "Continue"), (200, "OK"), (201, "Created"), (202, "Accepted"), (204, "No Content"), (301, "Moved Permanently"), (302, "Found"), (304, "Not Modified"), (400, "Bad Request"), (401, "Unauthorized"), (403, "Forbidden"), (404, "Not Found"), (405, "Method Not Allowed"), (408, "Request Timeout"), (411, "Length Required"), (413, "Content Too Large"), (414, "URI Too Long"), (429, "Too Many Requests"), (431, "Request Header Fields Too Large"), (500, "Internal Server Error"), (501, "Not Implemented"), (502, "Bad Gateway"), (503, "Service Unavailable"), (504, "Gateway Timeout"))
+
+def reason_phrase(status Int64) String {
+  if reason_phrases.has(status) {
+    return reason_phrases.get(status)
+  }
+  return "Unknown"
+}
+
+// Whether the response already carries the header (any case) — the
+// caller's Content-Length and Date stand, the wire carries one truth.
+def has_header_ci(headers Array[(String, String)], name String) Bool {
+  for var i = 0; i < headers.length(); i = i + 1 {
+    if headers[i][0].lower() == name {
+      return true
+    }
+  }
+  return false
+}
+
+// The body that goes on the wire: a HEAD carries the headers of its
+// response and no body; 204 and 304 carry neither body nor a length.
+def response_body(req Request, resp Response) String {
+  if req.method == "HEAD" {
+    return ""
+  }
+  if resp.status == 204 || resp.status == 304 {
+    return ""
+  }
+  return resp.body
+}
+
+// The whole response on one write: status line, the handler's headers
+// in wire order (the server owns Connection — handler entries with
+// that name are dropped, the negotiation below decides it; a
+// Content-Length the handler set stands, else the length derives),
+// the injected Date when the handler set none, the derived
+// Content-Length, the negotiated Connection.
+def response_head(req Request, resp Response, keep_alive Bool, date String) String {
+  var head = "HTTP/1.1 " + resp.status.to_string() + " " + reason_phrase(resp.status) + "\r\n"
+  for var i = 0; i < resp.headers.length(); i = i + 1 {
+    const pair = resp.headers[i]
+    if pair[0].lower() != "connection" {
+      head = head + pair[0] + ": " + pair[1] + "\r\n"
+    }
+  }
+  if resp.status != 204 && resp.status != 304 && !has_header_ci(resp.headers, "content-length") {
+    head = head + "Content-Length: " + resp.body.length().to_string() + "\r\n"
+  }
+  if date != "" && !has_header_ci(resp.headers, "date") {
+    head = head + "Date: " + date + "\r\n"
+  }
+  if !keep_alive {
+    head = head + "Connection: close\r\n"
+  } else {
+    if req.proto == "HTTP/1.0" {
+      head = head + "Connection: keep-alive\r\n"
+    }
+  }
+  return head + "\r\n" + response_body(req, resp)
+}
+
+// ---- Options ----
+
+// The server's knobs, built the net options way: `server_options()`
+// starts at the defaults and every `with_*` answers a new value. The
+// timeouts are seconds, 0.0 leaving an operation unbounded — the net
+// convention. The header block starts bounded at 1 MiB; the body is
+// unbounded until the caller bounds it.
+class ServerOptions {
+  def init(read_timeout Float64, idle_timeout Float64, max_header_bytes Int64, max_body_bytes Int64, date_fn Block, has_date Bool) {
+    self.read_timeout = read_timeout
+    self.idle_timeout = idle_timeout
+    self.max_header_bytes = max_header_bytes
+    self.max_body_bytes = max_body_bytes
+    self.date_fn = date_fn
+    self.has_date = has_date
+  }
+
+  def with_read_timeout(seconds Float64) ServerOptions {
+    return ServerOptions.new(read_timeout: seconds, idle_timeout: self.idle_timeout, max_header_bytes: self.max_header_bytes, max_body_bytes: self.max_body_bytes, date_fn: self.date_fn, has_date: self.has_date)
+  }
+
+  def with_idle_timeout(seconds Float64) ServerOptions {
+    return ServerOptions.new(read_timeout: self.read_timeout, idle_timeout: seconds, max_header_bytes: self.max_header_bytes, max_body_bytes: self.max_body_bytes, date_fn: self.date_fn, has_date: self.has_date)
+  }
+
+  def with_max_header_bytes(n Int64) ServerOptions {
+    return ServerOptions.new(read_timeout: self.read_timeout, idle_timeout: self.idle_timeout, max_header_bytes: n, max_body_bytes: self.max_body_bytes, date_fn: self.date_fn, has_date: self.has_date)
+  }
+
+  def with_max_body_bytes(n Int64) ServerOptions {
+    return ServerOptions.new(read_timeout: self.read_timeout, idle_timeout: self.idle_timeout, max_header_bytes: self.max_header_bytes, max_body_bytes: n, date_fn: self.date_fn, has_date: self.has_date)
+  }
+
+  // The clock, injected: the language has none (the slog stance), so
+  // a caller with one hands a () String block and every response
+  // carries its Date until the handler set a Date itself. Default
+  // output stays byte-deterministic — no clock, no Date.
+  def with_date(fn Block) ServerOptions {
+    return ServerOptions.new(read_timeout: self.read_timeout, idle_timeout: self.idle_timeout, max_header_bytes: self.max_header_bytes, max_body_bytes: self.max_body_bytes, date_fn: fn, has_date: true)
+  }
+}
+
+def server_options() ServerOptions {
+  return ServerOptions.new(read_timeout: 0.0, idle_timeout: 0.0, max_header_bytes: 1048576, max_body_bytes: 0, date_fn: -> () { return "" }, has_date: false)
+}
+
+// ---- One connection ----
+
+// The refusal answer: the plain-text reason as the body, the
+// connection always closing after — a request the server refused is
+// not one it keeps talking on.
+def write_simple(conn TcpConn, status Int64, message String) (R, TcpConn) {
+  const head = "HTTP/1.1 " + status.to_string() + " " + reason_phrase(status) + "\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + message.length().to_string() + "\r\nConnection: close\r\n\r\n" + message
+  case conn.write(head) {
+    (R.error, _) -> { return conn.close() }
+    (R.ok, _)    -> { return conn.close() }
+  }
+}
+
+def is_digits(s String) Bool {
+  if s == "" {
+    return false
+  }
+  for var i = 0; i < s.length(); i = i + 1 {
+    if "0123456789".index_of(s.substring(i, 1)) < 0 {
+      return false
+    }
+  }
+  return true
+}
+
+// The hex run's value — a chunk size or nothing.
+def hex_parse(s String) (R, Int64) {
+  var value = 0
+  for var i = 0; i < s.length(); i = i + 1 {
+    const v = hex_value(s.substring(i, 1))
+    if v < 0 {
+      return (R.error, "httpd: bad request: the chunk size `" + s + "` is not hex")
+    }
+    value = value * 16 + v
+  }
+  return (R.ok, value)
+}
+
+// The head block under the byte limit, read line by line to the blank
+// line. The answer's second slot is the status to refuse with: 0 the
+// block is good, 431 the block ran over the limit (the first slot
+// then carries the reason text), (R.error, _) a transport failure —
+// a timeout, a close mid-line — that has no answer to give.
+def read_head(conn TcpConn, max_bytes Int64) (R, (String, Int64)) {
+  return read_head_lines(conn, max_bytes, 0, [])
+}
+
+def read_head_lines(conn TcpConn, max_bytes Int64, total Int64, lines Array[String]) (R, (String, Int64)) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.ok, (join_head(lines), 0))
+      }
+      const next_total = total + line.length() + 2
+      if next_total > max_bytes {
+        return (R.ok, ("httpd: the header block exceeds the server's " + max_bytes.to_string() + "-byte limit", 431))
+      }
+      return read_head_lines(conn, max_bytes, next_total, lines.append(line))
+    }
+  }
+}
+
+def join_head(lines Array[String]) String {
+  var out = ""
+  for var i = 0; i < lines.length(); i = i + 1 {
+    out = out + lines[i] + "\r\n"
+  }
+  return out + "\r\n"
+}
+
+// Chunked bodies: `size` lines (hex, extensions after a `;` ignored),
+// `size` bytes and a CRLF each, a 0 chunk, trailer lines to the blank
+// one. The answer is read_head's: 0 the body is good, 400 the peer's
+// chunk framing broke, 413 the body ran over the limit.
+def read_chunked(conn TcpConn, max_body Int64) (R, (String, Int64)) {
+  return read_chunk_loop(conn, max_body, "", 0)
+}
+
+def read_chunk_loop(conn TcpConn, max_body Int64, out String, total Int64) (R, (String, Int64)) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      case chunk_size(line) {
+        (R.error, why) -> { return (R.ok, (why, 400)) }
+        (R.ok, size)   -> {
+          if size == 0 {
+            return read_trailers(conn, out)
+          }
+          const next_total = total + size
+          if max_body > 0 && next_total > max_body {
+            return (R.ok, ("httpd: the request body exceeds the server's limit", 413))
+          }
+          case conn.read_exactly(size + 2) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, data)   -> {
+              const n = data.length()
+              if n < 2 || data.substring(n - 2, 2) != "\r\n" {
+                return (R.ok, ("httpd: bad request: a chunk's data does not end with its CRLF", 400))
+              }
+              return read_chunk_loop(conn, max_body, out + data.substring(0, n - 2), next_total)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def chunk_size(line String) (R, Int64) {
+  const semi = line.index_of(";")
+  var text = line
+  if semi >= 0 {
+    text = line.substring(0, semi)
+  }
+  text = text.trim()
+  if text == "" {
+    return (R.error, "httpd: bad request: a chunk carries no size")
+  }
+  return hex_parse(text)
+}
+
+// The trailer lines after the 0 chunk: read to the blank one, their
+// names and values ignored this side of the wire.
+def read_trailers(conn TcpConn, body String) (R, (String, Int64)) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.ok, (body, 0))
+      }
+      return read_trailers(conn, body)
+    }
+  }
+}
+
+// The keep-alive negotiation: HTTP/1.1 keeps the connection unless the
+// peer named `close`; HTTP/1.0 closes unless it named `keep-alive`.
+def header_has_token(value String, token String) Bool {
+  const parts = value.lower().split(",")
+  for var i = 0; i < parts.length(); i = i + 1 {
+    if parts[i].trim() == token {
+      return true
+    }
+  }
+  return false
+}
+
+def wants_keep_alive(req Request) Bool {
+  if req.proto == "HTTP/1.1" {
+    return !header_has_token(req.header("Connection"), "close")
+  }
+  return header_has_token(req.header("Connection"), "keep-alive")
+}
+
+// One connection, one process, kept alive across requests until the
+// negotiation closes it. A request the server cannot parse is
+// answered and the connection ends; a handler that raises ends the
+// connection's process (and holds one drain count — the
+// no-catch stance's known face, the same exposure sync.WaitGroup
+// carries).
+def serve_connection(conn TcpConn, handler Block, options ServerOptions, counter Pid) Int64 {
+  return connection_loop(conn, handler, options, counter, true)
+}
+
+def connection_loop(c TcpConn, handler Block, options ServerOptions, counter Pid, first Bool) Int64 {
+  var conn = c
+  if first {
+    if options.read_timeout > 0.0 {
+      conn = conn.set_timeout(options.read_timeout)
+    }
+  } else {
+    if options.idle_timeout > 0.0 {
+      conn = conn.set_timeout(options.idle_timeout)
+    } else {
+      if options.read_timeout > 0.0 {
+        conn = conn.set_timeout(options.read_timeout)
+      }
+    }
+  }
+  case read_head(conn, options.max_header_bytes) {
+    (R.error, _) -> { return connection_done(conn, counter) }
+    (R.ok, parts) -> {
+      if parts[1] != 0 {
+        write_simple(conn, parts[1], parts[0])
+        return connection_done(conn, counter)
+      }
+      case parse_head(parts[0]) {
+        (R.error, why) -> {
+          write_simple(conn, 400, why)
+          return connection_done(conn, counter)
+        }
+        (R.ok, req) -> {
+          return answer_request(conn, handler, options, counter, req)
+        }
+      }
+    }
+  }
+}
+
+// The body and the answer: chunked or Content-Length under the
+// limits, `100 Continue` before a body the peer waited on, one whole
+// Request through the handler, one write of the response.
+def answer_request(c TcpConn, handler Block, options ServerOptions, counter Pid, req Request) Int64 {
+  var conn = c
+  const te = req.header("Transfer-Encoding")
+  const cl = req.header("Content-Length")
+  var body = ""
+  if te != "" {
+    if te.lower() != "chunked" {
+      write_simple(conn, 400, "httpd: bad request: the only transfer encoding a request may name is `chunked`, got `" + te + "`")
+      return connection_done(conn, counter)
+    }
+    if cl != "" {
+      write_simple(conn, 400, "httpd: bad request: a request carries Content-Length beside Transfer-Encoding")
+      return connection_done(conn, counter)
+    }
+    if req.header("Expect").lower() == "100-continue" {
+      case conn.write("HTTP/1.1 100 Continue\r\n\r\n") {
+        (R.error, _) -> { return connection_done(conn, counter) }
+        (R.ok, _)    -> { }
+      }
+    }
+    if options.read_timeout > 0.0 {
+      conn = conn.set_timeout(options.read_timeout)
+    }
+    case read_chunked(conn, options.max_body_bytes) {
+      (R.error, _) -> { return connection_done(conn, counter) }
+      (R.ok, parts) -> {
+        if parts[1] != 0 {
+          write_simple(conn, parts[1], parts[0])
+          return connection_done(conn, counter)
+        }
+        body = parts[0]
+      }
+    }
+  } else {
+    if cl != "" {
+      if !is_digits(cl) {
+        write_simple(conn, 400, "httpd: bad request: Content-Length is not a count, got `" + cl + "`")
+        return connection_done(conn, counter)
+      }
+      const n = cl.to_int64()
+      if options.max_body_bytes > 0 && n > options.max_body_bytes {
+        write_simple(conn, 413, "httpd: the request body exceeds the server's " + options.max_body_bytes.to_string() + "-byte limit")
+        return connection_done(conn, counter)
+      }
+      if n > 0 {
+        if req.header("Expect").lower() == "100-continue" {
+          case conn.write("HTTP/1.1 100 Continue\r\n\r\n") {
+            (R.error, _) -> { return connection_done(conn, counter) }
+            (R.ok, _)    -> { }
+          }
+        }
+        if options.read_timeout > 0.0 {
+          conn = conn.set_timeout(options.read_timeout)
+        }
+        case conn.read_exactly(n) {
+          (R.error, _) -> { return connection_done(conn, counter) }
+          (R.ok, data) -> { body = data }
+        }
+      }
+    }
+  }
+  const req2 = req.with_body(body)
+  const keep = wants_keep_alive(req2)
+  const f = handler
+  const resp = f(req2)
+  var date = ""
+  if options.has_date {
+    const df = options.date_fn
+    date = df()
+  }
+  if options.read_timeout > 0.0 {
+    conn = conn.set_timeout(options.read_timeout)
+  }
+  case conn.write(response_head(req2, resp, keep, date)) {
+    (R.error, _) -> { return connection_done(conn, counter) }
+    (R.ok, _)    -> {
+      if keep {
+        return connection_loop(conn, handler, options, counter, false)
+      }
+      return connection_done(conn, counter)
+    }
+  }
+}
+
+// The connection's end: closed, and its seat in the drain count
+// freed.
+def connection_done(conn TcpConn, counter Pid) Int64 {
+  conn.close()
+  counter <- ("httpd", "done")
+  return 0
+}
+
+// ---- The server ----
+
+// The drain counter: one process holding the live-connection count.
+// `close` stops accepting new counts, `done` frees a seat, and when a
+// closed counter reaches zero every waiter learns the drain finished.
+// The released counter stays alive answering waits — no caller ever
+// mails a dead pid.
+def counter_process(count Int64, closed Bool, waiters Array[Pid]) Int64 {
+  receive {
+    ("httpd", "add") -> {
+      return counter_process(count + 1, closed, waiters)
+    }
+    ("httpd", "done") -> {
+      const left = count - 1
+      if closed && left == 0 {
+        return counter_release(waiters)
+      }
+      return counter_process(left, closed, waiters)
+    }
+    ("httpd", "close") -> {
+      if count == 0 {
+        return counter_release(waiters)
+      }
+      return counter_process(count, true, waiters)
+    }
+    ("httpd", "wait", who) -> {
+      if closed && count == 0 {
+        who <- ("httpd", "drained")
+        return counter_process(count, closed, waiters)
+      }
+      return counter_process(count, closed, waiters.append(who))
+    }
+  }
+}
+
+def counter_release(waiters Array[Pid]) Int64 {
+  for var i = 0; i < waiters.length(); i = i + 1 {
+    const who = waiters[i]
+    who <- ("httpd", "drained")
+  }
+  return counter_released()
+}
+
+def counter_released() Int64 {
+  receive {
+    ("httpd", "wait", who) -> {
+      who <- ("httpd", "drained")
+      return counter_released()
+    }
+    _ -> { return counter_released() }
+  }
+}
+
+// The accept loop: one process, one connection spawned per accept,
+// the loop ending when the listener closes under it.
+def accept_loop(listener TcpListener, handler Block, options ServerOptions, counter Pid) Int64 {
+  case listener.accept() {
+    (R.error, _) -> { return 0 }
+    (R.ok, conn) -> {
+      counter <- ("httpd", "add")
+      do serve_connection(conn, handler, options, counter)
+      return accept_loop(listener, handler, options, counter)
+    }
+  }
+}
+
+// The server handle: stop() stops accepting and lets the live
+// connections finish, wait() joins the drain. An idle kept-alive
+// connection finishes through its idle timeout — a server with no
+// timeouts set waits on it the same as on a live one.
+class Server {
+  def init(listener TcpListener, counter Pid) {
+    self.listener = listener
+    self.counter = counter
+  }
+
+  def stop() (R, Server) {
+    const l = self.listener
+    case l.close() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        const c = self.counter
+        c <- ("httpd", "close")
+        return (R.ok, self)
+      }
+    }
+  }
+
+  def wait() Server {
+    const c = self.counter
+    c <- ("httpd", "wait", self_pid())
+    receive {
+      ("httpd", "drained") -> { return self }
+    }
+  }
+}
+
+// The direct server: the handler is a (Request) Response — a trailing
+// block or a function value, middleware-composable by wrapping. The
+// accept loop runs in its own process; the handle answers at once.
+def serve(listener TcpListener, handler Block) Server {
+  return serve_with(listener, handler, server_options())
+}
+
+def serve_with(listener TcpListener, handler Block, options ServerOptions) Server {
+  const counter = do counter_process(0, false, [])
+  do accept_loop(listener, handler, options, counter)
+  return Server.new(listener: listener, counter: counter)
+}
+
+// ---- Router ----
+
+// A pattern's method must be the wire's own spelling — `GET`, not a
+// lowercase lookalike that would never match a request line.
+const upper_token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~"
+
+def is_upper_token(s String) Bool {
+  if s == "" {
+    return false
+  }
+  return upper_token_from(s, 0)
+}
+
+def upper_token_from(s String, i Int64) Bool {
+  if i >= s.length() {
+    return true
+  }
+  if upper_token_chars.index_of(s.substring(i, 1)) < 0 {
+    return false
+  }
+  return upper_token_from(s, i + 1)
+}
+
+def is_name(s String) Bool {
+  if s == "" {
+    return false
+  }
+  return name_from(s, 0)
+}
+
+def name_from(s String, i Int64) Bool {
+  if i >= s.length() {
+    return true
+  }
+  if token_chars.index_of(s.substring(i, 1)) < 0 {
+    return false
+  }
+  return name_from(s, i + 1)
+}
+
+// One registered pattern. `method` is "" when the pattern answers
+// every method; `tokens` is the parsed path — a literal segment tags
+// `l` and keeps its text, a `{name}` wildcard tags `n`, a
+// `{name...}` rest tags `r`; `subtree` marks the trailing slash. The
+// shape parses once, at registration.
+class Route {
+  def init(method String, path String, handler Block, tokens Array[String], subtree Bool, rest_name String) {
+    self.method = method
+    self.path = path
+    self.handler = handler
+    self.tokens = tokens
+    self.subtree = subtree
+    self.rest_name = rest_name
+  }
+}
+
+// The route table: immutable like every Emo value — each
+// registration answers a new Router, so the builders chain.
+class Router {
+  def init(routes Array[Route]) {
+    self.routes = routes
+  }
+
+  // The general form: the pattern carries its own method (`GET
+  // /users/{id}`) or none (`/static/` answers every method).
+  def handle(pattern String, handler Block) Router {
+    case parse_pattern(pattern) {
+      (R.error, why) -> { raise Exception.new(why) }
+      (R.ok, parts)  -> {
+        return add_checked(self.routes, parts[0], parts[1], parts[2], parts[3], parts[4], handler)
+      }
+    }
+  }
+
+  // The method-scoped forms: the pattern is the bare path — a
+  // pattern naming its own method goes through handle.
+  def get(pattern String, handler Block) Router {
+    return register_bare(self.routes, "GET", pattern, handler)
+  }
+
+  def post(pattern String, handler Block) Router {
+    return register_bare(self.routes, "POST", pattern, handler)
+  }
+
+  def put(pattern String, handler Block) Router {
+    return register_bare(self.routes, "PUT", pattern, handler)
+  }
+
+  def delete(pattern String, handler Block) Router {
+    return register_bare(self.routes, "DELETE", pattern, handler)
+  }
+}
+
+def router() Router {
+  return Router.new(routes: [])
+}
+
+// The pattern for handle: an optional method prefix, then the path.
+def parse_pattern(pattern String) (R, (String, String, Array[String], Bool, String)) {
+  const space = pattern.index_of(" ")
+  if space < 0 {
+    case parse_path(pattern) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, parts)  -> { return (R.ok, ("", parts[0], parts[1], parts[2], parts[3])) }
+    }
+  }
+  const method = pattern.substring(0, space)
+  if !is_upper_token(method) {
+    return (R.error, "httpd: the pattern `" + pattern + "` reads `" + method + "` where a method goes — a method is an uppercase token (`GET /path`)")
+  }
+  case parse_path(pattern.substring(space + 1, pattern.length() - space - 1)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> { return (R.ok, (method, parts[0], parts[1], parts[2], parts[3])) }
+  }
+}
+
+// The pattern for the method-scoped forms: the bare path, no method
+// prefix — naming one here would be two answers to one question.
+def parse_bare_pattern(pattern String) (R, (String, Array[String], Bool, String)) {
+  if pattern.index_of(" ") >= 0 {
+    return (R.error, "httpd: the pattern `" + pattern + "` names a method — the `get`/`post`/`put`/`delete` helpers take the bare path, or `handle(\"GET /path\")` for the general form")
+  }
+  return parse_path(pattern)
+}
+
+// The path half of a pattern: subtree (trailing slash), tokens, and
+// the rest wildcard's name.
+def parse_path(path String) (R, (String, Array[String], Bool, String)) {
+  if path == "" || path.substring(0, 1) != "/" {
+    return (R.error, "httpd: the pattern `" + path + "` must begin with `/`")
+  }
+  var inner = path
+  var subtree = false
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    subtree = true
+    inner = path.substring(0, path.length() - 1)
+  }
+  case parse_segments(inner.split("/"), 1, [], "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> { return (R.ok, (path, parts[0], subtree, parts[1])) }
+  }
+}
+
+// One pattern segment to its token. A brace opens a wildcard or it
+// is a literal's mistake; a rest is the last segment or the pattern
+// is wrong; `//` and `.`/`..` segments are the wire's cleanup
+// business — a pattern is exact.
+def parse_segments(segs Array[String], i Int64, acc Array[String], rest String) (R, (Array[String], String)) {
+  if i >= segs.length() {
+    return (R.ok, (acc, rest))
+  }
+  const seg = segs[i]
+  if seg == "" {
+    return (R.error, "httpd: the pattern carries `//` — write the cleaned path")
+  }
+  if seg == "." || seg == ".." {
+    return (R.error, "httpd: the pattern carries a `.` or `..` segment — write the cleaned path")
+  }
+  if rest != "" {
+    return (R.error, "httpd: the rest wildcard must be the pattern's last segment")
+  }
+  if seg.substring(0, 1) == "{" {
+    if seg.substring(seg.length() - 1, 1) != "}" {
+      return (R.error, "httpd: the pattern segment `" + seg + "` opens a `{` it never closes")
+    }
+    const name = seg.substring(1, seg.length() - 2)
+    if name.length() >= 3 && name.substring(name.length() - 3, 3) == "..." {
+      const rest_name = name.substring(0, name.length() - 3)
+      if rest_name == "" {
+        return (R.error, "httpd: the rest wildcard needs a name — write `{path...}`")
+      }
+      if !is_name(rest_name) {
+        return (R.error, "httpd: the rest wildcard name `" + rest_name + "` is not a name")
+      }
+      return parse_segments(segs, i + 1, acc.append("r" + rest_name), rest_name)
+    }
+    if name == "" {
+      return (R.error, "httpd: the pattern segment `{}` needs a name — write `{id}`")
+    }
+    if !is_name(name) {
+      return (R.error, "httpd: the wildcard name `" + name + "` is not a name")
+    }
+    return parse_segments(segs, i + 1, acc.append("n" + name), "")
+  }
+  if seg.index_of("{") >= 0 || seg.index_of("}") >= 0 {
+    return (R.error, "httpd: the literal segment `" + seg + "` carries a brace — a wildcard is `{name}`, a rest is `{path...}`")
+  }
+  return parse_segments(segs, i + 1, acc.append("l" + seg), "")
+}
+
+def add_checked(routes Array[Route], method String, path String, tokens Array[String], subtree Bool, rest_name String, handler Block) Router {
+  const route = Route.new(method: method, path: path, handler: handler, tokens: tokens, subtree: subtree, rest_name: rest_name)
+  return Router.new(routes: check_conflict(routes, route, 0))
+}
+
+def register_bare(routes Array[Route], method String, pattern String, handler Block) Router {
+  case parse_bare_pattern(pattern) {
+    (R.error, why) -> { raise Exception.new(why) }
+    (R.ok, parts)  -> {
+      return add_checked(routes, method, parts[0], parts[1], parts[2], parts[3], handler)
+    }
+  }
+}
+
+// Two patterns of one shape — the same segment kinds and subtree-
+// ness — with overlapping methods would both claim the same
+// requests: the second registration raises. Different shapes
+// coexist; the dispatch picks the more specific.
+def check_conflict(routes Array[Route], route Route, i Int64) Array[Route] {
+  if i >= routes.length() {
+    return routes.append(route)
+  }
+  const other = routes[i]
+  if shape_key(other) == shape_key(route) {
+    if route.method == "" || other.method == "" || other.method == route.method {
+      raise Exception.new("httpd: the pattern `" + route.path + "` conflicts with `" + other.path + "` — the same shape answering overlapping methods")
+    }
+  }
+  return check_conflict(routes, route, i + 1)
+}
+
+// The shape's identity: subtree flag, then one mark per segment — a
+// literal keeps its text, a wildcard is only its kind.
+def shape_key(route Route) String {
+  var key = "s0"
+  if route.subtree {
+    key = "s1"
+  }
+  return shape_key_tokens(route.tokens, 0, key)
+}
+
+def shape_key_tokens(tokens Array[String], i Int64, key String) String {
+  if i >= tokens.length() {
+    return key
+  }
+  const tag = tokens[i].substring(0, 1)
+  if tag == "l" {
+    return shape_key_tokens(tokens, i + 1, key + "|l" + tokens[i].substring(1, tokens[i].length() - 1))
+  }
+  if tag == "r" {
+    return shape_key_tokens(tokens, i + 1, key + "|r")
+  }
+  return shape_key_tokens(tokens, i + 1, key + "|n")
+}
+
+// The request path's segments: the leading slash drops, and one
+// trailing slash drops with it (a subtree's tail is decided by the
+// raw path, not by an empty segment).
+def request_segments(path String) Array[String] {
+  if path == "/" {
+    return []
+  }
+  var to = path.split("/").length()
+  if path.substring(path.length() - 1, 1) == "/" {
+    to = to - 1
+  }
+  return segs_from(path.split("/"), 1, to, [])
+}
+
+def segs_from(segs Array[String], i Int64, to Int64, acc Array[String]) Array[String] {
+  if i >= to {
+    return acc
+  }
+  return segs_from(segs, i + 1, to, acc.append(segs[i]))
+}
+
+// One route against one request: the method gate, then the shape.
+// A GET pattern answers HEAD too — the body stripping is the
+// response writer's half.
+def route_match_one(route Route, method String, path String) (R, (Map[String, String], Array[String])) {
+  if route.method != "" && route.method != method {
+    if !(method == "HEAD" && route.method == "GET") {
+      return (R.error, "httpd: method")
+    }
+  }
+  case route_shape(route, path) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, params) -> { return (R.ok, (params, route.tokens)) }
+  }
+}
+
+// The shape half: exact patterns answer the bare spelling (a
+// trailing slash is part of the address), subtrees take the trailing
+// slash or more segments, a rest takes everything left.
+def route_shape(route Route, path String) (R, Map[String, String]) {
+  const segs = request_segments(path)
+  if route.rest_name != "" {
+    return shape_rest(route, segs, 0, Map.new())
+  }
+  if route.subtree {
+    if segs.length() < route.tokens.length() {
+      return (R.error, "httpd: shape")
+    }
+    if segs.length() == route.tokens.length() {
+      if path.length() > 1 && path.substring(path.length() - 1, 1) != "/" {
+        return (R.error, "httpd: shape")
+      }
+    }
+    return shape_walk(route, segs, 0, Map.new())
+  }
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    return (R.error, "httpd: shape")
+  }
+  if segs.length() != route.tokens.length() {
+    return (R.error, "httpd: shape")
+  }
+  return shape_walk(route, segs, 0, Map.new())
+}
+
+def shape_walk(route Route, segs Array[String], i Int64, params Map[String, String]) (R, Map[String, String]) {
+  if i >= route.tokens.length() {
+    return (R.ok, params)
+  }
+  const tok = route.tokens[i]
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    if segs[i] != tok.substring(1, tok.length() - 1) {
+      return (R.error, "httpd: shape")
+    }
+    return shape_walk(route, segs, i + 1, params)
+  }
+  if tag == "n" {
+    params.set(tok.substring(1, tok.length() - 1), segs[i])
+    return shape_walk(route, segs, i + 1, params)
+  }
+  return (R.error, "httpd: shape")
+}
+
+// The rest wildcard's shape: the tokens before it walk the request's
+// first segments, the rest captures whatever remains — "" when
+// nothing does.
+def shape_rest(route Route, segs Array[String], i Int64, params Map[String, String]) (R, Map[String, String]) {
+  const fixed = route.tokens.length() - 1
+  if i >= fixed {
+    return (R.ok, params.set(route.rest_name, join_from(segs, i)))
+  }
+  if i >= segs.length() {
+    return (R.error, "httpd: shape")
+  }
+  const tok = route.tokens[i]
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    if segs[i] != tok.substring(1, tok.length() - 1) {
+      return (R.error, "httpd: shape")
+    }
+    return shape_rest(route, segs, i + 1, params)
+  }
+  if tag == "n" {
+    params.set(tok.substring(1, tok.length() - 1), segs[i])
+    return shape_rest(route, segs, i + 1, params)
+  }
+  return (R.error, "httpd: shape")
+}
+
+def join_from(segs Array[String], i Int64) String {
+  if i >= segs.length() {
+    return ""
+  }
+  const head = join_from(segs, i + 1)
+  if head == "" {
+    return segs[i]
+  }
+  return segs[i] + "/" + head
+}
+
+// Which of two matching patterns is the more specific: a literal
+// outranks a wildcard, a wildcard outranks the rest, the first
+// difference decides; past the shared prefix, the longer pattern
+// wins — it pins more of the path.
+def more_specific(a Array[String], b Array[String]) Bool {
+  return ms_from(a, b, 0)
+}
+
+def ms_from(a Array[String], b Array[String], i Int64) Bool {
+  if i >= a.length() || i >= b.length() {
+    return a.length() > b.length()
+  }
+  if token_score(a[i]) != token_score(b[i]) {
+    return token_score(a[i]) > token_score(b[i])
+  }
+  return ms_from(a, b, i + 1)
+}
+
+def token_score(tok String) Int64 {
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    return 3
+  }
+  if tag == "n" {
+    return 2
+  }
+  return 1
+}
+
+// The best match's index: walk the table, keep the most specific
+// shape that answers the method. -1 when nothing does.
+def route_best_index(routes Array[Route], method String, path String, i Int64, have Bool, best Int64, best_tokens Array[String]) Int64 {
+  if i >= routes.length() {
+    if have {
+      return best
+    }
+    return 0 - 1
+  }
+  case route_match_one(routes[i], method, path) {
+    (R.error, _) -> {
+      return route_best_index(routes, method, path, i + 1, have, best, best_tokens)
+    }
+    (R.ok, (_, tokens)) -> {
+      if !have || more_specific(tokens, best_tokens) {
+        return route_best_index(routes, method, path, i + 1, true, i, tokens)
+      }
+      return route_best_index(routes, method, path, i + 1, have, best, best_tokens)
+    }
+  }
+}
+
+def route_scan(routes Array[Route], method String, path String) (R, (Route, Map[String, String])) {
+  const best = route_best_index(routes, method, path, 0, false, 0, [])
+  if best < 0 {
+    return (R.error, "httpd: no route matches `" + path + "`")
+  }
+  const route = routes[best]
+  case route_match_one(route, method, path) {
+    (R.error, why)      -> { return (R.error, why) }
+    (R.ok, (params, _)) -> { return (R.ok, (route, params)) }
+  }
+}
+
+// The methods that shape-match the path — the 405's Allow, deduped,
+// registration order. A method-less pattern would have matched, so
+// every name here is a concrete method the request did not carry.
+def route_allow(routes Array[Route], path String) String {
+  return allow_from(routes, path, 0, [])
+}
+
+def allow_from(routes Array[Route], path String, i Int64, acc Array[String]) String {
+  if i >= routes.length() {
+    return join_commas(acc, 0)
+  }
+  case route_shape(routes[i], path) {
+    (R.error, _) -> { return allow_from(routes, path, i + 1, acc) }
+    (R.ok, _)    -> {
+      if contains_str(acc, routes[i].method, 0) {
+        return allow_from(routes, path, i + 1, acc)
+      }
+      return allow_from(routes, path, i + 1, acc.append(routes[i].method))
+    }
+  }
+}
+
+def join_commas(items Array[String], i Int64) String {
+  if i >= items.length() {
+    return ""
+  }
+  const head = join_commas(items, i + 1)
+  if head == "" {
+    return items[i]
+  }
+  return items[i] + ", " + head
+}
+
+def contains_str(items Array[String], s String, i Int64) Bool {
+  if i >= items.length() {
+    return false
+  }
+  if items[i] == s {
+    return true
+  }
+  return contains_str(items, s, i + 1)
+}
+
+// Whether the trailed spelling has a handler — the slash redirect's
+// client (`/static` answers 301 to `/static/` when `/static/` is
+// registered). A path already ending in its slash is a plain 404 or
+// 405; the cleaner has been there.
+def route_slash(routes Array[Route], method String, path String) Bool {
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    return false
+  }
+  case route_scan(routes, method, path + "/") {
+    (R.error, _) -> { return false }
+    (R.ok, _)    -> { return true }
+  }
+}
+
+// The cleaned spelling of a request path: `//` collapses, `.` drops,
+// `..` climbs (past the root it stays at the root), a trailing slash
+// survives. The dispatch answers anything the cleaner changes with a
+// 301 to the clean form.
+def clean_path(path String) String {
+  const trailing = path.length() > 1 && path.substring(path.length() - 1, 1) == "/"
+  const built = clean_walk(path.split("/"), 0, [])
+  const joined = join_from(built, 0)
+  var out = "/" + joined
+  if joined == "" {
+    out = "/"
+  }
+  if trailing && out != "/" {
+    out = out + "/"
+  }
+  return out
+}
+
+def clean_walk(segs Array[String], i Int64, built Array[String]) Array[String] {
+  if i >= segs.length() {
+    return built
+  }
+  const seg = segs[i]
+  if seg == "" || seg == "." {
+    return clean_walk(segs, i + 1, built)
+  }
+  if seg == ".." {
+    if built.length() > 0 {
+      return clean_walk(segs, i + 1, without_last(built, 0, []))
+    }
+    return clean_walk(segs, i + 1, built)
+  }
+  return clean_walk(segs, i + 1, built.append(seg))
+}
+
+def without_last(built Array[String], i Int64, acc Array[String]) Array[String] {
+  if i >= built.length() - 1 {
+    return acc
+  }
+  return without_last(built, i + 1, acc.append(built[i]))
+}
+
+// The target's query rides a redirect untouched.
+def query_suffix(target String) String {
+  const q = target.index_of("?")
+  if q < 0 {
+    return ""
+  }
+  return target.substring(q, target.length() - q)
+}
+
+// The wildcard captures decoded: the path's own convention — `+` is
+// a plus, each `/`-separated piece decodes alone, so an encoded
+// slash stays a boundary on the wire and a literal in the value.
+def decode_params(params Map[String, String]) (R, Map[String, String]) {
+  const out = Map.new()
+  const keys = params.keys()
+  for var i = 0; i < keys.length(); i = i + 1 {
+    const key = keys[i]
+    case decode_segments(params.get(key)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value)  -> { out.set(key, value) }
+    }
+  }
+  return (R.ok, out)
+}
+
+def decode_segments(raw String) (R, String) {
+  if raw == "" {
+    return (R.ok, "")
+  }
+  const parts = raw.split("/")
+  return decode_join(parts, 0, "")
+}
+
+def decode_join(parts Array[String], i Int64, acc String) (R, String) {
+  if i >= parts.length() {
+    return (R.ok, acc)
+  }
+  case percent_decode_raw(parts[i]) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, piece)  -> {
+      if i == 0 {
+        return decode_join(parts, i + 1, piece)
+      }
+      return decode_join(parts, i + 1, acc + "/" + piece)
+    }
+  }
+}
+
+// The router's dispatch: clean the path (301 when the cleaner
+// changes it), match, and answer — the matched route's handler with
+// the wildcards decoded into req.params, or the 301/405/404 family.
+def router_dispatch(routes Router, req Request) Response {
+  const cleaned = clean_path(req.path)
+  if cleaned != req.path {
+    return response(301, [("Location", cleaned + query_suffix(req.target))], "")
+  }
+  const table = routes.routes
+  case route_scan(table, req.method, req.path) {
+    (R.error, _) -> {
+      if route_slash(table, req.method, req.path) {
+        return response(301, [("Location", req.path + "/" + query_suffix(req.target))], "")
+      }
+      const allow = route_allow(table, req.path)
+      if allow != "" {
+        return response(405, [("Allow", allow)], "")
+      }
+      return error(404, "404 page not found\n")
+    }
+    (R.ok, (route, params)) -> {
+      case decode_params(params) {
+        (R.error, why) -> { return error(400, why) }
+        (R.ok, decoded) -> {
+          const h = route.handler
+          return h(req.with_params(decoded))
+        }
+      }
+    }
+  }
+}
+
+// The routed server: the Router in the handler's seat, the same
+// Server handle serve answers.
+def serve_routes(listener TcpListener, routes Router) Server {
+  return serve_routes_with(listener, routes, server_options())
+}
+
+def serve_routes_with(listener TcpListener, routes Router, options ServerOptions) Server {
+  return serve_with(listener, -> (req Request) {
+    return router_dispatch(routes, req)
+  }, options)
+}

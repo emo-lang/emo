@@ -1,0 +1,39 @@
+// The step 13 acceptance over httpd: a server, a middleware wrapping
+// the handler, one round-trip through the http client, and a graceful
+// shutdown — stop() stops accepting, wait() joins the drain. No ports
+// printed: the listener rides port 0 and the URL builds from the
+// handle.
+require "httpd"
+require "http"
+require "net"
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+
+// The app: the handler as a named def, so middleware can wrap it.
+def app(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "hello from httpd " + req.path)
+}
+
+// The middleware: a (Request) Response wrapped in one — it logs the
+// line the request earned, then delegates.
+const logged = -> (next Block) {
+  return -> (req httpd.Request) {
+    const resp = next(req)
+    println("[log] " + req.method + " " + req.path + " " + resp.status.to_string())
+    return resp
+  }
+}
+
+const server = httpd.serve(listener, logged(app))
+
+case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.body)
+    println(resp.status)
+  }
+}
+
+const (R.ok, _) = server.stop()
+server.wait()
+println("drained")

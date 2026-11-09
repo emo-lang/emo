@@ -1,0 +1,10 @@
+package {
+  name = "emo/httpd_wire"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "httpd" = "0.1.0"
+    "net" = "0.1.0"
+  }
+}

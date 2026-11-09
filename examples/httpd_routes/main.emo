@@ -1,0 +1,124 @@
+// The router's acceptance walk: wildcards and rests decoded into
+// req.params, literal-over-wildcard precedence, a method-less
+// subtree, the 405 with its Allow, the 301 cleanup (with the query
+// riding along), the slash redirect, and the plain 404. Everything
+// printed is byte-deterministic: the listener rides port 0 and the
+// http client never follows a redirect, so each 301 is read as the
+// answer it is.
+require "httpd"
+require "http"
+require "net"
+
+// ---- handlers ----
+
+def greet(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "hello " + req.params.get("name"))
+}
+
+def files(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "files [" + req.params.get("path") + "]")
+}
+
+def admin_page(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "the admin console")
+}
+
+def user_page(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "user " + req.params.get("id"))
+}
+
+def echo(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "echo " + req.body)
+}
+
+def static_handler(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "static " + req.path)
+}
+
+// ---- probes (the URL prefix rides in; consts cannot precede the
+// defs that read them) ----
+
+def probe_get(base String, path String) Int64 {
+  println("== GET " + path)
+  case http.get(base + path) {
+    (R.error, why) -> {
+      println("   error: " + why)
+    }
+    (R.ok, resp) -> {
+      println("   " + resp.status.to_string())
+      println("   " + resp.body)
+    }
+  }
+  return 0
+}
+
+def probe_post(base String, path String, body String) Int64 {
+  println("== POST " + path)
+  case http.post(base + path, body) {
+    (R.error, why) -> {
+      println("   error: " + why)
+    }
+    (R.ok, resp) -> {
+      println("   " + resp.status.to_string())
+      println("   " + resp.body)
+    }
+  }
+  return 0
+}
+
+def probe_header(base String, path String, name String) Int64 {
+  println("== GET " + path)
+  case http.get(base + path) {
+    (R.error, why) -> {
+      println("   error: " + why)
+    }
+    (R.ok, resp) -> {
+      println("   " + resp.status.to_string())
+      println("   " + name + ": " + resp.header(name))
+    }
+  }
+  return 0
+}
+
+// ---- the walk ----
+
+// The table, registration by registration (builders answer a new
+// Router; there is no chaining syntax, so the locals carry it).
+def build_routes() httpd.Router {
+  var r = httpd.router()
+  r = r.get("/hello/{name}", greet)
+  r = r.get("/files/{path...}", files)
+  r = r.get("/users/admin", admin_page)
+  r = r.get("/users/{id}", user_page)
+  r = r.post("/echo", echo)
+  r = r.handle("/static/", static_handler)
+  return r
+}
+
+const routes = build_routes()
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+const server = httpd.serve_routes(listener, routes)
+const base = "http://127.0.0.1:" + listener.port().to_string()
+
+probe_get(base, "/hello/ada")
+probe_get(base, "/hello/ada%20grace")
+probe_get(base, "/hello/a+b")
+probe_get(base, "/files/2026/11/report.txt")
+probe_get(base, "/files")
+probe_get(base, "/users/admin")
+probe_get(base, "/users/5")
+probe_post(base, "/echo", "ping")
+probe_header(base, "/echo", "Allow")
+probe_get(base, "/nosuch")
+probe_header(base, "/a//b", "Location")
+probe_header(base, "/a/./b", "Location")
+probe_header(base, "/x/../top", "Location")
+probe_header(base, "/hello/..", "Location")
+probe_header(base, "/a//b?k=1", "Location")
+probe_header(base, "/static", "Location")
+probe_get(base, "/static/css/main.css")
+
+const (R.ok, _) = server.stop()
+server.wait()
+println("drained")

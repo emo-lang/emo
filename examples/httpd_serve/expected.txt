@@ -1,0 +1,4 @@
+[log] GET /hello 200
+hello from httpd /hello
+200
+drained

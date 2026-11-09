@@ -13,13 +13,14 @@
 // the runtime's own OpenSSL/LibreSSL fence — one source, both ends of
 // the wire, byte-identical output.
 
+require "httpd"
 require "http"
 require "net"
 
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [], "hello over tls")
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello over tls")
 }
 
 case http.get("https://localhost:" + listener.port().to_string() + "/hello") {

@@ -1,0 +1,50 @@
+// The httpd parser's fixture walk: twelve head blocks as they ride
+// the wire, each answered by the pure parser — heads parsed to
+// fields, malformed ones refused with the reason the server will
+// answer 400 with. No sockets: the parser is pure Emo, and the same
+// bytes must come back on every hosted target.
+require "httpd"
+
+// One parsed head, printed field by field — the query in map order,
+// the interesting headers through the case-insensitive lookups.
+def print_request(req httpd.Request) {
+  println("ok " + req.method + " " + req.target + " path=" + req.path + " proto=" + req.proto + " headers=" + req.headers.length().to_string())
+  const keys = req.query.keys()
+  for var k = 0; k < keys.length(); k = k + 1 {
+    println("   query " + keys[k] + "=" + req.query.get(keys[k]))
+  }
+  const names = ["Host", "Content-Type", "X-Trace", "Transfer-Encoding"]
+  for var n = 0; n < names.length(); n = n + 1 {
+    const name = names[n]
+    const all = req.header_all(name)
+    for var v = 0; v < all.length(); v = v + 1 {
+      println("   header " + name + ": " + all[v])
+    }
+  }
+}
+
+const heads = [
+  ("minimal", "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  ("query", "GET /search?q=hello%20world&x=1&q=second HTTP/1.1\r\nHost: h\r\n\r\n"),
+  ("case-folding", "POST /users HTTP/1.0\r\ncontent-TYPE: text/plain\r\nX-TRACE: one\r\nx-trace: two\r\n\r\n"),
+  ("chunked-head", "POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n"),
+  ("plus-is-space", "GET /find?q=a+b HTTP/1.1\r\nHost: h\r\n\r\n"),
+  ("blank-inside", "GET /x HTTP/1.1\r\n\r\nHost: h\r\n\r\n"),
+  ("no-equals", "GET /?k HTTP/1.1\r\nHost: h\r\n\r\n"),
+  ("missing-host", "GET / HTTP/1.1\r\n\r\n"),
+  ("bad-escape", "GET /?q=%zz HTTP/1.1\r\nHost: h\r\n\r\n"),
+  ("unprintable-escape", "GET /?q=caf%C3%A9 HTTP/1.1\r\nHost: h\r\n\r\n"),
+  ("bad-version", "GET / HTTP/2.0\r\nHost: h\r\n\r\n"),
+  ("four-parts", "GET /x HTTP/1.1 extra\r\nHost: h\r\n\r\n"),
+  ("space-before-colon", "GET / HTTP/1.1\r\nHost : h\r\n\r\n"),
+  ("truncated", "GET / HTTP/1.1\r\nHost: h\r\n")
+]
+
+for var i = 0; i < heads.length(); i = i + 1 {
+  const fixture = heads[i]
+  println("== " + fixture[0])
+  case httpd.parse_head(fixture[1]) {
+    (R.error, why) -> { println("err " + why) }
+    (R.ok, req)    -> { print_request(req) }
+  }
+}

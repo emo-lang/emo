@@ -563,7 +563,14 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       let dispatch = chain branches in
       env.in_receive <- saved;
       env.in_loop <- saved_loop;
-      Printf.sprintf "await E.receive(async (%s) => {\n%s\n})" scratch dispatch
+      let receive =
+        Printf.sprintf "await E.receive(async (%s) => {\n%s\n})" scratch
+          dispatch
+      in
+      (* The receive in tail position is the def's value: a method or a
+         callee def whose last statement receives answers through it,
+         and dropping the return answered undefined instead. *)
+      if tail then Printf.sprintf "return %s;" receive else receive
   | Raise e -> Printf.sprintf "E.throwException(%s);" (expr env e)
   | Return_stmt e -> (
       if env.in_receive then

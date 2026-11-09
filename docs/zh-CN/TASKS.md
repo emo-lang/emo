@@ -40,6 +40,7 @@
 | M20 — 数值库 | 53–54 | `math` 包长成 netlib 评估(`docs/math-netlib.md`)分阶段规划的「正确性优先」数值表面:完整的初等函数集、复数算术与 radix-2 FFT、BLAS1、LU 求解器、误差函数与伽马函数——纯 Emo,在全部五个宿主 target 上逐字节一致,以源自 ELEFUNT 的测试电池作精度记录;随后是原生快速通道——在 `c`/`ocaml` 上把 `math` 的标量表面直接绑到宿主 libm 的 `fastmath` 包,以及经现有「标量 + 回调」FFI 在 `c` 上绑定 QUADPACK 的 `quad` 包。数组级性能(BLAS2/3、LAPACK)继续挂在数组 FFI 之门后。 |
 | M21 — crypto 包 | 55 | 可移植的原语层作为一个纯 Emo 包 `crypto`——SHA-2、SHA-3 与 SHAKE、HMAC、HKDF 与 PBKDF2、常量时间比较、ChaCha20-Poly1305、AES 连同 CTR、CBC、GCM、Ed25519 与 X25519、收在 `crypto.legacy` 后的 SHA-1 与 MD5——在全部五个宿主 target 上逐字节一致,每个 golden 都是对 RFC 与 NIST 向量、对 Go 自家答案的一次 diff;旁边的 `rand` 包逐 target 绑定熵源并承载确定性的 HMAC-DRBG 流;错误二分沿 house 规则,Bytes 是载体,文档把常量时间写成源码级纪律并逐 target 给出诚实状态。RSA 等 bignum 地基;TLS、x509 与后量子集合不在其内。 |
 | M22 — `wasm` 上的文件 IO | 56 | wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器走:`file`、`os`(fd/目录半边——进程半边在调用点拒绝并点名能力)与 `bufio` 在 `wasm` 上可解析、逐字节一致;`emo run --target wasm` 用随编译器走的宿主在 Node 下运行产物;`emo build --target wasm` 仍只产出 `.wasm` + `.wat`;一切既有 golden 在一切 target 上逐字节不变(`CHECK.md`)。 |
+| M23 — httpd 服务器 | 57 | HTTP 的服务端半边从 `http` 迁入 `httpd`,成为骑在 `net` 上的纯 Emo HTTP/1.1 服务器——一个请求进、一个 `Response` 值出,每连接一进程,keep-alive、chunked 请求体、`100-continue`、带 405+`Allow` 与路径清理重定向的模式路由、每请求超时与尺寸限额、优雅关闭——在它声明的三个宿主 target 上逐字节一致,客户端包瘦身回原形,一切既有 golden 全绿(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1101,3 +1102,102 @@ wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器�
       golden 交给 wasmtime 的 cranelift 编译验证——49/49,零偏差;
       执行宿主仍是 Node(wasmtime CLI 供不了非 WASI 模块的自定义
       import;规范宿主的 Rust 驱动移植是已点名的后续)。
+
+## M23 — httpd 服务器
+
+HTTP 的服务端半边从 `http` 迁入独立的 `httpd` 包,长成一台真正的
+HTTP/1.1 服务器:骑在 `net` 上每连接一进程,请求作为一个值进来、
+handler 用一个值应答,连接机制——keep-alive、请求体、限额、超时、
+优雅关闭——和路由都住进包里,不再住进每个程序的 accept 循环。
+Go 的 `net/http` 服务器是机制调研对象;表面保持 Emo 自己的样子。
+决定记录在 `plan/step-57-httpd.md`;验收标准:`httpd_parse`、
+往返、线上形状、路由与关闭金测在 `net` 声明的三个宿主 target 上
+逐字节一致,bench 与 `http_roundtrip`/`https_roundtrip`/`ssr_page`
+跑在 `httpd` 上,`http` 回归纯客户端,一切既有 golden 在一切
+target 上逐字节不变(`CHECK.md`)。
+
+### 步骤 57 — httpd 包 · `plan/step-57-httpd.md`
+
+**Prereq:** 步骤 13、26–27、28–30。**Done when:** 解析器、路由、
+线上形状、往返与关闭金测在 `ocaml`、`c`、`typescript` 上逐字节
+一致;bench 与三个 roundtrip 示例跑在 `httpd` 上;`http` 不再携带
+服务端;`dune runtest` 绿。
+
+- [x] **T57.1** — 包骨架与纯解析器:`Request` 与 `Response` 作为值,
+      `response`/`error` 构造器,`parse_head`——请求行(三段、
+      token 方法、仅 HTTP/1.x)、头行(token 名规范化、冒号位置
+      严格)、origin-form target 拆成裸路径 + 查询 map(同名键首次
+      胜出、无 `=` 的对拒绝、HTTP/1.1 的 Host 规则)、可打印
+      ASCII 纪律下的百分比解码。`httpd_parse` 示例遍历夹具头——
+      解析出的字段与拒绝——三个宿主 target 逐字节一致。
+- [x] **T57.2** — 连接半边:431 限额下的头块读取、413 限额下的
+      Content-Length 与 chunked 请求体、`100 Continue`(对等方等待
+      时先答再读)、响应写出(`Content-Length` 恒在——handler 自带
+      的算数、HEAD/204/304 去体)、keep-alive 协商(HTTP/1.1 见
+      `Connection: close` 即关、HTTP/1.0 见 `keep-alive` 才留)、
+      每连接一进程的循环、每请求超时
+      (`with_read_timeout`/`with_idle_timeout`)、`serve`/
+      `serve_with` 应答 `Server` 句柄——`stop()` 优雅关闭、
+      `wait()` 依托 sync.WaitGroup 形状的排水计数进程——以及
+      `server_options()` 的 with_* builder 加 `with_date`(注入
+      时钟;语言没有时钟)。路上抓到三个编译器 bug,各配钉死它
+      的探针:IR 把"点名顶层 const 持有的可调用"的调用路由到零参
+      thunk、整队丢掉实参(中间件在两个编译 target 上全灭;零参
+      符号 + 有实参现在下沉为值调用);c target 在 `-O2` 严格别名
+      下构建,值世界的字视图让垃圾指针进 `emo_cell_kind`——确定性
+      崩溃、对布局敏感(`-O0` 与 `-fno-strict-aliasing` 逐字节一
+      致),c target 改为 `-fno-strict-aliasing` 构建,底层 pun 是
+      已点名的后续;ts 两处——`listenerClose` 留下停车的 accept
+      (Node 带着它结束程序),现照 error 事件的形状拒绝等待者;
+      receive 的值返回把 `EReturn` 抛过 `E.receive` 直达进程包装
+      层(方法或被调 def 里返回值的 receive 静默终结整个程序),
+      现由 receive 本身应答;外加发射器兑现尾位 receive(`await`
+      丢掉了 def 的值)。金测:`httpd_serve`(中间件、往返、排水)与
+      `httpd_wire`(裸连接上十四种线上形状)在三个宿主 target 上
+      手工验证逐字节一致,解释器腿在 test/emo_project 过已提交的
+      lockfile。两个 serve 示例暂不进 c_goldens:wire 示例的 c
+      二进制在 harness 的 fork-加-管道执行下于首行后干净结束,而
+      单独运行 10/10 逐字节全对——第二个潜伏的 c 运行时 flake
+      (调度器见 root fiber 的 `finished` 标志即返回,标志提前置位
+      就把该挂起的程序静默结束),与严格别名崩溃同族,未究根因,
+      已在 CHECK.md 点名——带 flake 的金测比缺席的金测更糟。
+- [x] **T57.3** — 路由器:模式只在注册时解析一次——
+      `handle("GET /users/{id}", h)` 与收裸路径的
+      `get`/`post`/`put`/`delete`(在那里命名方法会 raise 并点名两
+      种形态),字面量、`{name}`、`{name...}` 段当场验证(raise
+      族:不闭合的花括号、空名字、不在末尾的 rest、`//` 与
+      `.`/`..`——线上清理是对等方的事,模式是精确的),同形状且方
+      法重叠的第二次注册 raise。分发先清理路径(`//`、`./`、`../`
+      越过根停在根、尾斜杠与查询串都保留),变了就用 301 应答;
+      匹配走 token——字面量压过通配压过 rest,共享前缀之外更长的
+      模式胜出,精确模式的尾斜杠是地址的一部分,子树要尾斜杠或
+      更多段,rest 收下所剩的一切(包括空)——GET 模式应答 HEAD,
+      捕获按路径自己的 `+` 是加号约定解码(查询的
+      `percent_decode` 与路径的 `percent_decode_raw` 分立)再经
+      `with_params` 交给 handler。无匹配但形状以别的方法匹配时以
+      去重后的 `Allow` 答 405;已注册子树的无斜杠拼写答 301
+      (`/static` → `/static/`);彻底无答 Go 自己的
+      `404 page not found\n`。`serve_routes`/`serve_routes_with`
+      把 Router 放进同一个 `Server` 的 handler 座位。`httpd_routes`
+      示例走十七个探针——解码与保留 `+` 的参数、空 rest、字面量
+      优先、405+Allow、带查询串的四种清理形状、斜杠重定向、子
+      树、404——三个宿主 target 手工逐字节一致,解释器腿在
+      test/emo_project 过已提交的 lockfile(c/ts 腿手工验证,serve
+      示例的 c_goldens 缓期同样覆盖这一个)。
+- [x] **T57.4** — 迁移与文档:`http` 回归纯客户端(`serve`、
+      `serve_requests`、`handle_connection`、`read_request`、
+      `write_response`、`reason_phrase` 删除;头注释把服务端半边
+      指向 httpd),调用方迁移——`benchmarks/http_echo`(deps
+      `httpd` + `net`,经真实 curl 冒烟)、`examples/
+      http_roundtrip` 与 `examples/https_roundtrip`(deps 增
+      `httpd`,`httpd.serve` 尾随块站在 `http.serve_requests` 原
+      位,输出不变),`ssr_page` 无需动(它不点名服务器)——每个
+      源动过的包重生成 lock;`docs/stdlib/httpd.md` 与 zh 镜像
+      (服务、请求与响应、路由、选项、线上严格性、诚实的限制),
+      `docs/stdlib/http.md` 双语瘦身回客户端,`docs/stdlib.md`
+      行拆分并双语新增 `httpd` 摘要节,networking intro 的
+      HTTP bullet 双语拆成客户端与服务器;plan 文件勾齐、
+      `plan/README.md` 加行;迁移后的 `https_roundtrip` c 二进制
+      在 harness 下 3/3 红、单独运行 3/3 绿——又是那个已点名的
+      flake 家族——其 c golden 因此加入缓期,解释器腿承载覆盖;
+      M23 完成。

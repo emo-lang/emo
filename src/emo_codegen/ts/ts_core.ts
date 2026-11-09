@@ -1821,17 +1821,29 @@ const E: any = {
   // Selective receive: the dispatch runs each branch's body for the
   // first message it matches (returning anything but false); non-
   // matching messages stay in the mailbox in order; no match means the
-  // task waits for the next delivery.
+  // task waits for the next delivery. A branch that RETURNS A VALUE
+  // from its enclosing def throws EReturn(value) — the value answers
+  // this receive here, not the process wrapper: a receive inside a
+  // method or a callee def would otherwise end the whole program at
+  // the wrapper, the return silently lost.
   async receive(dispatch: (msg: any) => Promise<any>): Promise<any> {
     const pid = _host.currentPid();
     if (pid === null) throw new Error("receive() outside a process");
+    const taken = async (msg: any): Promise<any> => {
+      try {
+        return await dispatch(msg);
+      } catch (e) {
+        if (e instanceof EReturn) return e.value;
+        throw e;
+      }
+    };
     for (;;) {
       const q = _mailboxes.get(pid)!;
       let i = 0;
       while (i < q.length) {
         const msg = q[i];
         q.splice(i, 1);
-        const r = await dispatch(msg);
+        const r = await taken(msg);
         if (r !== false) return r;
         q.splice(i, 0, msg);
         i++;
@@ -1840,7 +1852,7 @@ const E: any = {
       // message (send hands it to the waiter, not to the mailbox).
       const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
       _endIfShutdown();
-      const r = await dispatch(fresh);
+      const r = await taken(fresh);
       if (r !== false) return r;
       // No branch took it: keep it at the head so FIFO order holds.
       q.unshift(fresh);

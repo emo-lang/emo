@@ -47,6 +47,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — the `fastmath` package binding `math`'s scalar surface to the host libm on `c`/`ocaml`, and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
 | M21 — The crypto package | 55 | The portable primitives layer as one pure-Emo package, `crypto` — SHA-2, SHA-3 and SHAKE, HMAC, HKDF and PBKDF2, the constant-time comparison, ChaCha20-Poly1305, AES with CTR, CBC, and GCM, Ed25519 and X25519, SHA-1 and MD5 behind `crypto.legacy` — byte-identical on all five hosted targets with every golden a diff against the RFC and NIST vectors and Go's own answers; the `rand` package beside it binding the entropy source per target and carrying the deterministic HMAC-DRBG stream; the error split per the house rule, Bytes as the carrier, and the docs stating constant time as a source-level discipline with each target's honest status. RSA waits on a bignum foundation; TLS, x509, and the post-quantum set stay out. |
 | M22 — File IO on `wasm` | 56 | The wasm target's host boundary grows the file-system syscalls and the canonical host rides the compiler: `file`, `os` (the fd/directory half — the process half refuses at the call naming the capability), and `bufio` resolve and answer byte-for-byte on `wasm`; `emo run --target wasm` runs an artifact under Node with the bundled host; `emo build --target wasm` still emits exactly `.wasm` + `.wat`; every existing golden on every target stays byte-identical (`CHECK.md`). |
+| M23 — The httpd server | 57 | The server half of HTTP moves out of `http` into `httpd` as a pure-Emo HTTP/1.1 server over `net` — a request in, a `Response` value out, one process per connection, keep-alive, chunked request bodies, `100-continue`, pattern routing with 405+`Allow` and path-cleanup redirects, per-request timeouts and size limits, graceful shutdown — byte-identical on the three hosted targets it declares, the client package slimmed back, every existing golden green (`CHECK.md`). |
 
 ## Design gates
 
@@ -3329,3 +3330,137 @@ runtest` green.
       49/49, zero deltas; Node stays the execution host (the wasmtime
       CLI cannot supply a non-WASI module's custom imports; the
       Rust-driver port of the canonical host is the named follow-up).
+
+## M23 — The httpd server
+
+The server half of HTTP moves out of `http` into a dedicated `httpd`
+package and grows to a real HTTP/1.1 server: one process per
+connection over `net`, a request arriving as a value and the handler
+answering with one, the connection machinery — keep-alive, bodies,
+limits, timeouts, graceful shutdown — and the routing living in the
+package instead of every program's accept loop. Go's `net/http`
+server is the mechanism survey; the surface stays Emo's own.
+`plan/step-57-httpd.md` holds the decisions; the exit criteria: the
+`httpd_parse`, roundtrip, wire-shape, routing, and shutdown goldens
+run byte-for-byte on the three hosted targets `net` declares, `http`
+is client-only again with its callers migrated, no runtime primitive
+changes, and every existing golden on every target stays
+byte-identical (`CHECK.md`).
+
+### Step 57 — The httpd package · `plan/step-57-httpd.md`
+
+**Prereq:** Steps 13, 26–27, 28–30. **Done when:** the parser,
+routing, wire-shape, roundtrip, and shutdown goldens answer
+byte-identically on `ocaml`, `c`, and `typescript`; the bench and
+`http_roundtrip`/`https_roundtrip`/`ssr_page` run on `httpd`; `http`
+carries no server half; `dune runtest` green.
+
+- [x] **T57.1** — The package skeleton and the pure parser: `Request`
+      and `Response` as values, `response`/`error` constructors,
+      `parse_head` — request line (three parts, token method,
+      HTTP/1.x only), header lines (token names canonicalized, strict
+      colon placement), origin-form target split into raw path +
+      query map (first occurrence wins, pairs without `=` refused,
+      the Host rule for HTTP/1.1), percent-decoding under the
+      printable-ASCII discipline. The `httpd_parse` example walks
+      fixture heads — parsed fields and refusals — byte-identical on
+      the three hosted targets.
+- [x] **T57.2** — The connection half: the head block read under the
+      431 limit, bodies by Content-Length or chunked under the 413
+      limit, `100 Continue` before a body the peer waited on,
+      response writing with `Content-Length` always (the handler's
+      own standing) and HEAD/204/304 stripping, the keep-alive
+      negotiation (HTTP/1.1 closes on `Connection: close`, HTTP/1.0
+      stays on `keep-alive`), the loop one process per connection,
+      per-request timeouts (`with_read_timeout`/`with_idle_timeout`),
+      `serve`/`serve_with` answering the `Server` handle — `stop()`
+      graceful, `wait()` joining a drain counter process in the
+      sync.WaitGroup shape — and `server_options()` with the with_*
+      builders plus `with_date` (the injected clock; the language has
+      none). Three compiler bugs found on the way, each with the
+      probe that nailed it: the IR routed a call naming a top-level
+      const holding a callable to the zero-param thunk and dropped
+      the arguments whole (the middlewares died on both compiled
+      targets; zero-param symbol + arguments now lowers as the value
+      call); the c target built `-O2` under strict aliasing and the
+      value world's word views made a garbage pointer reach
+      `emo_cell_kind` — deterministic crash, layout-sensitive
+      (`-O0` and `-fno-strict-aliasing` agree byte-for-byte), so the
+      c target now builds `-fno-strict-aliasing` and the underlying
+      pun is the named follow-up; and two ts gaps — `listenerClose`
+      left a parked accept pending (Node ends the program with it),
+      now rejecting the waiters like the error event does, and a
+      receive's value return threw `EReturn` past `E.receive` to the
+      process wrapper (a receive returning a value inside a method
+      or callee def ended the program silently), now answered at the
+      receive; with the emitter honoring the receive in tail
+      position (`await` was dropping the def's value). The goldens:
+      `httpd_serve` (middleware, roundtrip, drain) and `httpd_wire`
+      (fourteen wire shapes on raw connections) answer byte-
+      identical on the three hosted targets by hand, the interpreter
+      legs running through the committed lockfiles in
+      test/emo_project. The two serve examples stay out of the
+      c_goldens list for now: the wire example's c binary ends
+      cleanly after its first line under the harness's fork-and-pipe
+      execution while answering byte-identically standalone 10/10 —
+      the second latent c-runtime flake (the scheduler returns when
+      the root fiber's `finished` flag stands, so an early flag ends
+      the program where it should hang), same family as the
+      strict-aliasing crash, unroot-caused and named in CHECK.md —
+      a flaky golden is worse than an absent one.
+- [x] **T57.3** — The Router: patterns parse once at registration —
+      `handle("GET /users/{id}", h)` and the method-scoped
+      `get`/`post`/`put`/`delete` taking the bare path (a pattern
+      naming a method there is the raise naming both forms), literal
+      and `{name}` and `{name...}` segments validated on the spot
+      (the raise family: braces without closes, empty names, a rest
+      that is not last, `//` and `.`/`..` — the wire's cleanup is the
+      peer's business, a pattern is exact) — and same-shape
+      registrations with overlapping methods raise at the second
+      one. The dispatch cleans the path first (`//`, `.`/`..` with a
+      climb past the root staying at the root, the trailing slash and
+      the query surviving) and answers the change with 301; matching
+      walks the tokens — literal outranks wildcard outranks rest,
+      the longer pattern past a shared prefix wins, an exact
+      pattern's trailing slash is part of the address, a subtree
+      takes the slash or more segments, a rest captures everything
+      left including nothing — a GET pattern answers HEAD, and the
+      captures decode under the path's own `+`-is-a-plus convention
+      (the query's `percent_decode` and the path's
+      `percent_decode_raw` split) before `with_params` hands them to
+      the handler. No match with a shape matching otherwise answers
+      405 with the deduped `Allow`; the trailed spelling of a
+      registered subtree answers 301 (`/static` → `/static/`);
+      nothing at all answers Go's own `404 page not found\n`.
+      `serve_routes`/`serve_routes_with` put the Router in the
+      handler's seat of the same `Server`. The `httpd_routes`
+      example walks seventeen probes — decoded and `+`-preserved
+      params, empty rest, literal-over-wildcard, 405+Allow, four
+      cleanup shapes with the query riding, the slash redirect, the
+      subtree, the 404 — byte-identical on the three hosted targets
+      by hand and through the committed lockfile in test/emo_project
+      (the interpreter leg; the c/ts legs verified by hand, the
+      serve examples' c_goldens deferral covering this one too).
+- [x] **T57.4** — The migration and the docs: `http` returns to
+      client-only (`serve`, `serve_requests`, `handle_connection`,
+      `read_request`, `write_response`, and `reason_phrase` deleted;
+      the header comment pointing the server half at httpd), the
+      callers migrated — `benchmarks/http_echo` (deps `httpd` +
+      `net`, smoke-tested through a real curl), `examples/
+      http_roundtrip` and `examples/https_roundtrip` (deps gaining
+      `httpd`, `httpd.serve` with the trailing block where
+      `http.serve_requests` stood, outputs unchanged), `ssr_page`
+      needing nothing (it names no server) — the locks regenerated
+      for every package whose source moved; `docs/stdlib/httpd.md`
+      and its zh-CN mirror (serving, the request and the response,
+      routing, options, strictness on the wire, the honest
+      limitations), `docs/stdlib/http.md` slimmed to the client
+      both languages, the `docs/stdlib.md` rows split and the
+      `httpd` summary section added both languages, the networking
+      intro's HTTP bullet split into client and server both
+      languages; the plan file's boxes ticked and `plan/README.md`'s
+      row added; the migrated `https_roundtrip` c binary turned 3/3
+      red under the harness while standing 3/3 green standalone —
+      the named flake family again — so its c golden joins the
+      deferral and its interpreter leg carries the coverage; M23
+      complete.

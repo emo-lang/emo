@@ -2021,19 +2021,21 @@ let stdlib_http_tests =
   targets = ["ocaml"]
 
   deps {
+    "httpd" = "0.1.0"
     "http" = "0.1.0"
     "net" = "0.1.0"
   }
 }|}
               );
               ( "main.emo",
-                {|require "http"
+                {|require "httpd"
+require "http"
 require "net"
 
 const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [], "hello from emo")
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello from emo")
 }
 
 case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
@@ -2084,6 +2086,7 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
   targets = ["ocaml"]
 
   deps {
+    "httpd" = "0.1.0"
     "http" = "0.1.0"
     "net" = "0.1.0"
   }
@@ -2091,13 +2094,14 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
               );
               ( "main.emo",
                 Printf.sprintf
-                  {|require "http"
+                  {|require "httpd"
+require "http"
 require "net"
 
 const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "%s", "%s")
 
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [("Content-Type", "text/plain")], "hello over https")
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [("Content-Type", "text/plain")], "hello over https")
 }
 
 const options = net.tls_client_options().with_ca_file("%s")
@@ -2176,6 +2180,146 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
            200\n\
            request failed: cannot resolve host `256.256.256.256`\n"
           output);
+    tc "the httpd_parse example runs through the committed lockfile" (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let entry = Filename.concat examples "httpd_parse/main.emo" in
+        Sys.chdir (Filename.concat examples "httpd_parse");
+        let expected =
+          Emo_project.read_file
+            (Filename.concat examples "httpd_parse/expected.txt")
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" expected output);
+    tc "the httpd_serve example runs through the committed lockfile" (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let dir = Filename.concat examples "httpd_serve" in
+        let entry = Filename.concat dir "main.emo" in
+        Sys.chdir dir;
+        let expected =
+          Emo_project.read_file (Filename.concat dir "expected.txt")
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" expected output);
+    tc "the httpd_wire example runs through the committed lockfile" (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let dir = Filename.concat examples "httpd_wire" in
+        let entry = Filename.concat dir "main.emo" in
+        Sys.chdir dir;
+        let expected =
+          Emo_project.read_file (Filename.concat dir "expected.txt")
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" expected output);
+    tc "the httpd_routes example runs through the committed lockfile" (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let dir = Filename.concat examples "httpd_routes" in
+        let entry = Filename.concat dir "main.emo" in
+        Sys.chdir dir;
+        let expected =
+          Emo_project.read_file (Filename.concat dir "expected.txt")
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" expected output);
     tc "emo build caches by content hash across builds" (fun () ->
         use_workspace_registry () |> ignore;
         let emo_exe = emo_exe_path () in

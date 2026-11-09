@@ -517,6 +517,19 @@ and lower_call env span callee args =
       }
   | _ -> (
       match resolve_callee env callee with
+      | Some (mangled, params) when params = [] && args <> [] ->
+          (* A zero-param symbol called with arguments is a const
+             holding a callable (`const f = -> …`, then `f(x)`): the
+             callee is the value the name reads as — the entry local,
+             or the memoized thunk — and the call is the dynamic one.
+             A real zero-param def called with arguments is the
+             checker's refusal, never the IR's shape; lowering it as
+             the direct call would drop the arguments whole. *)
+          {
+            ety = type_of env span;
+            desc =
+              Call_value { f = lower_expr env callee; args = lower_args () };
+          }
       | Some (mangled, params) ->
           {
             ety = type_of env span;

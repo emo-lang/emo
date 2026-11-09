@@ -53,7 +53,8 @@ The packages:
 | [`os`](#the-os-package) | processes, pipes, raw fd IO, directories | `ocaml`, `c`, `wasm` (fd/directory half) |
 | [`bufio`](#the-bufio-package) | buffered readers and writers over any stream | `ocaml`, `c`, `wasm` |
 | [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c`, `typescript` |
-| [`http`](#the-http-package) | HTTP client and server | `ocaml`, `c`, `typescript` |
+| [`http`](#the-http-package) | HTTP client | `ocaml`, `c`, `typescript` |
+| [`httpd`](#the-httpd-package) | HTTP server | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
@@ -282,9 +283,10 @@ there. Reference:
 
 ## The `http` package
 
-An HTTP client and server in pure Emo on top of `net`. Direct style
-throughout; one connection per request, closed after the exchange;
-redirects are never followed — a 3xx is a response like any other.
+An HTTP client in pure Emo on top of `net`. Direct style throughout;
+one connection per request, closed after the exchange; redirects are
+never followed — a 3xx is a response like any other. Serving HTTP is
+the `httpd` package's half of the wire.
 
 ```emo
 def get(url String) (R, HttpResponse)
@@ -308,39 +310,61 @@ class HttpResponse {
 }
 ```
 
-The server side is two helpers, both taking the handler as an
-attached block:
-
-```emo
-http.serve(listener) -> (conn TcpConn) { ... }
-http.serve_requests(listener) -> (req HttpRequest) { ... }
-def response(status Int64, headers Array[(String, String)], body String) HttpResponse
-```
-
-`serve` runs one process per connection and hands the handler the raw
-connection; `serve_requests` parses each request into an `HttpRequest`
-(`method`, `path`, `headers`, `body`, plus `header(name)`), writes the
-handler's `HttpResponse` back, and closes. Most handlers want
-`serve_requests`. The listener can come from `net.listen`, or from
-`net.listen_tls`/`net.listen_tls_with` to serve the same handler over
-HTTPS.
-
-```emo
-require "http"
-require "net"
-
-const (R.ok, listener) = net.listen("127.0.0.1", 8902)
-
-http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [("Content-Type", "text/plain")], "hello from emo\n")
-}
-```
-
 Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, which its own
 manifest pins). On `c` it inherits `net`'s coverage: TCP and TLS.
 Reference:
 [`docs/stdlib/http.md`](stdlib/http.md) · Demos:
 `examples/http_roundtrip`, `examples/https_roundtrip`.
+
+## The `httpd` package
+
+An HTTP server in pure Emo on top of `net`: one process per connection,
+a request arriving as a value and the handler answering with one —
+keep-alive, chunked request bodies, `100-continue`, per-request
+timeouts and size limits, and graceful shutdown all in the package, not
+every program's accept loop. The client half is the `http` package.
+
+```emo
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello from emo\n")
+}
+
+server.stop()   // close the listener; live connections finish
+server.wait()   // join the drain
+```
+
+`serve` (or `serve_with` with `server_options()` — read/idle timeouts,
+header and body budgets over 431/413, an injected `Date` clock) answers
+a `Server` handle at once; `wait()` blocks until the drain completes.
+The handler receives one whole `Request` — `method`, `path`, `query`,
+canonicalized `headers` (lookups case-insensitive), `body` by
+`Content-Length` or chunked with `100-continue`, `params` — and answers
+a `Response` value; the wire always carries `Content-Length` (derived,
+or the handler's own), HEAD/204/304 lose their bodies, and keep-alive
+holds until the peer says close.
+
+Routing lives in `httpd.router()`, one registration at a time:
+
+```emo
+var r = httpd.router()
+r = r.get("/hello/{name}", greet)      // req.params["name"], decoded
+r = r.get("/files/{path...}", files)   // the rest of the path, one capture
+r = r.handle("/static/", serve_static) // every method, the subtree below
+const server = httpd.serve_routes(listener, r)
+```
+
+The most specific pattern wins (literal > wildcard > rest, longer past
+a shared prefix); a shape matched with another method answers 405 with
+`Allow`; `//`, `.`, and `..` answer 301 to the cleaned path. Patterns
+parse at registration — malformed or conflicting ones raise. The peer's
+malformed bytes are values (400/431/413 plain text, connection closed);
+the language has no clock, so responses carry no `Date` unless one is
+injected through `with_date`.
+
+Targets: `["ocaml", "c", "typescript"]`. Reference:
+[`docs/stdlib/httpd.md`](stdlib/httpd.md) · Demos:
+`examples/httpd_routes`, `examples/httpd_serve`, `examples/httpd_wire`,
+`examples/httpd_parse`, `examples/https_roundtrip`.
 
 ## The `json` package
 
