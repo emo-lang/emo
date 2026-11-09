@@ -3408,11 +3408,39 @@ carries no server half; `dune runtest` green.
       the program where it should hang), same family as the
       strict-aliasing crash, unroot-caused and named in CHECK.md —
       a flaky golden is worse than an absent one.
-- [ ] **T57.3** — The Router: pattern parsing at registration,
-      method-scoped and method-less patterns, `{name}` and
-      `{path...}` wildcards feeding `req.params`, subtree prefixes,
-      most-specific precedence, 405 with `Allow`, 301 path cleanup,
-      and the routing goldens.
+- [x] **T57.3** — The Router: patterns parse once at registration —
+      `handle("GET /users/{id}", h)` and the method-scoped
+      `get`/`post`/`put`/`delete` taking the bare path (a pattern
+      naming a method there is the raise naming both forms), literal
+      and `{name}` and `{name...}` segments validated on the spot
+      (the raise family: braces without closes, empty names, a rest
+      that is not last, `//` and `.`/`..` — the wire's cleanup is the
+      peer's business, a pattern is exact) — and same-shape
+      registrations with overlapping methods raise at the second
+      one. The dispatch cleans the path first (`//`, `.`/`..` with a
+      climb past the root staying at the root, the trailing slash and
+      the query surviving) and answers the change with 301; matching
+      walks the tokens — literal outranks wildcard outranks rest,
+      the longer pattern past a shared prefix wins, an exact
+      pattern's trailing slash is part of the address, a subtree
+      takes the slash or more segments, a rest captures everything
+      left including nothing — a GET pattern answers HEAD, and the
+      captures decode under the path's own `+`-is-a-plus convention
+      (the query's `percent_decode` and the path's
+      `percent_decode_raw` split) before `with_params` hands them to
+      the handler. No match with a shape matching otherwise answers
+      405 with the deduped `Allow`; the trailed spelling of a
+      registered subtree answers 301 (`/static` → `/static/`);
+      nothing at all answers Go's own `404 page not found\n`.
+      `serve_routes`/`serve_routes_with` put the Router in the
+      handler's seat of the same `Server`. The `httpd_routes`
+      example walks seventeen probes — decoded and `+`-preserved
+      params, empty rest, literal-over-wildcard, 405+Allow, four
+      cleanup shapes with the query riding, the slash redirect, the
+      subtree, the 404 — byte-identical on the three hosted targets
+      by hand and through the committed lockfile in test/emo_project
+      (the interpreter leg; the c/ts legs verified by hand, the
+      serve examples' c_goldens deferral covering this one too).
 - [ ] **T57.4** — The migration and the docs: `http` loses its
       server half, the bench and examples move to httpd,
       `docs/stdlib/httpd.md` and the zh-CN mirror, the index rows,

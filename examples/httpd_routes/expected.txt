@@ -1,0 +1,53 @@
+== GET /hello/ada
+   200
+   hello ada
+== GET /hello/ada%20grace
+   200
+   hello ada grace
+== GET /hello/a+b
+   200
+   hello a+b
+== GET /files/2026/11/report.txt
+   200
+   files [2026/11/report.txt]
+== GET /files
+   200
+   files []
+== GET /users/admin
+   200
+   the admin console
+== GET /users/5
+   200
+   user 5
+== POST /echo
+   200
+   echo ping
+== GET /echo
+   405
+   Allow: POST
+== GET /nosuch
+   404
+   404 page not found
+
+== GET /a//b
+   301
+   Location: /a/b
+== GET /a/./b
+   301
+   Location: /a/b
+== GET /x/../top
+   301
+   Location: /top
+== GET /hello/..
+   301
+   Location: /
+== GET /a//b?k=1
+   301
+   Location: /a/b?k=1
+== GET /static
+   301
+   Location: /static/
+== GET /static/css/main.css
+   200
+   static /static/css/main.css
+drained

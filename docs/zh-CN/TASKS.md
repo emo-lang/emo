@@ -1161,10 +1161,29 @@ target 上逐字节不变(`CHECK.md`)。
       (调度器见 root fiber 的 `finished` 标志即返回,标志提前置位
       就把该挂起的程序静默结束),与严格别名崩溃同族,未究根因,
       已在 CHECK.md 点名——带 flake 的金测比缺席的金测更糟。
-- [ ] **T57.3** — 路由器:模式注册时解析(坏模式/冲突 raise)、
-      带方法与不带方法的模式、`{name}` 与 `{path...}` 通配喂
-      `req.params`、子树前缀、最具体优先、405+`Allow`、301 路径
-      清理,以及路由金测。
+- [x] **T57.3** — 路由器:模式只在注册时解析一次——
+      `handle("GET /users/{id}", h)` 与收裸路径的
+      `get`/`post`/`put`/`delete`(在那里命名方法会 raise 并点名两
+      种形态),字面量、`{name}`、`{name...}` 段当场验证(raise
+      族:不闭合的花括号、空名字、不在末尾的 rest、`//` 与
+      `.`/`..`——线上清理是对等方的事,模式是精确的),同形状且方
+      法重叠的第二次注册 raise。分发先清理路径(`//`、`./`、`../`
+      越过根停在根、尾斜杠与查询串都保留),变了就用 301 应答;
+      匹配走 token——字面量压过通配压过 rest,共享前缀之外更长的
+      模式胜出,精确模式的尾斜杠是地址的一部分,子树要尾斜杠或
+      更多段,rest 收下所剩的一切(包括空)——GET 模式应答 HEAD,
+      捕获按路径自己的 `+` 是加号约定解码(查询的
+      `percent_decode` 与路径的 `percent_decode_raw` 分立)再经
+      `with_params` 交给 handler。无匹配但形状以别的方法匹配时以
+      去重后的 `Allow` 答 405;已注册子树的无斜杠拼写答 301
+      (`/static` → `/static/`);彻底无答 Go 自己的
+      `404 page not found\n`。`serve_routes`/`serve_routes_with`
+      把 Router 放进同一个 `Server` 的 handler 座位。`httpd_routes`
+      示例走十七个探针——解码与保留 `+` 的参数、空 rest、字面量
+      优先、405+Allow、带查询串的四种清理形状、斜杠重定向、子
+      树、404——三个宿主 target 手工逐字节一致,解释器腿在
+      test/emo_project 过已提交的 lockfile(c/ts 腿手工验证,serve
+      示例的 c_goldens 缓期同样覆盖这一个)。
 - [ ] **T57.4** — 迁移与文档:`http` 失去服务端半边、bench 与示例
       迁 httpd、`docs/stdlib/httpd.md` 与 zh 镜像、索引行、
       networking intro 指针。

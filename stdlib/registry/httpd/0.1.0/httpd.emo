@@ -23,14 +23,14 @@
 // with_date — default output stays byte-deterministic.
 
 class Request {
-  def init(method String, target String, path String, query Map[String, String], proto String, headers Array[(String, String)], body String) {
+  def init(method String, target String, path String, query Map[String, String], proto String, headers Array[(String, String)], body String, params Map[String, String]) {
     self.method = method
     self.target = target
     self.path = path
     self.query = query
     self.proto = proto
     self.headers = headers
-    self.params = Map.new()
+    self.params = params
     self.body = body
   }
 
@@ -48,7 +48,12 @@ class Request {
   // The request with a body attached: the server reads the head and
   // the body apart and hands the handler one whole value.
   def with_body(body String) Request {
-    return Request.new(method: self.method, target: self.target, path: self.path, query: self.query, proto: self.proto, headers: self.headers, body: body)
+    return Request.new(method: self.method, target: self.target, path: self.path, query: self.query, proto: self.proto, headers: self.headers, body: body, params: self.params)
+  }
+
+  // The request with the router's wildcard captures filled in.
+  def with_params(params Map[String, String]) Request {
+    return Request.new(method: self.method, target: self.target, path: self.path, query: self.query, proto: self.proto, headers: self.headers, body: self.body, params: params)
   }
 }
 
@@ -105,7 +110,7 @@ def parse_head(raw String) (R, Request) {
               case split_target(parts[1]) {
                 (R.error, why) -> { return (R.error, why) }
                 (R.ok, split)  -> {
-                  return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: ""))
+                  return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: "", params: Map.new()))
                 }
               }
             }
@@ -235,10 +240,21 @@ def parse_query(raw String) (R, Map[String, String]) {
 // both nibbles hex becomes the byte it names, and that byte must sit
 // in 0x20..0x7E — the range every target carries identically in a
 // String. An escape decoding outside it (a UTF-8 sequence, a control
-// byte) is refused with the byte named. `+` decodes to space, the
-// query-string convention. Literal characters pass through as the
-// text they already are.
+// byte) is refused with the byte named. Literal characters pass
+// through as the text they already are.
+//
+// `+` is where the two spellings part: the query-string convention
+// reads it as a space (percent_decode), a path's `+` is a plus
+// (percent_decode_raw).
 def percent_decode(s String) (R, String) {
+  return percent_decode_with(s, true)
+}
+
+def percent_decode_raw(s String) (R, String) {
+  return percent_decode_with(s, false)
+}
+
+def percent_decode_with(s String, plus_space Bool) (R, String) {
   var out = ""
   var i = 0
   while i < s.length() {
@@ -259,7 +275,7 @@ def percent_decode(s String) (R, String) {
       out = out + ascii_printable.substring(b - 32, 1)
       i = i + 3
     } else {
-      if ch == "+" {
+      if plus_space && ch == "+" {
         out = out + " "
       } else {
         out = out + ch
@@ -869,4 +885,623 @@ def serve_with(listener TcpListener, handler Block, options ServerOptions) Serve
   const counter = do counter_process(0, false, [])
   do accept_loop(listener, handler, options, counter)
   return Server.new(listener: listener, counter: counter)
+}
+
+// ---- Router ----
+
+// A pattern's method must be the wire's own spelling — `GET`, not a
+// lowercase lookalike that would never match a request line.
+const upper_token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~"
+
+def is_upper_token(s String) Bool {
+  if s == "" {
+    return false
+  }
+  return upper_token_from(s, 0)
+}
+
+def upper_token_from(s String, i Int64) Bool {
+  if i >= s.length() {
+    return true
+  }
+  if upper_token_chars.index_of(s.substring(i, 1)) < 0 {
+    return false
+  }
+  return upper_token_from(s, i + 1)
+}
+
+def is_name(s String) Bool {
+  if s == "" {
+    return false
+  }
+  return name_from(s, 0)
+}
+
+def name_from(s String, i Int64) Bool {
+  if i >= s.length() {
+    return true
+  }
+  if token_chars.index_of(s.substring(i, 1)) < 0 {
+    return false
+  }
+  return name_from(s, i + 1)
+}
+
+// One registered pattern. `method` is "" when the pattern answers
+// every method; `tokens` is the parsed path — a literal segment tags
+// `l` and keeps its text, a `{name}` wildcard tags `n`, a
+// `{name...}` rest tags `r`; `subtree` marks the trailing slash. The
+// shape parses once, at registration.
+class Route {
+  def init(method String, path String, handler Block, tokens Array[String], subtree Bool, rest_name String) {
+    self.method = method
+    self.path = path
+    self.handler = handler
+    self.tokens = tokens
+    self.subtree = subtree
+    self.rest_name = rest_name
+  }
+}
+
+// The route table: immutable like every Emo value — each
+// registration answers a new Router, so the builders chain.
+class Router {
+  def init(routes Array[Route]) {
+    self.routes = routes
+  }
+
+  // The general form: the pattern carries its own method (`GET
+  // /users/{id}`) or none (`/static/` answers every method).
+  def handle(pattern String, handler Block) Router {
+    case parse_pattern(pattern) {
+      (R.error, why) -> { raise Exception.new(why) }
+      (R.ok, parts)  -> {
+        return add_checked(self.routes, parts[0], parts[1], parts[2], parts[3], parts[4], handler)
+      }
+    }
+  }
+
+  // The method-scoped forms: the pattern is the bare path — a
+  // pattern naming its own method goes through handle.
+  def get(pattern String, handler Block) Router {
+    return register_bare(self.routes, "GET", pattern, handler)
+  }
+
+  def post(pattern String, handler Block) Router {
+    return register_bare(self.routes, "POST", pattern, handler)
+  }
+
+  def put(pattern String, handler Block) Router {
+    return register_bare(self.routes, "PUT", pattern, handler)
+  }
+
+  def delete(pattern String, handler Block) Router {
+    return register_bare(self.routes, "DELETE", pattern, handler)
+  }
+}
+
+def router() Router {
+  return Router.new(routes: [])
+}
+
+// The pattern for handle: an optional method prefix, then the path.
+def parse_pattern(pattern String) (R, (String, String, Array[String], Bool, String)) {
+  const space = pattern.index_of(" ")
+  if space < 0 {
+    case parse_path(pattern) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, parts)  -> { return (R.ok, ("", parts[0], parts[1], parts[2], parts[3])) }
+    }
+  }
+  const method = pattern.substring(0, space)
+  if !is_upper_token(method) {
+    return (R.error, "httpd: the pattern `" + pattern + "` reads `" + method + "` where a method goes — a method is an uppercase token (`GET /path`)")
+  }
+  case parse_path(pattern.substring(space + 1, pattern.length() - space - 1)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> { return (R.ok, (method, parts[0], parts[1], parts[2], parts[3])) }
+  }
+}
+
+// The pattern for the method-scoped forms: the bare path, no method
+// prefix — naming one here would be two answers to one question.
+def parse_bare_pattern(pattern String) (R, (String, Array[String], Bool, String)) {
+  if pattern.index_of(" ") >= 0 {
+    return (R.error, "httpd: the pattern `" + pattern + "` names a method — the `get`/`post`/`put`/`delete` helpers take the bare path, or `handle(\"GET /path\")` for the general form")
+  }
+  return parse_path(pattern)
+}
+
+// The path half of a pattern: subtree (trailing slash), tokens, and
+// the rest wildcard's name.
+def parse_path(path String) (R, (String, Array[String], Bool, String)) {
+  if path == "" || path.substring(0, 1) != "/" {
+    return (R.error, "httpd: the pattern `" + path + "` must begin with `/`")
+  }
+  var inner = path
+  var subtree = false
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    subtree = true
+    inner = path.substring(0, path.length() - 1)
+  }
+  case parse_segments(inner.split("/"), 1, [], "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> { return (R.ok, (path, parts[0], subtree, parts[1])) }
+  }
+}
+
+// One pattern segment to its token. A brace opens a wildcard or it
+// is a literal's mistake; a rest is the last segment or the pattern
+// is wrong; `//` and `.`/`..` segments are the wire's cleanup
+// business — a pattern is exact.
+def parse_segments(segs Array[String], i Int64, acc Array[String], rest String) (R, (Array[String], String)) {
+  if i >= segs.length() {
+    return (R.ok, (acc, rest))
+  }
+  const seg = segs[i]
+  if seg == "" {
+    return (R.error, "httpd: the pattern carries `//` — write the cleaned path")
+  }
+  if seg == "." || seg == ".." {
+    return (R.error, "httpd: the pattern carries a `.` or `..` segment — write the cleaned path")
+  }
+  if rest != "" {
+    return (R.error, "httpd: the rest wildcard must be the pattern's last segment")
+  }
+  if seg.substring(0, 1) == "{" {
+    if seg.substring(seg.length() - 1, 1) != "}" {
+      return (R.error, "httpd: the pattern segment `" + seg + "` opens a `{` it never closes")
+    }
+    const name = seg.substring(1, seg.length() - 2)
+    if name.length() >= 3 && name.substring(name.length() - 3, 3) == "..." {
+      const rest_name = name.substring(0, name.length() - 3)
+      if rest_name == "" {
+        return (R.error, "httpd: the rest wildcard needs a name — write `{path...}`")
+      }
+      if !is_name(rest_name) {
+        return (R.error, "httpd: the rest wildcard name `" + rest_name + "` is not a name")
+      }
+      return parse_segments(segs, i + 1, acc.append("r" + rest_name), rest_name)
+    }
+    if name == "" {
+      return (R.error, "httpd: the pattern segment `{}` needs a name — write `{id}`")
+    }
+    if !is_name(name) {
+      return (R.error, "httpd: the wildcard name `" + name + "` is not a name")
+    }
+    return parse_segments(segs, i + 1, acc.append("n" + name), "")
+  }
+  if seg.index_of("{") >= 0 || seg.index_of("}") >= 0 {
+    return (R.error, "httpd: the literal segment `" + seg + "` carries a brace — a wildcard is `{name}`, a rest is `{path...}`")
+  }
+  return parse_segments(segs, i + 1, acc.append("l" + seg), "")
+}
+
+def add_checked(routes Array[Route], method String, path String, tokens Array[String], subtree Bool, rest_name String, handler Block) Router {
+  const route = Route.new(method: method, path: path, handler: handler, tokens: tokens, subtree: subtree, rest_name: rest_name)
+  return Router.new(routes: check_conflict(routes, route, 0))
+}
+
+def register_bare(routes Array[Route], method String, pattern String, handler Block) Router {
+  case parse_bare_pattern(pattern) {
+    (R.error, why) -> { raise Exception.new(why) }
+    (R.ok, parts)  -> {
+      return add_checked(routes, method, parts[0], parts[1], parts[2], parts[3], handler)
+    }
+  }
+}
+
+// Two patterns of one shape — the same segment kinds and subtree-
+// ness — with overlapping methods would both claim the same
+// requests: the second registration raises. Different shapes
+// coexist; the dispatch picks the more specific.
+def check_conflict(routes Array[Route], route Route, i Int64) Array[Route] {
+  if i >= routes.length() {
+    return routes.append(route)
+  }
+  const other = routes[i]
+  if shape_key(other) == shape_key(route) {
+    if route.method == "" || other.method == "" || other.method == route.method {
+      raise Exception.new("httpd: the pattern `" + route.path + "` conflicts with `" + other.path + "` — the same shape answering overlapping methods")
+    }
+  }
+  return check_conflict(routes, route, i + 1)
+}
+
+// The shape's identity: subtree flag, then one mark per segment — a
+// literal keeps its text, a wildcard is only its kind.
+def shape_key(route Route) String {
+  var key = "s0"
+  if route.subtree {
+    key = "s1"
+  }
+  return shape_key_tokens(route.tokens, 0, key)
+}
+
+def shape_key_tokens(tokens Array[String], i Int64, key String) String {
+  if i >= tokens.length() {
+    return key
+  }
+  const tag = tokens[i].substring(0, 1)
+  if tag == "l" {
+    return shape_key_tokens(tokens, i + 1, key + "|l" + tokens[i].substring(1, tokens[i].length() - 1))
+  }
+  if tag == "r" {
+    return shape_key_tokens(tokens, i + 1, key + "|r")
+  }
+  return shape_key_tokens(tokens, i + 1, key + "|n")
+}
+
+// The request path's segments: the leading slash drops, and one
+// trailing slash drops with it (a subtree's tail is decided by the
+// raw path, not by an empty segment).
+def request_segments(path String) Array[String] {
+  if path == "/" {
+    return []
+  }
+  var to = path.split("/").length()
+  if path.substring(path.length() - 1, 1) == "/" {
+    to = to - 1
+  }
+  return segs_from(path.split("/"), 1, to, [])
+}
+
+def segs_from(segs Array[String], i Int64, to Int64, acc Array[String]) Array[String] {
+  if i >= to {
+    return acc
+  }
+  return segs_from(segs, i + 1, to, acc.append(segs[i]))
+}
+
+// One route against one request: the method gate, then the shape.
+// A GET pattern answers HEAD too — the body stripping is the
+// response writer's half.
+def route_match_one(route Route, method String, path String) (R, (Map[String, String], Array[String])) {
+  if route.method != "" && route.method != method {
+    if !(method == "HEAD" && route.method == "GET") {
+      return (R.error, "httpd: method")
+    }
+  }
+  case route_shape(route, path) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, params) -> { return (R.ok, (params, route.tokens)) }
+  }
+}
+
+// The shape half: exact patterns answer the bare spelling (a
+// trailing slash is part of the address), subtrees take the trailing
+// slash or more segments, a rest takes everything left.
+def route_shape(route Route, path String) (R, Map[String, String]) {
+  const segs = request_segments(path)
+  if route.rest_name != "" {
+    return shape_rest(route, segs, 0, Map.new())
+  }
+  if route.subtree {
+    if segs.length() < route.tokens.length() {
+      return (R.error, "httpd: shape")
+    }
+    if segs.length() == route.tokens.length() {
+      if path.length() > 1 && path.substring(path.length() - 1, 1) != "/" {
+        return (R.error, "httpd: shape")
+      }
+    }
+    return shape_walk(route, segs, 0, Map.new())
+  }
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    return (R.error, "httpd: shape")
+  }
+  if segs.length() != route.tokens.length() {
+    return (R.error, "httpd: shape")
+  }
+  return shape_walk(route, segs, 0, Map.new())
+}
+
+def shape_walk(route Route, segs Array[String], i Int64, params Map[String, String]) (R, Map[String, String]) {
+  if i >= route.tokens.length() {
+    return (R.ok, params)
+  }
+  const tok = route.tokens[i]
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    if segs[i] != tok.substring(1, tok.length() - 1) {
+      return (R.error, "httpd: shape")
+    }
+    return shape_walk(route, segs, i + 1, params)
+  }
+  if tag == "n" {
+    params.set(tok.substring(1, tok.length() - 1), segs[i])
+    return shape_walk(route, segs, i + 1, params)
+  }
+  return (R.error, "httpd: shape")
+}
+
+// The rest wildcard's shape: the tokens before it walk the request's
+// first segments, the rest captures whatever remains — "" when
+// nothing does.
+def shape_rest(route Route, segs Array[String], i Int64, params Map[String, String]) (R, Map[String, String]) {
+  const fixed = route.tokens.length() - 1
+  if i >= fixed {
+    return (R.ok, params.set(route.rest_name, join_from(segs, i)))
+  }
+  if i >= segs.length() {
+    return (R.error, "httpd: shape")
+  }
+  const tok = route.tokens[i]
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    if segs[i] != tok.substring(1, tok.length() - 1) {
+      return (R.error, "httpd: shape")
+    }
+    return shape_rest(route, segs, i + 1, params)
+  }
+  if tag == "n" {
+    params.set(tok.substring(1, tok.length() - 1), segs[i])
+    return shape_rest(route, segs, i + 1, params)
+  }
+  return (R.error, "httpd: shape")
+}
+
+def join_from(segs Array[String], i Int64) String {
+  if i >= segs.length() {
+    return ""
+  }
+  const head = join_from(segs, i + 1)
+  if head == "" {
+    return segs[i]
+  }
+  return segs[i] + "/" + head
+}
+
+// Which of two matching patterns is the more specific: a literal
+// outranks a wildcard, a wildcard outranks the rest, the first
+// difference decides; past the shared prefix, the longer pattern
+// wins — it pins more of the path.
+def more_specific(a Array[String], b Array[String]) Bool {
+  return ms_from(a, b, 0)
+}
+
+def ms_from(a Array[String], b Array[String], i Int64) Bool {
+  if i >= a.length() || i >= b.length() {
+    return a.length() > b.length()
+  }
+  if token_score(a[i]) != token_score(b[i]) {
+    return token_score(a[i]) > token_score(b[i])
+  }
+  return ms_from(a, b, i + 1)
+}
+
+def token_score(tok String) Int64 {
+  const tag = tok.substring(0, 1)
+  if tag == "l" {
+    return 3
+  }
+  if tag == "n" {
+    return 2
+  }
+  return 1
+}
+
+// The best match's index: walk the table, keep the most specific
+// shape that answers the method. -1 when nothing does.
+def route_best_index(routes Array[Route], method String, path String, i Int64, have Bool, best Int64, best_tokens Array[String]) Int64 {
+  if i >= routes.length() {
+    if have {
+      return best
+    }
+    return 0 - 1
+  }
+  case route_match_one(routes[i], method, path) {
+    (R.error, _) -> {
+      return route_best_index(routes, method, path, i + 1, have, best, best_tokens)
+    }
+    (R.ok, (_, tokens)) -> {
+      if !have || more_specific(tokens, best_tokens) {
+        return route_best_index(routes, method, path, i + 1, true, i, tokens)
+      }
+      return route_best_index(routes, method, path, i + 1, have, best, best_tokens)
+    }
+  }
+}
+
+def route_scan(routes Array[Route], method String, path String) (R, (Route, Map[String, String])) {
+  const best = route_best_index(routes, method, path, 0, false, 0, [])
+  if best < 0 {
+    return (R.error, "httpd: no route matches `" + path + "`")
+  }
+  const route = routes[best]
+  case route_match_one(route, method, path) {
+    (R.error, why)      -> { return (R.error, why) }
+    (R.ok, (params, _)) -> { return (R.ok, (route, params)) }
+  }
+}
+
+// The methods that shape-match the path — the 405's Allow, deduped,
+// registration order. A method-less pattern would have matched, so
+// every name here is a concrete method the request did not carry.
+def route_allow(routes Array[Route], path String) String {
+  return allow_from(routes, path, 0, [])
+}
+
+def allow_from(routes Array[Route], path String, i Int64, acc Array[String]) String {
+  if i >= routes.length() {
+    return join_commas(acc, 0)
+  }
+  case route_shape(routes[i], path) {
+    (R.error, _) -> { return allow_from(routes, path, i + 1, acc) }
+    (R.ok, _)    -> {
+      if contains_str(acc, routes[i].method, 0) {
+        return allow_from(routes, path, i + 1, acc)
+      }
+      return allow_from(routes, path, i + 1, acc.append(routes[i].method))
+    }
+  }
+}
+
+def join_commas(items Array[String], i Int64) String {
+  if i >= items.length() {
+    return ""
+  }
+  const head = join_commas(items, i + 1)
+  if head == "" {
+    return items[i]
+  }
+  return items[i] + ", " + head
+}
+
+def contains_str(items Array[String], s String, i Int64) Bool {
+  if i >= items.length() {
+    return false
+  }
+  if items[i] == s {
+    return true
+  }
+  return contains_str(items, s, i + 1)
+}
+
+// Whether the trailed spelling has a handler — the slash redirect's
+// client (`/static` answers 301 to `/static/` when `/static/` is
+// registered). A path already ending in its slash is a plain 404 or
+// 405; the cleaner has been there.
+def route_slash(routes Array[Route], method String, path String) Bool {
+  if path.length() > 1 && path.substring(path.length() - 1, 1) == "/" {
+    return false
+  }
+  case route_scan(routes, method, path + "/") {
+    (R.error, _) -> { return false }
+    (R.ok, _)    -> { return true }
+  }
+}
+
+// The cleaned spelling of a request path: `//` collapses, `.` drops,
+// `..` climbs (past the root it stays at the root), a trailing slash
+// survives. The dispatch answers anything the cleaner changes with a
+// 301 to the clean form.
+def clean_path(path String) String {
+  const trailing = path.length() > 1 && path.substring(path.length() - 1, 1) == "/"
+  const built = clean_walk(path.split("/"), 0, [])
+  const joined = join_from(built, 0)
+  var out = "/" + joined
+  if joined == "" {
+    out = "/"
+  }
+  if trailing && out != "/" {
+    out = out + "/"
+  }
+  return out
+}
+
+def clean_walk(segs Array[String], i Int64, built Array[String]) Array[String] {
+  if i >= segs.length() {
+    return built
+  }
+  const seg = segs[i]
+  if seg == "" || seg == "." {
+    return clean_walk(segs, i + 1, built)
+  }
+  if seg == ".." {
+    if built.length() > 0 {
+      return clean_walk(segs, i + 1, without_last(built, 0, []))
+    }
+    return clean_walk(segs, i + 1, built)
+  }
+  return clean_walk(segs, i + 1, built.append(seg))
+}
+
+def without_last(built Array[String], i Int64, acc Array[String]) Array[String] {
+  if i >= built.length() - 1 {
+    return acc
+  }
+  return without_last(built, i + 1, acc.append(built[i]))
+}
+
+// The target's query rides a redirect untouched.
+def query_suffix(target String) String {
+  const q = target.index_of("?")
+  if q < 0 {
+    return ""
+  }
+  return target.substring(q, target.length() - q)
+}
+
+// The wildcard captures decoded: the path's own convention — `+` is
+// a plus, each `/`-separated piece decodes alone, so an encoded
+// slash stays a boundary on the wire and a literal in the value.
+def decode_params(params Map[String, String]) (R, Map[String, String]) {
+  const out = Map.new()
+  const keys = params.keys()
+  for var i = 0; i < keys.length(); i = i + 1 {
+    const key = keys[i]
+    case decode_segments(params.get(key)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value)  -> { out.set(key, value) }
+    }
+  }
+  return (R.ok, out)
+}
+
+def decode_segments(raw String) (R, String) {
+  if raw == "" {
+    return (R.ok, "")
+  }
+  const parts = raw.split("/")
+  return decode_join(parts, 0, "")
+}
+
+def decode_join(parts Array[String], i Int64, acc String) (R, String) {
+  if i >= parts.length() {
+    return (R.ok, acc)
+  }
+  case percent_decode_raw(parts[i]) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, piece)  -> {
+      if i == 0 {
+        return decode_join(parts, i + 1, piece)
+      }
+      return decode_join(parts, i + 1, acc + "/" + piece)
+    }
+  }
+}
+
+// The router's dispatch: clean the path (301 when the cleaner
+// changes it), match, and answer — the matched route's handler with
+// the wildcards decoded into req.params, or the 301/405/404 family.
+def router_dispatch(routes Router, req Request) Response {
+  const cleaned = clean_path(req.path)
+  if cleaned != req.path {
+    return response(301, [("Location", cleaned + query_suffix(req.target))], "")
+  }
+  const table = routes.routes
+  case route_scan(table, req.method, req.path) {
+    (R.error, _) -> {
+      if route_slash(table, req.method, req.path) {
+        return response(301, [("Location", req.path + "/" + query_suffix(req.target))], "")
+      }
+      const allow = route_allow(table, req.path)
+      if allow != "" {
+        return response(405, [("Allow", allow)], "")
+      }
+      return error(404, "404 page not found\n")
+    }
+    (R.ok, (route, params)) -> {
+      case decode_params(params) {
+        (R.error, why) -> { return error(400, why) }
+        (R.ok, decoded) -> {
+          const h = route.handler
+          return h(req.with_params(decoded))
+        }
+      }
+    }
+  }
+}
+
+// The routed server: the Router in the handler's seat, the same
+// Server handle serve answers.
+def serve_routes(listener TcpListener, routes Router) Server {
+  return serve_routes_with(listener, routes, server_options())
+}
+
+def serve_routes_with(listener TcpListener, routes Router, options ServerOptions) Server {
+  return serve_with(listener, -> (req Request) {
+    return router_dispatch(routes, req)
+  }, options)
 }
