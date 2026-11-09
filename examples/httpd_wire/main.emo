@@ -1,0 +1,213 @@
+// The wire shapes, walked on raw connections against a self-hosted
+// server: keep-alive on one socket, the close negotiation, HTTP/1.0,
+// a chunked body behind 100-continue, HEAD and 204 body stripping,
+// the injected Date, and the refusal family — 400 garbage, a bad
+// Content-Length, Content-Length beside Transfer-Encoding, a broken
+// chunk framing, 431 over the header limit, 413 over the body limit.
+// Everything the client side prints is byte-deterministic: the
+// listeners ride port 0, the clock is a fixed string.
+require "httpd"
+require "net"
+
+// The app the probes talk to.
+def wire_app(req httpd.Request) httpd.Response {
+  if req.path == "/echo" {
+    return httpd.response(200, [], req.body)
+  }
+  if req.path == "/nocontent" {
+    return httpd.response(204, [], "")
+  }
+  if req.path == "/moved" {
+    return httpd.response(301, [("Location", "/there")], "")
+  }
+  return httpd.response(200, [], "wire " + req.path)
+}
+
+// One exchange: the request goes out whole, the answer prints whole —
+// status line, headers, blank line, body.
+def exchange(conn TcpConn, raw String, head_only Bool) Int64 {
+  conn.write(raw)
+  return read_response(conn, head_only)
+}
+
+// The response: interim 100s read and passed over, the final answer
+// printed — status line, headers, body (unless the method was HEAD).
+def read_response(conn TcpConn, head_only Bool) Int64 {
+  case conn.read_line() {
+    (R.error, why) -> {
+      println("read failed: " + why)
+      return 0
+    }
+    (R.ok, status) -> {
+      if status.starts_with("HTTP/1.1 100") {
+        // The interim answer's header block goes unread into nothing,
+        // then the walk continues at the real status line.
+        case read_headers(conn, []) {
+          (R.error, why) -> {
+            println("read failed: " + why)
+            return 0
+          }
+          (R.ok, _) -> {
+            return read_response(conn, head_only)
+          }
+        }
+      }
+      println(status)
+      case read_headers(conn, []) {
+        (R.error, why) -> {
+          println("read failed: " + why)
+          return 0
+        }
+        (R.ok, parts) -> {
+          for var i = 0; i < parts.length(); i = i + 1 {
+            println(parts[i][0] + ": " + parts[i][1])
+          }
+          println("")
+          if head_only {
+            return 0
+          }
+          case body_of(parts) {
+            (R.error, _) -> {
+              println("")
+            }
+            (R.ok, n) -> {
+              if n > 0 {
+                case conn.read_exactly(n) {
+                  (R.error, why) -> {
+                    println("read failed: " + why)
+                  }
+                  (R.ok, data) -> {
+                    println(data)
+                  }
+                }
+              }
+            }
+          }
+          return 0
+        }
+      }
+    }
+  }
+}
+
+def read_headers(conn TcpConn, acc Array[(String, String)]) (R, Array[(String, String)]) {
+  case conn.read_line() {
+    (R.error, why) -> {
+      return (R.error, why)
+    }
+    (R.ok, line) -> {
+      if line == "" {
+        return (R.ok, acc)
+      }
+      const at = line.index_of(": ")
+      if at < 0 {
+        return (R.ok, acc.append((line, "")))
+      }
+      return read_headers(conn, acc.append((line.substring(0, at), line.substring(at + 2, line.length() - at - 2))))
+    }
+  }
+}
+
+// The length to read: Content-Length when present, none otherwise —
+// every response this server writes carries one, 204 the exception
+// this walk refuses to confuse with a body.
+def body_of(headers Array[(String, String)]) (R, Int64) {
+  for var i = 0; i < headers.length(); i = i + 1 {
+    if headers[i][0].lower() == "content-length" {
+      return (R.ok, headers[i][1].to_int64())
+    }
+  }
+  return (R.error, "httpd_wire: no content-length")
+}
+
+// A refusal probe: the raw bytes go out, the plain-text answer prints.
+def refuse(port Int64, raw String) Int64 {
+  const (R.ok, conn) = net.connect("127.0.0.1", port, 0.0)
+  conn.write(raw)
+  read_response(conn, false)
+  conn.close()
+  return 0
+}
+
+// ---- The walk ----
+
+// Server A: the defaults plus an injected clock.
+const (R.ok, listener_a) = net.listen("127.0.0.1", 0)
+const options_a = httpd.server_options().with_date(-> () { return "Mon, 09 Nov 2026 07:00:00 GMT" })
+const server_a = httpd.serve_with(listener_a, wire_app, options_a)
+
+// Server B: tight limits for the 431 and 413 probes.
+const (R.ok, listener_b) = net.listen("127.0.0.1", 0)
+const options_b = httpd.server_options().with_max_header_bytes(64).with_max_body_bytes(8)
+const server_b = httpd.serve_with(listener_b, wire_app, options_b)
+
+// Two requests on one socket: keep-alive, the Date header riding.
+println("== keep-alive")
+const (R.ok, conn) = net.connect("127.0.0.1", listener_a.port(), 0.0)
+exchange(conn, "GET /first HTTP/1.1\r\nHost: h\r\n\r\n", false)
+exchange(conn, "GET /second HTTP/1.1\r\nHost: h\r\n\r\n", false)
+
+// The close negotiation: the answer carries Connection: close and the
+// socket goes after one exchange.
+println("== close-negotiated")
+exchange(conn, "GET /last HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", false)
+case conn.read_line() {
+  (R.error, _) -> {
+    println("eof")
+  }
+  (R.ok, line) -> {
+    if line == "" {
+      println("eof")
+    } else {
+      println("still open: " + line)
+    }
+  }
+}
+conn.close()
+
+// HTTP/1.0: close unless it asked to stay.
+println("== http10")
+const (R.ok, c10) = net.connect("127.0.0.1", listener_a.port(), 0.0)
+exchange(c10, "GET /ten HTTP/1.0\r\n\r\n", false)
+c10.close()
+
+// A chunked body behind 100-continue, echoed back whole.
+println("== chunked-100")
+const (R.ok, cc) = net.connect("127.0.0.1", listener_a.port(), 0.0)
+cc.write("POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n")
+cc.write("5\r\nhello\r\n3\r\n wo\r\n0\r\n\r\n")
+read_response(cc, false)
+cc.close()
+
+// HEAD: the length of the would-be body, none of the body.
+println("== head")
+const (R.ok, ch) = net.connect("127.0.0.1", listener_a.port(), 0.0)
+exchange(ch, "HEAD /thing HTTP/1.1\r\nHost: h\r\n\r\n", true)
+// and the connection stays good for the next request on it
+exchange(ch, "GET /after HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", false)
+ch.close()
+
+// 204: no body, no length.
+println("== 204")
+const (R.ok, cn) = net.connect("127.0.0.1", listener_a.port(), 0.0)
+exchange(cn, "GET /nocontent HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", false)
+cn.close()
+
+// The refusals, server A first: garbage, a bad count, the smuggling
+// pair, broken chunk framing.
+println("== refusals")
+refuse(listener_a.port(), "NOT A REQUEST\r\n\r\n")
+refuse(listener_a.port(), "GET /x HTTP/1.1\r\nHost: h\r\nContent-Length: abc\r\n\r\n")
+refuse(listener_a.port(), "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n")
+refuse(listener_a.port(), "POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n0\r\n\r\n")
+
+// The limits, server B: 431 over the header bytes, 413 over the body.
+println("== limits")
+refuse(listener_b.port(), "GET /x HTTP/1.1\r\nHost: h\r\nX-Long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n")
+refuse(listener_b.port(), "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 100\r\n\r\n")
+
+const (R.ok, _) = server_a.stop()
+server_a.wait()
+const (R.ok, _) = server_b.stop()
+server_b.wait()
+println("drained")

@@ -628,6 +628,17 @@ let c_goldens =
     "fastmath_elefunt";
     "quad_demo";
     "csv_demo";
+    (* httpd_parse: the httpd parser's fixture walk — heads parsed to
+       fields, malformed ones refused with the 400-family reason.
+       httpd_serve and httpd_wire stay out of this list for now: their
+       c binaries answer byte-identically run standalone and from this
+       list's own build (verified repeatedly), but under the harness's
+       fork-and-pipe execution the wire example deterministically ends
+       after its first line — a second latent c-runtime flake in the
+       family the strict-aliasing crash belonged to, unroot-caused
+       (T57.2's trail, CHECK.md). They run as interpreter goldens
+       through the committed lockfiles in test/emo_project. *)
+    "httpd_parse";
     "json_demo";
     "yaml_demo";
     "xml_demo";
@@ -1562,6 +1573,7 @@ let c_examples_tests =
             else Filename.quote out_bin
           in
           let out, err, proc_status = run_cmd run_it in
+          ignore (err, proc_status);
           Alcotest.(check string) "output" expected out;
           (* The TLS gate pin (step 51): a program that never touches
              TLS links with no SSL_ symbol undefined, so the

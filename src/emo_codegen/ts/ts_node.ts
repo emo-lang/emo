@@ -471,6 +471,15 @@ function listenerClose(l: EListener): EListener {
   try {
     l.server.close();
   } catch (e) {}
+  // The close fails the parked accepts — the semantic the other
+  // targets run ("an accept failure — the listener closed under the
+  // loop — ends the loop"). A promise left pending holds no event, so
+  // Node would end the program with the accept still parked.
+  const ws = l.waiting;
+  l.waiting = [];
+  ws.forEach((w) =>
+    w.reject(new EEmoException("the listener on " + l.desc + " is closed"))
+  );
   return l;
 }
 

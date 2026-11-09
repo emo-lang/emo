@@ -1,0 +1,11 @@
+package {
+  name = "emo/httpd_serve"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "httpd" = "0.1.0"
+    "http" = "0.1.0"
+    "net" = "0.1.0"
+  }
+}

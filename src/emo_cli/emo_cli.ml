@@ -587,13 +587,24 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     native.Emo_project.ni_frameworks
                 in
                 let cflags =
-                  (if
-                     List.exists
-                       (fun src -> Filename.check_suffix src ".m")
-                       native.Emo_project.ni_sources
-                   then [ "-fobjc-arc" ]
-                   else [])
-                  @ pkg_cflags
+                  (* The value world's cells are one uintptr_t payload
+                     read through accessors, and the generated C moves
+                     words between views the standard's aliasing rules
+                     do not bless; -O1 and up reorders a release past a
+                     view change and a garbage pointer reaches
+                     emo_cell_kind (the httpd_serve shape, T57.2 —
+                     -O0 and -fno-strict-aliasing agree byte-for-byte,
+                     strict -O1/-O2 crash deterministically). The flag
+                     rides the list, so it enters the cache digest and
+                     no cached binary outlives it. *)
+                  "-fno-strict-aliasing"
+                  :: ((if
+                         List.exists
+                           (fun src -> Filename.check_suffix src ".m")
+                           native.Emo_project.ni_sources
+                       then [ "-fobjc-arc" ]
+                       else [])
+                     @ pkg_cflags)
                 in
                 let cclibs =
                   cclibs @ native.Emo_project.ni_sources

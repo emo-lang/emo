@@ -1636,10 +1636,16 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
     List.mapi (fun i (n, _) -> (n, c_ident n, Emo_check.Unknown)) cparams
   in
   let cap_scope = List.map (fun (n, c, ty) -> (n, c, ty)) caps in
+  (* The closure's text lands in its own buffer and joins the hoisted
+     run whole: a nested closure's definition writes straight to the
+     shared run mid-body, and a definition that landed inside this
+     one's braces would be C-invalid. Forward declarations make the
+     join order free. *)
+  let closure_buf = Buffer.create 256 in
   let env =
     {
       env with
-      buf = env.closures;
+      buf = closure_buf;
       fresh = 0;
       fname = name;
       fresult = Emo_check.Unknown;
@@ -1669,6 +1675,7 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
   List.iter (fun l -> put env "%s" l) (unwind_lines env.owned []);
   put env "  emo_drain();\n  emo_pool_exit();\n";
   put env "  return emo_vbool(false);\n}\n\n";
+  Buffer.add_buffer env.closures closure_buf;
   let cap_values =
     String.concat ", "
       (List.map

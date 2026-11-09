@@ -1,0 +1,88 @@
+== keep-alive
+HTTP/1.1 200 OK
+Content-Length: 11
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+
+wire /first
+HTTP/1.1 200 OK
+Content-Length: 12
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+
+wire /second
+== close-negotiated
+HTTP/1.1 200 OK
+Content-Length: 10
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+Connection: close
+
+wire /last
+eof
+== http10
+HTTP/1.1 200 OK
+Content-Length: 9
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+Connection: close
+
+wire /ten
+== chunked-100
+HTTP/1.1 200 OK
+Content-Length: 8
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+
+hello wo
+== head
+HTTP/1.1 200 OK
+Content-Length: 11
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Length: 11
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+Connection: close
+
+wire /after
+== 204
+HTTP/1.1 204 No Content
+Date: Mon, 09 Nov 2026 07:00:00 GMT
+Connection: close
+
+
+== refusals
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Content-Length: 88
+Connection: close
+
+httpd: bad request: the protocol version is neither HTTP/1.1 nor HTTP/1.0, got `REQUEST`
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Content-Length: 60
+Connection: close
+
+httpd: bad request: Content-Length is not a count, got `abc`
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Content-Length: 77
+Connection: close
+
+httpd: bad request: a request carries Content-Length beside Transfer-Encoding
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Content-Length: 50
+Connection: close
+
+httpd: bad request: the chunk size `zz` is not hex
+== limits
+HTTP/1.1 431 Request Header Fields Too Large
+Content-Type: text/plain; charset=utf-8
+Content-Length: 58
+Connection: close
+
+httpd: the header block exceeds the server's 64-byte limit
+HTTP/1.1 413 Content Too Large
+Content-Type: text/plain; charset=utf-8
+Content-Length: 57
+Connection: close
+
+httpd: the request body exceeds the server's 8-byte limit
+drained
