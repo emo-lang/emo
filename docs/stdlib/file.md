@@ -13,8 +13,8 @@ require "file"
 
 The standard library ships with the compiler, but its packages are
 versioned like any other: `require "file"` needs `"file" = "0.1.0"` in
-the manifest's `deps` block. The package declares the `ocaml` and `c`
-targets, so a build for another target refuses it.
+the manifest's `deps` block. The package declares the `ocaml`, `c`,
+and `wasm` targets, so a build for another target refuses it.
 
 ## The surface
 
@@ -47,6 +47,8 @@ with `bufio` in front when buffering helps.
 
 ## Targets
 
-`["ocaml", "c"]` — the targets with a Unix-shaped host. The demo
+`["ocaml", "c", "wasm"]` — the targets whose host reaches a file
+system: the Unix-shaped ones and the wasm host's syscalls. The demo
 (`examples/file_read`) writes a file, reads it back, overwrites it,
-and checks the round-trip; its golden output is checked byte-for-byte.
+and checks the round-trip; its golden output is checked byte-for-byte
+on every declared target.

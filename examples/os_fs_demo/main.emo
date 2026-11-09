@@ -1,0 +1,37 @@
+// os on the fd/directory half: raw descriptors, directories, and the
+// (R.ok, value) / (R.error, reason) split — the same bytes on every
+// target that declares the package (the interpreter, c, and wasm).
+//
+//   emo run main.emo
+
+const dir = "emo-os-demo.d"
+
+os.mkdir(dir)
+const (R.ok, fd) = os.open_write(dir + "/a.txt")
+println(fd)
+const (R.ok, put) = os.write(fd, "written through fds\n")
+println(put)
+os.close(fd)
+
+const (R.ok, rfd) = os.open_read(dir + "/a.txt")
+const (R.ok, text) = os.read(rfd, 100)
+println(text)
+os.close(rfd)
+
+const (R.ok, names) = os.list_dir(dir)
+println(names.length())
+println(names[0])
+
+os.unlink(dir + "/a.txt")
+os.rmdir(dir)
+
+// The misses answer as values: the removed directory and a descriptor
+// that was never open each come back as (R.error, reason).
+case os.list_dir(dir) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)       -> { println("unexpected ok") }
+}
+case os.read(999, 5) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

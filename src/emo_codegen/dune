@@ -2,7 +2,7 @@
  (name emo_codegen)
  (libraries emo_support emo_ast emo_check emo_ir emo_runtime))
 
-(data_only_dirs ts c ocaml)
+(data_only_dirs ts c ocaml wasm)
 
 ; The target runtimes ride the compiler as generated data — the C
 ; sources are written next to the emitted main.c, the TypeScript
@@ -37,3 +37,16 @@
    emo_ocaml_runtime_data.ml
    (bash
     "printf '(* Generated from src/emo_codegen/ocaml — edit there, not here. *)\\n\\nlet runtime_ml = {ml|' && cat ocaml/emo_ocaml_runtime.ml && printf '|ml}\\n'"))))
+
+; The wasm host rides the compiler the same way: `emo run --target wasm`
+; writes it beside a temp copy of the artifact, and the golden tests run
+; it unchanged.
+
+(rule
+ (target emo_wasm_host_data.ml)
+ (deps wasm/wasm_host.mjs)
+ (action
+  (with-stdout-to
+   emo_wasm_host_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/wasm — edit there, not here. *)\\n\\nlet wasm_host_mjs = {mjs|' && cat wasm/wasm_host.mjs && printf '|mjs}\\n'"))))

@@ -50,7 +50,7 @@ println("rest: [" + pe.read(8) + "]")
 println(pe.read(8) == "")
 
 // ---- a buffered writer over a file, 8 bytes at a time ----
-const path = "bufio-demo-" + os.getpid().to_string() + ".tmp"
+const path = "bufio-demo.tmp"
 const (R.ok, fd) = os.open_write(path)
 const bw = bufio.writer_size(bufio.fd_writer(fd), 8)
 bw.write("buffered ")

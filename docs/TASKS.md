@@ -46,6 +46,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
 | M20 — The numerical library | 53–54 | The `math` package grows into the correctness-first numerical surface the netlib assessment staged (`docs/math-netlib.md`): the full elementary-function set, complex arithmetic and a radix-2 FFT, BLAS1, an LU solver, and the error and gamma functions — pure Emo, byte-identical on all five hosted targets, with an ELEFUNT-derived battery as the accuracy record; then the native fast lane — the `fastmath` package binding `math`'s scalar surface to the host libm on `c`/`ocaml`, and the `quad` package binding QUADPACK through the existing scalar-and-callback FFI on `c`. Array-level performance (BLAS2/3, LAPACK) stays parked behind the array FFI gate. |
 | M21 — The crypto package | 55 | The portable primitives layer as one pure-Emo package, `crypto` — SHA-2, SHA-3 and SHAKE, HMAC, HKDF and PBKDF2, the constant-time comparison, ChaCha20-Poly1305, AES with CTR, CBC, and GCM, Ed25519 and X25519, SHA-1 and MD5 behind `crypto.legacy` — byte-identical on all five hosted targets with every golden a diff against the RFC and NIST vectors and Go's own answers; the `rand` package beside it binding the entropy source per target and carrying the deterministic HMAC-DRBG stream; the error split per the house rule, Bytes as the carrier, and the docs stating constant time as a source-level discipline with each target's honest status. RSA waits on a bignum foundation; TLS, x509, and the post-quantum set stay out. |
+| M22 — File IO on `wasm` | 56 | The wasm target's host boundary grows the file-system syscalls and the canonical host rides the compiler: `file`, `os` (the fd/directory half — the process half refuses at the call naming the capability), and `bufio` resolve and answer byte-for-byte on `wasm`; `emo run --target wasm` runs an artifact under Node with the bundled host; `emo build --target wasm` still emits exactly `.wasm` + `.wat`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 
 ## Design gates
 
@@ -3219,3 +3220,86 @@ error split, and the honesty sections.
       estimated — the sign sweep is eleven seconds, the thousand
       X25519 iterations eighty. `plan/README.md`'s row reads done;
       M21 complete.
+
+## M22 — File IO on `wasm`
+
+The wasm target's host boundary grows the file-system syscalls, the
+canonical host rides the compiler, and the last IO packages still
+missing a hosted target land on it. `plan/step-56-wasm-file-io.md`
+holds the decisions; the exit criteria: `file`, `os` (fd/directory
+half), and `bufio` resolve and answer byte-for-byte on `wasm`, the
+process half refuses at the call naming the capability, `emo run
+--target wasm` runs an artifact under Node with the bundled host, and
+every existing golden on every target stays byte-identical
+(`CHECK.md`).
+
+### Step 56 — File IO on the wasm target (and the canonical host) · `plan/step-56-wasm-file-io.md`
+
+**Prereq:** Steps 16, 20–22, 31–38, 50. **Done when:** `emo run
+--target wasm` runs `examples/os_fs_demo`, `file_read`, and
+`bufio_demo` byte-for-byte; the fork refusal names `os_fork`; `emo
+build --target wasm` still emits exactly `.wasm` + `.wat`; `dune
+runtest` green.
+
+- [x] **T56.1** — The protocol and the `file` pair. The import table
+      grows `file_read`, `file_write`, and `fetch` — a syscall stashes
+      its answer (contents, or the reason the host formatted whole
+      against a Node error-code → strerror table byte-identical with
+      the c runtime's) and the guest copies it out with `fetch` into a
+      buffer a new `alloc` runtime bump-allocated; the `rt` index map
+      went import-relative so a new import shifts every defined
+      function mechanically; `Runtime_impl` lowers the two names
+      through `string_args`/`fetch_string`/`r_pair`; the canonical
+      host rides the compiler as generated data
+      (`src/emo_codegen/wasm/wasm_host.mjs`) and the golden tests'
+      inline runner is deleted for it; the bump base moves to 65536
+      (page 0 stays the host's, memory opens at 2 pages). Two wasm
+      runtime bugs found and fixed on the way — the bump cursor never
+      moved (the copy loop's exit branch jumped past the advance,
+      dead code since the backend landed, invisible while every
+      consumer read its buffer before the next allocation) and the
+      grow delta paged the length alone (negative past a page
+      boundary → `memory.grow` failed, its `-1` dropped, the copy
+      stored out of bounds — `plot_demo`'s second SVG caught it).
+      Golden: the scratch probe pins ok and error bytes.
+- [x] **T56.2** — The os fd/directory half. Eleven more imports
+      (`os_open` behind a mode parameter, `os_read`, `os_write`,
+      `os_close`, `os_list_dir`, `os_mkdir`, `os_rmdir`, `os_unlink`,
+      `os_rename`, `os_getcwd`, `os_chdir`); `list_dir` rides a
+      NUL-separated name stream the guest splits with the existing
+      `str_split`, byte-order sorted host-side like the c runtime's
+      `qsort`; the process half (`getpid`, `getppid`, `fork`,
+      `waitpid`, `pipe`, `execv`, `_exit`) lowers to a run-time raise
+      naming the capability — the interpreter's run-time refusals are
+      the precedent, and a compile-time refusal would have killed the
+      whole package (its own bodies call the process names). Golden:
+      the scratch probe pins the fork refusal's message.
+- [x] **T56.3** — `emo run --target wasm`: the riscv64 arm's shape —
+      build into `.emo-build`, probe `node` (exit 69 without it),
+      write the bundled host beside the artifact, run from the
+      caller's working directory so relative paths resolve as the
+      interpreter resolves them; `emo doctor`'s wasm line names the
+      run path; the `--target` help and the unknown-target refusal
+      name both run targets.
+- [x] **T56.4** — Manifests, examples, goldens: `file`, `os`, and
+      `bufio` declare `wasm`; `file_read`, `bufio_demo`, and the new
+      `examples/os_fs_demo` (fd write/read, directory create/list/
+      unlink/remove, both refusal shapes — byte-identical with the
+      interpreter and c) join the wasm golden list, `os_fs_demo`
+      joins the c list and the interpreter exclusion list; every
+      lockfile pinning a changed manifest regenerated; and the test
+      fixtures' root directory is created at definition instead of
+      assumed — a wiped temp directory had taken every
+      scratch-writing test with it. `os_demo` (it forks) stays a c
+      golden; `bufio_demo`'s temp file loses its `getpid` suffix for
+      the same reason.
+- [x] **T56.5** — The exchange-area audit (the bump/scratch collision
+      the step set out to check was real but secondary — folded into
+      T56.1's finds: the base moved to 65536, and the cursor had
+      never moved at all until the loop fix).
+- [x] **T56.6** — The docs: `docs/demo-targets.md`'s wasm section
+      (the 17-import table, the fetch protocol, `emo run --target
+      wasm`, the capability story) + zh mirror; `docs/stdlib/{file,os,
+      bufio}.md` and the `docs/stdlib.md` index + zh mirrors; this
+      step's plan file; `plan/README.md`'s row; the `CHECK.md` trail.
+      `plan/README.md`'s row reads done; M22 complete.

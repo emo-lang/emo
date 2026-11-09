@@ -24,9 +24,9 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 
 | 包 | 提供的能力 | 目标 |
 |---|---|---|
-| [`file`](#file-包) | 整文件读写 | `ocaml`、`c` |
-| [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c` |
-| [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c` |
+| [`file`](#file-包) | 整文件读写 | `ocaml`、`c`、`wasm` |
+| [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c`、`wasm`（fd/目录半边） |
+| [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c`、`wasm` |
 | [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
 | [`http`](#http-包) | HTTP 客户端与服务器 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |

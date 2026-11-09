@@ -1142,8 +1142,9 @@ let run =
       & opt (some string) None
       & info [ "target" ] ~docv:"TARGET"
           ~doc:
-            "Compile first and run the artifact (only riscv64 today: the ELF \
-             boots under qemu-system-riscv64).")
+            "Compile first and run the artifact (riscv64: the ELF boots under \
+             qemu-system-riscv64; wasm: the module runs under Node with the \
+             bundled host).")
   in
   let run file no_color error_limit target locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
@@ -1180,11 +1181,53 @@ let run =
                (Printf.sprintf
                   "qemu-system-riscv64 -machine virt -nographic -kernel %s"
                   (Filename.quote elf)))
+    | Some "wasm" ->
+        let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
+        if
+          (not (Sys.file_exists build_dir))
+          && Emo_tool.run_status
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
+             <> 0
+        then begin
+          prerr_endline (Printf.sprintf "emo run: cannot create %s" build_dir);
+          exit 70
+        end;
+        let wasm_out = Filename.concat build_dir "emo_run" in
+        let code =
+          build_file ~entry:file ~output:wasm_out ~specialize:false ~cclibs:[]
+            ~native:Emo_project.no_native_inputs ~target:"wasm"
+            ~profile:"kernel"
+        in
+        if code <> 0 then exit code
+        else if not (tool_exists "node") then begin
+          prerr_endline
+            "emo run: the wasm target needs node on PATH (its WasmGC runs the \
+             module)";
+          exit 69
+        end
+        else begin
+          (* The host rides the compiler as generated data; it lands
+             beside the artifact, the way the qemu command lands beside
+             the ELF. *)
+          let host = Filename.concat build_dir "emo_wasm_host.mjs" in
+          let oc = open_out_bin host in
+          output_string oc Emo_codegen.wasm_host_mjs;
+          close_out oc;
+          let module_ = Filename.concat build_dir "emo_run.wasm" in
+          (* Run from the caller's working directory: relative paths in
+             the program resolve the way the interpreter resolves them. *)
+          exit
+            (Sys.command
+               (Printf.sprintf "cd %s && node %s %s"
+                  (Filename.quote (Sys.getcwd ()))
+                  (Filename.quote host) (Filename.quote module_)))
+        end
     | Some other ->
         prerr_endline
           (Printf.sprintf
              "emo run: unknown target `%s` for run — --target supports only \
-              riscv64 (other targets: `emo build`, then run the artifact)"
+              riscv64 and wasm (other targets: `emo build`, then run the \
+              artifact)"
              other);
         exit 65
     | None -> (
@@ -2183,7 +2226,10 @@ let doctor ~(emit : string -> unit) : int =
        (module.stripTypeScriptTypes)";
   if tool_exists "erlc" then line "beam:" "ok"
   else line "beam:" "unavailable — erlc not found";
-  line "wasm:" "ok — no external tools needed";
+  if tool_exists "node" then
+    line "wasm:"
+      ("ok" ^ tool_version "node" ^ " — `emo run --target wasm` runs it")
+  else line "wasm:" "ok — no external tools needed (Node adds the run path)";
   (match riscv_binutils_prefix () with
   | None ->
       line "riscv64:"

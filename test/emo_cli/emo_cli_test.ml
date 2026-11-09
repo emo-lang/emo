@@ -8,9 +8,15 @@ let contains hay needle =
   in
   go 0
 
-(* A scratch directory for fixture programs; files persist for the run. *)
+(* A scratch directory for fixture programs; files persist for the run.
+   The root is created here, not assumed: a wiped temp directory took
+   every scratch-writing test with it (found 2026-11-08, T56.4). *)
 let scratch =
-  Filename.concat (Filename.get_temp_dir_name ()) "emo-cli-test-fixtures"
+  let root =
+    Filename.concat (Filename.get_temp_dir_name ()) "emo-cli-test-fixtures"
+  in
+  (if not (Sys.file_exists root) then try Unix.mkdir root 0o755 with _ -> ());
+  root
 
 (* The registry arrives relative to the directory dune runs the tests in,
    and a fixture resolves its dependencies from inside its own project
@@ -214,6 +220,7 @@ let beyond_the_interpreter =
     "arena_gone";
     "outlives";
     "survivors";
+    "os_fs_demo";
   ]
 
 (* Every examples/<name>/ holding one self-contained program runs end to
@@ -389,6 +396,11 @@ let wasm_goldens =
     "crypto_aead";
     "crypto_sign";
     "crypto_ecdh";
+    (* step 56: the fd/directory half of os rides the wasm syscalls —
+       file_read, the bufio surface over it, and the os_fs demo *)
+    "file_read";
+    "bufio_demo";
+    "os_fs_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -517,59 +529,12 @@ let beam_examples_tests =
                    err)))
     beam_goldens
 
-(* The host boundary: println forwards to stdout, abort exits nonzero
-   with the message, float_str renders into the scratch area at
-   60000 (matching the runtime's convention). *)
-let wasm_runner_source =
-  {|
-import { readFile } from "node:fs/promises";
-
-// OCaml's %g — the rule the interpreter's `emo_to_string` follows, and
-// the same one the TS runtime's `g6` implements: six significant
-// digits, exponent form below 1e-4 or at 1e6 and above, exponent
-// spelled with a sign and two digits.
-const g6 = (x) => {
-  const exp = Math.floor(Math.log10(Math.abs(x)));
-  if (exp < -4 || exp >= 6) {
-    let r = Number((x / Math.pow(10, exp)).toFixed(5));
-    let e = exp;
-    if (Math.abs(r) >= 10) {
-      r = Number((r / 10).toFixed(5));
-      e += 1;
-    }
-    let ms = r.toFixed(5);
-    if (ms.includes(".")) ms = ms.replace(/0+$/, "").replace(/\.$/, "");
-    return ms + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
-  }
-  const decimals = Math.max(0, 5 - exp);
-  let s = x.toFixed(decimals);
-  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
-  return s;
-};
-const floatStr = (f) => (Object.is(f, -0) ? "-0.0" : Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
-const bytes = await readFile(process.argv[2]);
-let mem = null;
-const dec = new TextDecoder();
-const module = await WebAssembly.compile(bytes);
-const instance = await WebAssembly.instantiate(module, { emo: {
-  println: (ptr, len) => {
-    process.stdout.write(dec.decode(new Uint8Array(mem.buffer, ptr, len)) + "\n");
-  },
-  abort: (ptr, len) => {
-    const msg = len ? dec.decode(new Uint8Array(mem.buffer, ptr, len)) : "";
-    console.error("ABORT: " + msg);
-    process.exit(1);
-  },
-  float_str: (f) => {
-    const encoded = new TextEncoder().encode(floatStr(f));
-    const view = new Uint8Array(mem.buffer, 60000, encoded.length);
-    view.set(encoded);
-    return [60000, encoded.length];
-  },
-}});
-mem = instance.exports.mem;
-instance.exports.main();
-|}
+(* The host boundary: the canonical host rides the compiler as
+   generated data (src/emo_codegen/wasm/wasm_host.mjs) — println
+   forwards to stdout, abort exits nonzero with the message, float_str
+   renders into the scratch area at 60000, and the file-system
+   syscalls answer through the fetch protocol. *)
+let wasm_runner_source = Emo_codegen.wasm_host_mjs
 
 let wasm_runner_path =
   lazy
@@ -654,6 +619,7 @@ let c_goldens =
     "list";
     "array_builder";
     "os_demo";
+    "os_fs_demo";
     "base64_demo";
     "fastmath_demo";
     (* fastmath_elefunt: the natives' battery — foreign calls cannot run
@@ -842,6 +808,102 @@ let check_run what (out, err, status) expected =
       Alcotest.fail (Printf.sprintf "%s died on signal %d: %s" what n err)
   | Unix.WSTOPPED n ->
       Alcotest.fail (Printf.sprintf "%s stopped on signal %d" what n)
+
+(* The file-system syscalls, end to end: a scratch program calls the
+   bare file_read/file_write the checker types on every target — the
+   package manifests follow in the step's own task — writing a file,
+   reading it back, and pinning the reason for the missing path. The
+   run stands in the scratch dir so the probe's file lands there. *)
+let wasm_file_probe_test =
+  tc "wasm file syscalls answer and refuse" (fun () ->
+      if not (Lazy.force node_available) then Alcotest.skip ();
+      let source =
+        {|
+const (R.ok, written) = file_write("emo-wasm-probe.txt", "hello from the syscalls\n")
+println(written)
+const (R.ok, text) = file_read("emo-wasm-probe.txt")
+println(text)
+case file_read("emo-wasm-probe-missing.txt") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+|}
+      in
+      let entry = scratch_entry "wasm-file-probe" source in
+      let dir = Filename.dirname entry in
+      let out_wasm = Filename.concat dir "probe.wasm" in
+      Alcotest.(check int)
+        "build exit" 0
+        (build_entry ~target:"wasm" entry out_wasm);
+      let expected =
+        "24\n\
+         hello from the syscalls\n\n\
+         file: cannot read emo-wasm-probe-missing.txt: No such file or directory\n"
+      in
+      let out, err, status =
+        run_cmd
+          (Printf.sprintf "cd %s && node %s %s" (Filename.quote dir)
+             (Filename.quote (Lazy.force wasm_runner_path))
+             (Filename.quote out_wasm))
+      in
+      check_run "node" (out, err, status) expected)
+
+(* The process half refuses at the call on wasm: the package ships, the
+   capability names itself, and the interpreter's run-time refusals are
+   the precedent. A raise ends the program with the message on stderr. *)
+let wasm_process_refusal_test =
+  tc "wasm os.fork raises naming the capability" (fun () ->
+      if not (Lazy.force node_available) then Alcotest.skip ();
+      let source =
+        {|
+require "os"
+
+println("before")
+os.fork()
+println("unreachable")
+|}
+      in
+      let entry = scratch_entry "wasm-process-refusal" source in
+      let dir = Filename.dirname entry in
+      let manifest = Filename.concat dir "package.emo" in
+      write_file manifest
+        {|package {
+  name = "emo/wasm-process-refusal"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|};
+      let out_wasm = Filename.concat dir "refusal.wasm" in
+      Alcotest.(check int)
+        "build exit" 0
+        (build_entry ~target:"wasm" entry out_wasm);
+      let expected_out = "before\n" in
+      let out, err, status =
+        run_cmd
+          (Printf.sprintf "cd %s && node %s %s" (Filename.quote dir)
+             (Filename.quote (Lazy.force wasm_runner_path))
+             (Filename.quote out_wasm))
+      in
+      Alcotest.(check string) "output stops at the call" expected_out out;
+      (match status with
+      | Unix.WEXITED 1 -> ()
+      | s ->
+          Alcotest.fail
+            (Printf.sprintf "node exited %s: %s"
+               (match s with
+               | Unix.WEXITED n -> string_of_int n
+               | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+               | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+               err));
+      Alcotest.(check bool)
+        "the refusal names os_fork" true
+        (contains err
+           "the runtime implementation `os_fork` is not available on the wasm \
+            target"))
 
 (* `-o` names the artifact on every target, and on beam it names the
    module too: erlc loads a .beam only when the file stem equals the
@@ -4299,8 +4361,9 @@ let doctor_tests =
           "the ocaml line names the toolchain, not the installation shape" true
           (contains text "ok — ocamlfind" || contains text "unavailable");
         Alcotest.(check bool)
-          "wasm needs nothing" true
-          (contains text "no external tools"));
+          "the wasm line names the run path or the no-tools story" true
+          (contains text "emo run --target wasm"
+          || contains text "no external tools"));
   ]
 
 (* ---- browser: the page bundle (T48.10) ---- *)
@@ -5864,7 +5927,9 @@ let () =
       ("repl", repl_tests);
       ("examples", examples_tests);
       ("errors_examples", errors_examples_tests);
-      ("wasm_examples", wasm_examples_tests);
+      ( "wasm_examples",
+        wasm_examples_tests
+        @ [ wasm_file_probe_test; wasm_process_refusal_test ] );
       ("beam_examples", beam_examples_tests);
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);

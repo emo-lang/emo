@@ -9,7 +9,8 @@ over tiny structural interfaces, adapters for the concrete streams,
 and buffers the caller sizes explicitly.
 
 The package is pure Emo over `os`, so it runs on the targets `os`
-runs on: the ocaml and c targets, the ones with a Unix-shaped host.
+runs on: the ocaml and c targets, the ones with a Unix-shaped host,
+and wasm, where the fd calls ride the module's syscalls.
 
 ## Using the package
 
@@ -184,5 +185,5 @@ destructors, so the tail in the buffer belongs to the caller.
 `examples/bufio_demo` exercises the whole surface end to end —
 in-memory streams, a file written through an 8-byte buffer that
 really flushes, read back through two stacked readers — and its
-golden output is checked byte-for-byte on the interpreter and the c
-target.
+golden output is checked byte-for-byte on every target the package
+declares — the interpreter, `c`, and `wasm`.

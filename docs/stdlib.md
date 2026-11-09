@@ -49,9 +49,9 @@ The packages:
 
 | Package | What it gives you | Targets |
 |---|---|---|
-| [`file`](#the-file-package) | whole-file read and write | `ocaml`, `c` |
-| [`os`](#the-os-package) | processes, pipes, raw fd IO, directories | `ocaml`, `c` |
-| [`bufio`](#the-bufio-package) | buffered readers and writers over any stream | `ocaml`, `c` |
+| [`file`](#the-file-package) | whole-file read and write | `ocaml`, `c`, `wasm` |
+| [`os`](#the-os-package) | processes, pipes, raw fd IO, directories | `ocaml`, `c`, `wasm` (fd/directory half) |
+| [`bufio`](#the-bufio-package) | buffered readers and writers over any stream | `ocaml`, `c`, `wasm` |
 | [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c`, `typescript` |
 | [`http`](#the-http-package) | HTTP client and server | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |

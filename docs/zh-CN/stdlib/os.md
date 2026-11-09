@@ -3,9 +3,10 @@
 标准库的进程级接口:进程 id、`fork`、`execv`、`waitpid`、管道、工作
 目录、目录列举,以及裸(非缓冲、基于 fd)文件 IO——系统程序在搭建
 一切之前需要的底层能力。与格式包不同,`os` 不是纯 Emo:它的调用分发
-到以 POSIX 为底座的运行时实现,因此只声明拥有 Unix 形态宿主的两个
-目标——`ocaml` 与 `c`。给浏览器或字节码目标声明这个包,在任何代码
-运行之前就会报包错误。
+到以 POSIX 为底座的运行时实现,因此只声明宿主能承载这套接口的
+目标——`ocaml`、`c`,以及 `wasm`(fd、目录与工作目录半边;进程半边
+在那里改为调用时 raise 并点名能力)。给浏览器或字节码目标声明这个
+包,在任何代码运行之前就会报包错误。
 
 ## 使用包
 
@@ -13,7 +14,7 @@
 require "os"
 ```
 
-标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "os"` 需要在 manifest 的 `deps` 块里钉上 `"os" = "0.1.0"`。本包声明 `ocaml` 和 `c` 两个目标,其他目标的构建会拒绝它。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "os"` 需要在 manifest 的 `deps` 块里钉上 `"os" = "0.1.0"`。本包声明 `ocaml`、`c` 和 `wasm` 目标,其他目标的构建会拒绝它。
 
 ## 错误
 
@@ -121,6 +122,9 @@ main 普通 `return` 会把父进程的清理逻辑跑两遍。
 
 ## 目标
 
-`["ocaml", "c"]`。ocaml 目标把 os 调用建在宿主的 Unix 模块上;
-c 目标直接发射 POSIX 调用。没有进程可 fork 的地方,fork/exec/
-wait/pipe 就没有意义,因此 typescript、wasm、beam 目标拒绝这个包。
+`["ocaml", "c", "wasm"]`。ocaml 目标把 os 调用建在宿主的 Unix 模块上;
+c 目标直接发射 POSIX 调用;wasm 目标把 fd、目录与工作目录半边降级为
+模块的 syscall,把进程半边降级为运行时 raise——`fork`、`execv`、
+`waitpid`、`pipe`、`getpid`、`getppid`、`_exit` 各自在被调用时点名
+能力(`os_fs_demo` 走 fd 与目录半边;含 fork 的 `os_demo` 仍是 c
+golden)。typescript 与 beam 目标拒绝这个包。

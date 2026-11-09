@@ -1,0 +1,9 @@
+package {
+  name = "emo/os_fs_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
