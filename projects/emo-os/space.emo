@@ -114,7 +114,7 @@ const slot_space = 872
 // in the cell and the build mapped a phantom grant, the range check
 // the loud end.
 const screen_pending = koff + 0x870029e0
-const screen_size = 0x400000 // 4 MiB, frames.emo's carve
+const screen_size = 0x800000 // 8 MiB, frames.emo's carve (T9.1)
 
 // The exec's pending record (emo-desktop A11.1): the cell the process
 // service pokes with the image record's address right before the spawn
@@ -361,5 +361,20 @@ def switch(w Int64) Int64 {
 def map_run(root_pa Int64, base_pa Int64, len Int64) Void {
   var root = sv39.va_of(root_pa)
   sv39.map_range(root, base_pa, base_pa, len, rwu)
+  sfence()
+}
+
+// A window buffer's run, taken back out of its owner's table (T9.3) —
+// the close's other half: the leaves `map_run` wrote, unmapped by the
+// exact walk that wrote them, the translations fenced after. The
+// window's mapping is the identity of its physical addresses, so the
+// walk's every leaf is one the map wrote and no other mapping's; a
+// leaf that maps anything else is the kernel's bug, the loud end. The
+// fence is the live table's own discipline — the owner's next stores
+// walk a table the run is no longer in, and a frame the allocator
+// hands another process is the new owner's alone.
+def unmap_run(root_pa Int64, base_pa Int64, len Int64) Void {
+  var root = sv39.va_of(root_pa)
+  sv39.unmap_range(root, base_pa, len)
   sfence()
 }

@@ -268,6 +268,807 @@ landed 2026-11-06 (the kernel half is [EmoOS T8.27](projects/emo-os/docs/TASKS.m
   volume-touching command. The round's find (the repaint that weighed
   a boot) in the dated section below.
 
+**emo-desktop — [M14, the HD desktop](projects/emo-desktop/docs/TASKS.md),
+opened 2026-11-06 (the kernel half is [EmoOS Step 9](projects/emo-os/docs/TASKS.md)):**
+
+- [x] **A14.1** — the primitives: one rounded rectangle, three verbs
+  (`rounded`, `stroke`, `shadow`) — the hosted targets and the metal
+  agreeing on the card's eight digests, the costs measured. Landed
+  2026-11-07; the record is the dated section below.
+- [x] **A14.2** — the type: Inter and JetBrains Mono rasterized at
+  generation time into a sixteen-level grid, `ink` the coverage blit,
+  proportional advances in the measure. Landed 2026-11-07; the record
+  is the dated section below.
+- [x] **A14.3** — the mode, the desktop's side: the wallpaper's art
+  and the windows' places from the mode, the goldens at 1920×1080.
+  Landed 2026-11-07; the record is the dated section below.
+- [x] **T9.1** — the mode, the kernel's side: the carve at 8 MiB grown
+  downward, the budget measured, the kernel heap 64 → 32 MiB the
+  round's lever. Landed 2026-11-07; the record is the dated section
+  below.
+- [x] **A14.4** — the chrome: the header and the dock translucent by
+  the wallpaper's formula, the icons drawn. Landed 2026-11-07; the
+  record is the dated section below.
+- [x] **A14.5** — the windows: the shared title bar, the apps
+  reskinned, the antialiased pointer. Landed 2026-11-07; the record is
+  the dated section below. M14 complete.
+- [x] **T9.2** — the compositor's corners and shadows, the cursor
+  plane's coverage blend. Landed 2026-11-07; the record is the dated
+  section below.
+- [x] **T9.3** — `win_close` unmaps the run's leaves from the owner's
+  table before the blocks go back, the translations fenced; the desk
+  pass's `c` closes and reopens, the map over the reused blocks the
+  proof. Landed 2026-11-07; the record is the dated section below.
+- [x] **T9.4** — the constant fill, the compiler's side (A14.2's
+  lever): integer-literal aggregates fill from a `.rodata` blob of
+  their static cells. Landed 2026-11-07; the record is the dated
+  section below.
+
+**emo-desktop — [M15, motion](projects/emo-desktop/docs/TASKS.md),
+opened 2026-11-08 (D9's deferral cashed in):**
+
+- [x] **D10** — the budget measured before anything moves: the
+  composition's own per-frame cost is what an animation rides, and it
+  is on record before any animation or compositor mechanism is
+  chosen. Landed 2026-11-08; the record is the dated section below.
+- [x] **A15.1** — the composition's cost measured (about 230 ms a
+  whole-screen composition at 1080p, the mailbox microseconds), the
+  blend's division retired at the four sites, sixteen locks
+  regenerated; the misapplied identity the goldens caught. Landed
+  2026-11-08; the record is the dated section below.
+
+**EmoOS — [Step 10, motion's kernel side](projects/emo-os/docs/TASKS.md),
+opened 2026-11-08 (the damage decision the number named):**
+
+- [x] **T10.1** — the compositor's damage rectangle: one bounding box
+  the ops mark and the composition walks and flushes only, the
+  painted records beside the stack, the generation's first composition
+  the whole mode; the raise's stale record the model's pixel caught.
+  Landed 2026-11-08; the record is the dated section below.
+
+**emo-desktop — [A15.2, the first animation](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-08 (M15 complete):**
+
+- [x] **A15.2** — the three apps' windows rise into place and sink on
+  close, the pacing the present's own reply (D12: the frame callback's
+  park deadlocks a solo client), the slide's comp lines the golden's
+  record and the launch-era dock/header sums the scheduler's own.
+  Landed 2026-11-08; the record is the dated section below.
+
+**emo-desktop — [M16, the window's own menu](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
+
+- [x] **A16.1–A16.5** (D13) — the bar's one round button and the
+  dropdown it opens (Maximize, Minimize, Quit), the menu once in the
+  seat the three apps share; the press-at wire (EmoOS T10.2), the
+  minimize's hidden entry with the dock tile's way back and the popup
+  fold at every focus move (T10.3), the maximize the scale seam's own
+  whole multiple with the scaled walk (T10.4), the bar a drag handle
+  on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
+  2026-11-08; the record is the dated section below.
+
+## 2026-11-08 — The window's own menu (emo-desktop M16, EmoOS T10.2–T10.4)
+
+- **The bar's chrome becomes live.** The three traffic lights the
+  A14.5 title bar painted were decoration — hit-tested by no one, the
+  bar's press "no one's" in the shell. M16 gives the bar one round
+  button and the dropdown it opens: Maximize, Minimize, Quit. The
+  architecture the constraints picked: the gate's owner checks make a
+  window's grant the only legal caller of its own verbs, so the menu
+  lives once in the seat the three apps share (`fb/winbuf`), not in
+  the shell; the popup rides the roles' own vocabulary (role 1,
+  `win_parent`); the pointer's position reaches the app as the
+  **press-at** (T10.2) — a second ring word behind every left-button
+  press, the position the axes last named packed raw — because
+  pointer-move fanout would race the panel's exemption. Menu language:
+  English (the system's face is ASCII; a Chinese menu is six new
+  16×16 glyphs — decidable later, the pipeline ready).
+- **The kernel's half.** T10.2: the press-at, the press's own
+  composition (the raise's marks now `comp_raise_mark`, shared with
+  op 15), and the **fold** — a window that loses the focus loses its
+  popups with it. T10.3: the hidden word beside the painted records,
+  `win_minimize` (verb 25) and `win_desk_open(pid)` (verb 26, the
+  panel the authority — the desktop names its apps by pid), the walk
+  skipping a hidden toplevel's whole tree. T10.4: `win_scale` accepts
+  the whole numbers — the recorded seam's values grown, the scaled
+  blit's word pairs doubling or gathering across a straddle, the
+  mask's arcs at the carried size; the win pass's strictness beat
+  flips (`scale 2 ok`, `scale 0 r4`).
+- **The finds.** (1) The desk_open's comp line read the entry's
+  position after the raise — the raised-from slot's stale words (the
+  dock's own coordinates printed in its place); captured before the
+  raise now. (2) `comp_stack_add` never cleared a reused slot's
+  hidden word — a shifted-down minimized entry's flag could ride a
+  new surface's slot; cleared. (3) The seat's `next` rewrite had the
+  quit sentinel inside the loop's own `done < 0` condition — the
+  session parked on the stream forever, the whole machine healthy
+  around it; five instrumented rounds to see what the structure said
+  at first glance. (4) **The exit event waits for the machine's next
+  input event when the desktop goes fully silent**: the sink's last
+  present ends, the close and the exit land, the exit ring holds the
+  news and the shell's reader sits served-parked on the empty stream
+  with its hold seat cleared — the ring's `exit_event_for_held` finds
+  no seat named, and the event delivers only when the next event
+  wakes the serve (its own reader's `exit_event_take` on the resumed
+  pass). Every pre-A16 beat's motion masked it; the menu-quit's quiet
+  beat exposed it, five more rounds to pin down, and the golden's
+  beat texture now does what a user's hand does — the pointer back to
+  its park after the click. Found, understood, left as the design's
+  shape: the delivery is correct on any following event, and a
+  silent machine has no lines to print anyway. (5) **The interactive
+  halt** (2026-11-09, A16.5's first hand-driven session): the ride's
+  machine froze at the client era with a real hand clicking the cocoa
+  window — the press's own composition (T10.2) walks and flushes
+  inside the notice handler, a whole-mode repair stretching that
+  flush to hundreds of milliseconds, and the client era landing its
+  presents inside one overran the stash T8.6 set four deep ("nobody's
+  era holds four window presents inside one flush" — the interactive
+  hand is somebody's). The stash is twelve deep now, its cells moved
+  past the hidden words to +3264 (the first cut of the twelve ran
+  +440..+536 and would have written the frame callbacks' pids over —
+  the address-overlap lesson's third bite in two days); two fresh
+  golden rounds green, the sums unchanged.
+- **The golden.** The menu's open, the maximize (×5, the work area's
+  whole width), the restore's menu at the carried seat, the restore,
+  the minimize's compose, the desktop open's, the menu-quit's session
+  end — every comp line pinned with its sum, deterministic across
+  rounds; the clicks named through the device axes' inverse. **The
+  drag** (A16.5, T10.5, 2026-11-09): the bar beside the button arms
+  the hand, the driver's move-at steps (type 5, the press-at's
+  packing, pushed while the button holds and the axes move) move the
+  window by the seat's own `win_move`, there and back, the two steps'
+  comp lines pinned — and the drag's cells taught the map a lesson:
+  the first cut landed on the input hold's seat zero (the desk drag's
+  moves wrote axes into the hold's pid word, the reply-to-nobody the
+  loud end), the second on the frame allocator's own head, free and
+  total (the arenas gone before the first spawn); the cells live in
+  the twenty-four bytes between the exit ring's tail and the
+  allocator's page, and the map's comment names the neighbors. The
+  pins: the fb gate green (151), `run.sh` green under both timer
+  transports — four rounds green, three byte-identical on both (the
+  fourth's only variance the launch-era prompt-vs-rise interleave
+  A15.2 recorded), the full `dune runtest` green, `@fmt` green. The
+  scratch instruments (the debug heartbeats, the throwaway locks) are
+  not committed; the numbers are the record's.
+
+## 2026-11-08 — The composition's cost, measured (emo-desktop M15 opened, A15.1)
+
+- **The number D9's milestone rides.** A14.1 measured what an app
+  pays to paint (the Surface's verbs, `fill` 19 ms a megapixel, an
+  opaque 1080p repaint 30–40 ms on QEMU's TCG); what an animation
+  actually rides is the composition — the walk over the whole stack
+  plus the flush — and that had never been timed. The probe: a
+  scratch windowed pass installed the disk ELFs' way (T8.21's path —
+  the blob beside the boot image, the bounds parked at the handoff
+  page's free tail `0x87002210`, the install line, `exec probe.elf`
+  from the REPL), its beats bracketed in serial markers — `m pre`/`m
+  post` around `win_move` (op 16, state alone, the reply before any
+  composition) and `pre`/`post` around `present` (op 17, whose reply
+  lands only after `comp_compose` returns and the flush completes;
+  the compositor's own `comp` line lands between the markers) — and a
+  host watcher stamping every serial line as it lands, the way A14.1
+  timestamped the lines. Ten compositions and ten moves over the
+  desktop's own stack (the wallpaper, the header, the dock, the
+  probe's 384×256 window dead center). **The numbers**: a whole-screen
+  composition **about 230 ms** (226–274, median 230.4); the full
+  present round trip median 235 ms; the client's own `round_digest`
+  about 4 ms; the mailbox round trip **6–17 µs** (the parity-refused
+  odd move about 130 µs, the walk's even-x discipline the probe's
+  step tripped on). The messaging is three to four orders under the
+  walk: **the composition's cost is the walk and the flush**. The
+  arithmetic on the number: about 2.2 M words walked in about 220 ms
+  of bracket, **about 100 ns a word** on TCG — a whole-screen
+  recomposition ~4 fps, no motion rides it; a 384×256 window's own
+  damage (two rects a step, ~0.2 M words) projects about 20 ms plus a
+  rect flush, roughly 30 fps within reach of damage rectangles. The
+  projection is arithmetic on the measured per-word cost, not a
+  measurement; the digest is no separate pass (the `comp` line's sum
+  accumulates during the walk). **The measured tree carried the
+  blend's first, misapplied form** — the same word counts and loop
+  shapes as the corrected one, one add apart per blended pixel — the
+  cost conclusion is unchanged.
+- **The blend's division retired, and the identity's own trap.** The
+  lever on record since A14.1 — `(v + 127) / 255 == ((v + 128) +
+  ((v + 128) >> 8)) >> 8` — adopted at the four sites that still
+  divided (`ui_fb.mix`, `ui_fb.cover`, the kernel's `comp_mix`,
+  `comp_cover`): `+128` **replaces** the `+127`, no extra temp. The
+  first application kept the `+127` *and* added the `+128` — the
+  identity's `v` is the value before the `+127` — a bias of half a
+  rounding step on most blended pixels, present on every target at
+  once (the form is portable Emo). The goldens named it twice: the fb
+  gate's corpus FAIL lines (lost to a truncated pipe read; the round
+  first misread the gate as green — the lesson: the gate's verdict is
+  its exit and its stderr, never a pipe's tail), and `run.sh`'s
+  first-frame digest, unmissable — the metal's frame 2525495889
+  against the corpus's 511863226, every boot. The diagnostic that
+  pinned it: a scratch bare-metal probe computing both forms over the
+  domain and counting mismatches — the standalone identity exact at
+  65,026 values, the misapplied mix wrong at 2,432 of the sampled
+  lattice (first at s=0, d=15, a=15: division 14, misapplied 15), the
+  corrected mix and cover exact across the lattice. The metal's
+  `frame` back at the corpus's number the moment the `+128` replaced
+  the `+127`. Sixteen consumers' locks regenerated with the sources
+  (the T8.20 lesson's shape, twice this round — the first
+  regeneration pinned the misapplied form and had to move aside
+  again).
+- **Found on the way, fixed: the ride's stale center.** `start.sh`'s
+  auto-ride still waited for `pointer 512 384` — the 1024×768-era
+  center, stale since T9.1's mode — so every 1080p boot stalled the
+  ride at the pointer beat and handed the windows to the hand. The
+  beat waits for `pointer 960 540` now, the mode's own center; the
+  scratch driver (the ride's beats verbatim) drove the whole chain to
+  the desktop and through the probe's session on the corrected beat.
+- **What the number decides next** (the milestone stays open): the
+  first animation's subject and whether the compositor grows damage
+  rectangles — EmoOS Step 10's candidate first task — are the
+  decisions the measurement now informs; neither is taken here.
+- **The damage decision taken (T10.1, the same day).** The number left
+  no third way: a whole-screen recomposition at ~230 ms carries no
+  motion, and the frame callback's rhythm is worthless if every beat
+  costs one. The shape is the smallest honest thing: **one bounding
+  box**, not a rect list — the drag-path over-approximation it implies
+  (a window's walk between two compositions marks its two ends, the
+  intermediate positions nothing ever showed) costs nothing until a
+  drag composes per frame, and the frame callback's world composes
+  per frame by construction. The marks sit at the ops that unmake or
+  make pixels — the present's rect, the move's painted-plus-new, the
+  raise's crossed range (the quiet case, the already-top toplevel,
+  marks nothing — the desktop's own focus beats), the prune's dead —
+  and they read **painted records kept beside the stack slots**, not
+  the rows, because the row that holds a surface's size is the close's
+  to clear first. The generation's first composition marks the whole
+  mode: the full clear's era erasure is the first composition's, and
+  after it the pixels outside the box are the last composition's own —
+  which is why every screendump model in `run.sh` passes unchanged
+  and only the comp line's sums moved (18 of the pinned literals; the
+  full-mode compositions' — the first frame, the wallpaper's own
+  presents, the desktop's refolds — identical by construction).
+  **The find the model caught**: the raise copied the entry to the
+  stack's top without its painted record, and the entry inherited the
+  removed slot's stale one — a closed window's shadow ring survived
+  its own death by one blend step, the client-era model's pixel at
+  (23,25) reading (25,25,29) against (26,26,30). The stale-slot shape
+  is the page-map's own history repeating (the dead cell's first seat
+  was the stash's second slot once); the records now ride the raise
+  the way the entries do. **The flush carries the box** — gpu op 3,
+  the rect packed in the message's third word (T8.11's shape), the
+  reply the result the await's word — the full-screen op 0 standing
+  behind it unused. **The damage world, measured** (A15.1's probe on
+  the scratch tree, the same beats): a window-sized composition
+  **27–44 ms, median ~36** — the walk's ~0.2 M word-pairs plus the
+  wallpaper's pixels inside the box plus a ~0.4 MB rect flush —
+  against the whole-screen 230: **six times the frames, ~25 fps
+  within reach of the first animation**, the projection's arithmetic
+  honest. The mailbox at its microseconds; the ledger `frames 774 576`
+  unchanged (the box is four words and a parallel array on the page
+  the compositor already owned).
+- **What the milestone still decides**: the first animation's subject
+  — the rhythm and the budget are now both real (the tick, the frame
+  callback, ~36 ms a window-sized frame); the desktop's half of M15
+  names it.
+- **The animation, and what it rode (A15.2, the same day).** The
+  subject was never in doubt once the numbers stood — the app window's
+  own open and close, the desktop's most ordinary motion, the beat
+  every desktop's user knows. The shape: the window mounts a quarter
+  of itself low with the landing frame the app's own hand paints —
+  the mount's tree through a throwaway `ui.Registry`, whose tags
+  register in the view's own order, the indices the loop's registry
+  agrees with, the corpus's digest untouched — and `Win.rise` eases
+  it home: the offset's square decaying, the metal's division
+  truncating the model's way, the last move landing the final seat
+  unpainted for the loop's mount (the mount's own present closes the
+  rise, one frame fewer on the wire). `Win.sink` is the mirror easing
+  in, every frame presented, the window a quarter low when
+  `win_close` takes it. The rise is the window's own height by four,
+  the steps eight — a size the window derives, a count the animation
+  owns. **The pacing decision (D12)**: the frame callback cannot pace
+  a solo animation. Its park answers at the next composition's
+  completion, and the only composer is the parked client itself — a
+  park before the first present waits on itself, the deadlock the
+  semantics as designed produce. The animation rides the present's
+  own reply (op 17's lands after the walk and the flush), each frame
+  the damage rectangle's budget; the callback's seat stays what
+  T8.15 proved — a client that has already presented reads the next
+  completion, the multi-client's cadence instrument. **The race the
+  golden had to name**: the launch era runs three clients at once —
+  the app's rise, the dock's lit tile, the header's count — and a
+  composition's box is whoever's marks are pending: the editor's move
+  landed inside the dock's pending box, the dock's sum became the
+  scheduler's own, differing across the transports at the same beat.
+  The golden pins those beats by position alone (the box's words are
+  nobody's contract), keeps the slide's own sums (single-client,
+  identical across both transports), and the three rounds' serials
+  vary exactly there — A14.1's recorded race's shape, the assertions
+  indifferent. **The mid-flight screendump was tried and retired**:
+  the await's tenth-of-a-second poll and the monitor's
+  hundred-millisecond dump against frames ten to forty milliseconds
+  apart — the dump lands frames late, and the wire's comp lines, the
+  position and the box's words pinned per frame, are the intermediate
+  frames' record the dump cannot outpace. The pins: `run.sh` green
+  under both timer transports three consecutive rounds, the slide's
+  sums identical across both, the variance only at the unpinned
+  launch-era pair; the full `dune runtest` green; `@fmt` green; the
+  fb gate green, the winbuf's five consumer locks regenerated. **M15
+  complete.**
+
+## 2026-11-07 — The windows (emo-desktop A14.5, M14 complete)
+
+- **The shared title bar.** One bar every window wears: the three
+  traffic-light buttons (the shapes' card's own three circles — the
+  red, the yellow, the green when the window holds the focus, one
+  quiet gray when it does not), the title in the interface face
+  centered on the bar's width, the light papers 0xFFF4F4F6 and
+  0xFFE6E6EA with the hairline at the foot. The painter has the two
+  states and the shell's windows live in both — the window corpus's
+  session pins focused and unfocused alike.
+- **The Chrome.** The apps' views ride under it: a content surface
+  whose every paint lands `bar_height()` lower on the real buffer, the
+  bar painted once at the mounting, the Elm loop seeing a surface of
+  the content's own size — the counter, the browser and the editor
+  reskinned without their views knowing a window exists. The state the
+  apps' bars wear is the launch's own: the machine focuses the new
+  window's reader (the keys reach it before any click), and no wire
+  yet tells the app when the focus moves on — the dock's lit tile
+  carries the same gap (A12.2's record). The day the wire exists, the
+  bar has the other state waiting.
+- **The antialiased pointer.** The grid speaks the font's sixteen
+  levels of coverage (A14.2's alphabet), the partial cells the
+  outline's ink at its own coverage — the body's paper always whole
+  inside the outline. The upload writes `(coverage << 24) | ink`, the
+  compositor's plane blends (T9.2's source-over), and the model of the
+  display blends the same words over its own background arithmetic —
+  shadow rings included — so the screendump's every partial cell is
+  the model's to verify.
+- **Finds.** The upload's shift is the coverage's own, not the alpha's:
+  `0xFF000000 + coverage` put the coverage in the ink's blue lane and
+  the corners of the cursor painted opaque — the model caught it at
+  the first walk, the shift constants written whole. The models'
+  sprite sentinel is a word, not a pair — the `(None, 0)` tuple's
+  unpack was the TypeError the first walk died of.
+- Pins: the window and apps corpora re-pinned on the interpreter and
+  all five hosted targets (the fb gate green), `run.sh` under both
+  transports three rounds, `dune runtest` green with the smoke,
+  `@fmt` green. **M14 complete** — the HD desktop's arc, A14.1
+  through A14.5 with EmoOS Step 9 beside it.
+
+## 2026-11-07 — The chrome, the corners, the close (emo-desktop A14.4, EmoOS T9.2+T9.3)
+
+- **The chrome is the wallpaper's own formula under a scrim.** D8's
+  material, made: the header and the dock recompute the wallpaper's
+  art at their rows — the gradient and every ribbon whose span reaches
+  them — under the panel's scrim (the header's 0xB41E1E26, the dock's
+  0xB424242C), row by row, three blends a row. The panel reads the
+  formula and never the pixels behind it, so the material is what the
+  chrome always believed the wallpaper was — a window sliding under
+  the dock changes nothing the dock shows (the standing note D8 made,
+  now the walk's topmost strip's actual behavior). The wallpaper's own
+  art is untouched: its digest `wall 1307018457` is the number A13
+  pinned.
+- **The dock is a shelf.** A translucent slab (6, 3, w−12, 34) at
+  radius 12 floats on the material — glass over the wallpaper's own
+  colors, graded 0x66484C5C down to 0x4C34363E — its soft shadow
+  (8 pixels, 0x80000000) beneath it, and the tiles drawn icons on it:
+  rounded squares 32×32 at radius 8, graded top to bottom (the focused
+  app's lit steel 0xFF7090B8→0xFF4A6288, the quiet tiles
+  0xFF50586A→0xFF3A4150), the app's initial centered in the interface
+  face, the running dot at the foot. The tiles start 20 pixels in — the
+  shelf's corner arcs own the first pixels — and the desktop's document
+  and folder icons are drawn the same way: the page a graded rounded
+  square with its folded corner and three line pills, the folder's tab
+  and graded body, the selection a rounded translucent card. No image
+  assets anywhere; the face is the shapes' own.
+- **The metal's painting stayed typed.** The chrome's repaint runs
+  through typed twins of the package's painters — `desk_chrome_row`
+  (the material's row: the gradient's fill, the ribbon's blend, the
+  scrim's blend), `desk_bar_paint`, `desk_dock_paint`,
+  `desk_strip_paint` — every call the carve's own (`carve_fill`,
+  `carve_blend`, `carve_shadow`, `carve_rounded`, `carve_ink`), no
+  interface call in a repaint, the A13 rule held: a class body's
+  boxing never comes back, and the dock repaints for a living.
+- **The round's find: the corner blend's alpha.** The masked blit's
+  partial pixels blended the window's word at its coverage —
+  `(c << 24) | v` — and the screendump's corner pixels came back "too
+  content" by an alpha no single coverage explained. Two kernel debug
+  prints settled it: the shadow's value under the corner was the
+  model's own, the corner's coverage and word were the model's own,
+  and the stored result was the model's over a *different* alpha —
+  the window word's own top byte, the client's to keep (the window
+  era's pattern rides `0x57` there), OR-ed into the coverage: 97 |
+  0x57 = 0x77 = 119. The fix is the mask: `(c << 24) | (v &
+  0xFFFFFF)` — the coverage replaces the client's byte, never ORs it.
+  The walk's own reproach: the model had the pixel right all along.
+- **The second find: the shadow's corner spans.** The shadow's pass
+  painted the left corner zones on the top rows and the right ones on
+  the bottom rows — the top-right and bottom-left corners' shadows
+  were missing, the slate showing where the ramp belonged. Both corner
+  zones on every corner row; the model caught it before any eye did.
+- **The folds are the window's own pixels.** A window's rectangle on
+  the screen now shows the background at its corners, so the corpus's
+  window digests became round folds — `round_digest(s, 10)` in the
+  hosted twins, the corner squares set aside — and the metal's frame
+  lines print the same fold over their buffers. The boot image's own
+  `Win` was the third site: the shell and the desk pass predate the
+  winbuf package, so the package's `present` fix alone changed nothing
+  on the metal — the boot image carries its own class, its present's
+  digest its own site. (The desk-era frames now match the corpus's
+  round lines; the debug print that proved it — the image's direct
+  `round_digest` answering the corpus's number while the class's
+  `present` answered the old full one — is the record's receipt.)
+  `run.sh`'s folds skip the same squares by the window's *local* row —
+  the first fold tested the screen's row and, for a window at y=128,
+  every row was "past the bottom corner" — and the dock's strip keeps
+  the plain fold: the walk masks toplevels only, and the panel's
+  digest is the panel's own.
+- **The neighbors' shadows.** The quadrant windows at `(mw − 384) / 4`
+  put the editor's right edge exactly at the counter's left edge, and
+  the shadow's nine-pixel ring fell inside the counter's fold — the
+  corpus's canvas cannot know a neighbor's shadow. The placement yields
+  the shadow its reach: `(mw − 384) / 4 − 10`, the ring's last pixel
+  one short of the neighbor. macOS windows shade each other; golden
+  windows keep their distance.
+- **T9.3: the close's other half.** The gate stages the caller's
+  space word with the close (as `win_new`'s does), and verb 14 unmaps
+  the run's leaves from the owner's table *before* the blocks go back
+  — `space.unmap_run` walks the exact sequence `map_range` mapped by,
+  every leaf checked a leaf of the very page taken back (the mapping
+  is the identity of its physical addresses, so the walk's every leaf
+  is one the map wrote; anything else is the loud end), the
+  translations fenced after. The golden beat is the desk pass's `c`:
+  beta closed and another window opened in the same life, the fresh
+  map riding the very blocks the close gave back — pre-fix, the
+  machine died `sv39: an address mapped twice` right there; post-fix
+  the reopen composes, the new grant's `desk b 10` on the wire. The
+  reopen's own find: the stack entry is made at the role verb, not at
+  `win_new` — a reopened window that skips `win_role` has no place on
+  the stack, and its present composes nothing; the beat declares the
+  role.
+- **The re-pin.** Every composition's sum changed (the shadows' words
+  in, the masked corners' out; the chrome's content; the drawn
+  icons): the comp lines re-pinned from the machine's own wire, the
+  ledger `frames 771 573` → `frames 774 576` (the images' new weight),
+  the desk-era comp ordering re-mapped (the rm's composition now lands
+  before the REPL's next refusals — the pacing moved with the
+  content).
+- Pins: `run.sh` under both transports three rounds; the fb gate
+  green (the dock's strip, the bar, the icons' goldens re-pinned on
+  the interpreter and all five hosted targets); `dune runtest` 371
+  green with the smoke; `@fmt` green.
+
+## 2026-11-07 — The mode (emo-desktop A14.3, EmoOS T9.1)
+
+- **The budget question answered on the machine.** The mode's demands
+  were known (the wallpaper's window buffer 48 → 127 blocks, the
+  header's and the dock's with it, +82 the desktop's own; the carve
+  8 MiB = 128 blocks grown downward off the region's top); what the
+  paper could not say was whether the region still held the desktop
+  plus three residents. The machine answered at the editor's exec —
+  `desktop: the kernel is out of a resource`, the take_run that could
+  not find its 102 contiguous blocks. The disk ELFs' round (A11.1)
+  had spent the kernel heap 96 → 64 MiB to grow the region for the
+  three residents; the mode spent the region again, and **the round's
+  lever is the same one: the kernel heap 64 → 32 MiB**. The heap's
+  live users are the root's bump (a few KiB) and the const region at
+  its top — the hooks serve every spawned pass from the region, so
+  the bare-metal spawn's carve the heap once backed is dead code —
+  and 512 blocks come back. No `-m` (the memory map's top stays
+  `0x88000000`, QEMU's 128 MiB default holding it exactly), no second
+  region, no allocator surgery. The dune pin (`.zero 67108864`) moved
+  with it. The trio now fits with room beside it, and the ledger's
+  arithmetic says so: `frames 685 569` → `771 573` (+86 taken, +4
+  given — the desktop's own +82 are live surfaces at poweroff, never
+  given).
+- **The art scales, the design constants stay.** The wallpaper's
+  gradient already derived from h; its three ribbons were tuned at
+  1024×768 with raw pixel constants. The landed form expresses every
+  band's rows, offsets and widths as fractions of w and h whose
+  denominators (256, 128, 24, 16, 8, 192) reproduce the tuned values
+  exactly at 1024×768 — `(5·h)/8` is 480 there, `(115·w)/256` is 460 —
+  and stretch them at the mode. The slopes stay the art's own, and
+  the truncation discipline held: the metal's typed mirror, the
+  hosted canvas and `run.sh`'s model divide the same way, and the
+  launch-era and desktop-era screendumps model to the pixel at
+  1920×1080. The chrome's own sizes — the 24px header, the 40px dock,
+  the 96×76 icon cells — are the face's design, not the mode's; A14.4
+  redraws them.
+- **The places derive; the proofs keep theirs.** The apps read the
+  mode through `output_info` and place their windows — the counter
+  dead center, the browser and editor its quadrants. The panel proof
+  (T8.15's full-width strip) takes the mode's own width at the
+  display's bottom edge. The desk pass's two demo windows keep their
+  absolute places (they are the drag proof's fixtures, and the drag
+  targets with them), and every `abs` beat's device value was
+  recomputed for the new axes with the compositor's own scale checked
+  (`floor(v·mode/32768) = pixel`).
+- **Two finds in the pins.** The bare comp pins (`comp 576 384`) had
+  been prefix-matching the compositor's summed lines all along — the
+  desk window's mount and the counter's were never bare — so the
+  remap split them by position in the list, and the comment that said
+  they "shared" the line now says why they stopped. The screendump
+  header `P6\n1920 1080\n255\n` is 17 bytes where the 768p one was
+  16 — five `data[:16]`/`data[16:]` pixel models read past their own
+  headers until the first digest failure named it.
+- **A self-inflicted wound, caught by the lockfile.** A scratch
+  render's heredoc ran after a failed `cd`, and its `package.emo`
+  landed on the fb core's own manifest — the next build refused by
+  checksum (`the lockfile records … but the registry serves …`),
+  exactly the drift check E5007 is for. The strays moved to
+  `protected/tmp/`, the manifest restored from git, the registry
+  re-staged; the render that caused it was killed mid-paint.
+- Pins: `run.sh` green under both transports in three consecutive
+  rounds at the mode (the legacy rounds byte-identical), the
+  screendumps modeled to the pixel, the ledger `frames 771 573`; the
+  fb gate and the full dune suite green; `@fmt` green. **The gate's
+  own cost at the mode**: the beam goldens' digest folds are
+  per-pixel, and 1920×1080 is 2.8× the pixels — the frame golden's
+  beam run alone took ~40 minutes of CPU (the whole gate ~50). A
+  strike-downsized digest (the metal's own chunks at the hosted
+  twins' scale) is the lever if the gate's wall-time starts mattering.
+
+## 2026-11-07 — The constant fill (EmoOS T9.4, the compiler's side)
+
+- **The design the existing pools allowed.** A14.2's record named the
+  lever as "a literal of integer constants emitted as `.rodata` words
+  and copied by the fill loop the string literals already use" —
+  reading the emitter showed the design already half-built:
+  `cell_label` mints one static read-only cell per distinct numeric
+  literal ([header word 1][payload], 32-byte aligned, deduped by
+  value) and the dynamic convention's literals evaluate to their
+  cells' addresses; only the *native* frames still emitted `li` +
+  `emo_box_i64` per element, and every array build spilled its
+  elements and walked them into the block. The landed fill keeps the
+  block's alloc and shape and replaces both the element evaluation and
+  the walk with one copy of a blob of the cells' tagged addresses —
+  eight bytes of image per element, a dozen instructions of text
+  whatever the count, and no box born at build time. The elements are
+  the same tagged words every convention reads, so the path is
+  frame-independent: native, dynamic and const-thunk builds take it
+  alike. Below four elements the per-element path is the shorter text,
+  so it stands. The predicate is the emitter's one copy
+  (`const_int_values`: every element `Const L_int`, typed Int64);
+  `expr_depth` keeps reserving the element temps, which now go unused —
+  teaching the pre-pass the same predicate was weighed and refused as
+  a second copy of the rule to keep in step.
+- **The numbers.** The kernel image −131 KiB (its const bodies were
+  the old native path whole), the user and app images −33 KiB each
+  (their const thunks already spilled static cells; the saving is the
+  per-element spill and walk), an app's exec'd image run 103 → 102
+  blocks, the ledger `frames 688 572` → `685 569` (run.sh's pin
+  remapped; the −3/−3 is the three execs' one block each — and the
+  boot image's own exec unchanged at 100). The mystery one-block of
+  A14.2's ledger note rides along (685 = 666 + 19 still carries it).
+- Pins: the riscv64 goldens green whole — all 22, `wide_literal` (the
+  600- and 253-element arrays) and `glyph_lookup` (the font's tables)
+  among them — byte-identical; `run.sh` green under both transports in
+  three consecutive rounds (the prompt's place the only mover); the fb
+  gate and the full dune suite green; `@fmt` green.
+
+## 2026-11-07 — The type (emo-desktop A14.2)
+
+- **Sixteen levels, one character a pixel.** The rasterizer could have
+  kept FreeType's 8-bit coverage; the grid would then need two
+  characters a pixel and stop reading like the drawing it replaces.
+  Sixteen levels (`.`, `1`–`9`, `a`–`f`) are the grayscale
+  antialiasing classic desktops shipped, keep the grid reviewable at a
+  glance, and halve the tables: two pixels a byte, eight a word, pixel
+  p of a word at bits 4p — the shift every walker (the canvas, the
+  carve, `run.sh`'s model) does the same way. The grid is committed,
+  so FreeType's version is the rasterizer's business alone: the gate
+  checks `font.emo` against the grid, never against a rendering.
+- **The layout the metal forced.** One meta word per glyph (the ink's
+  top and left, each +128 in eight bits — the `j` hangs one pixel left
+  of the pen — its width, height and advance, and a thirteen-bit base:
+  the first pack's twelve bits met a base of 4,101 and the generator
+  refused it by name), and the coverage in const arrays of 448 words:
+  on riscv64 a literal's elements are each evaluated into a stack temp
+  before the fill copies them, so one array of all 4,269 words would
+  have been a 34 KiB frame against a 64 KiB stack; ten arrays and a
+  ten-branch `word` cost nothing. The tables lower as code and static
+  cells — about sixty bytes a word — so every image carrying the core
+  grew about 288 KiB (an app's ELF 210 → 508 KiB, its run 100 → 103
+  blocks; the boot image 382 → 670 KiB). **The lever on record**: a
+  literal of integer constants emitted as `.rodata` words and copied
+  by the fill loop the string literals already use — O(1) text, eight
+  bytes a word — a compiler change that would also return the shapes'
+  and the pointer's tables; T9.1's budget is where it gets measured.
+- **`ink` replaces `glyph`.** The verb takes the strike and the glyph
+  index (the walk maps the byte once), inks at the pen with the line
+  box's top as the origin, and never reads the color's top byte: text
+  is opaque ink and every caller's color already lacked a coverage
+  byte, so treating it as an opacity would have made all of them
+  invisible. Removed with the cell: `glyph_row`, `glyph_w`,
+  `glyph_h`, `font.cell_w`/`cell_h`/`top_rows`/`bottom_rows`.
+- **The compositor's line is a sum, and two old pins were equal for a
+  reason not established.** `run.sh` pins the composition's carried
+  sum after each desktop event, and twice the old pins read the same
+  number on consecutive lines — the dock's present and the header's
+  right after it (the editor's launch, the counter's exit) — though
+  the header's count changed between them. It was not a blind spot of
+  the sum: the old `2` and `3` differ by one inked pixel. The likelier
+  reading is that the dock's composition walked a header the desk pass
+  had already repainted (a composition reads every buffer as it stands),
+  an ordering the text's extra work has moved; now the pairs differ,
+  three rounds agree on every new value, and those two were remapped by
+  their place in the list rather than by their old value. The
+  screendumps are what prove the pixels; the sums are the run's own
+  arithmetic, pinned from it.
+- **The ledger: `frames 666 551` → `688 572`**, the same on both
+  boots. Each exec takes a scratch run the ELF's size (4 → 8 blocks)
+  and an image run (100 → 103), both given back at the exit: +7/+7
+  each, three execs, +21/+21 exactly. One more block is taken and not
+  given in each boot. The boot that installs nothing (the second,
+  which keeps the volume) shows it too, so it is not the install's;
+  where it lives is open — the leading guess is a resident pass's
+  arena growing a block under the text work the desktop's
+  Surface-taking defs now box (A13's standing note), which A14.4's
+  move of the header and the dock onto typed paint would retire.
+- Pins: the fb gate 151 ok; `run.sh` green under both transports in
+  three consecutive rounds, the logs identical line for line but for
+  the prompt's place (the 2026-11-07 race); the screendumps modeled to
+  the pixel with the type's own tables; the core's assertions 76, the
+  canvas's 57.
+
+## 2026-11-07 — The shapes (emo-desktop A14.1)
+
+- **One shape, three verbs.** The modern face is drawn with the
+  rounded rectangle alone — radius 0 is the plain rectangle, half the
+  height the pill, half a square's side the circle — so the `Surface`
+  grows `rounded` (graded `top` to `bottom`), `stroke` (the ring
+  `width` deep inside the edge) and `shadow` (the edge faded over
+  `soft` pixels), and the general ellipse was dropped: nothing the
+  desktop draws needs it, and every shape lives four times (the hosted
+  canvas, the carve's walks, `run.sh`'s model, the compositor's own
+  copy for T9.2). A verb per shape rather than per pixel for A8.1's
+  reason: an interface call on the metal boxes what it carries. The
+  colors carry their opacity in the top byte, `blend`'s convention — a
+  color written `0x24242C` composites nothing, which is what it says;
+  no top byte is read as opaque by default.
+- **The arithmetic is the core's, the walks are the surfaces'.** The
+  signed distance from a pixel's center to the edge in 256ths
+  (`shape_sd`; the corners through a digit-by-digit integer square
+  root, exact to its floor), a fill's ramp over one pixel, a stroke as
+  the fill less the fill pulled in by its width, a shadow's smoothstep
+  over `soft` pixels with its position in 4096ths (the cube fits 64
+  bits at any softness), the grade per channel with the opacity among
+  them. A fill's and a shadow's row rises to whole coverage, stays and
+  falls (the shape is convex), so a surface walks in from both ends
+  asking each pixel until one is whole and stores the rest as one
+  span; a stroke's row rises and falls twice, so its walks stop at the
+  first clear pixel whose center is inside. The walks never change a
+  pixel's value — the canvas and the carve may walk differently and
+  still agree — but they keep the cost at the shape's edges.
+- **The metal's walks live once.** `ui_fb_winbuf` carries
+  `carve_rounded`/`carve_stroke`/`carve_shadow` over raw words, the
+  buffer's extent, the shape's corner and its extent riding two
+  coordinates to a word (`pack`/`high`/`low`, a negative coordinate
+  surviving) — a shape's words outnumber the eight a call carries on
+  this target. The boot image's `Carve` and `Win` call them instead of
+  mirroring them: the first metal code the boot image shares rather
+  than copies (the shell and the desk pass predate the package; the
+  launcher's registry and the dune smoke already staged it, so the new
+  dependency asked nothing of either). The clip is the walks' own
+  integers, never `ui_fb.clip`'s `Rect` — a typed loop that allocates
+  nothing.
+- **The acceptance, three ways.** `fb/shapes/` paints one card in
+  eight stages and pins the eight `shapes <digest>` lines on the
+  interpreter and all five hosted targets (the fb gate 134 → 151). The
+  value tests were worked by hand before they ran — a corner pixel
+  243/256ths outside its arc, the next one 246 of 255 covered, a
+  4-pixel shadow's two edge pixels 174 and 81 (the smoothstep's
+  mirror, summing to 255) — and passed on the first run (the core
+  39 → 69, the canvas 35 → 57). On the metal: a scratch tree whose
+  counter ELF painted the card through `Win`, exec'd from the
+  desktop's REPL by a headless driver of `start.sh`'s ride, printed
+  the golden's eight lines byte for byte. The probe was a scratch
+  build, never committed; the permanent three-way fold arrives when
+  `run.sh` folds the chrome these verbs paint (A14.4, A14.5).
+- **The cost, measured** (one run, QEMU's TCG on the development Mac,
+  the host timestamping the serial lines; ten passes over 1024×512 per
+  verb): `fill` 19 ms a megapixel, an opaque graded `rounded` 15,
+  `blend` 296, a translucent `rounded` 291; a 2-pixel `stroke` around
+  1024×512 4 ms a pass, a 32-pixel `shadow` under 960×448 166 ms.
+  Opaque painting is cheap — a 1080p screen in 30–40 ms — and
+  translucency fifteen to twenty times dearer: `over`'s three
+  divisions by 255 a pixel. D8's chrome is opaque by construction;
+  T9.2's shadows will paint the ring outside the window, never the
+  interior it covers. **The lever on record**: `(v + 127) / 255 ==
+  ((v + 128) + ((v + 128) >> 8)) >> 8` for every `v` `mix` can see
+  (0 to 65025, checked exhaustively) — a speed change with identical
+  bytes, to be measured when A14.3 spends the budget.
+- **Found and fixed — the beam emitter's arms shared a scope.** The
+  canvas's span helper declared a `const` in an `if`'s first arm and
+  looped in both; erlc refused the module (`unbound variable
+  '_word1898'`). The emitter threads every name in scope through a
+  loop, and its general statement path emitted the second arm with
+  the first arm's bindings still in scope — the loop asked for a Core
+  Erlang variable bound only in the other clause. `receive` had the
+  same shape (a branch's pattern bindings leaking into the next
+  branch's loop); `case` already reset per branch. Both now start each
+  arm from the scope before it. Pinned: `examples/branch_var` grew
+  `arm_loops` (on the wasm, beam and c lists) and the beam variable
+  tests a receive case (`dune runtest` 371).
+- **Found, not fixed — `win_close` leaves the run mapped (EmoOS
+  T9.3).** The probe's first draft closed its card window and opened a
+  larger one: the machine died `sv39: an address mapped twice`. Verb
+  14 gives the run's blocks back and clears the row, but the owner's
+  table keeps their leaves — the closer can still write frames another
+  process may now hold, and its next `win_new` over the reused blocks
+  is the double map. Latent since T8.5: every app closed its one
+  window at its exit, where the death takes the whole table.
+- **Found standing — the prompt's place is the scheduler's.** Three
+  rounds of `run.sh` on this round's tree and three on the unchanged
+  tree (`87c011ff`) agree line for line on both transports once two
+  things are set aside: the apps' image sizes (the window buffer
+  package grew the walks, 210368 → 219544 bytes, still 100 blocks)
+  and where `emo-os> ` lands against the editor's `comp 48 272` line —
+  before it in some rounds, after it in others, on either transport
+  and on both trees. The shell's prompt and the compositor's line are
+  two processes' writes; `run.sh`'s ordered list never pinned the
+  prompt's place, and earlier rounds recorded as byte-identical had
+  the race resolve one way each time. A byte-identical criterion now
+  needs the prompt's place set aside, or the race closed.
+- Pins: the fb gate 151 ok; `dune runtest` 371 green with the smoke;
+  `@fmt` green; `run.sh` green under both timer transports in three
+  consecutive rounds (identical to the unchanged tree's as above), the
+  ledger `frames 666 551` unchanged by the boot image's new
+  dependency.
+
+## 2026-11-06 — The HD desktop opened (emo-desktop M14, EmoOS Step 9)
+
+- **Where the pixel look comes from, measured before anything was
+  planned**: the 1-bit 8×16 glyph cell (`fb/glyphs/gen.py`, ASCII
+  alone, every glyph on the integer grid), a `Surface` that fills,
+  blends one constant alpha over a rectangle and sets glyph bits —
+  nothing rounded, graded or masked — and the 1024×768 mode. The
+  machinery under the face needed nothing new: the walk composites a
+  stack, `over` is a true source-over, the pointer scales to the mode,
+  and `win_format`/`win_scale` already have the shapes a second format
+  and a second scale would grow under. The gap is expressiveness, so
+  the milestone is primitives, type, the mode, then the chrome and the
+  windows painted with them (the trackers' order).
+- **D6, 1920×1080**: the most room for a modern layout. QEMU's cocoa
+  window can be larger than a laptop's screen — its own Zoom To Fit is
+  the remedy — and the primitives are mode-independent by D6's own
+  rule, so a retreat to 1600×900 would cost constants, not code. The
+  carve's arithmetic: the frame is 1920 × 1080 × 4 = 8,294,400 bytes;
+  an 8 MiB carve puts the cursor plane's last 64 KiB at 8,323,072,
+  28,672 bytes of slack between them. It grows downward (base
+  `0x86800000`) because every fixed cell the kernel names sits at
+  `0x87000000` and above. **The find the plan made**: the region's
+  ~500 blocks of 64 KiB do not obviously hold the HD desktop — the
+  carve takes 64 of them, the wallpaper's surface grows from 48 blocks
+  to 127, and the three residents' image runs are 300 — so T9.1
+  measures before it moves anything, and the lever (the kernel's heap,
+  or a second region above `0x88000000` with `-m` raised) is chosen on
+  the numbers.
+- **D7, real typefaces at generation time**: the glyph cell is the
+  look's largest single source. The rasterizer is the hard part —
+  coverage-accurate antialiasing from outlines — and Pillow's FreeType
+  does it; a pure-Python rasterizer over fontTools was weighed and
+  refused as a generator larger than the problem, a hand-drawn larger
+  grid as the most effort for the least coverage. The split keeps the
+  gate's discipline: the rasterizer writes a reviewable coverage grid
+  (`glyphs.txt`'s role), the stdlib generator writes the tables from
+  it, and the drift check never imports Pillow. Inter is SIL OFL 1.1:
+  the derived tables are a modified version under the OFL and travel
+  with its text. Apple's SF faces are Apple's and never enter the
+  tree. A monospace face stays where the cell arithmetic is the
+  program — the shell's columns and the feed's echo, the editor's
+  cursor.
+- **D8, translucency without blur**: a blur over a 1080p region per
+  frame, in typed Emo on the emulated machine, is not a budget
+  anything has. A smooth procedural wallpaper blurred is the wallpaper
+  itself, so the chrome samples the wallpaper's formula under a scrim
+  and pays nothing. **Standing with it**: a window that slides under
+  translucent chrome is hidden by it, the chrome showing the wallpaper
+  rather than the window — the panels are the walk's topmost strip,
+  painted by their owner. The day that matters, the compositor blends
+  an alpha format (`win_format`'s second value) and the chrome becomes
+  a true overlay; until then the formula is the material.
+- **D9, motion deferred**: the tick (T8.18) and the frame callback
+  (verb 22) are already the rhythm an animation would ride; what is
+  missing is the measured cost of a 1080p repaint, which A14.1 and
+  T9.1 produce. Animation opens as its own milestone after them.
+
 ## 2026-11-06 — The desktop's macOS face (emo-desktop A13, EmoOS T8.27)
 
 - The desktop after boot looks like a desktop: a header bar at the

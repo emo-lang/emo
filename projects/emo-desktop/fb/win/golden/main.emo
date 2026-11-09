@@ -31,7 +31,7 @@ def show(s ui_fb.Surface, title String, focused Bool, keys Int64) {
 }
 
 def again(s ui_fb.Surface) {
-  println("frame ${ui_fb_frame.digest(s)}")
+  println("frame ${ui_fb_frame.round_digest(s, 10)}")
 }
 
 def main() {

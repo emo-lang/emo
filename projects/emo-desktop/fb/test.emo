@@ -42,7 +42,7 @@ def word_is(got Int64, want Int64, what String) {
   }
 }
 
-// ---- measure: a label is glyph cells, a box is its children ---------
+// ---- measure: a label is its glyphs' advances, a box is its children --
 
 def padded() ui.Node {
   return ui.column([
@@ -58,15 +58,19 @@ def paired() ui.Node {
   ], ui.style().with_gap(8.0))
 }
 
+// The widths named here are the interface face's advances at 16 pixels
+// (`glyphs/coverage.txt`): the space 5, `[` and `]` 6, `a` 9, `b` 10,
+// `c` and `x` 9; its line box is 20 tall.
+
 def measure_checks() {
-  extent_is(ui_fb.measure(padded(), -1), 24, 42,
+  extent_is(ui_fb.measure(padded(), -1), 27, 50,
     "a column is its widest child plus padding, its children stacked a gap apart")
-  extent_is(ui_fb.measure(paired(), -1), 88, 16,
-    "a row lines its bracketed buttons up, one gap apart, one glyph row tall")
+  extent_is(ui_fb.measure(paired(), -1), 71, 20,
+    "a row lines its bracketed buttons up, one gap apart, one line box tall")
   extent_is(ui_fb.measure(ui.text_input("n", ui.style().with_width(40.0)), -1),
-    40, 16, "a fixed width overrides the intrinsic one")
+    40, 20, "a fixed width overrides the intrinsic one")
   extent_is(ui_fb.measure(ui.scroll([ui.text("x", ui.style())],
-    ui.style().with_height(64.0)), -1), 8, 64,
+    ui.style().with_height(64.0)), -1), 9, 64,
     "a scroll is as tall as its viewport, as wide as its content")
   extent_is(ui_fb.measure(ui.spacer(ui.style()), -1), 0, 0,
     "a spacer measures to nothing")
@@ -102,11 +106,61 @@ def over_checks() {
     "a quarter of black over white is three-quarters white")
 }
 
-// ---- the font: a character's glyph, and a glyph's rows ----------------
+// ---- the shapes' arithmetic (A14.1): distance, coverage, grade -------
 //
-// The rows named here are the drawing's (`glyphs/glyphs.txt`): the `A`
-// is an apex of one pixel on row 2, a five-pixel bar on row 7 and two
-// legs on row 11; the missing glyph is the hollow cell.
+// The shape is (0, 0, 9, 9) at radius 4 where a pixel is named: a
+// pixel's center against the edge in 256ths, worked by hand.
+
+def shape_checks() {
+  word_is(ui_fb.isqrt(0), 0, "the square root of 0 is 0")
+  word_is(ui_fb.isqrt(15), 3, "a root is floored")
+  word_is(ui_fb.isqrt(16), 4, "an exact square's root is exact")
+  word_is(ui_fb.isqrt(819200), 905, "a corner's distance is floored")
+  word_is(ui_fb.isqrt(4611686018427387904), 2147483648,
+    "the top bit's square root is exact")
+  word_is(ui_fb.isqrt(4611686018427387903), 2147483647,
+    "and one below it floors")
+  word_is(ui_fb.radius_in(4, 9, 9), 4, "a radius inside the shape stands")
+  word_is(ui_fb.radius_in(10, 9, 20), 4, "a radius past half the shorter side is half")
+  word_is(ui_fb.radius_in(-1, 5, 5), 0, "a negative radius is none")
+  word_is(ui_fb.shape_sd(4, 4, 0, 0, 9, 9, 4), -1152,
+    "the middle's center lies four and a half pixels in")
+  word_is(ui_fb.shape_sd(0, 4, 0, 0, 9, 9, 4), -128,
+    "a straight edge's pixel lies half a pixel in")
+  word_is(ui_fb.shape_sd(0, 0, 0, 0, 9, 9, 4), 243,
+    "the corner pixel lies outside the arc")
+  word_is(ui_fb.shape_sd(1, 1, 0, 0, 9, 9, 4), -119,
+    "the next one just inside it")
+  word_is(ui_fb.fill_cover(-128), 255, "a fill covers half a pixel in whole")
+  word_is(ui_fb.fill_cover(0), 128, "the edge itself half")
+  word_is(ui_fb.fill_cover(128), 0, "half a pixel out not at all")
+  word_is(ui_fb.stroke_cover(-128, 1), 255, "a stroke covers the edge's pixel")
+  word_is(ui_fb.stroke_cover(-384, 1), 0, "and not the one past its width")
+  word_is(ui_fb.shadow_cover(0, 4), 128, "a shadow's edge is half its color")
+  word_is(ui_fb.shadow_cover(-128, 4), 174, "eased in on the smoothstep")
+  word_is(ui_fb.shadow_cover(128, 4), 81, "and out on its mirror")
+  word_is(ui_fb.shadow_cover(-640, 4), 255, "whole past half its softness in")
+  word_is(ui_fb.shadow_cover(640, 4), 0, "clear past half its softness out")
+  word_is(ui_fb.shadow_cover(0, 0), ui_fb.shadow_cover(0, 1),
+    "a softness under one pixel is one pixel")
+  word_is(ui_fb.shadow_pad(4), 3, "a shadow reaches half its softness and one past its edge")
+  word_is(ui_fb.cover(0xFFFFFFFF, 128), 0x80FFFFFF, "coverage scales the opacity")
+  word_is(ui_fb.cover(0x80123456, 255), 0x80123456, "whole coverage keeps it")
+  word_is(ui_fb.grade(0xFF000000, 0xFFFF0080, 2, 5), 0xFF800040,
+    "a grade's middle row is halfway in every channel")
+  word_is(ui_fb.grade(0xFF000000, 0xFFFF0080, 4, 5), 0xFFFF0080,
+    "its last row is its bottom")
+  word_is(ui_fb.grade(0x40112233, 0xFF000000, 0, 1), 0x40112233,
+    "a grade one row tall is its top")
+}
+
+// ---- the type: a character's glyph, a glyph's metrics and ink ----------
+//
+// The values named here are the grid's (`glyphs/coverage.txt`): at 16
+// pixels the interface face's `A` advances 11, its ink 11 by 12 from
+// four rows down, row 0 `....8f8....` and row 7 `.1effffff1.`; its `j`
+// hangs one pixel left of the pen; the monospace face advances 10 for
+// every glyph; the three line boxes are 20, 30 and 22 tall.
 
 def font_checks() {
   word_is(font.glyph_of(" "), 0, "the space is the first glyph")
@@ -114,22 +168,32 @@ def font_checks() {
   word_is(font.glyph_of("~"), 94, "the tilde is the last printable one")
   word_is(font.glyph_of("\n"), font.missing(),
     "a character outside the table is the missing glyph")
-  check(font.top_rows(0) == 0 && font.bottom_rows(0) == 0, "the space has no ink")
+  word_is(font.line_height(font.ui16()), 20, "the interface face's line box at 16")
+  word_is(font.line_height(font.ui24()), 30, "and at 24")
+  word_is(font.line_height(font.mono16()), 22, "the monospace face's at 16")
+  word_is(font.ascent(font.ui16()), 16, "the ink hangs from a 16-pixel ascent")
+  check(font.advance(font.ui16(), 0) == 5 && font.words(font.ui16(), 0) == 0,
+    "the space advances and has no ink")
   const a = font.glyph_of("A")
-  const top = font.top_rows(a)
-  const bottom = font.bottom_rows(a)
-  word_is(ui_fb.glyph_row(top, bottom, 0), 0, "a capital's row 0 is clear")
-  word_is(ui_fb.glyph_row(top, bottom, 2), 0x10, "its apex is one pixel on row 2")
-  word_is(ui_fb.glyph_row(top, bottom, 7), 0x7C, "its bar spans five pixels on row 7")
-  word_is(ui_fb.glyph_row(top, bottom, 11), 0x44, "its legs stand on row 11")
-  word_is(ui_fb.glyph_row(top, bottom, 15), 0, "and row 15 is clear")
-  const m = font.missing()
-  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 2), 0x7C,
-    "the missing glyph is a hollow cell: its top edge")
-  word_is(ui_fb.glyph_row(font.top_rows(m), font.bottom_rows(m), 6), 0x44,
-    "and its sides")
-  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1), 16, 16,
-    "a label measures to the font's cells")
+  const s = font.ui16()
+  check(font.advance(s, a) == 11 && font.gleft(s, a) == 0 && font.gtop(s, a) == 4,
+    "a capital's advance and its ink's offsets")
+  check(font.gw(s, a) == 11 && font.gh(s, a) == 12, "and its ink's size")
+  word_is(font.pixel(s, a, 0), 0, "its row 0 starts clear")
+  word_is(font.pixel(s, a, 4), 136, "its apex's shoulder is level 8")
+  word_is(font.pixel(s, a, 5), 255, "its apex is whole")
+  word_is(font.pixel(s, a, 79), 238, "its bar is level 14 where it begins")
+  word_is(font.pixel(s, a, 131), 119, "its last pixel is level 7")
+  word_is(font.gleft(s, font.glyph_of("j")), -1,
+    "a descender's ink may start left of the pen")
+  check(font.advance(font.mono16(), a) == 10
+    && font.advance(font.mono16(), font.glyph_of("i")) == 10
+    && font.advance(font.mono16(), font.glyph_of("W")) == 10,
+    "the monospace face advances one cell for every glyph")
+  check(font.advance(s, font.missing()) == 11 && font.gh(s, font.missing()) == 19,
+    "the missing glyph is the face's own .notdef")
+  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1), 19, 20,
+    "a label measures to its glyphs' advances and the line box")
 }
 
 // ---- the pointer: the drawing's shape ---------------------------------
@@ -164,6 +228,7 @@ def script_checks() {
 measure_checks()
 clip_checks()
 over_checks()
+shape_checks()
 font_checks()
 pointer_checks()
 script_checks()

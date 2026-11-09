@@ -1,13 +1,14 @@
 #!/bin/sh
 # The fb backend's gate (emo-desktop A7.1, A7.2, A8.1, A8.2, A8.3, A9.1,
-# A10.3): the six packages under `fb/` — the core (`emo/ui_fb`, with the
-# bitmap font and the pointer sprite as its second and third modules), the
-# hosted canvas (`emo/ui_fb_canvas`), the first frame with the counter
-# (`emo/ui_fb_frame`), the window shell's windows (`emo/ui_fb_win`), the
-# first apps (`emo/ui_apps`, the counter, the file browser and the
-# editor) and their goldens — type-checked, their tests run, their
-# targets built, their bytes compared, the font's table checked against
-# its drawing, and the metal's lowering pinned without a machine.
+# A10.3, A14.1, A14.2): the six packages under `fb/` — the core
+# (`emo/ui_fb`, with the type and the pointer sprite as its second and
+# third modules), the hosted canvas (`emo/ui_fb_canvas`), the first frame with
+# the counter (`emo/ui_fb_frame`), the window shell's windows
+# (`emo/ui_fb_win`), the first apps (`emo/ui_apps`, the counter, the file
+# browser and the editor) and their goldens, the shapes' card among
+# them — type-checked, their tests run, their targets built, their bytes
+# compared, the font's table checked against its drawing, and the
+# metal's lowering pinned without a machine.
 #
 #   ./check.sh
 #
@@ -98,19 +99,21 @@ cp apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor
 cp winbuf/package.emo winbuf/ui_fb_winbuf.emo "$REG/emo/ui_fb_winbuf/0.1.0/"
 cp "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" "$REG/syscall/0.1.0/"
 
-# --- the font's table is its drawing ------------------------------------
+# --- the type's tables are its grid -------------------------------------
 #
-# `glyphs/glyphs.txt` is where the glyphs are drawn and `glyphs/gen.py` writes
-# them into `font.emo`'s table; a table that no longer matches the drawing
-# is refused here. The generator is Python 3's standard library, the same
-# interpreter `run.sh` folds a screendump with; without it the check says
-# so and passes, the way the platform gates do.
+# `glyphs/coverage.txt` is the type's coverage grid — rasterized from the
+# faces in `fonts/` by `glyphs/rasterize.py`, the one step that needs
+# Pillow, never run here — and `glyphs/gen.py` writes `font.emo` from it;
+# a `font.emo` that no longer matches the grid is refused here. The
+# generator is Python 3's standard library, the same interpreter `run.sh`
+# folds a screendump with; without it the check says so and passes, the
+# way the platform gates do.
 
 if command -v python3 >/dev/null 2>&1; then
   python3 glyphs/gen.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
-  expect 0 "the glyph table in font.emo is the drawing in glyphs/glyphs.txt" "$rc"
+  expect 0 "the type's tables in font.emo are the grid in glyphs/coverage.txt" "$rc"
 else
-  printf 'skip the glyph table check: no python3 on PATH\n'
+  printf 'skip the type table check: no python3 on PATH\n'
 fi
 
 # --- the packages type-check, and their tests run -----------------------
@@ -125,14 +128,14 @@ expect 0 "the core and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the core's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 39 "all thirty-nine core assertions pass" "$n"
+expect 76 "all seventy-six core assertions pass" "$n"
 
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" check ui_fb_canvas.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas and its test type-check" "$rc"
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" run test.emo ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 35 "all thirty-five canvas assertions pass" "$n"
+expect 58 "all fifty-eight canvas assertions pass" "$n"
 
 ( cd frame && EMO_REGISTRY="$REG" "$EMO" check ui_fb_frame.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the first frame type-checks" "$rc"
@@ -313,5 +316,14 @@ check_golden desktop/golden desktop/golden/expected.txt \
 # rectangles to.
 check_golden apps/golden apps/golden/expected.txt \
   "$PWD/.emo-build/check/apps" "first apps" ocaml c typescript wasm beam
+
+# The shapes (emo-desktop A14.1): one card painted stage by stage — the
+# rounded rectangle plain, graded, translucent and fading, the circles,
+# the strokes, the shadows, every edge the surface clips at and the
+# degenerate shapes — one `shapes <digest>` line per stage. The metal's
+# walks (`ui_fb_winbuf`) answer the same lines under QEMU (CHECK.md,
+# 2026-11-06); `run.sh` folds them where the desktop paints with them.
+check_golden shapes shapes/expected.txt \
+  "$PWD/.emo-build/check/shapes" "shapes' card" ocaml c typescript wasm beam
 
 exit $fail

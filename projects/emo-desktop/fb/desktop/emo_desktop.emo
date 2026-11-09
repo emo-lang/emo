@@ -1,22 +1,24 @@
 require "emo/ui_fb"
 
-// The desktop shell's dock (emo-desktop A10.2): the machine's desktop
-// chrome, painted direct — fills and glyphs through the `Surface`, no
-// tree, the window package's shape and reason (the shell repaints the
-// dock per focus change, and every node of a tree is a few KiB of
-// boxed numbers left in the arena per repaint on the metal). The dock
-// is a panel surface at the display's bottom edge — the walk's
-// topmost strip, no window over it (T8.15) — one tile per app the
-// shell runs, the focused app's tile in the steel a focused window's
-// bar wears, the one visible fact a focus changes. A press names the
-// tile it landed on, or none: the policy the shell's pointer handler
-// asks before its window hit test, the click it answers with the
-// app's own focus.
+// The desktop shell's dock (emo-desktop A10.2; the shelf A14.4): the
+// machine's desktop chrome, painted direct — fills and glyphs through
+// the `Surface`, no tree, the window package's shape and reason (the
+// shell repaints the dock per focus change, and every node of a tree
+// is a few KiB of boxed numbers left in the arena per repaint on the
+// metal). The dock is a panel surface at the display's bottom edge —
+// the walk's topmost strip, no window over it (T8.15) — a rounded
+// shelf floating on the wallpaper's own formula under a scrim (D8:
+// the chrome samples the wallpaper, it does not read the pixels
+// behind it), one drawn icon per app the shell runs, the focused
+// app's tile in the lit grade, the one visible fact a focus changes.
+// A press names the tile it landed on, or none: the policy the
+// shell's pointer handler asks before its window hit test, the click
+// it answers with the app's own focus.
 //
 // The tiles sit left to right, one per app in the shell's own order;
-// a tile carries the app's initial in the bitmap font. The strip's
-// paper is a slate darker than the desktop's background — chrome
-// under everything's chrome.
+// a tile is a rounded square graded top to bottom carrying the app's
+// initial in the labels' type. The strip's ground is the wallpaper's
+// formula under the dock's scrim — chrome under everything's chrome.
 
 def strip_height() Int64 {
   return 40
@@ -31,25 +33,28 @@ def tile_gap() Int64 {
 }
 
 def tile_margin() Int64 {
-  return 8
-}
-
-def paper() Int64 {
-  return 0x24242C
+  return 20
 }
 
 def ink() Int64 {
   return 0xF8F8F0
 }
 
-// A tile's steel: the focused window's bar's when the tile is the
-// focused app's, a quiet slate when it is not — a different byte in
-// every channel, so a swapped focus shows.
-def tile_color(focused Bool) Int64 {
+// A tile's grades: the lit steel a focused window's bar wears when
+// the tile is the focused app's, a quiet slate when it is not — a
+// different byte in every channel, so a swapped focus shows.
+def tile_top(focused Bool) Int64 {
   if focused {
-    return 0x7088A8
+    return 0xFF7090B8
   }
-  return 0x3A3A46
+  return 0xFF50586A
+}
+
+def tile_bottom(focused Bool) Int64 {
+  if focused {
+    return 0xFF4A6288
+  }
+  return 0xFF3A4150
 }
 
 // The tile index at a display position, or -1: outside the strip is
@@ -77,23 +82,128 @@ def tile_x(i Int64) Int64 {
   return tile_margin() + (i * (tile_size() + tile_gap()))
 }
 
-// The strip onto its own surface, whole from scratch: the paper, then
-// one tile per app — the face in its steel, the initial one pad in
-// and centered on the tile. `labels` are the apps' initials in tile
+// ---- the shelf (emo-desktop A14.4) ----
+//
+// The dock's rounded shelf floating on the material: the wallpaper's
+// own formula under the dock's scrim fills the strip the shelf floats
+// on, the shelf's shadow falls on that, the shelf — a translucent
+// slab, glass over the wallpaper's own colors — over its shadow, and
+// the tiles on the shelf. The shelf sits `shelf_pad` in from the
+// strip's sides and top, the tiles a pad inside it.
+
+def shelf_pad() Int64 {
+  return 6
+}
+
+def shelf_top_pad() Int64 {
+  return 3
+}
+
+def shelf_radius() Int64 {
+  return 12
+}
+
+def shelf_soft() Int64 {
+  return 8
+}
+
+def shelf_height() Int64 {
+  return strip_height() - shelf_top_pad() - 3
+}
+
+def shelf_top() Int64 {
+  return 0x66484C5C
+}
+
+def shelf_bottom() Int64 {
+  return 0x4C34363E
+}
+
+// A tile's top edge in the strip's own coordinates: a pad inside the
+// shelf, the icon's box in the strip's middle.
+def tile_y() Int64 {
+  return 4
+}
+
+// The chrome's scrims (D8): the wallpaper's formula sampled under
+// each panel's scrim — the header's the darker slate, the dock's the
+// strip's own — the alpha in the top byte, the chrome's one material.
+def header_scrim() Int64 {
+  return 0xB41E1E26
+}
+
+def dock_scrim() Int64 {
+  return 0xB424242C
+}
+
+// One row of the chrome's material at the display row `gy`, painted
+// at the surface's local `ly`: the wallpaper's gradient row, every
+// ribbon whose span holds the row over it, the scrim over the whole —
+// D8's formula, the wallpaper recomputed at nothing a pixel reads.
+// `mw` and `mh` are the display's mode (the ribbons are fractions of
+// it), `w` the surface's own width — the header's golden canvas is
+// narrower than the mode and samples the same formula.
+def material_row(s ui_fb.Surface, ly Int64, gy Int64, w Int64, mw Int64,
+                 mh Int64, scrim Int64) Void {
+  const denom = mh - 1
+  const tr = (wall_top() >> 16) & 255
+  const tg = (wall_top() >> 8) & 255
+  const tb = wall_top() & 255
+  const br = (wall_bottom() >> 16) & 255
+  const bg = (wall_bottom() >> 8) & 255
+  const bb = wall_bottom() & 255
+  const r = (tr * (denom - gy) + br * gy) / denom
+  const g = (tg * (denom - gy) + bg * gy) / denom
+  const b = (tb * (denom - gy) + bb * gy) / denom
+  s.fill(0, ly, w, 1, (r << 16) | (g << 8) | b)
+  if gy < (5 * mh) / 8 {
+    s.blend(-((25 * mw) / 128) + (3 * gy) / 4, ly, (115 * mw) / 256, 1,
+      (0x28 << 24) | 0x30B8C8)
+  }
+  if gy >= (5 * mh) / 24 && gy < (15 * mh) / 16 {
+    s.blend((15 * mw) / 256 + gy / 2, ly, (25 * mw) / 64, 1,
+      (0x20 << 24) | 0xE86890)
+  }
+  if gy >= (85 * mh) / 192 {
+    s.blend((225 * mw) / 256 - gy / 4, ly, (135 * mw) / 256, 1,
+      (0x18 << 24) | 0x8868E8)
+  }
+  s.blend(0, ly, w, 1, scrim)
+}
+
+// The strip onto its own surface, whole from scratch: the material
+// row by row, the shelf's shadow and the shelf over it, then one
+// drawn icon per app — a rounded square graded top to bottom, the
+// initial centered in it. `labels` are the apps' initials in tile
 // order, `focused` the lit tile's index or -1 when no app holds the
 // focus, and `running` the residency's bitmask — bit i set when the
 // i-th app has a live process — the launcher's one visible fact
 // (emo-desktop A12.1): a running app's tile wears the 4×4 ink dot at
 // its foot, centered, two pixels above the tile's bottom edge, the
-// mark a macOS dock keeps under a running application's icon.
-def paint(s ui_fb.Surface, w Int64, h Int64, labels Array[String], focused Int64, running Int64) Void {
-  s.fill(0, h - strip_height(), w, strip_height(), paper())
+// mark a macOS dock keeps under a running application's icon. `h` is
+// the strip's own height and `top` the display row its first row
+// stands on — the material samples the wallpaper's formula at the
+// display's own rows.
+def paint(s ui_fb.Surface, w Int64, h Int64, top Int64, labels Array[String], focused Int64, running Int64) Void {
+  var ly = 0
+  while ly < h {
+    material_row(s, ly, top + ly, w, w, top + h, dock_scrim())
+    ly = ly + 1
+  }
+  const sx = shelf_pad()
+  const sy = shelf_top_pad()
+  const sw = w - shelf_pad() * 2
+  const sh = shelf_height()
+  s.shadow(sx, sy, sw, sh, shelf_radius(), shelf_soft(), 0x80000000)
+  s.rounded(sx, sy, sw, sh, shelf_radius(), shelf_top(), shelf_bottom())
   var i = 0
   while i < labels.length() {
     const tx = tile_x(i)
-    const ty = h - strip_height() + 4
-    s.fill(tx, ty, tile_size(), tile_size(), tile_color(i == focused))
-    ui_fb.text(labels[i], tx + 12, ty + 8, ink(), s)
+    const ty = tile_y()
+    s.rounded(tx, ty, tile_size(), tile_size(), 8, tile_top(i == focused),
+      tile_bottom(i == focused))
+    ui_fb.text(labels[i], tx + (tile_size() - ui_fb.text_width(labels[i])) / 2,
+      ty + (tile_size() - ui_fb.line_height()) / 2, ink(), s)
     if (running >> i) & 1 == 1 {
       s.fill(tx + 14, ty + 26, 4, 4, ink())
     }
@@ -163,18 +273,20 @@ def isqrt(n Int64) Int64 {
   return x
 }
 
-// One byte's glyph cell at (x, y): the font's drawing of that byte's
-// own arithmetic — the index is the byte's position past space, the
-// hollow cell for a byte the font has no drawing of, the same rule the
-// String walk's (`font.glyph_of`). The desktop's names come from the
-// volume as bytes through the fs, and a String is never built of them:
-// the shell reads the scratch buffer's bytes straight into this.
-def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Void {
+// One byte's glyph at the pen (x, y) in the labels' type (A14.2): the
+// index is the byte's position past space, the missing glyph for a byte
+// the font has no drawing of, the same rule the String walk's
+// (`font.glyph_of`). The desktop's names come from the volume as bytes
+// through the fs, and a String is never built of them: the shell reads
+// the scratch buffer's bytes straight into this. The advance the next
+// byte's pen moves by comes back.
+def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Int64 {
   var i = b - 32
   if i < 0 || i > 94 {
-    i = 95
+    i = ui_fb.font.missing()
   }
-  s.glyph(x, y, ui_fb.font.top_rows(i), ui_fb.font.bottom_rows(i), ink_color)
+  s.ink(x, y, ui_fb.text_strike(), i, ink_color)
+  return ui_fb.font.advance(ui_fb.text_strike(), i)
 }
 
 // The wallpaper's colors: a deep navy at the top running into a dusky
@@ -233,18 +345,20 @@ def wallpaper(s ui_fb.Surface, w Int64, h Int64) Void {
     s.fill(0, y, w, 1, (r << 16) | (g << 8) | b)
     y = y + 1
   }
-  ribbon(s, h, (0 << 32) | 480, 3, 4, -200, 460, (0x28 << 24) | 0x30B8C8)
-  ribbon(s, h, (160 << 32) | 720, 1, 2, 60, 400, (0x20 << 24) | 0xE86890)
-  ribbon(s, h, (340 << 32) | 768, -1, 4, 900, 540, (0x18 << 24) | 0x8868E8)
+  // The ribbons' bands, offsets and widths derive from the mode (A14.3
+  // — fractions of w and h whose 256ths and 128ths reproduce the 1024x768
+  // drawing they were tuned at exactly); the slopes stay the art's own.
+  ribbon(s, h, (0 << 32) | ((5 * h) / 8), 3, 4, -((25 * w) / 128),
+    (115 * w) / 256, (0x28 << 24) | 0x30B8C8)
+  ribbon(s, h, (((5 * h) / 24) << 32) | ((15 * h) / 16), 1, 2, (15 * w) / 256,
+    (25 * w) / 64, (0x20 << 24) | 0xE86890)
+  ribbon(s, h, (((85 * h) / 192) << 32) | h, -1, 4, (225 * w) / 256,
+    (135 * w) / 256, (0x18 << 24) | 0x8868E8)
 }
 
-// The header bar's colors: a slate darker than the dock's paper —
-// chrome over everything's chrome — the wordmark in the boot banner's
-// cyan, the count in the quiet ink.
-def header_paper() Int64 {
-  return 0x1E1E26
-}
-
+// The header bar's inks: the wordmark in the boot banner's cyan, the
+// count in the quiet ink — the bar's ground is the wallpaper's own
+// formula under the header's scrim (`material_row`, D8).
 def header_ink() Int64 {
   return 0xC8C8D0
 }
@@ -255,41 +369,47 @@ def header_accent() Int64 {
 
 // `<n> apps` ending one pad short of `right`, drawn byte by byte — the
 // count is a number the shell keeps, not a String the image carries.
-// The x the text starts at comes back, the caller's to center against.
+// The digits' advances are summed before they are drawn, so the text
+// ends where it should whatever the digits are. The x the text starts
+// at comes back, the caller's to center against.
 def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) Int64 {
-  var digits = 1
-  var t = n / 10
-  while t > 0 {
-    digits = digits + 1
-    t = t / 10
-  }
-  const total = digits + 5
-  const x = right - total * 8
-  ui_fb.text(" apps", x + digits * 8, y, ink_color, s)
   var div = 1
-  var k = 1
-  while k < digits {
+  while n / div >= 10 {
     div = div * 10
-    k = k + 1
   }
+  var digits_w = 0
+  var d = div
+  while d > 0 {
+    digits_w = digits_w + ui_fb.font.advance(ui_fb.text_strike(), 16 + ((n / d) % 10))
+    d = d / 10
+  }
+  const x = right - digits_w - ui_fb.text_width(" apps")
   var p = x
   while div > 0 {
-    text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
-    p = p + 8
+    p = p + text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
     div = div / 10
   }
+  ui_fb.text(" apps", p, y, ink_color, s)
   return x
 }
 
-// The header bar onto its own surface, whole from scratch: the paper,
-// the wordmark one pad in, the running count at the right edge — the
-// one live fact the bar carries (the desktop knows its own children's
+// The header bar onto its own surface, whole from scratch: the
+// wallpaper's formula under the header's scrim, row by row — the bar
+// samples the display's own rows, `mw` and `mh` the mode — then the
+// wordmark one pad in, the running count at the right edge — the one
+// live fact the bar carries (the desktop knows its own children's
 // residency; the wall clock and the foreground app's name it does not
-// know, and the bar does not pretend to).
-def paint_header(s ui_fb.Surface, w Int64, running Int64) Void {
-  s.fill(0, 0, w, header_height(), header_paper())
-  ui_fb.text("EmoOS", 8, 4, header_accent(), s)
-  count_text(s, w - icon_margin(), 4, running, header_ink())
+// know, and the bar does not pretend to). The text sits centered in
+// the bar's height, the line box's own.
+def paint_header(s ui_fb.Surface, w Int64, mw Int64, mh Int64, running Int64) Void {
+  var y = 0
+  while y < header_height() {
+    material_row(s, y, y, w, mw, mh, header_scrim())
+    y = y + 1
+  }
+  const ty = (header_height() - ui_fb.line_height()) / 2
+  ui_fb.text("EmoOS", 8, ty, header_accent(), s)
+  count_text(s, w - icon_margin(), ty, running, header_ink())
 }
 
 // The selection's blend word: the tile steel at a low coverage laid
@@ -339,35 +459,35 @@ def icon_hit(px Int64, py Int64, count Int64, w Int64, h Int64) Int64 {
   return -1
 }
 
-// A document icon: the page with its folded corner and three text
-// lines — the volume's flat files, drawn in the 44×44 box at the
-// cell's heart (`cx`, `cy` the cell's origin). The selection's blend
-// goes down first, the icon over it.
+// A document icon: the page a rounded square graded top to bottom,
+// its folded corner and three text lines rounded over it — the
+// volume's flat files, drawn in the 44×44 box at the cell's heart
+// (`cx`, `cy` the cell's origin). The selection's rounded blend goes
+// down first, the icon over it.
 def paint_icon_doc(s ui_fb.Surface, cx Int64, cy Int64, selected Bool) Void {
   if selected {
-    s.blend(cx + 2, cy + 1, 92, 74, select_ink())
+    s.rounded(cx + 2, cy + 1, 92, 74, 10, select_ink(), select_ink())
   }
   const ix = cx + icon_off_x()
   const iy = cy + icon_off_y()
-  s.fill(ix + 8, iy + 2, 28, 40, 0xE8E8F0)
-  s.fill(ix + 28, iy + 2, 8, 8, 0xC2C8D4)
-  s.fill(ix + 14, iy + 16, 16, 3, 0x98A0B0)
-  s.fill(ix + 14, iy + 24, 16, 3, 0x98A0B0)
-  s.fill(ix + 14, iy + 32, 10, 3, 0x98A0B0)
+  s.rounded(ix + 8, iy + 2, 28, 40, 4, 0xFFF2F2F8, 0xFFD8DAE4)
+  s.rounded(ix + 28, iy + 2, 8, 8, 2, 0xFFC2C8D4, 0xFFC2C8D4)
+  s.rounded(ix + 14, iy + 16, 16, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
+  s.rounded(ix + 14, iy + 24, 16, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
+  s.rounded(ix + 14, iy + 32, 10, 3, 1, 0xFF98A0B0, 0xFF98A0B0)
 }
 
-// A folder icon: the tab and body in the folder blue, a light along
-// the top and a shade at the foot — a name prefix's cell on the
-// desktop (`a/one.txt` shows as the folder `a`), entered by a press,
-// left by the `..` cell the view grows when entered.
+// A folder icon: the tab and the body in the folder blue, the body
+// graded from its light along the top to its shade at the foot — a
+// name prefix's cell on the desktop (`a/one.txt` shows as the folder
+// `a`), entered by a press, left by the `..` cell the view grows when
+// entered.
 def paint_icon_folder(s ui_fb.Surface, cx Int64, cy Int64, selected Bool) Void {
   if selected {
-    s.blend(cx + 2, cy + 1, 92, 74, select_ink())
+    s.rounded(cx + 2, cy + 1, 92, 74, 10, select_ink(), select_ink())
   }
   const ix = cx + icon_off_x()
   const iy = cy + icon_off_y()
-  s.fill(ix + 6, iy + 8, 16, 7, 0x4098E0)
-  s.fill(ix + 4, iy + 13, 36, 25, 0x4098E0)
-  s.fill(ix + 4, iy + 13, 36, 3, 0x5FA8E8)
-  s.fill(ix + 4, iy + 32, 36, 6, 0x327FC2)
+  s.rounded(ix + 6, iy + 8, 16, 9, 3, 0xFF4098E0, 0xFF4098E0)
+  s.rounded(ix + 4, iy + 13, 36, 25, 4, 0xFF5FA8E8, 0xFF327FC2)
 }

@@ -226,6 +226,8 @@ const route_input_info = -1018
 const route_win_role = -1019
 const route_win_parent = -1020
 const route_win_frame = -1021
+const route_win_minimize = -1022
+const route_win_desk_open = -1023
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -698,8 +700,13 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     // win_scale(grant, scale) (T8.15, emo-desktop A9.3): the fourth
     // seam's other field — the surface's scale on the row, the
     // compositor's walk to honor when it carries the buffer. Scale 1
-    // is the first accepted value; the shape exists, the values grow
-    // under it.
+    // was the first accepted value; the values grow under it now
+    // (emo-desktop A16.4, EmoOS T10.4): an integer past one walks the
+    // buffer at that multiple, nearest neighbor, whole multiples only
+    // — a scale below 1 is the argument refusal, as is a fraction.
+    // The repaint a scale's change owes rides the move the caller
+    // pairs it with (the compositor's damage marks read the move's
+    // own ends), the pair the desktop's maximize speaks.
     var sidx = grant_row_of(r0)
     if sidx < 0 {
       return -reason_argument
@@ -707,7 +714,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (sidx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    if r1 != 1 {
+    if r1 < 1 {
       return -reason_argument
     }
     poke64(grant_table + (sidx * grant_row) + 104, r1)
@@ -731,10 +738,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return 1
   }
   if n == 14 {
-    // win_close(grant) (T8.5): the buffer's release — the run back to
-    // the allocator block by block, the row to the table. The owner is
-    // the gate's check (reason 3); an id the table does not hold is
-    // reason 4.
+    // win_close(grant) (T8.5): the buffer's release — the run's leaves
+    // out of the owner's table (T9.3), the run back to the allocator
+    // block by block, the row to the table. The owner is the gate's
+    // check (reason 3); an id the table does not hold is reason 4. The
+    // caller's space word rides the request as win_new's does — the
+    // mapping the close unmaps is the closer's own.
     if r0 == 0 {
       return -reason_argument
     }
@@ -746,6 +755,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       return -reason_permission
     }
     poke64(gpu_args, r0)
+    poke64(gpu_args + 40, peek64(caller_space_cell))
     return route_win_close
   }
   if n == 3 {
@@ -782,6 +792,52 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     poke64(exec_nlen, r1)
     poke64(exec_busy, 1)
     return route_process_exec
+  }
+  if n == 25 {
+    // win_minimize(grant) (emo-desktop A16.3, EmoOS T10.3): the
+    // toplevel off the walk's eye — the compositor marks the pixels
+    // the hide unmakes, keeps the entry (the restore's memory), and
+    // lets the focus fall. The owner is the gate's check, as the
+    // stack's other verbs'; the role's (a toplevel's alone) and the
+    // already-hidden's are the compositor's answers.
+    if r0 == 0 {
+      return -reason_argument
+    }
+    var midx = grant_row_of(r0)
+    if midx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (midx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var mslot = comp_slot_take()
+    if mslot < 0 {
+      return -reason_resource
+    }
+    var mseat = comp_slots + (mslot * comp_slot_bytes)
+    poke64(mseat, r0)
+    return route_win_minimize - (32 * mslot)
+  }
+  if n == 26 {
+    // win_desk_open(pid) (emo-desktop A16.3, EmoOS T10.3): the dock
+    // tile's word — the window owned by that pid raised to the top,
+    // the hidden one unhidden first, and named the focused one. The
+    // grant the argument is not: the desktop names its apps by pid
+    // (its own bookkeeping), and the authority is not the owner's but
+    // the desktop's — the caller must own a panel, a check the
+    // stack's knowledge and so the compositor's to make. No check
+    // here beyond the pid's shape; the compositor refuses what the
+    // stack does not hold.
+    if r0 < 1 {
+      return -reason_argument
+    }
+    var dslot = comp_slot_take()
+    if dslot < 0 {
+      return -reason_resource
+    }
+    var dseat = comp_slots + (dslot * comp_slot_bytes)
+    poke64(dseat, r0)
+    return route_win_desk_open - (32 * dslot)
   }
   if n == 4 {
     var me = peek64(handoff_caller)

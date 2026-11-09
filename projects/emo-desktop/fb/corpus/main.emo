@@ -46,8 +46,23 @@ class Eye {
     self.canvas.blend(x, y, w, h, color)
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    self.canvas.glyph(x, y, top, bottom, color)
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    self.canvas.ink(x, y, strike, glyph, color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.canvas.rounded(x, y, w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.canvas.stroke(x, y, w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.canvas.shadow(x, y, w, h, radius, soft, color)
   }
 
   def present() {
@@ -56,7 +71,7 @@ class Eye {
 }
 
 def main() {
-  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1024, 768))
+  const screen = Eye.new(canvas: ui_fb_canvas.canvas(1920, 1080))
   ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(),
     ui_fb.backend(screen, ui_fb.script([0, 0, 1, 2])))
 }

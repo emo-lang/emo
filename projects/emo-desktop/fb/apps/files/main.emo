@@ -2,6 +2,7 @@ require "syscall"
 require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_apps"
+require "emo/ui_fb_win"
 require "emo/ui_fb_winbuf"
 
 // The file browser as its own program (emo-desktop A11.1): the app's
@@ -27,7 +28,22 @@ def main() {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }
-  case syscall.win_move(gf, 224, 144) {
+  // the window's place derives from the mode (emo-desktop A14.3): the
+  // upper-left quadrant, the counter's centered quarter
+  var mw = 0
+  var mh = 0
+  case syscall.output_info(0) {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, m) -> {
+    mw = m >> 32
+    mh = m & 4294967295
+  }
+  }
+  // the seat and the rise's start (emo-desktop A15.2): a quarter of
+  // the window low, the rise easing it home
+  var fx = (mw - 384) / 4 - 10
+  var fy = (mh - 128) / 4
+  case syscall.win_move(gf, fx, fy + 128 / 4) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}
   }
@@ -38,8 +54,17 @@ def main() {
     (R.ok, _) -> {}
   }
   const wf = ui_fb_winbuf.win(gf, base_f, 384, 128)
+  const ch = ui_fb_win.chrome(wf, "files")
+  // the landing frame the app's own hand paints — the mount's tree,
+  // the same walk, on the wire low (emo-desktop A15.2)
+  const reg0 = ui.Registry.new()
+  ui_fb.paint(ui_apps.files.view(reg0, ui_apps.files.initial()), ch)
+  wf.present()
+  wf.rise(fx, fy)
   ui.run(ui_apps.files.view, ui_apps.files.update,
-    ui_apps.files.initial(), ui_fb.backend(wf, ui_fb_winbuf.keys([106, 107, 111])))
+    ui_apps.files.initial(),
+    ui_fb.backend(ch, ui_fb_winbuf.keys([106, 107, 111], wf, fx, fy, mw, mh)))
+  wf.sink(fx, fy)
   case syscall.win_close(gf) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
     (R.ok, _) -> {}

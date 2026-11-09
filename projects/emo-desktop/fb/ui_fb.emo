@@ -5,12 +5,13 @@ require "emo/ui"
 // column stacks, a row lines up, and `padding`, `gap`, `align`, `grow`,
 // `width` and `height` place every child — only the unit is a pixel
 // where the terminal's was a cell, and a leaf's own size is its label
-// measured in glyph cells of the bitmap font's fixed cell. Painting is
+// measured in its glyphs' advances and the type's line box. Painting is
 // rectangles and glyphs: every box fills the rectangle it was placed in,
 // in its role's color, parents under children, and a leaf's label lands
-// over its box in the bitmap font (`font.emo`, A8.1), one cell per
-// character, in the role's ink. That is M7's picture with M8's glyphs on
-// it; the pointer and the windows build on the same verbs (M8, M9).
+// over its box in the type (`font.emo`, A14.2; A8.1's bitmap cell
+// before it), each glyph inked at its own coverage, in the role's ink.
+// That is M7's picture with M8's glyphs on it; the pointer and the
+// windows build on the same verbs (M8, M9).
 //
 // The core splits where the assessment drew the line: measure, place,
 // clip and blend are pure Emo against the `Surface` interface and run
@@ -18,8 +19,8 @@ require "emo/ui"
 // business — `ui_fb_canvas` keeps one in a `Bytes` for the hosted
 // targets, and the metal's is the screen carve reached through the raw
 // shim, riscv64's alone (A7.2). The core never sees a byte: it hands a
-// surface clipped rectangles, glyph cells and colors, and reads words
-// back through `at`.
+// surface clipped rectangles, glyphs and colors, and reads words back
+// through `at`.
 //
 // A pixel is one `Int64` word, `0x00RRGGBB` — XRGB8888, the carve's
 // format (D5), red in bits 23..16 and blue in the low byte. A color
@@ -71,15 +72,27 @@ class Rect {
   }
 }
 
-// The glyph cell: the bitmap font's fixed 8x16 (`font.emo`). A label
-// measures to the cells it occupies, so the layout a frame gets is the
-// layout its text lands in.
-def glyph_w() Int64 {
-  return font.cell_w()
+// The labels' type (emo-desktop A14.2): the box model measures and
+// paints every label in the interface face at 16 pixels (`font.emo`),
+// each glyph its own advance and every line the strike's line box — so
+// the layout a frame gets is the layout its text lands in, as the fixed
+// 8x16 cell's was.
+def text_strike() Int64 {
+  return font.ui16()
 }
 
-def glyph_h() Int64 {
-  return font.cell_h()
+def line_height() Int64 {
+  return font.line_height(text_strike())
+}
+
+// A label's width: its glyphs' advances, a byte the font has no drawing
+// of measuring as the missing glyph it paints as.
+def text_width(label String) Int64 {
+  var w = 0
+  for var i = 0; i < label.length(); i = i + 1 {
+    w = w + font.char_advance(text_strike(), label.substring(i, 1))
+  }
+  return w
 }
 
 // The palette: one color per box role, the muted platinum of the
@@ -158,7 +171,7 @@ def intrinsic(n ui.Node) Extent {
   if n.is(ui.Spacer) {
     return Extent.new(w: 0, h: 0)
   }
-  return Extent.new(w: label_of(n).length() * glyph_w(), h: glyph_h())
+  return Extent.new(w: text_width(label_of(n)), h: line_height())
 }
 
 // A node's own size: the style's fixed width/height when set, the
@@ -234,24 +247,33 @@ def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
 // ---- the buffer seam ----
 
 // What the core paints into. `fill` stores a color over a rectangle,
-// `blend` composites one over it with `over`, and `glyph` stores a color
-// through one 8x16 cell of the bitmap font — the cell's sixteen rows as
-// two words, `top` rows 0 to 7 and `bottom` rows 8 to 15, each row a
-// byte with the top row in the high byte and the left pixel in the high
-// bit (`glyph_row` reads them), a set bit the color and a clear bit the
-// surface left alone. All three take their rectangle unclipped and keep
-// to their own bounds, and `at` outside the surface answers 0, so a
-// caller that skips `clip` is wrong by nothing worse than wasted work.
-// A `Surface` is the one thing a host provides: `ui_fb_canvas`'s keeps
-// words in a `Bytes`, the metal's are the carve's own words behind the
-// raw shim, and the core cannot tell them apart.
+// `blend` composites one over it with `over`, and `ink` composites one
+// glyph of a strike (`font.emo`) at the pen `(x, y)` — the line box's
+// top-left, the glyph's ink offset from there by its own left and top —
+// in the color's channels, each pixel at the glyph's own coverage; the
+// color's top byte is never read, text being opaque ink. All three
+// take their rectangle unclipped and keep to their own bounds, and `at`
+// outside the surface answers 0, so a caller that skips `clip` is wrong
+// by nothing worse than wasted work. A `Surface` is the one thing a
+// host provides: `ui_fb_canvas`'s keeps words in a `Bytes`, the metal's
+// are the carve's own words behind the raw shim, and the core cannot
+// tell them apart.
 //
-// The glyph is a verb of its own, not sixteen rows of `fill`, for the
+// The glyph is a verb of its own, not a `blend` per pixel, for the
 // metal's sake: an interface call there boxes every Int64 it carries
 // into a cell the pool never reclaims, so a frame of text that painted
 // its glyphs pixel by pixel — thousands of calls — would spend the
-// arena before its first line ended; one call per cell is the shape a
-// first frame survives.
+// arena before its first line ended; one call per glyph is the shape a
+// frame survives (A8.1's reason, the strike and the glyph index the
+// words it carries since A14.2).
+//
+// The shapes are verbs of their own for the same reason (emo-desktop
+// A14.1): `rounded` composites a rounded rectangle graded from `top`
+// down to `bottom`, `stroke` the ring `width` pixels deep inside one's
+// edge, `shadow` one whose edge fades over `soft` pixels — all three
+// with antialiased edges, their colors carrying their opacity in the
+// top byte the way `blend`'s do, and their arithmetic the shapes
+// section's below, so every surface covers every pixel alike.
 //
 // `present` commits a painted frame (A8.3): the backend calls it once
 // after every paint, and what it means is the surface's own business —
@@ -265,16 +287,21 @@ interface Surface {
   def at(x Int64, y Int64) Int64
   def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) Void
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) Void
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) Void
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) Void
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) Void
   def present() Void
 }
 
-// Row `r` of a glyph cell, 0 to 15, as its byte: the left pixel in bit
-// 7. The arithmetic every `Surface` paints a glyph by, kept here so the
-// hosted canvas and the carve read the same bit for the same pixel.
-def glyph_row(top Int64, bottom Int64, r Int64) Int64 {
-  const word = if r < 8 { top } else { bottom }
-  return (word >> (8 * (7 - (r & 7)))) & 0xFF
+// One pixel of a glyph's ink at `color`'s channels: the glyph's
+// coverage as the opacity `over` composites (emo-desktop A14.2) — the
+// arithmetic every `Surface` inks a glyph by.
+def inked(color Int64, coverage Int64) Int64 {
+  return (coverage << 24) | (color & 0xFFFFFF)
 }
 
 // ---- clip and blend: the pixel arithmetic ----
@@ -319,7 +346,8 @@ def clip(x Int64, y Int64, w Int64, h Int64, bounds_w Int64,
 // coverage `a` out of 255. Integer throughout, so every target lands
 // on the same byte.
 def mix(s Int64, d Int64, a Int64) Int64 {
-  return (s * a + d * (255 - a) + 127) / 255
+  const t = s * a + d * (255 - a) + 128
+  return (t + (t >> 8)) >> 8
 }
 
 // One pixel of source-over: `src` carries its coverage in the top byte,
@@ -339,6 +367,191 @@ def over(src Int64, dst Int64) Int64 {
   const g = mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
   const b = mix(src & 0xFF, dst & 0xFF, a)
   return (r << 16) | (g << 8) | b
+}
+
+// ---- shapes: one rounded rectangle, three ways (emo-desktop A14.1) ----
+//
+// The modern face is drawn with one shape, the rounded rectangle — a
+// plain rectangle at radius 0, a pill at half its height, a circle when
+// it is square at half its side — and one function decides how much of
+// a pixel it covers: the signed distance from the pixel's center to the
+// shape's edge, negative inside, in 256ths of a pixel. A fill covers a
+// pixel by how far inside its center lies, over one pixel's ramp; a
+// stroke is the fill less the fill drawn `width` pixels further in; a
+// shadow is the fill's ramp stretched over `soft` pixels on a
+// smoothstep. Integers throughout, so every surface — the hosted
+// canvas, the carve's typed loops, `run.sh`'s model — lands on the same
+// byte. The loops that walk a shape's rows are each surface's own; the
+// arithmetic they ask of each pixel is here.
+//
+// A row of a fill or a shadow rises to full coverage, stays there and
+// falls again — the shape is convex — so a surface walks in from both
+// ends asking each pixel until one is whole, and stores everything
+// between as one span. A stroke's row rises and falls twice, the
+// interior between untouched, so its walks stop where a pixel is clear
+// with its center inside.
+
+// The largest `s` with `s * s <= n`, for `n >= 0`: digit by digit, two
+// bits a step — no division and no float, the same steps on every
+// target.
+def isqrt(n Int64) Int64 {
+  var rem = n
+  var root = 0
+  var bit = 1 << 62
+  while bit > rem {
+    bit = bit >> 2
+  }
+  while bit != 0 {
+    if rem >= root + bit {
+      rem = rem - (root + bit)
+      root = (root >> 1) + bit
+    } else {
+      root = root >> 1
+    }
+    bit = bit >> 2
+  }
+  return root
+}
+
+// The radius a `w` by `h` shape can carry: never negative, never past
+// half the shorter side — the circle's.
+def radius_in(radius Int64, w Int64, h Int64) Int64 {
+  var r = radius
+  if r < 0 {
+    r = 0
+  }
+  if r * 2 > w {
+    r = w / 2
+  }
+  if r * 2 > h {
+    r = h / 2
+  }
+  return r
+}
+
+// The signed distance from the center of pixel `(px, py)` to the edge
+// of the shape `(x, y, w, h)` with corner radius `radius` (within the
+// shape — `radius_in`'s), in 256ths of a pixel: the corners' arcs exact
+// to the square root's floor, the straight edges exact.
+def shape_sd(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64,
+             radius Int64) Int64 {
+  const cx = px * 256 + 128
+  const cy = py * 256 + 128
+  const rr = radius * 256
+  var sx = x * 256 + rr - cx
+  const sx_right = cx - ((x + w) * 256 - rr)
+  if sx_right > sx {
+    sx = sx_right
+  }
+  var sy = y * 256 + rr - cy
+  const sy_bottom = cy - ((y + h) * 256 - rr)
+  if sy_bottom > sy {
+    sy = sy_bottom
+  }
+  var outside = 0
+  if sx > 0 && sy > 0 {
+    outside = isqrt(sx * sx + sy * sy)
+  } else {
+    if sx > 0 {
+      outside = sx
+    }
+    if sy > 0 {
+      outside = sy
+    }
+  }
+  var inside = sx
+  if sy > inside {
+    inside = sy
+  }
+  if inside > 0 {
+    inside = 0
+  }
+  return outside + inside - rr
+}
+
+// `v` held to one pixel's ramp, 0 to 256.
+def ramp(v Int64) Int64 {
+  if v < 0 {
+    return 0
+  }
+  if v > 256 {
+    return 256
+  }
+  return v
+}
+
+// A fill's coverage of a pixel, out of 255: whole half a pixel inside
+// the edge, none half a pixel outside, a straight ramp between.
+def fill_cover(sd Int64) Int64 {
+  return (ramp(128 - sd) * 255 + 128) / 256
+}
+
+// A stroke's coverage, out of 255: the fill's less the fill's of the
+// edge pulled `width` pixels in.
+def stroke_cover(sd Int64, width Int64) Int64 {
+  const outer = ramp(128 - sd)
+  const inner = ramp(128 - sd - width * 256)
+  return ((outer - inner) * 255 + 128) / 256
+}
+
+// A shadow's coverage, out of 255: the ramp spread over `soft` pixels
+// (one at least) centered on the edge, eased on a smoothstep — the
+// position along it in 4096ths, so the cube stays inside 64 bits
+// however soft the edge.
+def shadow_cover(sd Int64, soft Int64) Int64 {
+  var s = soft
+  if s < 1 {
+    s = 1
+  }
+  const span = s * 256
+  const c = s * 128 - sd
+  if c <= 0 {
+    return 0
+  }
+  if c >= span {
+    return 255
+  }
+  const t = (c * 4096) / span
+  return (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+}
+
+// `color` at `coverage` out of 255 of its own opacity: the top byte
+// scaled, the channels untouched — what `over` composites.
+def cover(color Int64, coverage Int64) Int64 {
+  const t = ((color >> 24) & 0xFF) * coverage + 128
+  const a = (t + (t >> 8)) >> 8
+  return (a << 24) | (color & 0xFFFFFF)
+}
+
+// One channel at step `i` of a `d`-step line from `a` to `b`, rounded
+// to nearest.
+def lerp8(a Int64, b Int64, i Int64, d Int64) Int64 {
+  return ((a & 0xFF) * (d - i) + (b & 0xFF) * i + d / 2) / d
+}
+
+// Row `i` of an `n`-row grade from `top` to `bottom`: every channel,
+// the opacity with them, on its own straight line — `top` on the first
+// row, `bottom` on the last.
+def grade(top Int64, bottom Int64, i Int64, n Int64) Int64 {
+  if n <= 1 || top == bottom {
+    return top
+  }
+  const d = n - 1
+  const a = lerp8(top >> 24, bottom >> 24, i, d)
+  const r = lerp8(top >> 16, bottom >> 16, i, d)
+  const g = lerp8(top >> 8, bottom >> 8, i, d)
+  const b = lerp8(top, bottom, i, d)
+  return (a << 24) | (r << 16) | (g << 8) | b
+}
+
+// How far a shadow's ramp reaches past its shape's edge, in whole
+// pixels: half its softness and one more — every pixel past it is
+// clear.
+def shadow_pad(soft Int64) Int64 {
+  if soft < 1 {
+    return 1
+  }
+  return soft / 2 + 1
 }
 
 // ---- place: the tree onto the surface ----
@@ -376,17 +589,19 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
   }
 }
 
-// A label's glyphs along one line from `(x, y)`, a cell per byte of the
-// label, each through the surface's `glyph` in the font's drawing of
-// that byte — the terminal backend's own rule, where a label is laid
-// into the frame cell by cell and only the frame's edge cuts it: the
-// surface's bounds are what clip a cell, never the node's rectangle, so
-// a label wider than its box runs on as the terminal's does. A byte the
-// font has no glyph for shows the hollow cell (`font.glyph_of`).
+// A label's glyphs along one line from `(x, y)`, the line box's
+// top-left, each through the surface's `ink` and the pen moving on by
+// the glyph's own advance — the terminal backend's rule kept, where
+// only the frame's edge cuts a label: the surface's bounds are what
+// clip a glyph, never the node's rectangle, so a label wider than its
+// box runs on as the terminal's does. A byte the font has no drawing
+// of shows the missing glyph (`font.glyph_of`).
 def text(label String, x Int64, y Int64, ink Int64, s Surface) {
+  var pen = x
   for var i = 0; i < label.length(); i = i + 1 {
     const g = font.glyph_of(label.substring(i, 1))
-    s.glyph(x + i * glyph_w(), y, font.top_rows(g), font.bottom_rows(g), ink)
+    s.ink(pen, y, text_strike(), g, ink)
+    pen = pen + font.advance(text_strike(), g)
   }
 }
 

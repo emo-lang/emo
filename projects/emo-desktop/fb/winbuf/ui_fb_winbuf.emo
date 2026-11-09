@@ -1,5 +1,7 @@
 require "syscall"
 require "emo/ui_fb"
+require "emo/ui_fb_win"
+require "emo_desktop"
 
 // The window buffer's metal side (emo-desktop A11.1): the package an
 // application program requires to run as its own image — the raw shim
@@ -22,7 +24,7 @@ require "emo/ui_fb"
 // heap gone before the first row ends. A fully typed top-level def
 // computes in raw registers and allocates nothing; the method hands it
 // the words once per rectangle, which is a dozen times a frame, and
-// once per glyph cell, which is a hundred.
+// once per glyph, which is a hundred.
 
 // The session's scratch, in the image's own writable segment: the
 // lines the helpers below build ride it through the write verb.
@@ -128,32 +130,402 @@ def key_byte(code Int64) Int64 {
   return -1
 }
 
+// ---- the window's own menu (emo-desktop A16.2, D13) ----
+//
+// The one-button bar's door: the seat opens the window's menu — a
+// popup surface hung from the window by the roles' own binding — at
+// the button's side, and the press-at's coordinates are how the three
+// items answer. The menu is the seat's, once, here: every app that
+// constructs the seat wears it, and no app writes a line of it. The
+// items are the window manager's verbs the app's own grant may call —
+// Maximize (the scale's whole multiple that fills the work area, the
+// move beside it, the pair again to restore), Minimize (the hidden
+// entry, the dock's tile the way back), Quit (the session's own end,
+// the sink and the close the app already speaks). The kernel folds the
+// menu when the window loses the focus — a click away from it — so no
+// menu outlives its reader's attention.
+
+// The menu's own numbers: the labels by their item, the restore's
+// word when the window rides the scale's multiple now.
+def menu_label(i Int64, maximized Bool) String {
+  if i == 0 {
+    if maximized {
+      return "Restore"
+    }
+    return "Maximize"
+  }
+  if i == 1 {
+    return "Minimize"
+  }
+  return "Quit"
+}
+
+def menu_items() Int64 {
+  return 3
+}
+
+// The item's height: the interface face's line with a pad's pair
+// around it; the menu's width the widest label's advance with the
+// inner pad's pair beside.
+def menu_item_h() Int64 {
+  return ui_fb.line_height() + 8
+}
+
+def menu_width() Int64 {
+  var w = ui_fb.text_width(menu_label(0, false))
+  if ui_fb.text_width(menu_label(1, false)) > w {
+    w = ui_fb.text_width(menu_label(1, false))
+  }
+  if ui_fb.text_width(menu_label(2, false)) > w {
+    w = ui_fb.text_width(menu_label(2, false))
+  }
+  if ui_fb.text_width(menu_label(0, true)) > w {
+    w = ui_fb.text_width(menu_label(0, true))
+  }
+  return w + 24
+}
+
+def menu_height() Int64 {
+  return menu_items() * menu_item_h() + 8
+}
+
+// The menu's seat by the window's side: the button's own x held in
+// from the bar's edge, the height the bar's own — the parent-relative
+// coordinates the binding speaks.
+def menu_x() Int64 {
+  return 4
+}
+
+def menu_y() Int64 {
+  return ui_fb_win.bar_height()
+}
+
+// The menu's colors: the bar's own paper and its hairline, the ink
+// the title wears.
+def menu_paper() Int64 {
+  return 0xFFF4F4F6
+}
+
+def menu_line() Int64 {
+  return 0xFFC8C8CC
+}
+
+def menu_ink() Int64 {
+  return 0xFF282830
+}
+
+// The seat's mutable state, cells in the image's writable segment past
+// the lines' scratch (the shell's own discipline — a class's fields
+// are its init's alone): the window's grant and seat, the mode, the
+// scale's state and the seat it came from, the open menu's grants,
+// the pointer's maxima. The menu's life is these words' to move.
+const seat_grant = buf + 2048
+const seat_wx = buf + 2056
+const seat_wy = buf + 2064
+const seat_mw = buf + 2072
+const seat_mh = buf + 2080
+const seat_scale = buf + 2088
+const seat_savedx = buf + 2096
+const seat_savedy = buf + 2104
+const seat_maxx = buf + 2112
+const seat_maxy = buf + 2120
+const seat_menug = buf + 2128
+const seat_menub = buf + 2136
+// the drag's own words (emo-desktop A16.5): whether the hand holds
+// the bar (0 idle, 1 armed — the press down, no move yet), and the
+// offset the window keeps to the pointer — screen-space, the scale
+// never in it, the window moving one with the hand.
+const seat_drag = buf + 2144
+const seat_dragx = buf + 2152
+const seat_dragy = buf + 2160
+
+// The menu's surface up and painted: the popup declared by its role,
+// bound to the window, moved to the button's side (the
+// parent-relative coordinates the binding speaks), the paper and the
+// hairline and the items inked, and the commit raw — no frame line,
+// the menu's frames the compositor's comp line's to pin.
+def seat_menu_open(surf Win) Void {
+  var g = 0
+  var b = 0
+  case syscall.win_new(menu_width(), menu_height()) {
+    (R.error, _) -> { mark() }
+    (R.ok, ans) -> {
+      g = ans & 4294967295
+      b = (ans >> 32) << 12
+    }
+  }
+  if g != 0 {
+    poke64(seat_menug, g)
+    poke64(seat_menub, b)
+    case syscall.win_role(g, 1) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    case syscall.win_parent(g, peek64(seat_grant)) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    case syscall.win_move(g, menu_x(), menu_y()) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    const ms = win(g, b, menu_width(), menu_height())
+    ms.fill(0, 0, menu_width(), menu_height(), menu_paper())
+    ms.fill(0, 0, menu_width(), 1, menu_line())
+    ms.fill(0, menu_height() - 1, menu_width(), 1, menu_line())
+    ms.fill(0, 0, 1, menu_height(), menu_line())
+    ms.fill(menu_width() - 1, 0, 1, menu_height(), menu_line())
+    var i = 0
+    while i < menu_items() {
+      ui_fb.text(menu_label(i, peek64(seat_scale) > 1), 12,
+        4 + (i * menu_item_h()) + 4, menu_ink(), ms)
+      i = i + 1
+    }
+    case syscall.present(g, 0, 0, menu_width(), menu_height()) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+}
+
+// The menu's surface gone: the grant closed, the cell cleared. The
+// pixels the popup leaves behind are the next composition's — the
+// caller that means the menu's absence on the display presents the
+// window (the commit's own prune takes the closed popup's entry and
+// its rect into the same walk), and the kernel's own compositions
+// (the minimize, the fold behind a focus's move) carry it the rest
+// of the time.
+def seat_menu_close() Void {
+  const g = peek64(seat_menug)
+  if g != 0 {
+    case syscall.win_close(g) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    poke64(seat_menug, 0)
+  }
+}
+
+// The maximize's pair and its mirror (emo-desktop A16.4): the
+// window's own scale to the largest whole multiple the work area
+// holds — the mode over the header's and the dock's strips, the
+// smaller of the two fits — and the move to its center, the even x
+// the blit's word pairs keep; the pair again at scale 1 and the seat
+// the window knew. The repaint rides the present the pair ends on:
+// the commit's prune takes the menu's own closed popup in the same
+// walk.
+def seat_toggle_max(surf Win) Void {
+  const w = surf.width()
+  const h = surf.height()
+  const workh = peek64(seat_mh) - emo_desktop.header_height() -
+    emo_desktop.strip_height()
+  if peek64(seat_scale) == 1 {
+    var s = peek64(seat_mw) / w
+    const sh = workh / h
+    if sh < s {
+      s = sh
+    }
+    if s < 1 {
+      s = 1
+    }
+    var nx = (peek64(seat_mw) - (w * s)) / 2
+    nx = nx - (nx & 1)
+    const ny = emo_desktop.header_height() + ((workh - (h * s)) / 2)
+    poke64(seat_savedx, peek64(seat_wx))
+    poke64(seat_savedy, peek64(seat_wy))
+    case syscall.win_scale(peek64(seat_grant), s) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    case syscall.win_move(peek64(seat_grant), nx, ny) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    poke64(seat_scale, s)
+    poke64(seat_wx, nx)
+    poke64(seat_wy, ny)
+  } else {
+    case syscall.win_scale(peek64(seat_grant), 1) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    case syscall.win_move(peek64(seat_grant), peek64(seat_savedx),
+      peek64(seat_savedy)) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+    poke64(seat_scale, 1)
+    poke64(seat_wx, peek64(seat_savedx))
+    poke64(seat_wy, peek64(seat_savedy))
+  }
+  surf.present()
+}
+
+// The press-at's verdict (emo-desktop A16.2): the raw word's halves
+// scaled by the axes' maxima the seat read at its mounting, the
+// menu's own coordinates first — an item's press the item's action,
+// the menu's pads and the world outside the menu's dismissal — then
+// the button's rectangle, the window's own coordinates divided by the
+// scale the walk carries the window at. The answer is 0 the loop goes
+// on, -2 the session ends (the menu's own Quit).
+def seat_press(raw Int64, surf Win) Int64 {
+  const sx = (((raw >> 16) & 65535) * peek64(seat_mw)) / (peek64(seat_maxx) + 1)
+  const sy = ((raw & 65535) * peek64(seat_mh)) / (peek64(seat_maxy) + 1)
+  if peek64(seat_menug) != 0 {
+    const mx = sx - (peek64(seat_wx) + menu_x())
+    const my = sy - (peek64(seat_wy) + menu_y())
+    if mx >= 0 && mx < menu_width() && my >= 0 && my < menu_height() {
+      const item = (my - 4) / menu_item_h()
+      if item >= 0 && item < menu_items() {
+        seat_menu_close()
+        if item == 0 {
+          seat_toggle_max(surf)
+        }
+        if item == 1 {
+          case syscall.win_minimize(peek64(seat_grant)) {
+            (R.error, _) -> { mark() }
+            (R.ok, _) -> {}
+          }
+        }
+        if item == 2 {
+          return 0 - 2
+        }
+        return 0
+      }
+    }
+    seat_menu_close()
+    surf.present()
+    return 0
+  }
+  var lx = sx - peek64(seat_wx)
+  var ly = sy - peek64(seat_wy)
+  if peek64(seat_scale) > 1 {
+    lx = lx / peek64(seat_scale)
+    ly = ly / peek64(seat_scale)
+  }
+  if lx >= ui_fb_win.button_x() &&
+     lx < ui_fb_win.button_x() + ui_fb_win.button_w() &&
+     ly >= ui_fb_win.button_y() &&
+     ly < ui_fb_win.button_y() + ui_fb_win.button_h() {
+    seat_menu_open(surf)
+    return 0
+  }
+  // the bar's own hand (emo-desktop A16.5): a press beside the button
+  // arms the drag — the offset the window keeps to the pointer until
+  // the release, screen-space (the scale never in it), the steps the
+  // move-at's push. The maximized window drags as the block it is:
+  // the offset the scaled rect keeps, the scale unchanged.
+  if lx >= 0 && lx < surf.width() && ly >= 0 &&
+     ly < ui_fb_win.bar_height() {
+    poke64(seat_dragx, sx - peek64(seat_wx))
+    poke64(seat_dragy, sy - peek64(seat_wy))
+    poke64(seat_drag, 1)
+  }
+  return 0
+}
+
+// One drag step (emo-desktop A16.5): the move-at's place scaled by
+// the axes' maxima, the window's new origin the pointer's less the
+// armed offset, the even x the blit's word pairs keep — the move the
+// seat's own call (the grant's owner, the coordinates it keeps true
+// for the menu and the maximize beside), the present the live frame.
+// The mode's edge is the drag's own clamp: a refused move leaves the
+// last seat standing, the steps walking the hand back in.
+def seat_drag_step(raw Int64, surf Win) Void {
+  if peek64(seat_drag) != 0 {
+    const sx = (((raw >> 16) & 65535) * peek64(seat_mw)) / (peek64(seat_maxx) + 1)
+    const sy = ((raw & 65535) * peek64(seat_mh)) / (peek64(seat_maxy) + 1)
+    var nx = sx - peek64(seat_dragx)
+    var ny = sy - peek64(seat_dragy)
+    if nx < 0 {
+      nx = 0
+    }
+    if ny < 0 {
+      ny = 0
+    }
+    nx = nx - (nx & 1)
+    case syscall.win_move(peek64(seat_grant), nx, ny) {
+      (R.error, _) -> {}
+      (R.ok, _) -> {
+        poke64(seat_wx, nx)
+        poke64(seat_wy, ny)
+        poke64(seat_drag, 2)
+        surf.present()
+      }
+    }
+  }
+}
+
 // The byte table in the input's seat: one tag per byte, the tag its
 // index in the table names — the table the app's own registration
 // order keeps (`a` first, `b` second, and so on, the same tags the
 // golden's script names) — and `q` the loop's end, the quit byte every
 // seat's session ends on. Every other byte is dropped, never guessed
 // at. The stream's device reports come too: the keyboard's press is
-// the key it names (the translation above), the pointer's reports are
-// not an app's and ride past.
+// the key it names (the translation above), and the press-at
+// (emo-desktop A16.2) the window's own word — the bar's button and
+// the open menu's items the seat judges by it, the pointer's other
+// reports riding past as they always have.
 class Keys {
-  def init(bytes Array[Int64]) {
+  def init(bytes Array[Int64], surf Win, x Int64, y Int64, mw Int64,
+           mh Int64) {
     self.bytes = bytes
+    self.surf = surf
+    poke64(seat_grant, surf.grant)
+    poke64(seat_wx, x)
+    poke64(seat_wy, y)
+    poke64(seat_mw, mw)
+    poke64(seat_mh, mh)
+    poke64(seat_scale, 1)
+    poke64(seat_menug, 0)
+    poke64(seat_menub, 0)
+    poke64(seat_drag, 0)
+    poke64(seat_dragx, 0)
+    poke64(seat_dragy, 0)
+    poke64(seat_savedx, x)
+    poke64(seat_savedy, y)
+    poke64(seat_maxx, 1)
+    poke64(seat_maxy, 1)
+    case syscall.input_info(0) {
+      (R.error, _) -> {}
+      (R.ok, m) -> {
+        poke64(seat_maxx, m >> 32)
+        poke64(seat_maxy, m & 4294967295)
+      }
+    }
   }
 
   def next() (R, Int64) {
-    var tag = -1
+    var tag = 0 - 1
     while tag < 0 {
       const ev = syscall.input_read()
-      var b = -1
+      var b = 0 - 1
       if ev_type(ev) == 17741 {
         b = ev_value(ev)
       } else {
-        if ev_type(ev) == 1 && ev_value(ev) == 1 {
-          b = key_byte(ev_code(ev))
+        if ev_type(ev) == 4 {
+          if seat_press(ev_value(ev), self.surf) < 0 {
+            return (R.error, 0)
+          }
+        } else {
+          if ev_type(ev) == 5 {
+            seat_drag_step(ev_value(ev), self.surf)
+          } else {
+            if ev_type(ev) == 1 {
+              if ev_value(ev) == 1 {
+                b = key_byte(ev_code(ev))
+              } else {
+                // the release disarms the hand (emo-desktop A16.5):
+                // the drag's steps stop, the window standing where
+                // the last step set it
+                poke64(seat_drag, 0)
+              }
+            }
+          }
         }
       }
       if b == 113 {
+        seat_menu_close()
         return (R.error, 0)
       }
       var i = 0
@@ -201,27 +573,35 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
   }
 }
 
-// A glyph's set bits as stores, each pixel checked against the
-// buffer's bounds: the row byte is `ui_fb.glyph_row`'s, the same bit
-// for the same pixel the hosted canvas reads, and a clear row costs no
-// column walk.
-def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
-                top Int64, bottom Int64, word Int64) Void {
-  var r = 0
-  while r < 16 {
-    const bits = ui_fb.glyph_row(top, bottom, r)
-    const py = y + r
-    if bits != 0 && py >= 0 && py < height {
-      var c = 0
-      while c < 8 {
-        const px = x + c
-        if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < width {
-          poke32(base + (py * width + px) * 4, word)
-        }
-        c = c + 1
+// One glyph of a strike at the pen `(x, y)` (emo-desktop A14.2): the
+// coverage walked a word at a time — `font.word` hands eight pixels,
+// pixel p at bits 4p — each covered pixel inside the buffer composited
+// in the color's channels, the same pixels at the same coverage the
+// hosted canvas inks. The buffer's extent rides packed (`pack`).
+def carve_ink(base Int64, dims Int64, x Int64, y Int64, strike Int64,
+              glyph Int64, color Int64) Void {
+  const width = high(dims)
+  const height = low(dims)
+  const w = ui_fb.font.gw(strike, glyph)
+  const n = w * ui_fb.font.gh(strike, glyph)
+  const x0 = x + ui_fb.font.gleft(strike, glyph)
+  const y0 = y + ui_fb.font.gtop(strike, glyph)
+  var m = 0
+  var k = 0
+  while m < n {
+    const wd = ui_fb.font.word(strike, glyph, k)
+    var p = 0
+    while p < 8 && m < n {
+      const c = ((wd >> (p * 4)) & 15) * 17
+      const px = x0 + m % w
+      const py = y0 + m / w
+      if c > 0 && px >= 0 && px < width && py >= 0 && py < height {
+        carve_blend_at(base + (py * width + px) * 4, ui_fb.inked(color, c))
       }
+      m = m + 1
+      p = p + 1
     }
-    r = r + 1
+    k = k + 1
   }
 }
 
@@ -234,16 +614,239 @@ def carve_glyph(base Int64, width Int64, height Int64, x Int64, y Int64,
 // one number or on none (run.sh).
 def carve_digest(base Int64, width Int64, height Int64) Int64 {
   var d = 0
-  var row = 0
-  while row < height {
-    var col = 0
-    while col < width {
-      d = (d * 31 + peek32(base + (row * width + col) * 4)) & 4294967295
+  var y = 0
+  while y < height {
+    var x = 0
+    while x < width {
+      d = (d * 31 + peek32(base + ((y * width) + x) * 4)) & 4294967295
+      x = x + 1
+    }
+    y = y + 1
+  }
+  return d
+}
+
+// The round fold (EmoOS T9.2): `carve_digest` with the four corner
+// squares of `radius` set aside — the corners the walk's mask leaves to
+// whatever is beneath the toplevel, so a window's `frame` line is the
+// digest of the pixels the window itself can show, the same fold the
+// hosted twins print and `run.sh` takes over a screendump's rectangle.
+// The radius is the walk's own design constant (10).
+def round_digest(base Int64, width Int64, height Int64) Int64 {
+  const rad = 10
+  var d = 0
+  var y = 0
+  while y < height {
+    var x = 0
+    while x < width {
+      if (x >= rad) && (x < width - rad) || (y >= rad) && (y < height - rad) {
+        d = (d * 31 + peek32(base + ((y * width) + x) * 4)) & 4294967295
+      }
+      x = x + 1
+    }
+    y = y + 1
+  }
+  return d
+}
+
+// ---- the shapes on the carve (emo-desktop A14.1) ----
+//
+// The canvas's walks over raw words: each row walked in from both ends
+// while its pixels are partly covered, the whole pixels between one
+// span — the arithmetic per pixel `ui_fb`'s shapes section, so the
+// carve and the hosted canvas cover every pixel alike. A shape is more
+// words than a call carries (eight at most on this target), so the
+// buffer's extent, the shape's corner and its extent ride two to a word
+// (`pack`); the clip is the loops' own integers, never `ui_fb.clip`'s
+// instance.
+
+// Two coordinates in one word, the first above the second; a negative
+// coordinate survives the trip.
+def pack(a Int64, b Int64) Int64 {
+  return a * 4294967296 + (b & 4294967295)
+}
+
+def high(p Int64) Int64 {
+  return (p - (p & 4294967295)) / 4294967296
+}
+
+def low(p Int64) Int64 {
+  const lo = p & 4294967295
+  if lo >= 2147483648 {
+    return lo - 4294967296
+  }
+  return lo
+}
+
+// The word at address `i` composited through `ui_fb.over` — nothing
+// read or written when the color covers nothing.
+def carve_blend_at(i Int64, color Int64) Void {
+  if ((color >> 24) & 255) > 0 {
+    poke32(i, ui_fb.over(color, peek32(i)))
+  }
+}
+
+// Columns `from` to `to` of the row at address `line` in one color:
+// stored when it is opaque, composited when it is not.
+def carve_span(line Int64, from Int64, to Int64, color Int64) Void {
+  var col = from
+  if ((color >> 24) & 255) >= 255 {
+    const word = color & 0xFFFFFF
+    while col <= to {
+      poke32(line + col * 4, word)
       col = col + 1
+    }
+  } else {
+    while col <= to {
+      carve_blend_at(line + col * 4, color)
+      col = col + 1
+    }
+  }
+}
+
+// The first visible column or row of a span that starts at `at`.
+def clip_from(at Int64) Int64 {
+  if at < 0 {
+    return 0
+  }
+  return at
+}
+
+// The column or row past a span's last visible one: its end, held to
+// the buffer's `limit`.
+def clip_to(end Int64, limit Int64) Int64 {
+  if end > limit {
+    return limit
+  }
+  return end
+}
+
+// A rounded rectangle graded from `top` to `bottom`, the canvas's
+// `rounded` over the carve.
+def carve_rounded(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                  top Int64, bottom Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  const x1 = clip_to(x + w, width)
+  const y1 = clip_to(y + h, low(dims))
+  var row = clip_from(y)
+  while row < y1 {
+    const color = ui_fb.grade(top, bottom, row - y, h)
+    const line = base + row * width * 4
+    var k = clip_from(x)
+    var j = x1 - 1
+    if ((color >> 24) & 255) == 0 {
+      k = j + 1
+    }
+    while k <= j {
+      const c = ui_fb.fill_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad))
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const c = ui_fb.fill_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad))
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
+    }
+    carve_span(line, k, j, color)
+    row = row + 1
+  }
+}
+
+// The ring `stroke` pixels deep inside a rounded rectangle's edge, the
+// canvas's `stroke` over the carve.
+def carve_stroke(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                 stroke Int64, color Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  var x1 = clip_to(x + w, width)
+  if stroke <= 0 {
+    x1 = 0
+  }
+  const y1 = clip_to(y + h, low(dims))
+  var row = clip_from(y)
+  while row < y1 {
+    const line = base + row * width * 4
+    var k = clip_from(x)
+    var j = x1 - 1
+    while k <= j {
+      const sd = ui_fb.shape_sd(k, row, x, y, w, h, rad)
+      const c = ui_fb.stroke_cover(sd, stroke)
+      if c == 0 && sd < 0 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const sd = ui_fb.shape_sd(j, row, x, y, w, h, rad)
+      const c = ui_fb.stroke_cover(sd, stroke)
+      if c == 0 && sd < 0 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
     }
     row = row + 1
   }
-  return d
+}
+
+// A rounded rectangle whose edge fades over `soft` pixels, the canvas's
+// `shadow` over the carve.
+def carve_shadow(base Int64, dims Int64, xy Int64, wh Int64, radius Int64,
+                 soft Int64, color Int64) Void {
+  const width = high(dims)
+  const x = high(xy)
+  const y = low(xy)
+  const w = high(wh)
+  const h = low(wh)
+  const rad = ui_fb.radius_in(radius, w, h)
+  const pad = ui_fb.shadow_pad(soft)
+  var x1 = clip_to(x + w + pad, width)
+  if w <= 0 || h <= 0 {
+    x1 = 0
+  }
+  const y1 = clip_to(y + h + pad, low(dims))
+  var row = clip_from(y - pad)
+  while row < y1 {
+    const line = base + row * width * 4
+    var k = clip_from(x - pad)
+    var j = x1 - 1
+    while k <= j {
+      const c = ui_fb.shadow_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad),
+        soft)
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + k * 4, ui_fb.cover(color, c))
+      k = k + 1
+    }
+    while j >= k {
+      const c = ui_fb.shadow_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad),
+        soft)
+      if c >= 255 {
+        break
+      }
+      carve_blend_at(line + j * 4, ui_fb.cover(color, c))
+      j = j - 1
+    }
+    carve_span(line, k, j, color)
+    row = row + 1
+  }
 }
 
 // A window's buffer as the fb core's `Surface`: the run `win_new`
@@ -289,16 +892,80 @@ class Win {
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
 
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    carve_glyph(self.base, self.width, self.height, x, y, top, bottom,
-      color & 0xFFFFFF)
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    carve_ink(self.base, pack(self.width, self.height), x, y, strike, glyph,
+      color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    carve_rounded(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    carve_stroke(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    carve_shadow(self.base, pack(self.width, self.height), pack(x, y),
+      pack(w, h), radius, soft, color)
   }
 
   def present() {
-    frame_line(carve_digest(self.base, self.width, self.height))
+    frame_line(round_digest(self.base, self.width, self.height))
     case syscall.present(self.grant, 0, 0, self.width, self.height) {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}
+    }
+  }
+
+  // The window's open (emo-desktop A15.2): the rise into place — the
+  // frames between the first frame the caller painted a quarter of the
+  // window low and the loop's mount at the final seat, the offset
+  // easing out (the square decays, the metal's division truncating the
+  // model's way), the last move landing the final seat unpainted — the
+  // caller's next present closes the rise. The pacing is the present's
+  // own: the reply lands only after the composition has walked and
+  // flushed, the frame budget the damage rectangle measured.
+  def rise(x Int64, y Int64) {
+    const steps = 8
+    var r = self.height / 4
+    var i = 1
+    while i < steps - 1 {
+      var off = r * (steps - i) * (steps - i) / (steps * steps)
+      case syscall.win_move(self.grant, x, y + off) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      self.present()
+      i = i + 1
+    }
+    case syscall.win_move(self.grant, x, y) {
+      (R.error, _) -> { mark() }
+      (R.ok, _) -> {}
+    }
+  }
+
+  // The window's close (emo-desktop A15.2): the mirror — the offset
+  // easing in, every frame on the wire, the window a quarter of itself
+  // low when the caller closes it and the desktop's next composition
+  // takes its rect for the wallpaper's.
+  def sink(x Int64, y Int64) {
+    const steps = 8
+    var r = self.height / 4
+    var i = 2
+    while i <= steps {
+      var off = r * i * i / (steps * steps)
+      case syscall.win_move(self.grant, x, y + off) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
+      }
+      self.present()
+      i = i + 1
     }
   }
 }
@@ -306,11 +973,14 @@ class Win {
 // The constructors, as defs: a riscv64 program names no other module's
 // class in value position (the emitter's type-reference rule), so a
 // consumer takes the surface and the seat from these two — the canvas
-// factory's own shape.
+// factory's own shape. The seat takes the window's surface and its
+// final seat (the rise's landing) beside the mode: the press-at's
+// coordinates are the window's own by them (emo-desktop A16.2).
 def win(grant Int64, base Int64, width Int64, height Int64) Win {
   return Win.new(grant: grant, base: base, width: width, height: height)
 }
 
-def keys(bytes Array[Int64]) Keys {
-  return Keys.new(bytes: bytes)
+def keys(bytes Array[Int64], surf Win, x Int64, y Int64, mw Int64,
+         mh Int64) Keys {
+  return Keys.new(bytes: bytes, surf: surf, x: x, y: y, mw: mw, mh: mh)
 }

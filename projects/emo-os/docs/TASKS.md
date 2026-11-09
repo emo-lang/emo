@@ -40,6 +40,7 @@ with its own ground rules, but every task is tracked here.
 | M9 — Windows | 8 | The compositor's composition walk, drag and focus, the kill-and-restart acceptance. | complete |
 | M10 — The desktop | 8 | The fb backend whole, the dock, the first apps. | complete |
 | M11 — Honest multi-app | 8 | The corpus apps as disk ELFs: loaded by the filesystem, per-image segment tables, per-process gate checks. | complete |
+| M14 — The HD desktop | 9 | The mode, the compositor's corners and shadows, the constant fill, `win_close`'s unmap — the kernel side of the desktop's HD face, with [`projects/emo-desktop`](../../emo-desktop) M14. | complete |
 
 ## Step 0 — Bare-metal bring-up (M1)
 
@@ -651,3 +652,221 @@ closed — the whole of Step 8 complete.
   ribbons, the header bar, the icons' names in the font's own table),
   the ledger `frames 666 551` (the wallpaper's 48-block run and the
   header's two the +50). The desktop's side is emo-desktop A13.
+
+## Step 9 — the HD desktop's kernel side (M14, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-06. The desktop's half is emo-desktop M14, whose
+tracker records the milestone's decisions (D6–D9); the reasoning is
+CHECK.md's (2026-11-06). The milestone's row joins the table above at
+its completion.
+
+- [x] **T9.1** — The mode — **complete 2026-11-07**. The machine's
+  display at 1920×1080 (`start.sh` and `run.sh` name it on the device;
+  the driver's `gpu 1920x1080 ready` stays the device's answer). The
+  carve grows to 8 MiB — the frame's 7.91 MiB with the cursor plane's
+  last 64 KiB past it — downward from the fixed cells at `0x87000000`:
+  its base moves to `0x86800000`, nothing above it moves, and the
+  region gives the carve its 64 more blocks. The budget measured on
+  the machine: the wallpaper's surface 48 → 127 blocks, the header's
+  and the dock's with it (+82 the desktop's own), and the editor's
+  exec died `the kernel is out of a resource` — the disk ELFs' round's
+  64 MiB kernel heap had spent the region the mode needed. **The
+  lever's decision: the kernel heap 64 → 32 MiB** — its live users are
+  the root's bump (a few KiB) and the const region at its top, the
+  hooks serving every spawned pass from the region — 512 blocks back,
+  no `-m` (the map's top stays `0x88000000`), and the trio fits with
+  room beside it. `run.sh`'s screendump models at the mode (the PPM
+  header's offset 16 → 17 bytes among the finds), the abs beats
+  recomputed for the device axes, the ledger `frames 685 569` →
+  `771 573` re-pinned. The acceptance: `run.sh` green under both
+  transports three rounds at the mode, the screendumps modeled to the
+  pixel, the dune pin (`.zero 33554432`) updated. Decision record:
+  CHECK.md, 2026-11-07.
+- [x] **T9.2** — The compositor's corners and shadows — **complete
+  2026-11-07**. The walk masks each toplevel's corners at the face's
+  radius (10) and lays its shadow beneath it — the coverage arithmetic
+  emo-desktop A14.1 pinned, copied into the kernel's own hands (the
+  kernel requires no desktop package): the signed distance to a
+  rounded rectangle's edge, the fill's and shadow's coverage of a
+  pixel, the source-over. The shadow's ink 0x80000000 at 16 pixels'
+  softness paints the ring past the rect and, inside it, the four
+  corner zones the mask leaves showing — never the interior the
+  window covers whole; the blit word-copies the rows the shape makes
+  whole and asks the shape's arithmetic of the corner zones' pixels,
+  the window's word at its coverage of each over what the shadow
+  left. A toplevel that covers the mode — the machine's fullscreen
+  pass — is the screen and wears neither. The cursor plane blends its
+  sprite by coverage where it stored opaque pixels (the one-bit
+  sprite's bytes unchanged; the antialiased sprite's the next era's).
+  `run.sh`'s model grows the same arithmetic — the rings it reads,
+  the corner squares' clear pixels it verifies — and the window folds
+  are taken over the window's own pixels (`round_digest`, the corner
+  squares aside), the corpus pinning both. The finds (CHECK.md,
+  2026-11-07): the corner blend's coverage must replace the window
+  word's own top byte, never OR it — the client's pattern byte rode
+  the alpha and the arcs painted too content; the shadow's corner
+  spans need both corners on every corner row; the quadrant windows
+  yield their shadows the ten pixels that reach the neighbor. The
+  acceptance: `run.sh` under both transports three rounds (the
+  corner-zone pixels verified against the model at every beat, the
+  round folds over every window), the ledger `frames 774 576`.
+  Decision record: CHECK.md, 2026-11-07.
+- [x] **T9.3** — `win_close` releases a run it leaves mapped —
+  **complete 2026-11-07**. Verb 14 gives the buffer's blocks back to
+  the allocator and clears the row, but the owner's table kept the
+  identity leaves — the closer could still write frames the allocator
+  may already have handed to another process, and the same process's
+  next `win_new` over reused blocks ended the machine (`sv39: an
+  address mapped twice`). Found by emo-desktop A14.1's metal probe,
+  latent since T8.5. The fix: the gate stages the caller's space word
+  with the request (as `win_new`'s does) and the close unmaps the
+  run's leaves from the owner's table before the blocks go back —
+  `space.unmap_run` walks the exact sequence `map_range` mapped by,
+  every leaf checked a leaf of the very page taken back, the
+  translations fenced after — and the golden beat pins it: the desk
+  pass's `c` closes beta and opens another window in the same life,
+  the fresh map riding the very blocks the close gave back, the
+  machine's survival the proof (pre-fix, the reopen was the double
+  map). Decision record: CHECK.md, 2026-11-07.
+- [x] **T9.4** — The constant fill, the compiler's side — **complete
+  2026-11-07**. An array literal whose every element is a plain
+  integer literal fills from one `.rodata` blob of its
+  elements' static cells — the cells `cell_label` already mints for
+  the dynamic literals, deduped by value — one word of image per
+  element and a dozen instructions of text whatever the count, no box
+  born at build time, below four elements the per-element path the
+  shorter text. The frame's element temps (`expr_depth`'s count) stay
+  reserved and go unused — the pre-pass keeps the simple predicate
+  split. The images: the kernel −131 KiB, the user and app images −33
+  KiB each, the exec'd image runs 103 → 102 blocks, the ledger
+  `frames 688 572` → `685 569` (run.sh's pin remapped). The
+  acceptance: the riscv64 goldens green whole (the 22, `wide_literal`
+  and `glyph_lookup` among them), `run.sh` under both transports
+  three rounds, the fb gate (151), the full dune suite (371), `@fmt`
+  green. Decision record: CHECK.md, 2026-11-07.
+
+## Step 10 — motion's kernel side (M15, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-08. The desktop's half is emo-desktop M15, whose tracker
+records the milestone's decisions (D10); the reasoning is CHECK.md's
+(2026-11-08). The milestone's row joins the table above at its
+completion.
+
+- [x] **T10.1** — The compositor's damage rectangle — **complete
+  2026-11-08**. One bounding box (`comp_dmg_*` on the compositor's
+  page, zero width the empty box) accumulates between compositions
+  what has changed, and the composition walks and flushes only it:
+  `comp_dmg_mark` unions a rect in — the shadow's pad beside every
+  surface rect, the box even at both x edges (the blit's word pairs),
+  clipped to the mode. The marks sit at the ops that unmake or make
+  pixels: the present's own rect (op 17), the move's painted rect and
+  its new one (op 16 — the painted record, not the entry's seat, so a
+  drag's whole walk between two compositions marks only its two ends),
+  the raise's crossed range (op 15 — already the topmost toplevel,
+  nothing marked), and the prune's dead entries. The painted rect each
+  slot last covered lives beside the stack (`comp_paint_*`, packed two
+  words, riding the raise and the shifts) — the ops that unmake pixels
+  mark from it, because the row that held the surface's size is
+  theirs to lose. The generation's first composition marks the whole
+  mode (the slate it meets is nobody's); after it, only the box. The
+  walk clips itself in the blit, the masked blit (the word spans keep
+  the anchor's parity), the shadow's spans and the clear; the flush
+  carries the box — gpu op 3, the rect in the message's third word
+  (T8.11's shape), the reply the result — and the box serves empty.
+  The comp line's sum is the box's words; the pixels outside it are
+  what the last composition left, and every screendump model in
+  `run.sh` passes unchanged. **The find, fixed**: the raise copied the
+  entry to the top without its painted record, and the entry inherited
+  the removed slot's stale one — a closed window's shadow ring
+  survived its own death by one blend step, the client-era model's
+  pixel (23,25) naming it at (25,25,29) against the model's
+  (26,26,30). The pins: `run.sh` green under both timer transports
+  three consecutive rounds byte-identical on both — the comp sums
+  re-pinned (18 of the pinned literals changed, every full-mode
+  composition's unchanged, the ledger `frames 774 576` unchanged) —
+  the full `dune runtest` green, `@fmt` green. The damage world's
+  cost, measured by A15.1's probe on the scratch tree: a window-sized
+  composition 27–44 ms (median ~36) against the whole-screen 230 —
+  the record in CHECK.md, 2026-11-08. Decision record: CHECK.md,
+  2026-11-08.
+
+- [x] **T10.2** — The press-at, and the press's own composition —
+  **complete 2026-11-08** (emo-desktop A16.2, M16). The pointer
+  driver's left-button press pushes a second word into the ring: the
+  **press-at** (type 4, the button's code, the position the axes last
+  named packed raw — x in the value's high half, y in its low) —
+  served to the focused window's reader by the focus's own verdict,
+  the title bar's button the app's to judge, the pointer's moves
+  still the panel owner's alone (no fanout, no race). The press's
+  raise composes its own box: the raise, the fold and the hidden skip
+  the press decided leave pixels no client's present will repair, so
+  the press path walks the box before the sprite's move — empty box,
+  the cheap early-out; the raise's z-order marks now ride
+  `comp_raise_mark`, the helper op 15's inline loop became. **The
+  fold**: a window that loses the focus loses its popups with it (op
+  15 and the press's raise both) — a menu whose reader's attention
+  moved is the next composition's wallpaper, never a latch left open.
+
+- [x] **T10.3** — The minimize and the desktop's open — **complete
+  2026-11-08** (emo-desktop A16.3, M16). The stack grew the hidden
+  word beside the painted records (carried by the raise and the
+  shifts, cleared at `comp_stack_add` — a reused slot's stale flag
+  the walk's toplevel skip would have swallowed): verb 25
+  `win_minimize(grant)` marks the painted rect, sets the word, folds
+  the popups, lets the focus fall to the topmost visible toplevel or
+  the wallpaper, and composes before the answer; verb 26
+  `win_desk_open(pid)` is the dock tile's word — the window of that
+  pid raised and focused, the hidden one unhidden first — under the
+  desktop's own authority (the caller owns a panel; the desktop names
+  its apps by pid), the compositor's mailbox ops 22 and 23 riding the
+  gate's verbs 25 and 26. The walk skips a hidden toplevel's whole
+  tree (the children ride the parent's iteration); the press's raise
+  skips what it cannot show. **The find, fixed**: the desk_open's
+  comp line read the entry's position after `comp_stack_raise` — the
+  raised-from slot's stale words — the position captured before the
+  raise now.
+
+- [x] **T10.4** — The scale's values, and the scaled walk —
+  **complete 2026-11-08** (emo-desktop A16.4, M16). Verb 21 accepts
+  the whole numbers past one (below 1 stays the argument refusal):
+  the walk carries the buffer at the row's multiple —
+  `comp_surface_wh` the sizes every bounds check, hit test and
+  painted record reads — the scaled blit's word pairs doubling a
+  source pixel or gathering two across a straddle, the masked shape's
+  corner zones per pixel at the carried arcs, the shadow at the
+  carried size, the radius the design constant at screen scale. The
+  win pass's strictness beat flips with the wire (`scale 2 ok`,
+  `scale 0 r4`) and leaves the row at 1. **The find** (CHECK.md,
+  2026-11-08): the exit event's delivery waits for the machine's
+  next input event when the desktop goes fully silent — the golden's
+  beat texture provides one (the pointer's park after every click),
+  as every pre-A16 beat's motion did.
+
+- [x] **T10.5** — The move-at — **complete 2026-11-09** (emo-desktop
+  A16.5, M16's drag). While the pointer's button is down and the axes
+  have moved since the last pushed place, each report's end pushes
+  one more word beside the axes' own: the **move-at** (type 5, the
+  press-at's packing — x in the value's high half, y in its low),
+  served to the focused window's reader by the focus's verdict — the
+  drag the seat speaks by its own `win_move` per step, the stationary
+  hand pushing nothing (the dedup the driver's own cells keep), the
+  ring's drops the smooth degradation they have always been. **The
+  find, and the map's lesson**: the first cut of the drag's three
+  cells landed on the input hold's seat zero (the desk drag's moves
+  wrote axes into the hold's pid word — the reply-to-nobody the loud
+  end), the second on the frame allocator's own head, free and total
+  (the boot's arenas gone before the first spawn); the cells live in
+  the twenty-four bytes the map leaves between the exit ring's tail
+  and the allocator's page, and the map's comment keeps the
+  neighborhood honest for the next address the kernel needs.
+
+- [x] **T10.6** — The stash's interactive depth — **complete
+  2026-11-09** (A16.5's first hand-driven session). The press's own
+  composition (T10.2) walks and flushes inside the notice handler,
+  and a real hand's clicks stretch that flush across whole-mode
+  repairs — a client era landing its presents inside one overran the
+  stash T8.6 set four deep, and the loud end froze the machine at the
+  client era. Twelve deep now, the cells moved past the hidden words
+  (+3264..+3359; the first cut of the twelve ran +440..+536 and would
+  have written the frame callbacks' parks over). Two fresh golden
+  rounds green, the sums unchanged.

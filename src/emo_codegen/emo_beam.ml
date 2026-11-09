@@ -1418,14 +1418,20 @@ and stmt env (s : Emo_ir.stmt) : unit =
       expr env x;
       put env "})"
   | Emo_ir.If { cond; then_; else_ } ->
-      (* Emo conditions are Bool values: the atoms 'true'/'false' *)
+      (* Emo conditions are Bool values: the atoms 'true'/'false'. Each
+         arm starts from the scope before the `if`: a loop threads every
+         name in scope, and a name the first arm bound is bound nowhere
+         in the second. *)
       put env "case ";
       expr env cond;
       put env " of\n";
       put env "  <'true'> when 'true' ->\n";
+      let saved = env.local_map in
       stmts env then_;
+      env.local_map <- saved;
       put env "\n  <'false'> when 'true' ->\n";
       stmts env else_;
+      env.local_map <- saved;
       put env "\nend"
   | Emo_ir.Case { scrutinee; branches } ->
       let scratch = fresh_var env "case" in
@@ -1486,6 +1492,8 @@ and stmt env (s : Emo_ir.stmt) : unit =
       let saved = env.local_map in
       List.iter
         (fun b ->
+          (* each branch from the receive's own scope, as the `if`'s arms *)
+          env.local_map <- saved;
           put env "  <";
           emit_pattern env b.Emo_ir.pattern;
           put env "> ";

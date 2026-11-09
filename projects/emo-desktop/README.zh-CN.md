@@ -10,7 +10,7 @@ English version: [`README.md`](README.md).
 
 - **Wayland/Quartz 形状,QNX Screen 谱系。** 一个合成器拥有 scanout;客户端在授权缓冲里渲染再 present;输入是统一的事件流。这与 EmoOS 微内核已认的谱系同宗,用在像素上。
 - **包的集合,不是第二个镜像。** 内核只嵌一个用户镜像;M7–M10 期间桌面以包的形态骑在该镜像上(boot image `require`,`syscall` stub 包的先例)。到 M11、程序从文件系统以 ELF 装载时,应用原地变成磁盘 ELF——结构不变。
-- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.1 起带着项目自己的位图字体,自 A8.2 起带着指针精灵)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口),连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`,`emo/ui_apps`——计数器、文件浏览器、编辑器,各自都是一个 corpus 包,由本项目自己的 gate 与家族同跑)、应用自己的程序树(`fb/apps/counter/` 及其兄弟——磁盘 ELF 的来源,各自一个 `main.emo` 会话)与它们共享的金属包(`fb/winbuf/`,`emo/ui_fb_winbuf`——窗口缓冲的 raw 垫片、输入座上的字节表),以及 shell 的 chrome(`fb/desktop/`,`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
+- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.2 起带着指针精灵,自 A14.2 起带着它的字体——从 `fb/fonts/` 里的字体光栅化出的 Inter 与 JetBrains Mono,字体文件与其 SIL Open Font License 授权文本一同随附——取代了 A8.1 手绘的位图字体)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口),连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`,`emo/ui_apps`——计数器、文件浏览器、编辑器,各自都是一个 corpus 包,由本项目自己的 gate 与家族同跑)、应用自己的程序树(`fb/apps/counter/` 及其兄弟——磁盘 ELF 的来源,各自一个 `main.emo` 会话)与它们共享的金属包(`fb/winbuf/`,`emo/ui_fb_winbuf`——窗口缓冲的 raw 垫片、输入座上的字节表),以及 shell 的 chrome(`fb/desktop/`,`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
 
 ## 命名——已定
 
@@ -30,11 +30,15 @@ English version: [`README.md`](README.md).
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | complete |
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查、一个桌面上两个镜像 | complete |
 | M12 — 桌面 shell 时代 | dock 的 tile 启动磁盘 ELF、退出事件经合并流到达永不 wait 的 shell、REPL 的 feed 与 `exec` | complete |
+| M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标,机器的桌面读起来是一个整体 | complete |
+| M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome、绘制图标、共享标题栏与抗锯齿指针 | complete |
+| M15 — 动画 | 合成成本实测(整屏 ~230 ms、窗级 ~36 ms)、损伤矩形、首个动画:三个 app 的窗口开时升起、关时沉下 | complete |
+| M16 — 窗口自己的菜单 | 标题栏的单个圆形按钮与它拉开的下拉菜单——Maximize、Minimize、Quit——骑 press-at 事件,标题栏可拖拽,最小化入隐藏项、dock 瓦片还原,最大化即 scale 的整数倍 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 
 ## 体验是什么——不是什么
 
-可达:合成窗口、拖动、聚焦、鼠标、位图字体、dock、真实应用(计数器、文件浏览器、编辑器)。这套栈上不可达:GPU 加速、抗锯齿、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站带着 Mac OS 9 的脾气。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
+可达:合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、过程壁纸上的半透明 chrome、dock、真实应用(计数器、文件浏览器、编辑器)。这套栈上不可达:GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。每个里程碑的内核侧一半住在 [EmoOS 的追踪器](../emo-os/docs/TASKS.md);ABI 的稳定性契约是 [EmoOS 的文档](../emo-os/docs/desktop-abi.md)。

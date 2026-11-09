@@ -214,6 +214,32 @@ const comp_panel_cell = comp_page + 40
 // dead cells' 256 seats (+600..+2648) and before the argument slots
 // (+2704).
 const comp_wallpaper_cell = comp_page + 2648
+// The damage rectangle (EmoOS T10.1, emo-desktop M15): what has changed
+// since the last composition, one bounding box the walk clips itself to
+// and the flush carries — the pixels outside it are what the last
+// composition left, and nothing in the stack touched them. Zero width
+// is the empty box. The generation's first composition repaints the
+// whole mode (the slate it meets is nobody's), the flag the service's
+// own init sets. Past the argument slots' 320 bytes.
+const comp_dmg_x = comp_page + 3024
+const comp_dmg_y = comp_page + 3032
+const comp_dmg_w = comp_page + 3040
+const comp_dmg_h = comp_page + 3048
+const comp_dmg_first = comp_page + 3056
+// The rect each stack slot last painted, packed two words to a slot —
+// the walk records it, and the ops that unmake pixels (a move, a
+// raise, a prune) mark from it, because by the time they run the row
+// that held the surface's size may already be gone. Past the damage
+// words.
+const comp_paint_xy = comp_page + 3064
+const comp_paint_wh = comp_page + 3128
+// The hidden word per stack slot (emo-desktop A16.3, EmoOS T10.3): the
+// minimized toplevel's flag, one word beside the painted records — the
+// walk skips a hidden toplevel and everything hanging from it, the
+// press's raise never hits what it cannot show, and the desktop's
+// open-by-pid clears it again. The entry stays: the position and the
+// grant are the restore's own memory. Past the painted records.
+const comp_hidden = comp_page + 3192
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -293,6 +319,21 @@ const pointer_gen_cell = koff + 0x87002ee0
 const pointer_notice_cell = koff + 0x87002ee8
 const pointer_dirty_cell = koff + 0x87002ef0
 const pointer_press_cell = koff + 0x87002f00
+// The drag's cells (emo-desktop A16.5, EmoOS T10.5): the button's
+// state while a press holds it, and the place the last pushed step
+// named — the move-at's own dedup, a stationary hand pushing nothing.
+// In the one gap the map leaves: the exit ring's tail ends at
+// 0x87002fe0 and the frame allocator's page begins at 0x87003000 —
+// the page whose head, free and total are the first three words — and
+// the input hold's seats sit at 0x87002f10. The first cut of these
+// cells landed on the hold's seat zero (the desk drag's moves wrote
+// axes into the hold's pid word, the reply-to-nobody the loud end);
+// the second landed on the allocator's own counters (the boot's
+// arenas gone before the first spawn). The gap is twenty-four bytes;
+// the three words fit, and the map's own note keeps them honest.
+const pointer_btn_cell = koff + 0x87002fe0
+const pointer_lastx_cell = koff + 0x87002fe8
+const pointer_lasty_cell = koff + 0x87002ff0
 // The held reads (emo-desktop A11.2): the multi-image desktop's
 // readers park on the same stream, and the bytes and keys are the
 // focused surface's owner's — a reader the focus does not name has
@@ -363,8 +404,8 @@ const grant_table = koff + 0x87002b00
 // XRGB8888 — B8G8R8X8 in the device's naming — the decided baseline's
 // own; the mode itself is the device's to say (GET_DISPLAY_INFO's
 // answer, never a constant — the protocol's second seam).
-const screen_base = 0x86c00000 // physical: frames.emo's carve, the device's DMA view
-const screen_size = 0x400000
+const screen_base = 0x86800000 // physical: frames.emo's carve, the device's DMA view
+const screen_size = 0x800000
 const gpu_format_bgrx = 2 // VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM — XRGB8888
 
 // The cursor plane's sprite memory (T8.11, emo-desktop A8.2): the
@@ -857,6 +898,7 @@ def process_serve(w Int64) Void {
                 if isvc != 0 {
                   gate_post(isvc, 13 << 32)
                 }
+                device_wake()
               }
             }
           }
@@ -1435,7 +1477,14 @@ def gpu_service(boss Pid) Void {
             if op == 2 {
               from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
             } else {
-              from <- 0 - aw
+              if op == 3 {
+                // The composition's damage flush (EmoOS T10.1): the
+                // box the walk painted, the transfer and the flush
+                // over it — the reply the result, the await's word.
+                from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
+              } else {
+                from <- 0 - aw
+              }
             }
           }
         }
@@ -1516,7 +1565,12 @@ def gpu_service(boss Pid) Void {
               }
             } else {
               if op == 14 {
-                // win_close (T8.5): the run back to the allocator
+                // win_close (T8.5): the run's leaves out of the owner's
+                // table first (T9.3 — the close's other half; the map
+                // left standing let the closer write frames the
+                // allocator may already have handed another process,
+                // and its own next win_new over the reused blocks was
+                // the double map), then the run back to the allocator
                 // block by block, the row to the table — the owner is
                 // the gate's check.
                 var row = grant_row_of(peek64(gpu_args))
@@ -1525,20 +1579,25 @@ def gpu_service(boss Pid) Void {
                 } else {
                   var base = peek64(row + 16)
                   var n = peek64(row + 24)
+                  space.unmap_run(peek64(gpu_args + 40), sv39.pa_of(base), n * block)
                   var i = 0
                   while i < n {
                     frames.give(base + (i * block))
                     i = i + 1
                   }
                   blk_zero(row, 12)
-                  // the closed row's kick (emo-desktop A11.2): the
+                    // the closed row's kick (emo-desktop A11.2): the
                   // focus's surface died — a read the focus held may
                   // now be entitled, and the input service's judgment
-                  // waits for exactly this news
+                  // waits for exactly this news — the device wake
+                  // beside it (emo-desktop A16.3): a serve parked on
+                  // the empty stream sleeps at the device world, a
+                  // state the mailbox word alone never reaches
                   var isvc = peek64(input_svc_cell)
                   if isvc != 0 {
                     gate_post(isvc, 13 << 32)
                   }
+                  device_wake()
                   gate_reply(caller_of(w), 0)
                 }
               } else {
@@ -1969,7 +2028,7 @@ def input_hold_serve(dev Int64, q Int64) Void {
             gate_reply(caller_of(w), e)
           } else {
             if input_entitled_for(pid, input_peek_type(dev, q)) {
-              var w = peek64(seat + 8)
+                var w = peek64(seat + 8)
               poke64(seat, 0)
               var r = input_serve_read(w, dev, q)
               if r == 1 {
@@ -2171,6 +2230,23 @@ def pointer_drain(dev Int64, q Int64) Void {
       if peek64(pointer_dirty_cell) != 0 {
         poke64(pointer_dirty_cell, 0)
         poke64(pointer_gen_cell, peek64(pointer_gen_cell) + 1)
+        // the drag's steps (emo-desktop A16.5, EmoOS T10.5): while the
+        // hand holds the button and the axes have moved since the last
+        // pushed place, the report's end pushes one more word beside
+        // the axes' own — the move-at, type 5, the position packed the
+        // press-at's way — and the focused window's reader moves its
+        // window by it. The dedup keeps a stationary hand silent (a
+        // click pushes none), the drops the ring's own rule.
+        if peek64(pointer_btn_cell) != 0 {
+          var dx = peek64(pointer_x_cell)
+          var dy = peek64(pointer_y_cell)
+          if dx != peek64(pointer_lastx_cell) || dy != peek64(pointer_lasty_cell) {
+            poke64(pointer_lastx_cell, dx)
+            poke64(pointer_lasty_cell, dy)
+            pointer_ring_push((5 << 48) | (272 << 32) |
+              ((dx & 65535) << 16) | (dy & 65535))
+          }
+        }
         pointer_notify()
       }
     } else {
@@ -2186,6 +2262,32 @@ def pointer_drain(dev Int64, q Int64) Void {
         if ev_code_of(e) == 272 && ev_value_of(e) == 1 {
           poke64(pointer_press_cell, 1)
           poke64(pointer_dirty_cell, 1)
+          // the drag's hand takes the button (emo-desktop A16.5,
+          // EmoOS T10.5): the state the move-at's steps ask, and the
+          // dedup's anchor — a press names the place a stationary
+          // hand must beat before the first step pushes
+          poke64(pointer_btn_cell, 1)
+          poke64(pointer_lastx_cell, peek64(pointer_x_cell))
+          poke64(pointer_lasty_cell, peek64(pointer_y_cell))
+          // the press-at (emo-desktop A16.2, EmoOS T10.2): the press's
+          // own place, packed raw — the position the axes last named,
+          // x in the value's high half and y in its low, riding the
+          // ring behind the press. The focused window's reader is who
+          // the type-4 word serves (the focus's verdict, the moves'
+          // panel exemption beside it): the title bar's button is the
+          // app's to judge, in the window's own coordinates it scales
+          // by the axes' maxima. The shell and the golden's hands leave
+          // the type unread.
+          var px = peek64(pointer_x_cell)
+          var py = peek64(pointer_y_cell)
+          pointer_ring_push((4 << 48) | (272 << 32) |
+            ((px & 65535) << 16) | (py & 65535))
+        }
+        // the button's falling edge: the drag's hand lets go — the
+        // steps stop, the release itself riding the ring to the
+        // reader that armed the drag (its own disarm)
+        if ev_code_of(e) == 272 && ev_value_of(e) == 0 {
+          poke64(pointer_btn_cell, 0)
         }
       }
       if ev_type_of(e) == 3 {
@@ -2227,6 +2329,9 @@ def pointer_service(boss Pid) Void {
   poke64(pointer_notice_cell, 0)
   poke64(pointer_dirty_cell, 0)
   poke64(pointer_press_cell, 0)
+  poke64(pointer_btn_cell, 0)
+  poke64(pointer_lastx_cell, 0)
+  poke64(pointer_lasty_cell, 0)
   input_dev_init(dev, q)
   println("pointer ready")
   boss <- self_pid()
@@ -2294,6 +2399,9 @@ def comp_stack_add(grant Int64, role Int64) Int64 {
   poke64(entry + 16, 0)
   poke64(entry + 24, role)
   poke64(entry + 32, 0)
+  poke64(comp_paint_xy_at(entry), 0)
+  poke64(comp_paint_wh_at(entry), 0)
+  poke64(comp_hidden_at(entry), 0)
   poke64(comp_top_cell, top + 1)
   return entry
 }
@@ -2328,19 +2436,28 @@ def comp_stack_remove(entry Int64) Void {
     poke64(e + 16, peek64(e + comp_entry + 16))
     poke64(e + 24, peek64(e + comp_entry + 24))
     poke64(e + 32, peek64(e + comp_entry + 32))
+    poke64(comp_paint_xy_at(e), peek64(comp_paint_xy_at(e + comp_entry)))
+    poke64(comp_paint_wh_at(e), peek64(comp_paint_wh_at(e + comp_entry)))
+    poke64(comp_hidden_at(e), peek64(comp_hidden_at(e + comp_entry)))
     e = e + comp_entry
   }
   poke64(comp_top_cell, top - 1)
 }
 
 // An entry to the stack's top (T8.13): the raise a focus is — the
-// focused surface composites last, over every other.
+// focused surface composites last, over every other. The painted
+// record rides along (T10.1): the slot it lands in held a removed
+// entry's, and a mark that read the stale one would unmake the wrong
+// pixels.
 def comp_stack_raise(entry Int64) Void {
   var grant = peek64(entry)
   var x = peek64(entry + 8)
   var y = peek64(entry + 16)
   var role = peek64(entry + 24)
   var parent = peek64(entry + 32)
+  var pxy = peek64(comp_paint_xy_at(entry))
+  var pwh = peek64(comp_paint_wh_at(entry))
+  var phid = peek64(comp_hidden_at(entry))
   comp_stack_remove(entry)
   var top = peek64(comp_top_cell)
   var e = comp_stack + (top * comp_entry)
@@ -2349,6 +2466,9 @@ def comp_stack_raise(entry Int64) Void {
   poke64(e + 16, y)
   poke64(e + 24, role)
   poke64(e + 32, parent)
+  poke64(comp_paint_xy_at(e), pxy)
+  poke64(comp_paint_wh_at(e), pwh)
+  poke64(comp_hidden_at(e), phid)
   poke64(comp_top_cell, top + 1)
 }
 
@@ -2379,6 +2499,15 @@ def comp_stack_prune() Void {
         }
       }
       if dead != 0 {
+        // The pixels the dead surface left behind (T10.1): its painted
+        // rect the next composition repaints — the row that held the
+        // size is already gone, the painted record is where it lives.
+        var pw = peek64(comp_paint_wh_at(entry)) >> 32
+        if pw != 0 {
+          var pb = peek64(comp_paint_xy_at(entry))
+          var pwh = peek64(comp_paint_wh_at(entry))
+          comp_dmg_mark(pb >> 32, pb & 4294967295, pw, pwh & 4294967295)
+        }
         comp_stack_remove(entry)
         changed = 1
       } else {
@@ -2386,6 +2515,40 @@ def comp_stack_prune() Void {
       }
     }
   }
+}
+
+// The stack slot's painted-rect words: the slot's index is the entry's
+// distance into the stack, the array beside it.
+def comp_paint_xy_at(entry Int64) Int64 {
+  return comp_paint_xy + ((entry - comp_stack) / comp_entry) * 8
+}
+
+def comp_paint_wh_at(entry Int64) Int64 {
+  return comp_paint_wh + ((entry - comp_stack) / comp_entry) * 8
+}
+
+def comp_hidden_at(entry Int64) Int64 {
+  return comp_hidden + ((entry - comp_stack) / comp_entry) * 8
+}
+
+// The scale a row's walk honors (EmoOS T10.4): the negotiation field
+// the gate records at verb 21, the buffer's pixels carried `s` screen
+// pixels wide and tall — integer, nearest neighbor, the whole buffer
+// covering the rect whole. A row the verb has not named walks at 1.
+def comp_scale_of(row Int64) Int64 {
+  var s = peek64(row + 104)
+  if s < 1 {
+    s = 1
+  }
+  return s
+}
+
+// The rect a surface paints, packed w above h: the row's own sizes
+// under the row's scale — every bounds check, hit test and painted
+// record reads the surface at the size the walk carries it.
+def comp_surface_wh(row Int64) Int64 {
+  var s = comp_scale_of(row)
+  return ((peek64(row + 32) * s) << 32) | (peek64(row + 40) * s)
 }
 
 // The blit (T8.6): the window's rows into the carve at the stack's
@@ -2397,7 +2560,6 @@ def comp_stack_prune() Void {
 // rows and word-columns past an edge are nobody's to store.
 def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
   var sum = 0
-  var r = 0
   var mw = peek64(comp_mode_w)
   var mh = peek64(comp_mode_h)
   var cols = w
@@ -2408,13 +2570,37 @@ def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
   if (y + h) > mh {
     rows = mh - y
   }
-  var half = cols / 2
+  // The damage's clip (T10.1): the walk stores only the box's pixels —
+  // the columns even at both ends, the blit's word pairs; outside the
+  // box the last composition's words already stand.
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
   var stride = mw / 2
-  while r < rows {
-    var i = 0
-    while i < half {
-      var v = peek64(base + (r * (w / 2) + i) * 8)
-      poke64(koff + screen_base + ((y + r) * stride + (x / 2) + i) * 8, v)
+  var r = r0
+  while r < r1 {
+    var i = (x0 - x) / 2
+    var iend = (x1 - x) / 2
+    while i < iend {
+      var v = peek64(base + ((r - y) * (w / 2) + i) * 8)
+      poke64(koff + screen_base + (r * stride + x / 2 + i) * 8, v)
       sum = sum + v
       i = i + 1
     }
@@ -2452,6 +2638,705 @@ def comp_blit_entry(entry Int64, x Int64, y Int64) Int64 {
   return 0
 }
 
+// ---- the toplevels' corners and shadows (T9.2, emo-desktop A14.1) ----
+//
+// A toplevel is not a rectangle of stored words: its corners are
+// rounded and its shadow falls on what is beneath it. The coverage
+// arithmetic is the desktop's A14.1 pinned — the signed distance from
+// a pixel's center to a rounded rectangle's edge, the fill's and the
+// shadow's coverage of a pixel — copied here because the kernel
+// requires no desktop package; every constant and every division the
+// same, so the walk's byte is the hosted canvas's byte. The radius and
+// the softness are the face's design sizes (the shapes' golden's
+// card): every window rounds at 10 and shadows at 16, and a toplevel
+// that covers the mode — the machine's own fullscreen pass — is the
+// screen, and wears neither.
+
+const comp_win_radius = 10
+const comp_win_soft = 16
+const comp_shadow_ink = 0x80000000
+
+// The largest `s` with `s * s <= n`, for `n >= 0`: digit by digit, two
+// bits a step — no division and no float, the same steps on every
+// target.
+def comp_isqrt(n Int64) Int64 {
+  var rem = n
+  var root = 0
+  var bit = 1 << 62
+  while bit > rem {
+    bit = bit >> 2
+  }
+  while bit != 0 {
+    if rem >= root + bit {
+      rem = rem - (root + bit)
+      root = (root >> 1) + bit
+    } else {
+      root = root >> 1
+    }
+    bit = bit >> 2
+  }
+  return root
+}
+
+// The radius a `w` by `h` shape can carry: never negative, never past
+// half the shorter side — the circle's.
+def comp_radius_in(radius Int64, w Int64, h Int64) Int64 {
+  var r = radius
+  if r < 0 {
+    r = 0
+  }
+  if r * 2 > w {
+    r = w / 2
+  }
+  if r * 2 > h {
+    r = h / 2
+  }
+  return r
+}
+
+// The signed distance from the center of pixel `(px, py)` to the edge
+// of the shape `(x, y, w, h)` with corner radius `radius`, in 256ths
+// of a pixel: negative inside, the corners' arcs exact to the square
+// root's floor.
+def comp_shape_sd(px Int64, py Int64, x Int64, y Int64, w Int64, h Int64, radius Int64) Int64 {
+  const cx = px * 256 + 128
+  const cy = py * 256 + 128
+  const rr = radius * 256
+  var sx = x * 256 + rr - cx
+  const sx_right = cx - ((x + w) * 256 - rr)
+  if sx_right > sx {
+    sx = sx_right
+  }
+  var sy = y * 256 + rr - cy
+  const sy_bottom = cy - ((y + h) * 256 - rr)
+  if sy_bottom > sy {
+    sy = sy_bottom
+  }
+  var outside = 0
+  if sx > 0 && sy > 0 {
+    outside = comp_isqrt(sx * sx + sy * sy)
+  } else {
+    if sx > 0 {
+      outside = sx
+    }
+    if sy > 0 {
+      outside = sy
+    }
+  }
+  var inside = sx
+  if sy > inside {
+    inside = sy
+  }
+  if inside > 0 {
+    inside = 0
+  }
+  return outside + inside - rr
+}
+
+// `v` held to one pixel's ramp, 0 to 256.
+def comp_ramp(v Int64) Int64 {
+  if v < 0 {
+    return 0
+  }
+  if v > 256 {
+    return 256
+  }
+  return v
+}
+
+// A fill's coverage of a pixel, out of 255: whole half a pixel inside
+// the edge, none half a pixel outside, a straight ramp between.
+def comp_fill_cover(sd Int64) Int64 {
+  return (comp_ramp(128 - sd) * 255 + 128) / 256
+}
+
+// A shadow's coverage, out of 255: the ramp spread over `soft` pixels
+// (one at least) centered on the edge, eased on a smoothstep — the
+// position along it in 4096ths, so the cube stays inside 64 bits.
+def comp_shadow_cover(sd Int64, soft Int64) Int64 {
+  var s = soft
+  if s < 1 {
+    s = 1
+  }
+  const span = s * 256
+  const c = s * 128 - sd
+  if c <= 0 {
+    return 0
+  }
+  if c >= span {
+    return 255
+  }
+  const t = (c * 4096) / span
+  return (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+}
+
+// How far a shadow's ramp reaches past its shape's edge, in whole
+// pixels: half its softness and one more.
+def comp_shadow_pad(soft Int64) Int64 {
+  if soft < 1 {
+    return 1
+  }
+  return soft / 2 + 1
+}
+
+// The damage rectangle grown by one rect (T10.1): the shadow's pad
+// beside every surface rect (the ring a window leaves and takes is
+// part of its change), the box even at both x edges — the blit's word
+// pairs — and clipped to the mode. The first rect is the box; the rest
+// union into it.
+def comp_dmg_mark(x Int64, y Int64, w Int64, h Int64) Void {
+  if w > 0 && h > 0 {
+    var mw = peek64(comp_mode_w)
+    var mh = peek64(comp_mode_h)
+    var pad = comp_shadow_pad(comp_win_soft)
+    var x0 = x - pad
+    var y0 = y - pad
+    var x1 = x + w + pad
+    var y1 = y + h + pad
+    if x0 < 0 {
+      x0 = 0
+    }
+    if y0 < 0 {
+      y0 = 0
+    }
+    if x1 > mw {
+      x1 = mw
+    }
+    if y1 > mh {
+      y1 = mh
+    }
+    x0 = x0 - (x0 & 1)
+    x1 = x1 + (x1 & 1)
+    if x1 > mw {
+      x1 = mw
+    }
+    if x0 < x1 && y0 < y1 {
+      var dw = peek64(comp_dmg_w)
+      if dw == 0 {
+        poke64(comp_dmg_x, x0)
+        poke64(comp_dmg_y, y0)
+        poke64(comp_dmg_w, x1 - x0)
+        poke64(comp_dmg_h, y1 - y0)
+      } else {
+        var ex0 = peek64(comp_dmg_x)
+        var ey0 = peek64(comp_dmg_y)
+        var ex1 = ex0 + dw
+        var ey1 = ey0 + peek64(comp_dmg_h)
+        if x0 < ex0 {
+          ex0 = x0
+        }
+        if y0 < ey0 {
+          ey0 = y0
+        }
+        if x1 > ex1 {
+          ex1 = x1
+        }
+        if y1 > ey1 {
+          ey1 = y1
+        }
+        poke64(comp_dmg_x, ex0)
+        poke64(comp_dmg_y, ey0)
+        poke64(comp_dmg_w, ex1 - ex0)
+        poke64(comp_dmg_h, ey1 - ey0)
+      }
+    }
+  }
+}
+
+// `color` at `coverage` out of 255 of its own opacity: the top byte
+// scaled, the channels untouched.
+def comp_cover(color Int64, coverage Int64) Int64 {
+  const t = ((color >> 24) & 0xFF) * coverage + 128
+  const a = (t + (t >> 8)) >> 8
+  return (a << 24) | (color & 0xFFFFFF)
+}
+
+// One channel of source-over, rounded to nearest: `s` over `d` at
+// coverage `a` out of 255.
+def comp_mix(s Int64, d Int64, a Int64) Int64 {
+  const t = s * a + d * (255 - a) + 128
+  return (t + (t >> 8)) >> 8
+}
+
+// One pixel of source-over: `src` carries its coverage in the top
+// byte, `dst` is the word the carve holds.
+def comp_over(src Int64, dst Int64) Int64 {
+  const a = (src >> 24) & 0xFF
+  if a >= 255 {
+    return src & 0xFFFFFF
+  }
+  if a <= 0 {
+    return dst & 0xFFFFFF
+  }
+  const r = comp_mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF, a)
+  const g = comp_mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
+  const b = comp_mix(src & 0xFF, dst & 0xFF, a)
+  return (r << 16) | (g << 8) | b
+}
+
+// One span of the shadow laid beneath a toplevel, row `row`: every
+// pixel's coverage asked, the ink blended over what the carve shows,
+// the words stored counted into the sum. The walk never stores a
+// pixel the window will cover whole — the interior is the blit's.
+def comp_shadow_span(x0 Int64, x1 Int64, row Int64, w Int64, h Int64, x Int64, y Int64, rad Int64) Int64 {
+  var sum = 0
+  var mw = peek64(comp_mode_w)
+  var a = x0
+  if a < 0 {
+    a = 0
+  }
+  var b = x1
+  if b > mw {
+    b = mw
+  }
+  // The damage's clip (T10.1): the span's pixels only where the box
+  // covers.
+  var dx0 = peek64(comp_dmg_x)
+  if a < dx0 {
+    a = dx0
+  }
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if b > dx1 {
+    b = dx1
+  }
+  while a < b {
+    const c = comp_shadow_cover(comp_shape_sd(a, row, x, y, w, h, rad), comp_win_soft)
+    if c > 0 {
+      var at = koff + screen_base + ((row * mw) + a) * 4
+      var nv = comp_over(comp_cover(comp_shadow_ink, c), peek32(at))
+      poke32(at, nv)
+      sum = sum + nv
+    }
+    a = a + 1
+  }
+  return sum
+}
+
+// The shadow beneath one toplevel: the ring past its rect — the bands
+// above and below, the sides beside — and, inside the rect, the four
+// corner zones the window's own mask will leave showing, the shadow's
+// ramp under the arcs. The words stored counted into the sum.
+def comp_toplevel_shadow(w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var rad = comp_radius_in(comp_win_radius, w, h)
+  var pad = comp_shadow_pad(comp_win_soft)
+  var mh = peek64(comp_mode_h)
+  var row = y - pad
+  if row < 0 {
+    row = 0
+  }
+  var y1 = y + h + pad
+  if y1 > mh {
+    y1 = mh
+  }
+  // The damage's clip (T10.1): the ring's rows to the box's — the
+  // spans clip themselves against the same box inside.
+  var dy0 = peek64(comp_dmg_y)
+  if row < dy0 {
+    row = dy0
+  }
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if y1 > dy1 {
+    y1 = dy1
+  }
+  while row < y1 {
+    if row < y || row >= y + h {
+      sum = sum + comp_shadow_span(x - pad, x + w + pad, row, w, h, x, y, rad)
+    } else {
+      sum = sum + comp_shadow_span(x - pad, x, row, w, h, x, y, rad)
+      sum = sum + comp_shadow_span(x + w, x + w + pad, row, w, h, x, y, rad)
+      if row < y + rad || row >= y + h - rad {
+        sum = sum + comp_shadow_span(x, x + rad, row, w, h, x, y, rad)
+        sum = sum + comp_shadow_span(x + w - rad, x + w, row, w, h, x, y, rad)
+      }
+    }
+    row = row + 1
+  }
+  return sum
+}
+
+// One pixel of the masked blit's corner zones: the window's coverage
+// of the pixel asked of the shape's arithmetic — whole the window's
+// word stored, partial the word blended over what the shadow left,
+// clear nothing stored. The answer into the sum.
+def comp_corner_pixel(base Int64, w Int64, h Int64, x Int64, y Int64, rad Int64, cx Int64, cy Int64) Int64 {
+  const c = comp_fill_cover(comp_shape_sd(x + cx, y + cy, x, y, w, h, rad))
+  if c <= 0 {
+    return 0
+  }
+  var mw = peek64(comp_mode_w)
+  var v = peek32(base + ((cy * w) + cx) * 4)
+  var at = koff + screen_base + (((y + cy) * mw) + x + cx) * 4
+  if c >= 255 {
+    poke32(at, v)
+    return v
+  }
+  // the window's word carries its own top byte — the client's to keep
+  // — so the coverage replaces it, never ORs it
+  var nv = comp_over((c << 24) | (v & 0xFFFFFF), peek32(at))
+  poke32(at, nv)
+  return nv
+}
+
+// The blit's masked shape (T9.2): the rows word-copied as the blit's
+// own where the shape is whole — every pixel of a straight edge sits
+// half a pixel inside it — and the four corner zones pixel by pixel,
+// the window's word at its coverage of each. A window too small for
+// its corner zones is every pixel its own verdict.
+def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var rad = comp_radius_in(comp_win_radius, w, h)
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  // The damage's clip (T10.1): the rows to the box's, the columns
+  // guarded at every store — the word spans keep the anchor's parity,
+  // the pairs the blit's own.
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var stride = mw / 2
+  var r = r0
+  while r < r1 {
+    var roff = r - y
+    if rad * 2 > w || rad * 2 > h || rad == 0 {
+      var c = x0 - x
+      while c < x1 - x {
+        sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, roff)
+        c = c + 1
+      }
+    } else {
+      if roff < rad || roff >= h - rad {
+        var c = x0 - x
+        while c < rad && c < x1 - x {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, roff)
+          c = c + 1
+        }
+        // the middle span [rad, w - rad) clipped to the mode's cols
+        // and the damage's box, word-copied — the shape is whole
+        // there, every pixel half a pixel inside a straight edge
+        var ms = w - rad
+        if ms > cols {
+          ms = cols
+        }
+        if ms > x1 - x {
+          ms = x1 - x
+        }
+        var cs = rad
+        if cs < x0 - x {
+          cs = x0 - x
+        }
+        cs = cs + ((cs - rad) & 1)
+        var half = (ms - cs) / 2
+        var i = 0
+        while i < half {
+          var v = peek64(base + (roff * (w / 2) + cs / 2 + i) * 8)
+          poke64(koff + screen_base + (r * stride + (x + cs) / 2 + i) * 8, v)
+          sum = sum + v
+          i = i + 1
+        }
+        var tail = cs + half * 2
+        while tail < ms {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, tail, roff)
+          tail = tail + 1
+        }
+        c = w - rad
+        if c < 0 {
+          c = 0
+        }
+        if c < x0 - x {
+          c = x0 - x
+        }
+        while c < x1 - x {
+          sum = sum + comp_corner_pixel(base, w, h, x, y, rad, c, roff)
+          c = c + 1
+        }
+      } else {
+        var i = (x0 - x) / 2
+        var iend = (x1 - x) / 2
+        while i < iend {
+          var v = peek64(base + (roff * (w / 2) + i) * 8)
+          poke64(koff + screen_base + (r * stride + x / 2 + i) * 8, v)
+          sum = sum + v
+          i = i + 1
+        }
+      }
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The scaled blit (EmoOS T10.4, emo-desktop A16.4): the buffer's pixels
+// carried `s` screen pixels to a side, nearest neighbor — the dest rect
+// (x, y, w·s, h·s) walked word pairs at a time, the damage's box the
+// only rows and columns stored, the parity the pairs' own. The sum
+// answered, the blit's proof as the unscaled one carries it.
+def comp_scaled_pair(base Int64, w Int64, s Int64, x Int64, sr Int64,
+                     dr Int64, c Int64) Int64 {
+  var sc0 = (c - x) / s
+  var sc1 = (c + 1 - x) / s
+  var mw = peek64(comp_mode_w)
+  var at = koff + screen_base + ((dr * (mw / 2)) + c / 2) * 8
+  if sc0 == sc1 {
+    var p = peek32(base + ((sr * w) + sc0) * 4)
+    var v = p | (p << 32)
+    poke64(at, v)
+    return v
+  }
+  var p0 = peek32(base + ((sr * w) + sc0) * 4)
+  var p1 = peek32(base + ((sr * w) + sc1) * 4)
+  var v = p0 | (p1 << 32)
+  poke64(at, v)
+  return v
+}
+
+def comp_blit_scaled(base Int64, w Int64, h Int64, s Int64, x Int64,
+                     y Int64) Int64 {
+  var sum = 0
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var dw = w * s
+  var dh = h * s
+  var cols = dw
+  if (x + dw) > mw {
+    cols = mw - x
+  }
+  var rows = dh
+  if (y + dh) > mh {
+    rows = mh - y
+  }
+  // The damage's clip (T10.1), the parity the word pairs' own.
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  x0 = x0 + (x0 & 1)
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var sr = (r - y) / s
+    var c = x0
+    while c + 2 <= x1 {
+      sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+      c = c + 2
+    }
+    if c < x1 {
+      var p = peek32(base + ((sr * w) + ((c - x) / s)) * 4)
+      poke32(koff + screen_base + ((r * mw) + c) * 4, p)
+      sum = sum + p
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The scaled blit's masked shape (EmoOS T10.4): the mask's geometry at
+// the carried size — the corner zones pixel by pixel, the coverage of
+// the scaled rect's own arcs, the radius the walk's design constant at
+// screen scale — and the straight spans the pairs of the scaled blit.
+def comp_corner_pixel_scaled(base Int64, w Int64, s Int64, sw Int64,
+                             sh Int64, x Int64, y Int64, cxy Int64) Int64 {
+  const cx = cxy >> 32
+  const cy = cxy & 4294967295
+  const rad = comp_radius_in(comp_win_radius, sw, sh)
+  const c = comp_fill_cover(comp_shape_sd(x + cx, y + cy, x, y, sw, sh, rad))
+  if c <= 0 {
+    return 0
+  }
+  var mw = peek64(comp_mode_w)
+  var v = peek32(base + (((cy / s) * w) + (cx / s)) * 4)
+  var at = koff + screen_base + (((y + cy) * mw) + x + cx) * 4
+  if c >= 255 {
+    poke32(at, v)
+    return v
+  }
+  // the window's word carries its own top byte — the client's to keep
+  // — so the coverage replaces it, never ORs it
+  var nv = comp_over((c << 24) | (v & 0xFFFFFF), peek32(at))
+  poke32(at, nv)
+  return nv
+}
+
+def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
+                            x Int64, y Int64) Int64 {
+  var sum = 0
+  var sw = w * s
+  var sh = h * s
+  var rad = comp_radius_in(comp_win_radius, sw, sh)
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = sw
+  if (x + sw) > mw {
+    cols = mw - x
+  }
+  var rows = sh
+  if (y + sh) > mh {
+    rows = mh - y
+  }
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  x0 = x0 + (x0 & 1)
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var roff = r - y
+    var sr = roff / s
+    if rad * 2 > sw || rad * 2 > sh || rad == 0 {
+      var c = x0 - x
+      while c < x1 - x {
+        sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+          (c << 32) | roff)
+        c = c + 1
+      }
+    } else {
+      if roff < rad || roff >= sh - rad {
+        var c = x0 - x
+        while c < rad && c < x1 - x {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (c << 32) | roff)
+          c = c + 1
+        }
+        // the middle span [rad, sw - rad) clipped to the mode's cols
+        // and the damage's box, pairs of the scaled blit — the shape is
+        // whole there, every pixel half a pixel inside a straight edge
+        var ms = sw - rad
+        if ms > cols {
+          ms = cols
+        }
+        if ms > x1 - x {
+          ms = x1 - x
+        }
+        var cs = rad
+        if cs < x0 - x {
+          cs = x0 - x
+        }
+        cs = cs + (cs & 1)
+        var mc = cs
+        while mc + 2 <= ms {
+          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, x + mc)
+          mc = mc + 2
+        }
+        var tail = mc
+        while tail < ms {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (tail << 32) | roff)
+          tail = tail + 1
+        }
+        c = sw - rad
+        if c < 0 {
+          c = 0
+        }
+        if c < x0 - x {
+          c = x0 - x
+        }
+        while c < x1 - x {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (c << 32) | roff)
+          c = c + 1
+        }
+      } else {
+        var c = x0
+        while c + 2 <= x1 {
+          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+          c = c + 2
+        }
+        if c < x1 {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            ((c - x) << 32) | roff)
+        }
+      }
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The walk's blit of one toplevel (T9.2): the shadow beneath it and
+// the masked blit over the shadow — a surface that covers the mode is
+// the screen's own and wears neither (the machine's fullscreen pass,
+// the wallpaper beside it). The row the grant names, the ready flag
+// the walk's gate; the row's scale the sizes the walk carries (T10.4).
+def comp_toplevel_entry(entry Int64, x Int64, y Int64) Int64 {
+  var row = grant_row_of(peek64(entry))
+  if peek64(row + 56) != 0 {
+    var base = peek64(row + 16)
+    var w = peek64(row + 32)
+    var h = peek64(row + 40)
+    var s = comp_scale_of(row)
+    var mw = peek64(comp_mode_w)
+    var mh = peek64(comp_mode_h)
+    if x == 0 && y == 0 && (w * s) >= mw && (h * s) >= mh {
+      if s == 1 {
+        return comp_blit(base, w, h, x, y)
+      }
+      return comp_blit_scaled(base, w, h, s, x, y)
+    }
+    var sum = comp_toplevel_shadow(w * s, h * s, x, y)
+    if s == 1 {
+      return sum + comp_blit_masked(base, w, h, x, y)
+    }
+    return sum + comp_blit_scaled_masked(base, w, h, s, x, y)
+  }
+  return 0
+}
+
 // The parked callbacks answered (T8.15, A9.3 — the fifth seam): the
 // composition's completion is the tick, and every pid verb 22 left in
 // the ring wakes with it — the caller's own reply first, the
@@ -2468,15 +3353,25 @@ def comp_cb_reply() Void {
 
 // The composition's stash (T8.6): the requests that arrive while the
 // display service's flush is in flight, served after it — the fs's
-// stash discipline; four deep, more is a kernel bug (nobody's era
-// holds four window presents inside one flush). Past the cursor
-// plane's cells since the stack's entries grew (T8.13).
+// stash discipline; four deep in T8.6's shape ("nobody's era holds
+// four window presents inside one flush"), twelve deep now
+// (emo-desktop A16.5's interactive presses): the press's own
+// composition (T10.2) walks and flushes inside the notice handler,
+// and a real hand's clicks stretch that flush across whole-mode
+// repairs — a client era landing its presents inside one now reaches
+// the fourth seat and the old bound was the loud end. The cells run
+// to +536, the dead owners' first seat at +600 keeps its distance.
 const comp_stash_count = comp_page + 432
-const comp_stash_cells = comp_page + 440
+// The cells sit past the hidden words (+3192..+3255), twelve seats to
+// +3359 — the frame callbacks' cells at +480 keep their distance (the
+// first cut of the twelve ran +440..+536 and would have written the
+// parks' pids over, the map's own lesson twice in one day).
+const comp_stash_cells = comp_page + 3264
+const comp_stash_depth = 12
 
 def comp_stash_push(w Int64) Void {
   var n = peek64(comp_stash_count)
-  if n >= 4 {
+  if n >= comp_stash_depth {
     println("comp: the stash is full")
     halt()
   }
@@ -2521,26 +3416,40 @@ def comp_reclaim(pid Int64) Void {
   if said != 0 {
     // the reclaimed rows' kick (emo-desktop A11.2): a read the focus
     // held may now be entitled — the dead owner's windows died with
-    // it, and the input service's judgment waits for the news
+    // it, and the input service's judgment waits for the news — the
+    // device wake beside it (emo-desktop A16.3), the serve-parked
+    // reader the mailbox word alone never reaches
     var isvc = peek64(input_svc_cell)
     if isvc != 0 {
       gate_post(isvc, 13 << 32)
     }
+    device_wake()
     println("comp reclaim ${pid}")
   }
 }
 
 // The carve cleared to the desktop's background (T8.13): word stores
-// over the whole mode, pairs the blit's granularity, before the stack's
-// walk — what a window leaves behind when it moves is the background,
-// not its last frame. A typed loop, the rule.
+// over the damage's box (T10.1 — the whole mode the box the
+// generation's first composition marks), pairs the blit's granularity,
+// before the stack's walk — what a window leaves behind when it moves
+// is the background, not its last frame. A typed loop, the rule.
 def comp_clear() Void {
-  var pairs = (peek64(comp_mode_w) * peek64(comp_mode_h)) / 2
+  var dx = peek64(comp_dmg_x)
+  var dy = peek64(comp_dmg_y)
+  var dw = peek64(comp_dmg_w)
+  var dh = peek64(comp_dmg_h)
+  var stride = peek64(comp_mode_w) / 2
   var pair = comp_background | (comp_background << 32)
-  var i = 0
-  while i < pairs {
-    poke64(koff + screen_base + (i * 8), pair)
-    i = i + 1
+  var r = dy
+  var r1 = dy + dh
+  while r < r1 {
+    var i = dx / 2
+    var i1 = (dx + dw) / 2
+    while i < i1 {
+      poke64(koff + screen_base + (r * stride + i) * 8, pair)
+      i = i + 1
+    }
+    r = r + 1
   }
 }
 
@@ -2554,7 +3463,85 @@ def comp_clear() Void {
 // pruned before the walk by the caller, so every entry's row is live;
 // the ready flag is the walk's gate, a surface whose buffer no client
 // has presented yet is not painted.
+// The rect a surface's last paint covered, recorded beside its entry
+// (T10.1) — the ops that unmake its pixels mark from this, the row
+// that held the size being theirs to lose.
+def comp_paint_record(entry Int64, x Int64, y Int64) Void {
+  var row = grant_row_of(peek64(entry))
+  poke64(comp_paint_xy_at(entry), (x << 32) | y)
+  poke64(comp_paint_wh_at(entry), comp_surface_wh(row))
+}
+
+// The popups of one toplevel off the stack (emo-desktop A16.2, EmoOS
+// T10.2): the fold that follows a focus's move — a menu left open when
+// its window loses the focus would hang on the screen with no reader
+// left to dismiss it, so the losing window's parent-relative surfaces
+// leave before the new focus is served. The pixels they leave behind
+// the next composition repaints; the grants stay the closer's (the
+// stack's removal is the walk's, never the row's).
+def comp_popups_fold(parent Int64) Void {
+  var i = 0
+  while i < peek64(comp_top_cell) {
+    var entry = comp_stack + (i * comp_entry)
+    var role = peek64(entry + 24)
+    if (role == role_popup || role == role_subsurface) &&
+       peek64(entry + 32) == parent {
+      var pw = peek64(comp_paint_wh_at(entry)) >> 32
+      if pw != 0 {
+        var pb = peek64(comp_paint_xy_at(entry))
+        var pwh = peek64(comp_paint_wh_at(entry))
+        comp_dmg_mark(pb >> 32, pb & 4294967295, pw, pwh & 4294967295)
+      }
+      comp_stack_remove(entry)
+    } else {
+      i = i + 1
+    }
+  }
+}
+
+// The raise's z-order pixels (T10.1's rule, the press's own raise
+// beside op 15's): the entries seated from the raised one up trade
+// places in the walk's order, their painted rects the damage — an
+// already-topmost entry is the quiet case, nothing moves, nothing is
+// marked.
+def comp_raise_mark(entry Int64) Void {
+  var midx = (entry - comp_stack) / comp_entry
+  var mlast = 0 - 1
+  var mi = peek64(comp_top_cell) - 1
+  while mi >= 0 {
+    if peek64(comp_stack + (mi * comp_entry) + 24) == role_toplevel {
+      mlast = mi
+      break
+    }
+    mi = mi - 1
+  }
+  if midx != mlast {
+    var mj = midx
+    while mj < peek64(comp_top_cell) {
+      var me2 = comp_stack + (mj * comp_entry)
+      var mb = peek64(comp_paint_xy_at(me2))
+      var mw2 = peek64(comp_paint_wh_at(me2))
+      comp_dmg_mark(mb >> 32, mb & 4294967295, mw2 >> 32, mw2 & 4294967295)
+      mj = mj + 1
+    }
+  }
+}
+
 def comp_compose(gpu Pid, me Pid) Int64 {
+  // The generation's first composition repaints the whole mode (T10.1):
+  // the slate it meets is nobody's — the boot's own gradient, an era
+  // the full clear used to erase. After it, only the box.
+  if peek64(comp_dmg_first) != 0 {
+    comp_dmg_mark(0, 0, peek64(comp_mode_w), peek64(comp_mode_h))
+    poke64(comp_dmg_first, 0)
+  }
+  var dw = peek64(comp_dmg_w)
+  if dw == 0 {
+    return 0
+  }
+  var dx = peek64(comp_dmg_x)
+  var dy = peek64(comp_dmg_y)
+  var dh = peek64(comp_dmg_h)
   var shown = peek64(comp_cursor_shown)
   if shown != 0 {
     cursor_hide(peek64(comp_cursor_x), peek64(comp_cursor_y))
@@ -2591,6 +3578,7 @@ def comp_compose(gpu Pid, me Pid) Int64 {
   if wready == 1 {
     var wboth = comp_abs_pos(wentry, peek64(wentry + 8), peek64(wentry + 16))
     sum = sum + comp_blit_entry(wentry, wboth >> 32, wboth & 4294967295)
+    comp_paint_record(wentry, wboth >> 32, wboth & 4294967295)
   }
   // The walk (T8.13, T8.15): the free-standing surfaces in the stack's
   // order — the last entry over the rest — each immediately followed by
@@ -2606,14 +3594,23 @@ def comp_compose(gpu Pid, me Pid) Int64 {
       i = i + 1
       continue
     }
+    // the minimized toplevel paints nothing and its children ride its
+    // iteration, so a hidden window's whole tree is the one skip
+    // (emo-desktop A16.3, EmoOS T10.3)
+    if peek64(comp_hidden_at(entry)) != 0 {
+      i = i + 1
+      continue
+    }
     var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
-    sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+    sum = sum + comp_toplevel_entry(entry, both >> 32, both & 4294967295)
+    comp_paint_record(entry, both >> 32, both & 4294967295)
     var j = 0
     while j < top {
       var kid = comp_stack + (j * comp_entry)
       if peek64(kid + 32) == peek64(entry) {
         var kboth = comp_abs_pos(kid, peek64(kid + 8), peek64(kid + 16))
         sum = sum + comp_blit_entry(kid, kboth >> 32, kboth & 4294967295)
+        comp_paint_record(kid, kboth >> 32, kboth & 4294967295)
       }
       j = j + 1
     }
@@ -2625,14 +3622,21 @@ def comp_compose(gpu Pid, me Pid) Int64 {
     if peek64(entry + 24) == role_panel {
       var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
       sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
+      comp_paint_record(entry, both >> 32, both & 4294967295)
     }
     i = i + 1
   }
   if shown != 0 {
     cursor_show(peek64(comp_cursor_x), peek64(comp_cursor_y))
   }
-  gpu <- (0, me, 0)
+  // The flush carries the box (T10.1): the rect the walk painted, the
+  // device's transfer and flush over it — the full-screen walk of
+  // op 0 behind it. The box served, the next accumulation starts
+  // empty; the stash's presents mark after this line.
+  gpu <- (3 << 32, me, rect_word(dx, dy, dw, dh))
   comp_await_flush()
+  poke64(comp_dmg_w, 0)
+  poke64(comp_dmg_h, 0)
   return sum
 }
 
@@ -2682,8 +3686,11 @@ def cursor_show(x Int64, y Int64) Void {
         var i = ((r * w) + c) * 4
         poke32(koff + sprite_under + i, peek32(at))
         var s = peek32(koff + sprite_pixels + i)
+        // the sprite blends by its own coverage (T9.2): full the word
+        // stored, partial the word over what the screen shows, clear
+        // nothing — the source-over the surfaces speak
         if (s >> 24) != 0 {
-          poke32(at, s & 16777215)
+          poke32(at, comp_over(s, peek32(at)))
         }
       }
       c = c + 1
@@ -2779,6 +3786,7 @@ def comp_await_flush() Void {
 def comp_press_raise() Void {
   var hx = (peek64(pointer_x_cell) * peek64(comp_mode_w)) / (peek64(pointer_max_x_cell) + 1)
   var hy = (peek64(pointer_y_cell) * peek64(comp_mode_h)) / (peek64(pointer_max_y_cell) + 1)
+  var was = peek64(comp_focus_cell)
   var hit = 0
   var i = peek64(comp_top_cell)
   while i > 0 && hit == 0 {
@@ -2786,15 +3794,22 @@ def comp_press_raise() Void {
     var entry = comp_stack + (i * comp_entry)
     var role = peek64(entry + 24)
     if role == role_toplevel || role == role_panel {
-      var row = grant_row_of(peek64(entry))
-      if row != 0 {
-        var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
-        var ax = both >> 32
-        var ay = both & 4294967295
-        if hx >= ax && hx < ax + peek64(row + 32) && hy >= ay && hy < ay + peek64(row + 40) {
-          poke64(comp_focus_cell, peek64(entry))
-          comp_stack_raise(entry)
-          hit = 1
+      // a hidden toplevel is no one's to click (emo-desktop A16.3):
+      // the walk does not show it, and a press that landed where the
+      // desktop shows wallpaper is the wallpaper's
+      if peek64(comp_hidden_at(entry)) == 0 {
+        var row = grant_row_of(peek64(entry))
+        if row != 0 {
+          var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+          var ax = both >> 32
+          var ay = both & 4294967295
+          var wh = comp_surface_wh(row)
+          if hx >= ax && hx < ax + (wh >> 32) && hy >= ay && hy < ay + (wh & 4294967295) {
+            poke64(comp_focus_cell, peek64(entry))
+            comp_raise_mark(entry)
+            comp_stack_raise(entry)
+            hit = 1
+          }
         }
       }
     }
@@ -2816,6 +3831,20 @@ def comp_press_raise() Void {
       }
     }
   }
+  // The focus that moved (emo-desktop A16.2): the losing window's
+  // popups fold — the menu a click away from its window has no reader
+  // left to dismiss it — and the held reads are judged by the news,
+  // the kick op 15's own.
+  if peek64(comp_focus_cell) != was {
+    if was != 0 {
+      comp_popups_fold(was)
+    }
+    var isvc = peek64(input_svc_cell)
+    if isvc != 0 {
+      gate_post(isvc, 13 << 32)
+    }
+    device_wake()
+  }
 }
 
 def comp_cursor_place(gpu Pid, me Pid) Void {
@@ -2828,6 +3857,17 @@ def comp_cursor_place(gpu Pid, me Pid) Void {
   if peek64(pointer_press_cell) != 0 {
     comp_press_raise()
     poke64(pointer_press_cell, 0)
+    // the press's own composition (emo-desktop A16.2, EmoOS T10.2):
+    // the raise, the fold and the hidden skip the press decided leave
+    // pixels behind that no client's present may come to repair — the
+    // box the press made is composed here, before the sprite's move.
+    // A press that changed nothing leaves the box empty and this the
+    // cheap early-out; the stashed presents the flush held re-mark
+    // their own rects, so an early walk of their damage is repaired
+    // again at their own turn.
+    if peek64(comp_dmg_w) != 0 {
+      comp_compose(gpu, me)
+    }
   }
   poke64(pointer_notice_cell, 0)
   poke64(comp_cursor_gen, peek64(pointer_gen_cell))
@@ -2907,7 +3947,19 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
       if peek64(entry + 24) == role_wallpaper {
         gate_reply(caller_of(w), -4)
       } else {
+        // The focus that moved (emo-desktop A16.2): the losing window's
+        // popups fold — a menu whose window no longer holds the focus
+        // has no reader left to dismiss it.
+        var was = peek64(comp_focus_cell)
         poke64(comp_focus_cell, grant)
+        if was != grant && was != 0 {
+          comp_popups_fold(was)
+        }
+        // The raise's z-order change (T10.1): the raised surface's
+        // painted rect and every surface seated above it trade places
+        // — already the topmost toplevel, nothing moves and nothing
+        // is marked, the desktop's own focus beats the quiet case.
+        comp_raise_mark(entry)
         comp_stack_raise(entry)
         var isvc = peek64(input_svc_cell)
         if isvc != 0 {
@@ -2929,8 +3981,9 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         gate_reply(caller_of(w), -4)
       } else {
         var row = grant_row_of(grant)
-        var ww = peek64(row + 32)
-        var hh = peek64(row + 40)
+        var wh = comp_surface_wh(row)
+        var ww = wh >> 32
+        var hh = wh & 4294967295
         // A parent-relative surface's move names its offset from the
         // parent (T8.15): the bounds the absolute position answers to,
         // the parity the word blit's own (the parent's is even, so the
@@ -2941,8 +3994,18 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         if (x % 2) != 0 || (ax + ww) > peek64(comp_mode_w) || (ay + hh) > peek64(comp_mode_h) {
           gate_reply(caller_of(w), -4)
         } else {
+          // The pixels the move unmakes and makes (T10.1): the rect as
+          // the last composition painted it — the painted record, not
+          // the entry's current seat, so a drag's whole walk between
+          // two compositions marks only its two ends — and the rect
+          // the move names now.
+          var ob = peek64(comp_paint_xy_at(entry))
+          var ow = peek64(comp_paint_wh_at(entry))
+          comp_dmg_mark(ob >> 32, ob & 4294967295, ow >> 32, ow & 4294967295)
           poke64(entry + 8, x)
           poke64(entry + 16, y)
+          var nb = comp_abs_pos(entry, x, y)
+          comp_dmg_mark(nb >> 32, nb & 4294967295, ww, hh)
           gate_reply(caller_of(w), 0)
         }
       }
@@ -2982,6 +4045,10 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           var y = both & 4294967295
           var row = grant_row_of(grant)
           poke64(row + 56, 1)
+          // The frame the client committed (T10.1): its rect in the
+          // window's own coordinates, absolute here — the damage the
+          // composition repaints.
+          comp_dmg_mark(x + rx, y + ry, rw, rh)
           var sum = comp_compose(gpu, me)
           poke64(row + 64, rx)
           poke64(row + 72, ry)
@@ -3081,11 +4148,154 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                 poke64(comp_cb_count, n + 1)
               }
             } else {
-              if op == pointer_op {
-                comp_cursor_place(gpu, me)
+              if op == 22 {
+                // The minimize (emo-desktop A16.3, EmoOS T10.3): the
+                // toplevel off the walk's eye — its painted rect the
+                // damage, the hidden word set, the entry kept (the
+                // position and the grant are the restore's own memory).
+                // The focus the window held falls to the topmost
+                // visible toplevel beside it, or to the wallpaper the
+                // way a background press does, and the held reads are
+                // judged by the news. The composed reply: the window's
+                // disappearance is on the display before the answer,
+                // the frame-lands-whole discipline op 17 replies by.
+                var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                var grant = peek64(seat)
+                poke64(seat, 0)
+                comp_stack_prune()
+                var entry = comp_stack_find(grant)
+                if entry == 0 || peek64(entry + 24) != role_toplevel {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  if peek64(comp_hidden_at(entry)) != 0 {
+                    gate_reply(caller_of(w), -4)
+                  } else {
+                    var pb = peek64(comp_paint_xy_at(entry))
+                    var pwh = peek64(comp_paint_wh_at(entry))
+                    comp_dmg_mark(pb >> 32, pb & 4294967295,
+                      pwh >> 32, pwh & 4294967295)
+                    poke64(comp_hidden_at(entry), 1)
+                    comp_popups_fold(grant)
+                    if peek64(comp_focus_cell) == grant {
+                      var ni = peek64(comp_top_cell)
+                      var next = 0
+                      while ni > 0 && next == 0 {
+                        ni = ni - 1
+                        var ne = comp_stack + (ni * comp_entry)
+                        if peek64(ne + 24) == role_toplevel &&
+                           peek64(ne) != grant &&
+                           peek64(comp_hidden_at(ne)) == 0 {
+                          var nrow = grant_row_of(peek64(ne))
+                          if nrow != 0 {
+                            next = peek64(ne)
+                          }
+                        }
+                      }
+                      if next != 0 {
+                        poke64(comp_focus_cell, next)
+                      } else {
+                        var wg = peek64(comp_wallpaper_cell)
+                        if wg != 0 {
+                          var wrow = grant_row_of(wg)
+                          if wrow != 0 {
+                            poke64(comp_focus_cell, wg)
+                          }
+                        }
+                      }
+                      var isvc = peek64(input_svc_cell)
+                      if isvc != 0 {
+                        gate_post(isvc, 13 << 32)
+                      }
+                      device_wake()
+                    }
+                    var sum = comp_compose(gpu, me)
+                    println("comp ${pb >> 32} ${pb & 4294967295} ${sum & 4294967295}")
+                    gate_reply(caller_of(w), 0)
+                    comp_cb_reply()
+                  }
+                }
               } else {
-                println("comp: the verb is nobody's")
-                halt()
+                if op == 23 {
+                  // The desktop's open (emo-desktop A16.3, EmoOS
+                  // T10.3): the dock tile's word for a live app — the
+                  // window of that pid's raised to the top and named
+                  // the focused one, the hidden one unhidden first, its
+                  // painted rect the damage the composition repaints.
+                  // The authority is the desktop's own: the caller must
+                  // own a panel — the shell's strip is the one layer
+                  // above the windows — and an app calling it is the
+                  // permission refusal. No window of that pid: the
+                  // argument refusal the shell answers with its running
+                  // line.
+                  var dseat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                  var pid = peek64(dseat)
+                  poke64(dseat, 0)
+                  var ai = 0
+                  var ok = 0
+                  while ai < peek64(comp_top_cell) && ok == 0 {
+                    var ae = comp_stack + (ai * comp_entry)
+                    if peek64(ae + 24) == role_panel {
+                      var arow = grant_row_of(peek64(ae))
+                      if arow != 0 && peek64(arow + 8) == caller_of(w) {
+                        ok = 1
+                      }
+                    }
+                    ai = ai + 1
+                  }
+                  if ok == 0 {
+                    gate_reply(caller_of(w), -3)
+                  } else {
+                    var fi = peek64(comp_top_cell)
+                    var fentry = 0
+                    while fi > 0 && fentry == 0 {
+                      fi = fi - 1
+                      var fe = comp_stack + (fi * comp_entry)
+                      if peek64(fe + 24) == role_toplevel {
+                        var frow = grant_row_of(peek64(fe))
+                        if frow != 0 && peek64(frow + 8) == pid {
+                          fentry = fe
+                        }
+                      }
+                    }
+                    if fentry == 0 {
+                      gate_reply(caller_of(w), -4)
+                    } else {
+                      var grant = peek64(fentry)
+                      var was = peek64(comp_focus_cell)
+                      var both = comp_abs_pos(fentry, peek64(fentry + 8),
+                        peek64(fentry + 16))
+                      if peek64(comp_hidden_at(fentry)) != 0 {
+                        poke64(comp_hidden_at(fentry), 0)
+                        var pb = peek64(comp_paint_xy_at(fentry))
+                        var pwh = peek64(comp_paint_wh_at(fentry))
+                        comp_dmg_mark(pb >> 32, pb & 4294967295,
+                          pwh >> 32, pwh & 4294967295)
+                      }
+                      if was != grant && was != 0 {
+                        comp_popups_fold(was)
+                      }
+                      poke64(comp_focus_cell, grant)
+                      comp_raise_mark(fentry)
+                      comp_stack_raise(fentry)
+                      var isvc = peek64(input_svc_cell)
+                      if isvc != 0 {
+                        gate_post(isvc, 13 << 32)
+                      }
+                      device_wake()
+                      var sum = comp_compose(gpu, me)
+                      println("comp ${both >> 32} ${both & 4294967295} ${sum & 4294967295}")
+                      gate_reply(caller_of(w), 0)
+                      comp_cb_reply()
+                    }
+                  }
+                } else {
+                  if op == pointer_op {
+                    comp_cursor_place(gpu, me)
+                  } else {
+                    println("comp: the verb is nobody's")
+                    halt()
+                  }
+                }
               }
             }
           }
@@ -3106,6 +4316,7 @@ def comp_service(boss Pid, gpu Pid) Void {
   var me2 = self_pid()
   var gen = peek64(comp_gen_cell) + 1
   poke64(comp_gen_cell, gen)
+  poke64(comp_dmg_first, 1)
   gpu <- (1 << 32, me2, 0)
   receive {
     m -> {
@@ -3491,6 +4702,7 @@ def put_spin_name(a Int64) Int64 {
   poke8(a + 7, 102B) // f
   return 8
 }
+
 
 def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
     label String) Void {

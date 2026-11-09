@@ -1,0 +1,61 @@
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+
+// The shapes' golden (emo-desktop A14.1): one card painted stage by
+// stage on the hosted canvas — every shape `ui_fb`'s shapes section
+// draws, at the radii, opacities, widths and softnesses the desktop
+// asks for, and at every edge a surface clips at — one
+// `shapes <digest>` line after each stage. The interpreter's bytes are
+// `expected.txt`, and every hosted target prints the same; the metal's
+// walks (`ui_fb_winbuf`'s) were measured against the same lines.
+//
+//   emo run main.emo
+
+def stage(s ui_fb.Surface) {
+  println("shapes ${ui_fb_frame.digest(s)}")
+}
+
+def main() {
+  const s = ui_fb_canvas.canvas(320, 200)
+  s.fill(0, 0, 320, 200, 0x202830)
+  stage(s)
+  // a plain rectangle and a rounded one, opaque, the second graded
+  s.rounded(8, 8, 60, 40, 0, 0xFF3A6EA5, 0xFF3A6EA5)
+  s.rounded(76, 8, 120, 72, 12, 0xFF4A7BD0, 0xFF8A4FD0)
+  stage(s)
+  // a translucent pill over the grade, and a grade fading to nothing
+  s.rounded(84, 40, 104, 28, 14, 0x60FFFFFF, 0x60FFFFFF)
+  s.rounded(204, 8, 108, 72, 18, 0xC0F0F0F0, 0x00F0F0F0)
+  stage(s)
+  // three circles, a title bar's buttons
+  s.rounded(12, 60, 14, 14, 7, 0xFFFF5F57, 0xFFFF5F57)
+  s.rounded(32, 60, 14, 14, 7, 0xFFFEBC2E, 0xFFFEBC2E)
+  s.rounded(52, 60, 14, 14, 7, 0xFF28C840, 0xFF28C840)
+  stage(s)
+  // strokes: a hairline, two pixels, a translucent ring around a circle
+  s.stroke(8, 88, 96, 48, 10, 1, 0xFFE0E0E0)
+  s.stroke(112, 88, 96, 48, 10, 2, 0xFF7AB0FF)
+  s.stroke(216, 88, 48, 48, 24, 3, 0x80FFFFFF)
+  stage(s)
+  // a shadow under a card and the card over it, then a hard one
+  s.shadow(20, 150, 120, 36, 10, 16, 0x80000000)
+  s.rounded(16, 144, 120, 36, 10, 0xFFF4F4F6, 0xFFE6E6EA)
+  s.shadow(176, 150, 64, 40, 20, 1, 0xFF000000)
+  stage(s)
+  // every edge the surface clips at
+  s.rounded(-20, -12, 48, 32, 12, 0xFFFFD166, 0xFFFFD166)
+  s.rounded(296, 184, 40, 30, 14, 0xFF06D6A0, 0xFF06D6A0)
+  s.stroke(-6, 100, 20, 40, 8, 2, 0xFFFFFFFF)
+  s.shadow(300, -10, 40, 40, 8, 12, 0xC0101010)
+  stage(s)
+  // the degenerate: no extent, a radius past half the shorter side, a
+  // ring deeper than its shape, a shadow of no height
+  s.rounded(250, 140, 0, 30, 4, 0xFFFFFFFF, 0xFFFFFFFF)
+  s.rounded(250, 140, 30, 20, 99, 0xFFEF476F, 0xFFEF476F)
+  s.stroke(286, 140, 20, 20, 4, 30, 0xFF118AB2)
+  s.shadow(250, 170, 20, 0, 0, 8, 0xFF000000)
+  stage(s)
+}
+
+main()

@@ -64,22 +64,125 @@ class Canvas {
     }
   }
 
-  // One glyph cell at `(x, y)`: each set bit of each row stores the
-  // color, top byte cleared, where the pixel lies on the surface; a
-  // clear bit leaves the word alone.
-  def glyph(x Int64, y Int64, top Int64, bottom Int64, color Int64) {
-    const word = color & 0xFFFFFF
-    for var r = 0; r < ui_fb.glyph_h(); r = r + 1 {
-      const bits = ui_fb.glyph_row(top, bottom, r)
-      const py = y + r
-      if bits != 0 && py >= 0 && py < self.height {
-        for var c = 0; c < ui_fb.glyph_w(); c = c + 1 {
-          const px = x + c
-          if ((bits >> (7 - c)) & 1) == 1 && px >= 0 && px < self.width {
-            self.data.set_u32_le((py * self.width + px) * 4, word)
-          }
-        }
+  // One glyph of a strike at the pen `(x, y)`, the line box's top-left
+  // (A14.2): each pixel of its ink composited in the color's channels at
+  // the glyph's own coverage, a clear pixel leaving the word alone.
+  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+    const w = ui_fb.font.gw(strike, glyph)
+    const n = w * ui_fb.font.gh(strike, glyph)
+    const x0 = x + ui_fb.font.gleft(strike, glyph)
+    const y0 = y + ui_fb.font.gtop(strike, glyph)
+    for var m = 0; m < n; m = m + 1 {
+      const c = ui_fb.font.pixel(strike, glyph, m)
+      const px = x0 + m % w
+      const py = y0 + m / w
+      if c > 0 && px >= 0 && px < self.width && py >= 0 && py < self.height {
+        blend_at(self.data, (py * self.width + px) * 4, ui_fb.inked(color, c))
       }
+    }
+  }
+
+  // A rounded rectangle graded from `top` to `bottom` (A14.1): each row
+  // walked in from both ends while its pixels are partly covered, the
+  // whole pixels between them one span in the row's color.
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    const rad = ui_fb.radius_in(radius, w, h)
+    const r = ui_fb.clip(x, y, w, h, self.width, self.height)
+    for var row = r.y(); row < r.y() + r.h(); row = row + 1 {
+      const color = ui_fb.grade(top, bottom, row - y, h)
+      const base = row * self.width * 4
+      var k = r.x()
+      var j = r.x() + r.w() - 1
+      if ((color >> 24) & 0xFF) == 0 {
+        k = j + 1
+      }
+      while k <= j {
+        const c = ui_fb.fill_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad))
+        if c >= 255 {
+          break
+        }
+        blend_at(self.data, base + k * 4, ui_fb.cover(color, c))
+        k = k + 1
+      }
+      while j >= k {
+        const c = ui_fb.fill_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad))
+        if c >= 255 {
+          break
+        }
+        blend_at(self.data, base + j * 4, ui_fb.cover(color, c))
+        j = j - 1
+      }
+      span(self.data, base, k, j, color)
+    }
+  }
+
+  // The ring `width` pixels deep inside a rounded rectangle's edge: each
+  // row walked in from both ends until a pixel is clear with its center
+  // inside — the interior the stroke never touches.
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    const rad = ui_fb.radius_in(radius, w, h)
+    const ring_w = if width > 0 { w } else { 0 }
+    const r = ui_fb.clip(x, y, ring_w, h, self.width, self.height)
+    for var row = r.y(); row < r.y() + r.h(); row = row + 1 {
+      const base = row * self.width * 4
+      var k = r.x()
+      var j = r.x() + r.w() - 1
+      while k <= j {
+        const sd = ui_fb.shape_sd(k, row, x, y, w, h, rad)
+        const c = ui_fb.stroke_cover(sd, width)
+        if c == 0 && sd < 0 {
+          break
+        }
+        blend_at(self.data, base + k * 4, ui_fb.cover(color, c))
+        k = k + 1
+      }
+      while j >= k {
+        const sd = ui_fb.shape_sd(j, row, x, y, w, h, rad)
+        const c = ui_fb.stroke_cover(sd, width)
+        if c == 0 && sd < 0 {
+          break
+        }
+        blend_at(self.data, base + j * 4, ui_fb.cover(color, c))
+        j = j - 1
+      }
+    }
+  }
+
+  // A rounded rectangle whose edge fades over `soft` pixels: the walk is
+  // the fill's over the shape grown by the ramp's reach, the whole
+  // pixels between one span.
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    const rad = ui_fb.radius_in(radius, w, h)
+    const pad = ui_fb.shadow_pad(soft)
+    const grown_w = if w > 0 && h > 0 { w + pad * 2 } else { 0 }
+    const r = ui_fb.clip(x - pad, y - pad, grown_w, h + pad * 2, self.width,
+      self.height)
+    for var row = r.y(); row < r.y() + r.h(); row = row + 1 {
+      const base = row * self.width * 4
+      var k = r.x()
+      var j = r.x() + r.w() - 1
+      while k <= j {
+        const c = ui_fb.shadow_cover(ui_fb.shape_sd(k, row, x, y, w, h, rad),
+          soft)
+        if c >= 255 {
+          break
+        }
+        blend_at(self.data, base + k * 4, ui_fb.cover(color, c))
+        k = k + 1
+      }
+      while j >= k {
+        const c = ui_fb.shadow_cover(ui_fb.shape_sd(j, row, x, y, w, h, rad),
+          soft)
+        if c >= 255 {
+          break
+        }
+        blend_at(self.data, base + j * 4, ui_fb.cover(color, c))
+        j = j - 1
+      }
+      span(self.data, base, k, j, color)
     }
   }
 
@@ -87,6 +190,29 @@ class Canvas {
   // moment they are stored, and whoever holds the canvas reads them back
   // whenever it likes. The carve's `present` is the display's flush.
   def present() {
+  }
+}
+
+// One word composited through `ui_fb.over` at byte offset `i` — nothing
+// read or written when the color covers nothing.
+def blend_at(data Bytes, i Int64, color Int64) {
+  if ((color >> 24) & 0xFF) > 0 {
+    data.set_u32_le(i, ui_fb.over(color, data.get_u32_le(i)))
+  }
+}
+
+// Columns `from` to `to` of the row at byte offset `base` in one color:
+// stored when it is opaque, composited when it is not.
+def span(data Bytes, base Int64, from Int64, to Int64, color Int64) {
+  if ((color >> 24) & 0xFF) >= 255 {
+    const word = color & 0xFFFFFF
+    for var col = from; col <= to; col = col + 1 {
+      data.set_u32_le(base + col * 4, word)
+    }
+  } else {
+    for var col = from; col <= to; col = col + 1 {
+      blend_at(data, base + col * 4, color)
+    }
   }
 }
 

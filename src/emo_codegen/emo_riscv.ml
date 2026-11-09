@@ -201,6 +201,10 @@ type env = {
   mutable cells : (int64 * int * string) list;
       (* the numeric literal cells: bits, tag, label — newest first; one
          static read-only cell per distinct literal *)
+  mutable arr_blobs : (string * string array) list;
+      (* the constant arrays' pointer blobs: label, cell labels — newest
+         first; one static word per element, the tagged cell its
+         literal already has *)
   mutable labels : int; (* the fresh-label counter *)
   mutable cur : frame option;
   mutable fclass : string option; (* the class whose method is emitting *)
@@ -334,6 +338,26 @@ let cell_label env (bits : int64) (tag : int) : string =
       let label = Printf.sprintf "emo_cell_%d" (List.length env.cells) in
       env.cells <- (bits, tag, label) :: env.cells;
       label
+
+(* The values of an array literal whose every element is a plain
+   integer literal — the constant fill's raw material — or None the
+   moment anything else stands in the list. Below four elements the
+   per-element path emits the shorter text. *)
+let const_int_values (es : Emo_ir.expr list) : Int64.t array option =
+  let n = List.length es in
+  if n < 4 then None
+  else
+    let out = Array.make n 0L in
+    let rec walk i = function
+      | [] -> i = n
+      | (e : Emo_ir.expr) :: tl -> (
+          match e.Emo_ir.desc with
+          | Const (Emo_ast.L_int v) when e.Emo_ir.ety = Emo_check.Int64 ->
+              Array.set out i v;
+              walk (i + 1) tl
+          | _ -> false)
+    in
+    if walk 0 es then Some out else None
 
 let fresh_label env base =
   env.labels <- env.labels + 1;
@@ -1576,11 +1600,55 @@ and emit_typed_call env d (func : string) (conv : conv)
   put env "    call %s\n" (func_label func);
   if not env.native then emit_box_result env conv.cresult
 
-(* A Tuple or Array literal: the elements evaluate first (each spilled —
-   boxed at the container boundary first), then one block is allocated
-   and filled. *)
+(* A Tuple or Array literal: one block, allocated and filled — from the
+   elements' static cells when every element is a plain integer literal
+   (`emit_seq_static`), else the elements evaluate first (each spilled —
+   boxed at the container boundary first) and the fill walks the spills. *)
 and emit_seq env d (es : Emo_ir.expr list) (tag : int) : unit =
   let n = List.length es in
+  match const_int_values es with
+  | Some values -> emit_seq_static env n values tag
+  | None -> emit_seq_elements env d es n tag
+
+(* The constant fill (emo-desktop A14.2's lever): an aggregate of plain
+   integer literals fills from one .rodata blob of its elements' static
+   cells — the cells `cell_label` already mints for the dynamic
+   literals, one word of image per element and a dozen instructions of
+   text whatever the count, and no box born at build time. The elements
+   are the same tagged words the dynamic path spills; the block's alloc
+   and shape are the per-element path's. The frame's element temps
+   (expr_depth's count) stay reserved and simply go unused. *)
+and emit_seq_static env n (values : Int64.t array) (tag : int) : unit =
+  let cells = Array.map (fun v -> cell_label env v 0) values in
+  let label = Printf.sprintf "emo_arr_%d" (List.length env.arr_blobs) in
+  env.arr_blobs <- (label, cells) :: env.arr_blobs;
+  put env "    li a0, %d\n" (n + 1);
+  call_runtime env
+    (match env.cur with
+    | Some f when env.region && List.mem f.fname !const_thunks ->
+        "emo_alloc_const"
+    | _ -> "emo_alloc");
+  put env "    li t0, %d\n" n;
+  put env "    sd t0, 8(a0)\n";
+  put env "    mv t5, a0\n";
+  let l_fill = fresh_label env "cellfill" in
+  put env "    la t1, %s\n" label;
+  put env "    addi t2, t5, 16\n";
+  put env "    li t3, %d\n" n;
+  put env "%s:\n" l_fill;
+  put env "    beqz t3, %s\n" (l_fill ^ "_done");
+  put env "    ld a0, 0(t1)\n";
+  put env "    sd a0, 0(t2)\n";
+  put env "    addi t1, t1, 8\n";
+  put env "    addi t2, t2, 8\n";
+  put env "    addi t3, t3, -1\n";
+  put env "    j %s\n" l_fill;
+  put env "%s_done:\n" l_fill;
+  put env "    mv a0, t5\n";
+  put env "    ori a0, a0, %d\n" tag
+
+and emit_seq_elements env d (es : Emo_ir.expr list) (n : int) (tag : int) : unit
+    =
   List.iteri
     (fun i el ->
       emit_expr env (d + n) el;
@@ -9134,7 +9202,13 @@ SECTIONS
 let stack_asm ~(profile : string) : string =
   let stack_bytes, heap_bytes =
     match profile with
-    | "kernel" -> (1048576, 67108864)
+    (* The kernel heap at 32 MiB (emo-desktop A14.3's T9.1 lever): the
+       heap's live users are the root's bump (a few KiB) and the const
+       region at its top — the hooks serve every spawned pass from the
+       region — so the disk ELFs' round's 64 MiB gives 32 back, and the
+       allocator region grows by the same 512 blocks the HD desktop's
+       surfaces and its three residents spend. *)
+    | "kernel" -> (1048576, 33554432)
     | "user" -> (65536, 8388608)
     (* The app profile's 2 MiB (emo-desktop A12.1): a disk ELF's arena is
        the run the spawn claimed (T8.9's hooks), so the .bss heap hosts
@@ -9628,6 +9702,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       fresh = 0;
       strs = [];
       cells = [];
+      arr_blobs = [];
       labels = 0;
       cur = None;
       fclass = None;
@@ -10122,6 +10197,15 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
       (fun (bits, _, label) ->
         gput env "    .balign 32\n%s:\n    .quad 1\n    .quad %Ld\n" label bits)
       (List.rev env.cells)
+  end;
+  if env.arr_blobs <> [] then begin
+    gput env
+      "\n# ---- Constant array pointer blobs ----\n\n    .section .rodata\n";
+    List.iter
+      (fun (label, cells) ->
+        gput env "    .balign 8\n%s:\n" label;
+        Array.iter (fun cell -> gput env "    .quad %s\n" cell) cells)
+      (List.rev env.arr_blobs)
   end;
   gput env "%s" (stack_asm ~profile);
   if profile = "user" || profile = "app" then gput env "%s" user_cell_asm;

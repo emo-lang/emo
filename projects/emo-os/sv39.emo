@@ -178,6 +178,60 @@ def map_range(root Int64, va Int64, pa Int64, len Int64, flags Int64) Void {
   }
 }
 
+// One leaf taken back out: the walk to `level` must find valid
+// non-leaves on the way and a leaf at the level — and, the mappings
+// this kernel makes at identities, the leaf must map the very page
+// taken back. Anything else is a kernel bug, the loud end. The entry
+// is zeroed, nothing else — the tables on the way stay (a table a
+// later mapping fills again costs no frame).
+def unmap(root Int64, va Int64, level Int64) Void {
+  var table = root
+  var l = 2
+  while l > level {
+    var at = table + (vpn(va, l) * 8)
+    var e = peek64(at)
+    if (e & pte_v) == 0 {
+      die("sv39: an unmap walks off the table")
+    }
+    if (e & leaf_bits) != 0 {
+      die("sv39: a leaf blocks the unmap walk")
+    }
+    table = va_of(pte_pa(e))
+    l = l - 1
+  }
+  var at = table + (vpn(va, level) * 8)
+  var e = peek64(at)
+  if (e & pte_v) == 0 || (e & leaf_bits) == 0 {
+    die("sv39: the unmap's leaf is not a leaf")
+  }
+  if pte_pa(e) != va {
+    die("sv39: the unmap's leaf maps another page")
+  }
+  poke64(at, 0)
+}
+
+// A range taken back, page-aligned at both ends and in length — the
+// exact walk `map_range` made the mapping by, megapages wherever the
+// alignment gives them, so every leaf it meets is one `map` wrote.
+def unmap_range(root Int64, va Int64, len Int64) Void {
+  if va % page != 0 || len % page != 0 {
+    die("sv39: a range off its page boundaries")
+  }
+  var v = va
+  var left = len
+  while left > 0 {
+    if v % mega == 0 && left >= mega {
+      unmap(root, v, 1)
+      v = v + mega
+      left = left - mega
+    } else {
+      unmap(root, v, 0)
+      v = v + page
+      left = left - page
+    }
+  }
+}
+
 // The translation a table gives `va`: the physical address, or -1 when
 // nothing maps it — the software walk, what the hardware does on a
 // miss. The boot's check reads it against the addresses the kernel is
