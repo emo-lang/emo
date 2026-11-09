@@ -189,10 +189,44 @@ def win_format(grant Int64, format Int64) (R, Int64) {
 
 // The surface's scale (EmoOS T8.15, verb 21, emo-desktop A9.3): the
 // negotiation's other field — the scale the compositor's walk honors
-// when it carries the buffer. Scale 1 is the first accepted value; the
-// shape exists, the values grow under it.
+// when it carries the buffer. Scale 1 was the first accepted value;
+// the values grow under it now (emo-desktop A16.4, EmoOS T10.4): a
+// whole number past one carries the buffer at that multiple, nearest
+// neighbor — the maximize the desktop's windows speak, the repaint
+// riding the move paired beside it. A scale below 1 is "bad argument".
 def win_scale(grant Int64, scale Int64) (R, Int64) {
   var answer = ecall(21, grant, scale, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The minimize (emo-desktop A16.3, verb 25, EmoOS T10.3): the toplevel
+// off the compositor's walk — the pixels the hide unmakes are the
+// damage the answer's own composition repaints, the entry kept (the
+// position and the grant are the restore's memory), the focus it held
+// fallen to the window beside it. The desktop's open (verb 26) is the
+// way back. A grant that is no toplevel, or one already hidden, is
+// "bad argument"; a grant this process does not own, "not writable".
+def win_minimize(grant Int64) (R, Int64) {
+  var answer = ecall(25, grant, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desktop's open (emo-desktop A16.3, verb 26, EmoOS T10.3): the
+// dock tile's word — the window owned by that pid raised to the top
+// and named the focused one, the hidden one unhidden first, the
+// composition's answer carrying the reappearance whole. The caller
+// must own a panel — the desktop's strip is the authority here, not
+// the window's ownership, for the desktop names its apps by pid and
+// asks after them the same way; an app calling this is "not
+// writable", a pid with no window "bad argument".
+def win_desk_open(pid Int64) (R, Int64) {
+  var answer = ecall(26, pid, 0, 0, 0, 0, 0)
   if answer >= 0 {
     return (R.ok, answer)
   }
@@ -216,7 +250,7 @@ def win_frame() (R, Int64) {
 
 // The desktop protocol's version (EmoOS T8.15, verb 23, emo-desktop
 // A9.3): one word, the negotiation's anchor — the answer is 1, the
-// protocol the verbs 10..23 carry. A client that reads it before its
+// protocol the verbs 10..26 carry. A client that reads it before its
 // first desktop call knows every shape this document names.
 def desktop_version() (R, Int64) {
   var answer = ecall(23, 0, 0, 0, 0, 0, 0)

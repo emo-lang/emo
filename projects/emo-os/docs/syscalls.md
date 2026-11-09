@@ -67,9 +67,11 @@ undocumented ever acts.
 | 18 | `input_info(index)` | the index-th pointer's axes, the maxima the device's own config states, packed (the X's above the Y's); an index no device answers is reason 4 (T8.13, below) |
 | 19 | `win_parent(grant, parent)` | a popup or a subsurface names the toplevel it hangs from — its coordinates the parent's from the binding on, the walk painting it immediately above the parent, the parent's death taking it; the caller must own both grants, a surface with no entry, a role that takes no parent (toplevel, panel), a parent that is no live toplevel, all reason 4 (T8.15, below) |
 | 20 | `win_format(grant, format)` | the buffer's format recorded on its row — XRGB8888 (0) is the first accepted value; a format the compositor does not carry is reason 4, by its number (T8.15, below) |
-| 21 | `win_scale(grant, scale)` | the surface's scale recorded on its row — 1 is the first accepted value; the rest are reason 4, by their number (T8.15, below) |
+| 21 | `win_scale(grant, scale)` | the surface's scale recorded on its row — 1 was the first accepted value; a whole number past one (emo-desktop A16.4, EmoOS T10.4) is the walk's own multiple, nearest neighbor, the repaint riding the move paired beside it; a scale below 1 is reason 4 (T8.15, below) |
 | 22 | `win_frame()` | the frame callback: the caller parks, and the answer is the next composition's completion — the flush that put a frame on the display; a ring of four parks full is reason 5 (T8.15, below) |
 | 23 | `desktop_version()` | the desktop protocol's version word; answers 1 (T8.15, below) |
+| 25 | `win_minimize(grant)` | the toplevel off the compositor's walk: the pixels the hide unmakes are the damage the answer's own composition repaints, the entry kept (the restore's memory), the focus it held fallen; a grant that is no toplevel, or one already hidden, is reason 4, a grant another process owns is reason 3 (emo-desktop A16.3, EmoOS T10.3) |
+| 26 | `win_desk_open(pid)` | the desktop's open: the window owned by that pid raised to the top and named the focused one, the hidden one unhidden first, the answer's composition carrying the reappearance whole; the caller must own a panel (the desktop's authority — it names its apps by pid), a pid with no window is reason 4, a caller with no panel is reason 3 (emo-desktop A16.3, EmoOS T10.3) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -89,7 +91,16 @@ pointer's notice holds op 18 (T8.11), so win_role's request rides op
 A9.3) grew it again — 19's binding riding mailbox op 20, 22's callback
 op 21, the gate answering 20, 21 and 23 itself (the negotiation's
 fields and the version are the protocol's front door's to state, no
-service between).
+service between). Verbs 25 and 26 (emo-desktop A16.3, EmoOS T10.3)
+grew it once more — the minimize and the desktop's open, both riding
+the compositor's mailbox (ops 22 and 23), the desktop's open by pid
+under the panel's authority the stack alone knows. And the merged
+stream grew an event of its own (emo-desktop A16.2, EmoOS T10.2): the
+pointer driver's left-button press is followed, on the ring, by a
+**press-at** — type 4, the button's code, the position the axes last
+named packed raw (x in the value's high half, y in its low) — served
+to the focused window's reader by the focus's own verdict, the bar's
+button the app's to judge.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),

@@ -789,3 +789,55 @@ completion.
   composition 27–44 ms (median ~36) against the whole-screen 230 —
   the record in CHECK.md, 2026-11-08. Decision record: CHECK.md,
   2026-11-08.
+
+- [x] **T10.2** — The press-at, and the press's own composition —
+  **complete 2026-11-08** (emo-desktop A16.2, M16). The pointer
+  driver's left-button press pushes a second word into the ring: the
+  **press-at** (type 4, the button's code, the position the axes last
+  named packed raw — x in the value's high half, y in its low) —
+  served to the focused window's reader by the focus's own verdict,
+  the title bar's button the app's to judge, the pointer's moves
+  still the panel owner's alone (no fanout, no race). The press's
+  raise composes its own box: the raise, the fold and the hidden skip
+  the press decided leave pixels no client's present will repair, so
+  the press path walks the box before the sprite's move — empty box,
+  the cheap early-out; the raise's z-order marks now ride
+  `comp_raise_mark`, the helper op 15's inline loop became. **The
+  fold**: a window that loses the focus loses its popups with it (op
+  15 and the press's raise both) — a menu whose reader's attention
+  moved is the next composition's wallpaper, never a latch left open.
+
+- [x] **T10.3** — The minimize and the desktop's open — **complete
+  2026-11-08** (emo-desktop A16.3, M16). The stack grew the hidden
+  word beside the painted records (carried by the raise and the
+  shifts, cleared at `comp_stack_add` — a reused slot's stale flag
+  the walk's toplevel skip would have swallowed): verb 25
+  `win_minimize(grant)` marks the painted rect, sets the word, folds
+  the popups, lets the focus fall to the topmost visible toplevel or
+  the wallpaper, and composes before the answer; verb 26
+  `win_desk_open(pid)` is the dock tile's word — the window of that
+  pid raised and focused, the hidden one unhidden first — under the
+  desktop's own authority (the caller owns a panel; the desktop names
+  its apps by pid), the compositor's mailbox ops 22 and 23 riding the
+  gate's verbs 25 and 26. The walk skips a hidden toplevel's whole
+  tree (the children ride the parent's iteration); the press's raise
+  skips what it cannot show. **The find, fixed**: the desk_open's
+  comp line read the entry's position after `comp_stack_raise` — the
+  raised-from slot's stale words — the position captured before the
+  raise now.
+
+- [x] **T10.4** — The scale's values, and the scaled walk —
+  **complete 2026-11-08** (emo-desktop A16.4, M16). Verb 21 accepts
+  the whole numbers past one (below 1 stays the argument refusal):
+  the walk carries the buffer at the row's multiple —
+  `comp_surface_wh` the sizes every bounds check, hit test and
+  painted record reads — the scaled blit's word pairs doubling a
+  source pixel or gathering two across a straddle, the masked shape's
+  corner zones per pixel at the carried arcs, the shadow at the
+  carried size, the radius the design constant at screen scale. The
+  win pass's strictness beat flips with the wire (`scale 2 ok`,
+  `scale 0 r4`) and leaves the row at 1. **The find** (CHECK.md,
+  2026-11-08): the exit event's delivery waits for the machine's
+  next input event when the desktop goes fully silent — the golden's
+  beat texture provides one (the pointer's park after every click),
+  as every pre-A16 beat's motion did.

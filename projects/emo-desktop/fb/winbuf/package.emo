@@ -6,5 +6,7 @@ package {
   deps {
     "syscall" = "0.1.0"
     "emo/ui_fb" = "0.1.0"
+    "emo/ui_fb_win" = "0.1.0"
+    "emo_desktop" = "0.1.0"
   }
 }

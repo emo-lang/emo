@@ -32,6 +32,8 @@ English version: [`README.md`](README.md).
 | M12 — 桌面 shell 时代 | dock 的 tile 启动磁盘 ELF、退出事件经合并流到达永不 wait 的 shell、REPL 的 feed 与 `exec` | complete |
 | M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标,机器的桌面读起来是一个整体 | complete |
 | M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome、绘制图标、共享标题栏与抗锯齿指针 | complete |
+| M15 — 动画 | 合成成本实测(整屏 ~230 ms、窗级 ~36 ms)、损伤矩形、首个动画:三个 app 的窗口开时升起、关时沉下 | complete |
+| M16 — 窗口自己的菜单 | 标题栏的单个圆形按钮与它拉开的下拉菜单——Maximize、Minimize、Quit——骑 press-at 事件,最小化入隐藏项、dock 瓦片还原,最大化即 scale 的整数倍 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

@@ -130,6 +130,37 @@ the fields answered and refused, the callback's `cb ok` inside the
 client era, `protocol 1`), and the display model of the moved window's
 composition grew the four surfaces the walk now carries.
 
+## The window's own menu (emo-desktop A16, EmoOS T10.2–T10.4)
+
+The bar's chrome grew a door and the protocol grew the wire under it.
+**The press-at** (T10.2): a left-button press on the pointer's ring is
+followed by a type-4 event — the button's code, the position the axes
+last named packed raw, x in the value's high half and y in its low —
+served to the focused window's reader by the focus's verdict (the
+moves' panel exemption beside it, never instead of it). The title
+bar's button is the app's to judge: the shared bar paints one round
+button at the bar's left (the three the traffic lights wore are one),
+the seat the fb family shares opens the window's menu — a popup hung
+from the window by verb 19's binding at the button's side — and the
+items are the window manager's verbs the app's own grant may call.
+**The minimize** (T10.3): verb 25, `win_minimize(grant)` — the toplevel
+off the walk's eye, the hidden word kept beside the stack (the walk
+skips it and everything hanging from it, the press's raise never hits
+what it cannot show), the entry kept (the position and the grant are
+the restore's memory), the focus it held fallen to the window beside
+it, the answer's own composition carrying the disappearance whole.
+**The desktop's open** (T10.3): verb 26, `win_desk_open(pid)` — the
+dock tile's word for a live app, the window of that pid raised and
+focused, the hidden one unhidden first; the authority is the desktop's
+(the caller owns a panel — the strip above the windows — for the
+desktop names its apps by pid), never the window's owner's. **The
+scale's values** (T10.4): verb 21 accepts the whole numbers now — the
+walk carries the buffer at that multiple, nearest neighbor, the
+maximize the desktop's windows speak; a scale below 1 stays the
+argument refusal. And the fold: a window that loses the focus loses
+its popups with it — a menu whose reader's attention moved is the
+next composition's wallpaper, never a latch left open on the screen.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

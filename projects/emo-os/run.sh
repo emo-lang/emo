@@ -1454,13 +1454,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 1)"
-  await 'comp 768 508 1538882744'
-  await 'comp 768 500 3217401438'
-  await 'comp 768 494 316383493'
-  await 'comp 768 488 3663021706'
-  await 'comp 768 484 1247487919'
-  await 'comp 768 480 610276855'
-  await 'comp 768 478 2751081797'
+  await 'comp 768 508 1434208531'
+  await 'comp 768 500 3112727225'
+  await 'comp 768 494 211709280'
+  await 'comp 768 488 3558347493'
+  await 'comp 768 484 1142813706'
+  await 'comp 768 480 505602642'
+  await 'comp 768 478 2646407584'
   await 'comp 768 476'
   sleep 0.3
   printf 'a' >&3
@@ -1482,13 +1482,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 4)"
-  await 'comp 374 270 3966593509'
-  await 'comp 374 262 1097754009'
-  await 'comp 374 256 3281524007'
-  await 'comp 374 250 2595654824'
-  await 'comp 374 246 599236119'
-  await 'comp 374 242 221186809'
-  await 'comp 374 240 2729524845'
+  await 'comp 374 270 3861919296'
+  await 'comp 374 262 993079796'
+  await 'comp 374 256 3176849794'
+  await 'comp 374 250 2490980611'
+  await 'comp 374 246 494561906'
+  await 'comp 374 242 116512596'
+  await 'comp 374 240 2624850632'
   await 'comp 374 238'
   # the browser's session rides the panel's focus: the press named it
   printf 'j' >&3
@@ -1512,13 +1512,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 7)"
-  await 'comp 374 508 3921009735'
-  await 'comp 374 500 2322895416'
-  await 'comp 374 494 682793000'
-  await 'comp 374 488 799160250'
-  await 'comp 374 484 3431270316'
-  await 'comp 374 480 3369958584'
-  await 'comp 374 478 1533489105'
+  await 'comp 374 508 3816335522'
+  await 'comp 374 500 2218221203'
+  await 'comp 374 494 578118787'
+  await 'comp 374 488 694486037'
+  await 'comp 374 484 3326596103'
+  await 'comp 374 480 3265284371'
+  await 'comp 374 478 1428814892'
   await 'comp 374 476'
   sleep 0.3
   printf 'a' >&3
@@ -1535,16 +1535,72 @@ PYEOF
   sleep 1
   hmp 'screendump .trio.ppm'
   apps_is .trio.ppm 768 476 "$(app_line 3)" 374 238 "$(app_line 6)" 374 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3
-  # the quits: each its window's focus first — the click raises, the
-  # q ends the pass, the death rides the stream, the dot goes out.
-  # the editor's quit-click at its own rect (the launcher's place)
-  abs 13381 14928
+  # The window's own menu (emo-desktop A16.2, D13): the one button the
+  # bar wears is the seat's to judge — the press-at's word the type-4
+  # event rides — and the three items are the window manager's verbs
+  # the app's own grant may call. The counter's button first: the menu
+  # up at the button's side, the maximize the scale's whole multiple
+  # that fills the work area and the move beside it, the restore the
+  # pair again, the minimize the hidden entry and the focus's fall,
+  # the dock's tile the way back (the desktop's open by pid), and the
+  # quit the session's own end — the sink and the close the app
+  # already spoke. The device's 0..32767 axes: the screen position the
+  # value's own scaling answers for, the guest's `(v * mode) / (max + 1)`
+  # the inverse.
+  abs 13346 14810
   btn true
   btn false
+  await 'comp 772 500 3992171468'
+  # the maximize: the menu's own item — the scale's five, the window
+  # the work area's whole width at the buffer's five-fold height
+  abs 13926 15659
+  btn true
+  btn false
+  await 'comp 0 212 3618473852'
+  # the restore: the button at the carried seat, the menu's first item
+  # the Restore word now
+  abs 1194 8254
+  btn true
+  btn false
+  await 'comp 4 236 1521821718'
+  abs 819 7647
+  btn true
+  btn false
+  await 'comp 768 476 3228739382'
+  # the minimize: the hidden entry, the focus fallen to the editor,
+  # the wallpaper the window's rect again — the composition the
+  # minimize's own reply rode
+  abs 13346 14810
+  btn true
+  btn false
+  await 'comp 772 500 3992171468'
+  abs 13926 16384
+  btn true
+  btn false
+  await 'comp 768 476 4185059610'
+  # the dock's tile on a live pid is the desktop's open: the window
+  # unhidden, raised, and focused — the way back the minimize spoke of
+  abs 614 32101
+  btn true
+  btn false
+  await 'comp 768 476 4240929130'
+  # the menu's own Quit: the session's end the q byte spoke before it,
+  # the sink and the close behind it
+  abs 13346 14810
+  btn true
+  btn false
+  await 'comp 772 500 3992171468'
+  abs 13926 17117
+  btn true
+  btn false
+  # the pointer back to its park: the quit's session ends, the sink's
+  # frames and the close and the exit ride the wire, and the desktop's
+  # exit lines follow the move the way a user's hand leaves the button
+  abs 274 21239
   sleep 1
-  printf 'q' >&3
   await 'desktop counter exit 0'
-  await 'comp 0 0 606458521'
+  await 'comp 0 1040'
+  await 'comp 0 0'
   abs 7100 7950
   btn true
   btn false
@@ -1851,7 +1907,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 648757998' 'comp 0 1040 4273206946' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'desktop counter exit 0' 'comp 0 1040 1817618603' 'comp 0 0 606458521' 'desktop files exit 0' 'comp 0 1040 513291839' 'comp 0 0 515539590' 'desktop editor exit 0' 'comp 0 1040 2503536019' 'comp 0 0 648757998' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 774 576'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 648757998' 'comp 0 1040 4273206946' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 772 500 3992171468' 'comp 0 212 3618473852' 'comp 4 236 1521821718' 'comp 768 476 3228739382' 'comp 772 500 3992171468' 'comp 768 476 4185059610' 'comp 768 476 4240929130' 'comp 772 500 3992171468' 'desktop counter exit 0' 'comp 0 1040 1817618603' 'comp 0 0 606458521' 'desktop files exit 0' 'comp 0 1040 408617626' 'comp 0 0 515539590' 'desktop editor exit 0' 'comp 0 1040 2503536019' 'comp 0 0 648757998' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 778 580'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

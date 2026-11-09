@@ -1,19 +1,20 @@
 require "emo/ui_fb"
 
 // The window shell's windows (emo-desktop A9.1; the shared title bar
-// A14.5): what a toplevel surface looks like, painted once into the
-// window's own buffer and again whenever its state changes — the frame
-// the compositor carries into the carve at the stack's position (EmoOS
-// T8.13). The bar is the one chrome every window wears: the three
-// traffic-light buttons (close, mini, zoom — the shapes' card's own
-// three circles, full color when the window holds the focus, quiet
-// gray when it does not), the title in the interface face centered on
-// the bar, and a hairline divider at its foot. Two windows are the
-// shell's, `alpha` and `beta`, the bar and a body: the body in the
-// input's paper with one line of ink, the count of keys the shell
-// routed to this window because it was the focused one. The bar is
-// also the drag's handle: a press on it takes the window along with
-// the pointer until the release.
+// A14.5, the one-button bar A16.1): what a toplevel surface looks
+// like, painted once into the window's own buffer and again whenever
+// its state changes — the frame the compositor carries into the carve
+// at the stack's position (EmoOS T8.13). The bar is the one chrome
+// every window wears: a single round button at the bar's left — the
+// menu's door, the three the traffic lights wore now one (the lights
+// were painted and hit-tested by no one; the button is the seat's to
+// judge, the press-at's coordinates the wire — A16.2), the title in
+// the interface face centered on the bar, and a hairline divider at
+// its foot. Two windows are the shell's, `alpha` and `beta`, the bar
+// and a body: the body in the input's paper with one line of ink, the
+// count of keys the shell routed to this window because it was the
+// focused one. The bar is also the drag's handle: a press on it takes
+// the window along with the pointer until the release.
 //
 // The paint is direct — fills and glyphs through the `Surface`, no
 // tree — because on the metal every node of a tree is a few KiB of
@@ -70,35 +71,41 @@ def bar_ink(focused Bool) Int64 {
   return 0xFF98989E
 }
 
-// The traffic lights: the shapes' card's own three circles, full color
-// when the window holds the focus, one quiet gray when it does not.
-def button_color(i Int64, focused Bool) Int64 {
-  if focused {
-    if i == 0 {
-      return 0xFFFF5F57
-    }
-    if i == 1 {
-      return 0xFFFEBC2E
-    }
-    return 0xFF28C840
-  }
-  return 0xFFC0C0C6
+// The button's own rectangle (emo-desktop A16.1): the seat's hit test
+// reads the same numbers the paint lays down — one place, four defs,
+// the bar's left in the window's own coordinates.
+def button_x() Int64 {
+  return 8
 }
 
-// The shared title bar onto a surface's top strip: the paper, the
-// three buttons centered on the bar's height, the title centered on
-// the bar's width in the interface face, the hairline at the foot.
-def paint_bar(s ui_fb.Surface, title String, focused Bool) Void {
-  const bw = 12
-  const pad = 8
-  const gap = 6
-  s.fill(0, 0, s.width(), bar_height(), bar_paper(focused))
-  var i = 0
-  while i < 3 {
-    s.rounded(pad + (i * (bw + gap)), (bar_height() - bw) / 2, bw, bw, bw / 2,
-      button_color(i, focused), button_color(i, focused))
-    i = i + 1
+def button_y() Int64 {
+  return 6
+}
+
+def button_w() Int64 {
+  return 12
+}
+
+def button_h() Int64 {
+  return 12
+}
+
+// The button's color: the bar's own ink — dark when the window holds
+// the focus, quiet gray when it does not, the title's own two states.
+def button_color(focused Bool) Int64 {
+  if focused {
+    return 0xFF282830
   }
+  return 0xFF98989E
+}
+
+// The shared title bar onto a surface's top strip: the paper, the one
+// round button at the bar's left, the title centered on the bar's
+// width in the interface face, the hairline at the foot.
+def paint_bar(s ui_fb.Surface, title String, focused Bool) Void {
+  s.fill(0, 0, s.width(), bar_height(), bar_paper(focused))
+  s.rounded(button_x(), button_y(), button_w(), button_h(), button_w() / 2,
+    button_color(focused), button_color(focused))
   ui_fb.text(title, (s.width() - ui_fb.text_width(title)) / 2,
     (bar_height() - ui_fb.line_height()) / 2, bar_ink(focused), s)
   s.fill(0, bar_height() - 1, s.width(), 1, bar_divider(focused))

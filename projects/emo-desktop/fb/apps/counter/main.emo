@@ -67,7 +67,8 @@ def main() {
   wc.present()
   wc.rise(fx, fy)
   ui.run(ui_apps.counter.view, ui_apps.counter.update,
-    ui_apps.counter.initial(), ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98])))
+    ui_apps.counter.initial(),
+    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98], wc, fx, fy, mw, mh)))
   wc.sink(fx, fy)
   case syscall.win_close(gc) {
     (R.error, _) -> { ui_fb_winbuf.mark() }

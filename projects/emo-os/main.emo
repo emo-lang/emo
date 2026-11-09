@@ -233,6 +233,13 @@ const comp_dmg_first = comp_page + 3056
 // words.
 const comp_paint_xy = comp_page + 3064
 const comp_paint_wh = comp_page + 3128
+// The hidden word per stack slot (emo-desktop A16.3, EmoOS T10.3): the
+// minimized toplevel's flag, one word beside the painted records — the
+// walk skips a hidden toplevel and everything hanging from it, the
+// press's raise never hits what it cannot show, and the desktop's
+// open-by-pid clears it again. The entry stays: the position and the
+// grant are the restore's own memory. Past the painted records.
+const comp_hidden = comp_page + 3192
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -876,6 +883,7 @@ def process_serve(w Int64) Void {
                 if isvc != 0 {
                   gate_post(isvc, 13 << 32)
                 }
+                device_wake()
               }
             }
           }
@@ -1563,14 +1571,18 @@ def gpu_service(boss Pid) Void {
                     i = i + 1
                   }
                   blk_zero(row, 12)
-                  // the closed row's kick (emo-desktop A11.2): the
+                    // the closed row's kick (emo-desktop A11.2): the
                   // focus's surface died — a read the focus held may
                   // now be entitled, and the input service's judgment
-                  // waits for exactly this news
+                  // waits for exactly this news — the device wake
+                  // beside it (emo-desktop A16.3): a serve parked on
+                  // the empty stream sleeps at the device world, a
+                  // state the mailbox word alone never reaches
                   var isvc = peek64(input_svc_cell)
                   if isvc != 0 {
                     gate_post(isvc, 13 << 32)
                   }
+                  device_wake()
                   gate_reply(caller_of(w), 0)
                 }
               } else {
@@ -2218,6 +2230,19 @@ def pointer_drain(dev Int64, q Int64) Void {
         if ev_code_of(e) == 272 && ev_value_of(e) == 1 {
           poke64(pointer_press_cell, 1)
           poke64(pointer_dirty_cell, 1)
+          // the press-at (emo-desktop A16.2, EmoOS T10.2): the press's
+          // own place, packed raw — the position the axes last named,
+          // x in the value's high half and y in its low, riding the
+          // ring behind the press. The focused window's reader is who
+          // the type-4 word serves (the focus's verdict, the moves'
+          // panel exemption beside it): the title bar's button is the
+          // app's to judge, in the window's own coordinates it scales
+          // by the axes' maxima. The shell and the golden's hands leave
+          // the type unread.
+          var px = peek64(pointer_x_cell)
+          var py = peek64(pointer_y_cell)
+          pointer_ring_push((4 << 48) | (272 << 32) |
+            ((px & 65535) << 16) | (py & 65535))
         }
       }
       if ev_type_of(e) == 3 {
@@ -2328,6 +2353,7 @@ def comp_stack_add(grant Int64, role Int64) Int64 {
   poke64(entry + 32, 0)
   poke64(comp_paint_xy_at(entry), 0)
   poke64(comp_paint_wh_at(entry), 0)
+  poke64(comp_hidden_at(entry), 0)
   poke64(comp_top_cell, top + 1)
   return entry
 }
@@ -2364,6 +2390,7 @@ def comp_stack_remove(entry Int64) Void {
     poke64(e + 32, peek64(e + comp_entry + 32))
     poke64(comp_paint_xy_at(e), peek64(comp_paint_xy_at(e + comp_entry)))
     poke64(comp_paint_wh_at(e), peek64(comp_paint_wh_at(e + comp_entry)))
+    poke64(comp_hidden_at(e), peek64(comp_hidden_at(e + comp_entry)))
     e = e + comp_entry
   }
   poke64(comp_top_cell, top - 1)
@@ -2382,6 +2409,7 @@ def comp_stack_raise(entry Int64) Void {
   var parent = peek64(entry + 32)
   var pxy = peek64(comp_paint_xy_at(entry))
   var pwh = peek64(comp_paint_wh_at(entry))
+  var phid = peek64(comp_hidden_at(entry))
   comp_stack_remove(entry)
   var top = peek64(comp_top_cell)
   var e = comp_stack + (top * comp_entry)
@@ -2392,6 +2420,7 @@ def comp_stack_raise(entry Int64) Void {
   poke64(e + 32, parent)
   poke64(comp_paint_xy_at(e), pxy)
   poke64(comp_paint_wh_at(e), pwh)
+  poke64(comp_hidden_at(e), phid)
   poke64(comp_top_cell, top + 1)
 }
 
@@ -2448,6 +2477,30 @@ def comp_paint_xy_at(entry Int64) Int64 {
 
 def comp_paint_wh_at(entry Int64) Int64 {
   return comp_paint_wh + ((entry - comp_stack) / comp_entry) * 8
+}
+
+def comp_hidden_at(entry Int64) Int64 {
+  return comp_hidden + ((entry - comp_stack) / comp_entry) * 8
+}
+
+// The scale a row's walk honors (EmoOS T10.4): the negotiation field
+// the gate records at verb 21, the buffer's pixels carried `s` screen
+// pixels wide and tall — integer, nearest neighbor, the whole buffer
+// covering the rect whole. A row the verb has not named walks at 1.
+def comp_scale_of(row Int64) Int64 {
+  var s = peek64(row + 104)
+  if s < 1 {
+    s = 1
+  }
+  return s
+}
+
+// The rect a surface paints, packed w above h: the row's own sizes
+// under the row's scale — every bounds check, hit test and painted
+// record reads the surface at the size the walk carries it.
+def comp_surface_wh(row Int64) Int64 {
+  var s = comp_scale_of(row)
+  return ((peek64(row + 32) * s) << 32) | (peek64(row + 40) * s)
 }
 
 // The blit (T8.6): the window's rows into the carve at the stack's
@@ -2990,24 +3043,248 @@ def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
   return sum
 }
 
+// The scaled blit (EmoOS T10.4, emo-desktop A16.4): the buffer's pixels
+// carried `s` screen pixels to a side, nearest neighbor — the dest rect
+// (x, y, w·s, h·s) walked word pairs at a time, the damage's box the
+// only rows and columns stored, the parity the pairs' own. The sum
+// answered, the blit's proof as the unscaled one carries it.
+def comp_scaled_pair(base Int64, w Int64, s Int64, x Int64, sr Int64,
+                     dr Int64, c Int64) Int64 {
+  var sc0 = (c - x) / s
+  var sc1 = (c + 1 - x) / s
+  var mw = peek64(comp_mode_w)
+  var at = koff + screen_base + ((dr * (mw / 2)) + c / 2) * 8
+  if sc0 == sc1 {
+    var p = peek32(base + ((sr * w) + sc0) * 4)
+    var v = p | (p << 32)
+    poke64(at, v)
+    return v
+  }
+  var p0 = peek32(base + ((sr * w) + sc0) * 4)
+  var p1 = peek32(base + ((sr * w) + sc1) * 4)
+  var v = p0 | (p1 << 32)
+  poke64(at, v)
+  return v
+}
+
+def comp_blit_scaled(base Int64, w Int64, h Int64, s Int64, x Int64,
+                     y Int64) Int64 {
+  var sum = 0
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var dw = w * s
+  var dh = h * s
+  var cols = dw
+  if (x + dw) > mw {
+    cols = mw - x
+  }
+  var rows = dh
+  if (y + dh) > mh {
+    rows = mh - y
+  }
+  // The damage's clip (T10.1), the parity the word pairs' own.
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  x0 = x0 + (x0 & 1)
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var sr = (r - y) / s
+    var c = x0
+    while c + 2 <= x1 {
+      sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+      c = c + 2
+    }
+    if c < x1 {
+      var p = peek32(base + ((sr * w) + ((c - x) / s)) * 4)
+      poke32(koff + screen_base + ((r * mw) + c) * 4, p)
+      sum = sum + p
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The scaled blit's masked shape (EmoOS T10.4): the mask's geometry at
+// the carried size — the corner zones pixel by pixel, the coverage of
+// the scaled rect's own arcs, the radius the walk's design constant at
+// screen scale — and the straight spans the pairs of the scaled blit.
+def comp_corner_pixel_scaled(base Int64, w Int64, s Int64, sw Int64,
+                             sh Int64, x Int64, y Int64, cxy Int64) Int64 {
+  const cx = cxy >> 32
+  const cy = cxy & 4294967295
+  const rad = comp_radius_in(comp_win_radius, sw, sh)
+  const c = comp_fill_cover(comp_shape_sd(x + cx, y + cy, x, y, sw, sh, rad))
+  if c <= 0 {
+    return 0
+  }
+  var mw = peek64(comp_mode_w)
+  var v = peek32(base + (((cy / s) * w) + (cx / s)) * 4)
+  var at = koff + screen_base + (((y + cy) * mw) + x + cx) * 4
+  if c >= 255 {
+    poke32(at, v)
+    return v
+  }
+  // the window's word carries its own top byte — the client's to keep
+  // — so the coverage replaces it, never ORs it
+  var nv = comp_over((c << 24) | (v & 0xFFFFFF), peek32(at))
+  poke32(at, nv)
+  return nv
+}
+
+def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
+                            x Int64, y Int64) Int64 {
+  var sum = 0
+  var sw = w * s
+  var sh = h * s
+  var rad = comp_radius_in(comp_win_radius, sw, sh)
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = sw
+  if (x + sw) > mw {
+    cols = mw - x
+  }
+  var rows = sh
+  if (y + sh) > mh {
+    rows = mh - y
+  }
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  x0 = x0 + (x0 & 1)
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var roff = r - y
+    var sr = roff / s
+    if rad * 2 > sw || rad * 2 > sh || rad == 0 {
+      var c = x0 - x
+      while c < x1 - x {
+        sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+          (c << 32) | roff)
+        c = c + 1
+      }
+    } else {
+      if roff < rad || roff >= sh - rad {
+        var c = x0 - x
+        while c < rad && c < x1 - x {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (c << 32) | roff)
+          c = c + 1
+        }
+        // the middle span [rad, sw - rad) clipped to the mode's cols
+        // and the damage's box, pairs of the scaled blit — the shape is
+        // whole there, every pixel half a pixel inside a straight edge
+        var ms = sw - rad
+        if ms > cols {
+          ms = cols
+        }
+        if ms > x1 - x {
+          ms = x1 - x
+        }
+        var cs = rad
+        if cs < x0 - x {
+          cs = x0 - x
+        }
+        cs = cs + (cs & 1)
+        var mc = cs
+        while mc + 2 <= ms {
+          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, x + mc)
+          mc = mc + 2
+        }
+        var tail = mc
+        while tail < ms {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (tail << 32) | roff)
+          tail = tail + 1
+        }
+        c = sw - rad
+        if c < 0 {
+          c = 0
+        }
+        if c < x0 - x {
+          c = x0 - x
+        }
+        while c < x1 - x {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            (c << 32) | roff)
+          c = c + 1
+        }
+      } else {
+        var c = x0
+        while c + 2 <= x1 {
+          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+          c = c + 2
+        }
+        if c < x1 {
+          sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
+            ((c - x) << 32) | roff)
+        }
+      }
+    }
+    r = r + 1
+  }
+  return sum
+}
+
 // The walk's blit of one toplevel (T9.2): the shadow beneath it and
 // the masked blit over the shadow — a surface that covers the mode is
 // the screen's own and wears neither (the machine's fullscreen pass,
 // the wallpaper beside it). The row the grant names, the ready flag
-// the walk's gate.
+// the walk's gate; the row's scale the sizes the walk carries (T10.4).
 def comp_toplevel_entry(entry Int64, x Int64, y Int64) Int64 {
   var row = grant_row_of(peek64(entry))
   if peek64(row + 56) != 0 {
     var base = peek64(row + 16)
     var w = peek64(row + 32)
     var h = peek64(row + 40)
+    var s = comp_scale_of(row)
     var mw = peek64(comp_mode_w)
     var mh = peek64(comp_mode_h)
-    if x == 0 && y == 0 && w >= mw && h >= mh {
-      return comp_blit(base, w, h, x, y)
+    if x == 0 && y == 0 && (w * s) >= mw && (h * s) >= mh {
+      if s == 1 {
+        return comp_blit(base, w, h, x, y)
+      }
+      return comp_blit_scaled(base, w, h, s, x, y)
     }
-    var sum = comp_toplevel_shadow(w, h, x, y)
-    return sum + comp_blit_masked(base, w, h, x, y)
+    var sum = comp_toplevel_shadow(w * s, h * s, x, y)
+    if s == 1 {
+      return sum + comp_blit_masked(base, w, h, x, y)
+    }
+    return sum + comp_blit_scaled_masked(base, w, h, s, x, y)
   }
   return 0
 }
@@ -3081,11 +3358,14 @@ def comp_reclaim(pid Int64) Void {
   if said != 0 {
     // the reclaimed rows' kick (emo-desktop A11.2): a read the focus
     // held may now be entitled — the dead owner's windows died with
-    // it, and the input service's judgment waits for the news
+    // it, and the input service's judgment waits for the news — the
+    // device wake beside it (emo-desktop A16.3), the serve-parked
+    // reader the mailbox word alone never reaches
     var isvc = peek64(input_svc_cell)
     if isvc != 0 {
       gate_post(isvc, 13 << 32)
     }
+    device_wake()
     println("comp reclaim ${pid}")
   }
 }
@@ -3131,7 +3411,62 @@ def comp_clear() Void {
 def comp_paint_record(entry Int64, x Int64, y Int64) Void {
   var row = grant_row_of(peek64(entry))
   poke64(comp_paint_xy_at(entry), (x << 32) | y)
-  poke64(comp_paint_wh_at(entry), (peek64(row + 32) << 32) | peek64(row + 40))
+  poke64(comp_paint_wh_at(entry), comp_surface_wh(row))
+}
+
+// The popups of one toplevel off the stack (emo-desktop A16.2, EmoOS
+// T10.2): the fold that follows a focus's move — a menu left open when
+// its window loses the focus would hang on the screen with no reader
+// left to dismiss it, so the losing window's parent-relative surfaces
+// leave before the new focus is served. The pixels they leave behind
+// the next composition repaints; the grants stay the closer's (the
+// stack's removal is the walk's, never the row's).
+def comp_popups_fold(parent Int64) Void {
+  var i = 0
+  while i < peek64(comp_top_cell) {
+    var entry = comp_stack + (i * comp_entry)
+    var role = peek64(entry + 24)
+    if (role == role_popup || role == role_subsurface) &&
+       peek64(entry + 32) == parent {
+      var pw = peek64(comp_paint_wh_at(entry)) >> 32
+      if pw != 0 {
+        var pb = peek64(comp_paint_xy_at(entry))
+        var pwh = peek64(comp_paint_wh_at(entry))
+        comp_dmg_mark(pb >> 32, pb & 4294967295, pw, pwh & 4294967295)
+      }
+      comp_stack_remove(entry)
+    } else {
+      i = i + 1
+    }
+  }
+}
+
+// The raise's z-order pixels (T10.1's rule, the press's own raise
+// beside op 15's): the entries seated from the raised one up trade
+// places in the walk's order, their painted rects the damage — an
+// already-topmost entry is the quiet case, nothing moves, nothing is
+// marked.
+def comp_raise_mark(entry Int64) Void {
+  var midx = (entry - comp_stack) / comp_entry
+  var mlast = 0 - 1
+  var mi = peek64(comp_top_cell) - 1
+  while mi >= 0 {
+    if peek64(comp_stack + (mi * comp_entry) + 24) == role_toplevel {
+      mlast = mi
+      break
+    }
+    mi = mi - 1
+  }
+  if midx != mlast {
+    var mj = midx
+    while mj < peek64(comp_top_cell) {
+      var me2 = comp_stack + (mj * comp_entry)
+      var mb = peek64(comp_paint_xy_at(me2))
+      var mw2 = peek64(comp_paint_wh_at(me2))
+      comp_dmg_mark(mb >> 32, mb & 4294967295, mw2 >> 32, mw2 & 4294967295)
+      mj = mj + 1
+    }
+  }
 }
 
 def comp_compose(gpu Pid, me Pid) Int64 {
@@ -3198,6 +3533,13 @@ def comp_compose(gpu Pid, me Pid) Int64 {
   while i < top {
     var entry = comp_stack + (i * comp_entry)
     if peek64(entry + 24) != role_toplevel {
+      i = i + 1
+      continue
+    }
+    // the minimized toplevel paints nothing and its children ride its
+    // iteration, so a hidden window's whole tree is the one skip
+    // (emo-desktop A16.3, EmoOS T10.3)
+    if peek64(comp_hidden_at(entry)) != 0 {
       i = i + 1
       continue
     }
@@ -3386,6 +3728,7 @@ def comp_await_flush() Void {
 def comp_press_raise() Void {
   var hx = (peek64(pointer_x_cell) * peek64(comp_mode_w)) / (peek64(pointer_max_x_cell) + 1)
   var hy = (peek64(pointer_y_cell) * peek64(comp_mode_h)) / (peek64(pointer_max_y_cell) + 1)
+  var was = peek64(comp_focus_cell)
   var hit = 0
   var i = peek64(comp_top_cell)
   while i > 0 && hit == 0 {
@@ -3393,15 +3736,22 @@ def comp_press_raise() Void {
     var entry = comp_stack + (i * comp_entry)
     var role = peek64(entry + 24)
     if role == role_toplevel || role == role_panel {
-      var row = grant_row_of(peek64(entry))
-      if row != 0 {
-        var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
-        var ax = both >> 32
-        var ay = both & 4294967295
-        if hx >= ax && hx < ax + peek64(row + 32) && hy >= ay && hy < ay + peek64(row + 40) {
-          poke64(comp_focus_cell, peek64(entry))
-          comp_stack_raise(entry)
-          hit = 1
+      // a hidden toplevel is no one's to click (emo-desktop A16.3):
+      // the walk does not show it, and a press that landed where the
+      // desktop shows wallpaper is the wallpaper's
+      if peek64(comp_hidden_at(entry)) == 0 {
+        var row = grant_row_of(peek64(entry))
+        if row != 0 {
+          var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
+          var ax = both >> 32
+          var ay = both & 4294967295
+          var wh = comp_surface_wh(row)
+          if hx >= ax && hx < ax + (wh >> 32) && hy >= ay && hy < ay + (wh & 4294967295) {
+            poke64(comp_focus_cell, peek64(entry))
+            comp_raise_mark(entry)
+            comp_stack_raise(entry)
+            hit = 1
+          }
         }
       }
     }
@@ -3423,6 +3773,20 @@ def comp_press_raise() Void {
       }
     }
   }
+  // The focus that moved (emo-desktop A16.2): the losing window's
+  // popups fold — the menu a click away from its window has no reader
+  // left to dismiss it — and the held reads are judged by the news,
+  // the kick op 15's own.
+  if peek64(comp_focus_cell) != was {
+    if was != 0 {
+      comp_popups_fold(was)
+    }
+    var isvc = peek64(input_svc_cell)
+    if isvc != 0 {
+      gate_post(isvc, 13 << 32)
+    }
+    device_wake()
+  }
 }
 
 def comp_cursor_place(gpu Pid, me Pid) Void {
@@ -3435,6 +3799,17 @@ def comp_cursor_place(gpu Pid, me Pid) Void {
   if peek64(pointer_press_cell) != 0 {
     comp_press_raise()
     poke64(pointer_press_cell, 0)
+    // the press's own composition (emo-desktop A16.2, EmoOS T10.2):
+    // the raise, the fold and the hidden skip the press decided leave
+    // pixels behind that no client's present may come to repair — the
+    // box the press made is composed here, before the sprite's move.
+    // A press that changed nothing leaves the box empty and this the
+    // cheap early-out; the stashed presents the flush held re-mark
+    // their own rects, so an early walk of their damage is repaired
+    // again at their own turn.
+    if peek64(comp_dmg_w) != 0 {
+      comp_compose(gpu, me)
+    }
   }
   poke64(pointer_notice_cell, 0)
   poke64(comp_cursor_gen, peek64(pointer_gen_cell))
@@ -3514,31 +3889,19 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
       if peek64(entry + 24) == role_wallpaper {
         gate_reply(caller_of(w), -4)
       } else {
+        // The focus that moved (emo-desktop A16.2): the losing window's
+        // popups fold — a menu whose window no longer holds the focus
+        // has no reader left to dismiss it.
+        var was = peek64(comp_focus_cell)
         poke64(comp_focus_cell, grant)
+        if was != grant && was != 0 {
+          comp_popups_fold(was)
+        }
         // The raise's z-order change (T10.1): the raised surface's
         // painted rect and every surface seated above it trade places
         // — already the topmost toplevel, nothing moves and nothing
         // is marked, the desktop's own focus beats the quiet case.
-        var midx = (entry - comp_stack) / comp_entry
-        var mlast = 0 - 1
-        var mi = peek64(comp_top_cell) - 1
-        while mi >= 0 {
-          if peek64(comp_stack + (mi * comp_entry) + 24) == role_toplevel {
-            mlast = mi
-            break
-          }
-          mi = mi - 1
-        }
-        if midx != mlast {
-          var mj = midx
-          while mj < peek64(comp_top_cell) {
-            var me2 = comp_stack + (mj * comp_entry)
-            var mb = peek64(comp_paint_xy_at(me2))
-            var mw2 = peek64(comp_paint_wh_at(me2))
-            comp_dmg_mark(mb >> 32, mb & 4294967295, mw2 >> 32, mw2 & 4294967295)
-            mj = mj + 1
-          }
-        }
+        comp_raise_mark(entry)
         comp_stack_raise(entry)
         var isvc = peek64(input_svc_cell)
         if isvc != 0 {
@@ -3560,8 +3923,9 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         gate_reply(caller_of(w), -4)
       } else {
         var row = grant_row_of(grant)
-        var ww = peek64(row + 32)
-        var hh = peek64(row + 40)
+        var wh = comp_surface_wh(row)
+        var ww = wh >> 32
+        var hh = wh & 4294967295
         // A parent-relative surface's move names its offset from the
         // parent (T8.15): the bounds the absolute position answers to,
         // the parity the word blit's own (the parent's is even, so the
@@ -3726,11 +4090,154 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                 poke64(comp_cb_count, n + 1)
               }
             } else {
-              if op == pointer_op {
-                comp_cursor_place(gpu, me)
+              if op == 22 {
+                // The minimize (emo-desktop A16.3, EmoOS T10.3): the
+                // toplevel off the walk's eye — its painted rect the
+                // damage, the hidden word set, the entry kept (the
+                // position and the grant are the restore's own memory).
+                // The focus the window held falls to the topmost
+                // visible toplevel beside it, or to the wallpaper the
+                // way a background press does, and the held reads are
+                // judged by the news. The composed reply: the window's
+                // disappearance is on the display before the answer,
+                // the frame-lands-whole discipline op 17 replies by.
+                var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                var grant = peek64(seat)
+                poke64(seat, 0)
+                comp_stack_prune()
+                var entry = comp_stack_find(grant)
+                if entry == 0 || peek64(entry + 24) != role_toplevel {
+                  gate_reply(caller_of(w), -4)
+                } else {
+                  if peek64(comp_hidden_at(entry)) != 0 {
+                    gate_reply(caller_of(w), -4)
+                  } else {
+                    var pb = peek64(comp_paint_xy_at(entry))
+                    var pwh = peek64(comp_paint_wh_at(entry))
+                    comp_dmg_mark(pb >> 32, pb & 4294967295,
+                      pwh >> 32, pwh & 4294967295)
+                    poke64(comp_hidden_at(entry), 1)
+                    comp_popups_fold(grant)
+                    if peek64(comp_focus_cell) == grant {
+                      var ni = peek64(comp_top_cell)
+                      var next = 0
+                      while ni > 0 && next == 0 {
+                        ni = ni - 1
+                        var ne = comp_stack + (ni * comp_entry)
+                        if peek64(ne + 24) == role_toplevel &&
+                           peek64(ne) != grant &&
+                           peek64(comp_hidden_at(ne)) == 0 {
+                          var nrow = grant_row_of(peek64(ne))
+                          if nrow != 0 {
+                            next = peek64(ne)
+                          }
+                        }
+                      }
+                      if next != 0 {
+                        poke64(comp_focus_cell, next)
+                      } else {
+                        var wg = peek64(comp_wallpaper_cell)
+                        if wg != 0 {
+                          var wrow = grant_row_of(wg)
+                          if wrow != 0 {
+                            poke64(comp_focus_cell, wg)
+                          }
+                        }
+                      }
+                      var isvc = peek64(input_svc_cell)
+                      if isvc != 0 {
+                        gate_post(isvc, 13 << 32)
+                      }
+                      device_wake()
+                    }
+                    var sum = comp_compose(gpu, me)
+                    println("comp ${pb >> 32} ${pb & 4294967295} ${sum & 4294967295}")
+                    gate_reply(caller_of(w), 0)
+                    comp_cb_reply()
+                  }
+                }
               } else {
-                println("comp: the verb is nobody's")
-                halt()
+                if op == 23 {
+                  // The desktop's open (emo-desktop A16.3, EmoOS
+                  // T10.3): the dock tile's word for a live app — the
+                  // window of that pid's raised to the top and named
+                  // the focused one, the hidden one unhidden first, its
+                  // painted rect the damage the composition repaints.
+                  // The authority is the desktop's own: the caller must
+                  // own a panel — the shell's strip is the one layer
+                  // above the windows — and an app calling it is the
+                  // permission refusal. No window of that pid: the
+                  // argument refusal the shell answers with its running
+                  // line.
+                  var dseat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                  var pid = peek64(dseat)
+                  poke64(dseat, 0)
+                  var ai = 0
+                  var ok = 0
+                  while ai < peek64(comp_top_cell) && ok == 0 {
+                    var ae = comp_stack + (ai * comp_entry)
+                    if peek64(ae + 24) == role_panel {
+                      var arow = grant_row_of(peek64(ae))
+                      if arow != 0 && peek64(arow + 8) == caller_of(w) {
+                        ok = 1
+                      }
+                    }
+                    ai = ai + 1
+                  }
+                  if ok == 0 {
+                    gate_reply(caller_of(w), -3)
+                  } else {
+                    var fi = peek64(comp_top_cell)
+                    var fentry = 0
+                    while fi > 0 && fentry == 0 {
+                      fi = fi - 1
+                      var fe = comp_stack + (fi * comp_entry)
+                      if peek64(fe + 24) == role_toplevel {
+                        var frow = grant_row_of(peek64(fe))
+                        if frow != 0 && peek64(frow + 8) == pid {
+                          fentry = fe
+                        }
+                      }
+                    }
+                    if fentry == 0 {
+                      gate_reply(caller_of(w), -4)
+                    } else {
+                      var grant = peek64(fentry)
+                      var was = peek64(comp_focus_cell)
+                      var both = comp_abs_pos(fentry, peek64(fentry + 8),
+                        peek64(fentry + 16))
+                      if peek64(comp_hidden_at(fentry)) != 0 {
+                        poke64(comp_hidden_at(fentry), 0)
+                        var pb = peek64(comp_paint_xy_at(fentry))
+                        var pwh = peek64(comp_paint_wh_at(fentry))
+                        comp_dmg_mark(pb >> 32, pb & 4294967295,
+                          pwh >> 32, pwh & 4294967295)
+                      }
+                      if was != grant && was != 0 {
+                        comp_popups_fold(was)
+                      }
+                      poke64(comp_focus_cell, grant)
+                      comp_raise_mark(fentry)
+                      comp_stack_raise(fentry)
+                      var isvc = peek64(input_svc_cell)
+                      if isvc != 0 {
+                        gate_post(isvc, 13 << 32)
+                      }
+                      device_wake()
+                      var sum = comp_compose(gpu, me)
+                      println("comp ${both >> 32} ${both & 4294967295} ${sum & 4294967295}")
+                      gate_reply(caller_of(w), 0)
+                      comp_cb_reply()
+                    }
+                  }
+                } else {
+                  if op == pointer_op {
+                    comp_cursor_place(gpu, me)
+                  } else {
+                    println("comp: the verb is nobody's")
+                    halt()
+                  }
+                }
               }
             }
           }

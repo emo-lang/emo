@@ -1199,9 +1199,24 @@ def scale_ok_line() Void {
   p = byte_at(p, 97) // a
   p = byte_at(p, 108) // l
   p = byte_at(p, 101) // e
-  p = byte_at(p, 32) //  
+  p = byte_at(p, 32) //
   p = byte_at(p, 49) // 1
-  p = byte_at(p, 32) //  
+  p = byte_at(p, 32) //
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def scale_two_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //
+  p = byte_at(p, 50) // 2
+  p = byte_at(p, 32) //
   p = byte_at(p, 111) // o
   p = byte_at(p, 107) // k
   p = byte_at(p, 10)
@@ -1214,9 +1229,9 @@ def scale_no_line() Void {
   p = byte_at(p, 97) // a
   p = byte_at(p, 108) // l
   p = byte_at(p, 101) // e
-  p = byte_at(p, 32) //  
-  p = byte_at(p, 50) // 2
-  p = byte_at(p, 32) //  
+  p = byte_at(p, 32) //
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 32) //
   p = byte_at(p, 114) // r
   p = byte_at(p, 52) // 4
   p = byte_at(p, 10)
@@ -1548,11 +1563,15 @@ if peek64(win_cell) != 0 {
       sp = num_at(buffer_sum(win_base(ans), 128, 256) & 4294967295, sp)
       sp = byte_at(sp, 10)
       gate_line(sp)
-      // The negotiation's fields (emo-desktop A9.3, EmoOS T8.15): the
-      // buffer's format and scale are words on the row, named by the
-      // client and recorded by the gate — XRGB8888 (0) and scale 1 the
-      // first accepted values, the rest refused by their number — and
-      // the protocol's version the one word the gate answers itself.
+      // The negotiation's fields (emo-desktop A9.3, EmoOS T8.15; the
+      // scale's growth A16.4): the buffer's format and scale are words
+      // on the row, named by the client and recorded by the gate —
+      // XRGB8888 (0) the first format, scale 1 the first scale, a
+      // whole number past one the walk's own multiple now, and below
+      // one the argument refusal — and the protocol's version the one
+      // word the gate answers itself. The two's answer is the proof
+      // the values grew; the row is left at 1 again, the pass's own
+      // geometry the one the walk carried before it.
       case syscall.win_format(id, 0) {
         (R.error, _) -> { mark() }
         (R.ok, _) -> { fmt_ok_line() }
@@ -1566,8 +1585,16 @@ if peek64(win_cell) != 0 {
         (R.ok, _) -> { scale_ok_line() }
       }
       case syscall.win_scale(id, 2) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> { scale_two_line() }
+      }
+      case syscall.win_scale(id, 0) {
         (R.error, _) -> { scale_no_line() }
         (R.ok, _) -> { mark() }
+      }
+      case syscall.win_scale(id, 1) {
+        (R.error, _) -> { mark() }
+        (R.ok, _) -> {}
       }
       case syscall.desktop_version() {
         (R.error, _) -> { mark() }
@@ -2648,16 +2675,23 @@ def desk_dock(labels Array[String]) Void {
     mode >> 32, mode & 4294967295, labels, -1, desk_running_mask())
 }
 
-// The launcher's one launch (emo-desktop A12.1): the slot's exec by
-// its own row — the pid lands in the slot, the dock repaints with the
-// tile's dot lit, `desktop <name> up` on the wire. A live slot
-// refuses (`desktop <name> running` — the tiles name apps, not
-// instances), and an exec the machine refuses speaks the stub's
-// message, `desktop: <the reason>`.
+// The launcher's one launch (emo-desktop A12.1; the live tile's open
+// A16.3): the slot's exec by its own row — the pid lands in the slot,
+// the dock repaints with the tile's dot lit, `desktop <name> up` on
+// the wire. A live slot's tile is the app's own open now: the window
+// raised to the top and named the focused one, the minimized one
+// unhidden — the desktop's verb, the panel its authority. A pid whose
+// window is not on the stack yet (the exec still loading) is the
+// running line the tiles have always answered (`desktop <name>
+// running` — the tiles name apps, not instances), and an exec the
+// machine refuses speaks the stub's message, `desktop: <the reason>`.
 def desk_launch(slot Int64, labels Array[String]) Void {
   var name = buf + desk_names + (slot * 12)
   if peek64(buf + desk_pids + (slot * 8)) != 0 {
-    desk_running_line(name, desk_nlen(slot))
+    case syscall.win_desk_open(peek64(buf + desk_pids + (slot * 8))) {
+      (R.error, _) -> { desk_running_line(name, desk_nlen(slot)) }
+      (R.ok, _) -> {}
+    }
   } else {
     case syscall.exec(name, desk_flen(slot)) {
       (R.error, why) -> { shell.desk_err(why) }

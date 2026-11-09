@@ -335,6 +335,78 @@ landed 2026-11-08 (M15 complete):**
   record and the launch-era dock/header sums the scheduler's own.
   Landed 2026-11-08; the record is the dated section below.
 
+**emo-desktop — [M16, the window's own menu](projects/emo-desktop/docs/TASKS.md),
+landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
+
+- [x] **A16.1–A16.4** (D13) — the bar's one round button and the
+  dropdown it opens (Maximize, Minimize, Quit), the menu once in the
+  seat the three apps share; the press-at wire (EmoOS T10.2), the
+  minimize's hidden entry with the dock tile's way back and the popup
+  fold at every focus move (T10.3), the maximize the scale seam's own
+  whole multiple with the scaled walk (T10.4). Landed 2026-11-08; the
+  record is the dated section below.
+
+## 2026-11-08 — The window's own menu (emo-desktop M16, EmoOS T10.2–T10.4)
+
+- **The bar's chrome becomes live.** The three traffic lights the
+  A14.5 title bar painted were decoration — hit-tested by no one, the
+  bar's press "no one's" in the shell. M16 gives the bar one round
+  button and the dropdown it opens: Maximize, Minimize, Quit. The
+  architecture the constraints picked: the gate's owner checks make a
+  window's grant the only legal caller of its own verbs, so the menu
+  lives once in the seat the three apps share (`fb/winbuf`), not in
+  the shell; the popup rides the roles' own vocabulary (role 1,
+  `win_parent`); the pointer's position reaches the app as the
+  **press-at** (T10.2) — a second ring word behind every left-button
+  press, the position the axes last named packed raw — because
+  pointer-move fanout would race the panel's exemption. Menu language:
+  English (the system's face is ASCII; a Chinese menu is six new
+  16×16 glyphs — decidable later, the pipeline ready).
+- **The kernel's half.** T10.2: the press-at, the press's own
+  composition (the raise's marks now `comp_raise_mark`, shared with
+  op 15), and the **fold** — a window that loses the focus loses its
+  popups with it. T10.3: the hidden word beside the painted records,
+  `win_minimize` (verb 25) and `win_desk_open(pid)` (verb 26, the
+  panel the authority — the desktop names its apps by pid), the walk
+  skipping a hidden toplevel's whole tree. T10.4: `win_scale` accepts
+  the whole numbers — the recorded seam's values grown, the scaled
+  blit's word pairs doubling or gathering across a straddle, the
+  mask's arcs at the carried size; the win pass's strictness beat
+  flips (`scale 2 ok`, `scale 0 r4`).
+- **The finds.** (1) The desk_open's comp line read the entry's
+  position after the raise — the raised-from slot's stale words (the
+  dock's own coordinates printed in its place); captured before the
+  raise now. (2) `comp_stack_add` never cleared a reused slot's
+  hidden word — a shifted-down minimized entry's flag could ride a
+  new surface's slot; cleared. (3) The seat's `next` rewrite had the
+  quit sentinel inside the loop's own `done < 0` condition — the
+  session parked on the stream forever, the whole machine healthy
+  around it; five instrumented rounds to see what the structure said
+  at first glance. (4) **The exit event waits for the machine's next
+  input event when the desktop goes fully silent**: the sink's last
+  present ends, the close and the exit land, the exit ring holds the
+  news and the shell's reader sits served-parked on the empty stream
+  with its hold seat cleared — the ring's `exit_event_for_held` finds
+  no seat named, and the event delivers only when the next event
+  wakes the serve (its own reader's `exit_event_take` on the resumed
+  pass). Every pre-A16 beat's motion masked it; the menu-quit's quiet
+  beat exposed it, five more rounds to pin down, and the golden's
+  beat texture now does what a user's hand does — the pointer back to
+  its park after the click. Found, understood, left as the design's
+  shape: the delivery is correct on any following event, and a
+  silent machine has no lines to print anyway.
+- **The golden.** The menu's open, the maximize (×5, the work area's
+  whole width), the restore's menu at the carried seat, the restore,
+  the minimize's compose, the desktop open's, the menu-quit's session
+  end — every comp line pinned with its sum, deterministic across
+  rounds; the clicks named through the device axes' inverse. The
+  pins: the fb gate green (151), `run.sh` green under both timer
+  transports — four rounds green, three byte-identical on both (the
+  fourth's only variance the launch-era prompt-vs-rise interleave
+  A15.2 recorded), the full `dune runtest` green, `@fmt` green. The
+  scratch instruments (the debug heartbeats, the throwaway locks) are
+  not committed; the numbers are the record's.
+
 ## 2026-11-08 — The composition's cost, measured (emo-desktop M15 opened, A15.1)
 
 - **The number D9's milestone rides.** A14.1 measured what an app

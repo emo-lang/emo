@@ -1125,3 +1125,97 @@ The decisions (2026-11-08):
   at the unpinned launch-era pair), the full `dune runtest` green,
   `@fmt` green, the fb gate green (the winbuf's five consumer locks
   regenerated). Decision record: CHECK.md, 2026-11-08. M15 complete.
+
+## M16 — the window's own menu (opened 2026-11-08)
+
+The bar the A14.5 shared title bar painted wore three traffic lights
+painted by no one's hand and hit-tested by no one's code — decoration.
+The milestone makes the bar's chrome live: one round button, and the
+dropdown it opens — Maximize, Minimize, Quit — the window manager's
+verbs the app's own grant may call, on a wire the protocol grew for
+exactly this. The kernel's half is [EmoOS Step 10](../../emo-os/docs/TASKS.md)
+(T10.2 the press-at, T10.3 the minimize and the desktop's open, T10.4
+the scale's values). The reasoning is CHECK.md's (2026-11-08).
+
+The decisions (2026-11-08):
+
+- [x] **D13** — The menu belongs to the app, once, in the seat: the
+  gate's owner checks make the window's grant the only legal caller of
+  its own verbs, so a shell-side menu could raise the verbs it named
+  but never call them; the seat the three apps share writes the menu
+  once and every window wears it. The button lives at the bar's left
+  where the lights were; the menu's words are English (the system's
+  own face is ASCII — a Chinese menu is six new 16×16 glyphs and the
+  font pipeline's regen, decidable later); Maximize is the scale
+  seam's own growth (the largest whole multiple the work area holds,
+  the move beside it — never a stretch, never a fake), Minimize is the
+  kernel's hidden entry with the dock tile for the way back, and Quit
+  is the session's own end the `q` byte already spoke.
+
+- [x] **A16.1** — The one-button bar — **complete 2026-11-08**. The
+  three lights' colors and their loop retire from `paint_bar`; one
+  round button takes the bar's left, the bar's own ink (dark when the
+  window holds the focus, quiet gray when it does not), and the
+  button's rectangle is four defs the paint and the seat's hit test
+  read together — one place, no drift. The shapes' card keeps its own
+  three circles (the primitives' card follows nothing).
+
+- [x] **A16.2** — The menu, the press-at, the seat — **complete
+  2026-11-08**. The pointer driver pushes a second word behind every
+  left-button press: the **press-at** (type 4, the position the axes
+  last named, packed raw), served to the focused window's reader by
+  the focus's own verdict — no pointer-move fanout, no race with the
+  panel's exemption. The seat grows the menu: a popup surface hung
+  from the window by the roles' own binding (role 1, `win_parent`),
+  moved to the button's side, the paper and hairline and three items
+  inked, the commit raw (no frame line — the menu's frames are the
+  compositor's comp lines). An item's press acts; the menu's pads and
+  the world outside dismiss; the kernel folds a losing window's
+  popups at every focus move (a menu whose reader's attention moved
+  has no one left to dismiss it). The seat's mutable state rides the
+  image's writable segment as cells (a class's fields are its init's
+  alone) — the discipline the boot image's shell has kept since A12.
+  The apps change one constructor call; no app writes a line of menu.
+
+- [x] **A16.3** — Minimize, and the dock tile's way back — **complete
+  2026-11-08**. The minimize hides the toplevel: the compositor's
+  hidden word rides the stack beside the painted records, the walk
+  skips the entry and everything hanging from it, the press's raise
+  never hits what it cannot show, the entry stays (the position and
+  the grant are the restore's own memory), the focus falls to the
+  window beside it, and the composition the minimize's own reply
+  carries lands the disappearance whole before the answer. The dock
+  tile's click on a live app is the desktop's open now (`win_desk_open`,
+  by pid, the panel the authority): the window raised, focused, the
+  hidden one unhidden first — the `desktop <name> running` line stays
+  the answer only for a pid whose window is not on the stack yet.
+
+- [x] **A16.4** — Maximize, the scale's own multiple — **complete
+  2026-11-08**. `win_scale` accepts the whole numbers (the seam's
+  recorded shape, its values grown): the walk carries the buffer at
+  the multiple, nearest neighbor, the scaled blit's word pairs never
+  straddling a source pixel at even scales and gathered one-for-one
+  across the boundary at odd ones, the mask's arcs at the carried
+  size, the radius the walk's own design constant at screen scale.
+  The seat computes the multiple from the work area (the mode over
+  the header's and the dock's strips), pairs the scale with the move
+  to its center (the even x the blit's word pairs keep), and the pair
+  again restores — the repaint riding the present the pair ends on.
+  The proof chain's strictness flips with the wire: scale 2 answers
+  ok now, scale 0 is the refusal.
+
+**The golden**: the menu's open, the maximize, the restore's menu at
+the carried seat, the restore, the minimize's compose, the desktop
+open's, and the menu-quit's session end — every comp line pinned with
+its sum, identical across the timer transports; the click coordinates
+the device's own 0..32767 axes named through the inverse of the
+guest's scaling. **The finds** (CHECK.md, 2026-11-08): the exit
+event's delivery waits for the machine's next input event when the
+desktop goes silent — the golden's beat texture (the pointer back to
+its park after every click) provides one, as every pre-A16 beat's
+motion did; the desk_open's position print read the raised entry's
+stale slot; `comp_stack_add` never cleared a reused slot's hidden
+word. The pins: the fb gate green (151), `run.sh` green under both
+timer transports three consecutive rounds byte-identical on both, the
+full `dune runtest` green, `@fmt` green. Decision record: CHECK.md,
+2026-11-08. M16 complete.
