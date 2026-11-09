@@ -859,3 +859,14 @@ completion.
   the twenty-four bytes the map leaves between the exit ring's tail
   and the allocator's page, and the map's comment keeps the
   neighborhood honest for the next address the kernel needs.
+
+- [x] **T10.6** — The stash's interactive depth — **complete
+  2026-11-09** (A16.5's first hand-driven session). The press's own
+  composition (T10.2) walks and flushes inside the notice handler,
+  and a real hand's clicks stretch that flush across whole-mode
+  repairs — a client era landing its presents inside one overran the
+  stash T8.6 set four deep, and the loud end froze the machine at the
+  client era. Twelve deep now, the cells moved past the hidden words
+  (+3264..+3359; the first cut of the twelve ran +440..+536 and would
+  have written the frame callbacks' parks over). Two fresh golden
+  rounds green, the sums unchanged.

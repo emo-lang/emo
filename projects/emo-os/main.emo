@@ -3353,15 +3353,25 @@ def comp_cb_reply() Void {
 
 // The composition's stash (T8.6): the requests that arrive while the
 // display service's flush is in flight, served after it — the fs's
-// stash discipline; four deep, more is a kernel bug (nobody's era
-// holds four window presents inside one flush). Past the cursor
-// plane's cells since the stack's entries grew (T8.13).
+// stash discipline; four deep in T8.6's shape ("nobody's era holds
+// four window presents inside one flush"), twelve deep now
+// (emo-desktop A16.5's interactive presses): the press's own
+// composition (T10.2) walks and flushes inside the notice handler,
+// and a real hand's clicks stretch that flush across whole-mode
+// repairs — a client era landing its presents inside one now reaches
+// the fourth seat and the old bound was the loud end. The cells run
+// to +536, the dead owners' first seat at +600 keeps its distance.
 const comp_stash_count = comp_page + 432
-const comp_stash_cells = comp_page + 440
+// The cells sit past the hidden words (+3192..+3255), twelve seats to
+// +3359 — the frame callbacks' cells at +480 keep their distance (the
+// first cut of the twelve ran +440..+536 and would have written the
+// parks' pids over, the map's own lesson twice in one day).
+const comp_stash_cells = comp_page + 3264
+const comp_stash_depth = 12
 
 def comp_stash_push(w Int64) Void {
   var n = peek64(comp_stash_count)
-  if n >= 4 {
+  if n >= comp_stash_depth {
     println("comp: the stash is full")
     halt()
   }

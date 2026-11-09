@@ -395,7 +395,19 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   beat texture now does what a user's hand does — the pointer back to
   its park after the click. Found, understood, left as the design's
   shape: the delivery is correct on any following event, and a
-  silent machine has no lines to print anyway.
+  silent machine has no lines to print anyway. (5) **The interactive
+  halt** (2026-11-09, A16.5's first hand-driven session): the ride's
+  machine froze at the client era with a real hand clicking the cocoa
+  window — the press's own composition (T10.2) walks and flushes
+  inside the notice handler, a whole-mode repair stretching that
+  flush to hundreds of milliseconds, and the client era landing its
+  presents inside one overran the stash T8.6 set four deep ("nobody's
+  era holds four window presents inside one flush" — the interactive
+  hand is somebody's). The stash is twelve deep now, its cells moved
+  past the hidden words to +3264 (the first cut of the twelve ran
+  +440..+536 and would have written the frame callbacks' pids over —
+  the address-overlap lesson's third bite in two days); two fresh
+  golden rounds green, the sums unchanged.
 - **The golden.** The menu's open, the maximize (×5, the work area's
   whole width), the restore's menu at the carried seat, the restore,
   the minimize's compose, the desktop open's, the menu-quit's session
