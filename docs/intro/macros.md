@@ -47,6 +47,10 @@ The worked example is [`examples/derive_eq_demo`](../../examples/derive_eq_demo/
 
 A macro body is self-contained: it names only its parameters, the `Syntax` namespace, and the builtins. The compiler checks the macro domain before any macro body runs — the `#macro` defs and the applications' compile-time arguments — and checks the whole module after expansion, which is where a call site naming a method the derivation does not produce fails.
 
+## Cross-module macros
+
+A macro module is an ordinary module whose `#macro` defs have no runtime presence: the application resolves through the program's macro table, and the spelling is qualified, the same path shape a value reference takes — `// @eq_macros.derive_eq` in one module applies the macro declared in the sibling `eq_macros.emo`. A bare `@macro` resolves in the declaring module only, and a same-name local macro shadows the outside one. The compile-time argument checks hold across modules (arity and types against the outside macro's declared parameters), and the self-contained rule applies to macro bodies everywhere. The worked example is [`examples/derive_shared`](../../examples/derive_shared/main.emo): a derivation written once, applied to two classes in another module.
+
 ## What macros are not
 
 Runtime code generation — `eval`, open classes, `method_missing` — is rejected as a language mechanism: generated code that does not exist at checking time cannot be checked, an evaluator in every runtime defeats the freestanding targets, and runtime structure defeats the type-feedback performance story. Emo's runtime extensibility units already exist: defs are first-class values (`Block`), dispatch tables are `Map`s, and the OS-level extension unit is a process. What macros add is the compile-time half — derivation, compile-time-checked DSLs, and the elimination of per-signature wrapper boilerplate that would otherwise drift.

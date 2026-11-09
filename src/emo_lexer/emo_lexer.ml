@@ -266,6 +266,20 @@ let lex ~file ~source =
                     Buffer.add_char buf (cur ());
                     bump ();
                     name_chars ())
+                  else if cur () = '.' then
+                    if
+                      (* a dotted application name (`@mod.macro`) — the dot
+                       must sit between two name segments *)
+                      Buffer.length buf > 0
+                      &&
+                      match char_at 1 with
+                      | Some c -> is_ident_letter c
+                      | None -> false
+                    then (
+                      Buffer.add_char buf '.';
+                      bump ();
+                      name_chars ())
+                    else ()
                   else ()
                 in
                 name_chars ();

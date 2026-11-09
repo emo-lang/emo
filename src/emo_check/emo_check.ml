@@ -4275,8 +4275,10 @@ let is_macro_item (item : Ast.item) : bool =
 let check_macro_domain ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
-    ?(aliases : (string list * string list) list = []) ~(current : string list)
-    (items : Ast.item list) : Emo_support.Diagnostic.t list =
+    ?(aliases : (string list * string list) list = [])
+    ?(extra_macros : ((string list * string) * Ast.fun_def) list = [])
+    ~(current : string list) (items : Ast.item list) :
+    Emo_support.Diagnostic.t list =
   let hollow item =
     match item.Ast.item_desc with
     | Ast.Item_def d when is_macro_item item -> Some item
@@ -4303,6 +4305,47 @@ let check_macro_domain ~(modules : string list list)
     | _ -> None
   in
   let domain = List.filter_map hollow items in
+  (* the cross-module table rides beside the module's own macros: each
+     outside macro enters the domain as a pseudo def keyed by the dotted
+     spelling the application wrote (`pricing.trace`), carrying the real
+     signature and a `Role_macro` directive — the window that lets its
+     `Syntax` parameter resolve — and a body that returns the `Syntax`
+     name itself, so the hollow-check rules stay satisfied. The argument
+     checks then see the outside macro exactly like a local one. *)
+  let pseudo (mpath, mname) macro =
+    let dotted = String.concat "." (mpath @ [ mname ]) in
+    let syntax_ident =
+      { Ast.span = macro.Ast.def_span; desc = Ast.Ident "Syntax" }
+    in
+    {
+      Ast.item_span = macro.Ast.def_span;
+      item_desc =
+        Ast.Item_def
+          {
+            Ast.def_span = macro.Ast.def_span;
+            def_name = dotted;
+            def_params = macro.Ast.def_params;
+            def_return = macro.Ast.def_return;
+            def_body =
+              [
+                {
+                  Ast.stmt_span = macro.Ast.def_span;
+                  stmt_desc = Ast.Return (Some syntax_ident);
+                };
+              ];
+          };
+      directives =
+        [
+          {
+            Ast.directive_span = macro.Ast.def_span;
+            directive_desc = Ast.Role_macro;
+          };
+        ];
+    }
+  in
+  let domain =
+    domain @ List.map (fun (key, macro) -> pseudo key macro) extra_macros
+  in
   let diagnostics, _, _ =
     check_module ~modules ~packages ~package_deps ~aliases ~current domain
   in

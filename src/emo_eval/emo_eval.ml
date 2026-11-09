@@ -4498,8 +4498,15 @@ let splice_of span (tree : syntax_tree) : Ast.item list =
    are compile-time equipment, with no runtime binding left behind. The
    precheck callback type-checks the original items first: a macro body
    that does not typecheck is rejected before it ever executes. *)
-let expand_macros ~(precheck : Ast.item list -> unit) (items : Ast.item list) :
-    Ast.item list =
+(* [extra_macros] carries the program's cross-module macro table
+   (design/macros.md, step 61): (dotted module path, macro name) → the
+   macro's def, collected by the project layer from a raw scan. A
+   qualified application `@mod.macro` — or `@a.b.macro`, any path depth —
+   resolves against it; a bare `@macro` resolves in the module that
+   declares it, and a same-name local macro shadows the outside one. *)
+let expand_macros ~(precheck : Ast.item list -> unit)
+    ?(extra_macros : ((string list * string) * Ast.fun_def) list = [])
+    (items : Ast.item list) : Ast.item list =
   if not (has_macro_directives items) then items
   else begin
     precheck items;
@@ -4518,6 +4525,35 @@ let expand_macros ~(precheck : Ast.item list -> unit) (items : Ast.item list) :
           | Ast.Item_def d when not (is_macro_def item) -> Some d.Ast.def_name
           | _ -> None)
         items
+    in
+    let resolve_macro span (name : string) : Ast.fun_def =
+      match List.assoc_opt name macros with
+      | Some macro -> macro
+      | None ->
+          let dotted = String.split_on_char '.' name in
+          if List.length dotted >= 2 then
+            let mpath = List.rev (List.tl (List.rev dotted)) in
+            let mname = List.nth dotted (List.length dotted - 1) in
+            match List.assoc_opt (mpath, mname) extra_macros with
+            | Some macro -> macro
+            | None ->
+                error span "E4300"
+                  (Printf.sprintf
+                     "unknown macro `@%s` — the module `%s` declares no `// \
+                      #macro` def by this name"
+                     name (String.concat "." mpath))
+          else
+            error span "E4300"
+              (if List.mem name plain_def_names then
+                 Printf.sprintf
+                   "`@%s` names a def that is not a macro — macros \
+                    are                     declared with `// #macro`"
+                   name
+               else
+                 Printf.sprintf
+                   "unknown macro `@%s` — no `// #macro` def by this name in \
+                    this module and no module path it names"
+                   name)
     in
     let expanded =
       List.concat
@@ -4549,25 +4585,11 @@ let expand_macros ~(precheck : Ast.item list -> unit) (items : Ast.item list) :
                      List.fold_left
                        (fun tree directive ->
                          match directive.Ast.directive_desc with
-                         | Ast.Apply_macro (name, []) -> (
-                             match List.assoc_opt name macros with
-                             | None ->
-                                 error directive.Ast.directive_span "E4300"
-                                   (if List.mem name plain_def_names then
-                                      Printf.sprintf
-                                        "`@%s` names a def that is not a macro \
-                                         — macros are declared with `// \
-                                         #macro`"
-                                        name
-                                    else
-                                      Printf.sprintf
-                                        "unknown macro `@%s` — no `// #macro` \
-                                         def by this name in this module"
-                                        name)
-                             | Some macro -> run_macro_body ~macro ~input:tree)
-                         | Ast.Apply_macro (_, _ :: _) ->
-                             error directive.Ast.directive_span "E2035"
-                               "a macro application takes no arguments"
+                         | Ast.Apply_macro (name, arg_exprs) ->
+                             let macro =
+                               resolve_macro directive.Ast.directive_span name
+                             in
+                             run_macro_body ~macro ~input:tree arg_exprs
                          | Ast.Role_macro -> assert false)
                        (Sx_item item) (List.rev directives)
                      (* nearest first: the line closest to the declaration

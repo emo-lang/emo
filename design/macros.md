@@ -291,9 +291,41 @@ parameters, the `Syntax` namespace, and the builtins; a helper def it
 needs is itself declared `#macro` (erased with the rest) or the logic
 moves inline.
 
-Cross-module macros — `@name` resolving through a require — stay the
-named follow-up: same-module derivation is the working core, and the
-preregistration tables are where the resolution rides when it comes.
+## Cross-module macros (step 61)
+
+A macro module is an ordinary module whose `#macro` defs have no runtime
+presence: the application resolves through the **program's macro table**,
+which the project layer builds by one raw scan over every registered file
+(no expansion — the scan cannot recurse through the parse cache) and
+memoizes on the project. The application spelling is qualified, the same
+path shape a value reference takes: `// @eq_macros.derive_eq` above a
+declaration in `main.emo` resolves the macro declared in the sibling
+`eq_macros.emo` — any path depth (`@a.b.macro`) — and the compiler runs
+that body during *this* module's expansion, splices the result here, and
+each module's own expansion erases its own macro defs. A bare `@macro`
+resolves in the declaring module only, and a same-name local macro
+shadows the outside one (nearest wins).
+
+The argument checks see the outside macro exactly like a local one: the
+macro-domain check registers each outside macro as a pseudo def keyed by
+the dotted spelling, carrying the real signature and a `Role_macro`
+directive (the window that lets its `Syntax` parameter resolve) and a
+body that returns the `Syntax` name — so arity (E4306) and type
+conformance (E4307) hold across modules. An unknown path or a module
+without that macro refuses with E4300 naming the module. The self-
+contained constraint applies to macro bodies everywhere: the body runs
+with only its parameters, `Syntax`, and the builtins in scope.
+
+The pilot is [`examples/derive_shared`](../../examples/derive_shared/main.emo):
+`derive_eq` lives once in `eq_macros.emo`, two classes in `main.emo`
+apply it qualified, and the output is byte-identical across the
+interpreter, the c binary, and the TypeScript output — code written once
+and shared, with nothing shipped but the classes and their equality.
+
+Still open: macros across **package boundaries** (a require-scoped
+library macro) — the table already carries every registered file, and
+the visibility rule (E5008's deps discipline) is what remains to
+decide.
 
 ## Pipeline mapping
 
@@ -335,11 +367,12 @@ derive step, where cross-package derivation is the actual use.
    `examples/derive_eq_demo` — one macro generating the equality method
    from the field list. The expansion precheck narrowed to the macro
    domain (macro bodies + application arguments), because a generated
-   method's call site must not be checked against the raw class. Still
-   open in this step's territory: declaration-structure holes in the
-   quote surface (a JSON derivation wants `def ${name}(...)`), field
-   types on the class tree (the AST carries names only), and cross-module
-   macros — each named below.
+   method's call site must not be checked against the raw class. 4. **Step 4 — cross-module macros** (landed, step 61): the program's
+   macro table, qualified applications `@mod.macro`, shadowing, and
+   cross-module argument checks — `examples/derive_shared` shows a
+   derivation written once in a sibling module applying to two classes
+   in another. Still open in this territory: package-boundary macros and
+   the items named below.
 
 ## Trade-offs recorded
 
@@ -375,6 +408,7 @@ assignment time). Codes are finalized as the diagnostics land.
 - Field types on the class tree — the AST carries field names only; a
   type-aware derivation (JSON) rides on the checker's field-type table or
   a richer field tree.
-- Cross-module macro tables — `@name` through a require.
+- Package-boundary macros — a require-scoped library macro, with the
+  deps visibility rule to decide.
 - JSON/string derivations beyond `eq?` — same shape, waits on the two
-  items above.
+  items above (holes and field types).

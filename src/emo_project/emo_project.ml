@@ -45,6 +45,12 @@ type project = {
       (* file → (content hash, parsed items): unchanged modules skip
          re-lex/parse within a run *)
   mutable parses : int; (* number of actual lex/parse operations *)
+  mutable macro_table : ((string list * string) * Ast.fun_def) list option;
+      (* the program's cross-module macro table (design/macros.md, step
+         61): a raw scan over every registered file's `#macro` defs, keyed
+         by (module path, macro name). Built lazily on the first
+         expansion — a raw parse, no expansion, so the scan itself cannot
+         recurse — and memoized. *)
 }
 
 let report p code message =
@@ -159,6 +165,7 @@ let discover () : project =
       diagnostics = ref [];
       cache = Hashtbl.create 8;
       parses = 0;
+      macro_table = None;
     }
   in
   (* The root directory is itself a module (the empty path). *)
@@ -227,6 +234,41 @@ let unit_path_of p (file : string) : string list =
   Hashtbl.iter (fun path f -> if String.equal f file then found := path) p.files;
   !found
 
+(* The program's cross-module macro table (design/macros.md, step 61):
+   one raw scan over every registered file, collecting each `// #macro`
+   def under its (module path, macro name). Raw means no expansion — the
+   scan itself must not recurse through parse_cached; files that fail to
+   parse here are skipped, since the file's own parse_cached call reports
+   the error properly. Memoized on the project. *)
+let program_macro_table (p : project) :
+    ((string list * string) * Ast.fun_def) list =
+  match p.macro_table with
+  | Some t -> t
+  | None ->
+      let table =
+        Hashtbl.fold
+          (fun path file acc ->
+            match
+              Emo_parser.parse_program_with_diagnostics ~file
+                ~source:(read_file file)
+            with
+            | items, [] ->
+                List.fold_left
+                  (fun acc item ->
+                    match item.Ast.item_desc with
+                    | Ast.Item_def d
+                      when List.exists
+                             (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+                             item.Ast.directives ->
+                        ((path, d.Ast.def_name), d) :: acc
+                    | _ -> acc)
+                  acc items
+            | _ -> acc)
+          p.files []
+      in
+      p.macro_table <- Some table;
+      table
+
 let parse_cached p (file : string) : Ast.item list =
   let source = read_file file in
   let hash = Digest.string source in
@@ -249,16 +291,22 @@ let parse_cached p (file : string) : Ast.item list =
          a macro body that does not typecheck is rejected before it ever
          runs; files without directives take the fast path untouched. *)
       let items =
+        let here = unit_path_of p file in
+        let extra =
+          List.filter
+            (fun ((mpath, _), _) -> mpath <> here)
+            (program_macro_table p)
+        in
         try
           Emo_eval.expand_macros
             ~precheck:(fun raw ->
               let diags =
                 Emo_check.check_macro_domain ~modules:(module_paths p)
                   ~packages:p.packages ~package_deps:p.package_deps
-                  ~aliases:p.aliases ~current:(unit_path_of p file) raw
+                  ~aliases:p.aliases ~current:here ~extra_macros:extra raw
               in
               match diags with [] -> () | ds -> raise (Static_errors ds))
-            items
+            ~extra_macros:extra items
         with Emo_eval.Error d -> raise (Static_errors [ d ])
       in
       Hashtbl.replace p.cache file (hash, items);

@@ -3613,3 +3613,40 @@ green.
       constant `true`), on two classes (an Int64 pair and a String);
       byte-identical across the interpreter, the c binary, and the
       TypeScript output.
+
+### Step 61 — Cross-module macros · `design/macros.md`
+
+**Prereq:** Step 60 (the class seat, the macro-domain gate). **Done
+when:** `examples/derive_shared` runs byte-for-byte on the interpreter
+and the c and TypeScript binaries — `derive_eq` declared once in the
+sibling `eq_macros.emo`, applied qualified (`// @eq_macros.derive_eq`)
+to two classes in `main.emo`; bare applications still resolve locally
+and shadow; cross-module arity/type checks refuse loudly; `dune
+runtest` green.
+
+- [x] **T61.1** — The program's macro table: one raw scan over every
+      registered file (no expansion — the scan cannot recurse through
+      the parse cache), collecting each `// #macro` def under its
+      (module path, macro name), memoized on the project record.
+- [x] **T61.2** — Qualified applications: the directive lexer accepts
+      dotted names (`@mod.macro`, any path depth, dots only between
+      segments), and the expansion resolves them against the macro
+      table — the body runs in the applying module's expansion, and each
+      module's own expansion erases its own macro defs. Bare names
+      resolve locally only, and a same-name local macro shadows the
+      outside one (verified live: a local identity macro renaming the
+      wrapped def answers a call the outside version would leave
+      undefined). E4300 names the module when the path or the macro
+      under it is missing.
+- [x] **T61.3** — Cross-module argument checks: the macro-domain gate
+      registers each outside macro as a pseudo def keyed by the dotted
+      spelling — the real signature, a `Role_macro` directive (the
+      `Syntax` window), and a body returning the `Syntax` name — so the
+      argument checks see an outside macro exactly like a local one
+      (E4306/E4307 verified across modules).
+- [x] **T61.4** — The pilot: `examples/derive_shared` — one derivation
+      in a sibling module, two classes applying it qualified,
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output. Package-boundary macros (a require-scoped
+      library macro with the deps visibility rule) stay the named
+      follow-up.

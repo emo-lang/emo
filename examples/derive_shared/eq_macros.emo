@@ -1,0 +1,29 @@
+// The macro library module (design/macros.md, step 61): the `#macro` defs
+// here have no runtime presence — they run inside the compiler of
+// whichever module applies them — and `main.emo` reaches them with the
+// qualified spelling `@eq_macros.derive_eq`, the same path shape a value
+// reference takes. A macro body is self-contained, so the module ships
+// nothing else.
+
+// #macro
+def derive_eq(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const fields = Syntax.fields(f)
+  const po = Syntax.new_param("other", Syntax.named_type(name))
+  var acc = Syntax.lit_bool(true)
+  var have = false
+  var i = 0
+  while i < fields.length() {
+    const fname = Syntax.field_name(fields[i])
+    const cmp = Syntax.bin_eq(
+        Syntax.member(Syntax.self_expr(), fname),
+        Syntax.member(Syntax.ident("other"), fname))
+    acc = if have { Syntax.bin_and(acc, cmp) } else { cmp }
+    have = true
+    i = i + 1
+  }
+  const eq = Syntax.new_def("eq?", [po], Syntax.named_type("Bool"), [
+      Syntax.return_stmt(acc)
+    ])
+  return Syntax.with_methods(f, [eq])
+}
