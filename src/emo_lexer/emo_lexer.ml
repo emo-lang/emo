@@ -72,7 +72,15 @@ module Token = struct
     | Upper_ident of string
     | Keyword of keyword
     | Op of op
+    | Directive of directive_raw
     | Eof
+
+  and directive_raw = {
+    d_sigil : char;
+        (* '#' — the role namespace; '@' — the application namespace *)
+    d_name : string;
+    d_args : string option; (* the raw text between the argument parens *)
+  }
 
   type t = {
     kind : kind;
@@ -219,16 +227,154 @@ let lex ~file ~source =
             newline_pending := true;
             bump ();
             go ()
-        | '/' when char_at 1 = Some '/' ->
+        | '/' when char_at 1 = Some '/' -> (
             skipped := true;
-            let rec line () =
-              if eof () then ()
-              else if cur () = '\n' then go ()
-              else (
-                bump ();
-                line ())
+            (* A comment whose first token is `#` or `@` is a directive —
+               the reserved namespace the compiler checks (design/macros.md).
+               Every other comment is prose and stays inert. *)
+            let d_line, d_col, d_off = (!line, !col, !offset) in
+            let rec spaces k =
+              match char_at k with
+              | Some (' ' | '\t') -> spaces (k + 1)
+              | _ -> k
             in
-            line ()
+            let k0 = spaces 2 in
+            match char_at k0 with
+            | Some ('#' | '@') as sigil ->
+                (* A directive may not share its line with other code: the
+                   placement rules (own line, directly above the declaration)
+                   are what make attachment unambiguous. *)
+                (match !toks with
+                | prev :: _ when prev.Token.span.Emo_support.Span.line = d_line
+                  ->
+                    error "E2030"
+                      (span_from d_line d_col d_off)
+                      "a directive must be on its own line"
+                | _ -> ());
+                bump ();
+                bump ();
+                let spaces_before_sigil = k0 - 2 in
+                for _ = 1 to spaces_before_sigil do
+                  bump ()
+                done;
+                bump ();
+                (* the sigil *)
+                let buf = Buffer.create 8 in
+                let rec name_chars () =
+                  if eof () then ()
+                  else if is_ident_letter (cur ()) then (
+                    Buffer.add_char buf (cur ());
+                    bump ();
+                    name_chars ())
+                  else ()
+                in
+                name_chars ();
+                let name = Buffer.contents buf in
+                if name = "" then
+                  error "E2033"
+                    (span_from d_line d_col d_off)
+                    "a directive needs a name after its sigil"
+                else ();
+                let args =
+                  if (not (eof ())) && cur () = '(' then (
+                    bump ();
+                    let abuf = Buffer.create 16 in
+                    let depth = ref 1 in
+                    let unterminated what =
+                      error "E2033" (span_from d_line d_col d_off) what
+                    in
+                    let rec collect () =
+                      if eof () then
+                        unterminated "unbalanced `(` in directive arguments"
+                      else
+                        match cur () with
+                        | '\n' ->
+                            unterminated
+                              "directive arguments must close on the same line"
+                        | '(' ->
+                            incr depth;
+                            Buffer.add_char abuf '(';
+                            bump ();
+                            collect ()
+                        | '"' ->
+                            Buffer.add_char abuf '"';
+                            bump ();
+                            let rec in_str () =
+                              if eof () || cur () = '\n' then
+                                unterminated
+                                  "unterminated string in directive arguments"
+                              else
+                                match cur () with
+                                | '\\' ->
+                                    Buffer.add_char abuf '\\';
+                                    bump ();
+                                    if eof () then
+                                      unterminated
+                                        "unterminated string in directive \
+                                         arguments"
+                                    else (
+                                      Buffer.add_char abuf (cur ());
+                                      bump ();
+                                      in_str ())
+                                | '"' ->
+                                    Buffer.add_char abuf '"';
+                                    bump ()
+                                | c ->
+                                    Buffer.add_char abuf c;
+                                    bump ();
+                                    in_str ()
+                            in
+                            in_str ();
+                            collect ()
+                        | ')' ->
+                            decr depth;
+                            if !depth = 0 then bump ()
+                            else (
+                              Buffer.add_char abuf ')';
+                              bump ();
+                              collect ())
+                        | c ->
+                            Buffer.add_char abuf c;
+                            bump ();
+                            collect ()
+                    in
+                    collect ();
+                    Some (Buffer.contents abuf))
+                  else None
+                in
+                emit
+                  (Token.Directive
+                     {
+                       Token.d_sigil = Option.get sigil;
+                       d_name = name;
+                       d_args = args;
+                     })
+                  d_line d_col d_off;
+                (* Only whitespace may follow on the directive's own line. *)
+                let rec tail_ws () =
+                  if eof () then ()
+                  else
+                    match cur () with
+                    | ' ' | '\t' | '\r' ->
+                        bump ();
+                        tail_ws ()
+                    | '\n' -> go ()
+                    | _ ->
+                        error "E2033"
+                          (span_from d_line d_col d_off)
+                          "a directive takes only its name and optional \
+                           (arguments)"
+                in
+                tail_ws ()
+            | _ ->
+                let rec line () =
+                  if eof () then ()
+                  else if cur () = '\n' then go ()
+                  else (
+                    bump ();
+                    line ())
+                in
+                line ())
         | _ -> ()
     in
     go ();

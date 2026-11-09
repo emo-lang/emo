@@ -469,7 +469,6 @@ Close-out: `Int64` and `Byte` ride the integer representations each target alrea
 
 Close-out: the sweep left nothing behind — `wasm_spec` reports 3456 claimed, 0 pending, 0 failed, and the smoke subset (forty cases, every decoder and validator family) rides the default `dune test`. Getting there flushed out bugs older than the validator: br_table's immediate never consumed its default index (present since T21.12 — the leaked byte parsed as an opcode and desynced whole bodies), and the final bulk-memory opcode numbering replaced the pre-merge proposal's. The validator's frame stack carries a logical top (rebuilding per pop was exponential on nested blocks) and pushes land only after truncating to the live prefix; block parameters live inside their frame (push_ctrl semantics), and unreachable frames keep pushed values concrete so `type-num-vs-num` cases still reject. One interpreter limit shaped the code: a method call on a recursive result (`f(n-1).append(x)`) spins past roughly 25 nesting levels, so every array-returning recursion is a tail-accumulator loop — recorded as language pressure. The datacount rule splits by phase: with a data section present, bulk-memory use without a datacount is malformed; without one, the validator's unknown-segment check makes it invalid — both pinned by the corpus. The declared-reference set (globals, exports, element segments — not the start function) types `ref.func`. **Step 21 acceptance met.**
 
-
 The boundaries that keep the in-repo runtime from becoming an in-repo language — the package edge, the spec data off the default test path, and the condition for the runtime leaving this repository — are in the plan file, with the surface pressure the runtime runs into and the sizes that make the list workable in spare sittings.
 
 ### Step 22 — Wasm runtime: interpreter core & spec-suite goldens · `plan/step-22-wasm-interpreter.md`
@@ -3466,3 +3465,59 @@ carries no server half; `dune runtest` green.
       the named flake family again — so its c golden joins the
       deferral and its interpreter leg carries the coverage; M23
       complete.
+### Step 58 — Compile-time macros · `design/macros.md`
+
+**Prereq:** Steps 9 (the checker), 21 (the eval's builtins). **Done
+when:** `examples/trace_demo` runs byte-for-byte on every target;
+`// #macro` / `// @trace` parse, expand, and check; the strictness
+battery (E2029–E2035, E3030, E4300–E4310) refuses every wrong spelling
+loudly; `dune runtest` green.
+
+- [x] **T58.1** — The directive layer: a `//` comment whose first token
+      is `#` or `@` is not a comment — the lexer captures the sigil,
+      name, and raw argument text as a directive token; the parser
+      collects, validates placement (own line, consecutive stacking,
+      directly above the declaration, nothing inside a body or trailing
+      the file), and attaches the directives to the item; the LSP
+      highlights the lines as macros. Unknown role names, blank-line
+      floats, in-body directives, duplicates, same-line tails, and
+      application arguments each refuse with their own code
+      (E2029/E2030/E2031/E2032/E2033/E2035).
+- [x] **T58.2** — The macro model: `Syntax` is a reserved compile-time
+      type, legal only inside a `// #macro` def's signature and body
+      (the checker's compile-time window opens for a macro's own
+      collection, signature resolution, and body); the shape is exactly
+      `(f Syntax) Syntax` (E4302); a macro body typechecks like any def
+      before it ever runs; after expansion the macro defs are erased.
+      `@name` resolves to a same-module macro or refuses by name
+      (E4300), a macro takes no applications (E4310), and the splice
+      must produce declarations (E4303).
+- [x] **T58.3** — The compile-time profile: the macro body runs on the
+      compiler's own interpreter with every effect refused, every
+      host-touching builtin refused (`rand_bytes` through both the
+      builtin and the runtime-impl paths), the output hook poisoned,
+      and a step budget — determinism by construction, no effect
+      system needed (E3030).
+- [x] **T58.4** — The expansion pass rides the parse cache: every
+      consumer — check, the backends, the evaluator — sees the expanded
+      declarations; the precheck is the original module's full check,
+      so files without directives take the fast path untouched and a
+      macro-using module is checked before and after the splice; the
+      bare interpreter (`Emo_eval.run_program`) expands with a
+      lone-file precheck. Applications apply nearest-first, feeding
+      each macro the previous application's result.
+- [x] **T58.5** — The `Syntax` API: readers (`name`, `params`,
+      `param_name`, `result`) and constructors (`rename`, `new_def`,
+      `seq`, `ident`, `lit_string`, `interp`, `call`, `call_stmt`,
+      `expr_stmt`, `const_stmt`, `return_stmt`, `gensym`) as builtin
+      members of the `Syntax` group, bound only inside a running macro
+      body; `Syntax.gensym` hands out collision-free names.
+- [x] **T58.6** — The pilot: `examples/trace_demo` — a `trace` macro
+      that moves the original def to a hidden name and makes the
+      visible name a wrapper logging every call's arguments and answer;
+      the forwarding call is built from the wrapped declaration's own
+      parameter trees, so it cannot drift; the generated wrapper is
+      checked with the module, which is where a wrong-arity wrapper
+      dies. Design decisions and the rejected alternatives (runtime
+      eval, the `by` keyword, value decorators as a separate mechanism)
+      live in `design/macros.md`.

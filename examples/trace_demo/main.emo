@@ -1,0 +1,69 @@
+// The macro model's proof chain (design/macros.md): a `// #macro` def runs
+// during compilation, receives the decorated declaration as a syntax tree,
+// and returns replacement trees that are spliced in place and then checked
+// like any other code. `trace` wraps any single-arity-value def: the
+// original moves to a generated hidden name, and the visible name becomes a
+// wrapper that logs the call's arguments and the answer — at every call
+// site, including the ones that cannot see this file. The expansion runs on
+// the compiler's own interpreter with every effect refused, so a macro is
+// deterministic by construction; the generated wrapper is checked with the
+// module, which is why a wrapper forwarding the wrong arity fails the build.
+//
+//   emo run main.emo
+
+// #macro
+def trace(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const params = Syntax.params(f)
+  const ret = Syntax.result(f)
+  const hidden_name = Syntax.gensym(name)
+  const original = Syntax.rename(f, hidden_name)
+
+  // The entry line: "trace: name(param, param)" — built as an interpolated
+  // string whose parts are the parameters' own expression trees.
+  const open_parts = ArrayBuilder.new()
+  const args = ArrayBuilder.new()
+  open_parts.push(Syntax.lit_string("trace: " + name + "("))
+  var i = 0
+  while i < params.length() {
+    if i > 0 {
+      open_parts.push(Syntax.lit_string(", "))
+    }
+    const pn = Syntax.param_name(params[i])
+    open_parts.push(Syntax.ident(pn))
+    args.push(Syntax.ident(pn))
+    i = i + 1
+  }
+  open_parts.push(Syntax.lit_string(")"))
+
+  // The wrapper: log the entry, forward to the hidden original, log the
+  // answer, return it. The forward call's arguments are the parameter
+  // trees lifted to identifier expressions — the forwarding can never
+  // drift from the wrapped signature, because both come from the same
+  // declaration.
+  const wrapper = Syntax.new_def(name, params, ret, [
+      Syntax.call_stmt("println", [Syntax.interp(open_parts.to_array())]),
+      Syntax.const_stmt("r", Syntax.call(Syntax.ident(hidden_name), args.to_array())),
+      Syntax.call_stmt("println", [Syntax.interp([
+        Syntax.lit_string("trace: " + name + " = "),
+        Syntax.ident("r")
+      ])]),
+      Syntax.return_stmt(Syntax.ident("r"))
+    ])
+  return Syntax.seq(original, wrapper)
+}
+
+// @trace
+def double(n Int64) Int64 {
+  return n * 2
+}
+
+// @trace
+def add3(a Int64, b Int64, c Int64) Int64 {
+  return a + b + c
+}
+
+// Every call site — here and in any importer — sees the wrapper.
+println(double(21))
+println(double(double(1)))
+println(add3(1, 2, 3))

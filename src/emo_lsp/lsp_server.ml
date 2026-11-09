@@ -352,6 +352,8 @@ let token_type_of ~(ix : Ix.t) ~(file : string)
       | Some s when s.Ix.kind = Ix.Kind.variable -> Some (8, mods)
       | _ -> Some (8, mods))
   | Op _ -> Some (21, 0)
+  (* the reserved `// #`/`// @` directive lines highlight as macros *)
+  | Directive _ -> Some (14, 0)
   | Eof -> None
 
 let semantic_tokens (state : state) (file : string) (text : string) :

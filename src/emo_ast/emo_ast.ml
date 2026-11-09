@@ -111,8 +111,30 @@ and literal =
   | L_string of string
   | L_bool of bool
 
-type item = { item_span : Emo_support.Span.t; item_desc : item_desc }
-(** A top-level item: a declaration, or a statement executed in order. *)
+type directive = {
+  directive_span : Emo_support.Span.t;
+  directive_desc : directive_desc;
+}
+(** A directive line — a reserved-first-token comment the compiler checks like
+    any other syntax. The `#` sigil opens the role namespace (compiler-owned:
+    what the declaration below is); the `@` sigil opens the application
+    namespace (a macro invoked on the declaration below). *)
+
+and directive_desc =
+  | Role_macro
+  (* // #macro — the def below is a macro: it runs at compile time and
+     is erased from the program after expansion *)
+  | Apply_macro of string * expr list
+(* // @sigil name(args...) — apply the macro `name` to the declaration
+     below; the arguments are compile-time expressions *)
+
+type item = {
+  item_span : Emo_support.Span.t;
+  item_desc : item_desc;
+  directives : directive list;
+}
+(** A top-level item: a declaration, or a statement executed in order — carrying
+    any `#`/`@` directive lines attached directly above it. *)
 
 and foreign_def = {
   foreign_span : Emo_support.Span.t;

@@ -80,6 +80,10 @@ let describe_kind (k : Tok.kind) =
   | Upper_ident s -> Printf.sprintf "type name `%s`" s
   | Keyword k -> "`" ^ keyword_spelling k ^ "` (a reserved word)"
   | Op o -> "`" ^ op_spelling o ^ "`"
+  | Directive d -> (
+      match d.Tok.d_sigil with
+      | '#' -> Printf.sprintf "the directive `#%s`" d.Tok.d_name
+      | _ -> Printf.sprintf "the directive `@%s`" d.Tok.d_name)
   | Eof -> "end of input"
 
 type parser = {
@@ -629,6 +633,10 @@ and parse_block st =
 and parse_stmt st =
   let start_span = span st in
   match kind st with
+  | Tok.Directive _ ->
+      error "E2031" (span st)
+        "a directive attaches to a top-level declaration — inside a body it \
+         has no meaning"
   | Tok.Keyword Tok.If ->
       advance st |> ignore;
       st.suppress_block_sugar <- true;
@@ -888,7 +896,109 @@ and end_statement st =
       error "E2002" (span st) "expressions cannot be juxtaposed"
         ~hint:"start a new statement on the next line"
 
+(* Directives: the reserved `// #`/`// @` comment namespace
+   (design/macros.md). Collected off the front of an item, validated for
+   placement, and attached to the parsed declaration. *)
+
+and directive_desc_of tok =
+  match tok.Tok.kind with
+  | Tok.Directive d -> (
+      match d.Tok.d_sigil with
+      | '#' -> (
+          match d.Tok.d_name with
+          | "macro" -> Ast.Role_macro
+          | other ->
+              error "E2029" tok.Tok.span
+                (Printf.sprintf
+                   "unknown directive role `#%s` — the role namespace is \
+                    compiler-owned and `#macro` is its only member"
+                   other))
+      | _ -> (
+          match d.Tok.d_args with
+          | Some _ ->
+              error "E2035" tok.Tok.span
+                "a macro application takes no arguments — compile-time \
+                 application arguments arrive with a later step"
+          | None -> Ast.Apply_macro (d.Tok.d_name, [])))
+  | _ -> assert false
+
+and collect_directives st =
+  let rec go acc last_line =
+    match kind st with
+    | Tok.Directive _ ->
+        let tok = advance st in
+        let line = tok.Tok.span.Emo_support.Span.line in
+        (match acc with
+        | _ :: _ when line <> last_line + 1 ->
+            error "E2030" tok.Tok.span
+              "stacked directives must sit on consecutive lines"
+        | _ -> ());
+        let directive =
+          {
+            Ast.directive_span = tok.Tok.span;
+            directive_desc = directive_desc_of tok;
+          }
+        in
+        go (directive :: acc) line
+    | _ -> (
+        match acc with
+        | [] -> []
+        | _ ->
+            if at_eof st then
+              error "E2030" (List.hd acc).Ast.directive_span
+                "a directive must attach to a declaration — nothing follows it"
+            else
+              let line = (peek st).Tok.span.Emo_support.Span.line in
+              if line <> last_line + 1 then
+                error "E2030" (List.hd acc).Ast.directive_span
+                  "a directive must sit directly above the declaration it \
+                   attaches to — a blank line leaves it floating"
+              else ();
+              List.rev acc)
+  in
+  go [] 0
+
+and validate_and_attach pending item =
+  if pending = [] then item
+  else
+    let first = List.hd pending in
+    let roles =
+      List.filter (fun d -> d.Ast.directive_desc = Ast.Role_macro) pending
+    in
+    (match item.Ast.item_desc with
+    | Ast.Item_def _ ->
+        if List.length roles > 1 then
+          error "E2032" (List.nth roles 1).Ast.directive_span
+            "`#macro` is declared twice on this declaration"
+        else ();
+        let rec dup_check seen = function
+          | [] -> ()
+          | d :: rest -> (
+              match d.Ast.directive_desc with
+              | Ast.Apply_macro (name, _) ->
+                  if List.mem name seen then
+                    error "E2032" d.Ast.directive_span
+                      (Printf.sprintf
+                         "`@%s` is applied twice to this declaration" name)
+                  else dup_check (name :: seen) rest
+              | Ast.Role_macro -> dup_check seen rest)
+        in
+        dup_check [] pending
+    | Ast.Item_stmt _ ->
+        error "E2031" first.Ast.directive_span
+          "a directive attaches to a declaration, not to a statement"
+    | _ ->
+        error "E2031" first.Ast.directive_span
+          "a directive attaches to a def — class application arrives with a \
+           later step");
+    { item with Ast.directives = pending }
+
 and parse_item st =
+  let pending = collect_directives st in
+  let item = parse_item_decl st in
+  validate_and_attach pending item
+
+and parse_item_decl st =
   let item_span = span st in
   match kind st with
   | Tok.Keyword Tok.Require ->
@@ -909,10 +1019,14 @@ and parse_item st =
             error "E2009" e.Ast.span "`require` expects a package name string"
       in
       end_statement st;
-      { Ast.item_span; item_desc = Ast.Item_require name }
+      { Ast.item_span; item_desc = Ast.Item_require name; directives = [] }
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
-      { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+      {
+        Ast.item_span = d.Ast.def_span;
+        item_desc = Ast.Item_def d;
+        directives = [];
+      }
   | Tok.Lower_ident "foreign" ->
       (* `foreign def name(params) Ret = "symbol"` — the C FFI binding
          surface (step 14). *)
@@ -958,20 +1072,42 @@ and parse_item st =
               foreign_return = Option.get foreign_return;
               foreign_symbol;
             };
+        directives = [];
       }
   | Tok.Keyword Tok.Class ->
       let c = parse_class st in
-      { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
+      {
+        Ast.item_span = c.Ast.class_span;
+        item_desc = Ast.Item_class c;
+        directives = [];
+      }
   | Tok.Keyword Tok.Emo ->
       let g = parse_emo_group st in
-      { Ast.item_span = g.Ast.group_span; item_desc = Ast.Item_emo_group g }
+      {
+        Ast.item_span = g.Ast.group_span;
+        item_desc = Ast.Item_emo_group g;
+        directives = [];
+      }
   | Tok.Keyword Tok.Interface ->
       let i = parse_interface st in
-      { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
+      {
+        Ast.item_span = i.Ast.interface_span;
+        item_desc = Ast.Item_interface i;
+        directives = [];
+      }
   | Tok.Keyword Tok.Enum ->
       let e = parse_enum st in
-      { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
-  | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
+      {
+        Ast.item_span = e.Ast.enum_span;
+        item_desc = Ast.Item_enum e;
+        directives = [];
+      }
+  | _ ->
+      {
+        Ast.item_span;
+        item_desc = Ast.Item_stmt (parse_stmt st);
+        directives = [];
+      }
 
 (* `true` when the current token can begin a type declaration: an
    UpperCamel type name, a module prefix before one (`sync.WaitGroup`),
