@@ -1263,12 +1263,35 @@ lives as long as its app. The decisions are D7 through D12 in
   canonical host the compiler carries (`src/emo_codegen/wasm/
   wasm_host.mjs`), which cannot drift.
 
-- [ ] **A17.2** — The parser and the Strike, in `raster.emo`: a face
-  module read into its outlines, metrics scaled by the pinned
-  formulas (ascent and descent by ceiling — the one rounding the
-  grid's three strikes confirm exactly), slots allocated dense over
-  the ASCII table at `max_dim` (the line box rounded up to 8), meta
-  two words per glyph. Hosted goldens pin the parse facts.
+- [x] **A17.2** — The parser and the Strike, in `raster.emo`: a face
+  module read whole into a `Face` (the outline words and bases copied
+  once, at boot), metrics scaled by the pinned formulas (ascent and
+  descent by ceiling — the one rounding the grid's three strikes
+  confirm exactly; the advance half-up, the generator's own
+  cross-check rounding), slots allocated dense over the ASCII table
+  at `max_dim` (the line box rounded up to 8), meta two words per
+  glyph. **Complete 2026-11-10** — with three findings on the way.
+  The design's "first use rasterizes" amended to eager-at-
+  construction: the language's arrays are immutable values and its
+  mutable containers hold no indexed word storage a blit could read
+  at `font.emo`'s shape. The strike's refusal is the error
+  convention — `(R.ok, the strike)` or `(R.error, why)`, not a
+  raise — because the riscv64 target does not lower raise and the
+  compiler pulls every module of a package into its builds; and the
+  constructor keeps to seven parameters, the metal refusing a wider
+  one (`emo_riscv.ml`'s ceiling). The metal now lowers the package
+  with the outlines and the Strike aboard — all eight riscv64 probe
+  lines green. The golden (`fb/type/`) pins the metrics reproducing
+  the grid's three strikes (Inter 16/4/20 and 24/6/30, JetBrains
+  Mono 17/5/22), twelve sample advances matching the grid
+  glyph-for-glyph, the parse slices (a space's empty drawing, an l's
+  one contour, an o's forty-eight points in two, a B's three), the
+  zero-size refusal, and two digests that pin the parse and the
+  scaled advances whole — byte-identical on ocaml, c and typescript;
+  the golden carries no surface, so wasm and beam refuse at build
+  time and the gate pins those refusals. Every package lock under
+  `fb/` regenerated (the package's content hash moved with the three
+  new modules).
 
 - [ ] **A17.3** — The rasterizer: `glyphs/reference.py` first (stdlib
   only, the algorithm's source of truth), then the Emo port to match

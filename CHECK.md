@@ -361,6 +361,57 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-10 — The parser and the Strike (emo-desktop A17.2)
+
+- `raster.emo` joins `emo/ui_fb` as the parser and the Strike's home:
+  a face module read whole into a `Face` (the 3,383 and 2,973 outline
+  words and the bases copied once, at boot), and `strike(f, px)` —
+  the metrics by the pinned formulas (ascent and descent by ceiling,
+  the advance half-up, the line box rounded up to eight for
+  `max_dim`), the coverage slots dense over the ASCII table (72 words
+  a slot at 16px, 128 at 24px), two meta words a glyph (slot base and
+  advance; the ink box waits for A17.3). The parse readers
+  (`advance_fu`, `points`, `contours`, `contour_end`, the vertex's
+  flag and signed deltas) and two rolling digests stand beside, the
+  golden's pins.
+- Three findings, each a wall the metal named:
+  - **The design's "first use rasterizes" amended to eager.** The
+    language's arrays are immutable values and its mutable containers
+    (Box, List, Map) hold no indexed word storage a blit could read
+    at `font.emo`'s shape — so the strike rasterizes at construction
+    into a plain `Array[Int64]` its init stores. Boot-time work
+    either way; the blit reads the same words every frame.
+  - **The raise is not the metal's.** The riscv64 target does not
+    lower raise, and the compiler pulls every module of a package
+    into its builds (there is no unreachable module) — one `raise`
+    in `raster.emo` failed all seven riscv64 probe builds. The
+    strike's refusal is the error convention instead:
+    `(R.ok, the strike)` or `(R.error, why)`, the syscall package's
+    own shape, a value the caller matches.
+  - **The constructor ceiling.** The metal refuses a constructor of
+    more than seven parameters (`emo_riscv.ml`); the Strike's init
+    carried eight, and `line` became derived (ascent + descent).
+- The golden (`fb/type/`) pins: the metrics reproducing the grid's
+  three strikes exactly (Inter 16/4/20 and 24/6/30, JetBrains Mono
+  17/5/22 — the ceiling formula's own confirmation), twelve sample
+  advances matching the grid glyph for glyph (space 5/7/10, A 11/17/10,
+  f 6/9/10, i 4/6/10 across the three strikes), the parse slices (a
+  space's empty drawing, an l's four points in one contour, an o's
+  forty-eight in two, a B's fifty-two in three, a vertex's fields
+  read back), the zero-size refusal, and two digests — bases then
+  outline words, advances per strike — folding `h·31 + w mod
+  1000000007`, overflow-free on Int64. Byte-identical on ocaml, c and
+  typescript; the golden carries no surface, so wasm and beam refuse
+  at build time (the package's interface calls have no implementor in
+  its program) and the gate pins both refusals the way the 48x32
+  screen's wasm one is pinned.
+- The metal lowers the package with the outlines and the Strike
+  aboard: all eight riscv64 probe lines green (the user programs, the
+  three app images, the window buffer). Every package lock under
+  `fb/` regenerated — the package's content hash moved with the three
+  new modules, and `apps/spin`'s empty lock (no deps to pin) restored
+  byte-identical.
+
 ## 2026-11-10 — The type at any size opens (emo-desktop A17.1)
 
 - The faces stop being three baked strikes and start being outlines:

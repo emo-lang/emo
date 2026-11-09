@@ -121,15 +121,22 @@ FreeType 自己的 hinting 偶尔挪动一个 advance 一像素(当前 Inter 的
 ## Strike(A17.2)
 
 每(字面, 像素字号)一个 `Strike`,在 ASCII 表上稠密——无哈希、无
-淘汰;字形落进的槽就是它的字母表位置:
+淘汰;字形落进的槽就是它的字母表位置。strike 的构造器按错误约定
+作答——`(R.ok, strike)` 或 `(R.error, why)`——因为 raise 不是金属的:
+riscv64 target 不 lower 它,而编译器会把包内每个模块拉进构建,所以
+`raster.emo` 随金属镜像一起 lower,像 gate 自己的 syscall 应答那样
+拒绝(它的构造器同样为此守着七个参数——金属拒绝更宽的)。
 
 - `max_dim` 默认行盒向上取整到 8;墨迹超出的字形拒绝(生成器对自家
   表静态断言同一上界)。每槽 `ceil(max_dim² / 8)` 词,覆盖度字节
   八个一词打包;16px 下一张 strike 是 96 × 72 词 ≈ 54 KiB,24px
   ≈ 96 KiB,全部在构造时分配——Strike 是它 app 的引导期常量,winbuf
   的路数,此后每帧零开销。
-- 首次使用光栅化;之后每次都是表面已在跑的 alpha blit,骑今天这同一条
-  窗口 damage 路径。
+- Strike 在构造时急切光栅化——设计里的"首次使用光栅化"在 A17.2 遇到
+  语言事实时修正:数组是不可变值,可变容器(Box、List、Map)里没有
+  blit 能按 `font.emo` 形状读取的按索引字存储,所以 strike 把九十六个
+  字形全部光栅化进 init 存下的一块普通 `Array[Int64]`。引导期工作
+  不变;blit 每帧读的是同一批词,此后每帧零分配。
 - 每字形暴露的 meta 是两个词:base 与 advance;left、top、width、
   height。blit 不再需要别的。
 

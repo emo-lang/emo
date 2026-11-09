@@ -76,6 +76,7 @@ build() {
 # what a consumer reaches, so each package is staged without its test;
 # the goldens and the probe are consumers and are built in place.
 sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
+  raster.emo face_inter.emo face_mono.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
   desktop/package.emo desktop/emo_desktop.emo \
@@ -92,7 +93,8 @@ mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0" \
   "$REG/emo/ui_fb_winbuf/0.1.0" "$REG/syscall/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo ui_fb.emo font.emo pointer.emo "$REG/emo/ui_fb/0.1.0/"
+cp package.emo ui_fb.emo font.emo pointer.emo raster.emo face_inter.emo face_mono.emo \
+  "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
 cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
 cp desktop/package.emo desktop/emo_desktop.emo "$REG/emo_desktop/0.1.0/"
@@ -336,5 +338,23 @@ check_golden apps/golden apps/golden/expected.txt \
 # 2026-11-06); `run.sh` folds them where the desktop paints with them.
 check_golden shapes shapes/expected.txt \
   "$PWD/.emo-build/check/shapes" "shapes' card" ocaml c typescript wasm beam
+
+# The type's parse facts (emo-desktop A17.2): the faces read whole and
+# the strikes at the grid's three pixel sizes — the metrics the grid
+# pinned, the parse slices, sample advances, and the digests that pin
+# the parse and the scaled advances whole. The golden carries no
+# surface, so the package's interface calls have no implementor in its
+# program and the two bytecode targets refuse at build time; the
+# refusals are pinned the way the 48x32 screen's wasm one is.
+check_golden type type/expected.txt \
+  "$PWD/.emo-build/check/type" "type parse facts" ocaml c typescript
+golden_build type wasm "$PWD/.emo-build/check/type/wasm" && rc=0 || rc=$?
+got=$(grep -o -m1 "method \`blend\` has no static dispatch" "$OUT.log" | head -1 || true)
+expect "method \`blend\` has no static dispatch" \
+  "the type golden --target wasm says why" "$got"
+golden_build type beam "$PWD/.emo-build/check/type/beam" && rc=0 || rc=$?
+got=$(grep -o -m1 "method \`present\` has no dispatch" "$OUT.log" | head -1 || true)
+expect "method \`present\` has no dispatch" \
+  "the type golden --target beam says why" "$got"
 
 exit $fail

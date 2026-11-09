@@ -1,0 +1,9 @@
+package {
+  name = "emo/ui_fb_type_golden"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "emo/ui_fb" = "0.1.0"
+  }
+}

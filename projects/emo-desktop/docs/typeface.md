@@ -154,7 +154,14 @@ identical on every target.
 ## The Strike (A17.2)
 
 One `Strike` per (face, pixel size), dense over the ASCII table — no
-hash, no eviction; the slot a glyph lands in is its alphabet position:
+hash, no eviction; the slot a glyph lands in is its alphabet position.
+The strike's constructor answers the error convention — `(R.ok, the
+strike)` or `(R.error, why)` — because the raise is not the metal's:
+the riscv64 target does not lower it, and the compiler pulls every
+module of a package into its builds, so `raster.emo` lowers with the
+metal's images and refuses the way the gate's own syscall answers do
+(its constructors keep to seven parameters for the same traveler —
+the metal refuses a wider one).
 
 - `max_dim` defaults to the line box rounded up to 8; a glyph whose
   ink exceeds it refuses (the generator asserts the same bound
@@ -163,8 +170,13 @@ hash, no eviction; the slot a glyph lands in is its alphabet position:
   96 × 72 words ≈ 54 KiB, at 24px ≈ 96 KiB, all allocated at
   construction — a Strike is a boot-time constant of its app, in the
   winbuf mold, and costs nothing per frame after.
-- First use rasterizes; every use after is the alpha blit the surfaces
-  already run, riding the window damage path it rides today.
+- A strike rasterizes eagerly, at construction — the design's "first
+  use rasterizes" amended when A17.2 met the language: arrays are
+  immutable values and the mutable containers (Box, List, Map) hold no
+  indexed word storage a blit could read at `font.emo`'s shape, so the
+  strike rasterizes all ninety-six glyphs into a plain `Array[Int64]`
+  its init stores. Boot-time work either way; the blit reads the same
+  words every frame, and nothing allocates per frame after.
 - The meta each glyph exposes is two words: base and advance; left,
   top, width, height. The blit needs nothing else.
 

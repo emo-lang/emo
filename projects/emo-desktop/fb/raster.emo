@@ -1,0 +1,356 @@
+// The type's parser and the Strike (emo-desktop A17.2): the face
+// modules' outlines read whole into a `Face`, and the strike a face
+// takes at one pixel size — the metrics scaled by the formulas the
+// grid's three strikes pinned (ascent and descent by ceiling, the
+// advance half-up), the coverage slots allocated dense over the ASCII
+// table at a line box rounded up to eight. The slots' pixels are
+// A17.3's rasterizer; the seam that blits them is A17.4's.
+//
+// The language's arrays are immutable values and its mutable
+// containers (Box, List, Map) hold no indexed word storage a blit
+// could read at `font.emo`'s shape, so a strike rasterizes eagerly at
+// construction — the design's "first use rasterizes" amended: boot-
+// time work either way, the blit reads a plain `Array[Int64]`, and
+// nothing allocates per frame.
+//
+// Every loop here is a typed top-level def (the winbuf rule): the
+// metal lowers a method's body in the dynamic convention, every
+// computed Int64 a boxed cell the pool never reclaims, while a typed
+// def computes in raw registers. Construction is boot-time work once,
+// and the same defs serve the digests the golden pins.
+
+// The alphabet the faces share: the 95 printable ASCII characters in
+// code order — the table's order, so a character's position here is
+// its glyph index minus one, and index 0 is the face's own .notdef.
+const alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+// ---- the faces ----
+
+// A face read whole: the head's numbers in font units, the outline
+// words copied from the face module, and each glyph's base — its
+// slice's first word — in table order, gid 0 the face's own .notdef
+// and gid 1..95 the printable ASCII in code order.
+class Face {
+  def init(units Int64, ascent Int64, descent Int64, gap Int64,
+           words Array[Int64], bases Array[Int64]) {
+    self.units = units
+    self.ascent = ascent
+    self.descent = descent
+    self.gap = gap
+    self.words = words
+    self.bases = bases
+  }
+
+  def units() Int64 {
+    return self.units
+  }
+
+  def ascent_fu() Int64 {
+    return self.ascent
+  }
+
+  def descent_fu() Int64 {
+    return self.descent
+  }
+
+  def line_gap_fu() Int64 {
+    return self.gap
+  }
+
+  def word_count() Int64 {
+    return self.words.length()
+  }
+
+  def word(k Int64) Int64 {
+    return self.words[k]
+  }
+
+  def glyphs() Int64 {
+    return self.bases.length()
+  }
+
+  def base(g Int64) Int64 {
+    return self.bases[g]
+  }
+
+  def words_array() Array[Int64] {
+    return self.words
+  }
+
+  def bases_array() Array[Int64] {
+    return self.bases
+  }
+
+  // The glyph index of one character, handed as the one-byte String a
+  // label's walk cuts (`substring(i, 1)`): its position in the
+  // alphabet plus one, or the .notdef for a byte the face has no
+  // drawing of.
+  def glyph_of(c String) Int64 {
+    const i = alphabet.index_of(c)
+    if i < 0 {
+      return 0
+    }
+    return i + 1
+  }
+}
+
+// The Inter face, read whole from `face_inter.emo` — the words and
+// the bases copied once, at boot, and the face module's accessors
+// staying the generator's bus.
+def inter() Face {
+  const n = face_inter.outline_words()
+  const w = ArrayBuilder.new()
+  for var k = 0; k < n; k = k + 1 {
+    w.push(face_inter.outline_word(k))
+  }
+  const b = ArrayBuilder.new()
+  for var g = 0; g < face_inter.glyphs(); g = g + 1 {
+    b.push(face_inter.outline_base(g))
+  }
+  return Face.new(units: face_inter.units_per_em(),
+                  ascent: face_inter.ascent_fu(),
+                  descent: face_inter.descent_fu(),
+                  gap: face_inter.line_gap_fu(),
+                  words: w.to_array(), bases: b.to_array())
+}
+
+// The JetBrains Mono face, read whole from `face_mono.emo`.
+def mono() Face {
+  const n = face_mono.outline_words()
+  const w = ArrayBuilder.new()
+  for var k = 0; k < n; k = k + 1 {
+    w.push(face_mono.outline_word(k))
+  }
+  const b = ArrayBuilder.new()
+  for var g = 0; g < face_mono.glyphs(); g = g + 1 {
+    b.push(face_mono.outline_base(g))
+  }
+  return Face.new(units: face_mono.units_per_em(),
+                  ascent: face_mono.ascent_fu(),
+                  descent: face_mono.descent_fu(),
+                  gap: face_mono.line_gap_fu(),
+                  words: w.to_array(), bases: b.to_array())
+}
+
+// ---- the parse: one glyph's slice ----
+//
+// The slice, in the order the generator wrote: the advance in font
+// units, the vertex count, the contour count, the contour ends packed
+// four 16-bit fields to a word, then one word per vertex — the
+// on-curve flag in the top byte, the signed deltas from the previous
+// vertex in two 28-bit fields.
+
+def advance_fu(f Face, g Int64) Int64 {
+  return f.word(f.base(g))
+}
+
+def points(f Face, g Int64) Int64 {
+  const b = f.base(g)
+  return f.word(b + 1)
+}
+
+def contours(f Face, g Int64) Int64 {
+  const b = f.base(g)
+  return f.word(b + 2)
+}
+
+// The e-th contour's last vertex index, from the packed ends.
+def contour_end(f Face, g Int64, e Int64) Int64 {
+  const b = f.base(g)
+  return (f.word(b + 3 + e / 4) >> (16 * (e % 4))) & 0xFFFF
+}
+
+// The v-th vertex word of the glyph's slice.
+def vertex_word(f Face, g Int64, v Int64) Int64 {
+  const b = f.base(g)
+  const ends = f.word(b + 2)
+  return f.word(b + 3 + (ends + 3) / 4 + v)
+}
+
+// The v-th vertex's on-curve flag (1 on the curve, 0 off it), and its
+// signed deltas — the 28-bit fields read back through two's
+// complement.
+def vertex_on(f Face, g Int64, v Int64) Int64 {
+  return vertex_word(f, g, v) >> 56
+}
+
+def vertex_dx(f Face, g Int64, v Int64) Int64 {
+  var d = (vertex_word(f, g, v) >> 28) & 0x3FFFFFF
+  if d > 134217728 {
+    d = d - 268435456
+  }
+  return d
+}
+
+def vertex_dy(f Face, g Int64, v Int64) Int64 {
+  var d = vertex_word(f, g, v) & 0x3FFFFFF
+  if d > 134217728 {
+    d = d - 268435456
+  }
+  return d
+}
+
+// ---- the scaling: the formulas the grid pinned ----
+
+// The ceiling scale the metrics ride: the one rounding FreeType does
+// that the grid's three strikes confirm exactly (Inter 16's ascent
+// 1984·16/2048 = 15.5 → 16, 24's 23.25 → 24, JetBrains Mono's 16.32 →
+// 17; every descent and .notdef advance beside).
+def ceil_scale(fu Int64, px Int64, upem Int64) Int64 {
+  var a = fu
+  if a < 0 {
+    a = 0 - a
+  }
+  return (a * px + upem - 1) / upem
+}
+
+// The half-up scale an advance rides: the generator's cross-check ran
+// on exactly this rounding, one pixel of drift reported as FreeType's
+// own hinting, two or more refused.
+def half_up(fu Int64, px Int64, upem Int64) Int64 {
+  return (2 * fu * px + upem) / (2 * upem)
+}
+
+// ---- the strike ----
+
+// The strike a face takes at one pixel size: the scaled metrics, the
+// coverage slots dense over the table — glyph g's slot begins at word
+// g * slot_words — and two meta words a glyph, the first the slot
+// base and the half-up advance, the second the ink box the
+// rasterizer fills (left and top +128, then width and height; zero
+// until A17.3 fills it).
+class Strike {
+  def init(face Face, px Int64, ascent Int64, descent Int64,
+           max_dim Int64, slots Array[Int64], meta Array[Int64]) {
+    self.face = face
+    self.px = px
+    self.ascent = ascent
+    self.descent = descent
+    self.max_dim = max_dim
+    self.slots = slots
+    self.meta = meta
+  }
+
+  def px() Int64 {
+    return self.px
+  }
+
+  def ascent() Int64 {
+    return self.ascent
+  }
+
+  def descent() Int64 {
+    return self.descent
+  }
+
+  def line_height() Int64 {
+    return self.ascent + self.descent
+  }
+
+  def max_dim() Int64 {
+    return self.max_dim
+  }
+
+  // The words one glyph's coverage slot spans.
+  def slot_words() Int64 {
+    return (self.max_dim * self.max_dim + 7) / 8
+  }
+
+  def glyphs() Int64 {
+    return self.meta.length() / 2
+  }
+
+  // The glyph's slot base and half-up advance — meta word A; word B
+  // is the ink box, A17.3's to fill.
+  def slot_base(g Int64) Int64 {
+    return self.meta[g * 2] & 0xFFFFFF
+  }
+
+  def advance(g Int64) Int64 {
+    return (self.meta[g * 2] >> 24) & 255
+  }
+
+  def meta_array() Array[Int64] {
+    return self.meta
+  }
+
+  def glyph_of(c String) Int64 {
+    const f = self.face
+    return f.glyph_of(c)
+  }
+}
+
+// The strike `f` takes at `px` pixels, by the error convention:
+// `(R.ok, the strike)` or `(R.error, why)` — a size at zero or below,
+// an advance the 8-bit meta field cannot hold. The refusal is a value,
+// not a raise: the riscv64 target does not lower raise, and the
+// compiler pulls every module of a package into its builds, so this
+// module lowers with the metal's images and refuses the way the gate's
+// own syscall answers do.
+def strike(f Face, px Int64) (R, Strike) {
+  if px <= 0 {
+    return (R.error, "raster: strike size ${px} is not positive")
+  }
+  const ascent = ceil_scale(f.ascent_fu(), px, f.units())
+  const descent = ceil_scale(f.descent_fu(), px, f.units())
+  const max_dim = (ascent + descent + 7) / 8 * 8
+  const slot = (max_dim * max_dim + 7) / 8
+  const n = f.glyphs()
+  const total = n * slot
+  const zeros = ArrayBuilder.new()
+  for var k = 0; k < total; k = k + 1 {
+    zeros.push(0)
+  }
+  const meta = ArrayBuilder.new()
+  for var g = 0; g < n; g = g + 1 {
+    const apx = half_up(advance_fu(f, g), px, f.units())
+    if apx > 255 {
+      return (R.error,
+              "raster: glyph ${g}'s advance ${apx} does not fit the meta word")
+    }
+    meta.push((g * slot) | (apx << 24))
+    meta.push(0)
+  }
+  return (R.ok, Strike.new(face: f, px: px, ascent: ascent, descent: descent,
+                           max_dim: max_dim,
+                           slots: zeros.to_array(), meta: meta.to_array()))
+}
+
+// ---- the digests the golden pins ----
+
+// A rolling digest over words: h = h·31 + w mod 1000000007, Int64
+// arithmetic with no overflow (h under 2^30, a word under 2^58, the
+// product under 2^35). Every target folds the same integers, so the
+// digest pins the parse whole.
+def digest_of(words Array[Int64]) Int64 {
+  var h = 0
+  for var k = 0; k < words.length(); k = k + 1 {
+    h = (h * 31 + words[k]) % 1000000007
+  }
+  return h
+}
+
+// The face's parse digest: the bases folded, then the outline words.
+def face_digest(f Face) Int64 {
+  const w = f.words_array()
+  const b = f.bases_array()
+  var h = 0
+  for var k = 0; k < b.length(); k = k + 1 {
+    h = (h * 31 + b[k]) % 1000000007
+  }
+  for var k = 0; k < w.length(); k = k + 1 {
+    h = (h * 31 + w[k]) % 1000000007
+  }
+  return h
+}
+
+// The strike's advance digest: one half-up advance a glyph, the
+// scaling formula's own pin.
+def advances_digest(s Strike) Int64 {
+  const m = s.meta_array()
+  var h = 0
+  for var g = 0; g < s.glyphs(); g = g + 1 {
+    h = (h * 31 + ((m[g * 2] >> 24) & 255)) % 1000000007
+  }
+  return h
+}

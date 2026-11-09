@@ -54,6 +54,12 @@ def outline_base(g Int64) Int64 {
   return bases[g]
 }
 
+// The outlines' word count: the bound `outline_word(k)` walks
+// to, and the words a Face copies whole.
+def outline_words() Int64 {
+  return 2973
+}
+
 // The outlines: 448 words to a chunk, each glyph's slice its
 // advance in font units, its vertex and contour counts, its
 // contour end indices packed four to a word, and one word per

@@ -1,0 +1,65 @@
+require "emo/ui_fb"
+
+// The type's parse-facts golden (emo-desktop A17.2): the faces read
+// whole from their modules and the strikes they take at the grid's
+// three pixel sizes — the metrics the grid pinned (Inter 16/4/20 and
+// 24/6/30, JetBrains Mono 17/5/22), the parse slices of a few glyphs,
+// sample advances, and the digests that pin the parse and the scaled
+// advances whole. The interpreter's bytes are `expected.txt` and the
+// three hosted targets print the same; the golden carries no surface,
+// so `wasm` and `beam` refuse at build time — the package's interface
+// calls have no implementor in the program — and the gate pins those
+// refusals beside the bytes.
+//
+//   emo run main.emo
+
+def main() {
+  const fi = ui_fb.raster.inter()
+  println("face inter upem ${fi.units()} ascent ${fi.ascent_fu()} descent ${fi.descent_fu()} gap ${fi.line_gap_fu()} words ${fi.word_count()}")
+  println("face inter digest ${ui_fb.raster.face_digest(fi)}")
+  const fm = ui_fb.raster.mono()
+  println("face mono upem ${fm.units()} ascent ${fm.ascent_fu()} descent ${fm.descent_fu()} gap ${fm.line_gap_fu()} words ${fm.word_count()}")
+  println("face mono digest ${ui_fb.raster.face_digest(fm)}")
+  // The parse slices: a space's empty drawing, an l's single contour,
+  // an o's two, a B's three, and a vertex's fields read back whole.
+  println("slice inter space advance ${ui_fb.raster.advance_fu(fi, 1)} points ${ui_fb.raster.points(fi, 1)} contours ${ui_fb.raster.contours(fi, 1)}")
+  const gl = fi.glyph_of("l")
+  println("slice inter l advance ${ui_fb.raster.advance_fu(fi, gl)} points ${ui_fb.raster.points(fi, gl)} contours ${ui_fb.raster.contours(fi, gl)} end0 ${ui_fb.raster.contour_end(fi, gl, 0)}")
+  const go = fi.glyph_of("o")
+  println("slice inter o advance ${ui_fb.raster.advance_fu(fi, go)} points ${ui_fb.raster.points(fi, go)} contours ${ui_fb.raster.contours(fi, go)} end0 ${ui_fb.raster.contour_end(fi, go, 0)} end1 ${ui_fb.raster.contour_end(fi, go, 1)}")
+  const gb = fi.glyph_of("B")
+  println("slice inter B advance ${ui_fb.raster.advance_fu(fi, gb)} points ${ui_fb.raster.points(fi, gb)} contours ${ui_fb.raster.contours(fi, gb)}")
+  println("slice mono l vertex0 on ${ui_fb.raster.vertex_on(fm, fm.glyph_of("l"), 0)} dx ${ui_fb.raster.vertex_dx(fm, fm.glyph_of("l"), 0)} dy ${ui_fb.raster.vertex_dy(fm, fm.glyph_of("l"), 0)}")
+  // The strikes at the grid's three sizes, by the error convention —
+  // and the refusal a zero size earns, pinned beside them.
+  case ui_fb.raster.strike(fi, 0) {
+    (R.error, why) -> { println("strike inter 0 refused: ${why}") }
+    (R.ok, _) -> { println("strike inter 0 unexpectedly ok") }
+  }
+  case ui_fb.raster.strike(fi, 16) {
+    (R.error, why) -> { println("strike inter 16 refused: ${why}") }
+    (R.ok, s) -> {
+      println("strike inter 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
+      println("strike inter 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
+      println("strike inter 16 digest ${ui_fb.raster.advances_digest(s)}")
+    }
+  }
+  case ui_fb.raster.strike(fi, 24) {
+    (R.error, why) -> { println("strike inter 24 refused: ${why}") }
+    (R.ok, s) -> {
+      println("strike inter 24 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
+      println("strike inter 24 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
+      println("strike inter 24 digest ${ui_fb.raster.advances_digest(s)}")
+    }
+  }
+  case ui_fb.raster.strike(fm, 16) {
+    (R.error, why) -> { println("strike mono 16 refused: ${why}") }
+    (R.ok, s) -> {
+      println("strike mono 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
+      println("strike mono 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
+      println("strike mono 16 digest ${ui_fb.raster.advances_digest(s)}")
+    }
+  }
+}
+
+main()

@@ -1,0 +1,19 @@
+face inter upem 2048 ascent 1984 descent -494 gap 0 words 3383
+face inter digest 523882719
+face mono upem 1000 ascent 1020 descent -300 gap 0 words 2973
+face mono digest 945054513
+slice inter space advance 576 points 0 contours 0
+slice inter l advance 496 points 4 contours 1 end0 3
+slice inter o advance 1228 points 48 contours 2 end0 23 end1 47
+slice inter B advance 1340 points 52 contours 3
+slice mono l vertex0 on 1 dx 380 dy 0
+strike inter 0 refused: raster: strike size 0 is not positive
+strike inter 16 ascent 16 descent 4 line 20 max_dim 24 slot 72
+strike inter 16 advances A 11 f 6 i 4 space 5
+strike inter 16 digest 335667603
+strike inter 24 ascent 24 descent 6 line 30 max_dim 32 slot 128
+strike inter 24 advances A 17 f 9 i 6 space 7
+strike inter 24 digest 135949470
+strike mono 16 ascent 17 descent 5 line 22 max_dim 24 slot 72
+strike mono 16 advances A 10 f 10 i 10 space 10
+strike mono 16 digest 84091540

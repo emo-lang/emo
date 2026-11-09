@@ -483,6 +483,12 @@ def glyph_of(c String) Int64 {
     out.append("}")
     out.append("")
     out.append(
+        "// The outlines' word count: the bound `outline_word(k)` walks\n"
+        "// to, and the words a Face copies whole."
+    )
+    out.append(f"def outline_words() Int64 {{\n  return {len(outlines)}\n}}")
+    out.append("")
+    out.append(
         f"// The outlines: {CHUNK} words to a chunk, each glyph's slice its\n"
         "// advance in font units, its vertex and contour counts, its\n"
         "// contour end indices packed four to a word, and one word per\n"
