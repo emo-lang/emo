@@ -1,14 +1,15 @@
 // The step 13 acceptance: an HTTP server and client round-trip on
 // localhost, in one program, entirely direct style — the scheduler
 // switches processes underneath while the code reads like blocking calls.
+require "httpd"
 require "http"
 require "net"
 
 const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
-// One process per connection, inside the library's serve helper.
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [], "hello from emo")
+// One process per connection, inside httpd's serve helper.
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello from emo")
 }
 
 case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {

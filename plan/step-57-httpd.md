@@ -1,6 +1,6 @@
 # Step 57 — The httpd package (the server half of HTTP)
 
-**Milestone:** M23 · **Prereq:** steps 13, 26–27, 28–30 · **Status:** in progress
+**Milestone:** M23 · **Prereq:** steps 13, 26–27, 28–30 · **Status:** done 2026-11-09
 
 ## Why this step exists
 
@@ -81,7 +81,7 @@ with one.
 
 ## Tasks
 
-- [ ] **T57.1** — The package skeleton and the pure parser: `Request`
+- [x] **T57.1** — The package skeleton and the pure parser: `Request`
       and `Response` as values, `response`/`error` constructors,
       `parse_head` — request line (three parts, token method,
       HTTP/1.x only), header lines (token names canonicalized to the
@@ -92,7 +92,7 @@ with one.
       discipline. The `httpd_parse` example walks fixture heads —
       parsed fields and refusals — byte-identical on the three
       hosted targets.
-- [ ] **T57.2** — The connection half: reading the head block off a
+- [x] **T57.2** — The connection half: reading the head block off a
       conn under the 431 limit, bodies by Content-Length or chunked
       under the 413 limit, `100 Continue` for `Expect:
       100-continue`, response writing (status line, reason phrases,
@@ -103,12 +103,12 @@ with one.
       `server_options` with the with_* builders, and the roundtrip
       and wire-shape goldens (keep-alive double request, chunked
       body, 431, 413, HEAD, injected Date).
-- [ ] **T57.3** — The Router: pattern parsing at registration
+- [x] **T57.3** — The Router: pattern parsing at registration
       (raise on bad or conflicting), method-scoped and method-less
       patterns, `{name}` and `{path...}` wildcards feeding
       `req.params`, subtree prefixes, most-specific precedence, 405
       with `Allow`, 301 path cleanup, and the routing goldens.
-- [ ] **T57.4** — The migration and the docs: `http` loses its
+- [x] **T57.4** — The migration and the docs: `http` loses its
       server half, the bench and examples move to httpd,
       `docs/stdlib/httpd.md` and the zh-CN mirror, the
       `docs/stdlib.md` index rows both languages, and the networking

@@ -3441,7 +3441,26 @@ carries no server half; `dune runtest` green.
       by hand and through the committed lockfile in test/emo_project
       (the interpreter leg; the c/ts legs verified by hand, the
       serve examples' c_goldens deferral covering this one too).
-- [ ] **T57.4** — The migration and the docs: `http` loses its
-      server half, the bench and examples move to httpd,
-      `docs/stdlib/httpd.md` and the zh-CN mirror, the index rows,
-      the networking intro's pointer.
+- [x] **T57.4** — The migration and the docs: `http` returns to
+      client-only (`serve`, `serve_requests`, `handle_connection`,
+      `read_request`, `write_response`, and `reason_phrase` deleted;
+      the header comment pointing the server half at httpd), the
+      callers migrated — `benchmarks/http_echo` (deps `httpd` +
+      `net`, smoke-tested through a real curl), `examples/
+      http_roundtrip` and `examples/https_roundtrip` (deps gaining
+      `httpd`, `httpd.serve` with the trailing block where
+      `http.serve_requests` stood, outputs unchanged), `ssr_page`
+      needing nothing (it names no server) — the locks regenerated
+      for every package whose source moved; `docs/stdlib/httpd.md`
+      and its zh-CN mirror (serving, the request and the response,
+      routing, options, strictness on the wire, the honest
+      limitations), `docs/stdlib/http.md` slimmed to the client
+      both languages, the `docs/stdlib.md` rows split and the
+      `httpd` summary section added both languages, the networking
+      intro's HTTP bullet split into client and server both
+      languages; the plan file's boxes ticked and `plan/README.md`'s
+      row added; the migrated `https_roundtrip` c binary turned 3/3
+      red under the harness while standing 3/3 green standalone —
+      the named flake family again — so its c golden joins the
+      deferral and its interpreter leg carries the coverage; M23
+      complete.

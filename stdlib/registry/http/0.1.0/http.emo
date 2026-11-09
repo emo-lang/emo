@@ -1,8 +1,8 @@
 require "net"
 
-// The standard HTTP library: a client over the net surface, and a server
-// that runs one process per connection. Direct style throughout — a
-// request reads like any other function call.
+// The standard HTTP client: requests over the net surface, direct
+// style — a request reads like any other function call. Serving HTTP
+// is the httpd package's half of the wire.
 
 class HttpRequest {
   def init(method String, path String, headers Array[(String, String)], body String) {
@@ -278,98 +278,4 @@ def find_header(headers Array[(String, String)], name String, i Int64) String {
     return pair[1].trim()
   }
   return find_header(headers, name, i + 1)
-}
-
-// ---- Server ----
-
-// The process-per-connection helper: every accepted connection runs its
-// own process, so one slow client never blocks the next. An accept
-// failure — the listener closed under the loop, the deadline gone —
-// ends the loop with the reason.
-def serve(listener TcpListener, handler Block) (R, TcpConn) {
-  case listener.accept() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, conn)   -> {
-      do handle_connection(conn, handler)
-      return serve(listener, handler)
-    }
-  }
-}
-
-// The request-level server: reads the request, hands it to the handler,
-// writes the handler's response back, and closes.
-def serve_requests(listener TcpListener, handler Block) (R, TcpConn) {
-  return serve(listener) -> (conn TcpConn) {
-    case read_request(conn) {
-      (R.error, why) -> {
-        conn.close()
-        return (R.error, why)
-      }
-      (R.ok, req) -> {
-        const resp = handler(req)
-        case write_response(conn, resp) {
-          (R.error, why) -> {
-            conn.close()
-            return (R.error, why)
-          }
-          (R.ok, _) -> { return conn.close() }
-        }
-      }
-    }
-  }
-}
-
-def handle_connection(conn TcpConn, handler Block) (R, TcpConn) {
-  return handler(conn)
-}
-
-def read_request(conn TcpConn) (R, HttpRequest) {
-  case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
-      const parts = line.split(" ")
-      case read_headers(conn, []) {
-        (R.error, why)  -> { return (R.error, why) }
-        (R.ok, headers) -> {
-          const length = header_value(headers, "content-length")
-          if length == "" {
-            return (R.ok, request_value(parts[0], parts[1], headers, ""))
-          }
-          case conn.read_exactly(length.to_int64()) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, body)   -> {
-              return (R.ok, request_value(parts[0], parts[1], headers, body))
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-def write_response(conn TcpConn, resp HttpResponse) (R, TcpConn) {
-  const head = "HTTP/1.1 " + resp.status.to_string() + " " + reason_phrase(resp.status) + "\r\nContent-Length: " + resp.body.length().to_string() + "\r\n\r\n"
-  return conn.write(head + resp.body)
-}
-
-def reason_phrase(status Int64) String {
-  if status == 200 {
-    return "OK"
-  }
-  if status == 201 {
-    return "Created"
-  }
-  if status == 204 {
-    return "No Content"
-  }
-  if status == 400 {
-    return "Bad Request"
-  }
-  if status == 404 {
-    return "Not Found"
-  }
-  if status == 500 {
-    return "Internal Server Error"
-  }
-  return "Unknown"
 }

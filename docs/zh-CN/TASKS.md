@@ -1184,6 +1184,20 @@ target 上逐字节不变(`CHECK.md`)。
       树、404——三个宿主 target 手工逐字节一致,解释器腿在
       test/emo_project 过已提交的 lockfile(c/ts 腿手工验证,serve
       示例的 c_goldens 缓期同样覆盖这一个)。
-- [ ] **T57.4** — 迁移与文档:`http` 失去服务端半边、bench 与示例
-      迁 httpd、`docs/stdlib/httpd.md` 与 zh 镜像、索引行、
-      networking intro 指针。
+- [x] **T57.4** — 迁移与文档:`http` 回归纯客户端(`serve`、
+      `serve_requests`、`handle_connection`、`read_request`、
+      `write_response`、`reason_phrase` 删除;头注释把服务端半边
+      指向 httpd),调用方迁移——`benchmarks/http_echo`(deps
+      `httpd` + `net`,经真实 curl 冒烟)、`examples/
+      http_roundtrip` 与 `examples/https_roundtrip`(deps 增
+      `httpd`,`httpd.serve` 尾随块站在 `http.serve_requests` 原
+      位,输出不变),`ssr_page` 无需动(它不点名服务器)——每个
+      源动过的包重生成 lock;`docs/stdlib/httpd.md` 与 zh 镜像
+      (服务、请求与响应、路由、选项、线上严格性、诚实的限制),
+      `docs/stdlib/http.md` 双语瘦身回客户端,`docs/stdlib.md`
+      行拆分并双语新增 `httpd` 摘要节,networking intro 的
+      HTTP bullet 双语拆成客户端与服务器;plan 文件勾齐、
+      `plan/README.md` 加行;迁移后的 `https_roundtrip` c 二进制
+      在 harness 下 3/3 红、单独运行 3/3 绿——又是那个已点名的
+      flake 家族——其 c golden 因此加入缓期,解释器腿承载覆盖;
+      M23 完成。

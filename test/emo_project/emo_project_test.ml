@@ -2021,19 +2021,21 @@ let stdlib_http_tests =
   targets = ["ocaml"]
 
   deps {
+    "httpd" = "0.1.0"
     "http" = "0.1.0"
     "net" = "0.1.0"
   }
 }|}
               );
               ( "main.emo",
-                {|require "http"
+                {|require "httpd"
+require "http"
 require "net"
 
 const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [], "hello from emo")
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [], "hello from emo")
 }
 
 case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
@@ -2084,6 +2086,7 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
   targets = ["ocaml"]
 
   deps {
+    "httpd" = "0.1.0"
     "http" = "0.1.0"
     "net" = "0.1.0"
   }
@@ -2091,13 +2094,14 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
               );
               ( "main.emo",
                 Printf.sprintf
-                  {|require "http"
+                  {|require "httpd"
+require "http"
 require "net"
 
 const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "%s", "%s")
 
-do http.serve_requests(listener) -> (req HttpRequest) {
-  return http.response(200, [("Content-Type", "text/plain")], "hello over https")
+const server = httpd.serve(listener) -> (req httpd.Request) {
+  return httpd.response(200, [("Content-Type", "text/plain")], "hello over https")
 }
 
 const options = net.tls_client_options().with_ca_file("%s")
