@@ -319,6 +319,21 @@ const pointer_gen_cell = koff + 0x87002ee0
 const pointer_notice_cell = koff + 0x87002ee8
 const pointer_dirty_cell = koff + 0x87002ef0
 const pointer_press_cell = koff + 0x87002f00
+// The drag's cells (emo-desktop A16.5, EmoOS T10.5): the button's
+// state while a press holds it, and the place the last pushed step
+// named — the move-at's own dedup, a stationary hand pushing nothing.
+// In the one gap the map leaves: the exit ring's tail ends at
+// 0x87002fe0 and the frame allocator's page begins at 0x87003000 —
+// the page whose head, free and total are the first three words — and
+// the input hold's seats sit at 0x87002f10. The first cut of these
+// cells landed on the hold's seat zero (the desk drag's moves wrote
+// axes into the hold's pid word, the reply-to-nobody the loud end);
+// the second landed on the allocator's own counters (the boot's
+// arenas gone before the first spawn). The gap is twenty-four bytes;
+// the three words fit, and the map's own note keeps them honest.
+const pointer_btn_cell = koff + 0x87002fe0
+const pointer_lastx_cell = koff + 0x87002fe8
+const pointer_lasty_cell = koff + 0x87002ff0
 // The held reads (emo-desktop A11.2): the multi-image desktop's
 // readers park on the same stream, and the bytes and keys are the
 // focused surface's owner's — a reader the focus does not name has
@@ -2013,7 +2028,7 @@ def input_hold_serve(dev Int64, q Int64) Void {
             gate_reply(caller_of(w), e)
           } else {
             if input_entitled_for(pid, input_peek_type(dev, q)) {
-              var w = peek64(seat + 8)
+                var w = peek64(seat + 8)
               poke64(seat, 0)
               var r = input_serve_read(w, dev, q)
               if r == 1 {
@@ -2215,6 +2230,23 @@ def pointer_drain(dev Int64, q Int64) Void {
       if peek64(pointer_dirty_cell) != 0 {
         poke64(pointer_dirty_cell, 0)
         poke64(pointer_gen_cell, peek64(pointer_gen_cell) + 1)
+        // the drag's steps (emo-desktop A16.5, EmoOS T10.5): while the
+        // hand holds the button and the axes have moved since the last
+        // pushed place, the report's end pushes one more word beside
+        // the axes' own — the move-at, type 5, the position packed the
+        // press-at's way — and the focused window's reader moves its
+        // window by it. The dedup keeps a stationary hand silent (a
+        // click pushes none), the drops the ring's own rule.
+        if peek64(pointer_btn_cell) != 0 {
+          var dx = peek64(pointer_x_cell)
+          var dy = peek64(pointer_y_cell)
+          if dx != peek64(pointer_lastx_cell) || dy != peek64(pointer_lasty_cell) {
+            poke64(pointer_lastx_cell, dx)
+            poke64(pointer_lasty_cell, dy)
+            pointer_ring_push((5 << 48) | (272 << 32) |
+              ((dx & 65535) << 16) | (dy & 65535))
+          }
+        }
         pointer_notify()
       }
     } else {
@@ -2230,6 +2262,13 @@ def pointer_drain(dev Int64, q Int64) Void {
         if ev_code_of(e) == 272 && ev_value_of(e) == 1 {
           poke64(pointer_press_cell, 1)
           poke64(pointer_dirty_cell, 1)
+          // the drag's hand takes the button (emo-desktop A16.5,
+          // EmoOS T10.5): the state the move-at's steps ask, and the
+          // dedup's anchor — a press names the place a stationary
+          // hand must beat before the first step pushes
+          poke64(pointer_btn_cell, 1)
+          poke64(pointer_lastx_cell, peek64(pointer_x_cell))
+          poke64(pointer_lasty_cell, peek64(pointer_y_cell))
           // the press-at (emo-desktop A16.2, EmoOS T10.2): the press's
           // own place, packed raw — the position the axes last named,
           // x in the value's high half and y in its low, riding the
@@ -2243,6 +2282,12 @@ def pointer_drain(dev Int64, q Int64) Void {
           var py = peek64(pointer_y_cell)
           pointer_ring_push((4 << 48) | (272 << 32) |
             ((px & 65535) << 16) | (py & 65535))
+        }
+        // the button's falling edge: the drag's hand lets go — the
+        // steps stop, the release itself riding the ring to the
+        // reader that armed the drag (its own disarm)
+        if ev_code_of(e) == 272 && ev_value_of(e) == 0 {
+          poke64(pointer_btn_cell, 0)
         }
       }
       if ev_type_of(e) == 3 {
@@ -2284,6 +2329,9 @@ def pointer_service(boss Pid) Void {
   poke64(pointer_notice_cell, 0)
   poke64(pointer_dirty_cell, 0)
   poke64(pointer_press_cell, 0)
+  poke64(pointer_btn_cell, 0)
+  poke64(pointer_lastx_cell, 0)
+  poke64(pointer_lasty_cell, 0)
   input_dev_init(dev, q)
   println("pointer ready")
   boss <- self_pid()

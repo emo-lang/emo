@@ -157,7 +157,12 @@ desktop names its apps by pid), never the window's owner's. **The
 scale's values** (T10.4): verb 21 accepts the whole numbers now — the
 walk carries the buffer at that multiple, nearest neighbor, the
 maximize the desktop's windows speak; a scale below 1 stays the
-argument refusal. And the fold: a window that loses the focus loses
+argument refusal. **The drag** (emo-desktop A16.5, EmoOS T10.5):
+while the hand holds the button, each report's end pushes the
+move-at (type 5, the press-at's packing) beside the axes — the
+window following the pointer by the seat's own `win_move`, the even
+x the blit's word pairs keep, the release the disarm. And the fold:
+a window that loses the focus loses
 its popups with it — a menu whose reader's attention moved is the
 next composition's wallpaper, never a latch left open on the screen.
 

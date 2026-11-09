@@ -231,6 +231,13 @@ const seat_maxx = buf + 2112
 const seat_maxy = buf + 2120
 const seat_menug = buf + 2128
 const seat_menub = buf + 2136
+// the drag's own words (emo-desktop A16.5): whether the hand holds
+// the bar (0 idle, 1 armed — the press down, no move yet), and the
+// offset the window keeps to the pointer — screen-space, the scale
+// never in it, the window moving one with the hand.
+const seat_drag = buf + 2144
+const seat_dragx = buf + 2152
+const seat_dragy = buf + 2160
 
 // The menu's surface up and painted: the popup declared by its role,
 // bound to the window, moved to the button's side (the
@@ -401,8 +408,52 @@ def seat_press(raw Int64, surf Win) Int64 {
      ly >= ui_fb_win.button_y() &&
      ly < ui_fb_win.button_y() + ui_fb_win.button_h() {
     seat_menu_open(surf)
+    return 0
+  }
+  // the bar's own hand (emo-desktop A16.5): a press beside the button
+  // arms the drag — the offset the window keeps to the pointer until
+  // the release, screen-space (the scale never in it), the steps the
+  // move-at's push. The maximized window drags as the block it is:
+  // the offset the scaled rect keeps, the scale unchanged.
+  if lx >= 0 && lx < surf.width() && ly >= 0 &&
+     ly < ui_fb_win.bar_height() {
+    poke64(seat_dragx, sx - peek64(seat_wx))
+    poke64(seat_dragy, sy - peek64(seat_wy))
+    poke64(seat_drag, 1)
   }
   return 0
+}
+
+// One drag step (emo-desktop A16.5): the move-at's place scaled by
+// the axes' maxima, the window's new origin the pointer's less the
+// armed offset, the even x the blit's word pairs keep — the move the
+// seat's own call (the grant's owner, the coordinates it keeps true
+// for the menu and the maximize beside), the present the live frame.
+// The mode's edge is the drag's own clamp: a refused move leaves the
+// last seat standing, the steps walking the hand back in.
+def seat_drag_step(raw Int64, surf Win) Void {
+  if peek64(seat_drag) != 0 {
+    const sx = (((raw >> 16) & 65535) * peek64(seat_mw)) / (peek64(seat_maxx) + 1)
+    const sy = ((raw & 65535) * peek64(seat_mh)) / (peek64(seat_maxy) + 1)
+    var nx = sx - peek64(seat_dragx)
+    var ny = sy - peek64(seat_dragy)
+    if nx < 0 {
+      nx = 0
+    }
+    if ny < 0 {
+      ny = 0
+    }
+    nx = nx - (nx & 1)
+    case syscall.win_move(peek64(seat_grant), nx, ny) {
+      (R.error, _) -> {}
+      (R.ok, _) -> {
+        poke64(seat_wx, nx)
+        poke64(seat_wy, ny)
+        poke64(seat_drag, 2)
+        surf.present()
+      }
+    }
+  }
 }
 
 // The byte table in the input's seat: one tag per byte, the tag its
@@ -428,6 +479,9 @@ class Keys {
     poke64(seat_scale, 1)
     poke64(seat_menug, 0)
     poke64(seat_menub, 0)
+    poke64(seat_drag, 0)
+    poke64(seat_dragx, 0)
+    poke64(seat_dragy, 0)
     poke64(seat_savedx, x)
     poke64(seat_savedy, y)
     poke64(seat_maxx, 1)
@@ -454,8 +508,19 @@ class Keys {
             return (R.error, 0)
           }
         } else {
-          if ev_type(ev) == 1 && ev_value(ev) == 1 {
-            b = key_byte(ev_code(ev))
+          if ev_type(ev) == 5 {
+            seat_drag_step(ev_value(ev), self.surf)
+          } else {
+            if ev_type(ev) == 1 {
+              if ev_value(ev) == 1 {
+                b = key_byte(ev_code(ev))
+              } else {
+                // the release disarms the hand (emo-desktop A16.5):
+                // the drag's steps stop, the window standing where
+                // the last step set it
+                poke64(seat_drag, 0)
+              }
+            }
           }
         }
       }

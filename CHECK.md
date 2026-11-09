@@ -338,13 +338,14 @@ landed 2026-11-08 (M15 complete):**
 **emo-desktop — [M16, the window's own menu](projects/emo-desktop/docs/TASKS.md),
 landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
 
-- [x] **A16.1–A16.4** (D13) — the bar's one round button and the
+- [x] **A16.1–A16.5** (D13) — the bar's one round button and the
   dropdown it opens (Maximize, Minimize, Quit), the menu once in the
   seat the three apps share; the press-at wire (EmoOS T10.2), the
   minimize's hidden entry with the dock tile's way back and the popup
   fold at every focus move (T10.3), the maximize the scale seam's own
-  whole multiple with the scaled walk (T10.4). Landed 2026-11-08; the
-  record is the dated section below.
+  whole multiple with the scaled walk (T10.4), the bar a drag handle
+  on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
+  2026-11-08; the record is the dated section below.
 
 ## 2026-11-08 — The window's own menu (emo-desktop M16, EmoOS T10.2–T10.4)
 
@@ -399,7 +400,18 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   whole width), the restore's menu at the carried seat, the restore,
   the minimize's compose, the desktop open's, the menu-quit's session
   end — every comp line pinned with its sum, deterministic across
-  rounds; the clicks named through the device axes' inverse. The
+  rounds; the clicks named through the device axes' inverse. **The
+  drag** (A16.5, T10.5, 2026-11-09): the bar beside the button arms
+  the hand, the driver's move-at steps (type 5, the press-at's
+  packing, pushed while the button holds and the axes move) move the
+  window by the seat's own `win_move`, there and back, the two steps'
+  comp lines pinned — and the drag's cells taught the map a lesson:
+  the first cut landed on the input hold's seat zero (the desk drag's
+  moves wrote axes into the hold's pid word, the reply-to-nobody the
+  loud end), the second on the frame allocator's own head, free and
+  total (the arenas gone before the first spawn); the cells live in
+  the twenty-four bytes between the exit ring's tail and the
+  allocator's page, and the map's comment names the neighbors. The
   pins: the fb gate green (151), `run.sh` green under both timer
   transports — four rounds green, three byte-identical on both (the
   fourth's only variance the launch-era prompt-vs-rise interleave

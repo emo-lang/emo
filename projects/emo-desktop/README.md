@@ -33,7 +33,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M13 — The macOS face | the wallpaper's art, the header bar, the desktop's icons, the machine's desktop reads as one | complete |
 | M14 — The HD desktop | 1920×1080, real typefaces, the rounded-and-shadowed primitives, the translucent chrome, the drawn icons, the shared title bar and the antialiased pointer | complete |
 | M15 — Motion | the composition measured (~230 ms whole-screen, ~36 ms window-sized), the damage rectangle, the first animation: the apps' windows rise on open and sink on close | complete |
-| M16 — The window's own menu | the bar's one round button and the dropdown it opens — Maximize, Minimize, Quit — on the press-at wire, the minimized entry with the dock tile's way back, the maximize the scale's whole multiple | complete |
+| M16 — The window's own menu | the bar's one round button and the dropdown it opens — Maximize, Minimize, Quit — on the press-at wire, the bar a drag handle, the minimized entry with the dock tile's way back, the maximize the scale's whole multiple | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

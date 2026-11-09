@@ -841,3 +841,21 @@ completion.
   next input event when the desktop goes fully silent — the golden's
   beat texture provides one (the pointer's park after every click),
   as every pre-A16 beat's motion did.
+
+- [x] **T10.5** — The move-at — **complete 2026-11-09** (emo-desktop
+  A16.5, M16's drag). While the pointer's button is down and the axes
+  have moved since the last pushed place, each report's end pushes
+  one more word beside the axes' own: the **move-at** (type 5, the
+  press-at's packing — x in the value's high half, y in its low),
+  served to the focused window's reader by the focus's verdict — the
+  drag the seat speaks by its own `win_move` per step, the stationary
+  hand pushing nothing (the dedup the driver's own cells keep), the
+  ring's drops the smooth degradation they have always been. **The
+  find, and the map's lesson**: the first cut of the drag's three
+  cells landed on the input hold's seat zero (the desk drag's moves
+  wrote axes into the hold's pid word — the reply-to-nobody the loud
+  end), the second on the frame allocator's own head, free and total
+  (the boot's arenas gone before the first spawn); the cells live in
+  the twenty-four bytes the map leaves between the exit ring's tail
+  and the allocator's page, and the map's comment keeps the
+  neighborhood honest for the next address the kernel needs.

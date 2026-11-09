@@ -100,7 +100,12 @@ pointer driver's left-button press is followed, on the ring, by a
 **press-at** — type 4, the button's code, the position the axes last
 named packed raw (x in the value's high half, y in its low) — served
 to the focused window's reader by the focus's own verdict, the bar's
-button the app's to judge.
+button the app's to judge. And while the hand holds the button and
+the axes move, the driver pushes one more word beside each report's
+end — the **move-at** (type 5, the position packed the press-at's
+way) — the focused window's reader again, the drag the seat speaks:
+the window following the hand by the reader's own `win_move`, one
+present per step (emo-desktop A16.5, EmoOS T10.5).
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),

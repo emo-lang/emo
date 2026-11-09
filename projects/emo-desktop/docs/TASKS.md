@@ -1219,3 +1219,15 @@ word. The pins: the fb gate green (151), `run.sh` green under both
 timer transports three consecutive rounds byte-identical on both, the
 full `dune runtest` green, `@fmt` green. Decision record: CHECK.md,
 2026-11-08. M16 complete.
+
+- [x] **A16.5** — The bar's drag — **complete 2026-11-09**. A press
+  beside the button arms the hand: the offset the window keeps to the
+  pointer (screen-space, the scale never in it — the maximized window
+  drags as the block it is), and the driver's move-at steps move the
+  window with the pointer — the seat's own `win_move` per step (the
+  coordinates it keeps true for the menu and the maximize beside),
+  the even x the blit's word pairs keep, the present the live frame,
+  the release the disarm. The kernel's half is
+  [EmoOS T10.5](../../emo-os/docs/TASKS.md). The golden drags the
+  counter there and back — the two steps' comp lines pinned with
+  their sums, the window standing at its landing seat again.
