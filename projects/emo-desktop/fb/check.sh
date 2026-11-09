@@ -28,7 +28,11 @@ case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
 
 UI=$(cd ../../emo-ui && pwd)
 SYSCALL_SRC="$PWD/../../../stdlib/registry/syscall/0.1.0"
-RUNNER=$UI/wasm-runner.mjs
+# The wasm artifacts run under the canonical host the compiler carries
+# as generated data (step 56's seventeen imports — the hand-rolled
+# emo-ui runner predates them and supplies three, so every module
+# fails at link). Living in the compiler tree, it cannot drift.
+HOST=$(cd ../../.. && pwd)/src/emo_codegen/wasm/wasm_host.mjs
 mkdir -p .emo-build/check
 OUT=$PWD/.emo-build/check/out
 fail=0
@@ -104,14 +108,21 @@ cp "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" "$REG/syscall/0.1.0/"
 # `glyphs/coverage.txt` is the type's coverage grid — rasterized from the
 # faces in `fonts/` by `glyphs/rasterize.py`, the one step that needs
 # Pillow, never run here — and `glyphs/gen.py` writes `font.emo` from it;
-# a `font.emo` that no longer matches the grid is refused here. The
-# generator is Python 3's standard library, the same interpreter `run.sh`
-# folds a screendump with; without it the check says so and passes, the
-# way the platform gates do.
+# a `font.emo` that no longer matches the grid is refused here. Beside
+# it, `glyphs/outlines.py` writes the faces' outline modules
+# (`face_inter.emo`, `face_mono.emo`) straight from the pinned faces,
+# the scalable source the desktop's own rasterizer (A17) strikes at any
+# pixel size; a face module that no longer matches its face is refused
+# the same way, and the same script's advance cross-check against the
+# grid runs inside both modes. The generators are Python 3's standard
+# library, the same interpreter `run.sh` folds a screendump with;
+# without it the checks say so and pass, the way the platform gates do.
 
 if command -v python3 >/dev/null 2>&1; then
   python3 glyphs/gen.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
   expect 0 "the type's tables in font.emo are the grid in glyphs/coverage.txt" "$rc"
+  python3 glyphs/outlines.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
+  expect 0 "the faces' outlines match the pinned faces (glyphs/outlines.py)" "$rc"
 else
   printf 'skip the type table check: no python3 on PATH\n'
 fi
@@ -246,7 +257,7 @@ run_target() {
     ocaml)      "$2/ocaml/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     c)          "$2/c/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     typescript) node "$2/typescript/out.ts" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
-    wasm)       node "$RUNNER" "$2/wasm/out.wasm" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+    wasm)       node "$HOST" "$2/wasm/out.wasm" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     beam)       erl -noshell -pa "$2/beam" \
                   -eval 'out:main(), erlang:halt(0).' >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
   esac

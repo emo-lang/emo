@@ -361,6 +361,46 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-10 — The type at any size opens (emo-desktop A17.1)
+
+- The faces stop being three baked strikes and start being outlines:
+  `glyphs/outlines.py` reads the pinned Inter 4.1 and JetBrains Mono
+  2.304 and writes `face_inter.emo` (3,383 outline words, 8 chunks)
+  and `face_mono.emo` (2,973, 7) against the 4,269 words of the three
+  pixel strikes they retire in A17.4. What the OS-side parser never
+  sees, the generator resolved: the cmap (format 4 or 12; every ASCII
+  code point present or refusal), the implied on-curve midpoints
+  (floored, each contour rotated to start on one), composites
+  (translation applied; scale or point-index anchor refused by name).
+  Face format 1 is pinned in
+  `projects/emo-desktop/docs/typeface.md` (EN + zh-CN): per glyph the
+  advance in font units, the vertex and contour counts, the contour
+  ends four 16-bit fields to a word, and one word per vertex — the
+  on-curve flag in the top byte, the signed deltas in two 28-bit
+  fields.
+- The advance cross-check runs in both generator modes against the
+  grid FreeType rendered: exact rational round-half-up; a one-pixel
+  difference is FreeType's own hinting and is reported (`5` at 16px
+  and `T` at 24px on Inter; JetBrains Mono 95/95 exact), two or more
+  refuse. The metrics' scale is pinned as ceiling — the one rounding
+  the grid confirms (Inter 16's ascent 1984·16/2048 = 15.5 → 16, 24's
+  23.25 → 24; every ascent, descent and `.notdef` advance of the
+  three strikes reproduces exactly).
+- The find: the fb gate's wasm goldens had been broken on develop
+  since step 56's seventeen-import table landed — the hand-rolled
+  `emo-ui/wasm-runner.mjs` (untouched since T48.6) supplies three
+  imports, every module links against seventeen, and each golden died
+  at instantiate. The gate runs its wasm artifacts under the
+  canonical host the compiler carries
+  (`src/emo_codegen/wasm/wasm_host.mjs`) now, which cannot drift.
+  The same staleness stands in emo-ui's own gates (`check.sh`,
+  `corpus/check.sh`, `ssr/check.sh`) — unrepaired, the emo-ui track's
+  to sweep.
+- Pins: the fb gate green — 152 checks, the faces' drift check among
+  them, the goldens byte-identical on the five hosted targets (the
+  beam legs minutes-slow at 1080p and correct), the riscv64 probe
+  lowering the package with the face modules aboard.
+
 ## 2026-11-09 — The wasm follow-ups: entropy, the baseline, the second engine (T56.7–T56.9)
 
 - The entropy refusal died with its premise: T55.7 kept `rand` off
