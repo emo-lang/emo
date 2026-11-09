@@ -38,7 +38,7 @@ ocaml:      ok — ocamlfind with the unix and ssl packages found
 typescript: ok (v26.12.0)
 browser:    ok (v26.12.0)
 beam:       ok
-wasm:       ok — no external tools needed
+wasm:       ok v26.12.0 — `emo run --target wasm` runs it
 riscv64:    ok (QEMU emulator version 11.1.2)
 ```
 
@@ -51,7 +51,7 @@ riscv64:    ok (QEMU emulator version 11.1.2)
 | `ocaml` | `emo build --target ocaml main.emo -o demo-ocaml` | native executable | `./demo-ocaml` |
 | `typescript` | `emo build --target typescript main.emo -o demo-ts` | one `demo-ts.ts` | `node demo-ts.ts` |
 | `browser` | `emo build --target browser main.emo -o app` | one `app.js` | `<script src="app.js">` in a page |
-| `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | a JS host providing the `emo` imports |
+| `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | a JS host providing the `emo` imports (`emo run --target wasm` runs one under Node with the bundled host) |
 | `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` |
 | `riscv64` | `emo build --target riscv64 main.emo -o demo-riscv` | freestanding ELF | `qemu-system-riscv64 ... -kernel` or `emo run --target riscv64` |
 
@@ -134,15 +134,39 @@ $ ls demo-wasm.*
 demo-wasm.wasm  demo-wasm.wat
 ```
 
-The artifact is a **WasmGC** module (values are GC structs and arrays) plus a readable `.wat` sibling. It is not a WASI executable: `println`, exceptions, and float formatting are host imports. The module has exactly three:
+The artifact is a **WasmGC** module (values are GC structs and arrays) plus a readable `.wat` sibling. It is not a WASI executable: printing, exceptions, float formatting, and the file system are host imports. The module has exactly these:
 
 | Import | Signature | Purpose |
 | --- | --- | --- |
 | `emo.println` | `(i32 ptr, i32 len) -> ()` | print one line from linear memory |
 | `emo.abort` | `(i32 ptr, i32 len) -> ()` | uncaught exception / abort |
-| `emo.float_str` | `(f64) -> (i32 ptr, i32 len)` | format a float by the `%g` rule into memory |
+| `emo.float_str` | `(f64) -> (i32 ptr, i32 len)` | format a float by the `%g` rule into memory (scratch at 60000) |
+| `emo.file_read` | `(i32 ptr, i32 len) -> (i32 tag, i32 size)` | read a whole file; the answer waits for `fetch` |
+| `emo.file_write` | `(i32 ptr, i32 len, i32 dptr, i32 dlen) -> (i32 tag, i64 count)` | write a file; the answer waits for `fetch` |
+| `emo.fetch` | `(i32 buf, i32 cap) -> i32` | copy the stashed answer into the guest's buffer |
+| `emo.os_open` | `(i32 ptr, i32 len, i32 mode) -> (i32 tag, i64 fd)` | open a descriptor (0 read, 1 write, 2 append) |
+| `emo.os_read` | `(i64 fd, i64 n) -> (i32 tag, i32 size)` | read up to n bytes; empty string = end of file |
+| `emo.os_write` | `(i64 fd, i32 dptr, i32 dlen) -> (i32 tag, i64 count)` | write to a descriptor |
+| `emo.os_close` | `(i64 fd) -> (i32 tag, i64 zero)` | close a descriptor |
+| `emo.os_list_dir` | `(i32 ptr, i32 len) -> (i32 tag, i32 size)` | list a directory; NUL-separated names, byte-order sorted |
+| `emo.os_mkdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | create a directory |
+| `emo.os_rmdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | remove a directory |
+| `emo.os_unlink` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | remove a file |
+| `emo.os_rename` | `(i32 optr, i32 olen, i32 nptr, i32 nlen) -> (i32 tag, i64 zero)` | rename |
+| `emo.os_getcwd` | `() -> (i32 tag, i32 size)` | the working directory |
+| `emo.os_chdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | change the working directory |
+| `emo.rand_bytes` | `(i64 n) -> (i32 tag, i32 size)` | n bytes from the host's entropy source (Node's CSPRNG), through `fetch` |
 
-It exports `main` (the entry, called after instantiation) and `mem` (the linear memory the host must use to decode strings). Running it therefore means supplying an `emo` host. A Node host (`run-wasm.mjs`):
+Every syscall answers `(tag, …)` — tag 0 ok, tag 1 error — and stashes its payload (the file contents, or the whole reason text `file: cannot read …: …` / `os: …: …`, formatted by the host) for the guest's `fetch` call, which copies it into a buffer the guest bump-allocated. Descriptors live in the host; 0/1/2 are stdio, files count from 3.
+
+It exports `main` (the entry, called after instantiation) and `mem` (the linear memory the host must use to decode strings; the guest's bump allocator starts at 65536, so page 0 stays the host's). Running it therefore means supplying an `emo` host — or just `emo run --target wasm main.emo`, which builds and runs the module under Node with the bundled host (`emo doctor` reports whether Node is present).
+
+```console
+$ emo run --target wasm main.emo
+Hello, world!
+```
+
+A hand-rolled host implements exactly the imports above; the smallest one covers the three every module needs (`run-wasm.mjs`):
 
 ```js
 import { readFile } from "node:fs/promises";
@@ -180,7 +204,8 @@ Points to keep in mind:
 
 - The host must support **WasmGC** (Node 22+ enables it in V8 by default). An MVP-only runtime, or a WASI-only one, cannot run the module.
 - `mem` exists only after instantiation, while the `start` section runs during instantiation. Keep host callbacks behind a closure variable assigned after `WebAssembly.instantiate` resolves.
-- There is no argv, filesystem, or network. Pure computation and `println` work, and the pure standard-library packages run — the format packages, `float`, `math`, `plot`, `sql`, `sync`, `slog`; anything needing a process, file, socket, or FFI is refused by the resolution gate.
+- The **file system is the host's own**: `file`, `os`'s fd/directory half, `bufio`, and `rand` run through the syscalls, with reasons byte-identical with the `ocaml` and `c` targets. There is no argv and no network — anything needing a socket (`net`, `http`) or FFI (`sqlite3`) is still refused by the resolution gate, and `os`'s process half (`fork`, `execv`, `waitpid`, `pipe`, `getpid`, `getppid`, `_exit`) raises at the call, naming the capability: a WasmGC module has no process to fork.
+- **A second engine vouches for the shape**: every wasm golden is compile-validated by the wasmtime CLI (`devtools/wasmtime-smoke.sh` — cranelift's validator over the whole module: the GC type hierarchy, the multi-value signatures, the block nesting). Node stays the execution host; wasmtime's CLI cannot supply the custom `emo` imports a non-WASI module needs.
 - The in-repo `runtime/wasm/` is a different thing: an Emo-written WebAssembly decoder/interpreter covering the MVP and a few extensions. It explicitly cannot run the GC modules `emo build --target wasm` emits.
 
 ## `beam`

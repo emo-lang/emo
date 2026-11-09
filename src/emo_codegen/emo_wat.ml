@@ -59,6 +59,8 @@ type instr =
   | I32_lt_s
   | I32_ge
   | I32_gt
+  | I32_shl
+  | I32_shr_u
   | I32_wrap_i64
   | I64_eq
   | I64_eqz
@@ -198,6 +200,8 @@ let rec instr_text indent (i : instr) : string =
   | I32_rem_s -> Printf.sprintf "%si32.rem_s\n" pad
   | I32_lt_s -> Printf.sprintf "%si32.lt_s\n" pad
   | I32_ge -> Printf.sprintf "%si32.ge\n" pad
+  | I32_shl -> Printf.sprintf "%si32.shl\n" pad
+  | I32_shr_u -> Printf.sprintf "%si32.shr_u\n" pad
   | I32_wrap_i64 -> Printf.sprintf "%si32.wrap_i64\n" pad
   | I64_eq -> Printf.sprintf "%si64.eq\n" pad
   | I64_eqz -> Printf.sprintf "%si64.eqz\n" pad
@@ -464,6 +468,8 @@ let rec encode_instr buf (i : instr) =
   | I32_lt_s -> Buffer.add_char buf '\x48'
   | I32_ge -> Buffer.add_char buf '\x4e'
   | I32_gt -> Buffer.add_char buf '\x4a'
+  | I32_shl -> Buffer.add_char buf '\x74'
+  | I32_shr_u -> Buffer.add_char buf '\x76'
   | I32_wrap_i64 -> Buffer.add_char buf '\xa7'
   | I64_eq -> Buffer.add_char buf '\x51'
   | I64_eqz -> Buffer.add_char buf '\x50'

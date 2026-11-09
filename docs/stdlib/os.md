@@ -6,8 +6,10 @@ and raw (unbuffered, fd-based) file IO — the machinery a systems
 program needs before it can build anything else. Unlike the format
 packages, `os` is not pure Emo: its calls dispatch to the runtime's
 implementations, backed by POSIX, and it declares only the targets
-that have a Unix-shaped host — `ocaml` and `c`. Declaring it for the
-browser or bytecode targets is a package error before any code runs.
+whose host carries the surface — `ocaml`, `c`, and `wasm` (the fd,
+directory, and working-directory half; the process half raises at the
+call there, naming the capability). Declaring it for the browser or
+bytecode targets is a package error before any code runs.
 
 ## Using the package
 
@@ -17,8 +19,8 @@ require "os"
 
 The standard library ships with the compiler, but its packages are
 versioned like any other: `require "os"` needs `"os" = "0.1.0"` in the
-manifest's `deps` block. The package declares the `ocaml` and `c`
-targets, so a build for another target refuses it.
+manifest's `deps` block. The package declares the `ocaml`, `c`, and
+`wasm` targets, so a build for another target refuses it.
 
 ## Errors
 
@@ -135,7 +137,11 @@ end it does not use, and the child leaves through `_exit` — ordinary
 
 ## Targets
 
-`["ocaml", "c"]`. The ocaml target builds its os calls on the host's
-Unix module; the c target emits direct POSIX calls. fork/exec/wait/
-pipe have no meaning where there is no process to fork, so the
-typescript, wasm, and beam targets refuse the package.
+`["ocaml", "c", "wasm"]`. The ocaml target builds its os calls on the
+host's Unix module; the c target emits direct POSIX calls; the wasm
+target lowers the fd, directory, and working-directory half to the
+module's syscalls and lowers the process half to a run-time raise —
+`fork`, `execv`, `waitpid`, `pipe`, `getpid`, `getppid`, and `_exit`
+each name the capability when called (`os_fs_demo` walks the fd and
+directory half; `os_demo`, which forks, stays a c golden). The
+typescript and beam targets refuse the package.

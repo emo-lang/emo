@@ -39,6 +39,7 @@
 | M19 — `wasm` 与 `beam` 上的 Map | 52 | 最后两个宿主 target 用各自既有的可变种类机制实现 `Map` 内建——插入序、六种键类型、结构化 `==`、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——`send` 在 `wasm` 上送快照(新可变性使之可达的那条记录在案的遗留),`slog` 加宽到这两个 target,`Exception.new(data:)` 在除 `riscv64` 外的每个 target 上都能携带崩溃上下文,`plot` 包的 Map 形状 `Table` 与通道(Step 42)由此解除阻塞(`CHECK.md`)。 |
 | M20 — 数值库 | 53–54 | `math` 包长成 netlib 评估(`docs/math-netlib.md`)分阶段规划的「正确性优先」数值表面:完整的初等函数集、复数算术与 radix-2 FFT、BLAS1、LU 求解器、误差函数与伽马函数——纯 Emo,在全部五个宿主 target 上逐字节一致,以源自 ELEFUNT 的测试电池作精度记录;随后是原生快速通道——在 `c`/`ocaml` 上把 `math` 的标量表面直接绑到宿主 libm 的 `fastmath` 包,以及经现有「标量 + 回调」FFI 在 `c` 上绑定 QUADPACK 的 `quad` 包。数组级性能(BLAS2/3、LAPACK)继续挂在数组 FFI 之门后。 |
 | M21 — crypto 包 | 55 | 可移植的原语层作为一个纯 Emo 包 `crypto`——SHA-2、SHA-3 与 SHAKE、HMAC、HKDF 与 PBKDF2、常量时间比较、ChaCha20-Poly1305、AES 连同 CTR、CBC、GCM、Ed25519 与 X25519、收在 `crypto.legacy` 后的 SHA-1 与 MD5——在全部五个宿主 target 上逐字节一致,每个 golden 都是对 RFC 与 NIST 向量、对 Go 自家答案的一次 diff;旁边的 `rand` 包逐 target 绑定熵源并承载确定性的 HMAC-DRBG 流;错误二分沿 house 规则,Bytes 是载体,文档把常量时间写成源码级纪律并逐 target 给出诚实状态。RSA 等 bignum 地基;TLS、x509 与后量子集合不在其内。 |
+| M22 — `wasm` 上的文件 IO | 56 | wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器走:`file`、`os`(fd/目录半边——进程半边在调用点拒绝并点名能力)与 `bufio` 在 `wasm` 上可解析、逐字节一致;`emo run --target wasm` 用随编译器走的宿主在 Node 下运行产物;`emo build --target wasm` 仍只产出 `.wasm` + `.wat`;一切既有 golden 在一切 target 上逐字节不变(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1014,3 +1015,89 @@ Go 调研(`pkg.go.dev/crypto@go1.27.3`,26 个包)用减法定出了范围。Go �
 - [x] **T55.10** — `crypto.cipher` 上的 AES 与 GCM:分组密码落地为 S-box 字节式而非 T-table——一张推导表而非五张,SubBytes 查表的缓存时序告诫同口气写明(无分支的 xtime 与域乘;AES-NI 的 C shim 仍是日后 `c` 的可选加固)——带 128/192/256 的密钥扩展、正向与逆向分组、CTR(全 128 位大端计数器,复制调用方的 IV)、带 PKCS#7 的 CBC(坏填充是值 `(R.error, "crypto: invalid padding")`,填充预言机告诫写明)、以及 GCM——GHASH 纯位运算(无分支、无表、无此告诫),12 字节 nonce、16 字节 tag,nonce 复用是调用方不可挽回的合同违约。S-box 与逆表由 GF(2^8) 求逆与仿射映射推导,落地前经 Python AES 过齐 FIPS 197 附录 C 的三条已知答案。金测 `examples/crypto_aead` 长出 AES 面板——三条 KAT 与其解密、GCM 的 NIST 案例 1 与 2、跨块与 pad16 边界的九个 GCM 尺寸、各六长度的 CBC 与 CTR、以及越过低字节的计数器进位——五十条 Go 行逐字节一致;五条路径逐字节。顺手找到并修复:`aes_ctr` 改写了调用方的 IV——计数器块现在先复制。
 - [x] **T55.11** — Ed25519 与 X25519(RFC 8032、RFC 7748):先做探针——`Int128` 是 E4005,`2^32 · 2^32` 答 0(乘法按 2^64 回绕,没有 128 位乘积),`(2^51 − 1)²` 回绕——于是五 limb 的 radix 2^51 出局,域骑十个带符号 `Int64` limb、26/25 位交替基数(ref10 的 32 位形状),落在 `internal/fe25519.emo`:每个 limb 乘积都在 2^53 之下,跨过 2^255 的项乘 19、奇奇项乘 2,十项之和在 2^63 之下;乘法器的和式由这条规则生成、整个 limb 层先在 Python 里镜像并对大整数算术模糊三千对再转写(生成器的初稿漏了奇奇项的因子 2——limb 0、1 对而 2 起的偶数 limb 错,limb 级 diff 一轮定位);舍入进位链、忽略第 255 位的 `from_bytes`、经商估计的 `to_bytes`、求逆与 (p − 5)/8 链、掩码 `cmov`/`cswap`;热路径直接读写 limb 盒并内联进位——冒烟面板解释器从 2.8 秒到 1.4 秒,逐字节不变。`internal/ed25519.emo`:点是持四个域盒的类、扩展坐标,§5.1.4 的加法与倍点(2d 与 Z·2Z 作单次乘积,乘法器的每个输入都守在界内),标量乘走 256 位 double-and-add-always 加掩码选择,解码经 u·v³·(u·v⁷)^((p−5)/8) 带 sqrt(−1) 修正与 x = 0 带符号位的拒绝(非规范 y 接受,与 Go 读法一致),模 L 标量骑十六个 32 位字——schoolbook 乘积里每个字乘积作为 64 位位型精确、经逻辑右移拆半,归约是 260 次掩码试减——以及方案本身:公钥、签名、验证即 [S]B − [k]A 重编码后与 R 比对(无 cofactor 的等式,Go 的形状),S 不小于 L 拒绝。`internal/x25519.emo`:Montgomery 梯子 255 步带掩码交换、clamp,最高位由域自己的 `from_bytes` 忽略。常量推导不手抄:d、2d、sqrt(−1) 作 limb,基点作其编码,L 作其字。公开面:`crypto.sign`——`ed25519_public(seed)`、`ed25519_sign(seed, message)`、`ed25519_verify(public, message, signature)` 答 `Bool`,错消息、翻字节、非 64 字节签名、S 不小于 L、解不出的公钥同一个 false,seed 或公钥非 32 字节 raise——与 `crypto.ecdh`——`x25519(scalar, point)` 答 `(R, Bytes)`,全零共享密钥是值 `(R.error, "crypto: x25519 low-order point")`,另有 `x25519_public(scalar)`。金测:`examples/crypto_sign` 收 §7.1 五条向量(公钥、签名、验证)与拒绝面板(翻字节、错消息、S + L、63 字节签名、x = 0 带符号位、无根的 y)——21 行与 Go `crypto/ed25519` 一致,解释器五秒;`examples/crypto_ecdh` 收 §5.2、§6.1 双向、第一次迭代、u = 0 与 u = 1 的拒绝(原因钉死)与横扫——与 Go `crypto/ecdh` 一致;两者五个名单逐字节;`examples/crypto_sign_sweep`(十三个消息长度——解释器十一秒、编译十分之一秒)与 `examples/crypto_ecdh_iterated`(RFC 7748 的一千次迭代——解释器八十秒、编译 0.6 秒)仅 c。本步趟出 typescript 发射器的缺口:名为 `public` 的局部名原样发出,而它是严格模式 JavaScript 的保留字——`ts_local` 现在以 Emo 标识符不可能含有的 `$` 后缀护住 JS/TS 保留字,即 C 发射器 `c_ident` 的形状(`CHECK.md`,已修)。
 - [x] **T55.12** — 文档:`docs/stdlib/crypto.md` 与 `docs/stdlib/rand.md`(EN + zh-CN)——根模块与八个子模块的全部表面连同每个签名、逐函数写明的 raise/error 二分(`rand` 另列表)、Bytes 载体规则、构造无法替调用方强制的两条合同(nonce 重用、CBC padding oracle)、常量时间一节写明源码级纪律、它的两处写明的例外(AES 的 S-box 查表、公开数据上的比较)以及逐 target 说明 `Int64` 是什么、这条纪律变成了什么——在任何 target 上都不是保证,没有任何 target 做过泄漏测量——还有点名被拒算法的 legacy 警告;`docs/stdlib.md` 的 `crypto`、`rand` 行与节,EN 与 zh-CN;README 的参考清单。金测名单按各 target 已落地的情况补齐:`crypto_hash` 进 beam 名单、四个 crypto 金测进 wasm 名单——全部逐字节一致,包声明的五个 target 现在每一个都有金测跑过。顺手两处小修正:SHAKE 的负长度以包自己的消息 raise(此前是引擎里 `Bytes.new` 的 E3004 冒出来),仅 c 金测的解释器耗时改为实测而非估算——签名横扫十一秒、一千次 X25519 迭代八十秒。`plan/README.md` 的行写 done;M21 完成。
+
+## M22 — `wasm` 上的文件 IO
+
+wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器走,
+最后一批还缺宿主 target 的 IO 包在它上面落地。决定记录在
+`plan/step-56-wasm-file-io.md`;验收标准:`file`、`os`(fd/目录
+半边)与 `bufio` 在 `wasm` 上可解析且逐字节一致,进程半边在调用点
+拒绝并点名能力,`emo run --target wasm` 用随编译器走的宿主在 Node
+下运行产物,一切既有 golden 在一切 target 上逐字节不变
+(`CHECK.md`)。
+
+### 步骤 56 — wasm 目标上的文件 IO(与规范宿主) · `plan/step-56-wasm-file-io.md`
+
+**Prereq:** 步骤 16、20–22、31–38、50。**Done when:** `emo run
+--target wasm` 逐字节跑通 `examples/os_fs_demo`、`file_read` 与
+`bufio_demo`;fork 拒绝点名 `os_fork`;`emo build --target wasm` 仍
+只产出 `.wasm` + `.wat`;`dune runtest` 绿。
+
+- [x] **T56.1** — 协议与 `file` 两件套。import 表长出 `file_read`、
+      `file_write` 与 `fetch`——syscall 把应答(文件内容,或宿主按
+      Node 错误码 → strerror 对照表拼好的整条原因,与 c 运行时逐字
+      节一致)暂存,guest 用 `fetch` 拷进一个新 `alloc` 运行时 bump
+      出来的缓冲;`rt` 索引映射改为相对 import 数,新 import 机械地
+      平移一切已定义函数;`Runtime_impl` 经 `string_args`/
+      `fetch_string`/`r_pair` 降级两个名字;规范宿主以生成数据的形
+      式随编译器走(`src/emo_codegen/wasm/wasm_host.mjs`),金测的
+      内联 runner 为它删除;bump 基址挪到 65536(页 0 留给宿主,内
+      存以 2 页开局)。顺手找到并修复两个 wasm 运行时 bug——bump
+      游标从未动过(拷贝循环的出口分支直接跳过了游标推进,是后端
+      落地以来的死代码;每个消费者都在下一次分配前读走缓冲,所以一
+      直无害)与 grow 增量只给长度算了页数(跨页边界后变负 →
+      `memory.grow` 失败、`-1` 被 drop、拷贝越界——`plot_demo` 的
+      第二张 SVG 抓住了它)。金测:scratch 探针钉住 ok 与 error 两
+      路字节。
+- [x] **T56.2** — os 的 fd/目录半边。再长十一个 import(共用 mode
+      参数的 `os_open`、`os_read`、`os_write`、`os_close`、
+      `os_list_dir`、`os_mkdir`、`os_rmdir`、`os_unlink`、
+      `os_rename`、`os_getcwd`、`os_chdir`);`list_dir` 骑 NUL 分隔
+      的名字流,guest 用既有的 `str_split` 拆分,宿主侧按字节序排
+      序(对齐 c 运行时的 `qsort`);进程半边(`getpid`、`getppid`、
+      `fork`、`waitpid`、`pipe`、`execv`、`_exit`)降级为调用点
+      raise 并点名能力——解释器的运行时拒绝是先例,而编译期拒绝会
+      杀死整个包(它自己的函数体就调用这些名字)。金测:scratch
+      探针钉住 fork 拒绝的消息。
+- [x] **T56.3** — `emo run --target wasm`:riscv64 臂的形状——构建
+      进 `.emo-build`,探测 `node`(缺席 exit 69),宿主写在产物旁
+      边,从调用方工作目录运行,相对路径的解析与解释器一致;`emo
+      doctor` 的 wasm 行点名运行路径;`--target` 帮助与未知目标拒
+      绝点名两个可运行目标。
+- [x] **T56.4** — manifest、示例、金测:`file`、`os`、`bufio` 声明
+      `wasm`;`file_read`、`bufio_demo` 与新的 `examples/os_fs_demo`
+      (fd 写/读、目录建/列/删/移除、两种拒绝形状——与解释器和 c
+      逐字节一致)进 wasm 金测名单,`os_fs_demo` 进 c 名单与解释器
+      排除名单;所有钉住已改 manifest 的 lockfile 重生成;测试
+      fixtures 根目录改为在定义处创建而非假设存在——一次被清空的
+      temp 目录曾把所有写 scratch 的测试一起带走。`os_demo`(它
+      fork)仍是 c golden;`bufio_demo` 的临时文件为同样理由去掉
+      `getpid` 后缀。
+- [x] **T56.5** — 交换区审计(步骤原本要查的 bump/scratch 相撞是
+      真实但次要的——并入 T56.1 的两个发现:基址挪到 65536,而游
+      标在循环修复前从未动过)。
+- [x] **T56.6** — 文档:`docs/demo-targets.md` 的 wasm 节(17 个
+      import 的表、fetch 协议、`emo run --target wasm`、能力叙述)
+      + zh 镜像;`docs/stdlib/{file,os,bufio}.md` 与 `docs/stdlib.md`
+      索引 + zh 镜像;本步的 plan 文件;`plan/README.md` 的行;
+      `CHECK.md` 的轨迹。`plan/README.md` 的行写 done;M22 完成。
+- [x] **T56.7** — 熵源:`rand_bytes` 进 wasm import 表——`(i64 n) ->
+      (tag, size)`,payload 骑 `fetch`(ok 分支是熵字节,error 分支是
+      原因文本),宿主从 Node 的 CSPRNG 应答——即 typescript target
+      的同一来源;`rand` 声明 `wasm`——T55.7 拒绝的前提("wasm 宿主
+      供不出熵")随规范宿主而死——`rand_demo` 进 wasm 金测名单且逐
+      字节一致(它的熵行与宿主无关:长度、两次抽取不同、零)。文档
+      翻转拒绝段落(EN + zh:`rand.md`、`stdlib.md` 行、
+      `demo-targets.md` 的 import 表与能力 bullet)。
+- [x] **T56.8** — 性能基线:`benchmarks/run.sh` 经
+      `benchmarks/wasm_driver.mjs`(复用规范宿主导出的 import 工厂;
+      只计模块执行,不含 node 启动)长出 wasm 行。数字:fib(30) 与 c
+      持平(38 ms 对 39),两条直循环 ~5–6× c,Bytes 扫描 ~4×
+      c——step 16 记录的 Int unboxing follow-up **依证据谢绝,重开
+      触发器已点名**(某个真实工作负载的 profile 显示装箱搬运占主;
+     论证在 plan 文件)。顺手修复仍调 M10 前 `net.listen` 形状的
+      `http_echo` 基准。
+- [x] **T56.9** — 第二引擎:`devtools/wasmtime-smoke.sh` 把每个 wasm
+      golden 交给 wasmtime 的 cranelift 编译验证——49/49,零偏差;
+      执行宿主仍是 Node(wasmtime CLI 供不了非 WASI 模块的自定义
+      import;规范宿主的 Rust 驱动移植是已点名的后续)。

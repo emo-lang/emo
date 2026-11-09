@@ -73,3 +73,6 @@ projects/emo-os/.deskout.ppm
 projects/emo-os/.folder.ppm
 projects/emo-os/.ride.log
 projects/emo-os/.blk.img.gdb
+*.wasm-art
+*.wasm-art.wasm
+*.wasm-art.wat

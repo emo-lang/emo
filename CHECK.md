@@ -2,6 +2,7 @@
 
 Pending design decisions — deliberately kept out of the README until they are settled.
 
+- File IO on the wasm target: **settled (2026-11-08) — syscalls + fetch, the host formats the reasons whole, and the os package ships in halves.** Amends step 16's T16.5 trail on the file half (sockets stay refused). The protocol: a syscall import takes its string arguments as `(ptr, len)` pairs the guest wrote through `write_bytes` and answers `(tag, …)` — tag 0 ok, tag 1 error — stashing the payload (the contents, or the whole reason text the host formatted against a Node error-code → strerror table byte-identical with the c runtime's `emo_os_fail`/`emo_file_*`); the guest then calls `fetch(buf, cap)` to copy the stash into a buffer a new `alloc` runtime bump-allocated. Two calls, because `os.read` is not idempotent — a fixed scratch the host writes into (the `float_str` convention) is safe to re-run, a read is not — and it retires the fixed scratch's size ceiling. Count-bearing syscalls answer `(tag, i64)` with the payload size riding the count on the error path. The os package's manifest gains `wasm` for the whole package; the fd, directory, and working-directory half lowers to the syscalls; the process half (`getpid`, `getppid`, `fork`, `waitpid`, `pipe`, `execv`, `_exit`) lowers to a run-time raise naming the capability — the interpreter's run-time refusals are the precedent, a compile-time refusal would have killed the whole package (its own bodies call the process names), and the package-level resolution refusal is coarser than the capability. The canonical host (`src/emo_codegen/wasm/wasm_host.mjs`) rides the compiler as generated data: `emo run --target wasm` writes it beside a temp copy of the artifact and runs it under Node (the qemu-style refusal when Node is missing), and the golden tests run the same source — the build artifact contract unchanged, `.wasm` + `.wat` and nothing else (step 25's rule). The bump base moves to 65536 so the exchange cursor never reaches `float_str`'s scratch at 60000.
 - Mixin mechanism: **settled (2026-10-06) — not added.** An `include`-style mixin is inheritance renamed: a single include is single inheritance, multiple includes are multiple inheritance, and both drag in method-resolution order, diamond ambiguity, implicit method provenance, `self` / field coupling, and the fragile-base problem — exactly what the no-inheritance decision rejected. Interfaces with default method bodies are the same trap and are also excluded. Reuse stays with duck-typed functions, composition, and structural interfaces. Delegation is not a separate mechanism either: forwarding to a contained object is ordinary composition code — `def draw() { return self.inner.draw() }` — and gets no construct, keyword, or auto-forwarding, because it expresses nothing the ordinary methods cannot and would only hide method provenance. Struct embedding is the same space under another name: Go's anonymous embedding promotes an inner type's methods and fields into the outer one, which is inheritance in effect — promotion, shadowing, and a depth-based resolution rule together are a hidden method-resolution order — and it leaves the outer type's method set invisible at its declaration. It also amplifies *accidental interface satisfaction*: because Emo's interfaces are structural (satisfaction by shape, no `implements`), a promoted method can make a type satisfy an interface its author never intended, and a later change to the embedded type silently flips that satisfaction. Go's embedding of `sync.Mutex` — which exposes `Lock`/`Unlock` and satisfies `sync.Locker` without the author asking — is the canonical example. Emo's safeguard is that a class's method set is exactly its own `def`s, so satisfaction changes only when its own body changes; the residual coincidental-name hazard is inherent to structural typing and is mitigated by small, clearly named interfaces. The whole inheritance-shaped space — mixin, include, default methods, delegation, embedding — is therefore closed: reuse is duck-typed functions, composition, and structural interfaces, plus plain code.
 - Error handling: **settled (2026-10-11) — no catch construct; expected failures are values, violations raise.** Supersedes the 2026-10-06 `begin`/`catch`/`ensure` settle. The deciding evidence is the backends: `interp`/`ocaml`/`ts`/`beam` get host exceptions for free, but `c` needs `setjmp`/`longjmp` plus a drain of the refcount/autorelease state along every unwound frame, wasm's raise is a host `abort` no in-wasm handler can resume from, and `riscv64` refuses `raise` outright — six targets, six stack disciplines, a permanent two-tier language for one construct. The Erlang split takes its place, and Emo already runs its other half (an uncaught exception kills only the offending process, the per-process arena reclaims its memory, supervision is library-level): an **expected failure** — parse errors, IO, network, not-found, anything the data can trigger — is an ordinary value, the call returning `(R.ok, value)` or `(R.error, reason)`, the reason a String carrying the message convention (package prefix: `json: expected array element at byte 3`); a **violation** — a broken contract, a bug — raises and ends the process. `Exception` stays the language's one exception class — no subclasses (Emo has no inheritance), the name reserved against user shadowing — carrying `message` and an optional `data` Map whose role is machine-readable context for crash reports and supervision, never type identity: nothing dispatches on exceptions when nothing catches them, so the `e.is(Timeout)` narrowing idea dies with the catch design. The `raise` operand must be an `Exception` instance (anything else gets its own E-code), and the uncaught report prints non-empty `data` alongside the message. `R { ok, error }` is a built-in enum (root-env binding, the `Exception` precedent) so matching a returned tuple never costs an import; the tag is spelled `R.ok`/`R.error` — a bare lowercase `ok` in a pattern is a binding and would match everything, and atoms (`:ok`) were rejected as a new value type across all targets for what the enum already expresses. The name's one shadow — the R language of statistical computing — is cosmetic: the two never share an artifact (that R lives as the `/usr/bin/R` command, `.R` files, and CRAN; Emo's `R` is a type name always spelled in qualified form — `R.ok`, `(R, String)` — and no Emo command, file extension, or package carries the bare letter), a single-letter identifier inside another language raises no trademark question, and the fingerprint test passes — enum-dot tags over tuples are the Erlang shape, and R has no such syntax (its counterpart concept is the factor). Migration is the follow-up: the eight raising packages (~220 raise sites) and the runtime-backed packages (`os`/`file`/`net`) split per call into tuple returns and keep-raising violations.
 - Binding patterns: **settled (2026-10-11)** — `const` and `var` take a full pattern, not just a name: `const (R.ok, body) = file.read(path)`. A pattern that does not match is a runtime error — the same rule as a `case` scrutinee matching no branch — making the assert-match binding (Erlang's `{ok, B} = f(X)`) the expect-success fast path of the tuple convention. No `match` keyword: the construct is a binding, and `case` already owns the pattern vocabulary. Lowered at IR level by desugaring to a one-arm `case` wrapping the rest of the block, so the six backends see only existing nodes; the parser's `const (` form is a hard error today, so the extension breaks no grammar.
@@ -346,6 +347,93 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   whole multiple with the scaled walk (T10.4), the bar a drag handle
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
+
+## 2026-11-09 — The wasm follow-ups: entropy, the baseline, the second engine (T56.7–T56.9)
+
+- The entropy refusal died with its premise: T55.7 kept `rand` off
+  wasm because "the wasm host supplies no entropy", and step 56's
+  canonical host *is* a wasm host with Node behind it. `rand_bytes`
+  joins the import table — `(i64 n) -> (tag, size)`, one `fetch`
+  serving both branches (the payload is the entropy on ok, the reason
+  text on error) — the host answers from Node's CSPRNG (the
+  typescript target's own source), `rand` declares `wasm`, and
+  `rand_demo` rides the wasm golden list byte-identical (its entropy
+  lines are host-independent: lengths, draw-divergence, zero).
+- The performance baseline landed: `benchmarks/run.sh` grows the wasm
+  rows (module execution only — the driver reuses the canonical
+  host's exported import factory and times fresh instantiations of a
+  once-compiled module). The numbers, against the same run's c
+  target: fib(30) **38 ms vs 39 — parity** (the box churn hides
+  behind call overhead); the straight-line loops **172/178 ms vs
+  28/36, ~5–6×**; the Bytes scan **983 vs 247, ~4×**; the json-ish
+  scan sub-millisecond. The step-16 recorded follow-up — Int
+  unboxing — is **declined on the evidence, the reopen trigger
+  named**: a real workload whose profile shows box churn dominating.
+  The argument lives in the step plan. The `http_echo` bench, still
+  calling the pre-M10 `net.listen` shape (the bench set had not been
+  re-run since 2026-10-11), was repaired on the way.
+- The second engine vouches for the shape: `devtools/wasmtime-smoke.sh`
+  feeds every wasm golden (49 examples) to the wasmtime CLI's
+  compiler — cranelift's validator checks the whole module against an
+  independent implementation: **49/49 validated, zero deltas**. Node
+  stays the execution host; the wasmtime CLI cannot supply a non-WASI
+  module's custom imports (the machine has no Rust toolchain — the
+  canonical host's Rust-driver port is the named follow-up if
+  execution parity ever earns it).
+- Pins: `dune runtest` green, `dune build @fmt` green;
+  `benchmarks/results.md` re-recorded in full by the extended harness
+  (five wasm rows); `devtools/wasmtime-smoke.sh` 49/49.
+
+## 2026-11-08 — File IO lands on the wasm target (step 56, M22)
+
+- The wasm target's largest capability gap closed: `file`, `os` (the
+  fd, directory, and working-directory half), and `bufio` now declare
+  `wasm` and answer byte-for-byte what the interpreter and `c` answer.
+  The import table grew from three to seventeen — `file_read`,
+  `file_write`, `fetch`, `os_open`, `os_read`, `os_write`, `os_close`,
+  `os_list_dir`, `os_mkdir`, `os_rmdir`, `os_unlink`, `os_rename`,
+  `os_getcwd`, `os_chdir` — each a syscall that stashes its answer for
+  the guest's `fetch`, the reasons the host formats whole against a
+  Node error-code → strerror table that spells them exactly as the c
+  runtime's `emo_os_fail` does. `list_dir` rides a NUL-separated name
+  stream the guest splits with the existing `str_split`, byte-order
+  sorted host-side. The process half raises at the call naming the
+  capability (the interpreter's run-time-refusal precedent; a
+  compile-time refusal would have killed the whole package, whose own
+  bodies call those names). The canonical host
+  (`src/emo_codegen/wasm/wasm_host.mjs`) rides the compiler as
+  generated data; `emo run --target wasm` writes it beside the
+  artifact and runs under Node, the riscv64 arm's shape; the golden
+  tests' inline runner is deleted for it. `examples/os_fs_demo` walks
+  the fd and directory half on interpreter/c/wasm byte-identically;
+  `os_demo` (it forks) stays a c golden. New wasm goldens: `file_read`,
+  `bufio_demo`, `os_fs_demo`, plus scratch probes for the file
+  syscalls and the fork refusal. All lockfiles pinning the changed
+  manifests regenerated.
+- **Two wasm-runtime bugs found and fixed, both invisible until
+  something needed two live bump buffers at once** (every earlier
+  consumer — `println`, the float scratch — read its buffer before the
+  next allocation): the bump cursor **never moved** — `write_bytes`'s
+  copy loop sat directly in its enclosing block and the exit branch
+  (`br_if 1`) jumped past the cursor advance, dead code since the
+  backend landed (found 2026-11-08, T56.1, the loop now wears its own
+  block); and the grow delta **paged the length alone** — `(len +
+  65535) >> 16 - memory.size` goes negative once the cursor rides
+  along, so past the first page boundary `memory.grow` failed, its
+  `-1` was dropped, and the copy stored out of bounds — `plot_demo`'s
+  second SVG caught it, the delta now pages `end` (found 2026-11-08,
+  T56.1). The bump base moved to 65536 so page 0 stays the host's and
+  the `float_str` scratch at 60000 can never be overrun.
+- Pre-existing test-suite landmine fixed while wiring the goldens:
+  the CLI tests' fixture root (`$TMPDIR/emo-cli-test-fixtures`) was
+  assumed to exist — nothing created it, and a wiped temp directory
+  took every scratch-writing test with it (found 2026-11-08, T56.4).
+  It is created where the path is defined.
+- Pins: `dune runtest` green — 376 tests in the CLI group alone, zero
+  failures; `dune build @fmt` green (ocamlformat over the three
+  touched OCaml files); `emo run --target wasm` byte-identical with
+  `expected.txt` on `os_fs_demo`, `file_read`, and `bufio_demo`;
+  `emo build --target wasm` still emits exactly `.wasm` + `.wat`.
 
 ## 2026-11-08 — The window's own menu (emo-desktop M16, EmoOS T10.2–T10.4)
 
@@ -1690,3 +1778,5 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
 - The crypto package's String surface is unsound on `typescript`: **found 2026-11-01 (T55.7's rand package), the Bytes doors are the fix's shape, the surface migration is a pending decision.** Bytes ride as `String` across this standard library (`os.read`, `bufio`, `base64`), and crypto's T55.2 decision followed — keys, digests, and tags in and out as `String`. On the byte targets a `String` is a byte string and the choice is exact; on `typescript` a `String` is a JS string, `to_bytes` and `Bytes.to_string` are the UTF-8 codec by the runtime's own design (`ts_core.ts`: "a JS string cannot carry raw non-UTF-8 bytes"), and every digest byte at or past 0x80 that is not a valid sequence decodes to U+FFFD. The evidence: `examples/crypto_hash` built for `typescript` prints `efbfbd` — U+FFFD's UTF-8 — where the interpreter prints `e3b0c4` (every `sha*` line differs, 192 of them), and RFC 4231's 131-byte-key cases crash with `index 64 is out of bounds for a length-64 Bytes`, because the hashed key, expanded through the String carrier, no longer fits the block. `crypto_hash` is therefore not in the typescript golden list, and the package's `targets` still name typescript on the strength of the four byte targets — that line is the honest casualty until the decision lands. The decision is the T55.2 rule itself: the `plot.png` precedent (step 45) already answers raw payloads as `Bytes` for exactly this reason, and T55.7 proves the shape — `crypto.sha2.sha256_bytes`, `crypto.hash.hmac_sha256_bytes`, the `write_bytes`/`sum_bytes` methods, `rand.bytes` and `rand.drbg_sha256` answering `Bytes` — rides `typescript` byte-identically (`examples/rand_demo`, the ts golden). Migrating the whole surface to `Bytes` (or doubling every door) is a surface-wide change to a settled decision, so it waits for the decision rather than landing by stealth; until then the String doors are exact on `ocaml`, `c`, `beam`, and the interpreter, and documented as such. **Resolved the same day: the decision landed for Bytes** — T55.8 migrated every door of the surface to `Bytes` (text stays text at `hex_encode`/`hex_decode`), the String plumbing was removed rather than doubled, every golden's `expected.txt` came out byte-identical before and after, and `crypto_hash` joined the typescript golden list, passing where it had printed U+FFFD and crashed.
 - The typescript `Bytes.get_u32_le` read its four bytes through int32 shifts: **found and fixed 2026-11-01 (T55.9, chacha20's words flushed it).** `ts_core.ts` accumulated the four bytes with `(acc << 8) | byte`, JS's bitwise shifts are int32, and a value with its high bit set landed negative — `BigInt(acc)` carried the sign, so `set_u32_le(0, 2492521683)` read back `-1802445613` on `typescript` alone. No earlier golden tripped it: the u32 accessors' prior consumers never loaded a word with bit 31 set from `typescript` (sha2's big-endian loads go through the byte doors). The read now closes with `>>> 0`, and `examples/crypto_aead` — whose state words live entirely at or past that bit — rides the typescript golden byte-identically. Two sibling flaws in the same new code were found and fixed on the way: `poly1305`'s block copy wrote its source offset into the destination index too (the third 16-byte block wrote at 32 into a 16-byte buffer), and the AEAD's one-time key copied all 64 bytes of the keystream block into a 32-byte cell — both unreachable until a message crossed a block boundary.
 - The typescript emitter emitted a local's name verbatim, reserved words included: **found and fixed 2026-11-02 (T55.11, a parameter named `public` flushed it).** `internal/ed25519.emo`'s `verify(public Bytes, …)` lowered to `async function …(public, …)`, and Node refused the file with `Expected ',', got 'public'` — `public` is reserved in strict-mode JavaScript, and `static`, `let`, `yield`, `package`, `interface`, `implements`, `private`, `protected`, `await`, `delete`, `typeof`, and the rest of the list are the same story, every one of them a legal Emo identifier. The C emitter has guarded this since its own `double` (`c_ident`, the `_c` suffix); the typescript emitter had no such guard, and no earlier golden had named a local after a JavaScript keyword. `emo_ts.ml` now routes every local emission — parameters, closure parameters, `const`/`var` bindings and assignments, the `for` header, pattern bindings, and reads — through `ts_local`, which suffixes a reserved word with `$`: no Emo identifier can contain `$` (the lexer's identifier letters are digits, letters, and `_`), so the mangled name cannot collide with another local, and module-level names are mangled with `__` elsewhere and never meet the list. `examples/crypto_sign` and `examples/crypto_ecdh` ride the typescript golden byte-identically with `public$` in the emitted source; every other typescript golden is byte-identical before and after.
+- The wasm backend's bump cursor never moved: **found and fixed 2026-11-08 (T56.1, the file syscalls' two-live-buffers protocol flushed it).** `rt_write_bytes`'s copy loop sat directly in its enclosing block, and the loop's exit branch (`br_if 1`) jumped straight past the cursor advance that followed the loop inside the same block — dead code since the backend landed, every `println` writing over the same buffer at the base and the host reading it before the next allocation ever happened. The protocol this step added (path and contents both bumped before one `file_write` call) needed both buffers live, and the file's name decoded as the contents' first bytes. The loop now wears its own block so its exit lands on the advance. The sibling bug fired the same day: the grow delta paged the length alone — `(len + 65535) >> 16 - memory.size` — which goes negative once the cursor rides along, so the first crossing of a page boundary made `memory.grow` fail, dropped its `-1`, and stored out of bounds (`plot_demo`'s second SVG, 63 KB into a 128 KB memory); the delta now pages `end`. Both fix stories live in the step plan's finds; every existing golden stayed byte-identical across both fixes, which is how they hid for so long.
+- The CLI tests assumed their fixture root existed: **found and fixed 2026-11-08 (T56.4, regenerating the changed manifests' lockfiles flushed it).** `$TMPDIR/emo-cli-test-fixtures` — the scratch root every fixture-writing test builds under — was spelled at definition and never created; it had been created by hand once and survived as "deliberately persistent", so a wiped temp directory failed every scratch-writing test with `ENOENT` at `Unix.mkdir` (or at `build_file`'s `open_out_bin`). The root is now created where the path is defined.

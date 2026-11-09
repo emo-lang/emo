@@ -24,9 +24,9 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 
 | 包 | 提供的能力 | 目标 |
 |---|---|---|
-| [`file`](#file-包) | 整文件读写 | `ocaml`、`c` |
-| [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c` |
-| [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c` |
+| [`file`](#file-包) | 整文件读写 | `ocaml`、`c`、`wasm` |
+| [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c`、`wasm`（fd/目录半边） |
+| [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c`、`wasm` |
 | [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
 | [`http`](#http-包) | HTTP 客户端与服务器 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
@@ -34,7 +34,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
-| [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam` |
+| [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |

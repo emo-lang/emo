@@ -10,8 +10,10 @@
 
    Host boundary: println renders into linear memory and calls an
    imported (ptr, len) println; raise calls an imported abort that
-   throws in the host. $heap is the bump cursor for that exchange,
-   starting at 1024. *)
+   throws in the host; the file-system syscalls cross the same memory,
+   the host stashing each answer for the fetch call. $heap is the bump
+   cursor for that exchange, starting at 65536 — page 0 below it
+   belongs to the host's own scratch. *)
 
 module Ast = Emo_ast
 module W = Emo_wat
@@ -54,6 +56,19 @@ let t_vatomic = 38
 let t_atomic_store = 39
 let t_atomic_rm = 40
 let t_atomic_cas = 41
+let t_file_read = 42
+let t_file_write = 43
+let t_fetch = 44
+let t_alloc = 45
+let t_os_open = 46
+let t_os_read = 47
+let t_os_write = 48
+let t_os_close = 49
+let t_os_list_dir = 50
+let t_os_path = 51
+let t_os_rename = 52
+let t_os_getcwd = 53
+let t_rand_bytes = 54
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -173,130 +188,182 @@ let runtime_types : W.typ list =
     (* atomic exchange and the fetch family: cell, value -> previous *)
     W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], [ W.Anyref ]);
     (* atomic_compare_exchange: cell, expected, fresh -> (Bool, previous) *)
+    W.FuncT ([ W.I32; W.I32 ], [ W.I32; W.I32 ]);
+    (* file_read: (path ptr, path len) -> (tag, payload size) *)
+    W.FuncT ([ W.I32; W.I32; W.I32; W.I32 ], [ W.I32; W.I64 ]);
+    (* file_write: (path ptr, path len, data ptr, data len) ->
+       (tag, byte count) *)
+    W.FuncT ([ W.I32; W.I32 ], [ W.I32 ]);
+    (* fetch: (buf ptr, cap) -> copied; the host's stashed answer rides
+       into the guest's buffer *)
+    W.FuncT ([ W.I32 ], [ W.I32 ]);
+    (* alloc: size -> ptr, the bump without the copy *)
+    W.FuncT ([ W.I32; W.I32; W.I32 ], [ W.I32; W.I64 ]);
+    (* os_open: (path ptr, path len, mode) -> (tag, fd | err size) *)
+    W.FuncT ([ W.I64; W.I64 ], [ W.I32; W.I32 ]);
+    (* os_read: (fd, n) -> (tag, payload size) *)
+    W.FuncT ([ W.I64; W.I32; W.I32 ], [ W.I32; W.I64 ]);
+    (* os_write: (fd, data ptr, data len) -> (tag, byte count) *)
+    W.FuncT ([ W.I64 ], [ W.I32; W.I64 ]);
+    (* os_close: (fd) -> (tag, 0 | err size) *)
+    W.FuncT ([ W.I32; W.I32 ], [ W.I32; W.I32 ]);
+    (* os_list_dir: (path ptr, path len) -> (tag, payload size) *)
+    W.FuncT ([ W.I32; W.I32 ], [ W.I32; W.I64 ]);
+    (* os_path: mkdir / rmdir / unlink / chdir share the shape:
+       (path ptr, path len) -> (tag, 0 | err size) *)
+    W.FuncT ([ W.I32; W.I32; W.I32; W.I32 ], [ W.I32; W.I64 ]);
+    (* os_rename: (old ptr, old len, new ptr, new len) -> (tag, 0 | size) *)
+    W.FuncT ([], [ W.I32; W.I32 ]);
+    (* os_getcwd: () -> (tag, payload size) *)
+    W.FuncT ([ W.I64 ], [ W.I32; W.I32 ]);
+    (* rand_bytes: (n) -> (tag, payload size) *)
   ]
 
 let i_print = 0
 let i_abort = 1
 let i_float_str = 2
+let i_file_read = 3
+let i_file_write = 4
+let i_fetch = 5
+let i_os_open = 6
+let i_os_read = 7
+let i_os_write = 8
+let i_os_close = 9
+let i_os_list_dir = 10
+let i_os_mkdir = 11
+let i_os_rmdir = 12
+let i_os_unlink = 13
+let i_os_rename = 14
+let i_os_getcwd = 15
+let i_os_chdir = 16
+let i_rand_bytes = 17
 
-(* Runtime function indices: imports 0..2, then these. *)
-let rt = function
-  | "add" -> 3
-  | "sub" -> 4
-  | "mul" -> 5
-  | "div" -> 6
-  | "mod" -> 7
-  | "neg" -> 8
-  | "lt" -> 9
-  | "le" -> 10
-  | "gt" -> 11
-  | "ge" -> 12
-  | "eq" -> 13
-  | "ne" -> 14
-  | "to_str" -> 15
-  | "println" -> 16
-  | "strcat" -> 17
-  | "box" -> 18
-  | "throw" -> 19
-  | "int_str" -> 20
-  | "bool_str" -> 21
-  | "char_str" -> 22
-  | "instance_str" -> 23
-  | "write_bytes" -> 24
-  | "bytes_from_mem" -> 25
-  | "str_eq" -> 26
-  | "deep_eq" -> 27
-  | "append" -> 28
-  | "spawn_begin" -> 29
-  | "spawn_end" -> 30
-  | "send" -> 31
-  | "recv_poll" -> 32
-  | "recv_take" -> 33
-  | "park" -> 34
-  | "driver_next" -> 35
-  | "driver_resume" -> 36
-  | "driver_run" -> 37
-  | "self_pid" -> 38
-  | "halt" -> 39
-  | "proc_end" -> 40
-  | "bit_and" -> 41
-  | "bit_or" -> 42
-  | "bit_xor" -> 43
-  | "shl" -> 44
-  | "shr" -> 45
-  | "bnot" -> 46
-  | "bytes_new" -> 47
-  | "bytes_get" -> 48
-  | "bytes_set" -> 49
-  | "bytes_u16_get" -> 50
-  | "bytes_u32_get" -> 51
-  | "bytes_u64_get" -> 52
-  | "bytes_u16_set" -> 53
-  | "bytes_u32_set" -> 54
-  | "bytes_u64_set" -> 55
-  | "bytes_from_str" -> 56
-  | "bytes_to_str" -> 57
-  | "bytes_label" -> 58
-  | "init" -> 59
-  | "list_new" -> 61
-  | "list_push_front" -> 62
-  | "list_push_back" -> 63
-  | "list_pop_front" -> 64
-  | "list_pop_back" -> 65
-  | "list_len" -> 66
-  | "list_str" -> 67
-  | "str_substring" -> 68
-  | "builder_new" -> 69
-  | "builder_push" -> 70
-  | "builder_get" -> 71
-  | "builder_to_array" -> 72
-  | "array_str" -> 73
-  | "builder_str" -> 74
-  | "map_new" -> 75
-  | "map_get" -> 76
-  | "map_set" -> 77
-  | "map_has" -> 78
-  | "map_remove" -> 79
-  | "map_len" -> 80
-  | "map_keys" -> 81
-  | "map_values" -> 82
-  | "map_str" -> 83
-  | "map_key_eq" -> 84
-  | "map_dbg" -> 85
-  | "str_quote" -> 86
-  | "bytes_str" -> 87
-  | "deep_copy" -> 88
-  | "str_slice" -> 89
-  | "str_starts_with" -> 90
-  | "str_split" -> 91
-  | "tuple_str" -> 92
-  | "str_index_of" -> 93
-  | "str_trim" -> 94
-  | "str_lower" -> 95
-  | "str_to_int64" -> 96
-  | "atomic_new" -> 97
-  | "atomic_load" -> 98
-  | "atomic_store" -> 99
-  | "atomic_exchange" -> 100
-  | "atomic_compare_exchange" -> 101
-  | "atomic_fetch_add" -> 102
-  | "atomic_fetch_sub" -> 103
-  | "atomic_fetch_and" -> 104
-  | "atomic_fetch_or" -> 105
-  | "atomic_fetch_xor" -> 106
+(* Every defined function's index follows the imports. *)
+let import_count = 18
+
+(* Runtime function indices: imports 0..import_count-1, then these —
+   written relative to the import count, so a new host import shifts
+   every defined function mechanically (bump import_count, done). *)
+let rt =
+  let b = import_count in
+  function
+  | "add" -> b
+  | "sub" -> b + 1
+  | "mul" -> b + 2
+  | "div" -> b + 3
+  | "mod" -> b + 4
+  | "neg" -> b + 5
+  | "lt" -> b + 6
+  | "le" -> b + 7
+  | "gt" -> b + 8
+  | "ge" -> b + 9
+  | "eq" -> b + 10
+  | "ne" -> b + 11
+  | "to_str" -> b + 12
+  | "println" -> b + 13
+  | "strcat" -> b + 14
+  | "box" -> b + 15
+  | "throw" -> b + 16
+  | "int_str" -> b + 17
+  | "bool_str" -> b + 18
+  | "char_str" -> b + 19
+  | "instance_str" -> b + 20
+  | "write_bytes" -> b + 21
+  | "bytes_from_mem" -> b + 22
+  | "str_eq" -> b + 23
+  | "deep_eq" -> b + 24
+  | "append" -> b + 25
+  | "spawn_begin" -> b + 26
+  | "spawn_end" -> b + 27
+  | "send" -> b + 28
+  | "recv_poll" -> b + 29
+  | "recv_take" -> b + 30
+  | "park" -> b + 31
+  | "driver_next" -> b + 32
+  | "driver_resume" -> b + 33
+  | "driver_run" -> b + 34
+  | "self_pid" -> b + 35
+  | "halt" -> b + 36
+  | "proc_end" -> b + 37
+  | "bit_and" -> b + 38
+  | "bit_or" -> b + 39
+  | "bit_xor" -> b + 40
+  | "shl" -> b + 41
+  | "shr" -> b + 42
+  | "bnot" -> b + 43
+  | "bytes_new" -> b + 44
+  | "bytes_get" -> b + 45
+  | "bytes_set" -> b + 46
+  | "bytes_u16_get" -> b + 47
+  | "bytes_u32_get" -> b + 48
+  | "bytes_u64_get" -> b + 49
+  | "bytes_u16_set" -> b + 50
+  | "bytes_u32_set" -> b + 51
+  | "bytes_u64_set" -> b + 52
+  | "bytes_from_str" -> b + 53
+  | "bytes_to_str" -> b + 54
+  | "bytes_label" -> b + 55
+  | "init" -> b + 56
+  | "main" -> b + 57
+  | "list_new" -> b + 58
+  | "list_push_front" -> b + 59
+  | "list_push_back" -> b + 60
+  | "list_pop_front" -> b + 61
+  | "list_pop_back" -> b + 62
+  | "list_len" -> b + 63
+  | "list_str" -> b + 64
+  | "str_substring" -> b + 65
+  | "builder_new" -> b + 66
+  | "builder_push" -> b + 67
+  | "builder_get" -> b + 68
+  | "builder_to_array" -> b + 69
+  | "array_str" -> b + 70
+  | "builder_str" -> b + 71
+  | "map_new" -> b + 72
+  | "map_get" -> b + 73
+  | "map_set" -> b + 74
+  | "map_has" -> b + 75
+  | "map_remove" -> b + 76
+  | "map_len" -> b + 77
+  | "map_keys" -> b + 78
+  | "map_values" -> b + 79
+  | "map_str" -> b + 80
+  | "map_key_eq" -> b + 81
+  | "map_dbg" -> b + 82
+  | "str_quote" -> b + 83
+  | "bytes_str" -> b + 84
+  | "deep_copy" -> b + 85
+  | "str_slice" -> b + 86
+  | "str_starts_with" -> b + 87
+  | "str_split" -> b + 88
+  | "tuple_str" -> b + 89
+  | "str_index_of" -> b + 90
+  | "str_trim" -> b + 91
+  | "str_lower" -> b + 92
+  | "str_to_int64" -> b + 93
+  | "atomic_new" -> b + 94
+  | "atomic_load" -> b + 95
+  | "atomic_store" -> b + 96
+  | "atomic_exchange" -> b + 97
+  | "atomic_compare_exchange" -> b + 98
+  | "atomic_fetch_add" -> b + 99
+  | "atomic_fetch_sub" -> b + 100
+  | "atomic_fetch_and" -> b + 101
+  | "atomic_fetch_or" -> b + 102
+  | "atomic_fetch_xor" -> b + 103
+  | "alloc" -> b + 104
   | _ -> failwith "wasm: bad runtime function"
 
-(* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
-   program funcs follow. The List ops (61..67) sit after main — main
-   stays at 60 so the exported entry keeps its index. The String
-   substring runtime (68) and the ArrayBuilder ops (69..72) sit after
-   them for the same reason, as do the array and builder renderings
-   (73..74) the `to_str` chain calls, the Map ops (75..86) after
-   those, the Bytes rendering (87), the send snapshot's deep copy
-   (88), the String split surface (89..91), the tuple rendering
-   (92), and the rest of the String surface — index_of, trim, lower,
-   to_int64 (93..96) — last. *)
-let runtime_count = 107
+(* imports, then the runtime funcs above (the numeric core, the
+   scheduler, the bit and bytes ops, init + main), then the List ops —
+   main stays at b+57 so the exported entry keeps its index. The
+   String substring runtime and the ArrayBuilder ops sit after main
+   for the same reason, as do the array and builder renderings the
+   `to_str` chain calls, the Map ops after those, the Bytes rendering,
+   the send snapshot's deep copy, the String split surface, the tuple
+   rendering, the rest of the String surface, the atomics, the bump
+   allocator last. *)
+let runtime_count = import_count + 105
 
 (* ---- Lowering state ---- *)
 
@@ -447,9 +514,10 @@ let string_bytes_instrs (s : string) : W.instr list =
   List.mapi (fun i _ -> W.I32_const (Char.code s.[i])) (List.init n Fun.id)
   @ [ W.Array_new_fixed (t_bytes, n) ]
 
-let string_const env (s : string) =
+(* The pool global of a constant string, registering it on first use. *)
+let string_pool_global env (s : string) : int =
   match List.assoc_opt s env.strings with
-  | Some g -> e env (W.Global_get g)
+  | Some g -> g
   | None ->
       (* The memo slots of every const thunk sit between the scheduler
          cursor (global 0) and the pool, so the pool's base shifts by
@@ -457,7 +525,15 @@ let string_const env (s : string) =
       let g = 1 + (2 * List.length env.consts) + List.length env.string_pool in
       env.strings <- (s, g) :: env.strings;
       env.string_pool <- s :: env.string_pool;
-      e env (W.Global_get g)
+      g
+
+let string_const env (s : string) =
+  e env (W.Global_get (string_pool_global env s))
+
+(* The same, as an instruction list — the syscall lowering builds
+   blocks that outlive a single append. *)
+let string_const_code env (s : string) : W.instr list =
+  [ W.Global_get (string_pool_global env s) ]
 
 (* A const thunk's memo globals: the done flag (i32) and the value slot
    (anyref). The slot pair is fixed by the const's position in the
@@ -483,6 +559,82 @@ let memo_cell env fname =
    anyref, so it is narrowed to $vbool before the field read. *)
 let truthy (v : W.instr list) : W.instr list =
   v @ [ W.Ref_cast t_vbool; W.Struct_get (t_vbool, 0) ]
+
+(* ---- The file-system syscalls ----
+
+   The protocol (emo_wasm_host implements the other half): a syscall
+   import takes its string arguments as (ptr, len) pairs written by
+   write_bytes, and answers (tag, size) — tag 0 ok, tag set means the
+   host stashed the reason text it formatted whole; count-bearing
+   syscalls answer (tag, i64) with the payload size riding the count
+   on the error path. The guest allocates the payload buffer with
+   alloc and copies the answer out with fetch. *)
+
+(* Pushes (ptr, len) for a string value's bytes: bump-allocate and
+   copy through write_bytes, the length beside them. *)
+let string_args env (code : W.instr list) : W.instr list =
+  let b = fresh_local env "__str_bytes" (W.RefNull t_bytes) in
+  code
+  @ [
+      W.Ref_cast t_vstring;
+      W.Struct_get (t_vstring, 0);
+      W.Local_set b;
+      W.Local_get b;
+      W.Call (rt "write_bytes");
+      W.Local_get b;
+      W.Array_len t_bytes;
+    ]
+
+(* Copies the host's stashed payload — the contents, or the reason —
+   into a bump buffer and builds the $vstring. *)
+let fetch_string env ~(size : W.instr list) : W.instr list =
+  let n = fresh_local env "__pay_size" W.I32 in
+  let buf = fresh_local env "__pay_buf" W.I32 in
+  size
+  @ [
+      W.Local_set n;
+      W.Local_get n;
+      W.Call (rt "alloc");
+      W.Local_set buf;
+      W.Local_get buf;
+      W.Local_get n;
+      W.Call i_fetch;
+      W.Drop;
+      W.Local_get buf;
+      W.Local_get n;
+      W.Call (rt "bytes_from_mem");
+      W.Struct_new t_vstring;
+    ]
+
+(* The (R, v) pair a syscall lowers to: the tag on the stack picks the
+   member, ok_code / err_code each leave the pair's second element on
+   the stack. *)
+let r_pair env ~(ok : W.instr list) ~(err : W.instr list) : W.instr list =
+  let pair member second =
+    string_const_code env "R"
+    @ string_const_code env member
+    @ [ W.Struct_new t_venum ] @ second
+    @ [ W.Array_new_fixed (t_anyarray, 2); W.Struct_new t_vtuple ]
+  in
+  [ W.If (W.Result W.Anyref, pair "error" err, pair "ok" ok) ]
+
+(* The i64 inside a $vint value. *)
+let int64_of (code : W.instr list) : W.instr list =
+  code @ [ W.Ref_cast t_vint; W.Struct_get (t_vint, 0) ]
+
+(* Calls a (tag, i64) syscall: leaves the tag on the stack, hands back
+   the count's local. *)
+let sys_count env (import : int) (code : W.instr list) : W.instr list * int =
+  let tag = fresh_local env "__sys_tag" W.I32 in
+  let v = fresh_local env "__sys_v" W.I64 in
+  (code @ [ W.Call import; W.Local_set v; W.Local_set tag; W.Local_get tag ], v)
+
+(* Calls a (tag, i32) syscall: leaves the tag on the stack, hands back
+   the payload size's local. *)
+let sys_size env (import : int) (code : W.instr list) : W.instr list * int =
+  let tag = fresh_local env "__sys_tag" W.I32 in
+  let n = fresh_local env "__sys_size" W.I32 in
+  (code @ [ W.Call import; W.Local_set n; W.Local_set tag; W.Local_get tag ], n)
 
 (* The class-member name behind a mangled method fname: the mangled
    form is `cname "__" member`. *)
@@ -799,11 +951,204 @@ let rec expr env (x : Emo_ir.expr) : unit =
           raise
             (Emo_ir.Lower_error
                ("builtin `" ^ name ^ "` is not available on the wasm target")))
-  | Runtime_impl { name; _ } ->
-      raise
-        (Emo_ir.Lower_error
-           ("the runtime implementation `" ^ name
-          ^ "` is not available on the wasm target"))
+  | Runtime_impl { name; args } -> (
+      match (name, args) with
+      | "file_read", [ path ] ->
+          let code, size =
+            sys_size env i_file_read (string_args env (expr_block env path))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:(fetch_string env ~size:[ W.Local_get size ])
+                ~err:(fetch_string env ~size:[ W.Local_get size ]))
+      | "file_write", [ path; contents ] ->
+          let code, v =
+            sys_count env i_file_write
+              (string_args env (expr_block env path)
+              @ string_args env (expr_block env contents))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.Local_get v; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | ( (("os_open_read" | "os_open_write" | "os_open_append") as open_name),
+          [ path ] ) ->
+          let mode =
+            if open_name = "os_open_read" then 0
+            else if open_name = "os_open_write" then 1
+            else 2
+          in
+          let code, v =
+            sys_count env i_os_open
+              (string_args env (expr_block env path) @ [ W.I32_const mode ])
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.Local_get v; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "os_read", [ fd; n ] ->
+          let code, size =
+            sys_size env i_os_read
+              (int64_of (expr_block env fd) @ int64_of (expr_block env n))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:(fetch_string env ~size:[ W.Local_get size ])
+                ~err:(fetch_string env ~size:[ W.Local_get size ]))
+      | "os_write", [ fd; data ] ->
+          let code, v =
+            sys_count env i_os_write
+              (int64_of (expr_block env fd)
+              @ string_args env (expr_block env data))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.Local_get v; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "os_close", [ fd ] ->
+          let code, v =
+            sys_count env i_os_close (int64_of (expr_block env fd))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.I64_const 0L; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "os_list_dir", [ path ] ->
+          (* one fetch serves both branches: the payload lands in a
+             bump buffer, then the tag picks — ok splits it as a
+             NUL-separated name stream, error surfaces it whole *)
+          let tag = fresh_local env "__sys_tag" W.I32 in
+          let size = fresh_local env "__sys_size" W.I32 in
+          let buf = fresh_local env "__sys_buf" W.I32 in
+          let payload =
+            [
+              W.Local_get buf;
+              W.Local_get size;
+              W.Call (rt "bytes_from_mem");
+              W.Struct_new t_vstring;
+            ]
+          in
+          es env
+            (string_args env (expr_block env path)
+            @ [
+                W.Call i_os_list_dir;
+                W.Local_set size;
+                W.Local_set tag;
+                W.Local_get size;
+                W.Call (rt "alloc");
+                W.Local_set buf;
+                W.Local_get buf;
+                W.Local_get size;
+                W.Call i_fetch;
+                W.Drop;
+                W.Local_get tag;
+              ]
+            @ r_pair env
+                ~ok:
+                  (payload
+                  @ string_const_code env "\000"
+                  @ [ W.Call (rt "str_split") ])
+                ~err:payload)
+      | (("os_mkdir" | "os_rmdir" | "os_unlink") as op_name), [ path ] ->
+          let import =
+            if op_name = "os_mkdir" then i_os_mkdir
+            else if op_name = "os_rmdir" then i_os_rmdir
+            else i_os_unlink
+          in
+          let code, v =
+            sys_count env import (string_args env (expr_block env path))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.I64_const 0L; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "os_rename", [ old_path; new_path ] ->
+          let code, v =
+            sys_count env i_os_rename
+              (string_args env (expr_block env old_path)
+              @ string_args env (expr_block env new_path))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.I64_const 0L; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "os_getcwd", [] ->
+          (* the answer rides as (tag, size); getcwd cannot fail on the
+             host, so the tag is dropped *)
+          let tag = fresh_local env "__sys_tag" W.I32 in
+          let size = fresh_local env "__sys_size" W.I32 in
+          es env
+            ([ W.Call i_os_getcwd; W.Local_set size; W.Local_set tag ]
+            @ fetch_string env ~size:[ W.Local_get size ])
+      | "os_chdir", [ path ] ->
+          let code, v =
+            sys_count env i_os_chdir (string_args env (expr_block env path))
+          in
+          es env
+            (code
+            @ r_pair env
+                ~ok:[ W.I64_const 0L; W.Struct_new t_vint ]
+                ~err:(fetch_string env ~size:[ W.Local_get v; W.I32_wrap_i64 ])
+            )
+      | "rand_bytes", [ n ] ->
+          (* one fetch serves both branches: the payload is the entropy
+             on the ok path, the reason text on the error path *)
+          let tag = fresh_local env "__sys_tag" W.I32 in
+          let size = fresh_local env "__sys_size" W.I32 in
+          let buf = fresh_local env "__sys_buf" W.I32 in
+          let payload =
+            [ W.Local_get buf; W.Local_get size; W.Call (rt "bytes_from_mem") ]
+          in
+          es env
+            (int64_of (expr_block env n)
+            @ [
+                W.Call i_rand_bytes;
+                W.Local_set size;
+                W.Local_set tag;
+                W.Local_get size;
+                W.Call (rt "alloc");
+                W.Local_set buf;
+                W.Local_get buf;
+                W.Local_get size;
+                W.Call i_fetch;
+                W.Drop;
+                W.Local_get tag;
+              ]
+            @ r_pair env
+                ~ok:(payload @ [ W.Struct_new t_vbytes ])
+                ~err:(payload @ [ W.Struct_new t_vstring ]))
+      | ( ( "os_getpid" | "os_getppid" | "os_fork" | "os_waitpid" | "os_pipe"
+          | "os_execv" | "os__exit" ),
+          _ ) ->
+          (* the process half: a WasmGC module has no process to fork,
+             so these raise when called — the package ships (its fd and
+             directory half is real), the capability names itself at
+             the call, the interpreter's run-time refusals are the
+             precedent *)
+          string_const env
+            ("the runtime implementation `" ^ name
+           ^ "` is not available on the wasm target");
+          e env (W.Call (rt "throw"));
+          e env W.Unreachable
+      | _ ->
+          raise
+            (Emo_ir.Lower_error
+               ("the runtime implementation `" ^ name
+              ^ "` is not available on the wasm target")))
   | Box_new v ->
       expr env v;
       e env (W.Call (rt "box"))
@@ -2794,46 +3139,113 @@ let rt_write_bytes : W.func_type =
               W.I32_add;
               W.Memory_size;
               W.I32_const 16;
-              W.I32_mul;
+              W.I32_shl;
               W.I32_gt;
               W.If
                 ( W.Void,
                   [
+                    (* the delta counts from the cursor: pages of (end),
+                       minus the pages already there — the first cut
+                       paged the length alone and went negative once
+                       the cursor rode along (found 2026-11-08, T56.1) *)
                     W.Global_get 0;
                     W.Local_get 2;
                     W.I32_add;
-                    W.I32_const 15;
+                    W.I32_const 65535;
                     W.I32_add;
                     W.I32_const 16;
-                    W.I32_div_s;
+                    W.I32_shr_u;
+                    W.Memory_size;
+                    W.I32_sub;
                     W.Memory_grow;
                     W.Drop;
                   ],
                   [] );
               W.I32_const 0;
               W.Local_set 3;
-              W.Loop
+              (* the copy loop wears its own block: its exit branch
+                 (br_if 1) must land on the cursor advance below, not
+                 past it — found 2026-11-08 (T56.1): the loop sat
+                 directly in the outer block, its exit branch jumped
+                 straight past the advance, and the bump cursor never
+                 moved — harmless while every consumer (println) read
+                 the buffer before the next allocation, fatal the
+                 moment two bump buffers had to live at once *)
+              W.Block
                 ( W.Void,
                   [
-                    W.Local_get 3;
-                    W.Local_get 2;
-                    W.I32_ge;
-                    W.Br_if 1;
-                    W.Local_get 1;
-                    W.Local_get 3;
-                    W.I32_add;
-                    W.Local_get 0;
-                    W.Local_get 3;
-                    W.Array_get_u t_bytes;
-                    W.I32_store8;
-                    W.Local_get 3;
-                    W.I32_const 1;
-                    W.I32_add;
-                    W.Local_set 3;
-                    W.Br 0;
+                    W.Loop
+                      ( W.Void,
+                        [
+                          W.Local_get 3;
+                          W.Local_get 2;
+                          W.I32_ge;
+                          W.Br_if 1;
+                          W.Local_get 1;
+                          W.Local_get 3;
+                          W.I32_add;
+                          W.Local_get 0;
+                          W.Local_get 3;
+                          W.Array_get_u t_bytes;
+                          W.I32_store8;
+                          W.Local_get 3;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Local_set 3;
+                          W.Br 0;
+                        ] );
                   ] );
               W.Global_get 0;
               W.Local_get 2;
+              W.I32_add;
+              W.Global_set 0;
+            ] );
+        W.Local_get 1;
+      ];
+  }
+
+(* alloc(size) -> i32 ptr: the bump without the copy — the buffer the
+   guest hands fetch for the host's stashed answer. Locals: 1 ptr, 2
+   need. *)
+let rt_alloc : W.func_type =
+  {
+    W.ftype_idx = t_alloc;
+    fparams = [ "size" ];
+    flocals = [ (1, W.I32); (2, W.I32) ];
+    fbody =
+      [
+        W.Block
+          ( W.Void,
+            [
+              W.Global_get 0;
+              W.Local_set 1;
+              W.Global_get 0;
+              W.Local_get 0;
+              W.I32_add;
+              W.Local_set 2;
+              W.Local_get 2;
+              W.Memory_size;
+              W.I32_const 16;
+              W.I32_shl;
+              W.I32_gt;
+              W.If
+                ( W.Void,
+                  [
+                    W.Global_get 0;
+                    W.Local_get 0;
+                    W.I32_add;
+                    W.I32_const 65535;
+                    W.I32_add;
+                    W.I32_const 16;
+                    W.I32_shr_u;
+                    W.Memory_size;
+                    W.I32_sub;
+                    W.Memory_grow;
+                    W.Drop;
+                  ],
+                  [] );
+              W.Global_get 0;
+              W.Local_get 0;
               W.I32_add;
               W.Global_set 0;
             ] );
@@ -2942,37 +3354,38 @@ let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
     fparams = [];
     flocals = [ (1, W.RefNull t_proc); (1, W.RefNull t_cons); (1, W.I32) ];
     fbody =
-      List.concat_map
-        (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
-        pool
-      @ List.mapi
-          (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
-          pool
-      @ [
-          W.I32_const 0;
-          W.I32_const 1;
-          W.I32_const 0;
-          W.Ref_null_any;
-          W.Ref_null_any;
-          W.Ref_null_any;
-          W.Ref_null_any;
-          W.Struct_new t_proc;
-          W.Local_set 0;
-          W.Local_get 0;
-          W.Ref_null_any;
-          W.Struct_new t_cons;
-          W.Local_set 1;
-          W.Local_get 1;
-          W.Global_set g.g_head;
-          W.Local_get 1;
-          W.Global_set g.g_tail;
-          W.Local_get 0;
-          W.Global_set g.g_curp;
-          W.I32_const 1;
-          W.Global_set g.g_next;
-          W.I32_const 0;
-          W.Global_set g.g_root_done;
-        ];
+      W.I32_const 65536 :: W.Global_set 0
+      :: (List.concat_map
+            (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
+            pool
+         @ List.mapi
+             (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
+             pool
+         @ [
+             W.I32_const 0;
+             W.I32_const 1;
+             W.I32_const 0;
+             W.Ref_null_any;
+             W.Ref_null_any;
+             W.Ref_null_any;
+             W.Ref_null_any;
+             W.Struct_new t_proc;
+             W.Local_set 0;
+             W.Local_get 0;
+             W.Ref_null_any;
+             W.Struct_new t_cons;
+             W.Local_set 1;
+             W.Local_get 1;
+             W.Global_set g.g_head;
+             W.Local_get 1;
+             W.Global_set g.g_tail;
+             W.Local_get 0;
+             W.Global_set g.g_curp;
+             W.I32_const 1;
+             W.Global_set g.g_next;
+             W.I32_const 0;
+             W.Global_set g.g_root_done;
+           ]);
   }
 
 (* ---- Numeric and comparison runtime (sig1: anyref -> anyref where a
@@ -7680,12 +8093,13 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_atomic_fetch_and;
         rt_atomic_fetch_or;
         rt_atomic_fetch_xor;
+        rt_alloc;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
-  (* main sits at 60; the List ops (61..67) follow it before the
-     program's functions start at runtime_count. *)
-  let main_idx = 60 in
+  (* main rides the map; the List ops follow it before the program's
+     functions start at runtime_count. *)
+  let main_idx = rt "main" in
   (* types: the fixed runtime head, then everything the lowering
      appended (env.types accumulates in reverse) — snapped last so the
      driver's own func types are included *)
@@ -7697,9 +8111,36 @@ let assemble (program : Emo_ir.program) : W.module_ =
         { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
         { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
         { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
+        { W.imodule = "emo"; W.iname = "file_read"; W.itype_idx = t_file_read };
+        {
+          W.imodule = "emo";
+          W.iname = "file_write";
+          W.itype_idx = t_file_write;
+        };
+        { W.imodule = "emo"; W.iname = "fetch"; W.itype_idx = t_fetch };
+        { W.imodule = "emo"; W.iname = "os_open"; W.itype_idx = t_os_open };
+        { W.imodule = "emo"; W.iname = "os_read"; W.itype_idx = t_os_read };
+        { W.imodule = "emo"; W.iname = "os_write"; W.itype_idx = t_os_write };
+        { W.imodule = "emo"; W.iname = "os_close"; W.itype_idx = t_os_close };
+        {
+          W.imodule = "emo";
+          W.iname = "os_list_dir";
+          W.itype_idx = t_os_list_dir;
+        };
+        { W.imodule = "emo"; W.iname = "os_mkdir"; W.itype_idx = t_os_path };
+        { W.imodule = "emo"; W.iname = "os_rmdir"; W.itype_idx = t_os_path };
+        { W.imodule = "emo"; W.iname = "os_unlink"; W.itype_idx = t_os_path };
+        { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
+        { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
+        { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
+        {
+          W.imodule = "emo";
+          W.iname = "rand_bytes";
+          W.itype_idx = t_rand_bytes;
+        };
       ];
     funcs;
-    memory = 1;
+    memory = 2;
     export_mem = true;
     (* Every defined function, not only the hidden closures: a def named
        as a value is a `ref.func` to a program function or a class
@@ -7707,7 +8148,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
        in the declarative element segment whatever kind of function it
        is. Declaring the whole defined range costs one small segment and
        cannot go stale as lowering grows new `ref.func` sites. *)
-    declared_funcs = List.init (List.length funcs) (fun i -> 3 + i);
+    declared_funcs = List.init (List.length funcs) (fun i -> import_count + i);
     globals =
       (W.I32, true)
       :: List.concat_map

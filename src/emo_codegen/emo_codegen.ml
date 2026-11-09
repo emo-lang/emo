@@ -13,6 +13,11 @@ module Riscv = Emo_riscv
    never linked from the host build tree. *)
 let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
 
+(* The wasm host (src/emo_codegen/wasm — step 56): `emo run --target
+   wasm` writes it beside a temp copy of the artifact, and the golden
+   tests run it unchanged. *)
+let wasm_host_mjs = Emo_wasm_host_data.wasm_host_mjs
+
 (* An Int64 literal, parenthesized when negative: after a constructor
    or an operator, `Int64 -9223372036854775808L` parses as
    subtraction (crypto_hash's SHA-512/256 initial words — the first

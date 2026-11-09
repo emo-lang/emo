@@ -38,7 +38,7 @@ ocaml:      ok — ocamlfind with the unix and ssl packages found
 typescript: ok (v26.12.0)
 browser:    ok (v26.12.0)
 beam:       ok
-wasm:       ok — no external tools needed
+wasm:       ok v26.12.0 — `emo run --target wasm` runs it
 riscv64:    ok (QEMU emulator version 11.1.2)
 ```
 
@@ -51,7 +51,7 @@ riscv64:    ok (QEMU emulator version 11.1.2)
 | `ocaml` | `emo build --target ocaml main.emo -o demo-ocaml` | 原生可执行文件 | `./demo-ocaml` |
 | `typescript` | `emo build --target typescript main.emo -o demo-ts` | 单文件 `demo-ts.ts` | `node demo-ts.ts` |
 | `browser` | `emo build --target browser main.emo -o app` | 单文件 `app.js` | 页面里 `<script src="app.js">` |
-| `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | 提供 `emo` imports 的 JS 宿主 |
+| `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | 提供 `emo` imports 的 JS 宿主(`emo run --target wasm` 用随编译器走的宿主在 Node 下运行) |
 | `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` |
 | `riscv64` | `emo build --target riscv64 main.emo -o demo-riscv` | freestanding ELF | `qemu-system-riscv64 ... -kernel` 或 `emo run --target riscv64` |
 
@@ -134,15 +134,39 @@ $ ls demo-wasm.*
 demo-wasm.wasm  demo-wasm.wat
 ```
 
-产物是一个 **WasmGC** 模块（值用 GC struct/array 表示），外加一份可读的 `.wat`。它不是 WASI 可执行文件：`println`、异常和浮点格式化都是宿主 import，模块恰好有三个：
+产物是一个 **WasmGC** 模块（值用 GC struct/array 表示），外加一份可读的 `.wat`。它不是 WASI 可执行文件：打印、异常、浮点格式化和文件系统都是宿主 import，模块恰好有这些：
 
 | Import | 签名 | 用途 |
 | --- | --- | --- |
 | `emo.println` | `(i32 ptr, i32 len) -> ()` | 从线性内存打印一行 |
 | `emo.abort` | `(i32 ptr, i32 len) -> ()` | 未捕获异常 / abort |
-| `emo.float_str` | `(f64) -> (i32 ptr, i32 len)` | 按 `%g` 规则把浮点格式化进内存 |
+| `emo.float_str` | `(f64) -> (i32 ptr, i32 len)` | 按 `%g` 规则把浮点格式化进内存（scratch 固定在 60000） |
+| `emo.file_read` | `(i32 ptr, i32 len) -> (i32 tag, i32 size)` | 读整个文件；应答等 `fetch` 取走 |
+| `emo.file_write` | `(i32 ptr, i32 len, i32 dptr, i32 dlen) -> (i32 tag, i64 count)` | 写文件；应答等 `fetch` 取走 |
+| `emo.fetch` | `(i32 buf, i32 cap) -> i32` | 把暂存的应答拷进 guest 的缓冲 |
+| `emo.os_open` | `(i32 ptr, i32 len, i32 mode) -> (i32 tag, i64 fd)` | 打开描述符（0 读、1 写、2 追加） |
+| `emo.os_read` | `(i64 fd, i64 n) -> (i32 tag, i32 size)` | 读至多 n 字节；空串即文件尾 |
+| `emo.os_write` | `(i64 fd, i32 dptr, i32 dlen) -> (i32 tag, i64 count)` | 向描述符写 |
+| `emo.os_close` | `(i64 fd) -> (i32 tag, i64 zero)` | 关闭描述符 |
+| `emo.os_list_dir` | `(i32 ptr, i32 len) -> (i32 tag, i32 size)` | 列目录；NUL 分隔的名字流，按字节序排序 |
+| `emo.os_mkdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | 建目录 |
+| `emo.os_rmdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | 删目录 |
+| `emo.os_unlink` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | 删文件 |
+| `emo.os_rename` | `(i32 optr, i32 olen, i32 nptr, i32 nlen) -> (i32 tag, i64 zero)` | 重命名 |
+| `emo.os_getcwd` | `() -> (i32 tag, i32 size)` | 工作目录 |
+| `emo.os_chdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | 切换工作目录 |
+| `emo.rand_bytes` | `(i64 n) -> (i32 tag, i32 size)` | 从宿主熵源（Node 的 CSPRNG）取 n 字节，经 `fetch` 取走 |
 
-导出只有 `main`（入口，实例化后调用）和 `mem`（宿主解码字符串所需的线性内存）。因此运行它意味着自己提供 `emo` 宿主。下面是 Node 宿主（`run-wasm.mjs`）：
+每个 syscall 都回答 `(tag, …)`——tag 0 成功、tag 1 出错——并把 payload（文件内容，或整条错误原因 `file: cannot read …: …` / `os: …: …`，由宿主拼好）暂存起来，等 guest 的 `fetch` 调用把它拷进 guest 自己 bump 出来的缓冲。描述符由宿主持有；0/1/2 是 stdio，文件从 3 起。
+
+导出只有 `main`（入口，实例化后调用）和 `mem`（宿主解码字符串所需的线性内存；guest 的 bump 分配器从 65536 起，页 0 留给宿主）。因此运行它意味着自己提供 `emo` 宿主——或者直接 `emo run --target wasm main.emo`：构建后在 Node 里用随编译器走的宿主运行（`emo doctor` 会报告 Node 是否在位）。
+
+```console
+$ emo run --target wasm main.emo
+Hello, world!
+```
+
+手写宿主只需实现上面的 import；最小的那版只覆盖每个模块都需要的三个（`run-wasm.mjs`）：
 
 ```js
 import { readFile } from "node:fs/promises";
@@ -180,7 +204,8 @@ Hello, world!
 
 - 宿主必须支持 **WasmGC**（Node 22+ 的 V8 默认支持）。只支持 MVP 或只有 WASI 的运行时跑不了这个模块。
 - `mem` 在实例化之后才存在，而 `start` 段在实例化期间执行。宿主回调要放在闭包变量后面，等 `WebAssembly.instantiate` 完成后再赋值。
-- 没有 argv、文件系统和网络。纯计算和 `println` 可用，纯 Emo 的标准库包都能跑——格式包、`float`、`math`、`plot`、`sql`、`sync`、`slog`；需要进程、文件、socket 或 FFI 的包会被解析门拒绝。
+- **文件系统就是宿主自己的**：`file`、`os` 的 fd/目录半边、`bufio` 与 `rand` 经 syscall 运行，错误原因与 `ocaml`、`c` target 逐字节一致。没有 argv、也没有网络——需要 socket（`net`、`http`）或 FFI（`sqlite3`）的包仍被解析门拒绝；`os` 的进程半边（`fork`、`execv`、`waitpid`、`pipe`、`getpid`、`getppid`、`_exit`）在调用点 raise 并点名能力：WasmGC 模块没有进程可 fork。
+- **第二个引擎为形状背书**：每个 wasm golden 都经 wasmtime CLI 编译验证（`devtools/wasmtime-smoke.sh`——cranelift 的验证器走完整模块：GC 类型层级、multi-value 签名、块嵌套）。执行宿主仍是 Node；wasmtime CLI 供不了非 WASI 模块需要的自定义 `emo` import。
 - 仓库里的 `runtime/wasm/` 是另一回事：它是用 Emo 写的 WebAssembly 解码/解释器，覆盖 MVP 和少数扩展。它明确**不能**运行 `emo build --target wasm` 发射的 GC 模块。
 
 ## `beam`

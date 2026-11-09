@@ -6,13 +6,19 @@
 // (`os: open /x: no such file...`) — no error codes, no nil.
 //
 // The module is POSIX: it runs on the ocaml and c targets, the targets
-// with a Unix-shaped host. fork/exec/wait/pipe have no meaning on the
-// browser and bytecode targets, so declaring this package for them is a
-// package error before any code runs.
+// with a Unix-shaped host. On the wasm target the fd, directory, and
+// working-directory half runs — every call crosses to the host's own
+// file system through the module's syscalls — while the process half
+// (fork, exec, wait, pipe, the process ids) refuses at emission: a
+// WasmGC module has no process to fork. The browser and bytecode
+// targets stay undeclared: declaring this package for them is a package
+// error before any code runs.
 //
 // waitpid returns the kernel's raw 16-bit status word, decoded by the
 // wait_* helpers below — the same encoding every Unix kernel uses, so
-// the numbers survive unchanged across the ocaml and c targets.
+// the numbers survive unchanged across the ocaml and c targets. The
+// wait_* decoders themselves are pure bit arithmetic and run everywhere
+// the package resolves.
 
 def getpid() Int64 {
   return os_getpid()
