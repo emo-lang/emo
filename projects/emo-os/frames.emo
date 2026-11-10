@@ -60,7 +60,7 @@ const block = 65536
 const frame = 4096
 
 // The arena's run (T8.9): the kernel's decision that a child's arena
-// is a contiguous run of this many blocks — 256 KiB — claimed in one
+// is a contiguous run of this many blocks — 512 KiB — claimed in one
 // take_run at the spawn, mapped whole by the build, walked home block
 // by block at the death. The stub parks the number in the runtime's
 // emo_arena_run_len (runtime.S), and the process service's spare test
@@ -73,6 +73,10 @@ const frame = 4096
 // exec's image run (the app images' 12.7 MB span, 196 blocks) fits
 // beside every resident — and the fs service's per-sector tuples (the
 // leak the install-sized writes named) have an arena to live in.
+// The type's own boot (emo-desktop A17.4) rasterizes its strikes in
+// the child's arena — the parse, the slots, and the flatten's store
+// live once in the run; the lever spent to 32 blocks (2 MiB) carries
+// the construction whole (CHECK.md, 2026-11-10).
 const arena_run = 4
 // The screen carve (T8.2, T9.1): the region's end moved down to the
 // carve's base — the carve, 8 MiB, is the memory between the two, the

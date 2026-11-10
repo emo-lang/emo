@@ -14,7 +14,20 @@ require "emo/ui_fb_winbuf"
 // surface, the puts typing into the cursor's row and the newline
 // moving it — the quit key ends the loop, the window closed behind it,
 // the exit answering the parent's wait (`app editor 0`).
+
+// The interface strike, built once at boot: the Inter face at 16
+// pixels — the window's bar and the app's own labels draw in it.
+def strike() (R, ui_fb.raster.Strike) {
+  return ui_fb.raster.strike(ui_fb.raster.inter(), 16)
+}
+
 def main() {
+  const holder = ArrayBuilder.new()
+  case strike() {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const fs = holder.get(0)
   var ge = 0
   var base_e = 0
   case syscall.win_new(384, 128) {
@@ -54,16 +67,16 @@ def main() {
     (R.ok, _) -> {}
   }
   const we = ui_fb_winbuf.win(ge, base_e, 384, 128)
-  const ch = ui_fb_win.chrome(we, "editor")
+  const ch = ui_fb_win.chrome(we, fs, "editor")
   // the landing frame the app's own hand paints — the mount's tree,
   // the same walk, on the wire low (emo-desktop A15.2)
   const reg0 = ui.Registry.new()
-  ui_fb.paint(ui_apps.editor.view(reg0, ui_apps.editor.initial()), ch)
+  ui_fb.paint(ui_apps.editor.view(reg0, ui_apps.editor.initial()), ch, fs)
   we.present()
   we.rise(fx, fy)
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
     ui_apps.editor.initial(),
-    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10], we, fx, fy, mw, mh)))
+    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10], we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {
     (R.error, _) -> { ui_fb_winbuf.mark() }

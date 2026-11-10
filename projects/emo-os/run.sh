@@ -166,11 +166,11 @@ fi
 # The desktop's header and the icons' names ink the type's glyphs, and
 # the display model inks the same coverage from the same tables
 # (emo-desktop A13, A14.2) — one drawing, one file, the sprite's rule.
-font_src=${FONT_SRC:-../emo-desktop/fb/font.emo}
-if [ ! -f "$font_src" ]; then
-  echo "run.sh: the type's tables are missing: $font_src" >&2
-  echo "  (projects/emo-desktop/fb/font.emo carries the glyphs the desktop" >&2
-  echo "  inks and this run's display model reads; FONT_SRC names it)" >&2
+glyphs_dir=${GLYPHS_DIR:-../emo-desktop/fb/glyphs}
+if [ ! -f "$glyphs_dir/reference.py" ]; then
+  echo "run.sh: the type's rasterizer is missing: $glyphs_dir/reference.py" >&2
+  echo "  (projects/emo-desktop/fb/glyphs/reference.py strikes the glyphs the" >&2
+  echo "  desktop inks at the sizes the display reads; GLYPHS_DIR names it)" >&2
   exit 1
 fi
 
@@ -995,7 +995,7 @@ PYEOF
   # is the loud end.
   apps_is() {
     local ppm="$1" ax="$2" ay="$3" wa="$4" bx="$5" by="$6" wb="$7" cx="$8" cy="$9" wc="${10}" sx="${11}" sy="${12}" wd="${13}" what="${14}" icons="${15}" running="${16}"
-    if ! PPM="$ppm" AX="$ax" AY="$ay" WA="$wa" BX="$bx" BY="$by" WB="$wb" CX="$cx" CY="$cy" WC="$wc" SX="$sx" SY="$sy" WD="$wd" WHAT="$what" ICONS="$icons" RUNNING="$running" POINTER_SPRITE="$pointer_sprite" FONT_SRC="$font_src" python3 - <<'PYEOF'
+    if ! PPM="$ppm" AX="$ax" AY="$ay" WA="$wa" BX="$bx" BY="$by" WB="$wb" CX="$cx" CY="$cy" WC="$wc" SX="$sx" SY="$sy" WD="$wd" WHAT="$what" ICONS="$icons" RUNNING="$running" POINTER_SPRITE="$pointer_sprite" GLYPHS_DIR="$glyphs_dir" python3 - <<'PYEOF'
 import os
 import re
 import sys
@@ -1015,35 +1015,38 @@ rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(e['POINTER_SPRITE']).read()
 if len(rows) != 17 or any(len(r) != 12 for r in rows):
     sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
 
-# The type (emo-desktop A14.2): the strikes' line boxes, one meta word
-# per glyph and the coverage data's chunks, read straight out of
-# font.emo — the names, the wordmark and the count are the model's to
-# ink from the same tables the metal walks, at the same coverage.
-font = open(e['FONT_SRC']).read()
-def table(name):
-    m = re.search(r'const ' + name + r' = \[(.*?)\]', font, re.S)
-    if not m:
-        sys.exit(f"run.sh: {e['FONT_SRC']} does not carry the type's `{name}` table")
-    return [int(v, 0) for v in re.findall(r'0x[0-9A-Fa-f]+|\d+', m.group(1))]
-line_boxes = table('line_boxes')
-meta = table('meta')
-chunks = sorted(int(n) for n in re.findall(r'const data(\d+) = \[', font))
-words = [w for n in chunks for w in table(f'data{n}')]
-if len(meta) != 3 * 96 or len(line_boxes) != 6:
-    sys.exit(f"run.sh: {e['FONT_SRC']} does not carry three 96-glyph strikes")
+# The type (emo-desktop A17): the runtime strikes — the reference
+# rasterizer's own integers, the algorithm whose bytes the metal's
+# carve walks and the type golden pin — struck here at the interface
+# size, the names, the wordmark and the count inked from the same
+# coverage the metal walks.
+sys.path.insert(0, e['GLYPHS_DIR'])
+import reference
+
+_face = reference.faces()['face_inter.emo']
+_ap = reference.ceil_scale(_face.ascent_fu, 16, _face.units_per_em)
+_dp = reference.ceil_scale(_face.descent_fu, 16, _face.units_per_em)
+LINE = _ap + _dp
+STRIKE = {}
+for gid in range(96):
+    if gid == 0:
+        pts, adv = _face.glyph_points(0)
+    else:
+        pts, adv = _face.glyph_points(_face.cmap_lookup(0x20 + gid - 1))
+    a, l, t, w, h, words = reference.rasterize(pts, adv, 16, _face.units_per_em, _ap)
+    STRIKE[gid] = (a, l, t, w, h, words)
 
 def glyph_index(b):
-    i = b - 32
-    return i if 0 <= i <= 94 else 95
+    i = b - 31
+    return i if 1 <= i <= 95 else 0
 
-def glyph_meta(s, gi):
-    m = meta[s * 96 + gi]
-    return {'base': m & 8191, 'advance': (m >> 13) & 255, 'h': (m >> 21) & 255,
-            'w': (m >> 29) & 255, 'left': ((m >> 37) & 255) - 128,
-            'top': ((m >> 45) & 255) - 128}
+def glyph_meta(gi):
+    a, l, t, w, h, words = STRIKE[gi]
+    return {'advance': a, 'left': l, 'top': t, 'w': w, 'h': h,
+            'words': words}
 
-def advance(label, s=0):
-    return sum(glyph_meta(s, glyph_index(ord(ch)))['advance'] for ch in label)
+def advance(label):
+    return sum(glyph_meta(glyph_index(ord(ch)))['advance'] for ch in label)
 
 # The wallpaper (emo-desktop A13): the gradient between the package's
 # two anchors and the three ribbons' spans, the blend the surface's
@@ -1194,9 +1197,9 @@ def stamp_text(label, x0, y0, color, s=0):
     # the pen moving on by the glyph's own advance
     pen = x0
     for ch in label:
-        g = glyph_meta(s, glyph_index(ord(ch)))
+        g = glyph_meta(glyph_index(ord(ch)))
         for m in range(g['w'] * g['h']):
-            c = ((words[g['base'] + m // 8] >> ((m % 8) * 4)) & 15) * 17
+            c = (g['words'][m // 8] >> (8 * (m % 8))) & 255
             if c:
                 xy = (pen + g['left'] + m % g['w'], y0 + g['top'] + m // g['w'])
                 if xy in overlay:
@@ -1241,7 +1244,7 @@ for yy in range(24):
     for xx in range(1920):
         r0, g0, b0 = wall(xx, yy)
         overlay[(xx, yy)] = over(HEADER_SCRIM, (r0 << 16) | (g0 << 8) | b0)
-ty = (24 - line_boxes[0]) // 2
+ty = (24 - LINE) // 2
 stamp_text('EmoOS', 8, ty, 0x40C8C8)
 rn = str(int(e['RUNNING']))
 x0 = 1912 - advance(rn) - advance(' apps')

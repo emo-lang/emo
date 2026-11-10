@@ -127,7 +127,8 @@ emo_start:
     la t0, emo_frames__take_run
     la t1, emo_arena_take_hook
     sd t0, 0(t1)
-    li t0, 4                    # frames.emo's arena_run
+    li t0, 4                    # frames.emo's arena_run (A11.1's value: the
+                                # run the counter pass's strike grew up in)
     la t1, emo_arena_run_len
     sd t0, 0(t1)
     # the tick's slice (T8.21): the root's quota word — the one policy

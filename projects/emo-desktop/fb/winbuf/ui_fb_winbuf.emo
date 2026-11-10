@@ -167,26 +167,26 @@ def menu_items() Int64 {
 // The item's height: the interface face's line with a pad's pair
 // around it; the menu's width the widest label's advance with the
 // inner pad's pair beside.
-def menu_item_h() Int64 {
-  return ui_fb.line_height() + 8
+def menu_item_h(f ui_fb.raster.Strike) Int64 {
+  return f.line_height() + 8
 }
 
-def menu_width() Int64 {
-  var w = ui_fb.text_width(menu_label(0, false))
-  if ui_fb.text_width(menu_label(1, false)) > w {
-    w = ui_fb.text_width(menu_label(1, false))
+def menu_width(f ui_fb.raster.Strike) Int64 {
+  var w = ui_fb.text_width(f, menu_label(0, false))
+  if ui_fb.text_width(f, menu_label(1, false)) > w {
+    w = ui_fb.text_width(f, menu_label(1, false))
   }
-  if ui_fb.text_width(menu_label(2, false)) > w {
-    w = ui_fb.text_width(menu_label(2, false))
+  if ui_fb.text_width(f, menu_label(2, false)) > w {
+    w = ui_fb.text_width(f, menu_label(2, false))
   }
-  if ui_fb.text_width(menu_label(0, true)) > w {
-    w = ui_fb.text_width(menu_label(0, true))
+  if ui_fb.text_width(f, menu_label(0, true)) > w {
+    w = ui_fb.text_width(f, menu_label(0, true))
   }
   return w + 24
 }
 
-def menu_height() Int64 {
-  return menu_items() * menu_item_h() + 8
+def menu_height(f ui_fb.raster.Strike) Int64 {
+  return menu_items() * menu_item_h(f) + 8
 }
 
 // The menu's seat by the window's side: the button's own x held in
@@ -244,10 +244,10 @@ const seat_dragy = buf + 2160
 // parent-relative coordinates the binding speaks), the paper and the
 // hairline and the items inked, and the commit raw — no frame line,
 // the menu's frames the compositor's comp line's to pin.
-def seat_menu_open(surf Win) Void {
+def seat_menu_open(f ui_fb.raster.Strike, surf Win) Void {
   var g = 0
   var b = 0
-  case syscall.win_new(menu_width(), menu_height()) {
+  case syscall.win_new(menu_width(f), menu_height(f)) {
     (R.error, _) -> { mark() }
     (R.ok, ans) -> {
       g = ans & 4294967295
@@ -269,19 +269,19 @@ def seat_menu_open(surf Win) Void {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}
     }
-    const ms = win(g, b, menu_width(), menu_height())
-    ms.fill(0, 0, menu_width(), menu_height(), menu_paper())
-    ms.fill(0, 0, menu_width(), 1, menu_line())
-    ms.fill(0, menu_height() - 1, menu_width(), 1, menu_line())
-    ms.fill(0, 0, 1, menu_height(), menu_line())
-    ms.fill(menu_width() - 1, 0, 1, menu_height(), menu_line())
+    const ms = win(g, b, menu_width(f), menu_height(f))
+    ms.fill(0, 0, menu_width(f), menu_height(f), menu_paper())
+    ms.fill(0, 0, menu_width(f), 1, menu_line())
+    ms.fill(0, menu_height(f) - 1, menu_width(f), 1, menu_line())
+    ms.fill(0, 0, 1, menu_height(f), menu_line())
+    ms.fill(menu_width(f) - 1, 0, 1, menu_height(f), menu_line())
     var i = 0
     while i < menu_items() {
-      ui_fb.text(menu_label(i, peek64(seat_scale) > 1), 12,
-        4 + (i * menu_item_h()) + 4, menu_ink(), ms)
+      ui_fb.text(f, menu_label(i, peek64(seat_scale) > 1), 12,
+        4 + (i * menu_item_h(f)) + 4, menu_ink(), ms)
       i = i + 1
     }
-    case syscall.present(g, 0, 0, menu_width(), menu_height()) {
+    case syscall.present(g, 0, 0, menu_width(f), menu_height(f)) {
       (R.error, _) -> { mark() }
       (R.ok, _) -> {}
     }
@@ -368,14 +368,14 @@ def seat_toggle_max(surf Win) Void {
 // the button's rectangle, the window's own coordinates divided by the
 // scale the walk carries the window at. The answer is 0 the loop goes
 // on, -2 the session ends (the menu's own Quit).
-def seat_press(raw Int64, surf Win) Int64 {
+def seat_press(f ui_fb.raster.Strike, raw Int64, surf Win) Int64 {
   const sx = (((raw >> 16) & 65535) * peek64(seat_mw)) / (peek64(seat_maxx) + 1)
   const sy = ((raw & 65535) * peek64(seat_mh)) / (peek64(seat_maxy) + 1)
   if peek64(seat_menug) != 0 {
     const mx = sx - (peek64(seat_wx) + menu_x())
     const my = sy - (peek64(seat_wy) + menu_y())
-    if mx >= 0 && mx < menu_width() && my >= 0 && my < menu_height() {
-      const item = (my - 4) / menu_item_h()
+    if mx >= 0 && mx < menu_width(f) && my >= 0 && my < menu_height(f) {
+      const item = (my - 4) / menu_item_h(f)
       if item >= 0 && item < menu_items() {
         seat_menu_close()
         if item == 0 {
@@ -407,7 +407,7 @@ def seat_press(raw Int64, surf Win) Int64 {
      lx < ui_fb_win.button_x() + ui_fb_win.button_w() &&
      ly >= ui_fb_win.button_y() &&
      ly < ui_fb_win.button_y() + ui_fb_win.button_h() {
-    seat_menu_open(surf)
+    seat_menu_open(f, surf)
     return 0
   }
   // the bar's own hand (emo-desktop A16.5): a press beside the button
@@ -467,10 +467,11 @@ def seat_drag_step(raw Int64, surf Win) Void {
 // the open menu's items the seat judges by it, the pointer's other
 // reports riding past as they always have.
 class Keys {
-  def init(bytes Array[Int64], surf Win, x Int64, y Int64, mw Int64,
-           mh Int64) {
+  def init(bytes Array[Int64], surf Win, f ui_fb.raster.Strike, x Int64,
+           y Int64, mw Int64, mh Int64) {
     self.bytes = bytes
     self.surf = surf
+    self.strike = f
     poke64(seat_grant, surf.grant)
     poke64(seat_wx, x)
     poke64(seat_wy, y)
@@ -504,7 +505,7 @@ class Keys {
         b = ev_value(ev)
       } else {
         if ev_type(ev) == 4 {
-          if seat_press(ev_value(ev), self.surf) < 0 {
+          if seat_press(self.strike, ev_value(ev), self.surf) < 0 {
             return (R.error, 0)
           }
         } else {
@@ -574,34 +575,31 @@ def carve_blend(base Int64, width Int64, x Int64, y Int64, w Int64,
 }
 
 // One glyph of a strike at the pen `(x, y)` (emo-desktop A14.2): the
-// coverage walked a word at a time — `font.word` hands eight pixels,
-// pixel p at bits 4p — each covered pixel inside the buffer composited
-// in the color's channels, the same pixels at the same coverage the
-// hosted canvas inks. The buffer's extent rides packed (`pack`).
-def carve_ink(base Int64, dims Int64, x Int64, y Int64, strike Int64,
+// coverage walked out of the strike's slot words — eight bytes a word,
+// the ink's row-major pixels — each covered pixel inside the buffer
+// composited in the color's channels, the same pixels at the same
+// coverage the hosted canvas inks. The buffer's extent rides packed
+// (`pack`).
+def carve_ink(base Int64, dims Int64, x Int64, y Int64, f ui_fb.raster.Strike,
               glyph Int64, color Int64) Void {
   const width = high(dims)
   const height = low(dims)
-  const w = ui_fb.font.gw(strike, glyph)
-  const n = w * ui_fb.font.gh(strike, glyph)
-  const x0 = x + ui_fb.font.gleft(strike, glyph)
-  const y0 = y + ui_fb.font.gtop(strike, glyph)
+  const meta_b = f.meta_b(glyph)
+  const w = (meta_b >> 8) & 255
+  const h = meta_b & 255
+  const x0 = x + ((meta_b >> 24) & 255) - 128
+  const y0 = y + ((meta_b >> 16) & 255) - 128
+  const words = f.slots_array()
+  const slot = f.meta_a(glyph) & 0xFFFFFF
   var m = 0
-  var k = 0
-  while m < n {
-    const wd = ui_fb.font.word(strike, glyph, k)
-    var p = 0
-    while p < 8 && m < n {
-      const c = ((wd >> (p * 4)) & 15) * 17
-      const px = x0 + m % w
-      const py = y0 + m / w
-      if c > 0 && px >= 0 && px < width && py >= 0 && py < height {
-        carve_blend_at(base + (py * width + px) * 4, ui_fb.inked(color, c))
-      }
-      m = m + 1
-      p = p + 1
+  while m < w * h {
+    const c = (words[slot + m / 8] >> (8 * (m % 8))) & 255
+    const px = x0 + m % w
+    const py = y0 + m / w
+    if c > 0 && px >= 0 && px < width && py >= 0 && py < height {
+      carve_blend_at(base + (py * width + px) * 4, ui_fb.inked(color, c))
     }
-    k = k + 1
+    m = m + 1
   }
 }
 
@@ -892,8 +890,8 @@ class Win {
     carve_blend(self.base, self.width, r.x(), r.y(), r.w(), r.h(), color)
   }
 
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
-    carve_ink(self.base, pack(self.width, self.height), x, y, strike, glyph,
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    carve_ink(self.base, pack(self.width, self.height), x, y, f, glyph,
       color)
   }
 
@@ -980,7 +978,8 @@ def win(grant Int64, base Int64, width Int64, height Int64) Win {
   return Win.new(grant: grant, base: base, width: width, height: height)
 }
 
-def keys(bytes Array[Int64], surf Win, x Int64, y Int64, mw Int64,
-         mh Int64) Keys {
-  return Keys.new(bytes: bytes, surf: surf, x: x, y: y, mw: mw, mh: mh)
+def keys(bytes Array[Int64], surf Win, f ui_fb.raster.Strike, x Int64,
+         y Int64, mw Int64, mh Int64) Keys {
+  return Keys.new(bytes: bytes, surf: surf, f: f, x: x, y: y, mw: mw,
+    mh: mh)
 }

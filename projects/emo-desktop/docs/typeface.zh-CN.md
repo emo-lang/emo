@@ -34,9 +34,11 @@ A17.1 至 A17.4。
 - **D10——接缝保形。** `ink` 保持五参形状;它的 strike 实参从 `Int64`
   表索引拓宽为 `Strike`——A17.2 构建的按尺寸稠密对象。`text` 与
   `text_width` 各自接收要画的 strike,每个调用点报出自己的字号。
-- **D11——像素管线在 A17.4 退役。** `font.emo`、`glyphs/gen.py` 与
-  `coverage.txt` 退场;`glyphs/rasterize.py` 留作审计的参照渲染器。
-  一条文本路径,不是两条。
+- **D11——像素管线在 A17.4 退役。** `font.emo` 与 `glyphs/gen.py`
+  退场;`glyphs/rasterize.py` 留作审计的参照渲染器,**`coverage.txt`
+  与它同留**(2026-11-10 修正,当退役落到生成器时):网格是 advance
+  交叉检查的另一侧、审计的数据——`rasterize.py` 一条命令可再生,不
+  编译进任何东西。一条文本路径,不是两条。
 - **D12——扩展各有触发器,一个都没拉。** hinting(14px 以下发虚)、
   kerning 对、分数 advance、CJK 覆盖度、字重面,各自在需求真实时
   重开;见非目标一节。
@@ -182,7 +184,7 @@ header 字号,editor 的格用 mono 面——金测重生成一轮,lock 一并(M
 | A17.1 | `glyphs/outlines.py`:钉死的面 → 解析后的轮廓 → `face_inter.emo`、`face_mono.emo`;gate 漂移检查 | 生成器对网格的交叉检查;包通过 type-check |
 | A17.2 | `raster.emo` 里的解析器与 Strike:读面,度量按钉死的公式缩放,槽分配 | hosted 金测:解析级事实,度量复现网格三 strike |
 | A17.3 | `glyphs/reference.py` 然后 Emo 移植:展平、面积累积、清扫 | 288 个 raster pin 与参照在三个 hosted target 逐字节一致,两个字节码拒绝钉死;FreeType 审计报告 |
-| A17.4 | 接缝迁移;像素管线退役;金属 bring-up | run.sh ×3 双传输逐字节、dune 全量、@fmt、fb gate、lock 重生成 |
+| A17.4 | 接缝迁移;像素管线退役;金属 bring-up | run.sh ×3 双传输逐字节、@fmt、fb gate、lock 重生成 |
 
 ## 非目标,各带触发器
 

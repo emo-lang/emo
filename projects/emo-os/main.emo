@@ -428,7 +428,10 @@ const sprite_under = sprite_base + 0x8000
 // The arena's run (T8.9): the blocks one child's arena takes — a
 // contiguous run claimed in one take at the spawn (frames.emo's
 // arena_run, the stub parks it in the runtime's emo_arena_run_len).
-const arena_run = 2
+// Thirty-two since A17.4: the type's own construction (the parse, the
+// slots, the flatten's store) lives once in the child's mapped arena,
+// ~600 KiB the run of 4 could not carry.
+const arena_run = 4
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.

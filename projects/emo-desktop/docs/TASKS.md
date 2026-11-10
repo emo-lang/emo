@@ -1331,9 +1331,20 @@ lives as long as its app. The decisions are D7 through D12 in
   deltas are hinting's (ink boxes move a pixel, stems read a level or
   two heavier, ink mass −6..−12%), not the algorithm's.
 
-- [ ] **A17.4** — The seam migrates: `ink`'s strike widens to a
+- [x] **A17.4** — The seam migrates: `ink`'s strike widens to a
   `Strike`, `text` and `text_width` take the strike they draw in,
-  every caller names its size; `font.emo`, `gen.py` and
-  `coverage.txt` retire (`rasterize.py` stays as the audit's
-  renderer); the metal carries the outlines; locks regenerate. The
-  first-day spike is `Array[Int64]` across module lines on riscv64.
+  `measure`/`place`/`paint` thread it, and the backend's `Fb` holds
+  the strike its tree paints in (`backend(surface, input, strike)`).
+  Every caller names its size: the goldens and the corpus build one
+  interface strike each at their boot; the app images hold theirs in
+  the session's locals; the desktop's carve pass threads the object
+  through the desk defs' first parameter. `font.emo` and `gen.py`
+  retire; **`coverage.txt` stays** (D11 amended 2026-11-10): the
+  advance cross-check's other side and the audit's data, regenerable
+  by `rasterize.py`, compiled into nothing. The metal carries the
+  outlines (A17.3's lowering) and now the whole seam: the user image
+  (hello's session, the desk pass, the menus), the three app images,
+  and the probe all lower with the strikes aboard. The raise-free
+  discipline reached the goldens too — their strike helpers answer
+  the holder pattern (build, case, push, read), the bytecode targets
+  build them whole. **Landed 2026-11-10.**

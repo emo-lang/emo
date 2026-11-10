@@ -274,6 +274,17 @@ class Strike {
     return self.meta
   }
 
+  // The raw meta words, the backends' own reads: word A carries the
+  // slot base in its low 24 bits and the advance in bits 24..31, word
+  // B the ink box (left and top +128, then width and height).
+  def meta_a(g Int64) Int64 {
+    return self.meta[g * 2]
+  }
+
+  def meta_b(g Int64) Int64 {
+    return self.meta[g * 2 + 1]
+  }
+
   def slots_array() Array[Int64] {
     return self.slots
   }

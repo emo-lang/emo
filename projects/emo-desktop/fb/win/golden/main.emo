@@ -25,8 +25,9 @@ require "emo/ui_fb_win"
 //
 //   emo run main.emo
 
-def show(s ui_fb.Surface, title String, focused Bool, keys Int64) {
-  ui_fb_win.paint(s, title, focused, keys)
+def show(f ui_fb.raster.Strike, s ui_fb.Surface, title String,
+         focused Bool, keys Int64) {
+  ui_fb_win.paint(s, f, title, focused, keys)
   again(s)
 }
 
@@ -34,18 +35,26 @@ def again(s ui_fb.Surface) {
   println("frame ${ui_fb_frame.round_digest(s, 10)}")
 }
 
+
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> { println("the interface strike refused: ${why}") }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+
 def main() {
   const a = ui_fb_canvas.canvas(ui_fb_win.width(), ui_fb_win.height())
   const b = ui_fb_canvas.canvas(ui_fb_win.width(), ui_fb_win.height())
-  show(a, ui_fb_win.title_a(), false, 0)
-  show(b, ui_fb_win.title_b(), false, 0)
-  show(a, ui_fb_win.title_a(), true, 0)
-  show(a, ui_fb_win.title_a(), true, 1)
-  show(a, ui_fb_win.title_a(), false, 1)
-  show(b, ui_fb_win.title_b(), true, 0)
+  show(f, a, ui_fb_win.title_a(), false, 0)
+  show(f, b, ui_fb_win.title_b(), false, 0)
+  show(f, a, ui_fb_win.title_a(), true, 0)
+  show(f, a, ui_fb_win.title_a(), true, 1)
+  show(f, a, ui_fb_win.title_a(), false, 1)
+  show(f, b, ui_fb_win.title_b(), true, 0)
   again(b)
   again(b)
-  show(b, ui_fb_win.title_b(), true, 1)
+  show(f, b, ui_fb_win.title_b(), true, 1)
 }
 
 main()

@@ -56,7 +56,8 @@ class Tally {
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
   }
 
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64,
+          color Int64) {
     self.glyphs.replace(self.glyphs.read() + 1)
   }
 
@@ -89,21 +90,35 @@ class Tally {
   }
 }
 
+
+// The interface strike, built once: the Inter face at 16 pixels — the
+// tally only counts the verb's calls, but the seam carries the strike.
 def main() {
-  const e = ui_fb.measure(ui_fb_frame.tree(), 1024)
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> {
+      // the loud end the probe itself prints — the lowerer refuses no
+      // input this program feeds it, so a refusal here is a lowered
+      // wrong answer, and the probe's count shows it
+      println("strike refused: ${why}")
+    }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+  const e = ui_fb.measure(ui_fb_frame.tree(), 1024, f)
   println("probe ${e.w()} ${e.h()}")
   const t = Tally.new(width: 1024, height: 768)
-  ui_fb.paint(ui_fb_frame.tree(), t)
+  ui_fb.paint(ui_fb_frame.tree(), t, f)
   const boxes = t.fills()
   println("painted ${boxes} boxes, ${t.glyphs()} glyphs")
   ui_fb.pointer.paint(t, 512, 384)
   println("pointer ${t.fills() - boxes} cells")
   ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
     ui_fb_frame.counter.initial(),
-    ui_fb.backend(t, ui_fb.script([0, 0, 1])))
+    ui_fb.backend(t, ui_fb.script([0, 0, 1]), f))
   println("looped ${t.presents()} frames")
   const w = Tally.new(width: ui_fb_win.width(), height: ui_fb_win.height())
-  ui_fb_win.paint(w, ui_fb_win.title_a(), true, 1)
+  ui_fb_win.paint(w, f, ui_fb_win.title_a(), true, 1)
   println("window ${w.fills()} boxes, ${w.glyphs()} glyphs")
 }
 

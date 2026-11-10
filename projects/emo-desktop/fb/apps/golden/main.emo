@@ -52,8 +52,8 @@ class Eye {
     self.canvas.blend(x, y, w, h, color)
   }
 
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
-    self.canvas.ink(x, y, strike, glyph, color)
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.canvas.ink(x, y, f, glyph, color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
@@ -76,6 +76,14 @@ class Eye {
   }
 }
 
+
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> { println("the interface strike refused: ${why}") }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+
 def main() {
   // The launcher's replay (emo-desktop A12.1): the counter's tile
   // first — its mount frame, its two keys — then the browser's tile,
@@ -83,25 +91,25 @@ def main() {
   // The exit lines are the desktop's own, the quits' order after the
   // sessions end.
   const ceye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
-  const chc = ui_fb_win.chrome(ceye, "counter")
-  const cbackend = ui_fb.backend(chc, ui_fb.script([0, 1]))
+  const chc = ui_fb_win.chrome(ceye, f, "counter")
+  const cbackend = ui_fb.backend(chc, ui_fb.script([0, 1]), f)
   const capp = ui.App.new(view: ui_apps.counter.view,
     update: ui_apps.counter.update, model: ui_apps.counter.initial(),
     backend: cbackend)
   cbackend.mount(capp.root(), capp)
   cbackend.run()
   const feye = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
-  const chf = ui_fb_win.chrome(feye, "files")
-  const fbackend = ui_fb.backend(chf, ui_fb.script([0, 2]))
+  const chf = ui_fb_win.chrome(feye, f, "files")
+  const fbackend = ui_fb.backend(chf, ui_fb.script([0, 2]), f)
   const fapp = ui.App.new(view: ui_apps.files.view,
     update: ui_apps.files.update, model: ui_apps.files.initial(),
     backend: fbackend)
   fbackend.mount(fapp.root(), fapp)
   fbackend.run()
   const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
-  const che = ui_fb_win.chrome(e, "editor")
+  const che = ui_fb_win.chrome(e, f, "editor")
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(), ui_fb.backend(che, ui_fb.script([0, 2, 1])))
+    ui_apps.editor.initial(), ui_fb.backend(che, ui_fb.script([0, 2, 1]), f))
   println("desktop counter exit 0")
   println("desktop files exit 0")
   println("desktop editor exit 0")

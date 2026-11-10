@@ -361,6 +361,77 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
+
+- `ink`'s strike widens from a table index to a `Strike` — the verb's
+  shape the one it has had since A8.1, one interface call a glyph —
+  and the threading reaches everything the core measures, places or
+  paints: `measure`/`measure_column`/`measure_row`, `place` and its
+  two containers, `paint`, `text`, `text_width`, `line_height`; the
+  `Fb` backend holds the strike its tree paints in. Every caller
+  names its size: the goldens and the corpus drivers build one
+  interface strike each at their boot; the three app images hold
+  theirs in the session's locals; the desktop's carve pass — the pass
+  whose own comment said "no class, no interface, no arena spent" —
+  threads the object as the desk defs' first parameter, the reading
+  amended: a reference argument boxes one cell a call, a handful a
+  repaint, and the walk's arithmetic stays the raw world's.
+- The metal carries the whole seam now. The user image — hello's
+  session, the desk pass, the window shell's menus, the seat's press
+  policy — lowers with the strikes aboard, as do the three app images
+  and the probe; the winbuf's `carve_ink` walks the slot words'
+  row-major bytes the hosted canvas walks, and the `Keys` seat and
+  the menus thread the strike beside the surface. The raise-free
+  discipline reached the boot roots: a helper that cannot refuse
+  quietly answers the holder pattern — build the strike, case the
+  tuple, push, read, the unprefixed read a runtime error the image
+  dies loudly on — and the goldens took the same shape, so the
+  bytecode targets build their mains whole again.
+- **D11 amended**: `font.emo` and `glyphs/gen.py` retired (moved to
+  the protected scratch per the deletion rule), but `coverage.txt`
+  stays — the retirement reached the generator and found the advance
+  cross-check's other side and the audit's data living in the grid;
+  regenerable by `rasterize.py` in one command, compiled into
+  nothing. The gate's drift checks are now two: the faces' outlines
+  and the reference's raster pins.
+- The goldens regenerate once, pixels moved by the runtime strikes'
+  own coverage (the digest lines keep their shapes: the frame's four,
+  the window shell's nine, the dock's ten, the corpus's nine, the
+  first apps' twenty), and every package lock under `fb/` moves with
+  the package's content — the locks the app images and the user image
+  carry too.
+
+## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
+
+- The seam lands hosted-complete: `ink`'s strike widens from a table
+  index to a `Strike`, the threading reaches `measure`/`place`/`paint`
+  and the `Fb` backend, every caller names its size, the goldens and
+  the corpus and the app images build one interface strike each, and
+  the type golden's 288 raster pins stay byte-identical through the
+  whole reworking (the reference's 288-pin check and the faces'
+  outline drift check both green). `font.emo` and `glyphs/gen.py`
+  retire; `coverage.txt` stays as the advance cross-check's other
+  side and the audit's data (D11 amended).
+- **The metal bring-up stays open, found-not-fixed**: the strike
+  construction in the exec'd screen pass dies of heap exhaustion on
+  the machine — the pass's early marks print, then the loud
+  `user heap 23 gone` — while the interpreter strikes the same code
+  correctly. The chase crossed three layers: the store-refactored
+  walk broke the ocaml target too (the emitter lowers a sum computed
+  at a typed call site, or inside a while body, to the dynamic
+  convention — `Emo_runtime.add v_s (!v_j)` where the typed
+  signature wants int64s), so `raster.emo`'s raster_glyph reverted to
+  the array-based walk that every target and the machine itself had
+  already verified, and the construction's arena need moved to the
+  lever instead (arena_run to 32 blocks, 2 MiB, the region's ~500
+  carrying it beside every resident). The machine's remaining death
+  is the kernel-side arena interaction (the spawn's mapped run, the
+  take_run granularity, the heap-gone's exact site) — the EmoOS
+  track's to instrument with its own eyes. The fence: the fb tree's
+  bytes are the hosted state's; the run.sh rounds resume when the
+  kernel side answers. The debug marks came out of hello's smoke; the
+  images rebuilt clean.
+
 ## 2026-11-10 — The rasterizer (emo-desktop A17.3)
 
 - The algorithm's source of truth lands as `glyphs/reference.py`

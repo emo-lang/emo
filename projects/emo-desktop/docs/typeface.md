@@ -48,9 +48,13 @@ below were made 2026-11-09; the ladder is A17.1 through A17.4.
   `Strike`, the dense per-size object A17.2 builds. `text` and
   `text_width` take the strike they draw in, and every caller names its
   own size.
-- **D11 — the pixel pipeline retires at A17.4.** `font.emo`,
-  `glyphs/gen.py` and `coverage.txt` go; `glyphs/rasterize.py` stays as
-  the audit's reference renderer. One text path, not two.
+- **D11 — the pixel pipeline retires at A17.4.** `font.emo` and
+  `glyphs/gen.py` go; `glyphs/rasterize.py` stays as the audit's
+  reference renderer, and **`coverage.txt` stays with it** (amended
+  2026-11-10, when the retirement reached the generator): the grid is
+  the advance cross-check's other side and the audit's data —
+  regenerable by `rasterize.py` in one command, compiled into nothing.
+  One text path, not two.
 - **D12 — expansion has named triggers, none pulled yet.** Hinting
   (below 14px grows soft), kerning pairs, fractional advances, CJK
   coverage, and weight faces each reopen when their need is real; see
@@ -232,7 +236,7 @@ its consumers' locks move).
 | A17.1 | `glyphs/outlines.py`: pinned faces → resolved outlines → `face_inter.emo`, `face_mono.emo`; gate drift check | generator's cross-check against the grid; the package type-checks |
 | A17.2 | the parser and the Strike in `raster.emo`: faces read, metrics scaled by the pinned formulas, slots allocated | hosted goldens: parse-level facts, metrics reproducing the grid's three strikes |
 | A17.3 | `glyphs/reference.py` then the Emo port: flatten, area accumulation, sweep | the 288 raster pins byte-identical to the reference on the three hosted targets, the two bytecode refusals pinned; FreeType audit report |
-| A17.4 | the seam migrates; the pixel pipeline retires; metal bring-up | run.sh ×3 dual transport byte-identical, dune full, @fmt, fb gate, locks regenerated |
+| A17.4 | the seam migrates; the pixel pipeline retires; metal bring-up | run.sh ×3 dual transport byte-identical, @fmt, fb gate, locks regenerated |
 
 ## Non-goals, with their triggers
 

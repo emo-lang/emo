@@ -75,7 +75,7 @@ build() {
 # serve a module a package no longer has. A dependency's modules are
 # what a consumer reaches, so each package is staged without its test;
 # the goldens and the probe are consumers and are built in place.
-sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo font.emo pointer.emo \
+sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo pointer.emo \
   raster.emo face_inter.emo face_mono.emo \
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
@@ -93,7 +93,7 @@ mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
   "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0" \
   "$REG/emo/ui_fb_winbuf/0.1.0" "$REG/syscall/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo ui_fb.emo font.emo pointer.emo raster.emo face_inter.emo face_mono.emo \
+cp package.emo ui_fb.emo pointer.emo raster.emo face_inter.emo face_mono.emo \
   "$REG/emo/ui_fb/0.1.0/"
 cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
 cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
@@ -107,22 +107,18 @@ cp "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" "$REG/syscall/0.1.0/"
 
 # --- the type's tables are its grid -------------------------------------
 #
-# `glyphs/coverage.txt` is the type's coverage grid — rasterized from the
-# faces in `fonts/` by `glyphs/rasterize.py`, the one step that needs
-# Pillow, never run here — and `glyphs/gen.py` writes `font.emo` from it;
-# a `font.emo` that no longer matches the grid is refused here. Beside
-# it, `glyphs/outlines.py` writes the faces' outline modules
-# (`face_inter.emo`, `face_mono.emo`) straight from the pinned faces,
-# the scalable source the desktop's own rasterizer (A17) strikes at any
-# pixel size; a face module that no longer matches its face is refused
-# the same way, and the same script's advance cross-check against the
-# grid runs inside both modes. The generators are Python 3's standard
-# library, the same interpreter `run.sh` folds a screendump with;
-# without it the checks say so and pass, the way the platform gates do.
+# The type's sources are the pinned faces: `glyphs/outlines.py` writes
+# the faces' outline modules (`face_inter.emo`, `face_mono.emo`) from
+# them — the scalable source the desktop's own rasterizer (A17) strikes
+# at any pixel size — and `glyphs/reference.py` is the rasterizer's
+# algorithm, its `--check` recomputing the type golden's raster pins
+# from the generator's own outlines. A face module that no longer
+# matches its face, or a raster pin the reference cannot recompute, is
+# refused here. The generators are Python 3's standard library, the
+# same interpreter `run.sh` folds a screendump with; without it the
+# checks say so and pass, the way the platform gates do.
 
 if command -v python3 >/dev/null 2>&1; then
-  python3 glyphs/gen.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
-  expect 0 "the type's tables in font.emo are the grid in glyphs/coverage.txt" "$rc"
   python3 glyphs/outlines.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
   expect 0 "the faces' outlines match the pinned faces (glyphs/outlines.py)" "$rc"
   python3 glyphs/reference.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
@@ -143,7 +139,7 @@ expect 0 "the core and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the core's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 76 "all seventy-six core assertions pass" "$n"
+expect 73 "all seventy-three core assertions pass" "$n"
 
 ( cd canvas && EMO_REGISTRY="$REG" "$EMO" check ui_fb_canvas.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the canvas and its test type-check" "$rc"
