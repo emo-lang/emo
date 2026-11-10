@@ -1,15 +1,19 @@
-// The router's acceptance walk: wildcards and rests decoded into
-// req.params, literal-over-wildcard precedence, a method-less
-// subtree, the 405 with its Allow, the 301 cleanup (with the query
-// riding along), the slash redirect, and the plain 404. Everything
-// printed is byte-deterministic: the listener rides port 0 and the
-// http client never follows a redirect, so each 301 is read as the
-// answer it is.
+// The router's acceptance walk: the exact root, wildcards and rests
+// decoded into req.params, literal-over-wildcard precedence, a
+// method-less subtree, the 405 with its Allow, the 301 cleanup (with
+// the query riding along), the slash redirect, and the plain 404.
+// Everything printed is byte-deterministic: the listener rides port 0
+// and the http client never follows a redirect, so each 301 is read as
+// the answer it is.
 require "httpd"
 require "http"
 require "net"
 
 // ---- handlers ----
+
+def home(req httpd.Request) httpd.Response {
+  return httpd.response(200, [], "the home page")
+}
 
 def greet(req httpd.Request) httpd.Response {
   return httpd.response(200, [], "hello " + req.params.get("name"))
@@ -86,6 +90,7 @@ def probe_header(base String, path String, name String) Int64 {
 // Router; there is no chaining syntax, so the locals carry it).
 def build_routes() httpd.Router {
   var r = httpd.router()
+  r = r.get("/", home)
   r = r.get("/hello/{name}", greet)
   r = r.get("/files/{path...}", files)
   r = r.get("/users/admin", admin_page)
@@ -101,6 +106,7 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 const server = httpd.serve_routes(listener, routes)
 const base = "http://127.0.0.1:" + listener.port().to_string()
 
+probe_get(base, "/")
 probe_get(base, "/hello/ada")
 probe_get(base, "/hello/ada%20grace")
 probe_get(base, "/hello/a+b")

@@ -18,9 +18,10 @@ require "httpd"
 ```
 
 `require "httpd"` needs `"httpd" = "0.1.0"` in the manifest's `deps`
-block; the `net` package it builds on comes through `httpd`'s own
-manifest. The package declares the `ocaml`, `c`, and `typescript`
-targets.
+block. `httpd` runs on the runtime's socket types and pins nothing
+itself, so the program that opens its listener with `net.listen` pins
+`"net" = "0.1.0"` beside it. The package declares the `ocaml`, `c`, and
+`typescript` targets.
 
 ## Serving
 
@@ -91,7 +92,9 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 ```
 
 `examples/https_roundtrip` is this program with its certificate pair
-checked in.
+checked in. A connection that fails before it begins — a client that
+breaks the TLS handshake, a plain-HTTP client on the TLS port — is
+dropped, and the server keeps accepting the next one.
 
 ## The request and the response
 
@@ -142,6 +145,7 @@ local rebinding:
 ```emo
 def build_routes() httpd.Router {
   var r = httpd.router()
+  r = r.get("/", home)                     // the exact root
   r = r.get("/hello/{name}", greet)        // GET /hello/ada → params["name"] = "ada"
   r = r.post("/users", create_user)        // POST /users
   r = r.put("/users/{id}", update_user)
@@ -151,7 +155,7 @@ def build_routes() httpd.Router {
   return r
 }
 
-const server = httpd.serve_routes(listener, routes)
+const server = httpd.serve_routes(listener, build_routes())
 ```
 
 - `handle(pattern, handler)` is the general form — the pattern carries
@@ -162,7 +166,8 @@ const server = httpd.serve_routes(listener, routes)
   under the path's convention — `%XX` yes, `+` stays a plus — and land
   in `req.params`.
 - A trailing slash marks a subtree: `/static/` answers `/static/` and
-  everything below it.
+  everything below it. `/` alone is the exact root — it answers the
+  bare `/` and nothing below it.
 - The most specific pattern wins: a literal outranks a wildcard, a
   wildcard outranks the rest, and a longer pattern wins past a shared
   prefix. `/users/admin` beats `/users/{id}`.
@@ -180,17 +185,21 @@ const server = httpd.serve_routes(listener, routes)
 
 `httpd.server_options()` starts at the defaults and every `with_*`
 answers a new value — timeouts in seconds, `0.0` leaving an operation
-unbounded:
+unbounded. A line cannot begin with `.`, so a longer configuration
+rebinds a local:
 
 ```emo
-const options = httpd.server_options()
-  .with_read_timeout(5.0)        // per-request read deadline
-  .with_idle_timeout(30.0)       // deadline between requests on a kept-alive connection
-  .with_max_header_bytes(16384)  // the header block's budget (default 1 MiB) — over answers 431
-  .with_max_body_bytes(1048576)  // the body's budget (default unbounded) — over answers 413
-  .with_date(-> () { return date_string() })  // the injected clock
+def options() httpd.ServerOptions {
+  var o = httpd.server_options()
+  o = o.with_read_timeout(5.0)        // per-request read deadline
+  o = o.with_idle_timeout(30.0)       // deadline between requests on a kept-alive connection
+  o = o.with_max_header_bytes(16384)  // the header block's budget (default 1 MiB) — over answers 431
+  o = o.with_max_body_bytes(1048576)  // the body's budget (default unbounded) — over answers 413
+  o = o.with_date(-> () { return date_string() })  // the injected clock
+  return o
+}
 
-const server = httpd.serve_with(listener, handler, options)
+const server = httpd.serve_with(listener, handler, options())
 ```
 
 `with_date` is the one way a response gains a `Date` header: the

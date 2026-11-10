@@ -8,7 +8,7 @@
 require "httpd"
 ```
 
-`require "httpd"` 需要在 manifest 的 `deps` 块里钉上 `"httpd" = "0.1.0"`;它依赖的 `net` 由 `httpd` 自己的 manifest 带入。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+`require "httpd"` 需要在 manifest 的 `deps` 块里钉上 `"httpd" = "0.1.0"`。`httpd` 跑在运行时的 socket 类型上,自身什么都不钉,所以用 `net.listen` 打开监听者的程序要在旁边钉上 `"net" = "0.1.0"`。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 服务
 
@@ -70,7 +70,7 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 }
 ```
 
-`examples/https_roundtrip` 就是这个程序,附带签入的证书对。
+`examples/https_roundtrip` 就是这个程序,附带签入的证书对。在开始之前就失败的连接——弄断 TLS 握手的客户端、打到 TLS 端口上的明文 HTTP 客户端——被丢弃,服务器继续接受下一个。
 
 ## 请求与响应
 
@@ -106,6 +106,7 @@ def error(status Int64, message String) Response   // 纯文本 body 原样给�
 ```emo
 def build_routes() httpd.Router {
   var r = httpd.router()
+  r = r.get("/", home)                     // 精确的根
   r = r.get("/hello/{name}", greet)        // GET /hello/ada → params["name"] = "ada"
   r = r.post("/users", create_user)        // POST /users
   r = r.put("/users/{id}", update_user)
@@ -115,29 +116,32 @@ def build_routes() httpd.Router {
   return r
 }
 
-const server = httpd.serve_routes(listener, routes)
+const server = httpd.serve_routes(listener, build_routes())
 ```
 
 - `handle(pattern, handler)` 是通用形式——模式自带方法(`"GET /users/{id}"`)或不带;方法限定的助手收裸路径。
 - `{name}` 捕获一段;`{name...}` 捕获路径的剩余部分(`/` 连接,没有剩余时为空)。捕获按路径的约定解码——`%XX` 是的,`+` 保持加号——落进 `req.params`。
-- 尾斜杠标记子树:`/static/` 应答 `/static/` 及其下一切。
+- 尾斜杠标记子树:`/static/` 应答 `/static/` 及其下一切。单独的 `/` 是精确的根——只应答裸 `/`,不含其下任何路径。
 - 最具体的模式胜出:字面量压过通配,通配压过 rest,共享前缀之外更长的模式胜。`/users/admin` 胜过 `/users/{id}`。
 - 形状匹配而方法不匹配的请求以 `405` 应答,附上会匹配的那些方法;只注册了 `/static/` 时对 `/static` 的请求以 `301` 应答到 `/static/`;带 `//`、`.`、`..` 的路径以 `301` 应答到清理后的拼写(查询串跟着走);彻底没有匹配答 `404 page not found`。
 - 模式在注册时解析一次。坏模式——不闭合的花括号、空名字、不在末尾的 rest——会 raise;同形状且方法重叠的第二次注册同样 raise。
 
 ## 选项
 
-`httpd.server_options()` 从默认值出发,每个 `with_*` 应答一个新值——超时以秒计,`0.0` 让该操作不设上限:
+`httpd.server_options()` 从默认值出发,每个 `with_*` 应答一个新值——超时以秒计,`0.0` 让该操作不设上限。一行不能以 `.` 开头,所以较长的配置靠重绑局部变量:
 
 ```emo
-const options = httpd.server_options()
-  .with_read_timeout(5.0)        // 每请求的读期限
-  .with_idle_timeout(30.0)       // keep-alive 连接上两次请求之间的期限
-  .with_max_header_bytes(16384)  // 头块预算(默认 1 MiB)——超出答 431
-  .with_max_body_bytes(1048576)  // 请求体预算(默认不限)——超出答 413
-  .with_date(-> () { return date_string() })  // 注入的时钟
+def options() httpd.ServerOptions {
+  var o = httpd.server_options()
+  o = o.with_read_timeout(5.0)        // 每请求的读期限
+  o = o.with_idle_timeout(30.0)       // keep-alive 连接上两次请求之间的期限
+  o = o.with_max_header_bytes(16384)  // 头块预算(默认 1 MiB)——超出答 431
+  o = o.with_max_body_bytes(1048576)  // 请求体预算(默认不限)——超出答 413
+  o = o.with_date(-> () { return date_string() })  // 注入的时钟
+  return o
+}
 
-const server = httpd.serve_with(listener, handler, options)
+const server = httpd.serve_with(listener, handler, options())
 ```
 
 `with_date` 是响应长出 `Date` 头的唯一途径:语言没有时钟(`slog` 记录的立场),默认输出逐字节确定,手上有钟的调用方用这个块给每个响应盖戳。处理者自己的 `Date` 头压过注入的。

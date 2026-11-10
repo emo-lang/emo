@@ -782,32 +782,41 @@ def connection_done(conn TcpConn, counter Pid) Int64 {
 // The drain counter: one process holding the live-connection count.
 // `close` stops accepting new counts, `done` frees a seat, and when a
 // closed counter reaches zero every waiter learns the drain finished.
-// The released counter stays alive answering waits — no caller ever
-// mails a dead pid.
-def counter_process(count Int64, closed Bool, waiters Array[Pid]) Int64 {
+// `stop` marks the stop begun before the listener closes, so the
+// accept loop can ask `state?` after an accept error and tell its own
+// end from one connection's failure. The released counter stays alive
+// answering waits — no caller ever mails a dead pid.
+def counter_process(count Int64, closed Bool, stopping Bool, waiters Array[Pid]) Int64 {
   receive {
     ("httpd", "add") -> {
-      return counter_process(count + 1, closed, waiters)
+      return counter_process(count + 1, closed, stopping, waiters)
     }
     ("httpd", "done") -> {
       const left = count - 1
       if closed && left == 0 {
         return counter_release(waiters)
       }
-      return counter_process(left, closed, waiters)
+      return counter_process(left, closed, stopping, waiters)
+    }
+    ("httpd", "stop") -> {
+      return counter_process(count, closed, true, waiters)
+    }
+    ("httpd", "state?", who) -> {
+      who <- ("httpd", "state", if stopping { "stopping" } else { "serving" })
+      return counter_process(count, closed, stopping, waiters)
     }
     ("httpd", "close") -> {
       if count == 0 {
         return counter_release(waiters)
       }
-      return counter_process(count, true, waiters)
+      return counter_process(count, true, stopping, waiters)
     }
     ("httpd", "wait", who) -> {
       if closed && count == 0 {
         who <- ("httpd", "drained")
-        return counter_process(count, closed, waiters)
+        return counter_process(count, closed, stopping, waiters)
       }
-      return counter_process(count, closed, waiters.append(who))
+      return counter_process(count, closed, stopping, waiters.append(who))
     }
   }
 }
@@ -826,20 +835,42 @@ def counter_released() Int64 {
       who <- ("httpd", "drained")
       return counter_released()
     }
+    ("httpd", "state?", who) -> {
+      who <- ("httpd", "state", "stopping")
+      return counter_released()
+    }
     _ -> { return counter_released() }
   }
 }
 
 // The accept loop: one process, one connection spawned per accept,
-// the loop ending when the listener closes under it.
+// the loop ending when the listener closes under it. An accept error
+// is either that close or one connection failing before it became one
+// — a TLS handshake the peer broke, a plain-HTTP client on a TLS port
+// — and a failed connection is no reason to stop serving the next.
+// The counter, told before the listener closes, says which.
 def accept_loop(listener TcpListener, handler Block, options ServerOptions, counter Pid) Int64 {
   case listener.accept() {
-    (R.error, _) -> { return 0 }
+    (R.error, _) -> {
+      if server_state(counter) == "stopping" {
+        return 0
+      }
+      return accept_loop(listener, handler, options, counter)
+    }
     (R.ok, conn) -> {
       counter <- ("httpd", "add")
       do serve_connection(conn, handler, options, counter)
       return accept_loop(listener, handler, options, counter)
     }
+  }
+}
+
+// What the counter knows: "stopping" once stop() has begun, "serving"
+// before.
+def server_state(counter Pid) String {
+  counter <- ("httpd", "state?", self_pid())
+  receive {
+    ("httpd", "state", state) -> { return state }
   }
 }
 
@@ -854,11 +885,12 @@ class Server {
   }
 
   def stop() (R, Server) {
+    const c = self.counter
+    c <- ("httpd", "stop")
     const l = self.listener
     case l.close() {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, _) -> {
-        const c = self.counter
         c <- ("httpd", "close")
         return (R.ok, self)
       }
@@ -882,7 +914,7 @@ def serve(listener TcpListener, handler Block) Server {
 }
 
 def serve_with(listener TcpListener, handler Block, options ServerOptions) Server {
-  const counter = do counter_process(0, false, [])
+  const counter = do counter_process(0, false, false, [])
   do accept_loop(listener, handler, options, counter)
   return Server.new(listener: listener, counter: counter)
 }
@@ -1017,6 +1049,11 @@ def parse_bare_pattern(pattern String) (R, (String, Array[String], Bool, String)
 def parse_path(path String) (R, (String, Array[String], Bool, String)) {
   if path == "" || path.substring(0, 1) != "/" {
     return (R.error, "httpd: the pattern `" + path + "` must begin with `/`")
+  }
+  // The root names no segment: `/` is the exact root, the zero-segment
+  // shape the dispatch reads a bare `/` request as — not a subtree.
+  if path == "/" {
+    return (R.ok, (path, [], false, ""))
   }
   var inner = path
   var subtree = false

@@ -253,7 +253,7 @@ const server = httpd.serve_routes(listener, r)
 
 最具体的模式胜出(字面量 > 通配 > rest,共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本,连接关闭);语言没有时钟,响应默认不带 `Date`,除非经 `with_date` 注入。
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
+目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 指南:[`docs/zh-CN/httpd-guide.md`](httpd-guide.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
 
 ## json 包
 

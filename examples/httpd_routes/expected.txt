@@ -1,3 +1,6 @@
+== GET /
+   200
+   the home page
 == GET /hello/ada
    200
    hello ada

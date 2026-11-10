@@ -12,6 +12,11 @@
 // On the interpreter the server is ocaml-ssl; on the c target it is
 // the runtime's own OpenSSL/LibreSSL fence — one source, both ends of
 // the wire, byte-identical output.
+//
+// A plain-HTTP client knocks on the TLS port first: its handshake
+// fails inside the server's accept, and the server keeps serving —
+// the https request after it is the proof, bounded so a server that
+// stopped accepting fails the run instead of hanging it.
 
 require "httpd"
 require "http"
@@ -23,7 +28,14 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
   return httpd.response(200, [], "hello over tls")
 }
 
-case http.get("https://localhost:" + listener.port().to_string() + "/hello") {
+const (R.ok, plain_conn) = net.connect("127.0.0.1", listener.port(), 5.0)
+const plain = plain_conn.set_timeout(5.0)
+plain.write("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n")
+plain.read_all()
+plain.close()
+println("a plain-HTTP client was turned away")
+
+case http.request("GET", "https://localhost:" + listener.port().to_string() + "/hello", [], "", 5.0) {
   (R.error, why) -> { println("request failed: ${why}") }
   (R.ok, resp)   -> {
     println(resp.body)

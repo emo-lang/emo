@@ -362,7 +362,8 @@ the language has no clock, so responses carry no `Date` unless one is
 injected through `with_date`.
 
 Targets: `["ocaml", "c", "typescript"]`. Reference:
-[`docs/stdlib/httpd.md`](stdlib/httpd.md) · Demos:
+[`docs/stdlib/httpd.md`](stdlib/httpd.md) · Guide:
+[`docs/httpd-guide.md`](httpd-guide.md) · Demos:
 `examples/httpd_routes`, `examples/httpd_serve`, `examples/httpd_wire`,
 `examples/httpd_parse`, `examples/https_roundtrip`.
 

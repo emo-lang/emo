@@ -43,6 +43,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 - [`docs/zh-CN/intro/package-management.md`](intro/package-management.md) —— 包即模块前缀、精确版本按 MVS 解析、发布。
 - [`docs/zh-CN/intro/concurrency.md`](intro/concurrency.md) —— 进程与消息传递：`do`、`<-`、`receive`。
 - [`docs/zh-CN/intro/networking.md`](intro/networking.md) —— 基于 `net` 与 `http` 包的直接风格异步网络 API。
+- [`docs/zh-CN/httpd-guide.md`](httpd-guide.md) —— Web 服务器指南：从十行的 `httpd.serve` 到带进程持有状态、中间件与优雅关闭的 JSON API。
 - [`docs/zh-CN/intro/native-builds.md`](intro/native-builds.md) —— `emo build`、随二进制附带的运行时、`foreign def` C 互操作。
 - [`docs/zh-CN/intro/testing.md`](intro/testing.md) —— `emo test`、`test/` 约定、`expect_*` 断言。
 - [`docs/emo-testing-guide.md`](../emo-testing-guide.md) —— 测试指南：发现规则、四个断言内建、报告与隔离（英文）。
