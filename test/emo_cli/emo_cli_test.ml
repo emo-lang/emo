@@ -402,6 +402,12 @@ let wasm_goldens =
     "bufio_demo";
     "os_fs_demo";
     "rand_demo";
+    (* M24: the macro pilots — expansion rides before codegen, so the
+       generated declarations compile to wasm like hand-written ones *)
+    "trace_demo";
+    "memoize_demo";
+    "derive_eq_demo";
+    "derive_shared";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -477,6 +483,12 @@ let beam_goldens =
     "crypto_aead";
     "crypto_sign";
     "crypto_ecdh";
+    (* M24: the macro pilots — Core Erlang assembles from the expanded
+       declarations, so the wrappers read like hand-written code *)
+    "trace_demo";
+    "memoize_demo";
+    "derive_eq_demo";
+    "derive_shared";
   ]
 
 let erl_available =
@@ -3221,6 +3233,12 @@ let riscv64_examples_tests =
       "wide_literal";
       "glyph_lookup";
       "def_values";
+      (* M24: the Map-free macro pilots — expansion rides before codegen,
+         so the generated wrappers lower like hand-written ones;
+         memoize_demo waits on Map for riscv64 (the refusal is live) *)
+      "trace_demo";
+      "derive_eq_demo";
+      "derive_shared";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

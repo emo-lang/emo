@@ -226,6 +226,12 @@ Two words that look special are ordinary identifiers:
   ordinary name.
 - **`init`** names the constructor only as a `def` inside a class. Outside a
   class, `def init` is an error; a binding named `init` is fine.
+- **`quote`** opens the macro template only in an operand-start position
+  with a brace following on the same line — after `=`, `(`, `,`, `[`,
+  `return`, `do`, or `->`, as in `const t = quote { ... }`. Everywhere
+  else it is an ordinary name: the standard library's JSON escaper is
+  called as `quote(s)`, and sql's `data.get(i) == quote` ends an `if`
+  condition whose `{` opens the body.
 
 ## Protocol names
 
@@ -236,3 +242,12 @@ language protocol's contract — `def to_string() String` and
 the contract. The complete set of protocol names is the `emo` registry (see
 [protocols.md](protocols.md)); bindings, fields, parameters, top-level
 functions, and group members with either name are fine.
+
+## The directive namespace
+
+A comment whose first token is `#` or `@` is not a comment — it is a
+directive, and the namespace is reserved: an unknown directive name is a
+compile error, so prose starting with either sigil cannot appear. The role
+side (`#`) is compiler-owned with `#macro` its only member; the application
+side (`@`) resolves the macro name in scope. The rules live in
+[macros.md](intro/macros.md).

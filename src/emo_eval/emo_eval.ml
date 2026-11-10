@@ -46,6 +46,20 @@ type value =
   | TypeValue of string
   | Module of module_handle
   | EmoGroup of (string * value) list (* a function group's members *)
+  | SyntaxTree of syntax_tree
+(* a compile-time syntax fragment: the macro model's currency. Such a
+         value exists only inside a running macro body; the Syntax group
+         binds nowhere else. *)
+
+and syntax_tree =
+  | Sx_item of Ast.item (* a whole declaration *)
+  | Sx_expr of Ast.expr
+  | Sx_stmt of Ast.stmt
+  | Sx_param of Ast.param
+  | Sx_type of Ast.type_decl
+  | Sx_field of Ast.field (* a class field tree: the derive reader's unit *)
+  | Sx_seq of syntax_tree list
+(* several declarations in order — what a macro application splices *)
 
 and class_def_value = {
   cname : string;
@@ -213,6 +227,7 @@ let type_name = function
   | TypeValue _ -> "a type"
   | Module _ -> "a module"
   | EmoGroup _ -> "a function group"
+  | SyntaxTree _ -> "a syntax tree"
 
 let rec equal_value a b =
   match (a, b) with
@@ -484,6 +499,37 @@ let count_step () =
   | Some budget when !step_count >= budget -> raise (Budget_exceeded budget)
   | _ -> step_count := !step_count + 1
 
+(* The compile-time macro profile (design/macros.md): while a macro body
+   runs, every host-touching builtin refuses and the output hook is
+   poisoned — a macro is deterministic by construction, with no effect
+   system needed to say so. *)
+let compile_time : bool ref = ref false
+let gensym_counter : int ref = ref 0
+let gen_span_counter : int ref = ref 0
+
+(* The syntax constructors build trees whose spans must not collide:
+   every node a macro fabricates carries the macro body's span, and the
+   span-keyed type tables (CHECK.md, cross-module types) would have two
+   decorated classes overwrite each other's entries — found live when
+   derive_eq's generated `self.x` typed as the second class on wasm and
+   beam. Synthetic offsets live in a reserved range far past any real
+   file (a source file would have to reach a gigabyte); line and col
+   stay the macro body's, so diagnostics still point at the constructor
+   call. *)
+let gen_span (s : Emo_support.Span.t) : Emo_support.Span.t =
+  incr gen_span_counter;
+  let start = 1_000_000_000 + (10 * !gen_span_counter) in
+  { s with Emo_support.Span.start; stop = start + 1 }
+
+let refuse_purity span name =
+  error span "E3030"
+    (Printf.sprintf
+       "`%s` runs at runtime only — a macro body must be deterministic" name)
+
+let host_touched name =
+  (String.length name >= 3 && String.sub name 0 3 = "os_")
+  || name = "rand_bytes"
+
 (* The module system hooks: the project layer installs discovery (a
    normalized module path → handle, with its child module names) and loading
    (a normalized module path → the namespace from running its items). *)
@@ -703,6 +749,7 @@ let rec to_string v =
   | TypeValue t -> t
   | Module m -> "<module " ^ String.concat "." m.mpath ^ ">"
   | EmoGroup _ -> "<group>"
+  | SyntaxTree _ -> "<syntax tree>"
 
 (* Inside an instance's default rendering, strings show quoted. *)
 and debug_value v =
@@ -1677,6 +1724,11 @@ and eval_method env span recv mname arg_exprs =
               let args = eval_args_named () in
               let frame = bind_params closure span args in
               eval_frame closure frame span
+          | BuiltinFn _ as fn ->
+              (* a builtin member (the Syntax namespace, design/macros.md):
+                 applies like any builtin call *)
+              let args = eval_args_named () in
+              apply fn span args
           | const_value ->
               if argc > 0 then
                 error span "E3007"
@@ -2877,506 +2929,1077 @@ and printf_render span (fmt : string) (items : value array) : string =
     parts;
   Buffer.contents buf
 
+(* ---- quote substitution (design/macros.md) ----
+
+   The template carries placeholder identifiers where `${expr}` holes
+   stood; substitution replaces each with the hole's tree. Holes splice
+   expression trees — anything else landing in expression position is a
+   compile-time error. Declaration structure inside the template is
+   literal (the Syntax constructors own it), so class/interface/enum/group
+   bodies pass through untouched. *)
+
+and subst_expr holes (e : Ast.expr) : Ast.expr =
+  let se = subst_expr holes in
+  match e.Ast.desc with
+  | Ast.Ident n -> (
+      match Hashtbl.find_opt holes n with
+      | Some (Sx_expr sub) -> sub
+      | Some _ ->
+          error e.Ast.span "E4309"
+            "this quote hole splices a non-expression tree"
+      | None -> e)
+  | Ast.Interpolated parts ->
+      {
+        e with
+        Ast.desc =
+          Ast.Interpolated
+            (List.map
+               (function
+                 | Ast.Literal_text t -> Ast.Literal_text t
+                 | Ast.Part_expr pe -> Ast.Part_expr (se pe))
+               parts);
+      }
+  | Ast.Member (b, n) -> { e with Ast.desc = Ast.Member (se b, n) }
+  | Ast.Index (b, i) -> { e with Ast.desc = Ast.Index (se b, se i) }
+  | Ast.Call (f, args) ->
+      {
+        e with
+        Ast.desc =
+          Ast.Call
+            ( se f,
+              List.map
+                (fun a -> { a with Ast.arg_value = se a.Ast.arg_value })
+                args );
+      }
+  | Ast.Arrow_block (ps, body) ->
+      {
+        e with
+        Ast.desc = Ast.Arrow_block (ps, List.map (subst_stmt holes) body);
+      }
+  | Ast.Tuple es -> { e with Ast.desc = Ast.Tuple (List.map se es) }
+  | Ast.Array_literal es ->
+      { e with Ast.desc = Ast.Array_literal (List.map se es) }
+  | Ast.Map_literal entries ->
+      {
+        e with
+        Ast.desc =
+          Ast.Map_literal (List.map (fun (k, v) -> (se k, se v)) entries);
+      }
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      {
+        e with
+        Ast.desc =
+          Ast.If_expr
+            {
+              cond = se cond;
+              then_expr = se then_expr;
+              else_expr = se else_expr;
+            };
+      }
+  | Ast.Unary (op, x) -> { e with Ast.desc = Ast.Unary (op, se x) }
+  | Ast.Binary (op, l, r) -> { e with Ast.desc = Ast.Binary (op, se l, se r) }
+  | Ast.Do x -> { e with Ast.desc = Ast.Do (se x) }
+  | Ast.Quote _ ->
+      (* the inner quote keeps its own holes; if the spliced result ever
+         reaches checked code, the checker refuses it there *)
+      e
+  | Ast.Int64 _ | Ast.Byte _ | Ast.Float _ | Ast.Char _ | Ast.Bool _
+  | Ast.String _ | Ast.Self | Ast.Type_ident _ ->
+      e
+
+and subst_stmt holes (s : Ast.stmt) : Ast.stmt =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e ->
+      { s with Ast.stmt_desc = Ast.Expr_stmt (subst_expr holes e) }
+  | Ast.Binding { mutable_; pattern; init } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Binding { mutable_; pattern; init = subst_expr holes init };
+      }
+  | Ast.Assign { target; value } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Assign
+            { target = subst_expr holes target; value = subst_expr holes value };
+      }
+  | Ast.Return r ->
+      { s with Ast.stmt_desc = Ast.Return (Option.map (subst_expr holes) r) }
+  | Ast.Raise e -> { s with Ast.stmt_desc = Ast.Raise (subst_expr holes e) }
+  | Ast.If { cond; then_body; else_body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.If
+            {
+              cond = subst_expr holes cond;
+              then_body = List.map (subst_stmt holes) then_body;
+              else_body = Option.map (List.map (subst_stmt holes)) else_body;
+            };
+      }
+  | Ast.While { cond; body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.While
+            {
+              cond = subst_expr holes cond;
+              body = List.map (subst_stmt holes) body;
+            };
+      }
+  | Ast.For { init; cond; post; body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.For
+            {
+              init = subst_stmt holes init;
+              cond = subst_expr holes cond;
+              post = subst_stmt holes post;
+              body = List.map (subst_stmt holes) body;
+            };
+      }
+  | Ast.Case { scrutinee; branches } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Case
+            {
+              scrutinee = subst_expr holes scrutinee;
+              branches =
+                List.map
+                  (fun b ->
+                    {
+                      b with
+                      Ast.guard = Option.map (subst_expr holes) b.Ast.guard;
+                      Ast.body = List.map (subst_stmt holes) b.Ast.body;
+                    })
+                  branches;
+            };
+      }
+  | Ast.Send { target; message } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Send
+            {
+              target = subst_expr holes target;
+              message = subst_expr holes message;
+            };
+      }
+  | Ast.Receive branches ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Receive
+            (List.map
+               (fun b ->
+                 {
+                   b with
+                   Ast.guard = Option.map (subst_expr holes) b.Ast.guard;
+                   Ast.body = List.map (subst_stmt holes) b.Ast.body;
+                 })
+               branches);
+      }
+  | Ast.Break | Ast.Continue -> s
+
+and subst_item holes (it : Ast.item) : Ast.item =
+  match it.Ast.item_desc with
+  | Ast.Item_stmt stmt ->
+      { it with Ast.item_desc = Ast.Item_stmt (subst_stmt holes stmt) }
+  | Ast.Item_def d ->
+      {
+        it with
+        Ast.item_desc =
+          Ast.Item_def
+            { d with Ast.def_body = List.map (subst_stmt holes) d.Ast.def_body };
+      }
+  | _ -> it
+
+and has_macro_directives (items : Ast.item list) : bool =
+  List.exists (fun item -> item.Ast.directives <> []) items
+
+(* What a macro application splices in place of one declaration: a single
+   def tree, or a sequence of them. Spliced items carry no directives —
+   the macro model has no application-after-application chaining through
+   generated code. *)
+and splice_of span (tree : syntax_tree) : Ast.item list =
+  let clean item = { item with Ast.directives = [] } in
+  match tree with
+  | Sx_item item -> [ clean item ]
+  | Sx_seq trees -> List.concat_map (splice_of span) trees
+  | _ ->
+      error span "E4303"
+        "a macro application must produce declarations — got an expression, \
+         statement, or type fragment instead"
+
+and stmt_tree_of span (tree : syntax_tree) : Ast.stmt =
+  (* a statement tree for a generated body: a statement fragment, or an
+     item-level binding as a quote lays it out *)
+  match tree with
+  | Sx_stmt s -> s
+  | Sx_item { Ast.item_desc = Ast.Item_stmt s; _ } -> s
+  | _ ->
+      error span "E4303"
+        "a generated body takes statement trees — a quote lays them out \
+         directly, or build them with the Syntax constructors"
+
 and apply_builtin span name args =
-  match (name, args) with
-  | "println", [ v ] ->
-      !output (to_string v ^ "\n");
-      v
-  | "println", vs ->
-      error span "E3007"
-        (Printf.sprintf "`println` expects 1 argument, got %d" (List.length vs))
-  | "printf", [ String fmt; Array items ] ->
-      !output (printf_render span fmt items);
-      Void
-  | "printf", [ _; _ ] ->
-      error span "E3001" "`printf` expects (format String, data Array)"
-  | "printf", vs ->
-      error span "E3007"
-        (Printf.sprintf "`printf` expects 2 arguments, got %d" (List.length vs))
-  (* ---- the expect builtins: test assertions. A failure raises an
+  if !compile_time && host_touched name then refuse_purity span name
+  else
+    match (name, args) with
+    | "println", [ v ] ->
+        !output (to_string v ^ "\n");
+        v
+    | "println", vs ->
+        error span "E3007"
+          (Printf.sprintf "`println` expects 1 argument, got %d"
+             (List.length vs))
+    | "printf", [ String fmt; Array items ] ->
+        !output (printf_render span fmt items);
+        Void
+    | "printf", [ _; _ ] ->
+        error span "E3001" "`printf` expects (format String, data Array)"
+    | "printf", vs ->
+        error span "E3007"
+          (Printf.sprintf "`printf` expects 2 arguments, got %d"
+             (List.length vs))
+    (* ---- the expect builtins: test assertions. A failure raises an
      ordinary Emo exception; the `emo test` runner traps it per test. ---- *)
-  | "expect_equal", [ expected; actual ] ->
-      if not (equal_value expected actual) then
-        raise
-          (expect_raise span
-             (Printf.sprintf "expect_equal: expected %s, got %s"
-                (to_string expected) (to_string actual)));
-      Void
-  | "expect_equal", vs ->
-      error span "E3007"
-        (Printf.sprintf "`expect_equal` expects 2 arguments, got %d"
-           (List.length vs))
-  | "expect_true", [ Bool true ] -> Void
-  | "expect_true", [ Bool false ] ->
-      raise (expect_raise span "expect_true: got false")
-  | "expect_true", [ v ] ->
-      error span "E3001"
-        (Printf.sprintf "`expect_true` expects a Bool, got %s" (type_name v))
-  | "expect_true", vs ->
-      error span "E3007"
-        (Printf.sprintf "`expect_true` expects 1 argument, got %d"
-           (List.length vs))
-  | "expect_false", [ Bool false ] -> Void
-  | "expect_false", [ Bool true ] ->
-      raise (expect_raise span "expect_false: got true")
-  | "expect_false", [ v ] ->
-      error span "E3001"
-        (Printf.sprintf "`expect_false` expects a Bool, got %s" (type_name v))
-  | "expect_false", vs ->
-      error span "E3007"
-        (Printf.sprintf "`expect_false` expects 1 argument, got %d"
-           (List.length vs))
-  | "expect_fail", [ String message ] -> raise (expect_raise span message)
-  | "expect_fail", [ v ] ->
-      error span "E3001"
-        (Printf.sprintf "`expect_fail` expects a String message, got %s"
-           (type_name v))
-  | "expect_fail", vs ->
-      error span "E3007"
-        (Printf.sprintf "`expect_fail` expects 1 argument, got %d"
-           (List.length vs))
-  | "self_pid", [] -> Pid (Effect.perform Self_pid)
-  | "self_pid", vs ->
-      error span "E3007"
-        (Printf.sprintf "`self_pid` expects no arguments, got %d"
-           (List.length vs))
-  | "halt", [] ->
-      (* Unwinds the calling process; the scheduler driver records the exit. *)
-      raise Halt_signal
-  | "halt", vs ->
-      error span "E3007"
-        (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
-  | "fence", [] ->
-      (* The exact no-op (CHECK.md, the atomic memory model): every Emo
+    | "expect_equal", [ expected; actual ] ->
+        if not (equal_value expected actual) then
+          raise
+            (expect_raise span
+               (Printf.sprintf "expect_equal: expected %s, got %s"
+                  (to_string expected) (to_string actual)));
+        Void
+    | "expect_equal", vs ->
+        error span "E3007"
+          (Printf.sprintf "`expect_equal` expects 2 arguments, got %d"
+             (List.length vs))
+    | "expect_true", [ Bool true ] -> Void
+    | "expect_true", [ Bool false ] ->
+        raise (expect_raise span "expect_true: got false")
+    | "expect_true", [ v ] ->
+        error span "E3001"
+          (Printf.sprintf "`expect_true` expects a Bool, got %s" (type_name v))
+    | "expect_true", vs ->
+        error span "E3007"
+          (Printf.sprintf "`expect_true` expects 1 argument, got %d"
+             (List.length vs))
+    | "expect_false", [ Bool false ] -> Void
+    | "expect_false", [ Bool true ] ->
+        raise (expect_raise span "expect_false: got true")
+    | "expect_false", [ v ] ->
+        error span "E3001"
+          (Printf.sprintf "`expect_false` expects a Bool, got %s" (type_name v))
+    | "expect_false", vs ->
+        error span "E3007"
+          (Printf.sprintf "`expect_false` expects 1 argument, got %d"
+             (List.length vs))
+    | "expect_fail", [ String message ] -> raise (expect_raise span message)
+    | "expect_fail", [ v ] ->
+        error span "E3001"
+          (Printf.sprintf "`expect_fail` expects a String message, got %s"
+             (type_name v))
+    | "expect_fail", vs ->
+        error span "E3007"
+          (Printf.sprintf "`expect_fail` expects 1 argument, got %d"
+             (List.length vs))
+    (* ---- the Syntax API (design/macros.md): the macro model's
+     compile-time surface. Readers take a declaration tree apart;
+     constructors build trees for the splice. The `Syntax` group binds
+     only inside a running macro body. ---- *)
+    | ( "syntax_name",
+        [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_def d; _ }) ] ) ->
+        String d.Ast.def_name
+    | ( "syntax_name",
+        [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_class c; _ }) ] ) ->
+        String c.Ast.class_name
+    | "syntax_name", [ _ ] ->
+        error span "E3001" "`Syntax.name` expects a def or class tree"
+    | ( "syntax_params",
+        [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_def d; _ }) ] ) ->
+        Array
+          (Array.of_list
+             (List.map (fun p -> SyntaxTree (Sx_param p)) d.Ast.def_params))
+    | "syntax_params", [ _ ] ->
+        error span "E3001" "`Syntax.params` expects a def tree"
+    | "syntax_param_name", [ SyntaxTree (Sx_param p) ] ->
+        String p.Ast.param_name
+    | "syntax_param_name", [ _ ] ->
+        error span "E3001" "`Syntax.param_name` expects a parameter tree"
+    | ( "syntax_result",
+        [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_def d; _ }) ] ) -> (
+        match d.Ast.def_return with
+        | Some t -> SyntaxTree (Sx_type t)
+        | None ->
+            error span "E4305"
+              (Printf.sprintf
+                 "`%s` declares no result type — a decorated def must declare \
+                  one"
+                 d.Ast.def_name))
+    | "syntax_result", [ _ ] ->
+        error span "E3001" "`Syntax.result` expects a def tree"
+    | "syntax_rename", [ SyntaxTree (Sx_item it); String nn ] -> (
+        match it.Ast.item_desc with
+        | Ast.Item_def d ->
+            SyntaxTree
+              (Sx_item
+                 {
+                   it with
+                   Ast.item_desc = Ast.Item_def { d with Ast.def_name = nn };
+                 })
+        | _ -> error span "E3001" "`Syntax.rename` expects a def tree")
+    | "syntax_rename", [ _; _ ] ->
+        error span "E3001" "`Syntax.rename` expects (def tree, name String)"
+    | ( "syntax_new_def",
+        [ String name; Array params; SyntaxTree (Sx_type rt); Array body ] ) ->
+        let params =
+          Array.to_list params
+          |> List.map (function
+            | SyntaxTree (Sx_param p) -> p
+            | _ -> error span "E3001" "`Syntax.new_def` expects parameter trees")
+        in
+        let body =
+          Array.to_list body
+          |> List.map (function
+            | SyntaxTree t -> stmt_tree_of span t
+            | _ -> error span "E3001" "`Syntax.new_def` expects statement trees")
+        in
+        SyntaxTree
+          (Sx_item
+             {
+               Ast.item_span = gen_span span;
+               item_desc =
+                 Ast.Item_def
+                   {
+                     Ast.def_span = gen_span span;
+                     def_name = name;
+                     def_params = params;
+                     def_return = Some rt;
+                     def_body = body;
+                   };
+               directives = [];
+             })
+    | ( "syntax_new_def",
+        [
+          String name;
+          Array params;
+          SyntaxTree (Sx_type rt);
+          SyntaxTree (Sx_seq body);
+        ] ) ->
+        (* the quote's shape: one sequence of item-level bindings and defs,
+           whose statement pieces become the body *)
+        let params =
+          Array.to_list params
+          |> List.map (function
+            | SyntaxTree (Sx_param p) -> p
+            | _ -> error span "E3001" "`Syntax.new_def` expects parameter trees")
+        in
+        let body = List.map (stmt_tree_of span) body in
+        SyntaxTree
+          (Sx_item
+             {
+               Ast.item_span = gen_span span;
+               item_desc =
+                 Ast.Item_def
+                   {
+                     Ast.def_span = gen_span span;
+                     def_name = name;
+                     def_params = params;
+                     def_return = Some rt;
+                     def_body = body;
+                   };
+               directives = [];
+             })
+    | "syntax_new_def", vs ->
+        error span "E3001"
+          "`Syntax.new_def` expects (name String, params Array, result tree, \
+           body Array or quote)"
+    | "syntax_seq", [ SyntaxTree a; SyntaxTree b ] ->
+        SyntaxTree (Sx_seq [ a; b ])
+    | "syntax_seq", [ _; _ ] ->
+        error span "E3001" "`Syntax.seq` expects two syntax trees"
+    | "syntax_seq", vs ->
+        error span "E3007"
+          (Printf.sprintf "`Syntax.seq` expects 2 arguments, got %d"
+             (List.length vs))
+    | "syntax_ident", [ String s ] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Ident s })
+    | "syntax_ident", [ _ ] ->
+        error span "E3001" "`Syntax.ident` expects a name String"
+    | "syntax_lit_string", [ String s ] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.String s })
+    | "syntax_lit_string", [ _ ] ->
+        error span "E3001" "`Syntax.lit_string` expects a String"
+    | "syntax_interp", [ Array parts ] ->
+        let parts =
+          Array.to_list parts
+          |> List.map (function
+            | SyntaxTree (Sx_expr { Ast.desc = Ast.String s; _ }) ->
+                Ast.Literal_text s
+            | SyntaxTree (Sx_expr e) -> Ast.Part_expr e
+            | _ ->
+                error span "E3001"
+                  "`Syntax.interp` expects an array of expression trees")
+        in
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Interpolated parts })
+    | "syntax_interp", [ _ ] ->
+        error span "E3001" "`Syntax.interp` expects an Array of parts"
+    | "syntax_call", [ SyntaxTree (Sx_expr f); Array argvs ] ->
+        let args =
+          Array.to_list argvs
+          |> List.map (function
+            | SyntaxTree (Sx_expr e) -> { Ast.arg_name = None; arg_value = e }
+            | _ ->
+                error span "E3001"
+                  "`Syntax.call` expects an array of expression trees")
+        in
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Call (f, args) })
+    | "syntax_call", [ _; _ ] ->
+        error span "E3001" "`Syntax.call` expects (callee tree, args Array)"
+    | "syntax_expr_stmt", [ SyntaxTree (Sx_expr e) ] ->
+        SyntaxTree
+          (Sx_stmt
+             { Ast.stmt_span = gen_span span; stmt_desc = Ast.Expr_stmt e })
+    | "syntax_expr_stmt", [ _ ] ->
+        error span "E3001" "`Syntax.expr_stmt` expects an expression tree"
+    | "syntax_call_stmt", [ String f; Array argvs ] ->
+        let args =
+          Array.to_list argvs
+          |> List.map (function
+            | SyntaxTree (Sx_expr e) -> { Ast.arg_name = None; arg_value = e }
+            | _ ->
+                error span "E3001"
+                  "`Syntax.call_stmt` expects an array of expression trees")
+        in
+        SyntaxTree
+          (Sx_stmt
+             {
+               Ast.stmt_span = gen_span span;
+               stmt_desc =
+                 Ast.Expr_stmt
+                   {
+                     Ast.span = gen_span span;
+                     desc =
+                       Ast.Call
+                         ({ Ast.span = gen_span span; desc = Ast.Ident f }, args);
+                   };
+             })
+    | "syntax_call_stmt", [ _; _ ] ->
+        error span "E3001"
+          "`Syntax.call_stmt` expects (callee name String, args Array)"
+    | "syntax_const_stmt", [ String name; SyntaxTree (Sx_expr e) ] ->
+        SyntaxTree
+          (Sx_stmt
+             {
+               Ast.stmt_span = gen_span span;
+               stmt_desc =
+                 Ast.Binding
+                   {
+                     mutable_ = false;
+                     pattern =
+                       {
+                         Ast.pattern_span = gen_span span;
+                         pattern_desc = Ast.Pattern_binding name;
+                       };
+                     init = e;
+                   };
+             })
+    | "syntax_const_stmt", [ _; _ ] ->
+        error span "E3001" "`Syntax.const_stmt` expects (name String, tree)"
+    | "syntax_return_stmt", [ SyntaxTree (Sx_expr e) ] ->
+        SyntaxTree
+          (Sx_stmt
+             { Ast.stmt_span = gen_span span; stmt_desc = Ast.Return (Some e) })
+    | "syntax_return_stmt", [ _ ] ->
+        error span "E3001" "`Syntax.return_stmt` expects an expression tree"
+    | "syntax_gensym", [ String base ] ->
+        incr gensym_counter;
+        String (base ^ "__" ^ string_of_int !gensym_counter)
+    | "syntax_gensym", [ _ ] ->
+        error span "E3001" "`Syntax.gensym` expects a base String"
+    | "syntax_empty_map", [] ->
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Map_literal [] })
+    | "syntax_empty_map", vs ->
+        error span "E3007"
+          (Printf.sprintf "`Syntax.empty_map` expects no arguments, got %d"
+             (List.length vs))
+    | "syntax_const_item", [ String name; SyntaxTree (Sx_expr e) ] ->
+        (* a module-level constant: what a macro splices beside the wrapper
+         for its generated runtime state *)
+        SyntaxTree
+          (Sx_item
+             {
+               Ast.item_span = gen_span span;
+               item_desc =
+                 Ast.Item_stmt
+                   {
+                     Ast.stmt_span = gen_span span;
+                     stmt_desc =
+                       Ast.Binding
+                         {
+                           mutable_ = false;
+                           pattern =
+                             {
+                               Ast.pattern_span = gen_span span;
+                               pattern_desc = Ast.Pattern_binding name;
+                             };
+                           init = e;
+                         };
+                   };
+               directives = [];
+             })
+    | "syntax_const_item", [ _; _ ] ->
+        error span "E3001" "`Syntax.const_item` expects (name String, tree)"
+    | "syntax_lit_int", [ Int64 n ] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Int64 n })
+    | "syntax_lit_int", [ _ ] ->
+        error span "E3001" "`Syntax.lit_int` expects an Int64"
+    | "syntax_lit_bool", [ Bool b ] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Bool b })
+    | "syntax_lit_bool", [ _ ] ->
+        error span "E3001" "`Syntax.lit_bool` expects a Bool"
+    | "syntax_lit_float", [ Float f ] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Float f })
+    | "syntax_lit_float", [ _ ] ->
+        error span "E3001" "`Syntax.lit_float` expects a Float64"
+    (* ---- the class surface (design/macros.md, step 3): the derive
+       reader and the constructors a derivation builds from ---- *)
+    | ( "syntax_fields",
+        [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_class c; _ }) ] ) ->
+        Array
+          (Array.of_list
+             (List.map (fun f -> SyntaxTree (Sx_field f)) c.Ast.class_fields))
+    | "syntax_fields", [ _ ] ->
+        error span "E3001" "`Syntax.fields` expects a class tree"
+    | "syntax_field_name", [ SyntaxTree (Sx_field f) ] ->
+        String f.Ast.field_name
+    | "syntax_field_name", [ _ ] ->
+        error span "E3001" "`Syntax.field_name` expects a field tree"
+    | "syntax_with_methods", [ SyntaxTree (Sx_item it); Array ms ] -> (
+        match it.Ast.item_desc with
+        | Ast.Item_class c ->
+            let methods =
+              Array.to_list ms
+              |> List.map (function
+                | SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_def d; _ }) ->
+                    d
+                | _ ->
+                    error span "E3001" "`Syntax.with_methods` expects def trees")
+            in
+            SyntaxTree
+              (Sx_item
+                 {
+                   it with
+                   Ast.item_desc =
+                     Ast.Item_class
+                       {
+                         c with
+                         Ast.class_methods = c.Ast.class_methods @ methods;
+                       };
+                 })
+        | _ -> error span "E3001" "`Syntax.with_methods` expects a class tree")
+    | "syntax_with_methods", [ _; _ ] ->
+        error span "E3001"
+          "`Syntax.with_methods` expects (class tree, methods Array)"
+    | "syntax_new_param", [ String name; SyntaxTree (Sx_type t) ] ->
+        SyntaxTree (Sx_param { Ast.param_name = name; param_type = t })
+    | "syntax_new_param", [ _; _ ] ->
+        error span "E3001" "`Syntax.new_param` expects (name String, type tree)"
+    | "syntax_named_type", [ String s ] ->
+        SyntaxTree
+          (Sx_type
+             { Ast.type_span = gen_span span; type_desc = Ast.Named_type s })
+    | "syntax_named_type", [ _ ] ->
+        error span "E3001" "`Syntax.named_type` expects a name String"
+    | "syntax_self_expr", [] ->
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Self })
+    | "syntax_self_expr", vs ->
+        error span "E3007"
+          (Printf.sprintf "`Syntax.self_expr` expects no arguments, got %d"
+             (List.length vs))
+    | "syntax_bin_eq", [ SyntaxTree (Sx_expr l); SyntaxTree (Sx_expr r) ] ->
+        SyntaxTree
+          (Sx_expr
+             { Ast.span = gen_span span; desc = Ast.Binary (Ast.Eq, l, r) })
+    | "syntax_bin_eq", [ _; _ ] ->
+        error span "E3001" "`Syntax.bin_eq` expects two expression trees"
+    | "syntax_bin_and", [ SyntaxTree (Sx_expr l); SyntaxTree (Sx_expr r) ] ->
+        SyntaxTree
+          (Sx_expr
+             { Ast.span = gen_span span; desc = Ast.Binary (Ast.And, l, r) })
+    | "syntax_bin_and", [ _; _ ] ->
+        error span "E3001" "`Syntax.bin_and` expects two expression trees"
+    | "syntax_member", [ SyntaxTree (Sx_expr b); String name ] ->
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Member (b, name) })
+    | "syntax_member", [ _; _ ] ->
+        error span "E3001"
+          "`Syntax.member` expects (expression tree, name String)"
+    | "self_pid", [] -> Pid (Effect.perform Self_pid)
+    | "self_pid", vs ->
+        error span "E3007"
+          (Printf.sprintf "`self_pid` expects no arguments, got %d"
+             (List.length vs))
+    | "halt", [] ->
+        (* Unwinds the calling process; the scheduler driver records the exit. *)
+        raise Halt_signal
+    | "halt", vs ->
+        error span "E3007"
+          (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+    | "fence", [] ->
+        (* The exact no-op (CHECK.md, the atomic memory model): every Emo
          process here cooperates on one OS thread and switches only at
          defined points, so sequential consistency holds vacuously and
          the barrier is a correct lowering of nothing to do. *)
-      Void
-  | "fence", vs ->
-      error span "E3007"
-        (Printf.sprintf "`fence` expects no arguments, got %d" (List.length vs))
-  | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-       | "device_wait" | "device_wake" | "sfence" ) as name),
-      _ ) ->
-      error span "E4028"
-        (Printf.sprintf
-           "`%s` reaches raw memory: only the `riscv64` target admits it, not \
-            the interpreter"
-           name)
-  | "ecall", _ ->
-      error span "E4028"
-        "`ecall` reaches the machine's gate: only the `riscv64` target admits \
-         it, not the interpreter"
-  | ( (("user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "pid_at") as name),
-      _ ) ->
-      error span "E4028"
-        (Printf.sprintf
-           "`%s` reaches the kernel's service machinery: only the `riscv64` \
-            target admits it, not the interpreter"
-           name)
-  | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
+        Void
+    | "fence", vs ->
+        error span "E3007"
+          (Printf.sprintf "`fence` expects no arguments, got %d"
+             (List.length vs))
+    | ( (( "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
+         | "device_wait" | "device_wake" | "sfence" ) as name),
+        _ ) ->
+        error span "E4028"
+          (Printf.sprintf
+             "`%s` reaches raw memory: only the `riscv64` target admits it, \
+              not the interpreter"
+             name)
+    | "ecall", _ ->
+        error span "E4028"
+          "`ecall` reaches the machine's gate: only the `riscv64` target \
+           admits it, not the interpreter"
+    | ( (("user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "pid_at") as
+         name),
+        _ ) ->
+        error span "E4028"
+          (Printf.sprintf
+             "`%s` reaches the kernel's service machinery: only the `riscv64` \
+              target admits it, not the interpreter"
+             name)
+    | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The standard library's runtime implementations — what a package's own
    Emo source calls underneath its API. Every arm here is named for the
    package that owns it. *)
 and apply_runtime_impl span name args =
-  match (name, args) with
-  | "net_connect", args when List.length args <> 3 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_connect` expects (host String, port Int64, timeout Float), \
-            got %d arguments"
-           (List.length args))
-  | "net_connect", [ String host; Int64 port; Float timeout ] ->
-      (* The handler resolves the host, then connects; failure rides
+  if !compile_time && host_touched name then refuse_purity span name
+  else
+    match (name, args) with
+    | "net_connect", args when List.length args <> 3 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_connect` expects (host String, port Int64, timeout Float), \
+              got %d arguments"
+             (List.length args))
+    | "net_connect", [ String host; Int64 port; Float timeout ] ->
+        (* The handler resolves the host, then connects; failure rides
          back in the tuple. *)
-      Effect.perform (Net_connect (host, Int64.to_int port, timeout, span))
-  | "net_resolve", [ String host ] -> Effect.perform (Net_resolve (host, span))
-  | "net_resolve", vs ->
-      error span "E3007"
-        (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
-           (List.length vs))
-  | "net_connect", _ ->
-      error span "E3001"
-        "`net_connect` expects (host String, port Int64, timeout Float)"
-  | "net_listen", args when List.length args <> 2 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_listen` expects (host String, port Int64), got %d arguments"
-           (List.length args))
-  | "net_listen", [ String host; Int64 port ] ->
-      Effect.perform (Net_listen (host, Int64.to_int port, span))
-  | "net_listen", _ ->
-      error span "E3001" "`net_listen` expects (host String, port Int64)"
-  | "net_udp_bind", args when List.length args <> 2 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_udp_bind` expects (host String, port Int64), got %d arguments"
-           (List.length args))
-  | "net_udp_bind", [ String host; Int64 port ] ->
-      Effect.perform (Net_udp_bind (host, Int64.to_int port, span))
-  | "net_udp_bind", _ ->
-      error span "E3001" "`net_udp_bind` expects (host String, port Int64)"
-  | "file_read", args when List.length args <> 1 ->
-      error span "E3007"
-        (Printf.sprintf "`file_read` expects (path String), got %d arguments"
-           (List.length args))
-  | "file_read", [ String path ] -> Effect.perform (File_read (path, span))
-  | "file_read", [ v ] ->
-      error span "E3001"
-        (Printf.sprintf "`file_read` expects a String path, got %s"
-           (type_name v))
-  | "file_write", args when List.length args <> 2 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`file_write` expects (path String, contents String), got \
-            %d             arguments"
-           (List.length args))
-  | "file_write", [ String path; String contents ] ->
-      Effect.perform (File_write (path, contents, span))
-  | "file_write", [ String _; v ] ->
-      error span "E3001"
-        (Printf.sprintf "`file_write` expects String contents, got %s"
-           (type_name v))
-  | "file_write", [ v; _ ] ->
-      error span "E3001"
-        (Printf.sprintf "`file_write` expects a String path, got %s"
-           (type_name v))
-  (* ---- the os module: synchronous POSIX syscalls (fork, unbuffered
+        Effect.perform (Net_connect (host, Int64.to_int port, timeout, span))
+    | "net_resolve", [ String host ] ->
+        Effect.perform (Net_resolve (host, span))
+    | "net_resolve", vs ->
+        error span "E3007"
+          (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
+             (List.length vs))
+    | "net_connect", _ ->
+        error span "E3001"
+          "`net_connect` expects (host String, port Int64, timeout Float)"
+    | "net_listen", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_listen` expects (host String, port Int64), got %d arguments"
+             (List.length args))
+    | "net_listen", [ String host; Int64 port ] ->
+        Effect.perform (Net_listen (host, Int64.to_int port, span))
+    | "net_listen", _ ->
+        error span "E3001" "`net_listen` expects (host String, port Int64)"
+    | "net_udp_bind", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_udp_bind` expects (host String, port Int64), got %d \
+              arguments"
+             (List.length args))
+    | "net_udp_bind", [ String host; Int64 port ] ->
+        Effect.perform (Net_udp_bind (host, Int64.to_int port, span))
+    | "net_udp_bind", _ ->
+        error span "E3001" "`net_udp_bind` expects (host String, port Int64)"
+    | "file_read", args when List.length args <> 1 ->
+        error span "E3007"
+          (Printf.sprintf "`file_read` expects (path String), got %d arguments"
+             (List.length args))
+    | "file_read", [ String path ] -> Effect.perform (File_read (path, span))
+    | "file_read", [ v ] ->
+        error span "E3001"
+          (Printf.sprintf "`file_read` expects a String path, got %s"
+             (type_name v))
+    | "file_write", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`file_write` expects (path String, contents String), got \
+              %d             arguments"
+             (List.length args))
+    | "file_write", [ String path; String contents ] ->
+        Effect.perform (File_write (path, contents, span))
+    | "file_write", [ String _; v ] ->
+        error span "E3001"
+          (Printf.sprintf "`file_write` expects String contents, got %s"
+             (type_name v))
+    | "file_write", [ v; _ ] ->
+        error span "E3001"
+          (Printf.sprintf "`file_write` expects a String path, got %s"
+             (type_name v))
+    (* ---- the os module: synchronous POSIX syscalls (fork, unbuffered
      file descriptors, directories, pipes). Every failure raises an
      ordinary Emo exception carrying the OS reason. ---- *)
-  | "os_getpid", [] -> Int64 (Int64.of_int (Unix.getpid ()))
-  | "os_getpid", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_getpid` expects no arguments, got %d"
-           (List.length vs))
-  | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
-  | "os_getppid", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_getppid` expects no arguments, got %d"
-           (List.length vs))
-  | "os_fork", [] ->
-      os_result span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
-  | "os_fork", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_fork` expects no arguments, got %d"
-           (List.length vs))
-  | "os_waitpid", [ Int64 pid ] ->
-      os_try span (fun () ->
-          let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
-          (* The kernel's raw 16-bit wait encoding, so the Emo-level
+    | "os_getpid", [] -> Int64 (Int64.of_int (Unix.getpid ()))
+    | "os_getpid", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_getpid` expects no arguments, got %d"
+             (List.length vs))
+    | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
+    | "os_getppid", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_getppid` expects no arguments, got %d"
+             (List.length vs))
+    | "os_fork", [] ->
+        os_result span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+    | "os_fork", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_fork` expects no arguments, got %d"
+             (List.length vs))
+    | "os_waitpid", [ Int64 pid ] ->
+        os_try span (fun () ->
+            let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
+            (* The kernel's raw 16-bit wait encoding, so the Emo-level
              decoders (exited / exit code / signal) are portable. *)
-          let raw =
-            match status with
-            | WEXITED code -> Int64.shift_left (Int64.of_int code) 8
-            | WSIGNALED sgn -> Int64.of_int sgn
-            | WSTOPPED sgn ->
-                Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
-          in
-          Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
-  | "os_waitpid", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
-           (List.length vs))
-  | "os_pipe", [] ->
-      os_result span (fun () ->
-          let r, w = Unix.pipe () in
-          Tuple
-            [ Int64 (Int64.of_int (fd_int r)); Int64 (Int64.of_int (fd_int w)) ])
-  | "os_pipe", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_pipe` expects no arguments, got %d"
-           (List.length vs))
-  | "os_execv", [ String path; Array items ] -> (
-      (* Success never returns — the process is replaced. Failure is a
+            let raw =
+              match status with
+              | WEXITED code -> Int64.shift_left (Int64.of_int code) 8
+              | WSIGNALED sgn -> Int64.of_int sgn
+              | WSTOPPED sgn ->
+                  Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
+            in
+            Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
+    | "os_waitpid", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_pipe", [] ->
+        os_result span (fun () ->
+            let r, w = Unix.pipe () in
+            Tuple
+              [
+                Int64 (Int64.of_int (fd_int r)); Int64 (Int64.of_int (fd_int w));
+              ])
+    | "os_pipe", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_pipe` expects no arguments, got %d"
+             (List.length vs))
+    | "os_execv", [ String path; Array items ] -> (
+        (* Success never returns — the process is replaced. Failure is a
          data-driven value: the call returns Void, and the fork child
          follows it with `_exit` (the POSIX idiom; a raise here would
          run the parent's cleanup a second time). *)
-      try
-        let argv = Array.of_list (List.map to_string (Array.to_list items)) in
-        Unix.execv path argv
-      with Unix.Unix_error _ -> Void)
-  | "os_execv", vs ->
-      error span "E3007"
-        (Printf.sprintf
-           "`os_execv` expects (path String, argv Array String), got %d \
-            arguments"
-           (List.length vs))
-  | "os__exit", [ Int64 status ] ->
-      (* Never returns: the fork child leaves without at_exit flushes. *)
-      let (_ : unit) = Unix._exit (Int64.to_int status) in
-      raise Halt_signal
-  | "os__exit", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os__exit` expects (status Int64), got %d"
-           (List.length vs))
-  | "os_open_read", [ String path ] ->
-      os_result span (fun () ->
-          Int64 (Int64.of_int (fd_int (Unix.openfile path [ O_RDONLY ] 0))))
-  | "os_open_read", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_open_read` expects (path String), got %d"
-           (List.length vs))
-  | "os_open_write", [ String path ] ->
-      os_result span (fun () ->
-          Int64
-            (Int64.of_int
-               (fd_int
-                  (Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644))))
-  | "os_open_write", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_open_write` expects (path String), got %d"
-           (List.length vs))
-  | "os_open_append", [ String path ] ->
-      os_result span (fun () ->
-          Int64
-            (Int64.of_int
-               (fd_int
-                  (Unix.openfile path [ O_WRONLY; O_CREAT; O_APPEND ] 0o644))))
-  | "os_open_append", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_open_append` expects (path String), got %d"
-           (List.length vs))
-  | "rand_bytes", [ Int64 n ] ->
-      if n < 0L then
-        error span "E3007" "`rand_bytes` expects a non-negative count"
-      else rand_result (fun () -> Bytes (read_entropy (Int64.to_int n)))
-  | "os_read", [ Int64 fd; Int64 n ] ->
-      if n < 0L then error span "E3007" "`os_read` expects a non-negative count"
-      else
+        try
+          let argv = Array.of_list (List.map to_string (Array.to_list items)) in
+          Unix.execv path argv
+        with Unix.Unix_error _ -> Void)
+    | "os_execv", vs ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_execv` expects (path String, argv Array String), got %d \
+              arguments"
+             (List.length vs))
+    | "os__exit", [ Int64 status ] ->
+        (* Never returns: the fork child leaves without at_exit flushes. *)
+        let (_ : unit) = Unix._exit (Int64.to_int status) in
+        raise Halt_signal
+    | "os__exit", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os__exit` expects (status Int64), got %d"
+             (List.length vs))
+    | "os_open_read", [ String path ] ->
         os_result span (fun () ->
-            let buf = Bytes.create (Int64.to_int n) in
-            let got =
-              Unix.read (fd_of_int (Int64.to_int fd)) buf 0 (Int64.to_int n)
-            in
-            String (Bytes.sub_string buf 0 got))
-  | "os_read", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
-           (List.length vs))
-  | "os_write", [ Int64 fd; String data ] ->
-      os_result span (fun () ->
-          let bytes = Bytes.of_string data in
-          Int64
-            (Int64.of_int
-               (Unix.write
-                  (fd_of_int (Int64.to_int fd))
-                  bytes 0 (Bytes.length bytes))))
-  | "os_write", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
-           (List.length vs))
-  | "os_close", [ Int64 fd ] ->
-      os_result span (fun () ->
-          Unix.close (fd_of_int (Int64.to_int fd));
-          Int64 0L)
-  | "os_close", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_close` expects (fd Int64), got %d" (List.length vs))
-  | "os_list_dir", [ String path ] ->
-      os_result span (fun () ->
-          (* opendir, not Sys.readdir: the failure rides the Unix_error
+            Int64 (Int64.of_int (fd_int (Unix.openfile path [ O_RDONLY ] 0))))
+    | "os_open_read", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_open_read` expects (path String), got %d"
+             (List.length vs))
+    | "os_open_write", [ String path ] ->
+        os_result span (fun () ->
+            Int64
+              (Int64.of_int
+                 (fd_int
+                    (Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644))))
+    | "os_open_write", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_open_write` expects (path String), got %d"
+             (List.length vs))
+    | "os_open_append", [ String path ] ->
+        os_result span (fun () ->
+            Int64
+              (Int64.of_int
+                 (fd_int
+                    (Unix.openfile path [ O_WRONLY; O_CREAT; O_APPEND ] 0o644))))
+    | "os_open_append", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_open_append` expects (path String), got %d"
+             (List.length vs))
+    | "rand_bytes", [ Int64 n ] ->
+        if n < 0L then
+          error span "E3007" "`rand_bytes` expects a non-negative count"
+        else rand_result (fun () -> Bytes (read_entropy (Int64.to_int n)))
+    | "os_read", [ Int64 fd; Int64 n ] ->
+        if n < 0L then
+          error span "E3007" "`os_read` expects a non-negative count"
+        else
+          os_result span (fun () ->
+              let buf = Bytes.create (Int64.to_int n) in
+              let got =
+                Unix.read (fd_of_int (Int64.to_int fd)) buf 0 (Int64.to_int n)
+              in
+              String (Bytes.sub_string buf 0 got))
+    | "os_read", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
+             (List.length vs))
+    | "os_write", [ Int64 fd; String data ] ->
+        os_result span (fun () ->
+            let bytes = Bytes.of_string data in
+            Int64
+              (Int64.of_int
+                 (Unix.write
+                    (fd_of_int (Int64.to_int fd))
+                    bytes 0 (Bytes.length bytes))))
+    | "os_write", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
+             (List.length vs))
+    | "os_close", [ Int64 fd ] ->
+        os_result span (fun () ->
+            Unix.close (fd_of_int (Int64.to_int fd));
+            Int64 0L)
+    | "os_close", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_close` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_list_dir", [ String path ] ->
+        os_result span (fun () ->
+            (* opendir, not Sys.readdir: the failure rides the Unix_error
              branch, so the reason names the call (`os: opendir p: ...`)
              — the text the c runtime prints for the same miss. *)
-          let dir = Unix.opendir path in
-          let rec collect acc =
-            match Unix.readdir dir with
-            | "." | ".." -> collect acc
-            | name -> collect (name :: acc)
-            | exception End_of_file ->
-                Unix.closedir dir;
-                Array.of_list (List.rev acc)
-          in
-          let names = collect [] in
-          Array.sort compare names;
-          Array (Array.map (fun s -> String s) names))
-  | "os_list_dir", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_list_dir` expects (path String), got %d"
-           (List.length vs))
-  | "os_mkdir", [ String path ] ->
-      os_result span (fun () ->
-          Unix.mkdir path 0o755;
-          Int64 0L)
-  | "os_mkdir", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_mkdir` expects (path String), got %d"
-           (List.length vs))
-  | "os_rmdir", [ String path ] ->
-      os_result span (fun () ->
-          Unix.rmdir path;
-          Int64 0L)
-  | "os_rmdir", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_rmdir` expects (path String), got %d"
-           (List.length vs))
-  | "os_unlink", [ String path ] ->
-      os_result span (fun () ->
-          Unix.unlink path;
-          Int64 0L)
-  | "os_unlink", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_unlink` expects (path String), got %d"
-           (List.length vs))
-  | "os_rename", [ String old_path; String new_path ] ->
-      os_result span (fun () ->
-          Unix.rename old_path new_path;
-          Int64 0L)
-  | "os_rename", vs ->
-      error span "E3007"
-        (Printf.sprintf
-           "`os_rename` expects (old_path String, new_path String), got %d"
-           (List.length vs))
-  | "os_getcwd", [] -> String (Sys.getcwd ())
-  | "os_getcwd", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
-           (List.length vs))
-  | "os_chdir", [ String path ] ->
-      os_result span (fun () ->
-          Unix.chdir path;
-          Int64 0L)
-  | "os_chdir", vs ->
-      error span "E3007"
-        (Printf.sprintf "`os_chdir` expects (path String), got %d"
-           (List.length vs))
-  | "net_connect_unix", args when List.length args <> 2 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_connect_unix` expects (path String, timeout Float64), got \
-            %d             arguments"
-           (List.length args))
-  | "net_connect_unix", [ String path; Float timeout ] ->
-      Effect.perform (Net_connect_unix (path, timeout, span))
-  | "net_connect_unix", _ ->
-      error span "E3001"
-        "`net_connect_unix` expects (path String, timeout Float64)"
-  | "net_listen_unix", args when List.length args <> 1 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_listen_unix` expects (path String), got %d arguments"
-           (List.length args))
-  | "net_listen_unix", [ String path ] ->
-      Effect.perform (Net_listen_unix (path, span))
-  | "net_listen_unix", _ ->
-      error span "E3001" "`net_listen_unix` expects (path String)"
-  | "net_tls_connect", args when List.length args <> 3 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_tls_connect` expects (host String, port Int64, timeout \
-            Float64),             got %d arguments"
-           (List.length args))
-  | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
-      (* The handler resolves the host, then connects and shakes hands;
+            let dir = Unix.opendir path in
+            let rec collect acc =
+              match Unix.readdir dir with
+              | "." | ".." -> collect acc
+              | name -> collect (name :: acc)
+              | exception End_of_file ->
+                  Unix.closedir dir;
+                  Array.of_list (List.rev acc)
+            in
+            let names = collect [] in
+            Array.sort compare names;
+            Array (Array.map (fun s -> String s) names))
+    | "os_list_dir", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_list_dir` expects (path String), got %d"
+             (List.length vs))
+    | "os_mkdir", [ String path ] ->
+        os_result span (fun () ->
+            Unix.mkdir path 0o755;
+            Int64 0L)
+    | "os_mkdir", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_mkdir` expects (path String), got %d"
+             (List.length vs))
+    | "os_rmdir", [ String path ] ->
+        os_result span (fun () ->
+            Unix.rmdir path;
+            Int64 0L)
+    | "os_rmdir", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_rmdir` expects (path String), got %d"
+             (List.length vs))
+    | "os_unlink", [ String path ] ->
+        os_result span (fun () ->
+            Unix.unlink path;
+            Int64 0L)
+    | "os_unlink", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_unlink` expects (path String), got %d"
+             (List.length vs))
+    | "os_rename", [ String old_path; String new_path ] ->
+        os_result span (fun () ->
+            Unix.rename old_path new_path;
+            Int64 0L)
+    | "os_rename", vs ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_rename` expects (old_path String, new_path String), got %d"
+             (List.length vs))
+    | "os_getcwd", [] -> String (Sys.getcwd ())
+    | "os_getcwd", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
+             (List.length vs))
+    | "os_chdir", [ String path ] ->
+        os_result span (fun () ->
+            Unix.chdir path;
+            Int64 0L)
+    | "os_chdir", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_chdir` expects (path String), got %d"
+             (List.length vs))
+    | "net_connect_unix", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_connect_unix` expects (path String, timeout Float64), got \
+              %d             arguments"
+             (List.length args))
+    | "net_connect_unix", [ String path; Float timeout ] ->
+        Effect.perform (Net_connect_unix (path, timeout, span))
+    | "net_connect_unix", _ ->
+        error span "E3001"
+          "`net_connect_unix` expects (path String, timeout Float64)"
+    | "net_listen_unix", args when List.length args <> 1 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_listen_unix` expects (path String), got %d arguments"
+             (List.length args))
+    | "net_listen_unix", [ String path ] ->
+        Effect.perform (Net_listen_unix (path, span))
+    | "net_listen_unix", _ ->
+        error span "E3001" "`net_listen_unix` expects (path String)"
+    | "net_tls_connect", args when List.length args <> 3 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_tls_connect` expects (host String, port Int64, timeout \
+              Float64),             got %d arguments"
+             (List.length args))
+    | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
+        (* The handler resolves the host, then connects and shakes hands;
          failure rides back in the tuple. *)
-      Effect.perform
-        (Net_tls_connect
-           (host, Int64.to_int port, timeout, default_tls_client_options, span))
-  | "net_tls_connect", _ ->
-      error span "E3001"
-        "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
-  | "net_tls_connect_insecure", args when List.length args <> 3 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_tls_connect_insecure` expects (host String, port Int64, \
-            timeout             Float64), got %d arguments"
-           (List.length args))
-  | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-      Effect.perform
-        (Net_tls_connect
-           ( host,
-             Int64.to_int port,
-             timeout,
-             { default_tls_client_options with tls_insecure = true },
-             span ))
-  | "net_tls_connect_insecure", _ ->
-      error span "E3001"
-        "`net_tls_connect_insecure` expects (host String, port Int64, \
-         timeout          Float64)"
-  | "net_tls_connect_with", args when List.length args <> 8 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_tls_connect_with` expects (host String, port Int64, timeout \
-            Float64, ca_file String, client_cert_file String, client_key_file \
-            String, server_name String, insecure Bool), got %d arguments"
-           (List.length args))
-  | ( "net_tls_connect_with",
-      [
-        String host;
-        Int64 port;
-        Float timeout;
-        String ca_file;
-        String cert_file;
-        String key_file;
-        String server_name;
-        Bool insecure;
-      ] ) ->
-      Effect.perform
-        (Net_tls_connect
-           ( host,
-             Int64.to_int port,
-             timeout,
-             {
-               tls_ca_file = ca_file;
-               tls_client_cert_file = cert_file;
-               tls_client_key_file = key_file;
-               tls_server_name = server_name;
-               tls_insecure = insecure;
-             },
-             span ))
-  | "net_tls_connect_with", _ ->
-      error span "E3001"
-        "`net_tls_connect_with` expects (host String, port Int64, timeout \
-         Float64, ca_file String, client_cert_file String, client_key_file \
-         String, server_name String, insecure Bool)"
-  | "net_listen_tls", args when List.length args <> 4 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_listen_tls` expects (host String, port Int64, cert_path \
-            String,             key_path String), got %d arguments"
-           (List.length args))
-  | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-      Effect.perform
-        (Net_tls_listen
-           (host, Int64.to_int port, cert, key, default_tls_server_options, span))
-  | "net_listen_tls", _ ->
-      error span "E3001"
-        "`net_listen_tls` expects (host String, port Int64, cert_path \
-         String,          key_path String)"
-  | "net_listen_tls_with", args when List.length args <> 6 ->
-      error span "E3007"
-        (Printf.sprintf
-           "`net_listen_tls_with` expects (host String, port Int64, cert_path \
-            String, key_path String, ca_file String, require_client_cert \
-            Bool), got %d arguments"
-           (List.length args))
-  | ( "net_listen_tls_with",
-      [
-        String host;
-        Int64 port;
-        String cert;
-        String key;
-        String ca_file;
-        Bool require_client_cert;
-      ] ) ->
-      Effect.perform
-        (Net_tls_listen
-           ( host,
-             Int64.to_int port,
-             cert,
-             key,
-             {
-               tls_client_ca_file = ca_file;
-               tls_require_client_cert = require_client_cert;
-             },
-             span ))
-  | "net_listen_tls_with", _ ->
-      error span "E3001"
-        "`net_listen_tls_with` expects (host String, port Int64, cert_path \
-         String, key_path String, ca_file String, require_client_cert Bool)"
-  | _, _ ->
-      error span "E3007"
-        (Printf.sprintf "unknown runtime implementation `%s`" name)
+        Effect.perform
+          (Net_tls_connect
+             (host, Int64.to_int port, timeout, default_tls_client_options, span))
+    | "net_tls_connect", _ ->
+        error span "E3001"
+          "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
+    | "net_tls_connect_insecure", args when List.length args <> 3 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_tls_connect_insecure` expects (host String, port Int64, \
+              timeout             Float64), got %d arguments"
+             (List.length args))
+    | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
+        Effect.perform
+          (Net_tls_connect
+             ( host,
+               Int64.to_int port,
+               timeout,
+               { default_tls_client_options with tls_insecure = true },
+               span ))
+    | "net_tls_connect_insecure", _ ->
+        error span "E3001"
+          "`net_tls_connect_insecure` expects (host String, port Int64, \
+           timeout          Float64)"
+    | "net_tls_connect_with", args when List.length args <> 8 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_tls_connect_with` expects (host String, port Int64, timeout \
+              Float64, ca_file String, client_cert_file String, \
+              client_key_file String, server_name String, insecure Bool), got \
+              %d arguments"
+             (List.length args))
+    | ( "net_tls_connect_with",
+        [
+          String host;
+          Int64 port;
+          Float timeout;
+          String ca_file;
+          String cert_file;
+          String key_file;
+          String server_name;
+          Bool insecure;
+        ] ) ->
+        Effect.perform
+          (Net_tls_connect
+             ( host,
+               Int64.to_int port,
+               timeout,
+               {
+                 tls_ca_file = ca_file;
+                 tls_client_cert_file = cert_file;
+                 tls_client_key_file = key_file;
+                 tls_server_name = server_name;
+                 tls_insecure = insecure;
+               },
+               span ))
+    | "net_tls_connect_with", _ ->
+        error span "E3001"
+          "`net_tls_connect_with` expects (host String, port Int64, timeout \
+           Float64, ca_file String, client_cert_file String, client_key_file \
+           String, server_name String, insecure Bool)"
+    | "net_listen_tls", args when List.length args <> 4 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_listen_tls` expects (host String, port Int64, cert_path \
+              String,             key_path String), got %d arguments"
+             (List.length args))
+    | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
+        Effect.perform
+          (Net_tls_listen
+             ( host,
+               Int64.to_int port,
+               cert,
+               key,
+               default_tls_server_options,
+               span ))
+    | "net_listen_tls", _ ->
+        error span "E3001"
+          "`net_listen_tls` expects (host String, port Int64, cert_path \
+           String,          key_path String)"
+    | "net_listen_tls_with", args when List.length args <> 6 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_listen_tls_with` expects (host String, port Int64, \
+              cert_path String, key_path String, ca_file String, \
+              require_client_cert Bool), got %d arguments"
+             (List.length args))
+    | ( "net_listen_tls_with",
+        [
+          String host;
+          Int64 port;
+          String cert;
+          String key;
+          String ca_file;
+          Bool require_client_cert;
+        ] ) ->
+        Effect.perform
+          (Net_tls_listen
+             ( host,
+               Int64.to_int port,
+               cert,
+               key,
+               {
+                 tls_client_ca_file = ca_file;
+                 tls_require_client_cert = require_client_cert;
+               },
+               span ))
+    | "net_listen_tls_with", _ ->
+        error span "E3001"
+          "`net_listen_tls_with` expects (host String, port Int64, cert_path \
+           String, key_path String, ca_file String, require_client_cert Bool)"
+    | _, _ ->
+        error span "E3007"
+          (Printf.sprintf "unknown runtime implementation `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and
    iterates in place; the OCaml stack stays flat however long the Emo-level
@@ -3753,6 +4376,22 @@ and eval_expr env e =
                "the if expression's condition must be a Bool, got %s"
                (type_name v)))
   | Ast.Call (callee, args) -> eval_call env span callee args
+  | Ast.Quote q ->
+      if not !compile_time then
+        error span "E4301"
+          "`quote` is compile-time — it is written only inside a macro body";
+      let holes = Hashtbl.create 8 in
+      List.iter
+        (fun (ph, he) ->
+          match eval_expr env he with
+          | SyntaxTree t -> Hashtbl.replace holes ph t
+          | _ ->
+              error he.Ast.span "E4309"
+                "a quote hole must evaluate to a syntax tree — lift names and \
+                 literals with the Syntax constructors")
+        q.Ast.holes;
+      let items = List.map (subst_item holes) q.Ast.template in
+      SyntaxTree (Sx_seq (List.map (fun i -> Sx_item i) items))
   | Ast.Do operand -> (
       (* `do work(args)` runs the call in a new process: the caller gets the
          child's pid immediately, and the call's own result is discarded. *)
@@ -3908,6 +4547,354 @@ let eval_item ?(module_path = []) env item =
          every target it names, and only a call to it is a mistake. *)
       define env f.Ast.foreign_name ~mutable_:false
         (ForeignFn f.Ast.foreign_name)
+
+(* ---- Compile-time macros (design/macros.md) ----
+
+   A `// #macro` def runs during compilation: it receives the decorated
+   declaration as a syntax tree and returns replacement trees, which are
+   spliced into the program before checking. The body executes on this
+   interpreter under the compile-time profile — every effect refused,
+   every host-touching builtin refused, the output hook poisoned, a step
+   budget — so a macro is deterministic by construction. *)
+
+(* Runs one macro body on one input tree. The application's compile-time
+   arguments evaluate here, in the protected profile, and bind to the
+   macro's leading parameters; the trailing Syntax parameter binds to the
+   input tree. The body's `return` yields the output; an Emo raise in the
+   body surfaces as the expansion's compile error. *)
+and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
+    (arg_exprs : Ast.expr list) : syntax_tree =
+  let leading, tree_param =
+    match List.rev macro.Ast.def_params with
+    | last :: rev_leading -> (List.rev rev_leading, last)
+    | [] ->
+        error macro.Ast.def_span "E4302"
+          (Printf.sprintf
+             "the macro `%s` must take exactly one `Syntax` parameter"
+             macro.Ast.def_name)
+  in
+  if List.length leading <> List.length arg_exprs then
+    error macro.Ast.def_span "E4302"
+      (Printf.sprintf "the macro `%s` takes %d compile-time argument(s), got %d"
+         macro.Ast.def_name (List.length leading) (List.length arg_exprs));
+  let param = tree_param in
+  let env = { frame = Hashtbl.create 8; parent = Some (global_env ()) } in
+  Hashtbl.replace env.frame "Syntax"
+    {
+      bound =
+        EmoGroup
+          (List.map
+             (fun name -> (name, BuiltinFn ("syntax_" ^ name)))
+             [
+               "name";
+               "params";
+               "param_name";
+               "result";
+               "rename";
+               "new_def";
+               "seq";
+               "ident";
+               "lit_string";
+               "interp";
+               "call";
+               "call_stmt";
+               "expr_stmt";
+               "const_stmt";
+               "return_stmt";
+               "gensym";
+               "empty_map";
+               "const_item";
+               "lit_int";
+               "lit_bool";
+               "lit_float";
+               "fields";
+               "field_name";
+               "with_methods";
+               "new_param";
+               "named_type";
+               "self_expr";
+               "bin_eq";
+               "bin_and";
+               "member";
+             ]);
+      mutable_ = false;
+    };
+  define env param.Ast.param_name ~mutable_:false (SyntaxTree input);
+  let saved_output = !output in
+  let saved_ct = !compile_time in
+  let saved_budget = !step_budget in
+  let saved_count = !step_count in
+  let restore () =
+    output := saved_output;
+    compile_time := saved_ct;
+    step_budget := saved_budget;
+    step_count := saved_count
+  in
+  compile_time := true;
+  (output :=
+     fun _ ->
+       error macro.Ast.def_span "E3030"
+         "a macro body cannot print — macros are deterministic compile-time \
+          code");
+  step_budget := Some 100_000_000;
+  step_count := 0;
+  Fun.protect ~finally:restore (fun () ->
+      let nowhere =
+        Emo_support.Span.make ~file:"<compile time>" ~line:1 ~col:1 ~start:0
+          ~stop:0
+      in
+      let refused span what =
+        error span "E3030"
+          (Printf.sprintf
+             "`%s` is not available at compile time — a macro body must be \
+              deterministic"
+             what)
+      in
+      try
+        Effect.Deep.try_with
+          (fun () ->
+            (* the application's compile-time arguments evaluate in the
+               protected profile, then bind to the leading parameters *)
+            List.iter
+              (fun (p, ae) ->
+                define env p.Ast.param_name ~mutable_:false (eval_expr env ae))
+              (List.combine leading arg_exprs);
+            List.iter (eval_stmt env) macro.Ast.def_body;
+            error macro.Ast.def_span "E4304"
+              (Printf.sprintf "the macro `%s` never returns a tree"
+                 macro.Ast.def_name))
+          ()
+          {
+            effc =
+              (fun (type a) (eff : a Effect.t) ->
+                match eff with
+                | Spawn (_, span) ->
+                    Some (fun (_ : (a, _) continuation) -> refused span "`do`")
+                | Send (_, _, span) ->
+                    Some (fun (_ : (a, _) continuation) -> refused span "`<-`")
+                | Self_pid ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused nowhere "`self_pid()`")
+                | Receive _ ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused nowhere "`receive`")
+                | Net_resolve (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_resolve`")
+                | Net_connect (_, _, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_connect`")
+                | Net_listen (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_listen`")
+                | Net_accept (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`accept`")
+                | Net_read_line (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`read_line`")
+                | Net_read_exactly (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`read_exactly`")
+                | Net_read_all (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`read_all`")
+                | Net_write (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`write`")
+                | Net_close_conn (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`close`")
+                | Net_close_listener (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`close`")
+                | Net_udp_bind (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_udp_bind`")
+                | Net_udp_send_to (_, _, _, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`send_to`")
+                | Net_udp_recv_from (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`recv_from`")
+                | Net_udp_close (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`close`")
+                | Net_connect_unix (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_connect_unix`")
+                | Net_listen_unix (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_listen_unix`")
+                | File_read (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`file.read`")
+                | File_write (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`file.write`")
+                | Compiled_receive _ ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused nowhere "`receive`")
+                | Net_tls_connect (_, _, _, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_tls_connect`")
+                | Net_tls_listen (_, _, _, _, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_listen_tls`")
+                | _ -> None);
+          }
+      with
+      | Return_signal (SyntaxTree t) -> t
+      | Return_signal _ ->
+          error macro.Ast.def_span "E4304"
+            (Printf.sprintf "the macro `%s` returns a non-tree value"
+               macro.Ast.def_name)
+      | Emo_raise (v, span, _trace) ->
+          let message =
+            match v with
+            | Instance i -> (
+                match List.assoc_opt "message" i.ifields with
+                | Some (String s) -> s
+                | _ -> to_string v)
+            | v -> to_string v
+          in
+          error span "E4308"
+            (Printf.sprintf "the macro `%s` raised: %s" macro.Ast.def_name
+               message))
+
+(* A def declared `// #macro`: the role lives on the item's directives. *)
+let is_macro_def (item : Ast.item) : bool =
+  List.exists
+    (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+    item.Ast.directives
+
+(* The expansion pass: runs between parsing and checking. Applies every
+   `// @name` directive nearest-first (the line closest to the declaration
+   wraps first), splices the results, and erases the `#macro` defs — they
+   are compile-time equipment, with no runtime binding left behind. The
+   precheck callback type-checks the original items first: a macro body
+   that does not typecheck is rejected before it ever executes. *)
+(* [extra_macros] carries the program's cross-module macro table
+   (design/macros.md, step 61): (dotted module path, macro name) → the
+   macro's def, collected by the project layer from a raw scan. A
+   qualified application `@mod.macro` — or `@a.b.macro`, any path depth —
+   resolves against it; a bare `@macro` resolves in the module that
+   declares it, and a same-name local macro shadows the outside one. *)
+let expand_macros ~(precheck : Ast.item list -> unit)
+    ?(extra_macros : ((string list * string) * Ast.fun_def) list = [])
+    (items : Ast.item list) : Ast.item list =
+  if not (has_macro_directives items) then items
+  else begin
+    precheck items;
+    let macros =
+      List.filter_map
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_def d when is_macro_def item -> Some (d.Ast.def_name, d)
+          | _ -> None)
+        items
+    in
+    let plain_def_names =
+      List.filter_map
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_def d when not (is_macro_def item) -> Some d.Ast.def_name
+          | _ -> None)
+        items
+    in
+    let resolve_macro span (name : string) : Ast.fun_def =
+      match List.assoc_opt name macros with
+      | Some macro -> macro
+      | None ->
+          let dotted = String.split_on_char '.' name in
+          if List.length dotted >= 2 then
+            let mpath = List.rev (List.tl (List.rev dotted)) in
+            let mname = List.nth dotted (List.length dotted - 1) in
+            match List.assoc_opt (mpath, mname) extra_macros with
+            | Some macro -> macro
+            | None ->
+                error span "E4300"
+                  (Printf.sprintf
+                     "unknown macro `@%s` — the module `%s` declares no `// \
+                      #macro` def by this name"
+                     name (String.concat "." mpath))
+          else
+            error span "E4300"
+              (if List.mem name plain_def_names then
+                 Printf.sprintf
+                   "`@%s` names a def that is not a macro — macros \
+                    are                     declared with `// #macro`"
+                   name
+               else
+                 Printf.sprintf
+                   "unknown macro `@%s` — no `// #macro` def by this name in \
+                    this module and no module path it names"
+                   name)
+    in
+    let expanded =
+      List.concat
+        (List.map
+           (fun item ->
+             match item.Ast.directives with
+             | [] -> [ item ]
+             | directives ->
+                 let has_application =
+                   List.exists
+                     (fun d ->
+                       match d.Ast.directive_desc with
+                       | Ast.Apply_macro _ -> true
+                       | Ast.Role_macro -> false)
+                     directives
+                 in
+                 if is_macro_def item then begin
+                   if has_application then
+                     error item.Ast.item_span "E4310"
+                       "a macro def takes no applications — macros do not \
+                        decorate macros";
+                   (* the macro def itself: nothing to expand, erased below *)
+                   [ item ]
+                 end
+                 else
+                   (* every directive on a non-macro item is an application:
+                      a role line would have made it a macro *)
+                   let tree =
+                     List.fold_left
+                       (fun tree directive ->
+                         match directive.Ast.directive_desc with
+                         | Ast.Apply_macro (name, arg_exprs) ->
+                             let macro =
+                               resolve_macro directive.Ast.directive_span name
+                             in
+                             run_macro_body ~macro ~input:tree arg_exprs
+                         | Ast.Role_macro -> assert false)
+                       (Sx_item item) (List.rev directives)
+                     (* nearest first: the line closest to the declaration
+                          applies first, exactly the order the parser kept *)
+                   in
+                   let last = List.hd (List.rev directives) in
+                   splice_of last.Ast.directive_span tree)
+           items)
+    in
+    List.filter (fun item -> not (is_macro_def item)) expanded
+  end
 
 (* Restricted-profile schema errors: the manifest reader maps them onto the
    E51xx codes. A field defined twice, and a value that is not literal data
@@ -4124,6 +5111,16 @@ let net_connect_sync (host : string) (port : int) (timeout : float) : value =
 let net_listen_sync (host : string) (port : int) : value =
   Effect.perform (Net_listen (host, port, Emo_support.Span.zero))
 
-(* Runs a whole file: declarations register, statements execute in order. *)
+(* Runs a whole file: declarations register, statements execute in order.
+   Macro applications expand first — the expansion prechecks the file
+   (a lone-file check), so a macro body typechecks before it ever runs. *)
 let run_program ~file ~source =
-  run_items (Emo_parser.parse_program ~file ~source)
+  let items =
+    expand_macros
+      ~precheck:(fun items ->
+        match Emo_check.check_macro_domain ~modules:[] ~current:[] items with
+        | [] -> ()
+        | first :: _ -> raise (Emo_lexer.Error first))
+      (Emo_parser.parse_program ~file ~source)
+  in
+  run_items items

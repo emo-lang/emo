@@ -32,6 +32,9 @@ type t =
   | BuilderType of
       t (* ArrayBuilder's element type; Unknown until a push pins it *)
   | FuncType of (string * t) list * t
+  | SyntaxType
+(* the compile-time macro currency (design/macros.md): legal only in
+         a `// #macro` def's signature and body *)
 
 let rec to_string = function
   | Unknown -> "Unknown"
@@ -43,6 +46,7 @@ let rec to_string = function
   | Char -> "Char"
   | String -> "String"
   | Bytes -> "Bytes"
+  | SyntaxType -> "Syntax"
   | Pid -> "Pid"
   | TcpConn -> "TcpConn"
   | TcpListener -> "TcpListener"
@@ -137,6 +141,13 @@ type ctx = {
       (* whether the program tables are present — a lone-file check
          resolves no cross-file names, so an unknown capitalized name
          stays silent there exactly like every other cross-file gap *)
+  macro_ok : bool ref;
+      (* the compile-time window: true while a `// #macro` def's signature
+         or body is being collected/checked — the only place the `Syntax`
+         type and the `Syntax` namespace may be named *)
+  macro_names : (string, unit) Hashtbl.t;
+      (* the module's `// #macro` def names, so signature resolution can
+         reopen the window without the item at hand *)
   target : string;
       (* the compilation target: the capability table gates `foreign
          def` per target (CHECK.md) — `c` honors Int64 directly on
@@ -328,6 +339,12 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "UdpSocket" -> UdpSocket
   | Ast.Named_type "Void" -> Void
   | Ast.Named_type "Block" -> Unknown
+  | Ast.Named_type "Syntax" ->
+      if not !(ctx.macro_ok) then
+        report ctx span "E4301"
+          "`Syntax` is a compile-time type — it is spelled only inside a `// \
+           #macro` def";
+      SyntaxType
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type "Atomic" -> AtomicType Unknown
   | Ast.Named_type "List" -> ListType Unknown
@@ -516,10 +533,56 @@ let collect ctx (items : Ast.item list) : unit =
     (fun item ->
       match item.Ast.item_desc with
       | Ast.Item_def d ->
+          let is_macro =
+            List.exists
+              (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+              item.Ast.directives
+          in
+          if is_macro then begin
+            (* The macro shape (design/macros.md): zero or more leading
+               compile-time scalar parameters, exactly one trailing `Syntax`
+               parameter (the decorated tree), and a `Syntax` result. *)
+            let syntax_type = function
+              | { Ast.type_desc = Ast.Named_type "Syntax"; _ } -> true
+              | _ -> false
+            in
+            let scalar_type = function
+              | {
+                  Ast.type_desc =
+                    Ast.Named_type
+                      ("Int64" | "String" | "Bool" | "Float64" | "Byte" | "Char");
+                  _;
+                } ->
+                  true
+              | _ -> false
+            in
+            let rec shaped = function
+              | [] -> false
+              | [ p ] -> syntax_type p.Ast.param_type
+              | p :: rest -> scalar_type p.Ast.param_type && shaped rest
+            in
+            let shaped =
+              shaped d.Ast.def_params
+              &&
+              match d.Ast.def_return with
+              | Some rt -> syntax_type rt
+              | None -> false
+            in
+            if not shaped then
+              report ctx d.Ast.def_span "E4302"
+                (Printf.sprintf
+                   "the macro `%s` must take scalar compile-time parameters \
+                    followed by exactly one `Syntax` parameter, and return \
+                    `Syntax`"
+                   d.Ast.def_name)
+          end;
+          ctx.macro_ok := is_macro;
           List.iter
             (fun p -> ignore (decl_to_type ctx p.Ast.param_type))
             d.Ast.def_params;
           Option.iter (fun r -> ignore (decl_to_type ctx r)) d.Ast.def_return;
+          ctx.macro_ok := false;
+          if is_macro then Hashtbl.replace ctx.macro_names d.Ast.def_name ();
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
           reserved_name ctx c.Ast.class_span "class" c.Ast.class_name;
@@ -766,6 +829,8 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       field_types = Hashtbl.create 0;
       pgroups = Hashtbl.create 0;
       program_checked = false;
+      macro_ok = ref false;
+      macro_names = Hashtbl.create 4;
       target = "c";
     }
   in
@@ -860,6 +925,10 @@ let empty_env =
         ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
         ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
+        (* The macro namespace (design/macros.md): the member calls check
+           as Unknown like every builtin's do; the E4301 hook on `Ident`
+           confines references to the compile-time window. *)
+        ("Syntax", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
         ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
@@ -1670,6 +1739,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                  "the var `%s` cannot be captured by a block that can outlive \
                   its own; use a const or a Box"
                  name);
+          (* The macro namespace binds only inside a macro body: outside
+             the compile-time window, a reference is a spelling error. *)
+          if name = "Syntax" && not !(ctx.macro_ok) then
+            report ctx span "E4301"
+              "`Syntax` is a compile-time namespace — it is named only inside \
+               a `// #macro` def";
           info.vtype
       | None -> (
           match normalize_module ctx [ name ] with
@@ -2017,6 +2092,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
   | Ast.Do operand ->
       ignore (check_expr ctx env operand);
       Pid
+  | Ast.Quote q ->
+      (* compile-time only: the template carries placeholder identifiers
+         and is checked where it splices, never here *)
+      if not !(ctx.macro_ok) then
+        report ctx span "E4301"
+          "`quote` is compile-time — it is written only inside a `// #macro` \
+           def";
+      List.iter (fun (_, he) -> ignore (check_expr ctx env he)) q.Ast.holes;
+      SyntaxType
   | Ast.Call (callee, args) -> (
       match callee.Ast.desc with
       | Ast.Member (recv, mname) ->
@@ -3617,11 +3701,21 @@ and always_returns ctx (s : Ast.stmt) : bool =
   | _ -> false
 
 let signature_of_def ctx (d : Ast.fun_def) : t =
-  FuncType
-    ( List.map
-        (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
-        d.Ast.def_params,
-      match d.Ast.def_return with Some r -> decl_to_type ctx r | None -> Void )
+  (* a macro's signature spells `Syntax`, so the compile-time window opens
+     for its own resolution *)
+  let was = !(ctx.macro_ok) in
+  ctx.macro_ok := Hashtbl.mem ctx.macro_names d.Ast.def_name;
+  let t =
+    FuncType
+      ( List.map
+          (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
+          d.Ast.def_params,
+        match d.Ast.def_return with
+        | Some r -> decl_to_type ctx r
+        | None -> Void )
+  in
+  ctx.macro_ok := was;
+  t
 
 (* Signature checks: the body runs under the declared parameter types with
    the declared return type as the target; `init` is exempt (it returns
@@ -3699,6 +3793,42 @@ let check_class ctx env (c : Ast.class_def) : unit =
 
 (* Checks the statement items of a program; declarations register into the
    environment in source order. *)
+(* A macro application's compile-time arguments: arity against the macro's
+   leading parameters, and each argument's type against the parameter's —
+   checked in the builtins-only environment the expansion evaluates them
+   in, so a name the compile-time profile cannot see fails here with the
+   same answer. A macro the shape rule already rejected is skipped, to
+   keep one error per cause. *)
+let check_directive_args ctx (item : Ast.item) : unit =
+  List.iter
+    (fun d ->
+      match d.Ast.directive_desc with
+      | Ast.Role_macro -> ()
+      | Ast.Apply_macro (name, args) -> (
+          match Hashtbl.find_opt ctx.funcs name with
+          | Some m
+            when Hashtbl.mem ctx.macro_names name
+                 && List.length m.Ast.def_params >= 1 ->
+              let leading = List.rev (List.tl (List.rev m.Ast.def_params)) in
+              if List.length args <> List.length leading then
+                report ctx d.Ast.directive_span "E4306"
+                  (Printf.sprintf
+                     "the macro `@%s` takes %d compile-time argument(s), got %d"
+                     name (List.length leading) (List.length args))
+              else
+                let env = base_env ctx.target in
+                List.iter2
+                  (fun p a ->
+                    let want = decl_to_type ctx p.Ast.param_type in
+                    let got = check_expr ctx env a in
+                    if not (conforms ctx got want) then
+                      report ctx a.Ast.span "E4307"
+                        (Printf.sprintf "`@%s` expects `%s` here, got `%s`" name
+                           (to_string want) (to_string got)))
+                  leading args
+          | _ -> ()))
+    item.Ast.directives
+
 let check_items ctx (items : Ast.item list) : unit =
   (* Every def's signature binds before any body is checked: closures
      resolve names at call time, so a forward reference works at runtime
@@ -3735,6 +3865,7 @@ let check_items ctx (items : Ast.item list) : unit =
   ignore
     (List.fold_left
        (fun env item ->
+         check_directive_args ctx item;
          match item.Ast.item_desc with
          | Ast.Item_require name ->
              (* the short name `emo` is the protocol registry's — a
@@ -3754,7 +3885,14 @@ let check_items ctx (items : Ast.item list) : unit =
              env
          | Ast.Item_stmt s -> check_stmt ctx env s
          | Ast.Item_def d ->
+             (* the compile-time window opens for a macro's own body *)
+             let was = !(ctx.macro_ok) in
+             ctx.macro_ok :=
+               List.exists
+                 (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+                 item.Ast.directives;
              check_fun_def ctx env d;
+             ctx.macro_ok := was;
              env
          | Ast.Item_class c ->
              check_class ctx env c;
@@ -3872,6 +4010,8 @@ let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
     field_types = tables.pfield_types;
     pgroups = tables.pgroups;
     program_checked = false;
+    macro_ok = ref false;
+    macro_names = Hashtbl.create 4;
     target = "c";
   }
 
@@ -4153,6 +4293,8 @@ let check_module_typed ~(modules : string list list)
         | Some p -> Hashtbl.copy p.pgroups
         | None -> Hashtbl.create 0);
       program_checked = Option.is_some program;
+      macro_ok = ref false;
+      macro_names = Hashtbl.create 4;
       target;
     }
   in
@@ -4179,6 +4321,103 @@ let check_module ~(modules : string list list)
   in
   (diagnostics, refs, requires)
 
+(* The expansion-time gate (design/macros.md): before a macro body ever
+   runs, the macro domain checks — the `#macro` defs' shape and bodies
+   (quote holes included), and every application's compile-time arguments
+   against the macro's declared leading parameters. The *rest* of the
+   module is deliberately not checked here: a macro application may grow
+   the declaration surface (a derived method the raw class does not
+   declare), so full checking belongs to the expanded module, not the raw
+   one. Application carriers ride as hollow shells — signatures and
+   directives intact, bodies emptied — so the argument checks see the
+   macro table without re-checking the call sites the expansion will
+   rewrite. *)
+let is_macro_item (item : Ast.item) : bool =
+  List.exists
+    (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+    item.Ast.directives
+
+let check_macro_domain ~(modules : string list list)
+    ?(packages : string list list = [])
+    ?(package_deps : (string list * string list) list = [])
+    ?(aliases : (string list * string list) list = [])
+    ?(extra_macros : ((string list * string) * Ast.fun_def) list = [])
+    ~(current : string list) (items : Ast.item list) :
+    Emo_support.Diagnostic.t list =
+  let hollow item =
+    match item.Ast.item_desc with
+    | Ast.Item_def d when is_macro_item item -> Some item
+    | Ast.Item_def d ->
+        Some
+          {
+            item with
+            Ast.item_desc =
+              Ast.Item_def { d with Ast.def_body = []; Ast.def_return = None };
+          }
+    | Ast.Item_class c ->
+        Some
+          {
+            item with
+            Ast.item_desc =
+              Ast.Item_class
+                {
+                  c with
+                  Ast.class_init = None;
+                  Ast.class_methods = [];
+                  Ast.class_fields = [];
+                };
+          }
+    | _ -> None
+  in
+  let domain = List.filter_map hollow items in
+  (* the cross-module table rides beside the module's own macros: each
+     outside macro enters the domain as a pseudo def keyed by the dotted
+     spelling the application wrote (`pricing.trace`), carrying the real
+     signature and a `Role_macro` directive — the window that lets its
+     `Syntax` parameter resolve — and a body that returns the `Syntax`
+     name itself, so the hollow-check rules stay satisfied. The argument
+     checks then see the outside macro exactly like a local one. *)
+  let pseudo (mpath, mname) macro =
+    let dotted = String.concat "." (mpath @ [ mname ]) in
+    let syntax_ident =
+      { Ast.span = macro.Ast.def_span; desc = Ast.Ident "Syntax" }
+    in
+    {
+      Ast.item_span = macro.Ast.def_span;
+      item_desc =
+        Ast.Item_def
+          {
+            Ast.def_span = macro.Ast.def_span;
+            def_name = dotted;
+            def_params = macro.Ast.def_params;
+            def_return = macro.Ast.def_return;
+            def_body =
+              [
+                {
+                  Ast.stmt_span = macro.Ast.def_span;
+                  stmt_desc = Ast.Return (Some syntax_ident);
+                };
+              ];
+          };
+      directives =
+        [
+          {
+            Ast.directive_span = macro.Ast.def_span;
+            directive_desc = Ast.Role_macro;
+          };
+        ];
+    }
+  in
+  let domain =
+    domain @ List.map (fun (key, macro) -> pseudo key macro) extra_macros
+  in
+  let diagnostics, _, _ =
+    check_module ~modules ~packages ~package_deps ~aliases ~current domain
+  in
+  diagnostics
+
+(* Checks pre-parsed items without module context. Every diagnostic found,
+   sorted by position. *)
 (* Checks pre-parsed items without module context. Every diagnostic found,
    sorted by position. *)
 let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =

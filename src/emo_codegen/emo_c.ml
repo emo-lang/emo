@@ -239,7 +239,10 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.AtomicType _
   | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
   | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
-  | Emo_check.Bytes ->
+  | Emo_check.Bytes
+  (* a macro's Syntax never reaches a backend — expansion erases the defs
+     before codegen; the arm keeps the match total *)
+  | Emo_check.SyntaxType ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
 

@@ -108,6 +108,7 @@ let rec expr_to_text (e : Ast.expr) : string =
   | Ast.Binary (_, l, _) -> expr_to_text l
   | Ast.If_expr _ -> "if ... { ... } else { ... }"
   | Ast.Do e -> "do " ^ expr_to_text e
+  | Ast.Quote _ -> "quote { ... }"
 
 let collect_items ~(file : string) ~(module_path : string list)
     (items : Ast.item list) : symbol list =

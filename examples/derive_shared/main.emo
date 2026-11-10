@@ -1,0 +1,33 @@
+// The cross-module macro demo (design/macros.md, step 61): `derive_eq`
+// lives in the sibling module `eq_macros.emo` and is applied here with
+// the qualified spelling — `// @eq_macros.derive_eq` — resolving through
+// the program's macro table the way a value reference resolves through
+// the module tree. The compiler runs the macro body from the other file
+// during this module's expansion, splices the generated `eq?` methods,
+// and erases the macro module's defs: the shipped program carries only
+// the classes and their equality, from code written once and shared.
+//
+//   emo run main.emo
+
+// @eq_macros.derive_eq
+class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+// @eq_macros.derive_eq
+class Label {
+  def init(text String) {
+    self.text = text
+  }
+}
+
+const p1 = Point.new(x: 1, y: 2)
+const p2 = Point.new(x: 1, y: 2)
+const p3 = Point.new(x: 9, y: 2)
+println(p1.eq?(p2))
+println(p1.eq?(p3))
+println(Label.new(text: "hi").eq?(Label.new(text: "hi")))
+println(Label.new(text: "hi").eq?(Label.new(text: "bye")))

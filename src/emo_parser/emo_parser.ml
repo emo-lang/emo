@@ -80,6 +80,10 @@ let describe_kind (k : Tok.kind) =
   | Upper_ident s -> Printf.sprintf "type name `%s`" s
   | Keyword k -> "`" ^ keyword_spelling k ^ "` (a reserved word)"
   | Op o -> "`" ^ op_spelling o ^ "`"
+  | Directive d -> (
+      match d.Tok.d_sigil with
+      | '#' -> Printf.sprintf "the directive `#%s`" d.Tok.d_name
+      | _ -> Printf.sprintf "the directive `@%s`" d.Tok.d_name)
   | Eof -> "end of input"
 
 type parser = {
@@ -89,13 +93,22 @@ type parser = {
   mutable suppress_block_sugar : bool;
       (* while parsing an if/case condition, a `{` starts the body, never a
          call's trailing block *)
+  mutable prev_kind : Tok.kind option;
+      (* the token before the current one: the quote template fires only in
+         operand-start positions, and this is how the parser knows the
+         context without lookahead machinery *)
   mutable manifest : bool;
       (* the manifest profile, where a deps entry's name is a string literal
          and so may stand in assignment-target position *)
 }
 
 let peek st = Emo_lexer.Stream.peek st.stream
-let advance st = Emo_lexer.Stream.advance st.stream
+
+let advance st =
+  let t = Emo_lexer.Stream.advance st.stream in
+  st.prev_kind <- Some t.Tok.kind;
+  t
+
 let at_eof st = Emo_lexer.Stream.at_eof st.stream
 let newline_before st = Emo_lexer.Stream.newline_before st.stream
 let kind st = (peek st).Tok.kind
@@ -348,6 +361,31 @@ and parse_primary st =
   | Tok.False ->
       advance st |> ignore;
       node tok.Tok.span (Ast.Bool false)
+  | Tok.Lower_ident "quote" -> (
+      (* `quote { ... }` — the macro template (design/macros.md). A
+         contextual spelling in operand-start positions only: an
+         assignment, an argument list, a binding, or after `return`/`do`/
+         an arrow. Everywhere else — the standard library's JSON escaper,
+         sql's `== quote {` ending an `if` condition — `quote` stays an
+         ordinary name and the brace belongs to the construct around it.
+         The same contextual rule `foreign` takes at item position. *)
+      let brace_ahead () =
+        let next = Emo_lexer.Stream.peek_ahead st.stream 1 in
+        next.Tok.kind = Tok.Op Tok.LBrace && not next.Tok.newline_before
+      in
+      (* every seat is checked against the brace: `return quote(...)` —
+         the standard library's JSON escaper call — is ordinary code, and
+         `return quote { ... }` is the template *)
+      match st.prev_kind with
+      | Some
+          (Tok.Op
+             (Tok.Assign | Tok.LParen | Tok.LBracket | Tok.Comma | Tok.Arrow))
+      | Some (Tok.Keyword (Tok.Return | Tok.Do))
+        when brace_ahead () ->
+          parse_quote st tok
+      | _ ->
+          advance st |> ignore;
+          node tok.Tok.span (Ast.Ident "quote"))
   | Tok.Lower_ident s ->
       advance st |> ignore;
       node tok.Tok.span (Ast.Ident s)
@@ -503,6 +541,99 @@ and parse_registry_call st tok =
         (Ast.Call (callee, rest @ [ { Ast.arg_name = None; arg_value = block } ]))
   | _ -> call
 
+(* The quote's hole placeholders are compiler-owned spellings no source
+   name may borrow; the counter makes them unique across the compilation.
+   `quote { ... }` — the macro author's template (design/macros.md). The
+   body parses as ordinary items over the quote's own token stream, so the
+   tree carries the file's real spans; each `${expr}` hole parses in place
+   and leaves a placeholder identifier standing in the stream, which the
+   evaluator substitutes with the hole's syntax tree at expansion time.
+   Holes splice expression trees — declaration structure (a def's name,
+   parameters, result) stays with the Syntax constructors. *)
+and quote_hole_counter = ref 0
+
+and parse_quote st tok =
+  advance st |> ignore;
+  expect_op st Tok.LBrace "`{`" ~hint:"a quote wraps its template in braces"
+  |> ignore;
+  let holes = ref [] in
+  let frags = ref [] in
+  let depth = ref 0 in
+  let push t = frags := t :: !frags in
+  let rec collect () =
+    match kind st with
+    | Tok.Op Tok.RBrace when !depth = 0 -> advance st |> ignore
+    | Tok.Op Tok.LBrace ->
+        incr depth;
+        push (peek st);
+        advance st |> ignore;
+        collect ()
+    | Tok.Op Tok.RBrace ->
+        decr depth;
+        push (peek st);
+        advance st |> ignore;
+        collect ()
+    | Tok.Interp_open ->
+        let open_span = (advance st).Tok.span in
+        let hole = parse_expr st in
+        if at_op st Tok.RBrace then (
+          let close_tok = advance st in
+          incr quote_hole_counter;
+          let ph = Printf.sprintf "__emo_quote_%d" !quote_hole_counter in
+          holes := (ph, hole) :: !holes;
+          (* the placeholder spans the whole `${...}` hole, so the source
+             rules that read token adjacency — a call's parentheses touching
+             its callee — see the hole as one token *)
+          push
+            {
+              Tok.kind = Tok.Lower_ident ph;
+              span = Emo_support.Span.merge open_span close_tok.Tok.span;
+              newline_before = false;
+            };
+          collect ())
+        else error "E2036" (span st) "a quote hole closes with `}`"
+    | Tok.Eof ->
+        error "E2036" tok.Tok.span "the quote never closes — `}` missing"
+    | _ ->
+        let t = peek st in
+        (match t.Tok.kind with
+        | Tok.Lower_ident n
+          when String.length n >= 12 && String.sub n 0 12 = "__emo_quote_" ->
+            error "E2036" t.Tok.span
+              "this spelling is reserved for the quote's hole placeholders"
+        | _ -> ());
+        push t;
+        advance st |> ignore;
+        collect ()
+  in
+  collect ();
+  let toks =
+    Array.append
+      (Array.of_list (List.rev !frags))
+      [| { Tok.kind = Tok.Eof; span = tok.Tok.span; newline_before = true } |]
+  in
+  let sub = { st with stream = Emo_lexer.Stream.of_array toks } in
+  let items = ref [] in
+  let rec loop_items () =
+    if at_eof sub then ()
+    else
+      match parse_item sub with
+      | item ->
+          items := item :: !items;
+          loop_items ()
+      | exception Error d -> raise (Error d)
+      | exception Emo_lexer.Error d -> raise (Emo_lexer.Error d)
+  in
+  loop_items ();
+  node
+    (merge_span tok.Tok.span tok.Tok.span)
+    (Ast.Quote
+       {
+         quote_span = tok.Tok.span;
+         template = List.rev !items;
+         holes = List.rev !holes;
+       })
+
 and parse_if_expr st =
   (* `if <cond> { <exp> } else { <exp> }` in expression position. The
      whole construct must stay on one line — token lines are monotonic,
@@ -629,6 +760,10 @@ and parse_block st =
 and parse_stmt st =
   let start_span = span st in
   match kind st with
+  | Tok.Directive _ ->
+      error "E2031" (span st)
+        "a directive attaches to a top-level declaration — inside a body it \
+         has no meaning"
   | Tok.Keyword Tok.If ->
       advance st |> ignore;
       st.suppress_block_sugar <- true;
@@ -888,7 +1023,150 @@ and end_statement st =
       error "E2002" (span st) "expressions cannot be juxtaposed"
         ~hint:"start a new statement on the next line"
 
+(* Directives: the reserved `// #`/`// @` comment namespace
+   (design/macros.md). Collected off the front of an item, validated for
+   placement, and attached to the parsed declaration. *)
+
+and directive_desc_of tok =
+  match tok.Tok.kind with
+  | Tok.Directive d -> (
+      match d.Tok.d_sigil with
+      | '#' -> (
+          match d.Tok.d_name with
+          | "macro" -> Ast.Role_macro
+          | other ->
+              error "E2029" tok.Tok.span
+                (Printf.sprintf
+                   "unknown directive role `#%s` — the role namespace is \
+                    compiler-owned and `#macro` is its only member"
+                   other))
+      | _ -> Ast.Apply_macro (d.Tok.d_name, []))
+  | _ -> assert false
+
+and parse_directive_args st d_line =
+  (* The application's argument list: the `(` touches the directive's name
+     on its own line, the arguments are ordinary comma-separated
+     expressions, and the `)` closes on the same line. *)
+  expect_op st Tok.LParen "`(`" |> ignore;
+  let args = ref [] in
+  (if not (at_op st Tok.RParen) then
+     let rec loop () =
+       args := parse_expr st :: !args;
+       if at_op st Tok.Comma then (
+         advance st |> ignore;
+         loop ())
+     in
+     loop ());
+  let same_line tok = tok.Tok.span.Emo_support.Span.line = d_line in
+  (match kind st with
+  | Tok.Op Tok.RParen when same_line (peek st) -> advance st |> ignore
+  | Tok.Op Tok.RParen ->
+      error "E2033" (span st)
+        "a directive's arguments must close on the directive's own line"
+  | _ ->
+      error "E2001" (span st) "expected `)` to close the directive's arguments");
+  (List.rev !args, (peek st).Tok.span.Emo_support.Span.line - 1)
+
+and collect_directives st =
+  let rec go acc last_line =
+    match kind st with
+    | Tok.Directive _ ->
+        let tok = advance st in
+        let line = tok.Tok.span.Emo_support.Span.line in
+        (match acc with
+        | _ :: _ when line <> last_line + 1 ->
+            error "E2030" tok.Tok.span
+              "stacked directives must sit on consecutive lines"
+        | _ -> ());
+        let desc = directive_desc_of tok in
+        let desc, args_end =
+          match (desc, kind st) with
+          | Ast.Role_macro, Tok.Op Tok.LParen ->
+              error "E2035" tok.Tok.span "a role directive takes no arguments"
+          | Ast.Apply_macro (name, []), Tok.Op Tok.LParen -> (
+              match (peek st).Tok.span.Emo_support.Span.line with
+              | l when l = line ->
+                  let args, end_line = parse_directive_args st line in
+                  (Ast.Apply_macro (name, args), end_line)
+              | _ ->
+                  error "E2033" (span st)
+                    "a directive's arguments must sit on the directive's own \
+                     line")
+          | _, _ -> (desc, line)
+        in
+        let directive =
+          { Ast.directive_span = tok.Tok.span; directive_desc = desc }
+        in
+        go (directive :: acc) args_end
+    | _ -> (
+        match acc with
+        | [] -> []
+        | _ ->
+            if at_eof st then
+              error "E2030" (List.hd acc).Ast.directive_span
+                "a directive must attach to a declaration — nothing follows it"
+            else
+              let line = (peek st).Tok.span.Emo_support.Span.line in
+              if line <> last_line + 1 then
+                error "E2030" (List.hd acc).Ast.directive_span
+                  "a directive must sit directly above the declaration it \
+                   attaches to — a blank line leaves it floating"
+              else ();
+              List.rev acc)
+  in
+  go [] 0
+
+and validate_and_attach pending item =
+  if pending = [] then item
+  else
+    let first = List.hd pending in
+    let roles =
+      List.filter (fun d -> d.Ast.directive_desc = Ast.Role_macro) pending
+    in
+    let dup_check () =
+      let rec go seen = function
+        | [] -> ()
+        | d :: rest -> (
+            match d.Ast.directive_desc with
+            | Ast.Apply_macro (name, _) ->
+                if List.mem name seen then
+                  error "E2032" d.Ast.directive_span
+                    (Printf.sprintf "`@%s` is applied twice to this declaration"
+                       name)
+                else go (name :: seen) rest
+            | Ast.Role_macro -> go seen rest)
+      in
+      go [] pending
+    in
+    (match item.Ast.item_desc with
+    | Ast.Item_def _ ->
+        if List.length roles > 1 then
+          error "E2032" (List.nth roles 1).Ast.directive_span
+            "`#macro` is declared twice on this declaration"
+        else ();
+        dup_check ()
+    | Ast.Item_class _ ->
+        (* the derive seat (design/macros.md, step 3): applications
+           transform the class; the role side stays def-only — a macro is
+           a def *)
+        if roles <> [] then
+          error "E2031" (List.hd roles).Ast.directive_span
+            "`#macro` declares a def a macro — a class takes applications only";
+        dup_check ()
+    | Ast.Item_stmt _ ->
+        error "E2031" first.Ast.directive_span
+          "a directive attaches to a declaration, not to a statement"
+    | _ ->
+        error "E2031" first.Ast.directive_span
+          "a directive attaches to a def or class");
+    { item with Ast.directives = pending }
+
 and parse_item st =
+  let pending = collect_directives st in
+  let item = parse_item_decl st in
+  validate_and_attach pending item
+
+and parse_item_decl st =
   let item_span = span st in
   match kind st with
   | Tok.Keyword Tok.Require ->
@@ -909,10 +1187,14 @@ and parse_item st =
             error "E2009" e.Ast.span "`require` expects a package name string"
       in
       end_statement st;
-      { Ast.item_span; item_desc = Ast.Item_require name }
+      { Ast.item_span; item_desc = Ast.Item_require name; directives = [] }
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
-      { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+      {
+        Ast.item_span = d.Ast.def_span;
+        item_desc = Ast.Item_def d;
+        directives = [];
+      }
   | Tok.Lower_ident "foreign" ->
       (* `foreign def name(params) Ret = "symbol"` — the C FFI binding
          surface (step 14). *)
@@ -958,20 +1240,42 @@ and parse_item st =
               foreign_return = Option.get foreign_return;
               foreign_symbol;
             };
+        directives = [];
       }
   | Tok.Keyword Tok.Class ->
       let c = parse_class st in
-      { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
+      {
+        Ast.item_span = c.Ast.class_span;
+        item_desc = Ast.Item_class c;
+        directives = [];
+      }
   | Tok.Keyword Tok.Emo ->
       let g = parse_emo_group st in
-      { Ast.item_span = g.Ast.group_span; item_desc = Ast.Item_emo_group g }
+      {
+        Ast.item_span = g.Ast.group_span;
+        item_desc = Ast.Item_emo_group g;
+        directives = [];
+      }
   | Tok.Keyword Tok.Interface ->
       let i = parse_interface st in
-      { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
+      {
+        Ast.item_span = i.Ast.interface_span;
+        item_desc = Ast.Item_interface i;
+        directives = [];
+      }
   | Tok.Keyword Tok.Enum ->
       let e = parse_enum st in
-      { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
-  | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
+      {
+        Ast.item_span = e.Ast.enum_span;
+        item_desc = Ast.Item_enum e;
+        directives = [];
+      }
+  | _ ->
+      {
+        Ast.item_span;
+        item_desc = Ast.Item_stmt (parse_stmt st);
+        directives = [];
+      }
 
 (* `true` when the current token can begin a type declaration: an
    UpperCamel type name, a module prefix before one (`sync.WaitGroup`),
@@ -1670,6 +1974,7 @@ let parse_expr_source ~file ~source =
       file;
       in_init = false;
       suppress_block_sugar = false;
+      prev_kind = None;
       manifest = false;
     }
   in
@@ -1707,7 +2012,14 @@ let resync st =
 let parse_program_with_diagnostics_in ~manifest ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
   let st =
-    { stream; file; in_init = false; suppress_block_sugar = false; manifest }
+    {
+      stream;
+      file;
+      in_init = false;
+      suppress_block_sugar = false;
+      prev_kind = None;
+      manifest;
+    }
   in
   let items = ref [] in
   let diagnostics = ref [] in

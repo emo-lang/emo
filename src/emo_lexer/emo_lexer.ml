@@ -72,7 +72,14 @@ module Token = struct
     | Upper_ident of string
     | Keyword of keyword
     | Op of op
+    | Directive of directive_raw
     | Eof
+
+  and directive_raw = {
+    d_sigil : char;
+        (* '#' — the role namespace; '@' — the application namespace *)
+    d_name : string;
+  }
 
   type t = {
     kind : kind;
@@ -219,16 +226,108 @@ let lex ~file ~source =
             newline_pending := true;
             bump ();
             go ()
-        | '/' when char_at 1 = Some '/' ->
+        | '/' when char_at 1 = Some '/' -> (
             skipped := true;
-            let rec line () =
-              if eof () then ()
-              else if cur () = '\n' then go ()
-              else (
-                bump ();
-                line ())
+            (* A comment whose first token is `#` or `@` is a directive —
+               the reserved namespace the compiler checks (design/macros.md).
+               Every other comment is prose and stays inert. *)
+            let d_line, d_col, d_off = (!line, !col, !offset) in
+            let rec spaces k =
+              match char_at k with
+              | Some (' ' | '\t') -> spaces (k + 1)
+              | _ -> k
             in
-            line ()
+            let k0 = spaces 2 in
+            match char_at k0 with
+            | Some ('#' | '@') as sigil ->
+                (* A directive may not share its line with other code: the
+                   placement rules (own line, directly above the declaration)
+                   are what make attachment unambiguous. *)
+                (match !toks with
+                | prev :: _ when prev.Token.span.Emo_support.Span.line = d_line
+                  ->
+                    error "E2030"
+                      (span_from d_line d_col d_off)
+                      "a directive must be on its own line"
+                | _ -> ());
+                bump ();
+                bump ();
+                let spaces_before_sigil = k0 - 2 in
+                for _ = 1 to spaces_before_sigil do
+                  bump ()
+                done;
+                bump ();
+                (* the sigil *)
+                let buf = Buffer.create 8 in
+                let rec name_chars () =
+                  if eof () then ()
+                  else if is_ident_letter (cur ()) then (
+                    Buffer.add_char buf (cur ());
+                    bump ();
+                    name_chars ())
+                  else if cur () = '.' then
+                    if
+                      (* a dotted application name (`@mod.macro`) — the dot
+                       must sit between two name segments *)
+                      Buffer.length buf > 0
+                      &&
+                      match char_at 1 with
+                      | Some c -> is_ident_letter c
+                      | None -> false
+                    then (
+                      Buffer.add_char buf '.';
+                      bump ();
+                      name_chars ())
+                    else ()
+                  else ()
+                in
+                name_chars ();
+                let name = Buffer.contents buf in
+                if name = "" then
+                  error "E2033"
+                    (span_from d_line d_col d_off)
+                    "a directive needs a name after its sigil"
+                else ();
+                emit
+                  (Token.Directive
+                     { Token.d_sigil = Option.get sigil; d_name = name })
+                  d_line d_col d_off;
+                if (not (eof ())) && cur () = '(' then
+                  (* The application's argument list lexes as ordinary
+                     tokens right after the directive — the parser consumes
+                     it there, and the spans it produces are the file's own. *)
+                  ()
+                else
+                  (* Only whitespace may follow on the directive's own line. *)
+                  let rec tail_ws () =
+                    if eof () then ()
+                    else
+                      match cur () with
+                      | ' ' | '\t' | '\r' ->
+                          bump ();
+                          tail_ws ()
+                      | '\n' -> go ()
+                      | '(' ->
+                          error "E2034"
+                            (span_from d_line d_col d_off)
+                            "a directive's arguments must touch its name — \
+                             write `@name(...)`"
+                      | _ ->
+                          error "E2033"
+                            (span_from d_line d_col d_off)
+                            "a directive takes only its name and optional \
+                             (arguments)"
+                  in
+                  tail_ws ()
+            | _ ->
+                let rec line () =
+                  if eof () then ()
+                  else if cur () = '\n' then go ()
+                  else (
+                    bump ();
+                    line ())
+                in
+                line ())
         | _ -> ()
     in
     go ();
@@ -349,6 +448,12 @@ let lex ~file ~source =
         | '"' ->
             frames := String_frame (here ()) :: !frames;
             bump ()
+        | '$' when char_at 1 = Some '{' ->
+            (* The quote's hole opener (design/macros.md): `${` outside a
+               string is the quote's splice marker, lexed as the same
+               Interp_open the string form uses. No frame is pushed — the
+               quote parser consumes the hole's closing brace itself. *)
+            double Token.Interp_open
         | '-' ->
             if char_at 1 = Some '>' then double (Token.Op Token.Arrow)
             else single (Token.Op Token.Minus)

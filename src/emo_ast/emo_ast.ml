@@ -26,6 +26,17 @@ and expr_desc =
   | Binary of binop * expr * expr
   | If_expr of { cond : expr; then_expr : expr; else_expr : expr }
   | Do of expr (* do <call> — the operand is always a Call node *)
+  | Quote of quote
+(* quote { ... } — the macro author's template (design/macros.md):
+         compiles only inside a macro body; the template's holes ride as
+         placeholder identifiers and are substituted with the holes' syntax
+         trees when the quote evaluates at expansion time *)
+
+and quote = {
+  quote_span : Emo_support.Span.t;
+  template : item list; (* placeholder identifiers where the holes stood *)
+  holes : (string * expr) list; (* placeholder name → the hole's expression *)
+}
 
 and string_part = Literal_text of string | Part_expr of expr
 and arg = { arg_name : string option; arg_value : expr }
@@ -111,8 +122,30 @@ and literal =
   | L_string of string
   | L_bool of bool
 
-type item = { item_span : Emo_support.Span.t; item_desc : item_desc }
-(** A top-level item: a declaration, or a statement executed in order. *)
+and directive = {
+  directive_span : Emo_support.Span.t;
+  directive_desc : directive_desc;
+}
+(** A directive line — a reserved-first-token comment the compiler checks like
+    any other syntax. The `#` sigil opens the role namespace (compiler-owned:
+    what the declaration below is); the `@` sigil opens the application
+    namespace (a macro invoked on the declaration below). *)
+
+and directive_desc =
+  | Role_macro
+  (* // #macro — the def below is a macro: it runs at compile time and
+     is erased from the program after expansion *)
+  | Apply_macro of string * expr list
+(* // @sigil name(args...) — apply the macro `name` to the declaration
+     below; the arguments are compile-time expressions *)
+
+and item = {
+  item_span : Emo_support.Span.t;
+  item_desc : item_desc;
+  directives : directive list;
+}
+(** A top-level item: a declaration, or a statement executed in order — carrying
+    any `#`/`@` directive lines attached directly above it. *)
 
 and foreign_def = {
   foreign_span : Emo_support.Span.t;

@@ -2803,6 +2803,300 @@ let emoji_login_cmd =
           | code -> exit code)
       $ registry $ expires_in_days)
 
+(* `emo dump`: the declaration surface after expansion (design/macros.md,
+   step 60's visibility). Macros are compile-time equipment — the program
+   a target compiles is the expanded one, and this prints it: each
+   declaration's signature in source-like form, with `--raw` showing the
+   file as parsed instead (directives annotated, macro defs present).
+   A macro application's effect reads by contrast: `emo dump` lists the
+   generated declarations, `emo dump --raw` shows what the macro author
+   wrote. *)
+
+let rec dump_type (t : Emo_ast.type_decl) : string =
+  match t.Emo_ast.type_desc with
+  | Emo_ast.Named_type s -> s
+  | Emo_ast.Applied_type (s, args) ->
+      Printf.sprintf "%s[%s]" s (String.concat ", " (List.map dump_type args))
+  | Emo_ast.Tuple_type ts ->
+      Printf.sprintf "(%s)" (String.concat ", " (List.map dump_type ts))
+
+let dump_params (ps : Emo_ast.param list) : string =
+  String.concat ", "
+    (List.map
+       (fun p ->
+         Printf.sprintf "%s %s" p.Emo_ast.param_name
+           (dump_type p.Emo_ast.param_type))
+       ps)
+
+let dump_ret (r : Emo_ast.type_decl option) : string =
+  match r with Some t -> " " ^ dump_type t | None -> ""
+
+(* The expression rendering stays minimal on purpose: it is the surface
+   a declaration signature needs — literals, names, calls, operators —
+   not a statement formatter. Anything richer prints as `(expr)`. *)
+let rec dump_expr (e : Emo_ast.expr) : string =
+  match e.Emo_ast.desc with
+  | Emo_ast.Int64 n -> Int64.to_string n
+  | Emo_ast.Byte n -> Printf.sprintf "0bL%d" n
+  | Emo_ast.Float f ->
+      if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
+      else string_of_float f
+  | Emo_ast.Char c -> Printf.sprintf "%C" c
+  | Emo_ast.Bool b -> if b then "true" else "false"
+  | Emo_ast.String s -> Printf.sprintf "%S" s
+  | Emo_ast.Interpolated parts ->
+      "\""
+      ^ String.concat ""
+          (List.map
+             (function
+               | Emo_ast.Literal_text t -> t
+               | Emo_ast.Part_expr x -> Printf.sprintf "${%s}" (dump_expr x))
+             parts)
+      ^ "\""
+  | Emo_ast.Ident s -> s
+  | Emo_ast.Type_ident s -> s
+  | Emo_ast.Self -> "self"
+  | Emo_ast.Member (b, n) -> dump_expr b ^ "." ^ n
+  | Emo_ast.Index (b, i) -> Printf.sprintf "%s[%s]" (dump_expr b) (dump_expr i)
+  | Emo_ast.Call (f, args) ->
+      Printf.sprintf "%s(%s)" (dump_expr f)
+        (String.concat ", "
+           (List.map
+              (fun a ->
+                match a.Emo_ast.arg_name with
+                | Some n ->
+                    Printf.sprintf "%s: %s" n (dump_expr a.Emo_ast.arg_value)
+                | None -> dump_expr a.Emo_ast.arg_value)
+              args))
+  | Emo_ast.Tuple es ->
+      Printf.sprintf "(%s)" (String.concat ", " (List.map dump_expr es))
+  | Emo_ast.Array_literal es ->
+      Printf.sprintf "[%s]" (String.concat ", " (List.map dump_expr es))
+  | Emo_ast.Map_literal entries ->
+      Printf.sprintf "{ %s }"
+        (String.concat ", "
+           (List.map
+              (fun (k, v) ->
+                Printf.sprintf "%s: %s" (dump_expr k) (dump_expr v))
+              entries))
+  | Emo_ast.Unary (op, x) ->
+      let spelling =
+        match op with
+        | Emo_ast.Not -> "!"
+        | Emo_ast.Neg -> "-"
+        | Emo_ast.Bit_not -> "~"
+      in
+      spelling ^ dump_expr x
+  | Emo_ast.Binary (op, l, r) ->
+      let spelling =
+        match op with
+        | Emo_ast.Eq -> "=="
+        | Emo_ast.Ne -> "!="
+        | Emo_ast.Lt -> "<"
+        | Emo_ast.Le -> "<="
+        | Emo_ast.Gt -> ">"
+        | Emo_ast.Ge -> ">="
+        | Emo_ast.Add -> "+"
+        | Emo_ast.Sub -> "-"
+        | Emo_ast.Mul -> "*"
+        | Emo_ast.Div -> "/"
+        | Emo_ast.Mod -> "%"
+        | Emo_ast.Bit_and -> "&"
+        | Emo_ast.Bit_or -> "|"
+        | Emo_ast.Bit_xor -> "^"
+        | Emo_ast.Shl -> "<<"
+        | Emo_ast.Shr -> ">>"
+        | Emo_ast.And -> "&&"
+        | Emo_ast.Or -> "||"
+      in
+      Printf.sprintf "%s %s %s" (dump_expr l) spelling (dump_expr r)
+  | Emo_ast.If_expr { cond; then_expr; else_expr } ->
+      Printf.sprintf "if %s { %s } else { %s }" (dump_expr cond)
+        (dump_expr then_expr) (dump_expr else_expr)
+  | Emo_ast.Do x -> Printf.sprintf "do %s" (dump_expr x)
+  | Emo_ast.Quote _ -> "(quote ...)"
+  | Emo_ast.Arrow_block _ -> "(block)"
+
+(* A statement renders on one line, indented under the signature: enough
+   to read a generated wrapper's shape — the cache probe, the forwarding
+   call, the eviction loop — without pretending to be a formatter. *)
+let rec dump_stmt (s : Emo_ast.stmt) : string =
+  match s.Emo_ast.stmt_desc with
+  | Emo_ast.Expr_stmt e -> dump_expr e
+  | Emo_ast.Binding { mutable_; pattern; init } -> (
+      let kw = if mutable_ then "var " else "const " in
+      match pattern.Emo_ast.pattern_desc with
+      | Emo_ast.Pattern_binding name ->
+          Printf.sprintf "%s%s = %s" kw name (dump_expr init)
+      | _ -> Printf.sprintf "%s(pattern) = %s" kw (dump_expr init))
+  | Emo_ast.Assign { target; value } ->
+      Printf.sprintf "%s = %s" (dump_expr target) (dump_expr value)
+  | Emo_ast.Return r -> (
+      match r with
+      | Some e -> Printf.sprintf "return %s" (dump_expr e)
+      | None -> "return")
+  | Emo_ast.Raise e -> Printf.sprintf "raise %s" (dump_expr e)
+  | Emo_ast.If { cond; then_body; else_body } ->
+      Printf.sprintf "if %s { ... }%s" (dump_expr cond)
+        (match else_body with Some _ -> " else { ... }" | None -> "")
+  | Emo_ast.While { cond; _ } ->
+      Printf.sprintf "while %s { ... }" (dump_expr cond)
+  | Emo_ast.For { cond; _ } ->
+      Printf.sprintf "for ...; %s; ... { ... }" (dump_expr cond)
+  | Emo_ast.Case { scrutinee; branches } ->
+      Printf.sprintf "case %s { %d branches }" (dump_expr scrutinee)
+        (List.length branches)
+  | Emo_ast.Break -> "break"
+  | Emo_ast.Continue -> "continue"
+  | Emo_ast.Send { target; message } ->
+      Printf.sprintf "%s <- %s" (dump_expr target) (dump_expr message)
+  | Emo_ast.Receive _ -> "receive { ... }"
+
+let dump_body (body : Emo_ast.stmt list) : string list =
+  match body with
+  | [] -> []
+  | stmts -> ("{" :: List.map (fun s -> "  " ^ dump_stmt s) stmts) @ [ "}" ]
+
+let dump_def (d : Emo_ast.fun_def) : string list =
+  [
+    Printf.sprintf "def %s(%s)%s" d.Emo_ast.def_name
+      (dump_params d.Emo_ast.def_params)
+      (dump_ret d.Emo_ast.def_return);
+  ]
+  @ dump_body d.Emo_ast.def_body
+
+let dump_item (it : Emo_ast.item) : string list =
+  let directive_note =
+    if it.Emo_ast.directives = [] then []
+    else
+      [
+        String.concat ""
+          (List.map
+             (fun d ->
+               match d.Emo_ast.directive_desc with
+               | Emo_ast.Role_macro -> "// #macro\n"
+               | Emo_ast.Apply_macro (name, _) -> Printf.sprintf "// @%s\n" name)
+             it.Emo_ast.directives);
+      ]
+  in
+  let body =
+    match it.Emo_ast.item_desc with
+    | Emo_ast.Item_require name -> [ Printf.sprintf "require \"%s\"" name ]
+    | Emo_ast.Item_def d -> dump_def d
+    | Emo_ast.Item_foreign f ->
+        [
+          Printf.sprintf "foreign def %s(%s)%s = \"%s\"" f.Emo_ast.foreign_name
+            (dump_params f.Emo_ast.foreign_params)
+            (" " ^ dump_type f.Emo_ast.foreign_return)
+            f.Emo_ast.foreign_symbol;
+        ]
+    | Emo_ast.Item_class c ->
+        let fields =
+          match c.Emo_ast.class_init with
+          | Some init ->
+              List.map
+                (fun f -> Printf.sprintf "field %s" f.Emo_ast.field_name)
+                c.Emo_ast.class_fields
+          | None -> []
+        in
+        let methods = List.concat_map dump_def c.Emo_ast.class_methods in
+        let init_line =
+          match c.Emo_ast.class_init with Some d -> dump_def d | None -> []
+        in
+        [ Printf.sprintf "class %s {" c.Emo_ast.class_name ]
+        @ List.map (fun l -> "  " ^ l) (init_line @ fields @ methods)
+        @ [ "}" ]
+    | Emo_ast.Item_interface i ->
+        [ Printf.sprintf "interface %s {" i.Emo_ast.interface_name ]
+        @ List.map
+            (fun s ->
+              Printf.sprintf "  def %s(%s)%s" s.Emo_ast.sig_name
+                (dump_params s.Emo_ast.sig_params)
+                (" " ^ dump_type s.Emo_ast.sig_return))
+            i.Emo_ast.interface_methods
+        @ [ "}" ]
+    | Emo_ast.Item_enum e ->
+        [
+          Printf.sprintf "enum %s { %s }" e.Emo_ast.enum_name
+            (String.concat ", "
+               (List.map
+                  (fun m -> m.Emo_ast.member_name)
+                  e.Emo_ast.enum_members));
+        ]
+    | Emo_ast.Item_emo_group g ->
+        [ Printf.sprintf "emo %s {" g.Emo_ast.group_name ]
+        @ List.concat_map
+            (fun d -> List.map (fun l -> "  " ^ l) (dump_def d))
+            g.Emo_ast.group_defs
+        @ List.map
+            (fun (_, n, e') ->
+              Printf.sprintf "  const %s = %s" n (dump_expr e'))
+            g.Emo_ast.group_consts
+        @ [ "}" ]
+    | Emo_ast.Item_stmt s -> (
+        match s.Emo_ast.stmt_desc with
+        | Emo_ast.Binding { mutable_; pattern; init } -> (
+            let kw = if mutable_ then "var " else "const " in
+            match pattern.Emo_ast.pattern_desc with
+            | Emo_ast.Pattern_binding name ->
+                [ Printf.sprintf "%s%s = %s" kw name (dump_expr init) ]
+            | _ -> [ Printf.sprintf "%s(pattern) = %s" kw (dump_expr init) ])
+        | Emo_ast.Expr_stmt e -> [ dump_expr e ]
+        | _ -> [ "(statement)" ])
+  in
+  directive_note @ body
+
+let dump_items (items : Emo_ast.item list) : string =
+  String.concat "\n" (List.concat_map (fun it -> dump_item it @ [ "" ]) items)
+
+(* The project entry: dump rides the same parse cache the compiler does,
+   so what prints is exactly what the backends and the evaluator consume —
+   expansion included, macro defs erased. `--raw` parses without the
+   project layer (a lone-file dump of the unexpanded source). *)
+let dump_cmd =
+  let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
+  let raw =
+    Arg.(
+      value & flag
+      & info [ "raw" ] ~doc:"dump the file as parsed, before expansion")
+  in
+  Cmd.v
+    (Cmd.info "dump"
+       ~doc:
+         "Print a module's declaration surface — expanded, as the targets \
+          compile it.")
+    Term.(
+      const (fun file raw ->
+          let items =
+            match raw with
+            | true -> (
+                match
+                  Emo_parser.parse_program_with_diagnostics ~file
+                    ~source:(Emo_project.read_file file)
+                with
+                | items, [] -> items
+                | _, d :: _ ->
+                    prerr_endline
+                      (Emo_support.Render.render_all ~color:false ~limit:None
+                         ~source:(Sys.getcwd ()) [ d ]);
+                    exit 65
+                | exception Emo_lexer.Error d ->
+                    prerr_endline
+                      (Emo_support.Render.render_all ~color:false ~limit:None
+                         ~source:(Sys.getcwd ()) [ d ]);
+                    exit 65)
+            | false ->
+                let entry = Filename.concat (Sys.getcwd ()) file in
+                let p, (_manifest, _dir) = Emo_project.prepare () in
+                ignore (Emo_project.entry_module_in_project p entry);
+                ignore p;
+                Emo_project.parse_cached p entry
+          in
+          print_string (dump_items items);
+          print_newline ();
+          Cmd.Exit.ok)
+      $ file $ raw)
+
 let emoji =
   Cmd.group
     (Cmd.info "emoji"
@@ -2816,6 +3110,7 @@ let cmd =
       run;
       repl;
       check;
+      dump_cmd;
       test_cmd;
       build;
       deps;

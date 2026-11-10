@@ -48,6 +48,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M21 — The crypto package | 55 | The portable primitives layer as one pure-Emo package, `crypto` — SHA-2, SHA-3 and SHAKE, HMAC, HKDF and PBKDF2, the constant-time comparison, ChaCha20-Poly1305, AES with CTR, CBC, and GCM, Ed25519 and X25519, SHA-1 and MD5 behind `crypto.legacy` — byte-identical on all five hosted targets with every golden a diff against the RFC and NIST vectors and Go's own answers; the `rand` package beside it binding the entropy source per target and carrying the deterministic HMAC-DRBG stream; the error split per the house rule, Bytes as the carrier, and the docs stating constant time as a source-level discipline with each target's honest status. RSA waits on a bignum foundation; TLS, x509, and the post-quantum set stay out. |
 | M22 — File IO on `wasm` | 56 | The wasm target's host boundary grows the file-system syscalls and the canonical host rides the compiler: `file`, `os` (the fd/directory half — the process half refuses at the call naming the capability), and `bufio` resolve and answer byte-for-byte on `wasm`; `emo run --target wasm` runs an artifact under Node with the bundled host; `emo build --target wasm` still emits exactly `.wasm` + `.wat`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M23 — The httpd server | 57 | The server half of HTTP moves out of `http` into `httpd` as a pure-Emo HTTP/1.1 server over `net` — a request in, a `Response` value out, one process per connection, keep-alive, chunked request bodies, `100-continue`, pattern routing with 405+`Allow` and path-cleanup redirects, per-request timeouts and size limits, graceful shutdown — byte-identical on the three hosted targets it declares, the client package slimmed back, every existing golden green (`CHECK.md`). |
+| M24 — Macros | 58–61 | Compile-time macros as the one metaprogramming mechanism: the reserved `// #macro` / `// @name` directive namespace (unknown names refusing), the macro model — scalar parameters plus the trailing `Syntax` tree, checked before it runs, deterministic by construction (every effect and host-touching builtin refusing), erased after expansion, and the spliced code checked with the module — the quote surface and compile-time application arguments checked statically, derivation applied to classes (`Syntax.fields` / `with_methods`), and cross-module macros through the program's macro table with qualified applications and local shadowing — four pilots (`trace`, `memoize`, `derive_eq`, `derive_shared`) byte-identical across the interpreter and the c and TypeScript binaries, expansion riding before codegen so every target inherits by construction; runtime `eval`, open classes, and `method_missing` rejected permanently (`CHECK.md`). |
 
 ## Design gates
 
@@ -468,7 +469,6 @@ Close-out: `Int64` and `Byte` ride the integer representations each target alrea
 - [x] **T21.18** — The corpus sweep with nothing pending, the smoke subset, `runtime/wasm/README.md`, close-out.
 
 Close-out: the sweep left nothing behind — `wasm_spec` reports 3456 claimed, 0 pending, 0 failed, and the smoke subset (forty cases, every decoder and validator family) rides the default `dune test`. Getting there flushed out bugs older than the validator: br_table's immediate never consumed its default index (present since T21.12 — the leaked byte parsed as an opcode and desynced whole bodies), and the final bulk-memory opcode numbering replaced the pre-merge proposal's. The validator's frame stack carries a logical top (rebuilding per pop was exponential on nested blocks) and pushes land only after truncating to the live prefix; block parameters live inside their frame (push_ctrl semantics), and unreachable frames keep pushed values concrete so `type-num-vs-num` cases still reject. One interpreter limit shaped the code: a method call on a recursive result (`f(n-1).append(x)`) spins past roughly 25 nesting levels, so every array-returning recursion is a tail-accumulator loop — recorded as language pressure. The datacount rule splits by phase: with a data section present, bulk-memory use without a datacount is malformed; without one, the validator's unknown-segment check makes it invalid — both pinned by the corpus. The declared-reference set (globals, exports, element segments — not the start function) types `ref.func`. **Step 21 acceptance met.**
-
 
 The boundaries that keep the in-repo runtime from becoming an in-repo language — the package edge, the spec data off the default test path, and the condition for the runtime leaving this repository — are in the plan file, with the surface pressure the runtime runs into and the sizes that make the list workable in spare sittings.
 
@@ -3466,3 +3466,218 @@ carries no server half; `dune runtest` green.
       the named flake family again — so its c golden joins the
       deferral and its interpreter leg carries the coverage; M23
       complete.
+## M24 — Macros
+
+The metaprogramming mechanism lands as one thing: compile-time macros
+behind the reserved directive namespace — `// #macro` declares, `//
+@name` applies — with the body checked before it ever runs and
+deterministic by construction (every effect and host-touching builtin
+refusing), applications expanding between parse and check so every
+target inherits by construction, the macro defs erased after expansion,
+and the spliced code checked with the module. Runtime `eval`, open
+classes, and `method_missing` are rejected permanently as a language
+mechanism (`CHECK.md` holds the decision and the rejected
+alternatives); `design/macros.md` is the working design.
+
+### Step 58 — Compile-time macros · `design/macros.md`
+
+**Prereq:** Steps 9 (the checker), 21 (the eval's builtins). **Done
+when:** `examples/trace_demo` runs byte-for-byte on every target;
+`// #macro` / `// @trace` parse, expand, and check; the strictness
+battery (E2029–E2035, E3030, E4300–E4310) refuses every wrong spelling
+loudly; `dune runtest` green.
+
+- [x] **T58.1** — The directive layer: a `//` comment whose first token
+      is `#` or `@` is not a comment — the lexer captures the sigil,
+      name, and raw argument text as a directive token; the parser
+      collects, validates placement (own line, consecutive stacking,
+      directly above the declaration, nothing inside a body or trailing
+      the file), and attaches the directives to the item; the LSP
+      highlights the lines as macros. Unknown role names, blank-line
+      floats, in-body directives, duplicates, same-line tails, and
+      application arguments each refuse with their own code
+      (E2029/E2030/E2031/E2032/E2033/E2035).
+- [x] **T58.2** — The macro model: `Syntax` is a reserved compile-time
+      type, legal only inside a `// #macro` def's signature and body
+      (the checker's compile-time window opens for a macro's own
+      collection, signature resolution, and body); the shape is exactly
+      `(f Syntax) Syntax` (E4302); a macro body typechecks like any def
+      before it ever runs; after expansion the macro defs are erased.
+      `@name` resolves to a same-module macro or refuses by name
+      (E4300), a macro takes no applications (E4310), and the splice
+      must produce declarations (E4303).
+- [x] **T58.3** — The compile-time profile: the macro body runs on the
+      compiler's own interpreter with every effect refused, every
+      host-touching builtin refused (`rand_bytes` through both the
+      builtin and the runtime-impl paths), the output hook poisoned,
+      and a step budget — determinism by construction, no effect
+      system needed (E3030).
+- [x] **T58.4** — The expansion pass rides the parse cache: every
+      consumer — check, the backends, the evaluator — sees the expanded
+      declarations; the precheck is the original module's full check,
+      so files without directives take the fast path untouched and a
+      macro-using module is checked before and after the splice; the
+      bare interpreter (`Emo_eval.run_program`) expands with a
+      lone-file precheck. Applications apply nearest-first, feeding
+      each macro the previous application's result.
+- [x] **T58.5** — The `Syntax` API: readers (`name`, `params`,
+      `param_name`, `result`) and constructors (`rename`, `new_def`,
+      `seq`, `ident`, `lit_string`, `interp`, `call`, `call_stmt`,
+      `expr_stmt`, `const_stmt`, `return_stmt`, `gensym`) as builtin
+      members of the `Syntax` group, bound only inside a running macro
+      body; `Syntax.gensym` hands out collision-free names.
+- [x] **T58.6** — The pilot: `examples/trace_demo` — a `trace` macro
+      that moves the original def to a hidden name and makes the
+      visible name a wrapper logging every call's arguments and answer;
+      the forwarding call is built from the wrapped declaration's own
+      parameter trees, so it cannot drift; the generated wrapper is
+      checked with the module, which is where a wrong-arity wrapper
+      dies. Design decisions and the rejected alternatives (runtime
+      eval, the `by` keyword, value decorators as a separate mechanism)
+      live in `design/macros.md`.
+
+### Step 59 — Macro applications with arguments, and the quote surface · `design/macros.md`
+
+**Prereq:** Step 58 (the directive layer, the expansion pipeline, the
+compile-time profile). **Done when:** `examples/memoize_demo` runs
+byte-for-byte on the interpreter and the c and TypeScript binaries;
+`// @memoize(2)` checks its argument against the macro's declared
+parameter and evaluates it at expansion; `quote { ... }` lays a wrapper
+body out as ordinary code with `${...}` holes; the refusal paths
+(E2033–E2036, E4306–E4309) refuse loudly; `dune runtest` green.
+
+- [x] **T59.1** — Application arguments: the directive's argument list
+      lexes as ordinary tokens after the name (the raw-text capture
+      retired), so the args carry the file's real spans; the parentheses
+      must touch the name (E2034) and close on the directive's own line
+      (E2033); role directives take none (E2035); a macro's signature
+      generalizes to leading scalar compile-time parameters plus the
+      trailing `Syntax` tree parameter (E4302); arity (E4306) and
+      per-argument type conformance (E4307) check statically in the
+      builtins-only environment the expansion evaluates them in, and the
+      values bind to the leading parameters inside the protected profile.
+- [x] **T59.2** — The quote surface: `quote { ... }` is a contextual
+      spelling in expression position — operand-start seats (`=`, `(`,
+      `,`, `[`, `return`, `do`, `->`) with a same-line brace; every other
+      `quote` stays an ordinary name. The rule was corpus-driven twice:
+      the stdlib's JSON escaper is called as `quote(self.value)` (a
+      keyword broke it) and sql's `== quote {` ends an if condition
+      (brace-follow alone broke it); `foreign` is the precedent —
+      parseable only inside a macro body (E4301
+      elsewhere); the body parses as ordinary items over the quote's own
+      token stream — real spans, no error recovery inside — with each
+      `${expr}` hole parsed in place and a compiler-owned placeholder
+      identifier (spelling reserved, E2036) standing in the stream; the
+      placeholder spans the whole hole so the adjacency rules read it as
+      one token; the evaluator substitutes each hole's tree for its
+      placeholder, and a hole producing a non-expression tree is E4309.
+- [x] **T59.3** — Generated runtime state: `Syntax.const_item` +
+      `Syntax.empty_map` splice a module-level `Map` constant beside the
+      wrapper; `Syntax.new_def` takes a whole quote as its body;
+      `Syntax.seq` flattens, so nested sequences concatenate; `lit_int` /
+      `lit_bool` / `lit_float` lift compile-time values into literal
+      trees; a `raise` inside a macro body surfaces as the expansion's
+      compile error E4308 carrying the Exception's message.
+- [x] **T59.4** — The pilot: `examples/memoize_demo` — `@memoize(2)`
+      wraps a def that prints on every actual evaluation; the output
+      shows a cache hit skipping the computation, the table reaching the
+      limit and dropping, and the evicted arguments computing again —
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output.
+
+### Step 60 — `@derive` on classes · `design/macros.md`
+
+**Prereq:** Step 59 (application arguments, the quote surface). **Done
+when:** `examples/derive_eq_demo` runs byte-for-byte on the interpreter
+and the c and TypeScript binaries; `// @derive_eq` above a `class`
+generates the equality method from the field list; the raw module no
+longer gates the expansion (the macro-domain check replaces the
+whole-module precheck); the refusal paths stay loud; `dune runtest`
+green.
+
+- [x] **T60.1** — The class seat: the parser accepts applications above
+      `class` items (roles stay def-only, E2031 names the rule; the
+      duplicate rules E2032 apply to classes; other items still refuse),
+      and the expansion passes the class tree through unchanged
+      machinery — `Sx_item (Item_class _)` in, the macro's transformed
+      class out.
+- [x] **T60.2** — The class API: `Syntax.fields` /
+      `Syntax.field_name` read the field list (names; the AST carries no
+      field types — recorded as the named gap for a JSON derivation),
+      `Syntax.with_methods` appends generated defs as ordinary methods,
+      `Syntax.name` answers a class or def tree; the body constructors —
+      `new_param`, `named_type`, `self_expr`, `bin_eq`, `bin_and`,
+      `member` — plus the `Sx_field` tree variant.
+- [x] **T60.3** — The precheck narrowed to the macro domain: the
+      whole-raw-module gate of step 58 could not survive derive, because
+      a call site naming a generated method fails against the raw class
+      before the macro ever runs (found live: the first derive smoke
+      died exactly there, at the runtime NoMethodError the raw-module
+      precheck had been masking). `Emo_check.check_macro_domain` checks
+      the `#macro` defs' shape and bodies plus every application's
+      compile-time arguments — application carriers ride as hollow
+      shells (bodies emptied, return dropped to Void so a hollow shell
+      cannot trip the must-return rule) — and the expanded module's full
+      check is where a call site naming a method the derivation does not
+      produce dies. One constraint lands with it: a macro body is
+      self-contained (its parameters, `Syntax`, the builtins).
+- [x] **T60.4** — The pilot: `examples/derive_eq_demo` — `@derive_eq`
+      generates an `eq?` method comparing every field pairwise (`self`
+      against `other`, chained with `&&`, a fieldless class deriving the
+      constant `true`), on two classes (an Int64 pair and a String);
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output.
+
+### Step 61 — Cross-module macros · `design/macros.md`
+
+**Prereq:** Step 60 (the class seat, the macro-domain gate). **Done
+when:** `examples/derive_shared` runs byte-for-byte on the interpreter
+and the c and TypeScript binaries — `derive_eq` declared once in the
+sibling `eq_macros.emo`, applied qualified (`// @eq_macros.derive_eq`)
+to two classes in `main.emo`; bare applications still resolve locally
+and shadow; cross-module arity/type checks refuse loudly; `dune
+runtest` green.
+
+- [x] **T61.1** — The program's macro table: one raw scan over every
+      registered file (no expansion — the scan cannot recurse through
+      the parse cache), collecting each `// #macro` def under its
+      (module path, macro name), memoized on the project record.
+- [x] **T61.2** — Qualified applications: the directive lexer accepts
+      dotted names (`@mod.macro`, any path depth, dots only between
+      segments), and the expansion resolves them against the macro
+      table — the body runs in the applying module's expansion, and each
+      module's own expansion erases its own macro defs. Bare names
+      resolve locally only, and a same-name local macro shadows the
+      outside one (verified live: a local identity macro renaming the
+      wrapped def answers a call the outside version would leave
+      undefined). E4300 names the module when the path or the macro
+      under it is missing.
+- [x] **T61.3** — Cross-module argument checks: the macro-domain gate
+      registers each outside macro as a pseudo def keyed by the dotted
+      spelling — the real signature, a `Role_macro` directive (the
+      `Syntax` window), and a body returning the `Syntax` name — so the
+      argument checks see an outside macro exactly like a local one
+      (E4306/E4307 verified across modules).
+- [x] **T61.4** — The pilot: `examples/derive_shared` — one derivation
+      in a sibling module, two classes applying it qualified,
+      byte-identical across the interpreter, the c binary, and the
+      TypeScript output. Package-boundary macros (a require-scoped
+      library macro with the deps visibility rule) stay the named
+      follow-up.
+- [x] **T61.5** — Every target, verified: the four pilots join the
+      wasm, beam, and riscv64 golden lists and pass byte-for-byte —
+      `memoize_demo` waits on `Map` for riscv64 (the refusal is live,
+      named in the list) — and the verification caught a real bug:
+      every node a macro fabricates carried the macro body's span, so
+      the span-keyed type tables had two decorated classes overwrite
+      each other's entries (derive_eq's generated `self.x` typed as the
+      second class on wasm and beam, invisible on the interpreter/c/ts
+      where spans do not key anything). The fix is synthetic uniqueness:
+      constructor-built spans move into a reserved offset range far past
+      any real file, with line/col kept pointing at the constructor call.
+- [x] **T61.6** — `emo dump`: the declaration surface after expansion,
+      printed in source-like form — signatures, one line per statement —
+      so a macro application's effect reads directly (`emo dump` lists
+      the generated declarations; `emo dump --raw` shows what the macro
+      author wrote, directives annotated). The macro model's visibility
+      promise, kept: nothing a macro does is invisible.

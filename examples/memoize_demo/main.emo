@@ -1,0 +1,62 @@
+// Step two of the macro ladder (design/macros.md): an application with a
+// compile-time argument, the quote surface, and generated runtime state.
+// `@memoize(2)` hands the literal `2` to the macro's leading `limit`
+// parameter — checked against the declared type at the application site
+// and evaluated at expansion time — and the macro splices three
+// declarations in the wrapped one's place: a hidden original, a private
+// `Map` constant (the generated runtime state), and a wrapper that
+// consults the cache before computing. The quote lays the wrapper's body
+// out as ordinary code, with `${...}` holes splicing the trees the macro
+// computed — the cache's name, the parameter's name, the hidden callee,
+// and the limit as a literal. A hit never recomputes; when the table
+// reaches the limit it drops and starts over, so an evicted argument
+// computes again. `slow_double` prints on every actual evaluation, which
+// is what makes the cache's behavior visible in the output.
+//
+//   emo run main.emo
+
+// #macro
+def memoize(limit Int64, f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const params = Syntax.params(f)
+  const ret = Syntax.result(f)
+  const hidden_name = Syntax.gensym(name)
+  const cache_name = Syntax.gensym(name + "_cache")
+  const original = Syntax.rename(f, hidden_name)
+  const pn = Syntax.param_name(params[0])
+  const cache = Syntax.ident(cache_name)
+  const arg = Syntax.ident(pn)
+  const wrapper = Syntax.new_def(name, params, ret, quote {
+    if ${cache}.has(${arg}) {
+      return ${cache}.get(${arg})
+    }
+    const r = ${Syntax.ident(hidden_name)}(${arg})
+    if ${cache}.length() >= ${Syntax.lit_int(limit)} {
+      const ks = ${cache}.keys()
+      var i = 0
+      while i < ks.length() {
+        ${cache}.remove(ks[i])
+        i = i + 1
+      }
+    }
+    ${cache}.set(${arg}, r)
+    return r
+  })
+  return Syntax.seq(original, Syntax.seq(
+    Syntax.const_item(cache_name, Syntax.empty_map()),
+    wrapper
+  ))
+}
+
+// @memoize(2)
+def slow_double(n Int64) Int64 {
+  println("computing double(${n})")
+  return n * 2
+}
+
+println(slow_double(4))
+println(slow_double(4))
+println(slow_double(5))
+println(slow_double(6))
+println(slow_double(4))
+println(slow_double(5))
