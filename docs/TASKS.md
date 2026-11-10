@@ -3466,6 +3466,19 @@ carries no server half; `dune runtest` green.
       the named flake family again — so its c golden joins the
       deferral and its interpreter leg carries the coverage; M23
       complete.
+## M24 — Macros
+
+The metaprogramming mechanism lands as one thing: compile-time macros
+behind the reserved directive namespace — `// #macro` declares, `//
+@name` applies — with the body checked before it ever runs and
+deterministic by construction (every effect and host-touching builtin
+refusing), applications expanding between parse and check so every
+target inherits by construction, the macro defs erased after expansion,
+and the spliced code checked with the module. Runtime `eval`, open
+classes, and `method_missing` are rejected permanently as a language
+mechanism (`CHECK.md` holds the decision and the rejected
+alternatives); `design/macros.md` is the working design.
+
 ### Step 58 — Compile-time macros · `design/macros.md`
 
 **Prereq:** Steps 9 (the checker), 21 (the eval's builtins). **Done
