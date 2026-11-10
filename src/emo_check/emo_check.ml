@@ -539,22 +539,41 @@ let collect ctx (items : Ast.item list) : unit =
               item.Ast.directives
           in
           if is_macro then begin
-            (* The macro shape: exactly `(f Syntax) Syntax`
-               (design/macros.md). *)
+            (* The macro shape (design/macros.md): zero or more leading
+               compile-time scalar parameters, exactly one trailing `Syntax`
+               parameter (the decorated tree), and a `Syntax` result. *)
             let syntax_type = function
               | { Ast.type_desc = Ast.Named_type "Syntax"; _ } -> true
               | _ -> false
             in
-            let shaped =
-              match (d.Ast.def_params, d.Ast.def_return) with
-              | [ p ], Some rt -> syntax_type p.Ast.param_type && syntax_type rt
+            let scalar_type = function
+              | {
+                  Ast.type_desc =
+                    Ast.Named_type
+                      ("Int64" | "String" | "Bool" | "Float64" | "Byte" | "Char");
+                  _;
+                } ->
+                  true
               | _ -> false
+            in
+            let rec shaped = function
+              | [] -> false
+              | [ p ] -> syntax_type p.Ast.param_type
+              | p :: rest -> scalar_type p.Ast.param_type && shaped rest
+            in
+            let shaped =
+              shaped d.Ast.def_params
+              &&
+              match d.Ast.def_return with
+              | Some rt -> syntax_type rt
+              | None -> false
             in
             if not shaped then
               report ctx d.Ast.def_span "E4302"
                 (Printf.sprintf
-                   "the macro `%s` must take exactly one `Syntax` parameter \
-                    and return `Syntax`"
+                   "the macro `%s` must take scalar compile-time parameters \
+                    followed by exactly one `Syntax` parameter, and return \
+                    `Syntax`"
                    d.Ast.def_name)
           end;
           ctx.macro_ok := is_macro;
@@ -2073,6 +2092,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
   | Ast.Do operand ->
       ignore (check_expr ctx env operand);
       Pid
+  | Ast.Quote q ->
+      (* compile-time only: the template carries placeholder identifiers
+         and is checked where it splices, never here *)
+      if not !(ctx.macro_ok) then
+        report ctx span "E4301"
+          "`quote` is compile-time — it is written only inside a `// #macro` \
+           def";
+      List.iter (fun (_, he) -> ignore (check_expr ctx env he)) q.Ast.holes;
+      SyntaxType
   | Ast.Call (callee, args) -> (
       match callee.Ast.desc with
       | Ast.Member (recv, mname) ->
@@ -3765,6 +3793,42 @@ let check_class ctx env (c : Ast.class_def) : unit =
 
 (* Checks the statement items of a program; declarations register into the
    environment in source order. *)
+(* A macro application's compile-time arguments: arity against the macro's
+   leading parameters, and each argument's type against the parameter's —
+   checked in the builtins-only environment the expansion evaluates them
+   in, so a name the compile-time profile cannot see fails here with the
+   same answer. A macro the shape rule already rejected is skipped, to
+   keep one error per cause. *)
+let check_directive_args ctx (item : Ast.item) : unit =
+  List.iter
+    (fun d ->
+      match d.Ast.directive_desc with
+      | Ast.Role_macro -> ()
+      | Ast.Apply_macro (name, args) -> (
+          match Hashtbl.find_opt ctx.funcs name with
+          | Some m
+            when Hashtbl.mem ctx.macro_names name
+                 && List.length m.Ast.def_params >= 1 ->
+              let leading = List.rev (List.tl (List.rev m.Ast.def_params)) in
+              if List.length args <> List.length leading then
+                report ctx d.Ast.directive_span "E4306"
+                  (Printf.sprintf
+                     "the macro `@%s` takes %d compile-time argument(s), got %d"
+                     name (List.length leading) (List.length args))
+              else
+                let env = base_env ctx.target in
+                List.iter2
+                  (fun p a ->
+                    let want = decl_to_type ctx p.Ast.param_type in
+                    let got = check_expr ctx env a in
+                    if not (conforms ctx got want) then
+                      report ctx a.Ast.span "E4307"
+                        (Printf.sprintf "`@%s` expects `%s` here, got `%s`" name
+                           (to_string want) (to_string got)))
+                  leading args
+          | _ -> ()))
+    item.Ast.directives
+
 let check_items ctx (items : Ast.item list) : unit =
   (* Every def's signature binds before any body is checked: closures
      resolve names at call time, so a forward reference works at runtime
@@ -3801,6 +3865,7 @@ let check_items ctx (items : Ast.item list) : unit =
   ignore
     (List.fold_left
        (fun env item ->
+         check_directive_args ctx item;
          match item.Ast.item_desc with
          | Ast.Item_require name ->
              (* the short name `emo` is the protocol registry's — a

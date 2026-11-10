@@ -26,6 +26,17 @@ and expr_desc =
   | Binary of binop * expr * expr
   | If_expr of { cond : expr; then_expr : expr; else_expr : expr }
   | Do of expr (* do <call> — the operand is always a Call node *)
+  | Quote of quote
+(* quote { ... } — the macro author's template (design/macros.md):
+         compiles only inside a macro body; the template's holes ride as
+         placeholder identifiers and are substituted with the holes' syntax
+         trees when the quote evaluates at expansion time *)
+
+and quote = {
+  quote_span : Emo_support.Span.t;
+  template : item list; (* placeholder identifiers where the holes stood *)
+  holes : (string * expr) list; (* placeholder name → the hole's expression *)
+}
 
 and string_part = Literal_text of string | Part_expr of expr
 and arg = { arg_name : string option; arg_value : expr }
@@ -111,7 +122,7 @@ and literal =
   | L_string of string
   | L_bool of bool
 
-type directive = {
+and directive = {
   directive_span : Emo_support.Span.t;
   directive_desc : directive_desc;
 }
@@ -128,7 +139,7 @@ and directive_desc =
 (* // @sigil name(args...) — apply the macro `name` to the declaration
      below; the arguments are compile-time expressions *)
 
-type item = {
+and item = {
   item_span : Emo_support.Span.t;
   item_desc : item_desc;
   directives : directive list;

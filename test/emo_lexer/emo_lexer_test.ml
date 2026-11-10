@@ -80,11 +80,8 @@ let pp_kind fmt (k : Token.kind) =
         | GtGt -> ">>"
         | Tilde -> "~"
         | Not -> "!")
-    | Token.Directive d -> (
-        "Directive "
-        ^ String.make 1 d.Token.d_sigil
-        ^ d.Token.d_name
-        ^ match d.Token.d_args with Some a -> "(" ^ a ^ ")" | None -> "")
+    | Token.Directive d ->
+        "Directive " ^ String.make 1 d.Token.d_sigil ^ d.Token.d_name
     | Token.Eof -> "Eof"
   in
   Format.pp_print_string fmt text

@@ -202,6 +202,11 @@ Constructors:
 - `Syntax.expr_stmt(e) -> Syntax`, `Syntax.const_stmt(name, e) -> Syntax`,
   `Syntax.return_stmt(e) -> Syntax` — statement wrappers
 - `Syntax.gensym(base) -> String` — a fresh, collision-free name
+- `Syntax.empty_map() -> Syntax`, `Syntax.const_item(name, e) -> Syntax`,
+  `Syntax.lit_int(n) -> Syntax`, `Syntax.lit_bool(b) -> Syntax`,
+  `Syntax.lit_float(f) -> Syntax` — step 2: the generated-runtime-state
+  constructors (a macro splices a private `Map` constant beside its
+  wrapper with `const_item` + `empty_map`)
 
 The pilot macros (`examples/trace_demo`, then `examples/memoize_demo`)
 are written entirely against this surface, which is the proof that the

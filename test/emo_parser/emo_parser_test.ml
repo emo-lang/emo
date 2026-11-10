@@ -80,6 +80,7 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
       Format.fprintf fmt "(if %a %a %a)" pp_expr cond pp_expr then_expr pp_expr
         else_expr
   | Do e -> Format.fprintf fmt "(do %a)" pp_expr e
+  | Quote _ -> Format.fprintf fmt "(quote ...)"
 
 and pp_part fmt = function
   | Emo_ast.Literal_text s -> Format.fprintf fmt "%S" s

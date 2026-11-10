@@ -1,6 +1,6 @@
 # 宏
 
-Emo 的元编程机制是编译期宏:一个用 `// #macro` 标记的普通 `def`,在编译期间运行,接收被装饰声明作为语法树,返回替换的语法树,拼接进程序后像普通代码一样检查。应用写在被转换声明上方的 `// @name`。完整的工作设计(含被否决的备选与后续步骤)在 [`design/macros.md`](../../design/macros.md)。
+Emo 的元编程机制是编译期宏:一个用 `// #macro` 标记的普通 `def`,在编译期间运行,接收被装饰声明作为语法树,返回替换的语法树,拼接进程序后像普通代码一样检查。应用写在被转换声明上方的 `// @name`。完整的工作设计(含被否决的备选与后续步骤)在 [`design/macros.md`](../../design/macros.md);面向任务的完整走读——指令、`Syntax` API、quote 表面、实例配方与错误码表——见[宏指南](../macro-guide.md)。
 
 ## 两个指令命名空间
 
@@ -25,19 +25,28 @@ def double(n Int64) Int64 {
 
 ## 宏模型
 
-- **声明形状**:宏恰好取一个 `Syntax` 参数并返回 `Syntax`(否则 E4302)。`Syntax` 是保留的、仅编译期存在的类型——在 `#macro` def 之外不得拼写或引用(E4301)。
+- **声明形状**:宏取零或多个前导编译期**标量**参数(`Int64`、`String`、`Bool`、`Float64`、`Byte`、`Char`),后接恰好一个尾随 `Syntax` 参数——被装饰树——并返回 `Syntax`(否则 E4302)。`Syntax` 是保留的、仅编译期存在的类型——在 `#macro` def 之外不得拼写或引用(E4301)。
 - **先检查后运行**:宏体像任何 def 一样做类型检查;没通过类型检查的宏在执行前就被拒绝。
 - **按构造确定**:宏体跑在编译器自带的解释器上,一切 effect 被拒,一切触及宿主的内置(`rand_bytes`、`os_*` 族)被拒(E3030)。不需要效应系统来说明这一点——编译期 profile 里这些钩子根本不存在。步数预算约束运行,失控的宏让构建失败而不是挂死编译器。
 - **抹除**:展开后 `#macro` def 消失——运行期没有绑定,发布的程序不携带数据从未要求的机器。
 - **拼接后再检查**:生成的代码随模块一起检查。转发参数个数错的 wrapper、绑定签名不允许的值的 wrapper,都以普通检查器错误在拼接处定位并让构建失败。
+- **拒绝即 raise**:无法包装的形状——多参数 def、`Void` 结果——用 `raise Exception.new("...")` 明说,raise 以展开期编译错误(E4308)浮出并携带消息。
 
 被装饰 def 体内的递归引用最终的、装饰后的绑定——体在全部展开之后、对着展开后的声明检查。宏编造的名字来自 `Syntax.gensym`,它发放不会与用户代码相撞的新名字。
 
+## 应用参数
+
+应用处供给宏的前导标量参数:`// @memoize(2)` 在编译期求值 `2` 并绑到 `memoize` 的 `limit`。括号必须紧贴指令名(E2034),实参是指令自己一行上的普通逗号分隔表达式,角色指令不取参数(E2035),个数(E4306)与每个实参对已声明参数的类型(E4307)都在展开期求值它们的那个"仅内置"环境里静态检查——编译期 profile 看不见的名字在检查处就以同样答案失败。
+
+## quote 表面
+
+`quote { ... }`——上下文拼写:仅当 `quote` 处于操作数起始位置(`=`、`(`、`,`、`[`、`return`、`do`、`->`)且同行紧跟花括号才是模板;其余 `quote` 都是普通名字——标准库的 JSON 转义器 `quote(s)` 与 sql 的 `== quote {` 条件收尾因此不受扰——把宏生成的代码按普通代码铺开:体在 quote 自己的 token 流上按 item 解析(真 span、真错误),每个 `${expr}` 洞拼接一个在展开期、于宏体内求值的表达式树。提升保持显式——`${Syntax.ident(name)}` 拼接名字,`${Syntax.lit_int(limit)}` 拼接字面量;洞产出非表达式树是错误(E4309)。模板内的声明结构是字面的(构造器掌管 def 的名字、参数、结果),带引号字符串里的字符串插值保持为生成代码自己的,宏体外的 `quote` 是普通编译期窗口错误(E4301)。`Syntax.new_def` 以整个 quote 作体,`Syntax.seq` 展平,宏的拼接就是它写下的那些声明。
+
 ## `Syntax` API
 
-交给宏的值是被装饰 def 的树;它返回的值拼回原位——一个 def,或一列 def(`Syntax.seq`)。读取器:`Syntax.name`、`Syntax.params`、`Syntax.param_name`、`Syntax.result`。构造器:`Syntax.rename`、`Syntax.new_def`(从名字、参数树、结果类型树和语句树构造 def)、`Syntax.ident`、`Syntax.lit_string`、`Syntax.interp`、`Syntax.call`、`Syntax.call_stmt`、`Syntax.expr_stmt`、`Syntax.const_stmt`、`Syntax.return_stmt`、`Syntax.gensym`。宏应用必须产出声明——单独的表达式或语句碎片是错误(E4303)。
+交给宏的值是被装饰 def 的树;它返回的值拼回原位——一个声明,或一列展平的声明(`Syntax.seq`)。读取器:`Syntax.name`、`Syntax.params`、`Syntax.param_name`、`Syntax.result`。构造器:`Syntax.rename`、`Syntax.new_def`(从名字、参数树、结果类型树和体构造 def——体是语句树数组或整个 quote)、`Syntax.ident`、`Syntax.lit_string`、`Syntax.lit_int`、`Syntax.lit_bool`、`Syntax.lit_float`、`Syntax.interp`、`Syntax.call`、`Syntax.call_stmt`、`Syntax.expr_stmt`、`Syntax.const_stmt`、`Syntax.return_stmt`、`Syntax.empty_map`、`Syntax.const_item`(宏为其生成的运行期状态拼接的模块级常量)、`Syntax.gensym`。宏应用必须产出声明——单独的表达式或语句碎片是错误(E4303)。
 
-完整实例在 [`examples/trace_demo`](../../examples/trace_demo/main.emo):一个 `trace` 宏,把原 def 挪到隐藏名字下,让可见名字变成记录每次调用的参数与应答的 wrapper——对每个调用点生效,包括其他模块里的。转发调用由被装饰声明自己的参数树构造,这正是它永远不会与签名漂移的原因。
+完整实例:[`examples/trace_demo`](../../examples/trace_demo/main.emo)——`trace` 宏的转发调用由被装饰声明自己的参数树构造,永远不会与签名漂移;[`examples/memoize_demo`](../../examples/memoize_demo/main.emo)——带编译期容量参数、私有 `Map` 常量和 quote 铺开 wrapper 的 `memoize` 宏,缓存命中跳过计算、驱逐则重算,输出可见。
 
 ## 类应用
 

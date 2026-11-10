@@ -1,0 +1,11 @@
+computing double(4)
+8
+8
+computing double(5)
+10
+computing double(6)
+12
+computing double(4)
+8
+computing double(5)
+10

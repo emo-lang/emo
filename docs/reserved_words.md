@@ -226,6 +226,12 @@ Two words that look special are ordinary identifiers:
   ordinary name.
 - **`init`** names the constructor only as a `def` inside a class. Outside a
   class, `def init` is an error; a binding named `init` is fine.
+- **`quote`** opens the macro template only in an operand-start position
+  with a brace following on the same line — after `=`, `(`, `,`, `[`,
+  `return`, `do`, or `->`, as in `const t = quote { ... }`. Everywhere
+  else it is an ordinary name: the standard library's JSON escaper is
+  called as `quote(s)`, and sql's `data.get(i) == quote` ends an `if`
+  condition whose `{` opens the body.
 
 ## Protocol names
 

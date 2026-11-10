@@ -482,6 +482,10 @@ and lower_expr env (e : Ast.expr) : expr =
               let f, arg_exprs = lower_apply env operand in
               expr (Spawn_value { f; args = arg_exprs }))
       | _ -> raise (Lower_error "`do` lowers from a call only"))
+  | Ast.Quote _ ->
+      (* a quote lives only inside a macro body, and macro defs are erased
+         before lowering; the arm keeps the match total *)
+      raise (Lower_error "`quote` runs at compile time only")
 
 (* One map entry lowers to a (key, value) pair. The parser's literal hands
    over the pair directly; `Map.new`'s argument is a two-element tuple the
@@ -1111,6 +1115,7 @@ let rec mentioned_expr (e : Ast.expr) (acc : string list) : string list =
   | Ast.If_expr { cond; then_expr; else_expr } ->
       mentioned_expr else_expr
         (mentioned_expr then_expr (mentioned_expr cond acc))
+  | Ast.Quote _ -> acc
 
 and mentioned_stmts (ss : Ast.stmt list) acc =
   List.fold_left (fun a s -> mentioned_stmt s a) acc ss

@@ -1,6 +1,6 @@
 # Macros
 
-Emo's metaprogramming mechanism is the compile-time macro: an ordinary `def` marked `// #macro` that runs during compilation, receives the decorated declaration as a syntax tree, and returns replacement trees which are spliced into the program and then checked like any other code. Applications are written `// @name` above the declaration being transformed. The working design, including the rejected alternatives and the later steps, lives in [`design/macros.md`](../../design/macros.md).
+Emo's metaprogramming mechanism is the compile-time macro: an ordinary `def` marked `// #macro` that runs during compilation, receives the decorated declaration as a syntax tree, and returns replacement trees which are spliced into the program and then checked like any other code. Applications are written `// @name` above the declaration being transformed. The working design, including the rejected alternatives and the later steps, lives in [`design/macros.md`](../../design/macros.md); a task-oriented walkthrough — the directives, the `Syntax` API, the quote surface, worked recipes, and the error table — is the [macro guide](../macro-guide.md).
 
 ## The two directive namespaces
 
@@ -25,19 +25,28 @@ def double(n Int64) Int64 {
 
 ## The macro model
 
-- **Declared shape**: a macro takes exactly one `Syntax` parameter and returns `Syntax` (E4302 otherwise). `Syntax` is a reserved, compile-time-only type — spelled and named nowhere outside a `#macro` def (E4301).
+- **Declared shape**: a macro takes zero or more leading compile-time **scalar** parameters (`Int64`, `String`, `Bool`, `Float64`, `Byte`, `Char`) followed by exactly one trailing `Syntax` parameter — the decorated tree — and returns `Syntax` (E4302 otherwise). `Syntax` is a reserved, compile-time-only type — spelled and named nowhere outside a `#macro` def (E4301).
 - **Checked before run**: the macro body type-checks like any def; a macro that does not typecheck is rejected before it ever executes.
 - **Deterministic by construction**: the body runs on the compiler's own interpreter with every effect refused and every host-touching builtin (`rand_bytes`, the `os_*` family) refused (E3030). No effect system is needed to say this — the hooks simply do not exist in the compile-time profile. A step budget bounds the run, so a runaway macro fails the build instead of hanging the compiler.
 - **Erasure**: after expansion the `#macro` defs are gone — no runtime binding exists, and the shipped program carries no machinery its data never asked for.
 - **Checked after splice**: the generated code is checked with the module. A wrapper that forwards the wrong arity, or binds a value the signature forbids, fails the build with the ordinary checker errors, located at the splice.
+- **Refusal is a raise**: a macro that cannot wrap a shape — a multi-parameter def, a `Void` result — says so with `raise Exception.new("...")`, and the raise surfaces as the expansion's compile error (E4308) carrying the message.
 
 Recursion inside a decorated def's body refers to the final, decorated binding — the body is checked after all expansions, against the post-expansion declarations. Names the macro fabricates come from `Syntax.gensym`, which hands out fresh names that cannot collide with user code.
 
+## Application arguments
+
+The application supplies the macro's leading scalar parameters: `// @memoize(2)` evaluates `2` at compile time and binds it to `memoize`'s `limit`. The parentheses touch the directive's name (E2034), the arguments are ordinary comma-separated expressions on the directive's own line, role directives take none (E2035), and both the arity (E4306) and each argument's type against the declared parameter (E4307) are checked statically, in the builtins-only environment the expansion evaluates them in — so a name the compile-time profile cannot see fails at checking with the same answer.
+
+## The quotation surface
+
+`quote { ... }` — a contextual spelling: the template only where `quote` sits in an operand-start position (`=`, `(`, `,`, `[`, `return`, `do`, `->`) with a brace following on the same line; every other `quote` is an ordinary name, which is why the standard library's JSON escaper `quote(s)` and sql's `== quote {` condition-ending are untouched — lays a macro's generated code out as ordinary code: the body parses as items over the quote's own token stream (real spans, real errors), and each `${expr}` hole splices an expression tree evaluated in the macro body at expansion time. Lifting stays explicit — `${Syntax.ident(name)}` splices a name, `${Syntax.lit_int(limit)}` a literal; a hole producing a non-expression tree is an error (E4309). Declaration structure inside the template is literal (the constructors own a def's name, parameters, and result), string interpolation inside a quoted string stays the generated code's own, and `quote` outside a macro body is the ordinary compile-time-window error (E4301). `Syntax.new_def` takes a whole quote as its body, and `Syntax.seq` flattens, so a macro's splice is simply the declarations it wrote.
+
 ## The `Syntax` API
 
-The value handed to a macro is the decorated def's tree; the value it returns is spliced in its place — one def, or a sequence of them (`Syntax.seq`). Readers: `Syntax.name`, `Syntax.params`, `Syntax.param_name`, `Syntax.result`. Constructors: `Syntax.rename`, `Syntax.new_def` (a def from a name, parameter trees, a result type tree, and statement trees), `Syntax.ident`, `Syntax.lit_string`, `Syntax.interp`, `Syntax.call`, `Syntax.call_stmt`, `Syntax.expr_stmt`, `Syntax.const_stmt`, `Syntax.return_stmt`, `Syntax.gensym`. A macro application must produce declarations — an expression or statement fragment alone is an error (E4303).
+The value handed to a macro is the decorated def's tree; the value it returns is spliced in its place — one declaration, or a flat sequence of them (`Syntax.seq`). Readers: `Syntax.name`, `Syntax.params`, `Syntax.param_name`, `Syntax.result`. Constructors: `Syntax.rename`, `Syntax.new_def` (a def from a name, parameter trees, a result type tree, and a body — an array of statement trees or one whole quote), `Syntax.ident`, `Syntax.lit_string`, `Syntax.lit_int`, `Syntax.lit_bool`, `Syntax.lit_float`, `Syntax.interp`, `Syntax.call`, `Syntax.call_stmt`, `Syntax.expr_stmt`, `Syntax.const_stmt`, `Syntax.return_stmt`, `Syntax.empty_map`, `Syntax.const_item` (the module-level constant a macro splices for its generated runtime state), `Syntax.gensym`. A macro application must produce declarations — an expression or statement fragment alone is an error (E4303).
 
-The worked example is [`examples/trace_demo`](../../examples/trace_demo/main.emo): a `trace` macro that moves the original def to a hidden name and makes the visible name a wrapper logging every call's arguments and answer — at every call site, including ones in other modules. The forwarding call is built from the wrapped declaration's own parameter trees, which is why it can never drift from the signature.
+The worked examples are [`examples/trace_demo`](../../examples/trace_demo/main.emo) — a `trace` macro whose forwarding call is built from the wrapped declaration's own parameter trees, so it can never drift from the signature — and [`examples/memoize_demo`](../../examples/memoize_demo/main.emo) — a `memoize` macro with a compile-time capacity argument, a private `Map` constant, and a quote-laid-out wrapper whose cache hits skip the computation and whose evictions recompute it, visible in the output.
 
 ## Class application
 

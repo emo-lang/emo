@@ -2929,6 +2929,222 @@ and printf_render span (fmt : string) (items : value array) : string =
     parts;
   Buffer.contents buf
 
+(* ---- quote substitution (design/macros.md) ----
+
+   The template carries placeholder identifiers where `${expr}` holes
+   stood; substitution replaces each with the hole's tree. Holes splice
+   expression trees — anything else landing in expression position is a
+   compile-time error. Declaration structure inside the template is
+   literal (the Syntax constructors own it), so class/interface/enum/group
+   bodies pass through untouched. *)
+
+and subst_expr holes (e : Ast.expr) : Ast.expr =
+  let se = subst_expr holes in
+  match e.Ast.desc with
+  | Ast.Ident n -> (
+      match Hashtbl.find_opt holes n with
+      | Some (Sx_expr sub) -> sub
+      | Some _ ->
+          error e.Ast.span "E4309"
+            "this quote hole splices a non-expression tree"
+      | None -> e)
+  | Ast.Interpolated parts ->
+      {
+        e with
+        Ast.desc =
+          Ast.Interpolated
+            (List.map
+               (function
+                 | Ast.Literal_text t -> Ast.Literal_text t
+                 | Ast.Part_expr pe -> Ast.Part_expr (se pe))
+               parts);
+      }
+  | Ast.Member (b, n) -> { e with Ast.desc = Ast.Member (se b, n) }
+  | Ast.Index (b, i) -> { e with Ast.desc = Ast.Index (se b, se i) }
+  | Ast.Call (f, args) ->
+      {
+        e with
+        Ast.desc =
+          Ast.Call
+            ( se f,
+              List.map
+                (fun a -> { a with Ast.arg_value = se a.Ast.arg_value })
+                args );
+      }
+  | Ast.Arrow_block (ps, body) ->
+      {
+        e with
+        Ast.desc = Ast.Arrow_block (ps, List.map (subst_stmt holes) body);
+      }
+  | Ast.Tuple es -> { e with Ast.desc = Ast.Tuple (List.map se es) }
+  | Ast.Array_literal es ->
+      { e with Ast.desc = Ast.Array_literal (List.map se es) }
+  | Ast.Map_literal entries ->
+      {
+        e with
+        Ast.desc =
+          Ast.Map_literal (List.map (fun (k, v) -> (se k, se v)) entries);
+      }
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      {
+        e with
+        Ast.desc =
+          Ast.If_expr
+            {
+              cond = se cond;
+              then_expr = se then_expr;
+              else_expr = se else_expr;
+            };
+      }
+  | Ast.Unary (op, x) -> { e with Ast.desc = Ast.Unary (op, se x) }
+  | Ast.Binary (op, l, r) -> { e with Ast.desc = Ast.Binary (op, se l, se r) }
+  | Ast.Do x -> { e with Ast.desc = Ast.Do (se x) }
+  | Ast.Quote _ ->
+      (* the inner quote keeps its own holes; if the spliced result ever
+         reaches checked code, the checker refuses it there *)
+      e
+  | Ast.Int64 _ | Ast.Byte _ | Ast.Float _ | Ast.Char _ | Ast.Bool _
+  | Ast.String _ | Ast.Self | Ast.Type_ident _ ->
+      e
+
+and subst_stmt holes (s : Ast.stmt) : Ast.stmt =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e ->
+      { s with Ast.stmt_desc = Ast.Expr_stmt (subst_expr holes e) }
+  | Ast.Binding { mutable_; pattern; init } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Binding { mutable_; pattern; init = subst_expr holes init };
+      }
+  | Ast.Assign { target; value } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Assign
+            { target = subst_expr holes target; value = subst_expr holes value };
+      }
+  | Ast.Return r ->
+      { s with Ast.stmt_desc = Ast.Return (Option.map (subst_expr holes) r) }
+  | Ast.Raise e -> { s with Ast.stmt_desc = Ast.Raise (subst_expr holes e) }
+  | Ast.If { cond; then_body; else_body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.If
+            {
+              cond = subst_expr holes cond;
+              then_body = List.map (subst_stmt holes) then_body;
+              else_body = Option.map (List.map (subst_stmt holes)) else_body;
+            };
+      }
+  | Ast.While { cond; body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.While
+            {
+              cond = subst_expr holes cond;
+              body = List.map (subst_stmt holes) body;
+            };
+      }
+  | Ast.For { init; cond; post; body } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.For
+            {
+              init = subst_stmt holes init;
+              cond = subst_expr holes cond;
+              post = subst_stmt holes post;
+              body = List.map (subst_stmt holes) body;
+            };
+      }
+  | Ast.Case { scrutinee; branches } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Case
+            {
+              scrutinee = subst_expr holes scrutinee;
+              branches =
+                List.map
+                  (fun b ->
+                    {
+                      b with
+                      Ast.guard = Option.map (subst_expr holes) b.Ast.guard;
+                      Ast.body = List.map (subst_stmt holes) b.Ast.body;
+                    })
+                  branches;
+            };
+      }
+  | Ast.Send { target; message } ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Send
+            {
+              target = subst_expr holes target;
+              message = subst_expr holes message;
+            };
+      }
+  | Ast.Receive branches ->
+      {
+        s with
+        Ast.stmt_desc =
+          Ast.Receive
+            (List.map
+               (fun b ->
+                 {
+                   b with
+                   Ast.guard = Option.map (subst_expr holes) b.Ast.guard;
+                   Ast.body = List.map (subst_stmt holes) b.Ast.body;
+                 })
+               branches);
+      }
+  | Ast.Break | Ast.Continue -> s
+
+and subst_item holes (it : Ast.item) : Ast.item =
+  match it.Ast.item_desc with
+  | Ast.Item_stmt stmt ->
+      { it with Ast.item_desc = Ast.Item_stmt (subst_stmt holes stmt) }
+  | Ast.Item_def d ->
+      {
+        it with
+        Ast.item_desc =
+          Ast.Item_def
+            { d with Ast.def_body = List.map (subst_stmt holes) d.Ast.def_body };
+      }
+  | _ -> it
+
+and has_macro_directives (items : Ast.item list) : bool =
+  List.exists (fun item -> item.Ast.directives <> []) items
+
+(* What a macro application splices in place of one declaration: a single
+   def tree, or a sequence of them. Spliced items carry no directives —
+   the macro model has no application-after-application chaining through
+   generated code. *)
+and splice_of span (tree : syntax_tree) : Ast.item list =
+  let clean item = { item with Ast.directives = [] } in
+  match tree with
+  | Sx_item item -> [ clean item ]
+  | Sx_seq trees -> List.concat_map (splice_of span) trees
+  | _ ->
+      error span "E4303"
+        "a macro application must produce declarations — got an expression, \
+         statement, or type fragment instead"
+
+and stmt_tree_of span (tree : syntax_tree) : Ast.stmt =
+  (* a statement tree for a generated body: a statement fragment, or an
+     item-level binding as a quote lays it out *)
+  match tree with
+  | Sx_stmt s -> s
+  | Sx_item { Ast.item_desc = Ast.Item_stmt s; _ } -> s
+  | _ ->
+      error span "E4303"
+        "a generated body takes statement trees — a quote lays them out \
+         directly, or build them with the Syntax constructors"
+
 and apply_builtin span name args =
   if !compile_time && host_touched name then refuse_purity span name
   else
@@ -3044,13 +3260,13 @@ and apply_builtin span name args =
           Array.to_list params
           |> List.map (function
             | SyntaxTree (Sx_param p) -> p
-            | _ -> error span "E3001" "`Syntax.def` expects parameter trees")
+            | _ -> error span "E3001" "`Syntax.new_def` expects parameter trees")
         in
         let body =
           Array.to_list body
           |> List.map (function
-            | SyntaxTree (Sx_stmt s) -> s
-            | _ -> error span "E3001" "`Syntax.def` expects statement trees")
+            | SyntaxTree t -> stmt_tree_of span t
+            | _ -> error span "E3001" "`Syntax.new_def` expects statement trees")
         in
         SyntaxTree
           (Sx_item
@@ -3101,7 +3317,7 @@ and apply_builtin span name args =
     | "syntax_new_def", vs ->
         error span "E3001"
           "`Syntax.new_def` expects (name String, params Array, result tree, \
-           body Array)"
+           body Array or quote)"
     | "syntax_seq", [ SyntaxTree a; SyntaxTree b ] ->
         SyntaxTree (Sx_seq [ a; b ])
     | "syntax_seq", [ _; _ ] ->
@@ -4160,6 +4376,22 @@ and eval_expr env e =
                "the if expression's condition must be a Bool, got %s"
                (type_name v)))
   | Ast.Call (callee, args) -> eval_call env span callee args
+  | Ast.Quote q ->
+      if not !compile_time then
+        error span "E4301"
+          "`quote` is compile-time — it is written only inside a macro body";
+      let holes = Hashtbl.create 8 in
+      List.iter
+        (fun (ph, he) ->
+          match eval_expr env he with
+          | SyntaxTree t -> Hashtbl.replace holes ph t
+          | _ ->
+              error he.Ast.span "E4309"
+                "a quote hole must evaluate to a syntax tree — lift names and \
+                 literals with the Syntax constructors")
+        q.Ast.holes;
+      let items = List.map (subst_item holes) q.Ast.template in
+      SyntaxTree (Sx_seq (List.map (fun i -> Sx_item i) items))
   | Ast.Do operand -> (
       (* `do work(args)` runs the call in a new process: the caller gets the
          child's pid immediately, and the call's own result is discarded. *)
@@ -4325,17 +4557,27 @@ let eval_item ?(module_path = []) env item =
    every host-touching builtin refused, the output hook poisoned, a step
    budget — so a macro is deterministic by construction. *)
 
-(* Runs one macro body on one input tree. The macro's single parameter is
-   bound to the input; the body's `return` yields the output. *)
-and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree) : syntax_tree =
-  let param =
-    match macro.Ast.def_params with
-    | [ p ] -> p
-    | _ ->
+(* Runs one macro body on one input tree. The application's compile-time
+   arguments evaluate here, in the protected profile, and bind to the
+   macro's leading parameters; the trailing Syntax parameter binds to the
+   input tree. The body's `return` yields the output; an Emo raise in the
+   body surfaces as the expansion's compile error. *)
+and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
+    (arg_exprs : Ast.expr list) : syntax_tree =
+  let leading, tree_param =
+    match List.rev macro.Ast.def_params with
+    | last :: rev_leading -> (List.rev rev_leading, last)
+    | [] ->
         error macro.Ast.def_span "E4302"
-          (Printf.sprintf "the macro `%s` must take exactly one parameter"
+          (Printf.sprintf
+             "the macro `%s` must take exactly one `Syntax` parameter"
              macro.Ast.def_name)
   in
+  if List.length leading <> List.length arg_exprs then
+    error macro.Ast.def_span "E4302"
+      (Printf.sprintf "the macro `%s` takes %d compile-time argument(s), got %d"
+         macro.Ast.def_name (List.length leading) (List.length arg_exprs));
+  let param = tree_param in
   let env = { frame = Hashtbl.create 8; parent = Some (global_env ()) } in
   Hashtbl.replace env.frame "Syntax"
     {
@@ -4411,6 +4653,12 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree) : syntax_tree =
       try
         Effect.Deep.try_with
           (fun () ->
+            (* the application's compile-time arguments evaluate in the
+               protected profile, then bind to the leading parameters *)
+            List.iter
+              (fun (p, ae) ->
+                define env p.Ast.param_name ~mutable_:false (eval_expr env ae))
+              (List.combine leading arg_exprs);
             List.iter (eval_stmt env) macro.Ast.def_body;
             error macro.Ast.def_span "E4304"
               (Printf.sprintf "the macro `%s` never returns a tree"
@@ -4518,38 +4766,25 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree) : syntax_tree =
       | Return_signal _ ->
           error macro.Ast.def_span "E4304"
             (Printf.sprintf "the macro `%s` returns a non-tree value"
-               macro.Ast.def_name))
+               macro.Ast.def_name)
+      | Emo_raise (v, span, _trace) ->
+          let message =
+            match v with
+            | Instance i -> (
+                match List.assoc_opt "message" i.ifields with
+                | Some (String s) -> s
+                | _ -> to_string v)
+            | v -> to_string v
+          in
+          error span "E4308"
+            (Printf.sprintf "the macro `%s` raised: %s" macro.Ast.def_name
+               message))
 
 (* A def declared `// #macro`: the role lives on the item's directives. *)
 let is_macro_def (item : Ast.item) : bool =
   List.exists
     (fun d -> d.Ast.directive_desc = Ast.Role_macro)
     item.Ast.directives
-
-let has_macro_directives (items : Ast.item list) : bool =
-  List.exists (fun item -> item.Ast.directives <> []) items
-
-(* What a macro application splices in place of one declaration: a single
-   def tree, or a sequence of them. Spliced items carry no directives —
-   the macro model has no application-after-application chaining through
-   generated code. *)
-let splice_of span (tree : syntax_tree) : Ast.item list =
-  let clean item = { item with Ast.directives = [] } in
-  match tree with
-  | Sx_item item -> [ clean item ]
-  | Sx_seq trees ->
-      List.map
-        (function
-          | Sx_item item -> clean item
-          | _ ->
-              error span "E4303"
-                "a macro application must produce declarations — a sequence \
-                 element is not one")
-        trees
-  | _ ->
-      error span "E4303"
-        "a macro application must produce declarations — got an expression, \
-         statement, or type fragment instead"
 
 (* The expansion pass: runs between parsing and checking. Applies every
    `// @name` directive nearest-first (the line closest to the declaration

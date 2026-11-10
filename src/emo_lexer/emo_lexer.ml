@@ -79,7 +79,6 @@ module Token = struct
     d_sigil : char;
         (* '#' — the role namespace; '@' — the application namespace *)
     d_name : string;
-    d_args : string option; (* the raw text between the argument parens *)
   }
 
   type t = {
@@ -289,97 +288,37 @@ let lex ~file ~source =
                     (span_from d_line d_col d_off)
                     "a directive needs a name after its sigil"
                 else ();
-                let args =
-                  if (not (eof ())) && cur () = '(' then (
-                    bump ();
-                    let abuf = Buffer.create 16 in
-                    let depth = ref 1 in
-                    let unterminated what =
-                      error "E2033" (span_from d_line d_col d_off) what
-                    in
-                    let rec collect () =
-                      if eof () then
-                        unterminated "unbalanced `(` in directive arguments"
-                      else
-                        match cur () with
-                        | '\n' ->
-                            unterminated
-                              "directive arguments must close on the same line"
-                        | '(' ->
-                            incr depth;
-                            Buffer.add_char abuf '(';
-                            bump ();
-                            collect ()
-                        | '"' ->
-                            Buffer.add_char abuf '"';
-                            bump ();
-                            let rec in_str () =
-                              if eof () || cur () = '\n' then
-                                unterminated
-                                  "unterminated string in directive arguments"
-                              else
-                                match cur () with
-                                | '\\' ->
-                                    Buffer.add_char abuf '\\';
-                                    bump ();
-                                    if eof () then
-                                      unterminated
-                                        "unterminated string in directive \
-                                         arguments"
-                                    else (
-                                      Buffer.add_char abuf (cur ());
-                                      bump ();
-                                      in_str ())
-                                | '"' ->
-                                    Buffer.add_char abuf '"';
-                                    bump ()
-                                | c ->
-                                    Buffer.add_char abuf c;
-                                    bump ();
-                                    in_str ()
-                            in
-                            in_str ();
-                            collect ()
-                        | ')' ->
-                            decr depth;
-                            if !depth = 0 then bump ()
-                            else (
-                              Buffer.add_char abuf ')';
-                              bump ();
-                              collect ())
-                        | c ->
-                            Buffer.add_char abuf c;
-                            bump ();
-                            collect ()
-                    in
-                    collect ();
-                    Some (Buffer.contents abuf))
-                  else None
-                in
                 emit
                   (Token.Directive
-                     {
-                       Token.d_sigil = Option.get sigil;
-                       d_name = name;
-                       d_args = args;
-                     })
+                     { Token.d_sigil = Option.get sigil; d_name = name })
                   d_line d_col d_off;
-                (* Only whitespace may follow on the directive's own line. *)
-                let rec tail_ws () =
-                  if eof () then ()
-                  else
-                    match cur () with
-                    | ' ' | '\t' | '\r' ->
-                        bump ();
-                        tail_ws ()
-                    | '\n' -> go ()
-                    | _ ->
-                        error "E2033"
-                          (span_from d_line d_col d_off)
-                          "a directive takes only its name and optional \
-                           (arguments)"
-                in
-                tail_ws ()
+                if (not (eof ())) && cur () = '(' then
+                  (* The application's argument list lexes as ordinary
+                     tokens right after the directive — the parser consumes
+                     it there, and the spans it produces are the file's own. *)
+                  ()
+                else
+                  (* Only whitespace may follow on the directive's own line. *)
+                  let rec tail_ws () =
+                    if eof () then ()
+                    else
+                      match cur () with
+                      | ' ' | '\t' | '\r' ->
+                          bump ();
+                          tail_ws ()
+                      | '\n' -> go ()
+                      | '(' ->
+                          error "E2034"
+                            (span_from d_line d_col d_off)
+                            "a directive's arguments must touch its name — \
+                             write `@name(...)`"
+                      | _ ->
+                          error "E2033"
+                            (span_from d_line d_col d_off)
+                            "a directive takes only its name and optional \
+                             (arguments)"
+                  in
+                  tail_ws ()
             | _ ->
                 let rec line () =
                   if eof () then ()
@@ -509,6 +448,12 @@ let lex ~file ~source =
         | '"' ->
             frames := String_frame (here ()) :: !frames;
             bump ()
+        | '$' when char_at 1 = Some '{' ->
+            (* The quote's hole opener (design/macros.md): `${` outside a
+               string is the quote's splice marker, lexed as the same
+               Interp_open the string form uses. No frame is pushed — the
+               quote parser consumes the hole's closing brace itself. *)
+            double Token.Interp_open
         | '-' ->
             if char_at 1 = Some '>' then double (Token.Op Token.Arrow)
             else single (Token.Op Token.Minus)
