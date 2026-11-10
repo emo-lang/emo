@@ -3651,3 +3651,20 @@ runtest` green.
       TypeScript output. Package-boundary macros (a require-scoped
       library macro with the deps visibility rule) stay the named
       follow-up.
+- [x] **T61.5** — Every target, verified: the four pilots join the
+      wasm, beam, and riscv64 golden lists and pass byte-for-byte —
+      `memoize_demo` waits on `Map` for riscv64 (the refusal is live,
+      named in the list) — and the verification caught a real bug:
+      every node a macro fabricates carried the macro body's span, so
+      the span-keyed type tables had two decorated classes overwrite
+      each other's entries (derive_eq's generated `self.x` typed as the
+      second class on wasm and beam, invisible on the interpreter/c/ts
+      where spans do not key anything). The fix is synthetic uniqueness:
+      constructor-built spans move into a reserved offset range far past
+      any real file, with line/col kept pointing at the constructor call.
+- [x] **T61.6** — `emo dump`: the declaration surface after expansion,
+      printed in source-like form — signatures, one line per statement —
+      so a macro application's effect reads directly (`emo dump` lists
+      the generated declarations; `emo dump --raw` shows what the macro
+      author wrote, directives annotated). The macro model's visibility
+      promise, kept: nothing a macro does is invisible.

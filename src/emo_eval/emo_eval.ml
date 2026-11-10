@@ -505,6 +505,21 @@ let count_step () =
    system needed to say so. *)
 let compile_time : bool ref = ref false
 let gensym_counter : int ref = ref 0
+let gen_span_counter : int ref = ref 0
+
+(* The syntax constructors build trees whose spans must not collide:
+   every node a macro fabricates carries the macro body's span, and the
+   span-keyed type tables (CHECK.md, cross-module types) would have two
+   decorated classes overwrite each other's entries — found live when
+   derive_eq's generated `self.x` typed as the second class on wasm and
+   beam. Synthetic offsets live in a reserved range far past any real
+   file (a source file would have to reach a gigabyte); line and col
+   stay the macro body's, so diagnostics still point at the constructor
+   call. *)
+let gen_span (s : Emo_support.Span.t) : Emo_support.Span.t =
+  incr gen_span_counter;
+  let start = 1_000_000_000 + (10 * !gen_span_counter) in
+  { s with Emo_support.Span.start; stop = start + 1 }
 
 let refuse_purity span name =
   error span "E3030"
@@ -3040,11 +3055,42 @@ and apply_builtin span name args =
         SyntaxTree
           (Sx_item
              {
-               Ast.item_span = span;
+               Ast.item_span = gen_span span;
                item_desc =
                  Ast.Item_def
                    {
-                     Ast.def_span = span;
+                     Ast.def_span = gen_span span;
+                     def_name = name;
+                     def_params = params;
+                     def_return = Some rt;
+                     def_body = body;
+                   };
+               directives = [];
+             })
+    | ( "syntax_new_def",
+        [
+          String name;
+          Array params;
+          SyntaxTree (Sx_type rt);
+          SyntaxTree (Sx_seq body);
+        ] ) ->
+        (* the quote's shape: one sequence of item-level bindings and defs,
+           whose statement pieces become the body *)
+        let params =
+          Array.to_list params
+          |> List.map (function
+            | SyntaxTree (Sx_param p) -> p
+            | _ -> error span "E3001" "`Syntax.new_def` expects parameter trees")
+        in
+        let body = List.map (stmt_tree_of span) body in
+        SyntaxTree
+          (Sx_item
+             {
+               Ast.item_span = gen_span span;
+               item_desc =
+                 Ast.Item_def
+                   {
+                     Ast.def_span = gen_span span;
                      def_name = name;
                      def_params = params;
                      def_return = Some rt;
@@ -3065,11 +3111,11 @@ and apply_builtin span name args =
           (Printf.sprintf "`Syntax.seq` expects 2 arguments, got %d"
              (List.length vs))
     | "syntax_ident", [ String s ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Ident s })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Ident s })
     | "syntax_ident", [ _ ] ->
         error span "E3001" "`Syntax.ident` expects a name String"
     | "syntax_lit_string", [ String s ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.String s })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.String s })
     | "syntax_lit_string", [ _ ] ->
         error span "E3001" "`Syntax.lit_string` expects a String"
     | "syntax_interp", [ Array parts ] ->
@@ -3083,7 +3129,8 @@ and apply_builtin span name args =
                 error span "E3001"
                   "`Syntax.interp` expects an array of expression trees")
         in
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Interpolated parts })
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Interpolated parts })
     | "syntax_interp", [ _ ] ->
         error span "E3001" "`Syntax.interp` expects an Array of parts"
     | "syntax_call", [ SyntaxTree (Sx_expr f); Array argvs ] ->
@@ -3095,12 +3142,14 @@ and apply_builtin span name args =
                 error span "E3001"
                   "`Syntax.call` expects an array of expression trees")
         in
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Call (f, args) })
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Call (f, args) })
     | "syntax_call", [ _; _ ] ->
         error span "E3001" "`Syntax.call` expects (callee tree, args Array)"
     | "syntax_expr_stmt", [ SyntaxTree (Sx_expr e) ] ->
         SyntaxTree
-          (Sx_stmt { Ast.stmt_span = span; stmt_desc = Ast.Expr_stmt e })
+          (Sx_stmt
+             { Ast.stmt_span = gen_span span; stmt_desc = Ast.Expr_stmt e })
     | "syntax_expr_stmt", [ _ ] ->
         error span "E3001" "`Syntax.expr_stmt` expects an expression tree"
     | "syntax_call_stmt", [ String f; Array argvs ] ->
@@ -3115,12 +3164,14 @@ and apply_builtin span name args =
         SyntaxTree
           (Sx_stmt
              {
-               Ast.stmt_span = span;
+               Ast.stmt_span = gen_span span;
                stmt_desc =
                  Ast.Expr_stmt
                    {
-                     Ast.span;
-                     desc = Ast.Call ({ Ast.span; desc = Ast.Ident f }, args);
+                     Ast.span = gen_span span;
+                     desc =
+                       Ast.Call
+                         ({ Ast.span = gen_span span; desc = Ast.Ident f }, args);
                    };
              })
     | "syntax_call_stmt", [ _; _ ] ->
@@ -3130,14 +3181,14 @@ and apply_builtin span name args =
         SyntaxTree
           (Sx_stmt
              {
-               Ast.stmt_span = span;
+               Ast.stmt_span = gen_span span;
                stmt_desc =
                  Ast.Binding
                    {
                      mutable_ = false;
                      pattern =
                        {
-                         Ast.pattern_span = span;
+                         Ast.pattern_span = gen_span span;
                          pattern_desc = Ast.Pattern_binding name;
                        };
                      init = e;
@@ -3147,7 +3198,8 @@ and apply_builtin span name args =
         error span "E3001" "`Syntax.const_stmt` expects (name String, tree)"
     | "syntax_return_stmt", [ SyntaxTree (Sx_expr e) ] ->
         SyntaxTree
-          (Sx_stmt { Ast.stmt_span = span; stmt_desc = Ast.Return (Some e) })
+          (Sx_stmt
+             { Ast.stmt_span = gen_span span; stmt_desc = Ast.Return (Some e) })
     | "syntax_return_stmt", [ _ ] ->
         error span "E3001" "`Syntax.return_stmt` expects an expression tree"
     | "syntax_gensym", [ String base ] ->
@@ -3156,7 +3208,8 @@ and apply_builtin span name args =
     | "syntax_gensym", [ _ ] ->
         error span "E3001" "`Syntax.gensym` expects a base String"
     | "syntax_empty_map", [] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Map_literal [] })
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Map_literal [] })
     | "syntax_empty_map", vs ->
         error span "E3007"
           (Printf.sprintf "`Syntax.empty_map` expects no arguments, got %d"
@@ -3167,18 +3220,18 @@ and apply_builtin span name args =
         SyntaxTree
           (Sx_item
              {
-               Ast.item_span = span;
+               Ast.item_span = gen_span span;
                item_desc =
                  Ast.Item_stmt
                    {
-                     Ast.stmt_span = span;
+                     Ast.stmt_span = gen_span span;
                      stmt_desc =
                        Ast.Binding
                          {
                            mutable_ = false;
                            pattern =
                              {
-                               Ast.pattern_span = span;
+                               Ast.pattern_span = gen_span span;
                                pattern_desc = Ast.Pattern_binding name;
                              };
                            init = e;
@@ -3189,15 +3242,15 @@ and apply_builtin span name args =
     | "syntax_const_item", [ _; _ ] ->
         error span "E3001" "`Syntax.const_item` expects (name String, tree)"
     | "syntax_lit_int", [ Int64 n ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Int64 n })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Int64 n })
     | "syntax_lit_int", [ _ ] ->
         error span "E3001" "`Syntax.lit_int` expects an Int64"
     | "syntax_lit_bool", [ Bool b ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Bool b })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Bool b })
     | "syntax_lit_bool", [ _ ] ->
         error span "E3001" "`Syntax.lit_bool` expects a Bool"
     | "syntax_lit_float", [ Float f ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Float f })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Float f })
     | "syntax_lit_float", [ _ ] ->
         error span "E3001" "`Syntax.lit_float` expects a Float64"
     (* ---- the class surface (design/macros.md, step 3): the derive
@@ -3245,25 +3298,31 @@ and apply_builtin span name args =
         error span "E3001" "`Syntax.new_param` expects (name String, type tree)"
     | "syntax_named_type", [ String s ] ->
         SyntaxTree
-          (Sx_type { Ast.type_span = span; type_desc = Ast.Named_type s })
+          (Sx_type
+             { Ast.type_span = gen_span span; type_desc = Ast.Named_type s })
     | "syntax_named_type", [ _ ] ->
         error span "E3001" "`Syntax.named_type` expects a name String"
     | "syntax_self_expr", [] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Self })
+        SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Self })
     | "syntax_self_expr", vs ->
         error span "E3007"
           (Printf.sprintf "`Syntax.self_expr` expects no arguments, got %d"
              (List.length vs))
     | "syntax_bin_eq", [ SyntaxTree (Sx_expr l); SyntaxTree (Sx_expr r) ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Binary (Ast.Eq, l, r) })
+        SyntaxTree
+          (Sx_expr
+             { Ast.span = gen_span span; desc = Ast.Binary (Ast.Eq, l, r) })
     | "syntax_bin_eq", [ _; _ ] ->
         error span "E3001" "`Syntax.bin_eq` expects two expression trees"
     | "syntax_bin_and", [ SyntaxTree (Sx_expr l); SyntaxTree (Sx_expr r) ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Binary (Ast.And, l, r) })
+        SyntaxTree
+          (Sx_expr
+             { Ast.span = gen_span span; desc = Ast.Binary (Ast.And, l, r) })
     | "syntax_bin_and", [ _; _ ] ->
         error span "E3001" "`Syntax.bin_and` expects two expression trees"
     | "syntax_member", [ SyntaxTree (Sx_expr b); String name ] ->
-        SyntaxTree (Sx_expr { Ast.span; desc = Ast.Member (b, name) })
+        SyntaxTree
+          (Sx_expr { Ast.span = gen_span span; desc = Ast.Member (b, name) })
     | "syntax_member", [ _; _ ] ->
         error span "E3001"
           "`Syntax.member` expects (expression tree, name String)"

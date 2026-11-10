@@ -327,6 +327,22 @@ library macro) — the table already carries every registered file, and
 the visibility rule (E5008's deps discipline) is what remains to
 decide.
 
+## Visibility: `emo dump`
+
+A macro application's effect is directly readable: `emo dump <file>`
+prints the declaration surface **after expansion** — signatures and one
+line per statement, in source-like form — which is exactly what the
+targets compile and the evaluator runs, because dump rides the same
+parse cache. `emo dump --raw` shows the file as parsed instead
+(directives annotated, macro defs present): the two views side by side
+are the whole story of what a macro did. One implementation rule landed
+with the metal-target verification: every node a macro fabricates gets
+a synthetic unique span (a reserved offset range; line/col stay at the
+constructor call), because the span-keyed type tables would otherwise
+let two decorated classes overwrite each other's entries — found live
+when derive_eq typed its generated `self.x` as the second class on wasm
+and beam.
+
 ## Pipeline mapping
 
 Parse → **expand** → check → codegen / eval. Expansion is a new pass
