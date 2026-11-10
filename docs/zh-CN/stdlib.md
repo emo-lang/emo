@@ -15,6 +15,8 @@ require "json"
 
 manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指出要补哪一行;被引入的包自身依赖什么,由它自己的 manifest 带入。包的 `targets` 不含本次构建目标的,在解析阶段直接拒绝——格式类包在所有目标上运行,系统类包只声明拥有 Unix 形态宿主的目标,网络类包声明 `ocaml`、`c` 与 `typescript`。
 
+REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库的名字直接从内置 registry 解析(`require "math"` 之后,`math.pow(2.0, 10.0)` 即答)。带 scope 的名字或标准库没有的名字在 REPL 里拒绝(E5015)并指回项目路径——registry 包仍然是 manifest 的事。
+
 两条约定贯穿所有包:
 
 - **预期内的失败是值,违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出,因为系统调用由共享的 os 运行时执行)。没有错误码,没有 nil。抛出保留给契约违例:`Exception` 是唯一的异常类,可选的 `data` Map 装机器可读的上下文,不往消息里拼接,抛出即结束进程。流结束不是错误:空字符串表示流结束。

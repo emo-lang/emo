@@ -1318,6 +1318,54 @@ let register_package (p : project) (short : string) (dir : string) : unit =
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
+(* The repl's require: the session has no manifest and pins nothing — it is
+   scratch, not a published unit — so a require resolves against the
+   standard library the compiler bundles. The package fetches from the
+   embedded copy, materializes into the shared cache (a cache hit after
+   the first time), and registers under its short name; the session's
+   `name.member` references resolve through the module hooks from then
+   on. A scoped name names a registry package, which needs a manifest pin
+   and a fetched version — not a session's business — so it refuses with
+   the project path; so does a name the standard library does not carry. *)
+let repl_require (p : project) (name : string) : (unit, string) result =
+  let embedded = Emo_pkg.Registry.embedded_names () in
+  if List.mem [ name ] p.packages then Ok ()
+  else if String.contains name '/' then
+    Error
+      (Printf.sprintf
+         "the repl resolves the standard library's packages, and `%s` names \
+          a registry package — registry packages need a manifest pin: add \
+          it to a project's deps and require it from there"
+         name)
+  else if not (List.mem name embedded) then
+    Error
+      (Printf.sprintf
+         "the repl requires `%s`, but the bundled standard library carries \
+          no such package — its names: %s"
+         name (String.concat ", " embedded))
+  else
+    let versions = Emo_pkg.Registry.versions Emo_pkg.Registry.Embedded ~name in
+    let latest = List.nth versions (List.length versions - 1) in
+    match
+      Emo_pkg.Registry.fetch Emo_pkg.Registry.Embedded ~name ~version:latest
+    with
+    | Error m -> Error m
+    | Ok f -> (
+        match
+          Emo_pkg.Registry.materialize
+            ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
+            f
+        with
+        | Error m -> Error m
+        | Ok dir -> (
+            try
+              register_package p name dir;
+              Ok ()
+            with Static_errors ds -> (
+              match ds with
+              | d :: _ -> Error d.Emo_support.Diagnostic.message
+              | [] -> Error "the package registers to no modules")))
+
 (* A package's native inputs: the C and Objective-C sources it carries
    (absolute paths into the materialized cache dir), the system libraries
    and macOS frameworks its manifest links, and the pkg-config modules

@@ -1270,10 +1270,14 @@ let unbalanced source =
 
 (* The interactive loop: definitions register, statements run, and expression
    lines echo their value (a REPL convenience, not a language rule). Runtime
-   errors print and the environment survives. *)
+   errors print and the environment survives. The session's module tree is
+   the working directory's, and a require fetches the bundled standard
+   library's packages into it on demand — the repl pins nothing, so
+   registry packages stay a project's business. *)
 let repl_loop ~(prompt : bool) ~(input : unit -> string option)
     ~(output : string -> unit) : unit =
-  Hashtbl.reset Emo_eval.interface_registry;
+  let session = Emo_project.discover () in
+  Emo_project.install_hooks session;
   let env = Emo_eval.global_env () in
   let evaluate source =
     let render d = output (Emo_support.Render.render ~source d ^ "\n") in
@@ -1294,6 +1298,21 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
                         ("= "
                         ^ Emo_eval.to_string (Emo_eval.eval_expr env e)
                         ^ "\n")
+                  | Emo_ast.Item_require name -> (
+                      match Emo_project.repl_require session name with
+                      | Ok () -> ()
+                      | Error message ->
+                          render
+                            {
+                              Emo_support.Diagnostic.severity =
+                                Emo_support.Severity.Error;
+                              code = Some "E5015";
+                              message;
+                              span =
+                                Emo_support.Span.make ~file:"<repl>" ~line:1
+                                  ~col:1 ~start:0 ~stop:0;
+                              hint = None;
+                            })
                   | _ -> Emo_eval.eval_item env item)
                 items)
         with

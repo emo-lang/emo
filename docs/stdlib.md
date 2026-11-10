@@ -24,6 +24,12 @@ packages run everywhere, the systems packages declare a Unix-shaped
 host, and the network packages declare `ocaml`, `c`, and
 `typescript`.
 
+The REPL is the one require without a manifest: a session pins
+nothing, so a stdlib name resolves straight from the bundled registry
+(`require "math"`, then `math.pow(2.0, 10.0)` answers). A scoped name
+or a name the standard library does not carry refuses there (E5015)
+with the project path — registry packages stay a manifest's business.
+
 Two conventions hold across every package:
 
 - **Expected failures are values; violations raise.** A call that can
