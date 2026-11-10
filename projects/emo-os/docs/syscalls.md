@@ -131,17 +131,21 @@ ecall, so one cell per pid is the whole of the race. Two writers parked
 at once were print-the-last-stager's-bytes wrong before this; the frame
 callback's beat (A9.3) parked two at once and named it.
 
-Verb 5 (T5.1) is not a service request but the user image's allocator
-speaking: when the running pass's own arena — the 64 KiB block the
-kernel's spawn took from its frame allocator (T5.3) — is full, the user
-image's `emo_alloc` says verb 5 instead of failing the machine. The gate
-answers it with the caller's death: the loud report (`user heap <pid>
-gone`) printed by the supervisor on the offender's own stack, the
-slot ending done, and the machine continuing without the process —
-the fault route's reclamation, reached through the gate instead of a
-trap. Nothing stops a program from saying verb 5 of itself, and the
-answer is the same: the program wanted out. The root riding verb 5
-ends the machine, as its exit does.
+Verb 5 (T5.1) is not a service request but the user image's runtime
+speaking: when the running pass's own arena — the contiguous run of
+blocks the kernel's spawn took from its frame allocator (T5.3, T8.9;
+a user pass's 16 blocks, the kernel services' 4) — is full, `emo_alloc`
+says verb 5 instead of failing the machine, and so does `emo_fail`: a
+runtime error and an exhausted arena ride the one verb, and the report
+says which. The gate answers it with the caller's death: the loud
+report — `user heap <pid> gone: <the error's message> | free <K> of
+<K>` (an arena death's message empty, the runtime error's text whole),
+printed by the supervisor on the kernel's trap stack, the slot ending
+done, and the machine continuing without the process — the fault
+route's reclamation, reached through the gate instead of a trap.
+Nothing stops a program from saying verb 5 of itself, and the answer
+is the same: the program wanted out. The root riding verb 5 ends the
+machine, as its exit does.
 
 Verb 0 never returns, so it has no returning handler to marshal: the
 trap entry takes it before the dispatcher. The verbs the services own

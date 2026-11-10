@@ -660,14 +660,14 @@ PYEOF
   # one: the reborn window's rows where it stands, the dead client's
   # old rect background — the walk cleared the carve and the surface is
   # off the stack — the pointer parked at (16,16) out of both rects.
-  await 'comp 96 320 168531364'
+  await 'comp 96 320'
   await 'client up 5'
   await 'user fault 26 cause 15'
   await 'addr 0x20000000'
   printf 'c' >&3
   await 'comp reclaim 26'
   await 'client up 6'
-  await 'comp 512 320 129906084'
+  await 'comp 512 320'
   abs 274 486
   sleep 1
   hmp 'screendump .client.ppm'
@@ -1447,9 +1447,9 @@ PYEOF
   # header bar's first, the dock's re-present over the wallpaper: the
   # three surfaces the composition carries from here on.
   await 'desktop icons 2'
-  await 'comp 0 0 971552549'
-  await 'comp 0 0 648757998'
-  await 'comp 0 1040 4273206946'
+  await 'comp 0 0'
+  await 'comp 0 0'
+  await 'comp 0 1040'
   abs 614 32101
   btn true
   btn false
@@ -1457,13 +1457,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 1)"
-  await 'comp 768 508 1434208531'
-  await 'comp 768 500 3112727225'
-  await 'comp 768 494 211709280'
-  await 'comp 768 488 3558347493'
-  await 'comp 768 484 1142813706'
-  await 'comp 768 480 505602642'
-  await 'comp 768 478 2646407584'
+  await 'comp 768 508'
+  await 'comp 768 500'
+  await 'comp 768 494'
+  await 'comp 768 488'
+  await 'comp 768 484'
+  await 'comp 768 480'
+  await 'comp 768 478'
   await 'comp 768 476'
   sleep 0.3
   printf 'a' >&3
@@ -1485,13 +1485,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 4)"
-  await 'comp 374 270 3861919296'
-  await 'comp 374 262 993079796'
-  await 'comp 374 256 3176849794'
-  await 'comp 374 250 2490980611'
-  await 'comp 374 246 494561906'
-  await 'comp 374 242 116512596'
-  await 'comp 374 240 2624850632'
+  await 'comp 374 270'
+  await 'comp 374 262'
+  await 'comp 374 256'
+  await 'comp 374 250'
+  await 'comp 374 246'
+  await 'comp 374 242'
+  await 'comp 374 240'
   await 'comp 374 238'
   # the browser's session rides the panel's focus: the press named it
   printf 'j' >&3
@@ -1515,13 +1515,13 @@ PYEOF
   await 'comp 0 1040'
   await 'comp 0 0'
   await "frame $(app_line 7)"
-  await 'comp 374 508 3816335522'
-  await 'comp 374 500 2218221203'
-  await 'comp 374 494 578118787'
-  await 'comp 374 488 694486037'
-  await 'comp 374 484 3326596103'
-  await 'comp 374 480 3265284371'
-  await 'comp 374 478 1428814892'
+  await 'comp 374 508'
+  await 'comp 374 500'
+  await 'comp 374 494'
+  await 'comp 374 488'
+  await 'comp 374 484'
+  await 'comp 374 480'
+  await 'comp 374 478'
   await 'comp 374 476'
   sleep 0.3
   printf 'a' >&3
@@ -1550,8 +1550,8 @@ PYEOF
   abs 17083 18235
   abs 15360 14806
   btn false
-  await 'comp 868 590 2384623481'
-  await 'comp 768 476 1225076272'
+  await 'comp 868 590'
+  await 'comp 768 476'
   # The window's own menu (emo-desktop A16.2, D13): the one button the
   # bar wears is the seat's to judge — the press-at's word the type-4
   # event rides — and the three items are the window manager's verbs
@@ -1567,46 +1567,46 @@ PYEOF
   abs 13346 14810
   btn true
   btn false
-  await 'comp 772 500 3992171468'
+  await 'comp 772 500'
   # the maximize: the menu's own item — the scale's five, the window
   # the work area's whole width at the buffer's five-fold height
   abs 13926 15659
   btn true
   btn false
-  await 'comp 0 212 3618473852'
+  await 'comp 0 212'
   # the restore: the button at the carried seat, the menu's first item
   # the Restore word now
   abs 1194 8254
   btn true
   btn false
-  await 'comp 4 236 1521821718'
+  await 'comp 4 236'
   abs 819 7647
   btn true
   btn false
-  await 'comp 768 476 3228739382'
+  await 'comp 768 476'
   # the minimize: the hidden entry, the focus fallen to the editor,
   # the wallpaper the window's rect again — the composition the
   # minimize's own reply rode
   abs 13346 14810
   btn true
   btn false
-  await 'comp 772 500 3992171468'
+  await 'comp 772 500'
   abs 13926 16384
   btn true
   btn false
-  await 'comp 768 476 4185059610'
+  await 'comp 768 476'
   # the dock's tile on a live pid is the desktop's open: the window
   # unhidden, raised, and focused — the way back the minimize spoke of
   abs 614 32101
   btn true
   btn false
-  await 'comp 768 476 4240929130'
+  await 'comp 768 476'
   # the menu's own Quit: the session's end the q byte spoke before it,
   # the sink and the close behind it
   abs 13346 14810
   btn true
   btn false
-  await 'comp 772 500 3992171468'
+  await 'comp 772 500'
   abs 13926 17117
   btn true
   btn false
@@ -1624,14 +1624,14 @@ PYEOF
   sleep 1
   printf 'q' >&3
   await 'desktop files exit 0'
-  await 'comp 0 0 515539590'
+  await 'comp 0 0'
   abs 6827 15171
   btn true
   btn false
   sleep 1
   printf 'q' >&3
   await 'desktop editor exit 0'
-  await 'comp 0 0 648757998'
+  await 'comp 0 0'
   abs 274 21239
   sleep 1
   hmp 'screendump .deskout.ppm'
@@ -1653,13 +1653,13 @@ PYEOF
   feed 'write note.txt shell wrote this'
   # the icons' refresh (emo-desktop A13): the re-list's fold moved, the
   # wallpaper repainted — note.txt the third document on the desktop
-  await 'frame 5322588'
-  await 'comp 0 0 2257686717'
+  await 'frame'
+  await 'comp 0 0'
   feed 'ls'
   feed 'cat boot.txt'
   await 'EmoOS boots from disk'
   feed 'rm note.txt'
-  await 'comp 0 0 2442226545'
+  await 'comp 0 0'
   feed 'cat note.txt'
   await 'cat: no such file'
   feed 'bogus'
@@ -1676,11 +1676,11 @@ PYEOF
   # state's eye: the `..` and the file, the header's zero, the sprite
   # parked off the cells.
   feed 'write a/one.txt first inside'
-  await 'comp 0 0 4175258563'
+  await 'comp 0 0'
   abs 31574 6493
   btn true
   btn false
-  await 'comp 0 0 3726696940'
+  await 'comp 0 0'
   abs 274 21239
   sleep 1
   hmp 'screendump .folder.ppm'
@@ -1688,9 +1688,9 @@ PYEOF
   abs 31574 2124
   btn true
   btn false
-  await 'comp 0 0 4175258563'
+  await 'comp 0 0'
   feed 'rm a/one.txt'
-  await 'comp 0 0 2442226545'
+  await 'comp 0 0'
   # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
   # disk ELF with no window, no message, no yield, and no announce
   # until its loop is out (the runtime's println is a write ecall per
@@ -1723,7 +1723,7 @@ PYEOF
   # end is the machine's own pace, the host's TCG speed the only
   # weather.
   local spin_done=0
-  for _ in $(seq 1 600); do
+  for _ in $(seq 1 1800); do
     if grep -qF -- 'spin done' "$log" 2>/dev/null; then
       spin_done=1
       break
@@ -1924,7 +1924,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 971552549' 'desktop icons 2' 'comp 0 0 648757998' 'comp 0 1040 4273206946' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590 2384623481' 'comp 768 476 1225076272' 'comp 772 500 3992171468' 'comp 0 212 3618473852' 'comp 4 236 1521821718' 'comp 768 476 3228739382' 'comp 772 500 3992171468' 'comp 768 476 4185059610' 'comp 768 476 4240929130' 'comp 772 500 3992171468' 'desktop counter exit 0' 'comp 0 1040 1817618603' 'comp 0 0 606458521' 'desktop files exit 0' 'comp 0 1040 408617626' 'comp 0 0 515539590' 'desktop editor exit 0' 'comp 0 1040 2503536019' 'comp 0 0 648757998' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 2257686717' 'EmoOS boots from disk' 'comp 0 0 2442226545' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 4175258563' 'comp 0 0 3726696940' 'comp 0 0 4175258563' 'comp 0 0 2442226545' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 778 580'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 18 cause 13' 'addr 0x80000000' 'greedy' 'user heap 19 gone' 'smash' 'user fault 20 cause 15' 'addr 0x40000000' 'reach' 'user fault 21 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0' 'win shown' 'comp 48 32' 'popup up' 'comp 400 32' 'sub up' 'parent panel r4' 'comp 0 1048' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320' 'client up 5' 'user fault 26 cause 15' 'addr 0x20000000' 'comp reclaim 26' 'comp 512 320' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames '; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

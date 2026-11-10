@@ -59,25 +59,38 @@ const frame_split = page + 336 // blocks split into frames so far
 const block = 65536
 const frame = 4096
 
-// The arena's run (T8.9): the kernel's decision that a child's arena
-// is a contiguous run of this many blocks — 512 KiB — claimed in one
-// take_run at the spawn, mapped whole by the build, walked home block
-// by block at the death. The stub parks the number in the runtime's
-// emo_arena_run_len (runtime.S), and the process service's spare test
-// rides it (main.emo: a spawn backs the stack plus this run or is
-// refused). Two was what the region's budget carried from T8.9 to
-// A11.1: the image's 96 MiB heap left the region 71 blocks, and a
-// spawn's stack, table, and run had to fit beside every resident's.
-// The disk ELFs' round spent the lever that note reserved (CHECK.md,
-// 2026-11-01): the heap is 64 MiB, the region 500-odd blocks, an
-// exec's image run (the app images' 12.7 MB span, 196 blocks) fits
-// beside every resident — and the fs service's per-sector tuples (the
-// leak the install-sized writes named) have an arena to live in.
-// The type's own boot (emo-desktop A17.4) rasterizes its strikes in
-// the child's arena — the parse, the slots, and the flatten's store
-// live once in the run; the lever spent to 32 blocks (2 MiB) carries
-// the construction whole (CHECK.md, 2026-11-10).
+// The arena's run (T8.9): a child's arena is a contiguous run of
+// blocks, claimed in one take_run at the spawn, mapped whole by the
+// build, walked home block by block at the death — each slot keeps
+// its own base and end, so the walk never asks how long a run was
+// meant to be. The length is the spawn's, and there are two:
+//
+// The services' run — what the stub parks in the runtime's
+// emo_arena_run_len (runtime.S) — is the kernel's own green processes'
+// arena: the drivers and services, whose live data is a few tuples.
+// Four blocks is A11.1's value, the one the fs service's per-sector
+// tuples asked for and every service has run in since.
+//
+// A user pass's run is the process service's to set: it pokes the
+// runtime's word through arena_len_cell before the spawn and puts the
+// services' value back after (arena_run_set below; one gate
+// transaction runs at a time, so the word is never read between).
+// The measure that sized it is the machine's own (emo-desktop A17.4's
+// bring-up): a pass that builds a strike has spent 2039 KiB by its
+// first present — the face's parse and the rasterizer's work box
+// every Int64 they push or index by, and a boxed cell is a value
+// kind, uncounted, never handed back to a bump arena — so the run is
+// 64 blocks, the construction and as much again for the session.
+//
+// One length for both was what the region could not afford: at 32 the
+// strike's pass died one repaint after its mount, and at 128 the
+// eighth spawn found the region spent (`take_run 128 no: 90 90`) —
+// the services had each taken a run they never fill.
 const arena_run = 4
+const user_arena_run = 16
+// The runtime's emo_arena_run_len, by address: the stub parks it here
+// after boot() clears the page, and arena_run_set writes through it.
+const arena_len_cell = page + 344
 // The screen carve (T8.2, T9.1): the region's end moved down to the
 // carve's base — the carve, 8 MiB, is the memory between the two, the
 // kernel's to hand out whole and once (the hand below) — the 1080p
@@ -85,7 +98,13 @@ const arena_run = 4
 // downward from the fixed cells at 0x87000000, which none of it moves.
 const screen_base = 0x86800000 // physical: the carve's base, 2 MiB-aligned
 const screen_size = 0x800000 // 8 MiB: the mode's frame, the sprite's tail
-const screen_flag = page + 152 // the hand's one-shot word: 0 = the carve held
+// The hand's one-shot word: 0 = the carve held. It sits in the gap
+// before the claimed bitmap — its old word, page + 152, was past the
+// bitmap's eight words until A11.1 grew the bitmap to 32, and since
+// then was the bitmap's own word for blocks 704 to 767: the hand
+// marked block 704 claimed, and a give of that block would have
+// cleared the hand.
+const screen_flag = page + 56
 const region_end = koff + screen_base
 const uart = koff + 0x10000000
 
@@ -115,6 +134,7 @@ def boot(bss_end Int64) Void {
   }
   poke64(free, n)
   poke64(total, n)
+  dump()
 }
 
 // The base of a free block, or 0 when the region is spent. O(1): pop
@@ -122,6 +142,20 @@ def boot(bss_end Int64) Void {
 def take() Int64 {
   var b = peek64(head)
   if b == 0 {
+    // The spent region, loud (the region's eyes): a take that answers
+    // zero is the root arena's growth failing or a spawn's stack —
+    // the one line the exhaustion's reader needs beside the map.
+    put(116) // t
+    put(97) // a
+    put(107) // k
+    put(101) // e
+    put(32)
+    put(110) // n
+    put(111) // o
+    put(58) // :
+    put(32)
+    dec(peek64(free))
+    put(10)
     return 0
   }
   poke64(head, peek64(b))
@@ -178,6 +212,25 @@ def spare() Int64 {
   return peek64(free)
 }
 
+// A user pass's run, for the callers in other modules (a const does
+// not cross a module on this target): the process service's spare
+// test rides it — a spawn backs its stack and this run or is refused.
+def user_run() Int64 {
+  return user_arena_run
+}
+
+// The two settings of the runtime's run word. A user pass's spawn
+// brackets itself with them: its own run before, the services' back
+// after — the runtime reads the word inside the spawn, twice (the
+// take's length and the arena's end), and nowhere else.
+def arena_for_user() Void {
+  poke64(peek64(arena_len_cell), user_arena_run)
+}
+
+def arena_for_service() Void {
+  poke64(peek64(arena_len_cell), arena_run)
+}
+
 // A single 4 KiB frame — a page table's unit (T6.1) — or 0 when the
 // region is spent. The frame freelist is fed a block at a time: an
 // empty list takes a block through the account above (the block is
@@ -224,6 +277,156 @@ def screen_take() Int64 {
   return koff + screen_base
 }
 
+// The region's eyes (the EmoOS arena track's instrumentation): the
+// largest free run's length, scanned off the claimed bitmap the way
+// take_run scans it — the number a "no run of n" refusal is honest
+// against, and the one number the contiguity questions are asked of.
+def largest() Int64 {
+  var total_blocks = peek64(total)
+  var i = 0
+  var run = 0
+  var best = 0
+  while i < total_blocks {
+    var w = claimed + ((i / 64) * 8)
+    if (peek64(w) & (1 << (i % 64))) == 0 {
+      run = run + 1
+      if run > best {
+        best = run
+      }
+    } else {
+      run = 0
+    }
+    i = i + 1
+  }
+  return best
+}
+
+// The region's map, one line: free/total, the largest free run, and
+// the free-run histogram's buckets — runs of 1, 2-3, 4-7, 8-15, 16-31,
+// 32-and-up — the shape every contiguity question is asked of. The
+// boot prints it whole; the heap-gone route and the take refusals
+// print it at their moment, the kernel answering "why not" with
+// numbers instead of silence. All frames.emo printing is raw UART
+// through put — this runs inside the scheduler's masked regions and
+// the trap, where the console hook's path is not the one to take.
+def dump() Void {
+  var total_blocks = peek64(total)
+  var i = 0
+  var run = 0
+  var best = 0
+  var runs = 0
+  var b1 = 0
+  var b2 = 0
+  var b4 = 0
+  var b8 = 0
+  var b16 = 0
+  var b32 = 0
+  while i <= total_blocks {
+    var free_here = true
+    if i == total_blocks {
+      free_here = false
+    } else {
+      var w = claimed + ((i / 64) * 8)
+      if (peek64(w) & (1 << (i % 64))) != 0 {
+        free_here = false
+      }
+    }
+    if free_here {
+      run = run + 1
+    } else {
+      if run > 0 {
+        runs = runs + 1
+        if run > best {
+          best = run
+        }
+        if run < 2 {
+          b1 = b1 + 1
+        } else {
+          if run < 4 {
+            b2 = b2 + 1
+          } else {
+            if run < 8 {
+              b4 = b4 + 1
+            } else {
+              if run < 16 {
+                b8 = b8 + 1
+              } else {
+                if run < 32 {
+                  b16 = b16 + 1
+                } else {
+                  b32 = b32 + 1
+                }
+              }
+            }
+          }
+        }
+      }
+      run = 0
+    }
+    i = i + 1
+  }
+  put(114) // r
+  put(101) // e
+  put(103) // g
+  put(105) // i
+  put(111) // o
+  put(110) // n
+  put(32)
+  put(102) // f
+  put(114) // r
+  put(101) // e
+  put(101) // e
+  put(32)
+  dec(peek64(free))
+  put(47) // /
+  dec(peek64(total))
+  put(32)
+  put(108) // l
+  put(97) // a
+  put(114) // r
+  put(103) // g
+  put(101) // e
+  put(115) // s
+  put(116) // t
+  put(32)
+  dec(best)
+  put(32)
+  put(114) // r
+  put(117) // u
+  put(110) // n
+  put(115) // s
+  put(32)
+  dec(runs)
+  put(32)
+  put(49) // 1
+  put(58) // :
+  dec(b1)
+  put(32)
+  put(50) // 2
+  put(58) // :
+  dec(b2)
+  put(32)
+  put(52) // 4
+  put(58) // :
+  dec(b4)
+  put(32)
+  put(56) // 8
+  put(58) // :
+  dec(b8)
+  put(32)
+  put(49) // 1
+  put(54) // 6
+  put(58) // :
+  dec(b16)
+  put(32)
+  put(51) // 3
+  put(50) // 2
+  put(43) // +
+  put(58) // :
+  dec(b32)
+  put(10)
+}
+
 // A contiguous run of n blocks — the window buffer's unit (T8.5): the
 // display memory a client's frame lives in, one range the device and
 // the compositor can name. The claimed bitmap is the free map (a zero
@@ -251,6 +454,28 @@ def take_run(n Int64) Int64 {
     i = i + 1
   }
   if start < 0 {
+    // The refusal with its numbers (the region's eyes): the length
+    // asked, the blocks free, the largest run the map holds — the
+    // fragmentation's own confession at the moment it bites.
+    put(116) // t
+    put(97) // a
+    put(107) // k
+    put(101) // e
+    put(95) // _
+    put(114) // r
+    put(117) // u
+    put(110) // n
+    put(32)
+    dec(n)
+    put(32)
+    put(110) // n
+    put(111) // o
+    put(58) // :
+    put(32)
+    dec(peek64(free))
+    put(32)
+    dec(largest())
+    put(10)
     return 0
   }
   i = start

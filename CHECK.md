@@ -361,6 +361,50 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-10 — The heap-gone was a disguise; the raw world lands (the arena track)
+
+- The metal bring-up's blocker was never the arena. The bring-up's
+  `user heap 23 gone` rode the gate's verb 5, which `emo_fail` shares
+  with the allocator's exhaustion: the screen pass's strike returned
+  `(R.error, "glyph 2's ink does not fit the strike's 24")`, `mark()`
+  ate the message, and `sholder.get(0)` on the empty holder died the
+  heap death — with 1698 of its 2048 KiB free. The riscv64 emitter's
+  representation rule was the disease: `emo_builder_get` answers the
+  tagged word its backing holds, the checker's element pin died with
+  the scope it pinned in, and a native frame's typed consumers trusted
+  rule-1 — `quad_flat` did its ink math on pointers. The region's own
+  eyes killed the guesses: `frames.dump` at boot and at every death
+  (the boot's 991 blocks; the deaths' 933 free with a 618-block run),
+  `take_run`/`take` refusals that name their numbers, the heap report
+  carrying the failing message (`emo_fail` parks its pair in s2/s3)
+  beside the arena's remainder.
+- The raw world: the checker's builder pin sticks past the loop that
+  pinned it (`keep_builder_pins`); the builder cell carries a mark and
+  the runtime grew `push_i64`/`get_i64` — an empty builder turns raw,
+  a started tagged builder boxes, a raw builder refuses tagged loudly;
+  `to_array` on a raw builder copies verbatim under a header of −1,
+  and the consumers normalize: `emo_arr_tagged` at the equality's and
+  display's entries, the typed index read adaptive in both frames (a
+  gradual element boxes before the claim), `emo_copy_deep` and
+  `emo_copy_out` carrying the mark through the mailbox. A runtime
+  error can no longer dress as `heap gone`.
+- The arena runs split by class: the services keep 4 blocks, a user
+  pass's spawn sets its own run through `arena_len_cell` and the
+  process service judges the map's largest run after the stack is out
+  — the count alone once passed a shattered region to the runtime's
+  loud end. The const region sizes itself from the image's counted
+  const demand (hello 64→121 KiB); `screen_flag` moves out of the
+  claimed bitmap it had been buried in; the exec unwind stops giving a
+  frame to the block give.
+- Measured: the strike construction 2039 KiB → 793–862 KiB at the
+  first present; counter, files and editor exec, run and exit 0 on the
+  metal, every app digest byte-identical with the hosted goldens, the
+  shell REPL's write/cat/rm round whole. The golden's comp and frame
+  pins await the harvest re-pin (the tree's run.sh carries the relaxed
+  form), the console renderer's exec the one open death, and the
+  spinner's budget rides the host's TCG weather. The four golden-dir
+  locks ride the gate staging's own refresh.
+
 ## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
 
 - `ink`'s strike widens from a table index to a `Strike` — the verb's

@@ -127,8 +127,12 @@ emo_start:
     la t0, emo_frames__take_run
     la t1, emo_arena_take_hook
     sd t0, 0(t1)
-    li t0, 4                    # frames.emo's arena_run (A11.1's value: the
-                                # run the counter pass's strike grew up in)
+    li t0, 4                    # frames.emo's arena_run: the run the
+                                # kernel's own green processes — the
+                                # services — are born with. A user pass's
+                                # run is its spawn's own (the process
+                                # service pokes this word around the
+                                # spawn, through the cell parked below)
     la t1, emo_arena_run_len
     sd t0, 0(t1)
     # the tick's slice (T8.21): the root's quota word — the one policy
@@ -187,6 +191,15 @@ emo_start:
     call emo_runtime_init
     la a0, __emo_bss_end
     call emo_frames__boot
+    # the arena run's word, named for the process service (the arena
+    # track's answer): the runtime reads its length at every spawn, a
+    # user pass's spawn pokes its own run through this cell and puts
+    # the services' default back after. The allocator's page keeps the
+    # address (frames.emo's arena_len_cell), written here because its
+    # boot has just cleared the page.
+    la t0, emo_arena_run_len
+    li t1, EMO_KOFF + 0x87003158
+    sd t0, 0(t1)
     # the kernel's own table (T6.1): sv39.emo maps the image by its
     # permission boundaries, the rest of the RAM, the devices, and the
     # window the user still runs in, over frames the allocator hands

@@ -488,16 +488,34 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   give_run(scratch, sb)
   println("image ${size} bytes, ${ib} blocks")
   poke64(exec_pending, rec)
+  // The refusals from here leave the handoff frame where it is: a
+  // frame never rejoins its block (the page tables' rule, the bound
+  // image_home documents), and the block give's strictness would end
+  // the machine on a frame's address — the path used to try.
   var stack = frames.take()
   if stack == 0 {
     poke64(exec_pending, 0)
     poke64(rec, 0)
-    frames.give(hp)
+    give_run(run, ib)
+    return -5
+  }
+  // The child's arena is a user pass's run, and the allocator has to
+  // hold it as one contiguous run now that everything else is out —
+  // the process service's own judgment at the plain spawn. A region
+  // that cannot is the refusal, every block this transaction took
+  // walking home first; the count alone passed such a region on to the
+  // runtime's loud end inside the spawn.
+  if frames.largest() < frames.user_run() {
+    poke64(exec_pending, 0)
+    poke64(rec, 0)
+    frames.give(stack)
     give_run(run, ib)
     return -5
   }
   var entry = peek64(rec + 200)
+  frames.arena_for_user()
   var child = user_spawn(entry, sv39.pa_of(stack) + block)
+  frames.arena_for_service()
   return child
 }
 
