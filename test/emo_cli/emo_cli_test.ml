@@ -172,6 +172,22 @@ let repl_tests =
                ])
           ~output:(Buffer.add_string out);
         Alcotest.(check string) "output" "= hi\n" (Buffer.contents out));
+    tc "a require fetches the standard library's package" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:
+            (queue_input [ "require \"math\""; "math.pow(2.0, 10.0)"; "exit" ])
+          ~output:(Buffer.add_string out);
+        Alcotest.(check string) "output" "= 1024.0\n" (Buffer.contents out));
+    tc "a scoped require refuses and the repl survives" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:
+            (queue_input [ {|require "acme/leaf"|}; "1 + 1"; "exit" ])
+          ~output:(Buffer.add_string out);
+        let text = Buffer.contents out in
+        Alcotest.(check bool) "refusal reported" true (contains text "E5015");
+        Alcotest.(check bool) "env survives" true (contains text "= 2"));
   ]
 
 let read_file path =

@@ -1485,11 +1485,13 @@ let rec structurally_conforms ctx cname iname =
   | _ -> false
 
 (* [conforms ctx actual expected] — the gradual conformance relation. Unknown
-   on either side silences the check; a known mismatch is provable. *)
+   on either side silences the check; a known mismatch is provable. Numeric
+   widths conform only to themselves: an Int64 never sneaks into a Float64
+   slot — `to_float64()` names the conversion, and every target runs the
+   same program. *)
 and conforms ctx actual expected =
   match (actual, expected) with
   | _, Unknown | Unknown, _ -> true
-  | Int64, Float64 -> true
   | ClassType a, ClassType b -> String.equal a b
   | EnumType a, EnumType b -> String.equal a b
   | ArrayType a, ArrayType b -> conforms ctx a b
