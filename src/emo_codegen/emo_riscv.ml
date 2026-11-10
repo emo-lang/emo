@@ -1072,7 +1072,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         match env.cur with
         | Some f when env.region && List.mem f.fname !const_thunks ->
             const_region_words :=
-              !const_region_words + ((String.length s + 7) / 8 + 1);
+              !const_region_words + (((String.length s + 7) / 8) + 1);
             true
         | _ -> false
       then call_runtime env "emo_string_lit_const"
@@ -1225,7 +1225,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
             put env "    call emo_box_i64\n";
             put env "%s:\n" l;
             read_claim env e.Emo_ir.ety
-      end else begin
+      end
+      else begin
         emit_index env d b i;
         let l = fresh_label env "rawbox" in
         put env "    bgez t6, %s\n" l;
@@ -2741,7 +2742,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
               if boxed then box_result env "emo_box_i64"
-          | "push", [ v ] -> (
+          | "push", [ v ] ->
               (* A native frame pushing an Int64 sends the payload raw:
                  the store marks an empty builder raw-numbers and boxes
                  for a started tagged builder, so no boxed cell is born
@@ -2752,11 +2753,8 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              let raw =
-                env.native && v.Emo_ir.ety = Emo_check.Int64
-              in
-              if raw then
-                emit_expr env (d + 2) v
+              let raw = env.native && v.Emo_ir.ety = Emo_check.Int64 in
+              if raw then emit_expr env (d + 2) v
               else begin
                 emit_expr env (d + 2) v;
                 box_if_numeric env v.Emo_ir.ety
@@ -2766,8 +2764,8 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a1, %d(sp)\n" vslot;
               put env "    ld a0, %d(sp)\n" self_slot;
               if raw then call_runtime env "emo_builder_push_i64"
-              else call_runtime env "emo_builder_push")
-          | "get", [ _ ] -> (
+              else call_runtime env "emo_builder_push"
+          | "get", [ _ ] ->
               (* A native frame reads through the raw entry: the index
                  rides raw and the element answers in its own word — a
                  raw builder's payload, a tagged builder's Int64 cell
@@ -2782,7 +2780,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a1, %d(sp)\n" idx_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
               if env.native then call_runtime env "emo_builder_get_i64"
-              else call_runtime env "emo_builder_get")
+              else call_runtime env "emo_builder_get"
           | "to_array", [] ->
               emit_expr env d self_;
               call_runtime env "emo_builder_to_array"
@@ -9322,7 +9320,8 @@ let init_tail_asm ~(profile : string) : string =
   let floor = "CONST_REGION_FLOOR_IMM" in
   match profile with
   | "kernel" ->
-      Printf.sprintf {|emo_runtime_init_tail:
+      Printf.sprintf
+        {|emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
                             #   across the call (the caller's t1 is its own)
     la t0, emo_heap_end
@@ -9346,9 +9345,11 @@ let init_tail_asm ~(profile : string) : string =
     la t1, emo_const_lim
     sd t0, 0(t1)            # and its floor, the const demand's region down
     ret
-|} floor
+|}
+        floor
   | "user" | "app" ->
-      Printf.sprintf {|emo_runtime_init_tail:
+      Printf.sprintf
+        {|emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
                             #   across the call
     # the arena end (emo-desktop A11.1): the boot image's root ends at
@@ -9386,7 +9387,8 @@ let init_tail_asm ~(profile : string) : string =
     la t1, emo_const_lim
     sd t0, 0(t1)            # and its floor, the const demand's region down
     ret
-|} floor floor
+|}
+        floor floor
   | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
 
 let arena_gone_asm ~(profile : string) : string =
@@ -9568,7 +9570,7 @@ SECTIONS
    and the root's own arena ends below the region — `emo_alloc_const`
    bumps it, `emo_runtime_init` draws the line. *)
 let stack_asm ~(profile : string) : string =
-  let stack_bytes, heap_bytes =
+  let stack_bytes, scratch_bytes, heap_bytes =
     match profile with
     (* The kernel heap at 32 MiB (emo-desktop A14.3's T9.1 lever): the
        heap's live users are the root's bump (a few KiB) and the const
@@ -9576,24 +9578,52 @@ let stack_asm ~(profile : string) : string =
        region — so the disk ELFs' round's 64 MiB gives 32 back, and the
        allocator region grows by the same 512 blocks the HD desktop's
        surfaces and its three residents spend. *)
-    | "kernel" -> (1048576, 33554432)
-    | "user" -> (65536, 8388608)
+    | "kernel" -> (1048576, 0, 33554432)
+    (* The user image's 8 MiB, split so the bump can never walk the raw
+       scratch: the first mebibyte under the heap's start is the
+       scratch's reservation — the address the packages' `buf` literals
+       name (0x87200000, a half mebibyte into it) — and the root's
+       cursor starts above it. The old single-span layout died on the
+       metal: the boot pass IS the desktop (the top level's last
+       statement), and the desktop's eager strike construction
+       (emo-desktop A17.4) bump-walked 385 KiB of glyph coverage and
+       builder backings straight through buf — the token cells at
+       buf+2048 read as coverage words, and the next boot-image spawn
+       (the counter pass) took the doomed branch reading one as its
+       token. Found 2026-11-11 with the monitor's physical-memory
+       snapshot; the const tables the old ink rode (font.emo, retired
+       in A17.4) lived in the const region at the heap's top, which is
+       why the walk never happened before. *)
+    | "user" -> (65536, 1048576, 7340032)
     (* The app profile's 2 MiB (emo-desktop A12.1): a disk ELF's arena is
        the run the spawn claimed (T8.9's hooks), so the .bss heap hosts
        the const region's 64 KiB and the raw scratch the packages poke —
-       the winbuf's `0x87200000` must stay inside the image's span — and
-       nothing else. Eight MiB of it was the span's dead weight: the
+       the winbuf's `0x87200000` must stay inside the image's span, and
+       the same mebibyte reservation under the heap's start keeps it
+       there whatever a pass's own bump might one day do — and nothing
+       else. Eight MiB of it was the span's dead weight: the
        counter's image measured 12.24 MiB, a 196-block image run per
        resident app against the region's ~500; two MiB measures 6.24 MiB,
        a 100-block run — three residents beside the desktop's own
        surfaces, the process world's 64 slots and its 4 MiB of
        per-process stacks the next lever (its 64-slot bound sits at ten
        asm sites, a round of its own if a fourth resident ever asks). *)
-    | "app" -> (65536, 2097152)
+    | "app" -> (65536, 1048576, 1048576)
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
+  let scratch_section =
+    if scratch_bytes = 0 then ""
+    else
+      Printf.sprintf
+        {|    .globl emo_scratch_base
+emo_scratch_base:
+    .zero %d
+|}
+        scratch_bytes
+  in
   Printf.sprintf
-    {|# ---- The stack and the value heap: .bss, cleared by the entry stub ----
+    {|# ---- The stack, the raw scratch, and the value heap: .bss, ----
+# ---- cleared by the entry stub ----
 
     .section .bss
     .align 16
@@ -9601,7 +9631,7 @@ let stack_asm ~(profile : string) : string =
 emo_stack_bottom:
     .zero %d
 emo_stack_top:
-    .globl emo_heap_start
+%s    .globl emo_heap_start
 emo_heap_start:
     .zero %d
     .globl emo_heap_end
@@ -9800,7 +9830,7 @@ emo_slice_left:
 emo_trap_resume_hook:
     .zero 8
 |}
-    stack_bytes heap_bytes
+    stack_bytes scratch_section heap_bytes
 
 (* The float formatter's tables: 10^k for every exponent the rule can
    produce (indexed by k + 303), as a double-double pair so the digit

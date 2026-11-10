@@ -36,9 +36,11 @@ the standing demo that the user side of the system is the same
 language as the supervisor underneath it.
 
 The REPL allocates in the boot pass's arena, as every user pass does,
-and no collector exists yet: the bound is the user heap (8 MiB), a few
-dozen bytes per interaction, the same lifetime bound every user pass
-lives under.
+and no collector exists yet: the bound is the image heap above the
+scratch's reservation (the 8 MiB span holds a bump-proof mebibyte for
+the scratch's addresses, and the bump runs from the reservation's top
+to the const region), a few dozen bytes per interaction, the same
+lifetime bound every user pass lives under.
 
 ## The line
 
@@ -137,7 +139,17 @@ can say to a shell whose buffers are its own writable segment.
 The shell keeps its own addresses in the user image's read-write
 segment, above the proof chain's (the segment the loader zeroed and
 the gate checks against — the ELF's RW segment runs megabytes past
-these):
+these). The base is no ordinary heap byte: the image's `.bss` carves
+a mebibyte reservation for it (`emo_scratch_base` … `emo_heap_start`)
+and the bump allocator's own range starts above it, so no pass's
+allocations can ever walk these words. The lesson is the counter
+pass's death: the boot pass IS the desktop, the desktop's eager
+strike construction (emo-desktop A17.4) bumped 385 KiB of glyph
+coverage through the old single-span heap, the token cells at
+buf+2048 read as coverage words, and the next boot-image spawn took
+the doomed branch reading one as its token — found with the monitor's
+physical-memory snapshot (2026-11-11), fixed by the reservation. The
+addresses themselves keep their old values:
 
 | Address (from the scratch base `0x87200000`) | Contents |
 | --- | --- |
@@ -196,5 +208,10 @@ program through the gate, nothing staged by the test), the refusal
 the exit route's lines as before, reached now by typing `poweroff`.
 The write is proven by a line-order check on the list: the second
 `ls` answers `hello.txt` and `note.txt` on consecutive lines, and the
-write's echo cannot produce that pair. Three consecutive rounds
-byte-identical on each leg.
+write's echo cannot produce that pair. Three consecutive rounds green
+on each leg, every pinned line and value identical; the one line that
+moves is the prompt's seat among a REPL-launched app's own lines —
+the desktop's repaint tail and the app's first slide end in the same
+instant, and which writer's bytes reach the console first is the
+scheduler's (the launch era's own race class, emo-desktop A15.2's
+finding).

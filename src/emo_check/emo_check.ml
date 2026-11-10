@@ -3286,17 +3286,13 @@ and keep_builder_pins (outer : env) (inner : env) : env =
       | BuilderType elem when elem <> Unknown -> (
           match lookup_env acc name with
           | Some
-              ({
-                 vtype = BuilderType Unknown;
-                 is_var = false;
-                 depth = d;
-                 _ } as o)
+              ({ vtype = BuilderType Unknown; is_var = false; depth = d; _ } as
+               o)
             when d = info.depth ->
               bind acc name { o with vtype = BuilderType elem }
           | _ -> acc)
       | _ -> acc)
-    outer
-    (List.rev inner.bindings)
+    outer (List.rev inner.bindings)
 
 and check_stmt ctx env (s : Ast.stmt) : env =
   let span = s.Ast.stmt_span in

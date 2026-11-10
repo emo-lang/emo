@@ -3370,8 +3370,11 @@ let riscv64_profile_tests =
           "the user stub is the entry" true
           (contains user_asm "The user profile's boot stub");
         Alcotest.(check bool)
-          "the user heap is the profile's budget" true
-          (contains user_asm ".zero 8388608");
+          "the user scratch is the bump-proof mebibyte" true
+          (contains user_asm "emo_scratch_base:\n    .zero 1048576");
+        Alcotest.(check bool)
+          "the user heap is the budget above the scratch" true
+          (contains user_asm "emo_heap_start:\n    .zero 7340032");
         Alcotest.(check bool)
           "the user image carries no kernel heap" true
           (not (contains user_asm ".zero 100663296"));
@@ -3381,7 +3384,10 @@ let riscv64_profile_tests =
           (contains kernel_asm "Boot profile A");
         Alcotest.(check bool)
           "the kernel heap is the 32 MiB the HD desktop's round spent" true
-          (contains kernel_asm ".zero 33554432"));
+          (contains kernel_asm ".zero 33554432");
+        Alcotest.(check bool)
+          "the kernel keeps its single heap, no scratch carved" true
+          (not (contains kernel_asm "emo_scratch_base")));
     tc "the allocator charges the current process's arena" (fun () ->
         (* T5.1: the slot holds the cursor and the end (offsets 576 and
            584, the stride 592), emo_alloc reads them off the current

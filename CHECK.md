@@ -361,6 +361,59 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-11 — The scratch gets its own mebibyte; the golden re-pins (the arena track's close)
+
+- The console renderer's death was never a hang and never the arena:
+  the counter child died in the doomed branch (`user fault 33 cause
+  13` reading 0x80000000) because every token cell in `buf`
+  (0x87200000) already held a coverage word. The boot pass IS the
+  desktop (the top level's last statement, `desktop()` at 3655), and
+  the desktop's eager strike construction (emo-desktop A17.4) bumps in
+  the boot pass's own arena — the image's static heap from
+  `emo_heap_start` (0x87180000) — where 385 KiB of face assembly,
+  builder backings and raw arrays walked straight through the scratch
+  page's token cells at buf+2048. The monitor's physical-memory
+  snapshot made it visible (`pmemsave` of the image's whole span at
+  four beats: the cells read as vertex-adjacent words from the first
+  prompt on; the walk over the bump's count headers ended at the first
+  raw array's −1 header, the boot pass's heap holding a whole strike's
+  worth of −1-marked arrays). The retired ink's tables lived in the
+  const region at the heap's top, which is why the walk never happened
+  before A17.4.
+- The fix is structural: the user and app profiles' `.bss` split the
+  image heap — a mebibyte reservation (`emo_scratch_base`) for the raw
+  scratch the packages' `buf` literals name, the bump's own range
+  starting above it (`emo_heap_start` 0x87180000→0x87280000; the app
+  profile's 2 MiB total and every image's span and const region
+  unchanged, the kernel profile's single heap untouched). The counter
+  pass now renders its frames (`EmoUI on EmoOS`, `count 001`, the quit
+  key home) and the golden runs whole, both transports.
+- The golden re-pinned from a dual-transport-verified pair: 48 comp
+  sums harvested by replaying the awaits' and the order list's own
+  walks on the new transcripts (40 moved, 8 unmoved — the no-glyph
+  compositions kept their sums, and each window's slide kept a
+  constant old→new delta, the mapping's cross-check), the icons'
+  refresh frame 624477878, the ledger `frames 980 782`. Three rounds
+  on the re-pinned file, both transports, green.
+- The spinner's budget story corrected: the loop's machine code is the
+  baseline compiler's instruction for instruction; the pace is its
+  page placement under TCG — translation blocks chain within a page,
+  so a loop whose bytes straddle a 4 KiB boundary pays the block
+  lookup every iteration. Measured: 18 s with the loop sitting inside
+  one page (the baseline-compiled image embedded in the same kernel),
+  167.8–170.9 s straddling (this build's, six boots). The budget is
+  3600 rounds (360 s), twice the straddle. Found-not-fixed: the
+  placement follows the runtime's size, so the pace flips with any
+  shift of the code; the budget now covers both cases.
+- One interleave to record, inside the launch era's own race class:
+  the REPL's prompt after a slot app's `exec` lands within a line of
+  the app's first slide — the prompt's position among the launch's
+  lines moved by one between rounds (every pinned line and value
+  identical; run.sh passes three rounds). A deterministic ordering
+  (prompt printed before the desktop's own repaints, same-writer
+  ordering) is available if whole-transcript byte identity is wanted
+  again; docs/shell.md's pins note now says what holds.
+
 ## 2026-11-10 — The heap-gone was a disguise; the raw world lands (the arena track)
 
 - The metal bring-up's blocker was never the arena. The bring-up's

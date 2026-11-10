@@ -241,7 +241,8 @@ let smoke_tests =
           [ "counter"; "files"; "editor"; "spin" ];
         (* The user image requires the desktop's packages beside the
            syscall stub (emo-desktop A7.2): EmoUI's core, the fb
-           backend's core with its bitmap font (A8.1) and pointer sprite
+           backend's core with its rasterizer and the two faces' outlines
+           (A17.1–A17.4, the bitmap font's successors) and pointer sprite
            (A8.2), the first frame with the counter the screen pass
            runs through the Elm loop (A8.3), the window shell's
            windows (A9.1), the desktop shell's dock (A10.2), the apps'
@@ -274,7 +275,14 @@ let smoke_tests =
               [ "package.emo"; "ui.emo"; "debug.emo" ] );
             ( "../../projects/emo-desktop/fb",
               "emo/ui_fb/0.1.0",
-              [ "package.emo"; "ui_fb.emo"; "font.emo"; "pointer.emo" ] );
+              [
+                "package.emo";
+                "ui_fb.emo";
+                "raster.emo";
+                "face_inter.emo";
+                "face_mono.emo";
+                "pointer.emo";
+              ] );
             ( "../../projects/emo-desktop/fb/frame",
               "emo/ui_fb_frame/0.1.0",
               [ "package.emo"; "ui_fb_frame.emo"; "counter.emo" ] );
@@ -395,28 +403,33 @@ let smoke_tests =
         Alcotest.(check bool)
           "the apps' corpus file is in the tree" true
           (Sys.file_exists apps_expected);
-        (* The bitmap font (emo-desktop A13): run.sh's model of the
-           display draws the header's wordmark and the icons' names from
-           `font.emo`'s table — the same table the user image stamps
-           with — and is pointed at the repository's the same way. *)
-        let font_src =
-          Filename.concat (Sys.getcwd ())
-            "../../projects/emo-desktop/fb/font.emo"
+        (* The type's rasterizer (emo-desktop A17.4, the bitmap font's
+           successor): run.sh's model of the display inks the header's
+           wordmark and the icons' names through `glyphs/reference.py` —
+           the reference the strikes' raster pins are checked against —
+           and is pointed at the repository's directory the same way. *)
+        let glyphs_dir =
+          Filename.concat (Sys.getcwd ()) "../../projects/emo-desktop/fb/glyphs"
         in
         Alcotest.(check bool)
-          "the bitmap font's table is in the tree" true
-          (Sys.file_exists font_src);
+          "the type's rasterizer is in the tree" true
+          (Sys.file_exists (Filename.concat glyphs_dir "reference.py"));
+        (* The budget (2026-11-11): one run is two boots, each a whole
+           session — the spinner's loop alone measured 170 s a boot when
+           its bytes straddle a page boundary under TCG, 18 s when they
+           do not — so the whole run measured fourteen minutes at its
+           slowest; the budget holds that with room. *)
         let out, err, status =
-          run_cmd ~timeout:480.0
+          run_cmd ~timeout:1500.0
             (Printf.sprintf
                "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
-                DOCK_EXPECTED=%s APPS_EXPECTED=%s FONT_SRC=%s %s"
+                DOCK_EXPECTED=%s APPS_EXPECTED=%s GLYPHS_DIR=%s %s"
                (Filename.quote frame_expected)
                (Filename.quote pointer_sprite)
                (Filename.quote win_expected)
                (Filename.quote dock_expected)
                (Filename.quote apps_expected)
-               (Filename.quote font_src)
+               (Filename.quote glyphs_dir)
                (Filename.quote (Filename.concat scratch "run.sh")))
         in
         (match status with
