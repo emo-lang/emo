@@ -361,6 +361,62 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-10 — The rasterizer (emo-desktop A17.3)
+
+- The algorithm's source of truth lands as `glyphs/reference.py`
+  (stdlib only), ported to `raster.emo` to match byte for byte: 26.6
+  throughout, every division truncating (Emo's own semantics, the
+  reference mirroring it), de Casteljau flattening while the second
+  difference exceeds one pixel (the deviation bound is a quarter of
+  that difference), and the area accumulation as one closed form per
+  touched column — the clamp's antiderivative, doubled, `G2(v)` = 0 |
+  v² | 128v − 4096, answering `H·(G2(xb − 64c) − G2(xa − 64c)) / D`
+  with the strip for the columns left of the piece falling out of the
+  same formula, no column splitting, no interpolation beyond the
+  row-boundary x's (truncating, a subpixel unit of dust a crossing).
+  The sweep runs right to left over `cells[c] + 128·cover_suffix[c]`
+  and rounds `min(255, (|A2| + 16) >> 5)`. The algorithm's full
+  spelling is the design's (typeface.md, amended where the prose had
+  drifted from what the code does).
+- The type golden grows 288 raster lines — a glyph per strike, the
+  advance, the ink box and a rolling digest over the ink's coverage
+  bytes — and `reference.py --check` recomputes them from the
+  generator's own outlines and matches the Emo strike byte for byte.
+  The two implementations read different roads to the same data (the
+  reference takes `outlines.py`'s absolute coordinates, the Emo side
+  decodes the face modules' packed words), so the agreement also
+  proves the packed decode. The strike rasterizes eagerly at
+  construction and fills meta word B; an ink beyond `max_dim` refuses
+  through the error convention, as the design's strictness asked.
+- Three findings:
+  - **The generator's vertex fields were 26 bits, not the documented
+    28.** `0x3FFFFFF` is 2²⁶ − 1: negative deltas were two's-
+    complemented at the wrong width and every face module carried
+    corrupted vertices for any glyph with a negative-going edge — the
+    reference never noticed (it reads Python objects), the Emo
+    rasterizer's bounding box exploded. The mask corrected to
+    `0xFFFFFFF`, the faces regenerated (their parse digests moved),
+    the advance cross-check unchanged.
+  - **A digest over slot words overflows Int64** — a word packs eight
+    coverage bytes and reaches 2⁶⁴ − 1 — so the raster digest folds
+    the bytes, which stay 0..255 on every target.
+  - **The builder element-type pinning**: `ArrayBuilder[Int64]`
+    annotations hold in parameter, field and return positions, but a
+    local binding settles only through a static push on the binding
+    itself — pushes made inside another def leave `get` answering
+    Unknown, and the c target refuses bitwise operators on Unknown
+    operands (the instrumented refusal named `left ty Unknown, left
+    var mnx`). `glyph_edges` builds and `to_array`s its edges behind
+    its own typed return; the sweep indexes the plain array. And
+    `ArrayBuilder[Int64].new()` is not a construct — the constructor
+    is bare, the element type riding annotations and pins only.
+- The FreeType audit ran once, box-aligned (the grid's pixels are
+  hinted, the reference is not): the shapes agree, ink boxes move by
+  a pixel, stems read a level or two heavier, ink mass −6..−12% —
+  hinting's signature, not the algorithm's. A dev report, never a
+  gate. The gate gains `reference.py --check` beside the two
+  generator drift checks.
+
 ## 2026-11-10 — The parser and the Strike (emo-desktop A17.2)
 
 - `raster.emo` joins `emo/ui_fb` as the parser and the Strike's home:

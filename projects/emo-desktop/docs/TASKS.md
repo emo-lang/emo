@@ -1293,13 +1293,43 @@ lives as long as its app. The decisions are D7 through D12 in
   `fb/` regenerated (the package's content hash moved with the three
   new modules).
 
-- [ ] **A17.3** — The rasterizer: `glyphs/reference.py` first (stdlib
+- [x] **A17.3** — The rasterizer: `glyphs/reference.py` first (stdlib
   only, the algorithm's source of truth), then the Emo port to match
   byte for byte — 26.6 throughout, de Casteljau flattening under the
-  one-pixel second difference, Green's-theorem area accumulation with
-  the suffix cover, the sweep's `min(255, (|A| + 8) >> 4)`. Goldens
-  pin a glyph set's coverage identical on every target; FreeType
-  stays a development audit, not a judge.
+  one-pixel second difference, the clamp's doubled antiderivative
+  answering every column the piece's x-range touches in one closed
+  form, the right-to-left sweep with the strip suffix. **Complete
+  2026-11-10** — the type golden grows 288 raster lines (a glyph per
+  strike: advance, ink box, and a rolling digest over the ink's
+  coverage bytes), and `reference.py --check` recomputes all 288 from
+  the generator's own outlines and matches the Emo strike byte for
+  byte — two independent implementations, one set of integers (the
+  reference reads `outlines.py`'s absolute coordinates; the Emo side
+  reads the face modules' packed words, so the equivalence also proves
+  the packed decode). The strike now rasterizes eagerly at
+  construction and fills meta word B (the ink box). Three findings on
+  the way:
+  - **The generator's vertex fields were 26 bits, not the documented
+    28** — `0x3FFFFFF` is 2²⁶ − 1, so negative deltas were two's-
+    complemented at the wrong width and every face module carried
+    corrupted vertices (the reference never saw it, reading Python
+    objects; the Emo bbox exploded). The mask corrected to
+    `0xFFFFFFF`, the faces regenerated, the advance cross-check still
+    95/95-plus-hinting.
+  - **A digest over slot words overflows Int64** — a word packs eight
+    coverage bytes and reaches 2⁶⁴ − 1 — so the raster digest folds
+    bytes, 0..255 on every target.
+  - **The builder element-type pinning**: `ArrayBuilder[Int64]`
+    annotations hold in parameter, field and return positions, but a
+    local binding settles only through a static push on the binding
+    itself — pushes made inside another def leave `get` answering
+    Unknown, and the c target refuses bitwise operators on Unknown
+    (the rasterizer's shifts died there). `glyph_edges` builds and
+    `to_array`s its edges behind its own typed return, and the sweep
+    indexes the plain array.
+  The FreeType audit ran once, box-aligned: the shapes agree, the
+  deltas are hinting's (ink boxes move a pixel, stems read a level or
+  two heavier, ink mass −6..−12%), not the algorithm's.
 
 - [ ] **A17.4** — The seam migrates: `ink`'s strike widens to a
   `Strike`, `text` and `text_width` take the strike they draw in,

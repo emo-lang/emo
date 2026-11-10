@@ -125,6 +125,8 @@ if command -v python3 >/dev/null 2>&1; then
   expect 0 "the type's tables in font.emo are the grid in glyphs/coverage.txt" "$rc"
   python3 glyphs/outlines.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
   expect 0 "the faces' outlines match the pinned faces (glyphs/outlines.py)" "$rc"
+  python3 glyphs/reference.py --check >"$OUT.log" 2>&1 && rc=0 || rc=$?
+  expect 0 "the reference rasterizer matches the golden's raster pins" "$rc"
 else
   printf 'skip the type table check: no python3 on PATH\n'
 fi

@@ -274,6 +274,27 @@ class Strike {
     return self.meta
   }
 
+  def slots_array() Array[Int64] {
+    return self.slots
+  }
+
+  // The ink box, meta word B: the pen-relative offsets and the span.
+  def ink_left(g Int64) Int64 {
+    return ((self.meta[g * 2 + 1] >> 24) & 255) - 128
+  }
+
+  def ink_top(g Int64) Int64 {
+    return ((self.meta[g * 2 + 1] >> 16) & 255) - 128
+  }
+
+  def ink_w(g Int64) Int64 {
+    return (self.meta[g * 2 + 1] >> 8) & 255
+  }
+
+  def ink_h(g Int64) Int64 {
+    return self.meta[g * 2 + 1] & 255
+  }
+
   def glyph_of(c String) Int64 {
     const f = self.face
     return f.glyph_of(c)
@@ -282,38 +303,350 @@ class Strike {
 
 // The strike `f` takes at `px` pixels, by the error convention:
 // `(R.ok, the strike)` or `(R.error, why)` — a size at zero or below,
-// an advance the 8-bit meta field cannot hold. The refusal is a value,
-// not a raise: the riscv64 target does not lower raise, and the
-// compiler pulls every module of a package into its builds, so this
-// module lowers with the metal's images and refuses the way the gate's
-// own syscall answers do.
+// an advance the 8-bit meta field cannot hold, an ink wider or taller
+// than the strike's max_dim. The refusal is a value, not a raise: the
+// riscv64 target does not lower raise, and the compiler pulls every
+// module of a package into its builds, so this module lowers with the
+// metal's images and refuses the way the gate's own syscall answers
+// do. Construction rasterizes every glyph eagerly (the language's
+// arrays are immutable; the design's "first use rasterizes" amended),
+// the advance pre-check running before the slots allocate.
 def strike(f Face, px Int64) (R, Strike) {
   if px <= 0 {
     return (R.error, "raster: strike size ${px} is not positive")
   }
-  const ascent = ceil_scale(f.ascent_fu(), px, f.units())
-  const descent = ceil_scale(f.descent_fu(), px, f.units())
-  const max_dim = (ascent + descent + 7) / 8 * 8
-  const slot = (max_dim * max_dim + 7) / 8
   const n = f.glyphs()
-  const total = n * slot
-  const zeros = ArrayBuilder.new()
-  for var k = 0; k < total; k = k + 1 {
-    zeros.push(0)
-  }
-  const meta = ArrayBuilder.new()
   for var g = 0; g < n; g = g + 1 {
     const apx = half_up(advance_fu(f, g), px, f.units())
     if apx > 255 {
       return (R.error,
               "raster: glyph ${g}'s advance ${apx} does not fit the meta word")
     }
+  }
+  const ascent = ceil_scale(f.ascent_fu(), px, f.units())
+  const descent = ceil_scale(f.descent_fu(), px, f.units())
+  const max_dim = (ascent + descent + 7) / 8 * 8
+  const slot = (max_dim * max_dim + 7) / 8
+  const slots = ArrayBuilder.new()
+  const meta = ArrayBuilder.new()
+  for var g = 0; g < n; g = g + 1 {
+    const meta_b = raster_glyph(f, g, px, max_dim, slot, slots)
+    if meta_b < 0 {
+      return (R.error,
+              "raster: glyph ${g}'s ink does not fit the strike's ${max_dim}")
+    }
+    const apx = half_up(advance_fu(f, g), px, f.units())
     meta.push((g * slot) | (apx << 24))
-    meta.push(0)
+    meta.push(meta_b)
   }
   return (R.ok, Strike.new(face: f, px: px, ascent: ascent, descent: descent,
-                           max_dim: max_dim,
-                           slots: zeros.to_array(), meta: meta.to_array()))
+                           max_dim: max_dim, slots: slots.to_array(),
+                           meta: meta.to_array()))
+}
+
+// The name a raster line prints for the glyph: the face's own .notdef
+// reads "missing", the space reads "space", every other printable
+// ASCII reads itself.
+def glyph_name(g Int64) String {
+  if g == 0 {
+    return "missing"
+  }
+  const c = alphabet.substring(g - 1, 1)
+  if c == " " {
+    return "space"
+  }
+  return c
+}
+
+// The rolling digest over the ink's coverage bytes — h·31 + b mod
+// 1000000007, the same fold the faces' parse digests ride. The bytes,
+// not the words: a slot word packs eight coverage bytes and reaches
+// 2^64 − 1, past Int64's positive range — the bytes stay 0..255 on
+// every target, so the fold lands on the same integer everywhere.
+def glyph_digest(s Strike, g Int64) Int64 {
+  const slots = s.slots_array()
+  const w = s.ink_w(g)
+  const h = s.ink_h(g)
+  const count = (w * h + 7) / 8
+  var at = s.slot_base(g)
+  var hv = 0
+  for var k = 0; k < count; k = k + 1 {
+    const word = slots[at]
+    for var j = 0; j < 8; j = j + 1 {
+      hv = (hv * 31 + ((word >> (8 * j)) & 255)) % 1000000007
+    }
+    at = at + 1
+  }
+  return hv
+}
+
+// ---- the rasterizer (A17.3) ----
+//
+// The reference's own integers (glyphs/reference.py, the algorithm's
+// source of truth): 26.6 throughout, every division truncating, the
+// clamp's doubled antiderivative answering each column in one closed
+// form. The loops are typed top-level defs — the winbuf rule — and
+// the work is boot-time once, the strike's own construction.
+
+// The clamp's antiderivative, doubled: zero below the pixel, v²
+// inside it, 128v − 4096 above.
+def g2(v Int64) Int64 {
+  if v <= 0 {
+    return 0
+  }
+  if v >= 64 {
+    return 128 * v - 4096
+  }
+  return v * v
+}
+
+// A font-unit value in 26.6: the exact rational rounded half up, the
+// advance's own rounding at sixty-four times the resolution.
+def scale26(fu Int64, px Int64, upem Int64) Int64 {
+  return (2 * fu * px * 64 + upem) / (2 * upem)
+}
+
+// One quadratic into the edges builder, split at de Casteljau
+// midpoints (floored averages) while its second difference exceeds
+// one pixel in either component — the curve's worst deviation from
+// its chord is a quarter of that difference. The recursion terminates
+// by halving.
+def quad_flat(edges ArrayBuilder[Int64], x0 Int64, y0 Int64, cx Int64, cy Int64,
+              x1 Int64, y1 Int64) Void {
+  var d2x = x0 - 2 * cx + x1
+  if d2x < 0 {
+    d2x = 0 - d2x
+  }
+  var d2y = y0 - 2 * cy + y1
+  if d2y < 0 {
+    d2y = 0 - d2y
+  }
+  if d2x > 64 || d2y > 64 {
+    const mx = (x0 + cx) / 2
+    const my = (y0 + cy) / 2
+    const nx = (cx + x1) / 2
+    const ny = (cy + y1) / 2
+    const qx = (mx + nx) / 2
+    const qy = (my + ny) / 2
+    quad_flat(edges, x0, y0, mx, my, qx, qy)
+    quad_flat(edges, qx, qy, nx, ny, x1, y1)
+  } else {
+    edges.push(x0)
+    edges.push(y0)
+    edges.push(x1)
+    edges.push(y1)
+  }
+}
+
+// The glyph's flattened segments, scaled to 26.6 and flipped downward
+// from the line box's top: the slice's vertices reconstructed from
+// their deltas and walked per contour — on→on a line, on→off→on a
+// quadratic, the closing piece mirroring the last vertex. Four words
+// an edge.
+def glyph_edges(f Face, g Int64, px Int64, ascent26 Int64) Array[Int64] {
+  const upem = f.units()
+  const base = f.base(g)
+  const points = f.word(base + 1)
+  const contours = f.word(base + 2)
+  const edges = ArrayBuilder.new()
+  const scaled = ArrayBuilder.new()
+  var vx = 0
+  var vy = 0
+  for var i = 0; i < points; i = i + 1 {
+    const wv = f.word(base + 3 + (contours + 3) / 4 + i)
+    var dx = (wv >> 28) & 0xFFFFFFF
+    if dx > 134217728 {
+      dx = dx - 268435456
+    }
+    var dy = wv & 0xFFFFFFF
+    if dy > 134217728 {
+      dy = dy - 268435456
+    }
+    vx = vx + dx
+    vy = vy + dy
+    scaled.push(scale26(vx, px, upem))
+    scaled.push(ascent26 - scale26(vy, px, upem))
+    scaled.push(wv >> 56)
+  }
+  var s = 0
+  for var e = 0; e < contours; e = e + 1 {
+    const end = (f.word(base + 3 + e / 4) >> (16 * (e % 4))) & 0xFFFF
+    const n = end - s + 1
+    var i = 0
+    while i < n {
+      const x0 = scaled.get((s + i) * 3)
+      const y0 = scaled.get((s + i) * 3 + 1)
+      const j = s + ((i + 1) % n)
+      const x1 = scaled.get(j * 3)
+      const y1 = scaled.get(j * 3 + 1)
+      if scaled.get(j * 3 + 2) == 1 {
+        edges.push(x0)
+        edges.push(y0)
+        edges.push(x1)
+        edges.push(y1)
+        i = i + 1
+      } else {
+        const k = s + ((i + 2) % n)
+        quad_flat(edges, x0, y0, x1, y1, scaled.get(k * 3),
+                  scaled.get(k * 3 + 1))
+        i = i + 2
+      }
+    }
+    s = end + 1
+  }
+  return edges.to_array()
+}
+
+// One glyph's ink into the strike's slots builder: the flattened
+// edges' bounding box, then the sweep — column by column, each edge's
+// row piece answering the closed form, the coverage byte packed eight
+// to a word, the slot padded dense. Answers the meta word B (left and
+// top +128, then width and height), or −1 when the ink does not fit
+// the strike's max_dim.
+def raster_glyph(f Face, g Int64, px Int64, max_dim Int64, slot Int64,
+                 slots ArrayBuilder[Int64]) Int64 {
+  const ascent26 = ceil_scale(f.ascent_fu(), px, f.units()) * 64
+  const edges = glyph_edges(f, g, px, ascent26)
+  const ne = edges.length() / 4
+  if ne == 0 {
+    // an empty ink is its advance alone — but the slot still fills
+    // with zeros, the dense layout's own bookkeeping
+    const pad_end = (g + 1) * slot
+    while slots.length() < pad_end {
+      slots.push(0)
+    }
+    return (128 << 24) | (128 << 16)
+  }
+  var mnx = edges[0]
+  var mxx = mnx
+  var mny = edges[1]
+  var mxy = mny
+  for var e = 1; e < ne; e = e + 1 {
+    const x0 = edges[e * 4]
+    if x0 < mnx {
+      mnx = x0
+    }
+    if x0 > mxx {
+      mxx = x0
+    }
+    const x1 = edges[e * 4 + 2]
+    if x1 < mnx {
+      mnx = x1
+    }
+    if x1 > mxx {
+      mxx = x1
+    }
+    const y0 = edges[e * 4 + 1]
+    if y0 < mny {
+      mny = y0
+    }
+    if y0 > mxy {
+      mxy = y0
+    }
+    const y1 = edges[e * 4 + 3]
+    if y1 < mny {
+      mny = y1
+    }
+    if y1 > mxy {
+      mxy = y1
+    }
+  }
+  const left = mnx >> 6
+  const top = mny >> 6
+  const w = ((mxx - 1) >> 6) - left + 1
+  const h = ((mxy - 1) >> 6) - top + 1
+  if w > max_dim || h > max_dim {
+    return -1
+  }
+  var cur = 0
+  var j = 0
+  for var r = top; r < top + h; r = r + 1 {
+    for var c = 0; c < w; c = c + 1 {
+      const col = 64 * (c + left)
+      var acc = 0
+      for var e = 0; e < ne; e = e + 1 {
+        const x0 = edges[e * 4]
+        const y0 = edges[e * 4 + 1]
+        const x1 = edges[e * 4 + 2]
+        const y1 = edges[e * 4 + 3]
+        if y0 != y1 {
+          var xa = x0
+          var xb = x1
+          var ya = y0
+          var yb = y1
+          var sign = 1
+          if y1 < y0 {
+            xa = x1
+            xb = x0
+            ya = y1
+            yb = y0
+            sign = 0 - 1
+          }
+          const r0 = 64 * r
+          var ry = ya
+          if ry < r0 {
+            ry = r0
+          }
+          var stop = yb
+          if stop > r0 + 64 {
+            stop = r0 + 64
+          }
+          if ry < stop {
+            var px0 = xa
+            if ry != ya {
+              px0 = xa + ((ry - ya) * (xb - xa)) / (yb - ya)
+            }
+            var px1 = xb
+            if stop != yb {
+              px1 = xa + ((stop - ya) * (xb - xa)) / (yb - ya)
+            }
+            const hp = stop - ry
+            const d = px1 - px0
+            if d == 0 {
+              var cv = px0 - col
+              if cv < 0 {
+                cv = 0
+              }
+              if cv > 64 {
+                cv = 64
+              }
+              acc = acc + sign * 2 * cv * hp
+            } else {
+              acc = acc + sign * ((hp * (g2(px1 - col) - g2(px0 - col))) / d)
+            }
+          }
+        }
+      }
+      var v = acc
+      if v < 0 {
+        v = 0 - v
+      }
+      var cov = (v + 16) >> 5
+      if cov > 255 {
+        cov = 255
+      }
+      cur = cur | (cov << (8 * j))
+      j = j + 1
+      if j == 8 {
+        slots.push(cur)
+        cur = 0
+        j = 0
+      }
+    }
+  }
+  if j > 0 {
+    slots.push(cur)
+  }
+  const pad_end = (g + 1) * slot
+  while slots.length() < pad_end {
+    slots.push(0)
+  }
+  var meta_b = 0
+  if left + 128 < 0 || left + 128 > 255 || top + 128 < 0 || top + 128 > 255 {
+    return -1
+  }
+  meta_b = ((left + 128) << 24) | ((top + 128) << 16) | (w << 8) | h
+  return meta_b
 }
 
 // ---- the digests the golden pins ----

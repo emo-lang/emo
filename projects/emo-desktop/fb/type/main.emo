@@ -42,6 +42,9 @@ def main() {
       println("strike inter 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike inter 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike inter 16 digest ${ui_fb.raster.advances_digest(s)}")
+      for var g = 0; g < s.glyphs(); g = g + 1 {
+        println("raster inter 16 ${ui_fb.raster.glyph_name(g)} ${s.advance(g)} ${s.ink_left(g)} ${s.ink_top(g)} ${s.ink_w(g)} ${s.ink_h(g)} ${ui_fb.raster.glyph_digest(s, g)}")
+      }
     }
   }
   case ui_fb.raster.strike(fi, 24) {
@@ -50,6 +53,9 @@ def main() {
       println("strike inter 24 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike inter 24 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike inter 24 digest ${ui_fb.raster.advances_digest(s)}")
+      for var g = 0; g < s.glyphs(); g = g + 1 {
+        println("raster inter 24 ${ui_fb.raster.glyph_name(g)} ${s.advance(g)} ${s.ink_left(g)} ${s.ink_top(g)} ${s.ink_w(g)} ${s.ink_h(g)} ${ui_fb.raster.glyph_digest(s, g)}")
+      }
     }
   }
   case ui_fb.raster.strike(fm, 16) {
@@ -58,6 +64,9 @@ def main() {
       println("strike mono 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike mono 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike mono 16 digest ${ui_fb.raster.advances_digest(s)}")
+      for var g = 0; g < s.glyphs(); g = g + 1 {
+        println("raster mono 16 ${ui_fb.raster.glyph_name(g)} ${s.advance(g)} ${s.ink_left(g)} ${s.ink_top(g)} ${s.ink_w(g)} ${s.ink_h(g)} ${ui_fb.raster.glyph_digest(s, g)}")
+      }
     }
   }
 }

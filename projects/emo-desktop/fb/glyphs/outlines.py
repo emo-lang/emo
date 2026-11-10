@@ -407,7 +407,7 @@ def glyph_words(points, advance):
                     raise Refused(f"a vertex delta of {d} does not fit the 28-bit field")
             flag = ON_CURVE if on_curve else 0
             words.append(
-                (flag << 56) | ((dx & 0x3FFFFFF) << 28) | (dy & 0x3FFFFFF)
+                (flag << 56) | ((dx & 0xFFFFFFF) << 28) | (dy & 0xFFFFFFF)
             )
             x, y = vx, vy
     return words

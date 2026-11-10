@@ -120,36 +120,55 @@ The normative algorithm, implemented first as `glyphs/reference.py`
   reproduces exactly).
 - **Flattening.** A quadratic flattens by de Casteljau midpoint
   splits, `floor((a+b)/2)` per midpoint, while its second difference
-  `|p0 − 2c + p1|` exceeds 64 (one pixel in 26.6) — the curve's worst
-  deviation from its chord is a quarter of that difference, so every
-  segment stays within a quarter pixel of the true curve. Depth is
-  capped at 8 and an edge table is sized exactly first (Σ 4^depth per
-  quadratic); overflow refuses.
-- **Area accumulation.** Each line, per row it crosses, is clipped to
-  the row and walked column by column with exact floor-rounded
-  interpolation at the crossings. By Green's theorem the pixel's
-  covered area is the sum of signed pieces `∫ clamp(x − 64c, 0, 64) dy`
-  over every crossing edge: the column it starts in and the column it
-  ends in get their trapezoids — `(w_top + w_bottom)·h / 2`, floored —
-  the columns strictly between get the full `64·h`, and every column
-  left of the piece gets it too, carried as a suffix-summed cover
-  (`cover[c_start − 1] += h`, the sign of the edge's descent). The
-  sweep adds `cells[c] + 64·cover_suffix[c]`, takes the absolute value
-  — nonzero winding falls out of the signed sum — and rounds
-  `min(255, (|A| + 8) >> 4)`. Horizontal lines contribute nothing; a
-  vertical line is its column's trapezoid.
-- **Ink placement.** `left = floor(min_x26 / 64)`,
-  `top = floor(min_y26' / 64)`, `w` and `h` the bounding rows and
-  columns that intersect the outline — the same pen/line-box semantics
-  the grid's `left` and `top` carry today.
-- **Order does not matter.** The cells accumulate exact integers; the
-  only rounding happens once, at the sweep. Flattening order, edge
-  order, none of it moves a byte.
+  `|p0 − 2c + p1|` exceeds 64 (one pixel in 26.6) in either component
+  — the curve's worst deviation from its chord is a quarter of that
+  difference, so every segment stays within a quarter pixel of the
+  true curve. The recursion terminates by halving, and the segments
+  land in a growable edge list — no depth cap, no overflow to refuse.
+- **Area accumulation.** Each segment's y span is split at the row
+  boundaries, x interpolated with a truncating division — the one
+  place dust enters, at most one subpixel unit a crossing,
+  deterministic everywhere. A row piece from `(xa, ya)` to `(xb, yb)`
+  contributes to column `c` the signed integral of the clamped
+  abscissa, `∫ clamp(x(y) − 64c, 0, 64) dy`, and with the clamp's
+  antiderivative — 0 below the pixel, `v²/2` inside it, `64v − 2048`
+  above (doubled, so every cell stays an exact integer) — every
+  column the piece's x-range touches answers in one closed form,
+  `H·(G2(xb − 64c) − G2(xa − 64c)) / D` with `D = xb − xa`, truncated:
+  no column splitting, no interpolation, the antiderivative
+  difference always sharing `D`'s sign so the quotient never meets a
+  negative numerator over a positive divisor or the reverse. Columns
+  left of the piece's x-range take the full strip `64·H`, columns
+  right take nothing — the closed form hands both out by itself, and
+  a vertical piece is its own column's rectangle,
+  `2·clamp(x − 64c, 0, 64)·H` doubled. The sweep runs right to left
+  with a running suffix of the pieces' strip records, the pixel's
+  doubled area is `cells[c] + 128·cover_suffix[c]`, and its coverage
+  is `min(255, (|A2| + 16) >> 5)` — round half up of `A2/32`, the
+  same rounding the metrics ride.
+- **Ink placement.** `left = min_x26 >> 6`, `top = min_y26' >> 6`
+  (arithmetic shifts, floor at any sign), `w` and `h` the span through
+  `(max − 1) >> 6` — the same pen/line-box semantics the grid's
+  `left` and `top` carry today; a glyph without edges is an empty box
+  with its advance alone. An ink wider or taller than the strike's
+  `max_dim` refuses, as does the strike before it allocates, when an
+  advance will not fit its meta byte.
+- **Order does not matter.** The cells accumulate truncated integers
+  piece by piece; flattening order, edge order, none of it moves a
+  byte.
 
 The audit against FreeType (Pillow, through `rasterize.py`'s machinery)
-is a development report — per-glyph, per-size level deltas — not a
-gate; the gate is the reference's own bytes, pinned in the goldens,
-identical on every target.
+is a development report — box-aligned per-pixel deltas and ink masses,
+run once at A17.3: the shapes agree, the deltas are hinting's (the
+grid's pixels are grid-fitted, the reference is not; ink boxes move by
+a pixel and stems read a level or two heavier), not the algorithm's.
+The gate is the reference's own bytes — 288 raster lines in the type
+golden, each the advance, the ink box and a rolling digest
+(`h·31 + b mod 1000000007`) over the ink's coverage bytes — recomputed
+by `reference.py --check` in the gate and byte-identical to the Emo
+strike on the three hosted targets. The digest folds bytes, not slot
+words: a word packs eight coverage bytes and reaches 2⁶⁴ − 1, past
+Int64's positive range, while the bytes stay 0..255 everywhere.
 
 ## The Strike (A17.2)
 
@@ -212,7 +231,7 @@ its consumers' locks move).
 |---|---------|--------------|
 | A17.1 | `glyphs/outlines.py`: pinned faces → resolved outlines → `face_inter.emo`, `face_mono.emo`; gate drift check | generator's cross-check against the grid; the package type-checks |
 | A17.2 | the parser and the Strike in `raster.emo`: faces read, metrics scaled by the pinned formulas, slots allocated | hosted goldens: parse-level facts, metrics reproducing the grid's three strikes |
-| A17.3 | `glyphs/reference.py` then the Emo port: flatten, area accumulation, sweep | pinned glyph set's coverage byte-identical to the reference on every target; FreeType audit report |
+| A17.3 | `glyphs/reference.py` then the Emo port: flatten, area accumulation, sweep | the 288 raster pins byte-identical to the reference on the three hosted targets, the two bytecode refusals pinned; FreeType audit report |
 | A17.4 | the seam migrates; the pixel pipeline retires; metal bring-up | run.sh ×3 dual transport byte-identical, dune full, @fmt, fb gate, locks regenerated |
 
 ## Non-goals, with their triggers
