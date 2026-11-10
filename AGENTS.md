@@ -18,3 +18,12 @@ This project uses **English only** as its working language:
 - English is the source of truth for all documentation. Do not mix other languages into English documents.
 - Chinese translations of documentation live in `docs/zh-CN/` and nowhere else. When a document is translated, keep the file structure under `docs/zh-CN/` mirroring the English docs.
 - When updating an English document, update or flag the corresponding Chinese translation under `docs/zh-CN/` so translations do not silently drift out of date.
+
+## Commit Conventions
+
+- **Subject line:** a concise one-sentence summary of the change.
+- **Body (optional):** separated from the subject by a blank line, at most 2 lines, saying what the commit does and why — never a roster of the files and functions it touched.
+- **No AI attribution, ever.** No `Co-Authored-By`, no `Generated with` / `Assisted by` lines, no AI tool names or links — in commit messages, tag messages, and PR descriptions alike.
+- **Version files ride with the change.** When a commit touches the version (the root `VERSION` file and friends), the version file lands in the same commit as the code change, never in a separate commit, so a tag sits on a commit that shows both the code and the version it names.
+- **Tags are always annotated** (`git tag -a <tag> -m "<message>"`), never lightweight; a tag's message follows the commit-subject rules above.
+- **Commit on `develop`, never directly on `main`;** merge into `main` afterwards. Do not commit or push unless explicitly asked — finished work stays in the working tree.
