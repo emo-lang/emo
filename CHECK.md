@@ -361,6 +361,321 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   on the move-at's steps (A16.5, T10.5, landed 2026-11-09). Landed
   2026-11-08; the record is the dated section below.
 
+## 2026-11-11 — The scratch gets its own mebibyte; the golden re-pins (the arena track's close)
+
+- The console renderer's death was never a hang and never the arena:
+  the counter child died in the doomed branch (`user fault 33 cause
+  13` reading 0x80000000) because every token cell in `buf`
+  (0x87200000) already held a coverage word. The boot pass IS the
+  desktop (the top level's last statement, `desktop()` at 3655), and
+  the desktop's eager strike construction (emo-desktop A17.4) bumps in
+  the boot pass's own arena — the image's static heap from
+  `emo_heap_start` (0x87180000) — where 385 KiB of face assembly,
+  builder backings and raw arrays walked straight through the scratch
+  page's token cells at buf+2048. The monitor's physical-memory
+  snapshot made it visible (`pmemsave` of the image's whole span at
+  four beats: the cells read as vertex-adjacent words from the first
+  prompt on; the walk over the bump's count headers ended at the first
+  raw array's −1 header, the boot pass's heap holding a whole strike's
+  worth of −1-marked arrays). The retired ink's tables lived in the
+  const region at the heap's top, which is why the walk never happened
+  before A17.4.
+- The fix is structural: the user and app profiles' `.bss` split the
+  image heap — a mebibyte reservation (`emo_scratch_base`) for the raw
+  scratch the packages' `buf` literals name, the bump's own range
+  starting above it (`emo_heap_start` 0x87180000→0x87280000; the app
+  profile's 2 MiB total and every image's span and const region
+  unchanged, the kernel profile's single heap untouched). The counter
+  pass now renders its frames (`EmoUI on EmoOS`, `count 001`, the quit
+  key home) and the golden runs whole, both transports.
+- The golden re-pinned from a dual-transport-verified pair: 48 comp
+  sums harvested by replaying the awaits' and the order list's own
+  walks on the new transcripts (40 moved, 8 unmoved — the no-glyph
+  compositions kept their sums, and each window's slide kept a
+  constant old→new delta, the mapping's cross-check), the icons'
+  refresh frame 624477878, the ledger `frames 980 782`. Three rounds
+  on the re-pinned file, both transports, green.
+- The spinner's budget story corrected: the loop's machine code is the
+  baseline compiler's instruction for instruction; the pace is its
+  page placement under TCG — translation blocks chain within a page,
+  so a loop whose bytes straddle a 4 KiB boundary pays the block
+  lookup every iteration. Measured: 18 s with the loop sitting inside
+  one page (the baseline-compiled image embedded in the same kernel),
+  167.8–170.9 s straddling (this build's, six boots). The budget is
+  3600 rounds (360 s), twice the straddle. Found-not-fixed: the
+  placement follows the runtime's size, so the pace flips with any
+  shift of the code; the budget now covers both cases.
+- One interleave to record, inside the launch era's own race class:
+  the REPL's prompt after a slot app's `exec` lands within a line of
+  the app's first slide — the prompt's position among the launch's
+  lines moved by one between rounds (every pinned line and value
+  identical; run.sh passes three rounds). A deterministic ordering
+  (prompt printed before the desktop's own repaints, same-writer
+  ordering) is available if whole-transcript byte identity is wanted
+  again; docs/shell.md's pins note now says what holds.
+
+## 2026-11-10 — The heap-gone was a disguise; the raw world lands (the arena track)
+
+- The metal bring-up's blocker was never the arena. The bring-up's
+  `user heap 23 gone` rode the gate's verb 5, which `emo_fail` shares
+  with the allocator's exhaustion: the screen pass's strike returned
+  `(R.error, "glyph 2's ink does not fit the strike's 24")`, `mark()`
+  ate the message, and `sholder.get(0)` on the empty holder died the
+  heap death — with 1698 of its 2048 KiB free. The riscv64 emitter's
+  representation rule was the disease: `emo_builder_get` answers the
+  tagged word its backing holds, the checker's element pin died with
+  the scope it pinned in, and a native frame's typed consumers trusted
+  rule-1 — `quad_flat` did its ink math on pointers. The region's own
+  eyes killed the guesses: `frames.dump` at boot and at every death
+  (the boot's 991 blocks; the deaths' 933 free with a 618-block run),
+  `take_run`/`take` refusals that name their numbers, the heap report
+  carrying the failing message (`emo_fail` parks its pair in s2/s3)
+  beside the arena's remainder.
+- The raw world: the checker's builder pin sticks past the loop that
+  pinned it (`keep_builder_pins`); the builder cell carries a mark and
+  the runtime grew `push_i64`/`get_i64` — an empty builder turns raw,
+  a started tagged builder boxes, a raw builder refuses tagged loudly;
+  `to_array` on a raw builder copies verbatim under a header of −1,
+  and the consumers normalize: `emo_arr_tagged` at the equality's and
+  display's entries, the typed index read adaptive in both frames (a
+  gradual element boxes before the claim), `emo_copy_deep` and
+  `emo_copy_out` carrying the mark through the mailbox. A runtime
+  error can no longer dress as `heap gone`.
+- The arena runs split by class: the services keep 4 blocks, a user
+  pass's spawn sets its own run through `arena_len_cell` and the
+  process service judges the map's largest run after the stack is out
+  — the count alone once passed a shattered region to the runtime's
+  loud end. The const region sizes itself from the image's counted
+  const demand (hello 64→121 KiB); `screen_flag` moves out of the
+  claimed bitmap it had been buried in; the exec unwind stops giving a
+  frame to the block give.
+- Measured: the strike construction 2039 KiB → 793–862 KiB at the
+  first present; counter, files and editor exec, run and exit 0 on the
+  metal, every app digest byte-identical with the hosted goldens, the
+  shell REPL's write/cat/rm round whole. The golden's comp and frame
+  pins await the harvest re-pin (the tree's run.sh carries the relaxed
+  form), the console renderer's exec the one open death, and the
+  spinner's budget rides the host's TCG weather. The four golden-dir
+  locks ride the gate staging's own refresh.
+
+## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
+
+- `ink`'s strike widens from a table index to a `Strike` — the verb's
+  shape the one it has had since A8.1, one interface call a glyph —
+  and the threading reaches everything the core measures, places or
+  paints: `measure`/`measure_column`/`measure_row`, `place` and its
+  two containers, `paint`, `text`, `text_width`, `line_height`; the
+  `Fb` backend holds the strike its tree paints in. Every caller
+  names its size: the goldens and the corpus drivers build one
+  interface strike each at their boot; the three app images hold
+  theirs in the session's locals; the desktop's carve pass — the pass
+  whose own comment said "no class, no interface, no arena spent" —
+  threads the object as the desk defs' first parameter, the reading
+  amended: a reference argument boxes one cell a call, a handful a
+  repaint, and the walk's arithmetic stays the raw world's.
+- The metal carries the whole seam now. The user image — hello's
+  session, the desk pass, the window shell's menus, the seat's press
+  policy — lowers with the strikes aboard, as do the three app images
+  and the probe; the winbuf's `carve_ink` walks the slot words'
+  row-major bytes the hosted canvas walks, and the `Keys` seat and
+  the menus thread the strike beside the surface. The raise-free
+  discipline reached the boot roots: a helper that cannot refuse
+  quietly answers the holder pattern — build the strike, case the
+  tuple, push, read, the unprefixed read a runtime error the image
+  dies loudly on — and the goldens took the same shape, so the
+  bytecode targets build their mains whole again.
+- **D11 amended**: `font.emo` and `glyphs/gen.py` retired (moved to
+  the protected scratch per the deletion rule), but `coverage.txt`
+  stays — the retirement reached the generator and found the advance
+  cross-check's other side and the audit's data living in the grid;
+  regenerable by `rasterize.py` in one command, compiled into
+  nothing. The gate's drift checks are now two: the faces' outlines
+  and the reference's raster pins.
+- The goldens regenerate once, pixels moved by the runtime strikes'
+  own coverage (the digest lines keep their shapes: the frame's four,
+  the window shell's nine, the dock's ten, the corpus's nine, the
+  first apps' twenty), and every package lock under `fb/` moves with
+  the package's content — the locks the app images and the user image
+  carry too.
+
+## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
+
+- The seam lands hosted-complete: `ink`'s strike widens from a table
+  index to a `Strike`, the threading reaches `measure`/`place`/`paint`
+  and the `Fb` backend, every caller names its size, the goldens and
+  the corpus and the app images build one interface strike each, and
+  the type golden's 288 raster pins stay byte-identical through the
+  whole reworking (the reference's 288-pin check and the faces'
+  outline drift check both green). `font.emo` and `glyphs/gen.py`
+  retire; `coverage.txt` stays as the advance cross-check's other
+  side and the audit's data (D11 amended).
+- **The metal bring-up stays open, found-not-fixed**: the strike
+  construction in the exec'd screen pass dies of heap exhaustion on
+  the machine — the pass's early marks print, then the loud
+  `user heap 23 gone` — while the interpreter strikes the same code
+  correctly. The chase crossed three layers: the store-refactored
+  walk broke the ocaml target too (the emitter lowers a sum computed
+  at a typed call site, or inside a while body, to the dynamic
+  convention — `Emo_runtime.add v_s (!v_j)` where the typed
+  signature wants int64s), so `raster.emo`'s raster_glyph reverted to
+  the array-based walk that every target and the machine itself had
+  already verified, and the construction's arena need moved to the
+  lever instead (arena_run to 32 blocks, 2 MiB, the region's ~500
+  carrying it beside every resident). The machine's remaining death
+  is the kernel-side arena interaction (the spawn's mapped run, the
+  take_run granularity, the heap-gone's exact site) — the EmoOS
+  track's to instrument with its own eyes. The fence: the fb tree's
+  bytes are the hosted state's; the run.sh rounds resume when the
+  kernel side answers. The debug marks came out of hello's smoke; the
+  images rebuilt clean.
+
+## 2026-11-10 — The rasterizer (emo-desktop A17.3)
+
+- The algorithm's source of truth lands as `glyphs/reference.py`
+  (stdlib only), ported to `raster.emo` to match byte for byte: 26.6
+  throughout, every division truncating (Emo's own semantics, the
+  reference mirroring it), de Casteljau flattening while the second
+  difference exceeds one pixel (the deviation bound is a quarter of
+  that difference), and the area accumulation as one closed form per
+  touched column — the clamp's antiderivative, doubled, `G2(v)` = 0 |
+  v² | 128v − 4096, answering `H·(G2(xb − 64c) − G2(xa − 64c)) / D`
+  with the strip for the columns left of the piece falling out of the
+  same formula, no column splitting, no interpolation beyond the
+  row-boundary x's (truncating, a subpixel unit of dust a crossing).
+  The sweep runs right to left over `cells[c] + 128·cover_suffix[c]`
+  and rounds `min(255, (|A2| + 16) >> 5)`. The algorithm's full
+  spelling is the design's (typeface.md, amended where the prose had
+  drifted from what the code does).
+- The type golden grows 288 raster lines — a glyph per strike, the
+  advance, the ink box and a rolling digest over the ink's coverage
+  bytes — and `reference.py --check` recomputes them from the
+  generator's own outlines and matches the Emo strike byte for byte.
+  The two implementations read different roads to the same data (the
+  reference takes `outlines.py`'s absolute coordinates, the Emo side
+  decodes the face modules' packed words), so the agreement also
+  proves the packed decode. The strike rasterizes eagerly at
+  construction and fills meta word B; an ink beyond `max_dim` refuses
+  through the error convention, as the design's strictness asked.
+- Three findings:
+  - **The generator's vertex fields were 26 bits, not the documented
+    28.** `0x3FFFFFF` is 2²⁶ − 1: negative deltas were two's-
+    complemented at the wrong width and every face module carried
+    corrupted vertices for any glyph with a negative-going edge — the
+    reference never noticed (it reads Python objects), the Emo
+    rasterizer's bounding box exploded. The mask corrected to
+    `0xFFFFFFF`, the faces regenerated (their parse digests moved),
+    the advance cross-check unchanged.
+  - **A digest over slot words overflows Int64** — a word packs eight
+    coverage bytes and reaches 2⁶⁴ − 1 — so the raster digest folds
+    the bytes, which stay 0..255 on every target.
+  - **The builder element-type pinning**: `ArrayBuilder[Int64]`
+    annotations hold in parameter, field and return positions, but a
+    local binding settles only through a static push on the binding
+    itself — pushes made inside another def leave `get` answering
+    Unknown, and the c target refuses bitwise operators on Unknown
+    operands (the instrumented refusal named `left ty Unknown, left
+    var mnx`). `glyph_edges` builds and `to_array`s its edges behind
+    its own typed return; the sweep indexes the plain array. And
+    `ArrayBuilder[Int64].new()` is not a construct — the constructor
+    is bare, the element type riding annotations and pins only.
+- The FreeType audit ran once, box-aligned (the grid's pixels are
+  hinted, the reference is not): the shapes agree, ink boxes move by
+  a pixel, stems read a level or two heavier, ink mass −6..−12% —
+  hinting's signature, not the algorithm's. A dev report, never a
+  gate. The gate gains `reference.py --check` beside the two
+  generator drift checks.
+
+## 2026-11-10 — The parser and the Strike (emo-desktop A17.2)
+
+- `raster.emo` joins `emo/ui_fb` as the parser and the Strike's home:
+  a face module read whole into a `Face` (the 3,383 and 2,973 outline
+  words and the bases copied once, at boot), and `strike(f, px)` —
+  the metrics by the pinned formulas (ascent and descent by ceiling,
+  the advance half-up, the line box rounded up to eight for
+  `max_dim`), the coverage slots dense over the ASCII table (72 words
+  a slot at 16px, 128 at 24px), two meta words a glyph (slot base and
+  advance; the ink box waits for A17.3). The parse readers
+  (`advance_fu`, `points`, `contours`, `contour_end`, the vertex's
+  flag and signed deltas) and two rolling digests stand beside, the
+  golden's pins.
+- Three findings, each a wall the metal named:
+  - **The design's "first use rasterizes" amended to eager.** The
+    language's arrays are immutable values and its mutable containers
+    (Box, List, Map) hold no indexed word storage a blit could read
+    at `font.emo`'s shape — so the strike rasterizes at construction
+    into a plain `Array[Int64]` its init stores. Boot-time work
+    either way; the blit reads the same words every frame.
+  - **The raise is not the metal's.** The riscv64 target does not
+    lower raise, and the compiler pulls every module of a package
+    into its builds (there is no unreachable module) — one `raise`
+    in `raster.emo` failed all seven riscv64 probe builds. The
+    strike's refusal is the error convention instead:
+    `(R.ok, the strike)` or `(R.error, why)`, the syscall package's
+    own shape, a value the caller matches.
+  - **The constructor ceiling.** The metal refuses a constructor of
+    more than seven parameters (`emo_riscv.ml`); the Strike's init
+    carried eight, and `line` became derived (ascent + descent).
+- The golden (`fb/type/`) pins: the metrics reproducing the grid's
+  three strikes exactly (Inter 16/4/20 and 24/6/30, JetBrains Mono
+  17/5/22 — the ceiling formula's own confirmation), twelve sample
+  advances matching the grid glyph for glyph (space 5/7/10, A 11/17/10,
+  f 6/9/10, i 4/6/10 across the three strikes), the parse slices (a
+  space's empty drawing, an l's four points in one contour, an o's
+  forty-eight in two, a B's fifty-two in three, a vertex's fields
+  read back), the zero-size refusal, and two digests — bases then
+  outline words, advances per strike — folding `h·31 + w mod
+  1000000007`, overflow-free on Int64. Byte-identical on ocaml, c and
+  typescript; the golden carries no surface, so wasm and beam refuse
+  at build time (the package's interface calls have no implementor in
+  its program) and the gate pins both refusals the way the 48x32
+  screen's wasm one is pinned.
+- The metal lowers the package with the outlines and the Strike
+  aboard: all eight riscv64 probe lines green (the user programs, the
+  three app images, the window buffer). Every package lock under
+  `fb/` regenerated — the package's content hash moved with the three
+  new modules, and `apps/spin`'s empty lock (no deps to pin) restored
+  byte-identical.
+
+## 2026-11-10 — The type at any size opens (emo-desktop A17.1)
+
+- The faces stop being three baked strikes and start being outlines:
+  `glyphs/outlines.py` reads the pinned Inter 4.1 and JetBrains Mono
+  2.304 and writes `face_inter.emo` (3,383 outline words, 8 chunks)
+  and `face_mono.emo` (2,973, 7) against the 4,269 words of the three
+  pixel strikes they retire in A17.4. What the OS-side parser never
+  sees, the generator resolved: the cmap (format 4 or 12; every ASCII
+  code point present or refusal), the implied on-curve midpoints
+  (floored, each contour rotated to start on one), composites
+  (translation applied; scale or point-index anchor refused by name).
+  Face format 1 is pinned in
+  `projects/emo-desktop/docs/typeface.md` (EN + zh-CN): per glyph the
+  advance in font units, the vertex and contour counts, the contour
+  ends four 16-bit fields to a word, and one word per vertex — the
+  on-curve flag in the top byte, the signed deltas in two 28-bit
+  fields.
+- The advance cross-check runs in both generator modes against the
+  grid FreeType rendered: exact rational round-half-up; a one-pixel
+  difference is FreeType's own hinting and is reported (`5` at 16px
+  and `T` at 24px on Inter; JetBrains Mono 95/95 exact), two or more
+  refuse. The metrics' scale is pinned as ceiling — the one rounding
+  the grid confirms (Inter 16's ascent 1984·16/2048 = 15.5 → 16, 24's
+  23.25 → 24; every ascent, descent and `.notdef` advance of the
+  three strikes reproduces exactly).
+- The find: the fb gate's wasm goldens had been broken on develop
+  since step 56's seventeen-import table landed — the hand-rolled
+  `emo-ui/wasm-runner.mjs` (untouched since T48.6) supplies three
+  imports, every module links against seventeen, and each golden died
+  at instantiate. The gate runs its wasm artifacts under the
+  canonical host the compiler carries
+  (`src/emo_codegen/wasm/wasm_host.mjs`) now, which cannot drift.
+  The same staleness stands in emo-ui's own gates (`check.sh`,
+  `corpus/check.sh`, `ssr/check.sh`) — unrepaired, the emo-ui track's
+  to sweep.
+- Pins: the fb gate green — 152 checks, the faces' drift check among
+  them, the goldens byte-identical on the five hosted targets (the
+  beam legs minutes-slow at 1080p and correct), the riscv64 probe
+  lowering the package with the face modules aboard.
+
 ## 2026-11-09 — The wasm follow-ups: entropy, the baseline, the second engine (T56.7–T56.9)
 
 - The entropy refusal died with its premise: T55.7 kept `rand` off

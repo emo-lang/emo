@@ -48,8 +48,8 @@ class Eye {
     self.canvas.blend(x, y, w, h, color)
   }
 
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
-    self.canvas.ink(x, y, strike, glyph, color)
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.canvas.ink(x, y, f, glyph, color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
@@ -72,11 +72,19 @@ class Eye {
   }
 }
 
+
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> { println("the interface strike refused: ${why}") }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+
 def main() {
   const screen = Eye.new(canvas: ui_fb_canvas.canvas(1920, 1080))
   ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
     ui_fb_frame.counter.initial(),
-    ui_fb.backend(screen, ui_fb.script([0, 0, 1])))
+    ui_fb.backend(screen, ui_fb.script([0, 0, 1]), f))
 }
 
 main()

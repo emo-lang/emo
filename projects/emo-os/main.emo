@@ -425,10 +425,10 @@ const sprite_header = sprite_base + 64
 const sprite_pixels = sprite_base + 80
 const sprite_under = sprite_base + 0x8000
 
-// The arena's run (T8.9): the blocks one child's arena takes — a
-// contiguous run claimed in one take at the spawn (frames.emo's
-// arena_run, the stub parks it in the runtime's emo_arena_run_len).
-const arena_run = 2
+// The arena's run (T8.9) is frames.emo's to name — two lengths, the
+// services' the stub parks and a user pass's the process service sets
+// around its spawn (frames.arena_for_user, frames.arena_for_service);
+// the spare tests below ride frames.user_run().
 
 // The Sv39 page (T6.1): the root table's kernel address, written by
 // sv39.emo's boot, and the satp the stub read back from the switch.
@@ -567,7 +567,18 @@ def fault_report(pid Int64, cause Int64, epc Int64, addr Int64) Void {
   console_put_byte(10)
 }
 
-def heap_report(pid Int64) Void {
+// The heap's death report (T5.1), the arena track's eyes added: the
+// prefix the transcripts pin (`user heap <pid> gone`), then the error
+// emo_fail parked in s2/s3 — a runtime failure and an exhausted arena
+// ride the same verb, and the message says which — read whole through
+// the kernel's own table (the pass's identity addresses are the
+// physical ones, the koff alias the give's translation), then the
+// arena's own numbers (the KiB left under the cursor, the KiB the run
+// was born with; the root's slot keeps no run base and answers its
+// remainder) — and frames.dump()'s region map. Everything raw and
+// typed: this runs on the kernel's trap stack, inside the mask.
+def heap_report(pid Int64, msg Int64, msg_end Int64, cur Int64,
+                lim Int64, base Int64) Void {
   console_put_byte(117) // u
   console_put_byte(115) // s
   console_put_byte(101) // e
@@ -584,7 +595,46 @@ def heap_report(pid Int64) Void {
   console_put_byte(111) // o
   console_put_byte(110) // n
   console_put_byte(101) // e
+  console_put_byte(58)  // :
+  console_put_byte(32)  // space
+  var len = msg_end - msg
+  if msg != 0 {
+    if len > 200 {
+      len = 200
+    }
+    var at = msg
+    if at > 0 {
+      at = at + koff
+    }
+    var i = 0
+    while i < len {
+      console_put_byte(peek8(at + i).to_int64())
+      i = i + 1
+    }
+  }
+  console_put_byte(32)  // space
+  console_put_byte(124) // |
+  console_put_byte(32)  // space
+  console_put_byte(102) // f
+  console_put_byte(114) // r
+  console_put_byte(101) // e
+  console_put_byte(101) // e
+  console_put_byte(32)  // space
+  var freek = (lim - 8 - cur) / 1024
+  fault_dec(freek)
+  console_put_byte(75)  // K
+  console_put_byte(32)  // space
+  console_put_byte(111) // o
+  console_put_byte(102) // f
+  console_put_byte(32)  // space
+  var spank = freek
+  if base != 0 {
+    spank = (lim - base) / 1024
+  }
+  fault_dec(spank)
+  console_put_byte(75)  // K
   console_put_byte(10)
+  frames.dump()
 }
 
 def uart_init() Void {
@@ -778,13 +828,24 @@ def console_service(boss Pid) Void {
 def process_serve(w Int64) Void {
     var op = op_of(w)
     if op == 3 {
-          // A spawn is backed before it is served: the stack block plus
-          // the arena's run (arena_run) — a spawn the allocator cannot
-          // back is the refusal the caller sees, never the runtime's
-          // loud end.
-          if frames.spare() < 1 + arena_run {
+          // A spawn is backed before it is served: the stack block and
+          // the arena's run — a user pass's (frames.user_run), which
+          // the allocator has to hold as one contiguous run once the
+          // stack is out. The count alone used to stand for it, and a
+          // region whose free blocks held no run that long passed the
+          // test and met the runtime's loud end inside the spawn — the
+          // machine's, where the caller was owed a refusal. So the run
+          // is judged after the stack is taken, by the map's own
+          // largest run, and a spawn the allocator cannot back gives
+          // the stack home and answers -5.
+          if frames.spare() < 1 + frames.user_run() {
             gate_reply(caller_of(w), -5)
           } else {
+            var stack = frames.take()
+            if frames.largest() < frames.user_run() {
+              frames.give(stack)
+              gate_reply(caller_of(w), -5)
+            } else {
             var screen = 0
             var ok = true
             if peek64(screen_cell) != 0 {
@@ -792,14 +853,19 @@ def process_serve(w Int64) Void {
               ok = screen != 0
             }
             if !ok {
+              frames.give(stack)
               gate_reply(caller_of(w), -5)
             } else {
-              var stack = frames.take()
               if screen != 0 {
                 poke64(screen_pending_cell, screen)
               }
+              // the pass's own run for this one spawn, the services'
+              // back after it (frames.emo: the runtime reads the word
+              // inside the spawn and nowhere else)
+              frames.arena_for_user()
               var child = user_spawn(exec.entry_for(caller_of(w)),
                 sv39.pa_of(stack) + block)
+              frames.arena_for_service()
               if screen != 0 {
                 poke64(svc_screen_pid, child)
                 poke64(svc_screen_base, screen)
@@ -817,6 +883,7 @@ def process_serve(w Int64) Void {
                 poke64(parent_for + (child * 8), caller_of(w))
               }
               gate_reply(caller_of(w), child)
+            }
             }
           }
     } else {
@@ -840,14 +907,16 @@ def process_serve(w Int64) Void {
       } else {
         if op == 5 {
           // exec (emo-desktop A11.1): the disk ELF the staged name
-          // names. The machine is backed for the runtime's own takes
-          // first (the stack and the arena — a failure inside
-          // user_spawn is the loud end, never a refusal), the name
-          // copied out of the staging at the pickup — the busy cell
-          // held from the staging to here is spent — and the
+          // names. The count is the early refusal — the stack and a
+          // user pass's run have to be there at all — and the exact
+          // judgment is the transaction's own, once its scratch and
+          // image runs are out: the arena's run contiguous or the
+          // refusal, never the runtime's loud end inside user_spawn.
+          // The name is copied out of the staging at the pickup — the
+          // busy cell held from the staging to here is spent — and the
           // transaction reads the volume, loads the image and starts
           // it. A refusal is the reason number, the caller's to name.
-          if frames.spare() < 1 + arena_run {
+          if frames.spare() < 1 + frames.user_run() {
             gate_reply(caller_of(w), -5)
           } else {
             var fsn = peek64(fs_pid_cell)

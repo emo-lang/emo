@@ -15,32 +15,40 @@ require "emo_desktop"
 //
 //   emo run main.emo
 
+
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> { println("the interface strike refused: ${why}") }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+
 def main() {
   const strip = ui_fb_canvas.canvas(1920, 40)
   // the desk era's three: no app focused, alpha's tile lit, beta's
-  emo_desktop.paint(strip, 1920, 40, 1040, ["a", "b"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], -1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["a", "b"], 0, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], 0, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["a", "b"], 1, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], 1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
   // the desktop era's residency, the launcher's own three tiles: the
   // masks the era lives in its order — the empty strip, the counter's
   // tile, two, all three, then the quits' way back down (the counter
   // out, the browser out) and the session's end, every dot out again
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 1)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 1)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 3)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 3)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 7)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 7)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 6)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 6)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 4)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 4)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
   println("tile ${emo_desktop.press(100, 200, 1920, 1080, 2)}")
   println("tile ${emo_desktop.press(24, 1060, 1920, 1080, 3)}")
@@ -58,9 +66,9 @@ def main() {
   emo_desktop.wallpaper(wall, 256, 192)
   println("wall ${ui_fb_frame.digest(wall)}")
   const bar = ui_fb_canvas.canvas(256, 24)
-  emo_desktop.paint_header(bar, 256, 1920, 1080, 2)
+  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 2)
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, 256, 1920, 1080, 0)
+  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 0)
   println("bar ${ui_fb_frame.digest(bar)}")
   const icons = ui_fb_canvas.canvas(384, 256)
   emo_desktop.paint_icon_doc(icons, 280, 32, false)
@@ -76,10 +84,10 @@ def main() {
   var k = 0
   var pen = 288
   while k < name.length() {
-    pen = pen + emo_desktop.text_byte(icons, pen, 90, name[k], 0xF8F8F0)
+    pen = pen + emo_desktop.text_byte(icons, f, pen, 90, name[k], 0xF8F8F0)
     k = k + 1
   }
-  emo_desktop.text_byte(icons, pen, 90, 7, 0xF8F8F0)
+  emo_desktop.text_byte(icons, f, pen, 90, 7, 0xF8F8F0)
   println("icon ${ui_fb_frame.digest(icons)}")
   println("isqrt ${emo_desktop.isqrt(0)}")
   println("isqrt ${emo_desktop.isqrt(1)}")

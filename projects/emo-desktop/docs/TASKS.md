@@ -1231,3 +1231,120 @@ full `dune runtest` green, `@fmt` green. Decision record: CHECK.md,
   [EmoOS T10.5](../../emo-os/docs/TASKS.md). The golden drags the
   counter there and back — the two steps' comp lines pinned with
   their sums, the window standing at its landing seat again.
+
+## M17 — the type at any size
+
+The rasterization moves into the OS: the faces travel as quadratic
+outlines in generated modules, a rasterizer in Emo strikes any glyph
+at any pixel size on first use, and the strike the result lands in
+lives as long as its app. The decisions are D7 through D12 in
+[the design](typeface.md); the text below is the ladder.
+
+- [x] **A17.1** — The outlines' generator: `glyphs/outlines.py` reads
+  the pinned faces (Inter 4.1, JetBrains Mono 2.304, SHA-256 pinned as
+  `rasterize.py` pins them), resolves what the OS-side parser should
+  never see — the cmap (format 4 or 12, every ASCII code point
+  present or refusal), the implied on-curve midpoints (floored, each
+  contour rotated to start on one), composites (translation applied;
+  scale or point-index anchor refused by name) — and writes
+  `face_inter.emo` and `face_mono.emo`, the outlines as 448-word
+  chunks behind the accessors the parser will call, 96 glyphs apiece
+  (gid 0 the face's own `.notdef`). The advance cross-check against
+  the grid FreeType rendered runs in both generator modes: exact
+  rational round-half-up, a one-pixel difference is FreeType's own
+  hinting (reported: `5` at 16, `T` at 24), two or more refuse. The
+  gate gains the drift check. **Complete 2026-11-09** (the gate's
+  full round green, 152) — the faces'
+  outlines are 3,383 and 2,973 words where the three pixel strikes
+  they will retire are 4,269; the fb gate's own findings on this run:
+  its wasm goldens had been broken on develop since step 56's
+  seventeen-import table landed (the emo-ui runner predates it and
+  supplies three), and the gate now runs its wasm artifacts under the
+  canonical host the compiler carries (`src/emo_codegen/wasm/
+  wasm_host.mjs`), which cannot drift.
+
+- [x] **A17.2** — The parser and the Strike, in `raster.emo`: a face
+  module read whole into a `Face` (the outline words and bases copied
+  once, at boot), metrics scaled by the pinned formulas (ascent and
+  descent by ceiling — the one rounding the grid's three strikes
+  confirm exactly; the advance half-up, the generator's own
+  cross-check rounding), slots allocated dense over the ASCII table
+  at `max_dim` (the line box rounded up to 8), meta two words per
+  glyph. **Complete 2026-11-10** — with three findings on the way.
+  The design's "first use rasterizes" amended to eager-at-
+  construction: the language's arrays are immutable values and its
+  mutable containers hold no indexed word storage a blit could read
+  at `font.emo`'s shape. The strike's refusal is the error
+  convention — `(R.ok, the strike)` or `(R.error, why)`, not a
+  raise — because the riscv64 target does not lower raise and the
+  compiler pulls every module of a package into its builds; and the
+  constructor keeps to seven parameters, the metal refusing a wider
+  one (`emo_riscv.ml`'s ceiling). The metal now lowers the package
+  with the outlines and the Strike aboard — all eight riscv64 probe
+  lines green. The golden (`fb/type/`) pins the metrics reproducing
+  the grid's three strikes (Inter 16/4/20 and 24/6/30, JetBrains
+  Mono 17/5/22), twelve sample advances matching the grid
+  glyph-for-glyph, the parse slices (a space's empty drawing, an l's
+  one contour, an o's forty-eight points in two, a B's three), the
+  zero-size refusal, and two digests that pin the parse and the
+  scaled advances whole — byte-identical on ocaml, c and typescript;
+  the golden carries no surface, so wasm and beam refuse at build
+  time and the gate pins those refusals. Every package lock under
+  `fb/` regenerated (the package's content hash moved with the three
+  new modules).
+
+- [x] **A17.3** — The rasterizer: `glyphs/reference.py` first (stdlib
+  only, the algorithm's source of truth), then the Emo port to match
+  byte for byte — 26.6 throughout, de Casteljau flattening under the
+  one-pixel second difference, the clamp's doubled antiderivative
+  answering every column the piece's x-range touches in one closed
+  form, the right-to-left sweep with the strip suffix. **Complete
+  2026-11-10** — the type golden grows 288 raster lines (a glyph per
+  strike: advance, ink box, and a rolling digest over the ink's
+  coverage bytes), and `reference.py --check` recomputes all 288 from
+  the generator's own outlines and matches the Emo strike byte for
+  byte — two independent implementations, one set of integers (the
+  reference reads `outlines.py`'s absolute coordinates; the Emo side
+  reads the face modules' packed words, so the equivalence also proves
+  the packed decode). The strike now rasterizes eagerly at
+  construction and fills meta word B (the ink box). Three findings on
+  the way:
+  - **The generator's vertex fields were 26 bits, not the documented
+    28** — `0x3FFFFFF` is 2²⁶ − 1, so negative deltas were two's-
+    complemented at the wrong width and every face module carried
+    corrupted vertices (the reference never saw it, reading Python
+    objects; the Emo bbox exploded). The mask corrected to
+    `0xFFFFFFF`, the faces regenerated, the advance cross-check still
+    95/95-plus-hinting.
+  - **A digest over slot words overflows Int64** — a word packs eight
+    coverage bytes and reaches 2⁶⁴ − 1 — so the raster digest folds
+    bytes, 0..255 on every target.
+  - **The builder element-type pinning**: `ArrayBuilder[Int64]`
+    annotations hold in parameter, field and return positions, but a
+    local binding settles only through a static push on the binding
+    itself — pushes made inside another def leave `get` answering
+    Unknown, and the c target refuses bitwise operators on Unknown
+    (the rasterizer's shifts died there). `glyph_edges` builds and
+    `to_array`s its edges behind its own typed return, and the sweep
+    indexes the plain array.
+  The FreeType audit ran once, box-aligned: the shapes agree, the
+  deltas are hinting's (ink boxes move a pixel, stems read a level or
+  two heavier, ink mass −6..−12%), not the algorithm's.
+
+- [x] **A17.4** — The seam migrates: `ink`'s strike widens to a
+  `Strike`, `text` and `text_width` take the strike they draw in,
+  `measure`/`place`/`paint` thread it, and the backend's `Fb` holds
+  the strike its tree paints in (`backend(surface, input, strike)`).
+  Every caller names its size: the goldens and the corpus build one
+  interface strike each at their boot; the app images hold theirs in
+  the session's locals; the desktop's carve pass threads the object
+  through the desk defs' first parameter. `font.emo` and `gen.py`
+  retire; **`coverage.txt` stays** (D11 amended 2026-11-10): the
+  advance cross-check's other side and the audit's data, regenerable
+  by `rasterize.py`, compiled into nothing. The metal carries the
+  outlines (A17.3's lowering) and now the whole seam: the user image
+  (hello's session, the desk pass, the menus), the three app images,
+  and the probe all lower with the strikes aboard. The raise-free
+  discipline reached the goldens too — their strike helpers answer
+  the holder pattern (build, case, push, read), the bytecode targets
+  build them whole. **Landed 2026-11-10.**

@@ -1,20 +1,20 @@
-frame 2379744347
+frame 1749364110
 add 1
-frame 3316513847
+frame 3376373479
 sub 0
-frame 2379744347
-frame 1077365458
+frame 1749364110
+frame 128423328
 sel files.emo
-frame 1077365458
+frame 128423328
 open files.emo
-frame 1077365458
-frame 4191287259
+frame 128423328
+frame 1344734404
 put a
-frame 438231313
+frame 2208389565
 newline
-frame 3882192565
+frame 1201365252
 put b
-frame 3446101869
+frame 3902471612
 desktop counter exit 0
 desktop files exit 0
 desktop editor exit 0

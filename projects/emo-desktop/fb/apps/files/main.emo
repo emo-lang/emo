@@ -14,7 +14,20 @@ require "emo/ui_fb_winbuf"
 // window buffer's surface, the selection down and the open through
 // `update` — the quit key ends the loop, the window closed behind it,
 // the exit answering the parent's wait (`app files 0`).
+
+// The interface strike, built once at boot: the Inter face at 16
+// pixels — the window's bar and the app's own labels draw in it.
+def strike() (R, ui_fb.raster.Strike) {
+  return ui_fb.raster.strike(ui_fb.raster.inter(), 16)
+}
+
 def main() {
+  const holder = ArrayBuilder.new()
+  case strike() {
+    (R.error, _) -> { ui_fb_winbuf.mark() }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const fs = holder.get(0)
   var gf = 0
   var base_f = 0
   case syscall.win_new(384, 128) {
@@ -54,16 +67,16 @@ def main() {
     (R.ok, _) -> {}
   }
   const wf = ui_fb_winbuf.win(gf, base_f, 384, 128)
-  const ch = ui_fb_win.chrome(wf, "files")
+  const ch = ui_fb_win.chrome(wf, fs, "files")
   // the landing frame the app's own hand paints — the mount's tree,
   // the same walk, on the wire low (emo-desktop A15.2)
   const reg0 = ui.Registry.new()
-  ui_fb.paint(ui_apps.files.view(reg0, ui_apps.files.initial()), ch)
+  ui_fb.paint(ui_apps.files.view(reg0, ui_apps.files.initial()), ch, fs)
   wf.present()
   wf.rise(fx, fy)
   ui.run(ui_apps.files.view, ui_apps.files.update,
     ui_apps.files.initial(),
-    ui_fb.backend(ch, ui_fb_winbuf.keys([106, 107, 111], wf, fx, fy, mw, mh)))
+    ui_fb.backend(ch, ui_fb_winbuf.keys([106, 107, 111], wf, fs, fx, fy, mw, mh), fs))
   wf.sink(fx, fy)
   case syscall.win_close(gf) {
     (R.error, _) -> { ui_fb_winbuf.mark() }

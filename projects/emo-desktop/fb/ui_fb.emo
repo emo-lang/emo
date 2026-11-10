@@ -77,20 +77,17 @@ class Rect {
 // each glyph its own advance and every line the strike's line box — so
 // the layout a frame gets is the layout its text lands in, as the fixed
 // 8x16 cell's was.
-def text_strike() Int64 {
-  return font.ui16()
-}
 
-def line_height() Int64 {
-  return font.line_height(text_strike())
+def line_height(f raster.Strike) Int64 {
+  return f.line_height()
 }
 
 // A label's width: its glyphs' advances, a byte the font has no drawing
 // of measuring as the missing glyph it paints as.
-def text_width(label String) Int64 {
+def text_width(f raster.Strike, label String) Int64 {
   var w = 0
   for var i = 0; i < label.length(); i = i + 1 {
-    w = w + font.char_advance(text_strike(), label.substring(i, 1))
+    w = w + f.advance(f.glyph_of(label.substring(i, 1)))
   }
   return w
 }
@@ -167,41 +164,41 @@ def label_of(n ui.Node) String {
   return ""
 }
 
-def intrinsic(n ui.Node) Extent {
+def intrinsic(n ui.Node, f raster.Strike) Extent {
   if n.is(ui.Spacer) {
     return Extent.new(w: 0, h: 0)
   }
-  return Extent.new(w: text_width(label_of(n)), h: line_height())
+  return Extent.new(w: text_width(f, label_of(n)), h: f.line_height())
 }
 
 // A node's own size: the style's fixed width/height when set, the
 // intrinsic size otherwise. `avail_w` is the width the parent has to
 // offer (-1 when unbounded), which a column needs to measure its
 // children against.
-def measure(n ui.Node, avail_w Int64) Extent {
+def measure(n ui.Node, avail_w Int64, f raster.Strike) Extent {
   const s = n.style()
   const fw = fixed(s.width())
   const fh = fixed(s.height())
   if n.is(ui.Column) {
-    return measure_column(n, s, fw, fh, avail_w)
+    return measure_column(n, s, fw, fh, avail_w, f)
   }
   // A `Scroll` is a vertical box at a fixed viewport height: without a
   // scroll offset it measures and places exactly like a column, and the
   // surface's own bounds are what clip it.
   if n.is(ui.Scroll) {
-    return measure_column(n, s, fw, fh, avail_w)
+    return measure_column(n, s, fw, fh, avail_w, f)
   }
   if n.is(ui.Row) {
-    return measure_row(n, s, fw, fh)
+    return measure_row(n, s, fw, fh, f)
   }
-  const e = intrinsic(n)
+  const e = intrinsic(n, f)
   const w = if fw >= 0 { fw } else { e.w() }
   const h = if fh >= 0 { fh } else { e.h() }
   return Extent.new(w: w, h: h)
 }
 
 def measure_column(n ui.Node, s ui.Style, fw Int64, fh Int64,
-                   avail_w Int64) Extent {
+                   avail_w Int64, f raster.Strike) Extent {
   const pad = s.padding().to_int64()
   const gap = s.gap().to_int64()
   const kids = n.children()
@@ -209,7 +206,7 @@ def measure_column(n ui.Node, s ui.Style, fw Int64, fh Int64,
   var maxw = 0
   var total = 0
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], inner)
+    const e = measure(kids[i], inner, f)
     if e.w() > maxw {
       maxw = e.w()
     }
@@ -223,14 +220,14 @@ def measure_column(n ui.Node, s ui.Style, fw Int64, fh Int64,
   return Extent.new(w: w, h: h)
 }
 
-def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
+def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64, f raster.Strike) Extent {
   const pad = s.padding().to_int64()
   const gap = s.gap().to_int64()
   const kids = n.children()
   var total = 0
   var maxh = 0
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], -1)
+    const e = measure(kids[i], -1, f)
     total = total + e.w()
     if e.h() > maxh {
       maxh = e.h()
@@ -287,7 +284,7 @@ interface Surface {
   def at(x Int64, y Int64) Int64
   def fill(x Int64, y Int64, w Int64, h Int64, color Int64) Void
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) Void
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) Void
+  def ink(x Int64, y Int64, f raster.Strike, glyph Int64, color Int64) Void
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
               bottom Int64) Void
   def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
@@ -566,7 +563,8 @@ def shadow_pad(soft Int64) Int64 {
 // can afford per event — the tree's nodes go back through the pool at
 // the event's end, and the walk's own boxed numbers are the frame's
 // residue (A8.3's count).
-def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
+def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
+          f raster.Strike) {
   if paints_box(n) {
     const r = clip(x, y, w, h, s.width(), s.height())
     if r.w() > 0 && r.h() > 0 {
@@ -574,18 +572,18 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
     }
   }
   if n.is(ui.Column) {
-    place_column(n, x, y, w, h, s)
+    place_column(n, x, y, w, h, s, f)
   }
   // `Scroll`, as above: a vertical box, not yet a viewport with an offset.
   if n.is(ui.Scroll) {
-    place_column(n, x, y, w, h, s)
+    place_column(n, x, y, w, h, s, f)
   }
   if n.is(ui.Row) {
-    place_row(n, x, y, w, h, s)
+    place_row(n, x, y, w, h, s, f)
   }
   const label = label_of(n)
   if label.length() > 0 {
-    text(label, x, y, ink_of(n), s)
+    text(f, label, x, y, ink_of(n), s)
   }
 }
 
@@ -596,12 +594,12 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
 // clip a glyph, never the node's rectangle, so a label wider than its
 // box runs on as the terminal's does. A byte the font has no drawing
 // of shows the missing glyph (`font.glyph_of`).
-def text(label String, x Int64, y Int64, ink Int64, s Surface) {
+def text(f raster.Strike, label String, x Int64, y Int64, ink Int64, s Surface) {
   var pen = x
   for var i = 0; i < label.length(); i = i + 1 {
-    const g = font.glyph_of(label.substring(i, 1))
-    s.ink(pen, y, text_strike(), g, ink)
-    pen = pen + font.advance(text_strike(), g)
+    const g = f.glyph_of(label.substring(i, 1))
+    s.ink(pen, y, f, g, ink)
+    pen = pen + f.advance(g)
   }
 }
 
@@ -610,7 +608,7 @@ def text(label String, x Int64, y Int64, ink Int64, s Surface) {
 // left over; the last one takes the remainder so the box stays flush.
 // The column's `align` places each child across its width.
 def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
-                 s Surface) {
+                 s Surface, f raster.Strike) {
   const st = n.style()
   const pad = st.padding().to_int64()
   const gap = st.gap().to_int64()
@@ -619,7 +617,7 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
   const inner_h = h - pad * 2
   var total = 0
   for var i = 0; i < kids.length(); i = i + 1 {
-    total = total + measure(kids[i], inner_w).h()
+    total = total + measure(kids[i], inner_w, f).h()
   }
   if kids.length() > 0 {
     total = total + gap * (kids.length() - 1)
@@ -636,7 +634,7 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
   const align = st.align()
   var cursor = y + pad
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], inner_w)
+    const e = measure(kids[i], inner_w, f)
     var ch = e.h()
     if growers > 0 && kids[i].style().grow() {
       ch = ch + leftover / growers
@@ -655,7 +653,7 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
     if align == ui.Align.stretch {
       cw = inner_w
     }
-    place(kids[i], cx, cursor, cw, ch, s)
+    place(kids[i], cx, cursor, cw, ch, s, f)
     cursor = cursor + ch + gap
   }
 }
@@ -663,7 +661,8 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
 // A row's children line up to the right inside its padding, one gap
 // apart, with `grow` and the leftover share working across the width and
 // `align` placing each child down the row's height.
-def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
+def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
+              f raster.Strike) {
   const st = n.style()
   const pad = st.padding().to_int64()
   const gap = st.gap().to_int64()
@@ -672,7 +671,7 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
   const inner_h = h - pad * 2
   var total = 0
   for var i = 0; i < kids.length(); i = i + 1 {
-    total = total + measure(kids[i], -1).w()
+    total = total + measure(kids[i], -1, f).w()
   }
   if kids.length() > 0 {
     total = total + gap * (kids.length() - 1)
@@ -689,7 +688,7 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
   const align = st.align()
   var cursor = x + pad
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], -1)
+    const e = measure(kids[i], -1, f)
     var cw = e.w()
     if growers > 0 && kids[i].style().grow() {
       cw = cw + leftover / growers
@@ -708,7 +707,7 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
     if align == ui.Align.stretch {
       ch = inner_h
     }
-    place(kids[i], cursor, cy, cw, ch, s)
+    place(kids[i], cursor, cy, cw, ch, s, f)
     cursor = cursor + cw + gap
   }
 }
@@ -717,8 +716,8 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface) {
 // painted from the root down. Every frame paints from scratch — the
 // pixel twin of the terminal's repaint, and what the full-screen pass
 // (A7.2) calls once before it presents.
-def paint(root ui.Node, s Surface) {
-  place(root, 0, 0, s.width(), s.height(), s)
+def paint(root ui.Node, s Surface, f raster.Strike) {
+  place(root, 0, 0, s.width(), s.height(), s, f)
 }
 
 // The surface as PPM text (P3): the header, then one pixel per line as
@@ -792,20 +791,21 @@ def unmounted() ui.Events {
 // pass was authorized (A7.2). The backend allocates no screen, and
 // whoever owns the surface reads the frame back.
 class Fb {
-  def init(surface Surface, input Input) {
+  def init(surface Surface, input Input, strike raster.Strike) {
     self.surface = surface
     self.input = input
+    self.strike = strike
     self.sink = Box.new(unmounted())
   }
 
   def mount(root ui.Node, events ui.Events) {
     self.sink.replace(events)
-    paint(root, self.surface)
+    paint(root, self.surface, self.strike)
     self.surface.present()
   }
 
   def patch(old ui.Node, next ui.Node) {
-    paint(next, self.surface)
+    paint(next, self.surface, self.strike)
     self.surface.present()
   }
 
@@ -821,6 +821,6 @@ class Fb {
   }
 }
 
-def backend(surface Surface, input Input) ui.Backend {
-  return Fb.new(surface: surface, input: input)
+def backend(surface Surface, input Input, f raster.Strike) ui.Backend {
+  return Fb.new(surface: surface, input: input, strike: f)
 }

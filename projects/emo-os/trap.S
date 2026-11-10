@@ -618,10 +618,23 @@ emo_os_trap_trampoline:
     # answered -104, and the offender dies alone — the loud report on
     # the kernel's trap stack (the fault report's precedent), the
     # slot ending done, the frame abandoned, the machine continuing.
-    # The root's death is the machine's end, as its exit is.
+    # The root's death is the machine's end, as its exit is. The
+    # report carries the arena track's eyes: emo_fail parks the
+    # error's message pair in s2/s3 before this same verb (a runtime
+    # failure and an exhausted arena ride one route, and the message
+    # in the console ring waits for a service's turn the death's
+    # aftermath may never grant), and the slot's cursor, end and run
+    # base name the arena's state — frames.dump()'s map beside them.
     la s0, emo_cur_slot
     ld s0, 0(s0)                # the offender's slot
     ld a0, 8(s0)                # its pid
+    la t0, emo_os_trap_frame
+    ld t0, 0(t0)
+    ld a1, 360(t0)              # s2: emo_fail's message start
+    ld a2, 368(t0)              # s3: its end
+    ld a3, 576(s0)              # the arena cursor at the death
+    ld a4, 584(s0)              # the arena end
+    ld a5, 880(s0)              # the run's base (0 for the root's heap)
     call emo_main__heap_report
     li t3, 3
     sd t3, 16(s0)               # done

@@ -102,23 +102,25 @@ def button_color(focused Bool) Int64 {
 // The shared title bar onto a surface's top strip: the paper, the one
 // round button at the bar's left, the title centered on the bar's
 // width in the interface face, the hairline at the foot.
-def paint_bar(s ui_fb.Surface, title String, focused Bool) Void {
+def paint_bar(s ui_fb.Surface, f ui_fb.raster.Strike, title String,
+              focused Bool) Void {
   s.fill(0, 0, s.width(), bar_height(), bar_paper(focused))
   s.rounded(button_x(), button_y(), button_w(), button_h(), button_w() / 2,
     button_color(focused), button_color(focused))
-  ui_fb.text(title, (s.width() - ui_fb.text_width(title)) / 2,
-    (bar_height() - ui_fb.line_height()) / 2, bar_ink(focused), s)
+  ui_fb.text(f, title, (s.width() - ui_fb.text_width(f, title)) / 2,
+    (bar_height() - f.line_height()) / 2, bar_ink(focused), s)
   s.fill(0, bar_height() - 1, s.width(), 1, bar_divider(focused))
 }
 
 // A window's frame onto its own surface, the whole buffer from scratch:
 // the shared bar, the body's paper, and the keys line one pad in from
 // the body's corner.
-def paint(s ui_fb.Surface, title String, focused Bool, keys Int64) Void {
+def paint(s ui_fb.Surface, f ui_fb.raster.Strike, title String, focused Bool,
+          keys Int64) Void {
   const pad = 8
-  paint_bar(s, title, focused)
+  paint_bar(s, f, title, focused)
   s.fill(0, bar_height(), s.width(), s.height() - bar_height(), 0xF8F8F0)
-  ui_fb.text("keys ${keys}", pad, bar_height() + pad, 0x282830, s)
+  ui_fb.text(f, "keys ${keys}", pad, bar_height() + pad, 0x282830, s)
 }
 
 // The chrome a content surface wears (emo-desktop A14.5): the app's
@@ -132,10 +134,11 @@ def paint(s ui_fb.Surface, title String, focused Bool, keys Int64) Void {
 // yet tells it when the focus moves on — the dock's lit tile carries
 // the same gap (A12.2).
 class Chrome {
-  def init(inner ui_fb.Surface, title String) {
+  def init(inner ui_fb.Surface, f ui_fb.raster.Strike, title String) {
     self.inner = inner
     self.title = title
-    paint_bar(self.inner, title, true)
+    self.strike = f
+    paint_bar(self.inner, f, title, true)
   }
 
   def width() Int64 {
@@ -158,8 +161,8 @@ class Chrome {
     self.inner.blend(x, y + bar_height(), w, h, color)
   }
 
-  def ink(x Int64, y Int64, strike Int64, glyph Int64, color Int64) {
-    self.inner.ink(x, y + bar_height(), strike, glyph, color)
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.inner.ink(x, y + bar_height(), f, glyph, color)
   }
 
   def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
@@ -185,6 +188,7 @@ class Chrome {
 // The constructor, as a def: a riscv64 program names no other module's
 // class in value position (the emitter's type-reference rule), so a
 // consumer takes the chrome from this — the window factory's own shape.
-def chrome(inner ui_fb.Surface, title String) Chrome {
-  return Chrome.new(inner: inner, title: title)
+def chrome(inner ui_fb.Surface, f ui_fb.raster.Strike,
+           title String) Chrome {
+  return Chrome.new(inner: inner, f: f, title: title)
 }

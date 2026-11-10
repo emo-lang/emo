@@ -384,6 +384,47 @@ let needs_adapter (conv : conv) : bool =
    [emit_const_function]). *)
 let const_thunks : string list ref = ref []
 
+(* The image's const region demand, in words (the arena track's
+   answer): every emission site that routes a block to the const
+   region — a literal aggregate's [n+1] words, a const String's
+   [(len+7)/8+1] — adds its static size here, and [emit] sizes the
+   region off the sum. The region is the heap's top slice every pass's
+   table maps, the one memory a const's memoized block may live in
+   (emo-desktop A9.1's find); it held a fixed 64 KiB until the faces'
+   outline tables (3383 and 2973 words) landed in it and the first
+   strike construction died at its floor — a death the spawn's
+   arena-run lever could never reach, the region being per-image and
+   the lever per-process. The sum is the static lower bound (a
+   const-shaped ask computed at runtime can exceed it), so the region
+   doubles the sum and adds 16 KiB of headroom, never shrinking below
+   the 64 KiB the scalar consts' bound has always carried. *)
+let const_region_words : int ref = ref 0
+
+(* The const region's size, in bytes, from the tracked demand — the
+   number [init_tail_asm]'s floor immediates carry. *)
+let const_region_bytes () : int =
+  max 65536 ((2 * !const_region_words * 8) + 16384)
+
+(* Every needle occurrence becomes the replacement, left to right — the
+   one post-pass [emit] runs over the finished assembly, swapping the
+   const region's floor token for the image's own number. *)
+let replace_token (hay : string) (needle : string) (with_ : string) : string =
+  let n = String.length needle in
+  let out = Buffer.create (String.length hay) in
+  let i = ref 0 in
+  let last = String.length hay - n in
+  while !i <= String.length hay - 1 do
+    if !i <= last && String.sub hay !i n = needle then begin
+      Buffer.add_string out with_;
+      i := !i + n
+    end
+    else begin
+      Buffer.add_char out (String.unsafe_get hay !i);
+      incr i
+    end
+  done;
+  Buffer.contents out
+
 (* ---- Class metadata ---- *)
 
 let class_of env display =
@@ -1025,12 +1066,17 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       put env "    la a0, %s\n" label;
       put env "    li a1, %d\n" (String.length s);
       (* a const initializer's strings join its containers in the const
-         region — same reason as the block sites below *)
-      call_runtime env
-        (match env.cur with
+         region — same reason as the block sites below; the block's
+         words are the region demand's to count *)
+      if
+        match env.cur with
         | Some f when env.region && List.mem f.fname !const_thunks ->
-            "emo_string_lit_const"
-        | _ -> "emo_string_lit")
+            const_region_words :=
+              !const_region_words + (((String.length s + 7) / 8) + 1);
+            true
+        | _ -> false
+      then call_runtime env "emo_string_lit_const"
+      else call_runtime env "emo_string_lit"
   | Var name -> (
       let slot = slot_offset env name in
       match env.cur with
@@ -1147,15 +1193,47 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
   | Tuple es -> emit_seq env d es tag_tuple
   | Array_lit es -> emit_seq env d es tag_array
   | Index (b, i) ->
-      emit_index env d b i;
-      read_claim env e.Emo_ir.ety;
-      (* the element is the tagged word the block holds; a native frame
-         reads a numeric one raw, the rule every consumer in it trusts —
-         unboxed nowhere before, because a def with an Array parameter is
-         dynamic and the one native shape that indexes, a typed def over
-         a module-level const table, first appeared with the bitmap
-         font's rows (emo-desktop A8.1) *)
-      unbox_if_numeric env e.Emo_ir.ety
+      (* the element answers in its own word when the array ran raw
+         numbers (its header carries -1, a value no allocation writes);
+         a tagged array's numeric cell is read out for the native frame
+         and boxed for the dynamic one — the word a raw builder's
+         to_array handed over is a payload, not a pointer (emo-desktop
+         A8.1's raw-index rule, now reading both representations) *)
+      if env.native then begin
+        emit_index env d b i;
+        match e.Emo_ir.ety with
+        | Emo_check.Int64 ->
+            let l = fresh_label env "rawel" in
+            put env "    bltz t6, %s\n" l;
+            put env "    andi a0, a0, -32\n";
+            put env "    ld a0, 8(a0)\n";
+            put env "%s:\n" l
+        | Emo_check.Float64 ->
+            let l = fresh_label env "rawelf" in
+            put env "    bltz t6, %s\n" l;
+            put env "    andi t0, a0, -32\n";
+            put env "    fld fa0, 8(t0)\n";
+            put env "%s:\n" l
+        | _ ->
+            (* a gradual element — a received message's, an untyped
+               parameter's — is the tagged world's even in a native
+               frame: a raw array's payload boxes before anything reads
+               it as a word (the claim's call spends t6, so the box
+               comes first). A raw 198 read as a pointer is a Tuple. *)
+            let l = fresh_label env "rawboxn" in
+            put env "    bgez t6, %s\n" l;
+            put env "    call emo_box_i64\n";
+            put env "%s:\n" l;
+            read_claim env e.Emo_ir.ety
+      end
+      else begin
+        emit_index env d b i;
+        let l = fresh_label env "rawbox" in
+        put env "    bgez t6, %s\n" l;
+        put env "    call emo_box_i64\n";
+        put env "%s:\n" l;
+        read_claim env e.Emo_ir.ety
+      end
   | Field_read { obj; name } -> (
       match obj.Emo_ir.ety with
       | Emo_check.ClassType _ ->
@@ -1623,11 +1701,14 @@ and emit_seq_static env n (values : Int64.t array) (tag : int) : unit =
   let label = Printf.sprintf "emo_arr_%d" (List.length env.arr_blobs) in
   env.arr_blobs <- (label, cells) :: env.arr_blobs;
   put env "    li a0, %d\n" (n + 1);
-  call_runtime env
-    (match env.cur with
+  if
+    match env.cur with
     | Some f when env.region && List.mem f.fname !const_thunks ->
-        "emo_alloc_const"
-    | _ -> "emo_alloc");
+        const_region_words := !const_region_words + (n + 1);
+        true
+    | _ -> false
+  then call_runtime env "emo_alloc_const"
+  else call_runtime env "emo_alloc";
   put env "    li t0, %d\n" n;
   put env "    sd t0, 8(a0)\n";
   put env "    mv t5, a0\n";
@@ -1658,12 +1739,16 @@ and emit_seq_elements env d (es : Emo_ir.expr list) (n : int) (tag : int) : unit
   put env "    li a0, %d\n" (n + 1);
   (* a const initializer's blocks come from the const region (emo_riscv's
      runtime: the memo they park in is the image's shared static memory,
-     and a builder's arena dies with the builder) *)
-  call_runtime env
-    (match env.cur with
+     and a builder's arena dies with the builder); the block's words are
+     the region demand's to count *)
+  if
+    match env.cur with
     | Some f when env.region && List.mem f.fname !const_thunks ->
-        "emo_alloc_const"
-    | _ -> "emo_alloc");
+        const_region_words := !const_region_words + (n + 1);
+        true
+    | _ -> false
+  then call_runtime env "emo_alloc_const"
+  else call_runtime env "emo_alloc";
   put env "    li t0, %d\n" n;
   put env "    sd t0, 8(a0)\n";
   let last_fill = 16 + (8 * (n - 1)) in
@@ -1732,6 +1817,7 @@ and emit_index env d (b : Emo_ir.expr) (i : Emo_ir.expr) : unit =
   end;
   put env "    ld t0, %d(sp)\n" spill;
   put env "    ld t1, 8(t0)\n";
+  put env "    ld t6, 0(t0)\n";
   let l_oob = fresh_label env "idxoob" in
   put env "    bgeu t2, t1, %s\n" l_oob;
   put env "    slli t2, t2, 3\n";
@@ -2656,20 +2742,45 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    andi a0, a0, -32\n";
               put env "    ld a0, 8(a0)\n";
               if boxed then box_result env "emo_box_i64"
-          | "push", [ _ ] ->
+          | "push", [ v ] ->
+              (* A native frame pushing an Int64 sends the payload raw:
+                 the store marks an empty builder raw-numbers and boxes
+                 for a started tagged builder, so no boxed cell is born
+                 per pushed value (the strike construction's arena died
+                 of exactly that churn). Every other value — pointers,
+                 Unknown-typed words, a dynamic frame's numerics — rides
+                 the tagged entry as it always has. *)
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              let raw = env.native && v.Emo_ir.ety = Emo_check.Int64 in
+              if raw then emit_expr env (d + 2) v
+              else begin
+                emit_expr env (d + 2) v;
+                box_if_numeric env v.Emo_ir.ety
+              end;
+              let vslot = temp_offset env (d + 1) in
+              put env "    sd a0, %d(sp)\n" vslot;
+              put env "    ld a1, %d(sp)\n" vslot;
               put env "    ld a0, %d(sp)\n" self_slot;
-              call_runtime env "emo_builder_push"
+              if raw then call_runtime env "emo_builder_push_i64"
+              else call_runtime env "emo_builder_push"
           | "get", [ _ ] ->
+              (* A native frame reads through the raw entry: the index
+                 rides raw and the element answers in its own word — a
+                 raw builder's payload, a tagged builder's Int64 cell
+                 read out. A dynamic frame keeps the tagged entry, the
+                 runtime boxing a raw builder's answer for it. *)
               let self_slot = temp_offset env d in
               emit_expr env (d + 1) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              let idx_slot = temp_offset env (d + 1) in
+              emit_expr env (d + 2) (List.hd args);
+              put env "    sd a0, %d(sp)\n" idx_slot;
+              put env "    ld a1, %d(sp)\n" idx_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
-              call_runtime env "emo_builder_get"
+              if env.native then call_runtime env "emo_builder_get_i64"
+              else call_runtime env "emo_builder_get"
           | "to_array", [] ->
               emit_expr env d self_;
               call_runtime env "emo_builder_to_array"
@@ -5422,6 +5533,55 @@ emo_bytes_to_string:
 # The elements are the values the pushes left, their claims the
 # construction's (the pool exempts the container kinds).
 
+# emo_arr_tagged: a0 = an Array word; a0 = the same array with its
+# elements tagged. A raw-numbers array (its header carries -1, a value
+# no allocation ever writes) copies with every payload boxed; any other
+# array answers as it came. The one bridge the raw world's arrays cross
+# to reach the tagged consumers — equality, display, append, the
+# message copy.
+    .globl emo_arr_tagged
+emo_arr_tagged:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)              # the source base
+    sd s1, 16(sp)             # the source cursor
+    sd s2, 24(sp)             # the count left
+    sd s3, 32(sp)             # the destination cursor
+    andi s0, a0, -32
+    ld t0, 0(s0)
+    bltz t0, 1f               # a tagged array answers as it came
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+1:  ld s2, 8(s0)              # the length
+    addi s1, s0, 16           # the source cursor: the raw words
+    addi a0, s2, 1
+    call emo_alloc
+    andi s0, a0, -32          # the copy's base, kept where the boxing
+                              #   calls below cannot spend it
+    sd s2, 8(s0)              # the length, verbatim
+    beqz s2, 3f
+    addi s3, s0, 16
+2:  ld a0, 0(s1)
+    call emo_box_i64          # each raw payload re-enters tagged
+    sd a0, 0(s3)
+    addi s1, s1, 8
+    addi s3, s3, 8
+    addi s2, s2, -1
+    bnez s2, 2b
+3:  ori a0, s0, 8
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+
 # emo_builder_new: a0 = an empty builder.
     .globl emo_builder_new
 emo_builder_new:
@@ -5432,20 +5592,33 @@ emo_builder_new:
     sd zero, 8(a0)
     ori a0, a0, 8
     sd a0, 8(sp)
-    li a0, 2
-    call emo_alloc            # the builder cell: payload 2
+    li a0, 3
+    call emo_alloc            # the builder cell: payload 3
     sd zero, 8(a0)            # size = 0
     ld t0, 8(sp)
     sd t0, 16(a0)
+    sd zero, 24(a0)           # the mark: 0 tagged, 1 raw numbers
     ori a0, a0, 22
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
 
 # emo_builder_push: a0 = a builder, a1 = the value; the value lands,
-# a0 = the builder (the pushes chain).
+# a0 = the builder (the pushes chain). A builder a raw push has claimed
+# (the mark below the size) refuses a tagged value loudly — one
+# representation per builder, the mixing the arena track's chase died
+# of twice.
     .globl emo_builder_push
 emo_builder_push:
+    andi t0, a0, -32
+    ld t0, 24(t0)
+    beqz t0, emo_builder_store
+    la a0, msg_builder_mix
+    la a1, msg_builder_mix_end
+    tail emo_fail
+
+# the store itself, value verbatim: the grow, the copy, the size step.
+emo_builder_store:
     addi sp, sp, -48
     sd ra, 0(sp)
     sd s0, 16(sp)             # the builder word
@@ -5507,10 +5680,39 @@ emo_builder_push:
     addi sp, sp, 48
     ret
 
+# emo_builder_push_i64: a0 = a builder, a1 = the raw payload; the same
+# store. An empty builder turns raw numbers here (nothing in its
+# backing commits a representation); a started tagged builder boxes
+# the payload instead, its world staying tagged.
+    .globl emo_builder_push_i64
+emo_builder_push_i64:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld t1, 24(t0)             # the mark
+    bnez t1, 1f               # raw numbers: the payload stores as it came
+    ld t1, 8(t0)              # the size
+    bnez t1, 2f               # a started tagged builder: the payload boxes
+    li t1, 1
+    sd t1, 24(t0)             # an empty builder turns raw numbers here
+1:  ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_builder_store
+2:  sd a0, 8(sp)              # the builder waits out the box
+    mv a0, a1
+    call emo_box_i64          # the payload boxes for the tagged world
+    mv a1, a0
+    ld a0, 8(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    j emo_builder_store
+
 # emo_builder_get: a0 = a builder, a1 = the tagged index; a0 = the
 # element's word. A leaf — the bounds check fails loudly.
     .globl emo_builder_get
 emo_builder_get:
+    addi sp, sp, -16
+    sd ra, 0(sp)
     andi t0, a0, -32
     ld t1, 8(t0)              # the size
     andi t2, a1, -32
@@ -5522,24 +5724,67 @@ emo_builder_get:
     slli t5, t3, 3
     add t5, t4, t5
     addi t5, t5, 16
-    ld a0, 0(t5)
+    ld a0, 0(t5)              # the element's word
+    ld t1, 24(t0)             # the mark
+    beqz t1, 1f               # a tagged builder's word answers as it is
+    call emo_box_i64          # a raw builder's payload boxes for the
+                              #   tagged world
+1:  ld ra, 0(sp)
+    addi sp, sp, 16
     ret
 .Lbg_fail:
     la a0, msg_builder_range
     la a1, msg_builder_range_end
     tail emo_fail
 
+# emo_builder_get_i64: a0 = a builder, a1 = the raw index; a0 = the
+# element's raw word. A raw builder answers its payload; a tagged
+# builder's Int64 cell is read out for the native frame, every other
+# kind answering as it is. A leaf — the bounds check fails loudly.
+    .globl emo_builder_get_i64
+emo_builder_get_i64:
+    andi t0, a0, -32
+    ld t1, 8(t0)              # the size
+    blt a1, zero, .Lbg64_fail
+    bge a1, t1, .Lbg64_fail
+    ld t4, 16(t0)
+    andi t4, t4, -32
+    slli t5, a1, 3
+    add t5, t4, t5
+    addi t5, t5, 16
+    ld a0, 0(t5)              # the element's word
+    ld t1, 24(t0)
+    bnez t1, 1f               # raw numbers: the word answers raw
+    andi t2, a0, 1
+    bnez t2, 1f               # an immediate answers as itself
+    andi t2, a0, 30           # the kind bits (4:1): zero is the Int64 cell
+    bnez t2, 1f               # any other kind answers as itself
+    andi t2, a0, -32
+    ld a0, 8(t2)              # the cell's payload
+1:  ret
+.Lbg64_fail:
+    la a0, msg_builder_range
+    la a1, msg_builder_range_end
+    tail emo_fail
+
 # emo_builder_to_array: a0 = a builder; a0 = a fresh Array of exactly
-# the builder's size (the builder keeps growing untouched).
+# the builder's size (the builder keeps growing untouched). A raw
+# builder's array holds tagged words: each payload boxes here, once —
+# the one place the raw world's numbers re-enter the tagged one.
     .globl emo_builder_to_array
 emo_builder_to_array:
-    addi sp, sp, -32
+    addi sp, sp, -64
     sd ra, 0(sp)
     sd s0, 8(sp)              # the builder word
     sd s1, 16(sp)             # the source cursor
     sd s2, 24(sp)             # the count left
+    sd s3, 32(sp)             # the destination cursor
+    sd s4, 40(sp)             # the mark
+    sd s5, 48(sp)             # the array's base: the boxing calls spend
+                              #   a0, and the answer leaves through it
     andi t0, a0, -32
     mv s0, a0
+    ld s4, 24(t0)             # the mark: 1 = the builder ran raw numbers
     ld s2, 8(t0)
     ld t1, 16(t0)
     andi t1, t1, -32
@@ -5547,22 +5792,30 @@ emo_builder_to_array:
     addi a0, s2, 1            # payload = the length word + the size
     call emo_alloc
     andi t2, a0, -32
+    mv s5, t2                 # the base the tag lands on at the end
     sd s2, 8(t2)              # the length = the size
     beqz s2, .Lbta_done
-    addi t3, t2, 16
+    addi t3, t2, 16           # the destination cursor
 5:  ld t5, 0(s1)
     sd t5, 0(t3)
     addi s1, s1, 8
     addi t3, t3, 8
     addi s2, s2, -1
     bnez s2, 5b
+    beqz s4, .Lbta_done
+    li t0, -1
+    sd t0, 0(s5)              # a raw builder's array wears the raw mark
 .Lbta_done:
+    mv a0, s5
     ori a0, a0, 8
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
     ld s2, 24(sp)
-    addi sp, sp, 32
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 64
     ret
 
 # emo_join_string: a0 = the opening String, a1 = the first element's
@@ -5710,8 +5963,13 @@ emo_array_append:
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
+    mv s1, a1                 # the value, out of the call's way
     andi s0, a0, -32
-    mv s1, a1
+    ld t0, 0(s0)
+    bgez t0, 1f               # a raw-numbers array re-enters tagged for
+    call emo_arr_tagged       #   the append, the result a tagged array
+1:
+    andi s0, a0, -32
     ld s2, 8(s0)
     addi a0, s2, 2
     call emo_alloc
@@ -5762,6 +6020,23 @@ emo_eq_deep:
     andi t3, a1, 31
     bne t2, t3, .Leq_no
     bnez t0, .Leq_no
+    li t0, 8
+    bne t2, t0, 4f            # only an array carries the raw mark: both
+    sd a1, 48(sp)             #   sides re-enter tagged before the walk
+    andi t0, a0, -32
+    ld t0, 0(t0)
+    bgez t0, 3f
+    call emo_arr_tagged
+3:  sd a0, 56(sp)
+    ld a0, 48(sp)
+    andi t0, a0, -32
+    ld t0, 0(t0)
+    bgez t0, 5f
+    call emo_arr_tagged
+5:  mv a1, a0
+    ld a0, 56(sp)
+    li t2, 8                  # the tag again: the calls spent t2
+4:
     andi s0, a0, -32
     andi s1, a1, -32
     beqz t2, .Leq_cell
@@ -6495,6 +6770,12 @@ emo_to_string:
     sd ra, 0(sp)             #   the entry frame, so restore ours first
     sd s0, 8(sp)
     andi s0, a0, -32
+    ld t0, 0(s0)
+    bgez t0, 1f              # a raw-numbers array re-enters tagged
+    ori a0, a0, 8
+    call emo_arr_tagged
+    andi s0, a0, -32
+1:
     la a0, msg_rbrack
     li a1, 1
     call emo_string_lit
@@ -6512,10 +6793,22 @@ emo_to_string:
     j .Lts_done
 .Lts_builder:
     # ArrayBuilder[e1, e2, …] — the elements live on the backing array
-    addi sp, sp, -32
+    addi sp, sp, -48
     sd ra, 0(sp)
     sd s0, 8(sp)
+    sd s1, 24(sp)            # the tagged copy of a raw builder's backing
     andi s0, a0, -32
+    ld t0, 24(s0)
+    beqz t0, 1f              # a raw-numbers builder displays through its
+    ori a0, s0, 22           #   exact array, re-entered tagged (the mark
+    call emo_builder_to_array #  is the builder's; the backing wears none)
+    call emo_arr_tagged
+    mv s1, a0
+    andi s1, s1, -32
+    j 2f
+1:  ld s1, 16(s0)
+    andi s1, s1, -32
+2:
     la a0, msg_rbrack
     li a1, 1
     call emo_string_lit
@@ -6524,14 +6817,13 @@ emo_to_string:
     li a1, 13
     call emo_string_lit
     ld a3, 16(sp)
-    ld t0, 16(s0)
-    andi t0, t0, -32
-    addi a1, t0, 16          # the elements
+    addi a1, s1, 16          # the elements
     ld a2, 8(s0)             # the size
     call emo_join_string
     ld ra, 0(sp)
     ld s0, 8(sp)
-    addi sp, sp, 32
+    ld s1, 24(sp)
+    addi sp, sp, 48
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -7115,6 +7407,9 @@ msg_bytes_close:
 msg_builder_range:
     .ascii "the index is outside the ArrayBuilder"
 msg_builder_range_end:
+msg_builder_mix:
+    .ascii "a builder fed raw numbers cannot take a tagged value"
+msg_builder_mix_end:
 msg_lbrack:
     .ascii "["
 msg_rbrack:
@@ -8587,6 +8882,12 @@ emo_copy_deep:
     li t1, 22
     beq t0, t1, .Lcd_builder # an ArrayBuilder: the size word is raw, no
                              #   value the generic walk could copy
+    li t1, 8
+    bne t0, t1, 5f            # an Array whose header carries -1 holds raw
+    andi t2, a0, -32          #   numbers: a verbatim word copy, the mark
+    ld t3, 0(t2)              #   riding along (the generic walk's bound
+    bltz t3, .Lcd_rawarr      #   reads the header and would run away)
+5:
     # 6 Tuple, 8 Array, 14 instance: a fresh block, verbatim header and
     # length/class word, every element or field copied. The clone's
     # header carries no refcount — the claims are the containers', taken
@@ -8635,6 +8936,29 @@ emo_copy_deep:
     addi t6, t6, 1
     sd t6, 40(sp)
     j .Lcd_loop
+.Lcd_rawarr:
+    # the length sizes the block: header, length, then the raw words
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld t3, 8(t2)
+    addi a0, t3, 1              # payload = the length word + the elements
+    call emo_alloc
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t3, 8(t2)
+    addi t3, t3, 2              # header + length + the elements
+    li t6, 0
+1:  bgeu t6, t3, 2f
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a1, 0(t5)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a1, 0(t5)
+    addi t6, t6, 1
+    j 1b
+2:  sd a0, 16(sp)
+    j .Lcd_wrap                 # 48(sp) already holds the tag (8)
 .Lcd_bytes:
     andi t2, a0, -32
     sd t2, 24(sp)
@@ -8725,6 +9049,13 @@ emo_copy_out:
     li t1, 22
     beq t0, t1, .Lco_builder # an ArrayBuilder: the size word is raw, no
                              #   value the generic walk could copy (T8.25)
+    li t1, 8
+    bne t0, t1, .Lco_tagged  # an Array whose header carries -1 holds raw
+                             #   numbers: a verbatim word copy, the mark
+    andi t2, a0, -32         #   riding along (this walk's bound reads
+    ld t3, 0(t2)             #   the header and would run away)
+    bltz t3, .Lco_rawarr
+.Lco_tagged:
     # 0, 2, 6, 8, 12, 14, 18: the block clone — verbatim header and
     # first word, every further word recursed (an Int64 cell, a Float64
     # cell, and a Pid all carry header 1, so the clone is the fresh
@@ -8782,6 +9113,30 @@ emo_copy_out:
     ld t2, 48(sp)
     or a0, a0, t2               # the fresh block wears the original's tag
     j .Lco_ret
+.Lco_rawarr:
+    # a raw-numbers array's delivery: the length sizes the block —
+    # header, length, then the raw words — the mark riding along
+    andi t2, a0, -32
+    sd t2, 24(sp)
+    ld t3, 8(t2)
+    addi a0, t3, 1              # payload = the length word + the elements
+    call emo_alloc
+    ld t2, 24(sp)
+    andi t4, a0, -32
+    ld t3, 8(t2)
+    addi t3, t3, 2              # header + length + the elements
+    li t6, 0
+1:  bgeu t6, t3, 2f
+    slli t5, t6, 3
+    add t5, t2, t5
+    ld a1, 0(t5)
+    slli t5, t6, 3
+    add t5, t4, t5
+    sd a1, 0(t5)
+    addi t6, t6, 1
+    j 1b
+2:  sd a0, 16(sp)
+    j .Lco_wrap
 .Lco_string:
     # a String's payload is bytes, not values: the clone is verbatim
     andi t2, a0, -32
@@ -8913,13 +9268,19 @@ emo_fail:
     sd a1, 16(sp)
     la a0, msg_prefix
     la a1, msg_prefix_end
-    call emo_fail_write
+    call emo_print_bytes
     ld a0, 8(sp)
     ld a1, 16(sp)
-    call emo_fail_write
+    call emo_print_bytes
     la a0, emo_fail_nl
     addi a1, a0, 1
-    call emo_fail_write
+    call emo_print_bytes
+    ld s2, 8(sp)             # the message's pair parks in s2/s3 for the
+    ld s3, 16(sp)            #   kernel's heap route: the ring's chunks
+                             #   wait for a service's turn the death may
+                             #   never grant, and the report prints the
+                             #   error whole instead of `user heap N gone`
+                             #   alone (the arena track's eyes)
     li a7, 5
     ecall                    # the heap-death route (T5.1)
 .Lfail_park:
@@ -8950,10 +9311,17 @@ emo_fail_write:
    builds are startup, the root's bump a few KiB of a 96 MiB heap; the
    bound is CHECK.md's). *)
 let init_tail_asm ~(profile : string) : string =
+  (* the region's floor rides as a token (the arena track's answer):
+     the const demand is counted during the program's emission, which
+     runs after this text lands in the buffer, and [emit] swaps the
+     token for the number before the assembly leaves. With no demand
+     beyond the scalar consts' bound the token is the 64 KiB the tail
+     has always named, every image the same bytes it was. *)
+  let floor = "CONST_REGION_FLOOR_IMM" in
   match profile with
   | "kernel" ->
-      {asm|
-emo_runtime_init_tail:
+      Printf.sprintf
+        {|emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
                             #   across the call (the caller's t1 is its own)
     la t0, emo_heap_end
@@ -8972,15 +9340,16 @@ emo_runtime_init_tail:
     sd t0, 0(t1)            # the const region's cursor, at its top (the
                             #   heap's freelist head word stays above it)
     la t0, emo_heap_end
-    li t2, -65544
+    li t2, %s
     add t0, t0, t2
     la t1, emo_const_lim
-    sd t0, 0(t1)            # and its floor, 64 KiB down
+    sd t0, 0(t1)            # and its floor, the const demand's region down
     ret
-|asm}
+|}
+        floor
   | "user" | "app" ->
-      {asm|
-emo_runtime_init_tail:
+      Printf.sprintf
+        {|emo_runtime_init_tail:
     la t1, emo_procs        # the root's slot — named here, never carried
                             #   across the call
     # the arena end (emo-desktop A11.1): the boot image's root ends at
@@ -8991,10 +9360,10 @@ emo_runtime_init_tail:
     ld t0, 0(t0)
     bnez t0, 9f
     la t0, emo_heap_end
-    li t2, -65544
+    li t2, %s
     add t0, t0, t2
-    sd t0, 584(t1)          # the root's arena end: 64 KiB below the heap's
-                            #   end — the span above it is the const
+    sd t0, 584(t1)          # the root's arena end: the region below the
+                            #   heap's end — the span above it is the const
                             #   region's (the words follow), the root's own
                             #   bump ends at its floor, and the spawn's
                             #   carve is dead code in this image (the
@@ -9013,12 +9382,13 @@ emo_runtime_init_tail:
     sd t0, 0(t1)            # the const region's cursor, at its top (the
                             #   heap's freelist head word stays above it)
     la t0, emo_heap_end
-    li t1, -65544
+    li t1, %s
     add t0, t0, t1
     la t1, emo_const_lim
-    sd t0, 0(t1)            # and its floor, 64 KiB down
+    sd t0, 0(t1)            # and its floor, the const demand's region down
     ret
-|asm}
+|}
+        floor floor
   | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
 
 let arena_gone_asm ~(profile : string) : string =
@@ -9200,7 +9570,7 @@ SECTIONS
    and the root's own arena ends below the region — `emo_alloc_const`
    bumps it, `emo_runtime_init` draws the line. *)
 let stack_asm ~(profile : string) : string =
-  let stack_bytes, heap_bytes =
+  let stack_bytes, scratch_bytes, heap_bytes =
     match profile with
     (* The kernel heap at 32 MiB (emo-desktop A14.3's T9.1 lever): the
        heap's live users are the root's bump (a few KiB) and the const
@@ -9208,24 +9578,52 @@ let stack_asm ~(profile : string) : string =
        region — so the disk ELFs' round's 64 MiB gives 32 back, and the
        allocator region grows by the same 512 blocks the HD desktop's
        surfaces and its three residents spend. *)
-    | "kernel" -> (1048576, 33554432)
-    | "user" -> (65536, 8388608)
+    | "kernel" -> (1048576, 0, 33554432)
+    (* The user image's 8 MiB, split so the bump can never walk the raw
+       scratch: the first mebibyte under the heap's start is the
+       scratch's reservation — the address the packages' `buf` literals
+       name (0x87200000, a half mebibyte into it) — and the root's
+       cursor starts above it. The old single-span layout died on the
+       metal: the boot pass IS the desktop (the top level's last
+       statement), and the desktop's eager strike construction
+       (emo-desktop A17.4) bump-walked 385 KiB of glyph coverage and
+       builder backings straight through buf — the token cells at
+       buf+2048 read as coverage words, and the next boot-image spawn
+       (the counter pass) took the doomed branch reading one as its
+       token. Found 2026-11-11 with the monitor's physical-memory
+       snapshot; the const tables the old ink rode (font.emo, retired
+       in A17.4) lived in the const region at the heap's top, which is
+       why the walk never happened before. *)
+    | "user" -> (65536, 1048576, 7340032)
     (* The app profile's 2 MiB (emo-desktop A12.1): a disk ELF's arena is
        the run the spawn claimed (T8.9's hooks), so the .bss heap hosts
        the const region's 64 KiB and the raw scratch the packages poke —
-       the winbuf's `0x87200000` must stay inside the image's span — and
-       nothing else. Eight MiB of it was the span's dead weight: the
+       the winbuf's `0x87200000` must stay inside the image's span, and
+       the same mebibyte reservation under the heap's start keeps it
+       there whatever a pass's own bump might one day do — and nothing
+       else. Eight MiB of it was the span's dead weight: the
        counter's image measured 12.24 MiB, a 196-block image run per
        resident app against the region's ~500; two MiB measures 6.24 MiB,
        a 100-block run — three residents beside the desktop's own
        surfaces, the process world's 64 slots and its 4 MiB of
        per-process stacks the next lever (its 64-slot bound sits at ten
        asm sites, a round of its own if a fourth resident ever asks). *)
-    | "app" -> (65536, 2097152)
+    | "app" -> (65536, 1048576, 1048576)
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
+  let scratch_section =
+    if scratch_bytes = 0 then ""
+    else
+      Printf.sprintf
+        {|    .globl emo_scratch_base
+emo_scratch_base:
+    .zero %d
+|}
+        scratch_bytes
+  in
   Printf.sprintf
-    {|# ---- The stack and the value heap: .bss, cleared by the entry stub ----
+    {|# ---- The stack, the raw scratch, and the value heap: .bss, ----
+# ---- cleared by the entry stub ----
 
     .section .bss
     .align 16
@@ -9233,7 +9631,7 @@ let stack_asm ~(profile : string) : string =
 emo_stack_bottom:
     .zero %d
 emo_stack_top:
-    .globl emo_heap_start
+%s    .globl emo_heap_start
 emo_heap_start:
     .zero %d
     .globl emo_heap_end
@@ -9432,7 +9830,7 @@ emo_slice_left:
 emo_trap_resume_hook:
     .zero 8
 |}
-    stack_bytes heap_bytes
+    stack_bytes scratch_section heap_bytes
 
 (* The float formatter's tables: 10^k for every exponent the rule can
    produce (indexed by k + 303), as a double-double pair so the digit
@@ -9657,6 +10055,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   in
   if program.pglobals <> [] then refuse "module-level `var`";
   const_thunks := program.Emo_ir.pconsts;
+  const_region_words := 0;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
   let classes =
     List.mapi
@@ -10211,4 +10610,11 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   if profile = "user" || profile = "app" then gput env "%s" user_cell_asm;
   if profile = "user" || profile = "app" then
     gput env "%s" user_console_hook_asm;
-  Buffer.contents env.buf
+  (* the const region's floor (the arena track's answer): the demand
+     finished counting when the program's emission did, so the tail's
+     token becomes the number here — the image's const demand doubled
+     and 16 KiB beside it, never below the 64 KiB the scalar bound has
+     always carried *)
+  let raw = Buffer.contents env.buf in
+  let imm = string_of_int (-(const_region_bytes () + 8)) in
+  replace_token raw "CONST_REGION_FLOOR_IMM" imm

@@ -10,7 +10,7 @@ shell 是一个**用户进程**——用户镜像自身的引导趟(boot pass)�
 
 shell 做的每件事都过门:它打印和读到的每个字节都经 write、read 动词穿过控制台服务,每次文件操作都经文件系统动词穿过文件系统服务。shell 就是 U-mode 里、自己的地址空间上的普通类型化 Emo,只说 `syscall` 包的桩——机器里第一个既非内核也非服务的住户,也是「用户侧与底下那个监督者同为一种语言」的常驻演示。
 
-REPL 和每个用户趟一样在引导趟的 arena 里分配,收集器尚不存在:上界就是用户堆(8 MiB),每次交互几十字节,与每个用户趟共有的生命周期上界相同。
+REPL 和每个用户趟一样在引导趟的 arena 里分配,收集器尚不存在:上界是暂存保留区之上的镜像堆(8 MiB 的跨距里,下面那一 mebibyte 是暂存地址的防 bump 保留区,bump 从保留区顶跑到 const 区),每次交互几十字节,与每个用户趟共有的生命周期上界相同。
 
 ## 行
 
@@ -67,7 +67,7 @@ REPL 以横幅开场:
 
 ## 暂存区
 
-shell 在用户镜像的读写段里持有自己的地址,在证明链的上方(loader 清零、gate 检查的那一段——ELF 的 RW 段比这些地址多出若干兆字节):
+shell 在用户镜像的读写段里持有自己的地址,在证明链的上方(loader 清零、gate 检查的那一段——ELF 的 RW 段比这些地址多出若干兆字节)。这个基址不是普通的堆字节:镜像的 `.bss` 为它划出一个 mebibyte 保留区(`emo_scratch_base` … `emo_heap_start`),bump 分配器自己的范围从保留区之上起步,任何趟的分配都走不进这些字。教训是 counter 趟的死:引导趟就是桌面,桌面 A17.4 的 eager strike 构建在旧的单段堆上 bump 出 385 KiB 的字形 coverage,漫过 buf+2048 的 token cells(读出来全是 coverage 词),下一个 boot 镜像的 spawn 把其中一个当成自己的 token,走了 doomed 分支——用监视器的物理内存快照发现(2026-11-11),用保留区修掉。地址本身保持旧值:
 
 | 地址(自暂存基址 `0x87200000` 起) | 内容 |
 | --- | --- |
@@ -88,4 +88,4 @@ shell 在用户镜像的读写段里持有自己的地址,在证明链的上方(
 
 ## 引脚
 
-`run.sh` 的链条在证明链最后一行之后长出桌面的这段对话,两种定时器传输下都有:时代的横幅与提示符、启动 counter 的 tile 点击(`desktop counter up`、会话、`desktop counter exit 0`——退出事件环的那一行)、REPL 的 `exec` 启动另外两个、退出的各行、列出九个命令的 `help` 行、echo 命令的回显、`ls` 列出 `hello.txt`、`cat boot.txt` 念出内核引导文件的字节(`EmoOS boots from disk`,由内核根经第一个实例写入——用户程序经门把盘上的内容读回来,测试没有代劳任何 staging)、`rm` 之后的拒绝 `cat: no such file`,以及 `bogus: unknown command`——然后是 exit 路由的各行,如今由敲下 `poweroff` 抵达。写由列表上的行序检查证明:第二次 `ls` 在相邻两行应答 `hello.txt` 与 `note.txt`,而写的回显变不出这一对。每条腿连续三轮逐字节相同。
+`run.sh` 的链条在证明链最后一行之后长出桌面的这段对话,两种定时器传输下都有:时代的横幅与提示符、启动 counter 的 tile 点击(`desktop counter up`、会话、`desktop counter exit 0`——退出事件环的那一行)、REPL 的 `exec` 启动另外两个、退出的各行、列出九个命令的 `help` 行、echo 命令的回显、`ls` 列出 `hello.txt`、`cat boot.txt` 念出内核引导文件的字节(`EmoOS boots from disk`,由内核根经第一个实例写入——用户程序经门把盘上的内容读回来,测试没有代劳任何 staging)、`rm` 之后的拒绝 `cat: no such file`,以及 `bogus: unknown command`——然后是 exit 路由的各行,如今由敲下 `poweroff` 抵达。写由列表上的行序检查证明:第二次 `ls` 在相邻两行应答 `hello.txt` 与 `note.txt`,而写的回显变不出这一对。每条腿连续三轮全绿,每条被钉的行与数值相同;唯一会挪动的是提示符在「REPL 启动的应用」自己那几行之间的落座——桌面重绘的收尾与应用的首次滑入结束在同一瞬间,哪个写者的字节先到控制台由调度器决定(launch 时代自己的那类竞态,emo-desktop A15.2 的发现)。

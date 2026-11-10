@@ -3270,6 +3270,30 @@ and pin_builder_push env (e : Ast.expr) (t : t) : env =
       | None -> env)
   | _ -> env
 
+(* The pins a loop body made stay after the loop. A `push` pins the
+   binding wherever the statement runs, and the element type describes
+   the builder object, not the scope the push ran in — a builder fed
+   inside a `for` or `while` body is a builder of what was fed it when
+   the loop is over, which the code after the loop reads and measures
+   by. Only the body's own bindings leave with the body: a pin applies
+   to the outer name when the two entries are the same binding (the
+   pin copies the depth it pinned), and a same-named builder the body
+   declared itself is a different object at a deeper depth. *)
+and keep_builder_pins (outer : env) (inner : env) : env =
+  List.fold_left
+    (fun acc (name, (info : var_info)) ->
+      match info.vtype with
+      | BuilderType elem when elem <> Unknown -> (
+          match lookup_env acc name with
+          | Some
+              ({ vtype = BuilderType Unknown; is_var = false; depth = d; _ } as
+               o)
+            when d = info.depth ->
+              bind acc name { o with vtype = BuilderType elem }
+          | _ -> acc)
+      | _ -> acc)
+    outer (List.rev inner.bindings)
+
 and check_stmt ctx env (s : Ast.stmt) : env =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
@@ -3483,10 +3507,10 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       let body_env =
         { (child_scope env) with loop_depth = env.loop_depth + 1 }
       in
-      let (_ : env) =
+      let body_env =
         List.fold_left (fun env s -> check_stmt ctx env s) body_env body
       in
-      env
+      keep_builder_pins env body_env
   | Ast.For { init; cond; post; body } ->
       (* The header is one scope: the `var` covers the condition and the
          post clause. The body is a child of it — an arrow block in the
@@ -3505,10 +3529,10 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       let body_env =
         { (child_scope loop_env) with loop_depth = env.loop_depth + 1 }
       in
-      let (_ : env) =
+      let body_env =
         List.fold_left (fun env s -> check_stmt ctx env s) body_env body
       in
-      env
+      keep_builder_pins env body_env
   | Ast.Break ->
       if env.loop_depth = 0 then
         report ctx span "E4022"

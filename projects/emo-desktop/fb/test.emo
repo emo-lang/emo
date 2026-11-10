@@ -59,20 +59,32 @@ def paired() ui.Node {
 }
 
 // The widths named here are the interface face's advances at 16 pixels
-// (`glyphs/coverage.txt`): the space 5, `[` and `]` 6, `a` 9, `b` 10,
-// `c` and `x` 9; its line box is 20 tall.
+// (the strike `iface()` strikes below): the space 5, `[` and `]` 6,
+// `a` 9, `b` 10, `c` and `x` 9; its line box is 20 tall.
+
+// The interface strike, built once: the Inter face at 16 pixels, the
+// metrics the grid's three strikes pinned.
+def iface() raster.Strike {
+  case raster.strike(raster.inter(), 16) {
+    (R.error, why) -> {
+      raise Exception.new(message: "the interface strike refused: ${why}")
+    }
+    (R.ok, s) -> { return s }
+  }
+}
 
 def measure_checks() {
-  extent_is(ui_fb.measure(padded(), -1), 27, 50,
+  const f = iface()
+  extent_is(ui_fb.measure(padded(), -1, f), 27, 50,
     "a column is its widest child plus padding, its children stacked a gap apart")
-  extent_is(ui_fb.measure(paired(), -1), 71, 20,
+  extent_is(ui_fb.measure(paired(), -1, f), 71, 20,
     "a row lines its bracketed buttons up, one gap apart, one line box tall")
-  extent_is(ui_fb.measure(ui.text_input("n", ui.style().with_width(40.0)), -1),
+  extent_is(ui_fb.measure(ui.text_input("n", ui.style().with_width(40.0)), -1, f),
     40, 20, "a fixed width overrides the intrinsic one")
   extent_is(ui_fb.measure(ui.scroll([ui.text("x", ui.style())],
-    ui.style().with_height(64.0)), -1), 9, 64,
+    ui.style().with_height(64.0)), -1, f), 9, 64,
     "a scroll is as tall as its viewport, as wide as its content")
-  extent_is(ui_fb.measure(ui.spacer(ui.style()), -1), 0, 0,
+  extent_is(ui_fb.measure(ui.spacer(ui.style()), -1, f), 0, 0,
     "a spacer measures to nothing")
 }
 
@@ -156,43 +168,69 @@ def shape_checks() {
 
 // ---- the type: a character's glyph, a glyph's metrics and ink ----------
 //
-// The values named here are the grid's (`glyphs/coverage.txt`): at 16
-// pixels the interface face's `A` advances 11, its ink 11 by 12 from
-// four rows down, row 0 `....8f8....` and row 7 `.1effffff1.`; its `j`
-// hangs one pixel left of the pen; the monospace face advances 10 for
-// every glyph; the three line boxes are 20, 30 and 22 tall.
+// The values named here are the strikes' (the grid's three strikes
+// reproduced exactly, the coverage the rasterizer's own — its bytes
+// the type golden's 288 raster pins carry): at 16 pixels the
+// interface face's `A` advances 11, its ink 11 by 12 from four rows
+// down; its `j` hangs one pixel left of the pen; the monospace face
+// advances 10 for every glyph; the three line boxes are 20, 30 and 22
+// tall; a slot word packs eight coverage bytes and the ink is not
+// empty.
 
-def font_checks() {
-  word_is(font.glyph_of(" "), 0, "the space is the first glyph")
-  word_is(font.glyph_of("A"), 33, "a character's glyph is its place in the alphabet")
-  word_is(font.glyph_of("~"), 94, "the tilde is the last printable one")
-  word_is(font.glyph_of("\n"), font.missing(),
-    "a character outside the table is the missing glyph")
-  word_is(font.line_height(font.ui16()), 20, "the interface face's line box at 16")
-  word_is(font.line_height(font.ui24()), 30, "and at 24")
-  word_is(font.line_height(font.mono16()), 22, "the monospace face's at 16")
-  word_is(font.ascent(font.ui16()), 16, "the ink hangs from a 16-pixel ascent")
-  check(font.advance(font.ui16(), 0) == 5 && font.words(font.ui16(), 0) == 0,
-    "the space advances and has no ink")
-  const a = font.glyph_of("A")
-  const s = font.ui16()
-  check(font.advance(s, a) == 11 && font.gleft(s, a) == 0 && font.gtop(s, a) == 4,
+def strike_checks() {
+  const f = iface()
+  word_is(f.glyph_of(" "), 1, "the space is the first glyph past the .notdef")
+  word_is(f.glyph_of("A"), 34, "a character's glyph is its place in the alphabet plus one")
+  word_is(f.glyph_of("~"), 95, "the tilde is the last printable one")
+  word_is(f.glyph_of("\n"), 0,
+    "a character outside the table is the .notdef")
+  word_is(f.line_height(), 20, "the interface face's line box at 16")
+  word_is(f.ascent(), 16, "the ink hangs from a 16-pixel ascent")
+  word_is(f.advance(1), 5, "the space advances")
+  check(f.ink_w(1) == 0 && f.ink_h(1) == 0, "and has no ink")
+  const a = f.glyph_of("A")
+  check(f.advance(a) == 11 && f.ink_left(a) == 0 && f.ink_top(a) == 4,
     "a capital's advance and its ink's offsets")
-  check(font.gw(s, a) == 11 && font.gh(s, a) == 12, "and its ink's size")
-  word_is(font.pixel(s, a, 0), 0, "its row 0 starts clear")
-  word_is(font.pixel(s, a, 4), 136, "its apex's shoulder is level 8")
-  word_is(font.pixel(s, a, 5), 255, "its apex is whole")
-  word_is(font.pixel(s, a, 79), 238, "its bar is level 14 where it begins")
-  word_is(font.pixel(s, a, 131), 119, "its last pixel is level 7")
-  word_is(font.gleft(s, font.glyph_of("j")), -1,
+  check(f.ink_w(a) == 11 && f.ink_h(a) == 12, "and its ink's size")
+  const slots = f.slots_array()
+  var mass = 0
+  var at = f.slot_base(a)
+  for var k = 0; k < (11 * 12 + 7) / 8; k = k + 1 {
+    const wv = slots[at]
+    for var j = 0; j < 8; j = j + 1 {
+      mass = mass + ((wv >> (8 * j)) & 255)
+    }
+    at = at + 1
+  }
+  check(mass > 0, "the ink's coverage is not empty")
+  word_is(f.ink_left(f.glyph_of("j")), -1,
     "a descender's ink may start left of the pen")
-  check(font.advance(font.mono16(), a) == 10
-    && font.advance(font.mono16(), font.glyph_of("i")) == 10
-    && font.advance(font.mono16(), font.glyph_of("W")) == 10,
-    "the monospace face advances one cell for every glyph")
-  check(font.advance(s, font.missing()) == 11 && font.gh(s, font.missing()) == 19,
+  const m = raster.strike(raster.mono(), 16)
+  case m {
+    (R.error, why) -> {
+      raise Exception.new(message: "the mono strike refused: ${why}")
+    }
+    (R.ok, ms) -> {
+      check(ms.advance(ms.glyph_of("A")) == 10
+        && ms.advance(ms.glyph_of("i")) == 10
+        && ms.advance(ms.glyph_of("W")) == 10,
+        "the monospace face advances one cell for every glyph")
+    }
+  }
+  const big = raster.strike(raster.inter(), 24)
+  case big {
+    (R.error, why) -> {
+      raise Exception.new(message: "the 24-pixel strike refused: ${why}")
+    }
+    (R.ok, s24) -> {
+      word_is(s24.line_height(), 30, "the interface face's line box at 24")
+      check(s24.advance(a) == 17 && s24.ink_w(a) == 16 && s24.ink_h(a) == 18,
+        "and the capital scales with it")
+    }
+  }
+  check(f.advance(0) == 11 && f.ink_h(0) == 19,
     "the missing glyph is the face's own .notdef")
-  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1), 19, 20,
+  extent_is(ui_fb.measure(ui.text("ab", ui.style()), -1, f), 19, 20,
     "a label measures to its glyphs' advances and the line box")
 }
 
@@ -229,6 +267,6 @@ measure_checks()
 clip_checks()
 over_checks()
 shape_checks()
-font_checks()
+strike_checks()
 pointer_checks()
 script_checks()

@@ -184,7 +184,9 @@ def material_row(s ui_fb.Surface, ly Int64, gy Int64, w Int64, mw Int64,
 // the strip's own height and `top` the display row its first row
 // stands on — the material samples the wallpaper's formula at the
 // display's own rows.
-def paint(s ui_fb.Surface, w Int64, h Int64, top Int64, labels Array[String], focused Int64, running Int64) Void {
+def paint(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64, h Int64,
+          top Int64, labels Array[String], focused Int64,
+          running Int64) Void {
   var ly = 0
   while ly < h {
     material_row(s, ly, top + ly, w, w, top + h, dock_scrim())
@@ -202,8 +204,9 @@ def paint(s ui_fb.Surface, w Int64, h Int64, top Int64, labels Array[String], fo
     const ty = tile_y()
     s.rounded(tx, ty, tile_size(), tile_size(), 8, tile_top(i == focused),
       tile_bottom(i == focused))
-    ui_fb.text(labels[i], tx + (tile_size() - ui_fb.text_width(labels[i])) / 2,
-      ty + (tile_size() - ui_fb.line_height()) / 2, ink(), s)
+    ui_fb.text(f, labels[i],
+      tx + (tile_size() - ui_fb.text_width(f, labels[i])) / 2,
+      ty + (tile_size() - f.line_height()) / 2, ink(), s)
     if (running >> i) & 1 == 1 {
       s.fill(tx + 14, ty + 26, 4, 4, ink())
     }
@@ -280,13 +283,14 @@ def isqrt(n Int64) Int64 {
 // through the fs, and a String is never built of them: the shell reads
 // the scratch buffer's bytes straight into this. The advance the next
 // byte's pen moves by comes back.
-def text_byte(s ui_fb.Surface, x Int64, y Int64, b Int64, ink_color Int64) Int64 {
-  var i = b - 32
-  if i < 0 || i > 94 {
-    i = ui_fb.font.missing()
+def text_byte(s ui_fb.Surface, f ui_fb.raster.Strike, x Int64, y Int64,
+              b Int64, ink_color Int64) Int64 {
+  var i = b - 31
+  if i < 1 || i > 95 {
+    i = 0
   }
-  s.ink(x, y, ui_fb.text_strike(), i, ink_color)
-  return ui_fb.font.advance(ui_fb.text_strike(), i)
+  s.ink(x, y, f, i, ink_color)
+  return f.advance(i)
 }
 
 // The wallpaper's colors: a deep navy at the top running into a dusky
@@ -372,7 +376,8 @@ def header_accent() Int64 {
 // The digits' advances are summed before they are drawn, so the text
 // ends where it should whatever the digits are. The x the text starts
 // at comes back, the caller's to center against.
-def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) Int64 {
+def count_text(s ui_fb.Surface, f ui_fb.raster.Strike, right Int64,
+               y Int64, n Int64, ink_color Int64) Int64 {
   var div = 1
   while n / div >= 10 {
     div = div * 10
@@ -380,16 +385,16 @@ def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) 
   var digits_w = 0
   var d = div
   while d > 0 {
-    digits_w = digits_w + ui_fb.font.advance(ui_fb.text_strike(), 16 + ((n / d) % 10))
+    digits_w = digits_w + f.advance(17 + ((n / d) % 10))
     d = d / 10
   }
-  const x = right - digits_w - ui_fb.text_width(" apps")
+  const x = right - digits_w - ui_fb.text_width(f, " apps")
   var p = x
   while div > 0 {
-    p = p + text_byte(s, p, y, 48 + ((n / div) % 10), ink_color)
+    p = p + text_byte(s, f, p, y, 48 + ((n / div) % 10), ink_color)
     div = div / 10
   }
-  ui_fb.text(" apps", p, y, ink_color, s)
+  ui_fb.text(f, " apps", p, y, ink_color, s)
   return x
 }
 
@@ -401,15 +406,16 @@ def count_text(s ui_fb.Surface, right Int64, y Int64, n Int64, ink_color Int64) 
 // residency; the wall clock and the foreground app's name it does not
 // know, and the bar does not pretend to). The text sits centered in
 // the bar's height, the line box's own.
-def paint_header(s ui_fb.Surface, w Int64, mw Int64, mh Int64, running Int64) Void {
+def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
+                 mw Int64, mh Int64, running Int64) Void {
   var y = 0
   while y < header_height() {
     material_row(s, y, y, w, mw, mh, header_scrim())
     y = y + 1
   }
-  const ty = (header_height() - ui_fb.line_height()) / 2
-  ui_fb.text("EmoOS", 8, ty, header_accent(), s)
-  count_text(s, w - icon_margin(), ty, running, header_ink())
+  const ty = (header_height() - f.line_height()) / 2
+  ui_fb.text(f, "EmoOS", 8, ty, header_accent(), s)
+  count_text(s, f, w - icon_margin(), ty, running, header_ink())
 }
 
 // The selection's blend word: the tile steel at a low coverage laid
