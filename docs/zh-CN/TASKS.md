@@ -1155,12 +1155,14 @@ target 上逐字节不变(`CHECK.md`)。
       丢掉了 def 的值)。金测:`httpd_serve`(中间件、往返、排水)与
       `httpd_wire`(裸连接上十四种线上形状)在三个宿主 target 上
       手工验证逐字节一致,解释器腿在 test/emo_project 过已提交的
-      lockfile。两个 serve 示例暂不进 c_goldens:wire 示例的 c
-      二进制在 harness 的 fork-加-管道执行下于首行后干净结束,而
-      单独运行 10/10 逐字节全对——第二个潜伏的 c 运行时 flake
-      (调度器见 root fiber 的 `finished` 标志即返回,标志提前置位
-      就把该挂起的程序静默结束),与严格别名崩溃同族,未究根因,
-      已在 CHECK.md 点名——带 flake 的金测比缺席的金测更糟。
+      lockfile。serve 示例与 `https_roundtrip` 次日在后续 flake
+      根因查明并修复后回到 c_goldens 名单(CHECK.md):那是一场被
+      误读为干净退出的 SIGSEGV(首个诊断从未打印子进程状态),ASan
+      在互尾调用簇里抓到陈旧释放——兄弟重入跳过了目标成员的局部
+      清零——修法是把 hoist 局部块挪到重入标签之后;ASan 5/5 净、
+      harness 用例 3/3 红 转 3/3 绿,`-fno-strict-aliasing` 保险背
+      后的 word-view pun 也一并消除(cell 现在是覆盖整个分配的单
+      一声明类型)。
 - [x] **T57.3** — 路由器:模式只在注册时解析一次——
       `handle("GET /users/{id}", h)` 与收裸路径的
       `get`/`post`/`put`/`delete`(在那里命名方法会 raise 并点名两

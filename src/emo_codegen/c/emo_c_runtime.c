@@ -85,13 +85,21 @@ static void *emo_alloc(size_t n) {
   return p;
 }
 
-/* A cell: the header word holds the kind; the payload follows. */
+/* A cell: one declared type over the whole allocation — the identity
+   head's refcount, the kind word, then the payload words — so every
+   view of a cell reads through this one struct and the strict-aliasing
+   rule is never tested (the old emo_idhead/emo_cell pair made the
+   refcount and the kind different members of different structs over
+   one allocation; -fno-strict-aliasing used to paper over it). A
+   cell's value points at the allocation's base. */
 typedef struct {
-  uintptr_t header;
+  int64_t rc;         /* the identity head: the refcount */
+  uintptr_t header;   /* the kind */
+  uintptr_t words[];  /* the payload follows */
 } emo_cell;
 
 static uintptr_t *emo_payload(emo_value v) {
-  return (uintptr_t *)(((emo_cell *)v) + 1);
+  return ((emo_cell *)v)->words;
 }
 
 /* ---- Reclamation (CHECK.md, the T23.5 gate; step 49) ----
@@ -114,11 +122,6 @@ static uintptr_t *emo_payload(emo_value v) {
    ArrayBuilder, instances, closures) can cycle only the way instances
    already could. */
 
-typedef struct {
-  int64_t rc;
-  /* the emo_cell header follows */
-} emo_idhead;
-
 static int64_t emo_identity_live = 0;
 
 /* Memory a cell owns besides its own payload — a list's struct and
@@ -136,21 +139,20 @@ static void *emo_owned_alloc(size_t n) {
 static emo_value emo_cell_new(uintptr_t kind, int64_t words) {
   /* zeroed: the field write barrier releases the previous word, so a
      fresh cell's fields must read as 0, not as malloc garbage */
-  emo_idhead *h = calloc(1, sizeof(emo_idhead) + sizeof(emo_cell) +
+  emo_cell *c = calloc(1, sizeof(emo_cell) +
                                (size_t)words * sizeof(emo_value));
-  if (h == NULL) {
+  if (c == NULL) {
     fputs("emo: out of memory\n", stderr);
     abort();
   }
-  h->rc = 1;
+  c->rc = 1;
   emo_identity_live++;
-  emo_cell *c = (emo_cell *)(h + 1);
   c->header = kind;
   return (uintptr_t)c; /* malloc alignment: low bits 000 */
 }
 
 static int64_t *emo_rc_of(emo_value v) {
-  return &((emo_idhead *)((emo_cell *)v - 1))->rc;
+  return &((emo_cell *)v)->rc;
 }
 
 static uintptr_t emo_cell_kind(emo_value v); /* defined with the accessors */
@@ -1292,7 +1294,7 @@ void emo_release(emo_value v) {
   default:
     break; /* String, Bytes, Enum, Int64, Float64, Pid */
   }
-  free((emo_idhead *)((emo_cell *)v - 1));
+  free((emo_cell *)v);
 }
 
 /* ---- Instances (T23.5) ---- */

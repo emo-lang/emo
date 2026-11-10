@@ -3399,15 +3399,17 @@ carries no server half; `dune runtest` green.
       (fourteen wire shapes on raw connections) answer byte-
       identical on the three hosted targets by hand, the interpreter
       legs running through the committed lockfiles in
-      test/emo_project. The two serve examples stay out of the
-      c_goldens list for now: the wire example's c binary ends
-      cleanly after its first line under the harness's fork-and-pipe
-      execution while answering byte-identically standalone 10/10 —
-      the second latent c-runtime flake (the scheduler returns when
-      the root fiber's `finished` flag stands, so an early flag ends
-      the program where it should hang), same family as the
-      strict-aliasing crash, unroot-caused and named in CHECK.md —
-      a flaky golden is worse than an absent one.
+      test/emo_project. The serve examples and `https_roundtrip` rode the c_goldens list
+      after the follow-up flake was root-caused and fixed the next
+      day (CHECK.md): a SIGSEGV misread as a clean exit (the first
+      diagnostic never printed the child's status), caught by ASan as
+      a stale release in the mutual-tail-call cluster — a sibling
+      rebind jumped past the target member's local zero-init — and
+      fixed by moving the hoisted-locals block after the rebind
+      label; ASan 5/5 clean, the harness case 3/3 red to 3/3 green,
+      and the word-view pun behind the `-fno-strict-aliasing`
+      insurance eliminated alongside it (the cell is one declared
+      type over the whole allocation).
 - [x] **T57.3** — The Router: patterns parse once at registration —
       `handle("GET /users/{id}", h)` and the method-scoped
       `get`/`post`/`put`/`delete` taking the bare path (a pattern

@@ -3048,12 +3048,15 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
          entry (the initial dispatch only — rebinds jump past, to the
          `_in` label, swapping through the barrier) and the exit unwind
          releases them. The body buffers so its hoisted declarations
-         splice inside the block, before the `_in` label. *)
+         splice inside the block, AFTER the `_in` label: a rebind
+         landing on the label must run them — the zero-initialized
+         locals belong to the target member, and the rebind site zeroes
+         only the member it leaves. First dispatch falls through the
+         same way. *)
       let body = Buffer.create (4 * 1024) in
       env.buf <- body;
       emit_stmts env m.Emo_ir.fbody;
       put env0 "emo_head_%s: {\n" (c_ident m.Emo_ir.fname);
-      List.iter (fun l -> put env0 "%s\n" l) (List.rev env.hoist);
       List.iter
         (fun (n, ty) ->
           if is_dyn ty then
@@ -3062,6 +3065,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
               (slot_name m.Emo_ir.fname n))
         m.Emo_ir.fparams;
       put env0 "emo_head_%s_in: ;\n" (c_ident m.Emo_ir.fname);
+      List.iter (fun l -> put env0 "%s\n" l) (List.rev env.hoist);
       Buffer.add_buffer env0.buf body;
       put env0 "}\n")
     members;

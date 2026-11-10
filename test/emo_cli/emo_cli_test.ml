@@ -616,13 +616,7 @@ let c_goldens =
     "file_read";
     "tcp_echo";
     "http_roundtrip";
-    (* https_roundtrip: after its migration to the httpd server (T57.4)
-       its c binary ends cleanly under this harness's fork-and-pipe
-       execution while answering byte-identically standalone — the
-       same latent c-runtime flake family as the serve examples
-       (CHECK.md, T57.2), so its c golden sits out until that is
-       rooted; the interpreter leg runs through the committed
-       lockfile in test/emo_project *)
+    "https_roundtrip";
     "list";
     "array_builder";
     "os_demo";
@@ -635,16 +629,14 @@ let c_goldens =
     "quad_demo";
     "csv_demo";
     (* httpd_parse: the httpd parser's fixture walk — heads parsed to
-       fields, malformed ones refused with the 400-family reason.
-       httpd_serve and httpd_wire stay out of this list for now: their
-       c binaries answer byte-identically run standalone and from this
-       list's own build (verified repeatedly), but under the harness's
-       fork-and-pipe execution the wire example deterministically ends
-       after its first line — a second latent c-runtime flake in the
-       family the strict-aliasing crash belonged to, unroot-caused
-       (T57.2's trail, CHECK.md). They run as interpreter goldens
-       through the committed lockfiles in test/emo_project. *)
+       fields, malformed ones refused with the 400-family reason;
+       httpd_serve: middleware wrapping, one round-trip, graceful
+       shutdown; httpd_wire: the wire shapes on raw connections —
+       keep-alive, 100-continue, HEAD/204 stripping, the refusals,
+       the 431 and 413 limits *)
     "httpd_parse";
+    "httpd_serve";
+    "httpd_wire";
     "json_demo";
     "yaml_demo";
     "xml_demo";
@@ -729,7 +721,7 @@ let sqlite3_available =
    the CLI prints — bare -lssl first, the Linux dev-package shape,
    then the Homebrew kegs. None means the machine has neither, and
    those goldens skip like sqlite3_demo does. *)
-let tls_goldens = [ "http_roundtrip" ]
+let tls_goldens = [ "http_roundtrip"; "https_roundtrip"; "httpd_serve" ]
 
 let tls_cclibs =
   lazy
