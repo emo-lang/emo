@@ -1333,16 +1333,17 @@ let repl_require (p : project) (name : string) : (unit, string) result =
   else if String.contains name '/' then
     Error
       (Printf.sprintf
-         "the repl resolves the standard library's packages, and `%s` names \
-          a registry package — registry packages need a manifest pin: add \
-          it to a project's deps and require it from there"
+         "the repl resolves the standard library's packages, and `%s` names a \
+          registry package — registry packages need a manifest pin: add it to \
+          a project's deps and require it from there"
          name)
   else if not (List.mem name embedded) then
     Error
       (Printf.sprintf
-         "the repl requires `%s`, but the bundled standard library carries \
-          no such package — its names: %s"
-         name (String.concat ", " embedded))
+         "the repl requires `%s`, but the bundled standard library carries no \
+          such package — its names: %s"
+         name
+         (String.concat ", " embedded))
   else
     let versions = Emo_pkg.Registry.versions Emo_pkg.Registry.Embedded ~name in
     let latest = List.nth versions (List.length versions - 1) in

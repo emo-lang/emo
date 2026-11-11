@@ -182,8 +182,7 @@ let repl_tests =
     tc "a scoped require refuses and the repl survives" (fun () ->
         let out = Buffer.create 128 in
         Emo_cli.repl_loop ~prompt:false
-          ~input:
-            (queue_input [ {|require "acme/leaf"|}; "1 + 1"; "exit" ])
+          ~input:(queue_input [ {|require "acme/leaf"|}; "1 + 1"; "exit" ])
           ~output:(Buffer.add_string out);
         let text = Buffer.contents out in
         Alcotest.(check bool) "refusal reported" true (contains text "E5015");
