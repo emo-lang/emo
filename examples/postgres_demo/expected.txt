@@ -1,0 +1,11 @@
+created: 0
+insert: 1
+insert: 1
+insert: 1
+rows: 3, columns: 3
+  1 ada 9.5
+  2 grace 3.25
+  3 alan -
+above 4: ada
+postgres: query: relation "no_such_table" does not exist (sqlstate 42P01)
+done

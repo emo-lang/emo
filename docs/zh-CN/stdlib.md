@@ -47,6 +47,8 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
+| [`sqlite3`](#sqlite3-包) | SQLite:预备语句、逐行步进 | `c` |
+| [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
@@ -633,6 +635,63 @@ println(stmt.to_string())   // SELECT * FROM users WHERE id = ?1
 目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
 [`docs/zh-CN/stdlib/sql.md`](stdlib/sql.md) · 示例:`examples/sql_demo`、
 `examples/sql_edge`。
+
+## postgres 包
+
+PostgreSQL 客户端:对 libpq——PostgreSQL 自家 C 库——的直接风格
+绑定。`Conn` 是一条服务器连接;语句经 `PQexecParams` 执行,
+`$1` 风格的占位符以 `Param` 传值,查询答出按 `(row, column)`
+读取、带类型校验的 `Rows`。调用经 `foreign def` 落到包自带的
+C shim,libpq 由清单的 `pkg_config` 字段解析——pkg-config 同时
+供给 shim 的头文件路径和链接用的 `-lpq`。预期失败是值,走
+`net` 的形状:服务器宕机、数据撞上的约束冲突,都以
+`(R.error, reason)` 作答,携带服务端消息和 SQLSTATE。
+
+```emo
+def connect(options ConnOptions) (R, Conn)
+def connect_info(info String) (R, Conn)
+def options() ConnOptions
+def text(v String) Param
+def i64(v Int64) Param
+def f64(v Float64) Param
+def bool(v Bool) Param
+def none() Param
+
+class Conn {
+  def exec(sql String, params Array[Param]) (R, Int64)
+  def query(sql String, params Array[Param]) (R, Rows)
+  def close() Void
+}
+
+class Rows {
+  def count() Int64
+  def columns() Int64
+  def name(c Int64) String
+  def index_of(wanted String) Int64
+  def text(r Int64, c Int64) String
+  def i64(r Int64, c Int64) Int64
+  def f64(r Int64, c Int64) Float64
+  def bool(r Int64, c Int64) Bool
+  def is_null(r Int64, c Int64) Bool
+  def finish() Void
+}
+```
+
+```emo
+const (R.ok, rows) = conn.query(
+  "select id, name from users where age > $1", [postgres.i64(30)])
+var r = 0
+while r < rows.count() {
+  println("row ${rows.i64(r, 0)}: ${rows.text(r, 1)}")
+  r = r + 1
+}
+rows.finish()
+```
+
+目标:`["c"]`——调用是 foreign def,解释器拒绝(E3009),构建期
+libpq 还须经 pkg-config 解析得到。参考:
+[`docs/zh-CN/stdlib/postgres.md`](stdlib/postgres.md) · 示例:
+`examples/postgres_demo`。
 
 ## sqlite3 包
 

@@ -1203,3 +1203,207 @@ target 上逐字节不变(`CHECK.md`)。
       在 harness 下 3/3 红、单独运行 3/3 绿——又是那个已点名的
       flake 家族——其 c golden 因此加入缓期,解释器腿承载覆盖;
       M23 完成。
+
+## M24 — 宏
+
+元编程机制作为一件事落地:编译期宏,藏在保留的指令命名空间之后——
+`// #macro` 声明、`// @name` 应用——宏体在运行之前先过检查,构造上
+即确定性(一切副作用与触宿内建一律拒绝),应用在 parse 与 check
+之间展开,所以每个 target 构造上继承,宏 def 在展开后擦除,拼接的
+代码随模块一起检查。运行期 `eval`、开类与 `method_missing` 作为
+语言机制被永久拒绝(`CHECK.md` 记录决策与被拒的备选);
+`design/macros.md` 是工作设计。
+
+### 步骤 58 — 编译期宏 · `design/macros.md`
+
+**前置:** Step 9(checker)、21(eval 的内建)。**完成标准:**
+`examples/trace_demo` 在每个 target 上逐字节运行;`// #macro` /
+`// @trace` 完成 parse、展开与检查;严格性弹药库(E2029–E2035、
+E3030、E4300–E4310)对每种错误拼法响亮拒绝;`dune runtest` 绿。
+
+- [x] **T58.1** — 指令层:首 token 为 `#` 或 `@` 的 `//` 注释不再
+      是注释——词法器把 sigil、名字与原始实参文本捕获为指令
+      token;解析器收集、校验摆放(独占一行、连续叠加、紧贴声明
+      上方,体内不行、文件尾不行),并把指令挂到条目上;LSP 把这些
+      行高亮为宏。未知 role 名、空行漂浮、体内指令、重复、同行
+      尾随、应用带实参各有自己的拒绝码
+      (E2029/E2030/E2031/E2032/E2033/E2035)。
+- [x] **T58.2** — 宏模型:`Syntax` 是保留的编译期类型,只在
+      `// #macro` def 的签名与体内合法(checker 的编译期窗口为宏
+      自身的收集、签名解析与宏体打开);形状恰为 `(f Syntax) Syntax`
+      (E4302);宏体在任何运行之前像普通 def 一样过类型检查;展开后
+      宏 def 被擦除。`@name` 解析到同模块宏,或按名拒绝(E4300);
+      宏不接受应用(E4310);拼接必须产出声明(E4303)。
+- [x] **T58.3** — 编译期 profile:宏体跑在编译器自己的解释器上,
+      一切副作用拒绝、一切触宿内建拒绝(`rand_bytes` 经内建与
+      runtime-impl 两条路都拒绝)、输出钩子下毒、步数预算——构造上
+      确定性,不需要副作用系统(E3030)。
+- [x] **T58.4** — 展开趟骑在 parse cache 上:每个消费者——check、
+      各后端、求值器——看到的是展开后的声明;预检是原模块的完整
+      检查,所以没有指令的文件原样走快路,用宏的模块在拼接前后各
+      检查一次;裸解释器(`Emo_eval.run_program`)以单文件预检展开。
+      应用按最近优先逐个套用,每个宏拿到上一个应用的产物。
+- [x] **T58.5** — `Syntax` API:读取器(`name`、`params`、
+      `param_name`、`result`)与构造器(`rename`、`new_def`、`seq`、
+      `ident`、`lit_string`、`interp`、`call`、`call_stmt`、
+      `expr_stmt`、`const_stmt`、`return_stmt`、`gensym`)作为
+      `Syntax` 组的内建成员,只在运行中的宏体内绑定;
+      `Syntax.gensym` 发放无冲突名字。
+- [x] **T58.6** — 试点:`examples/trace_demo`——`trace` 宏把原 def
+      挪到隐藏名,让可见名变成记录每次调用实参与应答的包装;转发
+      调用由被包装声明自己的参数树构造,不会漂移;生成的包装随
+      模块一起检查,参数个数不对的包装死在那里。设计决策与被拒
+      备选(运行期 eval、`by` 关键字、作为独立机制的值 decorator)
+      在 `design/macros.md`。
+
+### 步骤 59 — 带实参的宏应用与 quote 面 · `design/macros.md`
+
+**前置:** Step 58(指令层、展开管线、编译期 profile)。**完成
+标准:** `examples/memoize_demo` 在解释器与 c、TypeScript 二进制上
+逐字节运行;`// @memoize(2)` 对照宏声明的参数检查实参并在展开期
+求值;`quote { ... }` 把包装体铺成带 `${...}` 洞的普通代码;拒绝
+路径(E2033–E2036、E4306–E4309)响亮拒绝;`dune runtest` 绿。
+
+- [x] **T59.1** — 应用实参:指令的实参表在名字之后按普通 token 走
+      词法(原始文本捕获退役),实参携带文件的真实 span;括号必须
+      贴着名字(E2034)并在指令自己那行闭合(E2033);role 指令不
+      带实参(E2035);宏的签名推广为前置标量编译期参数加末尾的
+      `Syntax` 树参数(E4302);个数(E4306)与逐实参类型一致
+      (E4307)在展开求值所处的仅内建环境里静态检查,值在受保护
+      profile 内绑定到前置参数上。
+- [x] **T59.2** — quote 面:`quote { ... }` 是表达式位上的上下文
+      拼法——操作数起始座位(`=`、`(`、`,`、`[`、`return`、`do`、
+      `->`)且大括号同行;其余 `quote` 仍是普通名字。规则被语料
+      驱动了两次:标准库的 JSON 转义器以 `quote(self.value)` 调用
+      (关键字会弄坏它),sql 的 `== quote {` 收尾一个 if 条件
+      (只认大括号跟随会弄坏它);`foreign` 是先例——只在宏体内
+      可解析(他处 E4301);quote 体在 quote 自己的 token 流上按
+      普通条目解析——真实 span、体内无错误恢复——每个 `${expr}`
+      洞就地解析,由编译器拥有的占位标识符(拼法保留,E2036)
+      站在流里;占位符的 span 覆盖整个洞,邻接规则把它读成一个
+      token;求值器把每个洞的树替换其占位符,产出非表达式树的洞
+      是 E4309。
+- [x] **T59.3** — 生成的运行期状态:`Syntax.const_item` +
+      `Syntax.empty_map` 在包装旁拼出模块级 `Map` 常量;
+      `Syntax.new_def` 接受整段 quote 作为体;`Syntax.seq` 拍平,
+      嵌套序列拼接;`lit_int` / `lit_bool` / `lit_float` 把编译期
+      值抬升为字面量树;宏体内的 `raise` 浮现为展开的编译错误
+      E4308,携带 Exception 的消息。
+- [x] **T59.4** — 试点:`examples/memoize_demo`——`@memoize(2)`
+      包装一个每次真实求值都会打印的 def;输出展示缓存命中跳过
+      计算、表到上限后丢弃、被逐出的实参重新计算——解释器、
+      c 二进制、TypeScript 输出三者逐字节一致。
+
+### 步骤 60 — 类上的 `@derive` · `design/macros.md`
+
+**前置:** Step 59(应用实参、quote 面)。**完成标准:**
+`examples/derive_eq_demo` 在解释器与 c、TypeScript 二进制上逐字节
+运行;`class` 上方的 `// @derive_eq` 从字段表生成相等方法;裸模块
+不再把关展开(宏域检查取代整模块预检);拒绝路径保持响亮;
+`dune runtest` 绿。
+
+- [x] **T60.1** — 类的座位:解析器接受 `class` 条目上方的应用
+      (role 仍仅限 def,E2031 点名规则;重复规则 E2032 适用于类;
+      其他条目仍拒绝),展开让类树原样穿过既有机制——
+      `Sx_item (Item_class _)` 进,宏变换后的类出。
+- [x] **T60.2** — 类 API:`Syntax.fields` / `Syntax.field_name` 读
+      字段表(只有名字;AST 不携带字段类型——记为 JSON 派生的
+      有名缺口),`Syntax.with_methods` 把生成的 def 作为普通方法
+      追加,`Syntax.name` 应答类或 def 树;体构造器——`new_param`、
+      `named_type`、`self_expr`、`bin_eq`、`bin_and`、`member`——
+      外加 `Sx_field` 树变体。
+- [x] **T60.3** — 预检收窄到宏域:step 58 的整裸模块门撑不过
+      derive,因为点名生成方法的调用点会在宏运行前先撞裸类而
+      失败(实测发现:第一次 derive 冒烟正死在那里,死在裸模块
+      预检一直遮掩的运行期 NoMethodError 上)。
+      `Emo_check.check_macro_domain` 检查 `#macro` def 的形状与
+      宏体,加每个应用的编译期实参——应用载体以空心壳骑过(体
+      清空、return 降为 Void,空心壳不该绊倒必须返回规则)——而
+      展开后模块的完整检查才是点名派生不产出的方法的调用点死掉
+      的地方。随之落地一条约束:宏体自包含(它的参数、`Syntax`、
+      内建)。
+- [x] **T60.4** — 试点:`examples/derive_eq_demo`——`@derive_eq`
+      在两个类(一对 Int64 加一个 String)上生成逐字段两两比较的
+      `eq?` 方法(`self` 对 `other`,`&&` 链接,无字段类派生出
+      常量 `true`);解释器、c 二进制、TypeScript 输出逐字节一致。
+
+### 步骤 61 — 跨模块宏 · `design/macros.md`
+
+**前置:** Step 60(类的座位、宏域门)。**完成标准:**
+`examples/derive_shared` 在解释器与 c、TypeScript 二进制上逐字节
+运行——`derive_eq` 在同级 `eq_macros.emo` 里声明一次,以限定形式
+(`// @eq_macros.derive_eq`)应用到 `main.emo` 的两个类上;裸名
+应用仍在本地解析并被遮蔽;跨模块个数/类型检查响亮拒绝;
+`dune runtest` 绿。
+
+- [x] **T61.1** — 程序的宏表:对所有注册文件一次裸扫(不展开——
+      扫描不得递归穿过它所喂的 parse cache),把每条 `// #macro`
+      def 按(模块路径,宏名)收集,记忆化在 project 记录上。
+- [x] **T61.2** — 限定应用:指令词法器接受点分名字(`@mod.macro`,
+      任意路径深度,点只在段之间),展开对照宏表解析——宏体跑在
+      应用方模块的展开里,每个模块自己的展开擦掉自己的宏 def。
+      裸名只在本地解析,同名本地宏遮蔽外来者(实测验证:本地
+      恒等宏给被包装 def 改名,应答的是外来版本会留成未定义的
+      调用)。路径或其下的宏缺失时,E4300 点名模块。
+- [x] **T61.3** — 跨模块实参检查:宏域门把每个外来宏注册为按点分
+      拼法键控的伪 def——真签名、一条 `Role_macro` 指令(`Syntax`
+      窗口)、返回 `Syntax` 名的体——实参检查看外来宏与看本地宏
+      一模一样(E4306/E4307 跨模块实测)。
+- [x] **T61.4** — 试点:`examples/derive_shared`——同级模块里一个
+      派生,两个类限定应用,解释器、c 二进制、TypeScript 输出
+      逐字节一致。包边界宏(require 作用域的库宏加 deps 可见性
+      规则)仍是有名的后续。
+- [x] **T61.5** — 每个 target,验证:四个试点加入 wasm、beam、
+      riscv64 金测名单并逐字节通过——`memoize_demo` 在 riscv64 上
+      等 `Map`(拒绝是活的,名单里点名)——而验证抓到一个真 bug:
+      宏造出的每个节点都带宏体的 span,span 键控的类型表让两个被
+      装饰的类互相覆写条目(derive_eq 生成的 `self.x` 在 wasm 与
+      beam 上被当成第二个类的类型;解释器/c/ts 上不可见,因为
+      span 在那里不键任何东西)。修法是合成唯一性:构造器造的
+      span 挪进远超任何真实文件的保留偏移段,line/col 仍指向
+      构造调用。
+- [x] **T61.6** — `emo dump`:展开后的声明面,按类源码形态打印——
+      签名、每条语句一行——宏应用的效果直接可读(`emo dump` 列出
+      生成的声明;`emo dump --raw` 展示宏作者写的原文,指令带注)。
+      宏模型的可见性承诺,守住:宏做的事没有一件不可见。
+
+## M25 — postgres 客户端
+
+### 步骤 62 — 标准库:`postgres`
+
+**前置:** Step 38(原生绑定机制:清单 `link`/`pkg_config` 字段、
+包自带 C 源、E5007 诚实门),Step 50(`foreign def` 在其他目标
+上的拒绝)。**完成标准:** `examples/postgres_demo` 在 `c` 目标
+上对真实服务端逐字节运行——`exec` 跑 DDL、各参数类型写入(含
+SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
+解释器以 E3009 拒绝、其他目标在解析期拒绝;文档 EN+zh;
+`dune runtest` 绿。
+
+- [x] **T62.1** — 包本体:`stdlib/registry/postgres/0.1.0`,照
+      sqlite3 四件套——`package.emo`(`targets = ["c"]`,
+      `pkg_config = ["libpq"]`)、`internal/ffi.emo`(每个 shim
+      函数一条 `foreign def`,纯标量 ABI)、`emo_postgres_shim.c`
+      (libpq 精确 ABI 包装:`exec_begin` 到 `exec_fire` 之间的
+      参数 staging 带绑定掩码绊线、状态枚举在 shim 内归一化、
+      类型化读格走 `_ok`/读对),以及 `postgres.emo` 公开 API:
+      `connect`/`connect_info` 与 `ConnOptions` 的 `with_*`
+      构建器、`Param`(`text`/`i64`/`f64`/`bool`/`none`)经
+      `$1` 占位符的 `exec`/`query`、带类型校验与 `finish()` 的
+      `Rows`,`net` 形状的错误分派(`(R.error, reason)` 是值,
+      违约才 raise)。
+- [x] **T62.2** — 示例与金测:`examples/postgres_demo` 骑
+      temp 表对真实服务端运行(不留残留),三次运行对
+      `expected.txt` 逐字节一致;`postgres_demo` 加入
+      `c_goldens`,骑 `postgres_available` 探针(pkg-config
+      解析带 Homebrew keg 回退并 putenv 进环境、一次微型
+      `-lpq` 链接、一次对 5432 的 TCP connect),机器没有
+      libpq 或服务端时如 `sqlite3_demo` 般跳过;解释器(E3009)
+      与 ocaml 解析期(E5007)拒绝均实测。
+- [x] **T62.3** — 文档与追踪:`docs/stdlib/postgres.md` + zh
+      镜像(使用、错误、连接、执行 SQL、读取行、边界),
+      `docs/stdlib.md` 行与节 + zh 镜像——顺带补上自 step 38
+      起就缺失的 `sqlite3` 表行——README 参考行、CHECK.md 决策
+      记录、`plan/step-62-postgres.md`、`plan/README.md` 行。
+      途中发现并修掉:enum 成员要逗号分隔;类方法名在兄弟方法
+      体内可见(E4004);元组 foreign return 在 shim 里不可用
+      (生成的 shape typedef 是按程序计数的名字)。

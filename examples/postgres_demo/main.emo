@@ -1,0 +1,65 @@
+require "postgres"
+
+// The postgres package end to end: connect through options, DDL
+// through exec, writes through $1 parameters (including one SQL NULL),
+// a read with typed columns and a by-name lookup, and the
+// (R.error, reason) a missing table answers. c-target only — the
+// package's calls are foreign defs, which the interpreter refuses.
+// A temp table carries the demo: it lives and dies with this session,
+// so the run leaves nothing behind.
+
+const local = postgres.options().with_host("localhost").with_port(5432)
+const (R.ok, conn) = postgres.connect(local.with_database("postgres"))
+
+const (R.ok, created) = conn.exec(
+  "create temp table demo_users (id integer primary key, name text, score double precision)",
+  [])
+println("created: " + created.to_string())
+
+const (R.ok, first) = conn.exec(
+  "insert into demo_users (id, name, score) values ($1, $2, $3)",
+  [postgres.i64(1), postgres.text("ada"), postgres.f64(9.5)])
+println("insert: " + first.to_string())
+
+const (R.ok, second) = conn.exec(
+  "insert into demo_users (id, name, score) values ($1, $2, $3)",
+  [postgres.i64(2), postgres.text("grace"), postgres.f64(3.25)])
+println("insert: " + second.to_string())
+
+const (R.ok, third) = conn.exec(
+  "insert into demo_users (id, name, score) values ($1, $2, $3)",
+  [postgres.i64(3), postgres.text("alan"), postgres.none()])
+println("insert: " + third.to_string())
+
+const (R.ok, rows) = conn.query(
+  "select id, name, score from demo_users order by id", [])
+println("rows: " + rows.count().to_string() + ", columns: " + rows.columns().to_string())
+const score_col = rows.index_of("score")
+var r = 0
+while r < rows.count() {
+  var score = rows.text(r, score_col)
+  if rows.is_null(r, score_col) {
+    score = "-"
+  }
+  println("  " + rows.i64(r, 0).to_string() + " " + rows.text(r, 1) + " " + score)
+  r = r + 1
+}
+rows.finish()
+
+const (R.ok, fast) = conn.query(
+  "select name from demo_users where score > $1 order by score desc",
+  [postgres.f64(4.0)])
+var f = 0
+while f < fast.count() {
+  println("above 4: " + fast.text(f, 0))
+  f = f + 1
+}
+fast.finish()
+
+case conn.query("select * from no_such_table", []) {
+  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) -> { println(why) }
+}
+
+conn.close()
+println("done")

@@ -697,6 +697,11 @@ let c_goldens =
        package-carried C shim do the whole native link — the build here
        passes cclibs:[] on purpose *)
     "sqlite3_demo";
+    (* postgres_demo: the package's `pkg_config` field resolves libpq's
+       cflags and libs the same way, through the demo's own
+       package.lock — and its whole point is a live round trip, so the
+       probe below skips it on a machine with no server *)
+    "postgres_demo";
     "sql_demo";
     "sql_edge";
     "term_demo";
@@ -740,6 +745,66 @@ let sqlite3_available =
          "echo 'int main(void){return 0;}' | cc -x c - -lsqlite3 -o /dev/null \
           >/dev/null 2>&1"
        = 0)
+
+(* postgres_demo additionally needs libpq resolvable through
+   pkg-config and a server answering on localhost:5432. Resolution
+   probes the default path first, then the Homebrew kegs — the same
+   escape the tls probe takes — and the winning path enters the
+   environment, so the build's own pkg-config call resolves the same
+   way. The link probe runs through that resolution, and the server
+   probe is one plain TCP connect: the demo's point is a live round
+   trip, so a machine without a server skips it rather than fakes
+   one. *)
+let postgres_available =
+  lazy
+    (if not (Lazy.force cc_available) then false
+     else
+       let resolves cmd = Sys.command (cmd ^ " >/dev/null 2>&1") = 0 in
+       let kegs =
+         [
+           "/opt/homebrew/opt/postgresql@18/lib/postgresql/pkgconfig";
+           "/opt/homebrew/opt/libpq/lib/pkgconfig";
+           "/usr/local/opt/postgresql@18/lib/postgresql/pkgconfig";
+           "/usr/local/opt/libpq/lib/pkgconfig";
+         ]
+       in
+       (if
+          (not (resolves "pkg-config --modversion libpq"))
+          && Sys.getenv_opt "PKG_CONFIG_PATH" = None
+        then
+          match
+            List.find_opt
+              (fun dir ->
+                Sys.file_exists dir
+                && resolves
+                     (Printf.sprintf
+                        "PKG_CONFIG_PATH=%s pkg-config --modversion libpq"
+                        (Filename.quote dir)))
+              kegs
+          with
+          | Some dir -> Unix.putenv "PKG_CONFIG_PATH" dir
+          | None -> ());
+       let resolves_now = resolves "pkg-config --modversion libpq" in
+       let links =
+         resolves
+           "echo 'int main(void){return 0;}' | cc -x c - $(pkg-config --libs \
+            libpq) -o /dev/null"
+       in
+       let server_ok =
+         try
+           let s = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+           let ok =
+             try
+               Unix.connect s
+                 (Unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 5432));
+               true
+             with _ -> false
+           in
+           Unix.close s;
+           ok
+         with _ -> false
+       in
+       resolves_now && links && server_ok)
 
 (* The goldens whose reachable code genuinely reaches the TLS builtins
    (http_roundtrip's https branch; https_roundtrip's whole wire) need
@@ -1569,6 +1634,8 @@ let c_examples_tests =
       tc (Printf.sprintf "%s compiles to c and runs standalone" name) (fun () ->
           if not (Lazy.force cc_available) then Alcotest.skip ();
           if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
+            Alcotest.skip ();
+          if name = "postgres_demo" && not (Lazy.force postgres_available) then
             Alcotest.skip ();
           let tls_needed = List.mem name tls_goldens in
           if tls_needed && not (Option.is_some (Lazy.force tls_cclibs)) then

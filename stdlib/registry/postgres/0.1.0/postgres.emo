@@ -1,0 +1,422 @@
+// The postgres package: a direct-style client over libpq, PostgreSQL's
+// own C library. A Conn is one server connection; every statement runs
+// through PQexecParams with $1, $2, ... parameters supplied as Param
+// values, and a query answers a Rows you read while it is live.
+//
+// Following the standard library's convention, expected failures are
+// values: connect, exec, and query answer (R.ok, ...) or (R.error,
+// reason), the reason a String beginning "postgres: " that carries
+// the server's own message and, for a failed statement, its SQLSTATE
+// (23505 for a unique violation, 42P01 for a missing table). A server
+// that is down is a value, and so is a constraint the data broke.
+// Only contract violations raise: reading outside Rows, reading a
+// finished Rows, touching a closed Conn, running a statement through
+// the wrong door (exec refuses rows, query refuses a command), or a
+// typed read (i64/f64/bool) of text that is not one.
+//
+// The package is c-target only: its calls are `foreign def`s against
+// emo_postgres_shim.c, which the build compiles and links together
+// with the system libpq the manifest's `pkg_config` field resolves.
+// The interpreter refuses foreign code (E3009), so `emo run` cannot
+// execute a program that touches this package — build it with
+// `emo build` on a machine whose pkg-config resolves `libpq`.
+//
+// Handles are opaque Int64s over libpq's pointers. Strings cross the
+// C boundary NUL-terminated, so a String carrying an embedded NUL
+// truncates there. Statements travel in PostgreSQL's text format: the
+// server infers each $n parameter's type from the statement, and an
+// i64/f64/bool parameter arrives as its decimal or true/false
+// spelling. One connection runs one statement at a time — the wire
+// protocol's shape — and a call blocks until the server answers.
+
+// The kind a Param carries. Emo has no sum types, so a Param holds
+// all four value fields and the kind names the one that is real.
+enum ParamKind { text, i64, f64, bool, none }
+
+// One statement parameter, built by the constructors below —
+// postgres.text("ada"), postgres.i64(18), postgres.f64(1.5),
+// postgres.bool(true), postgres.none(). The slots line up with the
+// statement's $1, $2, ... in the order the array carries them.
+class Param {
+  def init(kind ParamKind, text String, i64 Int64, f64 Float64, flag Bool) {
+    self.kind = kind
+    self.text = text
+    self.i64 = i64
+    self.f64 = f64
+    self.flag = flag
+  }
+
+  // Stages this parameter into slot `i` (1-based) of `stg` — the
+  // package's own machinery; exec and query call it, statement code
+  // does not. A slot that refuses to take the value is out of the
+  // package's hands (out of memory, an index out of range), so it
+  // raises.
+  def stage(stg Int64, i Int64) {
+    case self.kind {
+      ParamKind.text -> {
+        if internal.ffi.bind_text(stg, i, self.text) != 0 {
+          raise Exception.new(message: "postgres: parameter ${i} could not be staged")
+        }
+      }
+      ParamKind.i64 -> {
+        if internal.ffi.bind_i64(stg, i, self.i64) != 0 {
+          raise Exception.new(message: "postgres: parameter ${i} could not be staged")
+        }
+      }
+      ParamKind.f64 -> {
+        if internal.ffi.bind_f64(stg, i, self.f64) != 0 {
+          raise Exception.new(message: "postgres: parameter ${i} could not be staged")
+        }
+      }
+      ParamKind.bool -> {
+        if internal.ffi.bind_bool(stg, i, self.flag) != 0 {
+          raise Exception.new(message: "postgres: parameter ${i} could not be staged")
+        }
+      }
+      ParamKind.none -> {
+        if internal.ffi.bind_none(stg, i) != 0 {
+          raise Exception.new(message: "postgres: parameter ${i} could not be staged")
+        }
+      }
+    }
+  }
+}
+
+def text(v String) Param {
+  return Param.new(kind: ParamKind.text, text: v, i64: 0, f64: 0.0, flag: false)
+}
+
+def i64(v Int64) Param {
+  return Param.new(kind: ParamKind.i64, text: "", i64: v, f64: 0.0, flag: false)
+}
+
+def f64(v Float64) Param {
+  return Param.new(kind: ParamKind.f64, text: "", i64: 0, f64: v, flag: false)
+}
+
+def bool(v Bool) Param {
+  return Param.new(kind: ParamKind.bool, text: "", i64: 0, f64: 0.0, flag: v)
+}
+
+// The SQL NULL as a parameter — not the empty string, not zero: the
+// cell the server stores as unknown.
+def none() Param {
+  return Param.new(kind: ParamKind.none, text: "", i64: 0, f64: 0.0, flag: false)
+}
+
+// The connection knobs the plain path names. Every field left unset
+// ("", 0, 0.0) falls to libpq's own default — the local unix socket,
+// the operating system's user, the database named after the user.
+// with_* returns a fresh options; nothing mutates. The raw path,
+// connect_info, takes the conninfo string and passes all of libpq's
+// keywords through untouched — sslmode and friends ride there.
+class ConnOptions {
+  def init(host String, port Int64, database String, user String, password String, connect_timeout Float64) {
+    self.host = host
+    self.port = port
+    self.database = database
+    self.user = user
+    self.password = password
+    self.connect_timeout = connect_timeout
+  }
+
+  def with_host(host String) ConnOptions {
+    return ConnOptions.new(host: host, port: self.port, database: self.database, user: self.user, password: self.password, connect_timeout: self.connect_timeout)
+  }
+
+  def with_port(port Int64) ConnOptions {
+    return ConnOptions.new(host: self.host, port: port, database: self.database, user: self.user, password: self.password, connect_timeout: self.connect_timeout)
+  }
+
+  def with_database(database String) ConnOptions {
+    return ConnOptions.new(host: self.host, port: self.port, database: database, user: self.user, password: self.password, connect_timeout: self.connect_timeout)
+  }
+
+  def with_user(user String) ConnOptions {
+    return ConnOptions.new(host: self.host, port: self.port, database: self.database, user: user, password: self.password, connect_timeout: self.connect_timeout)
+  }
+
+  def with_password(password String) ConnOptions {
+    return ConnOptions.new(host: self.host, port: self.port, database: self.database, user: self.user, password: password, connect_timeout: self.connect_timeout)
+  }
+
+  // Seconds libpq may spend reaching the server before the connect
+  // fails — 0.0 leaves it unset and the wait unbounded.
+  def with_connect_timeout(connect_timeout Float64) ConnOptions {
+    return ConnOptions.new(host: self.host, port: self.port, database: self.database, user: self.user, password: self.password, connect_timeout: connect_timeout)
+  }
+
+  // The conninfo string these options spell: only the fields actually
+  // set become keywords, in libpq's own order.
+  def info() String {
+    var out = ""
+    const named = [("host", self.host), ("dbname", self.database), ("user", self.user), ("password", self.password)]
+    var i = 0
+    while i < named.length() {
+      const one = named[i]
+      if one[1] != "" {
+        out = out + " " + one[0] + "=" + internal.conninfo.escape(one[1])
+      }
+      i = i + 1
+    }
+    if self.port != 0 {
+      out = out + " port=" + self.port.to_string()
+    }
+    if self.connect_timeout != 0.0 {
+      out = out + " connect_timeout=" + self.connect_timeout.to_string()
+    }
+    return out
+  }
+}
+
+def options() ConnOptions {
+  return ConnOptions.new(host: "", port: 0, database: "", user: "", password: "", connect_timeout: 0.0)
+}
+
+// Connects with a raw libpq conninfo string — "host=localhost
+// port=5432 dbname=shop user=ada" — answering the open connection, or
+// (R.error, reason) when the server cannot be reached or refuses the
+// login.
+def connect_info(info String) (R, Conn) {
+  const handle = internal.ffi.connect(info)
+  if handle == 0 {
+    return (R.error, "postgres: connect: out of memory")
+  }
+  if internal.ffi.conn_status(handle) != 1 {
+    const why = internal.reason.of_conn(handle, "connect")
+    internal.ffi.conn_close(handle)
+    return (R.error, why)
+  }
+  return (R.ok, Conn.new(handle))
+}
+
+// Connects from options — the plain path.
+def connect(options ConnOptions) (R, Conn) {
+  return connect_info(options.info())
+}
+
+// One server connection. exec for statements that answer no rows,
+// query for statements that do, close when done.
+class Conn {
+  def init(handle Int64) {
+    self.handle = handle
+    self.closed = Box.new(false)
+  }
+
+  // Runs one statement that answers no rows — DDL and writes.
+  // PQexecParams carries exactly one statement (no semicolon batches;
+  // the protocol's rule). The ok branch carries the count the server
+  // reports: rows inserted, updated, or deleted; a command with no
+  // count (CREATE TABLE and the rest) answers 0. A statement that
+  // produced rows is refused — query reads those.
+  def exec(sql String, params Array[Param]) (R, Int64) {
+    if self.closed.read() {
+      raise Exception.new(message: "postgres: exec: the connection is closed")
+    }
+    const res = self.fire(sql, params)
+    if res == 0 {
+      raise Exception.new(message: "postgres: exec: a parameter slot was left unbound")
+    }
+    if res == -1 {
+      return (R.error, internal.reason.of_conn(self.handle, "exec"))
+    }
+    const status = internal.ffi.result_status(res)
+    if status == 2 {
+      internal.ffi.result_finish(res)
+      return (R.error, "postgres: exec: the statement returned rows; query reads them")
+    }
+    if status != 1 {
+      const why = internal.reason.of_result(self.handle, res, "exec")
+      internal.ffi.result_finish(res)
+      return (R.error, why)
+    }
+    const n = internal.ffi.result_cmd_tuples(res)
+    internal.ffi.result_finish(res)
+    return (R.ok, n)
+  }
+
+  // Runs one SELECT (or RETURNING) statement, answering the rows it
+  // produced. finish() the Rows when done reading. A statement that
+  // produced no result set is refused — exec runs those.
+  def query(sql String, params Array[Param]) (R, Rows) {
+    if self.closed.read() {
+      raise Exception.new(message: "postgres: query: the connection is closed")
+    }
+    const res = self.fire(sql, params)
+    if res == 0 {
+      raise Exception.new(message: "postgres: query: a parameter slot was left unbound")
+    }
+    if res == -1 {
+      return (R.error, internal.reason.of_conn(self.handle, "query"))
+    }
+    const status = internal.ffi.result_status(res)
+    if status == 1 {
+      internal.ffi.result_finish(res)
+      return (R.error, "postgres: query: the statement produced no result set; exec runs it")
+    }
+    if status != 2 {
+      const why = internal.reason.of_result(self.handle, res, "query")
+      internal.ffi.result_finish(res)
+      return (R.error, why)
+    }
+    return (R.ok, Rows.new(res))
+  }
+
+  // The staged run both doors share: open the staging, let every
+  // Param take its slot, and fire. One connection runs one statement
+  // at a time — the package never overlaps them, so no queueing lives
+  // here.
+  def fire(sql String, params Array[Param]) Int64 {
+    const stg = internal.ffi.exec_begin(self.handle, sql, params.length())
+    if stg == 0 {
+      raise Exception.new(message: "postgres: out of memory staging the parameters")
+    }
+    var i = 0
+    while i < params.length() {
+      params[i].stage(stg, i + 1)
+      i = i + 1
+    }
+    return internal.ffi.exec_fire(self.handle, sql, stg)
+  }
+
+  // Closes the connection. Every call after this raises; the server
+  // sees the socket close and rolls back any transaction left open.
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "postgres: close: the connection is already closed")
+    }
+    internal.ffi.conn_close(self.handle)
+    self.closed.replace(true)
+  }
+}
+
+// The rows one query answered. Read them by (row, column), both
+// 0-based, while they are live; finish() when done. The typed readers
+// check what the server actually sent — a column holding text is not
+// silently read as a number.
+class Rows {
+  def init(handle Int64) {
+    self.handle = handle
+    self.done = Box.new(false)
+  }
+
+  // How many rows came back; 0 is a normal answer for a SELECT that
+  // matched nothing.
+  def count() Int64 {
+    self.live()
+    return internal.ffi.result_n_rows(self.handle)
+  }
+
+  def columns() Int64 {
+    self.live()
+    return internal.ffi.result_n_cols(self.handle)
+  }
+
+  // The column's name as the server reported it.
+  def name(c Int64) String {
+    self.live_column(c)
+    return internal.ffi.result_col_name(self.handle, c)
+  }
+
+  // The first column whose name is `wanted`, or -1 when none is. A
+  // result can carry two columns of one name; the first wins.
+  def index_of(wanted String) Int64 {
+    self.live()
+    var c = 0
+    const n = internal.ffi.result_n_cols(self.handle)
+    while c < n {
+      if internal.ffi.result_col_name(self.handle, c) == wanted {
+        return c
+      }
+      c = c + 1
+    }
+    return -1
+  }
+
+  // The cell's text as the server sent it. A NULL reads as "" —
+  // is_null tells the two apart.
+  def text(r Int64, c Int64) String {
+    self.live_cell(r, c)
+    return internal.ffi.result_value(self.handle, r, c)
+  }
+
+  // The cell as an integer. Text that is not one — or one past the
+  // Int64 range — raises and names the column: the server's integer
+  // columns always send integers, so a miss is a mis-typed read, not
+  // a value.
+  def i64(r Int64, c Int64) Int64 {
+    self.live_cell(r, c)
+    if internal.ffi.result_i64_ok(self.handle, r, c) == false {
+      raise Exception.new(
+        message: "postgres: i64: column \"" + self.name(c) + "\" holds \"" +
+                 internal.ffi.result_value(self.handle, r, c) + "\", not an integer")
+    }
+    return internal.ffi.result_i64(self.handle, r, c)
+  }
+
+  // The cell as a float. Text that is not one — or a value too wide
+  // for binary64 — raises and names the column; a NUMERIC that wide
+  // is a future width's read, and text() carries it until then.
+  def f64(r Int64, c Int64) Float64 {
+    self.live_cell(r, c)
+    if internal.ffi.result_f64_ok(self.handle, r, c) == false {
+      raise Exception.new(
+        message: "postgres: f64: column \"" + self.name(c) + "\" holds \"" +
+                 internal.ffi.result_value(self.handle, r, c) + "\", not a float")
+    }
+    return internal.ffi.result_f64(self.handle, r, c)
+  }
+
+  // The cell as a boolean: the server's t/f and the literal spellings
+  // it accepts (true/false, yes/no, 1/0) all read honestly.
+  def bool(r Int64, c Int64) Bool {
+    self.live_cell(r, c)
+    if internal.ffi.result_bool_ok(self.handle, r, c) == false {
+      raise Exception.new(
+        message: "postgres: bool: column \"" + self.name(c) + "\" holds \"" +
+                 internal.ffi.result_value(self.handle, r, c) + "\", not a boolean")
+    }
+    return internal.ffi.result_bool(self.handle, r, c)
+  }
+
+  // Whether the cell is SQL NULL — the question text() cannot answer,
+  // since a NULL reads as "".
+  def is_null(r Int64, c Int64) Bool {
+    self.live_cell(r, c)
+    return internal.ffi.result_is_null(self.handle, r, c)
+  }
+
+  // Releases the rows. Every read after this raises.
+  def finish() {
+    if self.done.read() {
+      raise Exception.new(message: "postgres: finish: the rows are already finished")
+    }
+    internal.ffi.result_finish(self.handle)
+    self.done.replace(true)
+  }
+
+  // ---- the guards every read walks through ----
+
+  def live() {
+    if self.done.read() {
+      raise Exception.new(message: "postgres: rows: the rows are finished")
+    }
+  }
+
+  def live_column(c Int64) {
+    self.live()
+    if c < 0 || c >= internal.ffi.result_n_cols(self.handle) {
+      raise Exception.new(message: "postgres: name: column ${c} is outside this result")
+    }
+  }
+
+  def live_cell(r Int64, c Int64) {
+    self.live()
+    if c < 0 || c >= internal.ffi.result_n_cols(self.handle) {
+      raise Exception.new(message: "postgres: rows: column ${c} is outside this result")
+    }
+    if r < 0 || r >= internal.ffi.result_n_rows(self.handle) {
+      raise Exception.new(message: "postgres: rows: row ${r} is outside this result")
+    }
+  }
+}

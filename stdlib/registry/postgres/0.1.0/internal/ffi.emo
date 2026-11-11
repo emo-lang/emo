@@ -1,0 +1,42 @@
+// The raw bindings behind the postgres package: one `foreign def` per
+// shim function in emo_postgres_shim.c. Everything here is c-target
+// only and subtree-private — callers outside the package cannot reach
+// these names; the public API lives in postgres.emo.
+//
+// Handles cross as pointer-sized Int64s: a PGconn *, a PGresult *, and
+// the parameter staging the shim keeps between exec_begin and
+// exec_fire. exec_fire answers 0 when a slot was never bound (a
+// package bug, so a raise, not a reason) and -1 when the connection
+// itself failed the call; anything positive is a result handle.
+// Strings cross NUL-terminated, so a String carrying an embedded NUL
+// truncates at the boundary. The typed reads ride in pairs: result_i64_ok
+// and friends validate the cell's text in C, then result_i64 and
+// friends parse it — two calls, so the FFI stays scalar on both sides.
+
+foreign def connect(info String) Int64 = "emo_postgres_connect"
+foreign def conn_status(conn Int64) Int64 = "emo_postgres_conn_status"
+foreign def conn_error(conn Int64) String = "emo_postgres_conn_error"
+foreign def conn_close(conn Int64) Void = "emo_postgres_conn_close"
+foreign def exec_begin(conn Int64, sql String, n Int64) Int64 = "emo_postgres_exec_begin"
+foreign def bind_text(stg Int64, i Int64, v String) Int64 = "emo_postgres_bind_text"
+foreign def bind_i64(stg Int64, i Int64, v Int64) Int64 = "emo_postgres_bind_i64"
+foreign def bind_f64(stg Int64, i Int64, v Float64) Int64 = "emo_postgres_bind_f64"
+foreign def bind_bool(stg Int64, i Int64, v Bool) Int64 = "emo_postgres_bind_bool"
+foreign def bind_none(stg Int64, i Int64) Int64 = "emo_postgres_bind_none"
+foreign def exec_fire(conn Int64, sql String, stg Int64) Int64 = "emo_postgres_exec_fire"
+foreign def result_status(res Int64) Int64 = "emo_postgres_result_status"
+foreign def result_error(res Int64) String = "emo_postgres_result_error"
+foreign def result_sqlstate(res Int64) String = "emo_postgres_result_sqlstate"
+foreign def result_n_rows(res Int64) Int64 = "emo_postgres_result_n_rows"
+foreign def result_n_cols(res Int64) Int64 = "emo_postgres_result_n_cols"
+foreign def result_col_name(res Int64, c Int64) String = "emo_postgres_result_col_name"
+foreign def result_value(res Int64, r Int64, c Int64) String = "emo_postgres_result_value"
+foreign def result_is_null(res Int64, r Int64, c Int64) Bool = "emo_postgres_result_is_null"
+foreign def result_i64_ok(res Int64, r Int64, c Int64) Bool = "emo_postgres_result_i64_ok"
+foreign def result_i64(res Int64, r Int64, c Int64) Int64 = "emo_postgres_result_i64"
+foreign def result_f64_ok(res Int64, r Int64, c Int64) Bool = "emo_postgres_result_f64_ok"
+foreign def result_f64(res Int64, r Int64, c Int64) Float64 = "emo_postgres_result_f64"
+foreign def result_bool_ok(res Int64, r Int64, c Int64) Bool = "emo_postgres_result_bool_ok"
+foreign def result_bool(res Int64, r Int64, c Int64) Bool = "emo_postgres_result_bool"
+foreign def result_cmd_tuples(res Int64) Int64 = "emo_postgres_result_cmd_tuples"
+foreign def result_finish(res Int64) Void = "emo_postgres_result_finish"
