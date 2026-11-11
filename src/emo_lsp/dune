@@ -9,4 +9,5 @@
   emo_parser
   emo_ast
   emo_check
+  emo_eval
   emo_pkg))

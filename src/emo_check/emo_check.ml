@@ -1775,6 +1775,21 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       | Some t -> t
       | None -> (
           if name = "Box" || name = "Exception" then Unknown
+          else if name = "Syntax" then (
+            (* The macro namespace in expression position: a capitalized
+               name parses as a `Type_ident`, so a `Syntax.name(f)` call's
+               receiver lands here rather than in the `Ident` arm — and a
+               macro-body check (the editor's raw-module check, no
+               expansion ahead of it) must answer the namespace, not
+               "not defined". Inside the compile-time window its member
+               reads check as Unknown like every builtin's; outside it is
+               a spelling error, E4301 like the `Ident` form and the type
+               annotation. *)
+            if not !(ctx.macro_ok) then
+              report ctx span "E4301"
+                "`Syntax` is a compile-time namespace — it is named only \
+                 inside a `// #macro` def";
+            Unknown)
           else if
             (* The runtime's value-carrying builtins (every frame pre-binds
            them): a bare use stays a runtime question, not a checker

@@ -23,13 +23,17 @@ The server is a thin layer over the compiler's own libraries:
 | --- | --- |
 | Lexing and tokens | `emo_lexer` |
 | Parsing | `emo_parser`, `emo_ast` |
+| Macro expansion | `emo_eval` |
 | Diagnostics and signatures | `emo_check` |
 | Manifests, registries, resolution | `emo_pkg` |
 | Positions, URIs, spans | `emo_support`, `lsp_util` |
 
 Because it reuses the compiler's passes, the diagnostics the editor shows are
 the diagnostics `emo check` produces — there is no second, editor-only
-analyzer to drift out of sync.
+analyzer to drift out of sync. Macro applications expand before a file is
+checked, exactly as the build's parse cache expands them, so a declaration a
+macro generates (`@derive_eq`'s `eq?`, a memoize's wrapper) is visible to the
+editor's diagnostics and a call site naming it is not a false error.
 
 ## The VS Code extension
 

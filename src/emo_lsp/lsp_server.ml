@@ -221,6 +221,63 @@ let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
   | exception Emo_pkg.Manifest_error d -> [ d ]
   | exception _ -> []
 
+(* Raised by the expansion gate: the diagnostics it carries are the
+   answer — the same refusal a build stops on, with the full check never
+   running (design/macros.md: a macro body that does not typecheck is
+   rejected before it ever executes). *)
+exception Expansion_failed of Diagnostic.t list
+
+(* What one module's macro pass produced: the expanded items, or the
+   diagnostics the gate or the expander refused with. *)
+type expansion = Expanded of Ast.item list | Refused of Diagnostic.t list
+
+(* The cross-module macro table, collected the way the build collects it
+   (emo_project's program_macro_table): a raw scan over every indexed
+   module but [exclude], pairing each `// #macro` def with its (module
+   path, name). The index's parsed units are the scan — no file is read
+   twice — and a module's own macros stay out: they ride its items,
+   where a local name shadows an outside one. *)
+let extra_macros_of (ix : Ix.t) ~(exclude : string list) :
+    ((string list * string) * Ast.fun_def) list =
+  List.concat_map
+    (fun (path, unit_items) ->
+      if path = exclude then []
+      else
+        List.filter_map
+          (fun item ->
+            match item.Ast.item_desc with
+            | Ast.Item_def d
+              when List.exists
+                     (fun d -> d.Ast.directive_desc = Ast.Role_macro)
+                     item.Ast.directives ->
+                Some ((path, d.Ast.def_name), d)
+            | _ -> None)
+          unit_items)
+    ix.Ix.units
+
+(* One module through the macro gate and the expansion it guards: the
+   gate checks the raw macro domain first (a broken macro body refuses
+   the expansion), then the applications run and the generated
+   declarations splice in. Files without directives take expand_macros'
+   fast path untouched. *)
+let expand_unit ~(modules : string list list) ~(packages : string list list)
+    ~(package_deps : (string list * string list) list)
+    ~(aliases : (string list * string list) list) ~(current : string list)
+    ~(extra_macros : ((string list * string) * Ast.fun_def) list)
+    (items : Ast.item list) : expansion =
+  let precheck raw =
+    match
+      Emo_check.check_macro_domain ~modules ~packages ~package_deps ~aliases
+        ~current ~extra_macros raw
+    with
+    | [] -> ()
+    | ds -> raise (Expansion_failed ds)
+  in
+  match Emo_eval.expand_macros ~precheck ~extra_macros items with
+  | expanded -> Expanded expanded
+  | exception Expansion_failed ds -> Refused ds
+  | exception Emo_eval.Error d -> Refused [ d ]
+
 let compute_diagnostics (state : state) (file : string) (text : string) :
     Diagnostic.t list =
   if Emo_pkg.is_manifest_file file then manifest_diagnostics ~file text
@@ -235,25 +292,70 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
             let ix = Ix.get ?registry:state.registry root in
             let modules = List.map fst ix.modules in
             let current = module_path_of_file root file in
-            (* Pre-register every indexed module — project and dependency
-               alike — so a qualified member (`sync.done`, `json.decode`)
-               resolves in diagnostics, exactly as it does in a full
-               project check. The dependency walk's package prefixes,
-               declared deps, and main-entry aliases ride along: the
-               checker's visibility rule keys on them, so a reference
-               into a package resolves the way a build resolves it. *)
-            let units = Ix.units_for ix ~current items in
-            let program, _ =
-              Emo_check.preregister_types ~packages:ix.Ix.packages
-                ~package_deps:ix.Ix.package_deps ~aliases:ix.Ix.aliases ~units
+            (* Macro applications expand first, the way the build's parse
+               cache expands them: every consumer — the checker included —
+               sees the declarations the applications generate (`@derive_eq`'s
+               `eq?`, a memoize's wrapper) instead of the applications.
+               A gate refusal answers for this module alone; the editor
+               session of the file that owns a broken macro body reports
+               it there. *)
+            let expand path unit_items =
+              expand_unit ~modules ~packages:ix.Ix.packages
+                ~package_deps:ix.Ix.package_deps ~aliases:ix.Ix.aliases
+                ~current:path
+                ~extra_macros:(extra_macros_of ix ~exclude:path)
+                unit_items
             in
-            let check_diags, _, _, _ =
-              Emo_check.check_module_typed ~modules ~current ~program
-                ~packages:ix.Ix.packages ~package_deps:ix.Ix.package_deps
-                ~aliases:ix.Ix.aliases items
+            let diagnostics =
+              match expand current items with
+              | Refused ds -> ds
+              | Expanded expanded ->
+                  (* Pre-register every indexed module — project and
+                     dependency alike — so a qualified member (`sync.done`,
+                     `json.decode`) resolves in diagnostics, exactly as it
+                     does in a full project check. The dependency walk's
+                     package prefixes, declared deps, and main-entry
+                     aliases ride along: the checker's visibility rule
+                     keys on them, so a reference into a package resolves
+                     the way a build resolves it. The type tables come
+                     from the expanded units — a declaration a macro
+                     generates in another module (`eq?` on a derived
+                     class) resolves here the way the build resolves it. *)
+                  let units =
+                    (current, expanded)
+                    :: List.filter_map
+                         (fun (path, unit_items) ->
+                           if path = current then None
+                           else
+                             match expand path unit_items with
+                             | Expanded expanded -> Some (path, expanded)
+                             | Refused _ ->
+                                 (* the broken module keeps its raw items;
+                                    its own editor session reports it *)
+                                 Some (path, unit_items))
+                         (Ix.units_for ix ~current items)
+                  in
+                  let program, _ =
+                    Emo_check.preregister_types ~packages:ix.Ix.packages
+                      ~package_deps:ix.Ix.package_deps ~aliases:ix.Ix.aliases
+                      ~units
+                  in
+                  let check_diags, _, _, _ =
+                    Emo_check.check_module_typed ~modules ~current ~program
+                      ~packages:ix.Ix.packages ~package_deps:ix.Ix.package_deps
+                      ~aliases:ix.Ix.aliases expanded
+                  in
+                  check_diags
+                  @ missing_dep_diagnostics ?registry:state.registry root items
             in
-            check_diags
-            @ missing_dep_diagnostics ?registry:state.registry root items)
+            (* Generated declarations carry spans from the macro's own
+               file; a diagnostic born there names a foreign file, and
+               mapping it onto this buffer would point at the wrong text.
+               This module's own diagnostics are all spelled here, so the
+               filter keeps them and drops only the foreign ones. *)
+            List.filter
+              (fun d -> String.equal d.Diagnostic.span.file file)
+              diagnostics)
 
 let publish_diagnostics (state : state) (uri : string) (file : string)
     (text : string) : unit =
