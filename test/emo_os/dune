@@ -15,8 +15,12 @@
   emo_check
   emo_codegen))
 
+; Off the runtest alias on purpose: this suite drives the projects/
+; trees (EmoOS smoke, desktop goldens, QEMU parity), so plain
+; `dune runtest` stays free of them. Run it explicitly: dune build @emo_os
+
 (rule
- (alias runtest)
+ (alias emo_os)
  (deps
   (source_tree ../../projects/emo-os)
   (source_tree ../../projects/emo-ui)

@@ -4,7 +4,10 @@
    outputs asserted byte-identical — and the kernel's QEMU smoke
    (projects/emo-os/run.sh) wired into the suite. Skips when QEMU or
    the cross binutils are absent; the binutils answer is the build's
-   own probe, so the two cannot disagree on which prefix is installed. *)
+   own probe, so the two cannot disagree on which prefix is installed.
+   The suite rides the @emo_os alias, not @runtest, so plain
+   `dune runtest` stays free of the QEMU legs; run it with
+   `dune build @emo_os`. *)
 
 let tc name f = Alcotest.test_case name `Quick f
 let run_cmd = Emo_test_support.run_cmd
