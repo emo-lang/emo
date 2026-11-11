@@ -1,0 +1,19 @@
+// The conninfo string the options spell: each set field becomes a
+// keyword whose value is single-quoted with libpq's own escaping, so
+// spaces, quotes, and backslashes inside a name or password survive
+// the ride.
+
+def escape(v String) String {
+  var out = "'"
+  var i = 0
+  while i < v.length() {
+    const ch = v.substring(i, 1)
+    if ch == "\\" || ch == "'" {
+      out = out + "\\" + ch
+    } else {
+      out = out + ch
+    }
+    i = i + 1
+  }
+  return out + "'"
+}

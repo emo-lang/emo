@@ -1,0 +1,23 @@
+// The reasons the package's (R.error, ...) branches answer. libpq
+// reports a failed statement through the result's error fields — the
+// primary message is the one line the server itself printed, and the
+// SQLSTATE names the error class (23505 for a unique violation, 42P01
+// for a missing table). A call that never reached the server reads
+// the connection's own message instead; libpq appends a newline to
+// that one, and a reason string carries no trailing newline.
+
+def of_result(conn Int64, res Int64, op String) String {
+  var message = internal.ffi.result_error(res)
+  if message == "" {
+    message = internal.ffi.conn_error(conn).trim()
+  }
+  const sqlstate = internal.ffi.result_sqlstate(res)
+  if sqlstate != "" {
+    message = message + " (sqlstate " + sqlstate + ")"
+  }
+  return "postgres: " + op + ": " + message
+}
+
+def of_conn(conn Int64, op String) String {
+  return "postgres: " + op + ": " + internal.ffi.conn_error(conn).trim()
+}

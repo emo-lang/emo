@@ -3681,3 +3681,49 @@ runtest` green.
       the generated declarations; `emo dump --raw` shows what the macro
       author wrote, directives annotated). The macro model's visibility
       promise, kept: nothing a macro does is invisible.
+
+## M25 — The postgres client
+
+### Step 62 — The standard library: `postgres`
+
+**Prereq:** Step 38 (the native-binding machinery: the manifest `link`/
+`pkg_config` fields, package-carried C sources, the E5007 honesty
+gate), Step 50 (the `foreign def` refusal on every other target).
+**Done when:** `examples/postgres_demo` runs byte-for-byte against a
+live server on the `c` target — DDL through `exec`, writes of every
+parameter kind including SQL NULL, typed reads with a by-name lookup,
+the error branch with SQLSTATE; the interpreter refuses with E3009 and
+the other targets at resolution; docs EN+zh; `dune runtest` green.
+
+- [x] **T62.1** — The package: `stdlib/registry/postgres/0.1.0` in the
+      sqlite3 four-file shape — `package.emo`
+      (`targets = ["c"]`, `pkg_config = ["libpq"]`), `internal/ffi.emo`
+      (one `foreign def` per shim function, scalar ABI only),
+      `emo_postgres_shim.c` (exact-ABI wrappers over libpq: the
+      parameter staging between `exec_begin` and `exec_fire` with a
+      bound-mask tripwire, status enums normalized in the shim,
+      `_ok`/read pairs for the typed cell reads), and `postgres.emo` —
+      the public API: `connect`/`connect_info` with the `ConnOptions`
+      `with_*` builders, `exec`/`query` with `Param` values
+      (`text`/`i64`/`f64`/`bool`/`none`) over `$1` placeholders, `Rows`
+      with typed checked accessors and `finish()`, the `net` error
+      split (`(R.error, reason)` values, contract violations raise).
+- [x] **T62.2** — The demo and its golden: `examples/postgres_demo`
+      rides a temp table against a live server (nothing left behind),
+      three runs byte-identical against `expected.txt`; `postgres_demo`
+      joins `c_goldens` behind the `postgres_available` probe
+      (pkg-config resolution with the Homebrew-keg fallback putenv'd
+      into the environment, a tiny `-lpq` link, one TCP connect to
+      5432) and skips like `sqlite3_demo` does when the machine has no
+      libpq or no server; the interpreter (E3009) and ocaml-resolution
+      (E5007) refusals verified live.
+- [x] **T62.3** — Docs and tracking: `docs/stdlib/postgres.md` + zh
+      mirror (using, errors, connecting, running SQL, reading rows,
+      boundaries), `docs/stdlib.md` rows and section + zh mirror —
+      with the found-and-fixed `sqlite3` table row that had been
+      missing since step 38 — README's references line, CHECK.md's
+      decision record, `plan/step-62-postgres.md`, `plan/README.md`'s
+      row. Found on the way, fixed in step: enum members need commas;
+      a class's method names are in scope across sibling bodies
+      (E4004); the tuple foreign return is unusable from a shim (the
+      generated shape typedefs are per-program counter names).

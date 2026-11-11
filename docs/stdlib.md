@@ -76,6 +76,8 @@ The packages:
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
+| [`sqlite3`](#the-sqlite3-package) | SQLite: prepared statements, stepped rows | `c` |
+| [`postgres`](#the-postgres-package) | PostgreSQL client over libpq: `$1` params, value errors | `c` |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
 
 "all five" names the hosted targets those packages declare — `c`,
@@ -930,6 +932,65 @@ println(stmt.to_string())   // SELECT * FROM users WHERE id = ?1
 Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
 [`docs/stdlib/sql.md`](stdlib/sql.md) · Demos: `examples/sql_demo`,
 `examples/sql_edge`.
+
+## The `postgres` package
+
+The PostgreSQL client: a direct-style binding over libpq, PostgreSQL's
+own C library. A `Conn` is one server connection; statements run
+through `PQexecParams` with `$1`-style parameters supplied as `Param`
+values, and a query answers a `Rows` read by `(row, column)` with
+typed, checked accessors. The calls are `foreign def`s against a C
+shim the package carries, and the manifest's `pkg_config` field
+resolves libpq — pkg-config answers the shim's include path and the
+link's `-lpq`. Expected failures are values, the `net` shape: a server
+that is down and a constraint the data broke both answer
+`(R.error, reason)` carrying the server's message and SQLSTATE.
+
+```emo
+def connect(options ConnOptions) (R, Conn)
+def connect_info(info String) (R, Conn)
+def options() ConnOptions
+def text(v String) Param
+def i64(v Int64) Param
+def f64(v Float64) Param
+def bool(v Bool) Param
+def none() Param
+
+class Conn {
+  def exec(sql String, params Array[Param]) (R, Int64)
+  def query(sql String, params Array[Param]) (R, Rows)
+  def close() Void
+}
+
+class Rows {
+  def count() Int64
+  def columns() Int64
+  def name(c Int64) String
+  def index_of(wanted String) Int64
+  def text(r Int64, c Int64) String
+  def i64(r Int64, c Int64) Int64
+  def f64(r Int64, c Int64) Float64
+  def bool(r Int64, c Int64) Bool
+  def is_null(r Int64, c Int64) Bool
+  def finish() Void
+}
+```
+
+```emo
+const (R.ok, rows) = conn.query(
+  "select id, name from users where age > $1", [postgres.i64(30)])
+var r = 0
+while r < rows.count() {
+  println("row ${rows.i64(r, 0)}: ${rows.text(r, 1)}")
+  r = r + 1
+}
+rows.finish()
+```
+
+Targets: `["c"]` — the calls are foreign defs, which the interpreter
+refuses (E3009), and libpq must resolve through pkg-config at build
+time. Reference: [`docs/stdlib/postgres.md`](stdlib/postgres.md) ·
+Demo: `examples/postgres_demo`.
 
 ## The `sqlite3` package
 
