@@ -1,0 +1,882 @@
+require "net"
+
+// The Valkey client: RESP2 commands over the net surface, direct
+// style — a command reads like any other function call, and the
+// scheduler parks the process while the socket is busy. One
+// connection, one command, one reply: the client writes the request's
+// array of bulk strings and reads the one reply the command names —
+// no pipelining to reason about, no reconnection to hide a dropped
+// socket. A reply that never arrives comes back as the error value,
+// like every other failure on the wire.
+//
+// Replies are a `Reply` tree over one class per RESP2 kind a client
+// can receive — the simple and the bulk string are one `rstring`
+// kind, the distinction the wire draws is not one a caller needs.
+// Server error replies (`-ERR ...`) are values:
+// `(R.error, "valkey: " + the server's text)`, the error code riding
+// inside the reason where the caller can match on it. Transport
+// failures keep the net surface's own reasons. The `as_*` accessors
+// on the tree are the caller's assertions — the wrong kind raises,
+// json's rule — while the typed doors decode the shape each command's
+// contract names and answer a wrong shape as the error value: a
+// server that misbehaves is data, not a crash.
+//
+// A missing key is not an error. The doors that can answer nothing —
+// GET, HGET, LPOP, RPOP, LINDEX, MGET's elements — return the reply
+// tree itself, and absence is `is_null?()`, json's null with the
+// same reading.
+
+enum ReplyKind { rnull, rstring, rint, rarray }
+
+interface Reply {
+  def kind() ReplyKind
+  def is_null?() Bool
+  def as_string() String
+  def as_int() Int64
+  def as_array() Array[Reply]
+}
+
+class ReplyNull {
+  def kind() ReplyKind {
+    return ReplyKind.rnull
+  }
+
+  def is_null?() Bool {
+    return true
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "valkey: expected a string reply, got the null reply")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "valkey: expected an integer reply, got the null reply")
+  }
+
+  def as_array() Array[Reply] {
+    raise Exception.new(message: "valkey: expected an array reply, got the null reply")
+  }
+}
+
+class ReplyString {
+  def init(value String) {
+    self.value = value
+  }
+
+  def kind() ReplyKind {
+    return ReplyKind.rstring
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def as_string() String {
+    return self.value
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "valkey: expected an integer reply, got a string reply")
+  }
+
+  def as_array() Array[Reply] {
+    raise Exception.new(message: "valkey: expected an array reply, got a string reply")
+  }
+}
+
+class ReplyInt {
+  def init(value Int64) {
+    self.value = value
+  }
+
+  def kind() ReplyKind {
+    return ReplyKind.rint
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "valkey: expected a string reply, got an integer reply")
+  }
+
+  def as_int() Int64 {
+    return self.value
+  }
+
+  def as_array() Array[Reply] {
+    raise Exception.new(message: "valkey: expected an array reply, got an integer reply")
+  }
+}
+
+class ReplyArray {
+  def init(items Array[Reply]) {
+    self.items = items
+  }
+
+  def kind() ReplyKind {
+    return ReplyKind.rarray
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "valkey: expected a string reply, got an array reply")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "valkey: expected an integer reply, got an array reply")
+  }
+
+  def as_array() Array[Reply] {
+    return self.items
+  }
+}
+
+class Valkey {
+  def init(conn TcpConn) {
+    self.conn = conn
+  }
+
+  // The generic door: any command, its raw reply. The typed doors
+  // below are this plus the decode; a command the package carries no
+  // door for rides here unchanged.
+  def command(args Array[String]) (R, Reply) {
+    if args.length() == 0 {
+      raise Exception.new(message: "valkey: a command needs at least one argument")
+    }
+    case self.conn.write(encode_request(args)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return read_reply(self.conn) }
+    }
+  }
+
+  def set_timeout(seconds Float64) Void {
+    self.conn.set_timeout(seconds)
+  }
+
+  def close() (R, Valkey) {
+    case self.conn.close() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  // ---- connection ----
+
+  def ping() (R, String) {
+    case self.command(["PING"]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("PING", reply) }
+    }
+  }
+
+  def echo(msg String) (R, String) {
+    case self.command(["ECHO", msg]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("ECHO", reply) }
+    }
+  }
+
+  def select(db Int64) (R, String) {
+    case self.command(["SELECT", db.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("SELECT", reply) }
+    }
+  }
+
+  def auth(password String) (R, String) {
+    case self.command(["AUTH", password]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("AUTH", reply) }
+    }
+  }
+
+  // ---- strings ----
+
+  def get(key String) (R, Reply) {
+    return self.command(["GET", key])
+  }
+
+  def set(key String, value String) (R, String) {
+    case self.command(["SET", key, value]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("SET", reply) }
+    }
+  }
+
+  def set_ex(key String, value String, seconds Int64) (R, String) {
+    case self.command(["SET", key, value, "EX", seconds.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("SET", reply) }
+    }
+  }
+
+  def setnx(key String, value String) (R, Bool) {
+    case self.command(["SETNX", key, value]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return bool_reply("SETNX", reply) }
+    }
+  }
+
+  def mset(pairs Array[(String, String)]) (R, String) {
+    if pairs.length() == 0 {
+      raise Exception.new(message: "valkey: `MSET` needs at least one pair")
+    }
+    case self.command(append_all(["MSET"], flatten_pairs(pairs, 0, []), 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("MSET", reply) }
+    }
+  }
+
+  def mget(keys Array[String]) (R, Array[Reply]) {
+    if keys.length() == 0 {
+      raise Exception.new(message: "valkey: `MGET` needs at least one key")
+    }
+    case self.command(append_all(["MGET"], keys, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return array_reply("MGET", reply) }
+    }
+  }
+
+  def del(keys Array[String]) (R, Int64) {
+    if keys.length() == 0 {
+      raise Exception.new(message: "valkey: `DEL` needs at least one key")
+    }
+    case self.command(append_all(["DEL"], keys, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("DEL", reply) }
+    }
+  }
+
+  def exists(keys Array[String]) (R, Int64) {
+    if keys.length() == 0 {
+      raise Exception.new(message: "valkey: `EXISTS` needs at least one key")
+    }
+    case self.command(append_all(["EXISTS"], keys, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("EXISTS", reply) }
+    }
+  }
+
+  def incr(key String) (R, Int64) {
+    case self.command(["INCR", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("INCR", reply) }
+    }
+  }
+
+  def decr(key String) (R, Int64) {
+    case self.command(["DECR", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("DECR", reply) }
+    }
+  }
+
+  def incr_by(key String, n Int64) (R, Int64) {
+    case self.command(["INCRBY", key, n.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("INCRBY", reply) }
+    }
+  }
+
+  def decr_by(key String, n Int64) (R, Int64) {
+    case self.command(["DECRBY", key, n.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("DECRBY", reply) }
+    }
+  }
+
+  def append(key String, value String) (R, Int64) {
+    case self.command(["APPEND", key, value]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("APPEND", reply) }
+    }
+  }
+
+  def strlen(key String) (R, Int64) {
+    case self.command(["STRLEN", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("STRLEN", reply) }
+    }
+  }
+
+  def getrange(key String, start Int64, stop Int64) (R, String) {
+    case self.command(["GETRANGE", key, start.to_string(), stop.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("GETRANGE", reply) }
+    }
+  }
+
+  def keys(pattern String) (R, Array[String]) {
+    case self.command(["KEYS", pattern]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_array_reply("KEYS", reply) }
+    }
+  }
+
+  def dbsize() (R, Int64) {
+    case self.command(["DBSIZE"]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("DBSIZE", reply) }
+    }
+  }
+
+  def type(key String) (R, String) {
+    case self.command(["TYPE", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("TYPE", reply) }
+    }
+  }
+
+  def rename(key String, new_key String) (R, String) {
+    case self.command(["RENAME", key, new_key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("RENAME", reply) }
+    }
+  }
+
+  def expire(key String, seconds Int64) (R, Bool) {
+    case self.command(["EXPIRE", key, seconds.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return bool_reply("EXPIRE", reply) }
+    }
+  }
+
+  def ttl(key String) (R, Int64) {
+    case self.command(["TTL", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("TTL", reply) }
+    }
+  }
+
+  def persist(key String) (R, Bool) {
+    case self.command(["PERSIST", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return bool_reply("PERSIST", reply) }
+    }
+  }
+
+  // ---- hashes ----
+
+  def hset(key String, field String, value String) (R, Int64) {
+    case self.command(["HSET", key, field, value]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("HSET", reply) }
+    }
+  }
+
+  def hget(key String, field String) (R, Reply) {
+    return self.command(["HGET", key, field])
+  }
+
+  def hdel(key String, fields Array[String]) (R, Int64) {
+    if fields.length() == 0 {
+      raise Exception.new(message: "valkey: `HDEL` needs at least one field")
+    }
+    case self.command(append_all(["HDEL", key], fields, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("HDEL", reply) }
+    }
+  }
+
+  def hexists(key String, field String) (R, Bool) {
+    case self.command(["HEXISTS", key, field]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return bool_reply("HEXISTS", reply) }
+    }
+  }
+
+  def hlen(key String) (R, Int64) {
+    case self.command(["HLEN", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("HLEN", reply) }
+    }
+  }
+
+  def hkeys(key String) (R, Array[String]) {
+    case self.command(["HKEYS", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_array_reply("HKEYS", reply) }
+    }
+  }
+
+  def hvals(key String) (R, Array[String]) {
+    case self.command(["HVALS", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_array_reply("HVALS", reply) }
+    }
+  }
+
+  def hgetall(key String) (R, Array[(String, String)]) {
+    case self.command(["HGETALL", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return pair_array_reply("HGETALL", reply) }
+    }
+  }
+
+  // ---- lists ----
+
+  def lpush(key String, values Array[String]) (R, Int64) {
+    if values.length() == 0 {
+      raise Exception.new(message: "valkey: `LPUSH` needs at least one value")
+    }
+    case self.command(append_all(["LPUSH", key], values, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("LPUSH", reply) }
+    }
+  }
+
+  def rpush(key String, values Array[String]) (R, Int64) {
+    if values.length() == 0 {
+      raise Exception.new(message: "valkey: `RPUSH` needs at least one value")
+    }
+    case self.command(append_all(["RPUSH", key], values, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("RPUSH", reply) }
+    }
+  }
+
+  def lpop(key String) (R, Reply) {
+    return self.command(["LPOP", key])
+  }
+
+  def rpop(key String) (R, Reply) {
+    return self.command(["RPOP", key])
+  }
+
+  def lrange(key String, start Int64, stop Int64) (R, Array[String]) {
+    case self.command(["LRANGE", key, start.to_string(), stop.to_string()]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_array_reply("LRANGE", reply) }
+    }
+  }
+
+  def llen(key String) (R, Int64) {
+    case self.command(["LLEN", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("LLEN", reply) }
+    }
+  }
+
+  def lindex(key String, index Int64) (R, Reply) {
+    return self.command(["LINDEX", key, index.to_string()])
+  }
+
+  def lset(key String, index Int64, value String) (R, String) {
+    case self.command(["LSET", key, index.to_string(), value]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_reply("LSET", reply) }
+    }
+  }
+
+  // ---- sets ----
+
+  def sadd(key String, members Array[String]) (R, Int64) {
+    if members.length() == 0 {
+      raise Exception.new(message: "valkey: `SADD` needs at least one member")
+    }
+    case self.command(append_all(["SADD", key], members, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("SADD", reply) }
+    }
+  }
+
+  def srem(key String, members Array[String]) (R, Int64) {
+    if members.length() == 0 {
+      raise Exception.new(message: "valkey: `SREM` needs at least one member")
+    }
+    case self.command(append_all(["SREM", key], members, 0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("SREM", reply) }
+    }
+  }
+
+  def smembers(key String) (R, Array[String]) {
+    case self.command(["SMEMBERS", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return string_array_reply("SMEMBERS", reply) }
+    }
+  }
+
+  def sismember(key String, member String) (R, Bool) {
+    case self.command(["SISMEMBER", key, member]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return bool_reply("SISMEMBER", reply) }
+    }
+  }
+
+  def scard(key String) (R, Int64) {
+    case self.command(["SCARD", key]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, reply)  -> { return int_reply("SCARD", reply) }
+    }
+  }
+}
+
+// ---- connecting ----
+
+// The four doors over the net surface. The timeout bounds each
+// exchange: the write and the reads that follow each get the budget
+// (net's per-operation deadline), `0.0` waits indefinitely.
+
+def connect(host String, port Int64, timeout Float64) (R, Valkey) {
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case net.connect(host, port, timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+      }
+    }
+  }
+}
+
+def connect_unix(path String, timeout Float64) (R, Valkey) {
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case net.connect_unix(path, timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+      }
+    }
+  }
+}
+
+def connect_tls(host String, port Int64, timeout Float64) (R, Valkey) {
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case net.tls_connect(host, port, timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+      }
+    }
+  }
+}
+
+def connect_tls_insecure(host String, port Int64, timeout Float64) (R, Valkey) {
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case net.tls_connect_insecure(host, port, timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+      }
+    }
+  }
+}
+
+def checked_timeout(timeout Float64) (R, Int64) {
+  if timeout < 0.0 {
+    return (R.error, "valkey: timeout must not be negative")
+  }
+  return (R.ok, 0)
+}
+
+def open_valkey(conn TcpConn, timeout Float64) (R, Valkey) {
+  conn.set_timeout(timeout)
+  return (R.ok, Valkey.new(conn: conn))
+}
+
+// ---- the request side ----
+
+// One command's wire form: the count line, then one bulk string per
+// argument. The length is a byte count — `to_bytes` is the UTF-8
+// codec on every target, so a multi-byte argument's length is the
+// wire's own on all of them.
+def encode_request(args Array[String]) String {
+  return "*" + args.length().to_string() + "\r\n" + encode_bulks(args, 0, "")
+}
+
+def encode_bulks(args Array[String], i Int64, acc String) String {
+  if i >= args.length() {
+    return acc
+  }
+  const arg = args[i]
+  const head = "$" + arg.to_bytes().length().to_string() + "\r\n"
+  return encode_bulks(args, i + 1, acc + head + arg + "\r\n")
+}
+
+// ---- the reply side ----
+
+// One reply. The empty line `read_line` answers at a clean close is
+// data too: the server went away before any reply, and that is the
+// error value, not a crash.
+def read_reply(conn TcpConn) (R, Reply) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.error, "valkey: the server closed the connection")
+      }
+      const data = line.to_bytes()
+      const lead = data.get(0)
+      const rest = line.substring(1, line.length() - 1)
+      if lead == 43 {
+        return (R.ok, ReplyString.new(value: rest))
+      }
+      if lead == 45 {
+        return (R.error, "valkey: " + rest)
+      }
+      if lead == 58 {
+        return read_int_reply(rest)
+      }
+      if lead == 36 {
+        return read_bulk_reply(conn, rest)
+      }
+      if lead == 42 {
+        return read_array_reply(conn, rest)
+      }
+      return (R.error, "valkey: unknown reply type `" + line + "`")
+    }
+  }
+}
+
+// The integer reply's text: an optional sign, then digits, the whole
+// value inside Int64. A malformed or oversized count is the error
+// value — a misbehaving server must not end the process, and
+// `to_int64` raises.
+def read_int_reply(text String) (R, Reply) {
+  if int_text_ok(text) {
+    return (R.ok, ReplyInt.new(value: text.to_int64()))
+  }
+  return (R.error, "valkey: invalid integer reply `" + text + "`")
+}
+
+// The bulk reply: the byte count (or -1, the null reply), the bytes
+// read exactly, the CRLF terminator read_line strips.
+def read_bulk_reply(conn TcpConn, length_text String) (R, Reply) {
+  if length_text == "-1" {
+    return (R.ok, ReplyNull.new())
+  }
+  if int_text_ok(length_text) {
+    case conn.read_exactly(length_text.to_int64()) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value)  -> {
+        case conn.read_line() {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, tail)   -> {
+            if tail == "" {
+              return (R.ok, ReplyString.new(value: value))
+            }
+            return (R.error, "valkey: a bulk reply's terminator is missing")
+          }
+        }
+      }
+    }
+  }
+  return (R.error, "valkey: invalid bulk length `" + length_text + "`")
+}
+
+// The array reply: the element count (or -1, the null array), then
+// that many replies of any kind. The flat element walk is a while
+// loop — recursion here would ride the element count into the stack,
+// and a wide LRANGE is ordinary data, not an edge.
+def read_array_reply(conn TcpConn, count_text String) (R, Reply) {
+  if count_text == "-1" {
+    return (R.ok, ReplyNull.new())
+  }
+  if int_text_ok(count_text) {
+    const n = count_text.to_int64()
+    var items = []
+    var i = 0
+    while i < n {
+      case read_reply(conn) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, reply)  -> {
+          items = items.append(reply)
+          i = i + 1
+        }
+      }
+    }
+    return (R.ok, ReplyArray.new(items: items))
+  }
+  return (R.error, "valkey: invalid array length `" + count_text + "`")
+}
+
+// A reply count's text: an optional sign, then digits only, and the
+// value inside Int64 — checked against the bounds by hand, since the
+// raise `to_int64` answers a malformed value with is not the wire's
+// error path.
+const int_max_text = "9223372036854775807"
+const int_min_text = "9223372036854775808"
+
+def int_text_ok(text String) Bool {
+  const n = text.length()
+  if n == 0 {
+    return false
+  }
+  if n > 20 {
+    return false
+  }
+  const data = text.to_bytes()
+  if data.get(0) == 45 {
+    return int_magnitude_ok(data, 1, n, int_min_text.to_bytes())
+  }
+  return int_magnitude_ok(data, 0, n, int_max_text.to_bytes())
+}
+
+def int_magnitude_ok(data Bytes, from Int64, stop Int64, bound Bytes) Bool {
+  const width = stop - from
+  if width == 0 {
+    return false
+  }
+  if width > 19 {
+    return false
+  }
+  if digits_ok(data, from, stop) {
+    if width < 19 {
+      return true
+    }
+    return digits_within(data, from, bound, 0)
+  }
+  return false
+}
+
+def digits_ok(data Bytes, from Int64, stop Int64) Bool {
+  if from >= stop {
+    return true
+  }
+  const b = data.get(from)
+  if b >= 48 && b <= 57 {
+    return digits_ok(data, from + 1, stop)
+  }
+  return false
+}
+
+def digits_within(data Bytes, from Int64, bound Bytes, i Int64) Bool {
+  if i >= 19 {
+    return true
+  }
+  const b = data.get(from + i)
+  const m = bound.get(i)
+  if b < m {
+    return true
+  }
+  if b > m {
+    return false
+  }
+  return digits_within(data, from, bound, i + 1)
+}
+
+// ---- the typed doors' decodes ----
+
+// What the shape is called when a door's contract names a kind the
+// server did not answer with.
+def reply_shape(kind ReplyKind) String {
+  if kind == ReplyKind.rnull {
+    return "the null reply"
+  }
+  if kind == ReplyKind.rstring {
+    return "a string reply"
+  }
+  if kind == ReplyKind.rint {
+    return "an integer reply"
+  }
+  return "an array reply"
+}
+
+def string_reply(op String, reply Reply) (R, String) {
+  if reply.kind() == ReplyKind.rstring {
+    return (R.ok, reply.as_string())
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+def int_reply(op String, reply Reply) (R, Int64) {
+  if reply.kind() == ReplyKind.rint {
+    return (R.ok, reply.as_int())
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+// The RESP2 shape behind the boolean doors: the integer reply, and it
+// is 1 or 0 — any other integer is a shape the door's contract does
+// not name.
+def bool_reply(op String, reply Reply) (R, Bool) {
+  if reply.kind() == ReplyKind.rint {
+    const n = reply.as_int()
+    if n == 1 {
+      return (R.ok, true)
+    }
+    if n == 0 {
+      return (R.ok, false)
+    }
+    return (R.error, "valkey: `" + op + "` answered " + n.to_string())
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+def array_reply(op String, reply Reply) (R, Array[Reply]) {
+  if reply.kind() == ReplyKind.rarray {
+    return (R.ok, reply.as_array())
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+def string_array_reply(op String, reply Reply) (R, Array[String]) {
+  if reply.kind() == ReplyKind.rarray {
+    return strings_from(op, reply.as_array(), 0, [])
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+def strings_from(op String, items Array[Reply], i Int64, acc Array[String]) (R, Array[String]) {
+  if i >= items.length() {
+    return (R.ok, acc)
+  }
+  const item = items[i]
+  if item.kind() == ReplyKind.rstring {
+    return strings_from(op, items, i + 1, acc.append(item.as_string()))
+  }
+  return (R.error, "valkey: `" + op + "` answered a non-string element reply")
+}
+
+// The HGETALL shape: fields and values alternating, so an odd length
+// is a shape the contract does not name.
+def pair_array_reply(op String, reply Reply) (R, Array[(String, String)]) {
+  if reply.kind() == ReplyKind.rarray {
+    return pairs_from(op, reply.as_array(), 0, [])
+  }
+  return (R.error, "valkey: `" + op + "` answered " + reply_shape(reply.kind()))
+}
+
+def pairs_from(op String, items Array[Reply], i Int64, acc Array[(String, String)]) (R, Array[(String, String)]) {
+  if i >= items.length() {
+    return (R.ok, acc)
+  }
+  if i + 1 >= items.length() {
+    return (R.error, "valkey: `" + op + "` answered an array with an odd length")
+  }
+  const field = items[i]
+  const value = items[i + 1]
+  if field.kind() == ReplyKind.rstring {
+    if value.kind() == ReplyKind.rstring {
+      return pairs_from(op, items, i + 2, acc.append((field.as_string(), value.as_string())))
+    }
+    return (R.error, "valkey: `" + op + "` answered a non-string value reply")
+  }
+  return (R.error, "valkey: `" + op + "` answered a non-string field reply")
+}
+
+// ---- argument building ----
+
+def append_all(base Array[String], extra Array[String], i Int64) Array[String] {
+  if i >= extra.length() {
+    return base
+  }
+  return append_all(base.append(extra[i]), extra, i + 1)
+}
+
+def flatten_pairs(pairs Array[(String, String)], i Int64, acc Array[String]) Array[String] {
+  if i >= pairs.length() {
+    return acc
+  }
+  const pair = pairs[i]
+  return flatten_pairs(pairs, i + 1, append_all(acc, [pair[0], pair[1]], 0))
+}

@@ -32,6 +32,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
 | [`http`](#http-包) | HTTP 客户端 | `ocaml`、`c`、`typescript` |
 | [`httpd`](#httpd-包) | HTTP 服务器 | `ocaml`、`c`、`typescript` |
+| [`valkey`](#valkey-包) | Valkey 客户端,RESP2 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
@@ -258,6 +259,27 @@ const server = httpd.serve_routes(listener, r)
 最具体的模式胜出(字面量 > 通配 > rest,共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本,连接关闭);语言没有时钟,响应默认不带 `Date`,除非经 `with_date` 注入。
 
 目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 指南:[`docs/zh-CN/httpd-guide.md`](httpd-guide.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
+
+## valkey 包
+
+构建在 `net` 之上的纯 Emo Valkey 客户端,讲 RESP2。直接风格;一条连接、一条命令、一个回复——没有流水线,没有连接池,没有把掉线藏起来的自动重连。服务器的错误回复是值:`(R.error, "valkey: " + 服务器原文)`。缺键是经 `is_null?()` 读取的 null 回复,不是错误。
+
+```emo
+valkey.connect(host, port, timeout)   // (R, Valkey) —— 另有 connect_unix、
+                                      // connect_tls、connect_tls_insecure
+
+v.get(key)                  // (R, Reply) — bulk,或 null 回复
+v.set(key, value)           // (R, String) — "OK"
+v.incr(key)                 // (R, Int64)
+v.hgetall(key)              // (R, Array[(String, String)])
+v.lrange(key, start, stop)  // (R, Array[String])
+v.smembers(key)             // (R, Array[String])
+v.command(args)             // (R, Reply) — 任意命令,原始回复
+```
+
+四十五扇左右的类型化门覆盖字符串、键、哈希、列表、集合五族外加 `ping`/`echo`/`auth`/`select`;每扇门解码自己命令的契约所命名的形状,服务器答出别的形状就以错误值返回。回复是一棵 `Reply` 树——每种 RESP2 类型一个类(`rnull`、`rstring`、`rint`、`rarray`;简单字符串与 bulk 字符串同为一类),`as_*` 访问器是调用者的断言,json 的规矩。timeout 约束每一次交换;`0.0` 表示无限等待。
+
+目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。参考:[`docs/zh-CN/stdlib/valkey.md`](stdlib/valkey.md) · 示例:`examples/valkey_demo`。
 
 ## json 包
 

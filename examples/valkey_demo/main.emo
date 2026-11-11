@@ -1,0 +1,1330 @@
+// The valkey package end to end on loopback: this program carries its
+// own miniature RESP2 server, and the client half of the wire talks
+// to this file's server half — every reply is an answer this file
+// computed. The golden pins the whole round trip byte for byte. The
+// server stands in for a real Valkey: its TTL answers the seconds
+// EXPIRE was told (the language has no clock), SMEMBERS walks its
+// insertion order, and everything else follows the commands the real
+// server answers. The client exercises the typed doors, the null
+// replies, a WRONGTYPE error value, the generic door, and
+// multi-byte payloads.
+
+require "net"
+require "valkey"
+
+// ---- the client half ----
+
+def run_client(v valkey.Valkey) Int64 {
+  case v.ping() {
+    (R.error, why) -> { println("ping failed: ${why}") }
+    (R.ok, pong)   -> { println(pong) }
+  }
+  case v.echo("hello valkey") {
+    (R.error, why) -> { println("echo failed: ${why}") }
+    (R.ok, back)   -> { println(back) }
+  }
+  case v.set("greeting", "hola") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.get("greeting") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.get("missing") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.is_null?()) }
+  }
+  case v.append("greeting", " !") {
+    (R.error, why) -> { println("append failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.strlen("greeting") {
+    (R.error, why) -> { println("strlen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.getrange("greeting", 0, 1) {
+    (R.error, why) -> { println("getrange failed: ${why}") }
+    (R.ok, text)   -> { println(text) }
+  }
+  case v.set_ex("session", "u1", 300) {
+    (R.error, why) -> { println("set_ex failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.get("session") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.setnx("greeting", "nope") {
+    (R.error, why) -> { println("setnx failed: ${why}") }
+    (R.ok, took)   -> { println(took) }
+  }
+  case v.setnx("fresh", "yes") {
+    (R.error, why) -> { println("setnx failed: ${why}") }
+    (R.ok, took)   -> { println(took) }
+  }
+  case v.mset([("k1", "v1"), ("k2", "v2")]) {
+    (R.error, why) -> { println("mset failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.mget(["k1", "greeting", "k2", "nope"]) {
+    (R.error, why) -> { println("mget failed: ${why}") }
+    (R.ok, replies) -> {
+      print_reply("k1", replies[0])
+      print_reply("greeting", replies[1])
+      print_reply("k2", replies[2])
+      print_reply("nope", replies[3])
+    }
+  }
+  case v.incr("hits") {
+    (R.error, why) -> { println("incr failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.incr("hits") {
+    (R.error, why) -> { println("incr failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.incr_by("hits", 10) {
+    (R.error, why) -> { println("incr_by failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.decr("hits") {
+    (R.error, why) -> { println("decr failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.exists(["greeting", "k1", "nope"]) {
+    (R.error, why) -> { println("exists failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.del(["k1", "nope"]) {
+    (R.error, why) -> { println("del failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.exists(["k1"]) {
+    (R.error, why) -> { println("exists failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.type("greeting") {
+    (R.error, why) -> { println("type failed: ${why}") }
+    (R.ok, name)   -> { println(name) }
+  }
+  case v.expire("greeting", 60) {
+    (R.error, why) -> { println("expire failed: ${why}") }
+    (R.ok, set)    -> { println(set) }
+  }
+  case v.ttl("greeting") {
+    (R.error, why) -> { println("ttl failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.persist("greeting") {
+    (R.error, why) -> { println("persist failed: ${why}") }
+    (R.ok, kept)   -> { println(kept) }
+  }
+  case v.ttl("greeting") {
+    (R.error, why) -> { println("ttl failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.ttl("missing") {
+    (R.error, why) -> { println("ttl failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.set("user:1", "u1") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.set("user:2", "u2") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.keys("user:*") {
+    (R.error, why) -> { println("keys failed: ${why}") }
+    (R.ok, names)  -> { print_strings(names) }
+  }
+  case v.rename("fresh", "renamed") {
+    (R.error, why) -> { println("rename failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.get("renamed") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.set("strkey", "plain") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.lpush("strkey", ["x"]) {
+    (R.error, why) -> { println(why) }
+    (R.ok, n)      -> { println("unexpected ${n}") }
+  }
+  case v.command(["OBJECT", "ENCODING", "greeting"]) {
+    (R.error, why) -> { println(why) }
+    (R.ok, reply)  -> { println("unexpected reply") }
+  }
+  case v.hset("person:1", "name", "wang") {
+    (R.error, why) -> { println("hset failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.hset("person:1", "city", "shanghai") {
+    (R.error, why) -> { println("hset failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.hget("person:1", "name") {
+    (R.error, why) -> { println("hget failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.hget("person:1", "missing") {
+    (R.error, why) -> { println("hget failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.is_null?()) }
+  }
+  case v.hgetall("person:1") {
+    (R.error, why) -> { println("hgetall failed: ${why}") }
+    (R.ok, pairs)  -> { print_pairs(pairs) }
+  }
+  case v.hlen("person:1") {
+    (R.error, why) -> { println("hlen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.hexists("person:1", "city") {
+    (R.error, why) -> { println("hexists failed: ${why}") }
+    (R.ok, there)  -> { println(there) }
+  }
+  case v.hkeys("person:1") {
+    (R.error, why) -> { println("hkeys failed: ${why}") }
+    (R.ok, names)  -> { print_strings(names) }
+  }
+  case v.hvals("person:1") {
+    (R.error, why) -> { println("hvals failed: ${why}") }
+    (R.ok, values) -> { print_strings(values) }
+  }
+  case v.hdel("person:1", ["city"]) {
+    (R.error, why) -> { println("hdel failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.hlen("person:1") {
+    (R.error, why) -> { println("hlen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.rpush("queue", ["a", "b"]) {
+    (R.error, why) -> { println("rpush failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.lpush("queue", ["c"]) {
+    (R.error, why) -> { println("lpush failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.lrange("queue", 0, -1) {
+    (R.error, why) -> { println("lrange failed: ${why}") }
+    (R.ok, items)  -> { print_strings(items) }
+  }
+  case v.llen("queue") {
+    (R.error, why) -> { println("llen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.lindex("queue", 1) {
+    (R.error, why) -> { println("lindex failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.lset("queue", 1, "A") {
+    (R.error, why) -> { println("lset failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.lrange("queue", 0, -1) {
+    (R.error, why) -> { println("lrange failed: ${why}") }
+    (R.ok, items)  -> { print_strings(items) }
+  }
+  case v.lpop("queue") {
+    (R.error, why) -> { println("lpop failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.rpop("queue") {
+    (R.error, why) -> { println("rpop failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.llen("queue") {
+    (R.error, why) -> { println("llen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.lpop("queue") {
+    (R.error, why) -> { println("lpop failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.lpop("queue") {
+    (R.error, why) -> { println("lpop failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.is_null?()) }
+  }
+  case v.sadd("tags", ["em", "lex"]) {
+    (R.error, why) -> { println("sadd failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.sadd("tags", ["em", "ico"]) {
+    (R.error, why) -> { println("sadd failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.scard("tags") {
+    (R.error, why) -> { println("scard failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.sismember("tags", "em") {
+    (R.error, why) -> { println("sismember failed: ${why}") }
+    (R.ok, there)  -> { println(there) }
+  }
+  case v.sismember("tags", "nope") {
+    (R.error, why) -> { println("sismember failed: ${why}") }
+    (R.ok, there)  -> { println(there) }
+  }
+  case v.smembers("tags") {
+    (R.error, why) -> { println("smembers failed: ${why}") }
+    (R.ok, names)  -> { print_strings(names) }
+  }
+  case v.srem("tags", ["em"]) {
+    (R.error, why) -> { println("srem failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.scard("tags") {
+    (R.error, why) -> { println("scard failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.set("bin", "line1\r\nline2") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.get("bin") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string().to_bytes().length()) }
+  }
+  case v.set("who", "王") {
+    (R.error, why) -> { println("set failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.strlen("who") {
+    (R.error, why) -> { println("strlen failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.get("who") {
+    (R.error, why) -> { println("get failed: ${why}") }
+    (R.ok, reply)  -> { println(reply.as_string()) }
+  }
+  case v.select(0) {
+    (R.error, why) -> { println("select failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.auth("secret") {
+    (R.error, why) -> { println("auth failed: ${why}") }
+    (R.ok, ok)     -> { println(ok) }
+  }
+  case v.dbsize() {
+    (R.error, why) -> { println("dbsize failed: ${why}") }
+    (R.ok, n)      -> { println(n) }
+  }
+  case v.close() {
+    (R.error, why) -> { println("close failed: ${why}") }
+    (R.ok, _)      -> { println("closed") }
+  }
+  return 0
+}
+
+def print_reply(name String, reply valkey.Reply) Int64 {
+  if reply.is_null?() {
+    println(name + "=null")
+    return 0
+  }
+  println(name + "=" + reply.as_string())
+  return 0
+}
+
+def print_strings(items Array[String]) Int64 {
+  return print_strings_from(items, 0)
+}
+
+def print_strings_from(items Array[String], i Int64) Int64 {
+  if i >= items.length() {
+    return 0
+  }
+  println(items[i])
+  return print_strings_from(items, i + 1)
+}
+
+def print_pairs(pairs Array[(String, String)]) Int64 {
+  return print_pairs_from(pairs, 0)
+}
+
+def print_pairs_from(pairs Array[(String, String)], i Int64) Int64 {
+  if i >= pairs.length() {
+    return 0
+  }
+  const pair = pairs[i]
+  println(pair[0] + "=" + pair[1])
+  return print_pairs_from(pairs, i + 1)
+}
+
+// ---- the server half ----
+
+// The demo's own state: four key spaces, one per Valkey type, plus
+// the expiry markers TTL answers from.
+class Db {
+  def init(strings Map[String, String], lists Map[String, Array[String]], sets Map[String, Array[String]], hashes Map[String, Map[String, String]], expiry Map[String, Int64]) {
+    self.strings = strings
+    self.lists = lists
+    self.sets = sets
+    self.hashes = hashes
+    self.expiry = expiry
+  }
+
+  def type_of(key String) String {
+    if self.strings.has(key) {
+      return "string"
+    }
+    if self.lists.has(key) {
+      return "list"
+    }
+    if self.sets.has(key) {
+      return "set"
+    }
+    if self.hashes.has(key) {
+      return "hash"
+    }
+    return "none"
+  }
+
+  // Removes the key from every key space; true when something was there.
+  def clear(key String) Bool {
+    var gone = false
+    if self.strings.has(key) {
+      self.strings.remove(key)
+      gone = true
+    }
+    if self.lists.has(key) {
+      self.lists.remove(key)
+      gone = true
+    }
+    if self.sets.has(key) {
+      self.sets.remove(key)
+      gone = true
+    }
+    if self.hashes.has(key) {
+      self.hashes.remove(key)
+      gone = true
+    }
+    if self.expiry.has(key) {
+      self.expiry.remove(key)
+    }
+    return gone
+  }
+
+  // The KEYS answer for a trailing-* pattern: every key space's keys
+  // with the prefix, in the spaces' order, insertion order inside each.
+  def keys_like(prefix String) Array[String] {
+    var out = []
+    out = collect_names(self.strings.keys(), prefix, 0, out)
+    out = collect_names(self.lists.keys(), prefix, 0, out)
+    out = collect_names(self.sets.keys(), prefix, 0, out)
+    out = collect_names(self.hashes.keys(), prefix, 0, out)
+    return out
+  }
+}
+
+def collect_names(names Array[String], prefix String, i Int64, acc Array[String]) Array[String] {
+  if i >= names.length() {
+    return acc
+  }
+  const name = names[i]
+  if name.starts_with(prefix) {
+    return collect_names(names, prefix, i + 1, acc.append(name))
+  }
+  return collect_names(names, prefix, i + 1, acc)
+}
+
+def serve(listener TcpListener, db Db) Int64 {
+  case listener.accept() {
+    (R.error, why) -> { return 0 }
+    (R.ok, conn)   -> { return connection(conn, db) }
+  }
+}
+
+def connection(conn TcpConn, db Db) Int64 {
+  var live = true
+  while live {
+    case read_request(conn) {
+      (R.error, why) -> { live = false }
+      (R.ok, args)   -> { dispatch(args, conn, db) }
+    }
+  }
+  conn.close()
+  return 0
+}
+
+// One RESP2 request: the array count line, then one bulk argument per
+// element. The client this server serves is the package's own encoder,
+// always well-formed.
+def read_request(conn TcpConn) (R, Array[String]) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.error, "the client closed the connection")
+      }
+      if line.substring(0, 1) == "*" {
+        return read_args(conn, line.substring(1, line.length() - 1).to_int64(), [])
+      }
+      return (R.error, "not an array request")
+    }
+  }
+}
+
+def read_args(conn TcpConn, n Int64, acc Array[String]) (R, Array[String]) {
+  if n == 0 {
+    return (R.ok, acc)
+  }
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, head)   -> {
+      if head.substring(0, 1) == "$" {
+        const length = head.substring(1, head.length() - 1).to_int64()
+        case conn.read_exactly(length) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, arg)    -> {
+            conn.read_line()
+            return read_args(conn, n - 1, acc.append(arg))
+          }
+        }
+      }
+      return (R.error, "not a bulk argument")
+    }
+  }
+}
+
+def wrong_type() String {
+  return "WRONGTYPE Operation against a key holding the wrong kind of value"
+}
+
+def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
+  const op = args[0]
+  case op {
+    "PING" -> {
+      if args.length() == 1 {
+        write_simple(conn, "PONG")
+      } else {
+        write_bulk(conn, args[1])
+      }
+    }
+    "ECHO" -> {
+      write_bulk(conn, args[1])
+    }
+    "SELECT" -> {
+      write_simple(conn, "OK")
+    }
+    "AUTH" -> {
+      write_simple(conn, "OK")
+    }
+    "DBSIZE" -> {
+      write_int(conn, db.strings.length() + db.lists.length() + db.sets.length() + db.hashes.length())
+    }
+    "TYPE" -> {
+      write_bulk(conn, db.type_of(args[1]))
+    }
+    "EXISTS" -> {
+      write_int(conn, count_present(args, db, 1, 0))
+    }
+    "DEL" -> {
+      write_int(conn, remove_keys(args, db, 1, 0))
+    }
+    "RENAME" -> {
+      move_key(args[1], args[2], conn, db)
+    }
+    "KEYS" -> {
+      const pattern = args[1]
+      const mark = pattern.substring(pattern.length() - 1, 1)
+      if mark == "*" {
+        write_array(conn, db.keys_like(pattern.substring(0, pattern.length() - 1)))
+      } else {
+        write_error(conn, "ERR unsupported pattern in the demo server")
+      }
+    }
+    "SET" -> {
+      db.clear(args[1])
+      db.strings.set(args[1], args[2])
+      write_simple(conn, "OK")
+    }
+    "SETNX" -> {
+      if db.type_of(args[1]) != "none" {
+        write_int(conn, 0)
+      } else {
+        db.strings.set(args[1], args[2])
+        write_int(conn, 1)
+      }
+    }
+    "GET" -> {
+      const t = db.type_of(args[1])
+      if t == "string" {
+        write_bulk(conn, db.strings.get(args[1]))
+      } else {
+        if t == "none" {
+          write_null(conn)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "APPEND" -> {
+      const t = db.type_of(args[1])
+      if t == "string" {
+        const grown = db.strings.get(args[1]) + args[2]
+        db.strings.set(args[1], grown)
+        write_int(conn, grown.to_bytes().length())
+      } else {
+        if t == "none" {
+          db.strings.set(args[1], args[2])
+          write_int(conn, args[2].to_bytes().length())
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "STRLEN" -> {
+      const t = db.type_of(args[1])
+      if t == "string" {
+        write_int(conn, db.strings.get(args[1]).to_bytes().length())
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "GETRANGE" -> {
+      const t = db.type_of(args[1])
+      if t == "string" {
+        write_bulk(conn, text_slice(db.strings.get(args[1]), args[2].to_int64(), args[3].to_int64()))
+      } else {
+        if t == "none" {
+          write_bulk(conn, "")
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "INCR" -> {
+      bump(conn, db, args[1], 1)
+    }
+    "DECR" -> {
+      bump(conn, db, args[1], 0 - 1)
+    }
+    "INCRBY" -> {
+      bump(conn, db, args[1], args[2].to_int64())
+    }
+    "DECRBY" -> {
+      bump(conn, db, args[1], 0 - args[2].to_int64())
+    }
+    "MSET" -> {
+      var i = 1
+      while i < args.length() {
+        db.clear(args[i])
+        db.strings.set(args[i], args[i + 1])
+        i = i + 2
+      }
+      write_simple(conn, "OK")
+    }
+    "MGET" -> {
+      write_mget(conn, db, args)
+    }
+    "EXPIRE" -> {
+      if db.type_of(args[1]) != "none" {
+        db.expiry.set(args[1], args[2].to_int64())
+        write_int(conn, 1)
+      } else {
+        write_int(conn, 0)
+      }
+    }
+    "PERSIST" -> {
+      if db.expiry.has(args[1]) {
+        db.expiry.remove(args[1])
+        write_int(conn, 1)
+      } else {
+        write_int(conn, 0)
+      }
+    }
+    "TTL" -> {
+      if db.expiry.has(args[1]) {
+        write_int(conn, db.expiry.get(args[1]))
+      } else {
+        if db.type_of(args[1]) != "none" {
+          write_int(conn, -1)
+        } else {
+          write_int(conn, -2)
+        }
+      }
+    }
+    "LPUSH" -> {
+      push(conn, db, args[1], args, "head")
+    }
+    "RPUSH" -> {
+      push(conn, db, args[1], args, "tail")
+    }
+    "LPOP" -> {
+      pop(conn, db, args[1], "head")
+    }
+    "RPOP" -> {
+      pop(conn, db, args[1], "tail")
+    }
+    "LLEN" -> {
+      const t = db.type_of(args[1])
+      if t == "list" {
+        write_int(conn, db.lists.get(args[1]).length())
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "LRANGE" -> {
+      const t = db.type_of(args[1])
+      if t == "list" {
+        write_array(conn, lrange_slice(db.lists.get(args[1]), args[2].to_int64(), args[3].to_int64()))
+      } else {
+        if t == "none" {
+          write_array(conn, [])
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "LINDEX" -> {
+      const t = db.type_of(args[1])
+      if t == "list" {
+        const list = db.lists.get(args[1])
+        var idx = args[2].to_int64()
+        if idx < 0 {
+          idx = list.length() + idx
+        }
+        if idx >= 0 && idx < list.length() {
+          write_bulk(conn, list[idx])
+        } else {
+          write_null(conn)
+        }
+      } else {
+        if t == "none" {
+          write_null(conn)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "LSET" -> {
+      const t = db.type_of(args[1])
+      if t == "list" {
+        const list = db.lists.get(args[1])
+        var idx = args[2].to_int64()
+        if idx < 0 {
+          idx = list.length() + idx
+        }
+        if idx >= 0 && idx < list.length() {
+          db.lists.set(args[1], replace_at(list, idx, args[3], 0, []))
+          write_simple(conn, "OK")
+        } else {
+          write_error(conn, "ERR index out of range")
+        }
+      } else {
+        if t == "none" {
+          write_error(conn, "ERR no such key")
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "SADD" -> {
+      const t = db.type_of(args[1])
+      if t == "set" || t == "none" {
+        var members = []
+        if t == "set" {
+          members = db.sets.get(args[1])
+        }
+        const grown = add_members(members, args, 2)
+        db.sets.set(args[1], grown[0])
+        write_int(conn, grown[1])
+      } else {
+        write_error(conn, wrong_type())
+      }
+    }
+    "SREM" -> {
+      const t = db.type_of(args[1])
+      if t == "set" {
+        const members = db.sets.get(args[1])
+        const fewer = drop_members(members, args, 2)
+        if fewer[1] > 0 {
+          if fewer[0].length() == 0 {
+            db.clear(args[1])
+          } else {
+            db.sets.set(args[1], fewer[0])
+          }
+        }
+        write_int(conn, fewer[1])
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "SMEMBERS" -> {
+      const t = db.type_of(args[1])
+      if t == "set" {
+        write_array(conn, db.sets.get(args[1]))
+      } else {
+        if t == "none" {
+          write_array(conn, [])
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "SISMEMBER" -> {
+      const t = db.type_of(args[1])
+      if t == "set" {
+        if has_member(db.sets.get(args[1]), args[2], 0) {
+          write_int(conn, 1)
+        } else {
+          write_int(conn, 0)
+        }
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "SCARD" -> {
+      const t = db.type_of(args[1])
+      if t == "set" {
+        write_int(conn, db.sets.get(args[1]).length())
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HSET" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        const fields = db.hashes.get(args[1])
+        if fields.has(args[2]) {
+          fields.set(args[2], args[3])
+          write_int(conn, 0)
+        } else {
+          fields.set(args[2], args[3])
+          write_int(conn, 1)
+        }
+      } else {
+        if t == "none" {
+          db.hashes.set(args[1], Map.new())
+          db.hashes.get(args[1]).set(args[2], args[3])
+          write_int(conn, 1)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HGET" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        const fields = db.hashes.get(args[1])
+        if fields.has(args[2]) {
+          write_bulk(conn, fields.get(args[2]))
+        } else {
+          write_null(conn)
+        }
+      } else {
+        if t == "none" {
+          write_null(conn)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HDEL" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        const fields = db.hashes.get(args[1])
+        var removed = 0
+        var i = 2
+        while i < args.length() {
+          if fields.has(args[i]) {
+            fields.remove(args[i])
+            removed = removed + 1
+          }
+          i = i + 1
+        }
+        if fields.length() == 0 {
+          db.clear(args[1])
+        }
+        write_int(conn, removed)
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HEXISTS" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        if db.hashes.get(args[1]).has(args[2]) {
+          write_int(conn, 1)
+        } else {
+          write_int(conn, 0)
+        }
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HLEN" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        write_int(conn, db.hashes.get(args[1]).length())
+      } else {
+        if t == "none" {
+          write_int(conn, 0)
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HKEYS" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        write_array(conn, db.hashes.get(args[1]).keys())
+      } else {
+        if t == "none" {
+          write_array(conn, [])
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HVALS" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        write_array(conn, hash_values(db.hashes.get(args[1])))
+      } else {
+        if t == "none" {
+          write_array(conn, [])
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    "HGETALL" -> {
+      const t = db.type_of(args[1])
+      if t == "hash" {
+        write_hgetall(conn, db.hashes.get(args[1]))
+      } else {
+        if t == "none" {
+          write_array(conn, [])
+        } else {
+          write_error(conn, wrong_type())
+        }
+      }
+    }
+    _ -> {
+      write_error(conn, "ERR unknown command '" + op + "'")
+    }
+  }
+  return 0
+}
+
+// ---- the server half's writers ----
+
+def write_simple(conn TcpConn, text String) Int64 {
+  conn.write("+" + text + "\r\n")
+  return 0
+}
+
+def write_error(conn TcpConn, text String) Int64 {
+  conn.write("-" + text + "\r\n")
+  return 0
+}
+
+def write_int(conn TcpConn, n Int64) Int64 {
+  conn.write(":" + n.to_string() + "\r\n")
+  return 0
+}
+
+def write_null(conn TcpConn) Int64 {
+  conn.write("$-1\r\n")
+  return 0
+}
+
+def write_bulk(conn TcpConn, data String) Int64 {
+  conn.write("$" + data.to_bytes().length().to_string() + "\r\n" + data + "\r\n")
+  return 0
+}
+
+def write_array(conn TcpConn, items Array[String]) Int64 {
+  conn.write("*" + items.length().to_string() + "\r\n" + bulks(items, 0, ""))
+  return 0
+}
+
+def bulks(items Array[String], i Int64, acc String) String {
+  if i >= items.length() {
+    return acc
+  }
+  const item = items[i]
+  return bulks(items, i + 1, acc + "$" + item.to_bytes().length().to_string() + "\r\n" + item + "\r\n")
+}
+
+// MGET's reply: one bulk or null per key, any type refusal answered
+// before the first element.
+def write_mget(conn TcpConn, db Db, args Array[String]) Int64 {
+  var out = "*" + (args.length() - 1).to_string() + "\r\n"
+  var i = 1
+  while i < args.length() {
+    const t = db.type_of(args[i])
+    if t == "string" {
+      const v = db.strings.get(args[i])
+      out = out + "$" + v.to_bytes().length().to_string() + "\r\n" + v + "\r\n"
+    } else {
+      out = out + "$-1\r\n"
+    }
+    i = i + 1
+  }
+  conn.write(out)
+  return 0
+}
+
+def write_hgetall(conn TcpConn, fields Map[String, String]) Int64 {
+  const ks = fields.keys()
+  var out = "*" + (ks.length() * 2).to_string() + "\r\n"
+  var i = 0
+  while i < ks.length() {
+    const f = ks[i]
+    const v = fields.get(f)
+    out = out + "$" + f.to_bytes().length().to_string() + "\r\n" + f + "\r\n"
+    out = out + "$" + v.to_bytes().length().to_string() + "\r\n" + v + "\r\n"
+    i = i + 1
+  }
+  conn.write(out)
+  return 0
+}
+
+// ---- the server half's helpers ----
+
+def count_present(args Array[String], db Db, i Int64, acc Int64) Int64 {
+  if i >= args.length() {
+    return acc
+  }
+  if db.type_of(args[i]) != "none" {
+    return count_present(args, db, i + 1, acc + 1)
+  }
+  return count_present(args, db, i + 1, acc)
+}
+
+def remove_keys(args Array[String], db Db, i Int64, acc Int64) Int64 {
+  if i >= args.length() {
+    return acc
+  }
+  if db.clear(args[i]) {
+    return remove_keys(args, db, i + 1, acc + 1)
+  }
+  return remove_keys(args, db, i + 1, acc)
+}
+
+def move_key(from_key String, to_key String, conn TcpConn, db Db) Int64 {
+  const t = db.type_of(from_key)
+  if t == "none" {
+    write_error(conn, "ERR no such key")
+    return 0
+  }
+  if t == "string" {
+    const v = db.strings.get(from_key)
+    db.clear(from_key)
+    db.clear(to_key)
+    db.strings.set(to_key, v)
+  }
+  if t == "list" {
+    const v = db.lists.get(from_key)
+    db.clear(from_key)
+    db.clear(to_key)
+    db.lists.set(to_key, v)
+  }
+  if t == "set" {
+    const v = db.sets.get(from_key)
+    db.clear(from_key)
+    db.clear(to_key)
+    db.sets.set(to_key, v)
+  }
+  if t == "hash" {
+    const v = db.hashes.get(from_key)
+    db.clear(from_key)
+    db.clear(to_key)
+    db.hashes.set(to_key, v)
+  }
+  if db.expiry.has(from_key) {
+    const seconds = db.expiry.get(from_key)
+    db.expiry.remove(from_key)
+    db.expiry.set(to_key, seconds)
+  }
+  write_simple(conn, "OK")
+  return 0
+}
+
+// The counter family: the value must be integer text (or absent —
+// absent counts from zero), the demo server's own digit guard before
+// to_int64, which raises on anything else.
+def bump(conn TcpConn, db Db, key String, delta Int64) Int64 {
+  const t = db.type_of(key)
+  if t == "none" {
+    db.strings.set(key, delta.to_string())
+    write_int(conn, delta)
+    return 0
+  }
+  if t == "string" {
+    const current = db.strings.get(key)
+    if int_text(current.to_bytes(), 0) {
+      const grown = current.to_int64() + delta
+      db.strings.set(key, grown.to_string())
+      write_int(conn, grown)
+      return 0
+    }
+    write_error(conn, "ERR value is not an integer or out of range")
+    return 0
+  }
+  write_error(conn, wrong_type())
+  return 0
+}
+
+// Digits with an optional leading sign.
+def int_text(data Bytes, i Int64) Bool {
+  const n = data.length()
+  if n == 0 {
+    return false
+  }
+  var at = i
+  if data.get(0) == 45 {
+    at = 1
+  }
+  if at == n {
+    return false
+  }
+  return digits_from(data, at, n)
+}
+
+def digits_from(data Bytes, i Int64, stop Int64) Bool {
+  if i >= stop {
+    return true
+  }
+  const b = data.get(i)
+  if b >= 48 && b <= 57 {
+    return digits_from(data, i + 1, stop)
+  }
+  return false
+}
+
+def push(conn TcpConn, db Db, key String, args Array[String], side String) Int64 {
+  const t = db.type_of(key)
+  if t == "list" || t == "none" {
+    var list = []
+    if t == "list" {
+      list = db.lists.get(key)
+    }
+    var i = 2
+    while i < args.length() {
+      if side == "head" {
+        list = prepend(args[i], list)
+      } else {
+        list = list.append(args[i])
+      }
+      i = i + 1
+    }
+    db.lists.set(key, list)
+    write_int(conn, list.length())
+    return 0
+  }
+  write_error(conn, wrong_type())
+  return 0
+}
+
+def prepend(item String, list Array[String]) Array[String] {
+  const out = [item]
+  return append_rest(out, list, 0)
+}
+
+def append_rest(base Array[String], extra Array[String], i Int64) Array[String] {
+  if i >= extra.length() {
+    return base
+  }
+  return append_rest(base.append(extra[i]), extra, i + 1)
+}
+
+def pop(conn TcpConn, db Db, key String, side String) Int64 {
+  const t = db.type_of(key)
+  if t == "list" {
+    const list = db.lists.get(key)
+    const last = list.length() - 1
+    var item = list[0]
+    var rest = []
+    if side == "head" {
+      item = list[0]
+      rest = slice_range(list, 1, last)
+    } else {
+      item = list[last]
+      rest = slice_range(list, 0, last - 1)
+    }
+    if rest.length() == 0 {
+      db.clear(key)
+    } else {
+      db.lists.set(key, rest)
+    }
+    write_bulk(conn, item)
+    return 0
+  }
+  if t == "none" {
+    write_null(conn)
+    return 0
+  }
+  write_error(conn, wrong_type())
+  return 0
+}
+
+// The inclusive, negative-aware slice the LRANGE and GETRANGE
+// semantics share.
+def lrange_slice(items Array[String], start Int64, stop Int64) Array[String] {
+  const n = items.length()
+  var s = start
+  if s < 0 {
+    s = n + s
+  }
+  if s < 0 {
+    s = 0
+  }
+  var e = stop
+  if e < 0 {
+    e = n + e
+  }
+  if e >= n {
+    e = n - 1
+  }
+  return slice_range(items, s, e)
+}
+
+def slice_range(items Array[String], s Int64, e Int64) Array[String] {
+  if s > e || s < 0 {
+    return []
+  }
+  return slice_into(items, s, e, s, [])
+}
+
+def slice_into(items Array[String], s Int64, e Int64, i Int64, acc Array[String]) Array[String] {
+  if i > e {
+    return acc
+  }
+  return slice_into(items, s, e, i + 1, acc.append(items[i]))
+}
+
+def text_slice(text String, start Int64, stop Int64) String {
+  const n = text.length()
+  var s = start
+  if s < 0 {
+    s = n + s
+  }
+  if s < 0 {
+    s = 0
+  }
+  var e = stop
+  if e < 0 {
+    e = n + e
+  }
+  if e >= n {
+    e = n - 1
+  }
+  if s > e {
+    return ""
+  }
+  return text.substring(s, e - s + 1)
+}
+
+def replace_at(items Array[String], idx Int64, value String, i Int64, acc Array[String]) Array[String] {
+  if i >= items.length() {
+    return acc
+  }
+  if i == idx {
+    return replace_at(items, idx, value, i + 1, acc.append(value))
+  }
+  return replace_at(items, idx, value, i + 1, acc.append(items[i]))
+}
+
+def hash_values(fields Map[String, String]) Array[String] {
+  const ks = fields.keys()
+  var out = []
+  var i = 0
+  while i < ks.length() {
+    out = out.append(fields.get(ks[i]))
+    i = i + 1
+  }
+  return out
+}
+
+def add_members(members Array[String], args Array[String], i Int64) (Array[String], Int64) {
+  if i >= args.length() {
+    return (members, 0)
+  }
+  const member = args[i]
+  if has_member(members, member, 0) {
+    return add_members(members, args, i + 1)
+  }
+  const grown = add_members(members.append(member), args, i + 1)
+  return (grown[0], grown[1] + 1)
+}
+
+def drop_members(members Array[String], args Array[String], i Int64) (Array[String], Int64) {
+  if i >= args.length() {
+    return (members, 0)
+  }
+  const member = args[i]
+  if has_member(members, member, 0) {
+    const fewer = drop_members(without(members, member, 0, []), args, i + 1)
+    return (fewer[0], fewer[1] + 1)
+  }
+  return drop_members(members, args, i + 1)
+}
+
+def has_member(members Array[String], member String, i Int64) Bool {
+  if i >= members.length() {
+    return false
+  }
+  if members[i] == member {
+    return true
+  }
+  return has_member(members, member, i + 1)
+}
+
+def without(members Array[String], member String, i Int64, acc Array[String]) Array[String] {
+  if i >= members.length() {
+    return acc
+  }
+  if members[i] == member {
+    return append_rest(acc, slice_range(members, i + 1, members.length() - 1), 0)
+  }
+  return without(members, member, i + 1, acc.append(members[i]))
+}
+
+// ---- the run ----
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+const db = Db.new(strings: Map.new(), lists: Map.new(), sets: Map.new(), hashes: Map.new(), expiry: Map.new())
+do serve(listener, db)
+
+case valkey.connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed") }
+  (R.ok, v)      -> { run_client(v) }
+}
