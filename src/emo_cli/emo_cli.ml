@@ -3,7 +3,7 @@ open Cmdliner
 let version = Version.version
 
 let print_version () =
-  Printf.printf "emo %s\n" version;
+  Printf.printf "%s\n" version;
   Cmd.Exit.ok
 
 let not_implemented () =
