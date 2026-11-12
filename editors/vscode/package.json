@@ -15,7 +15,6 @@
   "categories": ["Programming Languages", "Linters", "Snippets"],
   "keywords": ["emo", "language-server", "lsp"],
   "icon": "icon.png",
-  "activationEvents": ["onLanguage:emo"],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
