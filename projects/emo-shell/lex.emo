@@ -1,0 +1,195 @@
+// The lexer: one input line cut into words and operators. The grammar
+// the parser reads:
+//
+//   word     — the pieces the line was cut into; quoting is resolved
+//              here, not remembered: a single-quoted run and every
+//              escaped byte arrive as literal parts, a bare run and a
+//              double-quoted run arrive as expandable parts (the
+//              double quotes themselves are gone) — and a bare run
+//              accumulates as one part, so the `$` and the name after
+//              it reach the expander together;
+//   operator — `|`, `<`, `>`, `>>`, `;`, `&&`, `||`, each its own
+//              token kind.
+//
+// A `#` at the start of a word is a comment: the rest of the line is
+// dropped. A `&` that is not `&&` is refused — background jobs are
+// not in this shell yet, and a strict refusal beats a silent misread.
+// An unterminated quote is refused with the quote in the message.
+// Like the classic shells, an empty quoted string still makes a word
+// (`touch ''` must touch), so a word token can carry a single empty
+// literal part.
+//
+// The answers ride the standard library's error split — the shell has
+// no catch to survive, so a malformed line is the value
+// `(R.error, reason)`, and the session decides what dies and what
+// carries on.
+
+// One token: `kind` is `"word"` or the operator itself; a word
+// carries its parts, an operator carries none.
+class Tok {
+  def init(kind String, parts Array[expand.Part]) {
+    self.kind = kind
+    self.parts = parts
+  }
+}
+
+def op_pipe() String { return "|" }
+def op_lt() String { return "<" }
+def op_gt() String { return ">" }
+def op_gtgt() String { return ">>" }
+def op_semi() String { return ";" }
+def op_andand() String { return "&&" }
+def op_oror() String { return "||" }
+
+// The whole line's tokens, or the reason the line is malformed.
+def tokenize(line String) (R, Array[Tok]) {
+  const out = ArrayBuilder.new()
+  var i = 0
+  var in_word = false
+  var parts = ArrayBuilder.new()
+  // the bare run being accumulated, pending as one expandable part;
+  // quotes and escapes close it, word ends flush it
+  var cur = ""
+  while i < line.length() {
+    const ch = line.substring(i, 1)
+    if ch == " " || ch == "\t" {
+      if in_word {
+        if cur != "" {
+          parts.push(expand.Part.new(text: cur, lit: false))
+          cur = ""
+        }
+        out.push(Tok.new(kind: "word", parts: parts.to_array()))
+        parts = ArrayBuilder.new()
+        in_word = false
+      }
+      i = i + 1
+    } else {
+      if ch == "#" && !in_word {
+        // a comment: the word boundary is where it starts, the rest
+        // of the line is gone
+        i = line.length()
+      } else {
+        if ch == "&" || ch == "|" || ch == "<" || ch == ">" || ch == ";" {
+          if in_word {
+            if cur != "" {
+              parts.push(expand.Part.new(text: cur, lit: false))
+              cur = ""
+            }
+            out.push(Tok.new(kind: "word", parts: parts.to_array()))
+            parts = ArrayBuilder.new()
+            in_word = false
+          }
+          var two = ""
+          if i + 1 < line.length() {
+            two = line.substring(i, 2)
+          }
+          if two == "&&" || two == "||" || two == ">>" {
+            out.push(Tok.new(kind: two, parts: []))
+            i = i + 2
+          } else {
+            if ch == "&" {
+              return (R.error, "emosh: syntax error: & is not supported yet")
+            }
+            out.push(Tok.new(kind: ch, parts: []))
+            i = i + 1
+          }
+        } else {
+          if ch == "'" {
+            const rest = line.substring(i + 1, line.length() - i - 1)
+            const rel = rest.index_of("'")
+            if rel < 0 {
+              return (R.error, "emosh: syntax error: unterminated '")
+            }
+            if cur != "" {
+              parts.push(expand.Part.new(text: cur, lit: false))
+              cur = ""
+            }
+            // the whole run, byte for byte, nothing expandable
+            parts.push(expand.Part.new(text: rest.substring(0, rel), lit: true))
+            in_word = true
+            i = i + 1 + rel + 1
+          } else {
+            if ch == "\"" {
+              case through_double_quote(line, i + 1) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, quoted) -> {
+                  if cur != "" {
+                    parts.push(expand.Part.new(text: cur, lit: false))
+                    cur = ""
+                  }
+                  parts.push(expand.Part.new(text: quoted.text, lit: false))
+                  in_word = true
+                  i = quoted.next
+                }
+              }
+            } else {
+              if ch == "\\" {
+                if i + 1 >= line.length() {
+                  // a trailing backslash escapes the newline that is
+                  // not there; the classic shells continue the line,
+                  // this one refuses — strictness first
+                  return (R.error, "emosh: syntax error: trailing \\")
+                }
+                if cur != "" {
+                  parts.push(expand.Part.new(text: cur, lit: false))
+                  cur = ""
+                }
+                parts.push(expand.Part.new(text: line.substring(i + 1, 1), lit: true))
+                in_word = true
+                i = i + 2
+              } else {
+                cur = cur + ch
+                in_word = true
+                i = i + 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if in_word {
+    if cur != "" {
+      parts.push(expand.Part.new(text: cur, lit: false))
+    }
+    out.push(Tok.new(kind: "word", parts: parts.to_array()))
+  }
+  return (R.ok, out.to_array())
+}
+
+// The contents of one double-quoted run starting after the opening
+// quote, with the escapable set resolved ($ " ` \); any other
+// backslash stays, the way the classic shells keep it. Answers
+// (R.ok, Quoted) — the text and the index just past the closing
+// quote — or the reason the quote never closes.
+class Quoted {
+  def init(text String, next Int64) {
+    self.text = text
+    self.next = next
+  }
+}
+
+def through_double_quote(line String, start Int64) (R, Quoted) {
+  var text = ""
+  var i = start
+  while i < line.length() {
+    const ch = line.substring(i, 1)
+    if ch == "\"" {
+      return (R.ok, Quoted.new(text: text, next: i + 1))
+    }
+    if ch == "\\" && i + 1 < line.length() {
+      const next = line.substring(i + 1, 1)
+      if next == "$" || next == "\"" || next == "`" || next == "\\" {
+        text = text + next
+        i = i + 2
+      } else {
+        text = text + ch
+        i = i + 1
+      }
+    } else {
+      text = text + ch
+      i = i + 1
+    }
+  }
+  return (R.error, "emosh: syntax error: unterminated \"")
+}

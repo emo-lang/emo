@@ -1,15 +1,17 @@
 # The `os` Package
 
 The standard library's process-level surface: process ids, `fork`,
-`execv`, `waitpid`, pipes, the working directory, directory listing,
+`execv`, `execvp`, `waitpid`, pipes, descriptor plumbing, the
+environment, the signals, the working directory, directory listing,
 and raw (unbuffered, fd-based) file IO — the machinery a systems
-program needs before it can build anything else. Unlike the format
-packages, `os` is not pure Emo: its calls dispatch to the runtime's
-implementations, backed by POSIX, and it declares only the targets
-whose host carries the surface — `ocaml`, `c`, and `wasm` (the fd,
-directory, and working-directory half; the process half raises at the
-call there, naming the capability). Declaring it for the browser or
-bytecode targets is a package error before any code runs.
+program needs before it can build anything else (a shell, for one).
+Unlike the format packages, `os` is not pure Emo: its calls dispatch
+to the runtime's implementations, backed by POSIX, and it declares
+only the targets whose host carries the surface — `ocaml`, `c`, and
+`wasm` (the fd, directory, and working-directory half; the process
+half raises at the call there, naming the capability). Declaring it
+for the browser or bytecode targets is a package error before any
+code runs.
 
 ## Using the package
 
@@ -28,10 +30,10 @@ Following the standard library's convention, a call whose failure the
 data can trigger answers `(R.ok, value)` or `(R.error, reason)` — the
 reason a String stating exactly which system call failed and why —
 `os: open_write notes.txt: Permission denied` — no error codes, no
-nil. The calls that never fail (`getpid`, `getppid`, `getcwd`, the
-`wait_*` status decoders) are plain functions, and so is `waitpid`'s
-raw status word; `execv` returns on failure instead of raising, the
-fork child's cue to `_exit`.
+nil. The calls that never fail (`getpid`, `getppid`, `getcwd`,
+`isatty`, `argv`, the `wait_*` status decoders) are plain functions,
+and so is `waitpid`'s raw status word; `execv` and `execvp` return on
+failure instead of raising, the fork child's cue to `_exit`.
 
 ## Processes
 
@@ -67,7 +69,69 @@ returns, and on failure it returns — the fork child follows it with
 `_exit`, since a raise there would run the parent's cleanup a second
 time. `_exit(status)` ends the calling process immediately, without
 unwinding — the fork child's way out, so a child cannot run its
-parent's cleanup a second time.
+parent's cleanup a second time. `execvp(file, argv)` is the same
+replacement with a lookup: `file` is searched through the `PATH`
+environment variable the way the shell's own lookup is (a name with a
+slash in it is used as-is), and the failure contract is the execv one.
+
+## Descriptor plumbing and the terminal
+
+```emo
+def dup2(old_fd Int64, new_fd Int64) (R, Int64)
+def isatty(fd Int64) Bool
+```
+
+`dup2` copies `old_fd` onto `new_fd`, closing `new_fd` first if it was
+open — the plumbing a shell uses to point a child's stdin or stdout at
+a pipe end or a file before the exec. `isatty` answers whether `fd` is
+attached to a terminal — how a program tells an interactive session
+from a pipe or a script on stdin. Both are plain POSIX with no
+buffering and no surprises.
+
+## The environment and the arguments
+
+```emo
+def argv() Array[String]
+def getenv(name String) (R, String)
+def setenv(name String, value String) (R, Int64)
+def unsetenv(name String) (R, Int64)
+```
+
+`argv()` answers the process's own argument vector, `argv[0]` the name
+the process was started with — it never fails. `getenv` answers the
+variable's value, and unset is a value like every other data-driven
+failure in the package: `(R.error, "os: getenv HOME: is not set")`.
+`setenv` sets or replaces (the POSIX overwrite-always form); the fork
+child inherits the environment across the exec, which is how a shell's
+`export` reaches the commands it runs.
+
+## Signals
+
+```emo
+const sig_hup = 1
+const sig_int = 2
+const sig_quit = 3
+const sig_kill = 9
+const sig_pipe = 13
+const sig_term = 15
+
+def signal_ignore(sig Int64) (R, Int64)
+def signal_default(sig Int64) (R, Int64)
+```
+
+The classic Unix set — the numbers the `wait_*` decoders answer, the
+numbers the dispositions take. `signal_ignore` sets a signal to be
+ignored in this process; `signal_default` restores the default. An
+out-of-range number answers `(R.error, "os: signal_ignore 99: invalid
+signal")` — the same text on both targets, by construction.
+
+The discipline a shell lives by: ignore `sig_int` (and `sig_quit`) in
+the shell's own process, and have the fork child call
+`signal_default` before the exec. A disposition of *ignored* survives
+the exec — that is why the child must undo it — a handler's does not;
+this pair is the whole trick, and `sig_pipe` ignored in the shell keeps
+a write into a dead pipe from killing the interpreter while the
+external commands keep their own default death.
 
 ## Pipes
 
@@ -141,7 +205,8 @@ end it does not use, and the child leaves through `_exit` — ordinary
 host's Unix module; the c target emits direct POSIX calls; the wasm
 target lowers the fd, directory, and working-directory half to the
 module's syscalls and lowers the process half to a run-time raise —
-`fork`, `execv`, `waitpid`, `pipe`, `getpid`, `getppid`, and `_exit`
-each name the capability when called (`os_fs_demo` walks the fd and
-directory half; `os_demo`, which forks, stays a c golden). The
-typescript and beam targets refuse the package.
+`fork`, `execv`, `execvp`, `waitpid`, `pipe`, `dup2`, `getpid`,
+`getppid`, `_exit`, `isatty`, `argv`, the environment, and the signal
+dispositions each name the capability when called (`os_fs_demo` walks
+the fd and directory half; `os_demo`, which forks, stays a c golden).
+The typescript and beam targets refuse the package.

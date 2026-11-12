@@ -1,0 +1,17 @@
+require "os"
+
+// emosh — the entry: open the session, run it, leave with its last
+// command's exit status. The `_exit` is deliberate: the shell writes
+// through raw descriptors, so there is nothing buffered left to
+// flush, and a child spawned along the way can never run this exit a
+// second time.
+//
+//   emo build main.emo --target c -o emosh
+//   ./emosh            (interactive)
+//   ./emosh < script   (a script on stdin)
+
+def main() {
+  os._exit(exec.main_entry())
+}
+
+main()

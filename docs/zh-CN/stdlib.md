@@ -27,7 +27,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | 包 | 提供的能力 | 目标 |
 |---|---|---|
 | [`file`](#file-包) | 整文件读写 | `ocaml`、`c`、`wasm` |
-| [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c`、`wasm`（fd/目录半边） |
+| [`os`](#os-包) | 进程、管道、描述符接线、环境、信号、裸 fd IO、目录 | `ocaml`、`c`、`wasm`（fd/目录半边） |
 | [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c`、`wasm` |
 | [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
 | [`http`](#http-包) | HTTP 客户端 | `ocaml`、`c`、`typescript` |
@@ -79,7 +79,7 @@ println(text)
 
 ## os 包
 
-进程级的外部接口:进程 id、`fork`、`execv`、`waitpid`、管道、工作目录、目录列举,以及裸(无缓冲、基于 fd 的)文件 IO——系统程序在构建任何东西之前需要的机器。
+进程级的外部接口:进程 id、`fork`、`execv`、`execvp`、`waitpid`、管道、描述符接线、环境变量、信号、工作目录、目录列举,以及裸(无缓冲、基于 fd 的)文件 IO——系统程序在构建任何东西之前需要的机器。
 
 ```emo
 def getpid() Int64

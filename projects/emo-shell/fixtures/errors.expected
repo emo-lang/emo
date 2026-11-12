@@ -1,0 +1,9 @@
+emosh: no-such-command-emosh: command not found
+missing=127
+emosh: syntax error: unexpected end of line
+syntax=2
+emosh: syntax error: & is not supported yet
+amp=2
+emosh: syntax error: unterminated '
+quote=2
+survived

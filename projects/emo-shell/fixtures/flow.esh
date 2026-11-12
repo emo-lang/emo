@@ -1,0 +1,12 @@
+true && echo and-ran
+false || echo or-ran
+false && echo skipped
+true && echo chain-one && echo chain-two
+false && echo no || echo rescued
+echo a; echo b ; echo c
+true
+false
+echo carried=$?
+false || true
+echo connector=$?
+echo end

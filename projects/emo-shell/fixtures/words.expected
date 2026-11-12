@@ -1,0 +1,11 @@
+one two three
+hello world
+value-is-hello-x
+hello-braced
+single $EMOSH_TEST stays
+double hello expands
+-empty
+-empty-too
+status=0
+status=1
+escape-$EMOSH_TEST-literal

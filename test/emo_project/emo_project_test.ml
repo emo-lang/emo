@@ -2458,6 +2458,82 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
               "riscv64 refusal" "no build for target `riscv64`" messages);
   ]
 
+(* Whether a c compiler is present at all: the emosh goldens build the
+   shell twice, and the c leg skips where the machine has no cc — the
+   same courtesy the c_goldens runner extends. *)
+let cc_works =
+  lazy
+    (let _, _, status = Emo_test_support.run_cmd "cc --version" in
+     status = Unix.WEXITED 0)
+
+(* The emosh project: the shell the os surface was extended for, its
+   fixture scripts riding both targets byte for byte. Each fixture is
+   one shell script plus the stdout-merged-with-stderr it must speak
+   and the exit status it must leave with (the `.exit` file); the run
+   happens from the project's own directory, the scratch files a
+   fixture touches being its own to create and remove. *)
+let emosh_golden_tests =
+  [
+    tc "the emosh fixtures run byte-identically on the ocaml and c targets"
+      (fun () ->
+        if not (Lazy.force cc_works) then Alcotest.skip ();
+        use_workspace_registry () |> ignore;
+        let dir = from_original_cwd "../../projects/emo-shell" in
+        let emo_exe = emo_exe_path () in
+        let scratch = fresh_scratch () in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote scratch));
+        let ocaml_bin = Filename.concat scratch "emosh-ocaml" in
+        let c_bin = Filename.concat scratch "emosh-c" in
+        Sys.chdir dir;
+        let build target bin =
+          let out, _, status =
+            Emo_test_support.run_cmd
+              (Printf.sprintf "exec 2>&1; %s build main.emo --target %s -o %s"
+                 (Filename.quote emo_exe) target (Filename.quote bin))
+          in
+          match status with
+          | Unix.WEXITED 0 -> ()
+          | _ ->
+              Alcotest.fail
+                (Printf.sprintf "the %s build failed: %s" target out)
+        in
+        build "ocaml" ocaml_bin;
+        build "c" c_bin;
+        let names =
+          Array.to_list (Sys.readdir (Filename.concat dir "fixtures"))
+          |> List.filter (fun n -> Filename.check_suffix n ".esh")
+          |> List.sort compare
+        in
+        List.iter
+          (fun name ->
+            let stem = Filename.chop_suffix name ".esh" in
+            let expected =
+              Emo_project.read_file
+                (Filename.concat dir ("fixtures/" ^ stem ^ ".expected"))
+            in
+            let want_exit =
+              int_of_string
+                (String.trim
+                   (Emo_project.read_file
+                      (Filename.concat dir ("fixtures/" ^ stem ^ ".exit"))))
+            in
+            let fixture = Filename.concat dir ("fixtures/" ^ name) in
+            List.iter
+              (fun (tag, bin) ->
+                let out, _, status =
+                  Emo_test_support.run_cmd
+                    (Printf.sprintf "exec 2>&1; %s < %s" (Filename.quote bin)
+                       (Filename.quote fixture))
+                in
+                Alcotest.(check string) (tag ^ " output " ^ stem) expected out;
+                Alcotest.(check int)
+                  (tag ^ " exit " ^ stem)
+                  want_exit
+                  (match status with Unix.WEXITED n -> n | _ -> -1))
+              [ ("ocaml", ocaml_bin); ("c", c_bin) ])
+          names);
+  ]
+
 let stdlib_require_tests =
   [
     tc
@@ -4231,6 +4307,7 @@ let () =
       ("shop_golden", shop_golden_tests);
       ("compiled_sched", compiled_sched_tests);
       ("stdlib_http", stdlib_http_tests);
+      ("emosh_golden", emosh_golden_tests);
       ("stdlib_require", stdlib_require_tests);
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);

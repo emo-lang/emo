@@ -1291,6 +1291,69 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "os_dup2",
+          {
+            vtype =
+              FuncType
+                ( [ ("old_fd", Int64); ("new_fd", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_execvp",
+          {
+            vtype =
+              FuncType
+                ([ ("file", String); ("argv", ArrayType String) ], Unknown);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_isatty",
+          {
+            vtype = FuncType ([ ("fd", Int64) ], Bool);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_argv",
+          { vtype = FuncType ([], ArrayType String); is_var = false; depth = 0 }
+        );
+        ( "os_getenv",
+          {
+            vtype =
+              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_setenv",
+          {
+            vtype =
+              FuncType
+                ( [ ("name", String); ("value", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_unsetenv",
+          {
+            vtype =
+              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_signal_ignore",
+          {
+            vtype =
+              FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_signal_default",
+          {
+            vtype =
+              FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
       ];
     depth = 0;
     ret = None;

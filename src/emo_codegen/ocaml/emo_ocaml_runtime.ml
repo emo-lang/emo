@@ -797,6 +797,22 @@ module Emo_eval = struct
     | exception Sys_error message ->
         Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
 
+  (* The signal dispositions: the classic range rides ahead of the call
+     so an out-of-range number answers the same reason text on every
+     target (`os: signal_ignore 99: invalid signal`), not strerror's
+     whim. *)
+  let os_signal_mode what sig_no behavior : value =
+    if sig_no < 1L || sig_no > 31L then
+      Tuple
+        [
+          EnumMember ("R", "error");
+          String (Printf.sprintf "os: %s %Ld: invalid signal" what sig_no);
+        ]
+    else
+      os_result (fun () ->
+          Sys.set_signal (Int64.to_int sig_no) behavior;
+          Int64 0L)
+
   (* The rand package's answer shape, the reason under its own prefix. *)
   let rand_result (f : unit -> value) : value =
     match f () with
@@ -1615,6 +1631,106 @@ let pf_hash_float conv minus plus space width prec f =
     | "os_chdir", vs ->
         error "E3007"
           (Printf.sprintf "`os_chdir` expects (path String), got %d"
+             (List.length vs))
+    | "os_dup2", [ Int64 old_fd; Int64 new_fd ] ->
+        os_result
+          (fun () ->
+            Unix.dup2
+              (Obj.magic (Int64.to_int old_fd) : Unix.file_descr)
+              (Obj.magic (Int64.to_int new_fd) : Unix.file_descr);
+            Int64 0L)
+    | "os_dup2", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_dup2` expects (old_fd Int64, new_fd Int64), got %d"
+             (List.length vs))
+    | "os_execvp", [ String file; Array items ] ->
+        (* Success never returns — the process is replaced, the file
+           found through PATH. Failure is a data-driven value: the call
+           returns Void, and the fork child follows it with `_exit`. *)
+        (try
+           let argv =
+             Array.of_list (List.map to_string (Array.to_list items))
+           in
+           Unix.execvp file argv
+         with Unix.Unix_error _ -> Void)
+    | "os_execvp", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_execvp` expects (file String, argv Array String), got %d arguments"
+             (List.length vs))
+    | "os_isatty", [ Int64 fd ] ->
+        Bool (Unix.isatty (Obj.magic (Int64.to_int fd) : Unix.file_descr))
+    | "os_isatty", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_isatty` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_argv", [] -> Array (Array.map (fun s -> String s) Sys.argv)
+    | "os_argv", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_argv` expects no arguments, got %d"
+             (List.length vs))
+    | "os_getenv", [ String name ] -> (
+        (* The unset answer is written by hand, not ridden through
+           os_result: the reason names the miss (`is not set`), the same
+           text the c runtime prints for it. *)
+        match Sys.getenv_opt name with
+        | Some v -> Tuple [ EnumMember ("R", "ok"); String v ]
+        | None ->
+            Tuple
+              [
+                EnumMember ("R", "error");
+                String (Printf.sprintf "os: getenv %s: is not set" name);
+              ])
+    | "os_getenv", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_getenv` expects (name String), got %d"
+             (List.length vs))
+    | "os_setenv", [ String name; String value ] -> (
+        (* The reason names `setenv` — the call the c runtime makes —
+           not the OCaml putenv underneath. *)
+        try
+          Unix.putenv name value;
+          Tuple [ EnumMember ("R", "ok"); Int64 0L ]
+        with Unix.Unix_error (e, _, _) ->
+          Tuple
+            [
+              EnumMember ("R", "error");
+              String
+                (Printf.sprintf "os: setenv %s: %s" name
+                   (Unix.error_message e));
+            ])
+    | "os_setenv", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_setenv` expects (name String, value String), got %d"
+             (List.length vs))
+    | "os_unsetenv", [ String name ] -> (
+        try
+          Unix.unsetenv name;
+          Tuple [ EnumMember ("R", "ok"); Int64 0L ]
+        with Unix.Unix_error (e, _, _) ->
+          Tuple
+            [
+              EnumMember ("R", "error");
+              String
+                (Printf.sprintf "os: unsetenv %s: %s" name
+                   (Unix.error_message e));
+            ])
+    | "os_unsetenv", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_unsetenv` expects (name String), got %d"
+             (List.length vs))
+    | "os_signal_ignore", [ Int64 sig_no ] ->
+        os_signal_mode "signal_ignore" sig_no Sys.Signal_ignore
+    | "os_signal_ignore", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_signal_ignore` expects (sig Int64), got %d"
+             (List.length vs))
+    | "os_signal_default", [ Int64 sig_no ] ->
+        os_signal_mode "signal_default" sig_no Sys.Signal_default
+    | "os_signal_default", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_signal_default` expects (sig Int64), got %d"
              (List.length vs))
     | "net_connect_unix", args when List.length args <> 2 ->
         error "E3007"

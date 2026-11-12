@@ -1,0 +1,17 @@
+cd
+cd /tmp
+pwd
+export EMOSH_ENV=exported
+printenv EMOSH_ENV
+unset EMOSH_ENV
+printenv EMOSH_ENV
+echo env-status=$?
+cd /
+pwd
+cd /nonexistent-emosh-dir-63
+echo cd-status=$?
+echo truly-false
+false
+echo pre-exit=$?
+exit 5
+echo never

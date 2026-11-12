@@ -1,8 +1,9 @@
 # `os` 包
 
-标准库的进程级接口:进程 id、`fork`、`execv`、`waitpid`、管道、工作
-目录、目录列举,以及裸(非缓冲、基于 fd)文件 IO——系统程序在搭建
-一切之前需要的底层能力。与格式包不同,`os` 不是纯 Emo:它的调用分发
+标准库的进程级接口:进程 id、`fork`、`execv`、`execvp`、`waitpid`、
+管道、描述符接线、环境变量、信号、工作目录、目录列举,以及裸
+(非缓冲、基于 fd)文件 IO——系统程序在搭建一切之前需要的底层能力
+(shell 便是其一)。与格式包不同,`os` 不是纯 Emo:它的调用分发
 到以 POSIX 为底座的运行时实现,因此只声明宿主能承载这套接口的
 目标——`ocaml`、`c`,以及 `wasm`(fd、目录与工作目录半边;进程半边
 在那里改为调用时 raise 并点名能力)。给浏览器或字节码目标声明这个
@@ -22,8 +23,9 @@ require "os"
 `(R.error, reason)` 返回——reason 是 String,写明是哪个系统调用、
 为何失败——`os: open_write notes.txt: Permission denied`——没有
 错误码,没有 nil。不会失败的调用(`getpid`、`getppid`、`getcwd`、
-`wait_*` 状态解码器)就是普通函数,`waitpid` 的原始状态字同理;
-`execv` 失败时返回而不是抛出——那是 fork 子进程接 `_exit` 的暗号。
+`isatty`、`argv`、`wait_*` 状态解码器)就是普通函数,`waitpid` 的
+原始状态字同理;`execv` 与 `execvp` 失败时返回而不是抛出——那是
+fork 子进程接 `_exit` 的暗号。
 
 ## 进程
 
@@ -57,6 +59,62 @@ if os.wait_exited(w[1]) {
 ——fork 子进程随后接 `_exit`,因为在那里抛异常会把父进程的清理
 逻辑再跑一遍。`_exit(status)` 立即结束调用进程,不做任何展开——
 这是 fork 子进程的出口,保证子进程不会把父进程的清理逻辑再跑一遍。
+`execvp(file, argv)` 是同一种替换,只是多一步查找:`file` 沿 `PATH`
+环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用),
+失败约定与 execv 相同。
+
+## 描述符接线与终端
+
+```emo
+def dup2(old_fd Int64, new_fd Int64) (R, Int64)
+def isatty(fd Int64) Bool
+```
+
+`dup2` 把 `old_fd` 复制到 `new_fd` 上,若 `new_fd` 原本打开会先关掉
+——shell 靠它在 exec 之前把子进程的 stdin/stdout 指到管道端点或
+文件上。`isatty` 回答 `fd` 是否连接着终端——程序由此分辨交互会话
+与管道、脚本喂入的 stdin。两者都是朴素 POSIX,没有缓冲,没有意外。
+
+## 环境变量与参数
+
+```emo
+def argv() Array[String]
+def getenv(name String) (R, String)
+def setenv(name String, value String) (R, Int64)
+def unsetenv(name String) (R, Int64)
+```
+
+`argv()` 返回进程自己的参数向量,`argv[0]` 是进程启动时的名字——
+永不失败。`getenv` 返回变量的值;未设置与其他数据驱动的失败一样
+是值:`(R.error, "os: getenv HOME: is not set")`。`setenv` 设置或
+替换(POSIX 恒覆盖形式);fork 子进程经 exec 继承环境——shell 的
+`export` 正是这样传给它运行的命令的。
+
+## 信号
+
+```emo
+const sig_hup = 1
+const sig_int = 2
+const sig_quit = 3
+const sig_kill = 9
+const sig_pipe = 13
+const sig_term = 15
+
+def signal_ignore(sig Int64) (R, Int64)
+def signal_default(sig Int64) (R, Int64)
+```
+
+经典的 Unix 集合——`wait_*` 解码器回答的数字,也就是处置调用
+接受的数字。`signal_ignore` 把信号在本进程置为忽略;
+`signal_default` 恢复默认。越界号码返回 `(R.error, "os:
+signal_ignore 99: invalid signal")`——两个目标上文字相同,由构造
+保证。
+
+这是 shell 赖以为生的纪律:shell 自己的进程里忽略 `sig_int`(和
+`sig_quit`),fork 子进程在 exec 之前调 `signal_default` 撤销。
+*忽略*的处置会跨 exec 存活——所以子进程必须撤销——*handler* 的
+处置则不会;这一对就是全部技巧。shell 里忽略 `sig_pipe`,写进
+死管道就不会杀死解释器,外部命令仍保留自己的默认死法。
 
 ## 管道
 
@@ -125,6 +183,7 @@ main 普通 `return` 会把父进程的清理逻辑跑两遍。
 `["ocaml", "c", "wasm"]`。ocaml 目标把 os 调用建在宿主的 Unix 模块上;
 c 目标直接发射 POSIX 调用;wasm 目标把 fd、目录与工作目录半边降级为
 模块的 syscall,把进程半边降级为运行时 raise——`fork`、`execv`、
-`waitpid`、`pipe`、`getpid`、`getppid`、`_exit` 各自在被调用时点名
-能力(`os_fs_demo` 走 fd 与目录半边;含 fork 的 `os_demo` 仍是 c
+`execvp`、`waitpid`、`pipe`、`dup2`、`getpid`、`getppid`、`_exit`、
+`isatty`、`argv`、环境变量与信号处置各自在被调用时点名能力
+(`os_fs_demo` 走 fd 与目录半边;含 fork 的 `os_demo` 仍是 c
 golden)。typescript 与 beam 目标拒绝这个包。

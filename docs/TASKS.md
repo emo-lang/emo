@@ -49,6 +49,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M22 — File IO on `wasm` | 56 | The wasm target's host boundary grows the file-system syscalls and the canonical host rides the compiler: `file`, `os` (the fd/directory half — the process half refuses at the call naming the capability), and `bufio` resolve and answer byte-for-byte on `wasm`; `emo run --target wasm` runs an artifact under Node with the bundled host; `emo build --target wasm` still emits exactly `.wasm` + `.wat`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M23 — The httpd server | 57 | The server half of HTTP moves out of `http` into `httpd` as a pure-Emo HTTP/1.1 server over `net` — a request in, a `Response` value out, one process per connection, keep-alive, chunked request bodies, `100-continue`, pattern routing with 405+`Allow` and path-cleanup redirects, per-request timeouts and size limits, graceful shutdown — byte-identical on the three hosted targets it declares, the client package slimmed back, every existing golden green (`CHECK.md`). |
 | M24 — Macros | 58–61 | Compile-time macros as the one metaprogramming mechanism: the reserved `// #macro` / `// @name` directive namespace (unknown names refusing), the macro model — scalar parameters plus the trailing `Syntax` tree, checked before it runs, deterministic by construction (every effect and host-touching builtin refusing), erased after expansion, and the spliced code checked with the module — the quote surface and compile-time application arguments checked statically, derivation applied to classes (`Syntax.fields` / `with_methods`), and cross-module macros through the program's macro table with qualified applications and local shadowing — four pilots (`trace`, `memoize`, `derive_eq`, `derive_shared`) byte-identical across the interpreter and the c and TypeScript binaries, expansion riding before codegen so every target inherits by construction; runtime `eval`, open classes, and `method_missing` rejected permanently (`CHECK.md`). |
+| M25 — The postgres client | 62 | The standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried C shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none), `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE, contract violations raising); `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe; docs EN+zh, with the found-and-fixed `sqlite3` table row (`CHECK.md`). |
+| M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
 
 ## Design gates
 
@@ -3727,3 +3729,67 @@ the other targets at resolution; docs EN+zh; `dune runtest` green.
       a class's method names are in scope across sibling bodies
       (E4004); the tuple foreign return is unusable from a shim (the
       generated shape typedefs are per-program counter names).
+
+## M26 — The Emo shell
+
+### Step 63 — `emosh`, the shell in Emo
+
+**Prereq:** Step 56 (the `os` surface on every target it declares, the
+process half's run-time raise on wasm).
+**Done when:** `projects/emo-shell` builds on the ocaml and c targets
+and its fixture scripts — words and quoting, expansion, pipelines,
+redirections, connectors, the builtins, the error paths — run
+byte-identically on both with the pinned exit statuses; the `os`
+surface grows `dup2`/`execvp`/`isatty`/`argv` and the environment and
+signal halves with byte-identical reasons; docs EN+zh; `dune runtest`
+green.
+
+- [x] **T63.1** — The os plumbing four: `dup2`, `execvp`, `isatty`,
+      `argv` across the interpreter, the compiled ocaml runtime, the
+      c runtime (argv captured at main through `emo_args_set`), the
+      checker's table, and the wasm process-half raise — the generated
+      c main grows `int main(int argc, char **argv)`.
+- [x] **T63.2** — The os environment and signal halves:
+      `getenv` (unset the value `os: getenv NAME: is not set`),
+      `setenv`, `unsetenv`, `signal_ignore`/`signal_default` with the
+      classic range guard riding ahead of the call, and the signal
+      constants `sig_hup`…`sig_term`; the three example locks
+      re-resolved against the grown package; `docs/stdlib/os.md` + zh.
+- [x] **T63.3** — The skeleton: `projects/emo-shell` (manifest
+      `emo/emo-shell`, `targets = ["ocaml", "c"]`), the `Shell`
+      session (status, running, the raw-descriptor writers — every
+      byte through `os.write`, never a buffered stdout, so a fork
+      child's output survives `_exit` and interleaving stays
+      deterministic), the entry leaving through `_exit`.
+- [x] **T63.4** — The lexer and the expander: words as literal and
+      expandable parts (a bare run one part, so `$` reaches its name;
+      quotes resolved at lex time), the operators, the `#` comment,
+      the `&` refusal, unterminated quotes as values; `$var`/`${var}`
+      /`$?`/`$0`/the leading tilde, unset empty, no IFS re-splitting —
+      the honest contract the guide documents.
+- [x] **T63.5** — The parser: line → items (pipeline + connector),
+      strict about empty stages and dangling connectors, loose exactly
+      where the classic shells are (a trailing `;`, a redirection-only
+      command), errors as `(R.error, reason)` values — the shell has
+      no catch to survive.
+- [x] **T63.6** — The executor and the driver: the connector walk with
+      the carried status, pipelines forked per stage wired through
+      pipes and `dup2`, redirections opened onto the child, `execvp`
+      and the 127 refusal, signal death as 128+signal, the child
+      resetting `sig_int`/`sig_quit`/`sig_pipe` before its exec, the
+      interactive ignores (Ctrl-C discards the line, the shell
+      survives), the prompt, status 2 for a refused line.
+- [x] **T63.7** — The eight builtins: `cd` (bare → $HOME), `pwd`,
+      `echo` (verbatim, no flags), `exit` (the last status, the low
+      byte's fold, the numeric-argument refusal), `export`/`unset`
+      over the real environment, `true`/`false`.
+- [x] **T63.8** — The goldens: six fixture scripts with pinned output
+      and exit statuses, stderr merged into the one stream, run from
+      the project's own directory, byte-identical on the ocaml and c
+      targets in one Alcotest case (`emosh_golden`); the `projects`
+      tree riding the suite's dune deps.
+- [x] **T63.9** — Docs and tracking: `docs/emosh-guide.md` + zh (the
+      grammar, the builtins, the honest limits), the `os.md` surface
+      landed in T63.2, TASKS M26/Step 63 EN+zh,
+      `plan/step-63-emosh.md` + `plan/README.md`'s row, CHECK.md's
+      decision record, README's references line.
