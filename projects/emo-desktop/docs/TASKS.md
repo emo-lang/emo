@@ -21,6 +21,28 @@ tree's and EmoOS's, listed there.
 - [x] **D5** — The resolution baseline: 1024×768 XRGB8888, the
   carve sized to it. M14's D6 supersedes it.
 
+## Milestones
+
+| Milestone | Tasks | Exit criteria |
+| --- | --- | --- |
+| M7 — the screen | A7.1–A7.3 | The fb backend (`emo/ui_fb`) paints the box model onto a pixel surface in pure portable Emo — the first frame digests identically hosted and on the metal (the kernel half in EmoOS's tracker). |
+| M8 — glyphs & pointer | A8.1–A8.3 | The bitmap type renders text, the Elm loop runs on the machine, and the pointer moves its plane — text, loops, and pointer on one metal. |
+| M9 — windows | A9.1–A9.3 | The window shell: the window surface, kill-and-restart, and the window verb family — the desktop grows windows the walk paints into. |
+| M10 — the desktop | A10.1–A10.3 | The first apps (counter, files, editor) as corpus packages, the dock and desktop shell (`emo_desktop`), and the whole vocabulary folded into the convergence corpus. |
+| M11 — honest multi-app | A11.1–A11.2 | Apps become disk ELFs through the gate's exec, and two live in the arena at once — the double-mirror desktop. |
+| M12 — the desktop shell era | A12.1–A12.2 | The launcher's replay and the dual-mirror desktop: three apps exec'd, driven, and exited under the shell's own order. |
+| M14 — the HD desktop | A14.1–A14.5 | 1080p: chrome, window shading, software pointer, and the shell's surfaces rebuilt for the bigger mode — run.sh double-transport byte-identical. |
+| M15 — motion | A15.1–A15.2 | The first animation: the three apps' windows rise and sink through an eased eight-frame sequence, per-window damage composing under the D12 beat. |
+| M16 — the window's own menu | A16.1–A16.5 | The one-button menu (Maximize/Minimize/Quit) and title-bar dragging through press-at/move-at, with the interaction depth the cells grew to hold. |
+| M17 — the type at any size | A17.1–A17.4 | The scalable Inter and JetBrains Mono strikes: outlines, the rasterizer, and the ink swap — the type renders at any pixel size, byte-pinned. |
+| M18 — the Wayland gate | A18.1–A18.12 | The pure-Emo `wayland` client package on `c`: the wire codec, fd passage (sendmsg/recvmsg and the shm tier), and the first frame riding headless sway. |
+| M19 — the seat: input on the gate | A19.1–A19.5 | The wl_seat/wl_pointer/wl_keyboard tables plus the virtual devices: injected keys decode through the demo's tables against a canned-stream golden. |
+| M20 — the face rides Wayland | A20.1–A20.6 | The corpus application live on a real compositor: `LiveEye` presents through the shm tier, `LiveInput` translates, the smoke leg grades end to end. |
+| M21 — the dock clicks | A21.1–A21.4 | The pointer's click path (tracked coordinates, rect table, first containing rect wins) and the desktop face (wallpaper, header, dock) painted per frame. |
+| M22 — the tree takes the pointer | A22.1–A22.4 | The rect table is the ui tree's own export (`Rects`/`paint_rects`): the launched app's tree paints in-frame and a click on its "+" drives the app's own update. |
+| M23 — the keymap decodes | A23.1–A23.3 | `parse_keymap` reads the compositor's compiled xkb keymap (keycodes and symbols, both spellings, brace-bounded) and keys deliver by keysym name — the evdev rows retired, evdev+8 recorded. |
+| M24 — the apps become windows | A24.1–A24.4 | A launch stands the app up as a second toplevel (its own pool, buffer, configure); `LiveInput` answers `Ev`s naming their surface and the seat's focus routes keys to the focused window's app. |
+
 ## M7 — the screen (the desktop side)
 
 - [x] **A7.1** — The fb backend's hosted core: measure, place, clip,
