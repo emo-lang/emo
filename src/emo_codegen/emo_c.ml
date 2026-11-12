@@ -578,8 +578,9 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
    to the runtime's fenced TLS bodies, and the CLI defines EMO_HAS_TLS
    — with the TLS libraries — only when the reachability walk at the
    top of `emit` says the program genuinely reaches one of them. The
-   net surface beyond this tier — unix sockets, UDP, DNS — compiles
-   and fails at runtime, honestly. *)
+   Unix-socket tier (the wayland package's road, A18.6) rides beside
+   TCP; the net surface beyond that — UDP, DNS — compiles and fails
+   at runtime, honestly. *)
 and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
     (args : Emo_ir.expr list) : string =
   let arg n (ty : Emo_check.t) =
@@ -599,6 +600,29 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "net_connect" ->
       Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
+  (* ---- the Unix-socket tier: the wayland package's road. The same
+     boxed-fd shape as TCP, the address family the only news. ---- *)
+  | "net_listen_unix" ->
+      Printf.sprintf "emo_net_listen_unix(%s)" (arg 0 Emo_check.String)
+  | "net_connect_unix" ->
+      Printf.sprintf "emo_net_connect_unix(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Float64)
+  (* ---- the fd passage and the shm tier (A18.7): the wire's fds out
+     of band, the pool's create/size/paint. ---- *)
+  | "net_sendmsg_fd" ->
+      Printf.sprintf "emo_net_sendmsg_fd(%s, %s, %s)" (arg 0 Emo_check.TcpConn)
+        (arg 1 Emo_check.String) (arg 2 Emo_check.Int64)
+  | "net_recvmsg_fd" ->
+      Printf.sprintf "emo_net_recvmsg_fd(%s, %s)" (arg 0 Emo_check.TcpConn)
+        (arg 1 Emo_check.Int64)
+  | "os_shm_open" ->
+      Printf.sprintf "emo_os_shm_open(%s)" (arg 0 Emo_check.String)
+  | "os_ftruncate" ->
+      Printf.sprintf "emo_os_ftruncate(%s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.Int64)
+  | "os_pwrite" ->
+      Printf.sprintf "emo_os_pwrite(%s, %s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.String) (arg 2 Emo_check.Int64)
   (* ---- TLS (step 51): the gate arms. One C body serves both client
      names — the insecure variant is the whole path with verification
      off — and the runtime's `EMO_HAS_TLS` fence carries the real
@@ -633,6 +657,7 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_getenv" -> Printf.sprintf "emo_os_getenv(%s)" (arg 0 Emo_check.String)
   | "os_getppid" ->
       let v = Printf.sprintf "emo_os_getppid()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v

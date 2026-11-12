@@ -57,6 +57,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`sqlite3`](#sqlite3-包) | SQLite:预备语句、逐行步进 | `c` |
 | [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
+| [`wayland`](#wayland-包) | Wayland 客户端协议:编解码器、核心与 xdg-shell 接口表、shm | `c` |
 | [`wasm`](wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
@@ -938,6 +939,19 @@ Shift-Tab 与 Alt+按键背后的序列。raw mode 下 Ctrl-C 是按键事件,�
 考:[`docs/zh-CN/stdlib/term.md`](stdlib/term.md) · 示例:
 `examples/term_demo`。
 
+## wayland 包
+
+纯 Emo 的 Wayland 客户端协议,骑在 `net` 的 Unix 套接字上:线格式
+编解码器、接口表(核心、`wl_shm`、`xdg-shell`,opcode 写在调用点)、
+状态机——handshake、"先 configure 后 commit"的纪律——都是包自己的。
+一条连接、一根套接字、直接风格;fd 参数走带外队列,在流内不占字。
+Emo 程序落在真实 compositor(headless sway,smoke 腿)上的第一帧,
+走的就是这个包。
+
+Targets: `c`。
+参考:[docs/zh-CN/stdlib/wayland.md](stdlib/wayland.md) · 示例:
+`examples/wayland_wire`、`examples/wayland_handshake`、
+`examples/wayland_paint`(smoke 腿:`devtools/wayland-smoke.sh`)。
 ## wasm 包
 
 用 Emo 写的 WebAssembly 运行时——解码器、验证器、解释器,正如 wazero 是用 Go 写的运行时。验收线是官方 spec 套件,而且已经到达:每条二进制 `assert_malformed` 与 `assert_invalid` 都在正确的阶段被拒绝,供应商化运行语料的每条 `assert_return` 都逐位精确。

@@ -862,6 +862,15 @@ let c_goldens =
     "httpd_parse";
     "httpd_serve";
     "httpd_wire";
+    (* wayland_wire: the wire codec against hand-computed fixtures —
+       the requests built and hexed, the decode-back, the globals'
+       book walked and found; the fd's placeholder word without a
+       socket (A18.5). wayland_handshake: the socket's own golden —
+       a real Unix socket, the mock compositor one spawned process,
+       four requests byte-exact, the pool fd over SCM_RIGHTS with
+       its bytes read at the far end (A18.8). *)
+    "wayland_wire";
+    "wayland_handshake";
     "json_demo";
     "yaml_demo";
     "xml_demo";

@@ -3,9 +3,12 @@
    (open_memstream, struct timeval, suseconds_t) unless one of these
    is set. macOS gates the same surface — and the ucontext fibers —
    behind _XOPEN_SOURCE; 700 is the level that declares
-   open_memstream. */
+   open_memstream. _DARWIN_C_SOURCE rides beside it: without it macOS
+   hides the CMSG_* macros (the fd passage's ancillary data) from a
+   strict-ANSI translation unit. */
 #if defined(__APPLE__)
 #define _XOPEN_SOURCE 700
+#define _DARWIN_C_SOURCE
 #else
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -21,7 +24,9 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <dirent.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -3175,6 +3180,229 @@ emo_value emo_net_connect(emo_str host, int64_t port, double timeout) {
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
+/* ---- the Unix-socket tier (the wayland package's road) ----
+
+   The same boxed-fd shape as TCP: the listener and the connection
+   are plain fds, the cooperative parking (wait readable/writable)
+   and the read/write/close tier work unchanged. Only the address
+   family is new. */
+
+static int emo_net_listen_unix_fd(emo_str path, char *why, size_t whyn) {
+  char *p = emo_cstr_owned(path);
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sun_family = AF_UNIX;
+  if (strlen(p) >= sizeof addr.sun_path) {
+    snprintf(why, whyn, "socket path too long: %s", p);
+    free(p);
+    return -1;
+  }
+  strncpy(addr.sun_path, p, sizeof addr.sun_path - 1);
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) {
+    snprintf(why, whyn, "socket failed: %s", strerror(errno));
+    free(p);
+    return -1;
+  }
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+  int berr = 0;
+  if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+    berr = errno;
+    /* A name already bound: a stale socket file is this listener's
+       to replace — a socket, checked, never a regular file someone
+       else owns. Anything else stays a refusal. */
+    struct stat st;
+    if (berr == EADDRINUSE && stat(p, &st) == 0 && S_ISSOCK(st.st_mode) &&
+        unlink(p) == 0 && bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0) {
+      /* replaced */
+    } else {
+      snprintf(why, whyn, "cannot bind %s: %s", p, strerror(berr));
+      close(fd);
+      free(p);
+      return -1;
+    }
+  }
+  if (listen(fd, 16) < 0) {
+    snprintf(why, whyn, "cannot listen on %s: %s", p, strerror(errno));
+    close(fd);
+    free(p);
+    return -1;
+  }
+  free(p);
+  emo_net_nonblock(fd);
+  return fd;
+}
+
+emo_value emo_net_listen_unix(emo_str path) {
+  char why[512];
+  int fd = emo_net_listen_unix_fd(path, why, sizeof why);
+  if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  return emo_os_pair("ok", emo_box_i64(fd));
+}
+
+emo_value emo_net_connect_unix(emo_str path, double timeout) {
+  char why[512];
+  char *p = emo_cstr_owned(path);
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sun_family = AF_UNIX;
+  if (strlen(p) >= sizeof addr.sun_path) {
+    snprintf(why, sizeof why, "socket path too long: %s", p);
+    free(p);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+  strncpy(addr.sun_path, p, sizeof addr.sun_path - 1);
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) {
+    snprintf(why, sizeof why, "socket failed: %s", strerror(errno));
+    free(p);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+    if (errno == ECONNREFUSED || errno == ENOENT)
+      snprintf(why, sizeof why, "no listener at %s", p);
+    else
+      snprintf(why, sizeof why, "cannot connect to %s: %s", p,
+               strerror(errno));
+    close(fd);
+    free(p);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+  free(p);
+  emo_net_set_timeout(fd, timeout);
+  emo_net_nonblock(fd);
+  return emo_os_pair("ok", emo_box_i64(fd));
+}
+
+/* ---- the fd passage and the shm tier (the wayland package's road,
+   A18.7) ----
+
+   The wire's fd arguments ride the socket out of band: sendmsg with
+   SCM_RIGHTS out, recvmsg with the ancillary data back in. One fd a
+   call — the protocols this package speaks carry exactly one — and
+   the receiver answers (R, data, fd) with −1 when the read carried
+   no name. The shm trio (open, size, write-at) is the pool's whole
+   client-side life: create, size, paint — no mmap at the Emo
+   surface, the bytes go through pwrite and the compositor reads
+   them there. */
+
+emo_value emo_net_sendmsg_fd(int64_t fd, emo_str data, int64_t fd_to_pass) {
+  char why[512];
+  struct msghdr msg;
+  struct iovec iov;
+  union {
+    struct cmsghdr align;
+    unsigned char buf[CMSG_SPACE(sizeof(int))];
+  } control;
+  memset(&msg, 0, sizeof msg);
+  iov.iov_base = (void *)data.bytes;
+  iov.iov_len = (size_t)data.len;
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  msg.msg_control = control.buf;
+  msg.msg_controllen = sizeof control.buf;
+  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = SOL_SOCKET;
+  cmsg->cmsg_type = SCM_RIGHTS;
+  cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+  *(int *)CMSG_DATA(cmsg) = (int)fd_to_pass;
+  msg.msg_controllen = CMSG_SPACE(sizeof(int));
+  for (;;) {
+    ssize_t put = sendmsg((int)fd, &msg, 0);
+    if (put >= 0) return emo_os_ok(emo_box_i64((int64_t)put));
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      emo_net_wait_writable(fd);
+      continue;
+    }
+    snprintf(why, sizeof why, "sendmsg failed: %s", strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+}
+
+emo_value emo_net_recvmsg_fd(int64_t fd, int64_t cap) {
+  char why[512];
+  if (cap <= 0) return emo_os_fail("recvmsg", "capacity");
+  char *data_buf = malloc((size_t)cap);
+  if (data_buf == NULL) abort();
+  struct msghdr msg;
+  struct iovec iov;
+  union {
+    struct cmsghdr align;
+    unsigned char buf[CMSG_SPACE(sizeof(int))];
+  } control;
+  memset(&msg, 0, sizeof msg);
+  iov.iov_base = data_buf;
+  iov.iov_len = (size_t)cap;
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  msg.msg_control = control.buf;
+  msg.msg_controllen = sizeof control.buf;
+  int flags = 0;
+#ifdef MSG_CMSG_CLOEXEC
+  flags = MSG_CMSG_CLOEXEC;
+#endif
+  for (;;) {
+    ssize_t got = recvmsg((int)fd, &msg, flags);
+    if (got >= 0) {
+      int passed = -1;
+      for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != NULL;
+           c = CMSG_NXTHDR(&msg, c)) {
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS &&
+            c->cmsg_len >= CMSG_LEN(sizeof(int))) {
+          memcpy(&passed, CMSG_DATA(c), sizeof(int));
+          break;
+        }
+      }
+      emo_value elems[3];
+      elems[0] = emo_enum_new("R", "ok");
+      elems[1] = emo_box_str((emo_str){(int64_t)got, data_buf});
+      elems[2] = emo_box_i64((int64_t)passed);
+      free(data_buf);
+      return emo_tuple_new(3, elems);
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      emo_net_wait_readable(fd);
+      continue;
+    }
+    snprintf(why, sizeof why, "recvmsg failed: %s", strerror(errno));
+    free(data_buf);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+}
+
+emo_value emo_os_shm_open(emo_str name) {
+  /* The pool fd: a private regular file at `path`, unlinked at
+     birth — seekable and mappable on both platforms, the shape the
+     wl_shm pool accepts. POSIX shm_open was the first road and is
+     not the portable one: macOS's shm objects refuse read and pwrite
+     outright (mmap-only), while the client paints through pwrite and
+     the compositor mmaps. The name's whole life is this call: a
+     second open of it refuses instead of silently sharing. */
+  char *p = emo_cstr_owned(name);
+  int fd = open(p, O_CREAT | O_EXCL | O_RDWR, 0600);
+  if (fd < 0) return emo_os_fail("shm_open", p);
+  unlink(p);
+  return emo_os_ok(emo_box_i64(fd));
+}
+
+emo_value emo_os_ftruncate(int64_t fd, int64_t size) {
+  if (ftruncate((int)fd, (off_t)size) != 0) return emo_os_fail("ftruncate", "");
+  return emo_os_ok(emo_box_i64(0));
+}
+
+emo_value emo_os_pwrite(int64_t fd, emo_str data, int64_t offset) {
+  int64_t put_total = 0;
+  while (put_total < data.len) {
+    ssize_t put =
+        pwrite((int)fd, data.bytes + put_total, (size_t)(data.len - put_total),
+               (off_t)(offset + put_total));
+    if (put <= 0) return emo_os_fail("pwrite", "");
+    put_total += put;
+  }
+  return emo_os_ok(emo_box_i64(put_total));
+}
+
 int64_t emo_net_set_timeout(int64_t fd, double seconds) {
   struct timeval tv = {
       (time_t)seconds,
@@ -4202,6 +4430,13 @@ double emo_f64_trunc(double x) { return trunc(x); }
 /* ---- the os module: synchronous POSIX syscalls ---- */
 
 int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
+
+emo_value emo_os_getenv(emo_str name) {
+  char *p = emo_cstr_owned(name);
+  const char *v = getenv(p);
+  if (v == NULL) return emo_os_fail("getenv", p);
+  return emo_os_ok(emo_box_str(emo_str_from_cstr(v)));
+}
 
 int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
 

@@ -1,0 +1,123 @@
+// The wayland package's wire golden: the codec against hand-computed
+// fixtures, no socket. The requests a client's first seconds are
+// made of — the registry, the sync, the bind, the pool's fd — built,
+// hexed, and decoded back; the globals' book the handshake fills,
+// walked and found. The mock compositor rides beside this one
+// (examples/wayland_handshake) once the c runtime's Unix-socket tier
+// lands; next_event's framing belongs to that golden.
+
+require "wayland"
+require "crypto"
+
+def hexed(data Bytes) String {
+  return crypto.hex_encode(data)
+}
+
+def show(label String, m wayland.Message) {
+  case m.finish() {
+    (bytes, has_fd, fd) -> {
+      println(label + " " + hexed(bytes))
+      if has_fd {
+        println(label + " carries fd " + fd.to_string())
+      }
+    }
+  }
+}
+
+def slice(src Bytes, off Int64, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, src.get(off + i))
+    i = i + 1
+  }
+  return out
+}
+
+def main() {
+  const reg = wayland.Message.new(1, 1)
+  reg.u32(2)
+  show("get_registry", reg)
+
+  const sync = wayland.Message.new(1, 0)
+  sync.u32(3)
+  show("sync", sync)
+
+  const bind = wayland.Message.new(2, 0)
+  bind.u32(1)
+  bind.text("wl_compositor")
+  bind.u32(5)
+  bind.u32(3)
+  show("bind", bind)
+  case bind.finish() {
+    (bytes, has_fd, fd) -> {
+      const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
+      const name = args.u32()
+      const iface = args.text()
+      const version = args.u32()
+      const new_id = args.u32()
+      println("decode bind " + name.to_string() + " " + iface + " " + version.to_string() + " " + new_id.to_string())
+    }
+  }
+
+  const pool = wayland.Message.new(4, 0)
+  pool.fd(7)
+  pool.u32(4096)
+  show("create_pool", pool)
+  // the fd's own proof: the stream carries one word fewer than a
+  // three-argument message would
+  case pool.finish() {
+    (bytes, has_fd, fd) -> {
+      const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
+      println("create_pool size " + args.u32().to_string() + " carried " + has_fd.to_string() + " " + fd.to_string())
+    }
+  }
+
+  const fx = wayland.Message.new(8, 2)
+  fx.fixed(0 - 1)
+  case fx.finish() {
+    (bytes, has_fd, fd) -> {
+      const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
+      println("fixed -1 " + hexed(slice(bytes, 8, bytes.length() - 8)) + " back " + args.fixed().to_string())
+    }
+  }
+
+  const empty = wayland.Message.new(9, 0)
+  empty.text("")
+  case empty.finish() {
+    (bytes, has_fd, fd) -> {
+      println("empty text " + hexed(slice(bytes, 8, bytes.length() - 8)))
+    }
+  }
+
+  const g = wayland.Globals.new()
+  g.add(1, "wl_compositor", 5)
+  g.add(2, "wl_shm", 1)
+  g.add(3, "xdg_wm_base", 1)
+  println("globals " + g.length().to_string())
+  var i = 0
+  while i < g.length() {
+    case g.at(i) {
+      (name, iface, version) -> {
+        println("global " + i.to_string() + " " + iface + " " + version.to_string())
+      }
+    }
+    i = i + 1
+  }
+  case g.find("wl_shm") {
+    (R.error, why) -> { println("find wl_shm missed " + why) }
+    (R.ok, found) -> {
+      case found {
+        (name, version) -> {
+          println("find wl_shm " + name.to_string() + " " + version.to_string())
+        }
+      }
+    }
+  }
+  case g.find("wl_foo") {
+    (R.error, why) -> { println("find wl_foo " + why) }
+    (R.ok, found) -> { println("find wl_foo impossible") }
+  }
+}
+
+main()

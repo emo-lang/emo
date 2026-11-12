@@ -998,6 +998,51 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        (* The fd passage and the shm tier (A18.7): the c target's
+           runtime only — the interpreter refuses them at runtime. *)
+        ( "net_sendmsg_fd",
+          {
+            vtype =
+              FuncType
+                ( [ ("conn", TcpConn); ("data", String); ("fd", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_recvmsg_fd",
+          {
+            vtype =
+              FuncType
+                ( [ ("conn", TcpConn); ("cap", Int64) ],
+                  TupleType [ EnumType "R"; String; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_shm_open",
+          {
+            vtype =
+              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_ftruncate",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("size", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_pwrite",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("data", String); ("offset", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+          } );
         ( "net_tls_connect",
           {
             vtype =
@@ -1164,6 +1209,13 @@ let empty_env =
           } );
         ( "os_getpid",
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "os_getenv",
+          {
+            vtype =
+              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_getppid",
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
         ( "os_fork",
@@ -3709,25 +3761,30 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
   | Ast.Tuple_pattern ps -> (
       match scrutinee_t with
       | TupleType ts ->
-          if List.length ps <> List.length ts then
-            report ctx p.Ast.pattern_span "E4013"
-              (Printf.sprintf "a %d-element tuple pattern cannot match %s"
-                 (List.length ps) (to_string scrutinee_t));
           (* The convention's reading rule: `(R.error, why)` binds the
-             reason as the String it is, whatever the ok slot's type —
+             reason as the String it is, whatever the ok side's shape —
              the slot only types the ok side (`CHECK.md`, error
-             handling). *)
+             handling). A result of three slots and more (`(R, data,
+             fd)`, the fd passage's shape) keeps the rule: the two
+             patterns read the two values a refusal carries, the ok
+             side's extra slots staying theirs. *)
           let slot_types =
             match (ps, ts) with
             | ( [ { Ast.pattern_desc = Ast.Enum_member ("R", "error"); _ }; _ ],
-                [ EnumType "R"; t2 ] ) ->
+                EnumType "R" :: _ ) ->
                 [ EnumType "R"; String ]
             | _ -> ts
           in
+          if List.length ps <> List.length slot_types then
+            report ctx p.Ast.pattern_span "E4013"
+              (Printf.sprintf "a %d-element tuple pattern cannot match %s"
+                 (List.length ps) (to_string scrutinee_t));
           let env =
-            List.fold_left2
-              (fun env pat t -> check_pattern ctx env span t pat)
-              env ps slot_types
+            if List.length ps = List.length slot_types then
+              List.fold_left2
+                (fun env pat t -> check_pattern ctx env span t pat)
+                env ps slot_types
+            else env
           in
           env
       | Unknown ->

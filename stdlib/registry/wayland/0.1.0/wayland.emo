@@ -1,0 +1,911 @@
+// The Wayland client package: the Wayland wire protocol in pure Emo
+// over the net surface's Unix socket. A program connects to the
+// compositor's socket, binds the globals it names, shares pixels
+// through wl_shm, and answers the events the compositor sends — the
+// same gate this project's own kernel draws, met from the client's
+// side of it. Everything above the socket is this package's own Emo:
+// the message codec, the interface tables for the protocols a client
+// speaks (the core, wl_shm, xdg-shell), and the small state machine
+// (object ids, the registry's globals, the fd queue) they ride.
+//
+// The error split is the standard library's: the wire's surprises are
+// expected data, and a def answers them as (R.error, reason) — a
+// short frame, an unknown opcode on a protocol the package speaks, a
+// display error event. Reasons begin `wayland:`. A programmer's
+// mistake (an interface id the codec never assigned, a bind before
+// the handshake) raises.
+//
+// The fd rule, stated once: an fd argument occupies one placeholder
+// word in the message's argument stream, and the real fd rides the
+// socket out of band (SCM_RIGHTS), in the order the placeholders
+// appear. The codec owns the placeholder; the send primitive owns
+// the passage. The package never maps memory — pixels go into a
+// pool through pwrite, and the compositor reads them there.
+//
+// The wire is little-endian by the protocol's own definition (the
+// grammar fixes the layout; every platform that speaks it today is
+// little-endian). Strings on this target are byte strings, and the
+// codec's inputs and outputs are bytes wearing a String — the byte
+// safety httpd_wire proved, reused.
+
+// The one connection a program opens: the socket's reading end, the
+// codec's counters, and the registry's seat. The display object is
+// the wire's own id 1; the ids this client allocates start at 2.
+class Conn {
+  def init(side Side, next_id Int64, display_id Int64) {
+    self.side = side
+    self.next_id = Box.new(next_id)
+    self.display_id = display_id
+    self.registry_id = Box.new(0 - 1)
+  }
+
+  // The next object id this client allocates.
+  def alloc() Int64 {
+    const id = self.next_id.read()
+    self.next_id.replace(id + 1)
+    return id
+  }
+
+  // One message out on the socket: plain write for the ordinary
+  // frames, the sendmsg tier when an fd rides — the placeholder word
+  // never travels alone.
+  def send(m Message) (R, Conn) {
+    case m.finish() {
+      (bytes, has_fd, fd) -> {
+        if has_fd {
+          case net_sendmsg_fd(self.side.conn, bytes.to_string(), fd) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> { return (R.ok, self) }
+          }
+        }
+        case self.side.conn.write(bytes.to_string()) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> { return (R.ok, self) }
+        }
+      }
+    }
+  }
+}
+
+// The connection to the compositor: the socket at `path`, spoken to
+// in direct style. The c target's Unix-socket tier carries it.
+def connect(path String, timeout Float64) (R, Conn) {
+  const got = net_connect_unix(path, timeout)
+  case got {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, c) -> { return (R.ok, Conn.new(Side.new(c), 2, 1)) }
+  }
+}
+
+// The connection wrapped around a socket already open — the shape a
+// test double or a proxy starts from.
+def conn_of(conn TcpConn) Conn {
+  return Conn.new(Side.new(conn), 2, 1)
+}
+
+// ---- the wire's write half ----
+
+def hex_line(data Bytes) String {
+  const digits = "0123456789abcdef".to_bytes()
+  const out = Bytes.new(data.length() * 2)
+  var i = 0
+  while i < data.length() {
+    out.set(i * 2, digits.get(data.get(i) >> 4))
+    out.set(i * 2 + 1, digits.get(data.get(i) & 0xF))
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+// The pad to the wire's 4-byte argument alignment: the count of
+// filler bytes after an argument of n bytes (0 when n is a multiple
+// of 4).
+def pad4(n Int64) Int64 {
+  return (4 - (n % 4)) % 4
+}
+
+// One little-endian half word.
+def put_u16(dst Bytes, off Int64, v Int64) Int64 {
+  dst.set(off, v & 0xFF)
+  dst.set(off + 1, (v >> 8) & 0xFF)
+  return off + 2
+}
+
+// One little-endian word.
+def put_u32(dst Bytes, off Int64, v Int64) Int64 {
+  dst.set(off, v & 0xFF)
+  dst.set(off + 1, (v >> 8) & 0xFF)
+  dst.set(off + 2, (v >> 16) & 0xFF)
+  dst.set(off + 3, (v >> 24) & 0xFF)
+  return off + 4
+}
+
+// A message under construction. The header goes down first and its
+// size word is patched when the message finishes; arguments append
+// through the typed defs below. The builder is strict about the
+// wire's own rules — a value outside its word, a size past the u16,
+// a second fd — raises, because each of those is a human mistake the
+// wire would answer with garbage.
+//
+// One fd per message: the protocols this package speaks (the pool's
+// creation, the keymap's arrival) carry exactly one, and the shape
+// says so instead of a queue nobody fills. A protocol needing two
+// grows the shape then.
+class Message {
+  def init(oid Int64, opcode Int64) {
+    self.data = Box.new(Bytes.new(64))
+    self.cap = Box.new(64)
+    self.len = Box.new(8)
+    self.fd_val = Box.new(0 - 1)
+    put_u32(self.data.read(), 0, oid)
+    put_u16(self.data.read(), 4, opcode)
+  }
+
+  // The room for `extra` more bytes, growing the buffer when it
+  // must. Answers the offset to write at.
+  def ensure(extra Int64) Int64 {
+    const need = self.len.read() + extra
+    if need > self.cap.read() {
+      var cap = self.cap.read() * 2
+      while cap < need {
+        cap = cap * 2
+      }
+      const grown = Bytes.new(cap)
+      var i = 0
+      while i < self.len.read() {
+        grown.set(i, self.data.read().get(i))
+        i = i + 1
+      }
+      self.data.replace(grown)
+      self.cap.replace(cap)
+    }
+    return self.len.read()
+  }
+
+  // Marks the offset after appending, the one line every encoding
+  // def ends with.
+  def seal(off Int64, n Int64) Int64 {
+    self.len.replace(off + n)
+    return off + n
+  }
+
+  def u32(v Int64) Int64 {
+    if v < 0 || v > 4294967295 {
+      raise Exception.new(message: "wayland: u32 out of range: ${v}")
+    }
+    const at = self.ensure(4)
+    put_u32(self.data.read(), at, v)
+    return self.seal(at, 4)
+  }
+
+  def i32(v Int64) Int64 {
+    if v < 0 - 2147483648 || v > 2147483647 {
+      raise Exception.new(message: "wayland: i32 out of range: ${v}")
+    }
+    const at = self.ensure(4)
+    put_u32(self.data.read(), at, v)
+    return self.seal(at, 4)
+  }
+
+  // The wire's 24.8 fixed point: the signed integer value times 256.
+  def fixed(v Int64) Int64 {
+    if v < 0 - 8388608 || v > 8388607 {
+      raise Exception.new(message: "wayland: fixed out of range: ${v}")
+    }
+    return self.i32(v * 256)
+  }
+
+  // A string: its byte count including the terminator, the bytes,
+  // the terminator, and the pad — the empty string is one word, NUL
+  // and filler.
+  def text(s String) Int64 {
+    const body = s.to_bytes()
+    const blen = body.length()
+    const at = self.ensure(4 + blen + 1 + pad4(blen + 1))
+    var off = put_u32(self.data.read(), at, blen + 1)
+    var i = 0
+    while i < blen {
+      self.data.read().set(off, body.get(i))
+      off = off + 1
+      i = i + 1
+    }
+    self.data.read().set(off, 0)
+    off = off + 1
+    const total = self.seal(at, 4 + blen + 1 + pad4(blen + 1))
+    var p = pad4(blen + 1)
+    while p > 0 {
+      self.data.read().set(off, 0)
+      off = off + 1
+      p = p - 1
+    }
+    return total
+  }
+
+  // An array of raw bytes: the count, the bytes, and the pad.
+  def array(b Bytes) Int64 {
+    const blen = b.length()
+    const at = self.ensure(4 + blen + pad4(blen))
+    var off = put_u32(self.data.read(), at, blen)
+    var i = 0
+    while i < blen {
+      self.data.read().set(off, b.get(i))
+      off = off + 1
+      i = i + 1
+    }
+    var p = pad4(blen)
+    while p > 0 {
+      self.data.read().set(off, 0)
+      off = off + 1
+      p = p - 1
+    }
+    return self.seal(at, 4 + blen + pad4(blen))
+  }
+
+  // An fd argument: the fd rides the socket out of band (the
+  // ancillary queue) and takes NO word in the argument stream — the
+  // sway leg graded this literally: with a placeholder word, the
+  // compositor read it as the next argument's value. One fd per
+  // message.
+  def fd(f Int64) Int64 {
+    if self.fd_val.read() != 0 - 1 {
+      raise Exception.new(message: "wayland: message already carries an fd")
+    }
+    self.fd_val.replace(f)
+    return self.len.read()
+  }
+
+  // The message whole: the size word patched, the bytes handed over
+  // with the fd beside them. The wire's own ceiling — the u16 size —
+  // is checked here, where the mistake is caught.
+  def finish() (Bytes, Bool, Int64) {
+    const total = self.len.read()
+    if total % 4 != 0 {
+      raise Exception.new(message: "wayland: message size ${total} is not a multiple of four")
+    }
+    if total > 65535 {
+      raise Exception.new(message: "wayland: message size ${total} exceeds the wire's u16")
+    }
+    put_u16(self.data.read(), 6, total)
+    const out = Bytes.new(total)
+    var i = 0
+    while i < total {
+      out.set(i, self.data.read().get(i))
+      i = i + 1
+    }
+    const carried = self.fd_val.read()
+    if carried == 0 - 1 {
+      return (out, false, 0)
+    }
+    return (out, true, carried)
+  }
+}
+
+// ---- the wire's read half ----
+
+// One little-endian half word back.
+def get_u16(src Bytes, off Int64) Int64 {
+  return src.get(off) | (src.get(off + 1) << 8)
+}
+
+// One little-endian word back. The bytes cannot assemble past the
+// u32 ceiling, so the answer is never negative.
+def get_u32(src Bytes, off Int64) Int64 {
+  return src.get(off) | (src.get(off + 1) << 8) | (src.get(off + 2) << 16) | (src.get(off + 3) << 24)
+}
+
+// One end of the wire: the bytes the peer sent, buffered whole, and
+// the fds that rode beside them. Every read goes through recvmsg —
+// the fd's ancillary data rides any read, and a read that dropped it
+// would be the silent kind of loss — so the framing belongs to this
+// class, and the client and the mock compositor share it.
+class Side {
+  def init(conn TcpConn) {
+    self.conn = conn
+    self.buf = Box.new(Bytes.new(0))
+    self.rcur = Box.new(0)
+    self.fds = List.new([])
+  }
+
+  def buffered() Int64 {
+    return self.buf.read().length() - self.rcur.read()
+  }
+
+  // One recvmsg: the bytes appended, the consumed prefix dropped,
+  // any fd that rode them queued for the grammar to claim.
+  def recv_more() (R, Int64) {
+    case net_recvmsg_fd(self.conn, 4096) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, data, fd) -> {
+        const got = data.to_bytes()
+          if fd >= 0 {
+          self.fds.push_back(fd)
+        }
+        if got.length() == 0 {
+          return (R.error, "wayland: the peer closed the socket")
+        }
+        const old = self.buf.read()
+        const cut = self.rcur.read()
+        const live = old.length() - cut
+        const grown = Bytes.new(live + got.length())
+        var i = 0
+        while i < live {
+          grown.set(i, old.get(cut + i))
+          i = i + 1
+        }
+        var j = 0
+        while j < got.length() {
+          grown.set(live + j, got.get(j))
+          j = j + 1
+        }
+        self.buf.replace(grown)
+        self.rcur.replace(0)
+        return (R.ok, got.length())
+      }
+    }
+  }
+
+  // The framing floor: at least n bytes buffered, recvmsg until they
+  // are. The peer's close is the error it is, mid-frame or not.
+  def need(n Int64) (R, Int64) {
+    while self.buffered() < n {
+      case self.recv_more() {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _) -> { }
+      }
+    }
+    return (R.ok, self.buffered())
+  }
+
+  // Consume n buffered bytes.
+  def take(n Int64) Bytes {
+    const out = Bytes.new(n)
+    var i = 0
+    while i < n {
+      out.set(i, self.buf.read().get(self.rcur.read() + i))
+      i = i + 1
+    }
+    self.rcur.replace(self.rcur.read() + n)
+    return out
+  }
+
+}
+
+// One event off the wire: who it names (the object id), what it says
+// (the interface's opcode), and its arguments whole.
+//
+// The transport's truths answer (R.error, reason): a short read, a
+// peer gone mid-frame, a size word smaller than the header. A frame
+// that lies about its own argument lengths is protocol corruption —
+// the accessors raise on it, loudly, because a silent shift by four
+// bytes is the one failure a wire must never dress up.
+class Event {
+  def init(side Side, oid Int64, opcode Int64, body Bytes) {
+    self.oid = oid
+    self.opcode = opcode
+    self.body = body
+    self.args = Args.new(body, side.fds)
+  }
+}
+
+// Reads one frame off the wire: the header, then exactly the bytes
+// its size word names.
+def next_event(side Side) (R, Event) {
+  case side.need(8) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> {
+      const hb = side.take(8)
+      const size = get_u16(hb, 6)
+      if size < 8 {
+        return (R.error, "wayland: frame size " + size.to_string() + " is smaller than the header")
+      }
+      if size % 4 != 0 {
+        return (R.error, "wayland: frame size " + size.to_string() + " is not a multiple of four")
+      }
+      case side.need(size - 8) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _) -> {
+          const oid = get_u32(hb, 0)
+          const opcode = get_u16(hb, 4)
+          return (R.ok, Event.new(side, oid, opcode, side.take(size - 8)))
+        }
+      }
+    }
+  }
+}
+
+// The arguments of one frame, taken in the order the interface's
+// grammar names them. Each take answers the value and moves the
+// cursor; nothing rewinds. The fd queue arrives shared — the Side's
+// own deque, so frames decoded later see fds received later.
+class Args {
+  def init(data Bytes, fds List) {
+    self.data = data
+    self.at = Box.new(0)
+    self.fds = fds
+  }
+
+  // The room check every take opens with: the wire's word must be
+  // inside the frame it arrived in.
+  def room(n Int64) {
+    if self.at.read() + n > self.data.length() {
+      raise Exception.new(message: "wayland: frame shorter than its arguments (need " + n.to_string() + " at " + self.at.read().to_string() + ", have " + self.data.length().to_string() + ")")
+    }
+  }
+
+  def u32() Int64 {
+    self.room(4)
+    const v = get_u32(self.data, self.at.read())
+    self.at.replace(self.at.read() + 4)
+    return v
+  }
+
+  def i32() Int64 {
+    const v = self.u32()
+    if v >= 2147483648 {
+      return v - 4294967296
+    }
+    return v
+  }
+
+  // The 24.8 fixed point back to its integer value.
+  def fixed() Int64 {
+    return self.i32() / 256
+  }
+
+  def text() String {
+    const n = self.u32()
+    if n < 1 {
+      raise Exception.new(message: "wayland: text length " + n.to_string() + " has no room for its terminator")
+    }
+    self.room(n)
+    var out = Bytes.new(n - 1)
+    var i = 0
+    while i < n - 1 {
+      out.set(i, self.data.get(self.at.read() + i))
+      i = i + 1
+    }
+    if self.data.get(self.at.read() + n - 1) != 0 {
+      raise Exception.new(message: "wayland: text argument is not NUL-terminated")
+    }
+    self.at.replace(self.at.read() + n + pad4(n))
+    return out.to_string()
+  }
+
+  def array() Bytes {
+    const n = self.u32()
+    self.room(n)
+    var out = Bytes.new(n)
+    var i = 0
+    while i < n {
+      out.set(i, self.data.get(self.at.read() + i))
+      i = i + 1
+    }
+    self.at.replace(self.at.read() + n + pad4(n))
+    return out
+  }
+
+  // The fd the frame carried, claimed from the queue in grammar
+  // order — the stream carries no word for it (the sway leg graded
+  // this literally). A frame claiming an fd with the queue empty is
+  // the corruption it is.
+  def fd() Int64 {
+    if self.fds.length() == 0 {
+      raise Exception.new(message: "wayland: the frame names an fd and none arrived")
+    }
+    return self.fds.pop_front()
+  }
+}
+
+// ---- the core tables ----
+//
+// The three objects every client speaks, their requests and events
+// with the wire's opcode numbers stated where they are used:
+//
+//   wl_display (the wire's own object id 1)
+//     requests: sync(new_id) is 0, get_registry(new_id) is 1
+//     events:   error(object_id, message) is 0, delete_id(id) is 1
+//   wl_registry
+//     requests: bind(name, interface, version, new_id) is 0
+//     events:   global(name, interface, version) is 0,
+//               global_remove(name) is 1
+//   wl_callback
+//     events:   done(callback_data) is 0
+
+// The registry's globals as the handshake collected them: one entry
+// per advertisement, the interface's name the lookup key.
+class Globals {
+  def init() {
+    self.items = List.new([])
+  }
+
+  def add(name Int64, iface String, version Int64) {
+    self.items.push_back((name, iface, version))
+  }
+
+  def length() Int64 {
+    return self.items.length()
+  }
+
+  // The i-th global, the deque walked to it and walked back — the
+  // reading leaves the registry as it found it.
+  def at(i Int64) (Int64, String, Int64) {
+    const n = self.items.length()
+    if i < 0 || i >= n {
+      raise Exception.new(message: "wayland: globals index " + i.to_string() + " of " + n.to_string())
+    }
+    var j = 0
+    while j < i {
+      self.items.push_back(self.items.pop_front())
+      j = j + 1
+    }
+    const item = global_entry(self.items.pop_front())
+    self.items.push_back(item)
+    var k = n - 1 - i
+    while k > 0 {
+      self.items.push_back(self.items.pop_front())
+      k = k - 1
+    }
+    return item
+  }
+
+  // The global an interface names: (name, version) — (R.error,
+  // reason) when the compositor advertised none. The walk that finds
+  // it early walks the rest of the way home before answering.
+  def find(iface String) (R, (Int64, Int64)) {
+    const n = self.items.length()
+    var j = 0
+    while j < n {
+      const item = global_entry(self.items.pop_front())
+      self.items.push_back(item)
+      case item {
+        (name, advertised, version) -> {
+          if advertised == iface {
+            var k = n - 1 - j
+            while k > 0 {
+              self.items.push_back(self.items.pop_front())
+              k = k - 1
+            }
+            return (R.ok, (name, version))
+          }
+        }
+      }
+      j = j + 1
+    }
+    return (R.error, "wayland: no global named " + iface)
+  }
+}
+
+// The gradual wall's own pin: a global rides the deque as Unknown
+// until this def's signature holds it (the bufio chunk precedent).
+def global_entry(item (Int64, String, Int64)) (Int64, String, Int64) {
+  return item
+}
+
+// wl_display.sync: the round trip every client makes, the callback
+// it allocates handed back for the done event to answer.
+def display_sync(c Conn) (R, Int64) {
+  const cb = c.alloc()
+  const m = Message.new(c.display_id, 0)
+  m.u32(cb)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, cb) }
+  }
+}
+
+// wl_display.get_registry: the registry object allocated, its seat
+// remembered on the connection for the binds that follow.
+def display_get_registry(c Conn) (R, Int64) {
+  const reg = c.alloc()
+  const m = Message.new(c.display_id, 1)
+  m.u32(reg)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> {
+      c.registry_id.replace(reg)
+      return (R.ok, reg)
+    }
+  }
+}
+
+// wl_registry.bind: the global named by its advertisement, spoken at
+// the version the caller picked — a version above what the registry
+// advertised is the compositor's error event, and surfaces as one.
+// The bound object's id is allocated here and handed back.
+def registry_bind(c Conn, name Int64, iface String, version Int64) (R, Int64) {
+  const rid = c.registry_id.read()
+  if rid == 0 - 1 {
+    return (R.error, "wayland: bind before get_registry")
+  }
+  const new_id = c.alloc()
+  const m = Message.new(rid, 0)
+  m.u32(name)
+  m.text(iface)
+  m.u32(version)
+  m.u32(new_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, new_id) }
+  }
+}
+
+// The handshake's engine, one frame at a time: globals collected as
+// they are advertised, the callback's done the ending. A display
+// error event is the handshake's failure with its message carried
+// through; a delete_id is the display retiring an id the handshake
+// never held, and is answered by moving on; anything else during
+// the handshake is refused by name.
+def collect_more(c Conn, callback_id Int64, found Globals) (R, Globals) {
+  case next_event(c.side) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ev) -> {
+      if ev.oid == c.display_id && ev.opcode == 0 {
+        const obj = ev.args.u32()
+        const message = ev.args.text()
+        return (R.error, "wayland: display error on object " + obj.to_string() + ": " + message)
+      }
+      if ev.oid == c.display_id && ev.opcode == 1 {
+        return collect_more(c, callback_id, found)
+      }
+      if ev.oid == c.registry_id.read() && ev.opcode == 0 {
+        const name = ev.args.u32()
+        const iface = ev.args.text()
+        const version = ev.args.u32()
+        found.add(name, iface, version)
+        return collect_more(c, callback_id, found)
+      }
+      if ev.oid == callback_id && ev.opcode == 0 {
+        return (R.ok, found)
+      }
+      return (R.error, "wayland: unexpected event on object " + ev.oid.to_string() + " opcode " + ev.opcode.to_string() + " during the handshake")
+    }
+  }
+}
+
+// The whole handshake: registry out, sync pinned, every global
+// collected until the callback closes the exchange.
+def handshake(c Conn) (R, Globals) {
+  case display_get_registry(c) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> {
+      case display_sync(c) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, cb) -> { return collect_more(c, cb, Globals.new()) }
+      }
+    }
+  }
+}
+
+// ---- the wl_compositor and wl_surface tables ----
+//
+//   wl_compositor
+//     requests: create_surface(id) is 0, create_region(id) is 1
+//   wl_surface (the destroy at 0 shifts everything the C tile
+//     numbers one up — the smoke leg's first grade)
+//     requests: destroy is 0, attach(buffer, x, y) is 1,
+//               damage(x, y, w, h) is 2, frame(id) is 3,
+//               set_opaque_region is 4, set_input_region is 5,
+//               commit is 6, set_buffer_transform is 7,
+//               set_buffer_scale is 8, damage_buffer is 9,
+//               offset is 10
+//     events:   enter is 0, leave is 1
+
+// wl_compositor.create_surface: the drawing surface, the root of
+// every window's tree.
+def compositor_create_surface(c Conn, compositor_id Int64) (R, Int64) {
+  const surface_id = c.alloc()
+  const m = Message.new(compositor_id, 0)
+  m.u32(surface_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, surface_id) }
+  }
+}
+
+// wl_surface.attach: a buffer on the surface, at the offset.
+def surface_attach(c Conn, surface_id Int64, buffer_id Int64, x Int64, y Int64) (R, Conn) {
+  const m = Message.new(surface_id, 1)
+  m.u32(buffer_id)
+  m.i32(x)
+  m.i32(y)
+  return c.send(m)
+}
+
+// wl_surface.damage: the rectangle the next commit repaints — the
+// whole surface, phrased in the protocol's own extremes.
+def surface_damage(c Conn, surface_id Int64, x Int64, y Int64, w Int64, h Int64) (R, Conn) {
+  const m = Message.new(surface_id, 2)
+  m.i32(x)
+  m.i32(y)
+  m.i32(w)
+  m.i32(h)
+  return c.send(m)
+}
+
+// wl_surface.commit: the surface's state becomes visible. The
+// protocol's hinge — nothing shows before it.
+def surface_commit(c Conn, surface_id Int64) (R, Conn) {
+  const m = Message.new(surface_id, 6)
+  return c.send(m)
+}
+
+// ---- the wl_shm tables ----
+//
+//   wl_shm
+//     requests: create_pool(id, fd, size) is 0
+//     events:   format(format) is 0
+//   wl_shm_pool
+//     requests: create_buffer(id, offset, width, height, stride,
+//               format) is 0
+//   wl_buffer
+//     requests: destroy is 0
+//     events:   release is 0
+//
+// The formats the client paints: ARGB8888 is 0 (premultiplied
+// alpha), XRGB8888 is 1 — the wire's own numbers.
+
+def shm_format_argb8888() Int64 {
+  return 0
+}
+
+def shm_format_xrgb8888() Int64 {
+  return 1
+}
+
+// wl_shm.create_pool: the pool object's id allocated here, the fd
+// riding the message out of band, the size the pool's whole life.
+def shm_create_pool(c Conn, shm_id Int64, fd Int64, size Int64) (R, Int64) {
+  const pool_id = c.alloc()
+  const m = Message.new(shm_id, 0)
+  m.u32(pool_id)
+  m.fd(fd)
+  m.u32(size)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, pool_id) }
+  }
+}
+
+// wl_shm_pool.create_buffer: one rectangle of the pool — the
+// offset, the pixel shape, the stride (the bytes a row occupies),
+// the format the pixels wear.
+def pool_create_buffer(c Conn, pool_id Int64, offset Int64, width Int64, height Int64, stride Int64, format Int64) (R, Int64) {
+  const buffer_id = c.alloc()
+  const m = Message.new(pool_id, 0)
+  m.u32(buffer_id)
+  m.i32(offset)
+  m.i32(width)
+  m.i32(height)
+  m.i32(stride)
+  m.u32(format)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, buffer_id) }
+  }
+}
+
+// ---- the xdg-shell tables ----
+//
+//   xdg_wm_base
+//     requests: destroy is 0, create_positioner(id) is 1,
+//               get_xdg_surface(id, surface) is 2, pong(serial) is 3
+//     events:   ping(serial) is 0
+//   xdg_surface
+//     requests: destroy is 0, get_toplevel(id) is 1, get_popup is 2,
+//               set_window_geometry is 3, ack_configure(serial) is 4
+//     events:   configure(serial) is 0
+//   xdg_toplevel
+//     requests: destroy is 0, set_parent is 1, set_title is 2,
+//               set_app_id is 3, show_window_menu is 4, move is 5,
+//               resize is 6, set_max_size is 7, set_min_size is 8,
+//               set_maximized is 9, unset_maximized is 10,
+//               set_fullscreen is 11, unset_fullscreen is 12,
+//               set_minimized is 13
+//     events:   configure(width, height, states) is 0, close is 1,
+//               configure_bounds(bounds) is 2,
+//               wm_capabilities(capabilities) is 3
+
+// xdg_wm_base.get_xdg_surface: the role hung on the wl_surface.
+def wm_base_get_xdg_surface(c Conn, wm_base_id Int64, surface_id Int64) (R, Int64) {
+  const xdg_surface_id = c.alloc()
+  const m = Message.new(wm_base_id, 2)
+  m.u32(xdg_surface_id)
+  m.u32(surface_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, xdg_surface_id) }
+  }
+}
+
+// xdg_surface.get_toplevel: the window itself.
+def xdg_surface_get_toplevel(c Conn, xdg_surface_id Int64) (R, Int64) {
+  const toplevel_id = c.alloc()
+  const m = Message.new(xdg_surface_id, 1)
+  m.u32(toplevel_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, toplevel_id) }
+  }
+}
+
+// xdg_toplevel.set_title: the window's name in the compositor's
+// chrome.
+def toplevel_set_title(c Conn, toplevel_id Int64, title String) (R, Conn) {
+  const m = Message.new(toplevel_id, 2)
+  m.text(title)
+  return c.send(m)
+}
+
+// xdg_surface.ack_configure: the serial the configure named, answered
+// before the commit that honours it — the protocol's own discipline,
+// structurally required by this def's place in the sequence.
+def surface_ack_configure(c Conn, xdg_surface_id Int64, serial Int64) (R, Conn) {
+  const m = Message.new(xdg_surface_id, 4)
+  m.u32(serial)
+  return c.send(m)
+}
+
+// xdg_wm_base.pong: the ping's answer, the liveness the
+// compositor's heartbeat asks for.
+def wm_base_pong(c Conn, wm_base_id Int64, serial Int64) (R, Conn) {
+  const m = Message.new(wm_base_id, 3)
+  m.u32(serial)
+  return c.send(m)
+}
+
+// The configure wait — the state machine's heart. Events consumed
+// until the xdg_surface's configure names its serial: the toplevel's
+// own configures (the size, the bounds, the capabilities) read and
+// set aside, the wm_base's ping answered with the pong, the shm's
+// format adverts and the surface's enter/leave the background noise
+// a bind invites, the display's error the failure it is, a delete_id
+// the retirement of an id this client no longer holds. The serial
+// handed back is the ack's and the commit's license.
+def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, shm_id Int64, surface_id Int64) (R, Int64) {
+  case next_event(c.side) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ev) -> {
+      if ev.oid == c.display_id && ev.opcode == 0 {
+        const obj = ev.args.u32()
+        const message = ev.args.text()
+        return (R.error, "wayland: display error on object " + obj.to_string() + ": " + message)
+      }
+      if ev.oid == wm_base_id && ev.opcode == 0 {
+        const serial = ev.args.u32()
+        case wm_base_pong(c, wm_base_id, serial) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> { return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id) }
+        }
+      }
+      if ev.oid == xdg_surface_id && ev.opcode == 0 {
+        return (R.ok, ev.args.u32())
+      }
+      if ev.oid == toplevel_id && (ev.opcode == 0 || ev.opcode == 2 || ev.opcode == 3) {
+        if ev.opcode == 0 {
+          ev.args.i32()
+          ev.args.i32()
+          ev.args.array()
+        } else {
+          ev.args.array()
+        }
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+      }
+      if ev.oid == shm_id && ev.opcode == 0 {
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+      }
+      if ev.oid == surface_id && (ev.opcode == 0 || ev.opcode == 1) {
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+      }
+      if ev.oid == c.display_id && ev.opcode == 1 {
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+      }
+      if ev.oid == c.registry_id.read() && ev.opcode == 1 {
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+      }
+      return (R.error, "wayland: unexpected event on object " + ev.oid.to_string() + " opcode " + ev.opcode.to_string() + " while waiting for configure")
+    }
+  }
+}

@@ -452,6 +452,23 @@ emo_value emo_net_write(int64_t fd, emo_str data);
 emo_value emo_net_close(int64_t fd); /* (R.ok, fd) */
 int64_t emo_net_set_timeout(int64_t fd, double seconds); /* returns fd */
 
+/* Unix-domain sockets (the wayland package's road): the same
+   boxed-fd shape, the same cooperative parking, one address family
+   different. */
+emo_value emo_net_listen_unix(emo_str path);
+emo_value emo_net_connect_unix(emo_str path, double timeout);
+
+/* The fd passage and the shm tier (A18.7): one fd a call, the
+   receiver answering (R, data, fd) with −1 when the read carried no
+   name; the pool's client-side life is create, size, write-at —
+   os_shm_open takes a path and answers an unlinked, seekable,
+   mappable fd. */
+emo_value emo_net_sendmsg_fd(int64_t fd, emo_str data, int64_t fd_to_pass);
+emo_value emo_net_recvmsg_fd(int64_t fd, int64_t cap);
+emo_value emo_os_shm_open(emo_str name);
+emo_value emo_os_ftruncate(int64_t fd, int64_t size);
+emo_value emo_os_pwrite(int64_t fd, emo_str data, int64_t offset);
+
 /* The scheduler hooks: park the current fiber until its fd is
    readable (the reads), or writable (the TLS handshake's
    WANT_WRITE). */
@@ -501,6 +518,7 @@ emo_value emo_make_exception_data(emo_value message, emo_value data);
 
 /* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
 int64_t emo_os_getpid(void);
+emo_value emo_os_getenv(emo_str name);
 int64_t emo_os_getppid(void);
 emo_value emo_os_fork(void);
 int64_t emo_os_waitpid(int64_t pid);

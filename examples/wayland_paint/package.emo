@@ -1,0 +1,11 @@
+package {
+  name = "emo/wayland_paint"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "wayland" = "0.1.0"
+    "net" = "0.1.0"
+    "os" = "0.1.0"
+  }
+}

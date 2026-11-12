@@ -86,6 +86,7 @@ The packages:
 | [`sqlite3`](#the-sqlite3-package) | SQLite: prepared statements, stepped rows | `c` |
 | [`postgres`](#the-postgres-package) | PostgreSQL client over libpq: `$1` params, value errors | `c` |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
+| [`wayland`](#the-wayland-package) | the Wayland client protocol: codec, core and xdg-shell tables, shm | `c` |
 | [`wasm`](#the-wasm-package) | a WebAssembly runtime in Emo: decode, validate, execute, host imports | `ocaml`, `c` |
 
 "all five" names the hosted targets those packages declare — `c`,
@@ -1327,6 +1328,22 @@ refuses (E3009), so `emo run` cannot execute a program that touches the
 package; build it with `emo build`. Reference:
 [`docs/stdlib/term.md`](stdlib/term.md) · Demo: `examples/term_demo`.
 
+## The `wayland` package
+
+The Wayland client protocol in pure Emo over `net`'s Unix socket: the
+wire codec, the interface tables (the core, `wl_shm`, `xdg-shell`)
+with the opcodes stated at their call sites, and the state machine —
+the handshake, the configure-before-commit discipline — the package's
+own. One connection, one socket, direct style; the fd argument rides
+the ancillary queue and takes no word in the stream. The first frame
+an Emo program put on a real compositor (headless sway, the smoke
+leg) went through this package.
+
+Targets: `c`.
+Reference: [docs/stdlib/wayland.md](stdlib/wayland.md) · Demos:
+`examples/wayland_wire`, `examples/wayland_handshake`,
+`examples/wayland_paint` (the smoke leg:
+`devtools/wayland-smoke.sh`).
 ## The `wasm` package
 
 A WebAssembly runtime written in Emo — decoder, validator, and
