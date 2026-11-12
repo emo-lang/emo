@@ -236,7 +236,7 @@ def window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64, globals way
                     (R.error, why) -> { println("paint: first commit " + why) }
                     (R.ok, _) -> {
                       println("paint: first commit sent")
-                      case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id) {
+                      case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read()) {
                         (R.error, why) -> { println("paint: configure " + why) }
                         (R.ok, serial) -> {
                           println("paint: configure serial " + serial.to_string())

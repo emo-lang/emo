@@ -31,6 +31,13 @@ class Canvas {
     return self.height
   }
 
+  // The canvas's own words: the frame the moment it is stored, in
+  // the present bridge's hands — XRGB8888 bytes, little-endian, the
+  // wl_shm format's own layout (emo-desktop M20).
+  def bytes() Bytes {
+    return self.data
+  }
+
   // The word at a pixel; 0 for anything off the surface, the contract
   // every `Surface` keeps so a reader never has to clip.
   def at(x Int64, y Int64) Int64 {

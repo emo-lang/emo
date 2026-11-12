@@ -1642,3 +1642,63 @@ follow-up, not this milestone's debt.
   — the input section landed in both languages (the limitation line
   shrank to keysyms alone), and the CHECK.md bullet carries the
   three grades sway handed down. M19 closed: the window now listens.
+
+## M20 — the face rides Wayland (方案 2, opened 2026-11-12)
+
+M18 opened the gate, M19 wired the seat — the face is the cargo. The
+fb backend's hosted shape needs exactly two bridges to a real
+compositor, both points the Elm loop already draws: a `Surface` whose
+`present()` pushes the canvas's bytes through the shm tier into the
+window (`pwrite` + attach + damage + commit — the canvas's XRGB8888
+words are wl_shm XRGB8888 bytes verbatim), and an `Input` whose
+`next()` blocks on Wayland events and translates them into the tags
+`deliver` speaks (keys through an evdev-to-ASCII table with the shift
+state tracked, clicks through a rect table hit-tested at the
+pointer's last position). The demo is `ui_corpus`'s own application —
+the counter, the form, the whole vocabulary — live on a real
+compositor, driven by the injected keyboard. The packages ride the
+staged-registry pattern the fb gate drew (the emo-ui core, the fb
+packages, and the stdlib's wayland/net/os in one content-named
+directory).
+
+- [x] **A20.1** — The canvas's own bytes: `ui_fb_canvas.Canvas` grows
+  `bytes()` — the hosted canvas's data is the frame the moment it is
+  stored, and the present bridge reads exactly those words. The demo
+  package `projects/emo-desktop/wayland/` with its staged-registry
+  check script (the fb gate's pattern, plus the stdlib's
+  wayland/net/os). **Accept:** the demo resolves and type-checks
+  through the staged registry.
+
+- [x] **A20.2** — The window bridge: `wayland_live.emo`'s
+  `window_open` — the full M18/M19 dance (handshake, the seat grants
+  gated on capabilities, surface, xdg surface, toplevel, the pool
+  sized stride×height, the buffer in wl_shm XRGB8888, first frame)
+  answering a handle the present bridge drives. **Accept:** under
+  headless sway the window maps and the pattern lands.
+
+- [x] **A20.3** — The bridges: `LiveEye` (a `ui_fb.Surface` over the
+  canvas whose `present()` pushes the bytes and presents) and
+  `LiveInput` (an `ui_fb.Input` whose `next()` consumes Wayland
+  events — keyboard keys through the evdev table with the shift
+  state, pointer button with the position the motion events keep —
+  into the caller's tag and rect maps). **Accept:** the corpus demo
+  driven by injected keys shows the state transitions the script
+  once faked.
+
+- [x] **A20.4** — The demo: `ui_corpus`'s application live —
+  keyboard `i`/`d`/Enter mapped to its tags (inc, dec, submit), one
+  frame digest per present in the transcript. **Accept:** under
+  headless sway the injected keys change the model the way the
+  script's tags did, and the digests agree with the corpus's
+  sequence.
+
+- [x] **A20.5** — The smoke leg grades it: headless sway, the
+  virtual keyboard injects `i`, `i`, `d`, Enter, the transcript's
+  digests and state lines are asserted, and the capture shows the
+  frame the last present left. **Accept:** the leg exits 0 with the
+  state lines present.
+
+- [x] **A20.6** — The docs and the ledger: the ride section in
+  `docs/stdlib/wayland.md` and its zh mirror (or the project's own
+  README), the CHECK.md entry, the TASKS ticks. **Accept:** both
+  languages land; the ledger states what the ride taught.

@@ -12,6 +12,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
       build-essential \
       sway \
       grim \
+      xkb-data \
  && apt-get clean \
  && useradd -m smoke
 

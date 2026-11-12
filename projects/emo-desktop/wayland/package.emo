@@ -1,0 +1,16 @@
+package {
+  name = "emo/wayland_face"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_fb" = "0.1.0"
+    "emo/ui_fb_canvas" = "0.1.0"
+    "emo/ui_fb_frame" = "0.1.0"
+    "emo/ui_corpus" = "0.1.0"
+    "net" = "0.1.0"
+    "os" = "0.1.0"
+    "wayland" = "0.1.0"
+  }
+}

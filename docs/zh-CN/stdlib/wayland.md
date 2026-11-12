@@ -106,12 +106,25 @@ keycode 以裸值抵达(evdev 编号);经 keymap 解出 keysym 是点名的
   的 Unix 模块没有 sendmsg)是点名的后续。
 - **一条消息一个 fd。** 本包要说的协议恰好都只带一个;哪天某个协议
   要两个,再长这个形状。
-- **keysym 还没来。** keycode 以裸值抵达;经 keymap 解码是点名的
-  后续。
+- **keysym 还没来。** keycode 以裸值抵达,桥经 evdev 表翻译(键盘
+  的行与 shift 状态);经 keymap 本体解码是点名的后续。
 - **手写表。** opcode 活在调用点,由 compositor 打分;运行时不解析
   XML。
 
-示例:`examples/wayland_wire`(编解码器对手算 fixture)、
+## 驭之:活窗口
+
+活应用需要的桥很小,而且骑在 Elm 循环自己的缝上:一个 `Surface`,其
+`present()` 把画布字节经 `os_pwrite` 推进 pool,attach、整幅
+damage、commit(画布的 XRGB8888 字就是 wl_shm 的字节原样);一个
+`Input`,其 `next()` 阻塞在 Wayland 事件上,把应用说的 tag 递出去
+——按键经 evdev 表翻译(shift 状态读自 modifiers 事件,其第一个参数
+是 serial,depressed 在第二),点击经矩形表在指针位置上命中。fb
+后端的示例让收敛语料自己的应用活在一个真实 compositor 上:注入的
+按键、真实的重绘、转录里每一帧的 digest
+(`projects/emo-desktop/wayland/`,smoke 腿
+`devtools/wayland-face-smoke.sh`)。
+
+## 局限(编解码器对手算 fixture)、
 `examples/wayland_handshake`(真 Unix 套接字上的 mock compositor,
 逐字节)、`examples/wayland_paint`(第一帧——由
 `devtools/wayland-smoke.sh` 驱动:Docker 腿编译 demo 的 C,在
