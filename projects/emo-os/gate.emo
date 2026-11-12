@@ -228,6 +228,14 @@ const route_win_parent = -1020
 const route_win_frame = -1021
 const route_win_minimize = -1022
 const route_win_desk_open = -1023
+// The notification family's routes (emo-desktop M25, EmoOS Step 11):
+// verb 27 raise, verb 28 take — the verb the slot-0 op (the input
+// service's own habit), the slot riding above it at thirty-two, the
+// filesystem's habit at sixteen. The shim's decode names the shape:
+// ops past 26 whose low five bits past twenty-seven are 0 or 1 are
+// the notification service's, the rest the compositor's.
+const route_notify_raise = -1027
+const route_notify_take = -1028
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -420,6 +428,89 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     fs.stash_push((op << 32) | peek64(handoff_caller))
   }
   return -(1000 + op)
+}
+
+// The notification verbs (emo-desktop M25, EmoOS Step 11): the
+// filesystem's own shape — every pointer argument inside one writable
+// segment of the caller's, the byte bounds checked here, a slot free,
+// the bytes copied into the slot inside this trap, the route carrying
+// the slot's index above the op. Verb 27 raise(title, tlen, body,
+// blen): the title one to sixty-four bytes, the body zero to one
+// hundred ninety-two, the answer the service's id. Verb 28 take(buf,
+// cap): the capacity at least the reply's head — a capacity under an
+// entry's packed size is the service's to refuse without consuming —
+// and the caller's space word staged, the answer's bytes land in the
+// caller's own table's memory. A request during the gap between an
+// instance's death and the next one's parking goes into the stash the
+// next instance serves first, the caller parking without a post.
+def notify_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  if n == 27 {
+    if r1 < 1 || r1 > notify.notify_title_max {
+      return -reason_argument
+    }
+    if r3 < 0 || r3 > notify.notify_body_max {
+      return -reason_argument
+    }
+    var vt = check_write(r0, r1)
+    if vt != 0 {
+      return -vt
+    }
+    if r3 > 0 {
+      var vb = check_write(r2, r3)
+      if vb != 0 {
+        return -vb
+      }
+    }
+    var k = notify_slot_pick()
+    if k < 0 {
+      return -reason_resource
+    }
+    var s = notify.notify_slots + k * notify.notify_slot_size
+    poke64(s, peek64(handoff_caller))
+    poke64(s + 8, r1)
+    poke64(s + 16, r3)
+    copy_to(s + 64, r0, r1)
+    if r3 > 0 {
+      copy_to(s + 128, r2, r3)
+    }
+    var op = n + 32 * k
+    if peek64(notify.notify_svc_cell) == 0 {
+      notify.notify_stash_push((op << 32) | peek64(handoff_caller))
+    }
+    return -(1000 + op)
+  }
+  if r1 < 24 {
+    return -reason_argument
+  }
+  var vb = check_write(r0, r1)
+  if vb != 0 {
+    return -vb
+  }
+  var k = notify_slot_pick()
+  if k < 0 {
+    return -reason_resource
+  }
+  var s = notify.notify_slots + k * notify.notify_slot_size
+  poke64(s, peek64(handoff_caller))
+  poke64(s + 24, r0)
+  poke64(s + 32, r1)
+  poke64(s + 40, peek64(caller_space_cell))
+  var op = n + 32 * k
+  if peek64(notify.notify_svc_cell) == 0 {
+    notify.notify_stash_push((op << 32) | peek64(handoff_caller))
+  }
+  return -(1000 + op)
+}
+
+def notify_slot_pick() Int64 {
+  var k = 0
+  while k < notify.notify_slot_count {
+    if peek64(notify.notify_slots + k * notify.notify_slot_size) == 0 {
+      return k
+    }
+    k = k + 1
+  }
+  return -1
 }
 
 // The dispatch: the gate answers what needs no service, routes what
@@ -838,6 +929,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     var dseat = comp_slots + (dslot * comp_slot_bytes)
     poke64(dseat, r0)
     return route_win_desk_open - (32 * dslot)
+  }
+  if n == 27 || n == 28 {
+    return notify_dispatch(n, r0, r1, r2, r3)
   }
   if n == 4 {
     var me = peek64(handoff_caller)

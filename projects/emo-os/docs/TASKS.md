@@ -870,3 +870,28 @@ completion.
   (+3264..+3359; the first cut of the twelve ran +440..+536 and would
   have written the frame callbacks' parks over). Two fresh golden
   rounds green, the sums unchanged.
+
+## Step 11 — the notification service's kernel side (M25, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-12. The desktop's half is emo-desktop M25, whose
+tracker records the milestone's decisions (D16); the reasoning is
+CHECK.md's (2026-11-12). The milestone's row joins the table above at
+its completion.
+
+- [ ] **T11.1** — The notification service (the `fs.emo` lineage):
+  `notify.emo` in the kernel image — its own pages (`link.ld`,
+  `trap.S`), the pid cell, the pending ring (eight entries, full the
+  resource refusal, nothing evicted), the monotonic id, the mailbox
+  loop (the gate's raw request words, typed defs, never
+  pattern-matched), the stash for the dead-instance window, the
+  supervisor's restart. **Written 2026-11-12; the kernel builds with
+  it aboard (3.1 MB ELF); the metal's rounds pending.**
+- [ ] **T11.2** — The gate's verbs 27 and 28, and the trap's routes:
+  the notify request slots the gate fills inside the trap (the
+  title's and the body's byte bounds, `check_write` both), the
+  routes −1027/−1028 with the slot riding −32 (verb = slot-0 op, the
+  input service's own habit), the shim's decode branch
+  (`t6 ≥ 27`, `(t6−27) & 31 ≤ 1`), the spawn and the supervisor
+  wiring in `main.emo`, the take's first-taker ownership the
+  service's to keep. **Written 2026-11-12, building; the metal's
+  rounds pending.**
