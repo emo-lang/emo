@@ -836,6 +836,14 @@ def toplevel_set_title(c Conn, toplevel_id Int64, title String) (R, Conn) {
   return c.send(m)
 }
 
+// xdg_toplevel.set_app_id (opcode 3): the application identity the
+// compositor's rules and panels match against.
+def toplevel_set_app_id(c Conn, toplevel_id Int64, app_id String) (R, Conn) {
+  const m = Message.new(toplevel_id, 3)
+  m.text(app_id)
+  return c.send(m)
+}
+
 // xdg_surface.ack_configure: the serial the configure named, answered
 // before the commit that honours it — the protocol's own discipline,
 // structurally required by this def's place in the sequence.
@@ -861,7 +869,37 @@ def wm_base_pong(c Conn, wm_base_id Int64, serial Int64) (R, Conn) {
 // a bind invites, the display's error the failure it is, a delete_id
 // the retirement of an id this client no longer holds. The serial
 // handed back is the ack's and the commit's license.
-def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, shm_id Int64, surface_id Int64, pointer_id Int64, keyboard_id Int64) (R, Int64) {
+// The index a sibling xdg surface holds in the others table, or −1.
+def wc_other_index(others Array[(Int64, Int64)], xdg Int64, i Int64) Int64 {
+  if i >= others.length() {
+    return 0 - 1
+  }
+  case others[i] {
+    (o_xdg, _) -> {
+      if o_xdg == xdg {
+        return i
+      }
+    }
+  }
+  return wc_other_index(others, xdg, i + 1)
+}
+
+// The index a sibling toplevel holds in the others table, or −1.
+def wc_other_toplevel(others Array[(Int64, Int64)], toplevel Int64, i Int64) Int64 {
+  if i >= others.length() {
+    return 0 - 1
+  }
+  case others[i] {
+    (_, o_top) -> {
+      if o_top == toplevel {
+        return i
+      }
+    }
+  }
+  return wc_other_toplevel(others, toplevel, i + 1)
+}
+
+def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, shm_id Int64, surface_id Int64, pointer_id Int64, keyboard_id Int64, seat_id Int64, others Array[(Int64, Int64)]) (R, Int64) {
   case next_event(c.side) {
     (R.error, why) -> { return (R.error, why) }
     (R.ok, ev) -> {
@@ -870,11 +908,41 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         const message = ev.args.text()
         return (R.error, "wayland: display error on object " + obj.to_string() + ": " + message)
       }
+      if ev.oid == seat_id && ev.opcode == 0 {
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
+      }
+      if ev.oid == seat_id && ev.opcode == 1 {
+        ev.args.text()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
+      }
+      // A sibling window's configure: acked — the ack is the
+      // discipline's whole duty here (a bare commit would clear the
+      // window's buffer and unmap it); the tiling transaction times
+      // out and applies on its own clock.
+      if wc_other_index(others, ev.oid, 0) >= 0 && ev.opcode == 0 {
+        const serial = ev.args.u32()
+        case surface_ack_configure(c, ev.oid, serial) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> { }
+        }
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
+      }
+      if wc_other_toplevel(others, ev.oid, 0) >= 0 && (ev.opcode == 0 || ev.opcode == 2 || ev.opcode == 3) {
+        if ev.opcode == 0 {
+          ev.args.i32()
+          ev.args.i32()
+          ev.args.array()
+        } else {
+          ev.args.array()
+        }
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
+      }
       if ev.oid == wm_base_id && ev.opcode == 0 {
         const serial = ev.args.u32()
         case wm_base_pong(c, wm_base_id, serial) {
           (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> { return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id) }
+          (R.ok, _) -> { return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others) }
         }
       }
       if ev.oid == xdg_surface_id && ev.opcode == 0 {
@@ -888,28 +956,28 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         } else {
           ev.args.array()
         }
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == shm_id && ev.opcode == 0 {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == surface_id && (ev.opcode == 0 || ev.opcode == 1) {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && (ev.opcode == 0 || ev.opcode == 1) {
         ev.args.u32()
         ev.args.u32()
         ev.args.fixed()
         ev.args.fixed()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && ev.opcode == 2 {
         ev.args.u32()
         ev.args.fixed()
         ev.args.fixed()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && (ev.opcode == 3 || ev.opcode == 4) {
         ev.args.u32()
@@ -920,44 +988,44 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         } else {
           ev.args.fixed()
         }
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && (ev.opcode == 5 || ev.opcode == 6) {
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && ev.opcode == 7 {
         ev.args.u32()
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == pointer_id && ev.opcode == 8 {
         ev.args.u32()
         ev.args.i32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 0 {
         ev.args.u32()
         ev.args.fd()
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 1 {
         ev.args.u32()
         ev.args.u32()
         ev.args.array()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 2 {
         ev.args.u32()
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 3 {
         ev.args.u32()
         ev.args.u32()
         ev.args.u32()
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 4 {
         ev.args.u32()
@@ -965,19 +1033,19 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         ev.args.u32()
         ev.args.u32()
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == keyboard_id && ev.opcode == 5 {
         ev.args.i32()
         ev.args.i32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == c.display_id && ev.opcode == 1 {
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       if ev.oid == c.registry_id.read() && ev.opcode == 1 {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id, seat_id, others)
       }
       return (R.error, "wayland: unexpected event on object " + ev.oid.to_string() + " opcode " + ev.opcode.to_string() + " while waiting for configure")
     }
@@ -1152,4 +1220,283 @@ def virtual_keyboard_key(c Conn, kb_id Int64, time_ms Int64, key Int64, state In
   m.u32(key)
   m.u32(state)
   return c.send(m)
+}
+
+// ---- the keymap: the compositor's own translation ----
+//
+// The `wl_keyboard.keymap` event's fd carries the compiled xkb keymap,
+// its bytes through the passage. This half parses the text once — the
+// keycodes section's `<AD01> = 24;` entries, the symbols section's
+// rows — and answers the keysym name a keycode carries, the keymap's
+// own word for the key. Both spellings the compiled keymaps wear are
+// read: the bracket shorthand (`key <AD01> { [ q, Q ] };`) and the
+// explicit one (`key <LCTL> { symbols[Group1] = [ Control_L, ... ] };`)
+// — the list is the bracket after the `=` when one stands in the row's
+// braces, the first bracket otherwise.
+
+// The bytes before index n, as their own Bytes — the names the scan
+// captures, exact-sized.
+def km_prefix(b Bytes, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, b.get(i))
+    i = i + 1
+  }
+  return out
+}
+
+// The next index at or after i whose byte is not whitespace.
+def km_skip_space(b Bytes, i Int64) Int64 {
+  var j = i
+  while j < b.length() {
+    const c = b.get(j)
+    if c != 32 && c != 9 && c != 10 && c != 13 {
+      return j
+    }
+    j = j + 1
+  }
+  return j
+}
+
+// The keysym name a keycode carries, or "": unknown keycode, a row
+// the parse could not read. The upper name rides the shift state.
+class Keymap {
+  def init(codes Array[(String, Int64)], syms Array[(Int64, String, String)]) {
+    self.codes = codes
+    self.syms = syms
+  }
+
+  def code_count() Int64 {
+    return self.codes.length()
+  }
+
+  def key_count() Int64 {
+    return self.syms.length()
+  }
+
+  def code_of(name String, i Int64) Int64 {
+    if i >= self.codes.length() {
+      return 0 - 1
+    }
+    case self.codes[i] {
+      (n, c) -> {
+        if n == name {
+          return c
+        }
+      }
+    }
+    return self.code_of(name, i + 1)
+  }
+
+  def name_of(key Int64, shift Bool) String {
+    var i = 0
+    while i < self.syms.length() {
+      case self.syms[i] {
+        (code, lower, upper) -> {
+          if code == key {
+            if shift {
+              return upper
+            }
+            return lower
+          }
+        }
+      }
+      i = i + 1
+    }
+    return ""
+  }
+}
+
+// The keymap before its event: nothing decodes until the parse lands.
+def empty_keymap() Keymap {
+  return Keymap.new(codes: [], syms: [])
+}
+
+// One pass for the keycodes: every `<NAME> = <digits>;` the text
+// carries — the shape the section's entries wear.
+def km_codes(b Bytes, out ArrayBuilder) Void {
+  var i = 0
+  while i < b.length() {
+    if b.get(i) == 60 {
+      var j = i + 1
+      const name = Bytes.new(64)
+      var n = 0
+      while j < b.length() && b.get(j) != 62 {
+        if n < 64 {
+          name.set(n, b.get(j))
+          n = n + 1
+        }
+        j = j + 1
+      }
+      if j < b.length() {
+        var k = km_skip_space(b, j + 1)
+        if k < b.length() && b.get(k) == 61 {
+          k = km_skip_space(b, k + 1)
+          var v = 0
+          var digits = 0
+          while k < b.length() && b.get(k) >= 48 && b.get(k) <= 57 {
+            v = v * 10 + (b.get(k) - 48)
+            k = k + 1
+            digits = digits + 1
+          }
+          k = km_skip_space(b, k)
+          if digits > 0 && k < b.length() && b.get(k) == 59 {
+            out.push((km_prefix(name, n).to_string(), v))
+            i = k + 1
+            continue
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+}
+
+// A name through the codes table, or −1.
+def km_code_of(table Array[(String, Int64)], name String, i Int64) Int64 {
+  if i >= table.length() {
+    return 0 - 1
+  }
+  case table[i] {
+    (n, c) -> {
+      if n == name {
+        return c
+      }
+    }
+  }
+  return km_code_of(table, name, i + 1)
+}
+
+// One keysym name out of the list's text: the letters, digits and
+// underscores from the first non-space to the first character that
+// ends one, as `(name, next index)` — `("", i)` when the list is
+// spent.
+def km_sym_at(b Bytes, i Int64, end Int64) (String, Int64) {
+  var j = km_skip_space(b, i)
+  const name = Bytes.new(64)
+  var n = 0
+  while j < end {
+    const c = b.get(j)
+    if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 {
+      if n < 64 {
+        name.set(n, c)
+        n = n + 1
+      }
+      j = j + 1
+    } else {
+      break
+    }
+  }
+  return (km_prefix(name, n).to_string(), j)
+}
+
+// One pass for the symbols: every `key <NAME> { ... [ s0, s1 ] ... }`
+// row, the name resolved through the codes the first pass took. The
+// `=` and the list are searched strictly inside the row's own braces —
+// a row that carries no list (a `virtualMods` line, say) ends at its
+// closing brace and swallows nothing.
+def km_symbols(b Bytes, codes ArrayBuilder, out ArrayBuilder) Void {
+  const table = codes.to_array()
+  var i = 0
+  while i + 4 < b.length() {
+    if b.get(i) == 107 && b.get(i + 1) == 101 && b.get(i + 2) == 121 && b.get(i + 3) == 32 {
+      var j = km_skip_space(b, i + 4)
+      if j < b.length() && b.get(j) == 60 {
+        j = j + 1
+        const name = Bytes.new(64)
+        var n = 0
+        while j < b.length() && b.get(j) != 62 {
+          if n < 64 {
+            name.set(n, b.get(j))
+            n = n + 1
+          }
+          j = j + 1
+        }
+        if j < b.length() {
+          var k = km_skip_space(b, j + 1)
+          if k < b.length() && b.get(k) == 123 {
+            // The row's closing brace bounds everything: the `=` (the
+            // `symbols[Group1]` spelling) and the list bracket both
+            // live inside it.
+            var endb = k + 1
+            while endb < b.length() && b.get(endb) != 125 {
+              endb = endb + 1
+            }
+            var p = k + 1
+            var eq = 0 - 1
+            while p < endb {
+              if b.get(p) == 61 {
+                eq = p
+                break
+              }
+              p = p + 1
+            }
+            var q = k + 1
+            if eq >= 0 {
+              q = eq + 1
+            }
+            while q < endb && b.get(q) != 91 {
+              q = q + 1
+            }
+            if q < endb {
+              q = q + 1
+              const close = km_close_bracket(b, q, endb)
+              if close > q {
+                case km_sym_at(b, q, close) {
+                  (lower, after) -> {
+                    if lower.length() > 0 {
+                      const second = km_sym_at(b, after + 1, close)
+                      case second {
+                        (upper, _) -> {
+                          var up = lower
+                          if upper.length() > 0 {
+                            up = upper
+                          }
+                          const code = km_code_of(table, km_prefix(name, n).to_string(), 0)
+                          if code >= 0 {
+                            out.push((code, lower, up))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                i = close + 1
+                continue
+              }
+            }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+}
+
+// The next `]` at or after i, or `limit` when none stands inside.
+def km_close_bracket(b Bytes, i Int64, limit Int64) Int64 {
+  var j = i
+  while j < limit {
+    if b.get(j) == 93 {
+      return j
+    }
+    j = j + 1
+  }
+  return j
+}
+
+// The keymap's text, parsed: the keycodes first (the symbols resolve
+// their names through them), the symbols second — `(R, Keymap)`, the
+// empty keymap on a text with neither section.
+def parse_keymap(text String) (R, Keymap) {
+  const b = text.to_bytes()
+  const codes = ArrayBuilder.new()
+  const syms = ArrayBuilder.new()
+  km_codes(b, codes)
+  km_symbols(b, codes, syms)
+  if codes.to_array().length() == 0 && syms.to_array().length() == 0 {
+    return (R.error, "wayland: no keymap in the text")
+  }
+  return (R.ok, Keymap.new(codes: codes.to_array(), syms: syms.to_array()))
 }

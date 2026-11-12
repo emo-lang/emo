@@ -1,8 +1,14 @@
 // The input injector: a virtual pointer and keyboard born on the
-// seat, a keymap painted through the shm tier, and the key beats —
-// i, i, d, Enter (the evdev codes 23, 23, 32, 28). The focus wait
-// fires them: the keyboard's enter is the compositor's own word
-// that a window holds focus — keys fired before it land on nothing.
+// seat, a keymap painted through the shm tier, and the beats — the
+// choreography as one array of `(kind, time, a, b)` events: kind 0
+// moves the pointer to (a, b), kind 1 presses or releases the
+// pointer's button (a the code, b the state), kind 2 the keyboard's
+// key (a the code, b the state). The dock's first tile takes the
+// click, the arrows walk the focus, Enter launches the counter's
+// panel, and the last two clicks land on the tree's own "+". The
+// focus wait fires them: the keyboard's enter is the compositor's
+// own word that a window holds focus — keys fired before it land on
+// nothing.
 
 require "wayland"
 require "net"
@@ -12,17 +18,39 @@ def get_u32(src Bytes, off Int64) Int64 {
   return src.get(off) | (src.get(off + 1) << 8) | (src.get(off + 2) << 16) | (src.get(off + 3) << 24)
 }
 
-// The beats, one case deep each, generated so the braces balance.
-def fire_beats(c wayland.Conn, vkb Int64, beats Array[(Int64, Int64, Int64)], i Int64) {
+// The beats, walked by index — each event out on its own clock tick
+// (the beat's time is the pacing: the pause since the last one), the
+// transcript's order the array's. The pacing is the point: a window
+// the beats launch takes hundreds of milliseconds to stand,
+// configure, and take the seat's focus, and a beat fired inside that
+// dance is consumed by the wait, not by the window.
+def fire(c wayland.Conn, vkb Int64, vptr Int64,
+         beats Array[(Int64, Int64, Int64, Int64)], i Int64, prev Int64) {
   if i >= beats.length() {
-    println("inject: keys out")
+    println("inject: beats out")
   } else {
     case beats[i] {
-      (time_ms, key, state) -> {
-        case wayland.virtual_keyboard_key(c, vkb, time_ms, key, state) {
-          (R.error, why) -> { println("inject: " + why) }
-          (R.ok, _) -> {
-            fire_beats(c, vkb, beats, i + 1)
+      (kind, time_ms, a, b) -> {
+        case os.sleep_ms(time_ms - prev) {
+          (R.error, why) -> { println("inject: sleep " + why) }
+          (R.ok, _) -> { }
+        }
+        if kind == 0 {
+          case wayland.virtual_pointer_motion_absolute(c, vptr, time_ms, a, b, 1280, 720) {
+            (R.error, why) -> { println("inject: " + why) }
+            (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+          }
+        } else {
+          if kind == 1 {
+            case wayland.virtual_pointer_button(c, vptr, time_ms, a, b) {
+              (R.error, why) -> { println("inject: " + why) }
+              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+            }
+          } else {
+            case wayland.virtual_keyboard_key(c, vkb, time_ms, a, b) {
+              (R.error, why) -> { println("inject: " + why) }
+              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+            }
           }
         }
       }
@@ -141,46 +169,27 @@ def send_keymap(c wayland.Conn, vkb Int64, vptr Int64) {
                 (R.error, why) -> { println("inject: keymap sent " + text.length().to_string()) }
                 (R.ok, _) -> {
                   // The pointer onto the dock's first tile, press and
-                  // release; the right arrow moves the focus; Enter
-                  // launches. Then the devices stay alive while the
-                  // face's window maps, focuses, and decodes.
-                  case wayland.virtual_pointer_motion_absolute(c, vptr, 5, 36, 688, 1280, 720) {
-                    (R.error, why) -> { println("inject: motion " + why) }
-                    (R.ok, _) -> {
-                      case wayland.virtual_pointer_button(c, vptr, 15, 272, 1) {
-                        (R.error, why) -> { println("inject: press " + why) }
-                        (R.ok, _) -> {
-                          case wayland.virtual_pointer_button(c, vptr, 25, 272, 0) {
-                            (R.error, why) -> { println("inject: release " + why) }
-                            (R.ok, _) -> {
-                              case wayland.virtual_keyboard_key(c, vkb, 40, 106, 1) {
-                                (R.error, why) -> { println("inject: " + why) }
-                                (R.ok, _) -> {
-                                  case wayland.virtual_keyboard_key(c, vkb, 50, 106, 0) {
-                                    (R.error, why) -> { println("inject: " + why) }
-                                    (R.ok, _) -> {
-                                      case wayland.virtual_keyboard_key(c, vkb, 60, 28, 1) {
-                                        (R.error, why) -> { println("inject: " + why) }
-                                        (R.ok, _) -> {
-                                          case wayland.virtual_keyboard_key(c, vkb, 70, 28, 0) {
-                                            (R.error, why) -> { println("inject: " + why) }
-                                            (R.ok, _) -> {
-                                              println("inject: beats out")
-                                              drain(c)
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+                  // release; Enter launches the counter's window (the
+                  // compositor's focus follows it); the key `a` drives
+                  // the counter through its window's own table; a
+                  // click on the tree's own "+"; then the dock's third
+                  // tile, Enter, and the editor's typing. The devices
+                  // stay alive while the windows map, focus, and
+                  // decode.
+                  const beats = [
+                    (0, 5, 36, 688), (1, 15, 272, 1), (1, 25, 272, 0),
+                    (2, 40, 28, 1), (2, 50, 28, 0),
+                    (2, 1600, 30, 1), (2, 1620, 30, 0),
+                    (0, 1740, 300, 300), (1, 1760, 272, 1), (1, 1780, 272, 0),
+                    (2, 1820, 106, 1), (2, 1840, 106, 0),
+                    (2, 1860, 106, 1), (2, 1880, 106, 0),
+                    (2, 1900, 28, 1), (2, 1920, 28, 0),
+                    (2, 3500, 30, 1), (2, 3520, 30, 0),
+                    (2, 3550, 48, 1), (2, 3570, 48, 0),
+                    (2, 3600, 28, 1), (2, 3620, 28, 0)
+                  ]
+                  fire(c, vkb, vptr, beats, 0, 0)
+                  drain(c)
                 }
               }
             }

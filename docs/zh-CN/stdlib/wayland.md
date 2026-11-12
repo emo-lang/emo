@@ -105,8 +105,38 @@ motion、左键、按键——事件原路返回,脚本逐条断言。这条腿�
 重绘。方向键移动焦点,Enter 切换启动位,smoke 腿断言点击、方向键
 与启动——桌面活着,点击落了,按键驱动了它。
 
-keycode 以裸值抵达(evdev 编号);经 keymap 解出 keysym 是点名的
-后续。
+内容是一棵树时,这张表不再手写(M22):`ui_fb` 的绘制走查带一个
+矩形收集器(`ui_fb.paint_rects`),每放一个 Button,它就带着
+registry 发给视图的 tag 落进表里——一帧的像素和它的点击目标出自
+同一次走查——demo 把启动的应用树画进窗内,导出的矩形并入指针表
+(带应用的 tag 基数)。点树自己的 "+" 便驱动应用自己的
+`update`(quiet backend 之上立着的 `ui.App`,语料 counter 从
+`emo/ui_apps` 整包 require):计数动了,应用自己的话骑上转录,
+smoke 腿钉住导出的矩形行与两次点击。
+
+按键如今出自 keymap(M23):`keymap` 事件的 fd 走通道读回,解析
+一次——keycodes 段的 `<AD01> = 24;` 条目,symbols 段的两种拼写
+(编译后 keymap 穿的那两种),每一次搜索都被行自己的花括号框住
+——`name_of(key, shift)` 答出 keysym 名,compositor 对这颗键自己
+的说法。keymap 说的 keycode 是 xkb 的:**evdev 加八**,每个
+Wayland 客户端问 xkb 前都跳的这支舞(注入的 Enter 骑 evdev 28;
+keymap 的 `<RTRN>` 是 36)。demo 的 tag 表按名配键——"Left"、
+"Right"、"Return"——M19 demo 手写的 evdev 行退役;smoke 腿的活
+keymap 是 sway 自己的(编译后的,490 个码、117 行符号,全部解
+析),按键按名交付。
+
+窗口随后就来(M24):一次启动把应用立成第二个 toplevel——自己的
+surface、自己的 xdg surface、自己的 shm pool、自己的 configure
+等待(`wait_configure` 容忍 seat 自己的事件与兄弟窗的
+configure——多于一扇窗之后两者都会在等待中途到达)——而
+`LiveInput` 变成一台译码器,答出的 `Ev` 带着事件所属的窗面:键盘
+enter 命中的那面、指针悬停的那面。路由是调用方的事:桌面的名字
+驱动 dock,窗的名字驱动它背后的应用,rect 表按窗各一张(每次重
+绘都重新导出它的树按钮)。seat 的焦点是指挥——`wl_keyboard.enter`
+点名每颗键骑去哪面窗,语料应用的键表就用 keymap 产出的那些名字
+(编辑器打字的 "a"、"b"、"Return")——指针点击带着它落点的窗面。
+smoke 腿往编辑器窗口里打字,在计数器窗口上计数,全部活在 sway
+之下。
 
 ## 局限
 
@@ -114,8 +144,13 @@ keycode 以裸值抵达(evdev 编号);经 keymap 解出 keysym 是点名的
   的 Unix 模块没有 sendmsg)是点名的后续。
 - **一条消息一个 fd。** 本包要说的协议恰好都只带一个;哪天某个协议
   要两个,再长这个形状。
-- **keysym 还没来。** keycode 以裸值抵达,桥经 evdev 表翻译(键盘
-  的行与 shift 状态);经 keymap 本体解码是点名的后续。
+- **keymap 是个专注的读者,不是 xkb。** 解析器取 keycodes 与
+  symbols 两段的朴素行——sway 编译后 keymap 穿的形状——答头两个
+  符号;group、头两级以外的 level、types 与 compat 段都不建模。
+- **第二扇窗的指针归 compositor 路由。** demo 往立起的应用窗里
+  点的指针在 sway 1.7 headless 下没有送达(键盘的焦点路由是送达
+  的,同一矩形机制在 M22 于桌面自有窗面上已证);后续是换更新的
+  sway 重试,若复现,便是这个差异点名要问的协议问题。
 - **手写表。** opcode 活在调用点,由 compositor 打分;运行时不解析
   XML。
 
@@ -125,15 +160,25 @@ keycode 以裸值抵达(evdev 编号);经 keymap 解出 keysym 是点名的
 `present()` 把画布字节经 `os_pwrite` 推进 pool,attach、整幅
 damage、commit(画布的 XRGB8888 字就是 wl_shm 的字节原样);一个
 `Input`,其 `next()` 阻塞在 Wayland 事件上,把应用说的 tag 递出去
-——按键经 evdev 表翻译(shift 状态读自 modifiers 事件,其第一个参数
-是 serial,depressed 在第二),点击经矩形表在指针位置上命中。fb
-后端的示例让收敛语料自己的应用活在一个真实 compositor 上:注入的
-按键、真实的重绘、转录里每一帧的 digest
+——按键经 compositor 自己的 keymap 翻译(keymap 事件时解析,
+shift 状态读自 modifiers 事件,其第一个参数是 serial、depressed 在
+第二),点击经矩形表在指针位置上命中。自 M24 起,demo 是一个多窗
+客户端:桌面的 dock 加每启动一个应用一扇窗,各有自己的 pool 与
+buffer、自己的 rect 表,seat 的焦点决定哪个 `ui.App` 接住这颗键或
+这次点击。fb 后端的示例让收敛语料自己的应用活在一个真实
+compositor 上:注入的按键、真实的重绘、转录里每一帧的 digest
 (`projects/emo-desktop/wayland/`,smoke 腿
 `devtools/wayland-face-smoke.sh`)。
 
-## 局限(编解码器对手算 fixture)、
-`examples/wayland_handshake`(真 Unix 套接字上的 mock compositor,
-逐字节)、`examples/wayland_paint`(第一帧——由
-`devtools/wayland-smoke.sh` 驱动:Docker 腿编译 demo 的 C,在
-headless sway 下实跑,grim 当眼睛)。
+## 示例
+
+- `examples/wayland_wire`——编解码器对手算 fixture,字节级。
+- `examples/wayland_handshake`——真 Unix 套接字上的 mock
+  compositor,逐字节。
+- `examples/wayland_paint`——第一帧,由 `devtools/wayland-smoke.sh`
+  驱动:Docker 腿编译 demo 的 C,在 headless sway 下实跑,grim 当
+  眼睛。
+- `examples/wayland_input`——对罐头流检验 seat 的表:capabilities、
+  指针、键盘、keymap 的 fd 走通道。
+- `examples/wayland_inject`——smoke 腿驱动活窗口的虚拟设备:节拍即
+  一个事件数组。

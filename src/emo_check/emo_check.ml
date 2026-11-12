@@ -1125,6 +1125,13 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_sleep_ms",
+          {
+            vtype =
+              FuncType ([ ("ms", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_pwrite",
           {
             vtype =

@@ -69,16 +69,29 @@ docker run --rm \
     WAYLAND_DISPLAY=wayland-1 /out/inject >/tmp/inject.log 2>&1 &
     injector=$!
     for i in $(seq 1 100); do
-      grep -q "inject: keys out" /tmp/inject.log 2>/dev/null && break
+      grep -q "inject: beats out" /tmp/inject.log 2>/dev/null && break
       sleep 0.1
     done
-    cp /tmp/sway.log /out/sway.log
+    # The beats land one repaint apart — the whole choreography is
+    # done when the newline of the editor has spoken.
+    for i in $(seq 1 300); do
+      grep -q "^newline$" /tmp/face.log 2>/dev/null && break
+      sleep 0.1
+    done
+    cp /tmp/sway.log /out/sway.log || { echo "--- /tmp at sway.log loss:"; ls -la /tmp/; exit 9; }
     cp /tmp/face.log /out/face.log
     cp /tmp/inject.log /out/inject.log
+    cp /tmp/keymap-dump.txt /out/keymap-dump.txt 2>/dev/null || true
     sleep 1
-    grep -q "face: click at 36 688 delivers tag 0" /tmp/face.log || { echo "face-smoke: FAIL — the dock click never delivered"; fail=1; }
-    grep -q "face: key 106 delivers tag 4" /tmp/face.log || { echo "face-smoke: FAIL — the right arrow never delivered"; fail=1; }
-    grep -q "face: key 10 delivers tag 5" /tmp/face.log || { echo "face-smoke: FAIL — the enter launch never delivered"; fail=1; }
+    grep -q "face: click delivers tile 0" /tmp/face.log || { echo "face-smoke: FAIL — the dock click never delivered"; fail=1; }
+    grep -q "face: keymap parsed" /tmp/face.log || { echo "face-smoke: FAIL — the keymap never parsed"; fail=1; }
+    grep -q "face: window counter stands on surface" /tmp/face.log || { echo "face-smoke: FAIL — the counter window never stood up"; fail=1; }
+    grep -q "face: key a delivers tag 0 to counter" /tmp/face.log || { echo "face-smoke: FAIL — the key never routed to the counter"; fail=1; }
+    grep -q "^add 1$" /tmp/face.log || { echo "face-smoke: FAIL — the counter never counted"; fail=1; }
+    grep -q "face: window editor stands on surface" /tmp/face.log || { echo "face-smoke: FAIL — the editor window never stood up"; fail=1; }
+    grep -q "^put a$" /tmp/face.log || { echo "face-smoke: FAIL — the editor never took the a"; fail=1; }
+    grep -q "^put b$" /tmp/face.log || { echo "face-smoke: FAIL — the editor never took the b"; fail=1; }
+    grep -q "^newline$" /tmp/face.log || { echo "face-smoke: FAIL — the editor never took the newline"; fail=1; }
     if [ "$fail" != 0 ]; then
       echo "--- face.log:"; cat /tmp/face.log
       echo "--- inject.log:"; cat /tmp/inject.log

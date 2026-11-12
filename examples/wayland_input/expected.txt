@@ -6,7 +6,12 @@ client: pointer enter 3 7
 client: pointer motion 11 13
 client: button 272 pressed
 client: frame
-client: keymap xkb_v1 21 bytes [xkb_keymap-test-bytes]
+client: keymap parsed 5 codes 5 keys
 client: keyboard enter 1 keys down
-client: key 30 pressed
+client: key 24 q pressed
+client: modifiers depressed 1
+client: key 24 Q pressed
+client: modifiers depressed 0
+client: key 106 Right pressed
+client: key 28 Return pressed
 client: wayland: the peer closed the socket
