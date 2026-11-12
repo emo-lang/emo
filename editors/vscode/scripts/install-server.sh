@@ -11,6 +11,22 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"       # editors/vscode
 repo="$(cd "$here/../.." && pwd)"              # repository root
 
+# dune rides the opam switch; a bare shell has neither dune nor opam on
+# PATH, and opam itself may sit outside PATH (Homebrew, ~/.opam).
+if ! command -v dune >/dev/null 2>&1; then
+  opam_bin=""
+  for candidate in opam /opt/homebrew/bin/opam /usr/local/bin/opam "$HOME/.opam/opam"; do
+    if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
+      opam_bin="$candidate"
+      break
+    fi
+  done
+  if [ -n "$opam_bin" ]; then
+    eval "$("$opam_bin" env --switch 5.5.2 2>/dev/null)" ||
+      eval "$("$opam_bin" env 2>/dev/null)" || true
+  fi
+fi
+
 echo "building emo-lsp in $repo ..."
 (cd "$repo" && dune build bin/emo_lsp_bin.exe)
 
