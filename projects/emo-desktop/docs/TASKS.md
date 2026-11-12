@@ -1930,3 +1930,63 @@ when the desktop holds the focus.
   TASKS ticks close the milestone. **complete 2026-11-12** — landed;
   the Limitations sections carry the second window's pointer as the
   named follow-up in both languages.
+
+## M25 — notifications (opened 2026-11-12)
+
+The system-data layer's first module (D16, decided 2026-11-12): the
+`notify` verb family (27 raise, 28 take) and the notification service
+in the `fs.emo` lineage land on the metal — the kernel half is
+[EmoOS's Step 11](../../emo-os/docs/TASKS.md) — and the shell answers
+as the notification center by construction: the toast, the history,
+do-not-disturb are its own surfaces, fed through the provider seam
+(D14 — the metal provider speaks the verbs, the canned provider feeds
+the hosted golden from fixtures). The service keeps the pending queue
+only (raised, not yet taken; full is the resource refusal, nothing
+evicted); the history is the shell's memory; DND is shell policy and
+no verb's business. The wires: a raise copies the title and the body
+into a request slot inside the trap (the filesystem's shape) and
+answers the notification's id; a take drains one packed notification
+into the caller's buffer and names the first taker the center's owner
+(the wallpaper's first-declaration precedent), every later taker
+refused by pid. Absence stays visible (D15): no notification, no
+toast.
+
+- [x] **A25.1** — The notify module and the canned provider: 
+  `fb/notify/emo_notify.emo` (the package `emo_notify`) — the
+  provider seam (`Provider`: one take, `(R.error, "empty")` the dry
+  answer), the toast card in the display's corner (a raise shows it
+  for the residence's 300 ticks, then it is history's alone), the
+  history ring (the shell's own, newest first, sixteen the cap, the
+  overflow the oldest's departure), the DND flag (suppresses the
+  toast's display, never the history's record), the panel's paint
+  and its two press verdicts. The golden (`fb/notify/golden/`) pins
+  the states: the quiet corner, the raise, the residence's 299 beats
+  holding and the 300th retiring, the suppression recording without
+  showing (`suppressed 0`), the panel's rows and the flag's word,
+  the cap's `kept 16 newest 20 oldest 5`. **complete 2026-11-12** —
+  the bytes are the pinned file's on all five hosted targets; the
+  module type-checks and directory-builds on the three hosted ones
+  (the `Surface`-implementor rule, the core's own). Beside the
+  landing: four stale package locks regenerated (`apps/counter`,
+  `apps/files`, `apps/editor`, `winbuf` — the M22-era drift) and a
+  **found, not fixed**: the full `check.sh` hangs at the frame
+  golden's **beam leg** (the `beam.smp` spins, `timeout` kills it,
+  exit 124, reproduced independent of this milestone's tree — every
+  other beam leg in this session's runs answered byte-identically,
+  the notification golden's included); the gate's frame-beam leg is
+  the next sitting's first suspect.
+- [ ] **A25.2** — The metal verbs and the app's raise: the syscall
+  stub grows `notify` and `notify_take` (verbs 27 and 28, the
+  `(R, ...)` answer shape), the metal provider speaks them — the
+  take polled once a tick, the empty answer the cheap one — and the
+  editor raises on save (the title and the body its own words), the
+  desktop registering as the center's owner at its first take.
+- [ ] **A25.3** — The metal golden leg: `run.sh`'s choreography grows
+  the notify beats — an exec'd app raises, the toast in the
+  screendump's digest, DND toggled and the next raise recorded
+  without showing, the history panel's entries read — ×3 double
+  transport byte-identical. (The kernel half is Step 11's.)
+- [ ] **A25.4** — The docs and the trackers: `desktop-abi.md`'s
+  verbs 27 and 28 (both languages), `syscalls.md`'s numbering, the
+  READMEs, CHECK.md's entries — the landing's and the fs request
+  slot's latent misroute find (2026-11-12) — and the zh mirrors.

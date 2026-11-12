@@ -1,0 +1,374 @@
+require "emo/ui_fb"
+
+// The notification center's surfaces (emo-desktop M25, D16): the toast,
+// the history and do-not-disturb as one module the shell's face feeds
+// through the provider seam (D14 — the metal provider speaks the gate's
+// verbs 27 and 28, the golden's canned provider feeds the frames from
+// fixtures, and this module cannot tell the difference). The center is
+// the shell's own memory: the service on the metal keeps only the
+// pending queue, so what has been taken lives here and nowhere else.
+// Painted direct through the `Surface` like the dock and the header —
+// fills and glyphs, no tree, the arena's price on the metal — and every
+// number integer and fixed, so the hosted golden's digest is the
+// metal's. Absence stays visible (D15): a provider with nothing
+// pending changes no pixel, and a suppressed raise changes the history
+// alone.
+//
+// The module holds no clock: time is the face's `beat()` per tick, the
+// residence a tick count, the way the desktop's whole motion is the
+// frame callback's and the tick's (D12).
+
+// ---- the notification ----
+//
+// One notification as the center holds it: the service's monotonic id
+// (0 the empty seat's sentinel — a real raise answers 1 or more, and
+// every consumer of an id checks against zero), the title and the body
+// as the raiser's own bytes crossed the gate's bounds.
+
+class Notif {
+  def init(id Int64, title String, body String) {
+    self.id = id
+    self.title = title
+    self.body = body
+  }
+
+  def id() Int64 {
+    return self.id
+  }
+
+  def title() String {
+    return self.title
+  }
+
+  def body() String {
+    return self.body
+  }
+}
+
+// The factory, not the constructor: the metal face builds across the
+// module's edge, and riscv64 refuses a cross-module class construction
+// in value position (the corpus's own wall). Every construction here
+// rides a def.
+def notif(id Int64, title String, body String) Notif {
+  return Notif.new(id: id, title: title, body: body)
+}
+
+// ---- the provider seam (D14) ----
+//
+// Where delivered notifications come from. The metal provider answers
+// from the gate's take verb, polled once a tick, the empty answer the
+// cheap one; the canned provider answers from a fixture array, the
+// golden's feeder. One next notification per take — a burst of raises
+// shows as a sequence of toasts, each residence restarting the tick, the
+// way a queue drains.
+interface Provider {
+  def take() (R, Notif)
+}
+
+// The canned provider: the fixtures in their order, one take each, the
+// dry end `(R.error, "empty")` after the last — the same shape the
+// metal provider's no-pending answer wears.
+class Canned {
+  def init(items Array[Notif]) {
+    self.items = items
+    self.at = Box.new(0)
+  }
+
+  def take() (R, Notif) {
+    const i = self.at.read()
+    if i >= self.items.length() {
+      return (R.error, "empty")
+    }
+    self.at.replace(i + 1)
+    return (R.ok, self.items[i])
+  }
+}
+
+def canned(items Array[Notif]) Canned {
+  return Canned.new(items: items)
+}
+
+// ---- the center's numbers ----
+//
+// The residence in ticks (the machine's tick is 10 ms, so three hundred
+// is three seconds), the history's bound (the oldest falls off, a
+// documented ring, not a silent loss — the panel shows the count's
+// truth), and the card's geometry, display-relative by the face's
+// arguments: the toast hangs under the header's line at the display's
+// right edge, the panel its width in from the same edge between the
+// header's line and the dock's.
+
+def residence() Int64 {
+  return 300
+}
+
+def history_max() Int64 {
+  return 16
+}
+
+def toast_w() Int64 {
+  return 320
+}
+
+def toast_h() Int64 {
+  return 72
+}
+
+def toast_pad() Int64 {
+  return 16
+}
+
+def toast_radius() Int64 {
+  return 12
+}
+
+def panel_w() Int64 {
+  return 320
+}
+
+def panel_pad() Int64 {
+  return 12
+}
+
+def panel_radius() Int64 {
+  return 12
+}
+
+def header_line_h() Int64 {
+  return 40
+}
+
+def dnd_row_h() Int64 {
+  return 36
+}
+
+def row_h() Int64 {
+  return 64
+}
+
+def panel_x(w Int64) Int64 {
+  return w - panel_w() - panel_pad()
+}
+
+def dnd_row_y(top Int64) Int64 {
+  return top + header_line_h()
+}
+
+def first_entry_y(top Int64) Int64 {
+  return dnd_row_y(top) + dnd_row_h()
+}
+
+// The card's material: the dock shelf's own grades carried to a higher
+// opacity — a toast floats over windows, not over the wallpaper's
+// formula alone, so its ground carries its own color and the alpha is
+// for the windows it lands on. The accent is the wallpaper's pink
+// ribbon's byte, the one color the chrome borrows from the wallpaper's
+// own formula.
+def card_top() Int64 {
+  return 0xE64A5468
+}
+
+def card_bottom() Int64 {
+  return 0xE6363E4C
+}
+
+def accent() Int64 {
+  return 0xFFE86890
+}
+
+def ink() Int64 {
+  return 0xF8F8F0
+}
+
+def ink_dim() Int64 {
+  return 0xB8BCC4
+}
+
+def row_line() Int64 {
+  return 0x3A3E48
+}
+
+// ---- the center ----
+//
+// The shell-side state whole: the provider, the history ring (newest
+// first, the cap's overflow the oldest's departure), the live toast
+// (the id-0 sentinel the empty seat), its age in ticks, and the two
+// flags — do-not-disturb (suppresses the toast's display, never the
+// history's record) and the panel's open. The fields are the class's;
+// the module's painters and the face read through the methods.
+
+class Center {
+  def init(p Provider) {
+    self.provider = p
+    self.history = Box.new([])
+    self.live = Box.new(notif(0, "", ""))
+    self.age = Box.new(0)
+    self.dnd = Box.new(false)
+    self.open = Box.new(false)
+  }
+
+  // One poll of the provider: a delivery joins the history always and
+  // shows only when the door is open — DND is the display's policy,
+  // the record is the center's duty (a suppressed raise is a recorded
+  // raise).
+  def take() Void {
+    case self.provider.take() {
+      (R.error, _) -> {}
+      (R.ok, n) -> {
+        self.remember(n)
+        if self.dnd.read() == false {
+          self.live.replace(n)
+          self.age.replace(0)
+        }
+      }
+    }
+  }
+
+  // The tick's other half: the live toast ages, and the residence's
+  // end is the display's end — the history keeps what the toast was.
+  def beat() Void {
+    if self.live.read().id() != 0 {
+      const a = self.age.read() + 1
+      self.age.replace(a)
+      if a >= residence() {
+        self.live.replace(notif(0, "", ""))
+        self.age.replace(0)
+      }
+    }
+  }
+
+  def remember(n Notif) Void {
+    self.history.replace(history_with(self.history.read(), n))
+  }
+
+  def toggle_dnd() Void {
+    self.dnd.replace(self.dnd.read() == false)
+  }
+
+  def toggle_open() Void {
+    self.open.replace(self.open.read() == false)
+  }
+
+  // The history, newest first — the panel paints in this order, and
+  // the probes read it this way.
+  def entries() Array[Notif] {
+    return self.history.read()
+  }
+
+  def dnd_on() Bool {
+    return self.dnd.read()
+  }
+
+  def panel_open() Bool {
+    return self.open.read()
+  }
+
+  def live_id() Int64 {
+    return self.live.read().id()
+  }
+
+  // The toast card, when one is live: the shadow and the rounded card
+  // (the shelf's recipe), the accent bar at the card's left, the title
+  // and the body in the labels' type. `top` is the display row the
+  // card hangs below — the header's height the face's own formula
+  // names.
+  def paint_toast(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
+                  top Int64) Void {
+    const n = self.live.read()
+    if n.id() != 0 {
+      const x = w - toast_w() - toast_pad()
+      s.shadow(x, top, toast_w(), toast_h(), toast_radius(), 8, 0x80000000)
+      s.rounded(x, top, toast_w(), toast_h(), toast_radius(), card_top(),
+        card_bottom())
+      s.fill(x, top + 8, 3, toast_h() - 16, accent())
+      ui_fb.text(f, n.title(), x + 20, top + 12, ink(), s)
+      ui_fb.text(f, n.body(), x + 20, top + 40, ink_dim(), s)
+    }
+  }
+
+  // The panel, when open: the ground card, the header's line, the
+  // do-not-disturb row with its state word, then the history newest
+  // first — a row per entry, the separator line under each, the rows
+  // the panel's height holds. `top` and `bottom` name the panel's
+  // extent in display rows (the header's line and the dock's top the
+  // face's own formulas name).
+  def paint_center(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
+                   top Int64, bottom Int64) Void {
+    if self.open.read() != false {
+      const x = panel_x(w)
+      const h = bottom - top
+      s.shadow(x, top, panel_w(), h, panel_radius(), 8, 0x80000000)
+      s.rounded(x, top, panel_w(), h, panel_radius(), card_top(),
+        card_bottom())
+      ui_fb.text(f, "Notifications", x + 16, top + 12, ink(), s)
+      s.fill(x + 8, dnd_row_y(top) + 4, panel_w() - 16, dnd_row_h() - 8,
+        0x2A2E38)
+      ui_fb.text(f, "Do not disturb", x + 16, dnd_row_y(top) + 8, ink_dim(), s)
+      var st = "off"
+      if self.dnd.read() {
+        st = "on"
+      }
+      ui_fb.text(f, st, x + panel_w() - 48, dnd_row_y(top) + 8, ink(), s)
+      const items = self.entries()
+      var i = 0
+      var yy = first_entry_y(top)
+      while i < items.length() && yy + row_h() <= bottom {
+        const n = items[i]
+        ui_fb.text(f, n.title(), x + 16, yy + 6, ink(), s)
+        ui_fb.text(f, n.body(), x + 16, yy + 30, ink_dim(), s)
+        s.fill(x + 12, yy + row_h() - 6, panel_w() - 24, 1, row_line())
+        yy = yy + row_h()
+        i = i + 1
+      }
+    }
+  }
+}
+
+// The factory (the cross-module wall's other half).
+def center(p Provider) Center {
+  return Center.new(p: p)
+}
+
+// The history's next state: the new entry first, the rest after it, the
+// cap's overflow the tail's departure. The builder's pushes are this
+// def's own and statically typed — the annotation the parameter carries
+// is what the loop's pushes read as (the rasterizer's builder lesson).
+def history_with(old Array[Notif], n Notif) Array[Notif] {
+  const b = ArrayBuilder.new()
+  b.push(n)
+  var i = 0
+  while i < old.length() && i < history_max() - 1 {
+    b.push(old[i])
+    i = i + 1
+  }
+  return b.to_array()
+}
+
+// ---- the press targets ----
+//
+// The open panel's own click verdicts, the geometry the paint answers:
+// the panel's toggle is the header's bell region's (the face's rect
+// table names it, A25.2's wiring), and these two name what the open
+// panel itself answers — a press anywhere in the panel's rect is the
+// panel's business, and the do-not-disturb row's rect is the flag's.
+// A press in neither is the panel's own, not the desktop's.
+
+def center_hit(x Int64, y Int64, w Int64, top Int64, bottom Int64) Bool {
+  if x < panel_x(w) || x >= w - panel_pad() {
+    return false
+  }
+  if y < top || y >= bottom {
+    return false
+  }
+  return true
+}
+
+def dnd_hit(x Int64, y Int64, w Int64, top Int64) Bool {
+  if x < panel_x(w) + 8 || x >= w - panel_pad() - 8 {
+    return false
+  }
+  if y < dnd_row_y(top) + 4 || y >= dnd_row_y(top) + dnd_row_h() - 4 {
+    return false
+  }
+  return true
+}
