@@ -86,6 +86,11 @@ require('emo').setup({
 查找。注册表依次取 `registry`、`EMO_REGISTRY`；`:Emo*` 命令背后的 `emo` CLI
 依次取 `emo_path`、`EMO_BIN`。`:checkhealth emo` 会报告实际解析到的结果。
 
+插入补全走 Neovim 自带的 `vim.lsp.completion`：服务器的触发字符——`os.` 的
+点与 `require "..."` 里的引号——打开菜单，继续输入即收窄（`os.getp` 只剩
+`getpid` 与 `getppid`），`<C-x><C-o>` 可手动补全。`completion` 选项用于把
+服务器交给补全插件接管。
+
 命令与扩展一一对应——`:EmoRestart`、`:EmoCheck`、`:EmoBuild`、`:EmoRun`、
 `:EmoDepsResolve`、`:EmoDepsList`、`:EmoDepsUpdate`、`:EmoPackageInit`。
 完整列表与选项表见

@@ -103,7 +103,11 @@ lazy.nvim, `:Lazy` also lists the plugin as a local plugin.
 - **Code completion.** Keywords, built-in types and functions, declarations
   from the current file and the project, members after `.` (class methods and
   fields, group members, module members), and package names inside
-  `require "..."`.
+  `require "..."`. The plugin wires the server into Neovim's own completion:
+  the dot of `os.` and the quote inside `require "..."` open the menu, and
+  typing on narrows it — `os.getp` leaves `getpid` and `getppid`, signatures
+  in the menu. `<C-x><C-o>` completes by hand. Set `completion = false` if a
+  completion plugin (nvim-cmp and friends) drives the server instead.
 - **Diagnostics.** Lex, parse, and type errors from the compiler, plus
   manifest/`require` pairing errors, published as you type.
 - **Hover and go-to-definition.** Signatures and jump-to-declaration across
@@ -140,6 +144,7 @@ require('emo').setup({
   server_path = '/path/to/emo-lsp',
   emo_path = '/path/to/emo',
   registry = '/path/to/emo/stdlib/registry',
+  completion = true,
   lsp = true,
 })
 ```
@@ -149,6 +154,7 @@ require('emo').setup({
 | `server_path` | `nil` | Path to the `emo-lsp` executable |
 | `emo_path` | `nil` | Path to the `emo` CLI, passed to the server as `EMO_BIN` |
 | `registry` | `nil` | Registry endpoint, passed to the server as an initialization option |
+| `completion` | `true` | Pop up insert completion on the server's trigger characters |
 | `lsp` | `true` | Start the language server for `.emo` buffers |
 
 Every option defaults to the server's own behaviour when unset: `emo-lsp` is
@@ -165,7 +171,8 @@ The language server is registered with `vim.lsp.config('emo', ...)`, so a
 attach to the server automatically; if you would rather enable it yourself,
 set `lsp = false` and call `vim.lsp.enable('emo')` when you want it. The plugin
 ships an `lsp/emo.lua` for that path, so `vim.lsp.enable('emo')` alone is
-enough.
+enough. Completion rides the attach event either way — `vim.lsp.enable('emo')`
+with no further setup completes the same way `lsp = true` does.
 
 The project root is the nearest `package.emo` above the buffer, or the file's
 own directory when there is none — the last so that a loose `.emo` file still

@@ -95,6 +95,12 @@ then a build inside the Emo checkout. The registry comes from `registry`, then
 `EMO_REGISTRY`; the `emo` CLI behind the `:Emo*` commands comes from
 `emo_path`, then `EMO_BIN`. `:checkhealth emo` reports what was resolved.
 
+Insert completion rides Neovim's own `vim.lsp.completion`: the server's
+trigger characters — the dot of `os.` and the quote inside `require "..."` —
+open the menu, and typing on narrows it (`os.getp` leaves `getpid` and
+`getppid`), with `<C-x><C-o>` completing by hand. The `completion` option
+hands the server to a completion plugin instead.
+
 The commands mirror the extension's — `:EmoRestart`, `:EmoCheck`, `:EmoBuild`,
 `:EmoRun`, `:EmoDepsResolve`, `:EmoDepsList`, `:EmoDepsUpdate`, and
 `:EmoPackageInit`. See
