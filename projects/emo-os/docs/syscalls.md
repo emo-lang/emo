@@ -72,6 +72,8 @@ undocumented ever acts.
 | 23 | `desktop_version()` | the desktop protocol's version word; answers 1 (T8.15, below) |
 | 25 | `win_minimize(grant)` | the toplevel off the compositor's walk: the pixels the hide unmakes are the damage the answer's own composition repaints, the entry kept (the restore's memory), the focus it held fallen; a grant that is no toplevel, or one already hidden, is reason 4, a grant another process owns is reason 3 (emo-desktop A16.3, EmoOS T10.3) |
 | 26 | `win_desk_open(pid)` | the desktop's open: the window owned by that pid raised to the top and named the focused one, the hidden one unhidden first, the answer's composition carrying the reappearance whole; the caller must own a panel (the desktop's authority — it names its apps by pid), a pid with no window is reason 4, a caller with no panel is reason 3 (emo-desktop A16.3, EmoOS T10.3) |
+| 27 | `notify(title, title_len, body, body_len)` | a notification raised: the title's `title_len` bytes at `title` (1 to 64) and the body's `body_len` at `body` (0 to 192) go into the notification service's pending queue (eight entries, nothing evicted) and the answer is the notification's id, the service's monotonic number (1 or more; 0 the empty sentinel). A full queue is reason 5; an out-of-bounds, unwritable or oversized buffer is reason 4, 2 or 3 (emo-desktop M25, EmoOS T11.2, below) |
+| 28 | `notify_take(buf, cap)` | one packed notification lands at `buf` and the answer is its packed size — the 24-byte head (the id at 0, the title's length at 8, the body's at 16) then the bytes; 0 is the empty queue, the cheap poll, a `cap` under 24 bytes reason 4, and a `cap` under the first entry's packed size reason 4 without consuming (the caller retries with a bigger buffer). The first taker names the notification center's owner; every later taker another pid is reason 3 (emo-desktop M25, EmoOS T11.2, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -106,6 +108,18 @@ end — the **move-at** (type 5, the position packed the press-at's
 way) — the focused window's reader again, the drag the seat speaks:
 the window following the hand by the reader's own `win_move`, one
 present per step (emo-desktop A16.5, EmoOS T10.5).
+
+Verbs 27 and 28 (emo-desktop M25, EmoOS T11.2) are the notification
+service's, the filesystem's own shape: the title and the body copied
+into a request slot inside the trap that checked their bounds (the
+title 1..64 bytes, the body 0..192), the slot's index riding the route
+(`-1027` the raise, `-1028` the take), and the take's bytes landing in
+the caller's buffer through the space word. The service keeps the
+pending queue only — eight raised and not yet taken, a full queue the
+resource refusal and nothing evicted — and the take names the first
+taker the notification center's owner, every later taker's pid the
+permission refusal; the rest of the center, the history and
+do-not-disturb, is the shell's own memory and no verb's business.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),

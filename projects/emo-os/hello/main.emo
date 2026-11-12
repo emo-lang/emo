@@ -3489,20 +3489,16 @@ def metal_feed() MetalFeed {
   return MetalFeed.new()
 }
 
-// The card's ground and words, its window whole: the package's card
-// (the shelf's recipe) with the alpha the metal's blit cannot use — a
-// word copy, so the card is opaque here — the accent bar, the title
-// and the body.
+// The card's ground and words, its window whole (emo-desktop A25.3):
+// the package's own drawing through the carve — the same words the
+// hosted twin paints, so the surface's digest is the corpus's number.
+// The window's memory is the allocator's, not a fresh canvas: the
+// card's alpha grades composite over the ground, so the buffer is
+// zeroed first.
 def notify_card_paint(f ui_fb.raster.Strike, base Int64, w Int64, h Int64,
                       n emo_notify.Notif) Void {
-  const dims = ui_fb_winbuf.pack(w, h)
-  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(0, 0),
-    ui_fb_winbuf.pack(w, h), emo_notify.toast_radius(),
-    emo_notify.card_top() | 0xFF000000,
-    emo_notify.card_bottom() | 0xFF000000)
-  ui_fb_winbuf.carve_fill(base, w, 8, 8, 3, h - 16, emo_notify.accent())
-  desk_text(f, base, w, h, n.title(), 20, 12, emo_notify.ink())
-  desk_text(f, base, w, h, n.body(), 20, 40, emo_notify.ink_dim())
+  ui_fb_winbuf.carve_fill(base, w, 0, 0, w, h, 0)
+  emo_notify.paint_card(Carve.new(base: base, width: w, height: h), f, 0, 0, n)
 }
 
 // The panel's ground and rows, its window whole: the package's
@@ -3511,34 +3507,9 @@ def notify_card_paint(f ui_fb.raster.Strike, base Int64, w Int64, h Int64,
 // first, one row per entry the height holds.
 def notify_panel_paint(f ui_fb.raster.Strike, base Int64, w Int64, h Int64,
                        c emo_notify.Center) Void {
-  const dims = ui_fb_winbuf.pack(w, h)
-  ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(0, 0),
-    ui_fb_winbuf.pack(w, h), emo_notify.panel_radius(),
-    emo_notify.card_top() | 0xFF000000,
-    emo_notify.card_bottom() | 0xFF000000)
-  desk_text(f, base, w, h, "Notifications", 16, 12, emo_notify.ink())
-  ui_fb_winbuf.carve_fill(base, w, 8, emo_notify.dnd_row_y(0) + 4, w - 16,
-    emo_notify.dnd_row_h() - 8, 0x2A2E38)
-  desk_text(f, base, w, h, "Do not disturb", 16,
-    emo_notify.dnd_row_y(0) + 8, emo_notify.ink_dim())
-  var st = "off"
-  if c.dnd_on() {
-    st = "on"
-  }
-  desk_text(f, base, w, h, st, w - 48, emo_notify.dnd_row_y(0) + 8,
-    emo_notify.ink())
-  const items = c.entries()
-  var i = 0
-  var yy = emo_notify.first_entry_y(0)
-  while i < items.length() && yy + emo_notify.row_h() <= h {
-    const n = items[i]
-    desk_text(f, base, w, h, n.title(), 16, yy + 6, emo_notify.ink())
-    desk_text(f, base, w, h, n.body(), 16, yy + 30, emo_notify.ink_dim())
-    ui_fb_winbuf.carve_fill(base, w, 12, yy + emo_notify.row_h() - 6,
-      w - 24, 1, emo_notify.row_line())
-    yy = yy + emo_notify.row_h()
-    i = i + 1
-  }
+  ui_fb_winbuf.carve_fill(base, w, 0, 0, w, h, 0)
+  emo_notify.paint_panel(Carve.new(base: base, width: w, height: h), f, 0, 0,
+    w, h, c)
 }
 
 // A shell surface made and placed: a toplevel at (x, y), its grant and
@@ -3592,7 +3563,7 @@ def notify_close(grant_cell Int64, base_cell Int64) Void {
 // The shell's own commit: the frame's digest on the wire, then the
 // grant's present — the shape every surface of the desk keeps.
 def notify_present(grant Int64, base Int64, w Int64, h Int64) Void {
-  frame_line(carve_digest(base, w, h))
+  frame_line(ui_fb_winbuf.round_digest(base, w, h))
   case syscall.present(grant, 0, 0, w, h) {
     (R.error, _) -> { mark() }
     (R.ok, _) -> {}
@@ -3699,6 +3670,11 @@ def notify_panel_toggle(f ui_fb.raster.Strike, c emo_notify.Center, mw Int64,
                         mh Int64) Void {
   c.toggle_open()
   if c.panel_open() {
+    // the card goes with the door: the panel covers its place
+    if peek64(buf + notify_toast_grant) != 0 {
+      notify_close(buf + notify_toast_grant, buf + notify_toast_base)
+      poke64(buf + notify_painted, 0)
+    }
     notify_panel_sync(f, c, mw, mh)
   } else {
     notify_close(buf + notify_panel_grant, buf + notify_panel_base)
@@ -3861,9 +3837,18 @@ def desktop() Void {
     nc.beat()
     const had = nc.entries().length()
     nc.take()
-    notify_card_sync(f, nc, mw)
-    if nc.panel_open() && nc.entries().length() != had {
-      notify_panel_sync(f, nc, mw, mh)
+    if nc.panel_open() == false {
+      notify_card_sync(f, nc, mw)
+    } else {
+      // the open panel is the center whole: the card's place is the
+      // panel's, and a delivery repaints the rows
+      if peek64(buf + notify_toast_grant) != 0 {
+        notify_close(buf + notify_toast_grant, buf + notify_toast_base)
+        poke64(buf + notify_painted, 0)
+      }
+      if nc.entries().length() != had {
+        notify_panel_sync(f, nc, mw, mh)
+      }
     }
     const ev = syscall.input_read()
     const t = ev_type(ev)

@@ -19,3 +19,7 @@ dnd false
 dnd true
 dnd false
 kept 16 newest 20 oldest 5
+card 197429546
+center 726343998
+center_dnd 114786778
+center2 1199006476

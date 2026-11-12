@@ -77,6 +77,10 @@ projects/emo-os/.trio.ppm
 projects/emo-os/.reopen.ppm
 projects/emo-os/.deskout.ppm
 projects/emo-os/.folder.ppm
+projects/emo-os/.card.ppm
+projects/emo-os/.panel.ppm
+projects/emo-os/.dnd.ppm
+projects/emo-os/.supp.ppm
 projects/emo-os/.ride.log
 projects/emo-os/.blk.img.gdb
 *.wasm-art
