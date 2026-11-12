@@ -95,6 +95,34 @@ binds at the advertised versions, surface, xdg surface, toplevel,
 title, the empty commit, the configure wait, the ack, the pool
 painted one pwrite a row, attach, damage, the second commit.
 
+## Input
+
+The seat's half of the wire: `wl_seat` (bound at v5 — the pointer's
+frame family and the keyboard's `repeat_info` included), and the
+`wl_pointer`/`wl_keyboard` it grants through `seat_get_pointer` /
+`seat_get_keyboard`. The pointer's events (enter, motion with fixed
+24.8 surface coordinates, button, the frame family) and the
+keyboard's (the keymap whose **fd rides the ancillary queue in the
+event direction** — the same `Args.fd` claim, the bytes read back
+through the passage, enter/leave, key, modifiers) decode through the
+same `Args` cursor. The seat's requests are gated: sway refuses
+`get_pointer` before the capabilities advert names the pointer —
+the grant waits for the capabilities event.
+
+The smoke leg grades the tables end to end: the demo binds sway's
+`zwlr_virtual_pointer_manager_v1` and `zwp_virtual_keyboard_manager_v1`
+globals, paints a minimal xkb_v1 keymap through the shm tier, and
+injects motion, the left button, and a key against its own window —
+the events come back and the script asserts them. Two lessons the
+leg taught: a virtual pointer born with the wire's null seat is a
+device sway registers but never routes (born with the seat, it
+routes); and a compositor's cursor state lags its window
+transactions — the beats fire from the pointer's enter event, the
+one word that says the cursor state has caught up.
+
+Keycodes arrive raw (the evdev numbers); keysym decoding through the
+keymap is the named follow-up.
+
 ## Limitations
 
 - **One target.** `c` alone; the interpreter's fd-passage stubs (the
@@ -102,9 +130,8 @@ painted one pwrite a row, attach, damage, the second commit.
   follow-up.
 - **One fd a message.** The protocols this package speaks carry
   exactly one; a protocol needing two grows the shape then.
-- **Input is not here yet.** `wl_seat`, `wl_pointer`, `wl_keyboard`
-  — and the keymap fd their events carry — are the next tables, not
-  these.
+- **Keysyms are not here yet.** The keycodes arrive raw; decoding
+  them through the keymap is the named follow-up.
 - **Hand-written tables.** The opcodes live at their call sites and
   the compositor grades them; no XML is parsed at runtime.
 

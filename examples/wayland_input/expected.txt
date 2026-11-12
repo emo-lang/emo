@@ -1,0 +1,12 @@
+client: connected
+client: globals 1
+mock: 3 requests byte-ok; stream out
+client: capabilities pointer keyboard
+client: pointer enter 3 7
+client: pointer motion 11 13
+client: button 272 pressed
+client: frame
+client: keymap xkb_v1 21 bytes [xkb_keymap-test-bytes]
+client: keyboard enter 1 keys down
+client: key 30 pressed
+client: wayland: the peer closed the socket

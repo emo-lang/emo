@@ -871,6 +871,11 @@ let c_goldens =
        its bytes read at the far end (A18.8). *)
     "wayland_wire";
     "wayland_handshake";
+    (* wayland_input: the seat tables against a canned stream — the
+       capabilities advert, pointer enter/motion/button/frame, the
+       keyboard's keymap fd riding the ancillary queue with its bytes
+       read back through the passage, keyboard enter and key (M19). *)
+    "wayland_input";
     "json_demo";
     "yaml_demo";
     "xml_demo";
