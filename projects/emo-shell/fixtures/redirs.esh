@@ -1,0 +1,9 @@
+echo first > emosh-redirs.tmp
+echo second >> emosh-redirs.tmp
+cat < emosh-redirs.tmp
+> emosh-empty.tmp
+ls emosh-empty.tmp
+rm emosh-redirs.tmp emosh-empty.tmp
+echo missing > /nonexistent-emosh-dir-63/f
+echo status=$?
+echo after-failure

@@ -1,0 +1,90 @@
+require "os"
+require "bufio"
+
+// The shell's session: the state every command shares and the writers
+// every command uses. The parsing, the expansion, and the execution
+// live in their own modules; this one owns what they share — the last
+// exit status the next command observes as $?, whether the shell
+// keeps running, the line reader, and the three writers.
+//
+// Every byte emosh emits goes through os.write on the raw descriptor
+// — never through a buffered stdout — so a fork child running a
+// builtin cannot lose its output to `_exit`'s skipped flushes, and
+// the parent's words and the children's bytes interleave in the order
+// they were written, deterministically, on both targets.
+//
+// The line reader is bufio over fd 0. In an interactive session the
+// terminal's own line discipline does the editing — cooked mode, the
+// way a shell without a line editor reads — and the session's opening
+// moves (in exec) ignore sig_int and sig_quit so a Ctrl-C discards
+// the current line instead of killing the shell; a fork child
+// restores the default disposition before its exec. A session whose
+// stdin is not a tty is a script: no prompt, and the shell dies by
+// its own errors.
+
+class Shell {
+  def init(interactive Bool, name String) {
+    self.interactive = interactive
+    self.name = name
+    self.last_status = Box.new(0)
+    self.running = Box.new(true)
+    self.reader = Box.new(bufio.reader(bufio.fd_reader(0)))
+  }
+
+  // ---- the three writers ----
+
+  // Bytes to stdout, raw.
+  def out(s String) Void {
+    os.write(1, s)
+  }
+
+  // One line to stdout, raw.
+  def line(s String) Void {
+    os.write(1, s + "\n")
+  }
+
+  // One line to stderr, raw.
+  def err(s String) Void {
+    os.write(2, s + "\n")
+  }
+
+  // ---- the state commands share ----
+
+  // The exit status the next command observes as $?, and the status
+  // the shell itself leaves with at end of input.
+  def status() Int64 {
+    return self.last_status.read()
+  }
+
+  def set_status(status Int64) Void {
+    self.last_status.replace(status)
+  }
+
+  // Whether the session goes on: `exit` clears it.
+  def keeps_running() Bool {
+    return self.running.read()
+  }
+
+  def stop() Void {
+    self.running.replace(false)
+  }
+
+  // One more line of input; the empty string means end of input,
+  // trailing newline kept the bufio way.
+  def read_line() String {
+    return self.reader.read().read_line()
+  }
+}
+
+// The trailing newline read_line keeps — and a carriage return a
+// Windows-fed script carries — are input, not command text.
+def strip_newline(raw String) String {
+  var line = raw
+  if line != "" && line.substring(line.length() - 1, 1) == "\n" {
+    line = line.substring(0, line.length() - 1)
+  }
+  if line != "" && line.substring(line.length() - 1, 1) == "\r" {
+    line = line.substring(0, line.length() - 1)
+  }
+  return line
+}

@@ -56,7 +56,7 @@ The packages:
 | Package | What it gives you | Targets |
 |---|---|---|
 | [`file`](#the-file-package) | whole-file read and write | `ocaml`, `c`, `wasm` |
-| [`os`](#the-os-package) | processes, pipes, raw fd IO, directories | `ocaml`, `c`, `wasm` (fd/directory half) |
+| [`os`](#the-os-package) | processes, pipes, descriptor plumbing, environment, signals, raw fd IO, directories | `ocaml`, `c`, `wasm` (fd/directory half) |
 | [`bufio`](#the-bufio-package) | buffered readers and writers over any stream | `ocaml`, `c`, `wasm` |
 | [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c`, `typescript` |
 | [`http`](#the-http-package) | HTTP client | `ocaml`, `c`, `typescript` |
@@ -123,8 +123,9 @@ Reference: [`docs/stdlib/file.md`](stdlib/file.md) · Demo:
 
 ## The `os` package
 
-The process-level surface: process ids, `fork`, `execv`, `waitpid`,
-pipes, the working directory, directory listing, and raw (unbuffered,
+The process-level surface: process ids, `fork`, `execv`, `execvp`,
+`waitpid`, pipes, descriptor plumbing, the environment, the signals,
+the working directory, directory listing, and raw (unbuffered,
 fd-based) file IO — the machinery a systems program needs before it
 can build anything else.
 

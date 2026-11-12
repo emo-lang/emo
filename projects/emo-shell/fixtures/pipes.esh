@@ -1,0 +1,5 @@
+echo hello pipe | cat
+printf 'b\na\nc\n' | sort
+printf 'x\nx\ny\n' | sort | uniq
+printf 'p\nq\nr\n' | head -2
+echo one-word | cat | cat | cat

@@ -41,6 +41,7 @@
 | M21 — crypto 包 | 55 | 可移植的原语层作为一个纯 Emo 包 `crypto`——SHA-2、SHA-3 与 SHAKE、HMAC、HKDF 与 PBKDF2、常量时间比较、ChaCha20-Poly1305、AES 连同 CTR、CBC、GCM、Ed25519 与 X25519、收在 `crypto.legacy` 后的 SHA-1 与 MD5——在全部五个宿主 target 上逐字节一致,每个 golden 都是对 RFC 与 NIST 向量、对 Go 自家答案的一次 diff;旁边的 `rand` 包逐 target 绑定熵源并承载确定性的 HMAC-DRBG 流;错误二分沿 house 规则,Bytes 是载体,文档把常量时间写成源码级纪律并逐 target 给出诚实状态。RSA 等 bignum 地基;TLS、x509 与后量子集合不在其内。 |
 | M22 — `wasm` 上的文件 IO | 56 | wasm target 的宿主边界长出文件系统 syscall,规范宿主随编译器走:`file`、`os`(fd/目录半边——进程半边在调用点拒绝并点名能力)与 `bufio` 在 `wasm` 上可解析、逐字节一致;`emo run --target wasm` 用随编译器走的宿主在 Node 下运行产物;`emo build --target wasm` 仍只产出 `.wasm` + `.wat`;一切既有 golden 在一切 target 上逐字节不变(`CHECK.md`)。 |
 | M23 — httpd 服务器 | 57 | HTTP 的服务端半边从 `http` 迁入 `httpd`,成为骑在 `net` 上的纯 Emo HTTP/1.1 服务器——一个请求进、一个 `Response` 值出,每连接一进程,keep-alive、chunked 请求体、`100-continue`、带 405+`Allow` 与路径清理重定向的模式路由、每请求超时与尺寸限额、优雅关闭——在它声明的三个宿主 target 上逐字节一致,客户端包瘦身回原形,一切既有 golden 全绿(`CHECK.md`)。 |
+| M26 — Emo shell | 63 | `emosh`,用 Emo 写在 `os` 表面上的通用命令解释器:环境、信号与接线调用(`dup2`/`execvp`/`isatty`/`argv`)落进 `os`,与 fork 纪律并肩;shell 本体把词切成字面与可扩展部件,扩展 `$var`/`$?`/波浪号,逐段 fork 管道并用 `dup2` 接线,把 `<`/`>`/`>>` 开到子进程上,带着承接状态走 `;`/`&&`/`||`,应答八件内建,靠「忽略中断」的纪律活着——shell 忽略,fork 子进程在 exec 前恢复默认——行输入走终端自己的 cooked 模式;fixture 脚本在 ocaml 与 c 双 target 上逐字节一致,退出状态一并钉死(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1407,3 +1408,50 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
       途中发现并修掉:enum 成员要逗号分隔;类方法名在兄弟方法
       体内可见(E4004);元组 foreign return 在 shim 里不可用
       (生成的 shape typedef 是按程序计数的名字)。
+
+## M26 — Emo shell
+
+### 步骤 63 — `emosh`,用 Emo 写的 shell
+
+**前置:** 步骤 56(`os` 表面在其声明的每个 target 上就位,wasm 上进程半边运行时 raise)。
+**完成标准:** `projects/emo-shell` 在 ocaml 与 c 双 target 构建通过,其 fixture 脚本——词与引号、扩展、管道、重定向、连接符、内建、错误路径——双腿逐字节一致且退出状态钉死;`os` 表面长出 `dup2`/`execvp`/`isatty`/`argv` 与环境、信号两半,reason 逐字节一致;文档 EN+zh;`dune runtest` 绿。
+
+- [x] **T63.1** — os 接线四件:`dup2`、`execvp`、`isatty`、`argv`
+      落遍解释器、编译型 ocaml 运行时、c 运行时(argv 在 main 经
+      `emo_args_set` 捕获)、checker 的表,以及 wasm 进程半边的
+      raise——生成的 c main 长成 `int main(int argc, char **argv)`。
+- [x] **T63.2** — os 环境与信号两半:`getenv`(未设置返回值
+      `os: getenv NAME: is not set`)、`setenv`、`unsetenv`、
+      `signal_ignore`/`signal_default`(经典范围守卫骑在调用前),
+      以及信号常量 `sig_hup`…`sig_term`;三个示例 lock 对着长大的
+      包重新解析;`docs/stdlib/os.md` + zh。
+- [x] **T63.3** — 骨架:`projects/emo-shell`(manifest
+      `emo/emo-shell`,`targets = ["ocaml", "c"]`),`Shell` 会话
+      (状态、运行标志、裸描述符写出器——每个字节都走 `os.write`,
+      绝不经缓冲 stdout,fork 子进程的输出因而能活过 `_exit`,交错
+      顺序保持确定),入口经 `_exit` 离场。
+- [x] **T63.4** — 词法器与扩展器:词即字面与可扩展部件(裸跑一段
+      一部件,`$` 因此能找到自己的名字;引号在词法期解决),算符、
+      `#` 注释、`&` 的拒绝、未闭合引号作为值;`$var`/`${var}`/`$?`
+      /`$0`/词首波浪号,未设置为空,无 IFS 重切分——指南写明的诚实
+      契约。
+- [x] **T63.5** — 解析器:行 → 条目(管道 + 连接符),对空段与悬空
+      连接符严格,松手处恰与经典 shell 一致(行尾 `;`、纯重定向
+      命令),错误作为 `(R.error, reason)` 值——shell 没有 catch
+      可依赖。
+- [x] **T63.6** — 执行器与驱动:带承接状态的连接符行走,管道逐段
+      fork 经管道与 `dup2` 接线,重定向开到子进程上,`execvp` 与
+      127 拒绝,信号死亡按 128+信号,子进程 exec 前恢复
+      `sig_int`/`sig_quit`/`sig_pipe` 默认,交互态忽略(Ctrl-C 冲掉
+      本行,shell 存活),提示符,被拒行状态 2。
+- [x] **T63.7** — 八件内建:`cd`(无参 → $HOME)、`pwd`、`echo`
+      (逐字,无旗标)、`exit`(最后状态,低字节折叠,数字参数
+      拒绝)、`export`/`unset` 走真环境、`true`/`false`。
+- [x] **T63.8** — 金测:六个 fixture 脚本,输出与退出状态钉死,
+      stderr 并入同一条流,从项目自身目录运行,ocaml 与 c 双 target
+      在一个 Alcotest 用例里逐字节一致(`emosh_golden`);`projects`
+      树随 suite 的 dune deps 走。
+- [x] **T63.9** — 文档与追踪:`docs/emosh-guide.md` + zh(语法、
+      内建、诚实边界),`os.md` 表面已在 T63.2 落地,TASKS M26/
+      步骤 63 EN+zh,`plan/step-63-emosh.md` + `plan/README.md` 行,
+      CHECK.md 决策记录,README 引用行。

@@ -1,0 +1,9 @@
+no-such-command-emosh
+echo missing=$?
+echo dangling |
+echo syntax=$?
+echo stray &
+echo amp=$?
+echo 'unterminated
+echo quote=$?
+echo survived

@@ -1,0 +1,145 @@
+require "os"
+
+// Word expansion: the pass that turns the lexer's parts into the
+// strings a command runs with. Emosh's contract is deliberately
+// smaller than bash's — the honest simplifications a shell without
+// globbing and without IFS can make:
+//
+//   - a tilde expands only at the start of a word whose first part is
+//     unquoted, and only to $HOME (unset leaves the tilde as it is);
+//   - `$name` / `${name}` expand to the variable's value, unset
+//     answering the empty string — there is no word splitting after
+//     expansion, so one expanded word is one argument, always;
+//   - `$?` is the last exit status, `$0` the name the shell was
+//     started with;
+//   - a `$` the rules cannot name stays a literal `$`.
+//
+// Literal parts — single-quoted runs and the escapes the lexer
+// resolved — ride through untouched; that is the whole meaning of
+// quoting here, since there is no splitting or globbing to hide from.
+
+// One piece of a word: the characters, and whether they are literal —
+// a single-quoted run or an escaped character the lexer already
+// resolved, which expansion must never touch.
+class Part {
+  def init(text String, lit Bool) {
+    self.text = text
+    self.lit = lit
+  }
+}
+
+// The characters a variable's name may start with, and continue with —
+// the ASCII identifier set, matched through the const-table idiom:
+// index_of finds the byte or answers -1.
+const name_first = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+const name_rest = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
+
+def is_name_first(ch String) Bool {
+  if ch == "" {
+    return false
+  }
+  return name_first.index_of(ch) >= 0
+}
+
+def is_name_rest(ch String) Bool {
+  if ch == "" {
+    return false
+  }
+  return name_rest.index_of(ch) >= 0
+}
+
+// One whole word, expanded: the parts joined, `$` forms resolved, the
+// leading tilde traded for $HOME when the word opens unquoted.
+def word(parts Array[Part], status Int64, name String) String {
+  var joined = ""
+  var first = true
+  for var i = 0; i < parts.length(); i = i + 1 {
+    const part = parts[i]
+    var text = part.text
+    if part.lit {
+      joined = joined + text
+    } else {
+      if first && text.starts_with("~") {
+        text = expand_tilde(text)
+      }
+      joined = joined + dollars(text, status, name)
+    }
+    first = false
+  }
+  return joined
+}
+
+// The leading tilde of an unquoted first part: `~` and `~/...` trade
+// for $HOME; `~user` stays as it is — there is no user database in
+// the shell's contract, and honesty beats a wrong guess.
+def expand_tilde(text String) String {
+  if text.length() > 1 && text.substring(1, 1) != "/" {
+    return text
+  }
+  case os.getenv("HOME") {
+    (R.ok, home) -> { return home + text.substring(1, text.length() - 1) }
+    (R.error, _)  -> { return text }
+  }
+}
+
+// Every `$` form in one unquoted run: `?`, `0`, `${name}`, `$name` —
+// anything else keeps its dollar.
+def dollars(text String, status Int64, name String) String {
+  var out = ""
+  var i = 0
+  while i < text.length() {
+    const ch = text.substring(i, 1)
+    if ch != "$" {
+      out = out + ch
+      i = i + 1
+    } else {
+      if i + 1 >= text.length() {
+        out = out + "$"
+        i = i + 1
+      } else {
+        const next = text.substring(i + 1, 1)
+        if next == "?" {
+          out = out + status.to_string()
+          i = i + 2
+        } else {
+          if next == "0" {
+            out = out + name
+            i = i + 2
+          } else {
+            if next == "{" {
+              const close = text.index_of("}")
+              if close < 0 {
+                out = out + "$"
+                i = i + 1
+              } else {
+                out = out + value_of(text.substring(i + 2, close - i - 2))
+                i = close + 1
+              }
+            } else {
+              if is_name_first(next) {
+                var j = i + 1
+                while j < text.length() && is_name_rest(text.substring(j, 1)) {
+                  j = j + 1
+                }
+                out = out + value_of(text.substring(i + 1, j - i - 1))
+                i = j
+              } else {
+                out = out + "$"
+                i = i + 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
+// One variable's value; unset answers the empty string.
+def value_of(name String) String {
+  case os.getenv(name) {
+    (R.ok, value) -> { return value }
+    (R.error, _)  -> { return "" }
+  }
+}

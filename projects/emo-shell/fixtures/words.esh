@@ -1,0 +1,14 @@
+echo one two three
+export EMOSH_TEST=hello
+echo $EMOSH_TEST world
+echo value-is-$EMOSH_TEST-x
+echo ${EMOSH_TEST}-braced
+echo 'single $EMOSH_TEST stays'
+echo "double $EMOSH_TEST expands"
+echo $NO_SUCH_VAR_EMOSH-empty
+echo "$NO_SUCH_VAR_EMOSH-empty-too"
+true
+echo status=$?
+false
+echo status=$?
+echo escape-\$EMOSH_TEST-literal

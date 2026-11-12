@@ -510,6 +510,16 @@ emo_value emo_os_unlink(emo_str path);
 emo_value emo_os_rename(emo_str old_path, emo_str new_path);
 emo_value emo_os_getcwd(void); /* the working directory as a cell */
 emo_value emo_os_chdir(emo_str path);
+emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd);
+int64_t emo_os_execvp(emo_str file, emo_value argv);
+bool emo_os_isatty(int64_t fd);
+void emo_args_set(int argc, char **argv);
+emo_value emo_os_argv(void); /* the process's argument vector as a cell */
+emo_value emo_os_getenv(emo_str name);
+emo_value emo_os_setenv(emo_str name, emo_str value);
+emo_value emo_os_unsetenv(emo_str name);
+emo_value emo_os_signal_ignore(int64_t sig);
+emo_value emo_os_signal_default(int64_t sig);
 
 /* ---- The integer core (T23.2) ---- */
 

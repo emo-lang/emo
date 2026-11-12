@@ -44,6 +44,7 @@ Each area of the design has its own document:
 - [`docs/intro/concurrency.md`](docs/intro/concurrency.md) — processes and message passing: `do`, `<-`, `receive`.
 - [`docs/intro/networking.md`](docs/intro/networking.md) — the direct-style async networking API over the `net` and `http` packages.
 - [`docs/httpd-guide.md`](docs/httpd-guide.md) — the web-server guide: from a ten-line `httpd.serve` to a JSON API with process-owned state, middleware, and graceful shutdown.
+- [`docs/emosh-guide.md`](docs/emosh-guide.md) — the shell guide: `emosh`, the command interpreter written in Emo — pipelines, redirections, expansion, the builtins, and the honest limits.
 - [`docs/intro/native-builds.md`](docs/intro/native-builds.md) — `emo build`, the runtime inside the binary, and the `foreign def` C interop.
 - [`docs/intro/testing.md`](docs/intro/testing.md) — `emo test`, the `test/` convention, and the `expect_*` assertions.
 - [`docs/emo-testing-guide.md`](docs/emo-testing-guide.md) — the detailed testing guide: discovery, the four assertion builtins, reporting, and isolation.

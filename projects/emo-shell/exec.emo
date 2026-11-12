@@ -1,0 +1,344 @@
+require "os"
+
+// The executor and the session driver. The driver reads lines until
+// the input ends or `exit` stops the shell; each line goes lex →
+// parse → the item walk. A malformed line is a value, the session
+// prints the reason and carries on with status 2 — the classic
+// shells' syntax-error status — in an interactive session; a script
+// carries on too, dying only when the line walk says so, because a
+// script that stops at its first typo hides the rest of the damage.
+//
+// The walk itself is the classic one: run the pipeline, then let the
+// connector that follows decide whether the next item runs at all —
+// `;` always, `&&` on success, `||` on failure, with a skipped item's
+// status carried forward untouched so `false && x || y` runs y.
+//
+// A pipeline of one command stays in this process when it can (a
+// builtin without redirections); everything else forks — one child
+// per stage, stages wired through pipes with dup2, redirections
+// opened onto the child's descriptors, the child resetting the
+// interactive dispositions before its exec (an ignored disposition
+// survives the exec; a default one lets Ctrl-C kill the command the
+// way it should). The pipeline's status is its last stage's, a
+// signal death counting as 128 + signal, the classic encoding.
+
+// The session's opening moves: sig_pipe ignored in every mode (a
+// write into a dead pipe must not kill the shell), sig_int and
+// sig_quit ignored in an interactive one (Ctrl-C discards the line,
+// the shell survives), and the mode itself decided by what fd 0 is.
+def start() shell.Shell {
+  os.signal_ignore(os.sig_pipe)
+  const interactive = os.isatty(0)
+  if interactive {
+    os.signal_ignore(os.sig_int)
+    os.signal_ignore(os.sig_quit)
+  }
+  const argv = os.argv()
+  var name = "emosh"
+  if argv.length() > 0 {
+    name = argv[0]
+  }
+  return shell.Shell.new(interactive: interactive, name: name)
+}
+
+def main_entry() Int64 {
+  const sh = start()
+  var reading = true
+  while reading {
+    if sh.interactive {
+      os.write(1, "emosh> ")
+    }
+    const raw = sh.read_line()
+    if raw == "" {
+      if sh.interactive {
+        os.write(1, "\n")
+      }
+      reading = false
+    } else {
+      run_line(sh, shell.strip_newline(raw))
+      if !sh.keeps_running() {
+        reading = false
+      }
+    }
+  }
+  return sh.status()
+}
+
+// One line of input: lex, parse, walk.
+def run_line(sh shell.Shell, line String) Void {
+  if line != "" {
+    case lex.tokenize(line) {
+      (R.error, why) -> { refuse(sh, why) }
+      (R.ok, tokens) -> {
+        case parse.parse(tokens) {
+          (R.error, why) -> { refuse(sh, why) }
+          (R.ok, items) -> { run_items(sh, items) }
+        }
+      }
+    }
+  }
+}
+
+// A malformed line: the reason on stderr, status 2 — the syntax
+// error's classic status.
+def refuse(sh shell.Shell, why String) Void {
+  sh.err(why)
+  sh.set_status(2)
+}
+
+// The item walk: run what the connectors allow, carry the status
+// forward.
+def run_items(sh shell.Shell, items Array[parse.Item]) Void {
+  var status = sh.status()
+  var run = true
+  for var i = 0; i < items.length(); i = i + 1 {
+    const item = items[i]
+    if run {
+      status = run_pipeline(sh, item.pipeline)
+      sh.set_status(status)
+    }
+    if item.conn == ";" {
+      run = true
+    } else {
+      if item.conn == "&&" {
+        run = status == 0
+      } else {
+        if item.conn == "||" {
+          run = status != 0
+        } else {
+          // end of line — nothing further, by construction
+          run = false
+        }
+      }
+    }
+  }
+}
+
+// One pipeline: the fork-and-wire path when there is more than one
+// stage, the single-command path otherwise.
+def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
+  if stages.length() == 1 {
+    return run_simple(sh, stages[0])
+  }
+  const n = stages.length()
+  // n - 1 pipes; read end of pipe i - 1 feeds stage i, write end of
+  // pipe i carries stage i's stdout
+  const reads = ArrayBuilder.new()
+  const writes = ArrayBuilder.new()
+  var made = true
+  var why = ""
+  for var p = 0; p < n - 1; p = p + 1 {
+    case os.pipe() {
+      (R.error, reason) -> {
+        made = false
+        why = reason
+      }
+      (R.ok, ends) -> {
+        reads.push(ends[0])
+        writes.push(ends[1])
+      }
+    }
+  }
+  if !made {
+    sh.err("emosh: " + why)
+    close_all(reads.to_array(), writes.to_array())
+    return 1
+  }
+  const read_fds = reads.to_array()
+  const write_fds = writes.to_array()
+  const pids = ArrayBuilder.new()
+  var forked = true
+  var i = 0
+  while forked && i < n {
+    case os.fork() {
+      (R.error, reason) -> {
+        forked = false
+        sh.err("emosh: " + reason)
+      }
+      (R.ok, pid) -> {
+        if pid == 0 {
+          in_child(sh, stages[i], i, n, read_fds, write_fds)
+        } else {
+          pids.push(pid)
+          i = i + 1
+        }
+      }
+    }
+  }
+  // The parent keeps no pipe end: it would never see end of stream.
+  close_all(read_fds, write_fds)
+  if !forked {
+    // some stages may already run; wait what was spawned, then report
+    reap(pids.to_array())
+    return 1
+  }
+  return wait_status(pids.to_array())
+}
+
+// The fork child of stage i: wire the pipe ends, reset the signals,
+// open its redirections, run the stage, and leave through _exit —
+// every path, no return.
+def in_child(sh shell.Shell, cmd parse.Cmd, i Int64, n Int64, read_fds Array[Int64], write_fds Array[Int64]) Void {
+  if i > 0 {
+    os.dup2(read_fds[i - 1], 0)
+  }
+  if i < n - 1 {
+    os.dup2(write_fds[i], 1)
+  }
+  close_all(read_fds, write_fds)
+  child_reset_signals()
+  const opened = apply_redirs(sh, cmd.redirs)
+  if opened != 0 {
+    os._exit(opened)
+  }
+  const status = child_run(sh, cmd)
+  os._exit(status)
+}
+
+// A single command: a builtin with no redirections stays in this
+// process; everything else is the one-child pipeline.
+def run_simple(sh shell.Shell, cmd parse.Cmd) Int64 {
+  var words = ArrayBuilder.new()
+  for var k = 0; k < cmd.words.length(); k = k + 1 {
+    words.push(expand.word(cmd.words[k], sh.status(), sh.name))
+  }
+  const argv = words.to_array()
+  if argv.length() > 0 && builtin.is_builtin(argv[0]) && cmd.redirs.length() == 0 {
+    return builtin.run(sh, argv)
+  }
+  case os.fork() {
+    (R.error, reason) -> {
+      sh.err("emosh: " + reason)
+      return 1
+    }
+    (R.ok, pid) -> {
+      if pid == 0 {
+        child_reset_signals()
+        const status = apply_redirs(sh, cmd.redirs)
+        if status != 0 {
+          os._exit(status)
+        }
+        os._exit(child_run(sh, cmd))
+      }
+      return wait_one(pid)
+    }
+  }
+}
+
+// The child's body: expand, then a builtin's status or an execvp —
+// which never returns on success.
+def child_run(sh shell.Shell, cmd parse.Cmd) Int64 {
+  var words = ArrayBuilder.new()
+  for var k = 0; k < cmd.words.length(); k = k + 1 {
+    words.push(expand.word(cmd.words[k], sh.status(), sh.name))
+  }
+  const argv = words.to_array()
+  if argv.length() == 0 {
+    // a command of redirections alone: the files were opened already,
+    // there is nothing to run
+    return 0
+  }
+  if builtin.is_builtin(argv[0]) {
+    return builtin.run(sh, argv)
+  }
+  os.execvp(argv[0], argv)
+  sh.err("emosh: " + argv[0] + ": command not found")
+  return 127
+}
+
+// The child's redirections: each opened and dup2'd onto its
+// descriptor in order; a file that does not open reports the reason
+// and fails the command with 1.
+def apply_redirs(sh shell.Shell, redirs Array[parse.Redir]) Int64 {
+  var status = 0
+  var i = 0
+  while status == 0 && i < redirs.length() {
+    const redir = redirs[i]
+    // a redirection's file name never carries an unexpanded $? the
+    // user did not mean; expand it like a word
+    const path = expand.word(redir.word, sh.status(), sh.name)
+    if redir.op == lex.op_lt() {
+      case os.open_read(path) {
+        (R.error, why) -> {
+          sh.err("emosh: " + why)
+          status = 1
+        }
+        (R.ok, fd) -> {
+          os.dup2(fd, 0)
+          os.close(fd)
+        }
+      }
+    } else {
+      if redir.op == lex.op_gt() {
+        case os.open_write(path) {
+          (R.error, why) -> {
+            sh.err("emosh: " + why)
+            status = 1
+          }
+          (R.ok, fd) -> {
+            os.dup2(fd, 1)
+            os.close(fd)
+          }
+        }
+      } else {
+        case os.open_append(path) {
+          (R.error, why) -> {
+            sh.err("emosh: " + why)
+            status = 1
+          }
+          (R.ok, fd) -> {
+            os.dup2(fd, 1)
+            os.close(fd)
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return status
+}
+
+// The fork child takes the signals back: interactive ignores would
+// survive the exec and make Ctrl-C toothless on the command.
+def child_reset_signals() Void {
+  os.signal_default(os.sig_int)
+  os.signal_default(os.sig_quit)
+  os.signal_default(os.sig_pipe)
+}
+
+// Closes every descriptor a pipeline made, both halves.
+def close_all(reads Array[Int64], writes Array[Int64]) Void {
+  for var r = 0; r < reads.length(); r = r + 1 {
+    os.close(reads[r])
+  }
+  for var w = 0; w < writes.length(); w = w + 1 {
+    os.close(writes[w])
+  }
+}
+
+// Waits for every pid; the last stage's status is the pipeline's.
+def wait_status(pids Array[Int64]) Int64 {
+  var status = 0
+  for var p = 0; p < pids.length(); p = p + 1 {
+    status = wait_one(pids[p])
+  }
+  return status
+}
+
+// Waits for one child and decodes the kernel's raw status word.
+def wait_one(pid Int64) Int64 {
+  const w = os.waitpid(pid)
+  const raw = w[1]
+  if os.wait_signaled(raw) {
+    return 128 + os.wait_signal(raw)
+  }
+  return os.wait_exit_code(raw)
+}
+
+// Waits a fork failure's partial brood down; their statuses do not
+// matter, the walk already failed.
+def reap(pids Array[Int64]) Void {
+  for var p = 0; p < pids.length(); p = p + 1 {
+    os.waitpid(pids[p])
+  }
+}

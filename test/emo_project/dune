@@ -14,6 +14,7 @@
  (alias runtest)
  (deps
   (source_tree ../../examples)
+  (source_tree ../../projects)
   (source_tree ../../stdlib)
   (source_tree ../../test/emo_sched/fixtures)
   ../../src/emo_cli/emo.exe

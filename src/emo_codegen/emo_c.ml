@@ -674,6 +674,26 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
         (arg 1 Emo_check.String)
   | "os_getcwd" -> Printf.sprintf "emo_os_getcwd()" (* a cell *)
   | "os_chdir" -> Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String)
+  | "os_dup2" ->
+      Printf.sprintf "emo_os_dup2(%s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.Int64)
+  | "os_execvp" ->
+      Printf.sprintf "emo_os_execvp(%s, %s)" (arg 0 Emo_check.String)
+        (as_dyn env (List.nth args 1))
+  | "os_isatty" ->
+      let v = Printf.sprintf "emo_os_isatty(%s)" (arg 0 Emo_check.Int64) in
+      if is_dyn use_ty then Printf.sprintf "emo_vbool(%s)" v else v
+  | "os_argv" -> Printf.sprintf "emo_os_argv()" (* a cell *)
+  | "os_getenv" -> Printf.sprintf "emo_os_getenv(%s)" (arg 0 Emo_check.String)
+  | "os_setenv" ->
+      Printf.sprintf "emo_os_setenv(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.String)
+  | "os_unsetenv" ->
+      Printf.sprintf "emo_os_unsetenv(%s)" (arg 0 Emo_check.String)
+  | "os_signal_ignore" ->
+      Printf.sprintf "emo_os_signal_ignore(%s)" (arg 0 Emo_check.Int64)
+  | "os_signal_default" ->
+      Printf.sprintf "emo_os_signal_default(%s)" (arg 0 Emo_check.Int64)
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 (* `printf` is the language's own: the format rides as a String, the data
@@ -3888,7 +3908,8 @@ let emit (program : Emo_ir.program) : string * string * bool =
   emit_stmts env program.pinit;
   put env "  emo_drain();\n  emo_pool_exit();\n";
   put env "}\n\n";
-  put env "int main(void) {\n";
+  put env "int main(int argc, char **argv) {\n";
+  put env "  emo_args_set(argc, argv);\n";
   put env "  emo_startup();\n";
   put env "  (void)emo_spawn_process(emo_root_entry, INT64_C(0), NULL);\n";
   put env "  emo_scheduler_run();\n";

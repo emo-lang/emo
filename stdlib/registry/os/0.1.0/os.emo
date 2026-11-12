@@ -1,6 +1,7 @@
 // The os module: the process-level surface a systems program needs —
-// process ids, fork, exec, wait, pipes, the working directory, directory
-// listing, and raw (unbuffered, fd-based) file IO. Data-driven failures
+// process ids, fork, exec, wait, pipes, descriptor plumbing, the
+// environment, the signals, the working directory, directory listing,
+// and raw (unbuffered, fd-based) file IO. Data-driven failures
 // are values: the call returns `(R.ok, value)` or `(R.error, reason)`,
 // the reason a string stating exactly which system call failed and why
 // (`os: open /x: no such file...`) — no error codes, no nil.
@@ -9,7 +10,8 @@
 // with a Unix-shaped host. On the wasm target the fd, directory, and
 // working-directory half runs — every call crosses to the host's own
 // file system through the module's syscalls — while the process half
-// (fork, exec, wait, pipe, the process ids) refuses at emission: a
+// (fork, exec, wait, pipe, the process ids, the descriptor plumbing,
+// the environment, the signals, isatty, argv) raises when called: a
 // WasmGC module has no process to fork. The browser and bytecode
 // targets stay undeclared: declaring this package for them is a package
 // error before any code runs.
@@ -19,6 +21,17 @@
 // the numbers survive unchanged across the ocaml and c targets. The
 // wait_* decoders themselves are pure bit arithmetic and run everywhere
 // the package resolves.
+
+// The signal numbers a shell and its children live by. The classic
+// Unix set, stable across the mac and the Linux kernels — the same
+// numbers the wait_* decoders answer and signal_ignore / signal_default
+// take.
+const sig_hup = 1
+const sig_int = 2
+const sig_quit = 3
+const sig_kill = 9
+const sig_pipe = 13
+const sig_term = 15
 
 def getpid() Int64 {
   return os_getpid()
@@ -76,6 +89,63 @@ def pipe() (R, (Int64, Int64)) {
 // cleanup a second time).
 def execv(path String, argv Array[String]) Void {
   os_execv(path, argv)
+}
+
+// Replaces the calling process with `file`, searched through the PATH
+// environment variable the way the shell's own lookup is (a file name
+// with a slash in it is used as-is). argv[0] is conventionally the
+// program name again; the list must end where the arguments end. On
+// success this call never returns — the process is gone — and on
+// failure it returns, the fork child's cue to `_exit` (a raise here
+// would run the parent's cleanup a second time).
+def execvp(file String, argv Array[String]) Void {
+  os_execvp(file, argv)
+}
+
+// Copies old_fd onto new_fd, closing new_fd first if it was open — the
+// plumbing a shell uses to point a child's stdin or stdout at a pipe
+// end or a file before the exec.
+def dup2(old_fd Int64, new_fd Int64) (R, Int64) {
+  return os_dup2(old_fd, new_fd)
+}
+
+// Whether fd is attached to a terminal.
+def isatty(fd Int64) Bool {
+  return os_isatty(fd)
+}
+
+// The process's own argument vector, argv[0] the name the process was
+// started with.
+def argv() Array[String] {
+  return os_argv()
+}
+
+// The environment: unset is a value like every other data-driven
+// failure — (R.error, `os: getenv NAME: is not set`).
+def getenv(name String) (R, String) {
+  return os_getenv(name)
+}
+
+// Sets or replaces name in this process's environment; the fork child
+// inherits it across the exec.
+def setenv(name String, value String) (R, Int64) {
+  return os_setenv(name, value)
+}
+
+def unsetenv(name String) (R, Int64) {
+  return os_unsetenv(name)
+}
+
+// The discipline a shell lives by: ignore a signal in the shell's own
+// process, restore the default in the fork child before the exec. A
+// disposition of ignored survives the exec — that is why the child
+// undoes it — a handler's does not.
+def signal_ignore(sig Int64) (R, Int64) {
+  return os_signal_ignore(sig)
+}
+
+def signal_default(sig Int64) (R, Int64) {
+  return os_signal_default(sig)
 }
 
 // Exits immediately without unwinding — the fork child's way out. Ordinary

@@ -20,6 +20,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <dirent.h>
 #include <sys/wait.h>
@@ -4364,6 +4365,117 @@ emo_value emo_os_chdir(emo_str path) {
     return out;
   }
   free(p);
+  return emo_os_ok(emo_box_i64(0));
+}
+
+emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd) {
+  if (dup2((int)old_fd, (int)new_fd) < 0)
+    return emo_os_fail("dup2", "");
+  return emo_os_ok(emo_box_i64(0));
+}
+
+int64_t emo_os_execvp(emo_str file, emo_value argv) {
+  char *f = emo_cstr_owned(file);
+  int64_t count = emo_length(argv);
+  char **argv_c = malloc(sizeof(char *) * (size_t)(count + 1));
+  if (argv_c == NULL) abort();
+  for (int64_t i = 0; i < count; i++) {
+    argv_c[i] = emo_cstr_owned(emo_str_of(emo_index(argv, i)));
+  }
+  argv_c[count] = NULL;
+  execvp(f, argv_c);
+  /* Failure is a data-driven value: the call returns (the value is
+     discarded) — the fork child's cue to `_exit`. */
+  for (int64_t i = 0; i < count; i++) free(argv_c[i]);
+  free(argv_c);
+  free(f);
+  return 0;
+}
+
+bool emo_os_isatty(int64_t fd) { return isatty((int)fd) == 1; }
+
+/* The process's own arguments, captured at main so `emo_os_argv` can
+   answer them as the cell they are. */
+static int emo_argc = 0;
+static char **emo_argv = NULL;
+
+void emo_args_set(int argc, char **argv) {
+  emo_argc = argc;
+  emo_argv = argv;
+}
+
+emo_value emo_os_argv(void) {
+  int count = emo_argc > 0 ? emo_argc : 0;
+  size_t slot = count > 0 ? (size_t)count : 1;
+  emo_value *elems = malloc(sizeof(emo_value) * slot);
+  if (elems == NULL) abort();
+  for (int i = 0; i < count; i++) elems[i] = emo_cell_from_cstr(emo_argv[i]);
+  emo_value out = emo_array_new((int64_t)count, elems);
+  free(elems);
+  return out;
+}
+
+emo_value emo_os_getenv(emo_str name) {
+  char *n = emo_cstr_owned(name);
+  const char *v = getenv(n);
+  if (v == NULL) {
+    /* The unset answer is written by hand — "is not set", not
+       strerror's errno — the same text the interpreter prints. */
+    char buf[512];
+    snprintf(buf, sizeof buf, "os: getenv %s: is not set", n);
+    free(n);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+  }
+  free(n);
+  return emo_os_ok(emo_box_str(emo_str_from_cstr(v)));
+}
+
+emo_value emo_os_setenv(emo_str name, emo_str value) {
+  char *n = emo_cstr_owned(name);
+  char *v = emo_cstr_owned(value);
+  int rc = setenv(n, v, 1);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("setenv", n);
+    free(n);
+    free(v);
+    return out;
+  }
+  free(n);
+  free(v);
+  return emo_os_ok(emo_box_i64(0));
+}
+
+emo_value emo_os_unsetenv(emo_str name) {
+  char *n = emo_cstr_owned(name);
+  int rc = unsetenv(n);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("unsetenv", n);
+    free(n);
+    return out;
+  }
+  free(n);
+  return emo_os_ok(emo_box_i64(0));
+}
+
+/* The signal dispositions: the classic range rides ahead of the call so
+   an out-of-range number answers the same reason text the interpreter
+   prints, not the platform's EINVAL text. */
+static emo_value emo_signal_fail(const char *what, int64_t sig) {
+  char buf[512];
+  snprintf(buf, sizeof buf, "os: %s %lld: invalid signal", what,
+           (long long)sig);
+  return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+}
+
+emo_value emo_os_signal_ignore(int64_t sig) {
+  if (sig < 1 || sig > 31) return emo_signal_fail("signal_ignore", sig);
+  signal((int)sig, SIG_IGN);
+  return emo_os_ok(emo_box_i64(0));
+}
+
+emo_value emo_os_signal_default(int64_t sig) {
+  if (sig < 1 || sig > 31) return emo_signal_fail("signal_default", sig);
+  signal((int)sig, SIG_DFL);
   return emo_os_ok(emo_box_i64(0));
 }
 

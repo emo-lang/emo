@@ -1,0 +1,8 @@
+/private/tmp
+exported
+env-status=1
+/
+emosh: cd: os: chdir /nonexistent-emosh-dir-63: No such file or directory
+cd-status=1
+truly-false
+pre-exit=1
