@@ -1,0 +1,363 @@
+// The wayland package's input golden: the seat tables against a
+// canned stream over a real Unix socket. The mock compositor
+// asserts the client's three requests byte-exact (the seat bind at
+// v5, the pointer and keyboard grants), then drives the whole input
+// half — capabilities, pointer enter/motion/button/frame, the
+// keyboard's keymap with its fd riding the ancillary queue (a real
+// fd the mock paints through the shm tier, the client reading the
+// bytes back through the passage), keyboard enter and key. Every
+// print happens while the other side is parked on a read; three
+// runs must agree byte for byte.
+
+require "wayland"
+require "net"
+require "os"
+
+def bytes_equal(a Bytes, b Bytes) Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  var i = 0
+  while i < a.length() {
+    if a.get(i) != b.get(i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+def slice(src Bytes, off Int64, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, src.get(off + i))
+    i = i + 1
+  }
+  return out
+}
+
+def hex_line(data Bytes) String {
+  const digits = "0123456789abcdef".to_bytes()
+  const out = Bytes.new(data.length() * 2)
+  var i = 0
+  while i < data.length() {
+    out.set(i * 2, digits.get(data.get(i) >> 4))
+    out.set(i * 2 + 1, digits.get(data.get(i) & 0xF))
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+def send_raw(conn TcpConn, m wayland.Message) {
+  case m.finish() {
+    (bytes, has_fd, fd) -> {
+      if has_fd {
+        case net_sendmsg_fd(conn, bytes.to_string(), fd) {
+          (R.error, why) -> { println("mock: fd send " + why) }
+          (R.ok, _) -> { }
+        }
+      } else {
+        conn.write(bytes.to_string())
+      }
+    }
+  }
+}
+
+// The mock: three requests asserted, the canned stream out.
+def mock(listener TcpListener, pool_path String) {
+  case listener.accept() {
+    (R.error, why) -> { println("mock: accept failed " + why) }
+    (R.ok, conn) -> {
+      const side = wayland.Side.new(conn)
+
+      // The handshake: get_registry (new_id 2), sync (callback 3);
+      // the advert names wl_seat at v5, the done closes the exchange.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(1, 1)
+          expect.u32(2)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 1 || ev.opcode != 1 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: get_registry off the wire")
+              }
+            }
+          }
+        }
+      }
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(1, 0)
+          expect.u32(3)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 1 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: sync off the wire")
+              }
+            }
+          }
+          const global = wayland.Message.new(2, 0)
+          global.u32(1)
+          global.text("wl_seat")
+          global.u32(5)
+          send_raw(conn, global)
+          const done = wayland.Message.new(3, 0)
+          done.u32(77)
+          send_raw(conn, done)
+        }
+      }
+
+      // bind(name="wl_seat", v5, new_id=4) on the registry 2.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(2, 0)
+          expect.u32(1)
+          expect.text("wl_seat")
+          expect.u32(5)
+          expect.u32(4)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 2 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                println("mock: bind mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
+                raise Exception.new(message: "mock: seat bind off the wire")
+              }
+            }
+          }
+        }
+      }
+
+      // get_pointer on the seat 4, new_id 5.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(4, 0)
+          expect.u32(5)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 4 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                println("mock: gp mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
+                raise Exception.new(message: "mock: get_pointer off the wire")
+              }
+            }
+          }
+        }
+      }
+
+      // get_keyboard on the seat 4, new_id 6.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(4, 1)
+          expect.u32(6)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 4 || ev.opcode != 1 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                println("mock: gk mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
+                raise Exception.new(message: "mock: get_keyboard off the wire")
+              }
+            }
+          }
+          // The canned stream, the client parked for each beat.
+          const caps = wayland.Message.new(4, 0)
+          caps.u32(3)
+          send_raw(conn, caps)
+          const enter = wayland.Message.new(5, 0)
+          enter.u32(1)
+          enter.u32(9)
+          enter.fixed(3)
+          enter.fixed(7)
+          send_raw(conn, enter)
+          const motion = wayland.Message.new(5, 2)
+          motion.u32(100)
+          motion.fixed(11)
+          motion.fixed(13)
+          send_raw(conn, motion)
+          const button = wayland.Message.new(5, 3)
+          button.u32(2)
+          button.u32(110)
+          button.u32(272)
+          button.u32(1)
+          send_raw(conn, button)
+          const frame = wayland.Message.new(5, 5)
+          send_raw(conn, frame)
+          // The keymap: a real fd, painted through the shm tier.
+          case os_shm_open(pool_path) {
+            (R.error, why) -> { println("mock: pool " + why) }
+            (R.ok, map_fd) -> {
+              case os_ftruncate(map_fd, 21) {
+                (R.error, why) -> { println("mock: ftruncate " + why) }
+                (R.ok, _) -> {
+                  case os_pwrite(map_fd, "xkb_keymap-test-bytes", 0) {
+                    (R.error, why) -> { println("mock: pwrite " + why) }
+                    (R.ok, _) -> {
+                      const keymap = wayland.Message.new(6, 0)
+                      keymap.u32(1)
+                      keymap.fd(map_fd)
+                      keymap.u32(21)
+                      send_raw(conn, keymap)
+                      const kb_enter = wayland.Message.new(6, 1)
+                      kb_enter.u32(3)
+                      kb_enter.u32(9)
+                      const keys = Bytes.new(4)
+                      keys.set(0, 30)
+                      kb_enter.array(keys)
+                      send_raw(conn, kb_enter)
+                      const key = wayland.Message.new(6, 3)
+                      key.u32(4)
+                      key.u32(200)
+                      key.u32(30)
+                      key.u32(1)
+                      send_raw(conn, key)
+                      println("mock: 3 requests byte-ok; stream out")
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      conn.close()
+    }
+  }
+}
+
+// The client: bind at the advertised version, take the grants,
+// decode what arrives. The keymap's fd comes out of the queue the
+// ancillary half filled; its bytes read back prove the round trip.
+def client_body(c wayland.Conn, sock String) {
+  println("client: connected")
+  case wayland.handshake(c) {
+    (R.error, why) -> { println("client: handshake " + why) }
+    (R.ok, globals) -> {
+      println("client: globals " + globals.length().to_string())
+      case globals.find("wl_seat") {
+        (R.error, why) -> { println("client: " + why) }
+        (R.ok, found) -> {
+          case found {
+            (seat_name, seat_version) -> {
+              case wayland.registry_bind(c, seat_name, "wl_seat", 5) {
+                (R.error, why) -> { println("client: " + why) }
+                (R.ok, seat_id) -> {
+                  case wayland.seat_get_pointer(c, seat_id) {
+                    (R.error, why) -> { println("client: " + why) }
+                    (R.ok, pointer_id) -> {
+                      case wayland.seat_get_keyboard(c, seat_id) {
+                        (R.error, why) -> { println("client: " + why) }
+                        (R.ok, keyboard_id) -> {
+                          input_loop(c, seat_id, pointer_id, keyboard_id)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64, keyboard_id Int64) {
+  case wayland.next_event(c.side) {
+    (R.error, why) -> { println("client: " + why) }
+    (R.ok, ev) -> {
+      if ev.oid == seat_id && ev.opcode == 0 {
+        const caps = ev.args.u32()
+        var line = "client: capabilities "
+        if (caps & 1) != 0 {
+          line = line + "pointer "
+        }
+        if (caps & 2) != 0 {
+          line = line + "keyboard"
+        }
+        println(line)
+      }
+      if ev.oid == pointer_id && ev.opcode == 0 {
+        const serial = ev.args.u32()
+        const surface = ev.args.u32()
+        const x = ev.args.fixed()
+        const y = ev.args.fixed()
+        println("client: pointer enter " + x.to_string() + " " + y.to_string())
+      }
+      if ev.oid == pointer_id && ev.opcode == 2 {
+        const time_ms = ev.args.u32()
+        const x = ev.args.fixed()
+        const y = ev.args.fixed()
+        println("client: pointer motion " + x.to_string() + " " + y.to_string())
+      }
+      if ev.oid == pointer_id && ev.opcode == 3 {
+        const serial = ev.args.u32()
+        const time_ms = ev.args.u32()
+        const button = ev.args.u32()
+        const state = ev.args.u32()
+        var word = "released"
+        if state == 1 {
+          word = "pressed"
+        }
+        println("client: button " + button.to_string() + " " + word)
+      }
+      if ev.oid == pointer_id && ev.opcode == 5 {
+        println("client: frame")
+      }
+      if ev.oid == keyboard_id && ev.opcode == 0 {
+        const format = ev.args.u32()
+        const fd = ev.args.fd()
+        const size = ev.args.u32()
+        case os.read(fd, size) {
+          (R.error, why) -> { println("client: keymap read " + why) }
+          (R.ok, body) -> {
+            println("client: keymap xkb_v1 " + size.to_string() + " bytes [" + body + "]")
+          }
+        }
+      }
+      if ev.oid == keyboard_id && ev.opcode == 1 {
+        const serial = ev.args.u32()
+        const surface = ev.args.u32()
+        const keys = ev.args.array()
+        println("client: keyboard enter " + (keys.length() / 4).to_string() + " keys down")
+      }
+      if ev.oid == keyboard_id && ev.opcode == 3 {
+        const serial = ev.args.u32()
+        const time_ms = ev.args.u32()
+        const key = ev.args.u32()
+        const state = ev.args.u32()
+        var word = "released"
+        if state == 1 {
+          word = "pressed"
+        }
+        println("client: key " + key.to_string() + " " + word)
+      }
+      input_loop(c, seat_id, pointer_id, keyboard_id)
+    }
+  }
+}
+
+def main() {
+  const sock = "/tmp/emo-input-" + os.getpid().to_string() + ".sock"
+  const pool_path = "/tmp/emo-keymap-" + os.getpid().to_string() + ".tmp"
+  os.unlink(sock)
+
+  case net.listen_unix(sock) {
+    (R.error, why) -> { println("listen failed: " + why) }
+    (R.ok, listener) -> {
+      do mock(listener, pool_path)
+      case net.connect_unix(sock, 5.0) {
+        (R.error, why) -> { println("connect failed: " + why) }
+        (R.ok, raw) -> {
+          client_body(wayland.conn_of(raw), sock)
+        }
+      }
+      listener.close()
+    }
+  }
+  os.unlink(pool_path)
+}
+
+main()

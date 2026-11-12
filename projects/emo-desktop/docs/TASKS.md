@@ -1582,3 +1582,73 @@ list.
   carries the wire's four graded decisions, the two found-not-fixed
   findings, and the smoke leg's exit 0. The milestone is closed:
   A18.1–A18.12 complete, the foundation standing.
+
+## M19 — the seat: input on the gate (opened 2026-11-12)
+
+M18's window paints but does not listen: the seat, the pointer, and
+the keyboard are the wire's other half of interactivity. The milestone
+adds the input tables to the wayland package — `wl_seat`
+(capabilities, the pointer and keyboard it grants), `wl_pointer`
+(enter/leave/motion/button/axis, the frame family since v5),
+`wl_keyboard` (the keymap whose fd rides the event direction's own
+ancillary queue, enter/leave/key/modifiers) — every opcode read from
+the authoritative XML before it was written, the discipline M18's
+smoke leg paid for. The smoke leg grades them the honest way: the
+demo binds the `zwlr_virtual_pointer_manager_v1` and
+`zwp_virtual_keyboard_manager_v1` globals sway advertises, injects
+motion, a button press, and a key press against its own window, and
+the transcript answers for what arrived. The seat binds at v5 — the
+frame family and `repeat_info` included, `axis_value120` (v8)
+deliberately out. Keycodes arrive raw; the keymap's bytes are read
+and their shape asserted, but keysym decoding is the named
+follow-up, not this milestone's debt.
+
+- [x] **A19.1** — The input tables in the package: `wl_seat`
+  (get_pointer 0, get_keyboard 1, release 3; capabilities 0, name 1;
+  the capability bits pointer=1 keyboard=2), `wl_pointer` (set_cursor
+  0, release 1; enter 0, leave 1, motion 2, button 3, axis 4, frame 5,
+  axis_source 6, axis_stop 7, axis_discrete 8), `wl_keyboard`
+  (release 0; keymap 0, enter 1, leave 2, key 3, modifiers 4,
+  repeat_info 5); the defs pin the seat at v5 and the decode reads
+  fixed 24.8 coordinates through `Args.fixed`. **Accept:** the tables
+  compile; the opcodes state their source (the XML read, not the
+  guess). **complete 2026-11-12** — the tables landed beside the
+  virtual-device tables the injection would need
+  (`zwlr_virtual_pointer_manager_v1` create 0/destroy 1, the pointer's
+  motion 0 / motion_absolute 1 / button 2 / frame 4 / destroy 8;
+  `zwp_virtual_keyboard_manager_v1` create 0, the keyboard's keymap
+  0 / key 1 / modifiers 2 / destroy 3), all read from wayland.xml and
+  the wlr protocol files before a line was written.
+
+- [x] **A19.2** — `examples/wayland_input`: the mock leg. The mock
+  compositor's canned stream carries a capabilities advert, pointer
+  enter/motion/button, a keyboard keymap (its fd a real one the mock
+  paints through `os_shm_open`, the client reading the keymap's bytes
+  back through the passage), and key events; the client decodes each
+  and prints. Registered in `c_goldens`. **Accept:** byte-deterministic
+  on macOS `cc`; the keymap fd round-trips.
+
+- [x] **A19.3** — The smoke leg's injection half: the demo binds the
+  two virtual-device managers beside the seat, drives
+  `motion_absolute` across its own window, presses and releases the
+  left button, taps a key (the keymap a minimal xkb_v1 map painted
+  through the shm tier), and the event loop's prints name what
+  arrived. **Accept:** under headless sway the transcript shows the
+  motion, the button, and the key — the seat's verdict on the tables.
+
+- [x] **A19.4** — The smoke script asserts the injection: the
+  capture leg stays, the client's transcript gains the input lines,
+  and the script greps for them (motion seen, button pressed, key
+  arrived) and exits nonzero on any miss. **Accept:** the leg exits 0
+  with the input lines present. **complete 2026-11-12** — five
+  assertions (enter, motion, the button press, the key, the keymap
+  fd) and a new pass line: "the frame is on a real compositor and
+  the input came back."
+
+- [x] **A19.5** — The docs and the ledger: the input section in
+  `docs/stdlib/wayland.md` and its zh mirror, the M19 notes in the
+  CHECK.md entry, the TASKS ticks. **Accept:** both languages land;
+  the ledger states what the seat taught. **complete 2026-11-12**
+  — the input section landed in both languages (the limitation line
+  shrank to keysyms alone), and the CHECK.md bullet carries the
+  three grades sway handed down. M19 closed: the window now listens.

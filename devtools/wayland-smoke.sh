@@ -41,7 +41,7 @@ docker run --rm \
     mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
     export WLR_BACKENDS=headless
     export WLR_LIBINPUT_NO_DEVICES=1
-    sway -c /dev/null >/tmp/sway.log 2>&1 &
+    sway -d -c /dev/null >/tmp/sway.log 2>&1 &
     for i in $(seq 1 50); do
       [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break
       sleep 0.1
@@ -72,8 +72,17 @@ fail=0
 if [ "$red" -lt 1000 ]; then echo "smoke: FAIL — the red half never arrived"; fail=1; fi
 if [ "$blue" -lt 1000 ]; then echo "smoke: FAIL — the blue half never arrived"; fail=1; fi
 
+# The input half: the injected pointer and key must have come back
+# as events the client decoded — the seat tables' verdict.
+in_log="$work/out/paint.log"
+grep -q "input: pointer enter" "$in_log" || { echo "smoke: FAIL — the pointer enter never arrived"; fail=1; }
+grep -q "input: pointer motion" "$in_log" || { echo "smoke: FAIL — the pointer motion never arrived"; fail=1; }
+grep -q "input: button 272 pressed" "$in_log" || { echo "smoke: FAIL — the button press never arrived"; fail=1; }
+grep -q "input: key 30 pressed" "$in_log" || { echo "smoke: FAIL — the key never arrived"; fail=1; }
+grep -q "input: keymap xkb_v1" "$in_log" || { echo "smoke: FAIL — the keymap fd never arrived"; fail=1; }
+
 if [ "$fail" -eq 0 ]; then
-  echo "smoke: PASS — the first frame is on a real compositor"
+  echo "smoke: PASS — the frame is on a real compositor and the input came back"
 else
   echo "smoke: work kept in $work (the capture and the logs are there)"
   exit 1

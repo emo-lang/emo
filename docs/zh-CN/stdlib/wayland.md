@@ -77,14 +77,37 @@ pwrite,compositor 去 mmap,Emo 表面上不存在 mmap。demo 驱动的作画
 surface、toplevel、标题、空 commit、等 configure、ack、逐行 pwrite
 的 pool、attach、damage、第二次 commit。
 
+## 输入
+
+seat 的那半边线:`wl_seat`(绑 v5——指针的 frame 家族与键盘的
+`repeat_info` 都在内),以及它授出的 `wl_pointer` / `wl_keyboard`
+(`seat_get_pointer` / `seat_get_keyboard`)。指针的事件(enter、带
+fixed 24.8 窗面坐标的 motion、button、frame 家族)与键盘的事件
+(**keymap 的 fd 走事件方向的带外队列**——同一个 `Args.fd` 认领,
+字节经通道读回;enter/leave、key、modifiers)都从同一个 `Args`
+游标解码。seat 的请求有门:capabilities 广告点名 pointer 之前,
+sway 拒绝 `get_pointer`——授权要等 capabilities 事件。
+
+smoke 腿端到端给这些表打分:demo 绑定 sway 广告的
+`zwlr_virtual_pointer_manager_v1` 与 `zwp_virtual_keyboard_manager_v1`
+global,经 shm 层涂一份最小 xkb_v1 keymap,对自己的窗口注入
+motion、左键、按键——事件原路返回,脚本逐条断言。这条腿教了两课:
+以线上的 null seat 出生的虚拟指针是 sway 注册了却永不路由的设备
+(带 seat 出生的键盘能路由,指针不能);compositor 的光标状态滞后
+于它的窗口事务——节拍由指针的 enter 事件触发,那个词说明光标状态
+已跟上。
+
+keycode 以裸值抵达(evdev 编号);经 keymap 解出 keysym 是点名的
+后续。
+
 ## 局限
 
 - **只有一个 target。** 只有 `c`;解释器的 fd 传递 stub(OCaml 运行时
   的 Unix 模块没有 sendmsg)是点名的后续。
 - **一条消息一个 fd。** 本包要说的协议恰好都只带一个;哪天某个协议
   要两个,再长这个形状。
-- **输入还没来。** `wl_seat`、`wl_pointer`、`wl_keyboard`——以及它们
-  事件携带的 keymap fd——是下一批表,不在这一批。
+- **keysym 还没来。** keycode 以裸值抵达;经 keymap 解码是点名的
+  后续。
 - **手写表。** opcode 活在调用点,由 compositor 打分;运行时不解析
   XML。
 

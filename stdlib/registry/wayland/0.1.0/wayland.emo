@@ -909,3 +909,173 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
     }
   }
 }
+
+// ---- the seat tables ----
+//
+//   wl_seat (the bind pins v5: the pointer's frame family and the
+//     keyboard's repeat_info included, axis_value120 (v8) out)
+//     requests: get_pointer(id) is 0, get_keyboard(id) is 1,
+//               get_touch(id) is 2, release is 3 (since 5)
+//     events:   capabilities(capabilities) is 0, name(name) is 1
+//   wl_pointer
+//     requests: set_cursor(serial, surface, x, y) is 0, release is 1
+//     events:   enter(serial, surface, x, y) is 0, leave(serial,
+//               surface) is 1, motion(time, x, y) is 2,
+//               button(serial, time, button, state) is 3,
+//               axis(time, axis, value) is 4, frame is 5,
+//               axis_source(src) is 6, axis_stop(time, axis) is 7,
+//               axis_discrete(axis, steps) is 8
+//   wl_keyboard
+//     requests: release is 0
+//     events:   keymap(format, fd, size) is 0, enter(serial,
+//               surface, keys) is 1, leave(serial, surface) is 2,
+//               key(serial, time, key, state) is 3,
+//               modifiers(serial, depressed, latched, locked,
+//               group) is 4, repeat_info(rate, delay) is 5
+//
+// The opcodes are read from the authoritative XML (wayland.xml and
+// the wlr virtual-device files), not guessed — the smoke leg graded
+// that discipline into the package in M18. The capability bits are
+// the enum's own: pointer 1, keyboard 2, touch 4. The states ride
+// the wire's 0/1 (released/pressed). The keymap's fd arrives the
+// event direction's own way: the ancillary queue on receive, the
+// sendmsg tier on send — the same Args.fd both ways.
+
+def seat_capability_pointer() Int64 {
+  return 1
+}
+
+def seat_capability_keyboard() Int64 {
+  return 2
+}
+
+// wl_seat.get_pointer: the pointer object the seat grants.
+def seat_get_pointer(c Conn, seat_id Int64) (R, Int64) {
+  const pointer_id = c.alloc()
+  const m = Message.new(seat_id, 0)
+  m.u32(pointer_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, pointer_id) }
+  }
+}
+
+// wl_seat.get_keyboard: the keyboard object the seat grants.
+def seat_get_keyboard(c Conn, seat_id Int64) (R, Int64) {
+  const keyboard_id = c.alloc()
+  const m = Message.new(seat_id, 1)
+  m.u32(keyboard_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, keyboard_id) }
+  }
+}
+
+// wl_pointer.set_cursor: this client's pointer image — the surface
+// at the hotspot, or object 0 (the wire's null) to hand the image
+// back to the compositor's default.
+def pointer_set_cursor(c Conn, pointer_id Int64, serial Int64, surface_id Int64, hotspot_x Int64, hotspot_y Int64) (R, Conn) {
+  const m = Message.new(pointer_id, 0)
+  m.u32(serial)
+  m.u32(surface_id)
+  m.i32(hotspot_x)
+  m.i32(hotspot_y)
+  return c.send(m)
+}
+
+// ---- the virtual devices (the smoke leg's injection half) ----
+//
+//   zwlr_virtual_pointer_manager_v1
+//     requests: create_virtual_pointer(seat, id) is 0 (the seat the
+//               wire's null — object 0 — when the injector binds no
+//               seat), destroy is 1
+//   zwlr_virtual_pointer_v1
+//     requests: motion(time, dx, dy) is 0,
+//               motion_absolute(time, x, y, x_extent, y_extent) is 1,
+//               button(time, button, state) is 2, axis is 3,
+//               frame is 4, destroy is 8
+//   zwp_virtual_keyboard_manager_v1
+//     requests: create_virtual_keyboard(seat, id) is 0
+//   zwp_virtual_keyboard_v1
+//     requests: keymap(format, fd, size) is 0, key(time, key,
+//               state) is 1, modifiers(4 words) is 2, destroy is 3
+
+// The injector's pointer: born of the manager on the named seat —
+// a null seat leaves the device unrouted on some compositors (sway
+// graded it: the keyboard, born with a seat, routed; the pointer,
+// born with the wire's null, did not).
+def virtual_pointer_create(c Conn, manager_id Int64, seat_id Int64) (R, Int64) {
+  const ptr_id = c.alloc()
+  const m = Message.new(manager_id, 0)
+  m.u32(seat_id)
+  m.u32(ptr_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, ptr_id) }
+  }
+}
+
+// wl_pointer-motion's twin on the device: the cursor moves where it
+// stands, dx/dy in fixed 24.8.
+def virtual_pointer_motion(c Conn, ptr_id Int64, time_ms Int64, dx Int64, dy Int64) (R, Conn) {
+  const m = Message.new(ptr_id, 0)
+  m.u32(time_ms)
+  m.fixed(dx)
+  m.fixed(dy)
+  return c.send(m)
+}
+
+def virtual_pointer_motion_absolute(c Conn, ptr_id Int64, time_ms Int64, x Int64, y Int64, x_extent Int64, y_extent Int64) (R, Conn) {
+  const m = Message.new(ptr_id, 1)
+  m.u32(time_ms)
+  m.u32(x)
+  m.u32(y)
+  m.u32(x_extent)
+  m.u32(y_extent)
+  return c.send(m)
+}
+
+def virtual_pointer_button(c Conn, ptr_id Int64, time_ms Int64, button Int64, state Int64) (R, Conn) {
+  const m = Message.new(ptr_id, 2)
+  m.u32(time_ms)
+  m.u32(button)
+  m.u32(state)
+  return c.send(m)
+}
+
+def virtual_pointer_frame(c Conn, ptr_id Int64) (R, Conn) {
+  const m = Message.new(ptr_id, 4)
+  return c.send(m)
+}
+
+// The injector's keyboard: born of the manager on the injector's own
+// seat binding — the compositor routes the events to whatever holds
+// focus, whichever connection the device rode in on.
+def virtual_keyboard_create(c Conn, manager_id Int64, seat_id Int64) (R, Int64) {
+  const kb_id = c.alloc()
+  const m = Message.new(manager_id, 0)
+  m.u32(seat_id)
+  m.u32(kb_id)
+  case c.send(m) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, kb_id) }
+  }
+}
+
+// The keyboard's map: the fd rides the sendmsg tier, the format the
+// wire's own (xkb_v1 is 1).
+def virtual_keyboard_keymap(c Conn, kb_id Int64, fd Int64, size Int64) (R, Conn) {
+  const m = Message.new(kb_id, 0)
+  m.u32(1)
+  m.fd(fd)
+  m.u32(size)
+  return c.send(m)
+}
+
+def virtual_keyboard_key(c Conn, kb_id Int64, time_ms Int64, key Int64, state Int64) (R, Conn) {
+  const m = Message.new(kb_id, 1)
+  m.u32(time_ms)
+  m.u32(key)
+  m.u32(state)
+  return c.send(m)
+}
