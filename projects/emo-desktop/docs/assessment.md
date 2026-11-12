@@ -7,7 +7,8 @@ the scalability contract (what stays frozen as the desktop grows, what
 may move, what may be added), and the project's own placement. The
 decided outcomes live in the [README](../README.md); the decision
 points — all decided 2026-10-31 — are recorded here and at the top of
-the [tracker](TASKS.md).
+the [tracker](TASKS.md), and the system-data layer's decisions
+(D13–D22, decided 2026-11-12) close the record's second round.
 
 ## The shape: Wayland/Quartz, the QNX Screen lineage
 
@@ -129,6 +130,63 @@ that is the growth contract below.
 4. **The pool's scheduling** — decided: beside M7, not after it —
    M8's Elm loops need it.
 5. **The resolution baseline** — decided: 1024×768 XRGB8888.
+
+## The system-data layer's decisions, decided (2026-11-12)
+
+The noctalia round's second decision set: where the desktop's data
+comes from when the product host is the metal. Ten records.
+
+- **D13 — the product host is the metal; the compositor ride is the
+  harness.** The noctalia track chases the desktop's effect on EmoOS.
+  The `wayland` package and the sway loop are the development and
+  verification circuit — seconds and grim screenshots against the
+  QEMU furnace — never the substrate. The question this dissolves:
+  the Linux shell stack (DBus, PipeWire, NetworkManager, `/sys`,
+  PAM) does not exist on EmoOS and none of it is coming; the
+  system-data question restarts from EmoOS's own world — the gate's
+  verb families and the mailbox IPC the shell already speaks.
+- **D14 — the provider seam is structural.** The face's data-fed
+  modules take providers, not sources: the metal implementation
+  answers through the gate and the mailbox world, the golden
+  implementation answers from fixtures. One face, two feeders — the
+  harness's face and the metal's face stay the same code.
+- **D15 — absence is visible, and canned data rides goldens only.**
+  A module whose backend is missing renders nothing — not grayed,
+  not zeroed, not faked; the board's hardware truth is the UI's
+  truth. Fixed data feeds a provider's golden implementation, never
+  the running shell (the valkey fake-server discipline).
+- **D16 — notifications are an EmoOS service.** A `notify` verb
+  family (additions-only, the ABI rule) plus a notification service
+  in the `fs.emo` lineage; apps raise through the gate and the shell
+  is the notification center by construction — the toast, the
+  history, do-not-disturb are its own surfaces. The layer's best
+  value per cost; the module goes first.
+- **D17 — the clock's source is the board's RTC.** QEMU virt's
+  goldfish RTC is an MMIO read; a small kernel piece lands it as a
+  time verb. The header's clock and the calendar have had no wall
+  time to read — this is their ground.
+- **D18 — workspaces are the compositor's own feature.** A workspace
+  verb family grows the compositor service and the bar's pager rides
+  it — noctalia's signature piece, no new hardware under it.
+- **D19 — the lock checks a hash file.** The account file with a
+  hash is the permanent answer, not a stopgap — there is no PAM on
+  EmoOS to hang an auth on.
+- **D20 — audio is its own OS track.** The virtio-sound driver, the
+  mixer service, and the verb family are this layer's summit; the
+  volume widget, the OSD, and the media controls arrive when it
+  lands, absent until then (D15).
+- **D21 — the network is out of this goal's scope.** virtio-net and
+  an IP stack are an OS milestone family orthogonal to the desktop's
+  effect; the network module stays absent, revisited only when that
+  track exists.
+- **D22 — the tray retires.** EmoOS has no third-party daemon
+  ecosystem, so no StatusNotifierItem counterpart exists to host;
+  the dock is the tray by construction.
+
+The ladder this sets: notifications, the clock, workspaces, the
+launcher's enumeration and the lock — each its own milestone with
+the kernel half in EmoOS's tracker; the audio ride-along parked
+behind the audio track; the network nowhere on it.
 
 ## The growth contract: what it takes to stay honest to a modern desktop
 

@@ -42,6 +42,11 @@ tree's and EmoOS's, listed there.
 | M22 — the tree takes the pointer | A22.1–A22.4 | The rect table is the ui tree's own export (`Rects`/`paint_rects`): the launched app's tree paints in-frame and a click on its "+" drives the app's own update. |
 | M23 — the keymap decodes | A23.1–A23.3 | `parse_keymap` reads the compositor's compiled xkb keymap (keycodes and symbols, both spellings, brace-bounded) and keys deliver by keysym name — the evdev rows retired, evdev+8 recorded. |
 | M24 — the apps become windows | A24.1–A24.4 | A launch stands the app up as a second toplevel (its own pool, buffer, configure); `LiveInput` answers `Ev`s naming their surface and the seat's focus routes keys to the focused window's app. |
+| M25 — notifications | A25.1–A25.4 | The `notify` verb family and the notification service (the `fs.emo` lineage) land on the metal; apps raise through the gate and the shell answers as the notification center by construction — the toast, the history, do-not-disturb (D16; the kernel half in EmoOS's tracker). |
+| M26 — the clock | A26.1–A26.2 | The board's goldfish RTC becomes a time verb; the header's clock and the calendar read wall time — the bar's first real data (D17; the kernel half in EmoOS's tracker). |
+| M27 — workspaces | A27.1–A27.3 | The workspace verb family grows the compositor additions-only; the bar's pager switches and every window carries its workspace (D18; the kernel half in EmoOS's tracker). |
+| M28 — the launcher's enumeration and the lock | A28.1–A28.3 | The launcher enumerates the disk's app packages behind its search, and the lock screen takes the session behind D19's hash file — no PAM anywhere. |
+| M29 — the audio ride-along (parked) | — | Volume, the OSD, and the media controls arrive with the audio OS track (the virtio-sound driver, the mixer service, the verb family); until it lands the three render nothing by D15's rule. |
 
 ## M7 — the screen (the desktop side)
 
