@@ -388,6 +388,102 @@ int64_t emo_rocksdb_destroy_db(const char *path) {
   return 0;
 }
 
+/* ---- the column family list ----
+
+   Opening a database with `rocksdb_open_column_families` requires every
+   existing family named. The list handle answers them before any open:
+   a path that does not exist is the empty list (the caller is about to
+   create it), and a real database answers its names, "default" first in
+   RocksDB's own order. */
+
+typedef struct emo_rdb_name_list {
+  char **names;
+  int n;
+} emo_rdb_name_list;
+
+int64_t emo_rocksdb_list_new(const char *path) {
+  if (path == NULL) {
+    emo_rdb_set_error("invalid path");
+    return 0;
+  }
+  emo_rdb_name_list *list = calloc(1, sizeof *list);
+  if (list == NULL) {
+    emo_rdb_set_error("out of memory");
+    return 0;
+  }
+  struct stat st;
+  if (stat(path, &st) != 0 && errno == ENOENT) {
+    return (int64_t)(intptr_t)list;
+  }
+  rocksdb_options_t *options = rocksdb_options_create();
+  if (options == NULL) {
+    free(list);
+    emo_rdb_set_error("out of memory");
+    return 0;
+  }
+  size_t n = 0;
+  char *err = NULL;
+  char **names = rocksdb_list_column_families(options, path, &n, &err);
+  rocksdb_options_destroy(options);
+  if (err != NULL || names == NULL) {
+    free(list);
+    emo_rdb_error(err, 0);
+    return 0;
+  }
+  list->names = calloc(n == 0 ? 1 : n, sizeof *list->names);
+  if (list->names == NULL) {
+    rocksdb_list_column_families_destroy(names, n);
+    free(list);
+    emo_rdb_set_error("out of memory");
+    return 0;
+  }
+  for (size_t i = 0; i < n; i++) {
+    size_t len = strlen(names[i]);
+    char *copy = malloc(len + 1);
+    if (copy == NULL) {
+      for (size_t j = 0; j < i; j++) {
+        free(list->names[j]);
+      }
+      free(list->names);
+      free(list);
+      rocksdb_list_column_families_destroy(names, n);
+      emo_rdb_set_error("out of memory");
+      return 0;
+    }
+    memcpy(copy, names[i], len + 1);
+    list->names[i] = copy;
+  }
+  list->n = (int)n;
+  rocksdb_list_column_families_destroy(names, n);
+  return (int64_t)(intptr_t)list;
+}
+
+int64_t emo_rocksdb_list_count(int64_t handle) {
+  emo_rdb_name_list *list = (emo_rdb_name_list *)(intptr_t)handle;
+  return list == NULL ? 0 : (int64_t)list->n;
+}
+
+const char *emo_rocksdb_list_name(int64_t handle, int64_t i) {
+  emo_rdb_name_list *list = (emo_rdb_name_list *)(intptr_t)handle;
+  if (list == NULL || i < 0 || i >= list->n) {
+    emo_rdb_set_error("column family list index out of range");
+    return "";
+  }
+  return list->names[i];
+}
+
+void emo_rocksdb_list_free(int64_t handle) {
+  emo_rdb_name_list *list = (emo_rdb_name_list *)(intptr_t)handle;
+  if (list == NULL) {
+    return;
+  }
+  for (int i = 0; i < list->n; i++) {
+    free(list->names[i]);
+  }
+  free(list->names);
+  free(list);
+}
+
 /* ---- reads and writes ---- */
 
 /* The read options naming the snapshot (0 = the latest state). */

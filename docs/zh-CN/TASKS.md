@@ -47,7 +47,7 @@
 | M26 — Emo shell | 63 | `emosh`,用 Emo 写在 `os` 表面上的通用命令解释器:环境、信号与接线调用(`dup2`/`execvp`/`isatty`/`argv`)落进 `os`,与 fork 纪律并肩;shell 本体把词切成字面与可扩展部件,扩展 `$var`/`$?`/波浪号,逐段 fork 管道并用 `dup2` 接线,把 `<`/`>`/`>>` 开到子进程上,带着承接状态走 `;`/`&&`/`||`,应答八件内建,靠「忽略中断」的纪律活着——shell 忽略,fork 子进程在 exec 前恢复默认——行输入走终端自己的 cooked 模式;fixture 脚本在 ocaml 与 c 双 target 上逐字节一致,退出状态一并钉死(`CHECK.md`)。 |
 | M27 — `websocket` 与 `playwright` 包 | 64 | 用 Emo 做浏览器自动化:RFC 6455 的两端作为骑 `net` 的标准库包(客户端拨号并验证握手、服务端 accept 检查 upgrade/version/key、每轮交换一条文本消息、按角色掩码、ping 有应答、close 有应答、分片接收拼接过 4096 片),然后 `playwright` 客户端穿这些帧对官方 `playwright run-server` 说驱动的 channel 协议——pre-launched-browser 形态、根 channel 上的 initialize 握手、核心门集(goto/click/fill/press/title/content/text_content/screenshot/close)走 `net` 错误二分;两个 demo 各自带对手方(回声服务器;一个以真线格式应答、带分片消息、一个 ping 与八字节长度形态的迷你驱动),金测因此既不需要浏览器也不需要 Node,解释器与 `c` target 逐字节一致(`CHECK.md`)。 |
 | M28 —— RocksDB 半边 | 65 | emo-db 的第一笔落地:`projects/emo-db/` 脚手架与项目内的 `emo/rocksdb` 绑定——骑官方 RocksDB C API 的包内 C shim(open/close、get/put/delete、WriteBatch 原子写、iterator、快照、column family),经 `foreign def` 与 manifest 的 `pkg_config` 字段解析(`postgres` 先例);C ABI 长出 `Bytes` 借用视图(D10),键与值因此携带任意二进制数据,读操作填写调用方自己的 out 参数;调度器的协作模型让每次调用天然串行,shim 自己不长锁;其余 target 在解析处拒绝、解释器在运行时拒绝(E3009/E5007 活体验证);KV demo——文本与内嵌 NUL 的值、批量提交、读、前缀扫描、可见的快照隔离、关闭再重开——经 `projects/emo-db/check.sh` 在 `c` 上跑三遍逐字节一致(`CHECK.md`)。 |
-| M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、定宽与带长度前缀的变宽值)、rowid 分配、以及每索引一个 column family 的二级索引(键由被索引列加 rowid 编成)——目录变更走同一条 WriteBatch 纪律;demo 在目录里建表、插行、走索引扫描,`c` 上逐字节钉死(`CHECK.md`)。 |
+| M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型、索引与 oid 计数按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、4 字节 INTEGER、8 字节 BIGINT/REAL/DOUBLE、boolean、带长度前缀的 TEXT/VARCHAR/BYTEA)、插入的 WriteBatch 里的 rowid 分配、以及每索引一个 column family(名 `idx_<oid>`,键由被索引值加 rowid 编成)的二级索引——共享的 `data` family 以表 oid + rowid 为键,目录经 `rocksdb.list_families` 重开并校验索引 CF,索引扫描是等值前缀;record demo 在目录里建表、插入覆盖每种类型的行(NULL、BYTEA 内嵌 NUL、UTF-8 TEXT)、按 rowid 读、扫表、经唯一与非唯一索引找行、并重开 store,`c` 上逐字节钉死(`CHECK.md`)。 |
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型的 CREATE TABLE、INSERT(多行)、UPDATE、DELETE——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动;语句级与表达式级金测在全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
 | M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:逻辑计划节点(scan、filter、project、insert、update、delete)、骑记录层值的表达式求值、INSERT 造出行编码与索引条目、UPDATE 与 DELETE 经表扫描或索引扫描定位行、SELECT 走计划树——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出,未知表、未知列、类型不匹配以 PG 形状的错误串回答(`CHECK.md`)。 |
 | M32 —— 事务与会话面 | 69 | 设计定案 D6 的事务模型:BEGIN/COMMIT/ROLLBACK、每语句一个 RocksDB 快照(读已提交)、每事务的写缓进一个 WriteBatch 原子提交、Emo 自己的锁管理器仲裁写-写冲突(阻塞,死锁时中止)、目录变更骑同一次提交——两会话并发 demo 展示读已提交语义与冲突中止,`c` 上逐字节钉死(`CHECK.md`)。 |
@@ -1575,3 +1575,57 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
       `examples/sqlite3_demo/package.lock`)、
       `plan/step-65-emo-db-rocksdb.md`,以及 `dune build` /
       `dune build @fmt` 绿。
+
+## M29 —— 记录层
+
+### 步骤 66 —— 记录层
+
+**前置:** Step 65(`emo/rocksdb` 绑定与 `Bytes` 视图)。
+**完成标准:** 项目内的 `emo/record` 包在目录里建表、插入覆盖 v0 类型
+子集的行(NULL、BYTEA 里内嵌 NUL、UTF-8 TEXT),按 rowid 读回、扫表、
+经二级索引找到行——全部在 `c` target 上经
+`projects/emo-db/check.sh`,其 record 金测跑三遍逐字节一致,且 KV
+金测与 E3009/E5007 钉死保持绿;目录与索引 CF 重开后仍在;文档
+EN+zh;仓库可构建。
+
+- [x] **T66.1** —— 规格与追踪:`plan/step-66-record-layer.md`(编码契
+      约)、plan README 行,以及本节的 EN+zh。
+- [x] **T66.2** —— 设计注记:`docs/emo-db.md` + zh——D7 的 REAL
+      注、架构里共享的 `data` CF、M29 行,以及开放项(范围扫描、
+      流式扫描)。
+- [x] **T66.3** —— `rocksdb.list_families(path)`:shim 的 list 句柄
+      骑 `rocksdb_list_column_families`(`list_new`/`count`/`name`/
+      `free`,路径不存在答空),FFI 声明,以及门面的
+      `(R, Array[String])`。KV demo 的闸门保持绿。
+- [x] **T66.4** —— `projects/emo-db/record/` 骨架与
+      `internal/codec.emo`:u8/u32/u64/i32/i64/bytes/string 的
+      `Buf`/`Reader`(带边界检查),外加 UTF-8 长度与前缀助手。编码
+      器与目录编解码住在 `record.emo`——内部模块调用根 def 会构成
+      模块环。
+- [x] **T66.5** —— `record.emo` 的公开类型:`ColType`、`Column`、
+      `Index`、`ColumnDef`、`IndexDef`、`Value`、`Row`、`Table`、
+      `Store`、值构造器、`type_name`,以及契约检查(名字唯一、索引
+      引用列、VARCHAR 长度为正、primary 蕴含 NOT NULL)。
+- [x] **T66.6** —— 行编码/解码、值编码、索引键编码、VARCHAR 码点
+      检查,以及畸形输入的守卫(在 `record.emo` 里)。
+- [x] **T66.7** —— 目录键、表定义编码/解码、oid 计数,以及经绑定
+      的 load/save(在 `record.emo` 里)。
+- [x] **T66.8** —— `Store.open`/`close`/`table`/`tables`/
+      `create_table`:CF 枚举、基础 CF 打开、目录加载与索引 CF 校验、
+      oid 分配、索引 CF 创建、目录批量写,以及重开路径。
+- [x] **T66.9** —— `Table.insert`:值校验、唯一索引前缀检查、rowid、行/索
+      引/目录批量、成功后计数更新,以及重复键的错误值。
+- [x] **T66.10** —— `Table.get`/`scan`/`scan_index`:按键读行、表前
+      缀扫描、带 rowid 后缀的索引前缀扫描,以及有序结果。
+- [x] **T66.11** —— `projects/emo-db/record_demo/` 骨架:destroy、
+      打开、建 `users`、列目录、关闭;播下 `expected.txt`。
+- [x] **T66.12** —— demo 的插入节拍:三行覆盖每种类型、NULL、
+      BYTEA 内嵌 NUL、UTF-8 TEXT,以及重复唯一键答错误值。
+- [x] **T66.13** —— demo 的读节拍:按 rowid 取、扫表、按名字索引
+      等值扫描、按 id 索引扫描,以及重开后列目录与行。
+- [x] **T66.14** —— 闸门:暂存 `emo/record`、构建 record demo、跑三
+      遍对照 `expected.txt`,并保持 KV demo 与 E3009/E5007 钉死绿;
+      record demo 的 lock 经 `emo deps resolve`。
+- [x] **T66.15** —— 项目 README + zh:记录层的格式、demo 与闸门。
+- [x] **T66.16** —— 收尾:TASKS EN+zh、plan README、M29 行、
+      `CHECK.md` 条目,以及 `dune build`/`@fmt` 绿。

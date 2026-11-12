@@ -92,7 +92,9 @@ the database's control plane" made concrete — Emo's concurrency is
 the design's advantage on exactly this plane.
 
 **D7 — The v0 type subset.** INTEGER, BIGINT, REAL, DOUBLE PRECISION,
-TEXT, VARCHAR(n), BOOLEAN, BYTEA (riding `Bytes`). Deferred: NUMERIC
+TEXT, VARCHAR(n), BOOLEAN, BYTEA (riding `Bytes`). REAL and DOUBLE
+PRECISION both store as binary64 in v0; REAL's 4-byte narrowing waits
+for a Float32 or a rounding routine. Deferred: NUMERIC
 (waits on Int128/bignum — the language gap the assessment listed),
 DATE/TIMESTAMP (waits on a calendar library; a candidate standalone
 package later).
@@ -111,7 +113,7 @@ the ladder's shape:
 | Milestone | Steps | Lands |
 | --- | --- | --- |
 | M28 — The RocksDB half | 65 | The project scaffold and the C shim, with the `Bytes` borrowed view (D10): open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
-| M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, secondary indexes. |
+| M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, and secondary indexes as one column family per index — rows in one shared `data` family keyed by table oid + rowid. |
 | M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes, expression evaluation, an embedded test face. |
 | M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, the Emo lock manager. |
@@ -152,7 +154,10 @@ record layer's values.
 oid, in its own column family), the row encoding (null bitmap,
 fixed-width and length-prefixed variable-width values), rowid
 allocation, and secondary indexes: one column family per index, keyed
-by the indexed columns plus the rowid.
+by the indexed columns plus the rowid. Rows live in one shared `data`
+column family keyed by the table oid plus the rowid; the catalog is its
+own column family; the index keys are exact-prefix capable (an equality
+scan is a seek and a prefix walk) and not yet order-preserving.
 6. **The storage half** — RocksDB through the package's C shim:
 open/close, get/put/delete, WriteBatch, iterators, snapshots, column
 families. Keys and values cross as `Bytes` through D10's borrowed
@@ -213,6 +218,11 @@ concurrency.
 the pg_dump shape; both plausible, neither decided.
 - `Bytes` foreign returns — the out-parameter rule covers every
 arc-one read; a return position waits for an API that truly needs one.
+- Range scans over an index — the v0 index key is exact-prefix capable,
+not order-preserving; the comparison encoding and the planner's range
+nodes land with M31.
+- Streaming scans — v0 materializes rows; a cursor-shaped record API
+waits for a plan node that consumes one.
 - The commit's durability knob — the binding's plain write path leaves
 RocksDB's `sync` off; M32's COMMIT is where the flag finds its
 consumer.

@@ -70,9 +70,10 @@ C API 比 TransactionDB 的 C 面更小更稳;锁管理器正是评估那句
 个平面上。
 
 **D7 —— v0 类型子集。** INTEGER、BIGINT、REAL、DOUBLE PRECISION、
-TEXT、VARCHAR(n)、BOOLEAN、BYTEA(骑 `Bytes`)。挂起:NUMERIC(等
-语言的 Int128/bignum——评估列过的缺口)、DATE/TIMESTAMP(等日历
-库;将来一个独立包的候选)。
+TEXT、VARCHAR(n)、BOOLEAN、BYTEA(骑 `Bytes`)。REAL 与 DOUBLE
+PRECISION 在 v0 都按 binary64 存储;REAL 的 4 字节收窄等 Float32 或
+一个舍入例程。挂起:NUMERIC(等语言的 Int128/bignum——评估列过的
+缺口)、DATE/TIMESTAMP(等日历库;将来一个独立包的候选)。
 
 **D8 —— v0 线协议范围:simple query 路径。** Startup、trust 认证、
 Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
@@ -86,7 +87,7 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 | 里程碑 | 步骤 | 落地 |
 | --- | --- | --- |
 | M28 —— RocksDB 半边 | 65 | 项目脚手架与 C shim,连同 `Bytes` 借用视图(D10):open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
-| M29 —— 记录层 | 66 | 目录 column family、行编码、rowid 分配、二级索引。 |
+| M29 —— 记录层 | 66 | 目录 column family、行编码、rowid 分配、每索引一个 column family 的二级索引——行住在共享的 `data` family 里,键是表 oid + rowid。 |
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
 | M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点、表达式求值、嵌入式测试面。 |
 | M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、Emo 锁管理器。 |
@@ -119,7 +120,9 @@ insert、update、delete)与骑在记录层值上的表达式求值。
 5. **记录层** —— 目录(表、列、类型,按 oid,独立的 column
 family)、行编码(空值位图、定宽与带长度前缀的变宽值)、rowid 分
 配、二级索引:每索引一个 column family,键由被索引列加 rowid 编
-成。
+成。行住在共享的 `data` column family 里,键是表 oid 加 rowid;目
+录是自己的 column family;索引键只保证精确前缀(等值扫描是 seek
+加前缀走),暂不保序。
 6. **存储半边** —— 经包内 C shim 的 RocksDB:open/close、
 get/put/delete、WriteBatch、iterator、快照、column family。键与值
 骑 D10 的借用视图以 `Bytes` 跨界;读操作填写调用方自己的缓冲区。
@@ -171,6 +174,10 @@ HTAP 的门在这里开。
 路都通,都未定。
 - `Bytes` 的 foreign 返回——out 参数的规则覆盖弧一的全部读路径;返
 回位置等一个真需要它的 API。
+- 索引上的范围扫描——v0 的索引键只保证精确前缀、不保序;比较编码
+与计划器的范围节点随 M31 落地。
+- 流式扫描——v0 物化整行;游标形状的记录 API 等一个消费它的计划
+节点。
 - 提交的持久化开关——绑定的普通写路径没开 RocksDB 的 `sync`;M32
 的 COMMIT 是这个开关的消费者。
 - 弧二的里程碑切法。

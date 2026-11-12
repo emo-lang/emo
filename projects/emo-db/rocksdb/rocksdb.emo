@@ -63,6 +63,26 @@ def destroy_db(path String) (R, Bool) {
   return (R.ok, true)
 }
 
+// The column families that already exist at `path`, before any open —
+// the list `open` must name. A path that does not exist answers an
+// empty array: the caller is about to create the database. A database
+// answers its own names, "default" included.
+def list_families(path String) (R, Array[String]) {
+  const list = internal.ffi.list_new(path)
+  if list == 0 {
+    return (R.error, internal.reason.last("list_families"))
+  }
+  const n = internal.ffi.list_count(list)
+  var names = []
+  var i = 0
+  while i < n {
+    names = names.append(internal.ffi.list_name(list, i))
+    i = i + 1
+  }
+  internal.ffi.list_free(list)
+  return (R.ok, names)
+}
+
 // One open database. close() it when done; every Batch, Snapshot, and
 // Iter made from it must be closed first.
 class Db {

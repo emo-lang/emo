@@ -1,0 +1,22 @@
+create: users columns=9 types=BIGINT,TEXT,DOUBLE PRECISION,REAL,BOOLEAN,TEXT,BYTEA,INTEGER,VARCHAR(12) indexes=users_id,users_name,users_active
+insert: rowids=1,2,3
+duplicate: record: insert: duplicate key on index "users_name"
+get 2: rowid 2: 2 Grace NULL NULL false NULL 0x NULL grace
+get 99: found=0
+scan: 3 rows
+  rowid 1: 1 Ada 95.5 4.5 true alpha 0x0001ff 7 ada
+  rowid 2: 2 Grace NULL NULL false NULL 0x NULL grace
+  rowid 3: 3 Linus 88.0 3.25 true γ 0x00 -3 NULL
+index users_name Grace: 1 row(s)
+  rowid 2: 2 Grace NULL NULL false NULL 0x NULL grace
+index users_active true: 2 row(s)
+  rowid 1: 1 Ada 95.5 4.5 true alpha 0x0001ff 7 ada
+  rowid 3: 3 Linus 88.0 3.25 true γ 0x00 -3 NULL
+index users_id 3: 1 row(s)
+  rowid 3: 3 Linus 88.0 3.25 true γ 0x00 -3 NULL
+reopen: tables=users columns=9 types=BIGINT,TEXT,DOUBLE PRECISION,REAL,BOOLEAN,TEXT,BYTEA,INTEGER,VARCHAR(12) indexes=users_id,users_name,users_active
+reopen scan: 3 rows
+  rowid 1: 1 Ada 95.5 4.5 true alpha 0x0001ff 7 ada
+  rowid 2: 2 Grace NULL NULL false NULL 0x NULL grace
+  rowid 3: 3 Linus 88.0 3.25 true γ 0x00 -3 NULL
+done

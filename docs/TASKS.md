@@ -55,7 +55,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
 | M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
 | M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with the project-local `emo/rocksdb` binding — a package-carried C shim over the official RocksDB C API (open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families) resolved through `foreign def`s and the manifest's `pkg_config` field (the `postgres` precedent); the C ABI grows the `Bytes` borrowed view (D10) so keys and values carry arbitrary binary data, with reads filling a caller-owned out-parameter; the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — text and embedded-NUL values, a batch commit, reads, a prefix scan, snapshot isolation visible, close/reopen — run three times byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, and types by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, fixed-width and length-prefixed variable-width values), rowid allocation, and secondary indexes as one column family per index keyed by the indexed columns plus the rowid — catalog changes riding the WriteBatch discipline; a demo creates a table in the catalog, inserts rows, and scans through an index, pinned byte-for-byte on `c` (`CHECK.md`). |
+| M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, types, indexes, and oid counters by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), rowid allocation inside the insert's WriteBatch, and secondary indexes as one column family per index named `idx_<oid>` and keyed by the indexed values plus the rowid — the shared `data` family keyed by table oid + rowid, the catalog's reopen through `rocksdb.list_families` with the index-CF verification, and equality-prefix index scans; a record demo creates a table in the catalog, inserts rows covering every type (NULLs, an embedded NUL in BYTEA, UTF-8 TEXT), reads by rowid, scans the table, finds rows through unique and non-unique indexes, and reopens the store, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types, INSERT (multi-row), UPDATE, DELETE — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched; statement and expression goldens byte-identical on all five hosted targets (`CHECK.md`). |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: logical plan nodes (scan, filter, project, insert, update, delete), expression evaluation over the record layer's values, INSERT building encoded rows and index entries, UPDATE and DELETE locating rows through table or index scans, SELECT walking plan trees — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with unknown table, unknown column, and type mismatch answering PG-shaped error strings (`CHECK.md`). |
 | M32 — Transactions and the session plane | 69 | The transaction model of the design record's D6: BEGIN/COMMIT/ROLLBACK with per-statement RocksDB snapshots (read committed), writes buffered per transaction in one WriteBatch committed atomically, an Emo-owned lock manager arbitrating write-write conflicts (block, then abort on deadlock), catalog changes riding the same commit — a two-session concurrency demo showing the read-committed semantics and the conflict abort, pinned byte-for-byte on `c` (`CHECK.md`). |
@@ -4012,3 +4012,72 @@ the repo builds.
       caveat (docs EN+zh, the package comment, and the re-resolved
       `examples/sqlite3_demo/package.lock`), `plan/step-65-emo-db-
       rocksdb.md`, and `dune build` / `dune build @fmt` green.
+
+## M29 — The record layer
+
+### Step 66 — The record layer
+
+**Prereq:** Step 65 (the `emo/rocksdb` binding and the `Bytes` view).
+**Done when:** the project-local `emo/record` package creates a table in
+the catalog, inserts rows covering the v0 type subset (NULLs, an
+embedded NUL in BYTEA, UTF-8 TEXT), reads them back by rowid, scans the
+table, and finds rows through a secondary index — all on the `c` target
+through `projects/emo-db/check.sh`, whose record golden runs three
+times byte-identical and whose KV golden and E3009/E5007 pins stay
+green; the catalog and the index CFs survive a reopen; docs EN+zh; the
+repo builds.
+
+- [x] **T66.1** — The spec and the tracker: `plan/step-66-record-layer.md`
+      (the encoding contract), the plan README row, and this section
+      EN+zh.
+- [x] **T66.2** — The design notes: `docs/emo-db.md` + zh — D7's REAL
+      note, the architecture's shared `data` CF, the M29 row, and the
+      open items (range scans, streaming scans).
+- [x] **T66.3** — `rocksdb.list_families(path)`: the shim's list handle
+      over `rocksdb_list_column_families` (`list_new`/`count`/`name`/
+      `free`, a missing path answering empty), the FFI declarations, and
+      the facade's `(R, Array[String])`. The KV demo's gate stays green.
+- [x] **T66.4** — `projects/emo-db/record/` skeleton and
+      `internal/codec.emo`: `Buf`/`Reader` for u8/u32/u64/i32/i64/
+      bytes/string with bounds checks, plus the UTF-8 length and
+      bytes-prefix helpers. The encoders and the catalog codec live in
+      `record.emo` — a root ↔ internal reference is a module cycle when
+      the internal module calls root defs.
+- [x] **T66.5** — The public types in `record.emo`: `ColType`,
+      `Column`, `Index`, `ColumnDef`, `IndexDef`, `Value`, `Row`,
+      `Table`, `Store`, the value constructors, `type_name`, and the
+      contract checks (unique names, indexes reference columns, a
+      positive VARCHAR length, primary implies NOT NULL).
+- [x] **T66.6** — The row encoder/decoder, the value encoder, the
+      index-key encoder, the VARCHAR code-point check, and the
+      malformed-input guards (in `record.emo`).
+- [x] **T66.7** — The catalog keys, the table definition
+      encoder/decoder, the oid counters, and the load/save through the
+      binding (in `record.emo`).
+- [x] **T66.8** — `Store.open`/`close`/`table`/`tables`/`create_table`:
+      CF enumeration, the base-CF open, the catalog load with the
+      index-CF verification, oid allocation, index-CF creation, the
+      catalog batch, and the reopen path.
+- [x] **T66.9** — `Table.insert`: value validation, the unique-index
+      prefix check, the rowid, the row/index/catalog batch, the counter update
+      on success, and the duplicate-key error value.
+- [x] **T66.10** — `Table.get`/`scan`/`scan_index`: the row-key reads,
+      the table prefix scan, the index prefix scan with the rowid
+      suffix, and the ordered results.
+- [x] **T66.11** — `projects/emo-db/record_demo/` skeleton: destroy,
+      open, create `users`, list the catalog, close; the seeded
+      `expected.txt`.
+- [x] **T66.12** — The demo's insert beats: three rows covering every
+      type, NULLs, an embedded NUL in BYTEA, UTF-8 TEXT, and a
+      duplicate unique key answering the error value.
+- [x] **T66.13** — The demo's read beats: get by rowid, the table scan,
+      the name-index equality scan, the id-index scan, and the reopen
+      listing the catalog and the rows.
+- [x] **T66.14** — The gate: stage `emo/record`, build the record demo,
+      run it three times against `expected.txt`, and keep the KV demo
+      and the E3009/E5007 pins green; the record demo's lock via
+      `emo deps resolve`.
+- [x] **T66.15** — The project README + zh: the record layer's formats,
+      the demo, and the gate.
+- [x] **T66.16** — The close-out: TASKS EN+zh, the plan README, the M29
+      row, `CHECK.md`'s entry, and `dune build`/`@fmt` green.

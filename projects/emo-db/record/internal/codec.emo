@@ -1,0 +1,257 @@
+// The record layer's byte codec: a growable writer and a bounds-checked
+// reader for the catalog and row formats. Every multi-byte integer is
+// big-endian; `bytes` and `string` are a 4-byte length plus the
+// payload. A reader that runs past its buffer, or finishes with bytes
+// left over, raises — malformed on-disk data is corruption, never a
+// silent default.
+//
+// The writer is growable because a row's length depends on its values;
+// a Bytes buffer is fixed-length, so the class grows by doubling and
+// copies. The writer and reader are package machinery — callers use
+// the table API, not these classes.
+
+const initial_capacity = 64
+
+class Buf {
+  def init() {
+    self.buf = Box.new(Bytes.new(initial_capacity))
+    self.len = Box.new(0)
+  }
+
+  def ensure(n Int64) {
+    const need = self.len.read() + n
+    if need > self.buf.read().length() {
+      var cap = self.buf.read().length()
+      if cap == 0 {
+        cap = initial_capacity
+      }
+      while cap < need {
+        cap = cap * 2
+      }
+      const next = Bytes.new(cap)
+      const old = self.buf.read()
+      var i = 0
+      while i < self.len.read() {
+        next.set(i, old.get(i))
+        i = i + 1
+      }
+      self.buf.replace(next)
+    }
+  }
+
+  def u8(v Int64) {
+    if v < 0 || v > 255 {
+      raise Exception.new(message: "record: byte value ${v} is outside 0-255")
+    }
+    self.ensure(1)
+    const p = self.len.read()
+    self.buf.read().set(p, v)
+    self.len.replace(p + 1)
+  }
+
+  def u32be(v Int64) {
+    self.u8((v >> 24) & 255)
+    self.u8((v >> 16) & 255)
+    self.u8((v >> 8) & 255)
+    self.u8(v & 255)
+  }
+
+  def i32be(v Int64) {
+    self.u32be(v)
+  }
+
+  def u64be(v Int64) {
+    self.u8((v >> 56) & 255)
+    self.u8((v >> 48) & 255)
+    self.u8((v >> 40) & 255)
+    self.u8((v >> 32) & 255)
+    self.u8((v >> 24) & 255)
+    self.u8((v >> 16) & 255)
+    self.u8((v >> 8) & 255)
+    self.u8(v & 255)
+  }
+
+  def i64be(v Int64) {
+    self.u64be(v)
+  }
+
+  def bytes(b Bytes) {
+    self.u32be(b.length())
+    self.ensure(b.length())
+    var p = self.len.read()
+    var i = 0
+    const dst = self.buf.read()
+    while i < b.length() {
+      dst.set(p, b.get(i))
+      p = p + 1
+      i = i + 1
+    }
+    self.len.replace(p)
+  }
+
+  // The payload with no length prefix — the index entry appends its
+  // rowid to an already-encoded prefix.
+  def raw(b Bytes) {
+    self.ensure(b.length())
+    var p = self.len.read()
+    var i = 0
+    const dst = self.buf.read()
+    while i < b.length() {
+      dst.set(p, b.get(i))
+      p = p + 1
+      i = i + 1
+    }
+    self.len.replace(p)
+  }
+
+  def string(s String) {
+    self.bytes(s.to_bytes())
+  }
+
+  def finish() Bytes {
+    const n = self.len.read()
+    const out = Bytes.new(n)
+    const src = self.buf.read()
+    var i = 0
+    while i < n {
+      out.set(i, src.get(i))
+      i = i + 1
+    }
+    return out
+  }
+}
+
+class Reader {
+  def init(data Bytes) {
+    self.data = data
+    self.pos = Box.new(0)
+  }
+
+  def need(n Int64) {
+    if n < 0 || self.pos.read() + n > self.data.length() {
+      raise Exception.new(message: "record: truncated bytes at ${self.pos.read()}")
+    }
+  }
+
+  def u8() Int64 {
+    self.need(1)
+    const p = self.pos.read()
+    const v = self.data.get(p)
+    self.pos.replace(p + 1)
+    return v
+  }
+
+  def u32be() Int64 {
+    self.need(4)
+    var v = 0
+    var i = 0
+    while i < 4 {
+      v = (v << 8) | self.u8()
+      i = i + 1
+    }
+    return v
+  }
+
+  def i32be() Int64 {
+    const v = self.u32be()
+    if v >= 2147483648 {
+      return v - 4294967296
+    }
+    return v
+  }
+
+  def u64be() Int64 {
+    self.need(8)
+    var v = 0
+    var i = 0
+    while i < 8 {
+      v = (v << 8) | self.u8()
+      i = i + 1
+    }
+    return v
+  }
+
+  def i64be() Int64 {
+    self.need(8)
+    var v = self.u8()
+    if v >= 128 {
+      v = v - 256
+    }
+    var i = 0
+    while i < 7 {
+      v = (v << 8) | self.u8()
+      i = i + 1
+    }
+    return v
+  }
+
+  def bytes() Bytes {
+    const n = self.u32be()
+    self.need(n)
+    const out = Bytes.new(n)
+    var p = self.pos.read()
+    var i = 0
+    while i < n {
+      out.set(i, self.data.get(p))
+      p = p + 1
+      i = i + 1
+    }
+    self.pos.replace(p)
+    return out
+  }
+
+  def string() String {
+    return self.bytes().to_string()
+  }
+
+  def finish() {
+    if self.pos.read() != self.data.length() {
+      raise Exception.new(
+        message: "record: ${self.data.length() - self.pos.read()} trailing bytes")
+    }
+  }
+}
+
+// The number of UTF-8 code points in `b`: every byte that is not a
+// continuation byte starts one. The caller's Strings are valid UTF-8,
+// so no validation is needed for a value that came from one.
+
+// The one-value helpers the catalog's counter writes use; the writer
+// classes carry the general path.
+def u64(v Int64) Bytes {
+  const b = Buf.new()
+  b.u64be(v)
+  return b.finish()
+}
+
+def u32(v Int64) Bytes {
+  const b = Buf.new()
+  b.u32be(v)
+  return b.finish()
+}
+def utf8_len(b Bytes) Int64 {
+  var n = 0
+  var i = 0
+  while i < b.length() {
+    if (b.get(i) & 192) != 128 {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  return n
+}
+
+// Whether `b` starts with `prefix` — the index and table scans' test.
+def starts_with(b Bytes, prefix Bytes) Bool {
+  if b.length() < prefix.length() {
+    return false
+  }
+  var i = 0
+  while i < prefix.length() {
+    if b.get(i) != prefix.get(i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}

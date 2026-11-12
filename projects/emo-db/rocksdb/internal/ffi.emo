@@ -38,6 +38,13 @@ foreign def cf_list_name(db Int64, i Int64) String = "emo_rocksdb_cf_list_name"
 // Removes the database's directory tree. A missing path is success.
 foreign def destroy_db(path String) Int64 = "emo_rocksdb_destroy_db"
 
+// The column families that exist at `path`, before any open. A missing
+// path answers an empty list. The handle must be freed with list_free.
+foreign def list_new(path String) Int64 = "emo_rocksdb_list_new"
+foreign def list_count(list Int64) Int64 = "emo_rocksdb_list_count"
+foreign def list_name(list Int64, i Int64) String = "emo_rocksdb_list_name"
+foreign def list_free(list Int64) Void = "emo_rocksdb_list_free"
+
 // ---- reads and writes ----
 
 // 0 on success. get_len answers the value's length, -1 for a missing

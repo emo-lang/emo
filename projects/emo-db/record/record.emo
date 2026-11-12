@@ -1,0 +1,1248 @@
+require "emo/rocksdb"
+
+// The record layer: emo-db's own data model over the KV half. A Store
+// is an open database holding tables; a Table knows its columns, its
+// secondary indexes, and its next rowid; a Row is a rowid plus the
+// values in column order. Values carry the v0 type subset — INTEGER,
+// BIGINT, REAL, DOUBLE PRECISION, TEXT, VARCHAR(n), BOOLEAN, BYTEA —
+// and a BYTEA or TEXT payload crosses the layer as Bytes, embedded NULs
+// included.
+//
+// The catalog lives in its own column family (tables, columns, types,
+// indexes, rowid counters); rows live in one shared `data` family keyed
+// by table oid and rowid; each secondary index gets its own family
+// named `idx_<oid>`, keyed by the indexed values plus the rowid. The
+// format is written down in `plan/step-66-record-layer.md`.
+//
+// Expected failures are values: a missing table, a missing row, a
+// duplicate unique key, and a storage failure answer `(R.error, reason)`
+// with a `record: ` prefix. Contract violations raise: a wrong value
+// count, a value of the wrong type, a NULL in a NOT NULL column, an
+// unknown column or index name, or a malformed on-disk row.
+//
+// The layer is single-session in v0: the unique-key check and the rowid
+// counter are read-modify-write without a lock. M32's transaction plane
+// and lock manager make them safe across sessions; until then, one
+// session per store.
+
+enum ColType { integer, bigint, real, double, text, varchar, boolean, bytea }
+
+def type_name(kind ColType) String {
+  case kind {
+    ColType.integer -> { return "INTEGER" }
+    ColType.bigint -> { return "BIGINT" }
+    ColType.real -> { return "REAL" }
+    ColType.double -> { return "DOUBLE PRECISION" }
+    ColType.text -> { return "TEXT" }
+    ColType.varchar -> { return "VARCHAR" }
+    ColType.boolean -> { return "BOOLEAN" }
+    ColType.bytea -> { return "BYTEA" }
+  }
+}
+
+// One value in a row or an index key. The typed constructors below set
+// the kind; `null_value()` marks absence and leaves the kind to the
+// column it will land in. Read a value through the matching accessor —
+// a mis-typed read raises rather than converting.
+class Value {
+  def init(kind ColType, is_null Bool, i64 Int64, f64 Float64, flag Bool, data Bytes) {
+    self.kind = kind
+    self.is_null = is_null
+    self.i64 = i64
+    self.f64 = f64
+    self.flag = flag
+    self.data = data
+  }
+
+  def as_i64() Int64 {
+    if self.is_null {
+      raise Exception.new(message: "record: read a NULL as an integer")
+    }
+    if self.kind != ColType.integer && self.kind != ColType.bigint {
+      raise Exception.new(
+        message: "record: read a ${type_name(self.kind)} as an integer")
+    }
+    return self.i64
+  }
+
+  def as_f64() Float64 {
+    if self.is_null {
+      raise Exception.new(message: "record: read a NULL as a float")
+    }
+    if self.kind != ColType.real && self.kind != ColType.double {
+      raise Exception.new(
+        message: "record: read a ${type_name(self.kind)} as a float")
+    }
+    return self.f64
+  }
+
+  def as_bool() Bool {
+    if self.is_null {
+      raise Exception.new(message: "record: read a NULL as a boolean")
+    }
+    if self.kind != ColType.boolean {
+      raise Exception.new(
+        message: "record: read a ${type_name(self.kind)} as a boolean")
+    }
+    return self.flag
+  }
+
+  def as_bytes() Bytes {
+    if self.is_null {
+      raise Exception.new(message: "record: read a NULL as bytes")
+    }
+    if self.kind != ColType.text && self.kind != ColType.varchar &&
+       self.kind != ColType.bytea {
+      raise Exception.new(
+        message: "record: read a ${type_name(self.kind)} as bytes")
+    }
+    return self.data
+  }
+
+  def as_text() String {
+    if self.is_null {
+      raise Exception.new(message: "record: read a NULL as text")
+    }
+    if self.kind != ColType.text && self.kind != ColType.varchar {
+      raise Exception.new(
+        message: "record: read a ${type_name(self.kind)} as text")
+    }
+    return self.data.to_string()
+  }
+}
+
+def integer(v Int64) Value {
+  return Value.new(ColType.integer, false, v, 0.0, false, Bytes.new(0))
+}
+
+def bigint(v Int64) Value {
+  return Value.new(ColType.bigint, false, v, 0.0, false, Bytes.new(0))
+}
+
+def real(v Float64) Value {
+  return Value.new(ColType.real, false, 0, v, false, Bytes.new(0))
+}
+
+def double(v Float64) Value {
+  return Value.new(ColType.double, false, 0, v, false, Bytes.new(0))
+}
+
+def text(v String) Value {
+  return Value.new(ColType.text, false, 0, 0.0, false, v.to_bytes())
+}
+
+def varchar(v String) Value {
+  return Value.new(ColType.varchar, false, 0, 0.0, false, v.to_bytes())
+}
+
+def boolean(v Bool) Value {
+  return Value.new(ColType.boolean, false, 0, 0.0, v, Bytes.new(0))
+}
+
+def bytea(v Bytes) Value {
+  return Value.new(ColType.bytea, false, 0, 0.0, false, v)
+}
+
+def null_value() Value {
+  return Value.new(ColType.text, true, 0, 0.0, false, Bytes.new(0))
+}
+
+// A column definition for create_table: the name, the type, nullability,
+// the primary flag, and the VARCHAR length. `not_null` and
+// `primary_key` answer a fresh definition; nothing mutates.
+class ColumnDef {
+  def init(name String, kind ColType, nullable Bool, primary Bool, varchar_len Int64) {
+    self.name = name
+    self.kind = kind
+    self.nullable = nullable
+    self.primary = primary
+    self.varchar_len = varchar_len
+  }
+
+  def not_null() ColumnDef {
+    return ColumnDef.new(self.name, self.kind, false, self.primary, self.varchar_len)
+  }
+
+  def primary_key() ColumnDef {
+    return ColumnDef.new(self.name, self.kind, false, true, self.varchar_len)
+  }
+}
+
+def column(name String, kind ColType) ColumnDef {
+  return ColumnDef.new(name, kind, true, false, 0)
+}
+
+// A VARCHAR(n) column. `n` counts UTF-8 code points; the bytes are
+// stored with their byte length.
+def varchar_column(name String, n Int64) ColumnDef {
+  return ColumnDef.new(name, ColType.varchar, true, false, n)
+}
+
+// One secondary index definition: a name, whether it is unique, and the
+// column names it covers, in key order.
+class IndexDef {
+  def init(name String, unique Bool, columns Array[String]) {
+    self.name = name
+    self.unique = unique
+    self.columns = columns
+  }
+}
+
+def index(name String, columns Array[String]) IndexDef {
+  return IndexDef.new(name, false, columns)
+}
+
+def unique_index(name String, columns Array[String]) IndexDef {
+  return IndexDef.new(name, true, columns)
+}
+
+// The catalog's column record. `oid` is per table.
+class Column {
+  def init(oid Int64, name String, kind ColType, nullable Bool, primary Bool, varchar_len Int64) {
+    self.oid = oid
+    self.name = name
+    self.kind = kind
+    self.nullable = nullable
+    self.primary = primary
+    self.varchar_len = varchar_len
+  }
+}
+
+// The catalog's index record. `oid` is global; the index's column
+// family is `idx_<oid>`.
+class Index {
+  def init(oid Int64, name String, unique Bool, column_oids Array[Int64]) {
+    self.oid = oid
+    self.name = name
+    self.unique = unique
+    self.column_oids = column_oids
+  }
+}
+
+// The catalog's table record, before the runtime column families are
+// attached. The Store turns it into a Table.
+class TableMeta {
+  def init(oid Int64, name String, columns Array[Column], indexes Array[Index], next_rowid Int64) {
+    self.oid = oid
+    self.name = name
+    self.columns = columns
+    self.indexes = indexes
+    self.next_rowid = next_rowid
+  }
+}
+
+// What a catalog load answers: the table metadata and the oid counters.
+class CatalogState {
+  def init(metas Array[TableMeta], next_table_oid Int64, next_index_oid Int64) {
+    self.metas = metas
+    self.next_table_oid = next_table_oid
+    self.next_index_oid = next_index_oid
+  }
+}
+
+// One row: its rowid and its values in column order.
+class Row {
+  def init(rowid Int64, values Array[Value]) {
+    self.rowid = rowid
+    self.values = values
+  }
+}
+
+def has_name(names Array[String], name String) Bool {
+  var i = 0
+  while i < names.length() {
+    if names[i] == name {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def cf_required(db rocksdb.Db, name String) rocksdb.Cf {
+  case db.cf(name) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, cf) -> { return cf }
+  }
+}
+
+
+// ---- the row, value, and index encoders ----
+// The row, value, and index-key encoders. The format is v0 version 1:
+// a null bitmap, then the non-null values in column order; an index key
+// is the indexed values each marked present or NULL, then the rowid.
+// Every integer is big-endian; TEXT/VARCHAR/BYTEA are length-prefixed.
+//
+// The encoders validate as they write: a wrong value count, a type that
+// is not the column's, a NULL in a NOT NULL column, an INTEGER outside
+// 32 bits, or a VARCHAR past its code-point limit raises. The decoder
+// is the strict reader: a truncated blob or trailing bytes raises, and
+// a malformed catalog reference is loud.
+
+def check_value(column Column, value Value) {
+  if value.is_null {
+    if !column.nullable {
+      raise Exception.new(
+        message: "record: column \"" + column.name + "\" is NOT NULL")
+    }
+  } else {
+    if value.kind != column.kind {
+      raise Exception.new(
+        message: "record: column \"" + column.name + "\" expects " +
+                 type_name(column.kind) + ", got " +
+                 type_name(value.kind))
+    }
+    if column.kind == ColType.integer &&
+       (value.i64 < -2147483648 || value.i64 > 2147483647) {
+      raise Exception.new(
+        message: "record: column \"" + column.name +
+                 "\" is INTEGER, and ${value.i64} does not fit 32 bits")
+    }
+    if column.kind == ColType.varchar &&
+       internal.codec.utf8_len(value.data) > column.varchar_len {
+      raise Exception.new(
+        message: "record: column \"" + column.name + "\" is VARCHAR(" +
+                 column.varchar_len.to_string() + "), and this value has " +
+                 internal.codec.utf8_len(value.data).to_string() + " characters")
+    }
+  }
+}
+
+def check_row(columns Array[Column], values Array[Value]) {
+  if values.length() != columns.length() {
+    raise Exception.new(
+      message: "record: the row has ${values.length()} values for " +
+               columns.length().to_string() + " columns")
+  }
+  var i = 0
+  while i < columns.length() {
+    check_value(columns[i], values[i])
+    i = i + 1
+  }
+}
+
+def check_index(index Index, columns Array[Column], key_values Array[Value]) {
+  if key_values.length() != index.column_oids.length() {
+    raise Exception.new(
+      message: "record: index \"" + index.name + "\" takes " +
+               index.column_oids.length().to_string() + " key values, got " +
+               key_values.length().to_string())
+  }
+  var i = 0
+  while i < index.column_oids.length() {
+    const column = column_by_oid(columns, index.column_oids[i])
+    check_value(column, key_values[i])
+    i = i + 1
+  }
+}
+
+def index_has_null(index Index, columns Array[Column], values Array[Value]) Bool {
+  var i = 0
+  while i < index.column_oids.length() {
+    const pos = column_position(columns, index.column_oids[i])
+    if pos < 0 {
+      raise Exception.new(
+        message: "record: index \"" + index.name + "\" names a column that does not exist")
+    }
+    if values[pos].is_null {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def write_value(b internal.codec.Buf, column Column, value Value) {
+  case column.kind {
+    ColType.integer -> { b.i32be(value.i64) }
+    ColType.bigint -> { b.i64be(value.i64) }
+    ColType.real -> { b.u64be(value.f64.to_bits()) }
+    ColType.double -> { b.u64be(value.f64.to_bits()) }
+    ColType.boolean -> {
+      if value.flag {
+        b.u8(1)
+      } else {
+        b.u8(0)
+      }
+    }
+    ColType.text -> { b.bytes(value.data) }
+    ColType.varchar -> { b.bytes(value.data) }
+    ColType.bytea -> { b.bytes(value.data) }
+  }
+}
+
+def read_value(r internal.codec.Reader, column Column) Value {
+  case column.kind {
+    ColType.integer -> {
+      return Value.new(ColType.integer, false, r.i32be(), 0.0, false, Bytes.new(0))
+    }
+    ColType.bigint -> {
+      return Value.new(ColType.bigint, false, r.i64be(), 0.0, false, Bytes.new(0))
+    }
+    ColType.real -> {
+      return Value.new(ColType.real, false, 0, Float64.from_bits(r.u64be()), false, Bytes.new(0))
+    }
+    ColType.double -> {
+      return Value.new(ColType.double, false, 0, Float64.from_bits(r.u64be()), false, Bytes.new(0))
+    }
+    ColType.boolean -> {
+      return Value.new(ColType.boolean, false, 0, 0.0, r.u8() != 0, Bytes.new(0))
+    }
+    ColType.text -> {
+      return Value.new(ColType.text, false, 0, 0.0, false, r.bytes())
+    }
+    ColType.varchar -> {
+      return Value.new(ColType.varchar, false, 0, 0.0, false, r.bytes())
+    }
+    ColType.bytea -> {
+      return Value.new(ColType.bytea, false, 0, 0.0, false, r.bytes())
+    }
+  }
+}
+
+def encode_row(columns Array[Column], values Array[Value]) Bytes {
+  const b = internal.codec.Buf.new()
+  const bitmap_len = (columns.length() + 7) / 8
+  var byte_index = 0
+  while byte_index < bitmap_len {
+    var bits = 0
+    var bit = 0
+    while bit < 8 {
+      const column_index = byte_index * 8 + bit
+      if column_index < columns.length() && values[column_index].is_null {
+        bits = bits | (1 << bit)
+      }
+      bit = bit + 1
+    }
+    b.u8(bits)
+    byte_index = byte_index + 1
+  }
+  var i = 0
+  while i < columns.length() {
+    if !values[i].is_null {
+      write_value(b, columns[i], values[i])
+    }
+    i = i + 1
+  }
+  return b.finish()
+}
+
+def null_value_for(column Column) Value {
+  return Value.new(column.kind, true, 0, 0.0, false, Bytes.new(0))
+}
+
+def decode_row(columns Array[Column], data Bytes) Array[Value] {
+  const r = internal.codec.Reader.new(data)
+  const bitmap_len = (columns.length() + 7) / 8
+  const bitmap = Bytes.new(bitmap_len)
+  var i = 0
+  while i < bitmap_len {
+    bitmap.set(i, r.u8())
+    i = i + 1
+  }
+  var values = []
+  var column_index = 0
+  while column_index < columns.length() {
+    const byte = bitmap.get(column_index / 8)
+    const bit = (byte >> (column_index % 8)) & 1
+    if bit == 1 {
+      values = values.append(null_value_for(columns[column_index]))
+    } else {
+      values = values.append(read_value(r, columns[column_index]))
+    }
+    column_index = column_index + 1
+  }
+  r.finish()
+  return values
+}
+
+// The index key's value part: every indexed column, a present/NULL
+// marker, then the value's encoding; no rowid.
+def index_prefix_row(index Index, columns Array[Column], values Array[Value]) Bytes {
+  const b = internal.codec.Buf.new()
+  var i = 0
+  while i < index.column_oids.length() {
+    const pos = column_position(columns, index.column_oids[i])
+    if pos < 0 {
+      raise Exception.new(
+        message: "record: index \"" + index.name + "\" names a column that does not exist")
+    }
+    const column = columns[pos]
+    const value = values[pos]
+    if value.is_null {
+      b.u8(0)
+    } else {
+      b.u8(1)
+      write_value(b, column, value)
+    }
+    i = i + 1
+  }
+  return b.finish()
+}
+
+// The same prefix from the key values a scan passes, aligned with the
+// index's columns rather than the row.
+def index_prefix_key(index Index, columns Array[Column], key_values Array[Value]) Bytes {
+  const b = internal.codec.Buf.new()
+  var i = 0
+  while i < index.column_oids.length() {
+    const column = column_by_oid(columns, index.column_oids[i])
+    const value = key_values[i]
+    if value.is_null {
+      b.u8(0)
+    } else {
+      b.u8(1)
+      write_value(b, column, value)
+    }
+    i = i + 1
+  }
+  return b.finish()
+}
+
+def index_entry(prefix Bytes, rowid Int64) Bytes {
+  const b = internal.codec.Buf.new()
+  b.raw(prefix)
+  b.u64be(rowid)
+  return b.finish()
+}
+
+def row_key(table_oid Int64, rowid Int64) Bytes {
+  const b = internal.codec.Buf.new()
+  b.u64be(table_oid)
+  b.u64be(rowid)
+  return b.finish()
+}
+
+def table_prefix(table_oid Int64) Bytes {
+  return internal.codec.u64(table_oid)
+}
+
+// The rowid is the last eight bytes of a row key or an index key.
+def rowid_of(key Bytes) Int64 {
+  if key.length() < 8 {
+    raise Exception.new(message: "record: a row key shorter than eight bytes")
+  }
+  var v = 0
+  var i = key.length() - 8
+  while i < key.length() {
+    v = (v << 8) | key.get(i)
+    i = i + 1
+  }
+  return v
+}
+
+// ---- the catalog codec ----
+// The catalog's keys and the table definition's codec. The catalog is
+// its own column family: two meta keys carry the next table and index
+// oids, and every table is a `0x01` kind byte plus a big-endian oid.
+// The definition's version byte is 1; an unknown version or a malformed
+// blob raises.
+
+def kind_tag(kind ColType) Int64 {
+  case kind {
+    ColType.integer -> { return 1 }
+    ColType.bigint -> { return 2 }
+    ColType.real -> { return 3 }
+    ColType.double -> { return 4 }
+    ColType.text -> { return 5 }
+    ColType.varchar -> { return 6 }
+    ColType.boolean -> { return 7 }
+    ColType.bytea -> { return 8 }
+  }
+}
+
+def kind_of(tag Int64) ColType {
+  case tag {
+    1 -> { return ColType.integer }
+    2 -> { return ColType.bigint }
+    3 -> { return ColType.real }
+    4 -> { return ColType.double }
+    5 -> { return ColType.text }
+    6 -> { return ColType.varchar }
+    7 -> { return ColType.boolean }
+    8 -> { return ColType.bytea }
+    _ -> {
+      raise Exception.new(message: "record: unknown type tag ${tag}")
+    }
+  }
+}
+
+def meta_key(code Int64) Bytes {
+  const b = internal.codec.Buf.new()
+  b.u8(0)
+  b.u8(code)
+  return b.finish()
+}
+
+def table_key(oid Int64) Bytes {
+  const b = internal.codec.Buf.new()
+  b.u8(1)
+  b.u64be(oid)
+  return b.finish()
+}
+
+def catalog_table_prefix() Bytes {
+  const b = internal.codec.Buf.new()
+  b.u8(1)
+  return b.finish()
+}
+
+def encode_table(meta TableMeta) Bytes {
+  const b = internal.codec.Buf.new()
+  b.u8(1)
+  b.string(meta.name)
+  b.u64be(meta.next_rowid)
+  b.u32be(meta.columns.length())
+  var i = 0
+  while i < meta.columns.length() {
+    const column = meta.columns[i]
+    b.u32be(column.oid)
+    b.string(column.name)
+    b.u8(kind_tag(column.kind))
+    var flags = 0
+    if column.nullable {
+      flags = flags | 1
+    }
+    if column.primary {
+      flags = flags | 2
+    }
+    b.u8(flags)
+    b.u32be(column.varchar_len)
+    i = i + 1
+  }
+  b.u32be(meta.indexes.length())
+  var j = 0
+  while j < meta.indexes.length() {
+    const idx = meta.indexes[j]
+    b.u32be(idx.oid)
+    b.string(idx.name)
+    if idx.unique {
+      b.u8(1)
+    } else {
+      b.u8(0)
+    }
+    b.u32be(idx.column_oids.length())
+    var k = 0
+    while k < idx.column_oids.length() {
+      b.u32be(idx.column_oids[k])
+      k = k + 1
+    }
+    j = j + 1
+  }
+  return b.finish()
+}
+
+def decode_table(data Bytes) TableMeta {
+  const r = internal.codec.Reader.new(data)
+  const version = r.u8()
+  if version != 1 {
+    raise Exception.new(
+      message: "record: catalog: unknown table-definition version ${version}")
+  }
+  const name = r.string()
+  const next_rowid = r.u64be()
+  const column_count = r.u32be()
+  var columns = []
+  var i = 0
+  while i < column_count {
+    const oid = r.u32be()
+    const column_name = r.string()
+    const kind = kind_of(r.u8())
+    const flags = r.u8()
+    const varchar_len = r.u32be()
+    columns = columns.append(
+      Column.new(oid, column_name, kind, (flags & 1) != 0, (flags & 2) != 0, varchar_len))
+    i = i + 1
+  }
+  const index_count = r.u32be()
+  var indexes = []
+  var j = 0
+  while j < index_count {
+    const oid = r.u32be()
+    const index_name = r.string()
+    const unique = r.u8() != 0
+    const key_count = r.u32be()
+    var oids = []
+    var k = 0
+    while k < key_count {
+      oids = oids.append(r.u32be())
+      k = k + 1
+    }
+    indexes = indexes.append(
+      Index.new(oid, index_name, unique, oids))
+    j = j + 1
+  }
+  r.finish()
+  return TableMeta.new(0, name, columns, indexes, next_rowid)
+}
+
+// The table's oid is the key's suffix, not part of the value; decode_at
+// reads the key and rebuilds the meta with the real oid.
+
+def decode_at(key Bytes, data Bytes) TableMeta {
+  const r = internal.codec.Reader.new(key)
+  const kind = r.u8()
+  if kind != 1 {
+    raise Exception.new(message: "record: catalog: unexpected key kind ${kind}")
+  }
+  const oid = r.u64be()
+  r.finish()
+  const meta = decode_table(data)
+  return TableMeta.new(oid, meta.name, meta.columns, meta.indexes, meta.next_rowid)
+}
+
+def read_counter(catalog rocksdb.Cf, key Bytes) Int64 {
+  case catalog.get(key) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, found) -> {
+      if found.length() == 0 {
+        return 1
+      }
+      const r = internal.codec.Reader.new(found[0])
+      const v = r.u64be()
+      r.finish()
+      return v
+    }
+  }
+}
+
+def iter_required(catalog rocksdb.Cf) rocksdb.Iter {
+  case catalog.iter() {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, it) -> { return it }
+  }
+}
+
+def key_required(it rocksdb.Iter) Bytes {
+  case it.key() {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, key) -> { return key }
+  }
+}
+
+def value_required(it rocksdb.Iter) Bytes {
+  case it.value() {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, value) -> { return value }
+  }
+}
+
+def load(catalog rocksdb.Cf) CatalogState {
+  const next_table_oid = read_counter(catalog, meta_key(1))
+  const next_index_oid = read_counter(catalog, meta_key(2))
+  const prefix = catalog_table_prefix()
+  var metas = []
+  const it = iter_required(catalog)
+  var done = false
+  it.seek(prefix)
+  while it.valid() && !done {
+    const key = key_required(it)
+    if !internal.codec.starts_with(key, prefix) {
+      done = true
+    } else {
+      metas = metas.append(decode_at(key, value_required(it)))
+      it.next()
+    }
+  }
+  it.close()
+  return CatalogState.new(metas, next_table_oid, next_index_oid)
+}
+
+// Opens the database at `path`, creating it and its base column
+// families when absent. The existing families are enumerated before
+// open because RocksDB requires every one named; the catalog's index
+// families must have been in that list — a missing one is corruption,
+// not a family to recreate silently.
+def open(path String) (R, Store) {
+  case rocksdb.list_families(path) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, existing) -> {
+      var names = ["default", "catalog", "data"]
+      var i = 0
+      while i < existing.length() {
+        if !has_name(names, existing[i]) {
+          names = names.append(existing[i])
+        }
+        i = i + 1
+      }
+      case rocksdb.open(path, names, true) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, db) -> {
+          const catalog = cf_required(db, "catalog")
+          const data = cf_required(db, "data")
+          const state = load(catalog)
+          var tables = []
+          var t = 0
+          while t < state.metas.length() {
+            const meta = state.metas[t]
+            var cfs = []
+            var k = 0
+            while k < meta.indexes.length() {
+              const idx = meta.indexes[k]
+              const cf_name = "idx_" + idx.oid.to_string()
+              if !has_name(existing, cf_name) {
+                raise Exception.new(
+                  message: "record: open: the index column family " + cf_name +
+                           " of table " + meta.name + " is missing")
+              }
+              cfs = cfs.append(cf_required(db, cf_name))
+              k = k + 1
+            }
+            tables = tables.append(
+              Table.new(db, catalog, data, meta, cfs))
+            t = t + 1
+          }
+          return (R.ok, Store.new(db, catalog, data, tables,
+                                  state.next_table_oid, state.next_index_oid))
+        }
+      }
+    }
+  }
+}
+
+// One open store: the database, the table set, and the oid counters.
+// close() it when done; every Table made from it must not be used
+// afterwards.
+class Store {
+  def init(db rocksdb.Db, catalog rocksdb.Cf, data rocksdb.Cf, table_list Array[Table], next_table_oid Int64, next_index_oid Int64) {
+    self.db = db
+    self.catalog = catalog
+    self.data = data
+    self.table_list = Box.new(table_list)
+    self.next_table_oid = Box.new(next_table_oid)
+    self.next_index_oid = Box.new(next_index_oid)
+    self.closed = Box.new(false)
+  }
+
+  // The table named `name`, or (R.error, ...) when it does not exist.
+  def table(name String) (R, Table) {
+    self.live()
+    const all = self.table_list.read()
+    var i = 0
+    while i < all.length() {
+      if all[i].name == name {
+        return (R.ok, all[i])
+      }
+      i = i + 1
+    }
+    return (R.error, "record: no such table \"" + name + "\"")
+  }
+
+  // Every table, in creation order.
+  def tables() Array[Table] {
+    self.live()
+    return self.table_list.read()
+  }
+
+  // Creates a table, its catalog record, and one column family per
+  // index. The definitions are validated first: unique names, a
+  // positive VARCHAR length, a primary column that is NOT NULL, and
+  // indexes that name real columns.
+  def create_table(name String, columns Array[ColumnDef], indexes Array[IndexDef]) (R, Table) {
+    self.live()
+    if name == "" {
+      raise Exception.new(message: "record: create_table: the table name is empty")
+    }
+    if columns.length() == 0 {
+      raise Exception.new(message: "record: create_table: the table has no columns")
+    }
+    const table_oid = self.next_table_oid.read()
+    var next_index_oid = self.next_index_oid.read()
+    var seen_names = []
+    var cols = []
+    var i = 0
+    while i < columns.length() {
+      const col_def = columns[i]
+      if has_name(seen_names, col_def.name) {
+        raise Exception.new(
+          message: "record: create_table: duplicate column \"" + col_def.name + "\"")
+      }
+      seen_names = seen_names.append(col_def.name)
+      if col_def.primary && col_def.nullable {
+        raise Exception.new(
+          message: "record: create_table: primary column \"" + col_def.name +
+                   "\" is nullable")
+      }
+      if col_def.kind == ColType.varchar && col_def.varchar_len <= 0 {
+        raise Exception.new(
+          message: "record: create_table: VARCHAR column \"" + col_def.name +
+                   "\" needs a positive length")
+      }
+      cols = cols.append(
+        Column.new(i + 1, col_def.name, col_def.kind, col_def.nullable, col_def.primary,
+                   col_def.varchar_len))
+      i = i + 1
+    }
+    var index_names = []
+    var idxs = []
+    var j = 0
+    while j < indexes.length() {
+      const idx_def = indexes[j]
+      if has_name(index_names, idx_def.name) {
+        raise Exception.new(
+          message: "record: create_table: duplicate index \"" + idx_def.name + "\"")
+      }
+      index_names = index_names.append(idx_def.name)
+      if idx_def.columns.length() == 0 {
+        raise Exception.new(
+          message: "record: create_table: index \"" + idx_def.name + "\" has no columns")
+      }
+      var oids = []
+      var c = 0
+      while c < idx_def.columns.length() {
+        const oid = column_oid(cols, idx_def.columns[c])
+        if oid == 0 {
+          raise Exception.new(
+            message: "record: create_table: index \"" + idx_def.name +
+                     "\" names unknown column \"" + idx_def.columns[c] + "\"")
+        }
+        oids = oids.append(oid)
+        c = c + 1
+      }
+      idxs = idxs.append(Index.new(next_index_oid, idx_def.name, idx_def.unique, oids))
+      next_index_oid = next_index_oid + 1
+      j = j + 1
+    }
+    const existing = self.table_list.read()
+    var t = 0
+    while t < existing.length() {
+      if existing[t].name == name {
+        return (R.error, "record: create_table: table \"" + name + "\" already exists")
+      }
+      t = t + 1
+    }
+    // The index families first, then the catalog batch: a crash between
+    // them leaves an orphan family, never a catalog entry whose family
+    // is missing.
+    var index_cfs = []
+    var k = 0
+    while k < idxs.length() {
+      case self.db.cf_create("idx_" + idxs[k].oid.to_string()) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, cf) -> { index_cfs = index_cfs.append(cf) }
+      }
+      k = k + 1
+    }
+    const meta = TableMeta.new(table_oid, name, cols, idxs, 1)
+    const encoded = encode_table(meta)
+    case self.db.batch() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, batch) -> {
+        case batch.put(self.catalog, table_key(table_oid), encoded) {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        case batch.put(self.catalog, meta_key(1),
+                       internal.codec.u64(table_oid + 1)) {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        case batch.put(self.catalog, meta_key(2),
+                       internal.codec.u64(next_index_oid)) {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        case batch.write() {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        batch.close()
+      }
+    }
+    const created = Table.new(self.db, self.catalog, self.data, meta, index_cfs)
+    self.table_list.replace(self.table_list.read().append(created))
+    self.next_table_oid.replace(table_oid + 1)
+    self.next_index_oid.replace(next_index_oid)
+    return (R.ok, created)
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "record: close: the store is already closed")
+    }
+    self.db.close()
+    self.closed.replace(true)
+  }
+
+  def live() {
+    if self.closed.read() {
+      raise Exception.new(message: "record: the store is closed")
+    }
+    self.db.live()
+  }
+}
+
+def column_oid(columns Array[Column], name String) Int64 {
+  var i = 0
+  while i < columns.length() {
+    if columns[i].name == name {
+      return columns[i].oid
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+def column_by_oid(columns Array[Column], oid Int64) Column {
+  var i = 0
+  while i < columns.length() {
+    if columns[i].oid == oid {
+      return columns[i]
+    }
+    i = i + 1
+  }
+  raise Exception.new(
+    message: "record: the catalog names column oid ${oid}, which does not exist")
+}
+
+def column_position(columns Array[Column], oid Int64) Int64 {
+  var i = 0
+  while i < columns.length() {
+    if columns[i].oid == oid {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// One table: its columns, its indexes with their column families, and
+// its rowid counter. The Table is bound to its Store's database; every
+// operation checks that the database is still open.
+class Table {
+  def init(db rocksdb.Db, catalog rocksdb.Cf, data rocksdb.Cf, meta TableMeta, index_cfs Array[rocksdb.Cf]) {
+    self.db = db
+    self.catalog = catalog
+    self.data = data
+    self.oid = meta.oid
+    self.name = meta.name
+    self.columns = meta.columns
+    self.indexes = meta.indexes
+    self.index_cfs = index_cfs
+    self.next_rowid = Box.new(meta.next_rowid)
+  }
+
+  // Inserts one row and answers its rowid. The row, every index entry,
+  // and the catalog's new next_rowid are one atomic WriteBatch; a
+  // duplicate unique key answers an error value before the batch is
+  // opened. A null in a NOT NULL column, a wrong count, or a wrong type
+  // raises — the caller laid out the row against the wrong table.
+  def insert(values Array[Value]) (R, Int64) {
+    self.live()
+    check_row(self.columns, values)
+    var i = 0
+    while i < self.indexes.length() {
+      const idx = self.indexes[i]
+      if idx.unique && !index_has_null(idx, self.columns, values) {
+        const prefix = index_prefix_row(idx, self.columns, values)
+        case self.index_cfs[i].iter() {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, it) -> {
+            var duplicate = false
+            it.seek(prefix)
+            if it.valid() {
+              case it.key() {
+                (R.error, why) -> {
+                  it.close()
+                  return (R.error, why)
+                }
+                (R.ok, key) -> {
+                  if internal.codec.starts_with(key, prefix) {
+                    duplicate = true
+                  }
+                }
+              }
+            }
+            it.close()
+            if duplicate {
+              return (R.error,
+                      "record: insert: duplicate key on index \"" + idx.name + "\"")
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    const rowid = self.next_rowid.read()
+    const next = rowid + 1
+    const row = encode_row(self.columns, values)
+    const key = row_key(self.oid, rowid)
+    const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes, next)
+    const encoded_table = encode_table(meta)
+    case self.db.batch() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, batch) -> {
+        case batch.put(self.data, key, row) {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        var k = 0
+        while k < self.indexes.length() {
+          const prefix = index_prefix_row(self.indexes[k], self.columns, values)
+          const entry = index_entry(prefix, rowid)
+          case batch.put(self.index_cfs[k], entry, Bytes.new(0)) {
+            (R.error, why) -> {
+              batch.close()
+              return (R.error, why)
+            }
+            (R.ok, _) -> {}
+          }
+          k = k + 1
+        }
+        case batch.put(self.catalog, table_key(self.oid), encoded_table) {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        case batch.write() {
+          (R.error, why) -> {
+            batch.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> {}
+        }
+        batch.close()
+      }
+    }
+    self.next_rowid.replace(next)
+    return (R.ok, rowid)
+  }
+
+  // The row with `rowid`: an empty array when it is absent, a
+  // one-element array when it is present.
+  def get(rowid Int64) (R, Array[Row]) {
+    self.live()
+    const key = row_key(self.oid, rowid)
+    case self.data.get(key) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.ok, [])
+        }
+        const values = decode_row(self.columns, found[0])
+        return (R.ok, [Row.new(rowid, values)])
+      }
+    }
+  }
+
+  // Every row in rowid order.
+  def scan() (R, Array[Row]) {
+    self.live()
+    const prefix = table_prefix(self.oid)
+    case self.data.iter() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, it) -> {
+        var rows = []
+        var done = false
+        it.seek(prefix)
+        while it.valid() && !done {
+          case it.key() {
+            (R.error, why) -> {
+              it.close()
+              return (R.error, why)
+            }
+            (R.ok, key) -> {
+              if !internal.codec.starts_with(key, prefix) {
+                done = true
+              } else {
+                case it.value() {
+                  (R.error, why) -> {
+                    it.close()
+                    return (R.error, why)
+                  }
+                  (R.ok, blob) -> {
+                    const rowid = rowid_of(key)
+                    rows = rows.append(
+                      Row.new(rowid, decode_row(self.columns, blob)))
+                  }
+                }
+                it.next()
+              }
+            }
+          }
+        }
+        it.close()
+        return (R.ok, rows)
+      }
+    }
+  }
+
+  // The rows an index answers for the key values `key_values`, in
+  // index-key order (the rowid breaks ties in a non-unique index). The
+  // values must match the index's columns in order and type.
+  def scan_index(index_name String, key_values Array[Value]) (R, Array[Row]) {
+    self.live()
+    var pos = -1
+    var i = 0
+    while i < self.indexes.length() {
+      if self.indexes[i].name == index_name {
+        pos = i
+      }
+      i = i + 1
+    }
+    if pos < 0 {
+      return (R.error, "record: no such index \"" + index_name + "\"")
+    }
+    const idx = self.indexes[pos]
+    check_index(idx, self.columns, key_values)
+    const prefix = index_prefix_key(idx, self.columns, key_values)
+    case self.index_cfs[pos].iter() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, it) -> {
+        var rows = []
+        var done = false
+        it.seek(prefix)
+        while it.valid() && !done {
+          case it.key() {
+            (R.error, why) -> {
+              it.close()
+              return (R.error, why)
+            }
+            (R.ok, key) -> {
+              if !internal.codec.starts_with(key, prefix) {
+                done = true
+              } else {
+                const rowid = rowid_of(key)
+                case self.get(rowid) {
+                  (R.error, why) -> {
+                    it.close()
+                    return (R.error, why)
+                  }
+                  (R.ok, found) -> {
+                    if found.length() == 1 {
+                      rows = rows.append(found[0])
+                    }
+                  }
+                }
+                it.next()
+              }
+            }
+          }
+        }
+        it.close()
+        return (R.ok, rows)
+      }
+    }
+  }
+
+  def live() {
+    self.db.live()
+  }
+}
