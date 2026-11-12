@@ -1558,16 +1558,6 @@ list.
   own number when the placeholder carried it), and the codec's fd
   now rides the ancillary queue alone.
 
-- [ ] **A18.11** — The smoke leg: `devtools/wayland-smoke.Dockerfile`
-  (cc, sway, grim — no OCaml in the image) and
-  `devtools/wayland-smoke.sh`: the host emits the demo's C
-  (`emo build --target c`), the container compiles and runs it
-  under headless sway (`WLR_BACKENDS=headless`), `grim` captures,
-  the script checks the pattern's pixels and exits nonzero with the
-  capture beside it on any miss. **Accept:** the script exits 0 and
-  the screenshot shows the pattern — the milestone's first frame on
-  a real compositor.
-
 - [x] **A18.12** — The docs and the ledger: `docs/stdlib/wayland.md`
   and its `docs/zh-CN/stdlib/wayland.md` mirror, both `stdlib.md`
   index rows (English and Chinese), `plan/step-58-wayland-client.md`
