@@ -72,6 +72,30 @@ class Rect {
   }
 }
 
+// The pointer's hit table (emo-desktop M22): one rect per Button the
+// walk places, `(x, y, w, h, tag)` with the tag the button already
+// carries. The walk fills it mid-paint — a frame's pixels and its
+// click targets come from one pass, so a repaint leaves no stale
+// rect behind — and the host hands the table to whatever turns
+// presses into tags.
+class Rects {
+  def init() {
+    self.table = Box.new([])
+  }
+
+  def add(x Int64, y Int64, w Int64, h Int64, tag Int64) {
+    self.table.replace(self.table.read().append((x, y, w, h, tag)))
+  }
+
+  def table() Array[(Int64, Int64, Int64, Int64, Int64)] {
+    return self.table.read()
+  }
+
+  def clear() {
+    self.table.replace([])
+  }
+}
+
 // The labels' type (emo-desktop A14.2): the box model measures and
 // paints every label in the interface face at 16 pixels (`font.emo`),
 // each glyph its own advance and every line the strike's line box — so
@@ -564,7 +588,7 @@ def shadow_pad(soft Int64) Int64 {
 // the event's end, and the walk's own boxed numbers are the frame's
 // residue (A8.3's count).
 def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
-          f raster.Strike) {
+          f raster.Strike, rects Rects) {
   if paints_box(n) {
     const r = clip(x, y, w, h, s.width(), s.height())
     if r.w() > 0 && r.h() > 0 {
@@ -572,14 +596,20 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
     }
   }
   if n.is(ui.Column) {
-    place_column(n, x, y, w, h, s, f)
+    place_column(n, x, y, w, h, s, f, rects)
   }
   // `Scroll`, as above: a vertical box, not yet a viewport with an offset.
   if n.is(ui.Scroll) {
-    place_column(n, x, y, w, h, s, f)
+    place_column(n, x, y, w, h, s, f, rects)
   }
   if n.is(ui.Row) {
-    place_row(n, x, y, w, h, s, f)
+    place_row(n, x, y, w, h, s, f, rects)
+  }
+  // A Button's rect lands where the walk paints it, the tag the
+  // registry handed the view (M22): the host's hit test reads the
+  // same table the frame came from.
+  if n.is(ui.Button) {
+    rects.add(x, y, w, h, n.event())
   }
   const label = label_of(n)
   if label.length() > 0 {
@@ -608,7 +638,7 @@ def text(f raster.Strike, label String, x Int64, y Int64, ink Int64, s Surface) 
 // left over; the last one takes the remainder so the box stays flush.
 // The column's `align` places each child across its width.
 def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
-                 s Surface, f raster.Strike) {
+                 s Surface, f raster.Strike, rects Rects) {
   const st = n.style()
   const pad = st.padding().to_int64()
   const gap = st.gap().to_int64()
@@ -653,7 +683,7 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
     if align == ui.Align.stretch {
       cw = inner_w
     }
-    place(kids[i], cx, cursor, cw, ch, s, f)
+    place(kids[i], cx, cursor, cw, ch, s, f, rects)
     cursor = cursor + ch + gap
   }
 }
@@ -662,7 +692,7 @@ def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
 // apart, with `grow` and the leftover share working across the width and
 // `align` placing each child down the row's height.
 def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
-              f raster.Strike) {
+              f raster.Strike, rects Rects) {
   const st = n.style()
   const pad = st.padding().to_int64()
   const gap = st.gap().to_int64()
@@ -707,9 +737,17 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
     if align == ui.Align.stretch {
       ch = inner_h
     }
-    place(kids[i], cursor, cy, cw, ch, s, f)
+    place(kids[i], cursor, cy, cw, ch, s, f, rects)
     cursor = cursor + cw + gap
   }
+}
+
+// A tree onto a surface, the walk's rects collected as it goes — the
+// host's hit test reads the table the frame came from (M22). The
+// collector is the caller's: cleared and refilled per frame, or a
+// fresh one per walk for a caller that only wants the paint.
+def paint_rects(root ui.Node, s Surface, f raster.Strike, rects Rects) {
+  place(root, 0, 0, s.width(), s.height(), s, f, rects)
 }
 
 // A tree onto a surface: laid into the surface's whole rectangle and
@@ -717,7 +755,7 @@ def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
 // pixel twin of the terminal's repaint, and what the full-screen pass
 // (A7.2) calls once before it presents.
 def paint(root ui.Node, s Surface, f raster.Strike) {
-  place(root, 0, 0, s.width(), s.height(), s, f)
+  place(root, 0, 0, s.width(), s.height(), s, f, Rects.new())
 }
 
 // The surface as PPM text (P3): the header, then one pixel per line as
@@ -795,17 +833,20 @@ class Fb {
     self.surface = surface
     self.input = input
     self.strike = strike
+    self.rects = Rects.new()
     self.sink = Box.new(unmounted())
   }
 
   def mount(root ui.Node, events ui.Events) {
     self.sink.replace(events)
-    paint(root, self.surface, self.strike)
+    self.rects.clear()
+    paint_rects(root, self.surface, self.strike, self.rects)
     self.surface.present()
   }
 
   def patch(old ui.Node, next ui.Node) {
-    paint(next, self.surface, self.strike)
+    self.rects.clear()
+    paint_rects(next, self.surface, self.strike, self.rects)
     self.surface.present()
   }
 
