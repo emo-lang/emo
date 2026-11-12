@@ -78,11 +78,14 @@ let builtin_type_items : item list =
     ty "List" "List[T] — a mutable double-ended queue";
     ty "ArrayBuilder"
       "ArrayBuilder[T] — a mutable buffer that grows into an Array[T]";
+    ty "Bytes" "Bytes — a fixed-size mutable byte buffer";
+    ty "Atomic" "Atomic[T] — a cell read and written atomically";
     ty "TcpConn" "a TCP connection";
     ty "TcpListener" "a TCP listener";
     ty "UdpSocket" "a UDP socket";
     ty "Exception" "the base exception class";
     ty "R" "the built-in result enum — (R.ok, value) beside (R.error, reason)";
+    ty "Syntax" "the compile-time syntax tree — a macro's parameters and quotes";
   ]
 
 let builtin_function_items : item list =
