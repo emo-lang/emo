@@ -22,6 +22,11 @@ interface EHost {
   runtimeImpl(name: string, args: any[]): any;
 }
 let _host: EHost;
+
+// The builtin-method arms inside [method] await the async rendering —
+// `to_string` on a container dispatches through its elements' own
+// `to_string` — so [method] itself is async; every call site already
+// awaits it.
 const _hostMethodMiss = Symbol("host method miss");
 
 const _mailboxes = new Map<number, any[]>();
@@ -104,6 +109,17 @@ class EChar {
 }
 
 class EBox {
+  v: any;
+  constructor(v: any) {
+    this.v = v;
+  }
+}
+
+// The Atomic cell — Box's synchronized sibling (CHECK.md, the atomic
+// memory model). Every Emo process here cooperates on one event loop and
+// switches only at defined points, so the exact no-op is a correct
+// lowering: the reads and writes are plain field access.
+class EAtomic {
   v: any;
   constructor(v: any) {
     this.v = v;
@@ -269,6 +285,9 @@ class EPid {
 // identity the boundary deliberately shares).
 function deepCopy(v: any): any {
   if (v instanceof EBox) return new EBox(deepCopy(v.v));
+  // The one declared exception: an Atomic copies as the handle to the
+  // same cell — every operation on it is synchronized.
+  if (v instanceof EAtomic) return v;
   if (v instanceof EBytes) {
     const copy = new EBytes(v.data.length);
     copy.data.set(v.data);
@@ -365,6 +384,7 @@ function g6(x: number): string {
 }
 
 function floatStr(f: number): string {
+  if (Object.is(f, -0)) return "-0.0";
   if (Number.isInteger(f) && Math.abs(f) < 1e16) return f.toFixed(1);
   return g6(f);
 }
@@ -570,6 +590,8 @@ function deepEq(a: any, b: any): boolean {
     if (a.items.length !== b.items.length) return false;
     return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
   }
+  if (a instanceof EAtomic && b instanceof EAtomic)
+    return deepEq(a.v, b.v); // the values the cells hold now
   if (
     a &&
     b &&
@@ -583,12 +605,9 @@ function deepEq(a: any, b: any): boolean {
 
 // Inside a map's rendering, strings show quoted — the debug form the
 // interpreter's Map rendering uses.
-function toStrDbg(v: any): string {
-  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
-}
-
-// The one stringification rule: interpolation and `.to_string()` share
-// it, exactly like the interpreter.
+// The synchronous rendering, for the paths that cannot await (error
+// messages, NoMethodError, the host's crash report). Instances fall
+// back to the class name here; the value protocol runs through toStrA.
 function toStr(v: any): string {
   if (typeof v === "number") return String(v);
   if (typeof v === "bigint") return v.toString();
@@ -598,6 +617,7 @@ function toStr(v: any): string {
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
     const items: string[] = [];
@@ -627,8 +647,123 @@ function toStr(v: any): string {
   return String(v);
 }
 
+function toStrDbg(v: any): string {
+  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
+}
+
+// The entry module renders bare — the interpreter names the entry
+// file's module nothing, so "main.Local" renders as "#Local(...)";
+// a class in a main/ subdirectory keeps its full path.
+function classDisplayName(full: string): string {
+  return full.startsWith("main.") && !full.slice(5).includes(".")
+    ? full.slice(5)
+    : full;
+}
+
+// The one stringification rule, as the value protocol needs it:
+// interpolation, println, and `.to_string()` share it. It is async
+// because an instance's own `to_string` — the `emo.to_string`
+// protocol entry — is a method call on this target; the structure
+// dump is the defined default.
+//
+// The rule stays synchronous unless an instance's own `to_string` is
+// actually on the path: a plain value answers a string with no
+// promise, so the emitted `instanceof Promise ? await : ...` keeps the
+// scheduler's turn order byte-for-byte where no protocol rides. A
+// protocol value answers a promise, and only then does the caller
+// yield its turn.
+function joinP(
+  parts: (string | Promise<string>)[],
+  open: string,
+  sep: string,
+  close: string,
+): string | Promise<string> {
+  if (parts.every((p) => typeof p === "string"))
+    return open + parts.join(sep) + close;
+  return Promise.all(parts).then(
+    (ps: string[]) => open + ps.join(sep) + close,
+  );
+}
+
+function toStrP(v: any): string | Promise<string> {
+  if (typeof v === "number") return String(v);
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (v === null || v === undefined) return "nil";
+  if (isFloat(v)) return floatStr(v.v);
+  if (isChar(v)) return v.c;
+  if (v instanceof EBox) return toStrP(v.v);
+  if (v instanceof EAtomic) return "<atomic>";
+  if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
+  if (v instanceof EList) {
+    const items: (string | Promise<string>)[] = [];
+    for (let n = v.head; n; n = n.next) items.push(toStrP(n.v));
+    return joinP(items, "List[", ", ", "]");
+  }
+  if (v instanceof EBuilder) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "ArrayBuilder[", ", ", "]");
+  }
+  if (v instanceof ETuple) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "(", ", ", ")");
+  }
+  if (v instanceof EArray) {
+    const items: (string | Promise<string>)[] = [];
+    for (const it of v.items) items.push(toStrP(it));
+    return joinP(items, "[", ", ", "]");
+  }
+  if (v instanceof EMap) {
+    const items: (string | Promise<string>)[] = [];
+    for (const kv of [...v.entries.values()])
+      items.push(joinP([toStrDbgP(kv[0]), toStrDbgP(kv[1])], "", ": ", ""));
+    return joinP(items, "{", ", ", "}");
+  }
+  // The bare tag — the interpreter's form, and every other target's
+  // (CHECK.md, the enum display entry): the qualified spelling is the
+  // vocabulary's written form, not a value's.
+  if (v instanceof EEnum) return v.member;
+  if (v instanceof EPid) return "<pid " + v.id + ">";
+  if (v instanceof EEmoException) return toStrP(v.messageValue);
+  if (v && typeof v === "object" && v.constructor && v.constructor.__emo) {
+    if (typeof v.to_string === "function") {
+      // the one async branch: an instance's own to_string is a method
+      // call, and its answer rides a promise
+      return Promise.resolve(v.to_string()).then((r: any) => {
+        if (typeof r !== "string")
+          throw new Error("`to_string` must answer a String (E3015)");
+        return r;
+      });
+    }
+    const fields: string[] = v.constructor.__emoFields ?? [];
+    const items: (string | Promise<string>)[] = [];
+    for (const n of fields)
+      items.push(joinP([n + ": ", toStrDbgP(v[n])], "", "", ""));
+    return joinP(
+      items,
+      "#" + classDisplayName(v.constructor.__emo) + "(",
+      ", ",
+      ")",
+    );
+  }
+  return String(v);
+}
+
+function toStrDbgP(v: any): string | Promise<string> {
+  return typeof v === "string" ? JSON.stringify(v) : toStrP(v);
+}
+
 function println(v: any): void {
   _host.write(toStr(v) + "\n");
+}
+
+function printlnP(v: any): void | Promise<void> {
+  const r = toStrP(v);
+  if (typeof r === "string") _host.write(r + "\n");
+  else return r.then((s: string) => _host.write(s + "\n"));
 }
 
 // ---- printf ----
@@ -1118,6 +1253,7 @@ function tag(v: any): string {
   if (v instanceof EMap) return "Map";
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
+  if (v instanceof EAtomic) return "Atomic";
   if (v instanceof EBytes) return "Bytes";
   if (v instanceof EList) return "List";
   if (v instanceof EBuilder) return "ArrayBuilder";
@@ -1150,6 +1286,8 @@ const E: any = {
   tuple: (...items: any[]) => new ETuple(items),
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
+  atomic: (v: any) => new EAtomic(v),
+  fence: (): void => {},
   bytesNew: (n: any) => {
     const len = num(n);
     if (!Number.isInteger(len) || len < 0)
@@ -1169,14 +1307,19 @@ const E: any = {
   eq: deepEq,
   ne: (a: any, b: any) => !deepEq(a, b),
   truthy: (b: any) => b === true,
-  println,
+  // The value protocol stays synchronous unless an instance's own
+  // `to_string` actually rides the path: these answer a plain value
+  // then, and the emitter's conditional await (against E._r) yields a
+  // turn only when the answer is a promise.
+  _r: null as any,
+  println: printlnP,
   printf,
   builtin(name: string, _args: any[]): never {
     throw new Error(
       "builtin `" + name + "` is not available on the typescript target",
     );
   },
-  interpolate: (items: any[]) => items.map(toStr).join(""),
+  interpolate: (items: any[]) => joinP(items.map(toStrP), "", "", ""),
   toStr,
 
   // The Map's constructor: (key, value) tuple pairs, in insertion
@@ -1332,7 +1475,7 @@ const E: any = {
 
   // Method dispatch: instances by property, builtins by shape — one
   // table, like the native runtime's method_call.
-  method(recv: any, name: string, args: any[]): any {
+  async method(recv: any, name: string, args: any[]): Promise<any> {
     if (recv && typeof recv === "object") {
       const direct = recv[name] ?? recv[sanitize(name)];
       if (typeof direct === "function") return direct.apply(recv, args);
@@ -1345,6 +1488,57 @@ const E: any = {
       if (name === "replace" && recv instanceof EBox) {
         recv.v = args[0];
         return args[0];
+      }
+      if (name === "load" && recv instanceof EAtomic) return recv.v;
+      if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
+      if (name === "store" && recv instanceof EAtomic) {
+        recv.v = args[0];
+        return undefined;
+      }
+      if (name === "exchange" && recv instanceof EAtomic) {
+        const old = recv.v;
+        recv.v = args[0];
+        return old;
+      }
+      if (name === "compare_exchange" && recv instanceof EAtomic) {
+        // A mismatch is a value, not an error: the pair (Bool, previous).
+        const old = recv.v;
+        const swapped = deepEq(old, args[0]);
+        if (swapped) recv.v = args[1];
+        return new ETuple([swapped, old]);
+      }
+      if (
+        (name === "fetch_add" || name === "fetch_sub" ||
+          name === "fetch_and" || name === "fetch_or" ||
+          name === "fetch_xor") &&
+        recv instanceof EAtomic
+      ) {
+        // The single cooperative context makes the read-compute-write
+        // exact; the checker refuses the rest by name, and the arm
+        // refuses what a gradual call could still reach.
+        const old = recv.v;
+        if (typeof old === "bigint" && typeof args[0] === "bigint") {
+          // the Int64 rule: fetch_add and fetch_sub wrap at 64 bits
+          recv.v = BigInt.asIntN(
+            64,
+            name === "fetch_add" ? old + (args[0] as bigint)
+              : name === "fetch_sub" ? old - (args[0] as bigint)
+              : name === "fetch_and" ? old & (args[0] as bigint)
+              : name === "fetch_or" ? old | (args[0] as bigint)
+              : old ^ (args[0] as bigint),
+          );
+        } else if (typeof old === "boolean" && typeof args[0] === "boolean") {
+          if (name === "fetch_add" || name === "fetch_sub")
+            throw new Error("`" + name + "` expects an Int64");
+          recv.v = name === "fetch_and" ? old && (args[0] as boolean)
+            : name === "fetch_or" ? old || (args[0] as boolean)
+            : old !== (args[0] as boolean);
+        } else {
+          throw new Error(
+            "`" + name + "` expects an Int64 or Bool cell, got " + tag(recv.v),
+          );
+        }
+        return old;
       }
       if (recv instanceof EBytes) {
         const d = recv.data;
@@ -1373,7 +1567,10 @@ const E: any = {
           const i = idx(name);
           let acc = 0;
           for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
-          return BigInt(acc);
+          // the shifts run in int32, so a four-byte value with its high
+          // bit set lands negative — `>>> 0` reads it back unsigned
+          // (chacha20's words flushed this).
+          return BigInt(acc >>> 0);
         }
         if (name === "set_u16_le" || name === "set_u32_le") {
           const w = name === "set_u16_le" ? 2 : 4;
@@ -1432,7 +1629,7 @@ const E: any = {
         if (name === "pop_front") return listPopFront(recv);
         if (name === "pop_back") return listPopBack(recv);
         if (name === "length") return BigInt(recv.size);
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       if (recv instanceof EBuilder) {
         if (name === "push") {
@@ -1453,7 +1650,7 @@ const E: any = {
         }
         if (name === "to_array") return new EArray(recv.items.slice());
         if (name === "length") return BigInt(recv.items.length);
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       if (name === "length" && recv instanceof EArray)
         return BigInt(recv.items.length);
@@ -1487,7 +1684,7 @@ const E: any = {
           return new EArray(
             [...recv.entries.values()].map((kv: [any, any]) => kv[1])
           );
-        if (name === "to_string") return toStr(recv);
+        if (name === "to_string") return toStrP(recv);
       }
       // The host's own receivers — connections, listeners, datagram
       // sockets on Node; DOM handles on the browser.
@@ -1624,17 +1821,29 @@ const E: any = {
   // Selective receive: the dispatch runs each branch's body for the
   // first message it matches (returning anything but false); non-
   // matching messages stay in the mailbox in order; no match means the
-  // task waits for the next delivery.
+  // task waits for the next delivery. A branch that RETURNS A VALUE
+  // from its enclosing def throws EReturn(value) — the value answers
+  // this receive here, not the process wrapper: a receive inside a
+  // method or a callee def would otherwise end the whole program at
+  // the wrapper, the return silently lost.
   async receive(dispatch: (msg: any) => Promise<any>): Promise<any> {
     const pid = _host.currentPid();
     if (pid === null) throw new Error("receive() outside a process");
+    const taken = async (msg: any): Promise<any> => {
+      try {
+        return await dispatch(msg);
+      } catch (e) {
+        if (e instanceof EReturn) return e.value;
+        throw e;
+      }
+    };
     for (;;) {
       const q = _mailboxes.get(pid)!;
       let i = 0;
       while (i < q.length) {
         const msg = q[i];
         q.splice(i, 1);
-        const r = await dispatch(msg);
+        const r = await taken(msg);
         if (r !== false) return r;
         q.splice(i, 0, msg);
         i++;
@@ -1643,7 +1852,7 @@ const E: any = {
       // message (send hands it to the waiter, not to the mailbox).
       const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
       _endIfShutdown();
-      const r = await dispatch(fresh);
+      const r = await taken(fresh);
       if (r !== false) return r;
       // No branch took it: keep it at the head so FIFO order holds.
       q.unshift(fresh);
@@ -1699,6 +1908,7 @@ import * as nodeDgram from "node:dgram";
 import * as nodeTls from "node:tls";
 import * as nodeDns from "node:dns";
 import * as nodeFs from "node:fs";
+import * as nodeCrypto from "node:crypto";
 
 const _als = new AsyncLocalStorage<{ pid: number }>();
 
@@ -2160,6 +2370,15 @@ function listenerClose(l: EListener): EListener {
   try {
     l.server.close();
   } catch (e) {}
+  // The close fails the parked accepts — the semantic the other
+  // targets run ("an accept failure — the listener closed under the
+  // loop — ends the loop"). A promise left pending holds no event, so
+  // Node would end the program with the accept still parked.
+  const ws = l.waiting;
+  l.waiting = [];
+  ws.forEach((w) =>
+    w.reject(new EEmoException("the listener on " + l.desc + " is closed"))
+  );
   return l;
 }
 
@@ -2626,6 +2845,23 @@ function nodeMethod(recv: any, name: string, args: any[]): any {
 
 function nodeRuntimeImpl(name: string, args: any[]): any {
   switch (name) {
+    case "rand_bytes": {
+      // The rand package's entropy source: Node's CSPRNG. The answer is
+      // Bytes — a JS string cannot carry raw bytes — and a refused
+      // source is the (R.error, reason) value under the package's
+      // prefix; a negative count is the package's own raise, upstream.
+      const n = Number(args[0]);
+      try {
+        const out = new EBytes(n < 0 ? 0 : n);
+        out.data.set(nodeCrypto.randomBytes(out.data.length));
+        return netOk(out);
+      } catch (e: any) {
+        return new ETuple([
+          new EEnum("R", "error"),
+          "rand: randomBytes: " + String(e && e.message ? e.message : e),
+        ]);
+      }
+    }
     case "net_resolve":
       return netResult(() => netResolve(args[0]));
     case "net_connect":
@@ -2753,49 +2989,49 @@ return "\u{e9}\u{d7}a\u{28ff}";
 E.runMain(async () => {
 try {
 const s = (await main__s());
-E.println((await E.method(s, "length", [])));
-E.println((await E.method(s, "substring", [0n, 2n])));
-E.println((await E.method(s, "substring", [2n, 2n])));
-E.println((await E.method(s, "substring", [4n, 1n])));
-E.println((await E.method(s, "substring", [5n, 3n])));
-E.println((await E.method(s, "index_of", ["\u{d7}a"])));
-E.println((await E.method(s, "index_of", ["\u{28ff}"])));
-E.println((await E.method(s, "index_of", ["z"])));
-E.println((await E.method(s, "index_of", [""])));
-E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "length", [])));
-E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "substring", [3n, 6n])));
-E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "index_of", ["\u{8a9e}"])));
-E.println((await E.method("a\u{1f600}b", "length", [])));
-E.println((await E.method("a\u{1f600}b", "index_of", ["b"])));
-E.println((await E.method("a\u{1f600}b", "substring", [1n, 4n])));
-E.println((await E.method((await E.method("\u{e9}\u{d7}a", "to_bytes", [])), "length", [])));
-E.println((await E.method("a,b,,c", "split", [","])));
-E.println((await E.method("\u{65e5}\u{672c},\u{8a9e}", "split", [","])));
-E.println((await E.method("abc", "starts_with", ["ab"])));
-E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}", "starts_with", ["\u{672c}"])));
+E._r = E.println((await E.method(s, "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "substring", [0n, 2n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "substring", [2n, 2n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "substring", [4n, 1n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "substring", [5n, 3n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "index_of", ["\u{d7}a"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "index_of", ["\u{28ff}"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "index_of", ["z"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(s, "index_of", [""]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "substring", [3n, 6n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}", "index_of", ["\u{8a9e}"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("a\u{1f600}b", "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("a\u{1f600}b", "index_of", ["b"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("a\u{1f600}b", "substring", [1n, 4n]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method((await E.method("\u{e9}\u{d7}a", "to_bytes", [])), "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("a,b,,c", "split", [","]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{65e5}\u{672c},\u{8a9e}", "split", [","]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("abc", "starts_with", ["ab"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{65e5}\u{672c}\u{8a9e}", "starts_with", ["\u{672c}"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
 const ff = (await main__ff());
 (await E.method(ff, "set", [0n, 12n]));
 const vt = (await main__vt());
 (await E.method(vt, "set", [0n, 11n]));
-E.println((await E.method(" \t x y \r\n", "trim", [])));
-E.println((await E.method((await E.method(" x ", "trim", [])), "length", [])));
-E.println((await E.method((await E.method("\u{3000}x\u{3000}", "trim", [])), "length", [])));
-E.println((await E.method((await E.method(E.add(E.add((await E.method(ff, "to_string", [])), "a"), (await E.method(ff, "to_string", []))), "trim", [])), "length", [])));
-E.println((await E.method((await E.method(E.add(E.add((await E.method(vt, "to_string", [])), "a"), (await E.method(vt, "to_string", []))), "trim", [])), "length", [])));
-E.println((await E.method("\u{c9}COLE \u{3a3} \u{130} ABC", "lower", [])));
-E.println((await E.method("MiXeD 123 Z", "lower", [])));
-E.println((await E.method("42", "to_int64", [])));
-E.println((await E.method("-7", "to_int64", [])));
-E.println((await E.method("0042", "to_int64", [])));
-E.println((await E.method("-0", "to_int64", [])));
-E.println((await E.method("-9223372036854775808", "to_int64", [])));
-E.println((await E.method("9223372036854775807", "to_int64", [])));
+E._r = E.println((await E.method(" \t x y \r\n", "trim", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method((await E.method(" x ", "trim", [])), "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method((await E.method("\u{3000}x\u{3000}", "trim", [])), "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method((await E.method(E.add(E.add((await E.method(ff, "to_string", [])), "a"), (await E.method(ff, "to_string", []))), "trim", [])), "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method((await E.method(E.add(E.add((await E.method(vt, "to_string", [])), "a"), (await E.method(vt, "to_string", []))), "trim", [])), "length", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("\u{c9}COLE \u{3a3} \u{130} ABC", "lower", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("MiXeD 123 Z", "lower", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("42", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("-7", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("0042", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("-0", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("-9223372036854775808", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method("9223372036854775807", "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
 let dyn = { v: E.array([]) };
 dyn.v = (await E.method(dyn.v, "append", ["  -15 "]));
 dyn.v = (await E.method(dyn.v, "append", ["\u{c0}BC d"]));
-E.println((await E.method((await E.method(E.index(dyn.v, 0n), "trim", [])), "to_int64", [])));
-E.println((await E.method(E.index(dyn.v, 1n), "lower", [])));
-E.println((await E.method(E.index(dyn.v, 1n), "index_of", ["d"])));
+E._r = E.println((await E.method((await E.method(E.index(dyn.v, 0n), "trim", [])), "to_int64", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(E.index(dyn.v, 1n), "lower", []))), (E._r instanceof Promise) ? (await E._r) : E._r;
+E._r = E.println((await E.method(E.index(dyn.v, 1n), "index_of", ["d"]))), (E._r instanceof Promise) ? (await E._r) : E._r;
 } finally {
 E.endRoot();
 }
