@@ -89,7 +89,7 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 | M28 —— RocksDB 半边 | 65 | 项目脚手架与 C shim,连同 `Bytes` 借用视图(D10):open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
 | M29 —— 记录层 | 66 | 目录 column family、行编码、rowid 分配、每索引一个 column family 的二级索引——行住在共享的 `data` family 里,键是表 oid + rowid。 |
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
-| M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点、表达式求值、嵌入式测试面。 |
+| M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点(scan/filter/project、insert/update/delete)、骑记录层的表达式求值、嵌入式测试面。v0 的 SELECT 是单表(投影、WHERE、等值索引扫描);连接、聚合、ORDER BY/LIMIT 与子查询等 M34。 |
 | M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、Emo 锁管理器。 |
 | M33 —— 线协议 | 70 | PG 协议 v3 simple 路径;psql 端到端、`postgres` 客户端直连。 |
 | M34 —— 符合性与文档 | 71 | SQL 语料、实测性能表、文档 EN+zh。 |
@@ -175,9 +175,12 @@ HTAP 的门在这里开。
 - `Bytes` 的 foreign 返回——out 参数的规则覆盖弧一的全部读路径;返
 回位置等一个真需要它的 API。
 - 索引上的范围扫描——v0 的索引键只保证精确前缀、不保序;比较编码
-与计划器的范围节点随 M31 落地。
+与计划器的范围节点随 M34 的符合性广度落地。
 - 流式扫描——v0 物化整行;游标形状的记录 API 等一个消费它的计划
 节点。
+- SELECT 的其余部分——连接、聚合、`GROUP BY`/`HAVING`、`ORDER
+BY`/`LIMIT`、子查询、`DISTINCT` 与 `CAST`——v0 引擎拒绝它们;随
+M34 的符合性广度落地。
 - 提交的持久化开关——绑定的普通写路径没开 RocksDB 的 `sync`;M32
 的 COMMIT 是这个开关的消费者。
 - 弧二的里程碑切法。

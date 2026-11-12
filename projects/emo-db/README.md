@@ -3,9 +3,9 @@
 emo-db is Emo's own client-server SQL database: one PostgreSQL-dialect
 surface over two engines — a row store for OLTP first, a column store
 for OLAP later. The design record is [`docs/emo-db.md`](../../docs/emo-db.md);
-this directory is the project. M28 (the RocksDB half) and M29 (the
-record layer) are landed; the planner, transactions, and the wire follow
-in M30–M34.
+this directory is the project. M28 (the RocksDB half), M29 (the record
+layer), M30 (the SQL front-end's DML/DDL), and M31 (the planner and
+executor) are landed; transactions and the wire follow in M32–M34.
 
 ## Layout
 
@@ -25,10 +25,16 @@ in M30–M34.
 - `record_demo/` — the record golden: a `users` table covering every v0
   type, NULLs, an embedded NUL in BYTEA, UTF-8 TEXT, a duplicate unique
   key, the table scan, unique and non-unique index scans, and a reopen.
-- `check.sh` — the gate: resolve RocksDB, stage the registry, check both
-  packages, build and run both demos three times against their
-  `expected.txt`, and pin the two refusals (the interpreter's E3009 and a
-  non-`c` target's E5007).
+- `engine/` — the embedded SQL engine: the analyzer (names, types, the
+  PG-shaped failures), the typed expression tree with three-valued NULL
+  logic, the scan/filter/project plan with an equality index scan, and
+  the CREATE TABLE/INSERT/UPDATE/DELETE executors.
+- `engine_demo/` — the engine golden: SQL text in, a command tag, the
+  plan tree, and rows out; the error values; a close/reopen.
+- `check.sh` — the gate: resolve RocksDB, stage the registry, check the
+  three packages, build and run the three demos three times against
+  their `expected.txt`, and pin the two refusals (the interpreter's
+  E3009 and a non-`c` target's E5007).
 
 ## The binding's shape
 
@@ -68,13 +74,35 @@ byte, and `TEXT`/`VARCHAR(n)`/`BYTEA` a 4-byte length plus the bytes.
 `VARCHAR(n)` counts UTF-8 code points. A unique-index check runs before
 the write; the insert's row, index entries, and updated catalog
 definition then ride one atomic `WriteBatch`, so a failed write leaves
-the `rowid` counter untouched. Reopening enumerates the families with
-`list_families` and verifies every index family the catalog names was
-present — a missing one is corruption, not something to recreate silently.
+the `rowid` counter untouched. `update` and `delete` read the old row,
+remove its index entries, and write the new row/entries (or the
+removals) in one batch; an update's unique check excludes the row's own
+rowid. Reopening enumerates the families with `list_families` and
+verifies every index family the catalog names was present — a missing
+one is corruption, not something to recreate silently.
 
 Index keys are exact-prefix capable (an equality scan is a seek and a
 prefix walk), not order-preserving; range scans and streaming scans wait
-for the planner (M31).
+for a later planner.
+
+## The engine
+
+`emo/engine` is the first full SQL-to-rows path. `execute` parses with
+the `sql` package, resolves names and types against the catalog, and
+answers a `Result` (the PG command tag, the projected columns and rows,
+and the plan text) or a `code: message` failure string in PostgreSQL's
+shape. The v0 surface: single-table SELECT with a projection and an
+optional WHERE; an equality between an indexed column and a constant
+becomes an index scan, everything else a table scan. CREATE TABLE maps
+the v0 types and column constraints and gives a primary-key column one
+unique index (`<table>_pkey`); INSERT fills omitted columns with NULL
+and coerces numeric widening; UPDATE and DELETE locate rows through the
+same scan choice and call the record layer's update/delete. The typed
+expressions implement SQL's three-valued NULL logic, comparisons,
+AND/OR, arithmetic, text `||`, `IS`, `IN`, `BETWEEN`, `LIKE`, and
+`CASE`; DISTINCT, joins, subqueries, GROUP BY/HAVING, ORDER BY,
+LIMIT/OFFSET, aggregates, functions, CAST, and parameters answer
+`0A000`. `engine_demo` shows the whole surface and the error values.
 
 ## Running the gate
 
@@ -94,5 +122,6 @@ compiler binary; the default is `../../_build/default/src/emo_cli/emo.exe`.
 
 M28 landed 2026-11-12: the binding, the KV golden, and the C ABI's byte
 view. M29 landed the same day: the record layer, the record golden, and
-the catalog's reopen path. M30 — the SQL front-end's DML and DDL — is
-next.
+the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, and
+M31 the embedded planner/executor and its golden. M32 — transactions and
+the session plane — is next.

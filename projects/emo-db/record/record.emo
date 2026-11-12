@@ -1125,6 +1125,155 @@ class Table {
     return (R.ok, rowid)
   }
 
+  // Replaces the row at `rowid`. The old row's index entries are
+  // removed and the new ones written in the same batch; a unique index
+  // checks the new values against every other row. A missing rowid is
+  // an error value — the executor matched the row before the call.
+  def update(rowid Int64, values Array[Value]) (R, Table) {
+    self.live()
+    check_row(self.columns, values)
+    case self.get(rowid) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.error, "record: update: no row with rowid " + rowid.to_string())
+        }
+        const old_values = found[0].values
+        var i = 0
+        while i < self.indexes.length() {
+          const idx = self.indexes[i]
+          if idx.unique && !index_has_null(idx, self.columns, values) {
+            const prefix = index_prefix_row(idx, self.columns, values)
+            case self.index_cfs[i].iter() {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, it) -> {
+                var duplicate = false
+                it.seek(prefix)
+                if it.valid() {
+                  case it.key() {
+                    (R.error, why) -> {
+                      it.close()
+                      return (R.error, why)
+                    }
+                    (R.ok, key) -> {
+                      if internal.codec.starts_with(key, prefix) &&
+                         rowid_of(key) != rowid {
+                        duplicate = true
+                      }
+                    }
+                  }
+                }
+                it.close()
+                if duplicate {
+                  return (R.error,
+                          "record: update: duplicate key on index \"" + idx.name + "\"")
+                }
+              }
+            }
+          }
+          i = i + 1
+        }
+        const row = encode_row(self.columns, values)
+        const key = row_key(self.oid, rowid)
+        case self.db.batch() {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, batch) -> {
+            case batch.put(self.data, key, row) {
+              (R.error, why) -> {
+                batch.close()
+                return (R.error, why)
+              }
+              (R.ok, _) -> {}
+            }
+            var k = 0
+            while k < self.indexes.length() {
+              const idx = self.indexes[k]
+              const old_prefix = index_prefix_row(idx, self.columns, old_values)
+              const old_entry = index_entry(old_prefix, rowid)
+              case batch.delete(self.index_cfs[k], old_entry) {
+                (R.error, why) -> {
+                  batch.close()
+                  return (R.error, why)
+                }
+                (R.ok, _) -> {}
+              }
+              const new_prefix = index_prefix_row(idx, self.columns, values)
+              const new_entry = index_entry(new_prefix, rowid)
+              case batch.put(self.index_cfs[k], new_entry, Bytes.new(0)) {
+                (R.error, why) -> {
+                  batch.close()
+                  return (R.error, why)
+                }
+                (R.ok, _) -> {}
+              }
+              k = k + 1
+            }
+            case batch.write() {
+              (R.error, why) -> {
+                batch.close()
+                return (R.error, why)
+              }
+              (R.ok, _) -> {}
+            }
+            batch.close()
+          }
+        }
+        return (R.ok, self)
+      }
+    }
+  }
+
+  // Removes the row at `rowid` and its index entries in one batch. A
+  // missing rowid is a no-op success; the executor counts only the rows
+  // its scan matched.
+  def delete(rowid Int64) (R, Table) {
+    self.live()
+    case self.get(rowid) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.ok, self)
+        }
+        const old_values = found[0].values
+        const key = row_key(self.oid, rowid)
+        case self.db.batch() {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, batch) -> {
+            case batch.delete(self.data, key) {
+              (R.error, why) -> {
+                batch.close()
+                return (R.error, why)
+              }
+              (R.ok, _) -> {}
+            }
+            var k = 0
+            while k < self.indexes.length() {
+              const prefix = index_prefix_row(self.indexes[k], self.columns, old_values)
+              const entry = index_entry(prefix, rowid)
+              case batch.delete(self.index_cfs[k], entry) {
+                (R.error, why) -> {
+                  batch.close()
+                  return (R.error, why)
+                }
+                (R.ok, _) -> {}
+              }
+              k = k + 1
+            }
+            case batch.write() {
+              (R.error, why) -> {
+                batch.close()
+                return (R.error, why)
+              }
+              (R.ok, _) -> {}
+            }
+            batch.close()
+          }
+        }
+        return (R.ok, self)
+      }
+    }
+  }
+
   // The row with `rowid`: an empty array when it is absent, a
   // one-element array when it is present.
   def get(rowid Int64) (R, Array[Row]) {

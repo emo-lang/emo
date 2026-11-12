@@ -57,7 +57,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with the project-local `emo/rocksdb` binding — a package-carried C shim over the official RocksDB C API (open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families) resolved through `foreign def`s and the manifest's `pkg_config` field (the `postgres` precedent); the C ABI grows the `Bytes` borrowed view (D10) so keys and values carry arbitrary binary data, with reads filling a caller-owned out-parameter; the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — text and embedded-NUL values, a batch commit, reads, a prefix scan, snapshot isolation visible, close/reopen — run three times byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, types, indexes, and oid counters by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), rowid allocation inside the insert's WriteBatch, and secondary indexes as one column family per index named `idx_<oid>` and keyed by the indexed values plus the rowid — the shared `data` family keyed by table oid + rowid, the catalog's reopen through `rocksdb.list_families` with the index-CF verification, and equality-prefix index scans; a record demo creates a table in the catalog, inserts rows covering every type (NULLs, an embedded NUL in BYTEA, UTF-8 TEXT), reads by rowid, scans the table, finds rows through unique and non-unique indexes, and reopens the store, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types and column-level NOT NULL/PRIMARY KEY, multi-row INSERT ... VALUES with an optional column list, UPDATE ... SET ... [WHERE], and DELETE FROM ... [WHERE] — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched, and the parser's shape checks (duplicate columns/assignments, row widths, a positive VARCHAR length, the unsupported tails by name); statement and expression goldens byte-identical on the interpreter and all five hosted targets (`CHECK.md`). |
-| M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: logical plan nodes (scan, filter, project, insert, update, delete), expression evaluation over the record layer's values, INSERT building encoded rows and index entries, UPDATE and DELETE locating rows through table or index scans, SELECT walking plan trees — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with unknown table, unknown column, and type mismatch answering PG-shaped error strings (`CHECK.md`). |
+| M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: the `emo/engine` package over `emo/sql` and `emo/record` — plan nodes (scan, filter, project, insert, update, delete), typed expression evaluation with SQL's three-valued NULL logic, single-table SELECT (projection, WHERE; an equality on an indexed column becomes an index scan), CREATE TABLE (the v0 types, a primary-key index), INSERT, UPDATE and DELETE (the record layer's new update/delete rewrite the row and its index entries in one batch), and the PG-shaped `code: message` errors (`42P01`, `42703`, `42883`, `42804`, `23505`, `23502`, `22001`, `22012`, `0A000`, `42601`) — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with the plan tree printed, through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M32 — Transactions and the session plane | 69 | The transaction model of the design record's D6: BEGIN/COMMIT/ROLLBACK with per-statement RocksDB snapshots (read committed), writes buffered per transaction in one WriteBatch committed atomically, an Emo-owned lock manager arbitrating write-write conflicts (block, then abort on deadlock), catalog changes riding the same commit — a two-session concurrency demo showing the read-committed semantics and the conflict abort, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path: startup with trust authentication, Query/RowDescription/DataRow/CommandComplete/ReadyForQuery, ErrorResponse with PG's error-field convention, multi-statement query strings, empty results, and the error path restoring clean transaction state — one session actor per connection over `net` (the `httpd` shape); psql drives the whole surface end-to-end and the standard library's `postgres` client connects and runs the same script, both as goldens behind availability probes (`CHECK.md`). |
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit (statements, results, errors — text-comparable), a measured-performance table (numbers only where measured), and the documentation pass — `docs/emo-db.md` grown to the shipped surface, docs EN+zh, the README rows, and the arc-two sketch reviewed against what arc one actually built (`CHECK.md`). |
@@ -4119,3 +4119,41 @@ repo builds.
 - [x] **T67.12** — The close-out: the two `sql` locks re-resolved,
       `plan/README.md`, the M30 row, `CHECK.md`, `dune build`/`@fmt`,
       and the evidence.
+
+## M31 — The planner and executor
+
+### Step 68 — The planner and executor
+
+**Prereq:** Step 66 (the record layer) and Step 67 (the SQL AST's DDL/
+DML). **Done when:** an embedded engine turns SQL text into rows on the
+`c` target — CREATE TABLE, INSERT, single-table SELECT with WHERE and
+projection (table scan and equality index scan), UPDATE, and DELETE —
+with the plan text pinned and the PG-shaped errors (`42P01`, `42703`,
+`42883`, `42804`, `23505`, `23502`, `22012`, `0A000`) answered as
+values; the engine demo runs three times byte-identical through
+`projects/emo-db/check.sh`; the record/KV goldens and the E3009/E5007
+pins stay green; docs EN+zh; the repo builds.
+
+- [x] **T68.1** — The spec and this section EN+zh.
+- [x] **T68.2** — The record layer's `Table.update`/`delete` with index
+      maintenance and the unique checks.
+- [x] **T68.3** — The engine skeleton: manifest, `SqlError`, `Result`,
+      `open`/`close`.
+- [x] **T68.4** — The analyzer: table/alias/column resolution, the type
+      mapping, conformance, PG-shaped errors.
+- [x] **T68.5** — Typed expressions and their evaluators (3VL, IS/IN/
+      BETWEEN/LIKE/CASE, coercions, runtime errors).
+- [x] **T68.6** — CREATE TABLE execution (types, constraints, pkey
+      index, refusals).
+- [x] **T68.7** — INSERT execution (column list, NULL fill, coercion,
+      not-null, duplicate mapping).
+- [x] **T68.8** — SELECT planning/execution (scan choice, filter,
+      projection).
+- [x] **T68.9** — UPDATE/DELETE planning/execution.
+- [x] **T68.10** — The plan text and the result's plan field.
+- [x] **T68.11** — The engine demo and `expected.txt`.
+- [x] **T68.12** — The gate: stage the engine, build/run the demo three
+      times.
+- [x] **T68.13** — The project README + zh, the package docs, the locks.
+- [x] **T68.14** — The close-out: TASKS, plan README, CHECK.md, build/
+      fmt.

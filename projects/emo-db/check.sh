@@ -85,22 +85,40 @@ expect 0 "the binding type-checks" "$rc"
 
 sum=$(cat rocksdb/package.emo rocksdb/rocksdb.emo rocksdb/internal/*.emo \
   rocksdb/emo_rocksdb_shim.c record/package.emo record/record.emo \
-  record/internal/*.emo | cksum | awk '{print $1}')
+  record/internal/*.emo engine/package.emo engine/engine.emo \
+  ../../stdlib/registry/sql/0.1.0/package.emo \
+  ../../stdlib/registry/sql/0.1.0/sql.emo \
+  ../../stdlib/registry/float/0.1.0/package.emo \
+  ../../stdlib/registry/float/0.1.0/float.emo \
+  ../../stdlib/registry/float/0.1.0/internal/*.emo |
+  cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
-mkdir -p "$REG/emo/rocksdb/0.1.0/internal" "$REG/emo/record/0.1.0/internal"
+mkdir -p "$REG/emo/rocksdb/0.1.0/internal" "$REG/emo/record/0.1.0/internal" \
+  "$REG/emo/engine/0.1.0" "$REG/sql/0.1.0" "$REG/float/0.1.0/internal"
 cp rocksdb/package.emo rocksdb/rocksdb.emo "$REG/emo/rocksdb/0.1.0/"
 cp rocksdb/internal/*.emo "$REG/emo/rocksdb/0.1.0/internal/"
 cp rocksdb/emo_rocksdb_shim.c "$REG/emo/rocksdb/0.1.0/"
 cp record/package.emo record/record.emo "$REG/emo/record/0.1.0/"
 cp record/internal/*.emo "$REG/emo/record/0.1.0/internal/"
+cp engine/package.emo engine/engine.emo "$REG/emo/engine/0.1.0/"
+cp ../../stdlib/registry/sql/0.1.0/package.emo \
+  ../../stdlib/registry/sql/0.1.0/sql.emo "$REG/sql/0.1.0/"
+cp ../../stdlib/registry/float/0.1.0/package.emo \
+  ../../stdlib/registry/float/0.1.0/float.emo "$REG/float/0.1.0/"
+cp ../../stdlib/registry/float/0.1.0/internal/*.emo "$REG/float/0.1.0/internal/"
 
 ( cd record && EMO_REGISTRY="$REG" "$EMO" check record.emo ) \
   >"$OUT/record.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the record layer type-checks" "$rc"
 
+( cd engine && EMO_REGISTRY="$REG" "$EMO" check engine.emo ) \
+  >"$OUT/engine.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the engine type-checks" "$rc"
+
 # The demos' locks are committed. A missing one is a package change that
 # skipped `emo deps resolve`, not something the gate should paper over.
-for lock in kv_demo/package.lock record_demo/package.lock; do
+for lock in kv_demo/package.lock record_demo/package.lock \
+            engine_demo/package.lock; do
   if [ ! -f "$lock" ]; then
     echo "check.sh: $lock is missing — run" >&2
     echo "  (cd $(dirname "$lock") && EMO_REGISTRY=$REG \"$EMO\" deps resolve)" >&2
@@ -136,6 +154,22 @@ while [ "$run" -le 3 ]; do
   expect 0 "record run $run exits 0" "$rc"
   expect_same_file record_demo/expected.txt "$OUT/record-run-$run.txt" \
     "record run $run is byte-identical"
+  run=$((run + 1))
+done
+
+# --- build and run the engine golden --------------------------------------
+
+( cd engine_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/engine_demo" ) >"$OUT/engine-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the engine demo builds on c" "$rc"
+
+run=1
+while [ "$run" -le 3 ]; do
+  ( cd engine_demo && "$OUT/engine_demo" ) \
+    >"$OUT/engine-run-$run.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "engine run $run exits 0" "$rc"
+  expect_same_file engine_demo/expected.txt "$OUT/engine-run-$run.txt" \
+    "engine run $run is byte-identical"
   run=$((run + 1))
 done
 

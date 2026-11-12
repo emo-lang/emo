@@ -88,6 +88,14 @@ incrementally shippable steps — one file per step, executed in order.
   canonical renderings, the SELECT grammar untouched, and the two
   examples' goldens byte-identical on all five hosted targets. The plan
   is `plan/step-67-sql-dml-ddl.md`.
+- **M31 — The planner and executor (step 68):** the `emo/engine` package
+  over the SQL AST and the record layer — the analyzer's name/type
+  resolution, the typed expressions with three-valued NULL logic, the
+  scan/filter/project plan (an equality on an indexed column becomes an
+  index scan), CREATE TABLE/INSERT/UPDATE/DELETE, the plan text, and
+  the PG-shaped error strings; an embedded SQL-in/rows-out golden on
+  `c`. The record layer grows `Table.update`/`delete` with index
+  maintenance. The plan is `plan/step-68-planner-executor.md`.
 
 ## Ground rules
 
@@ -178,5 +186,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 65 | emo-db's RocksDB half | landed — `projects/emo-db/` with the project-local `emo/rocksdb` binding: a package-carried C shim over the official C API (`pkg_config = ["rocksdb"]`), open/close, column families (staged names at open, lookup, create, list), get/put/delete, WriteBatch, iterators, and snapshots bundling their read options; the C ABI's `Bytes` borrowed view (D10) carries arbitrary binary keys and values, with reads filling caller-owned out-parameters and `Bytes` returns refused; `(R, reason)` for storage failures, missing keys as an empty result, contract violations raising, and Db-level lifetime counters refusing a close under live batches/snapshots/iterators; the KV golden runs three times byte-identical through `projects/emo-db/check.sh` (text and embedded-NUL values, an atomic batch, a prefix scan, snapshot isolation, close/reopen), with E3009 and E5007 verified live; docs EN+zh (`plan/step-65-emo-db-rocksdb.md`) |
 | 66 | emo-db's record layer | landed — the `emo/record` package over the binding: the catalog CF (tables/columns/types/indexes by oid), the v0 row encoding (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), the rowid inside the insert's WriteBatch, and one CF per secondary index (`idx_<oid>`, value-marker + rowid keys, equality-prefix scans); `rocksdb.list_families` reopens a database with index families, the catalog verifies every index CF, and the record demo's golden covers every type, a duplicate unique key, three index scans, and a reopen (`plan/step-66-record-layer.md`) |
 | 67 | The SQL front-end's DML and DDL | landed — the `sql` package grows `CREATE TABLE` (the v0 types, column-level `NOT NULL`/`PRIMARY KEY`), multi-row `INSERT ... VALUES` with an optional column list, `UPDATE ... SET ... [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`: one class per statement behind `Stmt`, canonical `to_string()` renderings, the SELECT grammar untouched, and the parser validates the statement shape (duplicate columns/assignments, row widths, a positive `VARCHAR(n)`, the unsupported tails by name); `sql_demo` and `sql_edge` are byte-identical on the interpreter and all five hosted targets, with both locks re-resolved (`plan/step-67-sql-dml-ddl.md`) |
+| 68 | The planner and executor | landed — the `emo/engine` package over `emo/sql` and `emo/record`: the analyzer (table/alias/column resolution, the v0 type mapping, numeric/text conformance, the PG-shaped `code: message` failures), typed expressions with SQL's three-valued NULL logic (comparisons, AND/OR, arithmetic, `||`, IS/IN/BETWEEN/LIKE/CASE), the scan/filter/project plan with an equality index scan, CREATE TABLE (the v0 types, the primary-key index), INSERT (column list, NULL fill, coercion, not-null/duplicate mapping), and UPDATE/DELETE (the record layer's new update/delete, index entries rewritten in one batch); the embedded engine demo pins SQL text in and rows out with the plan tree on `c` (`plan/step-68-planner-executor.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

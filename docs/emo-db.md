@@ -115,7 +115,7 @@ the ladder's shape:
 | M28 — The RocksDB half | 65 | The project scaffold and the C shim, with the `Bytes` borrowed view (D10): open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
 | M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, and secondary indexes as one column family per index — rows in one shared `data` family keyed by table oid + rowid. |
 | M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
-| M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes, expression evaluation, an embedded test face. |
+| M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for M34. |
 | M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, the Emo lock manager. |
 | M33 — The wire | 70 | PG protocol v3, simple path; psql end-to-end and the `postgres` client connecting. |
 | M34 — Conformance and documentation | 71 | The SQL corpus, the measured-performance table, docs EN+zh. |
@@ -220,9 +220,12 @@ the pg_dump shape; both plausible, neither decided.
 arc-one read; a return position waits for an API that truly needs one.
 - Range scans over an index — the v0 index key is exact-prefix capable,
 not order-preserving; the comparison encoding and the planner's range
-nodes land with M31.
+nodes wait for M34's conformance breadth.
 - Streaming scans — v0 materializes rows; a cursor-shaped record API
 waits for a plan node that consumes one.
+- The rest of SELECT — joins, aggregates, `GROUP BY`/`HAVING`, `ORDER
+BY`/`LIMIT`, subqueries, `DISTINCT`, and `CAST` — the v0 engine
+refuses them; they land with M34's conformance breadth.
 - The commit's durability knob — the binding's plain write path leaves
 RocksDB's `sync` off; M32's COMMIT is where the flag finds its
 consumer.
