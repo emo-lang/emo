@@ -103,11 +103,12 @@ lazy.nvim, `:Lazy` also lists the plugin as a local plugin.
 - **Code completion.** Keywords, built-in types and functions, declarations
   from the current file and the project, members after `.` (class methods and
   fields, group members, module members), and package names inside
-  `require "..."`. The plugin wires the server into Neovim's own completion:
-  the dot of `os.` and the quote inside `require "..."` open the menu, and
-  typing on narrows it — `os.getp` leaves `getpid` and `getppid`, signatures
-  in the menu. `<C-x><C-o>` completes by hand. Set `completion = false` if a
-  completion plugin (nvim-cmp and friends) drives the server instead.
+  `require "..."`. Nothing pops up while typing: Tab, `<C-n>`, and `<C-p>`
+  ask for the candidates (Tab and `<C-n>` move to the next one, `<C-p>` to the
+  previous), and typing on narrows the list — `os.getp` leaves `getpid` and
+  `getppid`, signatures in the menu. `<C-x><C-o>` completes by hand too. Set
+  `completion = false` if a completion plugin (nvim-cmp and friends) drives the
+  server instead.
 - **Diagnostics.** Lex, parse, and type errors from the compiler, plus
   manifest/`require` pairing errors, published as you type.
 - **Hover and go-to-definition.** Signatures and jump-to-declaration across
@@ -154,7 +155,7 @@ require('emo').setup({
 | `server_path` | `nil` | Path to the `emo-lsp` executable |
 | `emo_path` | `nil` | Path to the `emo` CLI, passed to the server as `EMO_BIN` |
 | `registry` | `nil` | Registry endpoint, passed to the server as an initialization option |
-| `completion` | `true` | Pop up insert completion on the server's trigger characters |
+| `completion` | `true` | Open insert completion on Tab, `<C-n>`, and `<C-p>` |
 | `lsp` | `true` | Start the language server for `.emo` buffers |
 
 Every option defaults to the server's own behaviour when unset: `emo-lsp` is

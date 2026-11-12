@@ -95,11 +95,12 @@ then a build inside the Emo checkout. The registry comes from `registry`, then
 `EMO_REGISTRY`; the `emo` CLI behind the `:Emo*` commands comes from
 `emo_path`, then `EMO_BIN`. `:checkhealth emo` reports what was resolved.
 
-Insert completion rides Neovim's own `vim.lsp.completion`: the server's
-trigger characters — the dot of `os.` and the quote inside `require "..."` —
-open the menu, and typing on narrows it (`os.getp` leaves `getpid` and
-`getppid`), with `<C-x><C-o>` completing by hand. The `completion` option
-hands the server to a completion plugin instead.
+Insert completion rides Neovim's own `vim.lsp.completion`, and opens only on
+request: nothing pops up while typing. Tab, `<C-n>`, and `<C-p>` ask for the
+candidate list — Tab and `<C-n>` are the next-candidate key, `<C-p>` the
+previous — and typing on narrows it (`os.getp` leaves `getpid` and `getppid`),
+with `<C-x><C-o>` completing by hand as before. The `completion` option hands
+the server to a completion plugin instead.
 
 The commands mirror the extension's — `:EmoRestart`, `:EmoCheck`, `:EmoBuild`,
 `:EmoRun`, `:EmoDepsResolve`, `:EmoDepsList`, `:EmoDepsUpdate`, and
@@ -120,7 +121,10 @@ the options table.
   `require "..."`. Members answer for the language's own types too —
   `String.`, `Bytes.`, `Array.` and friends complete the method surface the
   checker answers with, as does a literal receiver (`"abc".`) or a value
-  whose declared type is one of them.
+  whose declared type is one of them. A member name still empty — the dot
+  just typed — answers from the receiver's declaration, including a class
+  that lives only in the open buffer, and a value initialized through a
+  module path (`ui.Registry.new()`) names its class too.
 - **Diagnostics.** Lex, parse, and type-check errors, plus a check that every
   `require` — standard library or scoped — is paired with a `deps` entry in
   `package.emo` (E5006) and that an unscoped `require` names a published

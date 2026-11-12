@@ -584,6 +584,23 @@ let items_for ~(ix : Ix.t) ~(file : string) ~(items : Emo_ast.item list)
         | Some t -> builtin_type_member_items t
         | None -> global_items ~ix ~file)
 
+(* The source to parse for a completion request. A member access whose
+   name is still empty — the cursor sits right after the dot of `p.` — is
+   a parse error, and the parser's item-level recovery drops the whole
+   enclosing declaration, taking the bindings and members completion
+   needs with it. Fill the empty name with a placeholder for the parse
+   only: it goes in at the cursor, so every offset before it is
+   unchanged, and the returned edits still use the original text. *)
+let completion_source (text : string) (offset : int) : string =
+  let n = String.length text in
+  let offset = min (max offset 0) n in
+  if
+    offset > 0
+    && text.[offset - 1] = '.'
+    && not (offset < n && is_word_char text.[offset])
+  then String.sub text 0 offset ^ "x" ^ String.sub text offset (n - offset)
+  else text
+
 (* Character offset at which the current completion token starts, so the
    client can replace exactly that range. *)
 let replacement_start (text : string) (offset : int) : int =

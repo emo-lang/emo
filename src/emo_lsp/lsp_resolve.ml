@@ -125,27 +125,44 @@ let return_type_of_def (items : Ast.item list) (fname : string) : string option
     items;
   !found
 
+(* The dotted name a type reference spells — `ui.Registry` names the
+   class `Registry` in module `ui` — so a binding initialized through a
+   module path (`const r = ui.Registry.new()`) infers its container. A
+   qualified type's module segments parse as plain identifiers and its
+   last segment keeps the type's capital, so the answer must end in a
+   capitalised segment reached through a pure name chain; a value chain
+   (`self.field`) stays out. *)
+let is_type_name (n : string) : bool = n <> "" && n.[0] >= 'A' && n.[0] <= 'Z'
+
+let rec type_reference_path (e : Ast.expr) : string list option =
+  match e.Ast.desc with
+  | Ast.Type_ident n | Ast.Ident n -> Some [ n ]
+  | Ast.Member (recv, field) ->
+      Option.map (fun path -> path @ [ field ]) (type_reference_path recv)
+  | _ -> None
+
+let type_reference_name (e : Ast.expr) : string option =
+  match type_reference_path e with
+  | Some path
+    when path <> [] && is_type_name (List.nth path (List.length path - 1)) ->
+      Some (String.concat "." path)
+  | _ -> None
+
 let rec infer_container (ix : Ix.t) (items : Ast.item list) ~(depth : int)
     (name : string) : string option =
   if depth > 6 then None
   else
     match find_binding items name with
     | Some
-        {
-          Ast.desc =
-            Ast.Call
-              ( {
-                  Ast.desc =
-                    Ast.Member ({ Ast.desc = Ast.Type_ident c; _ }, "new");
-                  _;
-                },
-                _ );
-          _;
-        } ->
-        Some c
-    | Some { Ast.desc = Ast.Member ({ Ast.desc = Ast.Type_ident e; _ }, _); _ }
-      ->
-        Some e
+        { Ast.desc = Ast.Call ({ Ast.desc = Ast.Member (ty, "new"); _ }, _); _ }
+      -> (
+        match type_reference_name ty with
+        | Some c -> Some c
+        | None -> local_or_project_container ix items name)
+    | Some { Ast.desc = Ast.Member (recv, _); _ } -> (
+        match type_reference_name recv with
+        | Some e -> Some e
+        | None -> local_or_project_container ix items name)
     | Some { Ast.desc = Ast.Call ({ Ast.desc = Ast.Ident f; _ }, _); _ } -> (
         match return_type_of_def items f with Some c -> Some c | None -> None)
     | Some { Ast.desc = Ast.Ident other; _ } -> (
@@ -282,24 +299,43 @@ let current_symbols ~(file : string) (items : Ast.item list) : Ix.symbol list =
 
 (* The first container declaration with [name], preferring one in [file]
    so same-named classes in other modules do not leak in. The current
-   buffer wins, then the on-disk index. *)
+   buffer wins, then the on-disk index. A module-qualified name — the
+   `ui.Registry` of `ui.Registry.new()` — resolves through the index's
+   module table first, so a project's own class does not lose to a
+   same-named one in the standard library. *)
 let container_symbol (ix : Ix.t) ~(file : string) ~(items : Ast.item list)
     (name : string) : Ix.symbol option =
-  let containers syms =
+  let containers target syms =
     List.filter
-      (fun (s : Ix.symbol) -> is_container_kind s.Ix.kind && s.Ix.name = name)
+      (fun (s : Ix.symbol) -> is_container_kind s.Ix.kind && s.Ix.name = target)
       syms
   in
-  match containers (current_symbols ~file items) with
-  | s :: _ -> Some s
-  | [] -> (
-      let candidates = containers (Ix.symbols_named ix name) in
-      let file = Lsp_util.normalize_path file in
+  let in_buffer target =
+    match containers target (current_symbols ~file items) with
+    | s :: _ -> Some s
+    | [] -> None
+  in
+  match List.rev (String.split_on_char '.' name) with
+  | last :: rev_path when rev_path <> [] -> (
+      let module_path = List.rev rev_path in
       match
-        List.find_opt (fun (s : Ix.symbol) -> s.Ix.file = file) candidates
+        List.find_opt
+          (fun (s : Ix.symbol) -> s.Ix.module_path = module_path)
+          (containers last (Ix.symbols_named ix last))
       with
       | Some s -> Some s
-      | None -> ( match candidates with s :: _ -> Some s | [] -> None))
+      | None -> in_buffer last)
+  | _ -> (
+      match in_buffer name with
+      | Some s -> Some s
+      | None -> (
+          let candidates = containers name (Ix.symbols_named ix name) in
+          let file = Lsp_util.normalize_path file in
+          match
+            List.find_opt (fun (s : Ix.symbol) -> s.Ix.file = file) candidates
+          with
+          | Some s -> Some s
+          | None -> ( match candidates with s :: _ -> Some s | [] -> None)))
 
 (* The container a dotted receiver names (a class, group, enum, or
    interface), or None when the receiver is not a container. *)
@@ -333,11 +369,36 @@ let resolve_container (ix : Ix.t) (items : Ast.item list) ~(file : string)
                   Option.bind (infer_container ix items ~depth:0 recv) named
               | _ -> None)))
 
+(* Members of a container the open buffer declares: the buffer's own
+   declarations come first, and an on-disk declaration they shadow is
+   dropped, so an unsaved class — or a member renamed but not yet
+   saved — completes before it reaches disk. A container in another
+   file answers from the index alone. *)
+let members_in_scope (ix : Ix.t) (items : Ast.item list) ~(file : string)
+    (s : Ix.symbol) : Ix.symbol list =
+  let indexed = Ix.members_of_in_file ix ~file:s.Ix.file s.Ix.name in
+  if Lsp_util.normalize_path s.Ix.file <> Lsp_util.normalize_path file then
+    indexed
+  else
+    let current =
+      List.filter
+        (fun (c : Ix.symbol) -> c.Ix.container = Some s.Ix.name)
+        (current_symbols ~file items)
+    in
+    current
+    @ List.filter
+        (fun (other : Ix.symbol) ->
+          not
+            (List.exists
+               (fun (c : Ix.symbol) -> c.Ix.name = other.Ix.name)
+               current))
+        indexed
+
 (* Resolve a receiver chain to the declarations that may follow a dot. *)
 let resolve_receiver (ix : Ix.t) (items : Ast.item list) (file : string)
     (offset : int) (segments : string list) : Ix.symbol list =
   match resolve_container ix items ~file offset segments with
-  | Some s -> Ix.members_of_in_file ix ~file:s.Ix.file s.Ix.name
+  | Some s -> members_in_scope ix items ~file s
   | None -> (
       match Ix.resolve_module_prefix ix segments with
       | Some (module_path, []) -> (

@@ -905,7 +905,8 @@ let capabilities () : Yojson.Safe.t =
       ( "completionProvider",
         `Assoc
           [
-            ("triggerCharacters", `List [ `String "."; `String "\"" ]);
+            (* No trigger characters: completion opens only on an explicit
+               request, never by typing a dot or a quote. *)
             ("resolveProvider", `Bool false);
           ] );
       ("hoverProvider", `Bool true);
@@ -984,7 +985,7 @@ let handle_completion (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let starts = Lsp_util.line_starts text in
       let offset = Lsp_util.position_to_offset text starts ~line ~character in
       let ix = index_for_file state file in
-      let items, _ = parse file text in
+      let items, _ = parse file (Completion.completion_source text offset) in
       let registry = state.registry in
       let result =
         Completion.items_for ~ix ~file ~items ~offset ~text ~registry
