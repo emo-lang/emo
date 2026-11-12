@@ -9,11 +9,10 @@
 // table into the tags `deliver` speaks. The compositor drives, the
 // model updates, every frame lands in a real window.
 
-require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_canvas"
 require "emo/ui_fb_frame"
-require "emo/ui_corpus"
+require "emo_desktop"
 require "wayland"
 require "net"
 require "os"
@@ -125,6 +124,10 @@ class LiveEye {
   // The present bridge: the whole canvas through pwrite, the buffer
   // back on the surface, the whole rect damaged, the commit. The
   // digest rides the transcript — the evidence a frame changed.
+  def canvas_bytes() Bytes {
+    return self.canvas.bytes()
+  }
+
   def present() {
     case os_pwrite(self.pool_fd, self.canvas.bytes().to_string(), 0) {
       (R.error, why) -> { println("face: pwrite " + why) }
@@ -146,6 +149,58 @@ class LiveEye {
   }
 }
 
+// ---- DockSurface: the dock's formulas paint in the strip's own
+// coordinates; this wrapper moves every row to the display's bottom
+// edge, so `emo_desktop.paint` runs unmodified over the wallpaper. ----
+class DockSurface {
+  def init(base ui_fb.Surface, dy Int64) {
+    self.base = base
+    self.dy = dy
+  }
+
+  def width() Int64 {
+    return self.base.width()
+  }
+
+  def height() Int64 {
+    return self.dy
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.base.at(x, y + self.dy)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.base.fill(x, y + self.dy, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.base.blend(x, y + self.dy, w, h, color)
+  }
+
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.base.ink(x, y + self.dy, f, glyph, color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.base.rounded(x, y + self.dy, w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.base.stroke(x, y + self.dy, w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.base.shadow(x, y + self.dy, w, h, radius, soft, color)
+  }
+
+  def present() {
+  }
+}
+
 // ---- LiveInput: the seat's keys become the app's tags. next()
 // blocks on the socket the way any direct-style read does; every
 // event the compositor sends is consumed by its own grammar so the
@@ -154,11 +209,18 @@ class LiveEye {
 class LiveInput {
   // The ids array: seat, pointer, keyboard, surface, xdg surface,
   // toplevel, wm base — the objects whose events this reader
-  // consumes or answers.
-  def init(c wayland.Conn, ids Array[Int64], tags Array[(Int64, Int64)]) {
+  // consumes or answers. `keytags` maps raw evdev codes (the arrows
+  // the ASCII table has no byte for); `asciitags` maps the ASCII
+  // bytes the key table produces; `rects` maps a click's position —
+  // (x, y, w, h, tag), the first containing rect wins.
+  def init(c wayland.Conn, ids Array[Int64], keytags Array[(Int64, Int64)],
+           asciitags Array[(Int64, Int64)],
+           rects Array[(Int64, Int64, Int64, Int64, Int64)]) {
     self.c = c
     self.ids = ids
-    self.tags = tags
+    self.keytags = keytags
+    self.asciitags = asciitags
+    self.rects = rects
     self.shift = Box.new(false)
     self.px = Box.new(0)
     self.py = Box.new(0)
@@ -192,13 +254,46 @@ class LiveInput {
     return self.ids[6]
   }
 
-  // The tag an ASCII byte names, or −1 when the map is silent.
-  def tag_of(ascii Int64) Int64 {
+  // The tag a raw evdev code names, or −1.
+  def raw_tag_of(key Int64) Int64 {
     var i = 0
-    while i < self.tags.length() {
-      case self.tags[i] {
+    while i < self.keytags.length() {
+      case self.keytags[i] {
+        (code, tag) -> {
+          if code == key {
+            return tag
+          }
+        }
+      }
+      i = i + 1
+    }
+    return 0 - 1
+  }
+
+  // The tag an ASCII byte names, or −1 when the map is silent.
+  def ascii_tag_of(ascii Int64) Int64 {
+    var i = 0
+    while i < self.asciitags.length() {
+      case self.asciitags[i] {
         (ch, tag) -> {
           if ch == ascii {
+            return tag
+          }
+        }
+      }
+      i = i + 1
+    }
+    return 0 - 1
+  }
+
+  // The tag of the first rect containing the click, or −1: outside
+  // every rect is no one's click.
+  def click_tag(x Int64, y Int64) Int64 {
+    var i = 0
+    while i < self.rects.length() {
+      case self.rects[i] {
+        (rx, ry, rw, rh, tag) -> {
+          if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
             return tag
           }
         }
@@ -236,9 +331,14 @@ class LiveInput {
           const key = ev.args.u32()
           const state = ev.args.u32()
           if state == 1 {
+            const raw = self.raw_tag_of(key)
+            if raw >= 0 {
+              println("face: key " + key.to_string() + " delivers tag " + raw.to_string())
+              return (R.ok, raw)
+            }
             const ascii = key_ascii(key, self.shift.read())
             if ascii >= 0 {
-              const tag = self.tag_of(ascii)
+              const tag = self.ascii_tag_of(ascii)
               if tag >= 0 {
                 println("face: key " + ascii.to_string() + " delivers tag " + tag.to_string())
                 return (R.ok, tag)
@@ -291,12 +391,15 @@ class LiveInput {
         }
         if ev.oid == self.pointer_id() && (ev.opcode == 3 || ev.opcode == 4) {
           ev.args.u32()
-          ev.args.u32()
-          ev.args.u32()
-          if ev.opcode == 3 {
-            ev.args.u32()
-          } else {
-            ev.args.fixed()
+          const time_ms = ev.args.u32()
+          const button = ev.args.u32()
+          const state = ev.args.u32()
+          if state == 1 && button == 272 {
+            const tag = self.click_tag(self.px.read(), self.py.read())
+            if tag >= 0 {
+              println("face: click at " + self.px.read().to_string() + " " + self.py.read().to_string() + " delivers tag " + tag.to_string())
+              return (R.ok, tag)
+            }
           }
           return self.next()
         }
@@ -397,6 +500,19 @@ def main() {
       }
     }
   }
+}
+
+// The face whole: the wallpaper's formula, the header bar, the dock
+// with its tiles — the desktop's own surfaces, the digest the
+// transcript's evidence per frame.
+def paint_desktop(eye LiveEye, f ui_fb.raster.Strike, w Int64, h Int64,
+                  focused Int64, launched Int64) {
+  emo_desktop.wallpaper(eye, w, h)
+  emo_desktop.paint_header(eye, f, w, w, h, launched)
+  const dock = DockSurface.new(base: eye, dy: h - 40)
+  emo_desktop.paint(dock, f, w, 40, 0, ["counter", "files", "editor"], focused, launched)
+  eye.present()
+  println("frame " + ui_fb_frame.digest(eye).to_string())
 }
 
 // The compositor's socket: $XDG_RUNTIME_DIR / $WAYLAND_DISPLAY.
@@ -646,15 +762,52 @@ def present_bridge(c wayland.Conn, surface_id Int64, shm_id Int64, wm_id Int64) 
                               const canvas = ui_fb_canvas.Canvas.new(width: w, height: h)
                               const eye = LiveEye.new(canvas: canvas, c: c, surface_id: surface_id, buffer_id: buffer_id, pool_fd: pool_fd)
                               const ids = [seat_slot.read(), pointer_slot.read(), keyboard_slot.read(), surface_id, xdg_surface_slot.read(), toplevel_slot.read(), wm_id]
-                              const input = LiveInput.new(c: c, ids: ids, tags: [(105, 0), (100, 1), (10, 2)])
+                              // The dock's tiles: three apps, the click
+                              // rects in display coordinates, the strip
+                              // at the bottom edge.
+                              const rects = [(20, h - 40 + 4, 32, 32, 0), (60, h - 40 + 4, 32, 32, 1), (100, h - 40 + 4, 32, 32, 2)]
+                              const input = LiveInput.new(c: c, ids: ids, keytags: [(105, 3), (106, 4)], asciitags: [(10, 5)], rects: rects)
                               const holder = ArrayBuilder.new()
                               case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
                                 (R.error, why) -> { println("the interface strike refused: ${why}") }
                                 (R.ok, s) -> { holder.push(s) }
                               }
                               const f = holder.get(0)
-                              println("face: the corpus runs live")
-                              ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(), ui_fb.backend(eye, input, f))
+                              println("face: the desktop runs live")
+                              // The shell's own loop, direct style: the
+                              // face painted, the tags consumed, the
+                              // frame presented per change.
+                              const focused = Box.new(0)
+                              const launched = Box.new(0)
+                              paint_desktop(eye, f, w, h, focused.read(), launched.read())
+                              var more = true
+                              while more {
+                                case input.next() {
+                                  (R.error, why) -> {
+                                    println("face: " + why)
+                                    more = false
+                                  }
+                                  (R.ok, tag) -> {
+                                    if tag <= 2 {
+                                      focused.replace(tag)
+                                    } else {
+                                      if tag == 3 {
+                                        focused.replace((focused.read() + 2) % 3)
+                                      } else {
+                                        if tag == 4 {
+                                          focused.replace((focused.read() + 1) % 3)
+                                        } else {
+                                          if tag == 5 {
+                                            launched.replace(launched.read() ^ (1 << focused.read()))
+                                          }
+                                        }
+                                      }
+                                    }
+                                    println("face: tile " + focused.read().to_string() + " focused launched " + launched.read().to_string())
+                                    paint_desktop(eye, f, w, h, focused.read(), launched.read())
+                                  }
+                                }
+                              }
                               println("face: the loop ended")
                             }
                           }

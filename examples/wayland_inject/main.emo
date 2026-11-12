@@ -111,20 +111,20 @@ def bind_managers(c wayland.Conn, globals wayland.Globals, seat_id Int64) {
 def create_devices(c wayland.Conn, vk_mgr Int64, vp_mgr Int64, seat_id Int64) {
   case wayland.virtual_pointer_create(c, vp_mgr, seat_id) {
     (R.error, why) -> { println("inject: pointer " + why) }
-    (R.ok, _) -> {
+    (R.ok, vptr) -> {
       println("inject: pointer created")
       case wayland.virtual_keyboard_create(c, vk_mgr, seat_id) {
         (R.error, why) -> { println("inject: keyboard " + why) }
         (R.ok, vkb) -> {
           println("inject: keyboard created")
-          send_keymap(c, vkb)
+          send_keymap(c, vkb, vptr)
         }
       }
     }
   }
 }
 
-def send_keymap(c wayland.Conn, vkb Int64) {
+def send_keymap(c wayland.Conn, vkb Int64, vptr Int64) {
   const map_path = "/tmp/emo-inject-map-" + os.getpid().to_string() + ".tmp"
   case os_shm_open(map_path) {
     (R.error, why) -> { println("inject: map " + why) }
@@ -140,8 +140,47 @@ def send_keymap(c wayland.Conn, vkb Int64) {
               case wayland.virtual_keyboard_keymap(c, vkb, map_fd, text.length()) {
                 (R.error, why) -> { println("inject: keymap sent " + text.length().to_string()) }
                 (R.ok, _) -> {
-                  fire_beats(c, vkb, [(10, 23, 1), (20, 23, 0), (30, 23, 1), (40, 23, 0), (50, 32, 1), (60, 32, 0), (70, 28, 1), (80, 28, 0)], 0)
-                  drain(c)
+                  // The pointer onto the dock's first tile, press and
+                  // release; the right arrow moves the focus; Enter
+                  // launches. Then the devices stay alive while the
+                  // face's window maps, focuses, and decodes.
+                  case wayland.virtual_pointer_motion_absolute(c, vptr, 5, 36, 688, 1280, 720) {
+                    (R.error, why) -> { println("inject: motion " + why) }
+                    (R.ok, _) -> {
+                      case wayland.virtual_pointer_button(c, vptr, 15, 272, 1) {
+                        (R.error, why) -> { println("inject: press " + why) }
+                        (R.ok, _) -> {
+                          case wayland.virtual_pointer_button(c, vptr, 25, 272, 0) {
+                            (R.error, why) -> { println("inject: release " + why) }
+                            (R.ok, _) -> {
+                              case wayland.virtual_keyboard_key(c, vkb, 40, 106, 1) {
+                                (R.error, why) -> { println("inject: " + why) }
+                                (R.ok, _) -> {
+                                  case wayland.virtual_keyboard_key(c, vkb, 50, 106, 0) {
+                                    (R.error, why) -> { println("inject: " + why) }
+                                    (R.ok, _) -> {
+                                      case wayland.virtual_keyboard_key(c, vkb, 60, 28, 1) {
+                                        (R.error, why) -> { println("inject: " + why) }
+                                        (R.ok, _) -> {
+                                          case wayland.virtual_keyboard_key(c, vkb, 70, 28, 0) {
+                                            (R.error, why) -> { println("inject: " + why) }
+                                            (R.ok, _) -> {
+                                              println("inject: beats out")
+                                              drain(c)
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }

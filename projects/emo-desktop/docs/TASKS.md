@@ -1702,3 +1702,51 @@ directory).
   `docs/stdlib/wayland.md` and its zh mirror (or the project's own
   README), the CHECK.md entry, the TASKS ticks. **Accept:** both
   languages land; the ledger states what the ride taught.
+
+## M21 — the dock clicks: the pointer's tags and the desktop face (opened 2026-11-12)
+
+M20's window listened to keys; the desktop itself was nowhere on the
+canvas. M21 puts the desktop's face behind the live window —
+`emo_desktop`'s wallpaper, header, and dock painted per frame — and
+gives the pointer a click path: the tracked surface coordinates, a
+rect table, and the first containing rect's tag delivered the way a
+key's is. The demo model is the desktop's own: the focused tile and
+the launch bits; a click on a tile focuses it, the arrows move the
+focus, Enter toggles the launch, and every change repaints the whole
+face. The smoke leg grades it with the injector's virtual pointer:
+onto the dock's first tile, press, release — then the arrows and
+Enter on the keyboard.
+
+- [x] **A21.1** — `LiveInput`'s click path: the pointer's surface
+  coordinates tracked from the motion events, the rect table
+  `(x, y, w, h, tag)` hit-tested on a left-button press, the raw-key
+  table beside the ASCII table (the arrows the key table has no byte
+  for). **complete 2026-11-12** — the tables landed; the button's
+  grammar taught one correction: `wl_pointer.button` is four
+  arguments, and a fifth read raised "frame shorter than its
+  arguments" and crashed the face on the first press.
+
+- [x] **A21.2** — The face demo becomes the desktop: the wallpaper's
+  formula, the header bar, and the dock painted per frame — the
+  dock's strip-local formulas through an offsetting Surface wrapper
+  (`DockSurface`, every verb shifted to the display's bottom edge) —
+  the model the focused tile and the launch bits, the corpus app
+  riding out. **complete 2026-11-12** — the composition landed:
+  wallpaper, header, dock, tiles with the lit grade on the focused
+  one, the launch dot per running bit.
+
+- [x] **A21.3** — The smoke leg grades it whole: the injector grows
+  the pointer's beats (motion_absolute onto the dock's first tile,
+  press, release) ahead of the arrows and Enter, and the script
+  asserts the click, the arrow, and the launch. **complete
+  2026-11-12** — exit 0: "click at 36 688 delivers tag 0", "key 106
+  delivers tag 4", "key 10 delivers tag 5", "tile 1 focused launched
+  2", eight frames, three distinct digests. The grade also fixed the
+  seat's own half: the face creates its virtual devices itself (the
+  capabilities its grants wait on), and the choreography held — the
+  face first, the injector after "the desktop runs live".
+
+- [x] **A21.4** — The docs and the ledger: the ride section grows
+  the click path in both languages, the CHECK.md entry carries M21,
+  the TASKS ticks close the milestone. **complete 2026-11-12** —
+  landed.
