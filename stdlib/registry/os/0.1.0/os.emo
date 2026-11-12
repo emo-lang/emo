@@ -48,6 +48,12 @@ def getenv(name String) (R, String) {
   return os_getenv(name)
 }
 
+// The pause: the milliseconds a caller waits, nanoseconds off the
+// host's clock.
+def sleep_ms(ms Int64) (R, Int64) {
+  return os_sleep_ms(ms)
+}
+
 def fork() (R, Int64) {
   return os_fork()
 }

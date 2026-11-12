@@ -22,6 +22,8 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" \
   "$FB/canvas/package.emo" "$FB/canvas/ui_fb_canvas.emo" \
   "$FB/frame/package.emo" "$FB/frame/ui_fb_frame.emo" "$FB/frame/counter.emo" \
   "$FB/desktop/package.emo" "$FB/desktop/emo_desktop.emo" \
+  "$FB/apps/package.emo" "$FB/apps/ui_apps.emo" "$FB/apps/counter.emo" \
+  "$FB/apps/files.emo" "$FB/apps/editor.emo" \
   package.emo main.emo \
   "$STDLIB/registry/wayland/0.1.0/package.emo" "$STDLIB/registry/wayland/0.1.0/wayland.emo" \
   "$STDLIB/registry/net/0.1.0/package.emo" "$STDLIB/registry/net/0.1.0/net.emo" \
@@ -29,12 +31,15 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" \
   | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
-  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo_desktop/0.1.0"
+  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo_desktop/0.1.0" \
+  "$REG/emo/ui_apps/0.1.0"
 cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
 cp "$FB/package.emo" "$FB/ui_fb.emo" "$FB/pointer.emo" "$FB/raster.emo" \
   "$FB/face_inter.emo" "$FB/face_mono.emo" "$REG/emo/ui_fb/0.1.0/"
 cp "$FB/canvas/package.emo" "$FB/canvas/ui_fb_canvas.emo" "$REG/emo/ui_fb_canvas/0.1.0/"
 cp "$FB/frame/package.emo" "$FB/frame/ui_fb_frame.emo" "$FB/frame/counter.emo" "$REG/emo/ui_fb_frame/0.1.0/"
+cp "$FB/apps/package.emo" "$FB/apps/ui_apps.emo" "$FB/apps/counter.emo" \
+  "$FB/apps/files.emo" "$FB/apps/editor.emo" "$REG/emo/ui_apps/0.1.0/"
 mkdir -p "$REG/emo_desktop/0.1.0"
 cp "$FB/desktop/package.emo" "$FB/desktop/emo_desktop.emo" "$REG/emo_desktop/0.1.0/"
 mkdir -p "$REG/wayland/0.1.0" "$REG/net/0.1.0" "$REG/os/0.1.0"

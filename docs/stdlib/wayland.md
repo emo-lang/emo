@@ -132,8 +132,48 @@ toggles the launch bit, and the smoke leg asserts the click, the
 arrow, and the launch — the desktop ran live, the click landed, and
 the keys drove it.
 
-Keycodes arrive raw (the evdev numbers); keysym decoding through the
-keymap is the named follow-up.
+The table is no longer hand-written where the content is a tree
+(M22): `ui_fb`'s paint walk carries a rect collector
+(`ui_fb.paint_rects`), every Button it places lands in the table with
+the tag the registry handed the view — a frame's pixels and its click
+targets come from one pass — and the demo paints a launched app's
+tree in-frame, the exported rects joined into the pointer's table
+under the app's tag base. A click on the tree's own "+" then drives
+the app's own `update` through the `ui.App` standing under the quiet
+backend (the corpus counter, required whole from `emo/ui_apps`): the
+count moves, the app's own words ride the transcript, and the smoke
+leg pins the exported rect line and both clicks.
+
+The keys come from the keymap now (M23): the `keymap` event's fd
+reads back through the passage and parses once — the keycodes
+section's `<AD01> = 24;` entries, the symbols section's rows in both
+spellings the compiled keymaps wear, every search bounded by the
+row's own braces — and `name_of(key, shift)` answers the keysym name,
+the compositor's own word for the key. The keycodes the keymap
+speaks are the xkb ones: **evdev plus eight**, the dance every
+Wayland client does before it asks xkb (the injected Enter rides
+evdev 28; the keymap's `<RTRN>` is 36). The demo's tag tables key on
+names — "Left", "Right", "Return" — and the hard-written evdev rows
+of the M19 demo are gone; the smoke leg's live keymap is sway's own
+(compiled, 490 codes, 117 symbol rows, all parsed), and the keys
+deliver by name.
+
+The windows come next (M24): a launch stands the app up as a second
+toplevel — its surface, its xdg surface, its shm pool, its own
+configure wait (`wait_configure` tolerates the seat's own events and
+the siblings' configures, both of which arrive mid-wait once more
+than one window exists) — and `LiveInput` becomes a decoder that
+answers `Ev`s naming the surface they are for: the keyboard's
+entered surface, the pointer's hovered one. The routing is the
+caller's: the desktop's names drive the dock, a window's names drive
+the app behind it, and the rect tables are per window (each repaint
+re-exports its tree's buttons). The seat's focus is the conductor —
+`wl_keyboard.enter` names the surface every key rides to, the
+corpus apps' key tables key on the same names the keymap produces
+("a", "b", "Return" for the editor's typing) — and the pointer's
+clicks carry the surface they landed on. The smoke leg types into
+the editor's window and counts on the counter's, both live under
+sway.
 
 ## Limitations
 
@@ -142,10 +182,17 @@ keymap is the named follow-up.
   follow-up.
 - **One fd a message.** The protocols this package speaks carry
   exactly one; a protocol needing two grows the shape then.
-- **Keysyms are not here yet.** The keycodes arrive raw and the
-  bridges translate through an evdev table (a keyboard's rows, the
-  shift state); decoding through the keymap itself is the named
-  follow-up.
+- **The keymap is a focused reader, not an xkb.** The parser takes
+  the keycodes and symbols sections' plain rows — the shapes sway's
+  compiled keymaps wear — and answers first and second symbols; it
+  does not model groups, levels beyond the first two, or the types
+  and compat sections.
+- **The second window's pointer is the compositor's to route.** The
+  demo's clicks inside a stood-up app window did not arrive under
+  sway 1.7 headless (the keyboard's focus routing delivers, the
+  same rect mechanism proven on the desktop's own surface in M22);
+  the follow-up is a retest against a newer sway and, if it
+  reproduces, the protocol-level question the difference names.
 - **Hand-written tables.** The opcodes live at their call sites and
   the compositor grades them; no XML is parsed at runtime.
 
@@ -156,17 +203,31 @@ own seams: a `Surface` whose `present()` pushes the canvas's bytes
 through `os_pwrite` into the pool, attaches, damages the whole rect,
 and commits (the canvas's XRGB8888 words are the wl_shm bytes
 verbatim), and an `Input` whose `next()` blocks on Wayland events and
-delivers the tags the application speaks — keys through an evdev
-table with the shift state read from the modifiers event (whose
-first argument is the serial, the depressed word second), clicks
-through a rect table hit at the tracked pointer position. The fb
-backend's own demo runs the convergence corpus's application live on
-a real compositor: injected keys, real repaints, the digest of every
-frame in the transcript (`projects/emo-desktop/wayland/`, the smoke
-leg `devtools/wayland-face-smoke.sh`).
+delivers the tags the application speaks — keys through the
+compositor's own keymap (parsed at the keymap event, the shift state
+read from the modifiers event whose first argument is the serial and
+whose depressed word is second), clicks
+through a rect table hit at the tracked pointer position. Since M24
+the demo is a multi-window client: the desktop's dock plus one
+window per launched app, each with its own pool and buffer, its own
+rect table, and the seat's focus deciding which `ui.App` a key or a
+click serves. The fb backend's own demo runs the convergence
+corpus's applications live on a real compositor: injected keys,
+real repaints, the digest of every frame in the transcript
+(`projects/emo-desktop/wayland/`, the smoke leg
+`devtools/wayland-face-smoke.sh`).
 
-## Limitations (the codec against hand-computed
-fixtures), `examples/wayland_handshake` (a mock compositor over a real
-Unix socket, byte-exact), `examples/wayland_paint` (the first frame —
-run by `devtools/wayland-smoke.sh`, the Docker leg that compiles the
-demo's C and runs it under headless sway, grim the eye).
+## The examples
+
+- `examples/wayland_wire` — the codec against hand-computed fixtures,
+  byte-level.
+- `examples/wayland_handshake` — a mock compositor over a real Unix
+  socket, byte-exact.
+- `examples/wayland_paint` — the first frame, run by
+  `devtools/wayland-smoke.sh`, the Docker leg that compiles the demo's
+  C and runs it under headless sway, grim the eye.
+- `examples/wayland_input` — the seat's tables against a canned
+  stream: capabilities, pointer, keyboard, the keymap's fd through the
+  passage.
+- `examples/wayland_inject` — the virtual devices the smoke leg
+  drives the live window with: the beats as one array of events.

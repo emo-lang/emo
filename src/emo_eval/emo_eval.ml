@@ -436,6 +436,8 @@ let global_env () =
     { bound = RuntimeImplFn "os_shm_open"; mutable_ = false };
   Hashtbl.replace env.frame "os_ftruncate"
     { bound = RuntimeImplFn "os_ftruncate"; mutable_ = false };
+  Hashtbl.replace env.frame "os_sleep_ms"
+    { bound = RuntimeImplFn "os_sleep_ms"; mutable_ = false };
   Hashtbl.replace env.frame "os_pwrite"
     { bound = RuntimeImplFn "os_pwrite"; mutable_ = false };
   Hashtbl.replace env.frame "net_tls_connect"
@@ -4206,6 +4208,12 @@ and apply_runtime_impl span name args =
              (List.length args))
     | "os_pwrite", [ _; _; _ ] ->
         not_yet span "`os_pwrite` (the shm tier rides the c target)"
+    | "os_sleep_ms", args when List.length args <> 1 ->
+        error span "E3007"
+          (Printf.sprintf "`os_sleep_ms` expects (ms Int64), got %d arguments"
+             (List.length args))
+    | "os_sleep_ms", [ _ ] ->
+        not_yet span "`os_sleep_ms` (the pause rides the c target)"
     | "net_tls_connect", args when List.length args <> 3 ->
         error span "E3007"
           (Printf.sprintf

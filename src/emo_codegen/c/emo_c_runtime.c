@@ -31,6 +31,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <sys/random.h>
 #include <time.h>
 #include <unistd.h>
@@ -3401,6 +3402,14 @@ emo_value emo_os_pwrite(int64_t fd, emo_str data, int64_t offset) {
     put_total += put;
   }
   return emo_os_ok(emo_box_i64(put_total));
+}
+
+emo_value emo_os_sleep_ms(int64_t ms) {
+  struct timespec pause;
+  pause.tv_sec = (time_t)(ms / 1000);
+  pause.tv_nsec = (long)((ms % 1000) * 1000000L);
+  nanosleep(&pause, NULL);
+  return emo_os_ok(emo_box_i64(ms));
 }
 
 int64_t emo_net_set_timeout(int64_t fd, double seconds) {

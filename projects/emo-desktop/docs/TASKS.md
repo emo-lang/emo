@@ -1750,3 +1750,156 @@ Enter on the keyboard.
   the click path in both languages, the CHECK.md entry carries M21,
   the TASKS ticks close the milestone. **complete 2026-11-12** —
   landed.
+
+## M22 — the tree takes the pointer (opened 2026-11-12)
+
+M21's rect table was written by hand — four literals naming the dock's
+tiles — while the window's content itself has no tree anywhere in it.
+M22 lets the click path read its rects out of a `ui` tree instead: the
+fb core's paint walk carries a rect collector, every Button it places
+lands in the table with the tag the button already carries, and the
+face paints a launched app's tree in-frame so a click on the tree's
+own button drives the app's own `update`. The tree is `emo/ui_apps`'s
+counter — the corpus package required whole, never copied — mounted in
+a `ui.App` whose backend stays quiet (the face paints the tree itself,
+from the App's `root()`), and the smoke's injector grows the beats
+that prove the loop: dock, arrows, Enter, then two clicks straight on
+the exported "+".
+
+- [x] **A22.1** — `ui_fb`'s rect export: the `Rects` collector, the
+  walk (`place`, `place_column`, `place_row`) carrying it, and the
+  `paint_rects` entry; a Button's placement appends
+  `(x, y, w, h, event)` mid-walk, so a frame's pixels and its click
+  targets come from one pass. The three-argument `paint` keeps its
+  shape (the family's callers unchanged); `Fb` clears and reuses one
+  collector per frame. **complete 2026-11-12** — the face project and
+  the family's ten hosted consumers re-type-checked; the twelve
+  hosted locks re-resolved, the five metal-side locks left to their
+  own harness (a stale digest refuses loudly there).
+
+- [x] **A22.2** — The face's panel: the launched counter's tree
+  painted in-frame through an offsetting `PanelSurface` (the
+  `DockSurface`'s twin on both axes), the exported rects joined into
+  the pointer's table under the app's tag base (100 + the registry's
+  own), and a click's tag delivered through the App — `deliver` runs
+  the corpus `update`, the face repaints from `root()`. The rect
+  lines ride the transcript: the table is the evidence. **complete
+  2026-11-12** — the panel paints, the rects print, a click on "+"
+  moves the count.
+
+- [x] **A22.3** — The smoke's beats as data: the injector's one-off
+  nested chain becomes a table of `(kind, time, a, b)` events, and
+  the leg grows the sequence — dock tile 0, both arrows, Enter
+  launching the counter, then two clicks on the exported button. The
+  assertions pin the rect line, the click tags, the corpus `update`'s
+  own words, and the count. **complete 2026-11-12** — exit 0 twice:
+  the rect line pinned (`172 160 33 20 tag 100`), both clicks
+  delivered, `add 1` and `add 2` spoken, fourteen frames, five
+  distinct digests; the leg waits on the second count instead of a
+  fixed sleep.
+
+- [x] **A22.4** — The docs and the ledger: the ride section carries
+  the tree click path in both languages, the CHECK.md entry carries
+  M22, the TASKS ticks close the milestone. **complete 2026-11-12** —
+  landed; the mangled examples tail in both ride sections repaired
+  into a proper list.
+
+## M23 — the keymap decodes (opened 2026-11-12)
+
+M19's keyboard translated raw evdev codes through a hand-written
+table — the rows of the US layout spelled out in the demo, the arrows
+named by code. The compositor already ships the real translation: the
+`wl_keyboard.keymap` event carries the compiled xkb keymap, its bytes
+through the fd passage. M23 makes the wayland package parse that text
+— the keycodes section's `<AD01> = 24;` entries, the symbols
+section's `key <AD01> { [ q, Q ] };` rows — and hand the demo a
+`name_of(key, shift)`: the keysym name, the keymap's own word. The
+demo's tables key on names ("Left", "Return"), single-character names
+give the bytes, and the hardcoded rows leave. The input golden grows
+the parse: the mock paints a real keymap and the client decodes its
+keys through it.
+
+- [x] **A23.1** — The wayland package's `Keymap`: the parser over the
+  keymap's text (both the bracket shorthand and the
+  `symbols[Group1] =` spelling the compiled keymaps wear), and
+  `LiveInput` consuming the keymap event — the fd read through
+  `os.read`, the parse stored, every key decoded by `name_of` before
+  the tag tables are asked. **complete 2026-11-12** — the face
+  decodes sway's own compiled keymap by name; the evdev rows are
+  gone. The grade taught two facts: the keymap's keycodes are the
+  xkb ones (evdev plus eight — the client's +8 dance), and a row
+  without a list ends at its closing brace (the unbounded bracket
+  search answered "Group1" for wrong keycodes). Offline replay of
+  the dumped live keymap: 490 codes, 117 of 117 symbol rows parsed.
+
+- [x] **A23.2** — The input golden's keymap leg: the mock paints a
+  compact real keymap (keycodes and symbols sections), the client
+  parses it and decodes the key beats through it — the names in the
+  transcript where the raw codes were. **Accept:** three runs agree
+  byte for byte; `expected.txt` pins the names. **complete
+  2026-11-12** — three runs identical; the mock's keymap carries the
+  +8 codes, the modifiers walk the shift up and back, the transcript
+  pins q, Q, Right, Return.
+
+- [x] **A23.3** — The docs and the ledger: the seat section carries
+  the keymap in both languages, the CHECK.md entry carries M23, the
+  TASKS ticks close the milestone. **Accept:** both languages land.
+  **complete 2026-11-12** — landed; the keysym limitation entry
+  becomes the focused-reader honesty (groups and levels beyond the
+  first two are not modeled).
+
+## M24 — the apps become windows (opened 2026-11-12)
+
+M22's app lived in the desktop's own window — a panel painted in
+frame. M24 lifts them: a launch now makes a toplevel of its own — its
+surface, its xdg surface, its shm pool and buffer, its configure wait
+— titled with the app's name, and the seat's focus follows it: the
+`wl_keyboard.enter`'s surface is tracked, so keys route to the
+focused window's app loop (the counter's a/b, the browser's j/k/o,
+the editor's typing), and clicks route by the surface the pointer is
+over. The three corpus apps all stand up: counter, files, editor —
+each a `ui.App` behind its own window, the desktop keeping the dock
+when the desktop holds the focus.
+
+- [x] **A24.1** — The window registry and the second toplevel: the
+  launch creates the app's window whole (surface, xdg surface,
+  toplevel, pool, buffer, configure, ack) and stands its `ui.App` up
+  behind it; the desktop repaints with the launch dot. **complete
+  2026-11-12** — the window stands ("face: window counter stands on
+  surface 19"), paints its first frame, the sway log shows the map.
+  `wait_configure` grew a seat tolerance (the `wl_seat.name` event
+  carries no serial — the parse read "seat" as a length and died)
+  and an `others` table of sibling (xdg, toplevel) pairs, whose
+  configures arrive mid-wait once more than one window exists.
+
+- [x] **A24.2** — The focus routing: `LiveInput` tracks the
+  keyboard's entered surface and the pointer's hovered surface;
+  `next()` answers `Ev`s naming the surface they are for and the demo
+  dispatches — the desktop's tags when the desktop holds the focus,
+  the app's registry tags when its window does. **complete
+  2026-11-12** — the routing is the transcript's own words: "key a
+  delivers tag 0 to counter" over the corpus `add 1`, "key a delivers
+  tag 0 to editor" over "put a". A two-client probe (the injector
+  standing its own window) cleared sway itself: the focus routing
+  delivers to whoever holds it.
+
+- [x] **A24.3** — The smoke grades the windows: the injector launches
+  the counter's window, drives it by key, then Right-Right-Enter and
+  the editor's typing; the assertions pin the focus lines, the
+  counts, and the buffer. **complete 2026-11-12** — exit 0 twice:
+  "add 1", "put a", "put b", "newline", eighteen frames, eleven
+  distinct digests. The injector's beats pace themselves by their own
+  `time` fields now (`os.sleep_ms`, the new runtime primitive): a
+  beat fired inside a launch's window dance is consumed by the
+  wait's tolerance, not by the window. The in-window pointer click
+  was dropped from the leg: sway 1.7 headless did not deliver the
+  second window's pointer press (the keyboard focus routing delivers;
+  the rect mechanism is M22-proven on the desktop's own surface) —
+  the limitation rides the docs' Limitations section as the named
+  follow-up.
+
+- [x] **A24.4** — The docs and the ledger: the ride section carries
+  the windows in both languages, the CHECK.md entry carries M24, the
+  TASKS ticks close the milestone. **complete 2026-11-12** — landed;
+  the Limitations sections carry the second window's pointer as the
+  named follow-up in both languages.

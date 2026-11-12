@@ -184,20 +184,23 @@ def mock(listener TcpListener, pool_path String) {
           send_raw(conn, button)
           const frame = wayland.Message.new(5, 5)
           send_raw(conn, frame)
-          // The keymap: a real fd, painted through the shm tier.
+          // The keymap: a real fd, a real keymap's text painted
+          // through the shm tier — both symbol spellings the compiled
+          // keymaps wear, the shift riding the modifiers beats.
           case os_shm_open(pool_path) {
             (R.error, why) -> { println("mock: pool " + why) }
             (R.ok, map_fd) -> {
-              case os_ftruncate(map_fd, 21) {
+              const text = "xkb_keymap {\n  xkb_keycodes {\n    <AD01> = 32;\n    <LCTL> = 37;\n    <LEFT> = 113;\n    <RGHT> = 114;\n    <RTRN> = 36;\n  };\n  xkb_symbols {\n    key <AD01> { [ q, Q ] };\n    key <LCTL> { symbols[Group1] = [ Control_L, Control_L ] };\n    key <LEFT> { [ Left ] };\n    key <RGHT> { [ Right ] };\n    key <RTRN> { [ Return ] };\n  };\n};\n"
+              case os_ftruncate(map_fd, text.length()) {
                 (R.error, why) -> { println("mock: ftruncate " + why) }
                 (R.ok, _) -> {
-                  case os_pwrite(map_fd, "xkb_keymap-test-bytes", 0) {
+                  case os_pwrite(map_fd, text, 0) {
                     (R.error, why) -> { println("mock: pwrite " + why) }
                     (R.ok, _) -> {
                       const keymap = wayland.Message.new(6, 0)
                       keymap.u32(1)
                       keymap.fd(map_fd)
-                      keymap.u32(21)
+                      keymap.u32(text.length())
                       send_raw(conn, keymap)
                       const kb_enter = wayland.Message.new(6, 1)
                       kb_enter.u32(3)
@@ -206,12 +209,52 @@ def mock(listener TcpListener, pool_path String) {
                       keys.set(0, 30)
                       kb_enter.array(keys)
                       send_raw(conn, kb_enter)
-                      const key = wayland.Message.new(6, 3)
-                      key.u32(4)
-                      key.u32(200)
-                      key.u32(30)
-                      key.u32(1)
-                      send_raw(conn, key)
+                      // The key beats, the shift walked up and back
+                      // between them: q, Q, Right, Return.
+                      const k1 = wayland.Message.new(6, 3)
+                      k1.u32(4)
+                      k1.u32(200)
+                      k1.u32(24)
+                      k1.u32(1)
+                      send_raw(conn, k1)
+                      const k2 = wayland.Message.new(6, 3)
+                      k2.u32(4)
+                      k2.u32(210)
+                      k2.u32(24)
+                      k2.u32(0)
+                      send_raw(conn, k2)
+                      const mods1 = wayland.Message.new(6, 2)
+                      mods1.u32(220)
+                      mods1.u32(1)
+                      mods1.u32(0)
+                      mods1.u32(0)
+                      mods1.u32(0)
+                      send_raw(conn, mods1)
+                      const k3 = wayland.Message.new(6, 3)
+                      k3.u32(6)
+                      k3.u32(230)
+                      k3.u32(24)
+                      k3.u32(1)
+                      send_raw(conn, k3)
+                      const mods2 = wayland.Message.new(6, 2)
+                      mods2.u32(240)
+                      mods2.u32(0)
+                      mods2.u32(0)
+                      mods2.u32(0)
+                      mods2.u32(0)
+                      send_raw(conn, mods2)
+                      const k4 = wayland.Message.new(6, 3)
+                      k4.u32(8)
+                      k4.u32(250)
+                      k4.u32(106)
+                      k4.u32(1)
+                      send_raw(conn, k4)
+                      const k5 = wayland.Message.new(6, 3)
+                      k5.u32(9)
+                      k5.u32(260)
+                      k5.u32(28)
+                      k5.u32(1)
+                      send_raw(conn, k5)
                       println("mock: 3 requests byte-ok; stream out")
                     }
                   }
@@ -249,7 +292,7 @@ def client_body(c wayland.Conn, sock String) {
                       case wayland.seat_get_keyboard(c, seat_id) {
                         (R.error, why) -> { println("client: " + why) }
                         (R.ok, keyboard_id) -> {
-                          input_loop(c, seat_id, pointer_id, keyboard_id)
+                          input_loop(c, seat_id, pointer_id, keyboard_id, Box.new(wayland.empty_keymap()), Box.new(false))
                         }
                       }
                     }
@@ -264,7 +307,12 @@ def client_body(c wayland.Conn, sock String) {
   }
 }
 
-def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64, keyboard_id Int64) {
+// The decode loop: the keymap parsed once at its event, the shift
+// state from the modifiers, every key's name the keymap's own word.
+// The keymap and the shift ride Boxes — a branch replaces, the tail
+// recursion reads what stands.
+def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64,
+               keyboard_id Int64, km Box, shift Box) {
   case wayland.next_event(c.side) {
     (R.error, why) -> { println("client: " + why) }
     (R.ok, ev) -> {
@@ -313,9 +361,24 @@ def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64, keyboard_id Int6
         case os.read(fd, size) {
           (R.error, why) -> { println("client: keymap read " + why) }
           (R.ok, body) -> {
-            println("client: keymap xkb_v1 " + size.to_string() + " bytes [" + body + "]")
+            case wayland.parse_keymap(body) {
+              (R.error, why) -> { println("client: keymap parse " + why) }
+              (R.ok, parsed) -> {
+                km.replace(parsed)
+                println("client: keymap parsed " + parsed.code_count().to_string() + " codes " + parsed.key_count().to_string() + " keys")
+              }
+            }
           }
         }
+      }
+      if ev.oid == keyboard_id && ev.opcode == 2 {
+        const serial = ev.args.u32()
+        const depressed = ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        shift.replace((depressed & 3) != 0)
+        println("client: modifiers depressed " + depressed.to_string())
       }
       if ev.oid == keyboard_id && ev.opcode == 1 {
         const serial = ev.args.u32()
@@ -328,13 +391,18 @@ def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64, keyboard_id Int6
         const time_ms = ev.args.u32()
         const key = ev.args.u32()
         const state = ev.args.u32()
-        var word = "released"
         if state == 1 {
-          word = "pressed"
+          // The keymap speaks xkb keycodes: evdev plus eight, the
+          // dance every Wayland client does before it asks xkb.
+          const name = km.read().name_of(key + 8, shift.read())
+          var line = "client: key " + key.to_string()
+          if name.length() > 0 {
+            line = line + " " + name
+          }
+          println(line + " pressed")
         }
-        println("client: key " + key.to_string() + " " + word)
       }
-      input_loop(c, seat_id, pointer_id, keyboard_id)
+      input_loop(c, seat_id, pointer_id, keyboard_id, km, shift)
     }
   }
 }

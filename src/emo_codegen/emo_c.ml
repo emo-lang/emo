@@ -623,6 +623,8 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "os_pwrite" ->
       Printf.sprintf "emo_os_pwrite(%s, %s, %s)" (arg 0 Emo_check.Int64)
         (arg 1 Emo_check.String) (arg 2 Emo_check.Int64)
+  | "os_sleep_ms" ->
+      Printf.sprintf "emo_os_sleep_ms(%s)" (arg 0 Emo_check.Int64)
   (* ---- TLS (step 51): the gate arms. One C body serves both client
      names — the insecure variant is the whole path with verification
      off — and the runtime's `EMO_HAS_TLS` fence carries the real

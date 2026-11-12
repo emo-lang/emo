@@ -4,71 +4,29 @@
 // `LiveEye`, a `ui_fb.Surface` whose `present()` pushes the canvas's
 // bytes through the shm tier into the window (the canvas's
 // XRGB8888 words are the wl_shm format's own bytes), and
-// `LiveInput`, an `ui_fb.Input` whose `next()` blocks on Wayland
-// events and translates the keyboard through an evdev-to-ASCII
-// table into the tags `deliver` speaks. The compositor drives, the
-// model updates, every frame lands in a real window.
+// `LiveInput`, whose `next()` blocks on Wayland events and decodes
+// them — the keysym names through the compositor's own keymap, the
+// clicks as positions on the surface the pointer is over — into
+// `Ev`s that name the surface they are for.
+//
+// M24 makes the apps windows of their own: a launch stands the
+// corpus application up as a second toplevel — its surface, its
+// shm pool, its configure wait — and the routing follows the seat's
+// focus: the keyboard's entered surface and the pointer's hovered
+// one decide which window's tags a key or a click becomes. The
+// three corpus apps — counter, files, editor — each behind their
+// own `ui.App`, the trees painted through the rect-exporting walk
+// so the windows' own buttons take the pointer.
 
+require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_canvas"
 require "emo/ui_fb_frame"
+require "emo/ui_apps"
 require "emo_desktop"
 require "wayland"
 require "net"
 require "os"
-
-// ---- the evdev table: the raw keycodes to ASCII, US layout, the
-// rows of the keyboard — letters by their rows, digits with their
-// shifted symbols, enter as the newline, space as the space. ----
-def key_ascii(key Int64, shift Bool) Int64 {
-  // The rows of the keyboard, evdev codes to ASCII — the codes are
-  // the layout's, not the ASCII table's, so each row is a lookup.
-  if key >= 16 && key <= 25 {
-    const row = "qwertyuiop".to_bytes()
-    const c = row.get(key - 16)
-    if shift {
-      return c - 32
-    }
-    return c
-  }
-  if key >= 30 && key <= 38 {
-    const row = "asdfghjkl".to_bytes()
-    const c = row.get(key - 30)
-    if shift {
-      return c - 32
-    }
-    return c
-  }
-  if key >= 44 && key <= 50 {
-    const row = "zxcvbnm".to_bytes()
-    const c = row.get(key - 44)
-    if shift {
-      return c - 32
-    }
-    return c
-  }
-  if key >= 2 && key <= 10 {
-    const digits = "1234567890".to_bytes()
-    if shift {
-      const syms = "!@#$%^&*(".to_bytes()
-      return syms.get(key - 2)
-    }
-    return digits.get(key - 2)
-  }
-  if key == 11 {
-    if shift {
-      return 41
-    }
-    return 48
-  }
-  if key == 28 {
-    return 10
-  }
-  if key == 57 {
-    return 32
-  }
-  return 0 - 1
-}
 
 // ---- LiveEye: the canvas's words pushed into the window the
 // moment a frame is painted. ----
@@ -201,29 +159,145 @@ class DockSurface {
   }
 }
 
-// ---- LiveInput: the seat's keys become the app's tags. next()
+// ---- PanelSurface: the launched app's panel, an offsetting wrapper
+// like the dock's — both axes this time — so the tree lays out and
+// paints in the panel's own coordinates while the pixels land on the
+// desktop's canvas. ----
+class PanelSurface {
+  def init(base LiveEye, dx Int64, dy Int64, w Int64, h Int64) {
+    self.base = base
+    self.dx = dx
+    self.dy = dy
+    self.w = w
+    self.h = h
+  }
+
+  def width() Int64 {
+    return self.w
+  }
+
+  def height() Int64 {
+    return self.h
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.base.at(x + self.dx, y + self.dy)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.base.fill(x + self.dx, y + self.dy, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.base.blend(x + self.dx, y + self.dy, w, h, color)
+  }
+
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.base.ink(x + self.dx, y + self.dy, f, glyph, color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.base.rounded(x + self.dx, y + self.dy, w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.base.stroke(x + self.dx, y + self.dy, w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.base.shadow(x + self.dx, y + self.dy, w, h, radius, soft, color)
+  }
+
+  def present() {
+  }
+}
+
+// The backend that paints nothing: the face owns the frames, so the
+// app's loop stands up with this under it and `deliver` only moves
+// the model — the face reads the tree back off `root()` and paints
+// it where the desktop wants it.
+class QuietBackend {
+  def mount(root ui.Node, events ui.Events) Void {
+  }
+
+  def patch(old ui.Node, next ui.Node) Void {
+  }
+
+  def run() Void {
+  }
+}
+
+// The ids the event loop's dispatch and the wait's tolerance read.
+const seat_slot = Box.new(0 - 1)
+const pointer_slot = Box.new(0 - 1)
+const keyboard_slot = Box.new(0 - 1)
+const surface_slot = Box.new(0 - 1)
+const xdg_surface_slot = Box.new(0 - 1)
+const toplevel_slot = Box.new(0 - 1)
+
+// ---- LiveInput: the seat's words, decoded but not routed. next()
 // blocks on the socket the way any direct-style read does; every
 // event the compositor sends is consumed by its own grammar so the
-// stream stays aligned; a key press the tag map names answers its
-// tag, and everything else loops. ----
+// stream stays aligned; a key press decodes through the compositor's
+// own keymap into a keysym name, a press becomes a position — and
+// both answer as `Ev`s naming the surface they are for: the
+// keyboard's entered surface, the pointer's hovered one. The routing
+// (which window's tags the name or the position becomes) is the
+// caller's business, not this reader's. ----
+class Ev {
+  def init(kind Int64, surface Int64, x Int64, y Int64, name String) {
+    self.kind = kind
+    self.surface = surface
+    self.x = x
+    self.y = y
+    self.name = name
+  }
+
+  def kind() Int64 {
+    return self.kind
+  }
+
+  def surface() Int64 {
+    return self.surface
+  }
+
+  def x() Int64 {
+    return self.x
+  }
+
+  def y() Int64 {
+    return self.y
+  }
+
+  def name() String {
+    return self.name
+  }
+}
+
 class LiveInput {
   // The ids array: seat, pointer, keyboard, surface, xdg surface,
-  // toplevel, wm base — the objects whose events this reader
-  // consumes or answers. `keytags` maps raw evdev codes (the arrows
-  // the ASCII table has no byte for); `asciitags` maps the ASCII
-  // bytes the key table produces; `rects` maps a click's position —
-  // (x, y, w, h, tag), the first containing rect wins.
-  def init(c wayland.Conn, ids Array[Int64], keytags Array[(Int64, Int64)],
-           asciitags Array[(Int64, Int64)],
-           rects Array[(Int64, Int64, Int64, Int64, Int64)]) {
+  // toplevel, wm base — the desktop's own objects. `xdg_ids` and
+  // `toplevel_ids` are every window the process has stood up, the
+  // desktop's included: a configure for any of them is acked, a
+  // shape for any of them consumed. The keymap is the compositor's
+  // own, parsed once at the keymap event; the shift state rides the
+  // modifiers event; `focus` is the surface the keyboard's enter
+  // named last, `psurface` the one the pointer is over.
+  def init(c wayland.Conn, ids Array[Int64]) {
     self.c = c
     self.ids = ids
-    self.keytags = keytags
-    self.asciitags = asciitags
-    self.rects = rects
+    self.xdg_ids = Box.new([ids[4]])
+    self.xdg_surfaces = Box.new([ids[3]])
+    self.toplevel_ids = Box.new([ids[5]])
+    self.keymap = Box.new(wayland.empty_keymap())
     self.shift = Box.new(false)
     self.px = Box.new(0)
     self.py = Box.new(0)
+    self.focus = Box.new(ids[3])
+    self.psurface = Box.new(ids[3])
   }
 
   def seat_id() Int64 {
@@ -254,65 +328,58 @@ class LiveInput {
     return self.ids[6]
   }
 
-  // The tag a raw evdev code names, or −1.
-  def raw_tag_of(key Int64) Int64 {
+  // A window the process stood up: its configure events join the
+  // tolerated set from now on.
+  def track_window(xdg_id Int64, surface_id Int64, toplevel_id Int64) {
+    self.xdg_ids.replace(self.xdg_ids.read().append(xdg_id))
+    self.xdg_surfaces.replace(self.xdg_surfaces.read().append(surface_id))
+    self.toplevel_ids.replace(self.toplevel_ids.read().append(toplevel_id))
+  }
+
+  def known_xdg(id Int64) Bool {
     var i = 0
-    while i < self.keytags.length() {
-      case self.keytags[i] {
-        (code, tag) -> {
-          if code == key {
-            return tag
-          }
-        }
+    while i < self.xdg_ids.read().length() {
+      if self.xdg_ids.read()[i] == id {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+
+  // The surface an xdg surface wraps, by the tolerance order.
+  def surface_of_xdg(id Int64) Int64 {
+    var i = 0
+    while i < self.xdg_ids.read().length() {
+      if self.xdg_ids.read()[i] == id {
+        return self.xdg_surfaces.read()[i]
       }
       i = i + 1
     }
     return 0 - 1
   }
 
-  // The tag an ASCII byte names, or −1 when the map is silent.
-  def ascii_tag_of(ascii Int64) Int64 {
+  def known_toplevel(id Int64) Bool {
     var i = 0
-    while i < self.asciitags.length() {
-      case self.asciitags[i] {
-        (ch, tag) -> {
-          if ch == ascii {
-            return tag
-          }
-        }
+    while i < self.toplevel_ids.read().length() {
+      if self.toplevel_ids.read()[i] == id {
+        return true
       }
       i = i + 1
     }
-    return 0 - 1
+    return false
   }
 
-  // The tag of the first rect containing the click, or −1: outside
-  // every rect is no one's click.
-  def click_tag(x Int64, y Int64) Int64 {
-    var i = 0
-    while i < self.rects.length() {
-      case self.rects[i] {
-        (rx, ry, rw, rh, tag) -> {
-          if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
-            return tag
-          }
-        }
-      }
-      i = i + 1
-    }
-    return 0 - 1
-  }
-
-  def next() (R, Int64) {
+  def next() (R, Ev) {
     case wayland.next_event(self.c.side) {
-      (R.error, why) -> { return (R.error, 0) }
+      (R.error, why) -> { return (R.error, Ev.new(kind: 0, surface: 0, x: 0, y: 0, name: "")) }
       (R.ok, ev) -> {
         println("live: ev oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " len=" + ev.body.length().to_string())
         if ev.oid == self.c.display_id && ev.opcode == 0 {
           const obj = ev.args.u32()
           const message = ev.args.text()
           println("face: display error on object " + obj.to_string() + ": " + message)
-          return (R.error, 0)
+          return (R.error, Ev.new(kind: 0, surface: 0, x: 0, y: 0, name: ""))
         }
         if ev.oid == self.keyboard_id() && ev.opcode == 4 {
           // The modifiers: the serial first, then the depressed
@@ -331,33 +398,47 @@ class LiveInput {
           const key = ev.args.u32()
           const state = ev.args.u32()
           if state == 1 {
-            const raw = self.raw_tag_of(key)
-            if raw >= 0 {
-              println("face: key " + key.to_string() + " delivers tag " + raw.to_string())
-              return (R.ok, raw)
+            // The keymap's own word for the key: the keycodes the
+            // keymap speaks are the xkb ones — evdev plus eight, the
+            // dance every Wayland client does. The name rides to the
+            // caller with the surface the keyboard entered; whether
+            // it is anyone's tag is routing, not decoding.
+            const name = self.keymap.read().name_of(key + 8, self.shift.read())
+            if name.length() > 0 {
+              println("face: key " + name + " arrives for surface " + self.focus.read().to_string())
+              return (R.ok, Ev.new(kind: 0, surface: self.focus.read(), x: 0, y: 0, name: name))
             }
-            const ascii = key_ascii(key, self.shift.read())
-            if ascii >= 0 {
-              const tag = self.ascii_tag_of(ascii)
-              if tag >= 0 {
-                println("face: key " + ascii.to_string() + " delivers tag " + tag.to_string())
-                return (R.ok, tag)
+          }
+          return self.next()
+        }
+        // The keyboard's own halves, consumed by their grammar. The
+        // keymap's fd reads back through the passage and parses once
+        // — the compositor's own translation table, from here on the
+        // source of every key's name.
+        if ev.oid == self.keyboard_id() && ev.opcode == 0 {
+          ev.args.u32()
+          const fd = ev.args.fd()
+          const size = ev.args.u32()
+          case os.read(fd, size) {
+            (R.error, why) -> { println("face: keymap read " + why) }
+            (R.ok, body) -> {
+              case wayland.parse_keymap(body) {
+                (R.error, why) -> { println("face: keymap parse " + why) }
+                (R.ok, km) -> {
+                  self.keymap.replace(km)
+                  println("face: keymap parsed")
+                }
               }
             }
           }
           return self.next()
         }
-        // The keyboard's own halves, consumed by their grammar.
-        if ev.oid == self.keyboard_id() && ev.opcode == 0 {
-          ev.args.u32()
-          ev.args.fd()
-          ev.args.u32()
-          return self.next()
-        }
         if ev.oid == self.keyboard_id() && ev.opcode == 1 {
           ev.args.u32()
-          ev.args.u32()
+          const surface = ev.args.u32()
           ev.args.array()
+          self.focus.replace(surface)
+          println("face: focus surface " + surface.to_string())
           return self.next()
         }
         if ev.oid == self.keyboard_id() && ev.opcode == 2 {
@@ -370,12 +451,14 @@ class LiveInput {
           ev.args.i32()
           return self.next()
         }
-        // The pointer: the position the clicks would need, kept.
+        // The pointer: the surface it is over and the position the
+        // clicks would need, both kept.
         if ev.oid == self.pointer_id() && ev.opcode == 0 {
           ev.args.u32()
-          ev.args.u32()
+          const surface = ev.args.u32()
           self.px.replace(ev.args.fixed())
           self.py.replace(ev.args.fixed())
+          self.psurface.replace(surface)
           return self.next()
         }
         if ev.oid == self.pointer_id() && ev.opcode == 1 {
@@ -395,11 +478,8 @@ class LiveInput {
           const button = ev.args.u32()
           const state = ev.args.u32()
           if state == 1 && button == 272 {
-            const tag = self.click_tag(self.px.read(), self.py.read())
-            if tag >= 0 {
-              println("face: click at " + self.px.read().to_string() + " " + self.py.read().to_string() + " delivers tag " + tag.to_string())
-              return (R.ok, tag)
-            }
+            println("face: click at " + self.px.read().to_string() + " " + self.py.read().to_string() + " on surface " + self.psurface.read().to_string())
+            return (R.ok, Ev.new(kind: 1, surface: self.psurface.read(), x: self.px.read(), y: self.py.read(), name: ""))
           }
           return self.next()
         }
@@ -419,7 +499,8 @@ class LiveInput {
         }
         // The seat and the surface families.
         if ev.oid == self.seat_id() && ev.opcode == 0 {
-          ev.args.u32()
+          const caps = ev.args.u32()
+          println("face: capabilities " + caps.to_string())
           return self.next()
         }
         if ev.oid == self.seat_id() && ev.opcode == 1 {
@@ -444,18 +525,20 @@ class LiveInput {
           ev.args.u32()
           return self.next()
         }
-        // The window's own halves: the xdg surface's configure is
-        // acked (the discipline), the toplevel's shapes consumed, the
-        // wm's ping answered — the loop lives through them.
-        if ev.oid == self.xdg_surface_id() && ev.opcode == 0 {
+        // Every window's own halves: the xdg surface's configure is
+        // acked (the discipline — a bare commit here would clear the
+        // window's buffer and unmap it), the toplevel's shapes
+        // consumed, the wm's ping answered — the loop lives through
+        // them.
+        if self.known_xdg(ev.oid) && ev.opcode == 0 {
           const serial = ev.args.u32()
-          case wayland.surface_ack_configure(self.c, self.xdg_surface_id(), serial) {
+          case wayland.surface_ack_configure(self.c, ev.oid, serial) {
             (R.error, why) -> { println("face: ack " + why) }
             (R.ok, _) -> { }
           }
           return self.next()
         }
-        if ev.oid == self.toplevel_id() && (ev.opcode == 0 || ev.opcode == 2 || ev.opcode == 3) {
+        if self.known_toplevel(ev.oid) && (ev.opcode == 0 || ev.opcode == 2 || ev.opcode == 3) {
           if ev.opcode == 0 {
             ev.args.i32()
             ev.args.i32()
@@ -465,8 +548,9 @@ class LiveInput {
           }
           return self.next()
         }
-        if ev.oid == self.toplevel_id() && ev.opcode == 1 {
-          return (R.error, 0)
+        if self.known_toplevel(ev.oid) && ev.opcode == 1 {
+          println("face: a window's close arrived")
+          return self.next()
         }
         if ev.oid == self.wm_base_id() && ev.opcode == 0 {
           case wayland.wm_base_pong(self.c, self.wm_base_id(), ev.args.u32()) {
@@ -476,7 +560,7 @@ class LiveInput {
           return self.next()
         }
         println("face: unexpected event on object " + ev.oid.to_string() + " opcode " + ev.opcode.to_string())
-        return (R.error, 0)
+        return (R.error, Ev.new(kind: 0, surface: 0, x: 0, y: 0, name: ""))
       }
     }
   }
@@ -503,8 +587,10 @@ def main() {
 }
 
 // The face whole: the wallpaper's formula, the header bar, the dock
-// with its tiles — the desktop's own surfaces, the digest the
-// transcript's evidence per frame.
+// with its tiles — the desktop's own chrome, the digest the
+// transcript's evidence per frame. The apps live in windows of
+// their own now; the desktop carries the launch dots and nothing
+// else of them.
 def paint_desktop(eye LiveEye, f ui_fb.raster.Strike, w Int64, h Int64,
                   focused Int64, launched Int64) {
   emo_desktop.wallpaper(eye, w, h)
@@ -513,6 +599,286 @@ def paint_desktop(eye LiveEye, f ui_fb.raster.Strike, w Int64, h Int64,
   emo_desktop.paint(dock, f, w, 40, 0, ["counter", "files", "editor"], focused, launched)
   eye.present()
   println("frame " + ui_fb_frame.digest(eye).to_string())
+}
+
+// ---- Win: an application window the process stood up — its ids,
+// its presenting eye, and the rect table the tree it last painted
+// exported. ----
+class Win {
+  def init(surface_id Int64, xdg_id Int64, toplevel_id Int64,
+           eye LiveEye) {
+    self.surface_id = surface_id
+    self.xdg_id = xdg_id
+    self.toplevel_id = toplevel_id
+    self.eye = eye
+    self.rects = Box.new([])
+  }
+
+  def surface_id() Int64 {
+    return self.surface_id
+  }
+
+  def xdg_id() Int64 {
+    return self.xdg_id
+  }
+
+  def toplevel_id() Int64 {
+    return self.toplevel_id
+  }
+
+  def eye() LiveEye {
+    return self.eye
+  }
+
+  def set_rects(table Array[(Int64, Int64, Int64, Int64, Int64)]) {
+    self.rects.replace(table)
+  }
+
+  def rect_table() Array[(Int64, Int64, Int64, Int64, Int64)] {
+    return self.rects.read()
+  }
+}
+
+// A window whole: surface, xdg surface, toplevel, the empty commit,
+// the configure wait, the ack, and the pool and buffer its frames
+// ride — everything the desktop's own window does, for an app.
+def make_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64,
+                title String, w Int64, h Int64,
+                others Array[(Int64, Int64)]) (R, Win) {
+  case wayland.compositor_create_surface(c, comp_id) {
+    (R.error, why) -> { return (R.error, "surface " + why) }
+    (R.ok, surface_id) -> {
+      case wayland.wm_base_get_xdg_surface(c, wm_id, surface_id) {
+        (R.error, why) -> { return (R.error, "xdg surface " + why) }
+        (R.ok, xdg_id) -> {
+          case wayland.xdg_surface_get_toplevel(c, xdg_id) {
+            (R.error, why) -> { return (R.error, "toplevel " + why) }
+            (R.ok, toplevel_id) -> {
+              case wayland.toplevel_set_title(c, toplevel_id, title) {
+                (R.error, why) -> { return (R.error, "title " + why) }
+                (R.ok, _) -> {
+                  case wayland.toplevel_set_app_id(c, toplevel_id, title) {
+                    (R.error, why) -> { return (R.error, "app id " + why) }
+                    (R.ok, _) -> {
+                      case wayland.surface_commit(c, surface_id) {
+                        (R.error, why) -> { return (R.error, "first commit " + why) }
+                        (R.ok, _) -> {
+                          case wayland.wait_configure(c, xdg_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read(), seat_slot.read(), others) {
+                            (R.error, why) -> { return (R.error, "configure " + why) }
+                            (R.ok, serial) -> {
+                              case wayland.surface_ack_configure(c, xdg_id, serial) {
+                                (R.error, why) -> { return (R.error, "ack " + why) }
+                                (R.ok, _) -> {
+                              const stride = w * 4
+                              const pool_path = "/tmp/emo-app-" + title + "-" + os.getpid().to_string() + ".tmp"
+                              case os_shm_open(pool_path) {
+                                (R.error, why) -> { return (R.error, "pool " + why) }
+                                (R.ok, pool_fd) -> {
+                                  case os_ftruncate(pool_fd, stride * h) {
+                                    (R.error, why) -> { return (R.error, "ftruncate " + why) }
+                                    (R.ok, _) -> {
+                                      case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
+                                        (R.error, why) -> { return (R.error, "create_pool " + why) }
+                                        (R.ok, pool_id) -> {
+                                          case wayland.pool_create_buffer(c, pool_id, 0, w, h, stride, wayland.shm_format_xrgb8888()) {
+                                            (R.error, why) -> { return (R.error, "create_buffer " + why) }
+                                            (R.ok, buffer_id) -> {
+                                              case wayland.surface_attach(c, surface_id, buffer_id, 0, 0) {
+                                                (R.error, why) -> { return (R.error, "attach " + why) }
+                                                (R.ok, _) -> {
+                                                  case wayland.surface_damage(c, surface_id, 0, 0, w, h) {
+                                                    (R.error, why) -> { return (R.error, "damage " + why) }
+                                                    (R.ok, _) -> {
+                                                      case wayland.surface_commit(c, surface_id) {
+                                                        (R.error, why) -> { return (R.error, "commit " + why) }
+                                                        (R.ok, _) -> {
+                                                          const canvas = ui_fb_canvas.Canvas.new(width: w, height: h)
+                                                          const eye = LiveEye.new(canvas: canvas, c: c, surface_id: surface_id, buffer_id: buffer_id, pool_fd: pool_fd)
+                                                          return (R.ok, Win.new(surface_id: surface_id, xdg_id: xdg_id, toplevel_id: toplevel_id, eye: eye))
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+}
+}
+
+// An app window's frame: the card, the title strip, the tree over
+// the content area — the tree's rects, moved into the window's own
+// coordinates, the hit table a click in this window tests.
+def paint_app_window(win Win, app ui.App, f ui_fb.raster.Strike,
+                     name String) {
+  const eye = win.eye()
+  const w = eye.width()
+  const h = eye.height()
+  eye.rounded(0, 0, w, h, 10, 0xFFF4F4F8, 0xFFD8DCE6)
+  eye.rounded(0, 0, w, 28, 10, 0xFF3A4150, 0xFF3A4150)
+  ui_fb.text(f, name, 12, 6, 0xF8F8F0, eye)
+  const panel = PanelSurface.new(base: eye, dx: 0, dy: 28, w: w, h: h - 28)
+  const rects = ui_fb.Rects.new()
+  ui_fb.paint_rects(app.root(), panel, f, rects)
+  var table = []
+  var i = 0
+  while i < rects.table().length() {
+    case rects.table()[i] {
+      (x, y, bw, bh, tag) -> {
+        table = table.append((x, y + 28, bw, bh, tag))
+        println("face: rect " + x.to_string() + " " + (y + 28).to_string() + " " + bw.to_string() + " " + bh.to_string() + " tag " + tag.to_string())
+      }
+    }
+    i = i + 1
+  }
+  win.set_rects(table)
+  eye.present()
+  println("face: window " + name + " frame " + ui_fb_frame.digest(eye).to_string())
+}
+
+// The tag a keysym name names in a routing table, or −1.
+def name_tag(table Array[(String, Int64)], name String) Int64 {
+  var i = 0
+  while i < table.length() {
+    case table[i] {
+      (n, tag) -> {
+        if n == name {
+          return tag
+        }
+      }
+    }
+    i = i + 1
+  }
+  return 0 - 1
+}
+
+// The tag of the first rect containing the position, or −1.
+def rect_tag(table Array[(Int64, Int64, Int64, Int64, Int64)], x Int64,
+             y Int64) Int64 {
+  var i = 0
+  while i < table.length() {
+    case table[i] {
+      (rx, ry, rw, rh, tag) -> {
+        if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
+          return tag
+        }
+      }
+    }
+    i = i + 1
+  }
+  return 0 - 1
+}
+
+// ---- the routing's furniture ----
+
+// A dock slot: the app that lives there, the keys that drive it
+// (the keysym names its window answers), the name on its title
+// strip.
+class Slot {
+  def init(index Int64, name String, app ui.App,
+           keys Array[(String, Int64)]) {
+    self.index = index
+    self.name = name
+    self.app = app
+    self.keys = keys
+  }
+
+  def index() Int64 {
+    return self.index
+  }
+
+  def name() String {
+    return self.name
+  }
+
+  def app() ui.App {
+    return self.app
+  }
+
+  def keys() Array[(String, Int64)] {
+    return self.keys
+  }
+}
+
+// A stood-up window and the slot it serves.
+class Opened {
+  def init(slot Slot, win Win) {
+    self.slot = slot
+    self.win = win
+  }
+
+  def slot() Slot {
+    return self.slot
+  }
+
+  def win() Win {
+    return self.win
+  }
+}
+
+// The windows the process has stood up so far.
+class Windows {
+  def init() {
+    self.list = Box.new([])
+  }
+
+  def open(slot Slot, win Win) {
+    self.list.replace(self.list.read().append(Opened.new(slot: slot, win: win)))
+  }
+
+  def count() Int64 {
+    return self.list.read().length()
+  }
+
+  def at(i Int64) Opened {
+    return self.list.read()[i]
+  }
+
+  // The window a surface belongs to, by index, or −1: the desktop's
+  // own surface belongs to none of them.
+  def index_of(surface Int64) Int64 {
+    var i = 0
+    while i < self.count() {
+      if self.at(i).win().surface_id() == surface {
+        return i
+      }
+      i = i + 1
+    }
+    return 0 - 1
+  }
+
+  // The dock slot's window, or −1 while the slot is unlaunched.
+  def index_of_slot(slot_index Int64) Int64 {
+    var i = 0
+    while i < self.count() {
+      if self.at(i).slot().index() == slot_index {
+        return i
+      }
+      i = i + 1
+    }
+    return 0 - 1
+  }
 }
 
 // The compositor's socket: $XDG_RUNTIME_DIR / $WAYLAND_DISPLAY.
@@ -527,14 +893,6 @@ def socket_path() (R, String) {
     }
   }
 }
-
-// The ids the event loop's dispatch and the wait's tolerance read.
-const seat_slot = Box.new(0 - 1)
-const pointer_slot = Box.new(0 - 1)
-const keyboard_slot = Box.new(0 - 1)
-const surface_slot = Box.new(0 - 1)
-const xdg_surface_slot = Box.new(0 - 1)
-const toplevel_slot = Box.new(0 - 1)
 
 // One global bound at a version, the id handed back — the shallow
 // chain the face's setup walks.
@@ -708,13 +1066,13 @@ def face_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64) {
                   case wayland.surface_commit(c, surface_id) {
                     (R.error, why) -> { println("face: first commit " + why) }
                     (R.ok, _) -> {
-                      case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read()) {
+                      case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read(), seat_slot.read(), []) {
                         (R.error, why) -> { println("face: configure " + why) }
                         (R.ok, serial) -> {
                           case wayland.surface_ack_configure(c, xdg_surface_id, serial) {
                             (R.error, why) -> { println("face: ack " + why) }
                             (R.ok, _) -> {
-                              present_bridge(c, surface_id, shm_id, wm_id)
+                              present_bridge(c, comp_id, surface_id, shm_id, wm_id)
                             }
                           }
                         }
@@ -733,7 +1091,8 @@ def face_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64) {
 
 // The pool, the buffer, the first frame, the bridges, and the Elm
 // loop — the corpus's own application, live.
-def present_bridge(c wayland.Conn, surface_id Int64, shm_id Int64, wm_id Int64) {
+def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
+                   shm_id Int64, wm_id Int64) {
   const w = 1280
   const h = 720
   const stride = w * 4
@@ -762,21 +1121,41 @@ def present_bridge(c wayland.Conn, surface_id Int64, shm_id Int64, wm_id Int64) 
                               const canvas = ui_fb_canvas.Canvas.new(width: w, height: h)
                               const eye = LiveEye.new(canvas: canvas, c: c, surface_id: surface_id, buffer_id: buffer_id, pool_fd: pool_fd)
                               const ids = [seat_slot.read(), pointer_slot.read(), keyboard_slot.read(), surface_id, xdg_surface_slot.read(), toplevel_slot.read(), wm_id]
-                              // The dock's tiles: three apps, the click
-                              // rects in display coordinates, the strip
-                              // at the bottom edge.
-                              const rects = [(20, h - 40 + 4, 32, 32, 0), (60, h - 40 + 4, 32, 32, 1), (100, h - 40 + 4, 32, 32, 2)]
-                              const input = LiveInput.new(c: c, ids: ids, keytags: [(105, 3), (106, 4)], asciitags: [(10, 5)], rects: rects)
+                              const input = LiveInput.new(c: c, ids: ids)
                               const holder = ArrayBuilder.new()
                               case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
                                 (R.error, why) -> { println("the interface strike refused: ${why}") }
                                 (R.ok, s) -> { holder.push(s) }
                               }
                               const f = holder.get(0)
+                              // The three corpus apps, standing from
+                              // the start: each dock slot carries its
+                              // app, the keysym names its window
+                              // answers, its name. `deliver` runs the
+                              // app's own update; the face paints the
+                              // tree back off `root()`.
+                              const slots = [
+                                Slot.new(index: 0, name: "counter",
+                                  app: ui.App.new(view: ui_apps.counter.view, update: ui_apps.counter.update, model: ui_apps.counter.initial(), backend: QuietBackend.new()),
+                                  keys: [("a", 0), ("b", 1)]),
+                                Slot.new(index: 1, name: "files",
+                                  app: ui.App.new(view: ui_apps.files.view, update: ui_apps.files.update, model: ui_apps.files.initial(), backend: QuietBackend.new()),
+                                  keys: [("j", 0), ("k", 1), ("o", 2)]),
+                                Slot.new(index: 2, name: "editor",
+                                  app: ui.App.new(view: ui_apps.editor.view, update: ui_apps.editor.update, model: ui_apps.editor.initial(), backend: QuietBackend.new()),
+                                  keys: [("a", 0), ("b", 1), ("Return", 2)])
+                              ]
+                              const windows = Windows.new()
+                              // The desktop's own routing tables: the
+                              // keysym names the dock answers, the
+                              // tiles' rects at the bottom edge.
+                              const desktop_names = [("Left", 3), ("Right", 4), ("Return", 5)]
+                              const desktop_rects = [(20, h - 40 + 4, 32, 32, 0), (60, h - 40 + 4, 32, 32, 1), (100, h - 40 + 4, 32, 32, 2)]
                               println("face: the desktop runs live")
-                              // The shell's own loop, direct style: the
-                              // face painted, the tags consumed, the
-                              // frame presented per change.
+                              // The shell's own loop: every `Ev` is
+                              // routed by the surface it names — the
+                              // desktop's tags drive the dock, a
+                              // window's tags drive the app behind it.
                               const focused = Box.new(0)
                               const launched = Box.new(0)
                               paint_desktop(eye, f, w, h, focused.read(), launched.read())
@@ -787,24 +1166,90 @@ def present_bridge(c wayland.Conn, surface_id Int64, shm_id Int64, wm_id Int64) 
                                     println("face: " + why)
                                     more = false
                                   }
-                                  (R.ok, tag) -> {
-                                    if tag <= 2 {
-                                      focused.replace(tag)
-                                    } else {
-                                      if tag == 3 {
-                                        focused.replace((focused.read() + 2) % 3)
+                                  (R.ok, ev) -> {
+                                    if ev.kind() == 1 {
+                                      // A press: the surface under the
+                                      // pointer says whose rects the
+                                      // position tests.
+                                      if ev.surface() == surface_id {
+                                        const tag = rect_tag(desktop_rects, ev.x(), ev.y())
+                                        if tag >= 0 {
+                                          println("face: click delivers tile " + tag.to_string())
+                                          focused.replace(tag)
+                                          println("face: tile " + focused.read().to_string() + " focused launched " + launched.read().to_string())
+                                          paint_desktop(eye, f, w, h, focused.read(), launched.read())
+                                        }
                                       } else {
-                                        if tag == 4 {
-                                          focused.replace((focused.read() + 1) % 3)
-                                        } else {
-                                          if tag == 5 {
-                                            launched.replace(launched.read() ^ (1 << focused.read()))
+                                        const idx = windows.index_of(ev.surface())
+                                        if idx >= 0 {
+                                          const opened = windows.at(idx)
+                                          const tag = rect_tag(opened.win().rect_table(), ev.x(), ev.y())
+                                          if tag >= 0 {
+                                            println("face: click delivers tag " + tag.to_string() + " to " + opened.slot().name())
+                                            opened.slot().app().deliver(tag)
+                                            paint_app_window(opened.win(), opened.slot().app(), f, opened.slot().name())
+                                          }
+                                        }
+                                      }
+                                    } else {
+                                      // A key: the surface the keyboard
+                                      // entered says whose tag the name
+                                      // becomes.
+                                      if ev.surface() == surface_id {
+                                        const tag = name_tag(desktop_names, ev.name())
+                                        if tag >= 0 {
+                                          println("face: key " + ev.name() + " delivers tag " + tag.to_string())
+                                          if tag <= 2 {
+                                            focused.replace(tag)
+                                          } else {
+                                            if tag == 3 {
+                                              focused.replace((focused.read() + 2) % 3)
+                                            } else {
+                                              if tag == 4 {
+                                                focused.replace((focused.read() + 1) % 3)
+                                              } else {
+                                                if tag == 5 {
+                                                  const slot = slots[focused.read()]
+                                                  if windows.index_of_slot(slot.index()) < 0 {
+                                                    const others = ArrayBuilder.new()
+                                                    others.push((xdg_surface_slot.read(), toplevel_slot.read()))
+                                                    var wi = 0
+                                                    while wi < windows.count() {
+                                                      const opened = windows.at(wi)
+                                                      others.push((opened.win().xdg_id(), opened.win().toplevel_id()))
+                                                      wi = wi + 1
+                                                    }
+                                                    case make_window(c, comp_id, shm_id, wm_id, slot.name(), 320, 240, others.to_array()) {
+                                                      (R.error, why) -> { println("face: window refused " + why) }
+                                                      (R.ok, win) -> {
+                                                        input.track_window(win.xdg_id(), win.surface_id(), win.toplevel_id())
+                                                        windows.open(slot, win)
+                                                        launched.replace(launched.read() | (1 << slot.index()))
+                                                        println("face: window " + slot.name() + " stands on surface " + win.surface_id().to_string())
+                                                        paint_app_window(win, slot.app(), f, slot.name())
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                          println("face: tile " + focused.read().to_string() + " focused launched " + launched.read().to_string())
+                                          paint_desktop(eye, f, w, h, focused.read(), launched.read())
+                                        }
+                                      } else {
+                                        const idx = windows.index_of(ev.surface())
+                                        if idx >= 0 {
+                                          const opened = windows.at(idx)
+                                          const tag = name_tag(opened.slot().keys(), ev.name())
+                                          if tag >= 0 {
+                                            println("face: key " + ev.name() + " delivers tag " + tag.to_string() + " to " + opened.slot().name())
+                                            opened.slot().app().deliver(tag)
+                                            paint_app_window(opened.win(), opened.slot().app(), f, opened.slot().name())
                                           }
                                         }
                                       }
                                     }
-                                    println("face: tile " + focused.read().to_string() + " focused launched " + launched.read().to_string())
-                                    paint_desktop(eye, f, w, h, focused.read(), launched.read())
                                   }
                                 }
                               }

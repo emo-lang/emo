@@ -468,6 +468,7 @@ emo_value emo_net_recvmsg_fd(int64_t fd, int64_t cap);
 emo_value emo_os_shm_open(emo_str name);
 emo_value emo_os_ftruncate(int64_t fd, int64_t size);
 emo_value emo_os_pwrite(int64_t fd, emo_str data, int64_t offset);
+emo_value emo_os_sleep_ms(int64_t ms);
 
 /* The scheduler hooks: park the current fiber until its fd is
    readable (the reads), or writable (the TLS handshake's
