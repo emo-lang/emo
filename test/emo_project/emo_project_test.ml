@@ -2215,7 +2215,8 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
                           ds)))
         in
         Alcotest.(check string) "output" expected output);
-    tc "the websocket_demo example runs through the committed lockfile" (fun () ->
+    tc "the websocket_demo example runs through the committed lockfile"
+      (fun () ->
         use_workspace_registry () |> ignore;
         let examples =
           match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
@@ -2250,7 +2251,8 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
                           ds)))
         in
         Alcotest.(check string) "output" expected output);
-    tc "the playwright_demo example runs through the committed lockfile" (fun () ->
+    tc "the playwright_demo example runs through the committed lockfile"
+      (fun () ->
         use_workspace_registry () |> ignore;
         let examples =
           match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
