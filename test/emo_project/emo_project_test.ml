@@ -3581,11 +3581,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "shop")
           "shop" "main.emo");
-    tc "derive_shared compiles to a binary with the interpreter's output"
+    tc "derive_shared_macro_demo compiles to a binary with the interpreter's output"
       (fun () ->
         bootstrap_example
-          (Filename.concat (examples_dir ()) "derive_shared")
-          "derive_shared" "main.emo");
+          (Filename.concat (examples_dir ()) "derive_shared_macro_demo")
+          "derive_shared_macro_demo" "main.emo");
     tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "pipeline")

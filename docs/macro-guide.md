@@ -33,7 +33,7 @@ emo dump main.emo --raw    # the file as parsed — directives, macro defs
 
 ## A first macro, line by line
 
-The worked example is [`examples/trace_demo`](../examples/trace_demo/main.emo) — the macro below wraps a def so every call logs its arguments and answer:
+The worked example is [`examples/trace_macro_demo`](../examples/trace_macro_demo/main.emo) — the macro below wraps a def so every call logs its arguments and answer:
 
 ```emo
 // #macro
@@ -137,7 +137,7 @@ The raise surfaces as the expansion's compile error, carrying the message.
 
 ## Class derivation
 
-The application seat also takes classes: `// @derive_eq` above a `class` hands the class tree to the macro, which reads the field list and appends generated methods with `Syntax.with_methods` — they live inside the class like hand-written ones, checked with the module. The worked example is [`examples/derive_eq_demo`](../examples/derive_eq_demo/main.emo):
+The application seat also takes classes: `// @derive_eq` above a `class` hands the class tree to the macro, which reads the field list and appends generated methods with `Syntax.with_methods` — they live inside the class like hand-written ones, checked with the module. The worked example is [`examples/derive_eq_macro_demo`](../examples/derive_eq_macro_demo/main.emo):
 
 ```emo
 // #macro
@@ -183,7 +183,7 @@ A macro module is an ordinary module whose `#macro` defs have no runtime presenc
 class Point { ... }
 ```
 
-The pilot lives in [`examples/derive_shared`](../examples/derive_shared/main.emo) — one derivation in `eq_macros.emo`, two classes applying it in `main.emo`.
+The pilot lives in [`examples/derive_shared_macro_demo`](../examples/derive_shared_macro_demo/main.emo) — one derivation in `eq_macros.emo`, two classes applying it in `main.emo`.
 
 ## Rules and limits
 
@@ -212,4 +212,4 @@ The pilot lives in [`examples/derive_shared`](../examples/derive_shared/main.emo
 
 ## The four runnable pilots
 
-[`examples/trace_demo`](../examples/trace_demo/main.emo) — the minimal wrap. [`examples/memoize_demo`](../examples/memoize_demo/main.emo) — an application argument, generated runtime state (a private `Map`), and a quote-laid-out wrapper. [`examples/derive_eq_demo`](../examples/derive_eq_demo/main.emo) — class derivation. [`examples/derive_shared`](../examples/derive_shared/main.emo) — the same derivation applied from a sibling module. Each runs byte-identically on the interpreter and the compiled targets.
+[`examples/trace_macro_demo`](../examples/trace_macro_demo/main.emo) — the minimal wrap. [`examples/memoize_macro_demo`](../examples/memoize_macro_demo/main.emo) — an application argument, generated runtime state (a private `Map`), and a quote-laid-out wrapper. [`examples/derive_eq_macro_demo`](../examples/derive_eq_macro_demo/main.emo) — class derivation. [`examples/derive_shared_macro_demo`](../examples/derive_shared_macro_demo/main.emo) — the same derivation applied from a sibling module. Each runs byte-identically on the interpreter and the compiled targets.
