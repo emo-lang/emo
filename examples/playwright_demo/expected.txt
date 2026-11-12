@@ -1,0 +1,16 @@
+browser version: 1.50.0
+page opened
+goto: https://example.com/ 200
+title: 例子页面
+content: 70013 bytes
+text_content #gone is null: true
+text_content #hello: 你好,世界
+clicked #link
+filled #box
+pressed Enter
+screenshot: 90000 bytes
+click #missing failed: playwright: timeout 30000ms exceeded
+fill #gone failed: playwright: element is not visible
+page closed
+browser closed
+connection closed

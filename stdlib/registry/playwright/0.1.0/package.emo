@@ -1,0 +1,11 @@
+package {
+  name = "playwright"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "base64" = "0.1.0"
+    "json" = "0.1.0"
+    "websocket" = "0.1.0"
+  }
+}

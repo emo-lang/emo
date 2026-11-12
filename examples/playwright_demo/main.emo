@@ -1,0 +1,745 @@
+// The playwright package end to end on loopback: this program carries
+// its own miniature driver, and the client half of the wire talks to
+// this file's driver half over the real websocket frames — every
+// answer is an answer this file computed. The golden pins the whole
+// round trip byte for byte.
+//
+// The driver stands in for `playwright run-server`: it takes the
+// upgrade, creates the Playwright object with a pre-launched browser
+// (that is the run-server shape — the browser arrives with the
+// initialize answer, the client never launches), and answers the
+// doors the package carries. It speaks raw frames by hand — not the
+// websocket package's server half — precisely so it can fragment a
+// message across frames, inject a ping, and ride the eight-byte
+// length form with a large screenshot: the frame paths a receiver
+// must survive, exercised on the client that reads them. The driver
+// prints nothing — every line of the golden is the client's reading.
+//
+// The protocol shapes the driver answers are the driver's own, as
+// main speaks them: commands {id, guid, method, params, metadata},
+// answers {id, result} or {id, error}, events {guid, method, params},
+// object references {guid}, binary as base64.
+
+require "base64"
+require "crypto"
+require "net"
+require "playwright"
+
+// ---- the client half ----
+
+def run_client(pw playwright.Playwright) {
+  const browser = pw.browser()
+  case browser.version() {
+    (R.error, why) -> { println("version failed: ${why}") }
+    (R.ok, v)      -> { println("browser version: ${v}") }
+  }
+  case browser.new_page() {
+    (R.error, why) -> { println("new_page failed: ${why}") }
+    (R.ok, page)   -> {
+      println("page opened")
+      run_page(page)
+    }
+  }
+  case browser.close() {
+    (R.error, why) -> { println("browser close failed: ${why}") }
+    (R.ok, _)      -> { println("browser closed") }
+  }
+  case pw.close() {
+    (R.error, why) -> { println("close failed: ${why}") }
+    (R.ok, _)      -> { println("connection closed") }
+  }
+}
+
+def run_page(page playwright.Page) {
+  case page.goto("https://example.com/") {
+    (R.error, why) -> { println("goto failed: ${why}") }
+    (R.ok, resp)   -> {
+      if resp.is_null?() {
+        println("goto: no response")
+      } else {
+        println("goto: ${resp.url()} ${resp.status()}")
+      }
+    }
+  }
+  case page.title() {
+    (R.error, why) -> { println("title failed: ${why}") }
+    (R.ok, text)   -> { println("title: ${text}") }
+  }
+  // The content's reading is its length — the golden pins the count,
+  // the wire carries the document, fragmented across frames.
+  case page.content() {
+    (R.error, why) -> { println("content failed: ${why}") }
+    (R.ok, text)   -> { println("content: ${text.length()} bytes") }
+  }
+  case page.text_content("#gone") {
+    (R.error, why) -> { println("text_content failed: ${why}") }
+    (R.ok, text)   -> { println("text_content #gone is null: ${text.is_null?()}") }
+  }
+  case page.text_content("#hello") {
+    (R.error, why) -> { println("text_content failed: ${why}") }
+    (R.ok, text)   -> { println("text_content #hello: ${text.as_string()}") }
+  }
+  case page.click("#link") {
+    (R.error, why) -> { println("click failed: ${why}") }
+    (R.ok, _)      -> { println("clicked #link") }
+  }
+  case page.fill("#box", "hello driver") {
+    (R.error, why) -> { println("fill failed: ${why}") }
+    (R.ok, _)      -> { println("filled #box") }
+  }
+  case page.press("#box", "Enter") {
+    (R.error, why) -> { println("press failed: ${why}") }
+    (R.ok, _)      -> { println("pressed Enter") }
+  }
+  case page.screenshot() {
+    (R.error, why) -> { println("screenshot failed: ${why}") }
+    (R.ok, png)    -> { println("screenshot: ${png.length()} bytes") }
+  }
+  case page.click("#missing") {
+    (R.error, why) -> { println("click #missing failed: ${why}") }
+    (R.ok, _)      -> { println("clicked #missing") }
+  }
+  case page.fill("#gone", "nope") {
+    (R.error, why) -> { println("fill #gone failed: ${why}") }
+    (R.ok, _)      -> { println("filled #gone") }
+  }
+  case page.close() {
+    (R.error, why) -> { println("page close failed: ${why}") }
+    (R.ok, _)      -> { println("page closed") }
+  }
+}
+
+// ---- the fake driver's raw wire half ----
+
+// One received frame: the opcode and the unmasked payload. Client
+// frames arrive masked; the driver unmasks by hand.
+class WireFrame {
+  def init(opcode Int64, payload Bytes) {
+    self.opcode = opcode
+    self.payload = payload
+  }
+}
+
+const wire_text = 1
+const wire_close = 8
+const wire_ping = 9
+const wire_pong = 10
+
+// The driver's accept: read the upgrade request, check the pieces a
+// real handshake must carry, answer 101 with the accept the key
+// names.
+def fake_accept(conn TcpConn) (R, String) {
+  case fake_request_key(conn, "", false, false, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, key)    -> {
+      case conn.write(fake_answer(key)) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> { return (R.ok, key) }
+      }
+    }
+  }
+}
+
+def fake_request_key(conn TcpConn, key String, upgrade_ok Bool, version_ok Bool, seen Int64) (R, String) {
+  if seen > 200 {
+    return (R.error, "too many header lines")
+  }
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        if key == "" {
+          return (R.error, "no key in the request")
+        }
+        if !upgrade_ok {
+          return (R.error, "no upgrade in the request")
+        }
+        if !version_ok {
+          return (R.error, "no version in the request")
+        }
+        return (R.ok, key)
+      }
+      const lower = line.lower()
+      if lower.starts_with("sec-websocket-key:") {
+        return fake_request_key(conn, header_value(line), upgrade_ok, version_ok, seen + 1)
+      }
+      if lower.starts_with("upgrade:") {
+        if header_value(line).lower() == "websocket" {
+          return fake_request_key(conn, key, true, version_ok, seen + 1)
+        }
+        return fake_request_key(conn, key, upgrade_ok, version_ok, seen + 1)
+      }
+      if lower.starts_with("sec-websocket-version:") {
+        if header_value(line) == "13" {
+          return fake_request_key(conn, key, upgrade_ok, true, seen + 1)
+        }
+        return (R.error, "wrong websocket version")
+      }
+      return fake_request_key(conn, key, upgrade_ok, version_ok, seen + 1)
+    }
+  }
+}
+
+// The value after the first colon, trimmed — a header's payload.
+def header_value(line String) String {
+  const at = line.index_of(":")
+  return line.substring(at + 1, line.length() - at - 1).trim()
+}
+
+const wire_guid = "258EAFA9-E914-47DA-95CA-C5AB0DC85B11"
+
+def fake_answer(key String) String {
+  const accept = base64.encode(crypto.legacy.sha1((key + wire_guid).to_bytes()).to_string())
+  return "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"
+}
+
+// One frame in, client-masked, whatever it is — the pong reader.
+// `fake_read_frame` skips pongs; this one must not, or the read for
+// our own ping's answer would skip past it and wait on a frame the
+// client only sends after our reply lands.
+def fake_read_any(conn TcpConn) (R, WireFrame) {
+  case fake_read_raw(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frame)  -> { return (R.ok, frame) }
+  }
+}
+
+// One frame in, client-masked. Pongs are skipped (the client answers
+// our pings); data frames and closes pass through.
+def fake_read_frame(conn TcpConn) (R, WireFrame) {
+  case fake_read_raw(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frame)  -> {
+      if frame.opcode == wire_pong {
+        return fake_read_frame(conn)
+      }
+      return (R.ok, frame)
+    }
+  }
+}
+
+def fake_read_raw(conn TcpConn) (R, WireFrame) {
+  case conn.read_exactly(2) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, head)   -> {
+      const b = head.to_bytes()
+      const opcode = b.get(0) & 15
+      if (b.get(1) & 128) == 0 {
+        return (R.error, "the client sent a bare frame")
+      }
+      case fake_read_length(conn, b.get(1) & 127) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, n)      -> {
+          case conn.read_exactly(4) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, key_text) -> {
+              const mask = key_text.to_bytes()
+              case conn.read_exactly(n) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, text)   -> {
+                  const raw = text.to_bytes()
+                  const out = Bytes.new(n)
+                  var i = 0
+                  while i < n {
+                    out.set(i, raw.get(i) ^ mask.get(i % 4))
+                    i = i + 1
+                  }
+                  return (R.ok, WireFrame.new(opcode: opcode, payload: out))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def fake_read_length(conn TcpConn, first Int64) (R, Int64) {
+  if first < 126 {
+    return (R.ok, first)
+  }
+  if first == 126 {
+    case conn.read_exactly(2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, text)   -> {
+        const b = text.to_bytes()
+        return (R.ok, (b.get(0) << 8) + b.get(1))
+      }
+    }
+  }
+  case conn.read_exactly(8) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, text)   -> {
+      const b = text.to_bytes()
+      var n = 0
+      var i = 0
+      while i < 8 {
+        n = n * 256 + b.get(i)
+        i = i + 1
+      }
+      return (R.ok, n)
+    }
+  }
+}
+
+// One frame out, bare — the driver is the server side.
+def fake_send_frame(conn TcpConn, opcode Int64, payload Bytes) (R, Int64) {
+  case conn.write(wire_frame(opcode, payload)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> { return (R.ok, 0) }
+  }
+}
+
+def wire_frame(opcode Int64, payload Bytes) String {
+  const n = payload.length()
+  if n < 126 {
+    const head = Bytes.new(2)
+    head.set(0, 128 + opcode)
+    head.set(1, n)
+    return head.to_string() + payload.to_string()
+  }
+  if n < 65536 {
+    const head = Bytes.new(4)
+    head.set(0, 128 + opcode)
+    head.set(1, 126)
+    head.set(2, (n >> 8) & 255)
+    head.set(3, n & 255)
+    return head.to_string() + payload.to_string()
+  }
+  const head = Bytes.new(10)
+  head.set(0, 128 + opcode)
+  head.set(1, 127)
+  head.set(2, (n >> 56) & 255)
+  head.set(3, (n >> 48) & 255)
+  head.set(4, (n >> 40) & 255)
+  head.set(5, (n >> 32) & 255)
+  head.set(6, (n >> 24) & 255)
+  head.set(7, (n >> 16) & 255)
+  head.set(8, (n >> 8) & 255)
+  head.set(9, n & 255)
+  return head.to_string() + payload.to_string()
+}
+
+// One text message out, in one frame.
+def fake_send_text(conn TcpConn, text String) (R, Int64) {
+  return fake_send_frame(conn, wire_text, text.to_bytes())
+}
+
+// A fragment out: the first half of a message the continuation
+// finishes, so the FIN bit stays down — the sender's choice, and the
+// client's assembly is what this exercises.
+def fake_send_fragment(conn TcpConn, opcode Int64, payload Bytes) (R, Int64) {
+  case conn.write(wire_fragment(opcode, payload)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> { return (R.ok, 0) }
+  }
+}
+
+def wire_fragment(opcode Int64, payload Bytes) String {
+  const n = payload.length()
+  const head = Bytes.new(4)
+  head.set(0, opcode)
+  head.set(1, 126)
+  head.set(2, (n >> 8) & 255)
+  head.set(3, n & 255)
+  return head.to_string() + payload.to_string()
+}
+
+// ---- the fake driver's protocol half ----
+
+// The next call the client makes: one data frame in, decoded, the
+// method checked against the script's expectation, the id out.
+def expect_call(conn TcpConn, method String) (R, Int64) {
+  case fake_read_frame(conn) {
+    (R.error, why) -> { return (R.error, "reading the call: " + why) }
+    (R.ok, frame)  -> {
+      if frame.opcode == wire_close {
+        return (R.error, "the client closed before `" + method + "`")
+      }
+      if frame.opcode != wire_text {
+        return (R.error, "the client's call rode a non-text frame")
+      }
+      case json_of(frame.payload.to_string()) {
+        (R.error, why) -> { return (R.error, "the client's call was malformed (" + why + ")") }
+        (R.ok, doc)    -> {
+          const got = doc.get("method")
+          if got.is_null?() {
+            return (R.error, "the client's call carries no method")
+          }
+          if got.as_string() != method {
+            return (R.error, "the client called `" + got.as_string() + "`, the script expected `" + method + "`")
+          }
+          const id = doc.get("id")
+          if id.is_null?() {
+            return (R.error, "the client's call carries no id")
+          }
+          return (R.ok, id.as_int())
+        }
+      }
+    }
+  }
+}
+
+def json_of(text String) (R, json.Json) {
+  return json.decode(text)
+}
+
+def send_reply(conn TcpConn, id Int64, result json.Json) (R, Int64) {
+  return fake_send_text(conn, json.object([("id", json.int64(id)), ("result", result)]).encode())
+}
+
+// An error answer in the dispatcher's own wrapping — the shape the
+// driver's errors really ride.
+def send_error(conn TcpConn, id Int64, message String) (R, Int64) {
+  return fake_send_text(conn, json.object([("id", json.int64(id)), ("error", json.object([("error", json.object([("message", json.string(message))]))]))]).encode())
+}
+
+def send_event(conn TcpConn, guid String, method String, params json.Json) (R, Int64) {
+  return fake_send_text(conn, json.object([("guid", json.string(guid)), ("method", json.string(method)), ("params", params)]).encode())
+}
+
+def create_params(type_name String, guid String, initializer json.Json) json.Json {
+  return json.object([("type", json.string(type_name)), ("guid", json.string(guid)), ("initializer", initializer)])
+}
+
+def ref(guid String) json.Json {
+  return json.object([("guid", json.string(guid))])
+}
+
+// The session: the doors in the order the client climbs them, each
+// step answering what the real driver would, the whole script one
+// chain so a wrong step names itself.
+def drive_session(conn TcpConn) (R, Int64) {
+  case step_initialize(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case step_new_page(conn) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> {
+          case step_goto(conn) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _)      -> {
+              case step_title(conn) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, _)      -> {
+                  case step_content(conn) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, _)      -> {
+                      case step_text_null(conn) {
+                        (R.error, why) -> { return (R.error, why) }
+                        (R.ok, _)      -> {
+                          case step_text_hello(conn) {
+                            (R.error, why) -> { return (R.error, why) }
+                            (R.ok, _)      -> {
+                              case step_click(conn) {
+                                (R.error, why) -> { return (R.error, why) }
+                                (R.ok, _)      -> {
+                                  case step_fill(conn) {
+                                    (R.error, why) -> { return (R.error, why) }
+                                    (R.ok, _)      -> {
+                                      case step_press(conn) {
+                                        (R.error, why) -> { return (R.error, why) }
+                                        (R.ok, _)      -> {
+                                          case step_screenshot(conn) {
+                                            (R.error, why) -> { return (R.error, why) }
+                                            (R.ok, _)      -> {
+                                              case step_click_error(conn) {
+                                                (R.error, why) -> { return (R.error, why) }
+                                                (R.ok, _)      -> {
+                                                  case step_fill_error(conn) {
+                                                    (R.error, why) -> { return (R.error, why) }
+                                                    (R.ok, _)      -> {
+                                                      case step_page_close(conn) {
+                                                        (R.error, why) -> { return (R.error, why) }
+                                                        (R.ok, _)      -> {
+                                                          case step_browser_close(conn) {
+                                                            (R.error, why) -> { return (R.error, why) }
+                                                            (R.ok, _)      -> { return drain_until_close(conn) }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def step_initialize(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "initialize") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      case send_event(conn, "pw-root", "__create__", create_params("Playwright", "pw-root", json.object([("chromium", ref("bt-chromium")), ("firefox", ref("bt-firefox")), ("webkit", ref("bt-webkit")), ("preLaunchedBrowser", ref("browser-1"))]))) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> {
+          case send_event(conn, "bt-chromium", "__create__", create_params("BrowserType", "bt-chromium", json.object([("name", json.string("chromium"))]))) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _)      -> {
+              case send_event(conn, "browser-1", "__create__", create_params("Browser", "browser-1", json.object([("version", json.string("1.50.0"))]))) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, _)      -> { return send_reply(conn, id, json.object([("playwright", ref("pw-root"))])) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The client never launches — the browser came with the initialize
+// answer — so the page rides the pre-launched browser through an
+// implicit context: newContext on the browser, newPage on that
+// context. The junk event between the two calls is what a real page
+// spews; the client must skip it.
+def step_new_page(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "newContext") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      case send_event(conn, "browser-1", "pageEvent", json.object([("note", json.string("an event the client must skip"))])) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> {
+          case send_reply(conn, id, json.object([("context", ref("context-1"))])) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _)      -> {
+              case expect_call(conn, "newPage") {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, id2)    -> {
+                  case send_event(conn, "context-1", "__create__", create_params("Page", "page-1", json.object([("mainFrame", ref("frame-1"))]))) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, _)      -> { return send_reply(conn, id2, json.object([("page", ref("page-1"))])) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def step_goto(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "goto") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      case send_event(conn, "frame-1", "__create__", create_params("Response", "response-1", json.object([("status", json.int64(200)), ("url", json.string("https://example.com/"))]))) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> { return send_reply(conn, id, json.object([("response", ref("response-1"))])) }
+      }
+    }
+  }
+}
+
+def step_title(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "title") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.string("例子页面"))])) }
+  }
+}
+
+// The document rides two frames: a fragment, then the continuation —
+// the client must join them before decoding.
+def step_content(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "content") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      const document = json.object([("id", json.int64(id)), ("result", json.object([("value", json.string(full_document()))]))]).encode()
+      case fake_send_fragment(conn, wire_text, document.substring(0, 30000).to_bytes()) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> { return fake_send_frame(conn, 0, document.substring(30000, document.length() - 30000).to_bytes()) }
+      }
+    }
+  }
+}
+
+// The content the golden pins: six plus seventy thousand plus seven.
+def full_document() String {
+  return "<html>" + make_x("", 0) + "</html>"
+}
+
+def make_x(acc String, i Int64) String {
+  if i >= 700 {
+    return acc
+  }
+  return make_x(acc + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", i + 1)
+}
+
+def step_text_null(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "textContent") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.null())])) }
+  }
+}
+
+def step_text_hello(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "textContent") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.string("你好,世界"))])) }
+  }
+}
+
+def step_click(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "click") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+  }
+}
+
+// A fill whose answer is delayed by a ping: the client must answer
+// the ping with a masked pong before the reply can land. The driver
+// reads the pong back — the proof the client's control frames work.
+def step_fill(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "fill") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      case fake_send_frame(conn, wire_ping, "hb".to_bytes()) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> {
+          case fake_read_any(conn) {
+            (R.error, why) -> { return (R.error, "reading the pong: " + why) }
+            (R.ok, pong)   -> {
+              if pong.opcode != wire_pong {
+                return (R.error, "the client did not answer the ping")
+              }
+              return send_reply(conn, id, json.object([]))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def step_press(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "press") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+  }
+}
+
+// The screenshot rides one frame past the two-byte length form —
+// 120000 characters of base64 take the eight-byte form. The reply is
+// assembled by hand, linearly: json's encoder walks a string's escape
+// length by plain recursion, and a walk this deep rides the stack
+// past the c target's fiber — a json-package landmine documented in
+// the CHECK notes, worked around here by the shape the encoder would
+// print anyway (the base64 alphabet carries nothing to escape).
+def step_screenshot(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "screenshot") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> {
+      const binary = base64.encode(fake_png().to_string())
+      const doc = "{\"id\":" + id.to_string() + ",\"result\":{\"binary\":\"" + binary + "\"}}"
+      return fake_send_text(conn, doc)
+    }
+  }
+}
+
+// Niney thousand deterministic bytes: the golden pins the decoded
+// length, the pattern pins the codec.
+def fake_png() Bytes {
+  const png = Bytes.new(90000)
+  var i = 0
+  while i < 90000 {
+    png.set(i, (i * 31 + 7) % 256)
+    i = i + 1
+  }
+  return png
+}
+
+// The refusal shape: the driver's errors ride one level of wrapping.
+def step_click_error(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "click") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_error(conn, id, "timeout 30000ms exceeded") }
+  }
+}
+
+def step_fill_error(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "fill") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_error(conn, id, "element is not visible") }
+  }
+}
+
+def step_page_close(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "close") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+  }
+}
+
+def step_browser_close(conn TcpConn) (R, Int64) {
+  case expect_call(conn, "close") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+  }
+}
+
+// After the last reply the client hangs up; the driver reads until
+// the close frame, answers it, and lets the socket go.
+def drain_until_close(conn TcpConn) (R, Int64) {
+  case fake_read_frame(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frame)  -> {
+      if frame.opcode == wire_close {
+        case fake_send_frame(conn, wire_close, Bytes.new(0)) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _)      -> { return (R.ok, 0) }
+        }
+      }
+      return drain_until_close(conn)
+    }
+  }
+}
+
+// ---- the run ----
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+
+def fake_driver(listener TcpListener) {
+  case listener.accept() {
+    (R.error, why) -> { }
+    (R.ok, conn)   -> {
+      case fake_accept(conn) {
+        (R.error, why) -> { }
+        (R.ok, _)      -> {
+          case drive_session(conn) {
+            (R.error, why) -> { }
+            (R.ok, _)      -> { }
+          }
+        }
+      }
+    }
+  }
+}
+
+do fake_driver(listener)
+
+case playwright.connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, pw)     -> { run_client(pw) }
+}

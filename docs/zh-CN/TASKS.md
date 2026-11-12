@@ -1457,3 +1457,16 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
       内建、诚实边界),`os.md` 表面已在 T63.2 落地,TASKS M26/
       步骤 63 EN+zh,`plan/step-63-emosh.md` + `plan/README.md` 行,
       CHECK.md 决策记录,README 引用行。
+## M27 — `websocket` 与 `playwright` 包
+
+### 步骤 64 — 浏览器自动化:先 `websocket`,再 `playwright`
+
+**前置:** Step 37(`net` 的 TCP 表面与每操作期限),Step 62 的包解剖(manifest、注册表嵌入、demo 金测、文档 EN+zh)。**完成标准:** `examples/websocket_demo` 在解释器与 `c` 目标上逐字节回声;`examples/playwright_demo` 对本仓库自带的迷你 driver 跑完整门面梯子——真 websocket 帧上拼回分片消息、ping 用带掩码 pong 应答且被 driver 读回、120000 字符应答骑八字节长度形态、两种 dispatcher 错误形状——解释器与 `c` 目标逐字节一致;`dune runtest` 绿,两个 demo 同时进 lockfile 套件与 `c_goldens`;文档 EN+zh。
+
+- [x] **T64.1** — `websocket` 包:`stdlib/registry/websocket/0.1.0`——`websocket.emo` 承载两半:`connect`(升级请求带 `rand` 出的 `Sec-WebSocket-Key`,首帧之前先对 `crypto.legacy.sha1` 校验 accept,应答头逐行读到空行、不让任何握手字节漏进帧流),`accept`(请求校验升级、版本 13、key;应答 `101`),以及两角色共用的一个 `Websocket`——`send_text` 只在客户端侧加掩码,`recv_message` 在客户端拒带掩码帧、在服务端拒裸帧,拼回续帧,ping 用原载荷应答,不请自来的 pong 跳过,close 先应答再关套接字;帧读取收全部三种长度形态,角色禁止处的对端掩码按名拒绝。`package.emo`:`targets = ["ocaml", "c", "typescript"]`,deps `net`/`base64`/`crypto`/`rand`。
+- [x] **T64.2** — `playwright` 包的引擎:`stdlib/registry/playwright/0.1.0/internal/channel.emo`——一条文本帧一条 JSON 文档,命令 `{id, guid, method, params, metadata}`,应答按 id 结账,`__create__` 与 `__dispose__` 维护 guid 对象表,其余事件一律跳过,驱动的错误包裹拆进 `(R.error, "playwright: " + 原文)`,空安全字段读取器(`field`/`string_field`/`int_field`/`guid_field`)把驱动数据挡在 raise 路径之外。
+- [x] **T64.3** — 门面:`playwright.emo`——`connect`/`connect_with` 拨 run-server 端点,浏览器骑 `?browser=` 查询参数(chromium、firefox、webkit;未知名字 raise),initialize 握手钉住根 Playwright 通道与预 launch 的浏览器,核心门面——`Browser.new_page`/`version`/`close`,`Page.goto` 应答 `PageResponse` 树、没赢得响应的导航走 null 响应,`click`/`fill`/`press` 路由到页面的主帧,`title`/`content`,`text_content` 应答 `Text` 树、null 经 `is_null?()` 读,`screenshot` 把驱动的 base64 解进 `Bytes`,每层都有 `close`。
+- [x] **T64.4** — 两个 demo:`examples/websocket_demo`(经 `websocket.accept` 的回声服务端,客户端经 `connect` 往返:多字节、70000 字节消息骑两字节长度形态、告别);`examples/playwright_demo`(迷你 driver 以裸帧应答 run-server 形状——initialize 对象群、一条被跳过的事件、带主帧的 page 创建、分片的 70013 字节文档、客户端必须应答的 ping、骑八字节形态并绕开 json 包栈深地雷手工拼装的 120000 字符截图应答、两种错误形状、告别——客户端半爬完每扇门);两个金测在解释器三轮与 `c` 二进制上逐字节一致。
+- [x] **T64.5** — 注册:`test/emo_project/emo_project_test.ml` 两个 `tc` 用例,`websocket_demo` 与 `playwright_demo` 进 `c_goldens`,每次改包后 `emo deps resolve` 重出 lockfile。途中发现并当场修掉:c 后端的方法查表拿保留字转义后的调用名(`goto_c`)去比 IR 的裸名,凡 C 关键字命名的方法一律被拒——现在调用名从匹配到的声明自己取。
+- [x] **T64.6** — 文档:`docs/stdlib/websocket.md`、`docs/stdlib/playwright.md` EN+zh,`docs/stdlib.md` 行与节 + zh 镜像,README 引用行,CHECK.md 决策记录,`plan/step-64-playwright.md`,`plan/README.md` 行。途中发现并记录:json 包的转义长度按字符递归,120000 字符的 `json.encode` 在 c 目标上骑穿纤程栈(解释器扛得住;found-not-fixed,demo 手工拼装那条大应答绕开)。
+- [x] **T64.7** — 真实检查:`npm install -g playwright`(1.65.0,chromium headless shell 158.0.8127.18),再经 `examples/playwright_live` 对真 `playwright run-server` 跑完整门面阶梯——握手、带预 launch 浏览器的 initialize、先 context 后 page 两跳、对程序自带 httpd 页面的导航、标题、多字节 DOM 文本、缺失选择器按 30000 ms metadata 死线以错误值应答、真截图、告别——**在 `c` 目标上全绿**;解释器在同一等待中撞上 det 调度器的驻留读墙(found-not-fixed,记入 CHECK.md)。driver 版本已记入 CHECK.md。

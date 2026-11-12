@@ -1,0 +1,97 @@
+// The websocket package end to end on loopback: this program carries
+// both halves of the wire, a server that takes the upgrade with
+// `websocket.accept` and echoes, and a client that dials with
+// `websocket.connect` and reads what comes back. The golden pins the
+// round trip byte for byte: a multi-byte message, a message large
+// enough to ride the two-byte length form, a last plain message, and
+// the goodbye. The server side prints nothing — every line of the
+// golden is the client's reading of what the wire brought back.
+
+require "net"
+require "websocket"
+
+// ---- the client half ----
+
+def run_client(ws websocket.Websocket) {
+  round_trip(ws, "hello 回环")
+  round_trip_big(ws, make_big("", 0))
+  round_trip(ws, "last one")
+  case ws.close() {
+    (R.error, why) -> { println("close failed: ${why}") }
+    (R.ok, _)      -> { println("closed") }
+  }
+}
+
+def round_trip(ws websocket.Websocket, message String) {
+  case ws.send_text(message) {
+    (R.error, why) -> { println("send failed: ${why}") }
+    (R.ok, _)      -> {
+      case ws.recv_message() {
+        (R.error, why) -> { println("recv failed: ${why}") }
+        (R.ok, back)   -> { println(back) }
+      }
+    }
+  }
+}
+
+// The big message's reading is its length — the golden pins the
+// count, the wire carries the bytes.
+def round_trip_big(ws websocket.Websocket, message String) {
+  case ws.send_text(message) {
+    (R.error, why) -> { println("send failed: ${why}") }
+    (R.ok, _)      -> {
+      case ws.recv_message() {
+        (R.error, why) -> { println("recv failed: ${why}") }
+        (R.ok, back)   -> { println(back.length()) }
+      }
+    }
+  }
+}
+
+// One thousand chunks of seventy characters: seventy thousand bytes,
+// past the 125-byte and the 65536-byte length forms alike.
+def make_big(acc String, i Int64) String {
+  if i >= 1000 {
+    return acc
+  }
+  return make_big(acc + "0123456789012345678901234567890123456789012345678901234567890123456789", i + 1)
+}
+
+// ---- the server half ----
+
+def echo_serve(listener TcpListener) {
+  case listener.accept() {
+    (R.error, why) -> { }
+    (R.ok, conn)   -> { echo_session(conn) }
+  }
+}
+
+def echo_session(conn TcpConn) {
+  case websocket.accept(conn) {
+    (R.error, why) -> { }
+    (R.ok, ws)     -> { echo_loop(ws) }
+  }
+}
+
+// Echo until the client's close frame ends the message stream.
+def echo_loop(ws websocket.Websocket) {
+  case ws.recv_message() {
+    (R.error, why) -> { }
+    (R.ok, text)   -> {
+      case ws.send_text(text) {
+        (R.error, why) -> { }
+        (R.ok, _)      -> { echo_loop(ws) }
+      }
+    }
+  }
+}
+
+// ---- the run ----
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+do echo_serve(listener)
+
+case websocket.connect("127.0.0.1", listener.port(), "/", 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, ws)     -> { run_client(ws) }
+}
