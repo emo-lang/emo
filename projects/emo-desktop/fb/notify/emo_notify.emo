@@ -267,6 +267,12 @@ class Center {
     return self.live.read().id()
   }
 
+  // The live notification whole: the card's title and body are the
+  // face's to paint, and the id-0 sentinel is the empty seat.
+  def live_notif() Notif {
+    return self.live.read()
+  }
+
   // The toast card, when one is live: the shadow and the rounded card
   // (the shelf's recipe), the accent bar at the card's left, the title
   // and the body in the labels' type. `top` is the display row the

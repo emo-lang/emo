@@ -1975,12 +1975,40 @@ toast.
   other beam leg in this session's runs answered byte-identically,
   the notification golden's included); the gate's frame-beam leg is
   the next sitting's first suspect.
-- [ ] **A25.2** — The metal verbs and the app's raise: the syscall
+- [x] **A25.2** — The metal verbs and the app's raise: the syscall
   stub grows `notify` and `notify_take` (verbs 27 and 28, the
   `(R, ...)` answer shape), the metal provider speaks them — the
   take polled once a tick, the empty answer the cheap one — and the
   editor raises on save (the title and the body its own words), the
   desktop registering as the center's owner at its first take.
+  **complete 2026-11-12** — verb 27 raises (the title 1..64 bytes,
+  the body 0..192, the answer the id) and verb 28 takes (the packed
+  24-byte head then the bytes, 0 the empty queue, the first taker
+  the center's owner); `hello`'s `MetalFeed` polls it once per desk
+  wake and decodes the head into Strings (`Bytes.new` + `to_string`,
+  the metal's one String-from-bytes path), and the desktop's face
+  grew the two surfaces D16 names as the shell's: the card (a
+  toplevel at the display's right edge, the package's card painted
+  opaque because the blit is a word copy) and the panel (the header
+  bell's toplevel, the DND row and the history newest first), both
+  created on demand and closed when they go — the compositor's ring
+  and mask are theirs for free. The editor's save is the corpus's
+  `Saver` seam (D14, the quiet saver for the hosted golden), the
+  metal saver writes `editor.txt` through the scratch page and
+  raises; the apps' and the notify goldens stay byte-identical, the
+  hosted type-check and the riscv64 image builds green. Two named
+  follow-ups, both recorded in the milestone's words: **the
+  heartbeat** — the merged stream carries no tick event, so the take
+  (and the residence's beat) rides the desk loop's next wake, and
+  the golden's toast appears one wake after the raise; **the seat's
+  modifiers** — the apps' byte table carries none, so the save rides
+  the `s` key (byte 115), not Ctrl+S, until the seat tracks them.
+  Beside the landing: the bell inks the header, so the metal's
+  `frames` line and the header beats' composition sums were re-pinned
+  (`991 783`, the bell's own drawing asserted by the desktop era's
+  pixel model instead); `start.sh` stages `emo_notify` and the
+  drifted locks were regenerated (`hello`, the three apps, `winbuf`,
+  the apps' and notify goldens, `wayland`).
 - [ ] **A25.3** — The metal golden leg: `run.sh`'s choreography grows
   the notify beats — an exec'd app raises, the toast in the
   screendump's digest, DND toggled and the next raise recorded

@@ -878,20 +878,31 @@ tracker records the milestone's decisions (D16); the reasoning is
 CHECK.md's (2026-11-12). The milestone's row joins the table above at
 its completion.
 
-- [ ] **T11.1** — The notification service (the `fs.emo` lineage):
+- [x] **T11.1** — The notification service (the `fs.emo` lineage):
   `notify.emo` in the kernel image — its own pages (`link.ld`,
   `trap.S`), the pid cell, the pending ring (eight entries, full the
   resource refusal, nothing evicted), the monotonic id, the mailbox
   loop (the gate's raw request words, typed defs, never
   pattern-matched), the stash for the dead-instance window, the
   supervisor's restart. **Written 2026-11-12; the kernel builds with
-  it aboard (3.1 MB ELF); the metal's rounds pending.**
-- [ ] **T11.2** — The gate's verbs 27 and 28, and the trap's routes:
+  it aboard (3.1 MB ELF); graded 2026-11-12 — the metal's rounds
+  green** (`run.sh` exit 0 twice, both timer transports): the boot
+  chain, the services' restarts, the desktop's eras and the frame
+  allocator's books all hold with the service aboard; the two spawn
+  slots it takes (the supervisor, the instance) moved every later
+  pid by two, the pids `run.sh` pins re-pinned (18→20, 20→22, 21→23,
+  `user heap 19`→`21`, 26→28), and the allocator's account moved by
+  the queue's block (`frames 991 783`).
+- [x] **T11.2** — The gate's verbs 27 and 28, and the trap's routes:
   the notify request slots the gate fills inside the trap (the
   title's and the body's byte bounds, `check_write` both), the
   routes −1027/−1028 with the slot riding −32 (verb = slot-0 op, the
   input service's own habit), the shim's decode branch
   (`t6 ≥ 27`, `(t6−27) & 31 ≤ 1`), the spawn and the supervisor
   wiring in `main.emo`, the take's first-taker ownership the
-  service's to keep. **Written 2026-11-12, building; the metal's
-  rounds pending.**
+  service's to keep. **Written 2026-11-12, building; graded
+  2026-11-12 with T11.1 — the same green rounds.** The desktop's
+  half landed beside them (emo-desktop A25.2): the syscall stub's
+  `notify`/`notify_take`, the metal provider's take, and the shell's
+  card and panel — the first take claims the center, the service's
+  owner rule answering as designed.

@@ -233,6 +233,42 @@ def win_desk_open(pid Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// A notification raised (emo-desktop M25, EmoOS T11.2, verb 27): the
+// title the tlen bytes at title (1 to 64) and the body the blen bytes
+// at body (0 to 192) go into the notification service's pending queue,
+// which holds eight raised and not yet taken — nothing evicted, the
+// full queue the resource refusal and the caller's to retry once the
+// shell has drained. The answer is (R.ok, the notification's id), the
+// service's monotonic number — 1 or more, 0 the empty seat's sentinel.
+// Both buffers are raw addresses in this program's own memory, like
+// write's buffer; the gate checks them and the byte bounds before the
+// bytes are copied into the request slot inside the trap.
+def notify(title Int64, tlen Int64, body Int64, blen Int64) (R, Int64) {
+  var answer = ecall(27, title, tlen, body, blen, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// A notification taken (verb 28): at most one packed notification lands
+// in the cap bytes at buf and the answer is its packed size — the
+// 24-byte head first (the id at 0, the title's length at 8, the body's
+// at 16), then the title's and the body's bytes. An empty queue answers
+// (R.ok, 0), the cheap poll's answer; a cap under the head's 24 bytes
+// is "bad argument", and a cap under the first entry's packed size is
+// refused without consuming (the caller retries with a bigger buffer).
+// The first taker names the notification center's owner — the desktop
+// claims it at its first take — and every later taker another pid is
+// "not writable", so an app's take is the permission refusal.
+def notify_take(buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(28, buf, cap, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
 // caller parks, and the answer is the tick — the next composition's
 // completion, the flush that put a frame on the display. The

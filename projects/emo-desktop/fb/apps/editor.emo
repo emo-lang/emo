@@ -16,13 +16,41 @@ require "emo/ui"
 // the buffer the golden session leaves shortest — and the session
 // three events, the pass's 128 KiB arena green (A8.3's per-event
 // count).
+//
+// The save (emo-desktop M25, D14): the corpus stays portable — the
+// volume is the metal's — so the act leaves through a provider the
+// consumer hands in, the way the notification center's feed does. The
+// hosted golden's saver is the quiet one; the metal editor's speaks the
+// gate's write and notify verbs. `update` says `save` and hands the
+// buffer over; what saving means is the provider's.
 
-enum Msg { put_a, put_b, newline }
+enum Msg { put_a, put_b, newline, save }
+
+// Where the editor's words go on save. `rows` is the buffer as it
+// stands: the two rows the model holds.
+interface Saver {
+  def save(rows Array[String]) Void
+}
+
+// The quiet saver: the hosted golden's feeder — the act is recorded on
+// the transcript alone.
+class Quiet {
+  def save(rows Array[String]) Void {}
+}
+
+def quiet() Quiet {
+  return Quiet.new()
+}
 
 class Model {
-  def init(rows Array[String], row Int64) {
+  def init(rows Array[String], row Int64, saver Saver) {
     self.rows = rows
     self.row = row
+    self.saver = saver
+  }
+
+  def saver() Saver {
+    return self.saver
   }
 
   def rows() Array[String] {
@@ -35,7 +63,13 @@ class Model {
 }
 
 def initial() Model {
-  return Model.new(rows: ["", ""], row: 0)
+  return initial_with(quiet())
+}
+
+// The same start with the act's provider in hand — the metal editor's
+// door (the hosted golden takes `initial`).
+def initial_with(saver Saver) Model {
+  return Model.new(rows: ["", ""], row: 0, saver: saver)
 }
 
 // The buffer with `s` typed into the row the cursor is on: a new rows
@@ -46,9 +80,11 @@ def initial() Model {
 // literals for fixed ones).
 def typed(m Model, s String) Model {
   if m.row() == 0 {
-    return Model.new(rows: [m.rows()[0] + s, m.rows()[1]], row: 0)
+    return Model.new(rows: [m.rows()[0] + s, m.rows()[1]], row: 0,
+      saver: m.saver())
   }
-  return Model.new(rows: [m.rows()[0], m.rows()[1] + s], row: 1)
+  return Model.new(rows: [m.rows()[0], m.rows()[1] + s], row: 1,
+    saver: m.saver())
 }
 
 def update(msg Msg, m Model) Model {
@@ -60,21 +96,27 @@ def update(msg Msg, m Model) Model {
     println("put b")
     return typed(m, "b")
   }
+  if msg == Msg.save {
+    println("save")
+    m.saver().save(m.rows())
+    return m
+  }
   println("newline")
   var r = m.row() + 1
   if r >= m.rows().length() {
     r = m.rows().length() - 1
   }
-  return Model.new(rows: m.rows(), row: r)
+  return Model.new(rows: m.rows(), row: r, saver: m.saver())
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
   // The tags are taken in statements of their own: `on` is a side
-  // effect, and this registration order is what fixes put_a, put_b
-  // and newline at tags 0, 1 and 2 on every run.
+  // effect, and this registration order is what fixes put_a, put_b,
+  // newline and save at tags 0, 1, 2 and 3 on every run.
   const put_a = reg.on(Msg.put_a)
   const put_b = reg.on(Msg.put_b)
   const newline = reg.on(Msg.newline)
+  const save = reg.on(Msg.save)
   return ui.column([
     ui.text(m.rows()[0], ui.style()),
     ui.text(m.rows()[1], ui.style()),
