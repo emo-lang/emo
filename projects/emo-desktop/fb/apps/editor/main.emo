@@ -21,6 +21,58 @@ def strike() (R, ui_fb.raster.Strike) {
   return ui_fb.raster.strike(ui_fb.raster.inter(), 16)
 }
 
+// The session's scratch, in this image's own writable segment (the
+// window buffer package's page, its line helpers' home): the save's
+// name, its words and the two rows ride here, because the gate's verbs
+// take raw addresses and an app holds no other writable page.
+const buf = 0x87200000
+
+// One String into the scratch, the bytes copied and counted (the
+// riscv64 String-to-bytes path, `to_bytes`, read one byte at a time).
+def poke_str(s String, at Int64) Int64 {
+  const b = s.to_bytes()
+  var i = 0
+  while i < b.length() {
+    poke8(at + i, b.get(i).to_byte())
+    i = i + 1
+  }
+  return b.length()
+}
+
+// The save (emo-desktop M25): the buffer's two rows whole onto the
+// volume as editor.txt, then the raise that tells the shell. The write
+// is the condition (a refused volume raises nothing — absence visible,
+// D15); the notification's title names the app and its body the save's
+// own words.
+def editor_save(r0 String, r1 String) Void {
+  const nl = poke_str("editor.txt", buf + 4096)
+  poke_str("editor", buf + 4128)
+  poke_str("editor.txt saved", buf + 4160)
+  var n = poke_str(r0, buf + 4224)
+  n = n + poke_str(r1, buf + 4224 + n)
+  case syscall.file_write(buf + 4096, nl, buf + 4224, n) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {
+      case syscall.notify(buf + 4128, 6, buf + 4160, 16) {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+    }
+  }
+}
+
+// The saver the corpus's update hands the buffer to (D14): the one
+// consumer of the seam that speaks the gate.
+class EditorSaver {
+  def save(rows Array[String]) Void {
+    editor_save(rows[0], rows[1])
+  }
+}
+
+def editor_saver() EditorSaver {
+  return EditorSaver.new()
+}
+
 def main() {
   const holder = ArrayBuilder.new()
   case strike() {
@@ -75,8 +127,8 @@ def main() {
   we.present()
   we.rise(fx, fy)
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(),
-    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10], we, fs, fx, fy, mw, mh), fs))
+    ui_apps.editor.initial_with(editor_saver()),
+    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10, 115], we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {
     (R.error, _) -> { ui_fb_winbuf.mark() }
