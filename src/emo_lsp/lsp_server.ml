@@ -110,7 +110,7 @@ let module_path_of_file (root : string) (file : string) : string list =
 let index_for_file (state : state) (file : string) : Ix.t =
   match root_for_file state file with
   | Some root -> Ix.get ?registry:state.registry root
-  | None -> Ix.empty
+  | None -> Ix.standalone ()
 
 (* ---- Diagnostics ---------------------------------------------------- *)
 
@@ -1024,19 +1024,88 @@ let symbols_at (ix : Ix.t) (items : Ast.item list) (file : string)
       let parts = String.split_on_char '.' word in
       let found =
         match List.rev parts with
-        | last :: rev_recv when rev_recv <> [] ->
+        | last :: rev_recv when rev_recv <> [] -> (
             let recv = List.rev rev_recv in
             let members = Resolve.resolve_receiver ix items file offset recv in
             let direct =
               List.filter (fun (s : Ix.symbol) -> s.Ix.name = last) members
             in
             if direct <> [] then direct
-            else Resolve.definitions_for_name ix items file word
+            else
+              (* The language's own method surface: a member the index
+                 does not carry, on a receiver whose type is builtin. *)
+              match
+                Lsp_completion.builtin_member_symbol ~items ~text ~offset
+                  (String.concat "." recv) last
+              with
+              | Some s -> [ s ]
+              | None -> Resolve.definitions_for_name ix items file word)
         | _ -> Resolve.definitions_for_name ix items file word
       in
       match found with
       | _ :: _ -> found
       | [] -> Option.to_list (Resolve.module_symbol ix word))
+
+(* The `//` lines directly above a declaration — the buffer's own text
+   for a symbol of the hovered file, the file on disk otherwise — as
+   prose with the `//` markers stripped. Nothing answers when the line
+   above the declaration is not a comment. *)
+let doc_comment_of_symbol ~(buffer : string) ~(buffer_file : string)
+    (s : Ix.symbol) : string option =
+  if s.Ix.file = "" then None
+  else
+    let source =
+      if Lsp_util.normalize_path s.Ix.file = Lsp_util.normalize_path buffer_file
+      then Some buffer
+      else Lsp_util.read_file s.Ix.file
+    in
+    match source with
+    | None -> None
+    | Some source -> (
+        let starts = Lsp_util.line_starts source in
+        let line, _ =
+          Lsp_util.offset_to_position source starts s.Ix.span.Span.start
+        in
+        let lines = Array.of_list (String.split_on_char '\n' source) in
+        let rec collect acc l =
+          if l < 0 then acc
+          else
+            let text = lines.(l) in
+            let trimmed = String.trim text in
+            if Lsp_util.starts_with ~prefix:"//" trimmed then
+              let prose =
+                String.trim (String.sub trimmed 2 (String.length trimmed - 2))
+              in
+              collect (prose :: acc) (l - 1)
+            else acc
+        in
+        match collect [] (line - 1) with
+        | [] -> None
+        | prose -> Some (String.concat "\n" prose))
+
+(* The hover body: the signature fenced, the defining file beside it,
+   the declaration's doc comment under both. A builtin's synthesized
+   symbol carries no file and no doc. *)
+let hover_value ~(detail : string) ~(file : string option)
+    ~(doc : string option) : string =
+  let fenced = Printf.sprintf "```emo\n%s\n```" detail in
+  let uri =
+    match file with
+    | Some f -> Some (Printf.sprintf "`%s`" (Lsp_util.path_to_uri f))
+    | None -> None
+  in
+  match (uri, doc) with
+  | Some u, Some d -> Printf.sprintf "%s\n\n%s\n\n%s" fenced u d
+  | Some u, None -> Printf.sprintf "%s\n\n%s" fenced u
+  | None, Some d -> Printf.sprintf "%s\n\n%s" fenced d
+  | None, None -> fenced
+
+let hover_reply (value : string) : Yojson.Safe.t =
+  `Assoc
+    [
+      ( "contents",
+        `Assoc [ ("kind", `String "markdown"); ("value", `String value) ] );
+    ]
 
 let handle_hover (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
   let td = Yojson.Safe.Util.member "textDocument" params in
@@ -1053,31 +1122,21 @@ let handle_hover (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let items, _ = parse file text in
       match symbols_at ix items file text offset with
       | [] -> (
-          (* `Syntax` and its members are the checker's reserved
-             compile-time surface — no declaration any index carries —
-             so the word under the cursor answers from the completion
-             module's table when the index came up empty. *)
-          match Lsp_completion.syntax_hover_at text offset with
-          | Some value ->
-              `Assoc
-                [
-                  ( "contents",
-                    `Assoc
-                      [ ("kind", `String "markdown"); ("value", `String value) ]
-                  );
-                ]
-          | None -> `Null)
+          (* The reserved surfaces — `Syntax` and the language's own
+             builtin functions, capability types, and their methods —
+             carry no declaration any index has, so the word under the
+             cursor answers from the completion module's tables when the
+             index came up empty. *)
+          match Completion.builtin_hover_at ~items text offset with
+          | Some value -> hover_reply value
+          | None -> (
+              match Lsp_completion.syntax_hover_at text offset with
+              | Some value -> hover_reply value
+              | None -> `Null))
       | (s : Ix.symbol) :: _ ->
-          let value =
-            Printf.sprintf "```emo\n%s\n```\n\n`%s`" s.Ix.detail
-              (Lsp_util.path_to_uri s.Ix.file)
-          in
-          `Assoc
-            [
-              ( "contents",
-                `Assoc
-                  [ ("kind", `String "markdown"); ("value", `String value) ] );
-            ])
+          let doc = doc_comment_of_symbol ~buffer:text ~buffer_file:file s in
+          let file = if s.Ix.file = "" then None else Some s.Ix.file in
+          hover_reply (hover_value ~detail:s.Ix.detail ~file ~doc))
 
 let handle_definition (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
   let td = Yojson.Safe.Util.member "textDocument" params in
@@ -1092,7 +1151,11 @@ let handle_definition (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let offset = Lsp_util.position_to_offset text starts ~line ~character in
       let ix = index_for_file state file in
       let items, _ = parse file text in
-      `List (List.map location_of_symbol (symbols_at ix items file text offset))
+      `List
+        (List.map location_of_symbol
+           (List.filter
+              (fun (s : Ix.symbol) -> s.Ix.file <> "")
+              (symbols_at ix items file text offset)))
 
 let handle_document_symbols (state : state) (params : Yojson.Safe.t) :
     Yojson.Safe.t =

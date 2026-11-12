@@ -95,6 +95,12 @@ then a build inside the Emo checkout. The registry comes from `registry`, then
 `EMO_REGISTRY`; the `emo` CLI behind the `:Emo*` commands comes from
 `emo_path`, then `EMO_BIN`. `:checkhealth emo` reports what was resolved.
 
+Insert completion rides Neovim's own `vim.lsp.completion`: the server's
+trigger characters — the dot of `os.` and the quote inside `require "..."` —
+open the menu, and typing on narrows it (`os.getp` leaves `getpid` and
+`getppid`), with `<C-x><C-o>` completing by hand. The `completion` option
+hands the server to a completion plugin instead.
+
 The commands mirror the extension's — `:EmoRestart`, `:EmoCheck`, `:EmoBuild`,
 `:EmoRun`, `:EmoDepsResolve`, `:EmoDepsList`, `:EmoDepsUpdate`, and
 `:EmoPackageInit`. See
@@ -111,7 +117,10 @@ the options table.
 - **Completion.** Keywords, built-in types and functions, declarations from
   the current file and the project, members after `.` (class fields and
   methods, function-group members, module members), and package names inside
-  `require "..."`.
+  `require "..."`. Members answer for the language's own types too —
+  `String.`, `Bytes.`, `Array.` and friends complete the method surface the
+  checker answers with, as does a literal receiver (`"abc".`) or a value
+  whose declared type is one of them.
 - **Diagnostics.** Lex, parse, and type-check errors, plus a check that every
   `require` — standard library or scoped — is paired with a `deps` entry in
   `package.emo` (E5006) and that an unscoped `require` names a published
@@ -119,7 +128,12 @@ the options table.
   buffer outside any package — no `package.emo` at the root the server was
   given — gets none of them: no project is indexed there, and one message
   says so rather than leaving the silence unexplained.
-- **Hover and go-to-definition.** Signatures and cross-module jumps.
+- **Hover and go-to-definition.** Signatures and cross-module jumps. A hover
+  shows the declaration's signature — parameter names and types, the return
+  type — with the `//` doc comment sitting above it, and jumps to the
+  declaration's file. The language's own surface answers as well: a bare
+  builtin (`println`), a capability type (`Bytes`), a builtin member spelled
+  against the type (`Bytes.get_u32_le`) or against a value of builtin type.
 - **Document and workspace symbols.** A file outline and project-wide symbol
   search.
 - **Package management.** A *Emo Packages* view lists the manifest's
@@ -154,6 +168,13 @@ by the extension's package view:
   manifest-less directory a buffer arrives in, pointing at `emo.package.init`.
 - **Unsaved buffers win.** Completion, hover, and diagnostics use the open
   document's text; the on-disk project index supplies everything else.
+- **The standard library is always in reach.** The bundled packages ride the
+  server binary, so their module trees mount into every index — a pinned
+  project's, and the no-project index a scratch file gets. `os.` completes
+  and `os.getenv` hovers with its parameter types in a file no manifest
+  claims. A pin is still the build's road in: the missing-dep diagnostic
+  (E5006) keeps reporting an unpaired `require`, with its quick fix, exactly
+  as a build refuses one.
 - **Positions are UTF-16.** Emo spans are byte offsets into UTF-8 source; the
   server converts at every boundary, so non-ASCII sources (Emo examples
   include Chinese text) map correctly.
