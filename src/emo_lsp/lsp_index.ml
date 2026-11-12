@@ -7,9 +7,10 @@
 
    The root is the directory the file's project stands in, and a project
    is a directory holding a package.emo — the compiler's root rule
-   (E5010). A file under no such directory has no index: the editor
-   answers from nothing rather than from a tree the compiler would
-   refuse. *)
+   (E5010). A file under no such directory indexes no project — the
+   editor answers no project reference the compiler would refuse — but
+   the standard library rides the binary, so its surface still answers
+   completion and hover everywhere. *)
 
 module Ast = Emo_ast
 module Span = Emo_support.Span
@@ -350,9 +351,11 @@ let index_of ?(units = []) ?(packages = []) ?(package_deps = []) ?(aliases = [])
     built_at = Unix.gettimeofday ();
   }
 
-(* The index for a file that stands outside any project: the editor still
-   answers requests, it simply has no declarations to resolve against. *)
-let empty : t = index_of "" ~modules:[] ~symbols:[]
+(* The index for a file that stands outside any project: no project
+   declarations to resolve against, but the standard library's surface
+   answers member completion and hover the same way it does inside one.
+   The index itself is built beside the stdlib mount below. *)
+let standalone_cache : t option ref = ref None
 
 (* The parsed items of every indexed module, with [items] substituted for
    the module [current]: a diagnostic check runs against the editor's own
@@ -677,9 +680,76 @@ let dependency_modules ~(root : string) ~(registry : string option) :
     (string list * string) list =
   (dependency_tree ~root ~registry).dep_modules
 
+(* The bundled standard library, mounted once for the process's lifetime:
+   every package the embedded registry publishes, under the short name
+   its require binds. The embedded data cannot move and a package's
+   materialized directory is content-addressed, so the parsed units
+   never go stale. *)
+type surface = {
+  std_modules : (string list * string) list;
+  std_units : (string list * Ast.item list) list;
+  std_symbols : symbol list;
+}
+
+let stdlib_surface_cache : surface option ref = ref None
+
+let stdlib_surface () : surface =
+  match !stdlib_surface_cache with
+  | Some s -> s
+  | None ->
+      let modules =
+        List.concat_map
+          (fun name ->
+            match
+              List.rev
+                (Emo_pkg.Registry.versions Emo_pkg.Registry.Embedded ~name)
+            with
+            | [] -> []
+            | version :: _ -> (
+                match embedded_package_dir ~name ~version with
+                | None -> []
+                | Some dir ->
+                    fst (mount_package ~short:(Emo_pkg.short_name name) ~dir)))
+          (Emo_pkg.Registry.embedded_names ())
+      in
+      let units =
+        List.map (fun (path, file) -> (path, parse_tolerant file)) modules
+      in
+      let symbols = symbols_of modules units in
+      let surface =
+        { std_modules = modules; std_units = units; std_symbols = symbols }
+      in
+      stdlib_surface_cache := Some surface;
+      surface
+
+(* The project's and its dependencies' modules keep their seats: a short
+   name a registry republishes resolves to the pinned version, never to
+   the bundled copy. The standard library fills in every path left
+   unnamed. *)
+let with_stdlib (modules : (string list * string) list) :
+    (string list * string) list =
+  let present = Hashtbl.create 64 in
+  List.iter (fun (path, _) -> Hashtbl.replace present path ()) modules;
+  modules
+  @ List.filter
+      (fun (path, _) -> not (Hashtbl.mem present path))
+      (stdlib_surface ()).std_modules
+
+let standalone () : t =
+  match !standalone_cache with
+  | Some ix -> ix
+  | None ->
+      let s = stdlib_surface () in
+      let ix =
+        index_of "" ~modules:s.std_modules ~units:s.std_units
+          ~symbols:s.std_symbols
+      in
+      standalone_cache := Some ix;
+      ix
+
 let build (root : string) : t =
   let tree = dependency_tree ~root ~registry:None in
-  let modules = scan root @ tree.dep_modules in
+  let modules = with_stdlib (scan root @ tree.dep_modules) in
   let units =
     List.map (fun (path, file) -> (path, parse_tolerant file)) modules
   in
@@ -689,12 +759,13 @@ let build (root : string) : t =
 
 (* The index for [root], rebuilt only when the tree's fingerprint moves.
    Dependency modules ride along so names like `http` and `net` resolve
-   in diagnostics and completion. *)
+   in diagnostics and completion, and the standard library's surface
+   under every path the project and its pins leave unnamed. *)
 let get ?registry (root : string) : t =
   let root = Lsp_util.normalize_path root in
   let project_modules = scan root in
   let tree = dependency_tree ~root ~registry in
-  let modules = project_modules @ tree.dep_modules in
+  let modules = with_stdlib (project_modules @ tree.dep_modules) in
   let key = root ^ "|" ^ Option.value ~default:"" registry in
   let fp = fingerprint root modules in
   match Hashtbl.find_opt cache key with

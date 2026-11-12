@@ -163,6 +163,80 @@ and local_or_project_container (ix : Ix.t) (items : Ast.item list)
       | s :: _ when is_container_kind s.Ix.kind -> Some s.Ix.name
       | _ -> None)
 
+(* ---- The builtin type a receiver names ------------------------------- *)
+
+(* The builtin type a literal expression stands for — the initializer
+   route for a `const s = "abc"` answered by `s.` *)
+let literal_type_of_expr (e : Ast.expr) : string option =
+  match e.Ast.desc with
+  | Ast.String _ | Ast.Interpolated _ -> Some "String"
+  | Ast.Int64 _ -> Some "Int64"
+  | Ast.Float _ -> Some "Float64"
+  | Ast.Bool _ -> Some "Bool"
+  | Ast.Char _ -> Some "Char"
+  | Ast.Array_literal _ -> Some "Array"
+  | Ast.Map_literal _ -> Some "Map"
+  | _ -> None
+
+(* The builtin type a string or char literal directly before the dot
+   names — `"abc".` completes String's methods. The scan takes the last
+   quote with no newline and no second quote between it and the dot;
+   numeric literals stay out, where `1.` and `1.5.` read ambiguously. *)
+let literal_receiver_type (text : string) (offset : int) : string option =
+  let n = String.length text in
+  let i = offset - 1 in
+  if i < 0 || i >= n || text.[i] <> '.' then None
+  else
+    let rec back q =
+      if q < 0 then None
+      else
+        match text.[q] with
+        | '\n' -> None
+        | ('\'' | '"') as quote ->
+            let rec clean k =
+              k >= i
+              || match text.[k] with '"' | '\'' -> false | _ -> clean (k + 1)
+            in
+            if clean (q + 1) then
+              Some (if quote = '"' then "String" else "Char")
+            else back (q - 1)
+        | _ -> back (q - 1)
+    in
+    back (i - 1)
+
+(* The builtin type name a receiver stands for, best-effort: a literal
+   directly before the dot, else a parameter or binding whose declared
+   type — or literal, or `Type.new(...)` initializer — names one. A
+   name the method tables have no entry for answers None. *)
+let builtin_receiver_type (items : Ast.item list) (text : string) (offset : int)
+    (segments : string list) : string option =
+  match literal_receiver_type text offset with
+  | Some t -> Some t
+  | None -> (
+      match segments with
+      | [ single ] -> (
+          match find_param_type items single with
+          | Some t -> base_type_name t
+          | None -> (
+              match find_binding items single with
+              | Some
+                  {
+                    Ast.desc =
+                      Ast.Call
+                        ( {
+                            Ast.desc =
+                              Ast.Member
+                                ({ Ast.desc = Ast.Type_ident c; _ }, "new");
+                            _;
+                          },
+                          _ );
+                    _;
+                  } ->
+                  Some c
+              | Some init -> literal_type_of_expr init
+              | None -> None))
+      | _ -> None)
+
 (* ---- Dotted receiver extraction ------------------------------------- *)
 
 let is_ident_char c =

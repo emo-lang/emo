@@ -84,6 +84,7 @@ let builtin_type_items : item list =
     ty "ArrayBuilder"
       "ArrayBuilder[T] — a mutable buffer that grows into an Array[T]";
     ty "Bytes" "Bytes — a fixed-size mutable byte buffer";
+    ty "Byte" "a single byte";
     ty "Atomic" "Atomic[T] — a cell read and written atomically";
     ty "TcpConn" "a TCP connection";
     ty "TcpListener" "a TCP listener";
@@ -102,6 +103,11 @@ let builtin_function_items : item list =
     fn "printf" "printf(format String, data Array) — C-style formatting";
     fn "self_pid" "self_pid() -> Pid";
     fn "halt" "halt() — stop the current process";
+    fn "fence" "fence() — a full memory barrier";
+    fn "expect_equal" "expect_equal(expected, actual) — a test assertion";
+    fn "expect_true" "expect_true(value) — a test assertion";
+    fn "expect_false" "expect_false(value) — a test assertion";
+    fn "expect_fail" "expect_fail(message String) — a test assertion";
   ]
 
 let symbol_item (s : Ix.symbol) : item =
@@ -219,6 +225,209 @@ let syntax_hover_at (text : string) (offset : int) : string option =
                detail)
     else None
 
+(* ---- The language's method surface ---------------------------------- *)
+
+(* The methods the checker answers on its own types — signatures as the
+   checker's member dispatch types them, parameter names as the docs
+   spell them; `T`, `K`, `V` stand for a type's element, key, and value.
+   No declaration any index carries, so member completion and hover
+   after a builtin receiver answer from this table. *)
+let builtin_type_members : (string * (string * string) list) list =
+  let m name detail = (name, detail) in
+  [
+    ( "String",
+      [
+        m "length" "def length() Int64";
+        m "substring" "def substring(start Int64, length Int64) String";
+        m "split" "def split(sep String) Array[String]";
+        m "trim" "def trim() String";
+        m "lower" "def lower() String";
+        m "index_of" "def index_of(needle String) Int64";
+        m "starts_with" "def starts_with(prefix String) Bool";
+        m "to_int64" "def to_int64() Int64";
+        m "to_bytes" "def to_bytes() Bytes";
+      ] );
+    ( "Int64",
+      [
+        m "to_byte" "def to_byte() Byte";
+        m "to_float64" "def to_float64() Float64";
+      ] );
+    ("Byte", [ m "to_int64" "def to_int64() Int64" ]);
+    ( "Float64",
+      [
+        m "sqrt" "def sqrt() Float64";
+        m "floor" "def floor() Float64";
+        m "ceil" "def ceil() Float64";
+        m "trunc" "def trunc() Float64";
+        m "to_bits" "def to_bits() Int64";
+        m "to_int64" "def to_int64() Int64";
+      ] );
+    ("Bool", []);
+    ("Char", []);
+    ( "Array",
+      [
+        m "append" "def append(value T) Array[T]";
+        m "length" "def length() Int64";
+      ] );
+    ( "List",
+      [
+        m "push_front" "def push_front(x T) List[T]";
+        m "push_back" "def push_back(x T) List[T]";
+        m "pop_front" "def pop_front() T";
+        m "pop_back" "def pop_back() T";
+        m "length" "def length() Int64";
+      ] );
+    ( "ArrayBuilder",
+      [
+        m "push" "def push(v T) ArrayBuilder[T]";
+        m "length" "def length() Int64";
+        m "get" "def get(i Int64) T";
+        m "to_array" "def to_array() Array[T]";
+      ] );
+    ( "Map",
+      [
+        m "get" "def get(key K) V";
+        m "set" "def set(key K, value V) Map[K, V]";
+        m "has" "def has(key K) Bool";
+        m "remove" "def remove(key K) Map[K, V]";
+        m "length" "def length() Int64";
+        m "keys" "def keys() Array[K]";
+        m "values" "def values() Array[V]";
+      ] );
+    ("Box", [ m "read" "def read() T"; m "replace" "def replace(v T) T" ]);
+    ( "Atomic",
+      [
+        m "load" "def load() T";
+        m "store" "def store(v T) Void";
+        m "exchange" "def exchange(v T) T";
+        m "compare_exchange" "def compare_exchange(expected T, new T) (Bool, T)";
+        m "fetch_add" "def fetch_add(v Int64) T";
+        m "fetch_sub" "def fetch_sub(v Int64) T";
+        m "fetch_and" "def fetch_and(v T) T";
+        m "fetch_or" "def fetch_or(v T) T";
+        m "fetch_xor" "def fetch_xor(v T) T";
+      ] );
+    ( "Bytes",
+      [
+        m "length" "def length() Int64";
+        m "get" "def get(i Int64) Int64";
+        m "set" "def set(i Int64, v Int64) Int64";
+        m "get_u16_le" "def get_u16_le(i Int64) Int64";
+        m "get_u32_le" "def get_u32_le(i Int64) Int64";
+        m "get_u64_le" "def get_u64_le(i Int64) Int64";
+        m "set_u16_le" "def set_u16_le(i Int64, v Int64) Int64";
+        m "set_u32_le" "def set_u32_le(i Int64, v Int64) Int64";
+        m "set_u64_le" "def set_u64_le(i Int64, v Int64) Int64";
+      ] );
+    ("Pid", []);
+    ( "TcpConn",
+      [
+        m "read_line" "def read_line() (R, String)";
+        m "read_exactly" "def read_exactly(n Int64) (R, String)";
+        m "read_all" "def read_all() (R, String)";
+        m "write" "def write(data String) (R, TcpConn)";
+        m "close" "def close() (R, TcpConn)";
+        m "set_timeout" "def set_timeout(seconds Float64) TcpConn";
+      ] );
+    ( "TcpListener",
+      [
+        m "accept" "def accept() (R, TcpConn)";
+        m "port" "def port() Int64";
+        m "close" "def close() (R, TcpListener)";
+        m "set_timeout" "def set_timeout(seconds Float64) TcpListener";
+      ] );
+    ( "UdpSocket",
+      [
+        m "send_to"
+          "def send_to(host String, port Int64, data String) (R, UdpSocket)";
+        m "recv_from" "def recv_from() (R, (String, String, Int64))";
+        m "port" "def port() Int64";
+        m "close" "def close() (R, UdpSocket)";
+        m "set_timeout" "def set_timeout(seconds Float64) UdpSocket";
+      ] );
+  ]
+
+let builtin_member_detail (type_name : string) (method_name : string) :
+    string option =
+  match List.assoc_opt type_name builtin_type_members with
+  | None -> None
+  | Some members -> List.assoc_opt method_name members
+
+let is_builtin_type (name : string) : bool =
+  List.exists (fun (i : item) -> i.label = name) builtin_type_items
+
+let builtin_function_detail (name : string) : string option =
+  List.find_map
+    (fun (i : item) -> if i.label = name then Some i.detail else None)
+    builtin_function_items
+
+let builtin_type_detail (name : string) : string option =
+  List.find_map
+    (fun (i : item) -> if i.label = name then Some i.detail else None)
+    builtin_type_items
+
+let builtin_type_member_items (type_name : string) : item list =
+  match List.assoc_opt type_name builtin_type_members with
+  | None -> []
+  | Some members ->
+      List.map
+        (fun (name, detail) ->
+          make ~label:name ~kind:3 (* Function *)
+            ~detail ~sort_text:("1" ^ name) ())
+        members
+
+(* An index-shaped symbol for a builtin member — `s.substring` with
+   `s: String`, or `Bytes.get_u32_le` spelled against the type — so the
+   hover pipeline answers it like any declaration. *)
+let builtin_member_symbol ~(items : Emo_ast.item list) ~(text : string)
+    ~(offset : int) (recv : string) (method_name : string) : Ix.symbol option =
+  let type_name =
+    match Resolve.builtin_receiver_type items text offset [ recv ] with
+    | Some t -> Some t
+    | None -> if is_builtin_type recv then Some recv else None
+  in
+  Option.bind type_name (fun t ->
+      Option.map
+        (fun detail -> (t, detail))
+        (builtin_member_detail t method_name))
+  |> Option.map (fun (t, detail) ->
+      Ix.mk ~name:method_name ~kind:Ix.Kind.function_ ~detail ~file:""
+        ~span:(Emo_support.Span.make ~file:"" ~line:1 ~col:1 ~start:0 ~stop:0)
+        ~container:(Some t) ~module_path:[] ~local:false)
+
+(* The hover for the language's own surface, consulted when the index
+   came up empty: a bare builtin function (`println`), a bare capability
+   type (`Bytes`), a builtin member spelled against the type
+   (`Bytes.get_u32_le`) or against a value of builtin type
+   (`s.substring`). *)
+let builtin_hover_at ~(items : Emo_ast.item list) (text : string) (offset : int)
+    : string option =
+  match Resolve.identifier_at text offset with
+  | None -> None
+  | Some (word, _, _) -> (
+      match String.split_on_char '.' word with
+      | [ single ] -> (
+          match builtin_function_detail single with
+          | Some detail -> Some (Printf.sprintf "```emo\n%s\n```" detail)
+          | None -> (
+              match builtin_type_detail single with
+              | Some blurb ->
+                  Some (Printf.sprintf "```emo\n%s\n```\n\n%s" single blurb)
+              | None -> None))
+      | [ recv; method_name ] -> (
+          match builtin_member_symbol ~items ~text ~offset recv method_name with
+          | Some s ->
+              Some
+                (Printf.sprintf
+                   "```emo\n\
+                    %s\n\
+                    ```\n\n\
+                    a method of the language's own surface on %s values"
+                   s.Ix.detail
+                   (Option.value ~default:"builtin" s.Ix.container))
+          | None -> None)
+      | _ -> None)
+
 (* ---- Registry packages ---------------------------------------------- *)
 
 let is_version_dir name =
@@ -316,9 +525,15 @@ let global_items ~(ix : Ix.t) ~(file : string) : item list =
   keyword_items @ builtin_type_items @ builtin_function_items
   @ List.map symbol_item (Ix.symbols_in_file ix file)
 
-let member_items (ix : Ix.t) (items : Emo_ast.item list) (file : string)
-    (offset : int) (segments : string list) : item list =
+let member_items (ix : Ix.t) (items : Emo_ast.item list) (text : string)
+    (file : string) (offset : int) (segments : string list) : item list =
+  (* The reserved surfaces answer from their tables: `Syntax.` from the
+     macro surface, a builtin type name from the language's method
+     surface — neither carries declarations any index has. *)
   if segments = [ "Syntax" ] then syntax_member_items
+  else if
+    match segments with [ single ] -> is_builtin_type single | _ -> false
+  then builtin_type_member_items (List.hd segments)
   else
     let members = Resolve.resolve_receiver ix items file offset segments in
     let container = Resolve.resolve_container ix items ~file offset segments in
@@ -332,11 +547,20 @@ let member_items (ix : Ix.t) (items : Emo_ast.item list) (file : string)
           ]
       | _ -> []
     in
-    new_item
-    @ List.map symbol_item
-        (List.filter
-           (fun (s : Ix.symbol) -> s.Ix.kind <> Ix.Kind.constructor)
-           members)
+    let indexed =
+      new_item
+      @ List.map symbol_item
+          (List.filter
+             (fun (s : Ix.symbol) -> s.Ix.kind <> Ix.Kind.constructor)
+             members)
+    in
+    if indexed <> [] then indexed
+    else
+      (* No declaration answers the receiver: complete from the
+         language's method surface when its type names a builtin. *)
+      match Resolve.builtin_receiver_type items text offset segments with
+      | Some t -> builtin_type_member_items t
+      | None -> []
 
 (* Items for a completion request selected by the cursor context. A
    require string offers package names the way a build routes them: a
@@ -352,8 +576,13 @@ let items_for ~(ix : Ix.t) ~(file : string) ~(items : Emo_ast.item list)
     | _ -> stdlib_package_items ()
   else
     match Resolve.receiver_segments text offset with
-    | Some segments -> member_items ix items file offset segments
-    | None -> global_items ~ix ~file
+    | Some segments -> member_items ix items text file offset segments
+    | None -> (
+        (* A literal directly before the dot — `"abc".` — names no
+           chain, yet its type's methods complete. *)
+        match Resolve.literal_receiver_type text offset with
+        | Some t -> builtin_type_member_items t
+        | None -> global_items ~ix ~file)
 
 (* Character offset at which the current completion token starts, so the
    client can replace exactly that range. *)

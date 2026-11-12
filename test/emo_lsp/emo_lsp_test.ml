@@ -179,7 +179,7 @@ let test_syntax_member_completion () =
   let items =
     Lsp_completion.member_items
       (Lsp_index.index_of "/tmp" ~modules:[] ~symbols)
-      [] "test.emo" 13 [ "Syntax" ]
+      [] "Syntax." "test.emo" 13 [ "Syntax" ]
   in
   let routed =
     List.map (fun (i : Lsp_completion.item) -> i.Lsp_completion.label) items
@@ -299,6 +299,129 @@ let diagnostic_codes ds =
   List.filter_map
     (fun (d : Lsp_server.Diagnostic.t) -> d.Lsp_server.Diagnostic.code)
     ds
+
+(* ---- The language's surface and the stdlib everywhere ---------------- *)
+
+let completion_item_named name items =
+  List.find_opt
+    (fun (i : Lsp_completion.item) -> i.Lsp_completion.label = name)
+    items
+
+let test_builtin_member_completion () =
+  (* `s.length` with `s: String` — the receiver carries no class
+     declaration, so completion answers from the language's method
+     surface, signatures typed the way the checker types them. *)
+  let text = "def shout(s String) Int64 {\n  return s.length()\n}" in
+  let offset = String.length "def shout(s String) Int64 {\n  return s." in
+  let items =
+    Lsp_completion.member_items (Lsp_index.standalone ()) (parse_items text)
+      text "test.emo" offset [ "s" ]
+  in
+  match completion_item_named "substring" items with
+  | Some i ->
+      Alcotest.(check string)
+        "substring signature" "def substring(start Int64, length Int64) String"
+        i.Lsp_completion.detail
+  | None -> Alcotest.fail "no substring after a String receiver"
+
+let test_builtin_type_member_completion () =
+  (* a builtin type name completes from the method surface, the way
+     `Syntax.` does *)
+  let items =
+    Lsp_completion.member_items (Lsp_index.standalone ()) [] "Bytes." "test.emo"
+      6 [ "Bytes" ]
+  in
+  match completion_item_named "get_u32_le" items with
+  | Some i ->
+      Alcotest.(check string)
+        "Bytes.get_u32_le signature" "def get_u32_le(i Int64) Int64"
+        i.Lsp_completion.detail
+  | None -> Alcotest.fail "no get_u32_le after Bytes."
+
+let test_builtin_literal_completion () =
+  (* the receiver is a string literal: the cursor sits after `const s = "hi".` *)
+  let text = "const s = \"hi\"." in
+  let offset = String.length text in
+  let items =
+    Lsp_completion.member_items (Lsp_index.standalone ())
+      (parse_items "const s = \"hi\"")
+      text "test.emo" offset [ "hi" ]
+  in
+  Alcotest.(check bool)
+    "length offered on a string literal" true
+    (completion_item_named "length" items <> None)
+
+let test_builtin_hover () =
+  let text = "def f(data Bytes) Int64 {\n  return data.get_u32_le(0)\n}" in
+  let items = parse_items text in
+  (* a bare builtin function *)
+  (match
+     Lsp_completion.builtin_hover_at ~items "println(x)"
+       (String.length "printl")
+   with
+  | Some value ->
+      Alcotest.(check bool)
+        "println hover" true
+        (Lsp_util.starts_with ~prefix:"```emo\nprintln(value)" value)
+  | None -> Alcotest.fail "println has no hover");
+  (* a bare capability type *)
+  (match
+     Lsp_completion.builtin_hover_at ~items "const b = Bytes.new()"
+       (String.length "const b = ")
+   with
+  | Some value ->
+      Alcotest.(check bool)
+        "Bytes hover" true
+        (Lsp_util.starts_with ~prefix:"```emo\nBytes\n```" value)
+  | None -> Alcotest.fail "Bytes has no hover");
+  (* a member on a value of builtin type *)
+  (match
+     Lsp_completion.builtin_hover_at ~items text
+       (String.length "def f(data Bytes) Int64 {\n  return data.get_u32_l")
+   with
+  | Some value ->
+      Alcotest.(check bool)
+        "Bytes member hover" true
+        (Lsp_util.starts_with ~prefix:"```emo\ndef get_u32_le(i Int64) Int64"
+           value)
+  | None -> Alcotest.fail "data.get_u32_le has no hover");
+  (* a word the surface does not name stays None *)
+  Alcotest.(check bool)
+    "other words stay None" true
+    (Lsp_completion.builtin_hover_at ~items text (String.length "def ") = None)
+
+let test_standalone_stdlib_completion () =
+  (* a file outside any project still completes the standard library's
+     surface — the packages ride the binary *)
+  let ix = Lsp_index.standalone () in
+  let items =
+    Lsp_completion.member_items ix [] "os." "scratch.emo" 3 [ "os" ]
+  in
+  match completion_item_named "getpid" items with
+  | Some i ->
+      Alcotest.(check string)
+        "os.getpid signature" "def getpid() Int64" i.Lsp_completion.detail
+  | None -> Alcotest.fail "no getpid after os."
+
+let test_standalone_stdlib_hover () =
+  let ix = Lsp_index.standalone () in
+  let text = "const status = os.wait_exit_code(0)" in
+  let offset = String.length "const status = os.wait_exit_cod" in
+  match Lsp_server.symbols_at ix [] "scratch.emo" text offset with
+  | s :: _ -> (
+      Alcotest.(check string)
+        "stdlib signature" "def wait_exit_code(status Int64) Int64"
+        s.Lsp_index.detail;
+      match
+        Lsp_server.doc_comment_of_symbol ~buffer:text ~buffer_file:"scratch.emo"
+          s
+      with
+      | Some doc ->
+          Alcotest.(check bool)
+            "the doc comment rides the hover" true
+            (String.length doc > 0)
+      | None -> Alcotest.fail "no doc comment above wait_exit_code")
+  | [] -> Alcotest.fail "os.wait_exit_code did not resolve outside a project"
 
 (* Every require needs a manifest pin: a scoped name and a standard-library
    short name alike are E5006, the latter's hint naming the version to add;
@@ -733,6 +856,16 @@ let () =
           tc "syntax hover" test_syntax_hover;
           tc "dep insertion" test_dep_insertion;
           tc "initialize result" test_initialize_result;
+        ] );
+      ( "completion",
+        [
+          tc "builtin member completion" test_builtin_member_completion;
+          tc "builtin type member completion"
+            test_builtin_type_member_completion;
+          tc "builtin literal completion" test_builtin_literal_completion;
+          tc "builtin hover" test_builtin_hover;
+          tc "standalone stdlib completion" test_standalone_stdlib_completion;
+          tc "standalone stdlib hover" test_standalone_stdlib_hover;
         ] );
       ("root", [ tc "find_root" test_find_root ]);
     ]
