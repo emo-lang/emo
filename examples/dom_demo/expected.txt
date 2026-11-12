@@ -1,0 +1,43 @@
+roots=4
+title=Field notes
+title-outer=<h1 id="title" class="banner">Field notes</h1>
+h2-count=2
+h2-first=Sieving HTML
+h2-last=Reading selectors
+h1+main=0
+group=4 text=parsequerywalkdom 0.1.0
+li=3
+eq1=query
+eq-2=query
+slice(1,3)=querywalk
+at1-kind=element elem=li
+href=https://emo.example/sieve
+href-strict=https://emo.example/sieve
+alt=absent
+img-outer=<img src="cover.png" alt="cover">
+img-html=
+nth-odd=parsewalk
+not-mid=parsewalk
+sections-with-a=1
+contains=1
+p-html=Strictness <b>sieves</b> mistakes early.
+root=html
+toc-children=3
+toc-parent=main
+toc-parents=3
+toc-closest-main=main
+footer-prev=img
+footer-prev-all=3
+footer-in-body=1
+featured=Sieving HTML
+is-featured=yes
+each:
+  0 parse
+  1 query
+  2 walk
+walked-all=no
+all-nodes=64
+all-elements=21
+encode-lines=30
+reparse-roots=4
+reparse-title=Field notes

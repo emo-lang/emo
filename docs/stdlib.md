@@ -67,6 +67,7 @@ The packages:
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
+| [`dom`](#the-dom-package) | strict HTML parse and CSS-selector query | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
 | [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
@@ -581,6 +582,42 @@ byte offset.
 
 Targets: all five. Reference: [`docs/stdlib/xml.md`](stdlib/xml.md)
 · Demos: `examples/xml_demo`, `examples/xml_edge`.
+
+## The `dom` package
+
+The read-only DOM: strict HTML parsed into a `Node` tree, queried
+with CSS selectors — goquery's shape, pure Emo over the shared
+runtimes. Parsing is the xml.decode direction: malformed input
+answers `(R.error, reason)` with the byte position, never a repaired
+tree, and there is no `html`/`head`/`body` synthesis — the tree
+mirrors the source, so fragments parse into what they name.
+
+```emo
+dom.parse(text)               // (R, Document) — strict
+dom.encode(n Node) String     // canonical HTML back out
+
+doc.find(sel)                 // (R, Selection) — every matching element
+sel.find(sel)                 // (R, Selection) — descendants
+sel.eq(i) / first() / last() / slice(start, end)
+sel.attr(name)                // (R, String) — attr_or for the default
+sel.text() / html() / outer_html()
+sel.children() / parent() / parents() / closest(sel)
+sel.next_all() / prev_all() / siblings()
+sel.filter(sel) / not(sel) / has(sel) / is?(sel)
+sel.each(f Block)             // the trailing block walks the selection
+```
+
+Selectors carry types, `*`, classes, ids, attribute tests (`[href]`,
+`=`, `^=`, `$=`, `*=`, `~=`, `|=`), the four combinators, comma
+groups, the structural pseudo-classes (`:first-child`,
+`:nth-child(an+b)`, `:not(...)`, `:empty`, `:root`, ...), and
+goquery's `:contains`. Pseudo-elements and unknown pseudo-classes
+answer as selector errors — `find` never silently matches nothing.
+`script`/`style` hold raw text, `title`/`textarea` character
+references only; tag and attribute names fold to lowercase.
+
+Targets: all five. Reference: [`docs/stdlib/dom.md`](stdlib/dom.md)
+· Demos: `examples/dom_demo`, `examples/dom_edge`.
 
 ## The `base64` package
 

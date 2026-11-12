@@ -1,0 +1,3227 @@
+// The dom package: parse strict HTML into a Node tree and query it
+// with CSS selectors — the shape of a read-only goquery. Pure Emo
+// over the shared runtimes.
+//
+// Parsing is strict, in the same direction as xml.decode: every
+// element opened must be closed, close tags must nest honestly, void
+// elements may not carry a close tag, and only void elements may
+// self-close. Malformed input answers `(R.error, reason)` with a
+// byte position instead of a repaired tree — the caller sees the
+// mistake, the library never invents structure. There is no
+// html/head/body synthesis: the tree mirrors the source, so a
+// fragment parses into exactly the elements it names.
+//
+// Supported: elements, attributes (double or single quoted, unquoted,
+// or valueless), text with `&amp;`-style character references (the
+// six common named ones plus `&#ddd;` / `&#xhh;`; an unknown but
+// well-formed name passes through literally), comments, and a
+// doctype. `script` / `style` hold raw text; `title` / `textarea`
+// hold text with character references. Tag and attribute names are
+// folded to lowercase, the HTML rule.
+//
+// Not supported (each answers as a parse error): unclosed elements,
+// misnested or stray close tags, close tags with attributes,
+// self-closing non-void elements, duplicate attributes, raw `<` or a
+// bare `&` in text, malformed character references, CDATA sections,
+// processing instructions, and nesting deeper than 512.
+//
+// Selectors: type, `*`, `.class`, `#id`, attribute tests
+// (`[href]`, `=`, `^=`, `$=`, `*=`, `~=`, `|=`), the four
+// combinators (descendant, `>`, `+`, `~`), comma groups, and the
+// structural pseudo-classes (`:first-child`, `:nth-child(an+b)`,
+// `:not(...)`, `:empty`, `:root`, ...) plus goquery's `:contains`.
+// Pseudo-elements and selector escapes answer as selector errors.
+//
+// The Selection face follows goquery: find, traversal, filtering,
+// and `each` with a trailing block. Nothing mutates the tree — this
+// package reads.
+
+// ---- the node model ----
+
+enum NodeKind { element, text, comment, doctype }
+
+// Every Node answers the whole element face: an element with its real
+// data, any other node by raising. The signatures name `Node` itself —
+// a self-reference, resolvable since type names register program-wide
+// before any module is checked; read the concrete carrier through
+// `is()` when it matters.
+interface Node {
+  def kind() NodeKind
+  def id() Int64
+  def is_element?() Bool
+  def as_element() Element
+  def tag() String
+  def attrs() Array[(String, String)]
+  def attr(name String) (R, String)
+  def children() Array[Node]
+  def parent() (R, Node)
+  def text() String
+  def encode() String
+}
+
+class Element {
+  def init(nid Int64, tag String, attrs Array[(String, String)], children Array[Node], parent_e Array[Node]) {
+    self.nid = nid
+    self.tag_name = tag
+    self.attrs_l = attrs
+    self.children_l = children
+    self.parent_cell = Box.new(parent_e)
+  }
+
+  def kind() NodeKind {
+    return NodeKind.element
+  }
+
+  // The node's serial in document order, assigned by the parser.
+  // Stable across every Selection operation; the identity two nodes
+  // compare by.
+  def id() Int64 {
+    return self.nid
+  }
+
+  def is_element?() Bool {
+    return true
+  }
+
+  def as_element() Element {
+    return self
+  }
+
+  // The element's tag name, lowercase.
+  def tag() String {
+    return self.tag_name
+  }
+
+  // The attributes in document order.
+  def attrs() Array[(String, String)] {
+    return self.attrs_l
+  }
+
+  // The value of attribute `name`; a missing attribute answers
+  // `(R.error, reason)` (scan `attrs()` when presence varies).
+  def attr(name String) (R, String) {
+    return attr_search(self.attrs_l, name, 0)
+  }
+
+  // All child nodes in document order — elements, text, and comments.
+  def children() Array[Node] {
+    return self.children_l
+  }
+
+  // The parent element, or `(R.error, reason)` on a document root.
+  def parent() (R, Node) {
+    const p = self.parent_cell.read()
+    if p.length() == 0 {
+      return (R.error, "dom: the node has no parent (it is a root of the document)")
+    }
+    return (R.ok, p[0])
+  }
+
+  // The descendant text of this element, in document order.
+  // Comments and doctypes contribute nothing.
+  def text() String {
+    return nodes_text(self.children_l, 0, "")
+  }
+
+  def encode() String {
+    return encode_element(self)
+  }
+
+  def attach_parent(p Node) {
+    self.parent_cell.replace([p])
+  }
+}
+
+class TextNode {
+  def init(nid Int64, text String, parent_e Array[Node]) {
+    self.nid = nid
+    self.text_l = text
+    self.parent_cell = Box.new(parent_e)
+  }
+
+  def kind() NodeKind {
+    return NodeKind.text
+  }
+
+  def id() Int64 {
+    return self.nid
+  }
+
+  def is_element?() Bool {
+    return false
+  }
+
+  def as_element() Element {
+    raise Exception.new(message: "dom: expected an element, got text")
+  }
+
+  def tag() String {
+    raise Exception.new(message: "dom: expected an element, got text")
+  }
+
+  def attrs() Array[(String, String)] {
+    raise Exception.new(message: "dom: expected an element, got text")
+  }
+
+  def attr(name String) (R, String) {
+    raise Exception.new(message: "dom: expected an element, got text")
+  }
+
+  def children() Array[Node] {
+    raise Exception.new(message: "dom: expected an element, got text")
+  }
+
+  def parent() (R, Node) {
+    const p = self.parent_cell.read()
+    if p.length() == 0 {
+      return (R.error, "dom: the node has no parent (it is a root of the document)")
+    }
+    return (R.ok, p[0])
+  }
+
+  // The text itself, character references already decoded.
+  def text() String {
+    return self.text_l
+  }
+
+  def encode() String {
+    return escape_text(self.text_l)
+  }
+
+  def attach_parent(p Node) {
+    self.parent_cell.replace([p])
+  }
+}
+
+class CommentNode {
+  def init(nid Int64, text String, parent_e Array[Node]) {
+    self.nid = nid
+    self.text_l = text
+    self.parent_cell = Box.new(parent_e)
+  }
+
+  def kind() NodeKind {
+    return NodeKind.comment
+  }
+
+  def id() Int64 {
+    return self.nid
+  }
+
+  def is_element?() Bool {
+    return false
+  }
+
+  def as_element() Element {
+    raise Exception.new(message: "dom: expected an element, got a comment")
+  }
+
+  def tag() String {
+    raise Exception.new(message: "dom: expected an element, got a comment")
+  }
+
+  def attrs() Array[(String, String)] {
+    raise Exception.new(message: "dom: expected an element, got a comment")
+  }
+
+  def attr(name String) (R, String) {
+    raise Exception.new(message: "dom: expected an element, got a comment")
+  }
+
+  def children() Array[Node] {
+    raise Exception.new(message: "dom: expected an element, got a comment")
+  }
+
+  def parent() (R, Node) {
+    const p = self.parent_cell.read()
+    if p.length() == 0 {
+      return (R.error, "dom: the node has no parent (it is a root of the document)")
+    }
+    return (R.ok, p[0])
+  }
+
+  // The comment's content, without the `<!--` and `-->`.
+  def text() String {
+    return self.text_l
+  }
+
+  def encode() String {
+    return "<!--" + self.text_l + "-->"
+  }
+
+  def attach_parent(p Node) {
+    self.parent_cell.replace([p])
+  }
+}
+
+class DoctypeNode {
+  def init(nid Int64, text String, parent_e Array[Node]) {
+    self.nid = nid
+    self.text_l = text
+    self.parent_cell = Box.new(parent_e)
+  }
+
+  def kind() NodeKind {
+    return NodeKind.doctype
+  }
+
+  def id() Int64 {
+    return self.nid
+  }
+
+  def is_element?() Bool {
+    return false
+  }
+
+  def as_element() Element {
+    raise Exception.new(message: "dom: expected an element, got a doctype")
+  }
+
+  def tag() String {
+    raise Exception.new(message: "dom: expected an element, got a doctype")
+  }
+
+  def attrs() Array[(String, String)] {
+    raise Exception.new(message: "dom: expected an element, got a doctype")
+  }
+
+  def attr(name String) (R, String) {
+    raise Exception.new(message: "dom: expected an element, got a doctype")
+  }
+
+  def children() Array[Node] {
+    raise Exception.new(message: "dom: expected an element, got a doctype")
+  }
+
+  def parent() (R, Node) {
+    const p = self.parent_cell.read()
+    if p.length() == 0 {
+      return (R.error, "dom: the node has no parent (it is a root of the document)")
+    }
+    return (R.ok, p[0])
+  }
+
+  // The text between `<!` and `>`, trimmed — `DOCTYPE html`.
+  def text() String {
+    return self.text_l
+  }
+
+  def encode() String {
+    return "<!" + self.text_l + ">"
+  }
+
+  def attach_parent(p Node) {
+    self.parent_cell.replace([p])
+  }
+}
+
+// The parsed document: the top-level nodes in document order
+// (typically a doctype, the `html` element, and the text and
+// comments around them). A fragment parses into whatever nodes it
+// names — there is no html/head/body synthesis.
+class Document {
+  def init(nodes Array[Node], root_id Int64) {
+    self.items = nodes
+    self.root_id = root_id
+  }
+
+  // The top-level nodes in document order.
+  def roots() Array[Node] {
+    return self.items
+  }
+
+  // Every node in the tree, document order.
+  def all() Selection {
+    return Selection.new(all_nodes(self.items, 0, []), self.root_id)
+  }
+
+  // Every element in the tree that the selector matches, document
+  // order. A selector that does not compile answers the error.
+  def find(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(all_nodes(self.items, 0, []), s, self.root_id)) }
+    }
+  }
+
+  // The document re-encoded to canonical HTML: attributes are double
+  // quoted, `&` `<` `>` come back escaped, void elements have no
+  // close tag. Not byte-identical to the source — canonical.
+  def encode() String {
+    return encode_nodes(self.items, 0, "")
+  }
+}
+
+// ---- the selection ----
+
+// An ordered set of nodes — the result of a query, a traversal step,
+// or a filter. Every operation answers a fresh Selection; the tree
+// itself is never touched.
+class Selection {
+  def init(nodes Array[Node], root_id Int64) {
+    self.items = nodes
+    self.root_id = root_id
+  }
+
+  def nodes() Array[Node] {
+    return self.items
+  }
+
+  def length() Int64 {
+    return self.items.length()
+  }
+
+  // The node at index `i`; out of range answers `(R.error, reason)`.
+  def at(i Int64) (R, Node) {
+    if i < 0 || i >= self.items.length() {
+      return (R.error, "dom: index " + i.to_string() + " is outside a selection of " + self.items.length().to_string())
+    }
+    return (R.ok, self.items[i])
+  }
+
+  // The node at index `i` as a one-node Selection; a negative index
+  // counts from the end, an out-of-range index answers empty.
+  def eq(i Int64) Selection {
+    const n = self.items.length()
+    var k = i
+    if k < 0 {
+      k = k + n
+    }
+    if k < 0 || k >= n {
+      return Selection.new([], self.root_id)
+    }
+    return Selection.new([self.items[k]], self.root_id)
+  }
+
+  def first() Selection {
+    return self.eq(0)
+  }
+
+  def last() Selection {
+    return self.eq(-1)
+  }
+
+  // The nodes from `start` to `end`, end exclusive. Negative indexes
+  // count from the end; out-of-range ends clamp, as jQuery's slice.
+  def slice(start Int64, end Int64) Selection {
+    var s = start
+    var e = end
+    if s < 0 {
+      s = s + self.items.length()
+    }
+    if e < 0 {
+      e = e + self.items.length()
+    }
+    if s < 0 {
+      s = 0
+    }
+    if e > self.items.length() {
+      e = self.items.length()
+    }
+    if e < s {
+      e = s
+    }
+    return Selection.new(slice_nodes(self.items, s, e, 0, []), self.root_id)
+  }
+
+  // The named attribute on the first node. An empty selection, a
+  // non-element first node, or a missing attribute answers
+  // `(R.error, reason)` — attr_or is the forgiving door.
+  def attr(name String) (R, String) {
+    if self.items.length() == 0 {
+      return (R.error, "dom: attr on an empty selection")
+    }
+    const head = self.items[0]
+    if head.is_element?() == false {
+      return (R.error, "dom: the first node of the selection is not an element")
+    }
+    return head.as_element().attr(name)
+  }
+
+  // The named attribute on the first node, or `fallback` when the
+  // selection is empty, the first node is not an element, or the
+  // attribute is absent — the caller's explicit default.
+  def attr_or(name String, fallback String) String {
+    case self.attr(name) {
+      (R.ok, v)    -> { return v }
+      (R.error, _) -> { return fallback }
+    }
+  }
+
+  // The combined text of every node — elements contribute their
+  // descendants, text nodes themselves, comments nothing.
+  def text() String {
+    return nodes_text(self.items, 0, "")
+  }
+
+  // The inner markup of the first node; a non-element first node
+  // answers its own markup.
+  def html() String {
+    if self.items.length() == 0 {
+      return ""
+    }
+    const n = self.items[0]
+    if n.is_element?() {
+      return encode_children(n.as_element().children(), 0, "")
+    }
+    return n.encode()
+  }
+
+  // The full markup of the first node, tags included.
+  def outer_html() String {
+    if self.items.length() == 0 {
+      return ""
+    }
+    return self.items[0].encode()
+  }
+
+  // The descendant elements of every node that the selector matches,
+  // document order, duplicates collapsed.
+  def find(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> {
+        return (R.ok, Selection.new(find_over(self.items, 0, s, self.root_id, Map.new(), []), self.root_id))
+      }
+    }
+  }
+
+  // The element children of every node.
+  def children() Selection {
+    return Selection.new(children_over(self.items, 0, Map.new(), []), self.root_id)
+  }
+
+  // The element children of every node that the selector matches.
+  def children_filtered(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.children().nodes(), s, self.root_id)) }
+    }
+  }
+
+  // All children of every element — text and comments included.
+  def contents() Selection {
+    return Selection.new(contents_over(self.items, 0, Map.new(), []), self.root_id)
+  }
+
+  // The immediate parent of every node; a root contributes nothing.
+  def parent() Selection {
+    return Selection.new(parent_over(self.items, 0, Map.new(), []), self.root_id)
+  }
+
+  // The ancestors of every node, nearest first, duplicates collapsed.
+  def parents() Selection {
+    return Selection.new(parents_over(self.items, 0, Map.new(), []), self.root_id)
+  }
+
+  // The ancestors of every node that the selector matches.
+  def parents_filtered(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.parents().nodes(), s, self.root_id)) }
+    }
+  }
+
+  // For every node, its nearest ancestor-or-self that the selector
+  // matches; nodes with no such ancestor contribute nothing.
+  def closest(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> {
+        return (R.ok, Selection.new(closest_over(self.items, 0, s, self.root_id, Map.new(), []), self.root_id))
+      }
+    }
+  }
+
+  // The element siblings that follow each node, document order.
+  def next_all() Selection {
+    return Selection.new(siblings_over(self.items, 0, true, Map.new(), []), self.root_id)
+  }
+
+  // The first element sibling that follows each node.
+  def next() Selection {
+    return self.next_all().first()
+  }
+
+  // The following element siblings that the selector matches.
+  def next_filtered(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.next_all().nodes(), s, self.root_id)) }
+    }
+  }
+
+  // The element siblings that precede each node, nearest first.
+  def prev_all() Selection {
+    return Selection.new(siblings_over(self.items, 0, false, Map.new(), []), self.root_id)
+  }
+
+  // The first element sibling that precedes each node.
+  def prev() Selection {
+    return self.prev_all().first()
+  }
+
+  // The preceding element siblings that the selector matches.
+  def prev_filtered(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.prev_all().nodes(), s, self.root_id)) }
+    }
+  }
+
+  // The element siblings of every node, itself excluded.
+  def siblings() Selection {
+    return Selection.new(siblings_all_over(self.items, 0, Map.new(), []), self.root_id)
+  }
+
+  // The element siblings of every node that the selector matches.
+  def siblings_filtered(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.siblings().nodes(), s, self.root_id)) }
+    }
+  }
+
+  // The nodes of this selection that the selector matches.
+  def filter(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, match_selection(self.items, s, self.root_id)) }
+    }
+  }
+
+  // The nodes of this selection that the selector does not match —
+  // non-element nodes never match, so they stay.
+  def not(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, Selection.new(not_over(self.items, 0, s, self.root_id, []), self.root_id)) }
+    }
+  }
+
+  // The elements of this selection that contain a matching
+  // descendant.
+  def has(sel String) (R, Selection) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, Selection.new(has_over(self.items, 0, s, self.root_id, []), self.root_id)) }
+    }
+  }
+
+  // Whether any node of the selection matches the selector.
+  def is?(sel String) (R, Bool) {
+    case compile_selector(sel) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, s)      -> { return (R.ok, is_over(self.items, 0, s, self.root_id)) }
+    }
+  }
+
+  // Calls `f` with each node as a one-node Selection, passing the
+  // zero-based index — `sel.each() -> (i Int64, one dom.Selection) { ... }`.
+  // Answers a Selection over the same nodes, so the call chains.
+  def each(f Block) Selection {
+    each_over(self.items, 0, f, self.root_id)
+    return Selection.new(self.items, self.root_id)
+  }
+
+  // Like each, but `f` answers whether to continue: false stops the
+  // walk early. Answers whether the walk ran to the end.
+  def each_with_break(f Block) Bool {
+    return each_break_over(self.items, 0, f, self.root_id)
+  }
+}
+
+// ---- selector values ----
+
+enum SelKind { s_type, s_universal, s_id, s_class, s_attr, s_pseudo }
+enum PseudoKind { ps_none, ps_first_child, ps_last_child, ps_only_child, ps_nth_child, ps_nth_last_child, ps_first_of_type, ps_last_of_type, ps_only_of_type, ps_nth_of_type, ps_not, ps_empty, ps_root, ps_contains }
+enum Tk { t_eof, t_ident, t_string, t_hash, t_dot, t_colon, t_star, t_gt, t_plus, t_tilde, t_comma, t_lbracket, t_rbracket, t_lparen, t_rparen, t_eq, t_caret_eq, t_dollar_eq, t_star_eq, t_tilde_eq, t_bar_eq }
+
+class Tok {
+  def init(kind Tk, text String, pos Int64) {
+    self.kind_e = kind
+    self.text_l = text
+    self.pos_l = pos
+  }
+
+  def kind() Tk {
+    return self.kind_e
+  }
+
+  def text() String {
+    return self.text_l
+  }
+
+  def pos() Int64 {
+    return self.pos_l
+  }
+}
+
+// One simple selector: `div`, `*`, `.item`, `#main`, `[href^="https"]`,
+// `:nth-child(2n+1)`. The unused fields of each kind stay empty.
+class Simple {
+  def init(kind SelKind, name String, op String, val String, pseudo PseudoKind, nth_a Int64, nth_b Int64, nots Array[Compound]) {
+    self.kind_e = kind
+    self.name_l = name
+    self.op_l = op
+    self.val_l = val
+    self.pseudo_e = pseudo
+    self.a_l = nth_a
+    self.b_l = nth_b
+    self.nots_l = nots
+  }
+
+  def kind() SelKind {
+    return self.kind_e
+  }
+
+  def name() String {
+    return self.name_l
+  }
+
+  def op() String {
+    return self.op_l
+  }
+
+  def val() String {
+    return self.val_l
+  }
+
+  def pseudo() PseudoKind {
+    return self.pseudo_e
+  }
+
+  def nth_a() Int64 {
+    return self.a_l
+  }
+
+  def nth_b() Int64 {
+    return self.b_l
+  }
+
+  def nots() Array[Compound] {
+    return self.nots_l
+  }
+}
+
+// One compound selector — the simple selectors a single element must
+// satisfy. `comb` is the combinator connecting the compound to its
+// left: "" on the first compound of a chain, then " ", ">", "+", "~".
+class Compound {
+  def init(comb String, simples Array[Simple]) {
+    self.comb_l = comb
+    self.simples_l = simples
+  }
+
+  def comb() String {
+    return self.comb_l
+  }
+
+  def simples() Array[Simple] {
+    return self.simples_l
+  }
+}
+
+// One comma-free selector: the compounds a match must satisfy from
+// right to left.
+class Chain {
+  def init(parts Array[Compound]) {
+    self.parts_l = parts
+  }
+
+  def parts() Array[Compound] {
+    return self.parts_l
+  }
+}
+
+// A full selector: the comma-separated chains, any of which matches.
+class Sel {
+  def init(groups Array[Chain]) {
+    self.groups_l = groups
+  }
+
+  def groups() Array[Chain] {
+    return self.groups_l
+  }
+}
+
+// ---- entry doors ----
+
+// Parses one HTML document or fragment into a Document. Strict: the
+// full rules live in the package header and docs/stdlib/dom.md.
+def parse(text String) (R, Document) {
+  const data = text.to_bytes()
+  case parse_nodes(data, 0, 0, 0, "", -1, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      wire_roots(r[0], 0)
+      return (R.ok, Document.new(nodes: r[0], root_id: root_element_id(r[0])))
+    }
+  }
+}
+
+// Encodes a node back to canonical HTML.
+def encode(n Node) String {
+  return n.encode()
+}
+
+// ---- byte and string helpers ----
+
+// The attribute pair's value by name, or the error when absent.
+def attr_search(attrs Array[(String, String)], name String, i Int64) (R, String) {
+  if i >= attrs.length() {
+    return (R.error, "dom: no attribute `" + name + "`")
+  }
+  const pair = attrs[i]
+  if pair[0] == name {
+    return (R.ok, pair[1])
+  }
+  return attr_search(attrs, name, i + 1)
+}
+
+def err_at(at Int64, what String) String {
+  return "dom: " + what + " at byte " + at.to_string()
+}
+
+def sel_err(at Int64, what String) String {
+  return "dom: " + what + " at byte " + at.to_string() + " of the selector"
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+def bytes_slice(data Bytes, a Int64, b Int64) String {
+  const n = b - a
+  if n <= 0 {
+    return ""
+  }
+  const buf = Bytes.new(n)
+  copy_range(data, buf, a, 0, n)
+  return buf.to_string()
+}
+
+def char_string(b Int64) String {
+  const buf = Bytes.new(1)
+  buf.set(0, b)
+  return buf.to_string()
+}
+
+def codepoint_string(cp Int64) String {
+  const buf = Bytes.new(utf8_len(cp))
+  utf8_put(buf, 0, cp)
+  return buf.to_string()
+}
+
+def utf8_len(cp Int64) Int64 {
+  if cp < 128 {
+    return 1
+  }
+  if cp < 2048 {
+    return 2
+  }
+  if cp < 65536 {
+    return 3
+  }
+  return 4
+}
+
+def utf8_put(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 128 {
+    out.set(w, cp)
+    return w + 1
+  }
+  if cp < 2048 {
+    out.set(w, 192 + cp / 64)
+    out.set(w + 1, 128 + cp % 64)
+    return w + 2
+  }
+  if cp < 65536 {
+    out.set(w, 224 + cp / 4096)
+    out.set(w + 1, 128 + (cp / 64) % 64)
+    out.set(w + 2, 128 + cp % 64)
+    return w + 3
+  }
+  out.set(w, 240 + cp / 262144)
+  out.set(w + 1, 128 + (cp / 4096) % 64)
+  out.set(w + 2, 128 + (cp / 64) % 64)
+  out.set(w + 3, 128 + cp % 64)
+  return w + 4
+}
+
+def is_letter(b Int64) Bool {
+  if b >= 65 && b <= 90 {
+    return true
+  }
+  return b >= 97 && b <= 122
+}
+
+def is_digit(b Int64) Bool {
+  return b >= 48 && b <= 57
+}
+
+def is_alnum(b Int64) Bool {
+  if is_letter(b) {
+    return true
+  }
+  return is_digit(b)
+}
+
+// The byte's lowercase form — the ASCII fold every tag and attribute
+// name goes through.
+def lower_of(b Int64) Int64 {
+  if b >= 65 && b <= 90 {
+    return b + 32
+  }
+  return b
+}
+
+def is_ws(b Int64) Bool {
+  if b == 32 || b == 9 {
+    return true
+  }
+  return b == 10 || b == 13 || b == 12
+}
+
+// An attribute name's start: a letter or `_`.
+def is_name_start(b Int64) Bool {
+  if is_letter(b) {
+    return true
+  }
+  return b == 95
+}
+
+// An attribute name's continuation: letters, digits, `-`, `_`, `.`, `:`.
+def is_name_char(b Int64) Bool {
+  if is_alnum(b) {
+    return true
+  }
+  if b == 45 || b == 95 {
+    return true
+  }
+  return b == 46 || b == 58
+}
+
+def skip_ws(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  if is_ws(data.get(i)) {
+    return skip_ws(data, i + 1)
+  }
+  return i
+}
+
+// Plain text: to the next `<` or `&`.
+def scan_plain(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if b == 60 || b == 38 {
+    return i
+  }
+  return scan_plain(data, i + 1)
+}
+
+// ---- the HTML parser ----
+
+// Parses the nodes between position `i` and either the input's end or
+// the close tag of `stop_tag` ("" at the top level). `opener` is the
+// byte position of the open tag whose children these are, for error
+// messages. Answers `(nodes, next position, next id)`.
+def parse_nodes(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  if depth > 512 {
+    return (R.error, err_at(i, "nesting deeper than 512"))
+  }
+  if i >= data.length() {
+    if stop_tag != "" {
+      return (R.error, err_at(opener, "`<" + stop_tag + ">` is never closed — the input ends first"))
+    }
+    return (R.ok, (acc, i, idc))
+  }
+  const b = data.get(i)
+  if b == 60 {
+    if close_tag_at(data, i) {
+      return parse_close(data, i, idc, stop_tag, opener, acc)
+    }
+    if comment_at(data, i) {
+      return parse_comment(data, i, depth, idc, stop_tag, opener, acc)
+    }
+    if bang_at(data, i) {
+      return parse_bang(data, i, depth, idc, stop_tag, opener, acc)
+    }
+    if question_at(data, i) {
+      return (R.error, err_at(i, "processing instructions do not exist in HTML"))
+    }
+    if i + 1 < data.length() && is_letter(data.get(i + 1)) {
+      return parse_element_root(data, i, depth, idc, stop_tag, opener, acc)
+    }
+    return (R.error, err_at(i, "a stray `<` — write `&lt;` in text"))
+  }
+  return parse_text_root(data, i, depth, idc, stop_tag, opener, acc)
+}
+
+def close_tag_at(data Bytes, i Int64) Bool {
+  if i + 1 >= data.length() {
+    return false
+  }
+  return data.get(i + 1) == 47
+}
+
+def comment_at(data Bytes, i Int64) Bool {
+  if i + 3 >= data.length() {
+    return false
+  }
+  if data.get(i + 1) != 33 {
+    return false
+  }
+  return data.get(i + 2) == 45 && data.get(i + 3) == 45
+}
+
+def bang_at(data Bytes, i Int64) Bool {
+  if i + 1 >= data.length() {
+    return false
+  }
+  return data.get(i + 1) == 33
+}
+
+def question_at(data Bytes, i Int64) Bool {
+  if i + 1 >= data.length() {
+    return false
+  }
+  return data.get(i + 1) == 63
+}
+
+// The close tag ends this node run: honest nesting consumes it,
+// anything else is an error naming both sides.
+def parse_close(data Bytes, i Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  case scan_close_tag(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const name = r[0]
+      const after = r[1]
+      if is_void_element(name) {
+        return (R.error, err_at(i, "`</" + name + ">` — void elements take no close tag"))
+      }
+      if stop_tag == "" {
+        return (R.error, err_at(i, "`</" + name + ">` closes an element that is not open"))
+      }
+      if name != stop_tag {
+        return (R.error, err_at(i, "`</" + name + ">` does not close the open `<" + stop_tag + ">` from byte " + opener.to_string()))
+      }
+      return (R.ok, (acc, after, idc))
+    }
+  }
+}
+
+// Scans `</name ...>` — the name, then nothing but whitespace before
+// `>`. Answers `(name, position after `>`)`.
+def scan_close_tag(data Bytes, i Int64) (R, (String, Int64)) {
+  case scan_tag_name(data, i + 2, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const name = r[0]
+      if name == "" {
+        return (R.error, err_at(i, "an empty closing tag — name the element you mean to close"))
+      }
+      const k = skip_ws(data, r[1])
+      if k >= data.length() {
+        return (R.error, err_at(i, "an unterminated closing tag"))
+      }
+      if data.get(k) != 62 {
+        return (R.error, err_at(k, "closing tags carry no attributes — `</" + name + ">` must end at `>`"))
+      }
+      return (R.ok, (name, k + 1))
+    }
+  }
+}
+
+def parse_comment(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  case scan_comment(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const node = CommentNode.new(nid: idc, text: r[0], parent_e: [])
+      return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
+    }
+  }
+}
+
+// The content between `<!--` and `-->`, verbatim.
+def scan_comment(data Bytes, i Int64) (R, (String, Int64)) {
+  return scan_comment_end(data, i + 4, i)
+}
+
+def scan_comment_end(data Bytes, i Int64, start Int64) (R, (String, Int64)) {
+  if i + 2 >= data.length() {
+    return (R.error, err_at(start, "an unterminated comment"))
+  }
+  if data.get(i) == 45 && data.get(i + 1) == 45 && data.get(i + 2) == 62 {
+    return (R.ok, (bytes_slice(data, start + 4, i), i + 3))
+  }
+  return scan_comment_end(data, i + 1, start)
+}
+
+def parse_bang(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  if doctype_at(data, i) {
+    return parse_doctype(data, i, depth, idc, stop_tag, opener, acc)
+  }
+  return (R.error, err_at(i, "an unsupported `<!` markup declaration — HTML has no CDATA sections"))
+}
+
+// `<!doctype` — the seven letters, either case.
+def doctype_at(data Bytes, i Int64) Bool {
+  const word = "doctype"
+  const wdata = word.to_bytes()
+  var k = 0
+  while k < 7 {
+    if i + 2 + k >= data.length() {
+      return false
+    }
+    if lower_of(data.get(i + 2 + k)) != wdata.get(k) {
+      return false
+    }
+    k = k + 1
+  }
+  return true
+}
+
+def parse_doctype(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  case scan_doctype(data, i + 9, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const node = DoctypeNode.new(nid: idc, text: r[0], parent_e: [])
+      return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
+    }
+  }
+}
+
+// The text between `<!` and `>`, trimmed — `doctype html`.
+def scan_doctype(data Bytes, i Int64, start Int64) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.error, err_at(start, "an unterminated `<!doctype>`"))
+  }
+  if data.get(i) == 62 {
+    return (R.ok, (bytes_slice(data, start + 2, i).trim(), i + 1))
+  }
+  return scan_doctype(data, i + 1, start)
+}
+
+def parse_element_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  case parse_element(data, i, depth, idc) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      return parse_nodes(data, r[1], depth, r[2], stop_tag, opener, acc.append(r[0]))
+    }
+  }
+}
+
+def parse_text_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
+  case read_text(data, i, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const node = TextNode.new(nid: idc, text: r[0], parent_e: [])
+      return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
+    }
+  }
+}
+
+def parse_element(data Bytes, i Int64, depth Int64, idc Int64) (R, (Node, Int64, Int64)) {
+  case scan_tag_name(data, i + 1, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      case parse_attrs(data, r[1], r[0], i, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, a)      -> {
+          const name = r[0]
+          const attrs = a[0]
+          const after_tag = a[1]
+          if is_void_element(name) {
+            const node = Element.new(nid: idc, tag: name, attrs: attrs, children: [], parent_e: [])
+            return (R.ok, (node, after_tag, idc + 1))
+          }
+          if a[2] {
+            return (R.error, err_at(i, "`<" + name + "/>` — only void elements may self-close"))
+          }
+          if is_raw_text(name) {
+            return parse_raw_content(data, after_tag, i, idc, name, attrs)
+          }
+          if is_rcdata(name) {
+            return parse_rcdata_content(data, after_tag, i, idc, name, attrs)
+          }
+          return element_with_children(data, after_tag, i, depth, idc, name, attrs)
+        }
+      }
+    }
+  }
+}
+
+// A normal element: the children run until the element's own close
+// tag; the element takes its id before the children's.
+def element_with_children(data Bytes, i Int64, opener Int64, depth Int64, idc Int64, name String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
+  case parse_nodes(data, i, depth + 1, idc + 1, name, opener, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kids)   -> {
+      const node = Element.new(nid: idc, tag: name, attrs: attrs, children: kids[0], parent_e: [])
+      return (R.ok, (node, kids[1], kids[2]))
+    }
+  }
+}
+
+// The tag name from position `i`, folded to lowercase as it scans.
+// Letters start it; letters, digits and `-` continue it (custom
+// elements keep their hyphen).
+def scan_tag_name(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.ok, (acc, i))
+  }
+  const b = data.get(i)
+  if is_alnum(b) || b == 45 {
+    return scan_tag_name(data, i + 1, acc + char_string(lower_of(b)))
+  }
+  return (R.ok, (acc, i))
+}
+
+// The attribute list up to `>` or `/>`. Answers
+// `(attributes, position after the tag, self-closing)`.
+def parse_attrs(data Bytes, i Int64, tag String, tag_pos Int64, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
+  const k = skip_ws(data, i)
+  if k >= data.length() {
+    return (R.error, err_at(tag_pos, "the `<" + tag + ">` tag is never terminated"))
+  }
+  const b = data.get(k)
+  if b == 62 {
+    return (R.ok, (acc, k + 1, false))
+  }
+  if b == 47 {
+    const gt = skip_ws(data, k + 1)
+    if gt < data.length() && data.get(gt) == 62 {
+      return (R.ok, (acc, gt + 1, true))
+    }
+    return (R.error, err_at(k, "unexpected content after `/` in the `<" + tag + ">` tag"))
+  }
+  if is_name_start(b) == false {
+    return (R.error, err_at(k, "expected an attribute name inside `<" + tag + ">`"))
+  }
+  case scan_attr_name(data, k, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, n)      -> {
+      const name = n[0]
+      if attr_has(acc, name, 0) {
+        return (R.error, err_at(k, "a duplicate attribute `" + name + "` on `<" + tag + ">`"))
+      }
+      const eq = skip_ws(data, n[1])
+      if eq >= data.length() {
+        return (R.error, err_at(tag_pos, "the `<" + tag + ">` tag is never terminated"))
+      }
+      if data.get(eq) != 61 {
+        return parse_attrs(data, eq, tag, tag_pos, acc.append((name, "")))
+      }
+      return parse_attr_value(data, skip_ws(data, eq + 1), tag, tag_pos, name, acc)
+    }
+  }
+}
+
+def scan_attr_name(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.ok, (acc, i))
+  }
+  const b = data.get(i)
+  if is_name_char(b) {
+    return scan_attr_name(data, i + 1, acc + char_string(lower_of(b)))
+  }
+  return (R.ok, (acc, i))
+}
+
+def attr_has(acc Array[(String, String)], name String, i Int64) Bool {
+  if i >= acc.length() {
+    return false
+  }
+  if acc[i][0] == name {
+    return true
+  }
+  return attr_has(acc, name, i + 1)
+}
+
+// The value after `=`: quoted (double or single), unquoted, or
+// malformed.
+def parse_attr_value(data Bytes, i Int64, tag String, tag_pos Int64, name String, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
+  if i >= data.length() {
+    return (R.error, err_at(tag_pos, "the `<" + tag + ">` tag is never terminated"))
+  }
+  const q = data.get(i)
+  if q == 34 || q == 39 {
+    return quoted_value(data, i, q, tag, tag_pos, name, acc)
+  }
+  return unquoted_value(data, i, tag, tag_pos, name, acc)
+}
+
+def quoted_value(data Bytes, i Int64, quote Int64, tag String, tag_pos Int64, name String, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
+  case read_quoted(data, i + 1, quote, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> {
+      return parse_attrs(data, v[1], tag, tag_pos, acc.append((name, v[0])))
+    }
+  }
+}
+
+def unquoted_value(data Bytes, i Int64, tag String, tag_pos Int64, name String, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
+  case read_unquoted(data, i, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> {
+      return parse_attrs(data, v[1], tag, tag_pos, acc.append((name, v[0])))
+    }
+  }
+}
+
+// A double- or single-quoted attribute value: character references
+// decode, a raw `<` refuses.
+def read_quoted(data Bytes, i Int64, quote Int64, acc String) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.error, err_at(i, "an unterminated attribute value"))
+  }
+  const b = data.get(i)
+  if b == quote {
+    return (R.ok, (acc, i + 1))
+  }
+  if b == 60 {
+    return (R.error, err_at(i, "a raw `<` inside an attribute value — write `&lt;`"))
+  }
+  if b == 38 {
+    return quoted_entity(data, i, quote, acc)
+  }
+  const j = scan_quoted_plain(data, i, quote)
+  return read_quoted(data, j, quote, acc + bytes_slice(data, i, j))
+}
+
+// The plain run of a quoted value: stops where the value ends, where
+// a `<` must be judged, or where a reference begins.
+def scan_quoted_plain(data Bytes, i Int64, quote Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if b == quote || b == 60 || b == 38 {
+    return i
+  }
+  return scan_quoted_plain(data, i + 1, quote)
+}
+
+def quoted_entity(data Bytes, i Int64, quote Int64, acc String) (R, (String, Int64)) {
+  case decode_entity(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return read_quoted(data, r[1], quote, acc + r[0]) }
+  }
+}
+
+// An unquoted attribute value: runs to whitespace or `>`; quotes,
+// `<` and `=` inside refuse.
+def read_unquoted(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.ok, (acc, i))
+  }
+  const b = data.get(i)
+  if is_ws(b) || b == 62 {
+    return (R.ok, (acc, i))
+  }
+  if b == 34 || b == 39 || b == 60 || b == 61 {
+    return (R.error, err_at(i, "an unquoted attribute value cannot contain quotes, `<`, or `=`"))
+  }
+  if b == 38 {
+    return unquoted_entity(data, i, acc)
+  }
+  const j = scan_unquoted_plain(data, i)
+  return read_unquoted(data, j, acc + bytes_slice(data, i, j))
+}
+
+// The plain run of an unquoted value: stops where the value ends or
+// where a forbidden character must be judged.
+def scan_unquoted_plain(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if is_ws(b) || b == 62 || b == 60 || b == 38 || b == 34 || b == 39 || b == 61 {
+    return i
+  }
+  return scan_unquoted_plain(data, i + 1)
+}
+
+def unquoted_entity(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  case decode_entity(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return read_unquoted(data, r[1], acc + r[0]) }
+  }
+}
+
+// Text between markup: character references decode; `<` stops (the
+// caller decides what it means); a bare `&` refuses.
+def read_text(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  if i >= data.length() {
+    return (R.ok, (acc, i))
+  }
+  const b = data.get(i)
+  if b == 60 {
+    return (R.ok, (acc, i))
+  }
+  if b == 38 {
+    return text_entity(data, i, acc)
+  }
+  const j = scan_plain(data, i)
+  return read_text(data, j, acc + bytes_slice(data, i, j))
+}
+
+def text_entity(data Bytes, i Int64, acc String) (R, (String, Int64)) {
+  case decode_entity(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return read_text(data, r[1], acc + r[0]) }
+  }
+}
+
+// One character reference at `&`. The six common named entities
+// decode; a well-formed but unknown name passes through literally;
+// anything else is a bare `&` and refuses.
+def decode_entity(data Bytes, i Int64) (R, (String, Int64)) {
+  if i + 1 >= data.length() {
+    return (R.error, err_at(i, "a bare `&` — write `&amp;`"))
+  }
+  const c = data.get(i + 1)
+  if c == 35 {
+    return decode_numeric(data, i)
+  }
+  if is_letter(c) {
+    return decode_named_ref(data, i)
+  }
+  return (R.error, err_at(i, "a bare `&` — write `&amp;`"))
+}
+
+def decode_named_ref(data Bytes, i Int64) (R, (String, Int64)) {
+  const j = scan_word(data, i + 1)
+  if j >= data.length() || data.get(j) != 59 {
+    return (R.error, err_at(i, "a bare `&` — write `&amp;`"))
+  }
+  const name = bytes_slice(data, i + 1, j)
+  const v = named_entity(name)
+  if v != "" {
+    return (R.ok, (v, j + 1))
+  }
+  // A well-formed but unknown name is faithful text, not an error.
+  return (R.ok, (bytes_slice(data, i, j + 1), j + 1))
+}
+
+// Word characters after `&`: letters and digits.
+def scan_word(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  if is_alnum(data.get(i)) {
+    return scan_word(data, i + 1)
+  }
+  return i
+}
+
+// "" means the name is not one of the six.
+def named_entity(name String) String {
+  if name == "amp" {
+    return "&"
+  }
+  if name == "lt" {
+    return "<"
+  }
+  if name == "gt" {
+    return ">"
+  }
+  if name == "quot" {
+    return "\""
+  }
+  if name == "apos" {
+    return "'"
+  }
+  if name == "nbsp" {
+    return codepoint_string(160)
+  }
+  return ""
+}
+
+// `&#ddd;` or `&#xhh;` — digits required, `;` required, the value
+// must be a real Unicode scalar.
+def decode_numeric(data Bytes, i Int64) (R, (String, Int64)) {
+  var p = i + 2
+  var hex = false
+  if p < data.length() && (data.get(p) == 120 || data.get(p) == 88) {
+    hex = true
+    p = p + 1
+  }
+  const start = p
+  while p < data.length() && is_ref_digit(data.get(p), hex) {
+    p = p + 1
+  }
+  if p == start {
+    return (R.error, err_at(i, "a malformed character reference — digits must follow `&#`"))
+  }
+  if p >= data.length() || data.get(p) != 59 {
+    return (R.error, err_at(i, "a malformed character reference — a `;` must end it"))
+  }
+  return numeric_codepoint(bytes_slice(data, start, p), hex, i, p + 1)
+}
+
+def numeric_codepoint(digits String, hex Bool, at Int64, after Int64) (R, (String, Int64)) {
+  var base = 10
+  if hex {
+    base = 16
+  }
+  case ref_value(digits, base, 0) {
+    (R.error, why) -> { return (R.error, err_at(at, why)) }
+    (R.ok, cp)     -> {
+      if cp == 0 {
+        return (R.error, err_at(at, "the character reference names no character (`&#0;`)"))
+      }
+      if cp >= 55296 && cp <= 57343 {
+        return (R.error, err_at(at, "the character reference names a lone surrogate"))
+      }
+      return (R.ok, (codepoint_string(cp), after))
+    }
+  }
+}
+
+def is_ref_digit(b Int64, hex Bool) Bool {
+  if is_digit(b) {
+    return true
+  }
+  if hex == false {
+    return false
+  }
+  if b >= 97 && b <= 102 {
+    return true
+  }
+  return b >= 65 && b <= 70
+}
+
+// Accumulates the reference value left to right, refusing anything
+// beyond Unicode before it can overflow.
+def ref_value(digits String, base Int64, acc Int64) (R, Int64) {
+  if digits == "" {
+    return (R.ok, acc)
+  }
+  const d = ref_digit(digits.to_bytes().get(0), base == 16)
+  if d == -1 {
+    return (R.error, "a malformed character reference")
+  }
+  const next = acc * base + d
+  if next > 1114111 {
+    return (R.error, "the character reference is beyond Unicode")
+  }
+  return ref_value(digits.substring(1, digits.length() - 1), base, next)
+}
+
+// The byte's digit value in the reference's alphabet; -1 otherwise.
+def ref_digit(b Int64, hex Bool) Int64 {
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if hex == false {
+    return -1
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  return -1
+}
+
+// ---- raw text and RCDATA elements ----
+
+// script / style: content is raw text — no markup, no character
+// references — ending at the case-insensitive close tag.
+def parse_raw_content(data Bytes, i Int64, opener Int64, idc Int64, tag String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
+  case scan_special_end(data, i, tag) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, stop)   -> {
+      case expect_special_close(data, stop, tag, opener) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, after)  -> {
+          const content = bytes_slice(data, i, stop)
+          const node = Element.new(nid: idc, tag: tag, attrs: attrs, children: one_text_child(idc + 1, content), parent_e: [])
+          return (R.ok, (node, after, after_text_id(idc, content)))
+        }
+      }
+    }
+  }
+}
+
+// title / textarea: content is text with character references, still
+// ending at the case-insensitive close tag — markup inside does not
+// parse.
+def parse_rcdata_content(data Bytes, i Int64, opener Int64, idc Int64, tag String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
+  case read_rcdata(data, i, tag, "") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      case expect_special_close(data, r[1], tag, opener) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, after)  -> {
+          const node = Element.new(nid: idc, tag: tag, attrs: attrs, children: one_text_child(idc + 1, r[0]), parent_e: [])
+          return (R.ok, (node, after, after_text_id(idc, r[0])))
+        }
+      }
+    }
+  }
+}
+
+// The text child an element's content becomes, absent when empty.
+def one_text_child(nid Int64, content String) Array[Node] {
+  if content == "" {
+    return []
+  }
+  return [TextNode.new(nid: nid, text: content, parent_e: [])]
+}
+
+// The id counter after an element whose content became one text node
+// (or none).
+def after_text_id(idc Int64, content String) Int64 {
+  if content == "" {
+    return idc + 1
+  }
+  return idc + 2
+}
+
+// Walks to the case-insensitive `</tag`, answering the `<` position
+// (the content's end). The input's end passes through; the caller's
+// expect_special_close turns a miss into the error.
+def scan_special_end(data Bytes, i Int64, tag String) (R, Int64) {
+  if special_close_at(data, i, tag) {
+    return (R.ok, i)
+  }
+  if i >= data.length() {
+    return (R.ok, i)
+  }
+  return scan_special_end(data, i + 1, tag)
+}
+
+// `</tag` case-insensitively at `i` (the close tag's `>` is checked
+// by expect_special_close).
+def special_close_at(data Bytes, i Int64, tag String) Bool {
+  if i + 2 >= data.length() {
+    return false
+  }
+  if data.get(i) != 60 || data.get(i + 1) != 47 {
+    return false
+  }
+  const tdata = tag.to_bytes()
+  var k = 0
+  while k < tdata.length() {
+    if i + 2 + k >= data.length() {
+      return false
+    }
+    if lower_of(data.get(i + 2 + k)) != tdata.get(k) {
+      return false
+    }
+    k = k + 1
+  }
+  return true
+}
+
+// RCDATA content: character references decode, everything else —
+// `<` included — is text until the case-insensitive close tag.
+def read_rcdata(data Bytes, i Int64, tag String, acc String) (R, (String, Int64)) {
+  if special_close_at(data, i, tag) {
+    return (R.ok, (acc, i))
+  }
+  if i >= data.length() {
+    return (R.ok, (acc, i))
+  }
+  const j = scan_plain(data, i)
+  const acc2 = acc + bytes_slice(data, i, j)
+  if j >= data.length() {
+    return (R.ok, (acc2, j))
+  }
+  if data.get(j) == 60 {
+    if special_close_at(data, j, tag) {
+      return (R.ok, (acc2, j))
+    }
+    // A `<` that opens no close tag is literal text here.
+    return read_rcdata(data, j + 1, tag, acc2 + "<")
+  }
+  return rcdata_entity(data, j, tag, acc2)
+}
+
+def rcdata_entity(data Bytes, j Int64, tag String, acc String) (R, (String, Int64)) {
+  case decode_entity(data, j) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return read_rcdata(data, r[1], tag, acc + r[0]) }
+  }
+}
+
+// After the raw/RCDATA content: the `</tag` that scan_special_end
+// found, then whitespace, then `>`.
+def expect_special_close(data Bytes, i Int64, tag String, opener Int64) (R, Int64) {
+  const k = skip_ws(data, i + 2 + tag.length())
+  if k >= data.length() {
+    return (R.error, err_at(opener, "the `<" + tag + ">` element is never closed"))
+  }
+  if data.get(k) != 62 {
+    return (R.error, err_at(k, "the `</" + tag + ">` close tag carries extra content"))
+  }
+  return (R.ok, k + 1)
+}
+
+// ---- the element catalogue ----
+
+// The fourteen void elements: no close tag exists for them.
+def is_void_element(tag String) Bool {
+  if tag == "area" || tag == "base" || tag == "br" || tag == "col" {
+    return true
+  }
+  if tag == "embed" || tag == "hr" || tag == "img" || tag == "input" {
+    return true
+  }
+  if tag == "link" || tag == "meta" || tag == "param" || tag == "source" {
+    return true
+  }
+  return tag == "track" || tag == "wbr"
+}
+
+// script and style: their content is raw text.
+def is_raw_text(tag String) Bool {
+  return tag == "script" || tag == "style"
+}
+
+// title and textarea: text with character references, no markup.
+def is_rcdata(tag String) Bool {
+  return tag == "title" || tag == "textarea"
+}
+
+// ---- wiring the parent pointers ----
+
+// The parser builds bottom-up (children complete before their parent
+// exists), so parent pointers attach in a second, top-down walk over
+// the finished tree.
+def wire_roots(ns Array[Node], i Int64) {
+  if i < ns.length() {
+    attach_descendants(ns[i])
+    wire_roots(ns, i + 1)
+  }
+}
+
+def attach_descendants(n Node) {
+  if n.is_element?() {
+    attach_each(n.as_element().children(), 0, n)
+  }
+}
+
+def attach_each(ns Array[Node], i Int64, parent Node) {
+  if i < ns.length() {
+    const c = ns[i]
+    if c.is(Element) {
+      c.attach_parent(parent)
+    }
+    if c.is(TextNode) {
+      c.attach_parent(parent)
+    }
+    if c.is(CommentNode) {
+      c.attach_parent(parent)
+    }
+    if c.is(DoctypeNode) {
+      c.attach_parent(parent)
+    }
+    attach_descendants(c)
+    attach_each(ns, i + 1, parent)
+  }
+}
+
+// The first top-level element is `:root`; its id, or -1 without one.
+// Leading text and comments do not disqualify the element after them.
+def root_element_id(ns Array[Node]) Int64 {
+  return root_id_walk(ns, 0)
+}
+
+def root_id_walk(ns Array[Node], i Int64) Int64 {
+  if i >= ns.length() {
+    return -1
+  }
+  if ns[i].is_element?() {
+    return ns[i].as_element().id()
+  }
+  return root_id_walk(ns, i + 1)
+}
+
+// ---- encoding ----
+
+def encode_element(e Element) String {
+  const tag = e.tag()
+  const open = encode_open_tag(e.attrs(), 0, "<" + tag)
+  if is_void_element(tag) {
+    return open
+  }
+  if is_raw_text(tag) {
+    return open + raw_children_text(e.children(), 0, "") + "</" + tag + ">"
+  }
+  return open + encode_children(e.children(), 0, "") + "</" + tag + ">"
+}
+
+// The attributes in order; a valueless attribute stays bare.
+def encode_open_tag(attrs Array[(String, String)], i Int64, acc String) String {
+  if i >= attrs.length() {
+    return acc + ">"
+  }
+  const pair = attrs[i]
+  var part = acc + " " + pair[0]
+  if pair[1] != "" {
+    part = part + "=\"" + escape_attr(pair[1]) + "\""
+  }
+  return encode_open_tag(attrs, i + 1, part)
+}
+
+def encode_children(ns Array[Node], i Int64, acc String) String {
+  if i >= ns.length() {
+    return acc
+  }
+  return encode_children(ns, i + 1, acc + ns[i].encode())
+}
+
+// script/style content rides back out verbatim.
+def raw_children_text(ns Array[Node], i Int64, acc String) String {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.kind() == NodeKind.text {
+    const t = n.text()
+    return raw_children_text(ns, i + 1, acc + t)
+  }
+  return raw_children_text(ns, i + 1, acc)
+}
+
+def encode_nodes(ns Array[Node], i Int64, acc String) String {
+  if i >= ns.length() {
+    return acc
+  }
+  return encode_nodes(ns, i + 1, acc + ns[i].encode())
+}
+
+def escape_text(s String) String {
+  return escape_walk(s.to_bytes(), 0, "", false)
+}
+
+def escape_attr(s String) String {
+  return escape_walk(s.to_bytes(), 0, "", true)
+}
+
+// `&` `<` `>` always; `"` joins them in attribute values.
+def escape_walk(data Bytes, i Int64, acc String, in_attr Bool) String {
+  if i >= data.length() {
+    return acc
+  }
+  const b = data.get(i)
+  if b == 38 {
+    return escape_walk(data, i + 1, acc + "&amp;", in_attr)
+  }
+  if b == 60 {
+    return escape_walk(data, i + 1, acc + "&lt;", in_attr)
+  }
+  if b == 62 {
+    return escape_walk(data, i + 1, acc + "&gt;", in_attr)
+  }
+  if in_attr && b == 34 {
+    return escape_walk(data, i + 1, acc + "&quot;", in_attr)
+  }
+  return escape_walk(data, i + 1, acc + char_string(b), in_attr)
+}
+
+// ---- the selector lexer ----
+
+// The whole selector becomes an array of tokens, eof-terminated; the
+// parser then works index-based over it. Identifiers keep their
+// source spelling — types fold at use, class and attribute values
+// stay case-sensitive.
+def lex_selector(data Bytes, i Int64, acc Array[Tok]) (R, Array[Tok]) {
+  const t = skip_ws(data, i)
+  if t >= data.length() {
+    return (R.ok, acc.append(Tok.new(kind: Tk.t_eof, text: "", pos: t)))
+  }
+  const b = data.get(t)
+  if is_sel_ident_start(b) {
+    return lex_sel_ident(data, t, t, acc)
+  }
+  if b == 34 || b == 39 {
+    return lex_sel_string(data, t, b, t + 1, "", acc)
+  }
+  if b == 35 {
+    return step_tok(data, t, Tk.t_hash, acc)
+  }
+  if b == 46 {
+    return step_tok(data, t, Tk.t_dot, acc)
+  }
+  if b == 58 {
+    if t + 1 < data.length() && data.get(t + 1) == 58 {
+      return (R.error, sel_err(t, "pseudo-elements are not supported"))
+    }
+    return step_tok(data, t, Tk.t_colon, acc)
+  }
+  if b == 42 {
+    return lex_star(data, t, acc)
+  }
+  if b == 62 {
+    return step_tok(data, t, Tk.t_gt, acc)
+  }
+  if b == 43 {
+    return step_tok(data, t, Tk.t_plus, acc)
+  }
+  if b == 126 {
+    return lex_tilde(data, t, acc)
+  }
+  if b == 44 {
+    return step_tok(data, t, Tk.t_comma, acc)
+  }
+  if b == 91 {
+    return step_tok(data, t, Tk.t_lbracket, acc)
+  }
+  if b == 93 {
+    return step_tok(data, t, Tk.t_rbracket, acc)
+  }
+  if b == 40 {
+    return step_tok(data, t, Tk.t_lparen, acc)
+  }
+  if b == 41 {
+    return step_tok(data, t, Tk.t_rparen, acc)
+  }
+  if b == 61 {
+    return step_tok(data, t, Tk.t_eq, acc)
+  }
+  if b == 94 || b == 36 || b == 124 {
+    return lex_attr_op(data, t, b, acc)
+  }
+  return (R.error, sel_err(t, "unexpected character `" + char_string(b) + "`"))
+}
+
+// An identifier's start: letters, `_`, `-`, and — tolerated only so
+// the raw :nth arguments lex through — digits.
+def is_sel_ident_start(b Int64) Bool {
+  if is_letter(b) {
+    return true
+  }
+  return b == 95 || b == 45 || is_digit(b)
+}
+
+def is_sel_ident_char(b Int64) Bool {
+  if is_sel_ident_start(b) || is_digit(b) {
+    return true
+  }
+  return b == 45
+}
+
+def lex_sel_ident(data Bytes, start Int64, i Int64, acc Array[Tok]) (R, Array[Tok]) {
+  if i >= data.length() || is_sel_ident_char(data.get(i)) == false {
+    const tok = Tok.new(kind: Tk.t_ident, text: bytes_slice(data, start, i), pos: start)
+    return lex_selector(data, i, acc.append(tok))
+  }
+  return lex_sel_ident(data, start, i + 1, acc)
+}
+
+// A selector string literal: no escapes — the text between the
+// quotes is the value, byte for byte.
+def lex_sel_string(data Bytes, start Int64, quote Int64, i Int64, text_acc String, toks Array[Tok]) (R, Array[Tok]) {
+  if i >= data.length() {
+    return (R.error, sel_err(start, "a string is not terminated"))
+  }
+  const b = data.get(i)
+  if b == quote {
+    const tok = Tok.new(kind: Tk.t_string, text: text_acc, pos: start)
+    return lex_selector(data, i + 1, toks.append(tok))
+  }
+  if b == 92 {
+    return (R.error, sel_err(i, "escapes are not supported in selector strings"))
+  }
+  return lex_sel_string(data, start, quote, i + 1, text_acc + char_string(b), toks)
+}
+
+// `*` is the universal selector; `*=` the substring attribute test.
+def lex_star(data Bytes, i Int64, acc Array[Tok]) (R, Array[Tok]) {
+  if i + 1 < data.length() && data.get(i + 1) == 61 {
+    return two_char_tok(data, i, Tk.t_star_eq, acc)
+  }
+  return step_tok(data, i, Tk.t_star, acc)
+}
+
+// `~` is the sibling combinator; `~=` the word attribute test.
+def lex_tilde(data Bytes, i Int64, acc Array[Tok]) (R, Array[Tok]) {
+  if i + 1 < data.length() && data.get(i + 1) == 61 {
+    return two_char_tok(data, i, Tk.t_tilde_eq, acc)
+  }
+  return step_tok(data, i, Tk.t_tilde, acc)
+}
+
+// `^=`, `$=`, `|=` — the two-character attribute tests; the bare
+// character alone has no selector meaning.
+def lex_attr_op(data Bytes, i Int64, b Int64, acc Array[Tok]) (R, Array[Tok]) {
+  if i + 1 >= data.length() || data.get(i + 1) != 61 {
+    return (R.error, sel_err(i, "unexpected character `" + char_string(b) + "`"))
+  }
+  if b == 94 {
+    return two_char_tok(data, i, Tk.t_caret_eq, acc)
+  }
+  if b == 36 {
+    return two_char_tok(data, i, Tk.t_dollar_eq, acc)
+  }
+  return two_char_tok(data, i, Tk.t_bar_eq, acc)
+}
+
+def step_tok(data Bytes, i Int64, kind Tk, acc Array[Tok]) (R, Array[Tok]) {
+  const tok = Tok.new(kind: kind, text: "", pos: i)
+  return lex_selector(data, i + 1, acc.append(tok))
+}
+
+def two_char_tok(data Bytes, i Int64, kind Tk, acc Array[Tok]) (R, Array[Tok]) {
+  const tok = Tok.new(kind: kind, text: "", pos: i)
+  return lex_selector(data, i + 2, acc.append(tok))
+}
+
+// ---- the selector parser ----
+
+def compile_selector(text String) (R, Sel) {
+  const data = text.to_bytes()
+  case lex_selector(data, 0, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, toks)   -> {
+      return parse_sel(data, toks, 0, [])
+    }
+  }
+}
+
+// The comma-separated chains; eof must follow the last one.
+def parse_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Chain]) (R, Sel) {
+  const t = toks[i]
+  if t.kind() == Tk.t_eof && acc.length() == 0 {
+    return (R.error, sel_err(t.pos(), "an empty selector"))
+  }
+  case parse_chain(data, toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const acc2 = acc.append(r[0])
+      const after = toks[r[1]]
+      if after.kind() == Tk.t_comma {
+        return parse_sel(data, toks, r[1] + 1, acc2)
+      }
+      if after.kind() == Tk.t_eof {
+        return (R.ok, Sel.new(groups: acc2))
+      }
+      return (R.error, sel_err(after.pos(), "unexpected content after the selector"))
+    }
+  }
+}
+
+// One chain: compounds joined by combinators. Whitespace between two
+// compounds is the descendant combinator.
+def parse_chain(data Bytes, toks Array[Tok], i Int64) (R, (Chain, Int64)) {
+  case parse_compound(data, toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      return parse_chain_rest(data, toks, r[1], [Compound.new(comb: "", simples: r[0])])
+    }
+  }
+}
+
+def parse_chain_rest(data Bytes, toks Array[Tok], i Int64, parts Array[Compound]) (R, (Chain, Int64)) {
+  const t = toks[i]
+  var comb = ""
+  var j = i
+  if t.kind() == Tk.t_gt {
+    comb = ">"
+    j = i + 1
+  } else {
+    if t.kind() == Tk.t_plus {
+      comb = "+"
+      j = i + 1
+    } else {
+      if t.kind() == Tk.t_tilde {
+        comb = "~"
+        j = i + 1
+      } else {
+        if starts_compound(t) {
+          comb = " "
+        } else {
+          return (R.ok, (Chain.new(parts: parts), i))
+        }
+      }
+    }
+  }
+  case parse_compound(data, toks, j) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      return parse_chain_rest(data, toks, r[1], parts.append(Compound.new(comb: comb, simples: r[0])))
+    }
+  }
+}
+
+def starts_compound(t Tok) Bool {
+  const k = t.kind()
+  if k == Tk.t_ident || k == Tk.t_star || k == Tk.t_hash {
+    return true
+  }
+  return k == Tk.t_dot || k == Tk.t_lbracket || k == Tk.t_colon
+}
+
+// The simple selectors one element must all satisfy. A bare name or
+// `*` may only open the compound.
+def parse_compound(data Bytes, toks Array[Tok], i Int64) (R, (Array[Simple], Int64)) {
+  return parse_compound_loop(data, toks, i, [])
+}
+
+def parse_compound_loop(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  const t = toks[i]
+  if t.kind() == Tk.t_ident {
+    // A bare name can only open a compound — later ones belong to the
+    // next compound across a descendant combinator.
+    if acc.length() > 0 {
+      return (R.ok, (acc, i))
+    }
+    const simple = type_simple(t)
+    return parse_compound_loop(data, toks, i + 1, acc.append(simple))
+  }
+  if t.kind() == Tk.t_star {
+    if acc.length() > 0 {
+      return (R.ok, (acc, i))
+    }
+    const simple = Simple.new(kind: SelKind.s_universal, name: "", op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+    return parse_compound_loop(data, toks, i + 1, acc.append(simple))
+  }
+  if t.kind() == Tk.t_dot {
+    return class_simple(data, toks, i + 1, acc)
+  }
+  if t.kind() == Tk.t_hash {
+    return id_simple(data, toks, i + 1, acc)
+  }
+  if t.kind() == Tk.t_lbracket {
+    return parse_attr_sel(data, toks, i + 1, acc)
+  }
+  if t.kind() == Tk.t_colon {
+    return parse_pseudo_sel(data, toks, i + 1, acc)
+  }
+  if acc.length() == 0 {
+    return (R.error, sel_err(t.pos(), "expected a selector"))
+  }
+  return (R.ok, (acc, i))
+}
+
+def type_simple(t Tok) Simple {
+  return Simple.new(kind: SelKind.s_type, name: t.text().lower(), op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+}
+
+// The identifier after `.` — class names stay case-sensitive.
+def class_simple(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  case simple_name(toks, i, "`.`") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const simple = Simple.new(kind: SelKind.s_class, name: r[0], op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+      return parse_compound_loop(data, toks, r[1], acc.append(simple))
+    }
+  }
+}
+
+// The identifier after `#` — id values stay case-sensitive.
+def id_simple(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  case simple_name(toks, i, "`#`") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      const simple = Simple.new(kind: SelKind.s_id, name: r[0], op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+      return parse_compound_loop(data, toks, r[1], acc.append(simple))
+    }
+  }
+}
+
+// The identifier after `.` or `#`.
+def simple_name(toks Array[Tok], i Int64, after String) (R, (String, Int64)) {
+  const t = toks[i]
+  if t.kind() != Tk.t_ident {
+    return (R.error, sel_err(t.pos(), "expected a name after " + after))
+  }
+  return (R.ok, (t.text(), i + 1))
+}
+
+// `[attr]`, `[attr=v]`, and the `^=` `$=` `*=` `~=` `|=` shapes.
+def parse_attr_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  const t = toks[i]
+  if t.kind() != Tk.t_ident {
+    return (R.error, sel_err(t.pos(), "expected an attribute name after `[`"))
+  }
+  const name = t.text().lower()
+  case attr_op_text(toks[i + 1]) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, o)      -> {
+      if o == "" {
+        const simple = Simple.new(kind: SelKind.s_attr, name: name, op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+        return parse_compound_loop(data, toks, i + 2, acc.append(simple))
+      }
+      return attr_sel_value(data, toks, i + 2, acc, name, o)
+    }
+  }
+}
+
+// The operator after the attribute name; "" is bare presence (the
+// `]` was already there).
+def attr_op_text(t Tok) (R, String) {
+  const k = t.kind()
+  if k == Tk.t_rbracket {
+    return (R.ok, "")
+  }
+  if k == Tk.t_eq {
+    return (R.ok, "=")
+  }
+  if k == Tk.t_caret_eq {
+    return (R.ok, "^=")
+  }
+  if k == Tk.t_dollar_eq {
+    return (R.ok, "$=")
+  }
+  if k == Tk.t_star_eq {
+    return (R.ok, "*=")
+  }
+  if k == Tk.t_tilde_eq {
+    return (R.ok, "~=")
+  }
+  if k == Tk.t_bar_eq {
+    return (R.ok, "|=")
+  }
+  return (R.error, sel_err(t.pos(), "expected `]` or an operator after the attribute name"))
+}
+
+def attr_sel_value(data Bytes, toks Array[Tok], i Int64, acc Array[Simple], name String, o String) (R, (Array[Simple], Int64)) {
+  const v = toks[i]
+  if v.kind() != Tk.t_string && v.kind() != Tk.t_ident {
+    return (R.error, sel_err(v.pos(), "expected a value after the attribute operator"))
+  }
+  const close = toks[i + 1]
+  if close.kind() != Tk.t_rbracket {
+    return (R.error, sel_err(close.pos(), "expected `]` to close the attribute selector"))
+  }
+  const simple = Simple.new(kind: SelKind.s_attr, name: name, op: o, val: v.text(), pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
+  return parse_compound_loop(data, toks, i + 2, acc.append(simple))
+}
+
+// `:first-child` and friends, the `:nth-*(an+b)` family, `:not(...)`,
+// and `:contains(...)`.
+def parse_pseudo_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  const t = toks[i]
+  if t.kind() != Tk.t_ident {
+    return (R.error, sel_err(t.pos(), "expected a pseudo-class name after `:`"))
+  }
+  const name = t.text().lower()
+  if name == "first-child" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_first_child, 0, 0, [])
+  }
+  if name == "last-child" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_last_child, 0, 0, [])
+  }
+  if name == "only-child" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_only_child, 0, 0, [])
+  }
+  if name == "first-of-type" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_first_of_type, 0, 0, [])
+  }
+  if name == "last-of-type" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_last_of_type, 0, 0, [])
+  }
+  if name == "only-of-type" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_only_of_type, 0, 0, [])
+  }
+  if name == "empty" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_empty, 0, 0, [])
+  }
+  if name == "root" {
+    return pseudo_done(data, toks, i + 1, acc, PseudoKind.ps_root, 0, 0, [])
+  }
+  if name == "nth-child" || name == "nth-last-child" || name == "nth-of-type" {
+    return parse_nth_sel(data, toks, i + 1, acc, name)
+  }
+  if name == "not" {
+    return parse_not_sel(data, toks, i + 1, acc)
+  }
+  if name == "contains" {
+    return parse_contains_sel(data, toks, i + 1, acc)
+  }
+  if name == "before" || name == "after" || name == "first-line" || name == "first-letter" {
+    return (R.error, sel_err(t.pos(), "pseudo-elements are not supported"))
+  }
+  if name == "selection" || name == "marker" || name == "backdrop" || name == "placeholder" {
+    return (R.error, sel_err(t.pos(), "pseudo-elements are not supported"))
+  }
+  return (R.error, sel_err(t.pos(), "an unknown pseudo `:" + name + "`"))
+}
+
+def pseudo_done(data Bytes, toks Array[Tok], i Int64, acc Array[Simple], pseudo PseudoKind, a Int64, b Int64, nots Array[Compound]) (R, (Array[Simple], Int64)) {
+  const simple = Simple.new(kind: SelKind.s_pseudo, name: "", op: "", val: "", pseudo: pseudo, nth_a: a, nth_b: b, nots: nots)
+  return parse_compound_loop(data, toks, i, acc.append(simple))
+}
+
+// `:nth-*(an+b)` — the argument reads raw from the selector text
+// between the parentheses, then the an+b grammar parses it.
+def parse_nth_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple], name String) (R, (Array[Simple], Int64)) {
+  const lp = toks[i]
+  if lp.kind() != Tk.t_lparen {
+    return (R.error, sel_err(lp.pos(), "`:" + name + "` expects parentheses"))
+  }
+  case nth_paren(toks, i + 1) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, rp)     -> {
+      return nth_argument(data, toks, lp, rp, acc, name)
+    }
+  }
+}
+
+def nth_argument(data Bytes, toks Array[Tok], lp Tok, rp Int64, acc Array[Simple], name String) (R, (Array[Simple], Int64)) {
+  const raw = bytes_slice(data, lp.pos() + 1, toks[rp].pos())
+  case parse_anb(raw) {
+    (R.error, why) -> { return (R.error, sel_err(lp.pos(), why)) }
+    (R.ok, ab)     -> {
+      var pseudo = PseudoKind.ps_nth_child
+      if name == "nth-last-child" {
+        pseudo = PseudoKind.ps_nth_last_child
+      }
+      if name == "nth-of-type" {
+        pseudo = PseudoKind.ps_nth_of_type
+      }
+      return pseudo_done(data, toks, rp + 1, acc, pseudo, ab[0], ab[1], [])
+    }
+  }
+}
+
+// The matching `)` of a pseudo argument — the arguments carry no
+// nesting of their own.
+def nth_paren(toks Array[Tok], i Int64) (R, Int64) {
+  const t = toks[i]
+  if t.kind() == Tk.t_rparen {
+    return (R.ok, i)
+  }
+  if t.kind() == Tk.t_eof {
+    return (R.error, sel_err(t.pos(), "a pseudo argument is missing its closing `)`"))
+  }
+  return nth_paren(toks, i + 1)
+}
+
+// `:not(...)` — one compound selector, no combinators.
+def parse_not_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  const lp = toks[i]
+  if lp.kind() != Tk.t_lparen {
+    return (R.error, sel_err(lp.pos(), "`:not` expects parentheses"))
+  }
+  case parse_compound(data, toks, i + 1) {
+    (R.error, _)  -> { return (R.error, sel_err(lp.pos(), "`:not` expects a compound selector in parentheses")) }
+    (R.ok, r)     -> {
+      const rp = toks[r[1]]
+      if rp.kind() != Tk.t_rparen {
+        return (R.error, sel_err(rp.pos(), "expected `)` to close `:not(`"))
+      }
+      const inner = Compound.new(comb: "", simples: r[0])
+      return pseudo_done(data, toks, r[1] + 1, acc, PseudoKind.ps_not, 0, 0, [inner])
+    }
+  }
+}
+
+// `:contains("text")` — goquery's extension, a case-sensitive
+// substring test over the element's text.
+def parse_contains_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
+  const lp = toks[i]
+  if lp.kind() != Tk.t_lparen {
+    return (R.error, sel_err(lp.pos(), "`:contains` expects parentheses"))
+  }
+  const v = toks[i + 1]
+  if v.kind() != Tk.t_string && v.kind() != Tk.t_ident {
+    return (R.error, sel_err(v.pos(), "`:contains` expects a string in parentheses"))
+  }
+  const rp = toks[i + 2]
+  if rp.kind() != Tk.t_rparen {
+    return (R.error, sel_err(rp.pos(), "expected `)` to close `:contains(`"))
+  }
+  const simple = Simple.new(kind: SelKind.s_pseudo, name: "", op: "", val: v.text(), pseudo: PseudoKind.ps_contains, nth_a: 0, nth_b: 0, nots: [])
+  return parse_compound_loop(data, toks, i + 3, acc.append(simple))
+}
+
+// `odd` and `even`, a plain integer, or the `an+b` form: the `a` is
+// signed and optional around `n`, the `b` signed and optional after
+// it. (2, 1) for `odd`, (2, 0) for `even`, (0, 7) for `7`.
+def parse_anb(s String) (R, (Int64, Int64)) {
+  const t = s.trim().lower()
+  if t == "" {
+    return (R.error, "an empty :nth argument")
+  }
+  if t == "odd" {
+    return (R.ok, (2, 1))
+  }
+  if t == "even" {
+    return (R.ok, (2, 0))
+  }
+  return anb_parts(t)
+}
+
+def anb_parts(t String) (R, (Int64, Int64)) {
+  const npos = t.index_of("n")
+  if npos == -1 {
+    return anb_constant(t)
+  }
+  case anb_a(t.substring(0, npos)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, a)      -> { return anb_b(a, t, npos) }
+  }
+}
+
+// The `a` coefficient: bare `n` is 1, `-n` is -1, a signed number
+// otherwise.
+def anb_a(s String) (R, Int64) {
+  if s == "" || s == "+" {
+    return (R.ok, 1)
+  }
+  if s == "-" {
+    return (R.ok, -1)
+  }
+  return int_strict(s, "the `a` of an :nth argument")
+}
+
+def anb_constant(t String) (R, (Int64, Int64)) {
+  case int_strict(t, "an :nth argument") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> { return (R.ok, (0, v)) }
+  }
+}
+
+def anb_b(a Int64, t String, npos Int64) (R, (Int64, Int64)) {
+  const rest = t.substring(npos + 1, t.length() - npos - 1)
+  if rest == "" {
+    if a == 0 {
+      return (R.error, "an :nth argument with `n` needs a nonzero coefficient")
+    }
+    return (R.ok, (a, 0))
+  }
+  const sign = rest.substring(0, 1)
+  if sign != "+" && sign != "-" {
+    return (R.error, "the `b` of an :nth argument needs a sign")
+  }
+  case int_strict(rest, "the `b` of an :nth argument") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, b)      -> { return (R.ok, (a, b)) }
+  }
+}
+
+// A signed decimal integer, nothing else. Bounded at 15 digits so a
+// fat-fingered literal cannot overflow.
+def int_strict(s String, what String) (R, Int64) {
+  if s == "" {
+    return (R.error, "`" + s + "` is not " + what)
+  }
+  var i = 0
+  var neg = false
+  const first = s.substring(0, 1)
+  if first == "-" {
+    neg = true
+    i = 1
+  } else {
+    if first == "+" {
+      i = 1
+    }
+  }
+  const body = s.substring(i, s.length() - i)
+  if body == "" {
+    return (R.error, "`" + s + "` is not " + what)
+  }
+  if body.length() > 15 {
+    return (R.error, what + " is too large")
+  }
+  return signed_digits(body, neg, what, s)
+}
+
+def signed_digits(body String, neg Bool, what String, s String) (R, Int64) {
+  case digits_value(body, 0) {
+    (R.error, _) -> { return (R.error, "`" + s + "` is not " + what) }
+    (R.ok, v)    -> {
+      if neg {
+        return (R.ok, 0 - v)
+      }
+      return (R.ok, v)
+    }
+  }
+}
+
+def digits_value(s String, acc Int64) (R, Int64) {
+  if s == "" {
+    return (R.ok, acc)
+  }
+  const b = s.to_bytes().get(0)
+  if is_digit(b) == false {
+    return (R.error, "not a digit")
+  }
+  return digits_value(s.substring(1, s.length() - 1), acc * 10 + (b - 48))
+}
+
+// ---- the selector matcher ----
+
+// Any group of the selector matches the element.
+def matches_groups(n Element, s Sel, root_id Int64) Bool {
+  return any_group(s.groups(), 0, n, root_id)
+}
+
+def any_group(groups Array[Chain], i Int64, n Element, root_id Int64) Bool {
+  if i >= groups.length() {
+    return false
+  }
+  const parts = groups[i].parts()
+  if matches_chain(n, parts, parts.length() - 1, root_id) {
+    return true
+  }
+  return any_group(groups, i + 1, n, root_id)
+}
+
+// Right to left: `parts[k]` must match the element itself, then the
+// combinator of `parts[k]` says where `parts[k-1]` sits — an ancestor
+// (space), the parent (`>`), the nearest preceding sibling (`+`), or
+// any preceding sibling (`~`).
+def matches_chain(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
+  const part = parts[k]
+  if matches_compound(n, part.simples(), 0, root_id) == false {
+    return false
+  }
+  if k == 0 {
+    return true
+  }
+  const comb = part.comb()
+  if comb == ">" {
+    return chain_parent(n, parts, k - 1, root_id)
+  }
+  if comb == "+" {
+    return chain_prev(n, parts, k - 1, root_id)
+  }
+  if comb == "~" {
+    return any_prev_sibling(n, parts, k - 1, root_id)
+  }
+  return any_ancestor(n, parts, k - 1, root_id)
+}
+
+// The child combinator: the parent must match the rest.
+def chain_parent(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
+  case n.parent() {
+    (R.error, _) -> { return false }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return false
+      }
+      return matches_chain(p.as_element(), parts, k, root_id)
+    }
+  }
+}
+
+// The adjacent-sibling combinator: the nearest preceding element
+// must match the rest.
+def chain_prev(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
+  case prev_element(n) {
+    (R.error, _) -> { return false }
+    (R.ok, p)    -> { return matches_chain(p, parts, k, root_id) }
+  }
+}
+
+// The descendant combinator: try every ancestor.
+def any_ancestor(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
+  case n.parent() {
+    (R.error, _) -> { return false }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return false
+      }
+      const pe = p.as_element()
+      if matches_chain(pe, parts, k, root_id) {
+        return true
+      }
+      return any_ancestor(pe, parts, k, root_id)
+    }
+  }
+}
+
+// The general-sibling combinator: try every preceding element.
+def any_prev_sibling(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
+  case prev_element(n) {
+    (R.error, _) -> { return false }
+    (R.ok, p)    -> {
+      if matches_chain(p, parts, k, root_id) {
+        return true
+      }
+      return any_prev_sibling(p, parts, k, root_id)
+    }
+  }
+}
+
+def matches_compound(n Element, simples Array[Simple], i Int64, root_id Int64) Bool {
+  if i >= simples.length() {
+    return true
+  }
+  if match_simple(n, simples[i], root_id) == false {
+    return false
+  }
+  return matches_compound(n, simples, i + 1, root_id)
+}
+
+def match_simple(n Element, s Simple, root_id Int64) Bool {
+  case s.kind() {
+    SelKind.s_universal -> { return true }
+    SelKind.s_type      -> {
+      const tag = n.tag()
+      return tag == s.name()
+    }
+    SelKind.s_id        -> { return id_is(n, s.name()) }
+    SelKind.s_class     -> { return class_is(n, s.name()) }
+    SelKind.s_attr      -> { return attr_match(n, s) }
+    SelKind.s_pseudo    -> { return pseudo_match(n, s, root_id) }
+  }
+}
+
+def id_is(n Element, name String) Bool {
+  case n.attr("id") {
+    (R.ok, v)    -> { return v == name }
+    (R.error, _) -> { return false }
+  }
+}
+
+def class_is(n Element, name String) Bool {
+  case n.attr("class") {
+    (R.ok, v)    -> { return word_list_has(v, name) }
+    (R.error, _) -> { return false }
+  }
+}
+
+// The attribute test: bare presence, then the five relations.
+def attr_match(n Element, s Simple) Bool {
+  case n.attr(s.name()) {
+    (R.error, _) -> { return false }
+    (R.ok, v)    -> {
+      const op = s.op()
+      if op == "" {
+        return true
+      }
+      const val = s.val()
+      if op == "=" {
+        return v == val
+      }
+      if op == "^=" {
+        return val != "" && v.starts_with(val)
+      }
+      if op == "$=" {
+        return val != "" && ends_with_str(v, val)
+      }
+      if op == "*=" {
+        return val != "" && v.index_of(val) != -1
+      }
+      if op == "~=" {
+        return word_list_has(v, val)
+      }
+      if op == "|=" {
+        return v == val || v.starts_with(val + "-")
+      }
+      return false
+    }
+  }
+}
+
+// A space-separated word list contains `word` exactly.
+def word_list_has(v String, word String) Bool {
+  return word_list_walk(v.split(" "), 0, word)
+}
+
+def word_list_walk(words Array[String], i Int64, word String) Bool {
+  if i >= words.length() {
+    return false
+  }
+  if words[i] == word {
+    return true
+  }
+  return word_list_walk(words, i + 1, word)
+}
+
+def ends_with_str(hay String, needle String) Bool {
+  const n = needle.length()
+  if n > hay.length() {
+    return false
+  }
+  const tail = hay.substring(hay.length() - n, n)
+  return tail == needle
+}
+
+def pseudo_match(n Element, s Simple, root_id Int64) Bool {
+  case s.pseudo() {
+    PseudoKind.ps_first_child   -> { return no_prev_element(n) }
+    PseudoKind.ps_last_child    -> { return no_next_element(n) }
+    PseudoKind.ps_only_child    -> { return no_prev_element(n) && no_next_element(n) }
+    PseudoKind.ps_nth_child     -> { return nth_ok(s.nth_a(), s.nth_b(), element_index(n)) }
+    PseudoKind.ps_nth_last_child -> { return nth_ok(s.nth_a(), s.nth_b(), element_index_from_end(n)) }
+    PseudoKind.ps_first_of_type -> { return no_prev_type(n) }
+    PseudoKind.ps_last_of_type  -> { return no_next_type(n) }
+    PseudoKind.ps_only_of_type  -> { return no_prev_type(n) && no_next_type(n) }
+    PseudoKind.ps_nth_of_type   -> { return nth_ok(s.nth_a(), s.nth_b(), type_index(n)) }
+    PseudoKind.ps_not           -> { return not_walk(s.nots(), 0, n, root_id) }
+    PseudoKind.ps_empty         -> { return is_empty_element(n) }
+    PseudoKind.ps_root          -> { return n.id() == root_id }
+    PseudoKind.ps_contains      -> {
+      const text = n.text()
+      return text.index_of(s.val()) != -1
+    }
+    PseudoKind.ps_none          -> { return false }
+  }
+}
+
+// :not answers true when no inner compound matches.
+def not_walk(nots Array[Compound], i Int64, n Element, root_id Int64) Bool {
+  if i >= nots.length() {
+    return true
+  }
+  if matches_compound(n, nots[i].simples(), 0, root_id) {
+    return false
+  }
+  return not_walk(nots, i + 1, n, root_id)
+}
+
+// :empty — no element and no text children; comments do not count.
+def is_empty_element(n Element) Bool {
+  return has_no_element_or_text(n.children(), 0)
+}
+
+def has_no_element_or_text(ns Array[Node], i Int64) Bool {
+  if i >= ns.length() {
+    return true
+  }
+  const kind = ns[i].kind()
+  if kind == NodeKind.element || kind == NodeKind.text {
+    return false
+  }
+  return has_no_element_or_text(ns, i + 1)
+}
+
+// Does `idx` satisfy `an+b` for some k >= 0?
+def nth_ok(a Int64, b Int64, idx Int64) Bool {
+  if a == 0 {
+    return idx == b
+  }
+  if a > 0 {
+    const d = idx - b
+    return d >= 0 && d % a == 0
+  }
+  const m = 0 - a
+  const d = b - idx
+  return d >= 0 && d % m == 0
+}
+
+// A root answers "first child" — it has no siblings at all, the same
+// reading browsers give the `html` element.
+def no_prev_element(n Element) Bool {
+  case prev_element(n) {
+    (R.error, _) -> { return true }
+    (R.ok, _)    -> { return false }
+  }
+}
+
+def no_next_element(n Element) Bool {
+  case next_element(n) {
+    (R.error, _) -> { return true }
+    (R.ok, _)    -> { return false }
+  }
+}
+
+def no_prev_type(n Element) Bool {
+  case prev_of_type(n) {
+    (R.error, _) -> { return true }
+    (R.ok, _)    -> { return false }
+  }
+}
+
+def no_next_type(n Element) Bool {
+  case next_of_type(n) {
+    (R.error, _) -> { return true }
+    (R.ok, _)    -> { return false }
+  }
+}
+
+// The element's 1-based position among its element siblings; a root
+// is the first child of the document.
+def element_index(n Element) Int64 {
+  return sibling_index(n, false, false)
+}
+
+def element_index_from_end(n Element) Int64 {
+  return sibling_index(n, false, true)
+}
+
+def type_index(n Element) Int64 {
+  return sibling_index(n, true, false)
+}
+
+// `of_type` filters the siblings to the same tag; `from_end` counts
+// from the last sibling backwards.
+def sibling_index(n Element, of_type Bool, from_end Bool) Int64 {
+  case n.parent() {
+    (R.error, _) -> { return 1 }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return 1
+      }
+      const kids = element_children(p.as_element().children(), 0, [])
+      var picks = kids
+      if of_type {
+        picks = same_tag(kids, 0, n.tag(), [])
+      }
+      const pos = index_of_elem(picks, 0, n.id())
+      if pos == -1 {
+        return 1
+      }
+      if from_end {
+        return picks.length() - pos
+      }
+      return pos + 1
+    }
+  }
+}
+
+def index_of_elem(picks Array[Element], i Int64, nid Int64) Int64 {
+  if i >= picks.length() {
+    return -1
+  }
+  if picks[i].id() == nid {
+    return i
+  }
+  return index_of_elem(picks, i + 1, nid)
+}
+
+def same_tag(kids Array[Element], i Int64, tag String, acc Array[Element]) Array[Element] {
+  if i >= kids.length() {
+    return acc
+  }
+  const tag_i = kids[i].tag()
+  if tag_i == tag {
+    return same_tag(kids, i + 1, tag, acc.append(kids[i]))
+  }
+  return same_tag(kids, i + 1, tag, acc)
+}
+
+// The previous / next element sibling; `(R.error, _)` when there is
+// none — absence rides the error slot inside the matcher only.
+def prev_element(n Element) (R, Element) {
+  return sibling_step(n, false)
+}
+
+def next_element(n Element) (R, Element) {
+  return sibling_step(n, true)
+}
+
+def sibling_step(n Element, forward Bool) (R, Element) {
+  case n.parent() {
+    (R.error, _) -> { return (R.error, "no parent") }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return (R.error, "no parent")
+      }
+      const kids = element_children(p.as_element().children(), 0, [])
+      const i = index_of_elem(kids, 0, n.id())
+      return neighbor_at(kids, i, forward)
+    }
+  }
+}
+
+def neighbor_at(kids Array[Element], i Int64, forward Bool) (R, Element) {
+  if i == -1 {
+    return (R.error, "not found")
+  }
+  if forward {
+    if i + 1 < kids.length() {
+      return (R.ok, kids[i + 1])
+    }
+    return (R.error, "none")
+  }
+  if i > 0 {
+    return (R.ok, kids[i - 1])
+  }
+  return (R.error, "none")
+}
+
+def prev_of_type(n Element) (R, Element) {
+  return type_step(n, false)
+}
+
+def next_of_type(n Element) (R, Element) {
+  return type_step(n, true)
+}
+
+def type_step(n Element, forward Bool) (R, Element) {
+  case n.parent() {
+    (R.error, _) -> { return (R.error, "no parent") }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return (R.error, "no parent")
+      }
+      const kids = same_tag(element_children(p.as_element().children(), 0, []), 0, n.tag(), [])
+      const i = index_of_elem(kids, 0, n.id())
+      return neighbor_at(kids, i, forward)
+    }
+  }
+}
+
+// The element children of a node list, in order.
+def element_children(ns Array[Node], i Int64, acc Array[Element]) Array[Element] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    return element_children(ns, i + 1, acc.append(n.as_element()))
+  }
+  return element_children(ns, i + 1, acc)
+}
+
+// ---- the selection walkers ----
+
+// Every node in the tree, document order.
+def all_nodes(ns Array[Node], i Int64, acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  const acc2 = acc.append(n)
+  if n.is_element?() {
+    return all_nodes(ns, i + 1, all_nodes(n.as_element().children(), 0, acc2))
+  }
+  return all_nodes(ns, i + 1, acc2)
+}
+
+// The elements of `ns` that the selector matches — the shared matcher
+// behind find, filter, and the *_filtered doors. `ns` must already be
+// duplicate-free.
+def match_selection(ns Array[Node], s Sel, root_id Int64) Selection {
+  return Selection.new(match_walk(ns, 0, s, root_id, []), root_id)
+}
+
+def match_walk(ns Array[Node], i Int64, s Sel, root_id Int64, acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    const e = n.as_element()
+    if matches_groups(e, s, root_id) {
+      return match_walk(ns, i + 1, s, root_id, acc.append(n))
+    }
+  }
+  return match_walk(ns, i + 1, s, root_id, acc)
+}
+
+// The find walk: every element under each source, matched and
+// de-duplicated by id.
+def find_over(ns Array[Node], i Int64, s Sel, root_id Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    return find_over(ns, i + 1, s, root_id, seen, find_elem(n.as_element(), s, root_id, seen, acc))
+  }
+  return find_over(ns, i + 1, s, root_id, seen, acc)
+}
+
+def find_elem(e Element, s Sel, root_id Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if seen.has(e.id()) == false && matches_groups(e, s, root_id) {
+    seen.set(e.id(), true)
+    return find_over(e.children(), 0, s, root_id, seen, acc.append(e))
+  }
+  return find_over(e.children(), 0, s, root_id, seen, acc)
+}
+
+def children_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    return children_over(ns, i + 1, seen, append_unseen_elem(n.as_element().children(), 0, seen, acc))
+  }
+  return children_over(ns, i + 1, seen, acc)
+}
+
+def contents_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    return contents_over(ns, i + 1, seen, append_unseen(n.as_element().children(), 0, seen, acc))
+  }
+  return contents_over(ns, i + 1, seen, acc)
+}
+
+def append_unseen_elem(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() && seen.has(n.id()) == false {
+    seen.set(n.id(), true)
+    return append_unseen_elem(ns, i + 1, seen, acc.append(n))
+  }
+  return append_unseen_elem(ns, i + 1, seen, acc)
+}
+
+def append_unseen(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if seen.has(n.id()) == false {
+    seen.set(n.id(), true)
+    return append_unseen(ns, i + 1, seen, acc.append(n))
+  }
+  return append_unseen(ns, i + 1, seen, acc)
+}
+
+def parent_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  case ns[i].parent() {
+    (R.ok, p)    -> {
+      if seen.has(p.id()) == false {
+        seen.set(p.id(), true)
+        return parent_over(ns, i + 1, seen, acc.append(p))
+      }
+    }
+    (R.error, _) -> {}
+  }
+  return parent_over(ns, i + 1, seen, acc)
+}
+
+def parents_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  return parents_over(ns, i + 1, seen, parent_chain(ns[i], seen, acc))
+}
+
+// The ancestors of one node, nearest first.
+def parent_chain(n Node, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  case n.parent() {
+    (R.error, _) -> { return acc }
+    (R.ok, p)    -> {
+      if seen.has(p.id()) {
+        return acc
+      }
+      seen.set(p.id(), true)
+      return parent_chain(p, seen, acc.append(p))
+    }
+  }
+}
+
+def closest_over(ns Array[Node], i Int64, s Sel, root_id Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  return closest_over(ns, i + 1, s, root_id, seen, closest_walk(ns[i], s, root_id, seen, acc))
+}
+
+// The nearest ancestor-or-self of one node that matches, or nothing.
+def closest_walk(n Node, s Sel, root_id Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if n.is_element?() {
+    const e = n.as_element()
+    if matches_groups(e, s, root_id) {
+      if seen.has(e.id()) == false {
+        seen.set(e.id(), true)
+        return acc.append(n)
+      }
+      return acc
+    }
+  }
+  case n.parent() {
+    (R.error, _) -> { return acc }
+    (R.ok, p)    -> { return closest_walk(p, s, root_id, seen, acc) }
+  }
+}
+
+// Following (forward) or preceding (nearest first) element siblings
+// of every node.
+def siblings_over(ns Array[Node], i Int64, forward Bool, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  return siblings_over(ns, i + 1, forward, seen, siblings_of(ns[i], forward, seen, acc))
+}
+
+def siblings_of(n Node, forward Bool, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  case n.parent() {
+    (R.error, _) -> { return acc }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return acc
+      }
+      const kids = element_children(p.as_element().children(), 0, [])
+      if forward {
+        return after_self(kids, 0, n.id(), seen, acc)
+      }
+      return before_self(kids, 0, n.id(), seen, acc)
+    }
+  }
+}
+
+def after_self(kids Array[Element], i Int64, nid Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= kids.length() {
+    return acc
+  }
+  if kids[i].id() == nid {
+    return append_unseen_elem(kids, i + 1, seen, acc)
+  }
+  return after_self(kids, i + 1, nid, seen, acc)
+}
+
+// The preceding siblings, nearest first — walk the kid list to the
+// node, then collect backwards.
+def before_self(kids Array[Element], i Int64, nid Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= kids.length() {
+    return acc
+  }
+  if kids[i].id() == nid {
+    return prepend_walk(kids, i - 1, seen, acc)
+  }
+  return before_self(kids, i + 1, nid, seen, acc)
+}
+
+def prepend_walk(kids Array[Element], j Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if j < 0 {
+    return acc
+  }
+  if seen.has(kids[j].id()) == false {
+    seen.set(kids[j].id(), true)
+    return prepend_walk(kids, j - 1, seen, acc.append(kids[j]))
+  }
+  return prepend_walk(kids, j - 1, seen, acc)
+}
+
+// The element siblings of every node, itself excluded.
+def siblings_all_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  return siblings_all_over(ns, i + 1, seen, siblings_all_of(ns[i], seen, acc))
+}
+
+def siblings_all_of(n Node, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  case n.parent() {
+    (R.error, _) -> { return acc }
+    (R.ok, p)    -> {
+      if p.is_element?() == false {
+        return acc
+      }
+      return append_unseen_except(p.as_element().children(), 0, n.id(), seen, acc)
+    }
+  }
+}
+
+def append_unseen_except(ns Array[Node], i Int64, skip_id Int64, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() && n.id() != skip_id && seen.has(n.id()) == false {
+    seen.set(n.id(), true)
+    return append_unseen_except(ns, i + 1, skip_id, seen, acc.append(n))
+  }
+  return append_unseen_except(ns, i + 1, skip_id, seen, acc)
+}
+
+def not_over(ns Array[Node], i Int64, s Sel, root_id Int64, acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  var matches = false
+  if n.is_element?() {
+    matches = matches_groups(n.as_element(), s, root_id)
+  }
+  if matches == false {
+    return not_over(ns, i + 1, s, root_id, acc.append(n))
+  }
+  return not_over(ns, i + 1, s, root_id, acc)
+}
+
+def has_over(ns Array[Node], i Int64, s Sel, root_id Int64, acc Array[Node]) Array[Node] {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() && has_walk(element_children(n.as_element().children(), 0, []), 0, s, root_id) {
+    return has_over(ns, i + 1, s, root_id, acc.append(n))
+  }
+  return has_over(ns, i + 1, s, root_id, acc)
+}
+
+// Any descendant element matches — self does not count.
+def has_walk(kids Array[Element], i Int64, s Sel, root_id Int64) Bool {
+  if i >= kids.length() {
+    return false
+  }
+  const k = kids[i]
+  if matches_groups(k, s, root_id) {
+    return true
+  }
+  if has_walk(element_children(k.children(), 0, []), 0, s, root_id) {
+    return true
+  }
+  return has_walk(kids, i + 1, s, root_id)
+}
+
+def is_over(ns Array[Node], i Int64, s Sel, root_id Int64) Bool {
+  if i >= ns.length() {
+    return false
+  }
+  const n = ns[i]
+  if n.is_element?() && matches_groups(n.as_element(), s, root_id) {
+    return true
+  }
+  return is_over(ns, i + 1, s, root_id)
+}
+
+// The find walk for each(): one selection per node, the block sees.
+def each_over(ns Array[Node], i Int64, f Block, root_id Int64) {
+  if i < ns.length() {
+    f(i, Selection.new([ns[i]], root_id))
+    each_over(ns, i + 1, f, root_id)
+  }
+}
+
+def each_break_over(ns Array[Node], i Int64, f Block, root_id Int64) Bool {
+  if i >= ns.length() {
+    return true
+  }
+  const cont = f(i, Selection.new([ns[i]], root_id))
+  if cont == false {
+    return false
+  }
+  return each_break_over(ns, i + 1, f, root_id)
+}
+
+// The text of a node list: elements' descendants, text nodes
+// themselves, comments and doctypes nothing.
+def nodes_text(ns Array[Node], i Int64, acc String) String {
+  if i >= ns.length() {
+    return acc
+  }
+  const n = ns[i]
+  if n.is_element?() {
+    return nodes_text(ns, i + 1, nodes_text(n.as_element().children(), 0, acc))
+  }
+  if n.kind() == NodeKind.text {
+    const t = n.text()
+    return nodes_text(ns, i + 1, acc + t)
+  }
+  return nodes_text(ns, i + 1, acc)
+}
+
+def slice_nodes(ns Array[Node], s Int64, e Int64, i Int64, acc Array[Node]) Array[Node] {
+  if i >= e {
+    return acc
+  }
+  if i >= s {
+    return slice_nodes(ns, s, e, i + 1, acc.append(ns[i]))
+  }
+  return slice_nodes(ns, s, e, i + 1, acc)
+}
