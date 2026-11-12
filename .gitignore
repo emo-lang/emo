@@ -1,5 +1,6 @@
 .emo-build/
 examples/*/main
+projects/*/*/main
 examples/*/*.tmp
 *.emo-bin
 *.emo-bin-nospec

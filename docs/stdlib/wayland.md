@@ -130,12 +130,30 @@ keymap is the named follow-up.
   follow-up.
 - **One fd a message.** The protocols this package speaks carry
   exactly one; a protocol needing two grows the shape then.
-- **Keysyms are not here yet.** The keycodes arrive raw; decoding
-  them through the keymap is the named follow-up.
+- **Keysyms are not here yet.** The keycodes arrive raw and the
+  bridges translate through an evdev table (a keyboard's rows, the
+  shift state); decoding through the keymap itself is the named
+  follow-up.
 - **Hand-written tables.** The opcodes live at their call sites and
   the compositor grades them; no XML is parsed at runtime.
 
-Demos: `examples/wayland_wire` (the codec against hand-computed
+## Riding it: a live window
+
+The bridges a live application needs are small and ride the Elm loop's
+own seams: a `Surface` whose `present()` pushes the canvas's bytes
+through `os_pwrite` into the pool, attaches, damages the whole rect,
+and commits (the canvas's XRGB8888 words are the wl_shm bytes
+verbatim), and an `Input` whose `next()` blocks on Wayland events and
+delivers the tags the application speaks — keys through an evdev
+table with the shift state read from the modifiers event (whose
+first argument is the serial, the depressed word second), clicks
+through a rect table hit at the tracked pointer position. The fb
+backend's own demo runs the convergence corpus's application live on
+a real compositor: injected keys, real repaints, the digest of every
+frame in the transcript (`projects/emo-desktop/wayland/`, the smoke
+leg `devtools/wayland-face-smoke.sh`).
+
+## Limitations (the codec against hand-computed
 fixtures), `examples/wayland_handshake` (a mock compositor over a real
 Unix socket, byte-exact), `examples/wayland_paint` (the first frame —
 run by `devtools/wayland-smoke.sh`, the Docker leg that compiles the

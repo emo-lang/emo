@@ -861,7 +861,7 @@ def wm_base_pong(c Conn, wm_base_id Int64, serial Int64) (R, Conn) {
 // a bind invites, the display's error the failure it is, a delete_id
 // the retirement of an id this client no longer holds. The serial
 // handed back is the ack's and the commit's license.
-def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, shm_id Int64, surface_id Int64) (R, Int64) {
+def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, shm_id Int64, surface_id Int64, pointer_id Int64, keyboard_id Int64) (R, Int64) {
   case next_event(c.side) {
     (R.error, why) -> { return (R.error, why) }
     (R.ok, ev) -> {
@@ -874,7 +874,7 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         const serial = ev.args.u32()
         case wm_base_pong(c, wm_base_id, serial) {
           (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> { return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id) }
+          (R.ok, _) -> { return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id) }
         }
       }
       if ev.oid == xdg_surface_id && ev.opcode == 0 {
@@ -888,22 +888,96 @@ def wait_configure(c Conn, xdg_surface_id Int64, toplevel_id Int64, wm_base_id I
         } else {
           ev.args.array()
         }
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
       }
       if ev.oid == shm_id && ev.opcode == 0 {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
       }
       if ev.oid == surface_id && (ev.opcode == 0 || ev.opcode == 1) {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && (ev.opcode == 0 || ev.opcode == 1) {
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.fixed()
+        ev.args.fixed()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && ev.opcode == 2 {
+        ev.args.u32()
+        ev.args.fixed()
+        ev.args.fixed()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && (ev.opcode == 3 || ev.opcode == 4) {
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        if ev.opcode == 3 {
+          ev.args.u32()
+        } else {
+          ev.args.fixed()
+        }
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && (ev.opcode == 5 || ev.opcode == 6) {
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && ev.opcode == 7 {
+        ev.args.u32()
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == pointer_id && ev.opcode == 8 {
+        ev.args.u32()
+        ev.args.i32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 0 {
+        ev.args.u32()
+        ev.args.fd()
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 1 {
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.array()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 2 {
+        ev.args.u32()
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 3 {
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 4 {
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        ev.args.u32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
+      }
+      if ev.oid == keyboard_id && ev.opcode == 5 {
+        ev.args.i32()
+        ev.args.i32()
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
       }
       if ev.oid == c.display_id && ev.opcode == 1 {
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
       }
       if ev.oid == c.registry_id.read() && ev.opcode == 1 {
         ev.args.u32()
-        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id)
+        return wait_configure(c, xdg_surface_id, toplevel_id, wm_base_id, shm_id, surface_id, pointer_id, keyboard_id)
       }
       return (R.error, "wayland: unexpected event on object " + ev.oid.to_string() + " opcode " + ev.opcode.to_string() + " while waiting for configure")
     }
