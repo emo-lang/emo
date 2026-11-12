@@ -38,8 +38,8 @@ emo-db 里析出——按体重做的决定,不预付拆分税。
 没有 fsync 就没有 WAL——直接化掉,因为 fsync 的纪律不再由我们来
 写。绑定走 `postgres`/`sqlite3` 的形状:包内自带 C shim,骑官方 C
 API(`rocksdb/c.h`),经 `foreign def` 与 manifest 的 `link` /
-`pkg_config` 字段点名库。仅 `c` target;其余 target 在解析处拒绝,
-解释器在运行时拒绝。
+`pkg_config` 字段点名库。键与值骑 D10 的借用视图以 `Bytes` 跨界。
+仅 `c` target;其余 target 在解析处拒绝,解释器在运行时拒绝。
 
 **D2 —— 一个项目,一条 SQL 门面,两台引擎。** 如上。目录、类型、门
 面、线协议、工具从第一笔提交起就共享;行存与列存两台引擎是同一个
@@ -85,13 +85,23 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 
 | 里程碑 | 步骤 | 落地 |
 | --- | --- | --- |
-| M28 —— RocksDB 半边 | 65 | 项目脚手架与 C shim:open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
+| M28 —— RocksDB 半边 | 65 | 项目脚手架与 C shim,连同 `Bytes` 借用视图(D10):open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
 | M29 —— 记录层 | 66 | 目录 column family、行编码、rowid 分配、二级索引。 |
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
 | M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点、表达式求值、嵌入式测试面。 |
 | M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、Emo 锁管理器。 |
 | M33 —— 线协议 | 70 | PG 协议 v3 simple 路径;psql 端到端、`postgres` 客户端直连。 |
 | M34 —— 符合性与文档 | 71 | SQL 语料、实测性能表、文档 EN+zh。 |
+
+**D10 —— 字节视图:`Bytes` 以借用视图过 C ABI。** RocksDB 的键与
+值是任意字节——内嵌的 NUL 是普通数据——而 sqlite3/postgres 绑定的
+NUL 结尾 String 跨界会把它截断。`c` target 的 foreign ABI 为此长出
+一个形状:`Bytes` 参数以 `{data, len}` 跨界,只在调用期间借用(C 侧
+绝不保留);`Bytes` **返回**仍然拒绝,因为 C 缓冲区的所有权无法穿过
+通用 ABI——读操作走调用方提供的 out 参数(先问长度,再拷入),字节
+的所有权始终在 Emo 侧。解释器保持 E3009,其余 target 保持各自的封
+送层。这是 v0 唯一需要的语言改动,随 M28 的绑定一起落地,因为行编
+码(M29)不可能建在 NUL 结尾的字符串上。
 
 ## 架构
 
@@ -111,11 +121,12 @@ family)、行编码(空值位图、定宽与带长度前缀的变宽值)、rowid
 配、二级索引:每索引一个 column family,键由被索引列加 rowid 编
 成。
 6. **存储半边** —— 经包内 C shim 的 RocksDB:open/close、
-get/put/delete、WriteBatch、iterator、快照、column family。
+get/put/delete、WriteBatch、iterator、快照、column family。键与值
+骑 D10 的借用视图以 `Bytes` 跨界;读操作填写调用方自己的缓冲区。
 
 有一个性质值得写明,因为整个绑定都骑在它上面:调度器的协作模型意味
 着每次进 RocksDB 的调用天然串行——shim 自己不长锁,锁管理器仲裁的
-是事务冲突,不是内存安全。M28 会验证这个前提;若某个 hosted
+是事务冲突,不是内存安全。M28 验证了这个前提;若某个 hosted
 runtime 将来长出真并行,就在那里重查。
 
 ## 弧二 —— OLAP 形状(方向已定,切法未定)
@@ -158,4 +169,8 @@ HTAP 的门在这里开。
 - 可重复读与串行化——等读已提交在并发下站稳之后。
 - 备份与恢复——RocksDB checkpoint 与 pg_dump 形状的逻辑转储,两条
 路都通,都未定。
+- `Bytes` 的 foreign 返回——out 参数的规则覆盖弧一的全部读路径;返
+回位置等一个真需要它的 API。
+- 提交的持久化开关——绑定的普通写路径没开 RocksDB 的 `sync`;M32
+的 COMMIT 是这个开关的消费者。
 - 弧二的里程碑切法。

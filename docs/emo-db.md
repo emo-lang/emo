@@ -49,7 +49,8 @@ Tier-B gate — no fsync, no WAL — because the fsync discipline is no
 longer ours to write. The binding is the `postgres`/`sqlite3` shape: a
 package-carried C shim over the official C API (`rocksdb/c.h`),
 reached through `foreign def`s with the manifest's `link` /
-`pkg_config` fields naming the library. `c` target only; every other
+`pkg_config` fields naming the library. The keys and values ride
+`Bytes` through D10's borrowed view. `c` target only; every other
 target refuses at resolution, the interpreter at run time.
 
 **D2 — One project, one SQL surface, two engines.** As above. The
@@ -109,13 +110,27 @@ the ladder's shape:
 
 | Milestone | Steps | Lands |
 | --- | --- | --- |
-| M28 — The RocksDB half | 65 | The project scaffold and the C shim: open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
+| M28 — The RocksDB half | 65 | The project scaffold and the C shim, with the `Bytes` borrowed view (D10): open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
 | M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, secondary indexes. |
 | M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes, expression evaluation, an embedded test face. |
 | M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, the Emo lock manager. |
 | M33 — The wire | 70 | PG protocol v3, simple path; psql end-to-end and the `postgres` client connecting. |
 | M34 — Conformance and documentation | 71 | The SQL corpus, the measured-performance table, docs EN+zh. |
+
+**D10 — The byte view: `Bytes` crosses the C ABI as a borrowed view.**
+RocksDB's keys and values are arbitrary bytes — an embedded NUL is
+ordinary data — and the sqlite3/postgres bindings' NUL-terminated
+String crossing would truncate them. The `c` target's foreign ABI
+grows one shape for this: a `Bytes` parameter crosses as
+`{data, len}`, borrowed for the call only (the C side never retains
+it); a `Bytes` **return** stays refused, because ownership of a C
+buffer cannot cross a generic ABI — a read takes a caller-provided
+out-parameter (length first, then copy in), so the Emo side always
+owns the bytes. The interpreter keeps E3009; every other target keeps
+its marshaling tier. This is the one language change v0 needs, and it
+lands with M28's binding because the row encoding (M29) cannot be
+built on NUL-terminated strings.
 
 ## The architecture
 
@@ -140,7 +155,8 @@ allocation, and secondary indexes: one column family per index, keyed
 by the indexed columns plus the rowid.
 6. **The storage half** — RocksDB through the package's C shim:
 open/close, get/put/delete, WriteBatch, iterators, snapshots, column
-families.
+families. Keys and values cross as `Bytes` through D10's borrowed
+view; a read fills a caller-owned buffer.
 
 One property worth stating because the whole binding leans on it: the
 scheduler's cooperative model means every call into RocksDB
@@ -195,4 +211,9 @@ security; the `crypto` package already holds the pieces.
 concurrency.
 - Backup and restore — RocksDB checkpoints versus a logical dump in
 the pg_dump shape; both plausible, neither decided.
+- `Bytes` foreign returns — the out-parameter rule covers every
+arc-one read; a return position waits for an API that truly needs one.
+- The commit's durability knob — the binding's plain write path leaves
+RocksDB's `sync` off; M32's COMMIT is where the flag finds its
+consumer.
 - Arc two's milestone cut.

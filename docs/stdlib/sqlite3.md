@@ -101,9 +101,9 @@ empty string.
 ## Boundaries and limitations
 
 Strings cross the C boundary NUL-terminated: a String carrying an
-embedded NUL truncates there, in both directions. Blobs are out of
-scope until `Bytes` can cross the FFI — bind them and they refuse at
-check time, like every unsupported foreign type.
+embedded NUL truncates there, in both directions. Blobs are not exposed
+yet: the C ABI now carries `Bytes` (the emo-db byte view), so a blob
+surface is a package change rather than a language one.
 
 ## Example
 

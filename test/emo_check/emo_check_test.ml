@@ -2062,6 +2062,56 @@ foreign def run(g Greeter) Void = "run"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
+(* The byte view (CHECK.md, 2026-11-12, emo-db D10): a Bytes crosses a
+   `foreign def` parameter on the c target as a borrowed {data, len}
+   view; a Bytes return stays refused (reads take an out-parameter),
+   and every other target keeps the marshaling tier. *)
+let bytes_ffi_tests =
+  [
+    tc "Bytes is a valid foreign parameter on c" (fun () ->
+        let diagnostics =
+          check
+            {|foreign def put(key Bytes, value Bytes) Void = "put"
+foreign def fill(out Bytes) Int64 = "fill"|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a Bytes foreign return names the out-parameter answer" (fun () ->
+        let diagnostics = check {|foreign def get(key Bytes) Bytes = "get"|} in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true;
+        Alcotest.(check bool)
+          "names the out-parameter"
+          (List.exists
+             (fun d -> contains_substring d.Diagnostic.message "out-parameter")
+             diagnostics)
+          true);
+    tc "a non-c target refuses the Bytes parameter" (fun () ->
+        match
+          Emo_parser.parse_program ~file:"test.emo"
+            ~source:{|foreign def put(key Bytes) Void = "put"|}
+        with
+        | items ->
+            let diagnostics, _, _, _ =
+              Emo_check.check_module_typed ~modules:[] ~current:[]
+                ~target:"ocaml" items
+            in
+            Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true
+        | exception Emo_parser.Error d ->
+            Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
+    tc "a Bytes field stays out of the struct shape tier" (fun () ->
+        let diagnostics =
+          check
+            {|class Carrier {
+  def init(b Bytes) {
+    self.b = b
+  }
+}
+
+foreign def use(c Carrier) Void = "use"|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+  ]
+
 (* The loop surface (CHECK.md, 2026-10-06): the header `var` scopes to the
    header and body, `break`/`continue` bind to the nearest enclosing loop
    and refuse outside one, and a loop never counts as a return point. *)
@@ -2580,6 +2630,7 @@ let () =
       ("field_type", field_type_tests);
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);
+      ("bytes_ffi", bytes_ffi_tests);
       ("shape", shape_tests);
       ("r_enum", r_enum_tests);
       ("binding_pattern", binding_pattern_tests);

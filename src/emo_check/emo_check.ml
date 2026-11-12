@@ -624,14 +624,19 @@ let collect ctx (items : Ast.item list) : unit =
              2026-10-11): a tuple marshals its element types in order
              and a class instance marshals its init-assigned fields,
              both by value, with recursion through nested tuples. A
-             single-method interface is the callback pair. Every other
-             backend takes Float64/String/Bool only. *)
+             single-method interface is the callback pair. Bytes crosses
+             as a borrowed view on the c target alone (CHECK.md
+             2026-11-12, emo-db D10): the C side gets {data, len} for the
+             duration of the call and never retains it; a Bytes return
+             stays refused — a read takes a caller-owned out-parameter.
+             Every other backend takes Float64/String/Bool only. *)
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
-            | Ast.Named_type "Int64" -> ctx.target = "c"
+            | Ast.Named_type "Int64" | Ast.Named_type "Bytes" ->
+                ctx.target = "c"
             | _ -> false
           in
           let ffi_return_ok = function
@@ -657,8 +662,9 @@ let collect ctx (items : Ast.item list) : unit =
           in
           let allowed =
             if ctx.target = "c" then
-              "Float64, String, Bool, Int64, a single-method interface, or a \
-               struct shape (a tuple of marshaling types, or a carrier class)"
+              "Float64, String, Bool, Int64, Bytes, a single-method interface, \
+               or a struct shape (a tuple of marshaling types, or a carrier \
+               class)"
             else "Float64, String, or Bool"
           in
           let allowed_return =
@@ -774,6 +780,10 @@ let collect ctx (items : Ast.item list) : unit =
           ignore (decl_to_type ctx f.Ast.foreign_return);
           let rspan = f.Ast.foreign_return.Ast.type_span in
           (match f.Ast.foreign_return.Ast.type_desc with
+          | Ast.Named_type "Bytes" when ctx.target = "c" ->
+              report ctx rspan "E4200"
+                "a Bytes foreign return is refused — take an out-parameter (a \
+                 Bytes the C side writes into) instead"
           | Ast.Tuple_type _ as desc when ctx.target = "c" ->
               struct_tuple_ok rspan desc
           | Ast.Named_type name

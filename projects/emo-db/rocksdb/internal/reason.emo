@@ -1,0 +1,12 @@
+// The reasons the package's (R.error, ...) branches answer. The shim
+// records RocksDB's own status text in its last-error slot; this
+// module names the operation and adds the package's prefix. Calls are
+// serialized, so `last` is read immediately after the failing call.
+
+def last(op String) String {
+  const why = internal.ffi.last_error()
+  if why == "" {
+    return "rocksdb: " + op + ": unknown error"
+  }
+  return "rocksdb: " + op + ": " + why
+}

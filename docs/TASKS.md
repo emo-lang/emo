@@ -11,6 +11,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 - **Working in spare time:** tasks within a step are ordered; any prefix of
   completed tasks leaves the tree in a consistent state. A step boundary is
   the checkpoint where the repo must build and `dune test` green.
+- **Write the section before the work:** a step's section is written when
+  the step starts, and each task is sized to finish in one spare sitting.
 - **Ground rules** (from `plan/README.md`):
   - Never start the next step on a red build.
   - `README.md` (repo root) is the design source of truth. Provisional
@@ -52,7 +54,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M25 — The postgres client | 62 | The standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried C shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none), `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE, contract violations raising); `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe; docs EN+zh, with the found-and-fixed `sqlite3` table row (`CHECK.md`). |
 | M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
 | M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
-| M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with a package-carried C shim over the official RocksDB C API — open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families — resolved through `foreign def`s and the manifest's `link`/`pkg_config` fields (the `postgres` precedent); the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — writes, a batch commit, reads, a prefix scan, snapshot isolation visible — run three times byte-identical on `c` (`CHECK.md`). |
+| M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with the project-local `emo/rocksdb` binding — a package-carried C shim over the official RocksDB C API (open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families) resolved through `foreign def`s and the manifest's `pkg_config` field (the `postgres` precedent); the C ABI grows the `Bytes` borrowed view (D10) so keys and values carry arbitrary binary data, with reads filling a caller-owned out-parameter; the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — text and embedded-NUL values, a batch commit, reads, a prefix scan, snapshot isolation visible, close/reopen — run three times byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, and types by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, fixed-width and length-prefixed variable-width values), rowid allocation, and secondary indexes as one column family per index keyed by the indexed columns plus the rowid — catalog changes riding the WriteBatch discipline; a demo creates a table in the catalog, inserts rows, and scans through an index, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types, INSERT (multi-row), UPDATE, DELETE — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched; statement and expression goldens byte-identical on all five hosted targets (`CHECK.md`). |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: logical plan nodes (scan, filter, project, insert, update, delete), expression evaluation over the record layer's values, INSERT building encoded rows and index entries, UPDATE and DELETE locating rows through table or index scans, SELECT walking plan trees — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with unknown table, unknown column, and type mismatch answering PG-shaped error strings (`CHECK.md`). |
@@ -3899,3 +3901,114 @@ in the lockfile suite and in `c_goldens`; docs EN+zh.
       trips the det scheduler's parked-read wall during the same
       wait (found-not-fixed, recorded in CHECK.md). The driver
       version is recorded in CHECK.md.
+
+## M28 — The RocksDB half
+
+### Step 65 — emo-db's RocksDB half
+
+**Prereq:** Step 38 (the native-binding machinery: the manifest's
+`link`/`pkg_config` fields, package-carried C sources, the E5007
+honesty gate), Step 62 (the package anatomy: shim, staging, error
+split, golden), `docs/emo-db.md` D1–D9 (D10 is settled in T65.1).
+**Done when:** the project-local `emo/rocksdb` binding opens and closes
+a database with column families, writes and reads arbitrary `Bytes`,
+commits a WriteBatch atomically, iterates, scans a prefix, and reads at
+a snapshot — all on the `c` target through `projects/emo-db/check.sh`,
+whose KV golden runs three times byte-identical; the C ABI's `Bytes`
+borrowed view lands as D10; the interpreter refuses with E3009 and every
+other target at resolution with E5007, both verified live; docs EN+zh;
+the repo builds.
+
+- [x] **T65.1** — D10 in the design record EN+zh: the `Bytes` borrowed
+      `{data, len}` view, argument-only, the out-parameter read, the
+      refused return, `c`-only; D1's binding sentence, the architecture's
+      storage item, the two open items, and the M28 ladder row. Doc-only;
+      the wording is the contract the later tasks implement.
+- [x] **T65.2** — The runtime's byte view: `emo_bytes_view` and
+      `emo_bytes_view_build` in `emo_c_runtime.h`/`.c` (the cell's inline
+      bytes plus its length, a borrow for the call only); additive, so
+      `dune build` stays green with no program using it yet.
+- [x] **T65.3** — The checker: `Bytes` joins `ffi_ok` on the `c` target
+      alone, a `Bytes` foreign return reports E4200 with the
+      out-parameter message, and the struct-shape field tier still
+      refuses it; four `bytes_ffi` cases in `emo_check_test.ml` pin the
+      clean parameter, the refused return, the non-c refusal, and the
+      refused field. The test binary builds; the behavior is also probed
+      through `emo check`/`emo build --target ocaml` by hand.
+- [x] **T65.4** — The emitter: `foreign_c_type` maps `Bytes` to
+      `emo_bytes_view`, the call site builds the view with
+      `emo_bytes_view_build`, and the result position keeps a
+      refusal guard. The compiler builds; the demo's `c` build at T65.11
+      is the end-to-end proof.
+- [x] **T65.5** — `docs/intro/native-builds.md` + zh: the FFI tier
+      paragraph names `Int64`, `Void` returns, struct shapes, callbacks,
+      and `Bytes` (the borrow, the refused return, the out-parameter).
+- [x] **T65.6** — The binding's skeleton, open/close, and column
+      families: `projects/emo-db/rocksdb/` with `package.emo`
+      (`emo/rocksdb`, `targets = ["c"]`, `pkg_config = ["rocksdb"]`),
+      `internal/ffi.emo`, `internal/reason.emo`, the shim's wrapper and
+      one last-error buffer, `cfs_new`/`cfs_add`/`cfs_free`/`open`/
+      `close`, `cf`/`cf_create`/`cf_list` and `destroy_db`, and the
+      facade's `Db`/`Cf` with the `(R, reason)` split. `emo check` green;
+      the demo's open/close and family beats verify it.
+- [x] **T65.7** — Values: `put`/`get_len`/`get_into`/`delete` through the
+      shim and `Cf`, the two-pass read (length first, copy into a
+      caller-owned `Bytes`), the 0-or-1 `get`, and the `(R, reason)`
+      storage split with contract violations raising. The demo's text,
+      NUL, empty, and missing beats verify it. Found on the way, fixed
+      in step: a NULL RocksDB status is success, and the first shim's
+      error helper treated it as failure — `emo_rdb_check` now splits the
+      void-shaped calls from the NULL-is-failure ones. Also settled:
+      `(R, Void)` is not a shape, so writes answer the resource.
+- [x] **T65.8** — Batches: `batch_new`/`batch_put`/`batch_delete`/
+      `batch_write`/`batch_close`, the `Batch` facade, the same-database
+      guard, and the Db's live-handle attach. The demo's batch beat
+      commits two puts and a delete in one write.
+- [x] **T65.9** — Iterators: `iter_new`/`iter_seek`/`iter_seek_to_first`/
+      `iter_valid`/`iter_next`/`iter_key`/`iter_value`/`iter_close`, the
+      key/value copy pair, and the `Iter` facade. The surface is
+      prefix-scan capable: the demo seeks a prefix and walks while the
+      key starts with it.
+- [x] **T65.10** — Snapshots and the lifecycle guards: `snapshot_new`/
+      `snapshot_close`, the shim's snapshot-plus-readoptions bundle, the
+      `Snapshot` facade and the iterator count, `Db.close` refusing under
+      a live batch/snapshot/iter, `Snapshot.close` refusing under a live
+      iterator, and double-close raising. The demo's snapshot beats
+      verify it. Found on the way, fixed in step: a local `const live`
+      inside `close` collides with the `live()` method (E4004) — renamed
+      `running`.
+- [x] **T65.11** — The demo skeleton and the text beat:
+      `projects/emo-db/kv_demo` (`package.emo`, `main.emo`'s die-on-
+      failure helpers), destroy, open with `default` + `notes`, a text
+      put/get, and `expected.txt` seeded. Builds and runs on `c`.
+- [x] **T65.12** — The binary proof: a four-byte value `00 01 ff 41`
+      round-trips (bytes=4, value=0001ff41), an empty value is present
+      with zero bytes, and a missing key is an empty result — the three
+      edges a NUL-terminated crossing cannot tell apart.
+- [x] **T65.13** — The batch and prefix-scan beats: a three-effect batch
+      (two puts, one delete) and a `user:` seek that walks the three
+      keys and stops at `other:1`.
+- [x] **T65.14** — The snapshot, `cf_create`, and reopen beats: a
+      snapshot answers the old value while the latest state answers the
+      new one, an iterator at that snapshot reads the old view and closes
+      before the snapshot, a family created after open persists, and the
+      reopen finds the bytes and the three family names. `expected.txt`
+      is final at twelve lines. Found on the way, fixed in step: top-
+      level consts used only by thunks still emit root-entry locals and
+      earn unused-variable warnings — `digits` moved into `hex` and the
+      second const inlined.
+- [x] **T65.15** — The gate: `projects/emo-db/check.sh` resolves RocksDB
+      (default pkg-config, then the Homebrew keg, then a tiny link
+      probe), stages the binding into a content-named registry, checks
+      the package, builds the demo, runs it three times against
+      `expected.txt`, and pins E3009 (exit 70) and E5007 (exit 65) live.
+      `kv_demo/package.lock` is generated with `emo deps resolve` after
+      the last package edit and committed.
+- [x] **T65.16** — `projects/emo-db/README.md` + zh: the layout, the
+      binding's shape (binary keys and values, the error split, the
+      lifecycle), the RocksDB prerequisite, the gate, and the M28 status.
+- [x] **T65.17** — The close-out: the TASKS rows EN+zh, `plan/README.md`'s
+      M28 bullet and step row, `CHECK.md`'s entry, the sqlite3 blob
+      caveat (docs EN+zh, the package comment, and the re-resolved
+      `examples/sqlite3_demo/package.lock`), `plan/step-65-emo-db-
+      rocksdb.md`, and `dune build` / `dune build @fmt` green.

@@ -1,0 +1,12 @@
+open: notes
+cf_create: indexes
+get user:1: bytes=5 value=616c706861
+get bin:1: bytes=4 value=0001ff41
+get empty: found=1 bytes=0
+get user:404: found=0
+batch: seed=0 user:2=74776f user:3=7468726565
+scan user: 757365723a31=616c706861,757365723a32=74776f,757365723a33=7468726565
+snapshot: get=616c706861 latest=62657461
+snapshot scan: first=757365723a31=616c706861
+reopen: user:1=62657461 families=default,notes,indexes
+done

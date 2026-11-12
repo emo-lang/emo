@@ -4022,6 +4022,16 @@ int64_t emo_bytes_length(emo_value b) {
   return (int64_t)*emo_payload(b);
 }
 
+/* The borrowed view a `Bytes` foreign argument crosses as (D10): the
+   cell's inline bytes, valid while the cell is alive — and the caller
+   holds it for the call's duration. */
+emo_bytes_view emo_bytes_view_build(emo_value b) {
+  b = emo_expect_kind(b, EMO_BYTES);
+  emo_bytes_view view = {(unsigned char *)(emo_payload(b) + 1),
+                         (int64_t)*emo_payload(b)};
+  return view;
+}
+
 static unsigned char *emo_bytes_ptr(emo_value b, int64_t i, int64_t width,
                                     const char *op) {
   b = emo_expect_kind(b, EMO_BYTES);
