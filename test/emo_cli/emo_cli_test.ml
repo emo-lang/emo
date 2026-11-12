@@ -378,6 +378,8 @@ let wasm_goldens =
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "dom_demo";
+    "dom_edge";
     "slog_demo";
     "sync_demo";
     "loops";
@@ -463,6 +465,8 @@ let beam_goldens =
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "dom_demo";
+    "dom_edge";
     "slog_demo";
     "sync_demo";
     "printf_demo";
@@ -667,6 +671,8 @@ let c_goldens =
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "dom_demo";
+    "dom_edge";
     "sync_demo";
     "slog_demo";
     "bufio_demo";

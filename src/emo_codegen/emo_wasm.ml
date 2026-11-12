@@ -1966,7 +1966,13 @@ and emit_closure env params cbody : int =
   let body = stmts_value env cbody ~tail:true in
   let _, sig_t = closure_type env (List.length names) in
   env.hidden <-
-    (fidx, { W.ftype_idx = sig_t; fparams = names; flocals = []; fbody = body })
+    ( fidx,
+      {
+        W.ftype_idx = sig_t;
+        fparams = names;
+        flocals = List.map (fun t -> (1, t)) env.local_decls;
+        fbody = body;
+      } )
     :: env.hidden;
   env.rev <- saved_rev;
   env.local_decls <- saved_locals;

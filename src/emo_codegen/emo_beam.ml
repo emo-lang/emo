@@ -308,25 +308,20 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "apply ";
       expr env f;
       args_list env args
-  | Closure { cparams; cbody } -> (
-      match cparams with
-      | [ (pname, _) ] ->
-          let v = fresh_var env pname in
-          put env ("fun (" ^ v ^ ") ->\n");
-          let saved = env.local_map in
-          env.local_map <- (pname, v) :: env.local_map;
-          let before = Buffer.length env.buf in
-          stmts env cbody;
-          let body =
-            Buffer.sub env.buf before (Buffer.length env.buf - before)
-          in
-          Buffer.truncate env.buf before;
-          put env (body_wrapper body);
-          env.local_map <- saved
-      | _ ->
-          raise
-            (Emo_ir.Lower_error
-               "beam: only one-parameter closures are supported yet"))
+  | Closure { cparams; cbody } ->
+      (* a BEAM fun takes the parameters natively, one or many; each
+         binds through the local map for the body's reads *)
+      let vs = List.map (fun (pname, _) -> fresh_var env pname) cparams in
+      put env ("fun (" ^ String.concat ", " vs ^ ") ->\n");
+      let saved = env.local_map in
+      env.local_map <-
+        List.map2 (fun (pname, _) v -> (pname, v)) cparams vs @ env.local_map;
+      let before = Buffer.length env.buf in
+      stmts env cbody;
+      let body = Buffer.sub env.buf before (Buffer.length env.buf - before) in
+      Buffer.truncate env.buf before;
+      put env (body_wrapper body);
+      env.local_map <- saved
   | Interpolate items ->
       (* every part renders through to_str, then the binaries concat *)
       let rec chain = function

@@ -38,6 +38,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
+| [`dom`](#dom-包) | 严格 HTML 解析与 CSS 选择器查询 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
@@ -394,6 +395,29 @@ def text(s String) Xml
 解码严格检查良构性——元素按序嵌套闭合、属性唯一且值带引号、根元素恰好一个——并跳过声明、注释、处理指令和不含内部子集的 DOCTYPE;CDATA 按原始文本解码;五个预定义实体加 `&#ddd;` / `&#xhh;` 字符引用在文本和属性值里处处解码。每个失败都以 `(R.error, reason)` 返回并带字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/xml.md`](stdlib/xml.md) · 示例:`examples/xml_demo`、`examples/xml_edge`。
+
+## dom 包
+
+只读的 DOM:严格 HTML 解析成 `Node` 树,用 CSS 选择器查询——goquery 的形状,纯 Emo 写在共享运行时之上。解析走 `xml.decode` 的方向:格式错误的输入以 `(R.error, reason)` 带字节位置回答,绝不返修一棵树;也不合成 `html`/`head`/`body`——树忠实反映源码,片段解析出它点名的那些元素。
+
+```emo
+dom.parse(text)               // (R, Document) —— 严格
+dom.encode(n Node) String     // 规范化 HTML 写出
+
+doc.find(sel)                 // (R, Selection) —— 命中的全部元素
+sel.find(sel)                 // (R, Selection) —— 后代
+sel.eq(i) / first() / last() / slice(start, end)
+sel.attr(name)                // (R, String) —— attr_or 给默认值
+sel.text() / html() / outer_html()
+sel.children() / parent() / parents() / closest(sel)
+sel.next_all() / prev_all() / siblings()
+sel.filter(sel) / not(sel) / has(sel) / is?(sel)
+sel.each(f Block)             // 尾随块走完整个 selection
+```
+
+选择器带类型、`*`、类、id、属性测试(`[href]`、`=`、`^=`、`$=`、`*=`、`~=`、`|=`)、四个组合器、逗号分组、结构伪类(`:first-child`、`:nth-child(an+b)`、`:not(...)`、`:empty`、`:root`……),以及 goquery 的 `:contains`。伪元素和未知伪类以选择器错误回答——`find` 从不悄悄匹配成空。`script`/`style` 存原始文本,`title`/`textarea` 只存字符引用;标签名和属性名折叠为小写。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/dom.md`](stdlib/dom.md) · 示例:`examples/dom_demo`、`examples/dom_edge`。
 
 ## base64 包
 

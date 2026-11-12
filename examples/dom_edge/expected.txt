@@ -1,0 +1,48 @@
+unclosed: dom: `<div>` is never closed — the input ends first at byte 0
+ok-nest: roots=1
+misnest: dom: `</i>` does not close the open `<b>` from byte 0 at byte 4
+stray: dom: `</div>` closes an element that is not open at byte 0
+extra-close: dom: `</p>` closes an element that is not open at byte 8
+dup-attr: dom: a duplicate attribute `class` on `<div>` at byte 15
+selfclose: dom: `<div/>` — only void elements may self-close at byte 0
+void-close: dom: `</br>` — void elements take no close tag at byte 4
+raw-lt: dom: a stray `<` — write `&lt;` in text at byte 5
+bare-amp: dom: a bare `&` — write `&amp;` at byte 5
+bad-ref: dom: a malformed character reference — digits must follow `&#` at byte 3
+zero-ref: dom: the character reference names no character (`&#0;`) at byte 3
+surrogate: dom: the character reference names a lone surrogate at byte 3
+cdata: dom: an unsupported `<!` markup declaration — HTML has no CDATA sections at byte 4
+pi: dom: processing instructions do not exist in HTML at byte 0
+close-attrs: dom: closing tags carry no attributes — `</div>` must end at `>` at byte 11
+implied-end: dom: `</ul>` does not close the open `<li>` from byte 9 at byte 14
+named=& < > " '  x
+numeric=© © ©
+unknown=&copy; stays literal
+attr-ref=a & b
+script=if (a<b && c>d) { run("x"); }
+script-upper=x < y
+style=a > .b { color: red }
+textarea=1 < 2 and < not markup
+script-open: dom: the `<script>` element is never closed at byte 0
+type=checkbox checked=
+input-outer=<input type="checkbox" checked>
+href=/rel
+custom=in data=7
+empty: roots=0
+text-only: nodes=1
+fragment=ab
+pre=[  kept
+  as-is]
+sel-empty: dom: an empty selector at byte 0 of the selector
+sel-element: dom: pseudo-elements are not supported at byte 2 of the selector
+sel-hover: dom: an unknown pseudo `:hover` at byte 1 of the selector
+sel-dot: dom: expected a name after `.` at byte 2 of the selector
+sel-bracket: dom: expected `]` or an operator after the attribute name at byte 5 of the selector
+sel-dangling: dom: expected a selector at byte 3 of the selector
+sel-string: dom: unexpected content after the selector at byte 2 of the selector
+sel-nth: dom: `2x+1` is not an :nth argument at byte 12 of the selector
+universal=1
+dedup-groups=1
+nth-forms=1
+first-of-type=1
+empty-p=0
