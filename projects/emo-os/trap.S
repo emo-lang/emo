@@ -715,6 +715,15 @@ emo_os_trap_trampoline:
                               # 18 by coincidence alone; the compositor's
                               # 18 is the pointer's notice, which never
                               # rides a route)
+    li t3, 26
+    bgt t6, t3, .Lroute_notify_maybe
+                              # ops 27..: the notification service's
+                              # (M25 — verb 27 raise rides ops 27, 59,
+                              # 91, 123, verb 28 take the +1s, the slot
+                              # above the verb at thirty-two; the shape,
+                              # not the number, is the test — the
+                              # compositor's own slot words (54, 86,
+                              # 118...) pass through to it)
     li t3, 15
     bge t6, t3, .Lroute_comp  # ops 15..: the compositor's (T8.6 —
                               # 15 and 16 the stack's, 17 the window
@@ -725,6 +734,22 @@ emo_os_trap_trampoline:
     li a0, EMO_KOFF + 0x870029f8  # verbs 10, 11, 13, 14: the display
                                   # service's pid cell (T8.4)
     j .Lroute_post
+.Lroute_notify_maybe:
+    addi t4, t6, -27
+    andi t4, t4, 31           # the shape's test: the verb's low bits
+    li t3, 1
+    bgt t4, t3, .Lroute_comp  # not a notification's: the compositor's
+    j .Lroute_notify
+.Lroute_notify:
+    li a0, EMO_KOFF + 0x87006000  # the notification service's pid cell
+                                  # (M25)
+    ld a0, 0(a0)
+    beqz a0, .Lroute_parked       # no instance between one's death and
+                                  # the next one's parking: the gate put
+                                  # the request word in the stash the
+                                  # next instance serves first — the
+                                  # caller parks without a post
+    j .Lroute_posted
 .Lroute_comp:
     li a0, EMO_KOFF + 0x87002e80  # the compositor's pid cell (T8.6;
                                   # A11.2 moved the routing cells past

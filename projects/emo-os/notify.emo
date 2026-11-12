@@ -1,0 +1,266 @@
+// The notification service (emo-desktop M25, EmoOS Step 11, D16): the
+// process that owns the pending queue, on the filesystem service's own
+// lineage — a fixed page for the pid cells, the request stash and the
+// request slots the gate fills, a supervisor-handed block for the
+// queue, the spawn, the death notice the restart answers. The design is
+// D16's split: the service keeps only what is raised and not yet taken
+// (eight entries, full the resource refusal, nothing evicted —
+// strictness, no silent loss); the history is the shell's memory and
+// do-not-disturb the shell's policy, neither this process's business.
+// A restart loses the pending queue (the abandoned callers refused
+// with reason 5, the slots and the stash cleared) and keeps the
+// center's ownership — the page outlives the instances, the way the
+// filesystem's pages do.
+//
+// The service runs on the kernel's own table, every def fully typed
+// (the raw-memory discipline: Int64 addresses, peek/poke, the queue
+// block one frame block the supervisor hands). Its mailbox holds the
+// gate's raw request words only — op << 32 | pid, a positive word,
+// decoded by typed defs, never pattern-matched (a raw word under any
+// pattern but a catch-all reads as a pointer). Every name here carries
+// the notify_ prefix: the kernel image's namespace is one flat room
+// with the filesystem's, and the two services' words must not meet.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The notification page (link.ld, trap.S): the service's, the
+// supervisor's and the notification center's pid cells, the request
+// stash, and the four request slots the gate fills. The center's cell
+// is the first taker's pid — the wallpaper's first-declaration
+// precedent (the desktop claims the center at its first take; an
+// app's take is the permission refusal) — and the page outlives every
+// instance, so the claim survives a restart.
+const notify_page = koff + 0x87006000
+const notify_svc_cell = notify_page
+const notify_sup_cell = notify_page + 8
+const notify_owner_cell = notify_page + 16
+const notify_stash_count = notify_page + 24
+const notify_stash_ring = notify_page + 32
+
+// The request slots: the caller's pid the busy word (zero = free), the
+// title's and body's lengths, the take's buffer and capacity beside the
+// caller's space word (the take's bytes land in the caller's memory,
+// and a disk ELF's buffer is its own table's — the service walks it by
+// this root), the title's bytes at 64, the body's at 128.
+const notify_slots = notify_page + 256
+const notify_slot_size = 320
+const notify_slot_count = 4
+
+// The wire's bounds, the gate's to check: the title one to sixty-four
+// bytes, the body zero to one hundred ninety-two; the packed reply is
+// the id, the two lengths, then the bytes — twenty-four bytes of
+// header at the least.
+const notify_title_max = 64
+const notify_body_max = 192
+const notify_reply_head = 24
+
+// The queue block's layout: the count at 0, the id counter at 8, then
+// the entries — id, the two lengths, the title's bytes at 24, the
+// body's at 88, two hundred eighty-eight an entry, eight entries the
+// block holds. The entry's head is the reply's head: a take's first
+// twenty-four bytes are the entry's own.
+const notify_queue_max = 8
+const notify_entry_size = 288
+const notify_entries = 64
+
+// The stash: raw request words set aside between an instance's death
+// and the next one's parking (the gate pushes when the pid cell reads
+// zero), served oldest first.
+def notify_stash_push(w Int64) Void {
+  var n = peek64(notify_stash_count)
+  if n >= notify_slot_count {
+    println("notify: the stash overflowed")
+    halt()
+  }
+  poke64(notify_stash_ring + n * 8, w)
+  poke64(notify_stash_count, n + 1)
+}
+
+def notify_stash_pop() Int64 {
+  var n = peek64(notify_stash_count)
+  if n == 0 {
+    return 0
+  }
+  var w = peek64(notify_stash_ring)
+  var i = 1
+  while i < n {
+    poke64(notify_stash_ring + (i - 1) * 8, peek64(notify_stash_ring + i * 8))
+    i = i + 1
+  }
+  poke64(notify_stash_count, n - 1)
+  return w
+}
+
+// One raise: the slot's bytes into the queue's next entry, the id the
+// answer. Full is the resource refusal — the caller sees it, retries
+// when the shell has drained, and nothing evicted (D15's discipline on
+// the service's side: the queue never lies by dropping).
+def notify_raise(block Int64, s Int64, caller Int64) Void {
+  var count = peek64(block)
+  if count >= notify_queue_max {
+    gate_reply(caller, -5)
+  } else {
+    var id = peek64(block + 8)
+    var e = block + notify_entries + count * notify_entry_size
+    poke64(e, id)
+    poke64(e + 8, peek64(s + 8))
+    poke64(e + 16, peek64(s + 16))
+    var tlen = peek64(s + 8)
+    var blen = peek64(s + 16)
+    var i = 0
+    while i < tlen {
+      poke8(e + 24 + i, peek8(s + 64 + i))
+      i = i + 1
+    }
+    i = 0
+    while i < blen {
+      poke8(e + 88 + i, peek8(s + 128 + i))
+      i = i + 1
+    }
+    poke64(block, count + 1)
+    poke64(block + 8, id + 1)
+    gate_reply(caller, id)
+  }
+}
+
+// The caller's memory, translated (the filesystem's own helper's
+// shape): the take's bytes land in the caller's buffer, and a disk
+// ELF's buffer is its own table's — the service walks the caller's
+// table by the space word the gate staged into the request slot.
+def notify_buf_pa(buf Int64, root Int64) Int64 {
+  if buf < 0 {
+    return sv39.pa_of(buf)
+  }
+  return sv39.lookup(root, buf)
+}
+
+// One take: the first taker names the center's owner and every later
+// taker another pid refuses; the empty queue answers zero (the cheap
+// poll's answer, not a refusal); a capacity under the head entry's
+// packed size refuses without consuming (the caller retries with a
+// bigger buffer); otherwise the entry's bytes — head, title, body —
+// cross into the caller's buffer byte by byte (no word store, the
+// caller's alignment nobody's to assume), the entry leaves, the rest
+// shift down, the packed size the answer.
+def notify_take(block Int64, s Int64, caller Int64) Void {
+  var owner = peek64(notify_owner_cell)
+  if owner == 0 {
+    poke64(notify_owner_cell, caller)
+  }
+  if peek64(notify_owner_cell) != caller {
+    gate_reply(caller, -3)
+  } else {
+    var count = peek64(block)
+    if count == 0 {
+      gate_reply(caller, 0)
+    } else {
+      var e = block + notify_entries
+      var tlen = peek64(e + 8)
+      var blen = peek64(e + 16)
+      var total = notify_reply_head + tlen + blen
+      var buf = peek64(s + 24)
+      var cap = peek64(s + 32)
+      var root = peek64(s + 40)
+      if cap < total {
+        gate_reply(caller, -4)
+      } else {
+        var i = 0
+        while i < notify_reply_head {
+          poke8(notify_buf_pa(buf + i, root), peek8(e + i))
+          i = i + 1
+        }
+        i = 0
+        while i < tlen {
+          poke8(notify_buf_pa(buf + notify_reply_head + i, root),
+            peek8(e + 24 + i))
+          i = i + 1
+        }
+        i = 0
+        while i < blen {
+          poke8(notify_buf_pa(buf + notify_reply_head + tlen + i, root),
+            peek8(e + 88 + i))
+          i = i + 1
+        }
+        var j = 1
+        while j < count {
+          var src = block + notify_entries + j * notify_entry_size
+          var b = 0
+          while b < notify_entry_size {
+            poke8(src - notify_entry_size + b, peek8(src + b))
+            b = b + 1
+          }
+          j = j + 1
+        }
+        poke64(block, count - 1)
+        gate_reply(caller, total)
+      }
+    }
+  }
+}
+
+// One request, whichever door it came through: the mailbox's word or
+// the stash's — op << 32 | pid, the verb at the word's low five bits
+// past twenty-seven, the slot above it at thirty-two (verb 27 rides
+// ops 27, 59, 91, 123; verb 28 the +1s). The slot frees when the
+// serve is done, whatever the answer was.
+def notify_serve(block Int64, w Int64) Void {
+  var op = w >> 32
+  var caller = w & 4294967295
+  var verb = 27 + (op & 31)
+  var k = (op - 27) >> 5
+  var s = notify_slots + k * notify_slot_size
+  if verb == 27 {
+    notify_raise(block, s, caller)
+  } else {
+    notify_take(block, s, caller)
+  }
+  poke64(s, 0)
+}
+
+// The supervisor's part at a restart (docs/fs.md's shape): every
+// client the dead instance left parked — a busy slot is a parked
+// caller — is refused with reason 5, the slots and the stash cleared,
+// before the next instance is spawned. The pending queue dies with the
+// instance (the block is the old arena's); the center's claim on the
+// page does not.
+def notify_abandon() Void {
+  var k = 0
+  while k < notify_slot_count {
+    var s = notify_slots + k * notify_slot_size
+    if peek64(s) != 0 {
+      gate_reply(peek64(s), -5)
+      poke64(s, 0)
+    }
+    k = k + 1
+  }
+  poke64(notify_stash_count, 0)
+}
+
+// The service: the queue block, the announce to the supervisor, then
+// the loop — the stash first, then the mailbox. There is no stop: the
+// service ends only in the death the supervisor restarts. The name
+// carries the prefix — the kernel image's namespace is one flat room
+// with the filesystem's own `service`.
+def notify_service(boss Pid) Void {
+  var me = self_pid()
+  var block = frames.take()
+  if block == 0 {
+    println("notify: no block for the queue")
+    halt()
+  }
+  poke64(block, 0)
+  poke64(block + 8, 1)
+  boss <- me
+  while true {
+    var w = notify_stash_pop()
+    if w != 0 {
+      notify_serve(block, w)
+    } else {
+      receive {
+        x -> {
+          notify_serve(block, x)
+        }
+      }
+    }
+  }
+}

@@ -4470,6 +4470,40 @@ def fs_run(boss Pid, blk Pid, cache Int64) Void {
   fs.service(boss, blk, cache)
 }
 
+def notify_run(boss Pid) Void {
+  notify.notify_service(boss)
+}
+
+// The notification service's supervisor (emo-desktop M25, EmoOS Step
+// 11): the compositor supervisor's shape — the pages outlive the
+// instances, the spawn, the death notice the shim's hook posts, the
+// restart. The abandon refuses the parked callers, clears the slots
+// and the stash, and the queue dies with the instance; the center's
+// claim on the page does not.
+def notify_supervisor(boss Pid) Void {
+  var me3 = self_pid()
+  poke64(notify.notify_sup_cell, pid_num(me3))
+  do notify_run(me3)
+  var inst = wait_pid()
+  poke64(notify.notify_svc_cell, pid_num(inst))
+  boss <- inst
+  while true {
+    receive {
+      w -> {
+        if op_of(w) == notice_op {
+          if caller_of(w) == pid_num(inst) {
+            notify.notify_abandon()
+            do notify_run(me3)
+            inst = wait_pid()
+            poke64(notify.notify_svc_cell, pid_num(inst))
+            boss <- inst
+          }
+        }
+      }
+    }
+  }
+}
+
 // One Pid from the mailbox, raw words set aside: the supervisor's
 // mailbox holds its instances' announces (a Pid, negative as every
 // pointer is) and the death notices (a positive raw word); the loop
@@ -4635,6 +4669,7 @@ var gpu_svc = me
 var input_svc = me
 var comp_svc = me
 var fs_svc = me
+var notify_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
@@ -4700,6 +4735,11 @@ receive { n1 -> {
 
 do supervisor(me, blk_svc)
 receive { f1 -> { fs_svc = f1 } }
+// The notification service (emo-desktop M25, EmoOS Step 11): the
+// compositor supervisor's lineage, the boot's announce the same
+// receive.
+do notify_supervisor(me)
+receive { ny1 -> { notify_svc = ny1 } }
 do reader(input_svc, me, 1)
 do reader(input_svc, me, 2)
 do reader(input_svc, me, 3)

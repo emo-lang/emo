@@ -102,6 +102,16 @@ SECTIONS
   . = KOFF + 0x87005000;
   .emo_fs (NOLOAD) : AT(ADDR(.emo_fs) - KOFF) { *(.emo_fs) } :tick
 
+  /* The notification service's page (emo-desktop M25), a page above
+     the filesystem's: the service's, the supervisor's and the
+     notification center's pid cells, the request stash, and the four
+     request slots the gate fills — the kernel's Emo (gate.emo,
+     notify.emo, main.emo) reads and writes them through peek/poke by
+     their fixed constants. The center's cell outlives the instances:
+     the first taker's claim survives a restart. */
+  . = KOFF + 0x87006000;
+  .emo_notify (NOLOAD) : AT(ADDR(.emo_notify) - KOFF) { *(.emo_notify) } :tick
+
   /* The console's staging page (T8.15), a page above the compositor's:
      the four request slots the gate fills for the write verb — busy
      lengths and the bytes, one slot per parked writer, the slot's
