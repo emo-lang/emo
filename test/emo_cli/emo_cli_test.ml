@@ -419,10 +419,10 @@ let wasm_goldens =
     "rand_demo";
     (* M24: the macro pilots — expansion rides before codegen, so the
        generated declarations compile to wasm like hand-written ones *)
-    "trace_demo";
-    "memoize_demo";
-    "derive_eq_demo";
-    "derive_shared";
+    "trace_macro_demo";
+    "memoize_macro_demo";
+    "derive_eq_macro_demo";
+    "derive_shared_macro_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -500,10 +500,10 @@ let beam_goldens =
     "crypto_ecdh";
     (* M24: the macro pilots — Core Erlang assembles from the expanded
        declarations, so the wrappers read like hand-written code *)
-    "trace_demo";
-    "memoize_demo";
-    "derive_eq_demo";
-    "derive_shared";
+    "trace_macro_demo";
+    "memoize_macro_demo";
+    "derive_eq_macro_demo";
+    "derive_shared_macro_demo";
   ]
 
 let erl_available =
@@ -3317,10 +3317,10 @@ let riscv64_examples_tests =
       "def_values";
       (* M24: the Map-free macro pilots — expansion rides before codegen,
          so the generated wrappers lower like hand-written ones;
-         memoize_demo waits on Map for riscv64 (the refusal is live) *)
-      "trace_demo";
-      "derive_eq_demo";
-      "derive_shared";
+         memoize_macro_demo waits on Map for riscv64 (the refusal is live) *)
+      "trace_macro_demo";
+      "derive_eq_macro_demo";
+      "derive_shared_macro_demo";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the

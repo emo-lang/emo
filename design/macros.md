@@ -208,7 +208,7 @@ Constructors:
   constructors (a macro splices a private `Map` constant beside its
   wrapper with `const_item` + `empty_map`)
 
-The pilot macros (`examples/trace_demo`, then `examples/memoize_demo`)
+The pilot macros (`examples/trace_macro_demo`, then `examples/memoize_macro_demo`)
 are written entirely against this surface, which is the proof that the
 surface is complete enough to be useful.
 
@@ -274,7 +274,7 @@ class's name. The supporting constructors: `Syntax.new_param`,
 is E2031, applications above any other item stay E2031, and the duplicate
 rules (E2032) apply to classes like defs.
 
-The pilot is [`examples/derive_eq_demo`](../../examples/derive_eq_demo/main.emo):
+The pilot is [`examples/derive_eq_macro_demo`](../../examples/derive_eq_macro_demo/main.emo):
 `@derive_eq` generates an `eq?` method comparing every field pairwise —
 the generated equality cannot forget a field the class declares, which is
 the drift this mechanism exists to remove — byte-identical across the
@@ -321,7 +321,7 @@ without that macro refuses with E4300 naming the module. The self-
 contained constraint applies to macro bodies everywhere: the body runs
 with only its parameters, `Syntax`, and the builtins in scope.
 
-The pilot is [`examples/derive_shared`](../../examples/derive_shared/main.emo):
+The pilot is [`examples/derive_shared_macro_demo`](../../examples/derive_shared_macro_demo/main.emo):
 `derive_eq` lives once in `eq_macros.emo`, two classes in `main.emo`
 apply it qualified, and the output is byte-identical across the
 interpreter, the c binary, and the TypeScript output — code written once
@@ -375,22 +375,22 @@ derive step, where cross-package derivation is the actual use.
    consumption with adjacency rules, checker validation (the full
    strictness error set), the expansion pipeline, the restricted
    compile-time interpreter profile, the `Syntax` API, and
-   `examples/trace_demo` proving the chain.
+   `examples/trace_macro_demo` proving the chain.
 2. **Step 2 — `@memoize` + application arguments + quotation** (landed,
    step 59): compile-time argument evaluation against the macro's leading
    parameters, generated runtime state (a private `Map` constant the
    wrapper consults, with a drop-and-restart eviction policy at the
-   limit), and the `quote` surface — `examples/memoize_demo` shows a hit
+   limit), and the `quote` surface — `examples/memoize_macro_demo` shows a hit
    skipping the computation and the eviction recomputing, byte-identical
    across targets.
 3. **Step 3 — `@derive` on classes** (landed, step 60): application onto
    `class` declarations, the class reader/constructor API, and
-   `examples/derive_eq_demo` — one macro generating the equality method
+   `examples/derive_eq_macro_demo` — one macro generating the equality method
    from the field list. The expansion precheck narrowed to the macro
    domain (macro bodies + application arguments), because a generated
    method's call site must not be checked against the raw class. 4. **Step 4 — cross-module macros** (landed, step 61): the program's
    macro table, qualified applications `@mod.macro`, shadowing, and
-   cross-module argument checks — `examples/derive_shared` shows a
+   cross-module argument checks — `examples/derive_shared_macro_demo` shows a
    derivation written once in a sibling module applying to two classes
    in another. Still open in this territory: package-boundary macros and
    the items named below.

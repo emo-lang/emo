@@ -1,0 +1,71 @@
+// The macro body is an ordinary Emo program running inside the compiler:
+// loops, arithmetic, strings — all of it at build time, deterministically
+// (the compile-time profile refuses every effect and every host-touching
+// builtin). `@powers(base, count)` computes the whole table while the
+// program compiles, then splices one def whose body decodes the result.
+// The channel from compile time into generated code is tree constructors,
+// and for bulk data a literal string is the container: the computed
+// values ride inside one string literal, and a fixed quote template lays
+// out the decode loop with the table spliced through one `${...}` hole.
+//
+//   emo run main.emo
+//   emo dump main.emo          # the expansion: one string literal, one loop
+
+// #macro
+def powers(base Int64, count Int64, f Syntax) Syntax {
+  if count < 1 {
+    raise Exception.new("powers needs at least one entry")
+  }
+  if count > 24 {
+    raise Exception.new("powers splices at most 24 entries")
+  }
+  var row = ""
+  var acc = 1
+  var i = 0
+  while i < count {
+    if i > 0 {
+      row = row + ","
+    }
+    row = row + acc.to_string()
+    acc = acc * base
+    i = i + 1
+  }
+  const data = Syntax.lit_string(row)
+  const body = quote {
+    var out = ArrayBuilder.new()
+    var i = 0
+    const cells = ${data}.split(",")
+    while i < cells.length() {
+      out.push(cells[i].to_int64())
+      i = i + 1
+    }
+    return out.to_array()
+  }
+  return Syntax.new_def(Syntax.name(f), [], Syntax.result(f), body)
+}
+
+// @powers(2, 10)
+def powers_of_two() Array[Int64] {}
+
+// @powers(3, 6)
+def powers_of_three() Array[Int64] {}
+
+println(powers_of_two())
+
+// The same table computed at runtime, to show the macro's answers are
+// the arithmetic's answers.
+def runtime_table() Array[Int64] {
+  var out = ArrayBuilder.new()
+  var acc = 1
+  var i = 0
+  while i < 10 {
+    out.push(acc)
+    acc = acc * 2
+    i = i + 1
+  }
+  return out.to_array()
+}
+
+println(powers_of_two() == runtime_table())
+println(powers_of_three())
+println(powers_of_three()[4])

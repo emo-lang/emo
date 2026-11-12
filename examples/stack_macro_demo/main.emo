@@ -1,0 +1,97 @@
+// Directives stack. The lines closest to the declaration expand first,
+// and each macro receives the previous application's result — so the
+// three derivations below land on one class: `@keys` first, then
+// `@describe` sees the keys-enriched class, then `@eq` sees both. The
+// expansion reads like one hand-written class carrying all three methods
+// (see it yourself with `emo dump main.emo`).
+//
+// The spelling around applications is checked like any syntax: one macro
+// applied twice to the same declaration is E2032, an application above a
+// macro def is E4310, a directive with no declaration beneath it is
+// E2030, and a blank line between the directive and the declaration
+// leaves it floating — also E2030.
+//
+//   emo run main.emo
+
+// #macro
+def eq(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const fields = Syntax.fields(f)
+  const po = Syntax.new_param("other", Syntax.named_type(name))
+  var acc = Syntax.lit_bool(true)
+  var have = false
+  var i = 0
+  while i < fields.length() {
+    const fname = Syntax.field_name(fields[i])
+    const cmp = Syntax.bin_eq(
+        Syntax.member(Syntax.self_expr(), fname),
+        Syntax.member(Syntax.ident("other"), fname))
+    acc = if have { Syntax.bin_and(acc, cmp) } else { cmp }
+    have = true
+    i = i + 1
+  }
+  const eqq = Syntax.new_def("eq?", [po], Syntax.named_type("Bool"), [
+      Syntax.return_stmt(acc)
+    ])
+  return Syntax.with_methods(f, [eqq])
+}
+
+// #macro
+def describe(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const fields = Syntax.fields(f)
+  const parts = ArrayBuilder.new()
+  parts.push(Syntax.lit_string(name + "("))
+  var i = 0
+  while i < fields.length() {
+    if i > 0 {
+      parts.push(Syntax.lit_string(", "))
+    }
+    const fname = Syntax.field_name(fields[i])
+    parts.push(Syntax.lit_string(fname + ": "))
+    parts.push(Syntax.member(Syntax.self_expr(), fname))
+    i = i + 1
+  }
+  parts.push(Syntax.lit_string(")"))
+  const to_string = Syntax.new_def("to_string", [], Syntax.named_type("String"), [
+      Syntax.return_stmt(Syntax.interp(parts.to_array()))
+    ])
+  return Syntax.with_methods(f, [to_string])
+}
+
+// #macro
+def keys(f Syntax) Syntax {
+  const fields = Syntax.fields(f)
+  const parts = ArrayBuilder.new()
+  var i = 0
+  while i < fields.length() {
+    if i > 0 {
+      parts.push(Syntax.lit_string(","))
+    }
+    parts.push(Syntax.lit_string(Syntax.field_name(fields[i])))
+    i = i + 1
+  }
+  const header = Syntax.new_def("csv_header", [], Syntax.named_type("String"), [
+      Syntax.return_stmt(Syntax.interp(parts.to_array()))
+    ])
+  return Syntax.with_methods(f, [header])
+}
+
+// @describe
+// @eq
+// @keys
+class Order {
+  def init(id Int64, item String, qty Int64) {
+    self.id = id
+    self.item = item
+    self.qty = qty
+  }
+}
+
+const a = Order.new(id: 7, item: "bolt", qty: 12)
+const b = Order.new(id: 7, item: "bolt", qty: 12)
+const c = Order.new(id: 7, item: "nut", qty: 12)
+println(a)
+println(a.eq?(b))
+println(a.eq?(c))
+println(a.csv_header())

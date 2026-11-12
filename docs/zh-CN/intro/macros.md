@@ -46,19 +46,19 @@ def double(n Int64) Int64 {
 
 交给宏的值是被装饰 def 的树;它返回的值拼回原位——一个声明,或一列展平的声明(`Syntax.seq`)。读取器:`Syntax.name`、`Syntax.params`、`Syntax.param_name`、`Syntax.result`。构造器:`Syntax.rename`、`Syntax.new_def`(从名字、参数树、结果类型树和体构造 def——体是语句树数组或整个 quote)、`Syntax.ident`、`Syntax.lit_string`、`Syntax.lit_int`、`Syntax.lit_bool`、`Syntax.lit_float`、`Syntax.interp`、`Syntax.call`、`Syntax.call_stmt`、`Syntax.expr_stmt`、`Syntax.const_stmt`、`Syntax.return_stmt`、`Syntax.empty_map`、`Syntax.const_item`(宏为其生成的运行期状态拼接的模块级常量)、`Syntax.gensym`。宏应用必须产出声明——单独的表达式或语句碎片是错误(E4303)。
 
-完整实例:[`examples/trace_demo`](../../examples/trace_demo/main.emo)——`trace` 宏的转发调用由被装饰声明自己的参数树构造,永远不会与签名漂移;[`examples/memoize_demo`](../../examples/memoize_demo/main.emo)——带编译期容量参数、私有 `Map` 常量和 quote 铺开 wrapper 的 `memoize` 宏,缓存命中跳过计算、驱逐则重算,输出可见。
+完整实例:[`examples/trace_macro_demo`](../../examples/trace_macro_demo/main.emo)——`trace` 宏的转发调用由被装饰声明自己的参数树构造,永远不会与签名漂移;[`examples/memoize_macro_demo`](../../examples/memoize_macro_demo/main.emo)——带编译期容量参数、私有 `Map` 常量和 quote 铺开 wrapper 的 `memoize` 宏,缓存命中跳过计算、驱逐则重算,输出可见。
 
 ## 类应用
 
 应用的座位扩到类:`// @derive_eq` 写在 `class` 上方,把类树交给宏;宏读取字段列表(`Syntax.fields`、`Syntax.field_name`——名字;AST 不携带字段类型),返回变换后的类——`Syntax.with_methods(class, methods)` 把生成的 def 追加为普通方法,随模块一起检查。`Syntax.name` 应答类名;`Syntax.new_param`、`Syntax.named_type`、`Syntax.self_expr`、`Syntax.bin_eq`、`Syntax.bin_and`、`Syntax.member` 构造生成体。角色侧仍是 def 专属——`// #macro` 写在类上是错误,应用写在其他 item 上也是错误。
 
-完整实例在 [`examples/derive_eq_demo`](../../examples/derive_eq_demo/main.emo):`@derive_eq` 生成把每个字段成对比较的 `eq?` 方法——生成的判等不可能遗漏类声明的任何字段,这正是此机制要消除的漂移。
+完整实例在 [`examples/derive_eq_macro_demo`](../../examples/derive_eq_macro_demo/main.emo):`@derive_eq` 生成把每个字段成对比较的 `eq?` 方法——生成的判等不可能遗漏类声明的任何字段,这正是此机制要消除的漂移。
 
 宏体是自足的:只引用自己的参数、`Syntax` 命名空间与内置。编译器在任何宏体运行之前检查宏域(`#macro` def 与应用的编译期参数),展开之后检查整个模块——调用点引用了派生不产出的方法,就在那里失败。
 
 ## 跨模块宏
 
-宏模块是普通模块,其 `#macro` def 没有运行期存在:应用通过程序的宏表解析,拼写是限定的,与值引用同一路径形状——一个模块里的 `// @eq_macros.derive_eq` 应用兄弟模块 `eq_macros.emo` 里声明的宏。裸名 `@macro` 只在声明模块内解析,同名的本地宏遮蔽外部宏。编译期参数检查跨模块成立(个数与类型对外部宏的已声明参数),自足规则对一切宏体成立。完整实例在 [`examples/derive_shared`](../../examples/derive_shared/main.emo):一次编写,另一个模块里的两个类应用。
+宏模块是普通模块,其 `#macro` def 没有运行期存在:应用通过程序的宏表解析,拼写是限定的,与值引用同一路径形状——一个模块里的 `// @eq_macros.derive_eq` 应用兄弟模块 `eq_macros.emo` 里声明的宏。裸名 `@macro` 只在声明模块内解析,同名的本地宏遮蔽外部宏。编译期参数检查跨模块成立(个数与类型对外部宏的已声明参数),自足规则对一切宏体成立。完整实例在 [`examples/derive_shared_macro_demo`](../../examples/derive_shared_macro_demo/main.emo):一次编写,另一个模块里的两个类应用。
 
 ## 宏不是什么
 

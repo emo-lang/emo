@@ -33,7 +33,7 @@ emo dump main.emo --raw    # 文件按解析所见——指令、宏 def 都在
 
 ## 第一个宏,逐行读
 
-完整实例在 [`examples/trace_demo`](../examples/trace_demo/main.emo)——下面的宏包装 def,让每次调用记录参数与应答:
+完整实例在 [`examples/trace_macro_demo`](../examples/trace_macro_demo/main.emo)——下面的宏包装 def,让每次调用记录参数与应答:
 
 ```emo
 // #macro
@@ -137,7 +137,7 @@ raise 以展开期编译错误浮出,携带消息。
 
 ## 类派生
 
-应用的座位也收类:`// @derive_eq` 写在 `class` 上方,把类树交给宏;宏读字段列表,用 `Syntax.with_methods` 追加生成的方法——它们像手写的一样住在类里,随模块检查。完整实例在 [`examples/derive_eq_demo`](../examples/derive_eq_demo/main.emo):
+应用的座位也收类:`// @derive_eq` 写在 `class` 上方,把类树交给宏;宏读字段列表,用 `Syntax.with_methods` 追加生成的方法——它们像手写的一样住在类里,随模块检查。完整实例在 [`examples/derive_eq_macro_demo`](../examples/derive_eq_macro_demo/main.emo):
 
 ```emo
 // #macro
@@ -183,7 +183,7 @@ class Point {
 class Point { ... }
 ```
 
-完整实例在 [`examples/derive_shared`](../examples/derive_shared/main.emo)——`eq_macros.emo` 里一次派生,`main.emo` 里两个类应用。
+完整实例在 [`examples/derive_shared_macro_demo`](../examples/derive_shared_macro_demo/main.emo)——`eq_macros.emo` 里一次派生,`main.emo` 里两个类应用。
 
 ## 规则与限制
 
@@ -212,4 +212,4 @@ class Point { ... }
 
 ## 四个可跑试点
 
-[`examples/trace_demo`](../examples/trace_demo/main.emo)——最小包装。[`examples/memoize_demo`](../examples/memoize_demo/main.emo)——应用参数、生成运行期状态(私有 `Map`)、quote 铺开的 wrapper。[`examples/derive_eq_demo`](../examples/derive_eq_demo/main.emo)——类派生。[`examples/derive_shared`](../examples/derive_shared/main.emo)——同一派生从兄弟模块应用。每个都在解释器与编译 target 上逐字节一致。
+[`examples/trace_macro_demo`](../examples/trace_macro_demo/main.emo)——最小包装。[`examples/memoize_macro_demo`](../examples/memoize_macro_demo/main.emo)——应用参数、生成运行期状态(私有 `Map`)、quote 铺开的 wrapper。[`examples/derive_eq_macro_demo`](../examples/derive_eq_macro_demo/main.emo)——类派生。[`examples/derive_shared_macro_demo`](../examples/derive_shared_macro_demo/main.emo)——同一派生从兄弟模块应用。每个都在解释器与编译 target 上逐字节一致。
