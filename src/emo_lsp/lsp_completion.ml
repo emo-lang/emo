@@ -60,6 +60,11 @@ let keyword_items : item list =
       ~sort_text:"0foreign" ();
   ]
 
+(* The `Syntax` blurb, shared by the completion list and the hover
+   fallback below. *)
+let syntax_type_detail : string =
+  "the compile-time syntax tree — a macro's parameters and quotes"
+
 let builtin_type_items : item list =
   let ty name detail =
     make ~label:name ~kind:7 (* Class *) ~detail ~sort_text:("1" ^ name) ()
@@ -85,7 +90,7 @@ let builtin_type_items : item list =
     ty "UdpSocket" "a UDP socket";
     ty "Exception" "the base exception class";
     ty "R" "the built-in result enum — (R.ok, value) beside (R.error, reason)";
-    ty "Syntax" "the compile-time syntax tree — a macro's parameters and quotes";
+    ty "Syntax" syntax_type_detail;
   ]
 
 let builtin_function_items : item list =
@@ -115,6 +120,104 @@ let symbol_item (s : Ix.symbol) : item =
   make ~label ~kind ~detail:s.Ix.detail
     ~documentation:(Some (Printf.sprintf "```emo\n%s\n```" s.Ix.detail))
     ~sort_text:("2" ^ s.Ix.name) ()
+
+(* The compile-time surface of `Syntax` — the readers, constructors, and
+   statement wrappers a macro body builds its splice from, the same list
+   design/macros.md documents and the evaluator implements. `Syntax` is
+   the checker's reserved type, not a declaration any index carries, so
+   member completion after `Syntax.` answers from this table. *)
+let syntax_member_items : item list =
+  let m label detail =
+    make ~label ~kind:3 (* Function *) ~detail ~sort_text:("1" ^ label) ()
+  in
+  [
+    m "name" "name(f) -> String — the def's name";
+    m "params" "params(f) -> Array[Syntax] — the parameter trees";
+    m "param_name" "param_name(p) -> String — a parameter's name";
+    m "result" "result(f) -> Syntax — the result type tree";
+    m "fields" "fields(cls) -> Array[Syntax] — the class's field trees";
+    m "field_name" "field_name(fld) -> String — a field's name";
+    m "rename" "rename(f, new_name) -> Syntax — the def tree, renamed";
+    m "new_def" "new_def(name, params, result, body) -> Syntax — a new def";
+    m "new_param" "new_param(name, ty) -> Syntax — a new parameter tree";
+    m "seq" "seq(a, b) -> Syntax — a sequence of trees";
+    m "ident" "ident(s) -> Syntax — an identifier expression";
+    m "named_type" "named_type(s) -> Syntax — a named type tree";
+    m "lit_string" "lit_string(s) -> Syntax — a string literal";
+    m "interp" "interp(parts) -> Syntax — an interpolated string";
+    m "lit_int" "lit_int(n) -> Syntax — an integer literal";
+    m "lit_bool" "lit_bool(b) -> Syntax — a boolean literal";
+    m "lit_float" "lit_float(f) -> Syntax — a float literal";
+    m "call" "call(f, args) -> Syntax — a call expression";
+    m "call_stmt" "call_stmt(f, args) -> Syntax — a call statement";
+    m "expr_stmt" "expr_stmt(e) -> Syntax — an expression statement";
+    m "const_stmt" "const_stmt(name, e) -> Syntax — a const statement";
+    m "return_stmt" "return_stmt(e) -> Syntax — a return statement";
+    m "gensym" "gensym(base) -> String — a fresh, collision-free name";
+    m "empty_map" "empty_map() -> Syntax — an empty Map literal";
+    m "const_item" "const_item(name, e) -> Syntax — a top-level const item";
+    m "self_expr" "self_expr() -> Syntax — the self expression";
+    m "member" "member(obj, name) -> Syntax — a member read";
+    m "with_methods"
+      "with_methods(cls, methods) -> Syntax — the class tree, methods attached";
+    m "bin_and" "bin_and(a, b) -> Syntax — a && expression";
+    m "bin_eq" "bin_eq(a, b) -> Syntax — an == expression";
+  ]
+
+let syntax_member_detail (label : string) : string option =
+  List.find_map
+    (fun (i : item) -> if i.label = label then Some i.detail else None)
+    syntax_member_items
+
+let is_word_char c =
+  (c >= 'a' && c <= 'z')
+  || (c >= 'A' && c <= 'Z')
+  || (c >= '0' && c <= '9')
+  || c = '_'
+
+(* The hover for the reserved surface: a cursor over `Syntax` itself
+   answers the type's blurb, a cursor over `Syntax.member` the member's
+   signature — `None` for any other word, which leaves the index-based
+   hover in charge. *)
+let syntax_hover_at (text : string) (offset : int) : string option =
+  let n = String.length text in
+  let left = ref (min offset n) in
+  while !left > 0 && is_word_char text.[!left - 1] do
+    decr left
+  done;
+  let word_start = !left in
+  let right = ref (min offset n) in
+  while !right < n && is_word_char text.[!right] do
+    incr right
+  done;
+  if word_start = !right then None
+  else
+    let word = String.sub text word_start (!right - word_start) in
+    if word = "Syntax" then
+      Some
+        (Printf.sprintf
+           "```emo\n\
+            Syntax\n\
+            ```\n\n\
+            %s — the compile-time macro surface (design/macros.md)"
+           syntax_type_detail)
+    else if
+      word_start >= 7
+      && text.[word_start - 1] = '.'
+      && String.sub text (word_start - 7) 6 = "Syntax"
+      && (word_start = 7 || not (is_word_char text.[word_start - 8]))
+    then
+      match syntax_member_detail word with
+      | None -> None
+      | Some detail ->
+          Some
+            (Printf.sprintf
+               "```emo\n\
+                Syntax.%s\n\
+                ```\n\n\
+                the compile-time macro surface (design/macros.md)"
+               detail)
+    else None
 
 (* ---- Registry packages ---------------------------------------------- *)
 
@@ -215,23 +318,25 @@ let global_items ~(ix : Ix.t) ~(file : string) : item list =
 
 let member_items (ix : Ix.t) (items : Emo_ast.item list) (file : string)
     (offset : int) (segments : string list) : item list =
-  let members = Resolve.resolve_receiver ix items file offset segments in
-  let container = Resolve.resolve_container ix items ~file offset segments in
-  let new_item =
-    match container with
-    | Some s when s.Ix.kind = Ix.Kind.class_ ->
-        [
-          make ~label:"new" ~kind:Ix.Kind.constructor
-            ~detail:("new " ^ s.Ix.name) ~insert_text:"new()" ~sort_text:"0new"
-            ();
-        ]
-    | _ -> []
-  in
-  new_item
-  @ List.map symbol_item
-      (List.filter
-         (fun (s : Ix.symbol) -> s.Ix.kind <> Ix.Kind.constructor)
-         members)
+  if segments = [ "Syntax" ] then syntax_member_items
+  else
+    let members = Resolve.resolve_receiver ix items file offset segments in
+    let container = Resolve.resolve_container ix items ~file offset segments in
+    let new_item =
+      match container with
+      | Some s when s.Ix.kind = Ix.Kind.class_ ->
+          [
+            make ~label:"new" ~kind:Ix.Kind.constructor
+              ~detail:("new " ^ s.Ix.name) ~insert_text:"new()"
+              ~sort_text:"0new" ();
+          ]
+      | _ -> []
+    in
+    new_item
+    @ List.map symbol_item
+        (List.filter
+           (fun (s : Ix.symbol) -> s.Ix.kind <> Ix.Kind.constructor)
+           members)
 
 (* Items for a completion request selected by the cursor context. A
    require string offers package names the way a build routes them: a

@@ -1052,7 +1052,21 @@ let handle_hover (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let ix = index_for_file state file in
       let items, _ = parse file text in
       match symbols_at ix items file text offset with
-      | [] -> `Null
+      | [] -> (
+          (* `Syntax` and its members are the checker's reserved
+             compile-time surface — no declaration any index carries —
+             so the word under the cursor answers from the completion
+             module's table when the index came up empty. *)
+          match Lsp_completion.syntax_hover_at text offset with
+          | Some value ->
+              `Assoc
+                [
+                  ( "contents",
+                    `Assoc
+                      [ ("kind", `String "markdown"); ("value", `String value) ]
+                  );
+                ]
+          | None -> `Null)
       | (s : Ix.symbol) :: _ ->
           let value =
             Printf.sprintf "```emo\n%s\n```\n\n`%s`" s.Ix.detail

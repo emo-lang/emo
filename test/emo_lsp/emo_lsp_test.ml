@@ -159,6 +159,57 @@ let test_members_of () =
   Alcotest.(check bool) "abs in Math" true (List.mem "abs" math_names);
   Alcotest.(check bool) "tau in Math" true (List.mem "tau" math_names)
 
+let test_syntax_member_completion () =
+  (* `Syntax` is the checker's reserved compile-time type, no
+     declaration any index carries — member completion after `Syntax.`
+     answers from the completion module's own table, the surface
+     design/macros.md documents and the evaluator implements. *)
+  let labels =
+    List.map
+      (fun (i : Lsp_completion.item) -> i.Lsp_completion.label)
+      Lsp_completion.syntax_member_items
+  in
+  let has name = List.mem name labels in
+  Alcotest.(check int) "the documented surface" 30 (List.length labels);
+  List.iter
+    (fun name -> Alcotest.(check bool) (name ^ " present") true (has name))
+    [ "new_def"; "gensym"; "lit_string"; "with_methods"; "bin_eq" ];
+  (* the dotted receiver routes before the index is consulted *)
+  let symbols = symbols_of source in
+  let items =
+    Lsp_completion.member_items
+      (Lsp_index.index_of "/tmp" ~modules:[] ~symbols)
+      [] "test.emo" 13 [ "Syntax" ]
+  in
+  let routed =
+    List.map (fun (i : Lsp_completion.item) -> i.Lsp_completion.label) items
+  in
+  Alcotest.(check int) "Syntax. routes to the table" 30 (List.length routed)
+
+let test_syntax_hover () =
+  let text = "  const wrapped = Syntax.new_def(n, ps, r, b)" in
+  let member_at = String.length "  const wrapped = Syntax.new_de" in
+  let type_at = String.length "  const wrapped = " in
+  (* a cursor over the member answers its signature *)
+  Alcotest.(check bool)
+    "member hover" true
+    (match Lsp_completion.syntax_hover_at text member_at with
+    | Some value ->
+        Lsp_util.starts_with
+          ~prefix:"```emo\nSyntax.new_def(name, params, result, body) -> Syntax"
+          value
+    | None -> false);
+  (* a cursor over `Syntax` itself answers the type's blurb *)
+  Alcotest.(check bool)
+    "type hover" true
+    (match Lsp_completion.syntax_hover_at text type_at with
+    | Some value -> Lsp_util.starts_with ~prefix:"```emo\nSyntax\n```" value
+    | None -> false);
+  (* a word the reserved surface does not name stays with the index *)
+  Alcotest.(check bool)
+    "other words stay with the index" true
+    (Lsp_completion.syntax_hover_at text (String.length "  const w") = None)
+
 (* ---- Receiver extraction -------------------------------------------- *)
 
 let test_receiver_segments () =
@@ -678,6 +729,8 @@ let () =
       ( "resolve",
         [
           tc "receiver segments" test_receiver_segments;
+          tc "syntax member completion" test_syntax_member_completion;
+          tc "syntax hover" test_syntax_hover;
           tc "dep insertion" test_dep_insertion;
           tc "initialize result" test_initialize_result;
         ] );
