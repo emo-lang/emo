@@ -225,6 +225,12 @@ let test_receiver_segments () =
     (Some [ "shop"; "order" ])
     (Lsp_resolve.receiver_segments text2 offset2);
   Alcotest.(check (option (list string)))
+    "half-spelled member names its receiver" (Some [ "os" ])
+    (Lsp_resolve.receiver_segments "os.getp" (String.length "os.getp"));
+  Alcotest.(check (option (list string)))
+    "a bare half-spelled word has no receiver" None
+    (Lsp_resolve.receiver_segments "getp" (String.length "getp"));
+  Alcotest.(check (option (list string)))
     "no receiver" None
     (Lsp_resolve.receiver_segments "foo(" (String.length "foo("))
 
@@ -350,6 +356,34 @@ let test_builtin_literal_completion () =
   Alcotest.(check bool)
     "length offered on a string literal" true
     (completion_item_named "length" items <> None)
+
+let test_partial_member_completion () =
+  (* a half-spelled member — `s.subs` — still routes to the receiver's
+     members; matching the typed tail against the labels is the
+     client's filter's job *)
+  let prefix = "def f(s String) Int64 {\n  return s.subs" in
+  let segments = Lsp_resolve.receiver_segments prefix (String.length prefix) in
+  Alcotest.(check (option (list string)))
+    "half-spelled member names its receiver" (Some [ "s" ]) segments;
+  let items =
+    Lsp_completion.member_items (Lsp_index.standalone ())
+      (parse_items (prefix ^ "\n}"))
+      prefix "test.emo" (String.length prefix)
+      (Option.value segments ~default:[])
+  in
+  Alcotest.(check bool)
+    "substring among the members" true
+    (completion_item_named "substring" items <> None);
+  let stdlib =
+    Lsp_completion.member_items (Lsp_index.standalone ()) [] "os.getp"
+      "test.emo" (String.length "os.getp") [ "os" ]
+  in
+  Alcotest.(check bool)
+    "getpid among the os members" true
+    (completion_item_named "getpid" stdlib <> None);
+  Alcotest.(check bool)
+    "getppid among the os members" true
+    (completion_item_named "getppid" stdlib <> None)
 
 let test_builtin_hover () =
   let text = "def f(data Bytes) Int64 {\n  return data.get_u32_le(0)\n}" in
@@ -863,6 +897,7 @@ let () =
           tc "builtin type member completion"
             test_builtin_type_member_completion;
           tc "builtin literal completion" test_builtin_literal_completion;
+          tc "partial member completion" test_partial_member_completion;
           tc "builtin hover" test_builtin_hover;
           tc "standalone stdlib completion" test_standalone_stdlib_completion;
           tc "standalone stdlib hover" test_standalone_stdlib_hover;

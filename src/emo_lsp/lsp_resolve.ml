@@ -245,19 +245,26 @@ let is_ident_char c =
   || (c >= '0' && c <= '9')
   || c = '_' || c = '?'
 
-(* The identifier chain immediately before [offset], when the character
-   just before it is a `.` (i.e. we are completing a member). *)
+(* The identifier chain a member completion completes against: the word
+   under the cursor — right after the dot (`os.`) or half-spelled
+   (`os.getp`) — and the chain of dotted names in front of the dot that
+   names the receiver. None when no dot precedes the word, which leaves
+   the bare-word completion in charge; the half-spelled tail stays with
+   the client, whose filter matches it against the member labels. *)
 let receiver_segments (text : string) (offset : int) : string list option =
   let n = String.length text in
-  let i = offset - 1 in
-  if i < 0 || i >= n || text.[i] <> '.' then None
+  let start = ref (min offset n) in
+  while !start > 0 && is_ident_char text.[!start - 1] do
+    decr start
+  done;
+  let dot = !start - 1 in
+  if dot < 0 || text.[dot] <> '.' then None
   else
-    let j = ref (i - 1) in
+    let j = ref (dot - 1) in
     while !j >= 0 && (is_ident_char text.[!j] || text.[!j] = '.') do
       decr j
     done;
-    let start = !j + 1 in
-    let chain = String.sub text start (i - start) in
+    let chain = String.sub text (!j + 1) (dot - (!j + 1)) in
     if chain = "" then None else Some (String.split_on_char '.' chain)
 
 (* ---- Member resolution ---------------------------------------------- *)
