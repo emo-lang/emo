@@ -61,6 +61,7 @@ The packages:
 | [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c`, `typescript` |
 | [`http`](#the-http-package) | HTTP client | `ocaml`, `c`, `typescript` |
 | [`httpd`](#the-httpd-package) | HTTP server | `ocaml`, `c`, `typescript` |
+| [`valkey`](#the-valkey-package) | Valkey client, RESP2 | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
@@ -374,6 +375,40 @@ Targets: `["ocaml", "c", "typescript"]`. Reference:
 [`docs/httpd-guide.md`](httpd-guide.md) · Demos:
 `examples/httpd_routes`, `examples/httpd_serve`, `examples/httpd_wire`,
 `examples/httpd_parse`, `examples/https_roundtrip`.
+
+## The `valkey` package
+
+A Valkey client in pure Emo on top of `net`, speaking RESP2. Direct
+style; one connection, one command, one reply — no pipelining, no
+pooling, no reconnection to hide a dropped socket. Server error replies
+are values: `(R.error, "valkey: " + the server's text)`. A missing key
+is the null reply read through `is_null?()`, not an error.
+
+```emo
+valkey.connect(host, port, timeout)   // (R, Valkey) — and connect_unix,
+                                      // connect_tls, connect_tls_insecure
+
+v.get(key)                  // (R, Reply) — bulk, or the null reply
+v.set(key, value)           // (R, String) — "OK"
+v.incr(key)                 // (R, Int64)
+v.hgetall(key)              // (R, Array[(String, String)])
+v.lrange(key, start, stop)  // (R, Array[String])
+v.smembers(key)             // (R, Array[String])
+v.command(args)             // (R, Reply) — any command, its raw reply
+```
+
+Around forty-five typed doors cover the string, key, hash, list, and
+set families plus `ping`/`echo`/`auth`/`select`; each decodes the shape
+its command's contract names, and a server answering a different shape
+is the error value. Replies are a `Reply` tree — one class per RESP2
+kind (`rnull`, `rstring`, `rint`, `rarray`; the simple and bulk strings
+one kind), the `as_*` accessors the caller's assertions, json's rule.
+The timeout bounds each exchange; `0.0` waits indefinitely.
+
+Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, which its
+own manifest pins). Reference:
+[`docs/stdlib/valkey.md`](stdlib/valkey.md) · Demo:
+`examples/valkey_demo`.
 
 ## The `json` package
 
