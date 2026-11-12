@@ -19,8 +19,8 @@ the manifest's `deps` block.
 ## The tree
 
 `parse` returns a `Stmt`: an interface over one class per statement
-kind — `Select`, `CreateTable`, `Insert`, `Update`, and `Delete` —
-discriminated by the `StmtKind` enum. Within a statement, expressions
+kind — `Select`, `CreateTable`, `Insert`, `Update`, `Delete`, `Begin`,
+`Commit`, and `Rollback` — discriminated by the `StmtKind` enum. Within a statement, expressions
 are `Expr` nodes (one class per `ExprKind`) and table references are
 `TableRef` nodes (one class per `TableKind`).
 All three interfaces answer `to_string()`, the canonical SQL
@@ -109,6 +109,12 @@ list refuse.
 `UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1` — distinct
 assignments (a repeated column refuses) and an optional `WHERE`.
 `DELETE FROM users WHERE id = 1` — the `WHERE` is optional.
+
+### Transaction control
+
+`BEGIN`, `COMMIT`, and `ROLLBACK` parse as their own statements and
+render back verbatim; the session plane (not the parser) carries the
+state.
 
 Not supported — each answers `(R.error, reason)`, never a guess:
 `INSERT ... SELECT`, `ON CONFLICT`, `RETURNING`, table-level constraints

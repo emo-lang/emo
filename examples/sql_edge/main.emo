@@ -70,6 +70,11 @@ def fill_char(buf Bytes, i Int64, n Int64, c Int64) {
 why("SELECT " + parens(512) + " FROM t")
 why("SELECT " + parens(513) + " FROM t")
 
+// ---- transaction-control edges ----
+why("BEGIN NOW")
+why("COMMIT WORK")
+why("ROLLBACK AND CHAIN")
+
 // ---- DDL and DML edges ----
 why("CREATE TABLE")
 why("CREATE TABLE t")

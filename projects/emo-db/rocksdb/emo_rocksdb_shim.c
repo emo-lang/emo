@@ -634,11 +634,16 @@ int64_t emo_rocksdb_batch_delete(int64_t batch, int64_t cf,
   return 0;
 }
 
-int64_t emo_rocksdb_batch_write(int64_t handle, int64_t batch) {
+int64_t emo_rocksdb_batch_write(int64_t handle, int64_t batch, bool sync) {
   emo_rdb *db = emo_rdb_of(handle);
   if (db == NULL || batch == 0) {
     return 1;
   }
+  /* COMMIT's durability: the transaction's batch write asks the WAL to
+     fsync before it answers; plain writes leave the flag off. Calls are
+     serialized by the cooperative scheduler, so one options object is
+     enough. */
+  rocksdb_writeoptions_set_sync(db->write_options, sync);
   char *err = NULL;
   rocksdb_write(db->db, db->write_options,
                 (rocksdb_writebatch_t *)(intptr_t)batch, &err);

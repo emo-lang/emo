@@ -35,7 +35,8 @@ require "float"
 // DOUBLE PRECISION, TEXT, VARCHAR(n), BOOLEAN, BYTEA) and column-level
 // NOT NULL / PRIMARY KEY; INSERT ... VALUES with an optional column
 // list and one or more rows; UPDATE ... SET ... [WHERE]; DELETE FROM
-// ... [WHERE]. Every statement renders back to canonical SQL.
+// ... [WHERE]; and BEGIN/COMMIT/ROLLBACK. Every statement renders back
+// to canonical SQL.
 //
 // Not supported (each answers `(R.error, reason)`): INSERT ... SELECT,
 // ON CONFLICT, RETURNING, table-level constraints and
@@ -47,7 +48,7 @@ require "float"
 
 // ---- kinds ----
 
-enum StmtKind { select, create_table, insert, update, delete }
+enum StmtKind { select, create_table, insert, update, delete, begin, commit, rollback }
 enum SelKind { star, expr }
 enum TableKind { named, join, subquery }
 enum JoinKind { inner, left, right, full, cross }
@@ -126,6 +127,49 @@ class Select {
       s = s + " OFFSET " + self.offset_e[0].to_string()
     }
     return s
+  }
+}
+
+// ---- transaction control ----
+
+// BEGIN starts a transaction; the session plane carries the state, the
+// parser only names the statement.
+class Begin {
+  def init() {
+  }
+
+  def kind() StmtKind {
+    return StmtKind.begin
+  }
+
+  def to_string() String {
+    return "BEGIN"
+  }
+}
+
+class Commit {
+  def init() {
+  }
+
+  def kind() StmtKind {
+    return StmtKind.commit
+  }
+
+  def to_string() String {
+    return "COMMIT"
+  }
+}
+
+class Rollback {
+  def init() {
+  }
+
+  def kind() StmtKind {
+    return StmtKind.rollback
+  }
+
+  def to_string() String {
+    return "ROLLBACK"
   }
 }
 
@@ -1361,9 +1405,18 @@ def parse_stmt(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   if at_kw(toks, i, "delete") {
     return parse_delete(toks, i)
   }
+  if at_kw(toks, i, "begin") {
+    return (R.ok, (Begin.new(), i + 1))
+  }
+  if at_kw(toks, i, "commit") {
+    return (R.ok, (Commit.new(), i + 1))
+  }
+  if at_kw(toks, i, "rollback") {
+    return (R.ok, (Rollback.new(), i + 1))
+  }
   return (R.error,
           err(peek(toks, i).pos,
-              "expected SELECT, INSERT, UPDATE, DELETE, or CREATE TABLE"))
+              "expected SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, BEGIN, COMMIT, or ROLLBACK"))
 }
 
 def parse_select(toks Array[Tok], i Int64, depth Int64) (R, (Stmt, Int64)) {

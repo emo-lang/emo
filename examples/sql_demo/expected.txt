@@ -42,5 +42,8 @@ DELETE FROM users WHERE id = 1
 1
 DELETE FROM users
 0
+BEGIN
+COMMIT
+ROLLBACK
 sql: expected an expression at byte 7
 sql: expected an expression at byte 26

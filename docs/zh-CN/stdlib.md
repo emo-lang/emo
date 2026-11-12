@@ -704,7 +704,8 @@ def parse(text String) (R, Stmt)
 函数调用、`CAST`、`CASE`、`EXISTS`、子查询,以及按标准优先级排列的
 运算符体系。`SELECT` 旁还解析并规范渲染 `CREATE TABLE`(v0 类型、
 `NOT NULL`、`PRIMARY KEY`)、多行 `INSERT ... VALUES`、
-`UPDATE ... SET ... [WHERE]` 与 `DELETE FROM ... [WHERE]`。格式错误
+`UPDATE ... SET ... [WHERE]`、`DELETE FROM ... [WHERE]` 与
+`BEGIN`/`COMMIT`/`ROLLBACK`。格式错误
 的输入返回值 `(R.error, reason)`,reason 准确说明发生了什么、在哪个
 字节偏移;不 raise、没有错误码、没有 nil。
 

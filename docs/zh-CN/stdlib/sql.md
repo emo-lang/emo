@@ -12,7 +12,7 @@ require "sql"
 
 ## 语法树
 
-`parse` 返回一个 `Stmt`:一个接口,每个语句种类一个类——`Select`、`CreateTable`、`Insert`、`Update`、`Delete`——用 `StmtKind` 枚举判别。语句内部,表达式是 `Expr` 节点(每个 `ExprKind` 一个类),表引用是 `TableRef` 节点(每个 `TableKind` 一个类)。三个接口都回答 `to_string()`:规范的 SQL 渲染——关键字大写、JOIN 种类写全、别名带 `AS`。节点的字段公开且在构造后冻结;`Expr` 背后的具体类用 `is()` 缩窄来读:
+`parse` 返回一个 `Stmt`:一个接口,每个语句种类一个类——`Select`、`CreateTable`、`Insert`、`Update`、`Delete`、`Begin`、`Commit`、`Rollback`——用 `StmtKind` 枚举判别。语句内部,表达式是 `Expr` 节点(每个 `ExprKind` 一个类),表引用是 `TableRef` 节点(每个 `TableKind` 一个类)。三个接口都回答 `to_string()`:规范的 SQL 渲染——关键字大写、JOIN 种类写全、别名带 `AS`。节点的字段公开且在构造后冻结;`Expr` 背后的具体类用 `is()` 缩窄来读:
 
 ```emo
 const (R.ok, stmt) = sql.parse("SELECT name, count(*) AS n FROM users GROUP BY name")
@@ -53,6 +53,10 @@ def parse(text String) (R, Stmt)
 ### UPDATE 与 DELETE
 
 `UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1`——互异的赋值(重复列拒绝)与可选 `WHERE`。`DELETE FROM users WHERE id = 1`——`WHERE` 可选。
+
+### 事务控制
+
+`BEGIN`、`COMMIT` 与 `ROLLBACK` 作为独立语句解析并原样渲染;状态由会话面(不是解析器)携带。
 
 不支持——每一项都返回 `(R.error, reason)`,绝不猜测:`INSERT ... SELECT`、`ON CONFLICT`、`RETURNING`、表级约束与 `UNIQUE`/`DEFAULT`/`CHECK`/`REFERENCES`、`CREATE INDEX`、`UPDATE ... FROM`、`DELETE ... USING`、`WITH`、集合运算(`UNION`/`INTERSECT`/`EXCEPT`)、窗口函数、方括号风格的带引号标识符、`LIKE` 的 `ESCAPE` 子句,以及一次调用中的多条语句。
 

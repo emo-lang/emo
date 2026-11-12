@@ -96,6 +96,15 @@ incrementally shippable steps — one file per step, executed in order.
   the PG-shaped error strings; an embedded SQL-in/rows-out golden on
   `c`. The record layer grows `Table.update`/`delete` with index
   maintenance. The plan is `plan/step-68-planner-executor.md`.
+- **M32 — Transactions and the session plane (step 69):** BEGIN/COMMIT/
+  ROLLBACK over the record layer's `Txn` (one WriteBatch, a
+  per-statement snapshot, a pending overlay for read-your-writes, the
+  rowid counters published on commit), the engine's session state and
+  table locks, and an Emo lock-manager process with a wait-for graph and
+  the deadlock abort; a two-session golden shows read committed, the
+  write-write block, and the deadlock on `c`. The `sql` package grows
+  the three transaction statements. The plan is
+  `plan/step-69-transactions-session.md`.
 
 ## Ground rules
 
@@ -187,5 +196,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 66 | emo-db's record layer | landed — the `emo/record` package over the binding: the catalog CF (tables/columns/types/indexes by oid), the v0 row encoding (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), the rowid inside the insert's WriteBatch, and one CF per secondary index (`idx_<oid>`, value-marker + rowid keys, equality-prefix scans); `rocksdb.list_families` reopens a database with index families, the catalog verifies every index CF, and the record demo's golden covers every type, a duplicate unique key, three index scans, and a reopen (`plan/step-66-record-layer.md`) |
 | 67 | The SQL front-end's DML and DDL | landed — the `sql` package grows `CREATE TABLE` (the v0 types, column-level `NOT NULL`/`PRIMARY KEY`), multi-row `INSERT ... VALUES` with an optional column list, `UPDATE ... SET ... [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`: one class per statement behind `Stmt`, canonical `to_string()` renderings, the SELECT grammar untouched, and the parser validates the statement shape (duplicate columns/assignments, row widths, a positive `VARCHAR(n)`, the unsupported tails by name); `sql_demo` and `sql_edge` are byte-identical on the interpreter and all five hosted targets, with both locks re-resolved (`plan/step-67-sql-dml-ddl.md`) |
 | 68 | The planner and executor | landed — the `emo/engine` package over `emo/sql` and `emo/record`: the analyzer (table/alias/column resolution, the v0 type mapping, numeric/text conformance, the PG-shaped `code: message` failures), typed expressions with SQL's three-valued NULL logic (comparisons, AND/OR, arithmetic, `||`, IS/IN/BETWEEN/LIKE/CASE), the scan/filter/project plan with an equality index scan, CREATE TABLE (the v0 types, the primary-key index), INSERT (column list, NULL fill, coercion, not-null/duplicate mapping), and UPDATE/DELETE (the record layer's new update/delete, index entries rewritten in one batch); the embedded engine demo pins SQL text in and rows out with the plan tree on `c` (`plan/step-68-planner-executor.md`) |
+| 69 | Transactions and the session plane | landed — the `sql` package's `BEGIN`/`COMMIT`/`ROLLBACK`; the record layer's `Txn` (one WriteBatch, a per-statement snapshot, the pending overlay, the rowid counters, the `Table` tx methods, commit/rollback); the engine's transaction state, autocommit path, `LockClient`, and table-level locks; the lock-manager process (owners, FIFO waiters, the wait-for graph, the deadlock abort, the release grant); the two-session `txn_demo` (read committed, write-write block, deadlock) three runs byte-identical on `c` (`plan/step-69-transactions-session.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

@@ -58,7 +58,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, types, indexes, and oid counters by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), rowid allocation inside the insert's WriteBatch, and secondary indexes as one column family per index named `idx_<oid>` and keyed by the indexed values plus the rowid — the shared `data` family keyed by table oid + rowid, the catalog's reopen through `rocksdb.list_families` with the index-CF verification, and equality-prefix index scans; a record demo creates a table in the catalog, inserts rows covering every type (NULLs, an embedded NUL in BYTEA, UTF-8 TEXT), reads by rowid, scans the table, finds rows through unique and non-unique indexes, and reopens the store, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types and column-level NOT NULL/PRIMARY KEY, multi-row INSERT ... VALUES with an optional column list, UPDATE ... SET ... [WHERE], and DELETE FROM ... [WHERE] — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched, and the parser's shape checks (duplicate columns/assignments, row widths, a positive VARCHAR length, the unsupported tails by name); statement and expression goldens byte-identical on the interpreter and all five hosted targets (`CHECK.md`). |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: the `emo/engine` package over `emo/sql` and `emo/record` — plan nodes (scan, filter, project, insert, update, delete), typed expression evaluation with SQL's three-valued NULL logic, single-table SELECT (projection, WHERE; an equality on an indexed column becomes an index scan), CREATE TABLE (the v0 types, a primary-key index), INSERT, UPDATE and DELETE (the record layer's new update/delete rewrite the row and its index entries in one batch), and the PG-shaped `code: message` errors (`42P01`, `42703`, `42883`, `42804`, `23505`, `23502`, `22001`, `22012`, `0A000`, `42601`) — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with the plan tree printed, through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M32 — Transactions and the session plane | 69 | The transaction model of the design record's D6: BEGIN/COMMIT/ROLLBACK with per-statement RocksDB snapshots (read committed), writes buffered per transaction in one WriteBatch committed atomically, an Emo-owned lock manager arbitrating write-write conflicts (block, then abort on deadlock), catalog changes riding the same commit — a two-session concurrency demo showing the read-committed semantics and the conflict abort, pinned byte-for-byte on `c` (`CHECK.md`). |
+| M32 — Transactions and the session plane | 69 | The transaction model of D6: BEGIN/COMMIT/ROLLBACK over the record layer's `Txn` — one WriteBatch per transaction committed atomically, a per-statement snapshot (read committed), a pending overlay for read-your-writes, the rowid counters published on commit, and the catalog's next-rowid change in the same write; the engine's session state, `LockClient`, and table-level write locks held to commit/rollback; an Emo lock-manager process with a FIFO of waiters, a wait-for graph, and a deadlock that aborts the requester with `40P01`; a two-session golden showing the read-committed pair, the write-write block, and the deadlock, pinned byte-for-byte on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path: startup with trust authentication, Query/RowDescription/DataRow/CommandComplete/ReadyForQuery, ErrorResponse with PG's error-field convention, multi-statement query strings, empty results, and the error path restoring clean transaction state — one session actor per connection over `net` (the `httpd` shape); psql drives the whole surface end-to-end and the standard library's `postgres` client connects and runs the same script, both as goldens behind availability probes (`CHECK.md`). |
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit (statements, results, errors — text-comparable), a measured-performance table (numbers only where measured), and the documentation pass — `docs/emo-db.md` grown to the shipped surface, docs EN+zh, the README rows, and the arc-two sketch reviewed against what arc one actually built (`CHECK.md`). |
 
@@ -4157,3 +4157,35 @@ pins stay green; docs EN+zh; the repo builds.
 - [x] **T68.13** — The project README + zh, the package docs, the locks.
 - [x] **T68.14** — The close-out: TASKS, plan README, CHECK.md, build/
       fmt.
+
+## M32 — Transactions and the session plane
+
+### Step 69 — Transactions and the session plane
+
+**Prereq:** Step 66 (the record layer), Step 67 (the SQL AST), Step 68
+(the engine). **Done when:** BEGIN/COMMIT/ROLLBACK work over the
+record layer's new transaction (one WriteBatch, a per-statement
+snapshot, read-your-writes through the pending overlay, rowid counters
+published on commit); the engine's session plane holds table locks
+through an Emo lock-manager process, blocks a second writer, aborts a
+deadlock with `40P01`, and releases on commit/rollback; a two-session
+golden shows read committed, the block, and the deadlock on `c`, three
+runs byte-identical through `projects/emo-db/check.sh`; the existing
+goldens and the E3009/E5007 pins stay green; docs EN+zh; the repo
+builds.
+
+- [x] **T69.1** — The spec and this section EN+zh.
+- [x] **T69.2** — `sql`: `BEGIN`/`COMMIT`/`ROLLBACK`, the examples'
+      cases, the five-target re-run.
+- [x] **T69.3** — The record `Txn` and the `Table` tx methods.
+- [x] **T69.4** — The engine's transaction state and autocommit path.
+- [x] **T69.5** — The `LockClient` interface and the engine's table
+      locks.
+- [x] **T69.6** — The lock-manager process and the deadlock check.
+- [x] **T69.7** — The session process and `RemoteLocks`.
+- [x] **T69.8** — `txn_demo`: the three scenarios and `expected.txt`.
+- [x] **T69.9** — The gate: the fourth demo and the build-failure
+      guards.
+- [x] **T69.10** — The docs EN+zh and the design record's notes.
+- [x] **T69.11** — The close-out: TASKS, the plan README, CHECK.md,
+      build/fmt.

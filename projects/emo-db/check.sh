@@ -118,7 +118,7 @@ expect 0 "the engine type-checks" "$rc"
 # The demos' locks are committed. A missing one is a package change that
 # skipped `emo deps resolve`, not something the gate should paper over.
 for lock in kv_demo/package.lock record_demo/package.lock \
-            engine_demo/package.lock; do
+            engine_demo/package.lock txn_demo/package.lock; do
   if [ ! -f "$lock" ]; then
     echo "check.sh: $lock is missing — run" >&2
     echo "  (cd $(dirname "$lock") && EMO_REGISTRY=$REG \"$EMO\" deps resolve)" >&2
@@ -131,6 +131,7 @@ done
 ( cd kv_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo -o "$OUT/kv_demo" ) \
   >"$OUT/build.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the KV demo builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
 
 run=1
 while [ "$run" -le 3 ]; do
@@ -146,6 +147,7 @@ done
 ( cd record_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
     -o "$OUT/record_demo" ) >"$OUT/record-build.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the record demo builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
 
 run=1
 while [ "$run" -le 3 ]; do
@@ -162,6 +164,7 @@ done
 ( cd engine_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
     -o "$OUT/engine_demo" ) >"$OUT/engine-build.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the engine demo builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
 
 run=1
 while [ "$run" -le 3 ]; do
@@ -170,6 +173,23 @@ while [ "$run" -le 3 ]; do
   expect 0 "engine run $run exits 0" "$rc"
   expect_same_file engine_demo/expected.txt "$OUT/engine-run-$run.txt" \
     "engine run $run is byte-identical"
+  run=$((run + 1))
+done
+
+# --- build and run the transaction golden ---------------------------------
+
+( cd txn_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/txn_demo" ) >"$OUT/txn-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the transaction demo builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+run=1
+while [ "$run" -le 3 ]; do
+  ( cd txn_demo && "$OUT/txn_demo" ) \
+    >"$OUT/txn-run-$run.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "txn run $run exits 0" "$rc"
+  expect_same_file txn_demo/expected.txt "$OUT/txn-run-$run.txt" \
+    "txn run $run is byte-identical"
   run=$((run + 1))
 done
 

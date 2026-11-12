@@ -60,7 +60,7 @@ foreign def delete(db Int64, cf Int64, key Bytes) Int64 = "emo_rocksdb_delete"
 foreign def batch_new() Int64 = "emo_rocksdb_batch_new"
 foreign def batch_put(batch Int64, cf Int64, key Bytes, value Bytes) Int64 = "emo_rocksdb_batch_put"
 foreign def batch_delete(batch Int64, cf Int64, key Bytes) Int64 = "emo_rocksdb_batch_delete"
-foreign def batch_write(db Int64, batch Int64) Int64 = "emo_rocksdb_batch_write"
+foreign def batch_write(db Int64, batch Int64, sync Bool) Int64 = "emo_rocksdb_batch_write"
 foreign def batch_close(batch Int64) Void = "emo_rocksdb_batch_close"
 
 // ---- iterators ----

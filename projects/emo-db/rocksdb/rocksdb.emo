@@ -305,8 +305,18 @@ class Batch {
   // reusable after this (RocksDB keeps its buffer); close() it when
   // the work is done.
   def write() (R, Batch) {
+    return self.write_with(false)
+  }
+
+  // The transaction's COMMIT: the same atomic write, with the WAL asked
+  // to fsync before the call answers.
+  def write_sync() (R, Batch) {
+    return self.write_with(true)
+  }
+
+  def write_with(sync Bool) (R, Batch) {
     self.live()
-    if internal.ffi.batch_write(self.db.handle, self.handle) != 0 {
+    if internal.ffi.batch_write(self.db.handle, self.handle, sync) != 0 {
       return (R.error, internal.reason.last("batch_write"))
     }
     return (R.ok, self)

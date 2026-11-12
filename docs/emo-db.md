@@ -116,7 +116,7 @@ the ladder's shape:
 | M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, and secondary indexes as one column family per index — rows in one shared `data` family keyed by table oid + rowid. |
 | M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for M34. |
-| M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, the Emo lock manager. |
+| M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, one WriteBatch per transaction with the COMMIT's fsync, the Emo lock manager. Table-level locks in v0. |
 | M33 — The wire | 70 | PG protocol v3, simple path; psql end-to-end and the `postgres` client connecting. |
 | M34 — Conformance and documentation | 71 | The SQL corpus, the measured-performance table, docs EN+zh. |
 
@@ -226,7 +226,8 @@ waits for a plan node that consumes one.
 - The rest of SELECT — joins, aggregates, `GROUP BY`/`HAVING`, `ORDER
 BY`/`LIMIT`, subqueries, `DISTINCT`, and `CAST` — the v0 engine
 refuses them; they land with M34's conformance breadth.
-- The commit's durability knob — the binding's plain write path leaves
-RocksDB's `sync` off; M32's COMMIT is where the flag finds its
-consumer.
+- The record API's non-transactional writes — the binding's plain
+`write` leaves RocksDB's `sync` off; the transaction's COMMIT calls
+`write_sync`. A direct record-API caller that needs durability takes the
+transaction.
 - Arc two's milestone cut.

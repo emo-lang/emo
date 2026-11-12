@@ -3,8 +3,9 @@
 emo-db 是 Emo 自己的客户端-服务器 SQL 数据库:一条 PostgreSQL 方言
 门面,底下先接行存的 OLTP、后接列存的 OLAP。设计定案见
 [`docs/zh-CN/emo-db.md`](../../docs/zh-CN/emo-db.md);本目录是项目本体。
-M28(RocksDB 存储半边)、M29(记录层)、M30(SQL 门面的 DML/DDL)与
-M31(计划器与执行器)已经落地;事务与线协议在 M32–M34 跟上。
+M28(RocksDB 存储半边)、M29(记录层)、M30(SQL 门面的 DML/DDL)、
+M31(计划器与执行器)与 M32(事务与会话面)已经落地;线协议与符合性
+收尾在 M33–M34 跟上。
 
 ## 布局
 
@@ -23,11 +24,14 @@ M31(计划器与执行器)已经落地;事务与线协议在 M32–M34 跟上。
   非唯一索引扫描,以及重开。
 - `engine/` —— 嵌入式 SQL 引擎:分析器(名字、类型、PG 形状失
   败)、带三值 NULL 逻辑的类型化表达式树、带等值索引扫描的
-  scan/filter/project 计划,以及 CREATE TABLE/INSERT/UPDATE/DELETE
-  执行器。
+  scan/filter/project 计划、CREATE TABLE/INSERT/UPDATE/DELETE 执行
+  器,以及会话面——BEGIN/COMMIT/ROLLBACK、每语句快照、经
+  `LockClient` 的表锁。
 - `engine_demo/` —— 引擎金测:SQL 文本进,命令标签、计划树与行出;
   错误值;关闭再重开。
-- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查三个包、把三
+- `txn_demo/` —— 会话面金测:一个锁管理器进程、两个骑同一 Store 的
+  会话进程、读已提交、写-写阻塞与死锁。
+- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查三个包、把四
   个 demo 各跑三遍对照各自的 `expected.txt`,并钉死两条拒绝(解释器
   E3009、非 `c` target 的 E5007)。
 
@@ -63,7 +67,10 @@ binary64,`BOOLEAN` 一字节,`TEXT`/`VARCHAR(n)`/`BYTEA` 是 4 字节
 查;插入的行、索引条目与更新后的目录定义随后骑一次原子
 `WriteBatch`,所以写失败不会推进 `rowid` 计数。`update` 与
 `delete` 读旧行、移除它的索引条目,并在一次批量里写回新行/条目
-(或删除);update 的唯一检查排除该行自己的 rowid。重开时用
+(或删除);update 的唯一检查排除该行自己的 rowid。事务的 `Txn` 把
+每次写缓进一个 `WriteBatch`,按每语句快照读,在快照上覆盖自己的
+pending 条目(读己之写),只在 COMMIT 时发布 rowid 计数——COMMIT 用
+`write_sync` 写这个批量,WAL 在回答前 fsync。重开时用
 `list_families` 枚举 family,并校验目录点名的每个索引 family 都曾
 存在——缺一个是损坏,不是可以悄悄重建的东西。
 
@@ -72,7 +79,8 @@ binary64,`BOOLEAN` 一字节,`TEXT`/`VARCHAR(n)`/`BYTEA` 是 4 字节
 
 ## 引擎
 
-`emo/engine` 是第一条完整的 SQL 到行链路。`execute` 用 `sql` 包解
+`emo/engine` 是第一条完整的 SQL 到行链路,它的会话面就是事务边
+界。`execute` 用 `sql` 包解
 析,对目录解析名字与类型,回答一个 `Result`(PG 命令标签、投影的列
 与行、计划文本)或一个 PG 形状的 `code: message` 失败串。v0 表面:
 带投影与可选 WHERE 的单表 SELECT;索引列与常量之间的等值变成索引
@@ -84,6 +92,13 @@ AND/OR、算术、文本 `||`、`IS`、`IN`、`BETWEEN`、`LIKE` 与
 `CASE`;DISTINCT、连接、子查询、GROUP BY/HAVING、ORDER BY、
 LIMIT/OFFSET、聚合、函数、CAST 与参数答 `0A000`。`engine_demo`
 展示整个表面与错误值。
+
+BEGIN 开启事务,COMMIT 写它的批量(含 fsync),ROLLBACK 丢弃;事务
+内的语句取每语句快照,没有事务的语句在自己的 autocommit 事务里
+跑。失败语句中止事务。写语句经挂上的 `LockClient` 拿表锁并持有到
+COMMIT/ROLLBACK;锁管理器是一个 Emo 进程,带 FIFO 等待队列、
+wait-for 图,死锁以 `40P01` 中止。`txn_demo` 跑两个会话与管理器,
+展示读已提交、写-写阻塞与死锁。
 
 ## 跑闸门
 
@@ -103,5 +118,5 @@ $ ./check.sh
 
 M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M29
 同日落地:记录层、记录层金测、以及目录的重开路径。M30 落地 SQL 门
-面的 DDL/DML,M31 落地嵌入式计划器/执行器及其金测。下一步是 M32
-——事务与会话面。
+面的 DDL/DML,M31 落地嵌入式计划器/执行器及其金测,M32 落地事务与
+会话面及其两会话金测。下一步是 M33——PostgreSQL 线协议。

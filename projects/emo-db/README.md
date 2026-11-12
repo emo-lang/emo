@@ -4,8 +4,9 @@ emo-db is Emo's own client-server SQL database: one PostgreSQL-dialect
 surface over two engines — a row store for OLTP first, a column store
 for OLAP later. The design record is [`docs/emo-db.md`](../../docs/emo-db.md);
 this directory is the project. M28 (the RocksDB half), M29 (the record
-layer), M30 (the SQL front-end's DML/DDL), and M31 (the planner and
-executor) are landed; transactions and the wire follow in M32–M34.
+layer), M30 (the SQL front-end's DML/DDL), M31 (the planner and
+executor), and M32 (transactions and the session plane) are landed; the
+wire and the conformance pass follow in M33–M34.
 
 ## Layout
 
@@ -27,12 +28,17 @@ executor) are landed; transactions and the wire follow in M32–M34.
   key, the table scan, unique and non-unique index scans, and a reopen.
 - `engine/` — the embedded SQL engine: the analyzer (names, types, the
   PG-shaped failures), the typed expression tree with three-valued NULL
-  logic, the scan/filter/project plan with an equality index scan, and
-  the CREATE TABLE/INSERT/UPDATE/DELETE executors.
+  logic, the scan/filter/project plan with an equality index scan, the
+  CREATE TABLE/INSERT/UPDATE/DELETE executors, and the session plane —
+  BEGIN/COMMIT/ROLLBACK, the per-statement snapshot, and the table locks
+  through a `LockClient`.
 - `engine_demo/` — the engine golden: SQL text in, a command tag, the
   plan tree, and rows out; the error values; a close/reopen.
+- `txn_demo/` — the session-plane golden: a lock-manager process, two
+  session processes over one Store, read committed, a write-write
+  block, and a deadlock.
 - `check.sh` — the gate: resolve RocksDB, stage the registry, check the
-  three packages, build and run the three demos three times against
+  three packages, build and run the four demos three times against
   their `expected.txt`, and pin the two refusals (the interpreter's
   E3009 and a non-`c` target's E5007).
 
@@ -77,9 +83,14 @@ definition then ride one atomic `WriteBatch`, so a failed write leaves
 the `rowid` counter untouched. `update` and `delete` read the old row,
 remove its index entries, and write the new row/entries (or the
 removals) in one batch; an update's unique check excludes the row's own
-rowid. Reopening enumerates the families with `list_families` and
-verifies every index family the catalog names was present — a missing
-one is corruption, not something to recreate silently.
+rowid. The transaction's `Txn` buffers every write in one `WriteBatch`,
+reads at a per-statement snapshot, overlays its own pending entries on
+the snapshot (read-your-writes), and publishes the rowid counters only
+at COMMIT — which writes the batch with `write_sync`, so the WAL fsyncs
+before the answer. Reopening enumerates the families with
+`list_families` and verifies every index family the catalog names was
+present — a missing one is corruption, not something to recreate
+silently.
 
 Index keys are exact-prefix capable (an equality scan is a seek and a
 prefix walk), not order-preserving; range scans and streaming scans wait
@@ -87,7 +98,8 @@ for a later planner.
 
 ## The engine
 
-`emo/engine` is the first full SQL-to-rows path. `execute` parses with
+`emo/engine` is the first full SQL-to-rows path, and its session plane
+is the transaction boundary. `execute` parses with
 the `sql` package, resolves names and types against the catalog, and
 answers a `Result` (the PG command tag, the projected columns and rows,
 and the plan text) or a `code: message` failure string in PostgreSQL's
@@ -103,6 +115,16 @@ AND/OR, arithmetic, text `||`, `IS`, `IN`, `BETWEEN`, `LIKE`, and
 `CASE`; DISTINCT, joins, subqueries, GROUP BY/HAVING, ORDER BY,
 LIMIT/OFFSET, aggregates, functions, CAST, and parameters answer
 `0A000`. `engine_demo` shows the whole surface and the error values.
+
+BEGIN opens a transaction, COMMIT writes its batch (fsync included),
+and ROLLBACK discards it; a statement inside a transaction takes the
+per-statement snapshot, and a statement without one runs in its own
+autocommit transaction. A failed statement aborts the transaction. A
+write statement acquires the table's lock through the attached
+`LockClient` and holds it to COMMIT/ROLLBACK; the lock manager is an
+Emo process with a FIFO of waiters, a wait-for graph, and a `40P01`
+abort for a deadlock. `txn_demo` runs two sessions and the manager to
+show read committed, the write-write block, and the deadlock.
 
 ## Running the gate
 
@@ -122,6 +144,7 @@ compiler binary; the default is `../../_build/default/src/emo_cli/emo.exe`.
 
 M28 landed 2026-11-12: the binding, the KV golden, and the C ABI's byte
 view. M29 landed the same day: the record layer, the record golden, and
-the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, and
-M31 the embedded planner/executor and its golden. M32 — transactions and
-the session plane — is next.
+the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, M31
+the embedded planner/executor and its golden, and M32 the transaction
+and session plane with its two-session golden. M33 — the PostgreSQL wire
+— is next.

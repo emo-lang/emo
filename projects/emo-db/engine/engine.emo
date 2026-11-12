@@ -1318,38 +1318,223 @@ def join_strings(xs Array[String], i Int64, acc String) String {
 def open(path String) (R, Engine) {
   case record.open(path) {
     (R.error, why) -> { return fail("XX000", "open: " + why) }
-    (R.ok, store) -> { return (R.ok, Engine.new(store)) }
+    (R.ok, store) -> { return (R.ok, Engine.new(store, [], [], Map.new())) }
   }
 }
 
+// Opens an engine whose writes acquire table locks through `locks`; the
+// M32 session demo uses this, the embedded face does not.
+def open_locked(path String, locks LockClient) (R, Engine) {
+  case record.open(path) {
+    (R.error, why) -> { return fail("XX000", "open: " + why) }
+    (R.ok, store) -> { return (R.ok, Engine.new(store, [locks], [], Map.new())) }
+  }
+}
+
+// The session's door to the lock manager. The engine calls it before a
+// write; the client may block until the lock is granted and answers a
+// PG-shaped failure on a deadlock. In an explicit transaction the lock
+// is held until COMMIT/ROLLBACK; in autocommit it is released after the
+// statement.
+interface LockClient {
+  def acquire(table String) (R, Bool)
+  def release(table String) Void
+}
+
 class Engine {
-  def init(store record.Store) {
+  def init(store record.Store, locks Array[LockClient], txn Array[record.Txn], held Map[String, Bool]) {
     self.store = store
+    self.locks = locks
+    self.txn = Box.new(txn)
+    self.held = held
     self.closed = Box.new(false)
   }
 
+  // Parses and dispatches one statement. BEGIN/COMMIT/ROLLBACK move the
+  // session's transaction state; every other statement runs inside the
+  // open transaction or, without one, in its own autocommit transaction.
   def execute(text String) (R, Result) {
     self.live()
     case sql.parse(text) {
       (R.error, why) -> { return fail("42601", why) }
-      (R.ok, stmt) -> {
-        if stmt.is(sql.Select) {
-          return self.select(stmt)
-        }
-        if stmt.is(sql.CreateTable) {
-          return self.create_table(stmt)
-        }
-        if stmt.is(sql.Insert) {
-          return self.insert(stmt)
-        }
-        if stmt.is(sql.Update) {
-          return self.update(stmt)
-        }
-        if stmt.is(sql.Delete) {
-          return self.delete(stmt)
-        }
-        return fail("0A000", "this statement is not supported in v0")
+      (R.ok, stmt) -> { return self.dispatch(stmt) }
+    }
+  }
+
+  def dispatch(stmt sql.Stmt) (R, Result) {
+    if stmt.is(sql.Begin) {
+      return self.begin_transaction()
+    }
+    if stmt.is(sql.Commit) {
+      return self.commit_transaction()
+    }
+    if stmt.is(sql.Rollback) {
+      return self.rollback_transaction()
+    }
+    if stmt.is(sql.CreateTable) {
+      if self.in_tx() {
+        return fail("0A000", "DDL inside a transaction is not supported in v0")
       }
+      return self.create_table(stmt)
+    }
+    if self.in_tx() {
+      const txn = self.current_txn()
+      case txn.begin_statement() {
+        (R.error, why) -> {
+          self.abort_tx()
+          return (R.error, record_error(why))
+        }
+        (R.ok, _) -> {
+          case self.run_statement(stmt, txn) {
+            (R.error, why) -> {
+              // A failed statement aborts the transaction, as PostgreSQL
+              // does; the session is idle and the locks are released.
+              self.abort_tx()
+              return (R.error, why)
+            }
+            (R.ok, result) -> { return (R.ok, result) }
+          }
+        }
+      }
+    }
+    case self.store.begin() {
+      (R.error, why) -> { return (R.error, record_error(why)) }
+      (R.ok, txn) -> {
+        case self.run_statement(stmt, txn) {
+          (R.error, why) -> {
+            case txn.rollback() {
+              (R.error, _) -> {}
+              (R.ok, _) -> {}
+            }
+            self.release_locks()
+            return (R.error, why)
+          }
+          (R.ok, result) -> {
+            case txn.commit() {
+              (R.error, why) -> {
+                case txn.rollback() {
+                  (R.error, _) -> {}
+                  (R.ok, _) -> {}
+                }
+                self.release_locks()
+                return (R.error, record_error(why))
+              }
+              (R.ok, _) -> {
+                self.release_locks()
+                return (R.ok, result)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def run_statement(stmt sql.Stmt, txn record.Txn) (R, Result) {
+    if stmt.is(sql.Select) {
+      return self.select(stmt, txn)
+    }
+    if stmt.is(sql.Insert) {
+      return self.insert(stmt, txn)
+    }
+    if stmt.is(sql.Update) {
+      return self.update(stmt, txn)
+    }
+    if stmt.is(sql.Delete) {
+      return self.delete(stmt, txn)
+    }
+    return fail("0A000", "this statement is not supported in v0")
+  }
+
+  def begin_transaction() (R, Result) {
+    if self.in_tx() {
+      return fail("25001", "there is already a transaction in progress")
+    }
+    case self.store.begin() {
+      (R.error, why) -> { return (R.error, record_error(why)) }
+      (R.ok, txn) -> {
+        self.txn.replace([txn])
+        return (R.ok, Result.new("BEGIN", [], [], ""))
+      }
+    }
+  }
+
+  def commit_transaction() (R, Result) {
+    if !self.in_tx() {
+      return fail("25P01", "there is no transaction in progress")
+    }
+    const txn = self.current_txn()
+    case txn.commit() {
+      (R.error, why) -> {
+        self.abort_tx()
+        return (R.error, record_error(why))
+      }
+      (R.ok, _) -> {
+        self.txn.replace([])
+        self.release_locks()
+        return (R.ok, Result.new("COMMIT", [], [], ""))
+      }
+    }
+  }
+
+  def rollback_transaction() (R, Result) {
+    if !self.in_tx() {
+      return fail("25P01", "there is no transaction in progress")
+    }
+    self.abort_tx()
+    return (R.ok, Result.new("ROLLBACK", [], [], ""))
+  }
+
+  def abort_tx() {
+    if self.in_tx() {
+      const txn = self.current_txn()
+      case txn.rollback() {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+      self.txn.replace([])
+    }
+    self.release_locks()
+  }
+
+  def in_tx() Bool {
+    return self.txn.read().length() == 1
+  }
+
+  def current_txn() record.Txn {
+    return self.txn.read()[0]
+  }
+
+  def acquire(table String) (R, Bool) {
+    if self.locks.length() == 0 {
+      return (R.ok, true)
+    }
+    if self.held.has(table) {
+      return (R.ok, true)
+    }
+    case self.locks[0].acquire(table) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        self.held.set(table, true)
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def release_locks() {
+    if self.locks.length() == 1 {
+      const names = self.held.keys()
+      var i = 0
+      while i < names.length() {
+        self.locks[0].release(names[i])
+        i = i + 1
+      }
+    }
+    const names = self.held.keys()
+    var j = 0
+    while j < names.length() {
+      self.held.remove(names[j])
+      j = j + 1
     }
   }
 
@@ -1407,7 +1592,7 @@ class Engine {
     }
   }
 
-  def insert(stmt sql.Insert) (R, Result) {
+  def insert(stmt sql.Insert, txn record.Txn) (R, Result) {
     const parts = stmt.parts
     if parts.length() != 1 {
       return fail("0A000", "schema-qualified table names are not supported in v0")
@@ -1415,6 +1600,10 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case resolve_targets(table, stmt.columns) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, targets) -> {
@@ -1431,7 +1620,7 @@ class Engine {
               case build_insert_row(table, targets, row) {
                 (R.error, why) -> { return (R.error, why) }
                 (R.ok, values) -> {
-                  case table.insert(values) {
+                  case table.insert_tx(txn, values) {
                     (R.error, why) -> { return (R.error, record_error(why)) }
                     (R.ok, _) -> { inserted = inserted + 1 }
                   }
@@ -1447,7 +1636,7 @@ class Engine {
     }
   }
 
-  def update(stmt sql.Update) (R, Result) {
+  def update(stmt sql.Update, txn record.Txn) (R, Result) {
     const parts = stmt.parts
     if parts.length() != 1 {
       return fail("0A000", "schema-qualified table names are not supported in v0")
@@ -1455,6 +1644,10 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case resolve_assignments(table, stmt.sets) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, assignments) -> {
@@ -1462,7 +1655,7 @@ class Engine {
               (R.error, why) -> { return (R.error, why) }
               (R.ok, wr) -> {
                 const plan = PUpdate.new(table.name, wr.plan)
-                case scan_rows(table, wr.scan) {
+                case scan_rows(table, wr.scan, txn) {
                   (R.error, why) -> { return (R.error, record_error(why)) }
                   (R.ok, rows) -> {
                     var updated = 0
@@ -1476,7 +1669,7 @@ class Engine {
                             case build_update_row(table, assignments, row) {
                               (R.error, why) -> { return (R.error, why) }
                               (R.ok, values) -> {
-                                case table.update(row.rowid, values) {
+                                case table.update_tx(txn, row.rowid, values) {
                                   (R.error, why) -> { return (R.error, record_error(why)) }
                                   (R.ok, _) -> { updated = updated + 1 }
                                 }
@@ -1499,7 +1692,7 @@ class Engine {
     }
   }
 
-  def delete(stmt sql.Delete) (R, Result) {
+  def delete(stmt sql.Delete, txn record.Txn) (R, Result) {
     const parts = stmt.parts
     if parts.length() != 1 {
       return fail("0A000", "schema-qualified table names are not supported in v0")
@@ -1507,11 +1700,15 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case self.plan_where(table, table.name, stmt.where_e) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, wr) -> {
             const plan = PDelete.new(table.name, wr.plan)
-            case scan_rows(table, wr.scan) {
+            case scan_rows(table, wr.scan, txn) {
               (R.error, why) -> { return (R.error, record_error(why)) }
               (R.ok, rows) -> {
                 var deleted = 0
@@ -1522,7 +1719,7 @@ class Engine {
                     (R.error, why) -> { return (R.error, why) }
                     (R.ok, keep) -> {
                       if keep {
-                        case table.delete(row.rowid) {
+                        case table.delete_tx(txn, row.rowid) {
                           (R.error, why) -> { return (R.error, record_error(why)) }
                           (R.ok, _) -> { deleted = deleted + 1 }
                         }
@@ -1541,7 +1738,7 @@ class Engine {
     }
   }
 
-  def select(stmt sql.Select) (R, Result) {
+  def select(stmt sql.Select, txn record.Txn) (R, Result) {
     if stmt.distinct {
       return fail("0A000", "DISTINCT is not supported in v0")
     }
@@ -1572,12 +1769,12 @@ class Engine {
           return fail("0A000", "schema-qualified table names are not supported in v0")
         }
         const alias = if alias_parts.length() == 1 { alias_parts[0] } else { parts[0] }
-        return self.select_named(stmt, parts[0], alias)
+        return self.select_named(stmt, parts[0], alias, txn)
       }
     }
   }
 
-  def select_named(stmt sql.Select, table_name String, alias String) (R, Result) {
+  def select_named(stmt sql.Select, table_name String, alias String, txn record.Txn) (R, Result) {
     case self.resolve_table(table_name) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
@@ -1588,7 +1785,7 @@ class Engine {
               (R.error, why) -> { return (R.error, why) }
               (R.ok, pr) -> {
                 const project = PProject.new(wr.plan, pr.names)
-                case scan_rows(table, wr.scan) {
+                case scan_rows(table, wr.scan, txn) {
                   (R.error, why) -> { return (R.error, record_error(why)) }
                   (R.ok, rows) -> {
                     var out = []
@@ -1660,6 +1857,9 @@ class Engine {
   def close() {
     if self.closed.read() {
       raise Exception.new(message: "engine: close: already closed")
+    }
+    if self.in_tx() {
+      self.abort_tx()
     }
     self.store.close()
     self.closed.replace(true)
@@ -1783,13 +1983,13 @@ def is_constant(expr sql.Expr) Bool {
          expr.is(sql.FloatLit) || expr.is(sql.StrLit)
 }
 
-def scan_rows(table record.Table, scan Plan) (R, Array[record.Row]) {
+def scan_rows(table record.Table, scan Plan, txn record.Txn) (R, Array[record.Row]) {
   if scan.is(PScan) {
     if scan.index_name != "" {
-      return table.scan_index(scan.index_name, scan.keys)
+      return table.scan_index_tx(txn, scan.index_name, scan.keys)
     }
   }
-  return table.scan()
+  return table.scan_tx(txn)
 }
 
 def filter_row(predicate_e Array[TExpr], row Array[record.Value]) (R, Bool) {

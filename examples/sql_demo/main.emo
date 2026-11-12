@@ -119,6 +119,14 @@ if d2.is(sql.Delete) {
   println(d2.where_e.length())
 }
 
+// ---- transaction control ----
+const (R.ok, t1) = sql.parse("BEGIN")
+println(t1.to_string())
+const (R.ok, t2) = sql.parse("COMMIT")
+println(t2.to_string())
+const (R.ok, t3) = sql.parse("ROLLBACK")
+println(t3.to_string())
+
 // ---- a malformed statement is a value, not a crash ----
 case sql.parse("SELECT FROM") {
   (R.error, why) -> { println(why) }

@@ -1,0 +1,50 @@
+sessions: started
+A BEGIN -> BEGIN
+A UPDATE users SET score = 1.0 WHERE id = 1 -> UPDATE 1
+  plan: update users
+  filter id = 1
+  index scan users_pkey (id = 1)
+B BEGIN -> BEGIN
+B SELECT id, score FROM users WHERE id = 1 -> SELECT 1
+  plan: project id, score
+  filter id = 1
+  index scan users_pkey (id = 1)
+  columns: id, score
+  (1, 95.5)
+A COMMIT -> COMMIT
+B SELECT id, score FROM users WHERE id = 1 -> SELECT 1
+  plan: project id, score
+  filter id = 1
+  index scan users_pkey (id = 1)
+  columns: id, score
+  (1, 1.0)
+B COMMIT -> COMMIT
+A BEGIN -> BEGIN
+A UPDATE users SET score = 2.0 WHERE id = 2 -> UPDATE 1
+  plan: update users
+  filter id = 2
+  index scan users_pkey (id = 2)
+B BEGIN -> BEGIN
+A COMMIT -> COMMIT
+B UPDATE users SET score = 3.0 WHERE id = 2 -> UPDATE 1
+  plan: update users
+  filter id = 2
+  index scan users_pkey (id = 2)
+B COMMIT -> COMMIT
+A BEGIN -> BEGIN
+A UPDATE users SET score = 4.0 WHERE id = 1 -> UPDATE 1
+  plan: update users
+  filter id = 1
+  index scan users_pkey (id = 1)
+B BEGIN -> BEGIN
+B UPDATE orders SET total = 10.0 WHERE id = 1 -> UPDATE 1
+  plan: update orders
+  filter id = 1
+  index scan orders_pkey (id = 1)
+B UPDATE users SET score = 5.0 WHERE id = 1 -> error 40P01: deadlock detected
+A UPDATE orders SET total = 20.0 WHERE id = 1 -> UPDATE 1
+  plan: update orders
+  filter id = 1
+  index scan orders_pkey (id = 1)
+A COMMIT -> COMMIT
+done

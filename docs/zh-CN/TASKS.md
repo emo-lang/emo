@@ -50,7 +50,7 @@
 | M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型、索引与 oid 计数按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、4 字节 INTEGER、8 字节 BIGINT/REAL/DOUBLE、boolean、带长度前缀的 TEXT/VARCHAR/BYTEA)、插入的 WriteBatch 里的 rowid 分配、以及每索引一个 column family(名 `idx_<oid>`,键由被索引值加 rowid 编成)的二级索引——共享的 `data` family 以表 oid + rowid 为键,目录经 `rocksdb.list_families` 重开并校验索引 CF,索引扫描是等值前缀;record demo 在目录里建表、插入覆盖每种类型的行(NULL、BYTEA 内嵌 NUL、UTF-8 TEXT)、按 rowid 读、扫表、经唯一与非唯一索引找行、并重开 store,`c` 上逐字节钉死(`CHECK.md`)。 |
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型与列级 NOT NULL/PRIMARY KEY 的 CREATE TABLE、带可选列清单的多行 INSERT ... VALUES、UPDATE ... SET ... [WHERE]、DELETE FROM ... [WHERE]——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动,解析器做形状检查(重复列/赋值、行宽、正的 VARCHAR 长度、按名拒绝不支持的尾部);语句级与表达式级金测在解释器与全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
 | M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:`emo/engine` 包骑 `emo/sql` 与 `emo/record`——计划节点(scan、filter、project、insert、update、delete)、带 SQL 三值 NULL 逻辑的类型化表达式求值、单表 SELECT(投影、WHERE;索引列上的等值变成索引扫描)、CREATE TABLE(v0 类型、主键索引)、INSERT、UPDATE 与 DELETE(记录层新增的 update/delete 在一次批量里重写行与索引条目),以及 PG 形状的 `code: message` 错误(`42P01`、`42703`、`42883`、`42804`、`23505`、`23502`、`22001`、`22012`、`0A000`、`42601`)——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出并打印计划树,经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
-| M32 —— 事务与会话面 | 69 | 设计定案 D6 的事务模型:BEGIN/COMMIT/ROLLBACK、每语句一个 RocksDB 快照(读已提交)、每事务的写缓进一个 WriteBatch 原子提交、Emo 自己的锁管理器仲裁写-写冲突(阻塞,死锁时中止)、目录变更骑同一次提交——两会话并发 demo 展示读已提交语义与冲突中止,`c` 上逐字节钉死(`CHECK.md`)。 |
+| M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
 | M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的 simple query 路径:startup 带 trust 认证、Query/RowDescription/DataRow/CommandComplete/ReadyForQuery、带 PG 错误字段约定的 ErrorResponse、多语句查询串、空结果、错误路径把事务状态收干净——`net` 上一连接一个会话 actor(`httpd` 形状);psql 端到端开动全部表面,标准库的 `postgres` 客户端直连并跑同一脚本,两者都作为金测骑在可用性探针后面(`CHECK.md`)。 |
 | M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料(语句、结果、错误——文本可比)、实测性能表(只写测过的数字)、文档收尾——`docs/emo-db.md` 长成已交付表面的参考、文档 EN+zh、README 行、弧二速写对照弧一实际建出的东西复核(`CHECK.md`)。 |
 
@@ -1697,3 +1697,29 @@ engine demo 经 `projects/emo-db/check.sh` 跑三遍逐字节一致;record/KV
 - [x] **T68.12** —— 闸门:暂存 engine、构建/跑 demo 三遍。
 - [x] **T68.13** —— 项目 README + zh、包文档、lock。
 - [x] **T68.14** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M32 —— 事务与会话面
+
+### 步骤 69 —— 事务与会话面
+
+**前置:** Step 66(记录层)、Step 67(SQL AST)、Step 68(引擎)。**完成
+标准:** BEGIN/COMMIT/ROLLBACK 骑记录层新增的事务(一个 WriteBatch、
+每语句一个快照、穿过 pending 覆盖层的读己之写、commit 时才发布
+rowid 计数);引擎的会话面经 Emo 锁管理器进程持有表锁、阻塞第二个写
+者、以 `40P01` 中止死锁、在 commit/rollback 时释放;两会话金测在
+`c` 上展示读已提交、阻塞与死锁,经 `projects/emo-db/check.sh` 跑三
+遍逐字节一致;既有金测与 E3009/E5007 钉死保持绿;文档 EN+zh;仓库可
+构建。
+
+- [x] **T69.1** —— 规格与本节的 EN+zh。
+- [x] **T69.2** —— `sql`:`BEGIN`/`COMMIT`/`ROLLBACK`、示例用例、五
+      target 重跑。
+- [x] **T69.3** —— 记录层 `Txn` 与 `Table` 的 tx 方法。
+- [x] **T69.4** —— 引擎的事务状态与 autocommit 路径。
+- [x] **T69.5** —— `LockClient` 接口与引擎的表锁。
+- [x] **T69.6** —— 锁管理器进程与死锁检查。
+- [x] **T69.7** —— 会话进程与 `RemoteLocks`。
+- [x] **T69.8** —— `txn_demo`:三个场景与 `expected.txt`。
+- [x] **T69.9** —— 闸门:第四个 demo 与构建失败守卫。
+- [x] **T69.10** —— 文档 EN+zh 与设计记录注记。
+- [x] **T69.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。

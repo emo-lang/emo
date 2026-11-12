@@ -1,0 +1,324 @@
+require "emo/engine"
+require "emo/record"
+require "emo/rocksdb"
+
+// The transaction and session plane (M32), as two concurrent sessions
+// and a lock manager: read committed on per-statement snapshots, a
+// write-write lock that blocks a second writer, and a deadlock that
+// aborts the requester with 40P01. The shared Store holds the database;
+// each session has its own Engine over it, its own transaction, and a
+// RemoteLocks client that blocks in receive while the manager decides.
+
+const path = ".emo-build/txn-db"
+
+def join(xs Array[String]) String {
+  var out = ""
+  var i = 0
+  while i < xs.length() {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + xs[i]
+    i = i + 1
+  }
+  return out
+}
+
+def hex(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}
+
+def show(value record.Value) String {
+  if value.is_null {
+    return "NULL"
+  }
+  case value.kind {
+    record.ColType.integer -> { return value.as_i64().to_string() }
+    record.ColType.bigint -> { return value.as_i64().to_string() }
+    record.ColType.real -> { return value.as_f64().to_string() }
+    record.ColType.double -> { return value.as_f64().to_string() }
+    record.ColType.text -> { return value.as_text() }
+    record.ColType.varchar -> { return value.as_text() }
+    record.ColType.boolean -> { return value.as_bool().to_string() }
+    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+  }
+}
+
+def show_values(values Array[record.Value]) String {
+  var out = "("
+  var i = 0
+  while i < values.length() {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + show(values[i])
+    i = i + 1
+  }
+  return out + ")"
+}
+
+// ---- the lock manager ----
+
+// The manager owns the write locks. `owners` maps a table to its
+// holder; `waiters` is the FIFO per table; `waiting` maps a pid to the
+// table it is parked on, which is the wait-for graph the deadlock check
+// walks. A release grants the first waiter; an acquire that closes a
+// cycle answers the requester with a deadlock.
+def manager(owners Map[String, Int64], waiters Map[String, Array[(Int64, Pid)]], waiting Map[Int64, String]) {
+  receive {
+    (tag, table, id, who) -> {
+      if tag == "acquire" {
+        if !owners.has(table) {
+          owners.set(table, id)
+          who <- ("granted", table)
+        } else {
+          const owner = owners.get(table)
+          if owner == id {
+            who <- ("granted", table)
+          } else {
+            const queue = waiters_of(waiters, table)
+            waiters.set(table, queue.append((id, who)))
+            waiting.set(id, table)
+            if deadlock(id, owners, waiting) {
+              waiters.set(table, without(waiters.get(table), id))
+              waiting.remove(id)
+              who <- ("deadlock", table)
+            }
+          }
+        }
+      } else {
+        if owners.has(table) {
+          if owners.get(table) == id {
+            owners.remove(table)
+            if waiters.has(table) {
+              const queue = waiters.get(table)
+              if queue.length() > 0 {
+                const next = queue[0]
+                owners.set(table, next[0])
+                waiting.remove(next[0])
+                waiters.set(table, drop_first(queue))
+                next[1] <- ("granted", table)
+              }
+            }
+          }
+        }
+      }
+      manager(owners, waiters, waiting)
+    }
+  }
+}
+
+// Follow the wait-for chain from the requester: it waits for a table's
+// owner; if that owner is itself waiting, follow its table's owner; a
+// chain that reaches the requester is a cycle.
+def deadlock(start Int64, owners Map[String, Int64], waiting Map[Int64, String]) Bool {
+  var current = start
+  var steps = 0
+  while steps < 64 {
+    if !waiting.has(current) {
+      return false
+    }
+    const table = waiting.get(current)
+    if !owners.has(table) {
+      return false
+    }
+    const owner = owners.get(table)
+    if owner == start {
+      return true
+    }
+    if owner == current {
+      return false
+    }
+    current = owner
+    steps = steps + 1
+  }
+  return false
+}
+
+def waiters_of(waiters Map[String, Array[(Int64, Pid)]], table String) Array[(Int64, Pid)] {
+  if waiters.has(table) {
+    return waiters.get(table)
+  }
+  return []
+}
+
+def without(queue Array[(Int64, Pid)], id Int64) Array[(Int64, Pid)] {
+  var out = []
+  var i = 0
+  while i < queue.length() {
+    if queue[i][0] != id {
+      out = out.append(queue[i])
+    }
+    i = i + 1
+  }
+  return out
+}
+
+def drop_first(queue Array[(Int64, Pid)]) Array[(Int64, Pid)] {
+  var out = []
+  var i = 1
+  while i < queue.length() {
+    out = out.append(queue[i])
+    i = i + 1
+  }
+  return out
+}
+
+// ---- the session's lock client ----
+
+class RemoteLocks {
+  def init(manager_pid Pid, id Int64) {
+    self.manager = manager_pid
+    self.id = id
+  }
+
+  def acquire(table String) (R, Bool) {
+    self.manager <- ("acquire", table, self.id, self_pid())
+    receive {
+      (tag, _) -> {
+        if tag == "deadlock" {
+          return (R.error, "40P01: deadlock detected")
+        }
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def release(table String) Void {
+    self.manager <- ("release", table, self.id, self_pid())
+  }
+}
+
+// ---- the session ----
+
+def session(store record.Store, manager_pid Pid, id Int64) {
+  const eng = engine.Engine.new(store, [RemoteLocks.new(manager_pid, id)], [], Map.new())
+  session_loop(eng)
+}
+
+def session_loop(eng engine.Engine) {
+  receive {
+    ("exec", text, reply) -> {
+      case eng.execute(text) {
+        (R.ok, result) -> { reply <- ("ok", text, result) }
+        (R.error, why) -> { reply <- ("error", text, why) }
+      }
+      session_loop(eng)
+    }
+  }
+}
+
+// ---- the coordinator's requests ----
+
+def show_reply(label String, text String, result engine.Result) {
+  println(label + " " + text + " -> " + result.tag)
+  if result.plan != "" {
+    println("  plan: " + result.plan)
+  }
+  if result.columns.length() > 0 {
+    println("  columns: " + join(result.columns))
+  }
+  var i = 0
+  while i < result.rows.length() {
+    println("  " + show_values(result.rows[i]))
+    i = i + 1
+  }
+}
+
+def ask(who Pid, label String, text String) {
+  who <- ("exec", text, self_pid())
+  receive {
+    (tag, said, payload) -> {
+      if tag == "ok" {
+        show_reply(label, said, payload)
+      } else {
+        println(label + " " + said + " -> error " + payload)
+      }
+    }
+  }
+}
+
+def tell(who Pid, text String) {
+  who <- ("exec", text, self_pid())
+}
+
+def await(label String) {
+  receive {
+    (tag, said, payload) -> {
+      if tag == "ok" {
+        show_reply(label, said, payload)
+      } else {
+        println(label + " " + said + " -> error " + payload)
+      }
+    }
+  }
+}
+
+// ---- the setup -----------------------------------------------------------
+
+def run_or_die(eng engine.Engine, text String) {
+  case eng.execute(text) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+}
+
+case rocksdb.destroy_db(path) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, _) -> {}
+}
+
+case record.open(path) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, store) -> {
+    const seeder = engine.Engine.new(store, [], [], Map.new())
+    run_or_die(seeder, "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION)")
+    run_or_die(seeder, "CREATE TABLE orders (id BIGINT NOT NULL PRIMARY KEY, total DOUBLE PRECISION)")
+    run_or_die(seeder, "INSERT INTO users (id, name, score) VALUES (1, 'Ada', 95.5), (2, 'Grace', 88.0)")
+    run_or_die(seeder, "INSERT INTO orders (id, total) VALUES (1, 1.0)")
+
+    const manager_pid = do manager(Map.new(), Map.new(), Map.new())
+    const a = do session(store, manager_pid, 1)
+    const b = do session(store, manager_pid, 2)
+    println("sessions: started")
+
+    // ---- read committed: B sees A's commit only at its next statement ----
+    ask(a, "A", "BEGIN")
+    ask(a, "A", "UPDATE users SET score = 1.0 WHERE id = 1")
+    ask(b, "B", "BEGIN")
+    ask(b, "B", "SELECT id, score FROM users WHERE id = 1")
+    ask(a, "A", "COMMIT")
+    ask(b, "B", "SELECT id, score FROM users WHERE id = 1")
+    ask(b, "B", "COMMIT")
+
+    // ---- write-write: B blocks on A's table lock, then proceeds ----
+    ask(a, "A", "BEGIN")
+    ask(a, "A", "UPDATE users SET score = 2.0 WHERE id = 2")
+    ask(b, "B", "BEGIN")
+    tell(b, "UPDATE users SET score = 3.0 WHERE id = 2")
+    ask(a, "A", "COMMIT")
+    await("B")
+    ask(b, "B", "COMMIT")
+
+    // ---- deadlock: A holds users and wants orders; B the reverse ----
+    ask(a, "A", "BEGIN")
+    ask(a, "A", "UPDATE users SET score = 4.0 WHERE id = 1")
+    ask(b, "B", "BEGIN")
+    ask(b, "B", "UPDATE orders SET total = 10.0 WHERE id = 1")
+    tell(a, "UPDATE orders SET total = 20.0 WHERE id = 1")
+    tell(b, "UPDATE users SET score = 5.0 WHERE id = 1")
+    await("B")
+    await("A")
+    ask(a, "A", "COMMIT")
+
+    println("done")
+  }
+}

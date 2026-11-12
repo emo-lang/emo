@@ -968,6 +968,15 @@ class Store {
     return (R.ok, created)
   }
 
+  // Starts a transaction over this store: one WriteBatch for its
+  // writes, a per-statement snapshot for its reads, and the rowid
+  // counters it will publish on commit. The Store's Tables see the new
+  // counters only when the transaction commits.
+  def begin() (R, Txn) {
+    self.live()
+    return begin_txn(self.db)
+  }
+
   def close() {
     if self.closed.read() {
       raise Exception.new(message: "record: close: the store is already closed")
@@ -1391,7 +1400,475 @@ class Table {
     }
   }
 
+  // ---- the transaction variants ----
+  //
+  // Every write buffers into the transaction's one WriteBatch and its
+  // pending overlay; every read sees the pending overlay first and the
+  // statement snapshot behind it. The rowid counter lives in the
+  // transaction until commit.
+
+  def insert_tx(txn Txn, values Array[Value]) (R, Int64) {
+    self.live()
+    check_row(self.columns, values)
+    var i = 0
+    while i < self.indexes.length() {
+      const idx = self.indexes[i]
+      if idx.unique && !index_has_null(idx, self.columns, values) {
+        const prefix = index_prefix_row(idx, self.columns, values)
+        case txn.scan_prefix(self.index_cfs[i], index_slot(idx), prefix) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, entries) -> {
+            if entries.length() > 0 {
+              return (R.error,
+                      "record: insert: duplicate key on index \"" + idx.name + "\"")
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    const rowid = txn.next_rowid(self)
+    const row = encode_row(self.columns, values)
+    const key = row_key(self.oid, rowid)
+    case txn.put(self.data, "data", key, row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {}
+    }
+    var k = 0
+    while k < self.indexes.length() {
+      const prefix = index_prefix_row(self.indexes[k], self.columns, values)
+      const entry = index_entry(prefix, rowid)
+      case txn.put(self.index_cfs[k], index_slot(self.indexes[k]), entry, Bytes.new(0)) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _) -> {}
+      }
+      k = k + 1
+    }
+    const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes,
+                               txn.rowid_next(self))
+    const encoded = encode_table(meta)
+    case txn.put(self.catalog, "catalog", table_key(self.oid), encoded) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {}
+    }
+    return (R.ok, rowid)
+  }
+
+  def get_tx(txn Txn, rowid Int64) (R, Array[Row]) {
+    self.live()
+    case txn.get(self.data, "data", row_key(self.oid, rowid)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.ok, [])
+        }
+        return (R.ok, [Row.new(rowid, decode_row(self.columns, found[0]))])
+      }
+    }
+  }
+
+  def scan_tx(txn Txn) (R, Array[Row]) {
+    self.live()
+    case txn.scan_prefix(self.data, "data", table_prefix(self.oid)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, entries) -> {
+        var rows = []
+        var i = 0
+        while i < entries.length() {
+          rows = rows.append(
+            Row.new(rowid_of(entries[i][0]),
+                    decode_row(self.columns, entries[i][1])))
+          i = i + 1
+        }
+        return (R.ok, rows)
+      }
+    }
+  }
+
+  def scan_index_tx(txn Txn, index_name String, key_values Array[Value]) (R, Array[Row]) {
+    self.live()
+    var pos = 0 - 1
+    var i = 0
+    while i < self.indexes.length() {
+      if self.indexes[i].name == index_name {
+        pos = i
+      }
+      i = i + 1
+    }
+    if pos < 0 {
+      return (R.error, "record: no such index \"" + index_name + "\"")
+    }
+    const idx = self.indexes[pos]
+    check_index(idx, self.columns, key_values)
+    const prefix = index_prefix_key(idx, self.columns, key_values)
+    case txn.scan_prefix(self.index_cfs[pos], index_slot(idx), prefix) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, entries) -> {
+        var rows = []
+        var k = 0
+        while k < entries.length() {
+          const rowid = rowid_of(entries[k][0])
+          case self.get_tx(txn, rowid) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, found) -> {
+              if found.length() == 1 {
+                rows = rows.append(found[0])
+              }
+            }
+          }
+          k = k + 1
+        }
+        return (R.ok, rows)
+      }
+    }
+  }
+
+  def update_tx(txn Txn, rowid Int64, values Array[Value]) (R, Table) {
+    self.live()
+    check_row(self.columns, values)
+    case self.get_tx(txn, rowid) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.error, "record: update: no row with rowid " + rowid.to_string())
+        }
+        const old_values = found[0].values
+        var i = 0
+        while i < self.indexes.length() {
+          const idx = self.indexes[i]
+          if idx.unique && !index_has_null(idx, self.columns, values) {
+            const prefix = index_prefix_row(idx, self.columns, values)
+            case txn.scan_prefix(self.index_cfs[i], index_slot(idx), prefix) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, entries) -> {
+                var k = 0
+                while k < entries.length() {
+                  if rowid_of(entries[k][0]) != rowid {
+                    return (R.error,
+                            "record: update: duplicate key on index \"" + idx.name + "\"")
+                  }
+                  k = k + 1
+                }
+              }
+            }
+          }
+          i = i + 1
+        }
+        const row = encode_row(self.columns, values)
+        const key = row_key(self.oid, rowid)
+        case txn.put(self.data, "data", key, row) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
+        var j = 0
+        while j < self.indexes.length() {
+          const idx = self.indexes[j]
+          const slot = index_slot(idx)
+          const old_prefix = index_prefix_row(idx, self.columns, old_values)
+          const old_entry = index_entry(old_prefix, rowid)
+          case txn.delete(self.index_cfs[j], slot, old_entry) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {}
+          }
+          const new_prefix = index_prefix_row(idx, self.columns, values)
+          const new_entry = index_entry(new_prefix, rowid)
+          case txn.put(self.index_cfs[j], slot, new_entry, Bytes.new(0)) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {}
+          }
+          j = j + 1
+        }
+        return (R.ok, self)
+      }
+    }
+  }
+
+  def delete_tx(txn Txn, rowid Int64) (R, Table) {
+    self.live()
+    case self.get_tx(txn, rowid) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, found) -> {
+        if found.length() == 0 {
+          return (R.ok, self)
+        }
+        const old_values = found[0].values
+        case txn.delete(self.data, "data", row_key(self.oid, rowid)) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
+        var i = 0
+        while i < self.indexes.length() {
+          const prefix = index_prefix_row(self.indexes[i], self.columns, old_values)
+          const entry = index_entry(prefix, rowid)
+          case txn.delete(self.index_cfs[i], index_slot(self.indexes[i]), entry) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {}
+          }
+          i = i + 1
+        }
+        return (R.ok, self)
+      }
+    }
+  }
+
   def live() {
     self.db.live()
   }
+}
+
+// ---- transactions ----
+
+// One buffered write in a transaction: the slot names the column
+// family's role (`data`, `catalog`, or `idx:<oid>`), the key and value
+// are the entry, and `deleted` marks a pending removal. The pending
+// map is keyed by the slot plus the hex of the key — Map keys are
+// primitive, Bytes is not.
+class Pending {
+  def init(slot String, key Bytes, value Bytes, deleted Bool) {
+    self.slot = slot
+    self.key = key
+    self.value = value
+    self.deleted = deleted
+  }
+}
+
+// A record transaction: one WriteBatch for every write, one snapshot
+// per statement for the reads (read committed), and the rowid counters
+// it publishes only on commit. The engine's session owns the
+// transaction and its locks; the record layer owns the encoding and
+// the pending overlay.
+class Txn {
+  def init(db rocksdb.Db, batch rocksdb.Batch, snapshots Array[rocksdb.Snapshot], pending Map[String, Pending], rowids Map[String, Int64], touched Map[String, Table]) {
+    self.db = db
+    self.batch = batch
+    self.snapshots = Box.new(snapshots)
+    self.pending = pending
+    self.rowids = rowids
+    self.touched = touched
+    self.closed = Box.new(false)
+  }
+
+  // Read committed: every statement reads the database at its own
+  // snapshot; a statement in the same transaction sees the pending
+  // overlay first.
+  def begin_statement() (R, Bool) {
+    self.live()
+    const old = self.snapshots.read()
+    if old.length() == 1 {
+      old[0].close()
+    }
+    case self.db.snapshot() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, snap) -> {
+        self.snapshots.replace([snap])
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def put(cf rocksdb.Cf, slot String, key Bytes, value Bytes) (R, Bool) {
+    self.live()
+    case self.batch.put(cf, key, value) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        self.pending.set(pending_key(slot, key), Pending.new(slot, key, value, false))
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def delete(cf rocksdb.Cf, slot String, key Bytes) (R, Bool) {
+    self.live()
+    case self.batch.delete(cf, key) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        self.pending.set(pending_key(slot, key), Pending.new(slot, key, Bytes.new(0), true))
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def get(cf rocksdb.Cf, slot String, key Bytes) (R, Array[Bytes]) {
+    self.live()
+    const pk = pending_key(slot, key)
+    if self.pending.has(pk) {
+      const entry = self.pending.get(pk)
+      if entry.deleted {
+        return (R.ok, [])
+      }
+      return (R.ok, [entry.value])
+    }
+    const snaps = self.snapshots.read()
+    if snaps.length() == 1 {
+      return cf.get_at(key, snaps[0])
+    }
+    return cf.get(key)
+  }
+
+  def iter_at(cf rocksdb.Cf) (R, rocksdb.Iter) {
+    const snaps = self.snapshots.read()
+    if snaps.length() == 1 {
+      return cf.iter_at(snaps[0])
+    }
+    return cf.iter()
+  }
+
+  // The snapshot's prefix in key order, with the pending overlay: a
+  // pending put replaces a snapshot value, a pending delete drops the
+  // key, and a pending-only key is appended in insertion order.
+  def scan_prefix(cf rocksdb.Cf, slot String, prefix Bytes) (R, Array[(Bytes, Bytes)]) {
+    self.live()
+    case self.iter_at(cf) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, it) -> {
+        var out = []
+        const seen = Map.new()
+        var done = false
+        it.seek(prefix)
+        while it.valid() && !done {
+          case it.key() {
+            (R.error, why) -> {
+              it.close()
+              return (R.error, why)
+            }
+            (R.ok, key) -> {
+              if !internal.codec.starts_with(key, prefix) {
+                done = true
+              } else {
+                const pk = pending_key(slot, key)
+                if self.pending.has(pk) {
+                  const entry = self.pending.get(pk)
+                  if !entry.deleted {
+                    out = out.append((key, entry.value))
+                  }
+                } else {
+                  case it.value() {
+                    (R.error, why) -> {
+                      it.close()
+                      return (R.error, why)
+                    }
+                    (R.ok, value) -> { out = out.append((key, value)) }
+                  }
+                }
+                seen.set(hex_key(key), true)
+                it.next()
+              }
+            }
+          }
+        }
+        it.close()
+        const pendings = self.pending.values()
+        var i = 0
+        while i < pendings.length() {
+          const entry = pendings[i]
+          if entry.slot == slot && !entry.deleted &&
+             internal.codec.starts_with(entry.key, prefix) &&
+             !seen.has(hex_key(entry.key)) {
+            out = out.append((entry.key, entry.value))
+          }
+          i = i + 1
+        }
+        return (R.ok, out)
+      }
+    }
+  }
+
+  // The rowid the next insert in this transaction takes, and the
+  // counter the catalog definition should carry.
+  def next_rowid(table Table) Int64 {
+    self.touch(table)
+    const n = self.rowids.get(table.name)
+    self.rowids.set(table.name, n + 1)
+    return n
+  }
+
+  def rowid_next(table Table) Int64 {
+    self.touch(table)
+    return self.rowids.get(table.name)
+  }
+
+  def touch(table Table) {
+    if !self.rowids.has(table.name) {
+      self.rowids.set(table.name, table.next_rowid.read())
+      self.touched.set(table.name, table)
+    }
+  }
+
+  def commit() (R, Txn) {
+    self.live()
+    // COMMIT is the transaction's durability point: the batch write
+    // asks the WAL to fsync before it answers.
+    case self.batch.write_sync() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        const names = self.touched.keys()
+        var i = 0
+        while i < names.length() {
+          const table = self.touched.get(names[i])
+          table.next_rowid.replace(self.rowids.get(names[i]))
+          i = i + 1
+        }
+        self.close_resources()
+        return (R.ok, self)
+      }
+    }
+  }
+
+  def rollback() (R, Txn) {
+    self.live()
+    self.close_resources()
+    return (R.ok, self)
+  }
+
+  def close_resources() {
+    const snaps = self.snapshots.read()
+    if snaps.length() == 1 {
+      snaps[0].close()
+    }
+    self.snapshots.replace([])
+    self.batch.close()
+    self.closed.replace(true)
+  }
+
+  def live() {
+    if self.closed.read() {
+      raise Exception.new(message: "record: the transaction is closed")
+    }
+  }
+}
+
+def begin_txn(db rocksdb.Db) (R, Txn) {
+  case db.batch() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, batch) -> {
+      const txn = Txn.new(db, batch, [], Map.new(), Map.new(), Map.new())
+      case txn.begin_statement() {
+        (R.error, why) -> {
+          batch.close()
+          return (R.error, why)
+        }
+        (R.ok, _) -> { return (R.ok, txn) }
+      }
+    }
+  }
+}
+
+def index_slot(idx Index) String {
+  return "idx:" + idx.oid.to_string()
+}
+
+def hex_key(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}
+
+def pending_key(slot String, key Bytes) String {
+  return slot + ":" + hex_key(key)
 }
