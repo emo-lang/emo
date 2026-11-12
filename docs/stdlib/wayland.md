@@ -120,6 +120,18 @@ routes); and a compositor's cursor state lags its window
 transactions — the beats fire from the pointer's enter event, the
 one word that says the cursor state has caught up.
 
+The ride's own demo grows the pointer a click path: `LiveInput`
+tracks the pointer's surface coordinates from the motion events, and
+a press runs the caller's rect table — `(x, y, w, h, tag)`, the
+first containing rect wins — so the desktop's dock is clickable: the
+demo paints the desktop's face (`emo_desktop`'s wallpaper, header,
+and dock — the dock's strip-local formulas through an offsetting
+Surface wrapper), and a click on a tile delivers the tile's tag,
+moves the focus, and repaints. The arrows move the focus, Enter
+toggles the launch bit, and the smoke leg asserts the click, the
+arrow, and the launch — the desktop ran live, the click landed, and
+the keys drove it.
+
 Keycodes arrive raw (the evdev numbers); keysym decoding through the
 keymap is the named follow-up.
 
