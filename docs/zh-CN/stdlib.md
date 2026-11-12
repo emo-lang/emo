@@ -690,7 +690,7 @@ wg.stop()
 ## sql 包
 
 SQL parser:SQL 文本进,抽象语法树出。纯 Emo 实现,只依赖共享
-运行时——解析出的树按语法节点一类一个类(`Select` 语句、`Expr`
+运行时——解析出的树按语法节点一类一个类(`Select`/`CreateTable`/`Insert`/`Update`/`Delete` 语句、`Expr`
 表达式、`TableRef` 表引用),每个节点都回答 `to_string()`,给出
 规范的 SQL 渲染。
 
@@ -702,8 +702,11 @@ def parse(text String) (R, Stmt)
 `WHERE`、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT`、`OFFSET`——
 之下是完整的表达式语法:字面量、参数(`?`、`?NNN`)、带限定的列名、
 函数调用、`CAST`、`CASE`、`EXISTS`、子查询,以及按标准优先级排列的
-运算符体系。格式错误的输入返回值 `(R.error, reason)`,reason
-准确说明发生了什么、在哪个字节偏移;不 raise、没有错误码、没有 nil。
+运算符体系。`SELECT` 旁还解析并规范渲染 `CREATE TABLE`(v0 类型、
+`NOT NULL`、`PRIMARY KEY`)、多行 `INSERT ... VALUES`、
+`UPDATE ... SET ... [WHERE]` 与 `DELETE FROM ... [WHERE]`。格式错误
+的输入返回值 `(R.error, reason)`,reason 准确说明发生了什么、在哪个
+字节偏移;不 raise、没有错误码、没有 nil。
 
 ```emo
 require "sql"

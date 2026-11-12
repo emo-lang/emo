@@ -31,16 +31,23 @@ require "float"
 // scalar subqueries, and operators OR / AND / NOT / comparisons /
 // LIKE / IN (list or subquery) / BETWEEN / IS [NOT] NULL|TRUE|FALSE /
 // + - * / % || with standard precedence; `--` and `/* */` comments.
+// Also: CREATE TABLE with the v0 column types (INTEGER, BIGINT, REAL,
+// DOUBLE PRECISION, TEXT, VARCHAR(n), BOOLEAN, BYTEA) and column-level
+// NOT NULL / PRIMARY KEY; INSERT ... VALUES with an optional column
+// list and one or more rows; UPDATE ... SET ... [WHERE]; DELETE FROM
+// ... [WHERE]. Every statement renders back to canonical SQL.
 //
-// Not supported (each answers `(R.error, reason)`): INSERT, UPDATE,
-// DELETE, DDL, WITH, UNION/INTERSECT/EXCEPT, window functions,
-// GROUPING SETS, quoted-identifier bracket styles other than the
-// standard double quote, backslash escapes in string literals
-// (standard SQL has none), and multiple statements in one parse call.
+// Not supported (each answers `(R.error, reason)`): INSERT ... SELECT,
+// ON CONFLICT, RETURNING, table-level constraints and
+// UNIQUE/DEFAULT/CHECK/REFERENCES, CREATE INDEX, WITH,
+// UNION/INTERSECT/EXCEPT, window functions, GROUPING SETS,
+// quoted-identifier bracket styles other than the standard double
+// quote, backslash escapes in string literals (standard SQL has none),
+// and multiple statements in one parse call.
 
 // ---- kinds ----
 
-enum StmtKind { select }
+enum StmtKind { select, create_table, insert, update, delete }
 enum SelKind { star, expr }
 enum TableKind { named, join, subquery }
 enum JoinKind { inner, left, right, full, cross }
@@ -117,6 +124,143 @@ class Select {
     }
     if self.offset_e.length() == 1 {
       s = s + " OFFSET " + self.offset_e[0].to_string()
+    }
+    return s
+  }
+}
+
+// ---- DDL and DML statements ----
+
+enum SqlType { integer, bigint, real, double, text, varchar, boolean, bytea }
+
+// One column definition in CREATE TABLE: name, v0 type, VARCHAR length,
+// and the two column-level constraints. The canonical rendering writes
+// the type first, then NOT NULL, then PRIMARY KEY, whatever order the
+// input used.
+class ColumnDef {
+  def init(name String, kind SqlType, varchar_len Int64, not_null Bool, primary Bool) {
+    self.name = name
+    self.kind = kind
+    self.varchar_len = varchar_len
+    self.not_null = not_null
+    self.primary = primary
+  }
+
+  def type_text() String {
+    case self.kind {
+      SqlType.integer -> { return "INTEGER" }
+      SqlType.bigint -> { return "BIGINT" }
+      SqlType.real -> { return "REAL" }
+      SqlType.double -> { return "DOUBLE PRECISION" }
+      SqlType.text -> { return "TEXT" }
+      SqlType.varchar -> { return "VARCHAR(" + self.varchar_len.to_string() + ")" }
+      SqlType.boolean -> { return "BOOLEAN" }
+      SqlType.bytea -> { return "BYTEA" }
+    }
+  }
+
+  def to_string() String {
+    var s = ident_text(self.name) + " " + self.type_text()
+    if self.not_null {
+      s = s + " NOT NULL"
+    }
+    if self.primary {
+      s = s + " PRIMARY KEY"
+    }
+    return s
+  }
+}
+
+// CREATE TABLE name (column definitions). The table name is a dotted
+// path like every other table reference; the executor decides whether a
+// schema qualifier is meaningful.
+class CreateTable {
+  def init(parts Array[String], columns Array[ColumnDef]) {
+    self.parts = parts
+    self.columns = columns
+  }
+
+  def kind() StmtKind {
+    return StmtKind.create_table
+  }
+
+  def to_string() String {
+    return "CREATE TABLE " + dot_join(self.parts, 0, "") + " (" +
+           comma_column_defs(self.columns, 0, "") + ")"
+  }
+}
+
+// INSERT INTO name [(columns)] VALUES (row), (row), ... — the column
+// list rides as an empty array when the statement named none.
+class Insert {
+  def init(parts Array[String], columns Array[String], rows Array[Array[Expr]]) {
+    self.parts = parts
+    self.columns = columns
+    self.rows = rows
+  }
+
+  def kind() StmtKind {
+    return StmtKind.insert
+  }
+
+  def to_string() String {
+    var s = "INSERT INTO " + dot_join(self.parts, 0, "")
+    if self.columns.length() > 0 {
+      s = s + " (" + comma_strings(self.columns, 0, "") + ")"
+    }
+    return s + " VALUES " + comma_rows(self.rows, 0, "")
+  }
+}
+
+// One SET assignment in UPDATE.
+class Assignment {
+  def init(column String, value Expr) {
+    self.column = column
+    self.value = value
+  }
+
+  def to_string() String {
+    return ident_text(self.column) + " = " + self.value.to_string()
+  }
+}
+
+// UPDATE name SET assignments [WHERE expression].
+class Update {
+  def init(parts Array[String], sets Array[Assignment], where_e Array[Expr]) {
+    self.parts = parts
+    self.sets = sets
+    self.where_e = where_e
+  }
+
+  def kind() StmtKind {
+    return StmtKind.update
+  }
+
+  def to_string() String {
+    var s = "UPDATE " + dot_join(self.parts, 0, "") + " SET " +
+            comma_assignments(self.sets, 0, "")
+    if self.where_e.length() == 1 {
+      s = s + " WHERE " + self.where_e[0].to_string()
+    }
+    return s
+  }
+}
+
+// DELETE FROM name [WHERE expression].
+class Delete {
+  def init(parts Array[String], where_e Array[Expr]) {
+    self.parts = parts
+    self.where_e = where_e
+  }
+
+  def kind() StmtKind {
+    return StmtKind.delete
+  }
+
+  def to_string() String {
+    var s = "DELETE FROM " + dot_join(self.parts, 0, "")
+    if self.where_e.length() == 1 {
+      s = s + " WHERE " + self.where_e[0].to_string()
     }
     return s
   }
@@ -764,6 +908,37 @@ def comma_sels(xs Array[SelItem], i Int64, acc String) String {
   return comma_sels(xs, i + 1, acc + ", " + xs[i].to_string())
 }
 
+def comma_column_defs(xs Array[ColumnDef], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_column_defs(xs, 1, xs[0].to_string())
+  }
+  return comma_column_defs(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def comma_assignments(xs Array[Assignment], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_assignments(xs, 1, xs[0].to_string())
+  }
+  return comma_assignments(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def comma_rows(rows Array[Array[Expr]], i Int64, acc String) String {
+  if i >= rows.length() {
+    return acc
+  }
+  const row = "(" + comma_exprs(rows[i], 0, "") + ")"
+  if i == 0 {
+    return comma_rows(rows, 1, row)
+  }
+  return comma_rows(rows, i + 1, acc + ", " + row)
+}
+
 def comma_tables(xs Array[TableRef], i Int64, acc String) String {
   if i >= xs.length() {
     return acc
@@ -1174,7 +1349,21 @@ def parse_stmt(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   if at_kw(toks, i, "select") {
     return parse_select(toks, i, 0)
   }
-  return (R.error, err(peek(toks, i).pos, "expected SELECT"))
+  if at_kw(toks, i, "create") {
+    return parse_create_table(toks, i)
+  }
+  if at_kw(toks, i, "insert") {
+    return parse_insert(toks, i)
+  }
+  if at_kw(toks, i, "update") {
+    return parse_update(toks, i)
+  }
+  if at_kw(toks, i, "delete") {
+    return parse_delete(toks, i)
+  }
+  return (R.error,
+          err(peek(toks, i).pos,
+              "expected SELECT, INSERT, UPDATE, DELETE, or CREATE TABLE"))
 }
 
 def parse_select(toks Array[Tok], i Int64, depth Int64) (R, (Stmt, Int64)) {
@@ -1246,6 +1435,473 @@ def parse_clauses(toks Array[Tok], i Int64, depth Int64, stage Int64, distinct B
     return (R.error, err(peek(toks, i).pos, "each clause appears once, in the order WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET"))
   }
   return (R.error, err(peek(toks, i).pos, "expected GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, or end of statement"))
+}
+
+// ---- DDL and DML ----
+
+// CREATE TABLE name (column definitions).
+def parse_create_table(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
+  case want_kw(toks, i + 1, "table", "TABLE after CREATE") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j) -> {
+      case parse_target_name(toks, j, "expected a table name after CREATE TABLE") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nr) -> {
+          case want_kind(toks, nr[1], Tk.t_lparen, "`(` after the table name") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, k) -> {
+              case parse_column_defs(toks, k, []) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, cr) -> {
+                  const columns = cr[0]
+                  const dup = duplicate_column(columns)
+                  if dup != "" {
+                    return (R.error, err(peek(toks, k).pos, "duplicate column \"" + dup + "\""))
+                  }
+                  case want_kind(toks, cr[1], Tk.t_rparen, "`)` after the column definitions") {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, e) -> { return (R.ok, (CreateTable.new(nr[0], columns), e)) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def parse_column_defs(toks Array[Tok], i Int64, acc Array[ColumnDef]) (R, (Array[ColumnDef], Int64)) {
+  case parse_column_def(toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r) -> {
+      const next = r[1]
+      if at_kind(toks, next, Tk.t_comma) {
+        return parse_column_defs(toks, next + 1, acc.append(r[0]))
+      }
+      if at_kind(toks, next, Tk.t_rparen) {
+        return (R.ok, (acc.append(r[0]), next))
+      }
+      return (R.error, err(peek(toks, next).pos, "expected `,` or `)` after the column definition"))
+    }
+  }
+}
+
+def parse_column_def(toks Array[Tok], i Int64) (R, (ColumnDef, Int64)) {
+  if at_kw(toks, i, "primary") || at_kw(toks, i, "constraint") ||
+     at_kw(toks, i, "unique") || at_kw(toks, i, "check") ||
+     at_kw(toks, i, "foreign") {
+    return (R.error, err(peek(toks, i).pos, "table-level constraints are not supported in v0"))
+  }
+  case parse_ident_name(toks, i, "expected a column name") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, nr) -> {
+      case parse_type(toks, nr[1]) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, tr) -> {
+          return parse_column_constraints(toks, nr[0], tr[0], tr[1], tr[2], false, false)
+        }
+      }
+    }
+  }
+}
+
+def parse_column_constraints(toks Array[Tok], name String, kind SqlType, varchar_len Int64, i Int64, not_null Bool, primary Bool) (R, (ColumnDef, Int64)) {
+  if at_kw(toks, i, "not") {
+    if not_null {
+      return (R.error, err(peek(toks, i).pos, "NOT NULL appears twice on column \"" + name + "\""))
+    }
+    case want_kw(toks, i + 1, "null", "NULL after NOT") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j) -> {
+        return parse_column_constraints(toks, name, kind, varchar_len, j, true, primary)
+      }
+    }
+  }
+  if at_kw(toks, i, "primary") {
+    if primary {
+      return (R.error, err(peek(toks, i).pos, "PRIMARY KEY appears twice on column \"" + name + "\""))
+    }
+    case want_kw(toks, i + 1, "key", "KEY after PRIMARY") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j) -> {
+        return parse_column_constraints(toks, name, kind, varchar_len, j, not_null, true)
+      }
+    }
+  }
+  if at_kw(toks, i, "null") {
+    return (R.error, err(peek(toks, i).pos, "explicit NULL is the default; omit it"))
+  }
+  if at_kw(toks, i, "unique") || at_kw(toks, i, "default") ||
+     at_kw(toks, i, "check") || at_kw(toks, i, "references") {
+    return (R.error,
+            err(peek(toks, i).pos,
+                "constraint `" + peek(toks, i).text + "` is not supported in v0"))
+  }
+  return (R.ok, (ColumnDef.new(name, kind, varchar_len, not_null, primary), i))
+}
+
+// The v0 type spellings. VARCHAR carries its length; every other type
+// answers 0 there. DOUBLE PRECISION is two words; VARCHAR needs `(n)`
+// with a positive integer.
+def parse_type(toks Array[Tok], i Int64) (R, (SqlType, Int64, Int64)) {
+  if at_kw(toks, i, "integer") {
+    return (R.ok, (SqlType.integer, 0, i + 1))
+  }
+  if at_kw(toks, i, "bigint") {
+    return (R.ok, (SqlType.bigint, 0, i + 1))
+  }
+  if at_kw(toks, i, "real") {
+    return (R.ok, (SqlType.real, 0, i + 1))
+  }
+  if at_kw(toks, i, "text") {
+    return (R.ok, (SqlType.text, 0, i + 1))
+  }
+  if at_kw(toks, i, "boolean") {
+    return (R.ok, (SqlType.boolean, 0, i + 1))
+  }
+  if at_kw(toks, i, "bytea") {
+    return (R.ok, (SqlType.bytea, 0, i + 1))
+  }
+  if at_kw(toks, i, "double") {
+    case want_kw(toks, i + 1, "precision", "PRECISION after DOUBLE") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j) -> { return (R.ok, (SqlType.double, 0, j)) }
+    }
+  }
+  if at_kw(toks, i, "varchar") {
+    case want_kind(toks, i + 1, Tk.t_lparen, "`(` after VARCHAR") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j) -> {
+        const t = peek(toks, j)
+        if t.kind != Tk.t_number || !plain_digits(t.text) {
+          return (R.error, err(t.pos, "VARCHAR length must be a positive integer"))
+        }
+        case positive_number(t.text, t.pos) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, n) -> {
+            case want_kind(toks, j + 1, Tk.t_rparen, "`)` after the VARCHAR length") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, e) -> { return (R.ok, (SqlType.varchar, n, e)) }
+            }
+          }
+        }
+      }
+    }
+  }
+  return (R.error,
+          err(peek(toks, i).pos,
+              "expected a column type (INTEGER, BIGINT, REAL, DOUBLE PRECISION, TEXT, VARCHAR(n), BOOLEAN, BYTEA)"))
+}
+
+def plain_digits(s String) Bool {
+  const data = s.to_bytes()
+  if data.length() == 0 {
+    return false
+  }
+  return plain_digits_b(data, 0)
+}
+
+def plain_digits_b(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return true
+  }
+  if !is_digit(data.get(i)) {
+    return false
+  }
+  return plain_digits_b(data, i + 1)
+}
+
+def positive_number(text String, pos Int64) (R, Int64) {
+  const data = text.to_bytes()
+  case acc_digits(data, 0, data.length(), pos, 0, false) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, n) -> {
+      if n <= 0 {
+        return (R.error, err(pos, "VARCHAR length must be positive"))
+      }
+      return (R.ok, n)
+    }
+  }
+}
+
+// INSERT INTO name [(columns)] VALUES (row), (row), ...
+def parse_insert(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
+  case want_kw(toks, i + 1, "into", "INTO after INSERT") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j) -> {
+      case parse_target_name(toks, j, "expected a table name after INSERT INTO") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nr) -> { return parse_insert_after_name(toks, nr[0], nr[1]) }
+      }
+    }
+  }
+}
+
+def parse_insert_after_name(toks Array[Tok], parts Array[String], i Int64) (R, (Stmt, Int64)) {
+  if at_kind(toks, i, Tk.t_lparen) {
+    case parse_name_list(toks, i + 1, []) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cr) -> {
+        const dup = duplicate_string(cr[0])
+        if dup != "" {
+          return (R.error, err(peek(toks, i).pos, "duplicate column \"" + dup + "\""))
+        }
+        case want_kind(toks, cr[1], Tk.t_rparen, "`)` after the column list") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, e) -> { return parse_insert_values(toks, parts, cr[0], e) }
+        }
+      }
+    }
+  }
+  return parse_insert_values(toks, parts, [], i)
+}
+
+def parse_insert_values(toks Array[Tok], parts Array[String], columns Array[String], i Int64) (R, (Stmt, Int64)) {
+  case want_kw(toks, i, "values", "VALUES after the insert target") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v) -> {
+      case parse_rows(toks, v, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, rr) -> {
+          const rows = rr[0]
+          const width_error = row_width_error(rows, columns)
+          if width_error != "" {
+            return (R.error, err(peek(toks, v).pos, width_error))
+          }
+          if at_kw(toks, rr[1], "on") {
+            return (R.error, err(peek(toks, rr[1]).pos, "ON CONFLICT is not supported"))
+          }
+          if at_kw(toks, rr[1], "returning") {
+            return (R.error, err(peek(toks, rr[1]).pos, "RETURNING is not supported"))
+          }
+          return (R.ok, (Insert.new(parts, columns, rows), rr[1]))
+        }
+      }
+    }
+  }
+}
+
+def parse_name_list(toks Array[Tok], i Int64, acc Array[String]) (R, (Array[String], Int64)) {
+  case parse_ident_name(toks, i, "expected a column name") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r) -> {
+      const next = r[1]
+      if at_kind(toks, next, Tk.t_comma) {
+        return parse_name_list(toks, next + 1, acc.append(r[0]))
+      }
+      if at_kind(toks, next, Tk.t_rparen) {
+        return (R.ok, (acc.append(r[0]), next))
+      }
+      return (R.error, err(peek(toks, next).pos, "expected `,` or `)` after the column name"))
+    }
+  }
+}
+
+def parse_rows(toks Array[Tok], i Int64, acc Array[Array[Expr]]) (R, (Array[Array[Expr]], Int64)) {
+  case parse_row(toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r) -> {
+      const next = r[1]
+      if at_kind(toks, next, Tk.t_comma) {
+        return parse_rows(toks, next + 1, acc.append(r[0]))
+      }
+      return (R.ok, (acc.append(r[0]), next))
+    }
+  }
+}
+
+def parse_row(toks Array[Tok], i Int64) (R, (Array[Expr], Int64)) {
+  case want_kind(toks, i, Tk.t_lparen, "`(` starting a VALUES row") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j) -> {
+      case parse_expr_list(toks, j, 0, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, er) -> {
+          case want_kind(toks, er[1], Tk.t_rparen, "`)` after the VALUES row") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, e) -> { return (R.ok, (er[0], e)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+def row_width_error(rows Array[Array[Expr]], columns Array[String]) String {
+  if rows.length() == 0 {
+    return "VALUES needs at least one row"
+  }
+  const width = rows[0].length()
+  if width == 0 {
+    return "a VALUES row needs at least one expression"
+  }
+  var i = 0
+  while i < rows.length() {
+    if rows[i].length() != width {
+      return "every VALUES row must have the same number of expressions"
+    }
+    i = i + 1
+  }
+  if columns.length() > 0 && columns.length() != width {
+    return "the column list and the VALUES rows disagree on the number of columns"
+  }
+  return ""
+}
+
+// UPDATE name SET column = expression, ... [WHERE expression]
+def parse_update(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
+  case parse_target_name(toks, i + 1, "expected a table name after UPDATE") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, nr) -> {
+      case want_kw(toks, nr[1], "set", "SET after the update target") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, j) -> {
+          case parse_assignments(toks, j, []) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, ar) -> {
+              const dup = duplicate_assignment(ar[0])
+              if dup != "" {
+                return (R.error, err(peek(toks, j).pos, "duplicate assignment to column \"" + dup + "\""))
+              }
+              return parse_update_where(toks, nr[0], ar[0], ar[1])
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def parse_update_where(toks Array[Tok], parts Array[String], assignments Array[Assignment], i Int64) (R, (Stmt, Int64)) {
+  if at_kw(toks, i, "where") {
+    case parse_expr(toks, i + 1, 0) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        return update_tail(toks, parts, assignments, [wr[0]], wr[1])
+      }
+    }
+  }
+  return update_tail(toks, parts, assignments, [], i)
+}
+
+def update_tail(toks Array[Tok], parts Array[String], assignments Array[Assignment], where_e Array[Expr], i Int64) (R, (Stmt, Int64)) {
+  if at_kw(toks, i, "from") {
+    return (R.error, err(peek(toks, i).pos, "UPDATE ... FROM is not supported"))
+  }
+  if at_kw(toks, i, "returning") {
+    return (R.error, err(peek(toks, i).pos, "RETURNING is not supported"))
+  }
+  return (R.ok, (Update.new(parts, assignments, where_e), i))
+}
+
+def parse_assignments(toks Array[Tok], i Int64, acc Array[Assignment]) (R, (Array[Assignment], Int64)) {
+  case parse_ident_name(toks, i, "expected a column name in SET") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, cr) -> {
+      case want_kind(toks, cr[1], Tk.t_eq, "`=` after the column name") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, j) -> {
+          case parse_expr(toks, j, 0) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, er) -> {
+              const assignment = Assignment.new(cr[0], er[0])
+              if at_kind(toks, er[1], Tk.t_comma) {
+                return parse_assignments(toks, er[1] + 1, acc.append(assignment))
+              }
+              return (R.ok, (acc.append(assignment), er[1]))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// DELETE FROM name [WHERE expression]
+def parse_delete(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
+  case want_kw(toks, i + 1, "from", "FROM after DELETE") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j) -> {
+      case parse_target_name(toks, j, "expected a table name after DELETE FROM") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nr) -> { return parse_delete_where(toks, nr[0], nr[1]) }
+      }
+    }
+  }
+}
+
+def parse_delete_where(toks Array[Tok], parts Array[String], i Int64) (R, (Stmt, Int64)) {
+  if at_kw(toks, i, "where") {
+    case parse_expr(toks, i + 1, 0) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        return delete_tail(toks, parts, [wr[0]], wr[1])
+      }
+    }
+  }
+  return delete_tail(toks, parts, [], i)
+}
+
+def delete_tail(toks Array[Tok], parts Array[String], where_e Array[Expr], i Int64) (R, (Stmt, Int64)) {
+  if at_kw(toks, i, "using") {
+    return (R.error, err(peek(toks, i).pos, "DELETE ... USING is not supported"))
+  }
+  if at_kw(toks, i, "returning") {
+    return (R.error, err(peek(toks, i).pos, "RETURNING is not supported"))
+  }
+  return (R.ok, (Delete.new(parts, where_e), i))
+}
+
+def has_string(xs Array[String], s String) Bool {
+  var i = 0
+  while i < xs.length() {
+    if xs[i] == s {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def duplicate_string(xs Array[String]) String {
+  var seen = []
+  var i = 0
+  while i < xs.length() {
+    if has_string(seen, xs[i]) {
+      return xs[i]
+    }
+    seen = seen.append(xs[i])
+    i = i + 1
+  }
+  return ""
+}
+
+def duplicate_column(columns Array[ColumnDef]) String {
+  var seen = []
+  var i = 0
+  while i < columns.length() {
+    if has_string(seen, columns[i].name) {
+      return columns[i].name
+    }
+    seen = seen.append(columns[i].name)
+    i = i + 1
+  }
+  return ""
+}
+
+def duplicate_assignment(assignments Array[Assignment]) String {
+  var seen = []
+  var i = 0
+  while i < assignments.length() {
+    if has_string(seen, assignments[i].column) {
+      return assignments[i].column
+    }
+    seen = seen.append(assignments[i].column)
+    i = i + 1
+  }
+  return ""
 }
 
 // ---- select list ----
@@ -1575,6 +2231,22 @@ def is_reserved(word String) Bool {
   if word == "union" { return true }
   if word == "asc" { return true }
   if word == "desc" { return true }
+  if word == "create" { return true }
+  if word == "table" { return true }
+  if word == "insert" { return true }
+  if word == "into" { return true }
+  if word == "values" { return true }
+  if word == "update" { return true }
+  if word == "set" { return true }
+  if word == "delete" { return true }
+  if word == "primary" { return true }
+  if word == "key" { return true }
+  if word == "default" { return true }
+  if word == "unique" { return true }
+  if word == "check" { return true }
+  if word == "references" { return true }
+  if word == "constraint" { return true }
+  if word == "foreign" { return true }
   return false
 }
 
@@ -2263,4 +2935,29 @@ def want_kind(toks Array[Tok], i Int64, kind Tk, what String) (R, Int64) {
     return (R.ok, i + 1)
   }
   return (R.error, err(peek(toks, i).pos, "expected " + what))
+}
+
+def want_kw(toks Array[Tok], i Int64, word String, what String) (R, Int64) {
+  if at_kw(toks, i, word) {
+    return (R.ok, i + 1)
+  }
+  return (R.error, err(peek(toks, i).pos, "expected " + what))
+}
+
+// A single identifier (plain or quoted) — a column name.
+def parse_ident_name(toks Array[Tok], i Int64, what String) (R, (String, Int64)) {
+  const t = peek(toks, i)
+  if t.kind == Tk.t_ident || t.kind == Tk.t_qident {
+    return (R.ok, (t.text, i + 1))
+  }
+  return (R.error, err(t.pos, what))
+}
+
+// A table name path — `t`, `db.t`, or a quoted form of either.
+def parse_target_name(toks Array[Tok], i Int64, what String) (R, (Array[String], Int64)) {
+  const t = peek(toks, i)
+  if t.kind == Tk.t_ident || t.kind == Tk.t_qident {
+    return scan_name_path(toks, i)
+  }
+  return (R.error, err(t.pos, what))
 }

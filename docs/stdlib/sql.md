@@ -19,9 +19,10 @@ the manifest's `deps` block.
 ## The tree
 
 `parse` returns a `Stmt`: an interface over one class per statement
-kind — today `Select` — discriminated by the `StmtKind` enum. Within a
-statement, expressions are `Expr` nodes (one class per `ExprKind`) and
-table references are `TableRef` nodes (one class per `TableKind`).
+kind — `Select`, `CreateTable`, `Insert`, `Update`, and `Delete` —
+discriminated by the `StmtKind` enum. Within a statement, expressions
+are `Expr` nodes (one class per `ExprKind`) and table references are
+`TableRef` nodes (one class per `TableKind`).
 All three interfaces answer `to_string()`, the canonical SQL
 rendering: uppercase keywords, explicit join kinds, `AS` on aliases.
 Node fields are public and frozen after construction; read the
@@ -84,8 +85,35 @@ expressions with optional `AS` aliases), a `FROM` list of named tables
 `ASC`/`DESC`, `LIMIT`, `OFFSET`. `JOIN` alone is an inner join; a
 `NATURAL` join takes no `ON` or `USING`.
 
+### CREATE TABLE
+
+`CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL,
+score DOUBLE PRECISION, handle VARCHAR(12))`. The v0 types are
+`INTEGER`, `BIGINT`, `REAL`, `DOUBLE PRECISION`, `TEXT`, `VARCHAR(n)`,
+`BOOLEAN`, and `BYTEA` — exact spellings, no aliases (`INT`, `BOOL`,
+`SERIAL`, … refuse), and `VARCHAR` needs a positive `(n)`. Column-level
+`NOT NULL` and `PRIMARY KEY` are supported, each at most once and in
+either order; the canonical rendering writes `NOT NULL` before
+`PRIMARY KEY`. Duplicate column names refuse.
+
+### INSERT
+
+`INSERT INTO users (id, name) VALUES (1, 'Ada'), (2, 'Grace')` — the
+column list is optional, and there is one or more parenthesized rows.
+Every row has the same number of expressions, and the column list's
+length when present; a mismatch refuses. Duplicate names in the column
+list refuse.
+
+### UPDATE and DELETE
+
+`UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1` — distinct
+assignments (a repeated column refuses) and an optional `WHERE`.
+`DELETE FROM users WHERE id = 1` — the `WHERE` is optional.
+
 Not supported — each answers `(R.error, reason)`, never a guess:
-`INSERT`, `UPDATE`, `DELETE`, DDL, `WITH`, set operations
+`INSERT ... SELECT`, `ON CONFLICT`, `RETURNING`, table-level constraints
+and `UNIQUE`/`DEFAULT`/`CHECK`/`REFERENCES`, `CREATE INDEX`, `UPDATE ...
+FROM`, `DELETE ... USING`, `WITH`, set operations
 (`UNION`/`INTERSECT`/`EXCEPT`), window functions, bracket-style quoted
 identifiers, `ESCAPE` on `LIKE`, and multiple statements in one call.
 

@@ -72,6 +72,53 @@ println(e10.to_string())
 const (R.ok, e11) = sql.parse("SELECT * FROM a CROSS JOIN b, c NATURAL JOIN d")
 println(e11.to_string())
 
+// ---- CREATE TABLE: the v0 types, NOT NULL, PRIMARY KEY ----
+const ddl = "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, rating REAL, active BOOLEAN, note TEXT, payload BYTEA, rank INTEGER, handle VARCHAR(12))"
+const (R.ok, c1) = sql.parse(ddl)
+println(c1.to_string())
+if c1.is(sql.CreateTable) {
+  println(c1.columns.length())
+  println(c1.columns[0].not_null)
+  println(c1.columns[0].primary)
+  println(c1.columns[2].type_text())
+  println(c1.columns[8].type_text())
+}
+
+// The canonical rendering normalizes keyword case and constraint order.
+const (R.ok, c2) = sql.parse("create table t (id integer primary key not null, v varchar(3))")
+println(c2.to_string())
+
+// ---- INSERT: the optional column list, multi-row, and no list ----
+const (R.ok, i1) = sql.parse("INSERT INTO users (id, name) VALUES (1, 'Ada'), (2, 'Grace')")
+println(i1.to_string())
+if i1.is(sql.Insert) {
+  println(i1.columns.length())
+  println(i1.rows.length())
+  println(i1.rows[1][1].to_string())
+}
+const (R.ok, i2) = sql.parse("INSERT INTO users VALUES (3, 'Linus', 88.0, NULL, TRUE, NULL, NULL, NULL, NULL)")
+println(i2.to_string())
+println(i2.is(sql.Insert))
+
+// ---- UPDATE and DELETE ----
+const (R.ok, u1) = sql.parse("UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1")
+println(u1.to_string())
+if u1.is(sql.Update) {
+  println(u1.sets.length())
+  println(u1.sets[0].column)
+  println(u1.where_e.length())
+}
+const (R.ok, d1) = sql.parse("DELETE FROM users WHERE id = 1")
+println(d1.to_string())
+if d1.is(sql.Delete) {
+  println(d1.where_e.length())
+}
+const (R.ok, d2) = sql.parse("DELETE FROM users")
+println(d2.to_string())
+if d2.is(sql.Delete) {
+  println(d2.where_e.length())
+}
+
 // ---- a malformed statement is a value, not a crash ----
 case sql.parse("SELECT FROM") {
   (R.error, why) -> { println(why) }

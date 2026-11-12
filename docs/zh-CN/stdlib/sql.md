@@ -12,7 +12,7 @@ require "sql"
 
 ## 语法树
 
-`parse` 返回一个 `Stmt`:一个接口,每个语句种类一个类——目前是 `Select`——用 `StmtKind` 枚举判别。语句内部,表达式是 `Expr` 节点(每个 `ExprKind` 一个类),表引用是 `TableRef` 节点(每个 `TableKind` 一个类)。三个接口都回答 `to_string()`:规范的 SQL 渲染——关键字大写、JOIN 种类写全、别名带 `AS`。节点的字段公开且在构造后冻结;`Expr` 背后的具体类用 `is()` 缩窄来读:
+`parse` 返回一个 `Stmt`:一个接口,每个语句种类一个类——`Select`、`CreateTable`、`Insert`、`Update`、`Delete`——用 `StmtKind` 枚举判别。语句内部,表达式是 `Expr` 节点(每个 `ExprKind` 一个类),表引用是 `TableRef` 节点(每个 `TableKind` 一个类)。三个接口都回答 `to_string()`:规范的 SQL 渲染——关键字大写、JOIN 种类写全、别名带 `AS`。节点的字段公开且在构造后冻结;`Expr` 背后的具体类用 `is()` 缩窄来读:
 
 ```emo
 const (R.ok, stmt) = sql.parse("SELECT name, count(*) AS n FROM users GROUP BY name")
@@ -42,7 +42,19 @@ def parse(text String) (R, Stmt)
 
 `SELECT` 全链路:带 `DISTINCT` 的选择列表(`*`、`t.*`、带可选 `AS` 别名的表达式)、`FROM` 表列表(可带 schema 限定、可带别名)、子查询,以及 `INNER` / `LEFT` / `RIGHT` / `FULL` / `CROSS` / `NATURAL` 连接,带 `ON` 或 `USING`;`WHERE`、`GROUP BY`、`HAVING`、`ORDER BY`(带 `ASC`/`DESC`)、`LIMIT`、`OFFSET`。单独的 `JOIN` 即内连接;`NATURAL` 连接不带 `ON` 或 `USING`。
 
-不支持——每一项都返回 `(R.error, reason)`,绝不猜测:`INSERT`、`UPDATE`、`DELETE`、DDL、`WITH`、集合运算(`UNION`/`INTERSECT`/`EXCEPT`)、窗口函数、方括号风格的带引号标识符、`LIKE` 的 `ESCAPE` 子句,以及一次调用中的多条语句。
+### CREATE TABLE
+
+`CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, handle VARCHAR(12))`。v0 类型是 `INTEGER`、`BIGINT`、`REAL`、`DOUBLE PRECISION`、`TEXT`、`VARCHAR(n)`、`BOOLEAN`、`BYTEA`——精确拼写,没有别名(`INT`、`BOOL`、`SERIAL` 等拒绝);`VARCHAR` 需要正的 `(n)`。支持列级 `NOT NULL` 与 `PRIMARY KEY`,各自至多一次、顺序任意;规范渲染先写 `NOT NULL` 再写 `PRIMARY KEY`。重复列名拒绝。
+
+### INSERT
+
+`INSERT INTO users (id, name) VALUES (1, 'Ada'), (2, 'Grace')`——列清单可选,值是一行或多行带括号的表达式。每行的表达式数相同;有列清单时还等于列数,不一致拒绝。列清单里的重复名字拒绝。
+
+### UPDATE 与 DELETE
+
+`UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1`——互异的赋值(重复列拒绝)与可选 `WHERE`。`DELETE FROM users WHERE id = 1`——`WHERE` 可选。
+
+不支持——每一项都返回 `(R.error, reason)`,绝不猜测:`INSERT ... SELECT`、`ON CONFLICT`、`RETURNING`、表级约束与 `UNIQUE`/`DEFAULT`/`CHECK`/`REFERENCES`、`CREATE INDEX`、`UPDATE ... FROM`、`DELETE ... USING`、`WITH`、集合运算(`UNION`/`INTERSECT`/`EXCEPT`)、窗口函数、方括号风格的带引号标识符、`LIKE` 的 `ESCAPE` 子句,以及一次调用中的多条语句。
 
 ## 渲染
 

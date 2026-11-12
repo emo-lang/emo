@@ -56,7 +56,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
 | M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with the project-local `emo/rocksdb` binding — a package-carried C shim over the official RocksDB C API (open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families) resolved through `foreign def`s and the manifest's `pkg_config` field (the `postgres` precedent); the C ABI grows the `Bytes` borrowed view (D10) so keys and values carry arbitrary binary data, with reads filling a caller-owned out-parameter; the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — text and embedded-NUL values, a batch commit, reads, a prefix scan, snapshot isolation visible, close/reopen — run three times byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, types, indexes, and oid counters by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), rowid allocation inside the insert's WriteBatch, and secondary indexes as one column family per index named `idx_<oid>` and keyed by the indexed values plus the rowid — the shared `data` family keyed by table oid + rowid, the catalog's reopen through `rocksdb.list_families` with the index-CF verification, and equality-prefix index scans; a record demo creates a table in the catalog, inserts rows covering every type (NULLs, an embedded NUL in BYTEA, UTF-8 TEXT), reads by rowid, scans the table, finds rows through unique and non-unique indexes, and reopens the store, pinned byte-for-byte on `c` (`CHECK.md`). |
-| M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types, INSERT (multi-row), UPDATE, DELETE — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched; statement and expression goldens byte-identical on all five hosted targets (`CHECK.md`). |
+| M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types and column-level NOT NULL/PRIMARY KEY, multi-row INSERT ... VALUES with an optional column list, UPDATE ... SET ... [WHERE], and DELETE FROM ... [WHERE] — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched, and the parser's shape checks (duplicate columns/assignments, row widths, a positive VARCHAR length, the unsupported tails by name); statement and expression goldens byte-identical on the interpreter and all five hosted targets (`CHECK.md`). |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: logical plan nodes (scan, filter, project, insert, update, delete), expression evaluation over the record layer's values, INSERT building encoded rows and index entries, UPDATE and DELETE locating rows through table or index scans, SELECT walking plan trees — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with unknown table, unknown column, and type mismatch answering PG-shaped error strings (`CHECK.md`). |
 | M32 — Transactions and the session plane | 69 | The transaction model of the design record's D6: BEGIN/COMMIT/ROLLBACK with per-statement RocksDB snapshots (read committed), writes buffered per transaction in one WriteBatch committed atomically, an Emo-owned lock manager arbitrating write-write conflicts (block, then abort on deadlock), catalog changes riding the same commit — a two-session concurrency demo showing the read-committed semantics and the conflict abort, pinned byte-for-byte on `c` (`CHECK.md`). |
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path: startup with trust authentication, Query/RowDescription/DataRow/CommandComplete/ReadyForQuery, ErrorResponse with PG's error-field convention, multi-statement query strings, empty results, and the error path restoring clean transaction state — one session actor per connection over `net` (the `httpd` shape); psql drives the whole surface end-to-end and the standard library's `postgres` client connects and runs the same script, both as goldens behind availability probes (`CHECK.md`). |
@@ -4081,3 +4081,41 @@ repo builds.
       the demo, and the gate.
 - [x] **T66.16** — The close-out: TASKS EN+zh, the plan README, the M29
       row, `CHECK.md`'s entry, and `dune build`/`@fmt` green.
+
+## M30 — The SQL front-end's DML and DDL
+
+### Step 67 — The SQL front-end's DML and DDL
+
+**Prereq:** Step 30 (the `sql` package's SELECT surface and expression
+grammar). **Done when:** the `sql` package parses `CREATE TABLE` (the v0
+column types, `NOT NULL`, `PRIMARY KEY`), multi-row `INSERT`, `UPDATE`,
+and `DELETE` beside `SELECT`, renders every tree back to canonical SQL,
+and answers malformed input with a reason and a byte offset; the SELECT
+grammar is unchanged; `example/sql_demo` and `sql_edge` print the pinned
+bytes on the interpreter and all five hosted targets; docs EN+zh; the
+repo builds.
+
+- [x] **T67.1** — The spec and this section EN+zh.
+- [x] **T67.2** — The AST: the four `StmtKind` members, `SqlType`,
+      `ColumnDef`, `CreateTable`/`Insert`/`Update`/`Delete`,
+      `Assignment`, and the canonical renderers.
+- [x] **T67.3** — The token helpers and `is_reserved` additions.
+- [x] **T67.4** — `parse_create_table`: name path, column list, types
+      (including `DOUBLE PRECISION` and `VARCHAR(n)`), constraints,
+      duplicate-column checks, unsupported-constraint refusals.
+- [x] **T67.5** — `parse_insert`: `INTO`, optional column list, VALUES
+      rows, row-width checks, duplicate columns, unsupported tails.
+- [x] **T67.6** — `parse_update`: SET assignments, duplicate check,
+      optional WHERE, trailing-token refusals.
+- [x] **T67.7** — `parse_delete`: FROM, optional WHERE, trailing-token
+      refusals.
+- [x] **T67.8** — `parse_stmt` dispatches the five statements.
+- [x] **T67.9** — `examples/sql_demo`: the DDL/DML parses, renderings,
+      and AST reads; `expected.txt` regenerated.
+- [x] **T67.10** — `examples/sql_edge`: the old INSERT refusal replaced;
+      new malformed DDL/DML cases; `expected.txt` regenerated.
+- [x] **T67.11** — The package header, `docs/stdlib/sql.md` + zh, and
+      the index row if its wording moved.
+- [x] **T67.12** — The close-out: the two `sql` locks re-resolved,
+      `plan/README.md`, the M30 row, `CHECK.md`, `dune build`/`@fmt`,
+      and the evidence.

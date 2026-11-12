@@ -48,7 +48,7 @@
 | M27 — `websocket` 与 `playwright` 包 | 64 | 用 Emo 做浏览器自动化:RFC 6455 的两端作为骑 `net` 的标准库包(客户端拨号并验证握手、服务端 accept 检查 upgrade/version/key、每轮交换一条文本消息、按角色掩码、ping 有应答、close 有应答、分片接收拼接过 4096 片),然后 `playwright` 客户端穿这些帧对官方 `playwright run-server` 说驱动的 channel 协议——pre-launched-browser 形态、根 channel 上的 initialize 握手、核心门集(goto/click/fill/press/title/content/text_content/screenshot/close)走 `net` 错误二分;两个 demo 各自带对手方(回声服务器;一个以真线格式应答、带分片消息、一个 ping 与八字节长度形态的迷你驱动),金测因此既不需要浏览器也不需要 Node,解释器与 `c` target 逐字节一致(`CHECK.md`)。 |
 | M28 —— RocksDB 半边 | 65 | emo-db 的第一笔落地:`projects/emo-db/` 脚手架与项目内的 `emo/rocksdb` 绑定——骑官方 RocksDB C API 的包内 C shim(open/close、get/put/delete、WriteBatch 原子写、iterator、快照、column family),经 `foreign def` 与 manifest 的 `pkg_config` 字段解析(`postgres` 先例);C ABI 长出 `Bytes` 借用视图(D10),键与值因此携带任意二进制数据,读操作填写调用方自己的 out 参数;调度器的协作模型让每次调用天然串行,shim 自己不长锁;其余 target 在解析处拒绝、解释器在运行时拒绝(E3009/E5007 活体验证);KV demo——文本与内嵌 NUL 的值、批量提交、读、前缀扫描、可见的快照隔离、关闭再重开——经 `projects/emo-db/check.sh` 在 `c` 上跑三遍逐字节一致(`CHECK.md`)。 |
 | M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型、索引与 oid 计数按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、4 字节 INTEGER、8 字节 BIGINT/REAL/DOUBLE、boolean、带长度前缀的 TEXT/VARCHAR/BYTEA)、插入的 WriteBatch 里的 rowid 分配、以及每索引一个 column family(名 `idx_<oid>`,键由被索引值加 rowid 编成)的二级索引——共享的 `data` family 以表 oid + rowid 为键,目录经 `rocksdb.list_families` 重开并校验索引 CF,索引扫描是等值前缀;record demo 在目录里建表、插入覆盖每种类型的行(NULL、BYTEA 内嵌 NUL、UTF-8 TEXT)、按 rowid 读、扫表、经唯一与非唯一索引找行、并重开 store,`c` 上逐字节钉死(`CHECK.md`)。 |
-| M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型的 CREATE TABLE、INSERT(多行)、UPDATE、DELETE——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动;语句级与表达式级金测在全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
+| M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型与列级 NOT NULL/PRIMARY KEY 的 CREATE TABLE、带可选列清单的多行 INSERT ... VALUES、UPDATE ... SET ... [WHERE]、DELETE FROM ... [WHERE]——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动,解析器做形状检查(重复列/赋值、行宽、正的 VARCHAR 长度、按名拒绝不支持的尾部);语句级与表达式级金测在解释器与全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
 | M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:逻辑计划节点(scan、filter、project、insert、update、delete)、骑记录层值的表达式求值、INSERT 造出行编码与索引条目、UPDATE 与 DELETE 经表扫描或索引扫描定位行、SELECT 走计划树——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出,未知表、未知列、类型不匹配以 PG 形状的错误串回答(`CHECK.md`)。 |
 | M32 —— 事务与会话面 | 69 | 设计定案 D6 的事务模型:BEGIN/COMMIT/ROLLBACK、每语句一个 RocksDB 快照(读已提交)、每事务的写缓进一个 WriteBatch 原子提交、Emo 自己的锁管理器仲裁写-写冲突(阻塞,死锁时中止)、目录变更骑同一次提交——两会话并发 demo 展示读已提交语义与冲突中止,`c` 上逐字节钉死(`CHECK.md`)。 |
 | M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的 simple query 路径:startup 带 trust 认证、Query/RowDescription/DataRow/CommandComplete/ReadyForQuery、带 PG 错误字段约定的 ErrorResponse、多语句查询串、空结果、错误路径把事务状态收干净——`net` 上一连接一个会话 actor(`httpd` 形状);psql 端到端开动全部表面,标准库的 `postgres` 客户端直连并跑同一脚本,两者都作为金测骑在可用性探针后面(`CHECK.md`)。 |
@@ -1629,3 +1629,38 @@ EN+zh;仓库可构建。
 - [x] **T66.15** —— 项目 README + zh:记录层的格式、demo 与闸门。
 - [x] **T66.16** —— 收尾:TASKS EN+zh、plan README、M29 行、
       `CHECK.md` 条目,以及 `dune build`/`@fmt` 绿。
+
+## M30 —— SQL 门面长 DML 与 DDL
+
+### 步骤 67 —— SQL 门面长 DML 与 DDL
+
+**前置:** Step 30(`sql` 包的 SELECT 表面与表达式语法)。**完成标准:**
+`sql` 包在 `SELECT` 旁解析 `CREATE TABLE`(v0 列类型、`NOT NULL`、
+`PRIMARY KEY`)、多行 `INSERT`、`UPDATE`、`DELETE`,每个树都能渲染回
+规范 SQL,畸形输入答理由与字节偏移;SELECT 语法不动;
+`example/sql_demo` 与 `sql_edge` 在解释器与全部五个 hosted target
+上打印钉死的字节;文档 EN+zh;仓库可构建。
+
+- [x] **T67.1** —— 规格与本节的 EN+zh。
+- [x] **T67.2** —— AST:四个 `StmtKind` 成员、`SqlType`、`ColumnDef`、
+      `CreateTable`/`Insert`/`Update`/`Delete`、`Assignment`,以及规范
+      渲染器。
+- [x] **T67.3** —— token 助手与 `is_reserved` 的新词。
+- [x] **T67.4** —— `parse_create_table`:名字路径、列清单、类型(含
+      `DOUBLE PRECISION` 与 `VARCHAR(n)`)、约束、重复列检查、不受
+      支持约束的拒绝。
+- [x] **T67.5** —— `parse_insert`:`INTO`、可选列清单、VALUES 行、
+      行宽检查、重复列、不受支持的尾部。
+- [x] **T67.6** —— `parse_update`:SET 赋值、重复检查、可选 WHERE、
+      尾随 token 拒绝。
+- [x] **T67.7** —— `parse_delete`:FROM、可选 WHERE、尾随 token 拒
+      绝。
+- [x] **T67.8** —— `parse_stmt` 分发五种语句。
+- [x] **T67.9** —— `examples/sql_demo`:DDL/DML 解析、渲染与 AST 读
+      取;重出 `expected.txt`。
+- [x] **T67.10** —— `examples/sql_edge`:旧的 INSERT 拒绝替换;新的
+      畸形 DDL/DML 用例;重出 `expected.txt`。
+- [x] **T67.11** —— 包头注释、`docs/stdlib/sql.md` + zh,以及索引行
+      (措辞若动)。
+- [x] **T67.12** —— 收尾:两个 `sql` lock 重解析、`plan/README.md`、
+      M30 行、`CHECK.md`、`dune build`/`@fmt`,以及证据。
