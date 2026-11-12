@@ -206,7 +206,7 @@ def notify_take(block Int64, s Int64, caller Int64) Void {
 def notify_serve(block Int64, w Int64) Void {
   var op = w >> 32
   var caller = w & 4294967295
-  var verb = 27 + (op & 31)
+  var verb = 27 + ((op - 27) & 31)
   var k = (op - 27) >> 5
   var s = notify_slots + k * notify_slot_size
   if verb == 27 {

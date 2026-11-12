@@ -34,6 +34,15 @@ English version: [`README.md`](README.md).
 | M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome、绘制图标、共享标题栏与抗锯齿指针 | complete |
 | M15 — 动画 | 合成成本实测(整屏 ~230 ms、窗级 ~36 ms)、损伤矩形、首个动画:三个 app 的窗口开时升起、关时沉下 | complete |
 | M16 — 窗口自己的菜单 | 标题栏的单个圆形按钮与它拉开的下拉菜单——Maximize、Minimize、Quit——骑 press-at 事件,标题栏可拖拽,最小化入隐藏项、dock 瓦片还原,最大化即 scale 的整数倍 | complete |
+| M17 — 任意尺寸的字体 | 从字体文件生成轮廓、光栅器、任意像素尺寸的 strike、ink 的迁移 | complete |
+| M18 — Wayland 之门 | `c` 目标上的纯 Emo `wayland` 客户端包:线路编解码、fd 传递、shm 层、真实合成器上的第一帧 | complete |
+| M19 — 座位 | `wl_seat`、`wl_pointer`、`wl_keyboard`、虚拟设备注入、被钉住的 keymap fd | complete |
+| M20 — 界面骑上 Wayland | `LiveEye`/`LiveInput`,语料应用在 headless sway 下真实运行 | complete |
+| M21 — dock 可点击 | 指针的点击路径、逐帧绘制的桌面脸面 | complete |
+| M22 — 树接住指针 | 绘制走栈导出的矩形表、被启动 app 的树在帧内绘制、点击驱动 app 自己的 update | complete |
+| M23 — keymap 解码 | 解析合成器编译出的 xkb keymap,按键按 keysym 名投递 | complete |
+| M24 — app 成为窗口 | 一次启动把 app 立成自己的 toplevel,座位的焦点把它的字路过去 | complete |
+| M25 — 通知 | `notify` 动词族与通知服务,壳天生就是中心——toast、历史、勿扰 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

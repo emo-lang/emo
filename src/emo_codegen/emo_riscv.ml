@@ -7883,15 +7883,19 @@ emo_device_wake:
 # for, so the ISR wakes that one slot beside the device-waiters. The
 # service's pid rides the cell the gate routes by; a zero cell (the
 # service dead between instances) or a slot at any other state is
-# simply not found.
+# simply not found. The cell is read through the kernel's **high
+# alias**: the trap shim does not switch the table, so an interrupt
+# landing while a process's own table is live must reach kernel memory
+# by the half every table maps (2026-11-12, A25.3's boot-2 trap: the
+# low window's identity was mapped only by the kernel's own root, and
+# a tick arriving while the boot pass ran died of it).
     .globl emo_sched_wake_input
 emo_sched_wake_input:
     addi sp, sp, -16
     sd ra, 0(sp)
-    li t0, 0x870029e8         # the input service's pid cell, the
-                              #   gate's own constant (A11.2: the low
-                              #   window's identity, the kernel's table
-                              #   maps it)
+    li t0, -272612972056      # koff + 0x870029e8: the input service's
+                              #   pid cell, the high alias every table
+                              #   maps
     ld a0, 0(t0)
     beqz a0, .Lwakei_none
     la t0, emo_procs

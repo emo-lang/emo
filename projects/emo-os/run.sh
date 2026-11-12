@@ -149,6 +149,31 @@ app_line() {
   echo "$apps_digests" | sed -n "${1}p"
 }
 
+# The notification center's corpus file (emo-desktop M25, A25.3): the
+# hosted twin's whole-window digests — the card's own window (the card
+# is the card's size) and the panel's (the display's height between the
+# header and the dock), both the round fold the walk's mask takes. The
+# metal's surfaces are the package's drawings through the carve, so the
+# display's rectangle folds to these numbers; NOTIFY_EXPECTED names the
+# file, the dune smoke points it at the repository's.
+notify_expected=${NOTIFY_EXPECTED:-../emo-desktop/fb/notify/golden/expected.txt}
+if [ ! -f "$notify_expected" ]; then
+  echo "run.sh: the notification center's corpus file is missing: $notify_expected" >&2
+  exit 1
+fi
+notify_card=$(awk '$1 == "card" { print $2 }' "$notify_expected")
+notify_panel=$(awk '$1 == "center" { print $2 }' "$notify_expected")
+notify_panel_dnd=$(awk '$1 == "center_dnd" { print $2 }' "$notify_expected")
+notify_panel2=$(awk '$1 == "center2" { print $2 }' "$notify_expected")
+for d in "$notify_card" "$notify_panel" "$notify_panel_dnd" "$notify_panel2"; do
+  case $d in
+    ''|*[!0-9]*)
+      echo "run.sh: $notify_expected must carry card, center, center_dnd and center2 digests" >&2
+      exit 1
+      ;;
+  esac
+done
+
 # The pointer's drawing (emo-desktop A8.2, T8.11): the sprite the
 # compositor's cursor plane composites is the desktop's, drawn in
 # `pointer.emo` as rows of cells (`#` ink, `o` paper, `.` clear), and
@@ -319,7 +344,7 @@ boot() {
   }
   await() {
     local pat="$1"
-    for _ in $(seq 1 100); do
+    for _ in $(seq 1 300); do
       if grep -qF -- "$pat" "$log" 2>/dev/null; then
         return 0
       fi
@@ -434,7 +459,7 @@ PYEOF
   # wait follow.
   await_count() {
     local pat="$1" n="$2"
-    for _ in $(seq 1 100); do
+    for _ in $(seq 1 300); do
       if [ "$(grep -caF -- "$pat" "$log" 2>/dev/null || true)" -ge "$n" ]; then
         return 0
       fi
@@ -1369,6 +1394,41 @@ PYEOF
   btn() {
     qmp '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":'"$1"',"button":"left"}}]}}'
   }
+  # The notification surface's fold (emo-desktop M25, A25.3): a
+  # screendump's rectangle folded the round way (radius 10, the walk's
+  # mask), the number the surface's own `frame` line printed and the
+  # hosted twin pins. The card and the panel are the shell's own
+  # toplevels, their surfaces the package's drawings through the carve
+  # — so the fold is the corpus's number, the rectangles the face's
+  # own places.
+  notice_fold() {
+    local ppm="$1" x="$2" y="$3" w="$4" h="$5" want="$6" what="$7"
+    if ! PPM="$ppm" X="$x" Y="$y" FW="$w" FH="$h" WANT="$want" WHAT="$what" python3 - <<'PYEOF'
+import os
+import sys
+
+e = os.environ
+data = open(e['PPM'], 'rb').read()
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1920x1080")
+px = data[17:]
+x, y, w, h = int(e['X']), int(e['Y']), int(e['FW']), int(e['FH'])
+rad = 10
+d = 0
+for ly in range(h):
+    for lx in range(w):
+        if (lx < rad or lx >= w - rad) and (ly < rad or ly >= h - rad):
+            continue
+        o = ((y + ly) * 1920 + (x + lx)) * 3
+        d = (d * 31 + ((px[o] << 16) | (px[o + 1] << 8) | px[o + 2])) & 0xFFFFFFFF
+if d != int(e['WANT']):
+    sys.exit(f"run.sh: the {e['WHAT']} folds to {d}; the corpus's is {e['WANT']}")
+PYEOF
+    then
+      kill "$qemu_pid" 2>/dev/null || true
+      exit 1
+    fi
+  }
   await 'desk range 32767 32767'
   await 'desk b 8'
   await 'comp 576 384'
@@ -1697,6 +1757,86 @@ PYEOF
   await 'comp 0 0 1019273451'
   feed 'rm a/one.txt'
   await 'comp 0 0 3582193566'
+  # ---- the notification center (emo-desktop M25, A25.3) ----
+  #
+  # The editor's `s` byte is its save: the buffer's two rows onto the
+  # volume, then the gate's verb 27. The editor's own quit is the wake
+  # the shell's take rides — the desk loop's poll runs before the exit
+  # is handled, so the card (the shell's toplevel, the card's own size)
+  # presents and says its digest before the exit's dock and chrome
+  # repaints. The card's rectangle folds to the hosted twin's card
+  # digest. The bell's press opens the panel (the display's height
+  # between the header and the dock), the card going with it; the
+  # do-not-disturb row's press flips the flag and the panel repaints
+  # with its word on; the second save, the door shut, records and shows
+  # nothing — the panel's two rows are the record, and the card is not
+  # painted again. The awaited counts are the sessions' own: the trio
+  # beat above already said its `put a` and its exit.
+  feed 'exec editor.elf'
+  await_count 'desktop editor up' 2
+  printf 'a' >&3
+  await_count 'put a' 2
+  printf 's' >&3
+  await_count 'save' 1
+  printf 'q' >&3
+  sleep 1
+  await_count 'desktop editor exit 0' 2
+  await "frame $notify_card"
+  await 'comp 1584 32'
+  # the sprite parked off the card's rect — the model's eye folds the
+  # window alone, the cursor plane's pixels beside it
+  abs 274 21239
+  sleep 0.5
+  hmp 'screendump .card.ppm'
+  notice_fold .card.ppm 1584 32 320 72 "$notify_card" 'card'
+  abs 1433 364
+  btn true
+  btn false
+  await "frame $notify_panel"
+  await 'comp 1588 24'
+  abs 274 21239
+  sleep 0.5
+  hmp 'screendump .panel.ppm'
+  notice_fold .panel.ppm 1588 24 320 1016 "$notify_panel" 'panel'
+  abs 29013 2427
+  btn true
+  btn false
+  await "frame $notify_panel_dnd"
+  await 'comp 1588 24'
+  abs 274 21239
+  sleep 0.5
+  hmp 'screendump .dnd.ppm'
+  notice_fold .dnd.ppm 1588 24 320 1016 "$notify_panel_dnd" 'panel, dnd on'
+  feed 'exec editor.elf'
+  await_count 'desktop editor up' 3
+  printf 'a' >&3
+  await_count 'put a' 3
+  printf 's' >&3
+  await_count 'save' 2
+  printf 'q' >&3
+  sleep 1
+  await_count 'desktop editor exit 0' 3
+  await "frame $notify_panel2"
+  await 'comp 1588 24'
+  abs 274 21239
+  sleep 0.5
+  hmp 'screendump .supp.ppm'
+  notice_fold .supp.ppm 1588 24 320 1016 "$notify_panel2" 'panel, two rows'
+  if [ "$(grep -caF -- "frame $notify_card" "$log")" -ne 1 ]; then
+    echo "run.sh: the suppressed raise painted a card; the count is not 1" >&2
+    kill "$qemu_pid" 2>/dev/null || true
+    exit 1
+  fi
+  # the panel shuts: the toast comes back with the door
+  abs 1433 364
+  btn true
+  btn false
+  # the save's file goes before the run ends: the volume the second
+  # boot mounts must be the one the goldens' beats left (the two
+  # documents the launcher's view names), or the notification beats'
+  # own trace would move the next boot's icons
+  feed 'rm editor.txt'
+  sleep 1
   # The preemption proof (EmoOS T8.21): the spinner — the busy app, a
   # disk ELF with no window, no message, no yield, and no announce
   # until its loop is out (the runtime's println is a write ecall per
@@ -1934,7 +2074,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0 1893846762' 'comp 0 1040 4255512004' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590 2422339152' 'comp 768 476 1262791943' 'comp 772 500 4076994909' 'comp 0 212 475800525' 'comp 4 236 1618932149' 'comp 768 476 3492346657' 'comp 772 500 4076994909' 'comp 768 476 4185059610' 'comp 768 476 4278644801' 'comp 772 500 4076994909' 'desktop counter exit 0' 'comp 0 1040 1822028258' 'comp 0 0 1846941004' 'desktop files exit 0' 'comp 0 1040 434475790' 'comp 0 0 1752337407' 'desktop editor exit 0' 'comp 0 1040 2485841077' 'comp 0 0 1893846762' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 3361274171' 'EmoOS boots from disk' 'comp 0 0 3582193566' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 1019273451' 'comp 0 0 618209843' 'comp 0 0 1019273451' 'comp 0 0 3582193566' 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 991 783'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'desk 0' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0 1893846762' 'comp 0 1040 4255512004' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590 2422339152' 'comp 768 476 1262791943' 'comp 772 500 4076994909' 'comp 0 212 475800525' 'comp 4 236 1618932149' 'comp 768 476 3492346657' 'comp 772 500 4076994909' 'comp 768 476 4185059610' 'comp 768 476 4278644801' 'comp 772 500 4076994909' 'desktop counter exit 0' 'comp 0 1040 1822028258' 'comp 0 0 1846941004' 'desktop files exit 0' 'comp 0 1040 434475790' 'comp 0 0 1752337407' 'desktop editor exit 0' 'comp 0 1040 2485841077' 'comp 0 0 1893846762' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0 3361274171' 'EmoOS boots from disk' 'comp 0 0 3582193566' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0 1019273451' 'comp 0 0 618209843' 'comp 0 0 1019273451' 'comp 0 0 3582193566' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_card" "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1285 1073'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

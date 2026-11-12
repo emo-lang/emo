@@ -166,6 +166,36 @@ a window that loses the focus loses
 its popups with it — a menu whose reader's attention moved is the
 next composition's wallpaper, never a latch left open on the screen.
 
+## The notification family (emo-desktop M25, EmoOS T11)
+
+The shell is the notification center by construction (D16): apps
+raise through the gate's verb 27, the service keeps the pending queue
+and nothing else, and the shell takes through verb 28 — the first
+taker the center's owner, every later taker refused by pid. **The
+raise** (`notify(title, title_len, body, body_len)`): the title 1 to
+64 bytes at `title` and the body 0 to 192 at `body`, both copied into
+a request slot inside the trap that checked them (the filesystem's
+own shape, the slot's index riding the route −1027), and the answer
+the notification's id — the service's monotonic number, 1 or more, 0
+the empty sentinel a real raise never carries. A full queue is the
+resource refusal and nothing is evicted: eight entries are what the
+service holds, and the queue never lies by dropping. **The take**
+(`notify_take(buf, cap)`): one packed entry lands at `buf` — the
+24-byte head (the id at 0, the title's length at 8, the body's at 16)
+then the bytes — and the answer is its packed size; 0 is the empty
+queue (the cheap poll), a `cap` under 24 bytes the argument refusal,
+and a `cap` under the first entry's packed size the argument refusal
+*without consuming*, so the caller retries with a bigger buffer. The
+first taker names the center's owner (the wallpaper's
+first-declaration precedent) and every later taker's pid is the
+permission refusal — the center is the shell's, by construction. The
+service's state is nothing but the queue: the history and
+do-not-disturb are the shell's memory and policy, no verb's business
+(D16's split). A restart loses the pending queue (the abandoned
+callers refused with reason 5, the slots and the stash cleared) and
+keeps the owner's claim — the page outlives the instances, the
+filesystem's own rule.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

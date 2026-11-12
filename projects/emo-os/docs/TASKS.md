@@ -892,7 +892,14 @@ its completion.
   slots it takes (the supervisor, the instance) moved every later
   pid by two, the pids `run.sh` pins re-pinned (18→20, 20→22, 21→23,
   `user heap 19`→`21`, 26→28), and the allocator's account moved by
-  the queue's block (`frames 991 783`).
+  the queue's block (`frames 991 783`). **The raise's own decode was
+  the first metal lesson (2026-11-12, A25.3's first run):**
+  `notify_serve`'s `verb = 27 + (op & 31)` read every op — 27, 59, 91,
+  123 — as verb 54, so each raise was served as a take and refused
+  with reason 4; the desktop's take then answered an empty queue and
+  no card appeared. The fix is `27 + ((op - 27) & 31)` (the low five
+  bits *past* twenty-seven, the comment's own words), and the
+  golden's first toast is the grade.
 - [x] **T11.2** — The gate's verbs 27 and 28, and the trap's routes:
   the notify request slots the gate fills inside the trap (the
   title's and the body's byte bounds, `check_write` both), the

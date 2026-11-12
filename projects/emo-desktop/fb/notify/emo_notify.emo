@@ -282,13 +282,7 @@ class Center {
                   top Int64) Void {
     const n = self.live.read()
     if n.id() != 0 {
-      const x = w - toast_w() - toast_pad()
-      s.shadow(x, top, toast_w(), toast_h(), toast_radius(), 8, 0x80000000)
-      s.rounded(x, top, toast_w(), toast_h(), toast_radius(), card_top(),
-        card_bottom())
-      s.fill(x, top + 8, 3, toast_h() - 16, accent())
-      ui_fb.text(f, n.title(), x + 20, top + 12, ink(), s)
-      ui_fb.text(f, n.body(), x + 20, top + 40, ink_dim(), s)
+      paint_card(s, f, w - toast_w() - toast_pad(), top, n)
     }
   }
 
@@ -301,31 +295,7 @@ class Center {
   def paint_center(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
                    top Int64, bottom Int64) Void {
     if self.open.read() != false {
-      const x = panel_x(w)
-      const h = bottom - top
-      s.shadow(x, top, panel_w(), h, panel_radius(), 8, 0x80000000)
-      s.rounded(x, top, panel_w(), h, panel_radius(), card_top(),
-        card_bottom())
-      ui_fb.text(f, "Notifications", x + 16, top + 12, ink(), s)
-      s.fill(x + 8, dnd_row_y(top) + 4, panel_w() - 16, dnd_row_h() - 8,
-        0x2A2E38)
-      ui_fb.text(f, "Do not disturb", x + 16, dnd_row_y(top) + 8, ink_dim(), s)
-      var st = "off"
-      if self.dnd.read() {
-        st = "on"
-      }
-      ui_fb.text(f, st, x + panel_w() - 48, dnd_row_y(top) + 8, ink(), s)
-      const items = self.entries()
-      var i = 0
-      var yy = first_entry_y(top)
-      while i < items.length() && yy + row_h() <= bottom {
-        const n = items[i]
-        ui_fb.text(f, n.title(), x + 16, yy + 6, ink(), s)
-        ui_fb.text(f, n.body(), x + 16, yy + 30, ink_dim(), s)
-        s.fill(x + 12, yy + row_h() - 6, panel_w() - 24, 1, row_line())
-        yy = yy + row_h()
-        i = i + 1
-      }
+      paint_panel(s, f, panel_x(w), top, panel_w(), bottom - top, self)
     }
   }
 }
@@ -333,6 +303,52 @@ class Center {
 // The factory (the cross-module wall's other half).
 def center(p Provider) Center {
   return Center.new(p: p)
+}
+
+// The card at an origin (emo-desktop M25, A25.3): the toast's own
+// drawing without a display's width — the shadow, the rounded card, the
+// accent bar, the title and the body — so a surface that *is* the card
+// (the metal's own toplevel, a window of the card's size) paints the
+// same words a display would place at its right edge, and its digest is
+// the hosted twin's. `toast_w` is the card's width, `toast_h` its
+// height.
+def paint_card(s ui_fb.Surface, f ui_fb.raster.Strike, x Int64, y Int64,
+               n Notif) Void {
+  s.shadow(x, y, toast_w(), toast_h(), toast_radius(), 8, 0x80000000)
+  s.rounded(x, y, toast_w(), toast_h(), toast_radius(), card_top(),
+    card_bottom())
+  s.fill(x, y + 8, 3, toast_h() - 16, accent())
+  ui_fb.text(f, n.title(), x + 20, y + 12, ink(), s)
+  ui_fb.text(f, n.body(), x + 20, y + 40, ink_dim(), s)
+}
+
+// The panel at an origin, its width and height the surface's (the
+// `paint_center` half the metal's panel window needs): the ground, the
+// header's line, the do-not-disturb row, then the history newest first,
+// a row per entry the height holds.
+def paint_panel(s ui_fb.Surface, f ui_fb.raster.Strike, x Int64, y Int64,
+                w Int64, h Int64, c Center) Void {
+  s.shadow(x, y, w, h, panel_radius(), 8, 0x80000000)
+  s.rounded(x, y, w, h, panel_radius(), card_top(), card_bottom())
+  ui_fb.text(f, "Notifications", x + 16, y + 12, ink(), s)
+  s.fill(x + 8, y + dnd_row_y(0) + 4, w - 16, dnd_row_h() - 8, 0x2A2E38)
+  ui_fb.text(f, "Do not disturb", x + 16, y + dnd_row_y(0) + 8, ink_dim(), s)
+  var st = "off"
+  if c.dnd_on() {
+    st = "on"
+  }
+  ui_fb.text(f, st, x + w - 48, y + dnd_row_y(0) + 8, ink(), s)
+  const items = c.entries()
+  var i = 0
+  var yy = y + first_entry_y(0)
+  while i < items.length() && yy + row_h() <= y + h {
+    const n = items[i]
+    ui_fb.text(f, n.title(), x + 16, yy + 6, ink(), s)
+    ui_fb.text(f, n.body(), x + 16, yy + 30, ink_dim(), s)
+    s.fill(x + 12, yy + row_h() - 6, w - 24, 1, row_line())
+    yy = yy + row_h()
+    i = i + 1
+  }
 }
 
 // The history's next state: the new entry first, the rest after it, the

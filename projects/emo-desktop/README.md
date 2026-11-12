@@ -34,6 +34,15 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M14 — The HD desktop | 1920×1080, real typefaces, the rounded-and-shadowed primitives, the translucent chrome, the drawn icons, the shared title bar and the antialiased pointer | complete |
 | M15 — Motion | the composition measured (~230 ms whole-screen, ~36 ms window-sized), the damage rectangle, the first animation: the apps' windows rise on open and sink on close | complete |
 | M16 — The window's own menu | the bar's one round button and the dropdown it opens — Maximize, Minimize, Quit — on the press-at wire, the bar a drag handle, the minimized entry with the dock tile's way back, the maximize the scale's whole multiple | complete |
+| M17 — The type at any size | outlines from the faces, the rasterizer, the strike at any pixel size, the ink migrated | complete |
+| M18 — The Wayland gate | the pure-Emo `wayland` client package on `c`: the wire codec, the fd passage, the shm tier, the first frame on a real compositor | complete |
+| M19 — The seat | `wl_seat`, `wl_pointer`, `wl_keyboard`, the virtual-device injection, the graded keymap fd | complete |
+| M20 — The face rides Wayland | `LiveEye`/`LiveInput`, the corpus application live under headless sway | complete |
+| M21 — The dock clicks | the pointer's click path, the desktop face painted per frame | complete |
+| M22 — The tree takes the pointer | the paint walk's rect export, the launched app's tree painted in-frame, a click driving the app's update | complete |
+| M23 — The keymap decodes | the compiled xkb keymap parsed, keys delivered by keysym name | complete |
+| M24 — The apps become windows | a launch stands the app up as its own toplevel, the seat's focus routes its words | complete |
+| M25 — Notifications | the `notify` verb family and the notification service, the shell as the center — the toast, the history, do-not-disturb | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

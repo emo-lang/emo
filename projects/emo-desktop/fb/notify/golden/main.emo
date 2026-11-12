@@ -124,6 +124,43 @@ def main() {
     j = j + 1
   }
   println("kept ${fc.entries().length()} newest ${fc.entries()[0].id()} oldest ${fc.entries()[15].id()}")
+
+  // The metal's own raises (emo-desktop A25.3): the editor's save and
+  // its recorded-but-suppressed companion, painted the way the shell's
+  // card and panel windows are — the card is a window of the card's
+  // own size, the panel the display's height between the header and
+  // the dock, both painted at their origin. The digests are the
+  // surfaces' own (the round fold, radius 10, the walk's mask), and
+  // `run.sh` folds the metal's rectangles to these numbers.
+  const m1 = emo_notify.notif(101, "editor", "editor.txt saved")
+  const m2 = emo_notify.notif(102, "editor", "editor.txt saved")
+  const cw = emo_notify.toast_w()
+  const ch = emo_notify.toast_h()
+  const cardc = ui_fb_canvas.canvas(cw, ch)
+  emo_notify.paint_card(cardc, f, 0, 0, m1)
+  println("card ${ui_fb_frame.round_digest(cardc, 10)}")
+
+  const pw = emo_notify.panel_w()
+  const ph = 1080 - 24 - 40
+  const p1 = emo_notify.center(emo_notify.canned([m1]))
+  p1.take()
+  p1.toggle_open()
+  const panelc = ui_fb_canvas.canvas(pw, ph)
+  emo_notify.paint_panel(panelc, f, 0, 0, pw, ph, p1)
+  println("center ${ui_fb_frame.round_digest(panelc, 10)}")
+  p1.toggle_dnd()
+  const dndc = ui_fb_canvas.canvas(pw, ph)
+  emo_notify.paint_panel(dndc, f, 0, 0, pw, ph, p1)
+  println("center_dnd ${ui_fb_frame.round_digest(dndc, 10)}")
+
+  const p2 = emo_notify.center(emo_notify.canned([m2, m1]))
+  p2.take()
+  p2.take()
+  p2.toggle_open()
+  p2.toggle_dnd()
+  const dnd2c = ui_fb_canvas.canvas(pw, ph)
+  emo_notify.paint_panel(dnd2c, f, 0, 0, pw, ph, p2)
+  println("center2 ${ui_fb_frame.round_digest(dnd2c, 10)}")
 }
 
 main()

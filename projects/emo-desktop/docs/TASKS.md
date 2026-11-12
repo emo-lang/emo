@@ -2009,12 +2009,52 @@ toast.
   pixel model instead); `start.sh` stages `emo_notify` and the
   drifted locks were regenerated (`hello`, the three apps, `winbuf`,
   the apps' and notify goldens, `wayland`).
-- [ ] **A25.3** — The metal golden leg: `run.sh`'s choreography grows
+- [x] **A25.3** — The metal golden leg: `run.sh`'s choreography grows
   the notify beats — an exec'd app raises, the toast in the
   screendump's digest, DND toggled and the next raise recorded
   without showing, the history panel's entries read — ×3 double
-  transport byte-identical. (The kernel half is Step 11's.)
-- [ ] **A25.4** — The docs and the trackers: `desktop-abi.md`'s
+  transport byte-identical. **complete 2026-11-12** — the beats: the
+  editor exec'd anew, its `s` save raising through verb 27, its quit
+  the wake the shell's take rides; the card's surface and the panel's
+  are the package's own drawings (A25.3 lifted `paint_card` and
+  `paint_panel` out of the class, so a window that *is* the card
+  paints the hosted twin's words), and the wire's `frame` lines and
+  the screendumps' round folds both answer the corpus's `card`,
+  `center`, `center_dnd` and `center2` digests the notified golden now
+  carries; the bell's press opens the panel, the DND row's press flips
+  the flag, the second save is recorded and shows nothing (the card's
+  frame line appears exactly once), and the saved file is deleted
+  before the machine ends so the second boot meets the goldens'
+  volume. Four finds, each the grade's: **the kernel's raise decode**
+  (`notify_serve`'s `verb = 27 + (op & 31)` read every op as verb 54 —
+  every raise was served as a take and refused; the low five bits
+  *past* twenty-seven is the fix); **the card's ground** (a toplevel's
+  memory is the allocator's, not a fresh canvas — the window is zeroed
+  before the alpha grades composite, or the card's words move with
+  whatever the last window left); **the pointer's sprite** (a fold is
+  the window alone — the sprite parked outside the rectangle before
+  each screendump, the model's eye); and **the runtime's low alias**
+  (`emo_sched_wake_input` read the input service's pid cell at
+  0x870029e8, mapped only by the kernel's own root — a tick landing
+  while a process's table was live died of it; the high alias, which
+  every table maps, is the fix). The awaited counts are the sessions'
+  own (the trio beat already said its `put a` and its exit), and the
+  boot's books re-pinned (`frames 1285 1073`).
+- [x] **A25.4** — The docs and the trackers: `desktop-abi.md`'s
   verbs 27 and 28 (both languages), `syscalls.md`'s numbering, the
   READMEs, CHECK.md's entries — the landing's and the fs request
   slot's latent misroute find (2026-11-12) — and the zh mirrors.
+  **complete 2026-11-12** — `syscalls.md` grew verbs 27 and 28's rows
+  and the paragraph that says why the family is the filesystem's
+  (the request slot, the route, the owner's rule), and the Chinese
+  table caught up with 25 and 26 beside them; `desktop-abi.md` grew
+  "The notification family" (the raise, the take, the queue's
+  honesty, the restart's rule) in both languages; both READMEs carry
+  the ladder through M25 (complete), and CHECK.md carries A25.2's
+  three bounds and A25.3's four finds. The fs request slot's latent
+  misroute, named and left for the next verb number: the fs packs
+  `op + 16 × slot`, so a future fs verb 11 or 12 in slot 1 rides ops
+  27 and 28 — the numbers the trap's decode hands the notification
+  family; the fs's vocabulary ends at 9 today, and the next verb
+  added under it must clear the 27/28 gate (a stride of its own or a
+  decode by service, not by op alone).
