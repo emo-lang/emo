@@ -1,0 +1,129 @@
+require "emo/ui_fb"
+require "emo/ui_fb_canvas"
+require "emo/ui_fb_frame"
+require "emo_notify"
+
+// The notification center's hosted twin (emo-desktop M25): the states
+// the center lives in, in the order they arrive — the quiet corner
+// before any raise (absence visible, D15), the first raise's toast,
+// the residence's 299 beats holding it and the 300th retiring it, the
+// second raise, do-not-disturb recording the third without showing
+// it, the panel open with the rows newest first and the flag's word
+// on, the flag off (the word flips, nothing else moves), and the
+// ring's cap — twenty raises, sixteen kept, the newest and the oldest
+// named. The press targets' verdicts beside: the panel's rect and the
+// do-not-disturb row's, inside and out. Every state paints a fresh
+// canvas — the digest is that state's pixels, never the last state's
+// leftovers. The interpreter's bytes are `expected.txt`, and every
+// hosted target prints the same.
+//
+//   emo run main.emo
+
+
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) -> { println("the interface strike refused: ${why}") }
+    (R.ok, s) -> { holder.push(s) }
+  }
+  const f = holder.get(0)
+
+def main() {
+  // the feed: three raises in their order — the editor's save, the
+  // counter's milestone, the browser's copy — ids the service's
+  // counter names
+  const feed = emo_notify.canned([emo_notify.notif(1, "editor", "boot.txt saved"),
+                                  emo_notify.notif(2, "counter", "count 10"),
+                                  emo_notify.notif(3, "files", "copy done")])
+  const c = emo_notify.center(feed)
+
+  // quiet: no raise yet — the corner shows nothing
+  const quiet = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(quiet, f, 480, 24)
+  println("toast ${ui_fb_frame.digest(quiet)}")
+
+  // the first raise: live at once, the history beside it
+  c.take()
+  const first = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(first, f, 480, 24)
+  println("toast ${ui_fb_frame.digest(first)}")
+  println("live ${c.live_id()} entries ${c.entries().length()}")
+
+  // the residence: 299 beats keep it, the 300th retires it
+  var i = 0
+  while i < emo_notify.residence() - 1 {
+    c.beat()
+    i = i + 1
+  }
+  const held = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(held, f, 480, 24)
+  println("held ${ui_fb_frame.digest(held)}")
+  c.beat()
+  const retired = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(retired, f, 480, 24)
+  println("retired ${ui_fb_frame.digest(retired)}")
+  println("live ${c.live_id()}")
+
+  // the second raise
+  c.take()
+  const second = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(second, f, 480, 24)
+  println("toast ${ui_fb_frame.digest(second)}")
+
+  // the second toast's residence runs out, the corner quiet again
+  var b = 0
+  while b < emo_notify.residence() {
+    c.beat()
+    b = b + 1
+  }
+
+  // do not disturb: the third raise records, shows nothing — the
+  // live seat stays empty, the history takes the entry
+  c.toggle_dnd()
+  c.take()
+  const suppressed = ui_fb_canvas.canvas(480, 120)
+  c.paint_toast(suppressed, f, 480, 24)
+  println("suppressed ${ui_fb_frame.digest(suppressed)}")
+  println("live ${c.live_id()} entries ${c.entries().length()} dnd ${c.dnd_on()}")
+
+  // the panel: open, the rows newest first, the flag's word on
+  c.toggle_open()
+  const open_panel = ui_fb_canvas.canvas(400, 560)
+  c.paint_center(open_panel, f, 400, 24, 524)
+  println("panel ${ui_fb_frame.digest(open_panel)}")
+  println("newest ${c.entries()[0].id()} oldest ${c.entries()[2].id()}")
+
+  // the flag off: the word flips, nothing else moves
+  c.toggle_dnd()
+  const quiet_panel = ui_fb_canvas.canvas(400, 560)
+  c.paint_center(quiet_panel, f, 400, 24, 524)
+  println("panel ${ui_fb_frame.digest(quiet_panel)}")
+
+  // the press targets: the panel's rect, inside and out; the
+  // do-not-disturb row's, inside and out
+  println("hit ${emo_notify.center_hit(100, 300, 400, 24, 524)}")
+  println("hit ${emo_notify.center_hit(80, 300, 400, 24, 524)}")
+  println("hit ${emo_notify.center_hit(60, 300, 400, 24, 524)}")
+  println("hit ${emo_notify.center_hit(100, 10, 400, 24, 524)}")
+  println("dnd ${emo_notify.dnd_hit(300, 80, 400, 24)}")
+  println("dnd ${emo_notify.dnd_hit(300, 50, 400, 24)}")
+  println("dnd ${emo_notify.dnd_hit(300, 94, 400, 24)}")
+  println("dnd ${emo_notify.dnd_hit(50, 80, 400, 24)}")
+
+  // the ring's cap: twenty raises, sixteen kept, the tail the
+  // overflow's departure
+  const feed_b = ArrayBuilder.new()
+  var k = 0
+  while k < 20 {
+    feed_b.push(emo_notify.notif(k + 1, "raise", "tick ${k}"))
+    k = k + 1
+  }
+  const fc = emo_notify.center(emo_notify.canned(feed_b.to_array()))
+  var j = 0
+  while j < 20 {
+    fc.take()
+    j = j + 1
+  }
+  println("kept ${fc.entries().length()} newest ${fc.entries()[0].id()} oldest ${fc.entries()[15].id()}")
+}
+
+main()
