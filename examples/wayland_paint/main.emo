@@ -1,0 +1,258 @@
+// The wayland package's first frame: a real window on a real
+// compositor — the smoke leg's program, not a golden (its transcript
+// belongs to the compositor that grades it). A 320×200 ARGB8888
+// window, the top half red, the bottom half blue, painted through
+// pwrite into the pool, mapped on the configure-before-commit
+// discipline. The smoke script greps "commit ok" for progress, lets
+// it live while grim captures, and the event loop here reads until
+// the compositor lets go.
+
+require "wayland"
+require "net"
+require "os"
+
+const w = 320
+const h = 200
+
+// One row of BGRA pixels — the little-endian wear of ARGB8888. Red
+// 0xFFFF0000 paints 00 00 ff ff; blue 0xFF0000FF paints ff 00 00 ff.
+def row(b0 Int64, b1 Int64, b2 Int64, b3 Int64) String {
+  const out = Bytes.new(w * 4)
+  var i = 0
+  while i < w {
+    out.set(i * 4, b0)
+    out.set(i * 4 + 1, b1)
+    out.set(i * 4 + 2, b2)
+    out.set(i * 4 + 3, b3)
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+// The event loop after the frame's commit: one event handled per
+// call, the verdict whether the loop lives on — the surface's enter,
+// the buffer configures acked, the pings answered, the display's
+// error the exit it is.
+def handle_event(c wayland.Conn, ev wayland.Event, surface_id Int64, xdg_surface_id Int64, wm_base_id Int64) Bool {
+  if ev.oid == c.display_id && ev.opcode == 0 {
+    const obj = ev.args.u32()
+    const message = ev.args.text()
+    println("paint: display error on object " + obj.to_string() + ": " + message)
+    return false
+  }
+  if ev.oid == surface_id && ev.opcode == 0 {
+    println("paint: surface entered")
+  }
+  if ev.oid == wm_base_id && ev.opcode == 0 {
+    case wayland.wm_base_pong(c, wm_base_id, ev.args.u32()) {
+      (R.error, why) -> { println("paint: pong " + why) }
+      (R.ok, _) -> { }
+    }
+  }
+  if ev.oid == xdg_surface_id && ev.opcode == 0 {
+    case wayland.surface_ack_configure(c, xdg_surface_id, ev.args.u32()) {
+      (R.error, why) -> { println("paint: ack " + why) }
+      (R.ok, _) -> { }
+    }
+  }
+  return true
+}
+
+// The read until the compositor lets go.
+def event_loop(c wayland.Conn, surface_id Int64, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64) {
+  case wayland.next_event(c.side) {
+    (R.error, why) -> { println("paint: " + why) }
+    (R.ok, ev) -> {
+      if handle_event(c, ev, surface_id, xdg_surface_id, wm_base_id) {
+        event_loop(c, surface_id, xdg_surface_id, toplevel_id, wm_base_id)
+      }
+    }
+  }
+}
+
+// The compositor's socket: $XDG_RUNTIME_DIR / $WAYLAND_DISPLAY, the
+// environment the protocol's own convention names. A missing
+// variable is the connect failure it becomes.
+def socket_path() (R, String) {
+  case os.getenv("XDG_RUNTIME_DIR") {
+    (R.error, why) -> { return (R.error, "paint: " + why) }
+    (R.ok, dir) -> {
+      case os.getenv("WAYLAND_DISPLAY") {
+        (R.error, _) -> { return (R.ok, dir + "/wayland-0") }
+        (R.ok, display) -> { return (R.ok, dir + "/" + display) }
+      }
+    }
+  }
+}
+
+def main() {
+  case socket_path() {
+    (R.error, why) -> { println(why) }
+    (R.ok, path) -> {
+      case net.connect_unix(path, 5.0) {
+        (R.error, why) -> { println("paint: connect " + why) }
+        (R.ok, raw) -> {
+          const c = wayland.conn_of(raw)
+      case wayland.handshake(c) {
+        (R.error, why) -> { println("paint: handshake " + why) }
+        (R.ok, globals) -> {
+          case globals.find("wl_compositor") {
+            (R.error, why) -> { println("paint: " + why) }
+            (R.ok, found) -> {
+              case found {
+                (comp_name, comp_version) -> {
+                  case wayland.registry_bind(c, comp_name, "wl_compositor", comp_version) {
+                    (R.error, why) -> { println("paint: " + why) }
+                    (R.ok, comp_id) -> {
+                      case globals.find("wl_shm") {
+                        (R.error, why) -> { println("paint: " + why) }
+                        (R.ok, found) -> {
+                          case found {
+                            (shm_name, shm_version) -> {
+                              case wayland.registry_bind(c, shm_name, "wl_shm", shm_version) {
+                                (R.error, why) -> { println("paint: " + why) }
+                                (R.ok, shm_id) -> {
+                                  println("paint: compositor+shm bound")
+                                  case globals.find("xdg_wm_base") {
+                                    (R.error, why) -> { println("paint: " + why) }
+                                    (R.ok, found) -> {
+                                      case found {
+                                        (wm_name, wm_version) -> {
+                                          case wayland.registry_bind(c, wm_name, "xdg_wm_base", wm_version) {
+                                            (R.error, why) -> { println("paint: " + why) }
+                                            (R.ok, wm_id) -> {
+                                              println("paint: wm_base bound")
+                                              window(c, comp_id, shm_id, wm_id)
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  }
+}
+}
+
+def window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64) {
+  case wayland.compositor_create_surface(c, comp_id) {
+    (R.error, why) -> { println("paint: surface " + why) }
+    (R.ok, surface_id) -> {
+      case wayland.wm_base_get_xdg_surface(c, wm_id, surface_id) {
+        (R.error, why) -> { println("paint: xdg surface " + why) }
+        (R.ok, xdg_surface_id) -> {
+          case wayland.xdg_surface_get_toplevel(c, xdg_surface_id) {
+            (R.error, why) -> { println("paint: toplevel " + why) }
+            (R.ok, toplevel_id) -> {
+              case wayland.toplevel_set_title(c, toplevel_id, "emo paint") {
+                (R.error, why) -> { println("paint: title " + why) }
+                (R.ok, _) -> {
+                  case wayland.surface_commit(c, surface_id) {
+                    (R.error, why) -> { println("paint: first commit " + why) }
+                    (R.ok, _) -> {
+                      println("paint: first commit sent")
+                      case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id) {
+                        (R.error, why) -> { println("paint: configure " + why) }
+                        (R.ok, serial) -> {
+                          println("paint: configure serial " + serial.to_string())
+                          case wayland.surface_ack_configure(c, xdg_surface_id, serial) {
+                            (R.error, why) -> { println("paint: ack " + why) }
+                            (R.ok, _) -> {
+                              frame(c, surface_id, shm_id, xdg_surface_id, toplevel_id, wm_id)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def frame(c wayland.Conn, surface_id Int64, shm_id Int64, xdg_surface_id Int64, toplevel_id Int64, wm_id Int64) {
+  const stride = w * 4
+  const pool_path = "/tmp/emo-paint-" + os.getpid().to_string() + ".tmp"
+  case os_shm_open(pool_path) {
+    (R.error, why) -> { println("paint: pool " + why) }
+    (R.ok, pool_fd) -> {
+      case os_ftruncate(pool_fd, stride * h) {
+        (R.error, why) -> { println("paint: ftruncate " + why) }
+        (R.ok, _) -> {
+          paint_rows(pool_fd)
+          case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
+            (R.error, why) -> { println("paint: create_pool " + why) }
+            (R.ok, pool_id) -> {
+              case wayland.pool_create_buffer(c, pool_id, 0, w, h, stride, wayland.shm_format_argb8888()) {
+                (R.error, why) -> { println("paint: create_buffer " + why) }
+                (R.ok, buffer_id) -> {
+                  case wayland.surface_attach(c, surface_id, buffer_id, 0, 0) {
+                    (R.error, why) -> { println("paint: attach " + why) }
+                    (R.ok, _) -> {
+                      case wayland.surface_damage(c, surface_id, 0, 0, w, h) {
+                        (R.error, why) -> { println("paint: damage " + why) }
+                        (R.ok, _) -> {
+                          case wayland.surface_commit(c, surface_id) {
+                            (R.error, why) -> { println("paint: commit " + why) }
+                            (R.ok, _) -> {
+                              println("paint: commit ok " + w.to_string() + "x" + h.to_string())
+                              event_loop(c, surface_id, xdg_surface_id, toplevel_id, wm_id)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The pixels: the top half red, the bottom half blue, one pwrite a
+// row.
+def paint_rows(pool_fd Int64) {
+  const red = row(0, 0, 255, 255)
+  const blue = row(255, 0, 0, 255)
+  var r = 0
+  while r < h {
+    if r < h / 2 {
+      case os_pwrite(pool_fd, red, r * (w * 4)) {
+        (R.error, why) -> { println("paint: pwrite " + why) }
+        (R.ok, _) -> { }
+      }
+    } else {
+      case os_pwrite(pool_fd, blue, r * (w * 4)) {
+        (R.error, why) -> { println("paint: pwrite " + why) }
+        (R.ok, _) -> { }
+      }
+    }
+    r = r + 1
+  }
+}
+
+main()

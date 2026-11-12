@@ -1348,3 +1348,237 @@ lives as long as its app. The decisions are D7 through D12 in
   discipline reached the goldens too — their strike helpers answer
   the holder pattern (build, case, push, read), the bytecode targets
   build them whole. **Landed 2026-11-10.**
+
+## M18 — the Wayland gate (opened 2026-11-11)
+
+The desktop so far lives inside its own machine: the gate, the carve,
+the comp lines — an EmoOS story. The other half of the lineage has
+been waiting since the README's first position line ("Wayland/Quartz
+shape, QNX Screen lineage"): the real Wayland world, the one the
+[noctalia-dev](https://github.com/noctalia-dev) family lives in — the
+Noctalia desktop shell, the Umbriel compositor (scrolling, dwindle,
+master, stacking), the greeter — "a family of native Wayland projects
+that feel like one desktop." M18 opens the gate onto that family from
+the client's side: a pure-Emo Wayland wire-protocol package, so an
+Emo program connects to a real compositor over its Unix socket,
+binds its globals, shares pixels through `wl_shm`, and puts a first
+frame on screen. The direction is decided (2026-11-11): the client
+package is the foundation every later noctalia-track shape rides
+(the fb face ported onto Wayland, a shell, a compositor — each
+re-evaluated once the foundation stands); verification is byte-level
+goldens against a mock compositor plus a Docker Linux leg running
+headless sway with `grim` screenshots. The package declares
+`targets = ["c"]` — the c runtime is where Unix sockets land, and the
+interpreter's fd-passage stubs are a named follow-up, not a debt of
+this milestone. This milestone is hosted-only by construction: **no
+kernel-side half exists, deliberately** (no EmoOS row).
+
+The tasks are sized for idle-time sittings: each is one self-contained
+unit with its own files and its own acceptance (a golden, a digest,
+a build), startable and finishable without the session that wrote the
+list.
+
+- [x] **A18.1** — The package's manifest and its opening words —
+  `stdlib/registry/wayland/0.1.0/package.emo` (name `wayland`,
+  version `0.1.0`, `targets = ["c"]`, `deps { "net" = "0.1.0" }`) and
+  the doc-comment header of `wayland.emo`: what the package is (the
+  Wayland wire protocol in pure Emo over `net`'s Unix socket), the
+  error split (`(R.error, reason)` with reasons prefixed `wayland:`),
+  and the strictness stance (a short read is a failure, never a
+  silence; the fd placeholder word is the codec's, the real fd rides
+  SCM_RIGHTS). **Accept:** the package resolves on `c` and refuses on
+  every other target (E5007, the sqlite3 precedent); the registry's
+  embedded data regenerates on `dune build` untouched.
+  **complete 2026-11-11** — the manifest and the header landed; the
+  package resolves on `c` and refuses on `wasm` with E5007 (the
+  sqlite3 precedent's shape), the registry's embedded data
+  regenerating on `dune build` untouched.
+
+- [x] **A18.2** — The wire's write half: the message builder. The
+  8-byte header (object id, opcode, size — little-endian words), the
+  argument encodings (int32, uint32, fixed 24.8, string with its NUL
+  and the pad to 4, new_id, array, the fd's placeholder word), and
+  the builder hands back one `String` per message, fd arguments
+  queued beside it for the sender to carry. **Accept:** the encodings
+  byte-match hand-computed fixtures (a demo def prints digests).
+  **complete 2026-11-11** — the `Message` builder landed; five
+  hand-computed fixtures matched byte for byte (get_registry, sync,
+  the bind with its padded string, the pool's fd placeholder, the
+  fixed −1 as `00ffffff`), the strictness raising on the out-of-range
+  word, the second fd, and the oversize message.
+
+- [x] **A18.3** — The wire's read half: the event frame reader and
+  the argument decoder. `read_exactly` the header, `read_exactly`
+  the size says, decode the same types back; `wl_display.error`,
+  `wl_callback.done` and `wl_registry.global` are the first events
+  with named shapes. **Accept:** the decoder round-trips A18.2's
+  fixtures and rejects a short frame with `wayland:` reasons.
+  **complete 2026-11-11** — `next_event`'s framing and the `Args`
+  cursor landed; the fixtures decoded back to their exact values
+  (the bind's four arguments, fixed −1, i32 −7, the empty text, the
+  fd's placeholder), and the cursor reading past a frame's end
+  raised with the offset named — the loud failure the wire's
+  corruption earns.
+
+- [x] **A18.4** — The core tables and the handshake: `wl_display`
+  (sync, get_registry, error), `wl_registry` (bind, global,
+  globals remover), `wl_callback` (done); connect through
+  `net.connect_unix`, get_registry, sync, collect the globals into a
+  typed shape, bind by name at the advertised version. **Accept:**
+  the handshake defs compile against the tables; correctness rides
+  the goldens.
+
+- [x] **A18.5** — `examples/wayland_wire`: the codec's golden. Build
+  the handshake's requests, print their digests, parse a canned
+  event stream, print what it saw — all pure function of the codec,
+  no socket. `package.emo` + `package.lock` + `expected.txt` in the
+  corpus discipline, registered in `c_goldens`
+  (`test/emo_cli/emo_cli_test.ml`). **Accept:** the golden passes on
+  the c target; `dune build` after `emo deps resolve` stays green.
+  **complete 2026-11-12** — the golden landed and caught a real bug
+  on its first run: `Globals.at`'s rotation was stateful across
+  calls (at(1) answered the third global) and `find`'s early exit
+  left the deque half-rotated; the walk now goes out and comes all
+  the way home. The transcript pinned in `expected.txt`, registered
+  in `c_goldens` beside httpd's.
+
+- [x] **A18.6** — The c runtime's Unix sockets: `net_listen_unix` and
+  `net_connect_unix` stop refusing on `c` — AF_UNIX bind/listen and
+  connect in `emo_c_runtime.c` (the conn is the boxed fd int; the
+  existing read/write/read_exactly/close work unchanged on the new
+  family), no emitter changes beyond the two names. **Accept:** an
+  in-process demo — a spawned process listens, the main process
+  connects and round-trips bytes — builds and runs on macOS `cc`.
+  **complete 2026-11-12** — AF_UNIX listen/connect in
+  `emo_c_runtime.c` (a stale socket file replaced only when `stat`
+  proves it a socket, never a regular file), the emitter's two arms,
+  the probe's spawned server parking on accept while the client
+  round-tripped bytes. The net docs' "refused on c" line for Unix
+  sockets retired with it.
+
+- [x] **A18.7** — The c runtime's fd passage and shm tier:
+  `net_sendmsg_fd` / `net_recvmsg_fd` (sendmsg/recvmsg with
+  SCM_RIGHTS, the fd queued with the message's own data),
+  `os_shm_open` (POSIX `shm_open` + immediate unlink — macOS and
+  Linux share it), `os_ftruncate`, `os_pwrite`. The emitter arms in
+  `emo_c.ml`, the signatures in `emo_check.ml`, and the interpreter's
+  honest refusal in `emo_eval.ml` ("the fd passage rides the c
+  target" — a runtime failure, never a silence). **Accept:** the
+  primitives compile into the c runtime; a demo sends one fd over a
+  real unix socket and reads it back on the other end.
+  **complete 2026-11-12** — sendmsg/recvmsg with SCM_RIGHTS landed
+  (the probe watched fd 3 leave and fd 7 arrive, the pool's bytes
+  readable at the far end), and three findings reshaped the road:
+  the checker's `(R.error, why)` convention only knew the pair — the
+  three-slot `(R, data, fd)` crashed `fold_left2` after the E4013
+  report, and the convention now reads any `(R, ...)` shape; macOS
+  hides the CMSG macros from a strict-ANSI unit without
+  `_DARWIN_C_SOURCE`; and macOS's POSIX shm objects refuse read and
+  pwrite outright (mmap-only), so `os_shm_open` became a private
+  file at a path, unlinked at birth — seekable and mappable on both
+  platforms, the shape the wl_shm pool accepts.
+
+- [x] **A18.8** — `examples/wayland_handshake`: the mock compositor's
+  golden. One program: a spawned process serves the socket as the
+  canned compositor (registry advert, sync answers, byte-exact
+  request assertions), the main process is the client riding A18.4's
+  handshake — including the `wl_shm` pool fd round trip (the mock
+  receives the fd, reads the pool's bytes back through it, asserts
+  the pattern). The transcript lands in `expected.txt`, registered
+  in `c_goldens`. **Accept:** the golden is byte-deterministic and
+  green on macOS `cc`.
+
+- [x] **A18.9** — The `xdg-shell` and `wl_shm` tables: `xdg_wm_base`
+  (ping/pong, get_xdg_surface), `xdg_surface` (configure/ack,
+  new_toplevel frame callbacks), `xdg_toplevel` (configure events,
+  set_title, close), `wl_shm` (create_pool, formats — ARGB8888
+  first), `wl_shm_pool` (create_buffer), `wl_buffer` (release). The
+  configure-before-commit discipline the protocol demands, made
+  structural in the package's API. **Accept:** the tables compile;
+  the state machine's shape reads in the defs' signatures.
+  **complete 2026-11-12** — the tables landed with their opcode
+  numbers stated where they are used, plus the wl_compositor and
+  wl_surface pair the window's tree grows from, and
+  `wait_configure` — the state machine's heart, the def whose
+  signature names the discipline (the serial out, the ping answered
+  on the way, the toplevel's own configures set aside). The opcode
+  numbers are the hand-written tables' honest risk: the smoke leg
+  (A18.11) is where a real compositor grades them.
+
+- [x] **A18.10** — `examples/wayland_paint`: the first frame. Open a
+  toplevel, `os_pwrite` an ARGB8888 pattern into the pool, wait the
+  configure, ack it, attach, commit — the demo prints its own
+  progress lines and leaves the window up a beat for the screenshot
+  leg. **Accept:** under a real compositor (the smoke leg) the
+  window maps; the pattern's pixels are what `grim` captures.
+  **complete 2026-11-12** — the demo landed and pulled `os.getenv`
+  in with it (the socket path is `$XDG_RUNTIME_DIR`/`$WAYLAND_DISPLAY`,
+  and no real client lives without the environment; the os package's
+  digest moved and the six locks pinning it re-resolved). The
+  sequence drives the whole ladder — handshake, the three binds at
+  the advertised versions, surface, xdg surface, toplevel, title,
+  the empty commit, the configure wait, the ack, the pool painted
+  one pwrite a row, attach, damage, the second commit — then reads
+  events until the compositor lets go. Two demo-shaped lessons: the
+  void def takes no `return` (the loop became `handle_event`
+  answering whether it lives on), and the generated C seeds module
+  consts in the root entry, so a def that binds-but-never-uses them
+  warns — the corpus's own pre-existing shape, recorded, not fixed
+  here. **complete 2026-11-12** — and the demo graded the hand's
+  opcode tables against the real compositor: `get_xdg_surface` is
+  opcode **2** (`create_positioner` sits at 1 — the first smoke run
+  silently minted a positioner@8 and the compositor's error named
+  our get_toplevel as its `set_size`), `pong` is 3,
+  `ack_configure` is 4 (`set_window_geometry` at 3), and the
+  wl_surface family sits one higher than the codec had it
+  (`destroy` at 0: attach 1, damage 2, commit 6). Sway graded
+  every one of them, loudly, by name.
+
+- [x] **A18.11** — The smoke leg: `devtools/wayland-smoke.Dockerfile`
+  (cc, sway, grim — no OCaml in the image) and
+  `devtools/wayland-smoke.sh`: the host emits the demo's C
+  (`emo build --target c`), the container compiles and runs it
+  under headless sway (`WLR_BACKENDS=headless`), `grim` captures,
+  the script checks the pattern's pixels and exits nonzero with the
+  capture beside it on any miss. **Accept:** the script exits 0 and
+  the screenshot shows the pattern — the milestone's first frame on
+  a real compositor.
+  **complete 2026-11-12** — the leg runs on this desk's Docker
+  Desktop (linux/arm64) and exits 0: `red pixels ~63900, blue
+  pixels ~63900`, the 320×200 window's halves counted from grim's
+  PPM. The leg's own lessons: sway refuses root ("unable to drop
+  root" — the image runs as a non-root user), Debian's CDN answered
+  502 for whole pools (the Dockerfile pins the TUNA mirror), and
+  the run script keeps the client's and sway's logs beside the
+  capture on every miss. The debugging it earned is the
+  milestone's deepest finding, recorded in CHECK.md: **the wire's
+  fd argument takes NO word in the argument stream** — the
+  compositor read our spec-shaped placeholder as the next
+  argument's value (the pool's size arrived as 0, then as the fd's
+  own number when the placeholder carried it), and the codec's fd
+  now rides the ancillary queue alone.
+
+- [ ] **A18.11** — The smoke leg: `devtools/wayland-smoke.Dockerfile`
+  (cc, sway, grim — no OCaml in the image) and
+  `devtools/wayland-smoke.sh`: the host emits the demo's C
+  (`emo build --target c`), the container compiles and runs it
+  under headless sway (`WLR_BACKENDS=headless`), `grim` captures,
+  the script checks the pattern's pixels and exits nonzero with the
+  capture beside it on any miss. **Accept:** the script exits 0 and
+  the screenshot shows the pattern — the milestone's first frame on
+  a real compositor.
+
+- [x] **A18.12** — The docs and the ledger: `docs/stdlib/wayland.md`
+  and its `docs/zh-CN/stdlib/wayland.md` mirror, both `stdlib.md`
+  index rows (English and Chinese), `plan/step-58-wayland-client.md`
+  (the design record: the fd-passage decision, the c-target-first
+  shape, the interpreter stubs as the named follow-up), and the
+  CHECK.md entry carrying the milestone's findings. **Accept:** the
+  docs land in both languages; the ledger entry states what was
+  learned, not what was built.
+  **complete 2026-11-12** — the reference landed in both languages,
+  both `stdlib.md` indexes grew their row and section, the design
+  record is `plan/step-58-wayland-client.md`, and the CHECK.md entry
+  carries the wire's four graded decisions, the two found-not-fixed
+  findings, and the smoke leg's exit 0. The milestone is closed:
+  A18.1–A18.12 complete, the foundation standing.

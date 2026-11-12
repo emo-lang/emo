@@ -1,0 +1,15 @@
+get_registry 0100000001000c0002000000
+sync 0100000000000c0003000000
+bind 0200000000002800010000000e000000776c5f636f6d706f7369746f720000000500000003000000
+decode bind 1 wl_compositor 5 3
+create_pool 0400000000000c0000100000
+create_pool carries fd 7
+create_pool size 4096 carried true 7
+fixed -1 00ffffff back -1
+empty text 0100000000000000
+globals 3
+global 0 wl_compositor 5
+global 1 wl_shm 1
+global 2 xdg_wm_base 1
+find wl_shm 2 1
+find wl_foo wayland: no global named wl_foo

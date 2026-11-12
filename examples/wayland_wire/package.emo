@@ -1,0 +1,10 @@
+package {
+  name = "emo/wayland_wire"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "wayland" = "0.1.0"
+    "crypto" = "0.1.0"
+  }
+}

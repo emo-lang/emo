@@ -41,6 +41,13 @@ def getppid() Int64 {
   return os_getppid()
 }
 
+// The process environment, read-only: the one name asked for, or
+// `(R.error, reason)` when the environment does not carry it — a
+// missing name is expected data, not a failure to dress up.
+def getenv(name String) (R, String) {
+  return os_getenv(name)
+}
+
 def fork() (R, Int64) {
   return os_fork()
 }
