@@ -1450,11 +1450,19 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           | Emo_check.ClassType display -> (
               match Hashtbl.find_opt env.classes display with
               | Some c -> (
+                  (* The IR carries the plain mangled name; the C
+                     declaration and the call both go through `c_ident`,
+                     so a def named `goto` declares as `...__goto_c`.
+                     The lookup accepts both spellings and the call
+                     names itself off the matched method, the same way
+                     the declaration did. *)
                   let mangled = c.Emo_ir.cname ^ "__" ^ c_ident name in
+                  let plain = c.Emo_ir.cname ^ "__" ^ name in
                   match
                     List.find_opt
                       (fun (m : Emo_ir.func) ->
-                        String.equal m.Emo_ir.fname mangled
+                        (String.equal m.Emo_ir.fname mangled
+                        || String.equal m.Emo_ir.fname plain)
                         && List.length m.Emo_ir.fparams - 1 = arity)
                       c.Emo_ir.cmethods
                   with
@@ -1468,7 +1476,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                           args (List.tl m.Emo_ir.fparams)
                       in
                       let v =
-                        Printf.sprintf "%s(%s%s)" (c_ident mangled) self_code
+                        Printf.sprintf "%s(%s%s)" (c_ident m.Emo_ir.fname)
+                          self_code
                           (if arg_code = [] then ""
                            else ", " ^ String.concat ", " arg_code)
                       in

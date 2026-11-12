@@ -62,6 +62,8 @@ The packages:
 | [`http`](#the-http-package) | HTTP client | `ocaml`, `c`, `typescript` |
 | [`httpd`](#the-httpd-package) | HTTP server | `ocaml`, `c`, `typescript` |
 | [`valkey`](#the-valkey-package) | Valkey client, RESP2 | `ocaml`, `c`, `typescript` |
+| [`websocket`](#the-websocket-package) | WebSocket client and server halves, RFC 6455 | `ocaml`, `c`, `typescript` |
+| [`playwright`](#the-playwright-package) | Playwright client, the driver's channel protocol over `run-server` | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
@@ -410,6 +412,51 @@ Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, which its
 own manifest pins). Reference:
 [`docs/stdlib/valkey.md`](stdlib/valkey.md) · Demo:
 `examples/valkey_demo`.
+
+## The `websocket` package
+
+The two WebSocket halves (RFC 6455) in pure Emo on `net`: `connect`
+dials and verifies the handshake's accept, `accept` takes a
+connection a client upgraded, and both meet on one `Websocket` whose
+unit is one text message. Frames stay under this roof — masking by
+role, pings answered with their own payload, a close answered, and a
+fragmented message joined before `recv_message` answers it.
+
+```emo
+websocket.connect(host, port, path, timeout)  // (R, Websocket)
+websocket.accept(conn)                        // (R, Websocket)
+ws.send_text(data)    // (R, Websocket)
+ws.recv_message()     // (R, String) — fragments joined, control frames handled
+ws.close()            // (R, Websocket) — one close frame, then the socket
+```
+
+Targets: `["ocaml", "c", "typescript"]`. Reference:
+[`docs/stdlib/websocket.md`](stdlib/websocket.md) · Demo:
+`examples/websocket_demo`.
+
+## The `playwright` package
+
+A Playwright client in pure Emo: the driver's channel protocol spoken
+to the official `playwright run-server` through the `websocket`
+package. The run-server pre-launches the browser for the connection —
+the client never launches — and the page's doors drive it. A refused
+call is `(R.error, "playwright: " + the driver's text)`; the wire
+never raises on driver data.
+
+```emo
+playwright.connect(host, port, timeout)  // (R, Playwright) — chromium
+pw.browser()                             // Browser — the pre-launched one
+browser.new_page()                       // (R, Page)
+page.goto(url)                           // (R, PageResponse) — status and url
+page.click(sel)                          // (R, Page) — fill, press likewise
+page.text_content(sel)                   // (R, Text) — is_null?(), then as_string()
+page.screenshot()                        // (R, Bytes) — a PNG
+pw.close()                               // (R, Playwright)
+```
+
+Targets: `["ocaml", "c", "typescript"]`. Reference:
+[`docs/stdlib/playwright.md`](stdlib/playwright.md) · Demo:
+`examples/playwright_demo`.
 
 ## The `json` package
 

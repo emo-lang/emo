@@ -1,0 +1,87 @@
+// The live check (T64.7): the playwright package against a REAL
+// `playwright run-server` driving a real headless chromium — no fake
+// driver anywhere on the wire. The program serves its own local page
+// through httpd (loopback, port 0), so nothing external is contacted.
+//
+// This example is in no golden list on purpose: it needs a machine
+// with playwright installed (`npm install -g playwright` plus
+// `playwright install chromium --only-shell`) and a driver running
+// (`playwright run-server --port 9933`), then it runs by hand:
+// `emo run main.emo`. The output is printed, read by a human, and
+// the driver's version is recorded in CHECK.md — a live answer is
+// not byte-stable across driver versions, so it is not pinned.
+//
+// The browser's close is deliberately not called: the run-server
+// holds the pre-launched browser in its deny-launch mode and takes
+// it down when the client hangs up — `pw.close()` is the goodbye.
+
+require "httpd"
+require "net"
+require "playwright"
+
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
+
+// The page the ladder reads: a title, an element carrying multi-byte
+// text, a second paragraph.
+def app(req httpd.Request) httpd.Response {
+  const page = "<html><head><title>emo live page</title></head><body><h1 id=\"hello\">你好, 真浏览器</h1><p id=\"para\">the live check's own words</p></body></html>"
+  return httpd.response(200, [("Content-Type", "text/html; charset=utf-8")], page)
+}
+
+const server = httpd.serve(listener, app)
+const url = "http://127.0.0.1:" + listener.port().to_string() + "/"
+
+case playwright.connect("127.0.0.1", 9933, 30.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, pw)     -> {
+    const browser = pw.browser()
+    case browser.version() {
+      (R.error, why) -> { println("version failed: ${why}") }
+      (R.ok, v)      -> { println("browser version: ${v}") }
+    }
+    case browser.new_page() {
+      (R.error, why) -> { println("new_page failed: ${why}") }
+      (R.ok, page)   -> {
+        println("page opened")
+        case page.goto(url) {
+          (R.error, why) -> { println("goto failed: ${why}") }
+          (R.ok, resp)   -> {
+            if resp.is_null?() {
+              println("goto: no response")
+            } else {
+              println("goto: ${resp.url()} ${resp.status()}")
+            }
+          }
+        }
+        case page.title() {
+          (R.error, why) -> { println("title failed: ${why}") }
+          (R.ok, text)   -> { println("title: ${text}") }
+        }
+        case page.text_content("#hello") {
+          (R.error, why) -> { println("text_content failed: ${why}") }
+          (R.ok, text)   -> { println("#hello: ${text.as_string()}") }
+        }
+        case page.text_content("#nothing") {
+          (R.error, why) -> { println("text_content failed: ${why}") }
+          (R.ok, text)   -> { println("#nothing is null: ${text.is_null?()}") }
+        }
+        case page.fill("#missing-input", "words") {
+          (R.error, why) -> { println("fill #missing-input failed: ${why}") }
+          (R.ok, _)      -> { println("filled #missing-input") }
+        }
+        case page.screenshot() {
+          (R.error, why) -> { println("screenshot failed: ${why}") }
+          (R.ok, png)    -> { println("screenshot: ${png.length()} bytes") }
+        }
+        case page.close() {
+          (R.error, why) -> { println("page close failed: ${why}") }
+          (R.ok, _)      -> { println("page closed") }
+        }
+      }
+    }
+    case pw.close() {
+      (R.error, why) -> { println("close failed: ${why}") }
+      (R.ok, _)      -> { println("connection closed") }
+    }
+  }
+}

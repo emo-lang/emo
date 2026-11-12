@@ -1,0 +1,444 @@
+require "base64"
+require "json"
+require "websocket"
+
+// The Playwright client: browser automation over the driver's
+// channel protocol, spoken to the official `playwright run-server`
+// through the websocket package. Pure Emo over the net surface —
+// every call parks the process on the scheduler like any other
+// socket work, and every failure on the wire is the value
+// (R.error, reason), never a crash.
+//
+// The shape of a session: `connect` dials the run-server's
+// websocket endpoint (the browser name rides the `?browser=` query
+// parameter; the server launches the browser for the connection and
+// hands it over pre-launched — the client never launches), then
+// `browser()` opens it, `new_page()` opens a page, and the page's
+// doors drive it: `goto`, `click`, `fill`, `press`, `title`,
+// `content`, `text_content`, `screenshot`, `close`. `close` on the
+// Playwright value hangs up; the server then takes the browser down.
+//
+// Errors follow the standard library's three-way split: the driver
+// refusing a call is the value `(R.error, "playwright: " + the
+// driver's text)`, the wire failing is the value with the websocket
+// or net reason, and a caller's own mistake — an unknown browser, an
+// empty selector — raises. The wire path never raises on driver
+// data: a malformed message is a reason, not a crash.
+//
+// The protocol is the driver's own, not a published standard: this
+// package tracks the wire as the driver speaks it, and the version
+// it was verified against lives in docs/stdlib/playwright.md.
+
+const default_browser = "chromium"
+
+// The per-call deadline the doors send in the metadata: the driver's
+// own 30000 ms default. A selector the page never meets would
+// otherwise hold the driver's answer forever — a metadata with no
+// timeout is no deadline at all. Structural calls (initialize, the
+// context dance, closes) carry 0, the official client's own shape.
+const door_timeout_ms = 30000
+const no_call_deadline = 0
+
+class Playwright {
+  def init(conn internal.channel.Conn) {
+    self.conn = conn
+  }
+
+  // The browser the driver pre-launched for this connection.
+  def browser() Browser {
+    return Browser.new(conn: self.conn)
+  }
+
+  def set_timeout(seconds Float64) Void {
+    self.conn.set_timeout(seconds)
+  }
+
+  // Hang up. The server takes the connection's browser down with it.
+  def close() (R, Playwright) {
+    case self.conn.shutdown() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+}
+
+class Browser {
+  def init(conn internal.channel.Conn) {
+    self.conn = conn
+  }
+
+  // The browser's version, as the driver introduced it.
+  def version() (R, String) {
+    case self.conn.lookup(self.conn.browser()) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, obj)    -> { return internal.channel.string_field(obj.initializer, "version", "the browser's version") }
+    }
+  }
+
+  // A page rides an implicit context: newContext on the browser,
+  // newPage on that context — the driver's channels have no page
+  // door on the browser itself.
+  def new_page() (R, Page) {
+    case self.conn.call(self.conn.browser(), "newContext", json.object([]), no_call_deadline) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, result) -> {
+        case internal.channel.guid_field(result, "context", "the newContext answer") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, context_guid) -> {
+            case self.conn.call(context_guid, "newPage", json.object([]), no_call_deadline) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, page_result) -> {
+                case internal.channel.guid_field(page_result, "page", "the newPage answer") {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, page_guid) -> { return bind_page(self.conn, page_guid) }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def close() (R, Browser) {
+    case self.conn.call(self.conn.browser(), "close", json.object([]), no_call_deadline) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+}
+
+class Page {
+  def init(conn internal.channel.Conn, page_guid String, frame_guid String) {
+    self.conn = conn
+    self.page_guid = page_guid
+    self.frame_guid = frame_guid
+  }
+
+  // Navigate the page's main frame. The answer is the response the
+  // navigation earned — its status and its url — or the null
+  // response when the navigation earns none (`about:blank`, a data
+  // url); `is_null?()` tells the two apart, json's reading.
+  def goto(url String) (R, PageResponse) {
+    if url == "" {
+      raise Exception.new(message: "playwright: `goto` needs a url")
+    }
+    case self.conn.call(self.frame_guid, "goto", json.object([("url", json.string(url))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, result) -> { return page_response_of(self.conn, result) }
+    }
+  }
+
+  def click(selector String) (R, Page) {
+    if selector == "" {
+      raise Exception.new(message: "playwright: a selector must not be empty")
+    }
+    case self.conn.call(self.frame_guid, "click", json.object([("selector", json.string(selector))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  def fill(selector String, text String) (R, Page) {
+    if selector == "" {
+      raise Exception.new(message: "playwright: a selector must not be empty")
+    }
+    case self.conn.call(self.frame_guid, "fill", json.object([("selector", json.string(selector)), ("value", json.string(text))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  def press(selector String, key String) (R, Page) {
+    if selector == "" {
+      raise Exception.new(message: "playwright: a selector must not be empty")
+    }
+    if key == "" {
+      raise Exception.new(message: "playwright: a key must not be empty")
+    }
+    case self.conn.call(self.frame_guid, "press", json.object([("selector", json.string(selector)), ("key", json.string(key))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  def title() (R, String) {
+    return frame_value(self, "title", "title")
+  }
+
+  def content() (R, String) {
+    return frame_value(self, "content", "content")
+  }
+
+  // The element's text. An element the selector does not match is
+  // not an error: the answer is the null text, `is_null?()` —
+  // valkey's null reply with the same reading.
+  def text_content(selector String) (R, Text) {
+    if selector == "" {
+      raise Exception.new(message: "playwright: a selector must not be empty")
+    }
+    case self.conn.call(self.frame_guid, "textContent", json.object([("selector", json.string(selector))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, result) -> {
+        const value = internal.channel.field(result, "value")
+        if value.is_null?() {
+          return (R.ok, TextNull.new())
+        }
+        if value.kind() != json.JsonKind.jstring {
+          return (R.error, "playwright: `text_content` answered a non-string value")
+        }
+        return (R.ok, TextValue.new(value: value.as_string()))
+      }
+    }
+  }
+
+  // A PNG of the page, the bytes decoded out of the driver's base64.
+  def screenshot() (R, Bytes) {
+    case self.conn.call(self.page_guid, "screenshot", json.object([("type", json.string("png"))]), door_timeout_ms) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, result) -> {
+        const binary = internal.channel.field(result, "binary")
+        if binary.is_null?() {
+          return (R.error, "playwright: `screenshot` answered no image")
+        }
+        if binary.kind() != json.JsonKind.jstring {
+          return (R.error, "playwright: `screenshot` answered a non-string image")
+        }
+        case base64.decode(binary.as_string()) {
+          (R.error, why) -> { return (R.error, "playwright: `screenshot` answered malformed base64 (" + why + ")") }
+          (R.ok, data)    -> { return (R.ok, data.to_bytes()) }
+        }
+      }
+    }
+  }
+
+  def close() (R, Page) {
+    case self.conn.call(self.page_guid, "close", json.object([]), no_call_deadline) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+}
+
+// The element's text, read or missing.
+interface Text {
+  def is_null?() Bool
+  def as_string() String
+}
+
+class TextValue {
+  def init(value String) {
+    self.value = value
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def as_string() String {
+    return self.value
+  }
+}
+
+class TextNull {
+  def is_null?() Bool {
+    return true
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "playwright: expected text, got the null text")
+  }
+}
+
+// The response a navigation earned.
+interface PageResponse {
+  def is_null?() Bool
+  def status() Int64
+  def url() String
+}
+
+class PageResponseValue {
+  def init(code Int64, location String) {
+    self.code = code
+    self.location = location
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def status() Int64 {
+    return self.code
+  }
+
+  def url() String {
+    return self.location
+  }
+}
+
+class PageResponseNull {
+  def is_null?() Bool {
+    return true
+  }
+
+  def status() Int64 {
+    raise Exception.new(message: "playwright: expected a response, got the null response")
+  }
+
+  def url() String {
+    raise Exception.new(message: "playwright: expected a response, got the null response")
+  }
+}
+
+// ---- connecting ----
+
+// The doors over the net surface. `connect` is chromium;
+// `connect_with` names the browser. The timeout bounds each
+// exchange (websocket and net's per-operation deadlines), `0.0`
+// waits indefinitely.
+def connect(host String, port Int64, timeout Float64) (R, Playwright) {
+  return connect_with(default_browser, host, port, timeout)
+}
+
+def connect_with(browser_name String, host String, port Int64, timeout Float64) (R, Playwright) {
+  if !known_browser(browser_name) {
+    raise Exception.new(message: "playwright: unknown browser `" + browser_name + "` — chromium, firefox, webkit")
+  }
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      // The insecure dial, deliberately: the driver's server answers
+      // an accept that does not derive from the client's key — its
+      // own client never validates it — so the RFC's proof is not
+      // available on this endpoint. The protocol proof this package
+      // carries instead is the initialize handshake itself.
+      case websocket.connect_insecure(host, port, ws_path(browser_name), timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, ws)     -> { return initialize_session(internal.channel.Conn.new(ws: ws)) }
+      }
+    }
+  }
+}
+
+def known_browser(name String) Bool {
+  if name == "chromium" {
+    return true
+  }
+  if name == "firefox" {
+    return true
+  }
+  if name == "webkit" {
+    return true
+  }
+  return false
+}
+
+def checked_timeout(timeout Float64) (R, Int64) {
+  if timeout < 0.0 {
+    return (R.error, "playwright: timeout must not be negative")
+  }
+  return (R.ok, 0)
+}
+
+// The browser rides the endpoint's query parameter: the run-server
+// launches it for the connection and hands it over pre-launched.
+def ws_path(browser_name String) String {
+  return "/?browser=" + browser_name
+}
+
+// The handshake: initialize on the root channel, the guid of the
+// Playwright object out of the answer, the pre-launched browser out
+// of the Playwright object's initializer. The `__create__` events
+// that introduce those objects have built the object table by the
+// time the answer lands.
+def initialize_session(conn internal.channel.Conn) (R, Playwright) {
+  const params = json.object([("sdkLanguage", json.string("javascript"))])
+  case conn.call("", "initialize", params, no_call_deadline) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, result) -> {
+      case internal.channel.guid_field(result, "playwright", "the initialize answer") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, pw_guid) -> {
+          conn.assign_playwright(pw_guid)
+          return bind_browser(conn, pw_guid)
+        }
+      }
+    }
+  }
+}
+
+def bind_browser(conn internal.channel.Conn, pw_guid String) (R, Playwright) {
+  case conn.lookup(pw_guid) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, pw_obj) -> {
+      case internal.channel.guid_field(pw_obj.initializer, "preLaunchedBrowser", "the pre-launched browser") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, browser_guid) -> {
+          conn.assign_browser(browser_guid)
+          return (R.ok, Playwright.new(conn: conn))
+        }
+      }
+    }
+  }
+}
+
+def bind_page(conn internal.channel.Conn, page_guid String) (R, Page) {
+  case conn.lookup(page_guid) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, obj)    -> {
+      case internal.channel.guid_field(obj.initializer, "mainFrame", "the page's main frame") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, frame_guid) -> {
+          return (R.ok, Page.new(conn: conn, page_guid: page_guid, frame_guid: frame_guid))
+        }
+      }
+    }
+  }
+}
+
+// ---- the doors' decodes ----
+
+def frame_value(page Page, method String, what String) (R, String) {
+  case page.conn.call(page.frame_guid, method, json.object([]), door_timeout_ms) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, result) -> {
+      const value = internal.channel.field(result, "value")
+      if value.is_null?() {
+        return (R.error, "playwright: `" + what + "` answered no value")
+      }
+      if value.kind() != json.JsonKind.jstring {
+        return (R.error, "playwright: `" + what + "` answered a non-string value")
+      }
+      return (R.ok, value.as_string())
+    }
+  }
+}
+
+// The goto answer: the response's channel reference, whose
+// initializer carries the status and the url — or no reference at
+// all, the navigation that earns no response.
+def page_response_of(conn internal.channel.Conn, result json.Json) (R, PageResponse) {
+  const ref = internal.channel.field(result, "response")
+  if ref.is_null?() {
+    return (R.ok, PageResponseNull.new())
+  }
+  case internal.channel.guid_ref(ref, "the goto answer") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, response_guid) -> {
+      case conn.lookup(response_guid) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, obj)    -> {
+          case internal.channel.int_field(obj.initializer, "status", "the response's status") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, status) -> {
+              case internal.channel.string_field(obj.initializer, "url", "the response's url") {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, url)    -> { return (R.ok, PageResponseValue.new(code: status, location: url)) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

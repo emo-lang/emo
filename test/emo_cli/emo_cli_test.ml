@@ -732,6 +732,15 @@ let c_goldens =
     "crypto_sign_sweep";
     "crypto_ecdh";
     "crypto_ecdh_iterated";
+    (* websocket_demo: both halves of the wire on loopback — the
+       client dials the upgrade, the server echoes through
+       `websocket.accept`, the golden pins the round trip byte for
+       byte; playwright_demo: the package against this repo's
+       miniature driver, the run-server shapes answered over real
+       websocket frames — fragmented messages, a ping answered, the
+       eight-byte length form, both error shapes *)
+    "websocket_demo";
+    "playwright_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

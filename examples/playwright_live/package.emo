@@ -1,0 +1,11 @@
+package {
+  name = "emo/playwright_live"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "httpd" = "0.1.0"
+    "net" = "0.1.0"
+    "playwright" = "0.1.0"
+  }
+}

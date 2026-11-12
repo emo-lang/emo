@@ -1,0 +1,13 @@
+package {
+  name = "emo/playwright_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "base64" = "0.1.0"
+    "crypto" = "0.1.0"
+    "json" = "0.1.0"
+    "net" = "0.1.0"
+    "playwright" = "0.1.0"
+  }
+}

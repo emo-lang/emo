@@ -33,6 +33,8 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`http`](#http-包) | HTTP 客户端 | `ocaml`、`c`、`typescript` |
 | [`httpd`](#httpd-包) | HTTP 服务器 | `ocaml`、`c`、`typescript` |
 | [`valkey`](#valkey-包) | Valkey 客户端,RESP2 | `ocaml`、`c`、`typescript` |
+| [`websocket`](#websocket-包) | WebSocket 客户端与服务端双半,RFC 6455 | `ocaml`、`c`、`typescript` |
+| [`playwright`](#playwright-包) | Playwright 客户端,经 `run-server` 讲驱动的通道协议 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
@@ -280,6 +282,38 @@ v.command(args)             // (R, Reply) — 任意命令,原始回复
 四十五扇左右的类型化门覆盖字符串、键、哈希、列表、集合五族外加 `ping`/`echo`/`auth`/`select`;每扇门解码自己命令的契约所命名的形状,服务器答出别的形状就以错误值返回。回复是一棵 `Reply` 树——每种 RESP2 类型一个类(`rnull`、`rstring`、`rint`、`rarray`;简单字符串与 bulk 字符串同为一类),`as_*` 访问器是调用者的断言,json 的规矩。timeout 约束每一次交换;`0.0` 表示无限等待。
 
 目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。参考:[`docs/zh-CN/stdlib/valkey.md`](stdlib/valkey.md) · 示例:`examples/valkey_demo`。
+
+## websocket 包
+
+构建在 `net` 之上的纯 Emo WebSocket 双半(RFC 6455):`connect` 拨号并校验握手的 accept,`accept` 接下一条客户端升级来的连接,双方在同一个 `Websocket` 上会合,交换单位是一条文本消息。帧留在这层屋顶之下——按角色加掩码、ping 用原载荷应答、close 被应答,拆成多帧的消息在 `recv_message` 应答前拼回。
+
+```emo
+websocket.connect(host, port, path, timeout)  // (R, Websocket)
+websocket.accept(conn)                        // (R, Websocket)
+ws.send_text(data)    // (R, Websocket)
+ws.recv_message()     // (R, String) —— 分片已拼回,控制帧已处理
+ws.close()            // (R, Websocket) —— 一个 close 帧,然后关套接字
+```
+
+目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/websocket.md`](stdlib/websocket.md) · 示例:`examples/websocket_demo`。
+
+## playwright 包
+
+纯 Emo 的 Playwright 客户端:经 `websocket` 包对着官方 `playwright run-server` 讲驱动的通道协议。run-server 为连接预 launch 浏览器——客户端从不 launch——门面驱动页面。被拒的调用是 `(R.error, "playwright: " + 驱动原文)`;线路永不因驱动数据 raise。
+
+```emo
+playwright.connect(host, port, timeout)  // (R, Playwright) —— chromium
+pw.browser()                             // Browser —— 预 launch 的那个
+browser.new_page()                       // (R, Page)
+page.goto(url)                           // (R, PageResponse) —— status 与 url
+page.click(sel)                          // (R, Page) —— fill、press 同型
+page.text_content(sel)                   // (R, Text) —— 先 is_null?(),再 as_string()
+page.screenshot()                        // (R, Bytes) —— 一张 PNG
+pw.close()                               // (R, Playwright)
+```
+
+目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 示例:`examples/playwright_demo`。
+
 
 ## json 包
 

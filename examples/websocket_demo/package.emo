@@ -1,0 +1,10 @@
+package {
+  name = "emo/websocket_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    "net" = "0.1.0"
+    "websocket" = "0.1.0"
+  }
+}

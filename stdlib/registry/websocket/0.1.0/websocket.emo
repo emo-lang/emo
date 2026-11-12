@@ -1,0 +1,552 @@
+require "base64"
+require "crypto"
+require "net"
+require "rand"
+
+// The WebSocket halves (RFC 6455) over the net surface: the client
+// dials with `connect`, the server takes an accepted connection with
+// `accept`, and both sides meet on one `Websocket` whose unit of
+// exchange is one text message — `send_text` writes it, `recv_message`
+// reads the next one the peer sent, however many frames the wire
+// carried it in. Frames are the transport's business and stay under
+// this roof: the client masks what she sends and refuses masked
+// frames on the way in, the server mirrors both rules, pings are
+// answered with their own payload, unsolicited pongs are skipped, and
+// a close frame is answered and ends the message stream. Binary
+// frames are refused: every protocol this package serves speaks text.
+// Two doors dial: `connect` verifies the peer's accept — the RFC's
+// proof — and `connect_insecure` skips that one check, named for the
+// peers whose answer does not derive from the client's key
+// (playwright's `run-server` ships an accept its own client never
+// validates). Everything else about the two dials is identical.
+//
+// Blocking operations park the process on the scheduler like every
+// net call, and every data-driven failure — a refused handshake, a
+// bare frame where a masked one was required, an exceeded deadline, a
+// peer gone — is the value (R.error, reason) stating exactly what
+// failed; only the caller's own mistakes raise. No error codes, no
+// nil.
+
+const accept_guid = "258EAFA9-E914-47DA-95CA-C5AB0DC85B11"
+const client_agent = "emo-websocket/0.1.0"
+
+const op_continuation = 0
+const op_text = 1
+const op_close = 8
+const op_ping = 9
+const op_pong = 10
+
+class Frame {
+  def init(opcode Int64, fin Bool, payload Bytes) {
+    self.opcode = opcode
+    self.fin = fin
+    self.payload = payload
+  }
+}
+
+class Websocket {
+  def init(conn TcpConn, server_side Bool) {
+    self.conn = conn
+    self.server_side = server_side
+  }
+
+  // One text message out. The client masks what she sends, the
+  // server sends bare.
+  def send_text(data String) (R, Websocket) {
+    case send_frame(self.conn, !self.server_side, op_text, data.to_bytes()) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  // The next message in, assembled across whatever fragmentation the
+  // wire used. Control frames met along the way are handled here:
+  // pings answered, pongs skipped, a close answered — the answer to
+  // this door is then the error value naming the end.
+  def recv_message() (R, String) {
+    case next_data_frame(self) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, first)  -> {
+        if first.fin {
+          return (R.ok, first.payload.to_string())
+        }
+        return assemble(self, first, 0)
+      }
+    }
+  }
+
+  def set_timeout(seconds Float64) Void {
+    self.conn.set_timeout(seconds)
+  }
+
+  // The goodbye: one close frame, then the socket. When the peer's
+  // close already came through `recv_message`, both halves of the
+  // goodbye have been spoken and this door answers with the socket's
+  // own refusal — the same end, read twice.
+  def close() (R, Websocket) {
+    const body = Bytes.new(2)
+    body.set(0, 3)
+    body.set(1, 232)
+    case send_frame(self.conn, !self.server_side, op_close, body) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> {
+        case self.conn.close() {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _)      -> { return (R.ok, self) }
+        }
+      }
+    }
+  }
+}
+
+// ---- dialling ----
+
+// The client's door: connect over TCP, upgrade, and hand back the
+// client's side. The timeout bounds the connect and each later
+// exchange (net's per-operation deadline), `0.0` waits indefinitely.
+// The path must say where to knock — `/` on an ordinary server. The
+// peer's accept is verified: the only proof the peer speaks this
+// protocol.
+def connect(host String, port Int64, path String, timeout Float64) (R, Websocket) {
+  return connect_either(host, port, path, timeout, true)
+}
+
+// The visibly dangerous twin: the same dial with the accept check
+// skipped — for peers whose answer does not derive from the client's
+// key at all, playwright's `run-server` among them (its own client
+// never validates the accept, so its server never had to be right).
+// The handshake is otherwise identical and the name says what is not
+// checked, tls_connect_insecure's rule.
+def connect_insecure(host String, port Int64, path String, timeout Float64) (R, Websocket) {
+  return connect_either(host, port, path, timeout, false)
+}
+
+def connect_either(host String, port Int64, path String, timeout Float64, verify Bool) (R, Websocket) {
+  if !path.starts_with("/") {
+    raise Exception.new(message: "websocket: the path must start with `/`")
+  }
+  case checked_timeout(timeout) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> {
+      case net.connect(host, port, timeout) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, conn)   -> { return dial(conn, host, port, path, timeout, verify) }
+      }
+    }
+  }
+}
+
+def checked_timeout(timeout Float64) (R, Int64) {
+  if timeout < 0.0 {
+    return (R.error, "websocket: timeout must not be negative")
+  }
+  return (R.ok, 0)
+}
+
+def dial(conn TcpConn, host String, port Int64, path String, timeout Float64, verify Bool) (R, Websocket) {
+  conn.set_timeout(timeout)
+  case rand.bytes(16) {
+    (R.error, why) -> { return (R.error, "websocket: the handshake key needs entropy (" + why + ")") }
+    (R.ok, key_bytes) -> {
+      const key = base64.encode(key_bytes.to_string())
+      case conn.write(handshake_request(path, host, port, key)) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, _)      -> { return read_answer(conn, key, verify) }
+      }
+    }
+  }
+}
+
+def handshake_request(path String, host String, port Int64, key String) String {
+  return "GET " + path + " HTTP/1.1\r\nHost: " + host + ":" + port.to_string() + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\nUser-Agent: " + client_agent + "\r\n\r\n"
+}
+
+// The answer's first line must be the upgrade, and somewhere among
+// the headers the accept must match the key we sent — the only proof
+// the peer speaks this protocol. The insecure dial walks the same
+// headers and skips only that check.
+def read_answer(conn TcpConn, key String, verify Bool) (R, Websocket) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.error, "websocket: the peer hung up during the handshake")
+      }
+      if !status_ok(line) {
+        return (R.error, "websocket: the handshake was refused (`" + line + "`)")
+      }
+      return read_accept_header(conn, key, 0, "", verify)
+    }
+  }
+}
+
+def status_ok(line String) Bool {
+  if !line.starts_with("HTTP/") {
+    return false
+  }
+  if line.length() < 12 {
+    return false
+  }
+  return line.substring(9, 3) == "101"
+}
+
+// The header walk reads to the answer's blank line — every header
+// line consumed, the accept checked only once the walk is done — so
+// the first frame after the handshake is the first byte of the wire,
+// never a half-read header.
+def read_accept_header(conn TcpConn, key String, seen Int64, accept String, verify Bool) (R, Websocket) {
+  if seen > 200 {
+    return (R.error, "websocket: the handshake answer carries too many header lines")
+  }
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        if verify {
+          if accept == "" {
+            return (R.error, "websocket: the handshake answer carries no accept header")
+          }
+          if accept == accept_for(key) {
+            return (R.ok, Websocket.new(conn: conn, server_side: false))
+          }
+          return (R.error, "websocket: the accept header does not match the handshake key")
+        }
+        return (R.ok, Websocket.new(conn: conn, server_side: false))
+      }
+      if line.lower().starts_with("sec-websocket-accept:") {
+        return read_accept_header(conn, key, seen + 1, header_value(line), verify)
+      }
+      return read_accept_header(conn, key, seen + 1, accept, verify)
+    }
+  }
+}
+
+// The value after the first colon, trimmed — a header's payload.
+def header_value(line String) String {
+  const at = line.index_of(":")
+  return line.substring(at + 1, line.length() - at - 1).trim()
+}
+
+// The only answer a correct peer can give: the base64 of the SHA-1
+// of the key and the magic GUID.
+def accept_for(key String) String {
+  return base64.encode(crypto.legacy.sha1((key + accept_guid).to_bytes()).to_string())
+}
+
+// ---- taking a connection ----
+
+// The server's door: read the client's upgrade request, answer
+// `101`, and hand back the server's side. The request must ask for
+// the upgrade, name version 13, and carry the key the accept answer
+// is computed from; anything else is refused before any frame moves.
+def accept(conn TcpConn) (R, Websocket) {
+  case read_request_line(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> { return read_upgrade_headers(conn, 0, "", false, false) }
+  }
+}
+
+def read_request_line(conn TcpConn) (R, Int64) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.error, "websocket: the peer hung up before the handshake request")
+      }
+      if !line.starts_with("GET ") {
+        return (R.error, "websocket: the handshake request is not a GET (`" + line + "`)")
+      }
+      return (R.ok, 0)
+    }
+  }
+}
+
+def read_upgrade_headers(conn TcpConn, seen Int64, key String, upgrade_ok Bool, version_ok Bool) (R, Websocket) {
+  if seen > 200 {
+    return (R.error, "websocket: the handshake request carries too many header lines")
+  }
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        if key == "" {
+          return (R.error, "websocket: the handshake request carries no key")
+        }
+        if !upgrade_ok {
+          return (R.error, "websocket: the handshake request does not ask for the upgrade")
+        }
+        if !version_ok {
+          return (R.error, "websocket: the handshake request carries no version header")
+        }
+        case conn.write(accept_answer(key)) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _)      -> { return (R.ok, Websocket.new(conn: conn, server_side: true)) }
+        }
+      }
+      const lower = line.lower()
+      if lower.starts_with("sec-websocket-key:") {
+        return read_upgrade_headers(conn, seen + 1, header_value(line), upgrade_ok, version_ok)
+      }
+      if lower.starts_with("upgrade:") {
+        if header_value(line).lower() == "websocket" {
+          return read_upgrade_headers(conn, seen + 1, key, true, version_ok)
+        }
+        return read_upgrade_headers(conn, seen + 1, key, upgrade_ok, version_ok)
+      }
+      if lower.starts_with("sec-websocket-version:") {
+        if header_value(line) == "13" {
+          return read_upgrade_headers(conn, seen + 1, key, upgrade_ok, true)
+        }
+        return (R.error, "websocket: the peer asked for websocket version `" + header_value(line) + "`, only 13 is spoken")
+      }
+      return read_upgrade_headers(conn, seen + 1, key, upgrade_ok, version_ok)
+    }
+  }
+}
+
+def accept_answer(key String) String {
+  return "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept_for(key) + "\r\n\r\n"
+}
+
+// ---- the frame layer ----
+
+def send_frame(conn TcpConn, masked Bool, opcode Int64, payload Bytes) (R, TcpConn) {
+  if !masked {
+    return conn.write(bare_frame(opcode, payload))
+  }
+  case rand.bytes(4) {
+    (R.error, why) -> { return (R.error, "websocket: a frame mask needs entropy (" + why + ")") }
+    (R.ok, mask)   -> { return conn.write(masked_frame(opcode, payload, mask)) }
+  }
+}
+
+def bare_frame(opcode Int64, payload Bytes) String {
+  return frame_head(opcode, payload.length(), false) + payload.to_string()
+}
+
+def masked_frame(opcode Int64, payload Bytes, mask Bytes) String {
+  const n = payload.length()
+  const body = Bytes.new(n)
+  var i = 0
+  while i < n {
+    body.set(i, payload.get(i) ^ mask.get(i % 4))
+    i = i + 1
+  }
+  return frame_head(opcode, n, true) + mask.to_string() + body.to_string()
+}
+
+// The two-byte head, the 126 escape with two length bytes, or the
+// 127 escape with eight — the mask bit rides the second byte, the
+// FIN bit the first.
+def frame_head(opcode Int64, n Int64, masked Bool) String {
+  var second = 0
+  if masked {
+    second = 128
+  }
+  if n < 126 {
+    const head = Bytes.new(2)
+    head.set(0, 128 + opcode)
+    head.set(1, second + n)
+    return head.to_string()
+  }
+  if n < 65536 {
+    const head = Bytes.new(4)
+    head.set(0, 128 + opcode)
+    head.set(1, second + 126)
+    head.set(2, (n >> 8) & 255)
+    head.set(3, n & 255)
+    return head.to_string()
+  }
+  const head = Bytes.new(10)
+  head.set(0, 128 + opcode)
+  head.set(1, second + 127)
+  head.set(2, (n >> 56) & 255)
+  head.set(3, (n >> 48) & 255)
+  head.set(4, (n >> 40) & 255)
+  head.set(5, (n >> 32) & 255)
+  head.set(6, (n >> 24) & 255)
+  head.set(7, (n >> 16) & 255)
+  head.set(8, (n >> 8) & 255)
+  head.set(9, n & 255)
+  return head.to_string()
+}
+
+// One frame in, the role's rules applied: a client receives bare
+// frames and refuses masked ones, a server receives masked frames and
+// refuses bare ones — the mask key sits between the length and the
+// payload, and the payload it names is unmasked on its way out.
+def recv_frame(ws Websocket) (R, Frame) {
+  case ws.conn.read_exactly(2) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, head)   -> {
+      const b = head.to_bytes()
+      const first = b.get(0)
+      const second = b.get(1)
+      const fin = (first & 128) != 0
+      const opcode = first & 15
+      const peer_masked = (second & 128) != 0
+      if peer_masked && !ws.server_side {
+        return (R.error, "websocket: the peer sent a masked frame — clients receive bare frames")
+      }
+      if !peer_masked && ws.server_side {
+        return (R.error, "websocket: the peer sent a bare frame — clients must mask")
+      }
+      case read_length(ws.conn, second & 127) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, n)      -> {
+          if peer_masked {
+            return read_masked_payload(ws.conn, fin, opcode, n)
+          }
+          return read_bare_payload(ws.conn, fin, opcode, n)
+        }
+      }
+    }
+  }
+}
+
+def read_length(conn TcpConn, first Int64) (R, Int64) {
+  if first < 126 {
+    return (R.ok, first)
+  }
+  if first == 126 {
+    case conn.read_exactly(2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, text)   -> {
+        const b = text.to_bytes()
+        return (R.ok, (b.get(0) << 8) + b.get(1))
+      }
+    }
+  }
+  case conn.read_exactly(8) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, text)   -> {
+      const b = text.to_bytes()
+      var n = 0
+      var i = 0
+      while i < 8 {
+        n = n * 256 + b.get(i)
+        i = i + 1
+      }
+      if n < 0 {
+        return (R.error, "websocket: a frame length overflows the byte count")
+      }
+      return (R.ok, n)
+    }
+  }
+}
+
+def read_masked_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
+  case conn.read_exactly(4) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, key_text) -> {
+      const mask = key_text.to_bytes()
+      case conn.read_exactly(n) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, text)   -> {
+          const raw = text.to_bytes()
+          const out = Bytes.new(n)
+          var i = 0
+          while i < n {
+            out.set(i, raw.get(i) ^ mask.get(i % 4))
+            i = i + 1
+          }
+          return (R.ok, Frame.new(opcode: opcode, fin: fin, payload: out))
+        }
+      }
+    }
+  }
+}
+
+def read_bare_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
+  case conn.read_exactly(n) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, text)   -> {
+      return (R.ok, Frame.new(opcode: opcode, fin: fin, payload: text.to_bytes()))
+    }
+  }
+}
+
+// The message pump's frame step: data frames pass through, control
+// frames are handled here — a ping is answered with its own payload,
+// an unsolicited pong is skipped, and a close is answered, the socket
+// closed, and the end named in the reason.
+def next_data_frame(ws Websocket) (R, Frame) {
+  case recv_frame(ws) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frame)  -> {
+      const opcode = frame.opcode
+      if opcode == op_ping {
+        return answer_ping(ws, frame)
+      }
+      if opcode == op_pong {
+        return next_data_frame(ws)
+      }
+      if opcode == op_close {
+        return peer_closed(ws)
+      }
+      if opcode == op_text || opcode == op_continuation {
+        return (R.ok, frame)
+      }
+      return (R.error, "websocket: the peer sent a frame of unknown type " + opcode.to_string())
+    }
+  }
+}
+
+def answer_ping(ws Websocket, frame Frame) (R, Frame) {
+  case send_frame(ws.conn, !ws.server_side, op_pong, frame.payload) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _)      -> { return next_data_frame(ws) }
+  }
+}
+
+def peer_closed(ws Websocket) (R, Frame) {
+  const body = Bytes.new(2)
+  body.set(0, 3)
+  body.set(1, 232)
+  case send_frame(ws.conn, !ws.server_side, op_close, body) {
+    (R.error, why) -> { return (R.error, "websocket: the peer closed the connection (the goodbye could not be sent: " + why + ")") }
+    (R.ok, _)      -> {
+      case ws.conn.close() {
+        (R.error, why) -> { return (R.error, "websocket: the peer closed the connection (" + why + ")") }
+        (R.ok, _)      -> { return (R.error, "websocket: the peer closed the connection") }
+      }
+    }
+  }
+}
+
+// The message's remaining fragments. A ping between fragments is
+// answered on the way; anything else but a continuation is a new
+// message interrupting the old one.
+def assemble(ws Websocket, first Frame, count Int64) (R, String) {
+  if count > 4096 {
+    return (R.error, "websocket: a message fragmented into too many pieces")
+  }
+  case next_data_frame(ws) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frame)  -> {
+      if frame.opcode != op_continuation {
+        return (R.error, "websocket: a fragment was interrupted by a new message")
+      }
+      const joined = append_bytes(first.payload, frame.payload)
+      if frame.fin {
+        return (R.ok, joined.to_string())
+      }
+      return assemble(ws, Frame.new(opcode: op_text, fin: false, payload: joined), count + 1)
+    }
+  }
+}
+
+def append_bytes(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  var i = 0
+  while i < a.length() {
+    out.set(i, a.get(i))
+    i = i + 1
+  }
+  var j = 0
+  while j < b.length() {
+    out.set(a.length() + j, b.get(j))
+    j = j + 1
+  }
+  return out
+}

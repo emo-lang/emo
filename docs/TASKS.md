@@ -51,6 +51,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M24 — Macros | 58–61 | Compile-time macros as the one metaprogramming mechanism: the reserved `// #macro` / `// @name` directive namespace (unknown names refusing), the macro model — scalar parameters plus the trailing `Syntax` tree, checked before it runs, deterministic by construction (every effect and host-touching builtin refusing), erased after expansion, and the spliced code checked with the module — the quote surface and compile-time application arguments checked statically, derivation applied to classes (`Syntax.fields` / `with_methods`), and cross-module macros through the program's macro table with qualified applications and local shadowing — four pilots (`trace`, `memoize`, `derive_eq`, `derive_shared`) byte-identical across the interpreter and the c and TypeScript binaries, expansion riding before codegen so every target inherits by construction; runtime `eval`, open classes, and `method_missing` rejected permanently (`CHECK.md`). |
 | M25 — The postgres client | 62 | The standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried C shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none), `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE, contract violations raising); `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe; docs EN+zh, with the found-and-fixed `sqlite3` table row (`CHECK.md`). |
 | M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
+| M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
 
 ## Design gates
 
@@ -3793,3 +3794,101 @@ green.
       landed in T63.2, TASKS M26/Step 63 EN+zh,
       `plan/step-63-emosh.md` + `plan/README.md`'s row, CHECK.md's
       decision record, README's references line.
+
+## M27 — The `websocket` and `playwright` packages
+
+### Step 64 — Browser automation: `websocket`, then `playwright`
+
+**Prereq:** Step 37 (`net`'s TCP surface and the per-operation
+deadline), Step 62's package anatomy (manifest, registry embedding,
+demo golden, docs EN+zh). **Done when:** `examples/websocket_demo`
+echoes byte for byte on the interpreter and the `c` target;
+`examples/playwright_demo` runs the full door ladder against the
+repo's own miniature driver over real websocket frames — a
+fragmented message joined, a ping answered with a masked pong the
+driver reads back, the eight-byte length form riding a 120000-char
+reply, both dispatcher error shapes — byte-identical on the
+interpreter and the `c` target; `dune runtest` green with both demos
+in the lockfile suite and in `c_goldens`; docs EN+zh.
+
+- [x] **T64.1** — The `websocket` package:
+      `stdlib/registry/websocket/0.1.0` — `websocket.emo` carrying
+      both halves: `connect` (upgrade request with a `rand`-keyed
+      `Sec-WebSocket-Key`, the accept verified against
+      `crypto.legacy.sha1` before the first frame, the answer's
+      header walk reading to the blank line so no handshake byte
+      leaks into the frame stream), `accept` (the request checked for
+      the upgrade, version 13, and the key; `101` answered), and one
+      `Websocket` for both roles — `send_text` masking on the client
+      side only, `recv_message` refusing masked frames at the client
+      and bare frames at the server, assembling continuations,
+      answering pings with their own payload, skipping unsolicited
+      pongs, and answering a close before closing the socket; the
+      frame reader takes all three length forms and refuses a peer's
+      mask where the role forbids it. `package.emo`:
+      `targets = ["ocaml", "c", "typescript"]`, deps `net`/`base64`/
+      `crypto`/`rand`.
+- [x] **T64.2** — The `playwright` package's engine:
+      `stdlib/registry/playwright/0.1.0/internal/channel.emo` — one
+      JSON document per text frame, commands `{id, guid, method,
+      params, metadata}`, answers settled by id, `__create__` and
+      `__dispose__` maintaining the guid object table, every other
+      event skipped, the driver's error wrapping unwrapped into
+      `(R.error, "playwright: " + text)`, and the null-safe field
+      readers (`field`/`string_field`/`int_field`/`guid_field`) that
+      keep driver data off the raise path.
+- [x] **T64.3** — The facade: `playwright.emo` — `connect`/
+      `connect_with` dialling the run-server endpoint with the
+      browser on the `?browser=` query parameter (chromium, firefox,
+      webkit; unknown names raise), the initialize handshake pinning
+      the root Playwright channel and the pre-launched browser, and
+      the core doors — `Browser.new_page`/`version`/`close`,
+      `Page.goto` answering a `PageResponse` tree with the null
+      response for a navigation that earns none, `click`/`fill`/
+      `press` routing to the page's main frame, `title`/`content`,
+      `text_content` answering a `Text` tree whose null reads through
+      `is_null?()`, `screenshot` decoding the driver's base64 into
+      `Bytes`, `close` at every level.
+- [x] **T64.4** — The demos: `examples/websocket_demo` (echo server
+      through `websocket.accept`, client round trips through
+      `connect`: multi-byte, a 70000-byte message riding the two-byte
+      length form, the goodbye); `examples/playwright_demo` (the
+      miniature driver answering the run-server shapes over raw
+      frames — the initialize object group, a skipped event, the
+      page create with its main frame, the fragmented 70013-byte
+      document, the ping the client must answer, the 120000-char
+      screenshot reply riding the eight-byte form and assembled by
+      hand around the json package's stack-depth landmine, both
+      error shapes, the goodbye — the client half climbing every
+      door); both goldens byte-identical across three interpreter
+      runs and the `c` binary.
+- [x] **T64.5** — The registrations: two `tc` cases in
+      `test/emo_project/emo_cli_test.ml`'s sibling suite
+      (`emo_project_test.ml`), `websocket_demo` and
+      `playwright_demo` in `c_goldens`, lockfiles resolved through
+      `emo deps resolve` after every package edit. Found on the way,
+      fixed in step: the c backend's method lookup compared the
+      reserved-word-escaped call name (`goto_c`) against the IR's
+      plain name, refusing every C-keyword-named method — the call
+      now names itself off the matched declaration.
+- [x] **T64.6** — The docs: `docs/stdlib/websocket.md` and
+      `docs/stdlib/playwright.md` EN+zh, `docs/stdlib.md` rows and
+      sections + zh mirror, README's references line, CHECK.md's
+      decision record, `plan/step-64-playwright.md`,
+      `plan/README.md`'s row. Found on the way, documented: the json
+      package's escape-length walk recurses per character and a
+      120000-char `json.encode` rides past the c target's fiber
+      stack (the interpreter survives; found-not-fixed, the demo
+      works around it by hand-assembling the one large reply).
+- [x] **T64.7** — The live check: `npm install -g playwright`
+      (1.65.0, chromium headless shell 158.0.8127.18), then the
+      whole door ladder against a real `playwright run-server`
+      through `examples/playwright_live` — handshake, initialize
+      with the pre-launched browser, the context-then-page dance,
+      navigation against the program's own httpd page, title,
+      multi-byte DOM text, a missing selector answering the 30000 ms
+      metadata deadline as the error value, a real screenshot, the
+      goodbye — **byte-green on the `c` target**; the interpreter
+      trips the det scheduler's parked-read wall during the same
+      wait (found-not-fixed, recorded in CHECK.md). The driver
+      version is recorded in CHECK.md.

@@ -1,0 +1,263 @@
+require "json"
+require "websocket"
+
+// The Playwright channel engine: the wire beneath the facade's
+// doors. One WebSocket text frame carries one JSON document; a
+// command names the object it addresses by its guid and rides with a
+// fresh id, and the pump reads messages until the answer with that id
+// arrives — every `__create__` event building up the object table on
+// the way, every `__dispose__` tearing its entry down, and every other
+// event (navigations, loads, logs) skipped: v1 has no event doors,
+// and a skipped event is not a lost one.
+//
+// The wire's shapes, as the driver speaks them:
+// - a command: {id, guid, method, params, metadata}
+// - an answer: {id, result} or {id, error}
+// - an event: {guid, method, params}, with `__create__` params
+//   {type, guid, initializer} and `__dispose__` params {guid}
+// - an object reference: {guid}
+// - binary: base64 text; null/undefined: JSON null or an absent field
+//
+// Errors follow the standard library's three-way split: an error
+// answer from the driver is the value (R.error, "playwright: " + the
+// driver's text), a wire failure is the value with the websocket or
+// net reason, and a caller's own mistake raises. The engine never
+// raises on driver data — a malformed message is a reason, not a
+// crash.
+
+// One entry of the object table: what the driver created and the
+// initializer it introduced it with.
+class Obj {
+  def init(type_name String, initializer json.Json) {
+    self.type_name = type_name
+    self.initializer = initializer
+  }
+}
+
+class Conn {
+  def init(ws websocket.Websocket) {
+    self.ws = ws
+    self.objects = Map.new()
+    self.next_id = Box.new(1)
+    self.playwright_slot = Box.new("")
+    self.browser_slot = Box.new("")
+  }
+
+  // The guids the handshake pinned: the root Playwright channel and
+  // the browser the driver pre-launched for this connection.
+  def playwright() String {
+    return self.playwright_slot.read()
+  }
+
+  def browser() String {
+    return self.browser_slot.read()
+  }
+
+  def assign_playwright(guid String) Void {
+    self.playwright_slot.replace(guid)
+  }
+
+  def assign_browser(guid String) Void {
+    self.browser_slot.replace(guid)
+  }
+
+  // The doors' engine: one command, the pump, its answer's result —
+  // or the reason anything on the way refused. The timeout rides the
+  // metadata — that field is the driver's per-call deadline, the one
+  // the official client sends on every command (0 = no deadline) —
+  // a budget in params is not read.
+  def call(guid String, method String, params json.Json, timeout_ms Int64) (R, json.Json) {
+    const id = self.next_id.read()
+    self.next_id.replace(id + 1)
+    const message = json.object([("id", json.int64(id)), ("guid", json.string(guid)), ("method", json.string(method)), ("params", params), ("metadata", json.object([("timeout", json.int64(timeout_ms))]))])
+    case self.ws.send_text(message.encode()) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return self.pump_for(id) }
+    }
+  }
+
+  def set_timeout(seconds Float64) Void {
+    self.ws.conn.set_timeout(seconds)
+  }
+
+  // The goodbye: the websocket's own — one close frame, then the
+  // socket, the two halves the package already speaks in order.
+  def shutdown() (R, Conn) {
+    case self.ws.close() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _)      -> { return (R.ok, self) }
+    }
+  }
+
+  def lookup(guid String) (R, Obj) {
+    if !self.objects.has(guid) {
+      return (R.error, "playwright: the server never created `" + guid + "`")
+    }
+    return (R.ok, self.objects.get(guid))
+  }
+
+  // Read messages until the one answering `id` arrives.
+  def pump_for(id Int64) (R, json.Json) {
+    case self.ws.recv_message() {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, text)   -> {
+        case json.decode(text) {
+          (R.error, why) -> { return (R.error, "playwright: the server sent a malformed message (" + why + ")") }
+          (R.ok, doc)    -> { return self.dispatch(id, doc) }
+        }
+      }
+    }
+  }
+
+  // An answer settles the call in flight; anything without an id is
+  // an event, absorbed or skipped.
+  def dispatch(id Int64, doc json.Json) (R, json.Json) {
+    const doc_id = field(doc, "id")
+    if doc_id.is_null?() {
+      return self.absorb(id, doc)
+    }
+    if doc_id.kind() != json.JsonKind.jint {
+      return (R.error, "playwright: the server sent an answer whose id is not a number")
+    }
+    if doc_id.as_int() != id {
+      return (R.error, "playwright: the server answered call " + doc_id.as_int().to_string() + " while call " + id.to_string() + " was in flight")
+    }
+    return self.settle(doc)
+  }
+
+  def absorb(id Int64, doc json.Json) (R, json.Json) {
+    const name = field(doc, "method")
+    if name.is_null?() {
+      return (R.error, "playwright: the server sent a message with neither an id nor a method")
+    }
+    if name.kind() != json.JsonKind.jstring {
+      return (R.error, "playwright: the server sent an event whose method is not a string")
+    }
+    const kind = name.as_string()
+    if kind == "__create__" {
+      const params = field(doc, "params")
+      case string_field(params, "guid", "a create event without a guid") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, guid)   -> {
+          case string_field(params, "type", "a create event without a type") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, type_name) -> {
+              if field(params, "initializer").is_null?() {
+                return (R.error, "playwright: a create event without an initializer")
+              }
+              self.objects.set(guid, Obj.new(type_name: type_name, initializer: field(params, "initializer")))
+              return self.pump_for(id)
+            }
+          }
+        }
+      }
+    }
+    if kind == "__dispose__" {
+      const params = field(doc, "params")
+      const gone = field(params, "guid")
+      if !gone.is_null?() {
+        self.objects.remove(gone.as_string())
+      }
+      return self.pump_for(id)
+    }
+    return self.pump_for(id)
+  }
+
+  def settle(doc json.Json) (R, json.Json) {
+    const error = field(doc, "error")
+    if !error.is_null?() {
+      return (R.error, "playwright: " + error_text(error))
+    }
+    const result = field(doc, "result")
+    if result.is_null?() {
+      return (R.ok, json.object([]))
+    }
+    return (R.ok, result)
+  }
+}
+
+// The driver's error answers carry the message one level down — the
+// dispatcher's own wrapping — or two, the transport's; both shapes are
+// read, the outermost message wins.
+def error_text(error json.Json) String {
+  const inner = field(error, "error")
+  if inner.is_null?() {
+    return message_of(error)
+  }
+  return message_of(inner)
+}
+
+def message_of(error json.Json) String {
+  const message = field(error, "message")
+  if message.is_null?() {
+    return "the driver refused the call"
+  }
+  if message.kind() != json.JsonKind.jstring {
+    return "the driver refused the call"
+  }
+  return message.as_string()
+}
+
+// ---- field readers ----
+
+// The null-safe field read. json's `get` is the caller's assertion —
+// it raises on a key the document does not carry — and the wire
+// carries documents whose fields come and go, so the engine reads
+// through this door: an absent field is the null json, read like any
+// other.
+def field(doc json.Json, key String) json.Json {
+  if doc.is(json.JsonObject) {
+    return field_in(doc.entries(), key, 0)
+  }
+  return json.JsonNull.new()
+}
+
+def field_in(entries Array[(String, json.Json)], key String, i Int64) json.Json {
+  if i >= entries.length() {
+    return json.JsonNull.new()
+  }
+  const pair = entries[i]
+  if pair[0] == key {
+    return pair[1]
+  }
+  return field_in(entries, key, i + 1)
+}
+
+// A field that must name a channel reference, read null-safely.
+def guid_field(doc json.Json, key String, what String) (R, String) {
+  return guid_ref(field(doc, key), what)
+}
+
+
+// The readers the doors share: a field that must be there and must be
+// of one kind, a channel reference that must name its guid. Driver
+// data that fails a check is the error value — the doors' contracts,
+// not a crash.
+def string_field(obj json.Json, key String, what String) (R, String) {
+  const value = field(obj, key)
+  if value.is_null?() {
+    return (R.error, "playwright: " + what)
+  }
+  if value.kind() != json.JsonKind.jstring {
+    return (R.error, "playwright: " + what + " (not a string)")
+  }
+  return (R.ok, value.as_string())
+}
+
+def int_field(obj json.Json, key String, what String) (R, Int64) {
+  const value = field(obj, key)
+  if value.is_null?() {
+    return (R.error, "playwright: " + what)
+  }
+  if value.kind() != json.JsonKind.jint {
+    return (R.error, "playwright: " + what + " (not an integer)")
+  }
+  return (R.ok, value.as_int())
+}
+
+def guid_ref(ref json.Json, what String) (R, String) {
+  if ref.is_null?() {
+    return (R.error, "playwright: " + what + " carries no channel reference")
+  }
+  return string_field(ref, "guid", what + " carries a malformed channel reference")
+}
