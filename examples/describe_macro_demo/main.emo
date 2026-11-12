@@ -1,0 +1,52 @@
+// A macro applied to a class reads the field list and appends methods.
+// `@describe` generates `to_string` — one interpolated part per field,
+// built from the class's own field trees, so the rendering can never
+// forget a field, misorder the parts, or drift away from the fields the
+// class actually declares. "to_string" is the runtime's rendering
+// protocol: `println` prints a class instance through it, so one
+// derivation teaches every println — here and in any importer — how to
+// render the class.
+//
+//   emo run main.emo
+
+// #macro
+def describe(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  const fields = Syntax.fields(f)
+  const parts = ArrayBuilder.new()
+  parts.push(Syntax.lit_string(name + "("))
+  var i = 0
+  while i < fields.length() {
+    if i > 0 {
+      parts.push(Syntax.lit_string(", "))
+    }
+    const fname = Syntax.field_name(fields[i])
+    parts.push(Syntax.lit_string(fname + ": "))
+    parts.push(Syntax.member(Syntax.self_expr(), fname))
+    i = i + 1
+  }
+  parts.push(Syntax.lit_string(")"))
+  const to_string = Syntax.new_def("to_string", [], Syntax.named_type("String"), [
+      Syntax.return_stmt(Syntax.interp(parts.to_array()))
+    ])
+  return Syntax.with_methods(f, [to_string])
+}
+
+// @describe
+class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+// @describe
+class Label {
+  def init(text String) {
+    self.text = text
+  }
+}
+
+println(Point.new(x: 1, y: 2))
+println(Point.new(x: -3, y: 0))
+println(Label.new(text: "hello"))

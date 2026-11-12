@@ -1,0 +1,29 @@
+// The hello, world of macros. A `// #macro` def runs during compilation:
+// it receives the decorated declaration as a syntax tree and returns the
+// trees that replace it. `greet` reads one thing off that tree — the def's
+// name — and splices a whole new def in its place. Whatever the decorated
+// body held is gone before checking begins; the compiler sees only what
+// the macro returned, and checks it like hand-written code.
+//
+//   emo run main.emo
+//   emo dump main.emo          # the expansion — what actually compiles
+//   emo dump main.emo --raw    # the file as parsed: directives, macro def
+
+// #macro
+def greet(f Syntax) Syntax {
+  const name = Syntax.name(f)
+  return Syntax.new_def(name, [], Syntax.named_type("Void"), [
+      Syntax.call_stmt("println", [
+        Syntax.lit_string("hello, world from " + name)
+      ])
+    ])
+}
+
+// @greet
+def main() {
+  // This body never exists: `@greet` replaces the whole declaration with
+  // the generated def, and the macro itself is erased — the shipped
+  // program carries only the expansion.
+}
+
+main()

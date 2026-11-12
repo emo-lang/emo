@@ -1,0 +1,40 @@
+// First steps beyond hello: a macro with a compile-time argument. The
+// application `// @repeat(3)` hands the literal `3` to `repeat`'s leading
+// `times` parameter — the compiler checks the argument's type against the
+// declaration right at the application site and evaluates it during
+// expansion. The macro then does the smallest useful wrap: the original
+// def moves to a gensym'd hidden name, and the visible name becomes a
+// wrapper that calls it `times` times. `${Syntax.lit_int(times)}` is how
+// a compile-time value is lifted into generated code — the loop bound
+// lands in the expansion as a literal, not a runtime parameter.
+//
+// A macro that cannot honor its contract refuses with `raise`. Apply
+// `@repeat(0)` (or any non-positive count) and the build fails with
+// "repeat needs a positive count" as the expansion's compile error.
+//
+//   emo run main.emo
+
+// #macro
+def repeat(times Int64, f Syntax) Syntax {
+  if times <= 0 {
+    raise Exception.new("repeat needs a positive count")
+  }
+  const name = Syntax.name(f)
+  const hidden = Syntax.gensym(name)
+  const original = Syntax.rename(f, hidden)
+  const wrapper = Syntax.new_def(name, [], Syntax.result(f), quote {
+    var i = 0
+    while i < ${Syntax.lit_int(times)} {
+      ${Syntax.ident(hidden)}()
+      i = i + 1
+    }
+  })
+  return Syntax.seq(original, wrapper)
+}
+
+// @repeat(3)
+def chime() Void {
+  println("chime")
+}
+
+chime()

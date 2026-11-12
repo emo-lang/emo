@@ -1,0 +1,142 @@
+// The capstone: a route DSL compiled into the program. The application's
+// spec string is parsed, validated, canonicalized, and indexed entirely
+// at compile time; what the macro splices is one data literal — the
+// compiled table — and two defs checked with the module like
+// hand-written code. The matcher walks the table at runtime and answers
+// a route ordinal; `:param` patterns match one trailing segment.
+//
+// A spec that breaks the DSL's rules is refused at the build: the
+// `raise` in the macro body surfaces as the expansion's compile error,
+// carrying the message. `@routes("GET nope")` fails with "routes: a path
+// starts with `/` — got `nope`"; an unknown method, a `:param` that is
+// not a whole trailing segment, a duplicate route, a stray `;` — each
+// has its own refusal. Determinism is what makes this a compile step:
+// the same spec always compiles to the same table, and `emo dump
+// main.emo` shows the expansion as plain data plus plain defs.
+//
+//   emo run main.emo
+
+// #macro
+def routes(spec String, f Syntax) Syntax {
+  var table = ""
+  var seen = ""
+  const raw = spec.split(";")
+  var i = 0
+  while i < raw.length() {
+    const entry = raw[i].trim()
+    if entry == "" {
+      raise Exception.new("routes: an empty route in the spec")
+    }
+    const cut = entry.index_of(" ")
+    if cut < 0 {
+      raise Exception.new("routes: a route is `METHOD path` — got `" + entry + "`")
+    }
+    const method = entry.substring(0, cut)
+    const path = entry.substring(cut + 1, entry.length() - cut - 1)
+    if path.index_of(" ") >= 0 {
+      raise Exception.new("routes: a route is `METHOD path` — got `" + entry + "`")
+    }
+    if method != "GET" && method != "POST" && method != "PUT" && method != "DELETE" {
+      raise Exception.new("routes: unknown method `" + method + "` — GET, POST, PUT, DELETE")
+    }
+    if !path.starts_with("/") {
+      raise Exception.new("routes: a path starts with `/` — got `" + path + "`")
+    }
+    if path.index_of(";") >= 0 {
+      raise Exception.new("routes: `;` separates routes — got `" + path + "`")
+    }
+    // a `:param` is a whole trailing segment: spelled `:name`, one per
+    // path, nothing after it
+    const segs = path.split("/")
+    var s = 0
+    while s < segs.length() {
+      const seg = segs[s]
+      const colon = seg.index_of(":")
+      if colon >= 0 {
+        if colon > 0 {
+          raise Exception.new("routes: a parameter is spelled `:name` — got `" + seg + "`")
+        }
+        if seg.length() < 2 {
+          raise Exception.new("routes: a parameter needs a name — got `" + seg + "`")
+        }
+        if s != segs.length() - 1 {
+          raise Exception.new("routes: a parameter must be the last segment — got `" + path + "`")
+        }
+        if seg.substring(1, seg.length() - 1).index_of(":") >= 0 {
+          raise Exception.new("routes: one parameter per segment — got `" + seg + "`")
+        }
+      }
+      s = s + 1
+    }
+    const canonical = method + " " + path
+    if seen != "" {
+      const known = seen.split(";")
+      var d = 0
+      while d < known.length() {
+        if known[d] == canonical {
+          raise Exception.new("routes: `" + canonical + "` appears twice")
+        }
+        d = d + 1
+      }
+      seen = seen + ";" + canonical
+    } else {
+      seen = canonical
+    }
+    if table != "" {
+      table = table + ";" + canonical
+    } else {
+      table = canonical
+    }
+    i = i + 1
+  }
+  const verb = Syntax.ident("verb")
+  const arg = Syntax.ident("path")
+  const data = Syntax.lit_string(table)
+  const matcher = Syntax.new_def(Syntax.name(f), [
+      Syntax.new_param("verb", Syntax.named_type("String")),
+      Syntax.new_param("path", Syntax.named_type("String"))
+    ], Syntax.named_type("Int64"), quote {
+    const entries = ${data}.split(";")
+    var i = 0
+    while i < entries.length() {
+      const route = entries[i]
+      const cut = route.index_of(" ")
+      const route_method = route.substring(0, cut)
+      const route_path = route.substring(cut + 1, route.length() - cut - 1)
+      const param = route_path.index_of(":")
+      if ${verb} == route_method {
+        if param >= 0 {
+          const prefix = route_path.substring(0, param)
+          const plen = prefix.length()
+          if ${arg}.starts_with(prefix) && ${arg}.length() > plen {
+            const tail = ${arg}.substring(plen, ${arg}.length() - plen)
+            if tail.index_of("/") < 0 {
+              return i
+            }
+          }
+        } else {
+          if ${arg} == route_path {
+            return i
+          }
+        }
+      }
+      i = i + 1
+    }
+    return -1
+  })
+  const listing = Syntax.new_def("route_table", [], Syntax.named_type("String"), [
+      Syntax.return_stmt(data)
+    ])
+  return Syntax.seq(matcher, listing)
+}
+
+// @routes("GET /;GET /users;GET /users/:id;POST /users")
+def route_for(verb String, path String) Int64 {}
+
+println(route_for("GET", "/"))
+println(route_for("GET", "/users"))
+println(route_for("GET", "/users/42"))
+println(route_for("GET", "/users/42/extra"))
+println(route_for("POST", "/users"))
+println(route_for("DELETE", "/users"))
+println(route_table())
