@@ -10,10 +10,10 @@ local defaults = {
   -- Directory holding the published package registry, used to complete
   -- names in `require "..."`. Unset means `$EMO_REGISTRY`.
   registry = nil,
-  -- Pop up insert-mode completion as you type: the dot of `os.` and the
-  -- quote inside `require "..."` open the menu, and typing on narrows it
-  -- (`os.getp` leaves getpid and getppid). Set false when a completion
-  -- plugin (nvim-cmp and friends) drives the server instead.
+  -- Drive insert completion through Neovim's built-in
+  -- `vim.lsp.completion`. Nothing opens while typing: Tab, `<C-n>`, and
+  -- `<C-p>` ask for the menu. Set false when a completion plugin
+  -- (nvim-cmp and friends) drives the server instead.
   completion = true,
   -- Start the language server for `.emo` buffers.
   lsp = true,

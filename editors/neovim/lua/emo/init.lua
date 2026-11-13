@@ -12,17 +12,29 @@ function M.setup(opts)
     return
   end
 
-  -- Insert-mode completion rides Neovim's own `vim.lsp.completion`: the
-  -- server's trigger characters — the dot of `os.` and the quote inside
-  -- `require "..."` — open the menu, and typing on narrows it. The
+  -- Insert-mode completion rides Neovim's own `vim.lsp.completion`, but
+  -- only on an explicit request: the server advertises no trigger
+  -- characters, so nothing opens while typing. Tab and the two
+  -- completion keys open the menu when it is closed and keep their
+  -- native meaning — next and previous candidate — once it is open. The
   -- attach event fires whichever way the client was enabled, the `lsp`
-  -- default or a user's own `vim.lsp.enable('emo')`, so one
-  -- autocommand covers both; `completion = false` hands the server to a
-  -- completion plugin instead.
+  -- default or a user's own `vim.lsp.enable('emo')`, so one autocommand
+  -- covers both; `completion = false` hands the server to a completion
+  -- plugin instead.
+  local function explicit_completion(direction)
+    return function()
+      if vim.fn.pumvisible() == 1 then
+        return vim.api.nvim_replace_termcodes(direction, true, false, true)
+      end
+      vim.lsp.completion.get()
+      return ''
+    end
+  end
+
   local group = vim.api.nvim_create_augroup('emo_completion', { clear = true })
   vim.api.nvim_create_autocmd('LspAttach', {
     group = group,
-    desc = 'emo: enable the language server\'s insert completion',
+    desc = 'emo: wire insert completion to an explicit keypress',
     callback = function(args)
       local client = vim.lsp.get_client_by_id(args.data.client_id)
       if
@@ -30,7 +42,15 @@ function M.setup(opts)
         and client.name == 'emo'
         and config.get().completion
       then
-        vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = true })
+        vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = false })
+        local opts = {
+          buffer = args.buf,
+          expr = true,
+          desc = 'emo: open completion, navigate while open',
+        }
+        vim.keymap.set('i', '<Tab>', explicit_completion('<C-n>'), opts)
+        vim.keymap.set('i', '<C-n>', explicit_completion('<C-n>'), opts)
+        vim.keymap.set('i', '<C-p>', explicit_completion('<C-p>'), opts)
       end
     end,
   })

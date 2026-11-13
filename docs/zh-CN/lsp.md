@@ -86,10 +86,11 @@ require('emo').setup({
 查找。注册表依次取 `registry`、`EMO_REGISTRY`；`:Emo*` 命令背后的 `emo` CLI
 依次取 `emo_path`、`EMO_BIN`。`:checkhealth emo` 会报告实际解析到的结果。
 
-插入补全走 Neovim 自带的 `vim.lsp.completion`：服务器的触发字符——`os.` 的
-点与 `require "..."` 里的引号——打开菜单，继续输入即收窄（`os.getp` 只剩
-`getpid` 与 `getppid`），`<C-x><C-o>` 可手动补全。`completion` 选项用于把
-服务器交给补全插件接管。
+插入补全走 Neovim 自带的 `vim.lsp.completion`，但只在明确请求时打开：输入过程中
+不会自动弹出。按 Tab、`<C-n>`、`<C-p>` 才显示候选列表——Tab 与 `<C-n>` 是下一
+个候选，`<C-p>` 是上一个——继续输入即收窄（`os.getp` 只剩 `getpid` 与
+`getppid`），`<C-x><C-o>` 仍可手动补全。`completion` 选项用于把服务器交给补全
+插件接管。
 
 命令与扩展一一对应——`:EmoRestart`、`:EmoCheck`、`:EmoBuild`、`:EmoRun`、
 `:EmoDepsResolve`、`:EmoDepsList`、`:EmoDepsUpdate`、`:EmoPackageInit`。
@@ -105,6 +106,8 @@ require('emo').setup({
   成员（类的字段与方法、函数组成员、模块成员），以及 `require "..."` 中的包名。
   语言自身类型也有成员补全——`String.`、`Bytes.`、`Array.` 等会列出 checker
   应答的方法面，字面量接收者（`"abc".`）与声明类型属于这些类型的值同样适用。
+  成员名尚未输入时（刚敲下 `.`）也按接收者的声明补全，包括只存在于打开缓冲区中
+  的类；通过模块路径初始化的值（`ui.Registry.new()`）同样能识别其类。
 - **诊断。** 词法、语法与类型检查错误，另含“每个 `require`——标准库或带 scope 的
   ——都必须在 `package.emo` 的 `deps` 中有对应项”（E5006）以及“不带 scope 的
   `require` 必须命名一个已发布的标准库包”（E5009）的检查。配对错误附带一个快速修复，用于补上依赖。

@@ -385,6 +385,73 @@ let test_partial_member_completion () =
     "getppid among the os members" true
     (completion_item_named "getppid" stdlib <> None)
 
+let test_bare_dot_completion_source () =
+  (* the cursor right after a dot makes the source incomplete — `p.` — and
+     the parser's item-level recovery would drop the enclosing declaration;
+     the completion parse fills the empty member in, leaving a spelled
+     member untouched *)
+  let text = "def main() Void {\n  const p = Point.new(1, 2)\n  p.\n}" in
+  let offset =
+    String.length "def main() Void {\n  const p = Point.new(1, 2)\n  p."
+  in
+  Alcotest.(check string)
+    "placeholder fills the empty member"
+    "def main() Void {\n  const p = Point.new(1, 2)\n  p.x\n}"
+    (Lsp_completion.completion_source text offset);
+  let partial = "os.getp" in
+  Alcotest.(check string)
+    "a spelled member is left alone" partial
+    (Lsp_completion.completion_source partial (String.length partial))
+
+let test_unsaved_class_member_completion () =
+  (* the class lives only in the open buffer — no manifest, nothing on
+     disk — and the receiver ends in a bare dot: the members answer from
+     the buffer itself, not from an index that never saw it *)
+  let text =
+    String.concat "\n"
+      [
+        "class Point {";
+        "  def init(x Int64, y Int64) {";
+        "    self.x = x";
+        "    self.y = y";
+        "  }";
+        "";
+        "  def length() Int64 {";
+        "    return self.x + self.y";
+        "  }";
+        "}";
+        "";
+        "def main() Void {";
+        "  const p = Point.new(1, 2)";
+        "  p.";
+        "}";
+      ]
+  in
+  let offset = String.length text - String.length "\n}" in
+  let items =
+    Lsp_completion.member_items (Lsp_index.standalone ())
+      (parse_items (Lsp_completion.completion_source text offset))
+      text "test.emo" offset [ "p" ]
+  in
+  Alcotest.(check bool)
+    "length among the instance's members" true
+    (completion_item_named "length" items <> None)
+
+let test_qualified_receiver_container () =
+  (* `points.Point.new(...)` names the class through its module path, and
+     the module segments must not be mistaken for the class's own name *)
+  let text = "const p = points.Point.new()" in
+  Alcotest.(check (option string))
+    "container from a module path" (Some "points.Point")
+    (Lsp_resolve.infer_container (Lsp_index.standalone ()) (parse_items text)
+       ~depth:0 "p");
+  (* a member chain ending in a lowercase name is a value, not a type *)
+  let value = "def f() Void {\n  const v = obj.field\n}" in
+  Alcotest.(check (option string))
+    "a value chain stays out" None
+    (Lsp_resolve.infer_container (Lsp_index.standalone ()) (parse_items value)
+       ~depth:0 "v")
+
 let test_builtin_hover () =
   let text = "def f(data Bytes) Int64 {\n  return data.get_u32_le(0)\n}" in
   let items = parse_items text in
@@ -853,6 +920,11 @@ let test_initialize_result () =
     "completionProvider present" true
     (Yojson.Safe.Util.member "completionProvider" capabilities <> `Null);
   Alcotest.(check bool)
+    "completion opens on request only" true
+    (Yojson.Safe.Util.member "triggerCharacters"
+       (Yojson.Safe.Util.member "completionProvider" capabilities)
+    = `Null);
+  Alcotest.(check bool)
     "serverInfo present" true
     (Yojson.Safe.Util.member "serverInfo" result <> `Null)
 
@@ -898,6 +970,10 @@ let () =
             test_builtin_type_member_completion;
           tc "builtin literal completion" test_builtin_literal_completion;
           tc "partial member completion" test_partial_member_completion;
+          tc "bare dot completion source" test_bare_dot_completion_source;
+          tc "unsaved class member completion"
+            test_unsaved_class_member_completion;
+          tc "qualified receiver container" test_qualified_receiver_container;
           tc "builtin hover" test_builtin_hover;
           tc "standalone stdlib completion" test_standalone_stdlib_completion;
           tc "standalone stdlib hover" test_standalone_stdlib_hover;
