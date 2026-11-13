@@ -326,7 +326,7 @@ let pkg_config_flags (modules : string list) :
 
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(native : Emo_project.native_inputs)
-    ~(target : string) ~(profile : string) : int =
+    ~(target : string) ~(profile : string) ~(wasi : bool) : int =
   (* The profile is the riscv64 image's shape (EmoOS T4.1): "kernel", the
      boot-profile-A image, "user", the U-mode ELF the kernel loads, or
      "app" (emo-desktop A12.1), the disk ELF's shape — the user world
@@ -386,19 +386,29 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             then raise (Build_dir_failed build_dir);
             match target with
             | "wasm" ->
-                let module_ = Emo_codegen.Wasm.assemble program in
+                let module_ = Emo_codegen.Wasm.assemble ~wasi program in
                 let out =
                   if Filename.check_suffix output ".wasm" then output
                   else output ^ ".wasm"
                 in
                 let out_wat = Filename.remove_extension out ^ ".wat" in
-                let binary = Emo_codegen.Wasm.to_binary module_ in
                 let oc = open_out_bin out in
-                output_string oc binary;
+                let oc_wat = open_out_bin out_wat in
+                if wasi then begin
+                  (* The WASI 0.3 command component: the --wasi core
+                     module inside the wrapper the probe validated
+                     (step 81). *)
+                  let core = Emo_codegen.Wasm.to_binary module_ in
+                  let binary, text = Emo_codegen.Component.command 2 core in
+                  output_string oc binary;
+                  output_string oc_wat text
+                end
+                else begin
+                  output_string oc (Emo_codegen.Wasm.to_binary module_);
+                  output_string oc_wat (Emo_codegen.Wasm.to_text module_)
+                end;
                 close_out oc;
-                let oc = open_out_bin out_wat in
-                output_string oc (Emo_codegen.Wasm.to_text module_);
-                close_out oc;
+                close_out oc_wat;
                 Printf.printf "built %s\n" out;
                 0
             | "beam" ->
@@ -1116,7 +1126,15 @@ let build =
              disk ELF the exec verb loads — the user world over a smaller \
              heap).")
   in
-  let build entry output no_specialize cclibs target profile locked =
+  let wasi =
+    Arg.(
+      value & flag
+      & info [ "wasi" ]
+          ~doc:
+            "wasm: wrap the module as a WASI 0.3 command component (runs under \
+             wasmtime 46+).")
+  in
+  let build entry output no_specialize cclibs target profile wasi locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
     let out =
       match output with
@@ -1127,7 +1145,7 @@ let build =
     in
     match
       build_file ~entry ~output:out ~specialize:(not no_specialize) ~cclibs
-        ~native:Emo_project.no_native_inputs ~target ~profile
+        ~native:Emo_project.no_native_inputs ~target ~profile ~wasi
     with
     | 0 -> Cmd.Exit.ok
     | code -> exit code
@@ -1136,7 +1154,7 @@ let build =
     (Cmd.info "build" ~doc:"Compile an Emo program.")
     Term.(
       const build $ entry $ output $ no_specialize $ cclib $ target $ profile
-      $ locked_flag ())
+      $ wasi $ locked_flag ())
 
 (* `emo check`: the static stages only, over the whole module tree. A
    `package.emo` is a manifest rather than a module, so it is read the way
@@ -1198,7 +1216,15 @@ let run =
              never. The interpreter's own run only: a --target artifact does \
              not consult it.")
   in
-  let run file no_color error_limit target curfew locked =
+  let wasi =
+    Arg.(
+      value & flag
+      & info [ "wasi" ]
+          ~doc:
+            "wasm: run the program as a WASI 0.3 command component under \
+             wasmtime (46+), the second engine.")
+  in
+  let run file no_color error_limit target curfew wasi locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     (match (target, curfew) with
@@ -1224,7 +1250,7 @@ let run =
         let code =
           build_file ~entry:file ~output:elf ~specialize:false ~cclibs:[]
             ~native:Emo_project.no_native_inputs ~target:"riscv64"
-            ~profile:"kernel"
+            ~profile:"kernel" ~wasi:false
         in
         if code <> 0 then exit code
         else if not (tool_exists "qemu-system-riscv64") then begin
@@ -1255,9 +1281,28 @@ let run =
         let code =
           build_file ~entry:file ~output:wasm_out ~specialize:false ~cclibs:[]
             ~native:Emo_project.no_native_inputs ~target:"wasm"
-            ~profile:"kernel"
+            ~profile:"kernel" ~wasi
         in
         if code <> 0 then exit code
+        else if wasi then begin
+          (* The WASI 0.3 command component runs under wasmtime — the
+             second engine, the sync stream builtins riding the
+             more-async-builtins gate (step 81). *)
+          if not (tool_exists "wasmtime") then begin
+            prerr_endline
+              "emo run: --wasi needs wasmtime 46+ on PATH (the WASI 0.3 \
+               runtime)";
+            exit 69
+          end;
+          let component = Filename.concat build_dir "emo_run.wasm" in
+          exit
+            (Sys.command
+               (Printf.sprintf
+                  "cd %s && wasmtime run -W \
+                   component-model-more-async-builtins=y %s"
+                  (Filename.quote (Sys.getcwd ()))
+                  (Filename.quote component)))
+        end
         else if not (tool_exists "node") then begin
           prerr_endline
             "emo run: the wasm target needs node on PATH (its WasmGC runs the \
@@ -1328,7 +1373,7 @@ let run =
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
     Term.(
-      const run $ file $ no_color $ error_limit $ target $ curfew
+      const run $ file $ no_color $ error_limit $ target $ curfew $ wasi
       $ locked_flag ())
 
 (* The count of brackets a pending source still has open — the depth the
@@ -3024,7 +3069,7 @@ let emoji_build ~(dir : string) : int =
               in
               let code =
                 build_file ~entry ~output ~specialize:true ~cclibs:[]
-                  ~native:own_native ~target ~profile:"kernel"
+                  ~native:own_native ~target ~profile:"kernel" ~wasi:false
               in
               (target, code))
             m.Emo_pkg.targets

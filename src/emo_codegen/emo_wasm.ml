@@ -243,15 +243,33 @@ let i_rand_bytes = 17
 let i_time_now_ms = 18
 let i_time_mono_ns = 19
 
+(* The --wasi import indices: seven imports (three unit-taking doors
+   share one type). *)
+let i_wvs_out = 0
+let i_wvs_err = 1
+let i_exit_code = 2
+let i_s_new = 3
+let i_s_write = 4
+let i_s_dw = 5
+let i_s_fdr = 6
+
 (* Every defined function's index follows the imports. *)
 let import_count = 20
 
+(* The ABI mode: the Node canonical host's eighteen `emo.*` imports, or
+   the WASI 0.3 component's seven — the two write-via-stream doors,
+   exit-with-code, and the four stream builtins (step 81). [assemble]
+   sets both before any lowering reads the indices; the wasi import
+   table and the lowered-function list branch on [wasi_mode]. *)
+let wasi_mode = ref false
+let import_base = ref 18
+
 (* Runtime function indices: imports 0..import_count-1, then these —
-   written relative to the import count, so a new host import shifts
-   every defined function mechanically (bump import_count, done). *)
-let rt =
-  let b = import_count in
-  function
+   written relative to the import base, so a mode with a different
+   import table shifts every defined function mechanically. *)
+let rt name =
+  let b = !import_base in
+  match name with
   | "add" -> b
   | "sub" -> b + 1
   | "mul" -> b + 2
@@ -357,6 +375,7 @@ let rt =
   | "atomic_fetch_or" -> b + 102
   | "atomic_fetch_xor" -> b + 103
   | "alloc" -> b + 104
+  | "float_str" -> b + 105
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -367,8 +386,9 @@ let rt =
    `to_str` chain calls, the Map ops after those, the Bytes rendering,
    the send snapshot's deep copy, the String split surface, the tuple
    rendering, the rest of the String surface, the atomics, the bump
-   allocator last. *)
-let runtime_count = import_count + 105
+   allocator last — and the wasi mode's guest-side float formatter
+   after the allocator. *)
+let runtime_count () = !import_base + if !wasi_mode then 106 else 105
 
 (* ---- Lowering state ---- *)
 
@@ -958,6 +978,35 @@ let rec expr env (x : Emo_ir.expr) : unit =
                ("builtin `" ^ name ^ "` is not available on the wasm target")))
   | Runtime_impl { name; args } -> (
       match (name, args) with
+      | _
+        when !wasi_mode
+             && List.mem name
+                  [
+                    "file_read";
+                    "file_write";
+                    "os_open_read";
+                    "os_open_write";
+                    "os_open_append";
+                    "os_read";
+                    "os_write";
+                    "os_close";
+                    "os_list_dir";
+                    "os_mkdir";
+                    "os_rmdir";
+                    "os_unlink";
+                    "os_rename";
+                    "os_getcwd";
+                    "os_chdir";
+                    "rand_bytes";
+                  ] ->
+          (* this rung's wasi component carries only the stdio and exit
+             doors; the filesystem and random imports land with their
+             wasi:filesystem / wasi:random lowerings (T81.5) *)
+          string_const env
+            ("the runtime implementation `" ^ name
+           ^ "` is not available on the wasi component yet");
+          e env (W.Call (rt "throw"));
+          e env W.Unreachable
       | "file_read", [ path ] ->
           let code, size =
             sys_size env i_file_read (string_args env (expr_block env path))
@@ -2684,7 +2733,17 @@ let emit_ctor_factory env (c : Emo_ir.class_) ~(pad : int) : W.func_type =
    reach their __str through method_call before to_str runs, so the
    fallthrough aborts with a host-side message. *)
 
-let rt_to_str : W.func_type =
+(* The wasi mode's float branch calls the guest-side formatter (a
+   defined runtime function, rt "float_str") instead of the host import;
+   this rung it refuses, the honest door until the %g port lands. *)
+let rt_to_str () : W.func_type =
+  let float_code =
+    if !wasi_mode then [ W.Call (rt "float_str"); W.Struct_new t_vstring ]
+    else
+      [
+        W.Call i_float_str; W.Call (rt "bytes_from_mem"); W.Struct_new t_vstring;
+      ]
+  in
   (* One If_else per shape: test -> produce a $vstring, else continue.
      The chain is built inside-out: the innermost else is the
      instance fallthrough. *)
@@ -2747,14 +2806,8 @@ let rt_to_str : W.func_type =
   in
   let float_branch =
     branch (test_of t_vfloat)
-      [
-        W.Local_get 0;
-        W.Ref_cast t_vfloat;
-        W.Struct_get (t_vfloat, 0);
-        W.Call i_float_str;
-        W.Call (rt "bytes_from_mem");
-        W.Struct_new t_vstring;
-      ]
+      ([ W.Local_get 0; W.Ref_cast t_vfloat; W.Struct_get (t_vfloat, 0) ]
+      @ float_code)
       [ bool_branch ]
   in
   let int_branch =
@@ -2828,7 +2881,7 @@ let rt_to_str : W.func_type =
    is still INT64_MIN as a bit pattern, which as an unsigned value is
    exactly its magnitude 2^63, so the signed forms would divide by a
    negative and only yield one digit. *)
-let rt_int_str : W.func_type =
+let rt_int_str () : W.func_type =
   let scratch = 60000 in
   {
     W.ftype_idx = t_int_str;
@@ -2928,7 +2981,7 @@ let rt_int_str : W.func_type =
   }
 
 (* bool_str(b i32) -> (ref null $bytes). *)
-let rt_bool_str : W.func_type =
+let rt_bool_str () : W.func_type =
   {
     W.ftype_idx = t_bool_str;
     fparams = [ "v" ];
@@ -2957,7 +3010,7 @@ let rt_bool_str : W.func_type =
   }
 
 (* char_str(c i32) -> (ref null $bytes): one byte. *)
-let rt_char_str : W.func_type =
+let rt_char_str () : W.func_type =
   {
     W.ftype_idx = t_char_str;
     fparams = [ "v" ];
@@ -2965,34 +3018,99 @@ let rt_char_str : W.func_type =
     fbody = [ W.Local_get 0; W.Array_new_fixed (t_bytes, 1) ];
   }
 
+(* ---- The --wasi stream cycles ----
+
+   The stdout/stderr path runs the probe's validated protocol: new,
+   hand the readable end to write-via-stream, write through the
+   writable end, drop the writable end (the EOF), drop the future —
+   and never drop the readable end, whose ownership transferred into
+   the call. Each println is one complete cycle, so a later println's
+   bytes cannot interleave with an earlier one's. *)
+
+(* The cycle: [base] holds the packed i64 handle the caller has set;
+   [base+1] the readable end, [base+2] the writable, [base+3] the
+   future; [ptr]/[len] the payload instructions (evaluated between the
+   hand-off and the write, the order the probe validated); [wvs] the
+   stdout or stderr door. *)
+let wasi_cycle_instrs ~(base : int) ~(wvs : int) ~(ptr : W.instr list)
+    ~(len : W.instr list) ~(exit_after : bool) : W.instr list =
+  [
+    W.Local_get base;
+    W.I32_wrap_i64;
+    W.Local_set (base + 1);
+    W.Local_get base;
+    W.I64_const 32L;
+    W.I64_shr_u;
+    W.I32_wrap_i64;
+    W.Local_set (base + 2);
+    W.Local_get (base + 1);
+    W.Call wvs;
+    W.Local_set (base + 3);
+    W.Local_get (base + 2);
+  ]
+  @ ptr @ len
+  @ [
+      W.Call i_s_write;
+      W.Drop;
+      W.Local_get (base + 2);
+      W.Call i_s_dw;
+      W.Local_get (base + 3);
+      W.Call i_s_fdr;
+    ]
+  @
+  if exit_after then [ W.I32_const 1; W.Call i_exit_code; W.Unreachable ]
+  else []
+
 (* instance_str(v) -> aborts: instances reach their __str through
    method_call; an unhandled shape here is a host-visible trap. *)
-let rt_instance_str : W.func_type =
-  {
-    W.ftype_idx = t_sig1;
-    fparams = [ "v" ];
-    flocals = [];
-    fbody =
-      [
-        (* scratch marker "inst" at 61000 *)
-        W.I32_const 61000;
-        W.I32_const 105;
-        W.I32_store8;
-        W.I32_const 61001;
-        W.I32_const 110;
-        W.I32_store8;
-        W.I32_const 61002;
-        W.I32_const 115;
-        W.I32_store8;
-        W.I32_const 61003;
-        W.I32_const 116;
-        W.I32_store8;
-        W.I32_const 61000;
-        W.I32_const 4;
-        W.Call i_abort;
-        W.Unreachable;
-      ];
-  }
+let rt_instance_str () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (1, W.I64); (3, W.I32); (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.I32_const 105;
+          W.I32_const 110;
+          W.I32_const 115;
+          W.I32_const 116;
+          W.Array_new_fixed (t_bytes, 4);
+          W.Local_set 5;
+          W.Call i_s_new;
+          W.Local_set 1;
+        ]
+        @ wasi_cycle_instrs ~base:1 ~wvs:i_wvs_err
+            ~ptr:[ W.Local_get 5; W.Call (rt "write_bytes") ]
+            ~len:[ W.Local_get 5; W.Array_len t_bytes ]
+            ~exit_after:true;
+    }
+  else
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [];
+      fbody =
+        [
+          (* scratch marker "inst" at 61000 *)
+          W.I32_const 61000;
+          W.I32_const 105;
+          W.I32_store8;
+          W.I32_const 61001;
+          W.I32_const 110;
+          W.I32_store8;
+          W.I32_const 61002;
+          W.I32_const 115;
+          W.I32_store8;
+          W.I32_const 61003;
+          W.I32_const 116;
+          W.I32_store8;
+          W.I32_const 61000;
+          W.I32_const 4;
+          W.Call i_abort;
+          W.Unreachable;
+        ];
+    }
 
 (* The entry module renders bare — the interpreter names the entry
    file's module nothing — and a main/ subdirectory keeps its full
@@ -3070,7 +3188,7 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
       program.Emo_ir.pclasses
   in
   let rec chain = function
-    | [] -> rt_instance_str.W.fbody
+    | [] -> (rt_instance_str ()).W.fbody
     | (tidx, arm) :: rest ->
         [
           W.If_else
@@ -3089,7 +3207,7 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
 
 (* bytes_from_mem(ptr, len) -> (ref null $bytes). Locals: 2 array, 3
    i. *)
-let rt_bytes_from_mem : W.func_type =
+let rt_bytes_from_mem () : W.func_type =
   {
     W.ftype_idx = t_bytes_from_mem;
     fparams = [ "ptr"; "len" ];
@@ -3136,7 +3254,7 @@ let rt_bytes_from_mem : W.func_type =
 
 (* write_bytes(b) -> i32 ptr: bump-allocate and copy. Locals: 1 ptr,
    2 len, 3 i. *)
-let rt_write_bytes : W.func_type =
+let rt_write_bytes () : W.func_type =
   {
     W.ftype_idx = t_write_bytes;
     fparams = [ "b" ];
@@ -3225,7 +3343,7 @@ let rt_write_bytes : W.func_type =
 (* alloc(size) -> i32 ptr: the bump without the copy — the buffer the
    guest hands fetch for the host's stashed answer. Locals: 1 ptr, 2
    need. *)
-let rt_alloc : W.func_type =
+let rt_alloc () : W.func_type =
   {
     W.ftype_idx = t_alloc;
     fparams = [ "size" ];
@@ -3271,30 +3389,65 @@ let rt_alloc : W.func_type =
       ];
   }
 
-(* println(v): render, bump-write, call the host. Local: 1 bytes. *)
-let rt_println : W.func_type =
-  {
-    W.ftype_idx = t_println_v;
-    fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
-    fbody =
-      [
-        W.Local_get 0;
-        W.Call (rt "to_str");
-        W.Ref_cast t_vstring;
-        W.Struct_get (t_vstring, 0);
-        W.Local_set 1;
-        W.Local_get 1;
-        W.Call (rt "write_bytes");
-        W.Local_get 1;
-        W.Array_len t_bytes;
-        W.Call i_print;
-      ];
-  }
+(* println(v): render, bump-write, call the host — or, in the wasi
+   mode, run one complete stdout stream cycle per line. Locals (wasi):
+   1 bytes, 2 the newline's bytes, 3 the joined bytes, 4 the pointer,
+   5 the length, 6 the packed handle, 7-9 readable/writable/future. *)
+let rt_println () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_println_v;
+      fparams = [ "v" ];
+      flocals = [ (3, W.RefNull t_bytes); (2, W.I32); (1, W.I64); (3, W.I32) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Call (rt "to_str");
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.I32_const 10;
+          W.Array_new_fixed (t_bytes, 1);
+          W.Local_set 2;
+          W.Local_get 1;
+          W.Local_get 2;
+          W.Call (rt "strcat");
+          W.Local_set 3;
+          W.Local_get 3;
+          W.Call (rt "write_bytes");
+          W.Local_set 4;
+          W.Local_get 3;
+          W.Array_len t_bytes;
+          W.Local_set 5;
+          W.Call i_s_new;
+          W.Local_set 6;
+        ]
+        @ wasi_cycle_instrs ~base:6 ~wvs:i_wvs_out ~ptr:[ W.Local_get 4 ]
+            ~len:[ W.Local_get 5 ] ~exit_after:false;
+    }
+  else
+    {
+      W.ftype_idx = t_println_v;
+      fparams = [ "v" ];
+      flocals = [ (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Call (rt "to_str");
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Call (rt "write_bytes");
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Call i_print;
+        ];
+    }
 
 (* str_eq(a, b) -> i32 (through sig2): byte-wise compare. Locals: 2
    i, 3 la, 4 lb. *)
-let rt_str_eq : W.func_type =
+let rt_str_eq () : W.func_type =
   {
     W.ftype_idx = t_str_eq;
     fparams = [ "a"; "b" ];
@@ -3467,7 +3620,7 @@ let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
   }
 
 (* add: int + int, string + string (concat), otherwise numeric float *)
-let rt_add =
+let rt_add () =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -3490,29 +3643,29 @@ let rt_add =
       ];
   }
 
-let rt_sub =
+let rt_sub () =
   rt_arith
     [ W.I64_sub; W.Struct_new t_vint ]
     [ W.F64_sub; W.Struct_new t_vfloat ]
 
-let rt_mul =
+let rt_mul () =
   rt_arith
     [ W.I64_mul; W.Struct_new t_vint ]
     [ W.F64_mul; W.Struct_new t_vfloat ]
 
 (* div/mod: int division truncates *)
-let rt_div =
+let rt_div () =
   rt_arith
     [ W.I64_div_s; W.Struct_new t_vint ]
     [ W.F64_div; W.Struct_new t_vfloat ]
 
-let rt_mod =
+let rt_mod () =
   rt_arith
     [ W.I64_rem_s; W.Struct_new t_vint ]
     [ W.F64_rem_s; W.Struct_new t_vfloat ]
 
 (* neg *)
-let rt_neg : W.func_type =
+let rt_neg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -3550,7 +3703,7 @@ let rt_bit_xor = rt_bit W.I64_xor
 let rt_shl = rt_bit W.I64_shl
 let rt_shr = rt_bit W.I64_shr_s
 
-let rt_bnot : W.func_type =
+let rt_bnot () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -3592,7 +3745,7 @@ let bytes_const (s : string) : W.instr list =
       (List.mapi (fun i c -> (i, c)) chars)
   @ [ W.Local_get 4 ]
 
-let rt_list_new : W.func_type =
+let rt_list_new () : W.func_type =
   (* list_new(arr): the elements copy into fresh nodes, front to back.
      Locals: 1 array, 2 i, 3 n, 4 head, 5 tail, 6 node. *)
   {
@@ -3656,7 +3809,7 @@ let rt_list_new : W.func_type =
       ];
   }
 
-let rt_list_push_front : W.func_type =
+let rt_list_push_front () : W.func_type =
   (* list_push_front(list, v) -> list. Locals: 2 list, 3 head, 4 node. *)
   {
     W.ftype_idx = t_list2;
@@ -3698,7 +3851,7 @@ let rt_list_push_front : W.func_type =
       ];
   }
 
-let rt_list_push_back : W.func_type =
+let rt_list_push_back () : W.func_type =
   (* list_push_back(list, v) -> list. Locals: 2 list, 3 tail, 4 node. *)
   {
     W.ftype_idx = t_list2;
@@ -3740,7 +3893,7 @@ let rt_list_push_back : W.func_type =
       ];
   }
 
-let rt_list_pop_front : W.func_type =
+let rt_list_pop_front () : W.func_type =
   (* list_pop_front(list) -> v; an empty List traps. Locals: 1 list,
      2 node. *)
   {
@@ -3796,7 +3949,7 @@ let rt_list_pop_front : W.func_type =
       ];
   }
 
-let rt_list_pop_back : W.func_type =
+let rt_list_pop_back () : W.func_type =
   (* list_pop_back(list) -> v; an empty List traps. Locals: 1 list,
      2 node. *)
   {
@@ -3852,7 +4005,7 @@ let rt_list_pop_back : W.func_type =
       ];
   }
 
-let rt_list_len : W.func_type =
+let rt_list_len () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "l" ];
@@ -3867,7 +4020,7 @@ let rt_list_len : W.func_type =
       ];
   }
 
-let rt_list_str : W.func_type =
+let rt_list_str () : W.func_type =
   (* list_str(l) -> $vstring: "List[" elements ", " ... "]". Every
      element renders through to_str, so nested Lists recurse. Locals:
      1 result, 2 node, 3 first, 4 scratch. *)
@@ -3936,7 +4089,7 @@ let rt_list_str : W.func_type =
         ];
   }
 
-let rt_bytes_new : W.func_type =
+let rt_bytes_new () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "len" ];
@@ -3958,7 +4111,7 @@ let rt_bytes_new : W.func_type =
       ];
   }
 
-let rt_bytes_get : W.func_type =
+let rt_bytes_get () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "b"; "i" ];
@@ -3994,7 +4147,7 @@ let rt_bytes_get : W.func_type =
       ];
   }
 
-let rt_bytes_set : W.func_type =
+let rt_bytes_set () : W.func_type =
   {
     W.ftype_idx = t_bytes_set;
     fparams = [ "b"; "i"; "v" ];
@@ -4152,7 +4305,7 @@ let rt_bytes_le_set (width : int) : W.func_type =
 
 (* $vstring -> $vbytes: the copy keeps the two surfaces independent —
    mutating the bytes must never be observable through the string. *)
-let rt_bytes_from_str : W.func_type =
+let rt_bytes_from_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -4208,7 +4361,7 @@ let rt_bytes_from_str : W.func_type =
   }
 
 (* $vbytes -> $vstring: same copy discipline, the other direction. *)
-let rt_bytes_to_str : W.func_type =
+let rt_bytes_to_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -4260,7 +4413,7 @@ let rt_bytes_to_str : W.func_type =
 
 (* $vbytes -> $vstring spelling "Bytes[N]": "Bytes[" lives at scratch
    60000, the digits of N from 60006 on, the bracket after them. *)
-let rt_bytes_label : W.func_type =
+let rt_bytes_label () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -4304,16 +4457,16 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
       ];
   }
 
-let rt_lt =
+let rt_lt () =
   rt_cmp [ W.I64_lt_s; W.Struct_new t_vbool ] [ W.F64_lt; W.Struct_new t_vbool ]
 
-let rt_le =
+let rt_le () =
   rt_cmp [ W.I64_le_s; W.Struct_new t_vbool ] [ W.F64_le; W.Struct_new t_vbool ]
 
-let rt_gt =
+let rt_gt () =
   rt_cmp [ W.I64_gt_s; W.Struct_new t_vbool ] [ W.F64_gt; W.Struct_new t_vbool ]
 
-let rt_ge =
+let rt_ge () =
   rt_cmp [ W.I64_ge_s; W.Struct_new t_vbool ] [ W.F64_ge; W.Struct_new t_vbool ]
 
 (* eq: primitives by content via deep_eq, boxed $vbool *)
@@ -5058,7 +5211,7 @@ let rt_deep_copy_func (env : env) : W.func_type =
 
 (* append(xs, v) -> a new array: every element copied, v at the end.
    Arrays are never mutated. Locals: 2 src, 3 elem, 4 fresh, 5 i. *)
-let rt_append : W.func_type =
+let rt_append () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "xs"; "v" ];
@@ -5118,7 +5271,7 @@ let rt_append : W.func_type =
       ];
   }
 
-let rt_strcat : W.func_type =
+let rt_strcat () : W.func_type =
   {
     W.ftype_idx = t_strcat;
     fparams = [ "a"; "b" ];
@@ -5195,7 +5348,7 @@ let rt_strcat : W.func_type =
    string independent, and any out-of-bounds (start, len) traps — the
    same failure shape as the Bytes accessors. Locals: 3 src, 4 total,
    5 start, 6 count, 7 dest, 8 i. *)
-let rt_str_substring : W.func_type =
+let rt_str_substring () : W.func_type =
   {
     W.ftype_idx = t_bytes_set;
     fparams = [ "s"; "start"; "len" ];
@@ -5277,7 +5430,7 @@ let rt_str_substring : W.func_type =
 (* slice(src, start, len) -> bytes: the internal helper str_split's
    parts materialize through — the callers compute in-bounds ranges.
    Locals: 3 dest, 4 k. *)
-let rt_str_slice : W.func_type =
+let rt_str_slice () : W.func_type =
   {
     W.ftype_idx = t_str_slice;
     fparams = [ "src"; "start"; "len" ];
@@ -5322,7 +5475,7 @@ let rt_str_slice : W.func_type =
    runtime's emo_str_starts_with rule — an empty prefix holds, a
    prefix longer than the receiver does not. Locals: 2 src, 3 prefix,
    4 i. *)
-let rt_str_starts_with : W.func_type =
+let rt_str_starts_with () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "prefix" ];
@@ -5385,7 +5538,7 @@ let rt_str_starts_with : W.func_type =
    so count and copy are one pass. Locals: 2 src, 3 sep, 4 scratch
    (the message constants), 5 total, 6 seplen, 7 i, 8 start, 9 out,
    10 j, 11 matched. *)
-let rt_str_split : W.func_type =
+let rt_str_split () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "sep" ];
@@ -5532,7 +5685,7 @@ let rt_str_split : W.func_type =
    length, which is what keeps a handed-out array independent of later
    pushes. *)
 
-let rt_builder_new : W.func_type =
+let rt_builder_new () : W.func_type =
   (* builder_new() -> builder. Empty, with room for the first eight. *)
   {
     W.ftype_idx = t_builder_new;
@@ -5548,7 +5701,7 @@ let rt_builder_new : W.func_type =
       ];
   }
 
-let rt_builder_push : W.func_type =
+let rt_builder_push () : W.func_type =
   (* builder_push(b, v) -> b. Locals: 2 builder, 3 fresh, 4 i,
      5 new capacity. *)
   {
@@ -5634,7 +5787,7 @@ let rt_builder_push : W.func_type =
       ];
   }
 
-let rt_builder_get : W.func_type =
+let rt_builder_get () : W.func_type =
   (* builder_get(b, i) -> v; an index outside the live prefix traps.
      Locals: 2 builder, 3 index. *)
   {
@@ -5670,7 +5823,7 @@ let rt_builder_get : W.func_type =
         ];
   }
 
-let rt_builder_to_array : W.func_type =
+let rt_builder_to_array () : W.func_type =
   (* builder_to_array(b) -> a fresh array of exactly the live length.
      Locals: 1 builder, 2 fresh, 3 i. *)
   {
@@ -5721,7 +5874,7 @@ let rt_builder_to_array : W.func_type =
 
 (* array_str(arr) -> $vstring: "[1, 2, 3]", every element through
    to_str. Locals: 1 result, 2 array, 3 i, 4 scratch, 5 first. *)
-let rt_array_str : W.func_type =
+let rt_array_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -5791,7 +5944,7 @@ let rt_array_str : W.func_type =
 
 (* tuple_str(t) -> $vstring: "(a, b, c)". Tuples are the runtime
    tuple wrapper around the same anyref array used by array_str. *)
-let rt_tuple_str : W.func_type =
+let rt_tuple_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "t" ];
@@ -5863,7 +6016,7 @@ let rt_tuple_str : W.func_type =
 (* index_of(recv, needle) -> $vint: the byte offset of the needle's
    first occurrence, -1 when absent, an empty needle found at 0 — the
    interpreter's rule. Locals: 2 src, 3 needle, 4 i, 5 k. *)
-let rt_str_index_of : W.func_type =
+let rt_str_index_of () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "needle" ];
@@ -5954,7 +6107,7 @@ let trim_space_at (bytes : int) (idx : W.instr list) : W.instr list =
 
 (* trim(recv) -> $vstring: the receiver without its leading and trailing
    trim spaces, sliced once. Locals: 1 src, 2 lo, 3 hi. *)
-let rt_str_trim : W.func_type =
+let rt_str_trim () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6021,7 +6174,7 @@ let rt_str_trim : W.func_type =
 
 (* lower(recv) -> $vstring: A–Z folded to a–z, every other byte kept.
    Locals: 1 src, 2 out, 3 i, 4 c. *)
-let rt_str_lower : W.func_type =
+let rt_str_lower () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6090,7 +6243,7 @@ let rt_str_lower : W.func_type =
    -9223372036854775808 and rejects 9223372036854775808. Locals: 1 src,
    2 i, 3 neg, 4 scratch (the message constants), 5 acc, 6 floor,
    7 message, 8 digit. *)
-let rt_str_to_int64 : W.func_type =
+let rt_str_to_int64 () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6238,7 +6391,7 @@ let rt_str_to_int64 : W.func_type =
    traps on the casts. The answer to a fetch is the value the cell held,
    which is the payload word itself. *)
 
-let rt_atomic_new : W.func_type =
+let rt_atomic_new () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -6246,7 +6399,7 @@ let rt_atomic_new : W.func_type =
     fbody = [ W.Local_get 0; W.I32_const 0; W.Struct_new t_vatomic ];
   }
 
-let rt_atomic_load : W.func_type =
+let rt_atomic_load () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "cell" ];
@@ -6254,7 +6407,7 @@ let rt_atomic_load : W.func_type =
     fbody = [ W.Local_get 0; W.Ref_cast t_vatomic; W.Struct_get (t_vatomic, 0) ];
   }
 
-let rt_atomic_store : W.func_type =
+let rt_atomic_store () : W.func_type =
   {
     W.ftype_idx = t_atomic_store;
     fparams = [ "cell"; "v" ];
@@ -6265,7 +6418,7 @@ let rt_atomic_store : W.func_type =
       @ [ W.Local_get 2; W.Local_get 3; W.Struct_set (t_vatomic, 0) ];
   }
 
-let rt_atomic_exchange : W.func_type =
+let rt_atomic_exchange () : W.func_type =
   {
     W.ftype_idx = t_atomic_rm;
     fparams = [ "cell"; "v" ];
@@ -6278,7 +6431,7 @@ let rt_atomic_exchange : W.func_type =
       @ [ W.Local_get 4 ];
   }
 
-let rt_atomic_compare_exchange : W.func_type =
+let rt_atomic_compare_exchange () : W.func_type =
   {
     W.ftype_idx = t_atomic_cas;
     fparams = [ "cell"; "expected"; "fresh" ];
@@ -6369,7 +6522,7 @@ let rt_atomic_fetch_and = rt_atomic_fetch W.I64_and (Some W.I32_and)
 let rt_atomic_fetch_or = rt_atomic_fetch W.I64_or (Some W.I32_or)
 let rt_atomic_fetch_xor = rt_atomic_fetch W.I64_xor (Some W.I32_xor)
 
-let rt_builder_str : W.func_type =
+let rt_builder_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -6454,7 +6607,7 @@ let rt_builder_str : W.func_type =
    everything else through `to_str`), and `str_quote` is its quoted
    shape. *)
 
-let rt_map_new : W.func_type =
+let rt_map_new () : W.func_type =
   (* map_new() -> map. Empty, with room for the first eight. *)
   {
     W.ftype_idx = t_builder_new;
@@ -6472,7 +6625,7 @@ let rt_map_new : W.func_type =
       ];
   }
 
-let rt_map_get : W.func_type =
+let rt_map_get () : W.func_type =
   (* map_get(m, k) -> v; a miss raises the interpreter's E3004 message.
      Locals: 2 map, 3 i, 4 scratch (the message constants), 5 message. *)
   {
@@ -6551,7 +6704,7 @@ let rt_map_get : W.func_type =
         ];
   }
 
-let rt_map_set : W.func_type =
+let rt_map_set () : W.func_type =
   (* map_set(m, k, v) -> m: an existing key replaces in place and keeps
      its position, a new key appends — doubling both buffers first when
      they are full. Locals: 3 map, 4 i, 5 new capacity, 6 fresh keys,
@@ -6707,7 +6860,7 @@ let rt_map_set : W.func_type =
       ];
   }
 
-let rt_map_has : W.func_type =
+let rt_map_has () : W.func_type =
   (* map_has(m, k) -> Bool; a key the map could never store is simply
      not present, the interpreter's rule. Locals: 2 map, 3 i. *)
   {
@@ -6755,7 +6908,7 @@ let rt_map_has : W.func_type =
       ];
   }
 
-let rt_map_remove : W.func_type =
+let rt_map_remove () : W.func_type =
   (* map_remove(m, k) -> m: the tail shifts left one slot from the
      removed position, so the relative order survives. Locals: 2 map,
      3 i, 4 shift cursor. *)
@@ -6860,7 +7013,7 @@ let rt_map_remove : W.func_type =
       ];
   }
 
-let rt_map_len : W.func_type =
+let rt_map_len () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "m" ];
@@ -6931,7 +7084,7 @@ let rt_map_values = rt_map_collect 1
    characters spelled, everything else raw. Two passes: the escaped
    length first, then the fill. Locals: 1 source, 2 length, 3 output,
    4 i, 5 o, 6 byte. *)
-let rt_str_quote : W.func_type =
+let rt_str_quote () : W.func_type =
   let is_esc =
     [
       W.Local_get 6;
@@ -7106,7 +7259,7 @@ let rt_str_quote : W.func_type =
 (* bytes_str(b) -> $vstring: "Bytes[n]", the interpreter's rendering.
    Locals: 2 accumulator, 3 the length as bytes, 4 scratch (the
    constants). *)
-let rt_bytes_str : W.func_type =
+let rt_bytes_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -7136,7 +7289,7 @@ let rt_bytes_str : W.func_type =
 (* map_dbg(v) -> $vstring: the debug form the map's rendering and
    get-miss message share — a string shows quoted, everything else
    through the shared to_str. *)
-let rt_map_dbg : W.func_type =
+let rt_map_dbg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -7151,7 +7304,7 @@ let rt_map_dbg : W.func_type =
       ];
   }
 
-let rt_map_str : W.func_type =
+let rt_map_str () : W.func_type =
   (* map_str(m) -> $vstring: "{key: value}" in insertion order, keys
      and values through map_dbg. Locals: 1 map, 2 result, 3 i,
      4 scratch (the constants), 5 first. *)
@@ -7243,7 +7396,7 @@ let rt_map_str : W.func_type =
 (* map_key_eq(a, b) -> i32: two boxed keys compare by content within a
    kind; different kinds never compare equal, so the scan walks past.
    One integer kind here — a Byte key is a $vint. *)
-let rt_map_key_eq : W.func_type =
+let rt_map_key_eq () : W.func_type =
   let both t a b =
     [ W.Local_get a; W.Ref_test t; W.Local_get b; W.Ref_test t; W.I32_and ]
   in
@@ -7298,7 +7451,7 @@ let rt_map_key_eq : W.func_type =
   }
 
 (* box(v) -> (ref null $vbox). *)
-let rt_box : W.func_type =
+let rt_box () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -7306,27 +7459,95 @@ let rt_box : W.func_type =
     fbody = [ W.Local_get 0; W.Struct_new t_vbox ];
   }
 
-(* throw(msg): render the message into memory and abort through the
-   host, which throws. *)
-let rt_throw : W.func_type =
+(* The wasi mode's guest-side float formatter: this rung refuses with
+   the message naming the rung — the honest door until the %g port
+   lands. The port's algorithm is validated (the fixed-form path ran
+   byte-identical with the node host over the whole float ladder in the
+   2026-11-14 session) and the wat-level exp-form bugs that remain are
+   recorded in plan/step-81-wasi03.md for the next pass. *)
+let rt_float_str (env : env) : W.func_type =
   {
-    W.ftype_idx = t_sig1;
+    W.ftype_idx = type_idx env (W.FuncT ([ W.F64 ], [ W.RefNull t_bytes ]));
     fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
+    flocals = [];
     fbody =
-      [
-        W.Local_get 0;
-        W.Ref_cast t_vstring;
-        W.Struct_get (t_vstring, 0);
-        W.Local_set 1;
-        W.Local_get 1;
-        W.Call (rt "write_bytes");
-        W.Local_get 1;
-        W.Array_len t_bytes;
-        W.Call i_abort;
-        W.Unreachable;
-      ];
+      (* raw bytes, not the string pool: this body is built after the
+         pool's globals list has been snapshotted, so a pool entry here
+         would answer the wrong global *)
+      string_bytes_instrs
+        "float formatting is not available on the wasi component yet"
+      @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ];
   }
+
+(* throw(msg): render the message into memory and abort through the
+   host, which throws — or, in the wasi mode, write the Node host's
+   "ABORT: msg" line through the stderr stream and exit-with-code(1).
+   Locals (wasi): 1 the message's bytes, 2 the prefix, 3 the newline,
+   4-5 the joins, 6 the pointer, 7 the length, 8 the packed handle,
+   9-11 readable/writable/future. *)
+let rt_throw () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (5, W.RefNull t_bytes); (2, W.I32); (1, W.I64); (3, W.I32) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.I32_const 65;
+          W.I32_const 66;
+          W.I32_const 79;
+          W.I32_const 82;
+          W.I32_const 84;
+          W.I32_const 58;
+          W.I32_const 32;
+          W.Array_new_fixed (t_bytes, 7);
+          W.Local_set 2;
+          W.I32_const 10;
+          W.Array_new_fixed (t_bytes, 1);
+          W.Local_set 3;
+          W.Local_get 2;
+          W.Local_get 1;
+          W.Call (rt "strcat");
+          W.Local_set 4;
+          W.Local_get 4;
+          W.Local_get 3;
+          W.Call (rt "strcat");
+          W.Local_set 5;
+          W.Local_get 5;
+          W.Call (rt "write_bytes");
+          W.Local_set 6;
+          W.Local_get 5;
+          W.Array_len t_bytes;
+          W.Local_set 7;
+          W.Call i_s_new;
+          W.Local_set 8;
+        ]
+        @ wasi_cycle_instrs ~base:8 ~wvs:i_wvs_err ~ptr:[ W.Local_get 6 ]
+            ~len:[ W.Local_get 7 ] ~exit_after:true;
+    }
+  else
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Call (rt "write_bytes");
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Call i_abort;
+          W.Unreachable;
+        ];
+    }
 
 (* ---- The concurrency driver ----
 
@@ -7829,8 +8050,12 @@ let rt_driver_run (g : driver_globals) ~(t_i32_void : int) : W.func_type =
 (* ---- Module assembly ---- *)
 
 (* The exported main runs the entry statements, then the driver loop;
-   exported memory backs the println/abort exchange. *)
-let assemble (program : Emo_ir.program) : W.module_ =
+   exported memory backs the println/abort exchange. The wasi mode
+   builds the same lowering over the seven-import WASI 0.3 surface —
+   the component wrapper (Emo_component) wraps the binary. *)
+let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
+  wasi_mode := wasi;
+  import_base := if wasi then 7 else 18;
   let env =
     {
       rev = [];
@@ -7848,7 +8073,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
       funcs = [];
       func_arity = [];
       closure_types = [];
-      nfuncs = runtime_count;
+      nfuncs = runtime_count ();
       fforeigns = [];
       strings = [];
       string_pool = [];
@@ -7975,36 +8200,36 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let rt_deep_copy = rt_deep_copy_func env in
   let rt_funcs =
     [
-      rt_add;
-      rt_sub;
-      rt_mul;
-      rt_div;
-      rt_mod;
-      rt_neg;
-      rt_lt;
-      rt_le;
-      rt_gt;
-      rt_ge;
+      rt_add ();
+      rt_sub ();
+      rt_mul ();
+      rt_div ();
+      rt_mod ();
+      rt_neg ();
+      rt_lt ();
+      rt_le ();
+      rt_gt ();
+      rt_ge ();
       rt_eq;
       rt_ne;
-      rt_to_str;
-      rt_println;
-      rt_strcat;
-      rt_box;
-      rt_throw;
-      rt_int_str;
-      rt_bool_str;
-      rt_char_str;
+      rt_to_str ();
+      rt_println ();
+      rt_strcat ();
+      rt_box ();
+      rt_throw ();
+      rt_int_str ();
+      rt_bool_str ();
+      rt_char_str ();
       (* the program's own instance rendering — its class dispatches
          and dumps fill this slot; the abort body answers when no class
          claims the value *)
-      (if program.Emo_ir.pclasses = [] then rt_instance_str
+      (if program.Emo_ir.pclasses = [] then rt_instance_str ()
        else generated_instance_str env program);
-      rt_write_bytes;
-      rt_bytes_from_mem;
-      rt_str_eq;
+      rt_write_bytes ();
+      rt_bytes_from_mem ();
+      rt_str_eq ();
       rt_deep_eq;
-      rt_append;
+      rt_append ();
     ]
   in
   (* The entry's locals start fresh: the local state still holds the
@@ -8052,12 +8277,21 @@ let assemble (program : Emo_ir.program) : W.module_ =
       W.If (W.Void, [ W.I32_const 1; W.Global_set g.g_root_done ], []);
     ]
   in
+  (* The wasi mode's run answers the bare `result` the world's async
+     export carries — its flattening is one i32 (0 = ok), so the core
+     entry returns it where the Node host's main returns nothing. *)
+  let t_run =
+    if !wasi_mode then type_idx env (W.FuncT ([], [ W.I32 ])) else t_main
+  in
   let main_func : W.func_type =
     {
-      W.ftype_idx = t_main;
+      W.ftype_idx = t_run;
       fparams = [];
       flocals = List.map (fun t -> (1, t)) env.local_decls;
-      fbody = main_stmts @ entry_end @ [ W.Call (rt "driver_run") ];
+      fbody =
+        (main_stmts @ entry_end
+        @ [ W.Call (rt "driver_run") ]
+        @ if !wasi_mode then [ W.I32_const 0 ] else []);
     }
   in
   let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
@@ -8087,69 +8321,72 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_bit_xor;
         rt_shl;
         rt_shr;
-        rt_bnot;
-        rt_bytes_new;
-        rt_bytes_get;
-        rt_bytes_set;
+        rt_bnot ();
+        rt_bytes_new ();
+        rt_bytes_get ();
+        rt_bytes_set ();
         rt_bytes_le_get 2;
         rt_bytes_le_get 4;
         rt_bytes_le_get 8;
         rt_bytes_le_set 2;
         rt_bytes_le_set 4;
         rt_bytes_le_set 8;
-        rt_bytes_from_str;
-        rt_bytes_to_str;
-        rt_bytes_label;
+        rt_bytes_from_str ();
+        rt_bytes_to_str ();
+        rt_bytes_label ();
         init_func;
         main_func;
-        rt_list_new;
-        rt_list_push_front;
-        rt_list_push_back;
-        rt_list_pop_front;
-        rt_list_pop_back;
-        rt_list_len;
-        rt_list_str;
-        rt_str_substring;
-        rt_builder_new;
-        rt_builder_push;
-        rt_builder_get;
-        rt_builder_to_array;
-        rt_array_str;
-        rt_builder_str;
-        rt_map_new;
-        rt_map_get;
-        rt_map_set;
-        rt_map_has;
-        rt_map_remove;
-        rt_map_len;
+        rt_list_new ();
+        rt_list_push_front ();
+        rt_list_push_back ();
+        rt_list_pop_front ();
+        rt_list_pop_back ();
+        rt_list_len ();
+        rt_list_str ();
+        rt_str_substring ();
+        rt_builder_new ();
+        rt_builder_push ();
+        rt_builder_get ();
+        rt_builder_to_array ();
+        rt_array_str ();
+        rt_builder_str ();
+        rt_map_new ();
+        rt_map_get ();
+        rt_map_set ();
+        rt_map_has ();
+        rt_map_remove ();
+        rt_map_len ();
         rt_map_keys;
         rt_map_values;
-        rt_map_str;
-        rt_map_key_eq;
-        rt_map_dbg;
-        rt_str_quote;
-        rt_bytes_str;
+        rt_map_str ();
+        rt_map_key_eq ();
+        rt_map_dbg ();
+        rt_str_quote ();
+        rt_bytes_str ();
         rt_deep_copy;
-        rt_str_slice;
-        rt_str_starts_with;
-        rt_str_split;
-        rt_tuple_str;
-        rt_str_index_of;
-        rt_str_trim;
-        rt_str_lower;
-        rt_str_to_int64;
-        rt_atomic_new;
-        rt_atomic_load;
-        rt_atomic_store;
-        rt_atomic_exchange;
-        rt_atomic_compare_exchange;
+        rt_str_slice ();
+        rt_str_starts_with ();
+        rt_str_split ();
+        rt_tuple_str ();
+        rt_str_index_of ();
+        rt_str_trim ();
+        rt_str_lower ();
+        rt_str_to_int64 ();
+        rt_atomic_new ();
+        rt_atomic_load ();
+        rt_atomic_store ();
+        rt_atomic_exchange ();
+        rt_atomic_compare_exchange ();
         rt_atomic_fetch_add;
         rt_atomic_fetch_sub;
         rt_atomic_fetch_and;
         rt_atomic_fetch_or;
         rt_atomic_fetch_xor;
-        rt_alloc;
+        rt_alloc ();
+        (* the wasi mode's guest-side float door, after the bump
+           allocator per the rt map *)
       ]
+    @ (if !wasi_mode then [ rt_float_str env ] else [])
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
   (* main rides the map; the List ops follow it before the program's
@@ -8157,59 +8394,107 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let main_idx = rt "main" in
   (* types: the fixed runtime head, then everything the lowering
      appended (env.types accumulates in reverse) — snapped last so the
-     driver's own func types are included *)
+     driver's own func types are included; the wasi mode appends its
+     four import signatures at the very end *)
   let all_types = runtime_types @ List.rev env.types in
+  let wasi_type_base = List.length all_types in
+  let all_types =
+    if !wasi_mode then
+      all_types
+      @ [
+          W.FuncT ([ W.I32 ], [ W.I32 ]);
+          (* write-via-stream: handle -> future handle *)
+          W.FuncT ([ W.I32 ], []);
+          (* exit-with-code; drop-writable and future-drop-readable
+             share the shape *)
+          W.FuncT ([], [ W.I64 ]);
+          (* stream.new *)
+          W.FuncT ([ W.I32; W.I32; W.I32 ], [ W.I32 ]);
+          (* stream.write *)
+        ]
+    else all_types
+  in
+  let node_imports =
+    [
+      { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
+      { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
+      { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
+      { W.imodule = "emo"; W.iname = "file_read"; W.itype_idx = t_file_read };
+      { W.imodule = "emo"; W.iname = "file_write"; W.itype_idx = t_file_write };
+      { W.imodule = "emo"; W.iname = "fetch"; W.itype_idx = t_fetch };
+      { W.imodule = "emo"; W.iname = "os_open"; W.itype_idx = t_os_open };
+      { W.imodule = "emo"; W.iname = "os_read"; W.itype_idx = t_os_read };
+      { W.imodule = "emo"; W.iname = "os_write"; W.itype_idx = t_os_write };
+      { W.imodule = "emo"; W.iname = "os_close"; W.itype_idx = t_os_close };
+      {
+        W.imodule = "emo";
+        W.iname = "os_list_dir";
+        W.itype_idx = t_os_list_dir;
+      };
+      { W.imodule = "emo"; W.iname = "os_mkdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_rmdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_unlink"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
+      { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
+      { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "rand_bytes"; W.itype_idx = t_rand_bytes };
+      { W.imodule = "emo"; W.iname = "time_now_ms"; W.itype_idx = t_time_i64 };
+      { W.imodule = "emo"; W.iname = "time_mono_ns"; W.itype_idx = t_time_i64 };
+    ]
+  in
+  let wasi_imports =
+    [
+      {
+        W.imodule = "wasi:cli/stdout@0.3.0";
+        W.iname = "write-via-stream";
+        W.itype_idx = wasi_type_base;
+      };
+      {
+        W.imodule = "wasi:cli/stderr@0.3.0";
+        W.iname = "write-via-stream";
+        W.itype_idx = wasi_type_base;
+      };
+      {
+        W.imodule = "wasi:cli/exit@0.3.0";
+        W.iname = "exit-with-code";
+        W.itype_idx = wasi_type_base + 1;
+      };
+      {
+        W.imodule = "stream";
+        W.iname = "new";
+        W.itype_idx = wasi_type_base + 2;
+      };
+      {
+        W.imodule = "stream";
+        W.iname = "write";
+        W.itype_idx = wasi_type_base + 3;
+      };
+      {
+        W.imodule = "stream";
+        W.iname = "drop-writable";
+        W.itype_idx = wasi_type_base + 1;
+      };
+      {
+        W.imodule = "stream";
+        W.iname = "future-drop-readable";
+        W.itype_idx = wasi_type_base + 1;
+      };
+    ]
+  in
   {
     W.types = all_types;
-    imports =
-      [
-        { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
-        { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
-        { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
-        { W.imodule = "emo"; W.iname = "file_read"; W.itype_idx = t_file_read };
-        {
-          W.imodule = "emo";
-          W.iname = "file_write";
-          W.itype_idx = t_file_write;
-        };
-        { W.imodule = "emo"; W.iname = "fetch"; W.itype_idx = t_fetch };
-        { W.imodule = "emo"; W.iname = "os_open"; W.itype_idx = t_os_open };
-        { W.imodule = "emo"; W.iname = "os_read"; W.itype_idx = t_os_read };
-        { W.imodule = "emo"; W.iname = "os_write"; W.itype_idx = t_os_write };
-        { W.imodule = "emo"; W.iname = "os_close"; W.itype_idx = t_os_close };
-        {
-          W.imodule = "emo";
-          W.iname = "os_list_dir";
-          W.itype_idx = t_os_list_dir;
-        };
-        { W.imodule = "emo"; W.iname = "os_mkdir"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_rmdir"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_unlink"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
-        { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
-        { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
-        {
-          W.imodule = "emo";
-          W.iname = "rand_bytes";
-          W.itype_idx = t_rand_bytes;
-        };
-        { W.imodule = "emo"; W.iname = "time_now_ms"; W.itype_idx = t_time_i64 };
-        {
-          W.imodule = "emo";
-          W.iname = "time_mono_ns";
-          W.itype_idx = t_time_i64;
-        };
-      ];
+    imports = (if !wasi_mode then wasi_imports else node_imports);
     funcs;
-    memory = 2;
-    export_mem = true;
+    memory = (if !wasi_mode then 0 else 2);
+    import_memory = (if !wasi_mode then Some ("prov", 2) else None);
+    export_mem = not !wasi_mode;
     (* Every defined function, not only the hidden closures: a def named
        as a value is a `ref.func` to a program function or a class
        method, and the validator requires the target of `ref.func` to be
        in the declarative element segment whatever kind of function it
        is. Declaring the whole defined range costs one small segment and
        cannot go stale as lowering grows new `ref.func` sites. *)
-    declared_funcs = List.init (List.length funcs) (fun i -> import_count + i);
+    declared_funcs = List.init (List.length funcs) (fun i -> !import_base + i);
     globals =
       (W.I32, true)
       :: List.concat_map
@@ -8226,7 +8511,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
           (W.I32, true);
         ];
     start = rt "init";
-    exports = [ ("main", main_idx) ];
+    exports = [ ((if !wasi_mode then "run" else "main"), main_idx) ];
   }
 
 (* Serializers re-exported for the CLI. *)

@@ -141,6 +141,10 @@ type module_ = {
   imports : import list;
   funcs : func_type list; (* indices continue after the imports *)
   memory : int; (* minimum pages; 0 = none *)
+  import_memory : (string * int) option;
+      (* the --wasi mode's provider import: (module name, min pages) —
+         the memory comes from the component's provider core module, so
+         the canon lowers can use it before the guest instantiates *)
   declared_funcs : int list; (* ref.func declarations for closures *)
   export_mem : bool; (* export the memory as "mem" *)
   globals : (valtype * bool) list; (* in order; zero/null init *)
@@ -629,6 +633,12 @@ let to_text (m : module_) : string =
         (Printf.sprintf "  (import %S %S (func $import%d))\n" imp.imodule
            imp.iname imp.itype_idx))
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      Buffer.add_string buf
+        (Printf.sprintf "  (import %S \"memory\" (memory %d))\n" module_name
+           min_pages));
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
@@ -677,6 +687,12 @@ let to_text (m : module_) : string =
         (Printf.sprintf "  (import %S %S (func $import%d))\n" imp.imodule
            imp.iname imp.itype_idx))
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      Buffer.add_string buf
+        (Printf.sprintf "  (import %S \"memory\" (memory %d))\n" module_name
+           min_pages));
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
@@ -748,7 +764,10 @@ let to_binary (m : module_) : string =
           Buffer.add_char types (if mutable_ then '\x01' else '\x00'))
     m.types;
   let imports = Buffer.create 64 in
-  leb_u imports (List.length m.imports);
+  let nimports =
+    List.length m.imports + if m.import_memory = None then 0 else 1
+  in
+  leb_u imports nimports;
   List.iter
     (fun imp ->
       encode_name imports imp.imodule;
@@ -756,6 +775,16 @@ let to_binary (m : module_) : string =
       Buffer.add_char imports '\x00';
       leb_u imports imp.itype_idx)
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      encode_name imports module_name;
+      encode_name imports "memory";
+      Buffer.add_char imports '\x02';
+      (* memory kind *)
+      Buffer.add_char imports '\x00';
+      (* no maximum *)
+      leb_u imports min_pages);
   let funcs = Buffer.create 64 in
   leb_u funcs (List.length m.funcs);
   List.iter (fun f -> leb_u funcs f.ftype_idx) m.funcs;
