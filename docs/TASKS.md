@@ -65,6 +65,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M36 — The column executor | 73 | The batch executor behind the same surface: the record layer's `scan_column_batches` and `column_block_counts`, the engine's storage routing (SELECT to the column executor, INSERT to the column blocks, UPDATE/DELETE answering the insert-only `0A000`), the column plan nodes, and the global aggregates COUNT/SUM/AVG/MIN/MAX — COUNT answers 0 and the others NULL over zero rows, SUM widens by the argument, AVG is DOUBLE PRECISION, MIN/MAX keep the argument's type, `DISTINCT` aggregates refuse, a mixed select list answers `42803` naming the column, `count(*)` with no WHERE takes the block-count fast path, and the plan text shows `column scan`/`aggregate` — pinned by the engine demo's executor cases, three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 | M37 — The two-engine proof | 74 | Both engines in one database, one session, one transaction over the wire: `htap_demo` seeds a row table and a column table (1100 rows across the block boundary) through the engine and serves the wire; psql and the `postgres` client each drive a script that reads both engines, carries the row table's UPDATE and the column table's INSERT inside one BEGIN/COMMIT, and reads the post-commit aggregates (`1100|605550|1.0|row-999` seeded, `1|11.0` updated, `1101|606651` after), pinned byte-for-byte behind the probes; the corpus's `column.test` lifts it to 141 cases (the DDL, the projections, the five aggregates, the zero-row rule `0|NULL`, and the mixing/type/DISTINCT/star/insert-only/primary-key refusals); the bench's column modes record the first measured comparison — the block scan 304 ms / 32895 rows per second against the row store's 675 ms / 14815, the aggregate 142 ms / 70423 — through `projects/emo-db/check.sh` green 3x (76 checks) (`CHECK.md`). |
 | M38 — The wasm capability | 75–77 | The Emo-written wasm runtime (steps 20–22) becomes a consumable capability: the package moves into the bundled registry as the `wasm` stdlib package with the execution surface on its root — `load`/`instantiate`/`call`/`get_global`/memory access over the R error split, the `(kind, bits)` value model with its constructors, and a host-import table of Emo closures — resolved like any bundled package; then `emo wasm run` executes a `.wasm` artifact from the CLI over the interpreter, the compiler never linking the runtime; then the `emo` host module (and the WASI surface it entails) runs modules from other toolchains; the conformance aliases (`wasm_spec`/`wasm_runs`) ride with the package (`CHECK.md`). |
+| M39 — Text templates | 78 | The `template` package renders text with holes from a `json` context — Go `text/template`'s mechanism, Emo's own surface, pure Emo over the shared runtimes, byte-identical on all five targets: one-shot `render` and the parse-once-render-many `Set` (new/with/render), `{{ }}` holes over bare dotted paths and bracket paths with seven ASCII-safe filter pipelines, `if`/`else if`/`else`/`end` on "not the zero value" truthiness, `for` over arrays and objects with `else`, `template` includes (bindings never cross the edge, the depth cap names the chain), `{{- `-` -}}` trim markers and `{{! }}` comments; parse and render both strict, every failure a `(R.error, reason)` with the byte position; the goldens flushed two backend bugs — the IR's module-level def mangle skipped `sanitize_ident` (a `?` suffix leaking into TS/OCaml identifiers), and the BEAM emitter's threaded-chain case registered a branch's pattern bindings before the per-branch save, a sibling arm's bindings leaking into a later continuation's live set, dying as erlc `unbound variable` (`CHECK.md`). |
+| M40 — The repl's line editor | 79 | The interactive session gains a real editor: the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches — the temp history entry pops on Ctrl-C and end-of-input as ENTER pops it, and the blocking read's verdict errno survives the stop's terminal-probing cleanup) compiles into the CLI through dune's `foreign_stubs` — the first C the OCaml CLI links — behind a binding module whose stubs map the library's errno verdicts onto OCaml variants; the input seam carries the prompt text and distinguishes a completed line from Ctrl-C's abandonment and the input's end; the editor takes the seat only when stdin and stdout are both terminals, pipes and redirects keeping the plain path byte for byte; the history rides per line, saved at the session's end to the state file (`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`), with the unreadable and unwritable cases warning on stderr and the missing file silent; Ctrl-C abandons the pending input instead of killing the process; the continuation prompt indents by two spaces per open bracket; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — typed lines, up-arrow recall, the interrupt that leaks no empty history entry, and a two-session persistence round-trip (`CHECK.md`). |
 
 ## Design gates
 
@@ -4582,4 +4584,47 @@ The `template_edge` golden also settled the bare-`}}` question the
 other way from the plan draft: a `}}` outside an action is text, not
 an error — code-generation templates close nested braces in their
 static text, and Go's own scanner agrees.
+
+## M40 — The repl's line editor
+
+### Step 79 — The repl's line editor (linenoise)
+
+**Prereq:** Step 08 (the repl itself). **Done when:** the interactive
+session edits its input with the vendored upstream linenoise — arrow-key
+history recall persisted to a state file, multi-line editing of long
+lines, the continuation prompt indented by bracket depth, Ctrl-C
+abandoning instead of killing — while pipes, redirects, and the tests
+keep the plain line path byte for byte; the vendored C compiles through
+dune's `foreign_stubs` behind a binding module whose stubs map the
+library's errno verdicts onto variants; the tests drive the real editor
+over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook; `dune
+runtest` green; docs EN+zh.
+
+- [x] **T79.1** — The vendored editor: `linenoise.c`/`linenoise.h` at
+      upstream `a473823d74b93eab2ba83480df16ed37617493f2` (2026-05-01)
+      with the two marked patches — the edit session's temporary
+      history entry pops on the Ctrl-C and end-of-input exits exactly
+      as ENTER pops it, end-of-input answers `ENOENT` (upstream leaks
+      one empty entry per Ctrl-C into the history otherwise), and the
+      blocking read's verdict errno is captured before the stop's
+      cleanup and restored after (that cleanup probes the terminal and
+      would clobber the verdict). The C stubs and the `emo_linenoise`
+      binding module — the stubs follow OCaml's mixed-variant
+      encoding, constants and payload constructors numbered
+      independently; dune's `foreign_stubs`.
+- [x] **T79.2** — The seam: the input function receives the prompt
+      text (the editor renders it itself), and its answer distinguishes
+      `Line` from `Aborted` and `Eof`; `unbalanced` shares its bracket
+      count with the continuation prompt, which indents two spaces per
+      open `{`/`(`/`[` and keeps the plain dots when the lexer cannot
+      scan the pending source; the editor session loads, adds, and
+      saves the history with its warnings.
+- [x] **T79.3** — The tests: the repl suite on the new seam; the
+      depth/indent units; the history-file resolution (`EMO_STATE_DIR`
+      → `XDG_STATE_HOME` → `$HOME`, no home no file); the editor smoke
+      over a pipe — the typed line, the up-arrow recall, the Ctrl-C
+      that abandons without leaking an empty entry, the input's end,
+      and a two-session persistence round-trip through the state file.
+- [x] **T79.4** — The docs: the repl section in `docs/toolchain.md`
+      EN+zh; TASKS/plan/CHECK updated.
 

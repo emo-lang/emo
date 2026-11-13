@@ -61,6 +61,42 @@ what makes re-installs work); `just package` requires
 an absolute path before staging — a relative `dist` argument would
 otherwise resolve from inside the staging directory and fail.
 
+## The repl's line editor
+
+`emo repl` edits its input with a vendored
+[linenoise](https://github.com/antirez/linenoise) — the library
+redis-cli reads with — compiled into the binary through dune's
+`foreign_stubs`. What the editor adds to the session:
+
+- **History recall across sessions.** Every non-empty line joins the
+  history as typed (up to 1000 entries), and the session's end saves it
+  to the state file: `$EMO_STATE_DIR/repl-history` when set, else
+  `$XDG_STATE_HOME/emo/repl-history`, else
+  `$HOME/.local/state/emo/repl-history`. Up and down walk the entries;
+  a file the system will not carry is one warning on stderr and the
+  session continues — a missing file is a first session's normal shape
+  and says nothing.
+- **Multi-line editing.** Long lines wrap across the terminal's rows
+  and stay editable; pasted input lands whole (bracketed-paste aware,
+  large pastes folded for display).
+- **The continuation prompt indents by bracket depth.** While the
+  session is collecting an unbalanced block, `... ` grows two spaces
+  per still-open `{`/`(`/`[` — the prompt shows where the block stands.
+  The indent is visual guidance; the editor places no cursor beyond it.
+- **Ctrl-C abandons, it does not kill.** The editor consumes Ctrl-C;
+  the repl discards the pending input and renders a fresh prompt. An
+  empty line's Ctrl-D ends the session, as EOF always has.
+
+The editor takes the seat only when stdin and stdout are both
+terminals. Pipes, redirects, and scripts keep the plain line-reading
+path byte for byte — `emo repl`'s piped behavior, and every test that
+drives the session, never touch the terminal machinery. The
+`repl-history` file is written 0600 by the library; a second
+concurrent session's save wins the file, which is the one known
+limitation. TAB completion is deliberately absent — the callback
+rides the binding, but what completes (keywords, the session's names,
+required packages) is a design of its own.
+
 ## References
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) — why
@@ -77,3 +113,5 @@ otherwise resolve from inside the staging directory and fail.
   and [`devtools/publish-release.sh`](../devtools/publish-release.sh)
   — the legs that carry a built release through Apple notarization
   and onto the download site.
+- [`plan/step-79-repl-linenoise.md`](../plan/step-79-repl-linenoise.md)
+  — the step that brought the repl its line editor (M39).
