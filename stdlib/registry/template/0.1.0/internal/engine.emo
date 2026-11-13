@@ -1,0 +1,1748 @@
+// internal/engine.emo — the template AST, the scanner, the parser, and
+// the renderer. The package root is the only thing another package
+// sees; everything here is the engine's guts.
+//
+// Parsing is strict, the dom.parse direction: every action must close,
+// `{{ end }}` must close the construct the stack says is open, filter
+// names must be on the table, and paths must lex — malformed input
+// answers `(R.error, reason)` with a byte position, never a repaired
+// tree. Rendering is strict the same way: a missing key, a wrong kind,
+// an out-of-bounds index, a null hole, a container hole — each answers
+// `(R.error, reason)` naming the path, the byte, and the fact. No
+// silent empty text, no `<no value>`, no zero-value fallthrough.
+//
+// The scanner walks the template's bytes (the house pattern: `{{` and
+// `}}` are ASCII, so UTF-8 content passes through untouched); the
+// parser recurses only per construct, bounded by the 512 nesting cap.
+
+require "json"
+require "float"
+
+// ---- tokens ----
+
+enum TokKind { tident, tstring, tint, tsym, tend }
+
+class Tok {
+  def init(tk TokKind, s String, n Int64, c Int64, at Int64, tr Bool) {
+    self.tk = tk
+    self.ttext = s
+    self.tnum = n
+    self.tch = c
+    self.tat = at
+    self.ttrim = tr
+  }
+
+  def kind() TokKind {
+    return self.tk
+  }
+
+  def text() String {
+    return self.ttext
+  }
+
+  def num() Int64 {
+    return self.tnum
+  }
+
+  def sym() Int64 {
+    return self.tch
+  }
+
+  def pos() Int64 {
+    return self.tat
+  }
+
+  def trim() Bool {
+    return self.ttrim
+  }
+}
+
+// ---- the AST ----
+
+enum SegKind { segname, segidx, segstr }
+
+class TplSeg {
+  def init(skind SegKind, sname String, sidx Int64, sat Int64) {
+    self.skind = skind
+    self.sname = sname
+    self.sidx = sidx
+    self.sat = sat
+  }
+
+  def kind() SegKind {
+    return self.skind
+  }
+
+  def name() String {
+    return self.sname
+  }
+
+  def idx() Int64 {
+    return self.sidx
+  }
+
+  def pos() Int64 {
+    return self.sat
+  }
+}
+
+enum ArgKind { apath, astring, aint, abool }
+
+class TplArg {
+  def init(akind ArgKind, apath_e Array[TplSeg], astring String, aint Int64, abool Bool, aat Int64) {
+    self.akind = akind
+    self.apath_e = apath_e
+    self.astring = astring
+    self.aint = aint
+    self.abool = abool
+    self.aat = aat
+  }
+
+  def kind() ArgKind {
+    return self.akind
+  }
+
+  def path_e() Array[TplSeg] {
+    return self.apath_e
+  }
+
+  def string() String {
+    return self.astring
+  }
+
+  def int() Int64 {
+    return self.aint
+  }
+
+  def bool() Bool {
+    return self.abool
+  }
+
+  def pos() Int64 {
+    return self.aat
+  }
+}
+
+class TplStep {
+  def init(sname String, sargs Array[TplArg], sat Int64) {
+    self.sname = sname
+    self.sargs = sargs
+    self.sat = sat
+  }
+
+  def name() String {
+    return self.sname
+  }
+
+  def args() Array[TplArg] {
+    return self.sargs
+  }
+
+  def pos() Int64 {
+    return self.sat
+  }
+}
+
+class TplPipe {
+  def init(ppath Array[TplSeg], psteps Array[TplStep], pat Int64) {
+    self.ppath = ppath
+    self.psteps = psteps
+    self.pat = pat
+  }
+
+  def path() Array[TplSeg] {
+    return self.ppath
+  }
+
+  def steps() Array[TplStep] {
+    return self.psteps
+  }
+
+  def pos() Int64 {
+    return self.pat
+  }
+}
+
+enum TplKind { ttext, thole, tif, tfor, tinclude }
+
+interface TplNode {
+  def kind() TplKind
+  def pos() Int64
+}
+
+class TplTextNode {
+  def init(ttext String, tpos Int64) {
+    self.ttext = ttext
+    self.tpos = tpos
+  }
+
+  def kind() TplKind {
+    return TplKind.ttext
+  }
+
+  def pos() Int64 {
+    return self.tpos
+  }
+
+  def text() String {
+    return self.ttext
+  }
+}
+
+class TplHoleNode {
+  def init(hpipe TplPipe, hpos Int64) {
+    self.hpipe = hpipe
+    self.hpos = hpos
+  }
+
+  def kind() TplKind {
+    return TplKind.thole
+  }
+
+  def pos() Int64 {
+    return self.hpos
+  }
+
+  def pipe() TplPipe {
+    return self.hpipe
+  }
+}
+
+class TplArm {
+  def init(acond TplPipe, abody Array[TplNode]) {
+    self.acond = acond
+    self.abody = abody
+  }
+
+  def cond() TplPipe {
+    return self.acond
+  }
+
+  def body() Array[TplNode] {
+    return self.abody
+  }
+}
+
+class TplIfNode {
+  def init(iarms Array[TplArm], ielse_e Array[TplNode], ipos Int64) {
+    self.iarms = iarms
+    self.ielse_e = ielse_e
+    self.ipos = ipos
+  }
+
+  def kind() TplKind {
+    return TplKind.tif
+  }
+
+  def pos() Int64 {
+    return self.ipos
+  }
+
+  def arms() Array[TplArm] {
+    return self.iarms
+  }
+
+  def else_e() Array[TplNode] {
+    return self.ielse_e
+  }
+}
+
+class TplForNode {
+  def init(fname1 String, fname2 String, fsrc TplPipe, fbody Array[TplNode], felse_e Array[TplNode], fpos Int64) {
+    self.fname1 = fname1
+    self.fname2 = fname2
+    self.fsrc = fsrc
+    self.fbody = fbody
+    self.felse_e = felse_e
+    self.fpos = fpos
+  }
+
+  def kind() TplKind {
+    return TplKind.tfor
+  }
+
+  def pos() Int64 {
+    return self.fpos
+  }
+
+  def name1() String {
+    return self.fname1
+  }
+
+  def name2() String {
+    return self.fname2
+  }
+
+  def src() TplPipe {
+    return self.fsrc
+  }
+
+  def body() Array[TplNode] {
+    return self.fbody
+  }
+
+  def else_e() Array[TplNode] {
+    return self.felse_e
+  }
+}
+
+class TplIncludeNode {
+  def init(xname String, xsrc_e Array[TplPipe], xpos Int64) {
+    self.xname = xname
+    self.xsrc_e = xsrc_e
+    self.xpos = xpos
+  }
+
+  def kind() TplKind {
+    return TplKind.tinclude
+  }
+
+  def pos() Int64 {
+    return self.xpos
+  }
+
+  def name() String {
+    return self.xname
+  }
+
+  def src_e() Array[TplPipe] {
+    return self.xsrc_e
+  }
+}
+
+// ---- small helpers ----
+
+def terr(at Int64, what String) String {
+  return "template: " + what + " at byte " + at.to_string()
+}
+
+def is_ws_byte(b Int64) Bool {
+  return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+def byte_str(b Int64) String {
+  const out = Bytes.new(1)
+  out.set(0, b)
+  return out.to_string()
+}
+
+def ltrim_ws(s String) String {
+  const b = s.to_bytes()
+  var i = 0
+  while i < b.length() {
+    if is_ws_byte(b.get(i)) {
+      i = i + 1
+    } else {
+      break
+    }
+  }
+  if i == 0 {
+    return s
+  }
+  return s.substring(i, b.length() - i)
+}
+
+def rtrim_ws(s String) String {
+  const b = s.to_bytes()
+  var e = b.length()
+  while e > 0 {
+    if is_ws_byte(b.get(e - 1)) {
+      e = e - 1
+    } else {
+      break
+    }
+  }
+  if e == b.length() {
+    return s
+  }
+  return s.substring(0, e)
+}
+
+// The spelling of one path segment in a reason: the first name bare,
+// later names dotted, brackets as written.
+def seg_text(s TplSeg, first Bool) String {
+  case s.kind() {
+    SegKind.segname -> {
+      if first {
+        return s.name()
+      }
+      return "." + s.name()
+    }
+    SegKind.segidx  -> { return "[" + s.idx().to_string() + "]" }
+    SegKind.segstr  -> { return "[\"" + s.name() + "\"]" }
+  }
+}
+
+def path_text(path Array[TplSeg], upto Int64) String {
+  var s = ""
+  var i = 0
+  while i < upto {
+    s = s + seg_text(path[i], i == 0)
+    i = i + 1
+  }
+  return s
+}
+
+def kind_name(v json.Json) String {
+  case v.kind() {
+    json.JsonKind.jnull   -> { return "null" }
+    json.JsonKind.jbool   -> { return "a bool" }
+    json.JsonKind.jint    -> { return "an integer" }
+    json.JsonKind.jfloat  -> { return "a float" }
+    json.JsonKind.jstring -> { return "a string" }
+    json.JsonKind.jarray  -> { return "an array" }
+    json.JsonKind.jobject -> { return "an object" }
+  }
+}
+
+// ---- the filter table ----
+//
+// Fixed and small: formatting over the json kinds, all ASCII-safe so
+// every target answers byte-identically. A Unicode case mapper waits
+// for cross-target-identical tables; custom filters stay out — compute
+// in Emo and put the result in the context.
+
+def filter_exists?(name String) Bool {
+  if name == "upper" { return true }
+  if name == "lower" { return true }
+  if name == "trim" { return true }
+  if name == "length" { return true }
+  if name == "join" { return true }
+  if name == "default" { return true }
+  if name == "escape_html" { return true }
+  return false
+}
+
+def filter_arity(name String) Int64 {
+  if name == "join" { return 1 }
+  if name == "default" { return 1 }
+  return 0
+}
+
+// ---- the parser ----
+//
+// The cursor rides a Box: the parser's methods advance it, and fields
+// are assigned only inside `init`.
+
+class TplParser {
+  def init(src String) {
+    self.src = src
+    self.data = src.to_bytes()
+    self.cur = Box.new(0)
+  }
+
+  def cur() Int64 {
+    return self.cur.read()
+  }
+
+  def seek(v Int64) {
+    self.cur.replace(v)
+  }
+
+  def n() Int64 {
+    return self.data.length()
+  }
+
+  def peek(k Int64) Int64 {
+    if self.cur() + k < self.n() {
+      return self.data.get(self.cur() + k)
+    }
+    return -1
+  }
+
+  def is_ws(b Int64) Bool {
+    return b == 32 || b == 9 || b == 10 || b == 13
+  }
+
+  def skip_ws() {
+    while self.cur() < self.n() {
+      if self.is_ws(self.data.get(self.cur())) {
+        self.seek(self.cur() + 1)
+      } else {
+        break
+      }
+    }
+  }
+
+  def is_ident_start(b Int64) Bool {
+    return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95
+  }
+
+  def is_ident_char(b Int64) Bool {
+    return self.is_ident_start(b) || (b >= 48 && b <= 57)
+  }
+
+  // The whole template: parse the body, refusing a stray `{{ end }}`
+  // or `{{ else }}` at the top level.
+  def parse() (R, Array[TplNode]) {
+    case self.parse_body(1, false) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> {
+        if r[1] == 1 {
+          return (R.error, terr(r[2], "unexpected `{{ end }}`"))
+        }
+        if r[1] == 2 {
+          return (R.error, terr(r[2], "unexpected `{{ else }}`"))
+        }
+        return (R.ok, r[0])
+      }
+    }
+  }
+
+  // One body: from the cursor to EOF (stop 0), to the `{{` of an
+  // unconsumed `{{ end }}` (stop 1), or to the `{{` of an unconsumed
+  // `{{ else ... }}` (stop 2). The stop tag is left for the caller to
+  // read, so its trim marker reaches the text after it. `init_tr` is
+  // the enclosing tag's trim-right, applying to this body's first text.
+  def parse_body(depth Int64, init_tr Bool) (R, (Array[TplNode], Int64, Int64)) {
+    if depth > 512 {
+      return (R.error, terr(self.cur(), "nesting deeper than 512"))
+    }
+    const acc = ArrayBuilder.new()
+    var tstart = self.cur()
+    var prev_tr = init_tr
+    var stop = 0
+    var stop_at = self.cur()
+    var failing = ""
+    var go = true
+    while go && failing == "" {
+      var j = self.cur()
+      var found = false
+      while j + 1 < self.n() {
+        if self.data.get(j) == 123 && self.data.get(j + 1) == 123 {
+          found = true
+          break
+        }
+        j = j + 1
+      }
+      if !found {
+        var rest = self.src.substring(tstart, self.n() - tstart)
+        if prev_tr {
+          rest = ltrim_ws(rest)
+        }
+        if rest != "" {
+          acc.push(TplTextNode.new(ttext: rest, tpos: tstart))
+        }
+        self.seek(self.n())
+        stop = 0
+        go = false
+      } else {
+        if j > tstart {
+          var head = self.src.substring(tstart, j - tstart)
+          if j + 2 < self.n() && self.data.get(j + 2) == 45 {
+            head = rtrim_ws(head)
+          }
+          if prev_tr {
+            head = ltrim_ws(head)
+          }
+          if head != "" {
+            acc.push(TplTextNode.new(ttext: head, tpos: tstart))
+          }
+        }
+        self.seek(j + 2)
+        if self.cur() < self.n() && self.data.get(self.cur()) == 45 {
+          self.seek(self.cur() + 1)
+        }
+        self.skip_ws()
+        if self.cur() < self.n() && self.data.get(self.cur()) == 33 {
+          case self.read_comment() {
+            (R.error, why) -> { failing = why }
+            (R.ok, ctr)    -> {
+              prev_tr = ctr
+              tstart = self.cur()
+            }
+          }
+        } else {
+          case self.peek_word(j) {
+            (R.error, why) -> { failing = why }
+            (R.ok, w)      -> {
+              if w == "end" {
+                stop = 1
+                stop_at = j
+                go = false
+              } else {
+                if w == "else" {
+                  stop = 2
+                  stop_at = j
+                  go = false
+                } else {
+                  case self.read_tag(j) {
+                  (R.error, why) -> { failing = why }
+                  (R.ok, tg)     -> {
+                    case self.dispatch_tag(tg[0], tg[1], depth, j) {
+                      (R.error, why) -> { failing = why }
+                      (R.ok, nr)     -> {
+                        if nr[1].length() == 1 {
+                          acc.push(nr[1][0])
+                        }
+                        prev_tr = nr[0]
+                        tstart = self.cur()
+                      }
+                    }
+                  }
+                }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, (acc.to_array(), stop, stop_at))
+  }
+
+  // One action's tokens: from the cursor (already past `{{`, the dash,
+  // and the whitespace) through `}}`. The trim-right flag rides the
+  // closing token; the tokens do not include it.
+  def read_tag(at Int64) (R, (Array[Tok], Bool)) {
+    const toks = ArrayBuilder.new()
+    var tr = false
+    var failing = ""
+    var go = true
+    while go && failing == "" {
+      self.skip_ws()
+      if self.cur() >= self.n() {
+        failing = terr(at, "`{{` is never closed")
+      } else {
+        case self.read_token() {
+          (R.error, why) -> { failing = why }
+          (R.ok, t)      -> {
+            if t.kind() == TokKind.tend {
+              tr = t.trim()
+              go = false
+            } else {
+              toks.push(t)
+            }
+          }
+        }
+      }
+    }
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, (toks.to_array(), tr))
+  }
+
+  // A comment: `{{! ... }}`, ending at the first `}}`; a dash touching
+  // that `}}` is the trim-right marker for the text after it.
+  def read_comment() (R, Bool) {
+    var j = self.cur() + 1
+    var found = false
+    while j + 1 < self.n() {
+      if self.data.get(j) == 125 && self.data.get(j + 1) == 125 {
+        found = true
+        break
+      }
+      j = j + 1
+    }
+    if !found {
+      return (R.error, terr(self.cur(), "the comment is never closed"))
+    }
+    var tr = false
+    if j >= 1 && self.data.get(j - 1) == 45 {
+      tr = true
+    }
+    self.seek(j + 2)
+    return (R.ok, tr)
+  }
+
+  // The tag's first word, with the cursor restored — the lookahead
+  // that lets `{{ end }}` / `{{ else }}` stop the body unconsumed.
+  def peek_word(at Int64) (R, String) {
+    if self.cur() >= self.n() {
+      return (R.error, terr(at, "`{{` is never closed"))
+    }
+    const save = self.cur()
+    var w = ""
+    var failing = ""
+    case self.read_token() {
+      (R.error, why) -> { failing = why }
+      (R.ok, t)      -> {
+        if t.kind() == TokKind.tident {
+          w = t.text()
+        }
+      }
+    }
+    self.seek(save)
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, w)
+  }
+
+  def read_token() (R, Tok) {
+    const at = self.cur()
+    const b = self.data.get(self.cur())
+    if b == 125 && self.peek(1) == 125 {
+      self.seek(self.cur() + 2)
+      return (R.ok, Tok.new(tk: TokKind.tend, s: "", n: 0, c: 0, at: at, tr: false))
+    }
+    if b == 45 {
+      if self.peek(1) == 125 {
+        self.seek(self.cur() + 3)
+        return (R.ok, Tok.new(tk: TokKind.tend, s: "", n: 0, c: 0, at: at, tr: true))
+      }
+      return (R.error, terr(at, "unexpected `-`"))
+    }
+    if self.is_ident_start(b) {
+      var j = self.cur()
+      while j < self.n() && self.is_ident_char(self.data.get(j)) {
+        j = j + 1
+      }
+      self.seek(j)
+      return (R.ok, Tok.new(tk: TokKind.tident, s: self.src.substring(at, j - at), n: 0, c: 0, at: at, tr: false))
+    }
+    if b == 34 {
+      case self.read_string() {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, s)      -> { return (R.ok, Tok.new(tk: TokKind.tstring, s: s, n: 0, c: 0, at: at, tr: false)) }
+      }
+    }
+    if b >= 48 && b <= 57 {
+      var j = self.cur()
+      while j < self.n() && self.data.get(j) >= 48 && self.data.get(j) <= 57 {
+        j = j + 1
+      }
+      if j - at > 18 {
+        return (R.error, terr(at, "the number is too large"))
+      }
+      const digits = self.src.substring(at, j - at)
+      self.seek(j)
+      return (R.ok, Tok.new(tk: TokKind.tint, s: digits, n: digits.to_int64(), c: 0, at: at, tr: false))
+    }
+    if b == 124 || b == 40 || b == 41 || b == 44 || b == 46 || b == 91 || b == 93 {
+      self.seek(self.cur() + 1)
+      return (R.ok, Tok.new(tk: TokKind.tsym, s: "", n: 0, c: b, at: at, tr: false))
+    }
+    return (R.error, terr(at, "unexpected `" + byte_str(b) + "`"))
+  }
+
+  // A double-quoted literal with the language's escape set:
+  // \n \r \t \\ \" \'. A raw line break never closes one.
+  def read_string() (R, String) {
+    const at = self.cur()
+    var j = self.cur() + 1
+    var out = ""
+    var run = j
+    var failing = ""
+    var go = true
+    while go && failing == "" {
+      if j >= self.n() {
+        failing = terr(at, "the string is never closed")
+      } else {
+        const b = self.data.get(j)
+        if b == 34 {
+          out = out + self.src.substring(run, j - run)
+          self.seek(j + 1)
+          go = false
+        } else {
+          if b == 92 {
+            out = out + self.src.substring(run, j - run)
+            if j + 1 >= self.n() {
+              failing = terr(at, "the string is never closed")
+            } else {
+              const e = self.data.get(j + 1)
+              var esc = ""
+              if e == 110 { esc = "\n" }
+              if e == 114 { esc = "\r" }
+              if e == 116 { esc = "\t" }
+              if e == 92 { esc = "\\" }
+              if e == 34 { esc = "\"" }
+              if e == 39 { esc = "'" }
+              if esc == "" {
+                failing = terr(j, "`\\" + byte_str(e) + "` is not an escape")
+              } else {
+                out = out + esc
+                j = j + 2
+                run = j
+              }
+            }
+          } else {
+            if b == 10 {
+              failing = terr(at, "the string is never closed")
+            } else {
+              j = j + 1
+            }
+          }
+        }
+      }
+    }
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, out)
+  }
+
+  // ---- the tag dispatch ----
+  //
+  // Answers (closing_trim, node_e): the node rides a 0-or-1 array so
+  // the stop words answer none — their caller reads the tag itself.
+
+  def dispatch_tag(toks Array[Tok], tr Bool, depth Int64, at Int64) (R, (Bool, Array[TplNode])) {
+    if toks.length() == 0 {
+      return (R.error, terr(at, "empty action"))
+    }
+    const t0 = toks[0]
+    if t0.kind() != TokKind.tident {
+      var what = "a string"
+      if t0.kind() == TokKind.tint {
+        what = "a number"
+      }
+      if t0.kind() == TokKind.tsym {
+        what = "`" + byte_str(t0.sym()) + "`"
+      }
+      return (R.error, terr(t0.pos(), "expected a path or a control word, got " + what))
+    }
+    const w = t0.text()
+    if w == "end" {
+      if toks.length() != 1 {
+        return (R.error, terr(toks[1].pos(), "unexpected token after `{{ end }}`"))
+      }
+      return (R.error, terr(at, "unexpected `{{ end }}`"))
+    }
+    if w == "else" {
+      if toks.length() == 1 {
+        return (R.error, terr(at, "unexpected `{{ else }}`"))
+      }
+      return (R.error, terr(toks[1].pos(), "unexpected `{{ else }}`"))
+    }
+    if w == "if" {
+      case self.parse_if(toks, tr, depth, at) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nr)     -> { return (R.ok, (nr[1], [nr[0]])) }
+      }
+    }
+    if w == "for" {
+      case self.parse_for(toks, tr, depth, at) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nr)     -> { return (R.ok, (nr[1], [nr[0]])) }
+      }
+    }
+    if w == "template" {
+      case self.parse_include(toks, at) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nd)     -> { return (R.ok, (tr, [nd])) }
+      }
+    }
+    if w == "true" || w == "false" || w == "in" {
+      return (R.error, terr(t0.pos(), "`" + w + "` is reserved"))
+    }
+    case self.parse_pipe_toks(toks, 0, at) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, pipe)   -> { return (R.ok, (tr, [TplHoleNode.new(hpipe: pipe, hpos: at)])) }
+    }
+  }
+
+  def parse_if(toks Array[Tok], tr Bool, depth Int64, at Int64) (R, (TplNode, Bool)) {
+    if toks.length() == 1 {
+      return (R.error, terr(at, "`{{ if }}` needs a condition"))
+    }
+    case self.parse_pipe_toks(toks, 1, at) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cond)   -> {
+        const arms = ArrayBuilder.new()
+        const else_e = ArrayBuilder.new()
+        var end_tr = false
+        var cur_tr = tr
+        var cur_cond = cond
+        var failing = ""
+        var done = false
+        while !done && failing == "" {
+          case self.parse_body(depth + 1, cur_tr) {
+            (R.error, why) -> { failing = why }
+            (R.ok, r)      -> {
+              arms.push(TplArm.new(acond: cur_cond, abody: r[0]))
+              if r[1] == 0 {
+                failing = terr(at, "`{{ if }}` is never closed")
+              } else {
+                if r[1] == 2 {
+                  case self.read_tag(r[2]) {
+                    (R.error, why) -> { failing = why }
+                    (R.ok, et)     -> {
+                      case self.parse_else_tag(et[0], et[1], at) {
+                        (R.error, why) -> { failing = why }
+                        (R.ok, er)     -> {
+                          if er[0].length() == 1 {
+                            cur_cond = er[0][0]
+                            cur_tr = et[1]
+                          } else {
+                            case self.parse_body(depth + 1, et[1]) {
+                              (R.error, why) -> { failing = why }
+                              (R.ok, r2)     -> {
+                                if r2[1] == 0 {
+                                  failing = terr(et[0][0].pos(), "`{{ else }}` is never closed")
+                                } else {
+                                  if r2[1] == 2 {
+                                    failing = terr(r2[2], "unexpected `{{ else }}`")
+                                  } else {
+                                    case self.read_tag(r2[2]) {
+                                      (R.error, why) -> { failing = why }
+                                      (R.ok, et2)    -> {
+                                        var x = 0
+                                        while x < r2[0].length() {
+                                          else_e.push(r2[0][x])
+                                          x = x + 1
+                                        }
+                                        end_tr = et2[1]
+                                        done = true
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  case self.read_tag(r[2]) {
+                    (R.error, why) -> { failing = why }
+                    (R.ok, et)     -> {
+                      end_tr = et[1]
+                      done = true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if failing != "" {
+          return (R.error, failing)
+        }
+        return (R.ok, (TplIfNode.new(iarms: arms.to_array(), ielse_e: else_e.to_array(), ipos: at), end_tr))
+      }
+    }
+  }
+
+  // The `{{ else ... }}` tag's shape: a bare else answers no pipeline,
+  // `{{ else if cond }}` answers its condition.
+  def parse_else_tag(toks Array[Tok], tr Bool, at Int64) (R, (Array[TplPipe], Bool)) {
+    if toks.length() == 1 {
+      return (R.ok, ([], tr))
+    }
+    if toks[1].kind() != TokKind.tident || toks[1].text() != "if" {
+      return (R.error, terr(toks[1].pos(), "unexpected token after `{{ else }}`"))
+    }
+    if toks.length() == 2 {
+      return (R.error, terr(at, "`{{ else if }}` needs a condition"))
+    }
+    case self.parse_pipe_toks(toks, 2, at) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cond)   -> { return (R.ok, ([cond], tr)) }
+    }
+  }
+
+  def parse_for(toks Array[Tok], tr Bool, depth Int64, at Int64) (R, (TplNode, Bool)) {
+    if toks.length() < 2 || toks[1].kind() != TokKind.tident {
+      var p = at
+      if toks.length() >= 2 {
+        p = toks[1].pos()
+      }
+      return (R.error, terr(p, "`{{ for }}` expects `name in pipeline`"))
+    }
+    const name1 = toks[1].text()
+    var k = 2
+    var name2 = ""
+    if k < toks.length() && toks[k].kind() == TokKind.tsym && toks[k].sym() == 44 {
+      if k + 1 >= toks.length() || toks[k + 1].kind() != TokKind.tident {
+        return (R.error, terr(toks[k].pos(), "`{{ for }}` expects a name after `,`"))
+      }
+      name2 = toks[k + 1].text()
+      k = k + 2
+    }
+    if k >= toks.length() || toks[k].kind() != TokKind.tident || toks[k].text() != "in" {
+      var p = at
+      if k < toks.length() {
+        p = toks[k].pos()
+      }
+      return (R.error, terr(p, "`{{ for }}` expects `in`"))
+    }
+    case self.parse_pipe_toks(toks, k + 1, at) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, src)    -> {
+        case self.parse_body(depth + 1, tr) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, r)      -> {
+            if r[1] == 0 {
+              return (R.error, terr(at, "`{{ for }}` is never closed"))
+            }
+            if r[1] == 2 {
+              case self.read_tag(r[2]) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, et)     -> {
+                  case self.parse_else_tag(et[0], et[1], at) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, er)     -> {
+                      if er[0].length() == 1 {
+                        return (R.error, terr(et[0][0].pos(), "`{{ else if }}` belongs to `{{ if }}`"))
+                      }
+                      case self.parse_body(depth + 1, et[1]) {
+                        (R.error, why) -> { return (R.error, why) }
+                        (R.ok, r2)     -> {
+                          if r2[1] == 0 {
+                            return (R.error, terr(et[0][0].pos(), "`{{ else }}` is never closed"))
+                          }
+                          if r2[1] == 2 {
+                            return (R.error, terr(r2[2], "unexpected `{{ else }}`"))
+                          }
+                          case self.read_tag(r2[2]) {
+                            (R.error, why) -> { return (R.error, why) }
+                            (R.ok, et2)    -> {
+                              return (R.ok, (TplForNode.new(fname1: name1, fname2: name2, fsrc: src, fbody: r[0], felse_e: r2[0], fpos: at), et2[1]))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            case self.read_tag(r[2]) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, et)     -> {
+                return (R.ok, (TplForNode.new(fname1: name1, fname2: name2, fsrc: src, fbody: r[0], felse_e: [], fpos: at), et[1]))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def parse_include(toks Array[Tok], at Int64) (R, TplIncludeNode) {
+    if toks.length() < 2 || toks[1].kind() != TokKind.tstring {
+      var p = at
+      if toks.length() >= 2 {
+        p = toks[1].pos()
+      }
+      return (R.error, terr(p, "`{{ template }}` needs a quoted name"))
+    }
+    const nm = toks[1].text()
+    if toks.length() == 2 {
+      return (R.ok, TplIncludeNode.new(xname: nm, xsrc_e: [], xpos: at))
+    }
+    case self.parse_pipe_toks(toks, 2, at) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, src)    -> { return (R.ok, TplIncludeNode.new(xname: nm, xsrc_e: [src], xpos: at)) }
+    }
+  }
+
+  // ---- pipelines ----
+
+  def parse_pipe_toks(toks Array[Tok], from Int64, at Int64) (R, TplPipe) {
+    if from >= toks.length() || toks[from].kind() != TokKind.tident {
+      var p = at
+      if from < toks.length() {
+        p = toks[from].pos()
+      }
+      return (R.error, terr(p, "expected a path"))
+    }
+    case self.parse_path_toks(toks, from) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, pr)     -> {
+        const steps = ArrayBuilder.new()
+        var k = pr[1]
+        var failing = ""
+        var go = true
+        while go && failing == "" {
+          if k >= toks.length() {
+            go = false
+          } else {
+            const t = toks[k]
+            if t.kind() == TokKind.tsym && t.sym() == 124 {
+              if k + 1 >= toks.length() || toks[k + 1].kind() != TokKind.tident {
+                failing = terr(t.pos(), "`|` needs a filter name")
+              } else {
+                const fname = toks[k + 1].text()
+                if !filter_exists?(fname) {
+                  failing = terr(toks[k + 1].pos(), "unknown filter `" + fname + "`")
+                } else {
+                  const args = ArrayBuilder.new()
+                  var k2 = k + 2
+                  if k2 < toks.length() && toks[k2].kind() == TokKind.tsym && toks[k2].sym() == 40 {
+                    case self.parse_args_toks(toks, k2 + 1, toks[k].pos()) {
+                      (R.error, why) -> { failing = why }
+                      (R.ok, ar)     -> {
+                        var x = 0
+                        while x < ar[0].length() {
+                          args.push(ar[0][x])
+                          x = x + 1
+                        }
+                        k2 = ar[1]
+                      }
+                    }
+                  }
+                  if failing == "" {
+                    const want = filter_arity(fname)
+                    const got = args.length()
+                    if got != want {
+                      if want == 0 {
+                        failing = terr(toks[k + 1].pos(), "`" + fname + "` takes no arguments, got " + got.to_string())
+                      } else {
+                        var plural = "s"
+                        if want == 1 {
+                          plural = ""
+                        }
+                        failing = terr(toks[k + 1].pos(), "`" + fname + "` expects " + want.to_string() + " argument" + plural + ", got " + got.to_string())
+                      }
+                    } else {
+                      steps.push(TplStep.new(sname: fname, sargs: args.to_array(), sat: toks[k + 1].pos()))
+                      k = k2
+                    }
+                  }
+                }
+              }
+            } else {
+              failing = terr(t.pos(), "unexpected " + tok_spell(t))
+            }
+          }
+        }
+        if failing != "" {
+          return (R.error, failing)
+        }
+        return (R.ok, TplPipe.new(ppath: pr[0], psteps: steps.to_array(), pat: at))
+      }
+    }
+  }
+
+  def parse_args_toks(toks Array[Tok], k Int64, open_at Int64) (R, (Array[TplArg], Int64)) {
+    const args = ArrayBuilder.new()
+    var i = k
+    var failing = ""
+    var closed = false
+    var want_arg = false
+    while !closed && failing == "" {
+      if i >= toks.length() {
+        failing = terr(open_at, "`(` is never closed")
+      } else {
+        const t = toks[i]
+        if t.kind() == TokKind.tsym && t.sym() == 41 {
+          if want_arg {
+            failing = terr(t.pos(), "expected an argument")
+          } else {
+            closed = true
+            i = i + 1
+          }
+        } else {
+          case self.parse_arg_toks(toks, i) {
+            (R.error, why) -> { failing = why }
+            (R.ok, ar)     -> {
+              args.push(ar[0])
+              want_arg = false
+              i = ar[1]
+              if i < toks.length() && toks[i].kind() == TokKind.tsym && toks[i].sym() == 44 {
+                want_arg = true
+                i = i + 1
+              } else {
+                if i < toks.length() && toks[i].kind() == TokKind.tsym && toks[i].sym() == 41 {
+                  closed = true
+                  i = i + 1
+                } else {
+                  if i >= toks.length() {
+                    failing = terr(open_at, "`(` is never closed")
+                  } else {
+                    failing = terr(toks[i].pos(), "expected `,` or `)`")
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, (args.to_array(), i))
+  }
+
+  def parse_arg_toks(toks Array[Tok], k Int64) (R, (TplArg, Int64)) {
+    const t = toks[k]
+    if t.kind() == TokKind.tstring {
+      return (R.ok, (TplArg.new(akind: ArgKind.astring, apath_e: [], astring: t.text(), aint: 0, abool: false, aat: t.pos()), k + 1))
+    }
+    if t.kind() == TokKind.tint {
+      return (R.ok, (TplArg.new(akind: ArgKind.aint, apath_e: [], astring: "", aint: t.num(), abool: false, aat: t.pos()), k + 1))
+    }
+    if t.kind() == TokKind.tident {
+      if t.text() == "true" {
+        return (R.ok, (TplArg.new(akind: ArgKind.abool, apath_e: [], astring: "", aint: 0, abool: true, aat: t.pos()), k + 1))
+      }
+      if t.text() == "false" {
+        return (R.ok, (TplArg.new(akind: ArgKind.abool, apath_e: [], astring: "", aint: 0, abool: false, aat: t.pos()), k + 1))
+      }
+      case self.parse_path_toks(toks, k) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, pr)     -> {
+          return (R.ok, (TplArg.new(akind: ArgKind.apath, apath_e: pr[0], astring: "", aint: 0, abool: false, aat: t.pos()), pr[1]))
+        }
+      }
+    }
+    return (R.error, terr(t.pos(), "expected an argument"))
+  }
+
+  def parse_path_toks(toks Array[Tok], i Int64) (R, (Array[TplSeg], Int64)) {
+    const segs = ArrayBuilder.new()
+    segs.push(TplSeg.new(skind: SegKind.segname, sname: toks[i].text(), sidx: 0, sat: toks[i].pos()))
+    var k = i + 1
+    var failing = ""
+    var go = true
+    while go && failing == "" {
+      if k >= toks.length() {
+        go = false
+      } else {
+        const t = toks[k]
+        if t.kind() == TokKind.tsym && t.sym() == 46 {
+          if k + 1 >= toks.length() || toks[k + 1].kind() != TokKind.tident {
+            failing = terr(t.pos(), "`.` needs a name")
+          } else {
+            segs.push(TplSeg.new(skind: SegKind.segname, sname: toks[k + 1].text(), sidx: 0, sat: toks[k + 1].pos()))
+            k = k + 2
+          }
+        } else {
+          if t.kind() == TokKind.tsym && t.sym() == 91 {
+            if k + 1 >= toks.length() {
+              failing = terr(t.pos(), "`[` needs a number or a quoted key")
+            } else {
+              const t1 = toks[k + 1]
+              if t1.kind() == TokKind.tint {
+                if k + 2 >= toks.length() || toks[k + 2].kind() != TokKind.tsym || toks[k + 2].sym() != 93 {
+                  failing = terr(t.pos(), "`[` is never closed")
+                } else {
+                  segs.push(TplSeg.new(skind: SegKind.segidx, sname: "", sidx: t1.num(), sat: t.pos()))
+                  k = k + 3
+                }
+              } else {
+                if t1.kind() == TokKind.tstring {
+                  if k + 2 >= toks.length() || toks[k + 2].kind() != TokKind.tsym || toks[k + 2].sym() != 93 {
+                    failing = terr(t.pos(), "`[` is never closed")
+                  } else {
+                    segs.push(TplSeg.new(skind: SegKind.segstr, sname: t1.text(), sidx: 0, sat: t.pos()))
+                    k = k + 3
+                  }
+                } else {
+                  failing = terr(t.pos(), "`[` needs a number or a quoted key")
+                }
+              }
+            }
+          } else {
+            go = false
+          }
+        }
+      }
+    }
+    if failing != "" {
+      return (R.error, failing)
+    }
+    return (R.ok, (segs.to_array(), k))
+  }
+}
+
+def tok_spell(t Tok) String {
+  case t.kind() {
+    TokKind.tident   -> { return "`" + t.text() + "`" }
+    TokKind.tstring  -> { return "a string" }
+    TokKind.tint     -> { return "a number" }
+    TokKind.tsym     -> { return "`" + byte_str(t.sym()) + "`" }
+    TokKind.tend     -> { return "`}}`" }
+  }
+}
+
+def parse_template(text String) (R, Array[TplNode]) {
+  const p = TplParser.new(src: text)
+  case p.parse() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, nodes)  -> { return (R.ok, nodes) }
+  }
+}
+
+// ---- the renderer ----
+
+// Every render reason carries the template it failed in: the one-shot
+// render has no name, a set render names its template, and an include
+// names the included one. `who` is that name, "" when there is none.
+def rerr(who String, at Int64, what String) String {
+  var s = "template: "
+  if who != "" {
+    s = s + "in `" + who + "`, "
+  }
+  return s + what + " at byte " + at.to_string()
+}
+
+def render_nodes(nodes Array[TplNode], bnd Array[(String, json.Json)], root json.Json, parts Array[(String, Array[TplNode])], who String, depth Int64, chain Array[String]) (R, String) {
+  var out = ""
+  var i = 0
+  while i < nodes.length() {
+    const nd = nodes[i]
+    case nd.kind() {
+      TplKind.ttext -> {
+        if nd.is(TplTextNode) {
+          out = out + nd.text()
+        }
+      }
+      TplKind.thole -> {
+        if nd.is(TplHoleNode) {
+          case eval_pipe(nd.pipe(), bnd, root, who) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, v)      -> {
+              const ps = path_text(nd.pipe().path(), nd.pipe().path().length())
+              case render_value(v, ps, nd.pos(), who) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, s)      -> { out = out + s }
+              }
+            }
+          }
+        }
+      }
+      TplKind.tif -> {
+        if nd.is(TplIfNode) {
+          case exec_if(nd, bnd, root, parts, who, depth, chain) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, s)      -> { out = out + s }
+          }
+        }
+      }
+      TplKind.tfor -> {
+        if nd.is(TplForNode) {
+          case exec_for(nd, bnd, root, parts, who, depth, chain) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, s)      -> { out = out + s }
+          }
+        }
+      }
+      TplKind.tinclude -> {
+        if nd.is(TplIncludeNode) {
+          case exec_include(nd, bnd, root, parts, who, depth, chain) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, s)      -> { out = out + s }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return (R.ok, out)
+}
+
+def exec_if(nd TplIfNode, bnd Array[(String, json.Json)], root json.Json, parts Array[(String, Array[TplNode])], who String, depth Int64, chain Array[String]) (R, String) {
+  var i = 0
+  while i < nd.arms().length() {
+    case eval_pipe(nd.arms()[i].cond(), bnd, root, who) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v)      -> {
+        if truthy(v) {
+          return render_nodes(nd.arms()[i].body(), bnd, root, parts, who, depth, chain)
+        }
+      }
+    }
+    i = i + 1
+  }
+  return render_nodes(nd.else_e(), bnd, root, parts, who, depth, chain)
+}
+
+def exec_for(nd TplForNode, bnd Array[(String, json.Json)], root json.Json, parts Array[(String, Array[TplNode])], who String, depth Int64, chain Array[String]) (R, String) {
+  case eval_pipe(nd.src(), bnd, root, who) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> {
+      if v.is(json.JsonArray) {
+        const items = v.items()
+        if items.length() == 0 {
+          return render_nodes(nd.else_e(), bnd, root, parts, who, depth, chain)
+        }
+        var out = ""
+        var k = 0
+        while k < items.length() {
+          var nb = bnd
+          if nd.name2() != "" {
+            nb = nb.append((nd.name1(), json.JsonInt.new(value: k)))
+            nb = nb.append((nd.name2(), items[k]))
+          } else {
+            nb = nb.append((nd.name1(), items[k]))
+          }
+          case render_nodes(nd.body(), nb, root, parts, who, depth, chain) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, s)      -> { out = out + s }
+          }
+          k = k + 1
+        }
+        return (R.ok, out)
+      }
+      if v.is(json.JsonObject) {
+        const es = v.entries()
+        if es.length() == 0 {
+          return render_nodes(nd.else_e(), bnd, root, parts, who, depth, chain)
+        }
+        var out = ""
+        var k = 0
+        while k < es.length() {
+          var nb = bnd
+          if nd.name2() != "" {
+            nb = nb.append((nd.name1(), json.JsonString.new(value: es[k][0])))
+            nb = nb.append((nd.name2(), es[k][1]))
+          } else {
+            nb = nb.append((nd.name1(), es[k][1]))
+          }
+          case render_nodes(nd.body(), nb, root, parts, who, depth, chain) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, s)      -> { out = out + s }
+          }
+          k = k + 1
+        }
+        return (R.ok, out)
+      }
+      const ps = path_text(nd.src().path(), nd.src().path().length())
+      return (R.error, rerr(who, nd.src().pos(), "`" + ps + "` is " + kind_name(v) + "; `for` ranges an array or an object"))
+    }
+  }
+}
+
+// An include renders the named template from the set: the caller's
+// root context when no pipeline is given, the pipeline's value
+// otherwise. Bindings never cross the edge; the depth cap names the
+// chain it refused.
+def exec_include(nd TplIncludeNode, bnd Array[(String, json.Json)], root json.Json, parts Array[(String, Array[TplNode])], who String, depth Int64, chain Array[String]) (R, String) {
+  if depth + 1 > 64 {
+    const full = chain.append(nd.name())
+    return (R.error, "template: include depth past 64: " + chain_text(full) + " at byte " + nd.pos().to_string())
+  }
+  const body_e = ArrayBuilder.new()
+  var k = 0
+  while k < parts.length() {
+    if parts[k][0] == nd.name() {
+      body_e.push(parts[k][1])
+      break
+    }
+    k = k + 1
+  }
+  if body_e.length() == 0 {
+    return (R.error, rerr(who, nd.pos(), "no template named `" + nd.name() + "`"))
+  }
+  const cr_e = ArrayBuilder.new()
+  if nd.src_e().length() == 1 {
+    case eval_pipe(nd.src_e()[0], bnd, root, who) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v)      -> { cr_e.push(v) }
+    }
+  }
+  var cr = root
+  if cr_e.length() == 1 {
+    cr = cr_e.get(0)
+  }
+  return render_nodes(body_e.get(0), [], cr, parts, nd.name(), depth + 1, chain.append(nd.name()))
+}
+
+def chain_text(chain Array[String]) String {
+  var s = ""
+  var i = 0
+  while i < chain.length() {
+    if i > 0 {
+      s = s + " -> "
+    }
+    s = s + chain[i]
+    i = i + 1
+  }
+  return s
+}
+
+// ---- evaluation ----
+
+def eval_pipe(p TplPipe, bnd Array[(String, json.Json)], root json.Json, who String) (R, json.Json) {
+  case resolve_path(p.path(), bnd, root, p.pos(), who) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> { return apply_steps(p.steps(), 0, v, bnd, root, who) }
+  }
+}
+
+def apply_steps(steps Array[TplStep], i Int64, v json.Json, bnd Array[(String, json.Json)], root json.Json, who String) (R, json.Json) {
+  if i >= steps.length() {
+    return (R.ok, v)
+  }
+  const st = steps[i]
+  case eval_args(st.args(), 0, [], bnd, root, who) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, argv)   -> {
+      case apply_filter(st.name(), v, argv, st.pos(), who) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, nv)     -> { return apply_steps(steps, i + 1, nv, bnd, root, who) }
+      }
+    }
+  }
+}
+
+def eval_args(args Array[TplArg], i Int64, acc Array[json.Json], bnd Array[(String, json.Json)], root json.Json, who String) (R, Array[json.Json]) {
+  if i >= args.length() {
+    return (R.ok, acc)
+  }
+  case eval_arg(args[i], bnd, root, who) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> { return eval_args(args, i + 1, acc.append(v), bnd, root, who) }
+  }
+}
+
+def eval_arg(a TplArg, bnd Array[(String, json.Json)], root json.Json, who String) (R, json.Json) {
+  case a.kind() {
+    ArgKind.apath   -> { return resolve_path(a.path_e(), bnd, root, a.pos(), who) }
+    ArgKind.astring -> { return (R.ok, json.JsonString.new(value: a.string())) }
+    ArgKind.aint    -> { return (R.ok, json.JsonInt.new(value: a.int())) }
+    ArgKind.abool   -> { return (R.ok, json.JsonBool.new(value: a.bool())) }
+  }
+}
+
+// The first segment resolves to the nearest enclosing binding, else
+// the context root's key; deeper segments walk data. No parent
+// walking, no scope chain through data, no root escape.
+def resolve_path(path Array[TplSeg], bnd Array[(String, json.Json)], root json.Json, at Int64, who String) (R, json.Json) {
+  case first_value(path[0], bnd, root, at, who) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v0)     -> { return walk_path(path, 1, v0, at, who) }
+  }
+}
+
+def first_value(s0 TplSeg, bnd Array[(String, json.Json)], root json.Json, at Int64, who String) (R, json.Json) {
+  const nm = s0.name()
+  var k = bnd.length() - 1
+  while k >= 0 {
+    if bnd[k][0] == nm {
+      return (R.ok, bnd[k][1])
+    }
+    k = k - 1
+  }
+  if root.kind() != json.JsonKind.jobject {
+    return (R.error, rerr(who, at, "`" + nm + "`: the context is not an object"))
+  }
+  case obj_get(root, nm) {
+    (R.error, _) -> { return (R.error, rerr(who, at, "the context holds no key `" + nm + "`")) }
+    (R.ok, v)    -> { return (R.ok, v) }
+  }
+}
+
+def obj_get(v json.Json, key String) (R, json.Json) {
+  if v.is(json.JsonObject) {
+    const es = v.entries()
+    var i = 0
+    while i < es.length() {
+      if es[i][0] == key {
+        return (R.ok, es[i][1])
+      }
+      i = i + 1
+    }
+    return (R.error, "missing")
+  }
+  return (R.error, "missing")
+}
+
+def walk_path(path Array[TplSeg], i Int64, v json.Json, at Int64, who String) (R, json.Json) {
+  if i >= path.length() {
+    return (R.ok, v)
+  }
+  const s = path[i]
+  const upto = path_text(path, i)
+  if s.kind() == SegKind.segidx {
+    if v.is(json.JsonArray) {
+      const items = v.items()
+      if s.idx() < 0 || s.idx() >= items.length() {
+        return (R.error, rerr(who, at, "`" + path_text(path, i + 1) + "`: index " + s.idx().to_string() + " of " + items.length().to_string()))
+      }
+      return walk_path(path, i + 1, items[s.idx()], at, who)
+    }
+    return (R.error, rerr(who, at, "`" + upto + "` is " + kind_name(v) + ", not an array"))
+  }
+  if v.kind() != json.JsonKind.jobject {
+    return (R.error, rerr(who, at, "`" + upto + "` is " + kind_name(v) + ", not an object"))
+  }
+  case obj_get(v, s.name()) {
+    (R.error, _) -> {
+      return (R.error, rerr(who, at, "`" + path_text(path, i + 1) + "`: the object holds no key `" + s.name() + "`"))
+    }
+    (R.ok, nv)   -> { return walk_path(path, i + 1, nv, at, who) }
+  }
+}
+
+// Truthiness is "not the zero value": null, false, 0, 0.0, the empty
+// string, an empty array, an empty object are false.
+def truthy(v json.Json) Bool {
+  case v.kind() {
+    json.JsonKind.jnull   -> { return false }
+    json.JsonKind.jbool   -> { return v.as_bool() }
+    json.JsonKind.jint    -> { return v.as_int() != 0 }
+    json.JsonKind.jfloat  -> { return v.as_float() != 0.0 }
+    json.JsonKind.jstring -> { return v.as_string() != "" }
+    json.JsonKind.jarray  -> {
+      if v.is(json.JsonArray) {
+        return v.items().length() > 0
+      }
+      return false
+    }
+    json.JsonKind.jobject -> {
+      if v.is(json.JsonObject) {
+        return v.entries().length() > 0
+      }
+      return false
+    }
+  }
+}
+
+// A hole's text: strings verbatim, integers decimal, floats through
+// the float package's exact-decimal text, booleans true/false. Null
+// and the containers refuse — a hole has no text of its own.
+def render_value(v json.Json, path_s String, at Int64, who String) (R, String) {
+  case v.kind() {
+    json.JsonKind.jnull   -> { return (R.error, rerr(who, at, "`" + path_s + "` is null and cannot render")) }
+    json.JsonKind.jbool   -> {
+      if v.as_bool() {
+        return (R.ok, "true")
+      }
+      return (R.ok, "false")
+    }
+    json.JsonKind.jint    -> { return (R.ok, v.as_int().to_string()) }
+    json.JsonKind.jfloat  -> { return (R.ok, float.to_text(v.as_float())) }
+    json.JsonKind.jstring -> { return (R.ok, v.as_string()) }
+    json.JsonKind.jarray  -> { return (R.error, rerr(who, at, "`" + path_s + "` is an array and cannot render")) }
+    json.JsonKind.jobject -> { return (R.error, rerr(who, at, "`" + path_s + "` is an object and cannot render")) }
+  }
+}
+
+// The value text `join` renders its elements with: the hole rules,
+// minus null and the containers, which refuse with the element index.
+def scalar_text(v json.Json) (R, String) {
+  case v.kind() {
+    json.JsonKind.jnull   -> { return (R.error, "null") }
+    json.JsonKind.jbool   -> {
+      if v.as_bool() {
+        return (R.ok, "true")
+      }
+      return (R.ok, "false")
+    }
+    json.JsonKind.jint    -> { return (R.ok, v.as_int().to_string()) }
+    json.JsonKind.jfloat  -> { return (R.ok, float.to_text(v.as_float())) }
+    json.JsonKind.jstring -> { return (R.ok, v.as_string()) }
+    json.JsonKind.jarray  -> { return (R.error, "an array") }
+    json.JsonKind.jobject -> { return (R.error, "an object") }
+  }
+}
+
+def apply_filter(name String, recv json.Json, args Array[json.Json], at Int64, who String) (R, json.Json) {
+  if name == "upper" {
+    if recv.kind() != json.JsonKind.jstring {
+      return (R.error, rerr(who, at, "`upper` expects a string, got " + kind_name(recv)))
+    }
+    return (R.ok, json.JsonString.new(value: ascii_upper(recv.as_string())))
+  }
+  if name == "lower" {
+    if recv.kind() != json.JsonKind.jstring {
+      return (R.error, rerr(who, at, "`lower` expects a string, got " + kind_name(recv)))
+    }
+    return (R.ok, json.JsonString.new(value: recv.as_string().lower()))
+  }
+  if name == "trim" {
+    if recv.kind() != json.JsonKind.jstring {
+      return (R.error, rerr(who, at, "`trim` expects a string, got " + kind_name(recv)))
+    }
+    return (R.ok, json.JsonString.new(value: recv.as_string().trim()))
+  }
+  if name == "length" {
+    if recv.is(json.JsonArray) {
+      return (R.ok, json.JsonInt.new(value: recv.items().length()))
+    }
+    if recv.is(json.JsonObject) {
+      return (R.ok, json.JsonInt.new(value: recv.entries().length()))
+    }
+    if recv.is(json.JsonString) {
+      return (R.ok, json.JsonInt.new(value: recv.as_string().length()))
+    }
+    return (R.error, rerr(who, at, "`length` expects an array, an object, or a string, got " + kind_name(recv)))
+  }
+  if name == "join" {
+    if recv.is(json.JsonArray) {
+      if args.length() != 1 || args[0].kind() != json.JsonKind.jstring {
+        return (R.error, rerr(who, at, "`join` expects a string separator"))
+      }
+      const sep = args[0].as_string()
+      const items = recv.items()
+      var out = ""
+      var i = 0
+      while i < items.length() {
+        if i > 0 {
+          out = out + sep
+        }
+        case scalar_text(items[i]) {
+          (R.error, why) -> {
+            return (R.error, rerr(who, at, "`join`: element " + i.to_string() + " is " + why))
+          }
+          (R.ok, s)      -> { out = out + s }
+        }
+        i = i + 1
+      }
+      return (R.ok, json.JsonString.new(value: out))
+    }
+    return (R.error, rerr(who, at, "`join` expects an array, got " + kind_name(recv)))
+  }
+  if name == "default" {
+    if recv.kind() == json.JsonKind.jnull {
+      return (R.ok, args[0])
+    }
+    return (R.ok, recv)
+  }
+  if name == "escape_html" {
+    if recv.kind() != json.JsonKind.jstring {
+      return (R.error, rerr(who, at, "`escape_html` expects a string, got " + kind_name(recv)))
+    }
+    return (R.ok, json.JsonString.new(value: escape_html_text(recv.as_string())))
+  }
+  return (R.error, "template: unknown filter `" + name + "`")
+}
+
+// ASCII-only, the language's own `String.lower` rule: bytes below 128
+// shift, everything else passes through unchanged.
+def ascii_upper(s String) String {
+  const b = s.to_bytes()
+  const out = Bytes.new(b.length())
+  var i = 0
+  while i < b.length() {
+    var c = b.get(i)
+    if c >= 97 && c <= 122 {
+      c = c - 32
+    }
+    out.set(i, c)
+    i = i + 1
+  }
+  return out.to_string()
+}
+
+// The five entities: & < > " '.
+def escape_html_text(s String) String {
+  const b = s.to_bytes()
+  var out = ""
+  var run = 0
+  var i = 0
+  while i < b.length() {
+    const c = b.get(i)
+    var entity = ""
+    if c == 38 { entity = "&amp;" }
+    if c == 60 { entity = "&lt;" }
+    if c == 62 { entity = "&gt;" }
+    if c == 34 { entity = "&quot;" }
+    if c == 39 { entity = "&#39;" }
+    if entity == "" {
+      i = i + 1
+    } else {
+      if i > run {
+        out = out + s.substring(run, i - run)
+      }
+      out = out + entity
+      i = i + 1
+      run = i
+    }
+  }
+  if run < b.length() {
+    out = out + s.substring(run, b.length() - run)
+  }
+  return out
+}

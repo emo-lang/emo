@@ -68,6 +68,7 @@ The packages:
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`dom`](#the-dom-package) | strict HTML parse and CSS-selector query | all five |
+| [`template`](#the-template-package) | text with holes rendered from a json context, strict at every step | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
 | [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
@@ -619,6 +620,40 @@ references only; tag and attribute names fold to lowercase.
 
 Targets: all five. Reference: [`docs/stdlib/dom.md`](stdlib/dom.md)
 · Demos: `examples/dom_demo`, `examples/dom_edge`.
+
+## The `template` package
+
+A text template engine in pure Emo: text with holes rendered from a
+`json` context — Go `text/template`'s mechanism, Emo's own surface.
+Strict at every step: parsing refuses malformed actions with the byte
+position (the `dom.parse` direction), rendering refuses what has no
+text — a missing key, a wrong kind, an out-of-bounds index, a null
+hole, a container hole — never silent empty output. The context is the
+json tree, so `json.decode` renders directly and numbers render
+through the `float` package's exact-decimal text, byte-identical by
+construction.
+
+```emo
+template.render(text, ctx)          // (R, String) — one-shot
+template.new()                      // an empty Set
+set.with(name, text)                // (R, Set) — parse a named template
+set.render(name, ctx)               // (R, String) — render one member
+```
+
+Actions: `{{ user.name }}` holes with bare dotted paths
+(`users[0].name`, `m["a b"]`), filter pipelines (`{{ name | upper }}` —
+upper/lower/trim/length/join/default/escape_html, fixed and
+ASCII-safe), `{{ if }}`/`{{ else if }}`/`{{ else }}`/`{{ end }}` with
+"not the zero value" truthiness, `{{ for x in e }}` over arrays and
+objects with `{{ else }}`, `{{ template "name" e? }}` includes
+(bindings never cross the edge; the depth cap names the chain), and
+`{{- ` / ` -}}` trim markers with `{{! ... }}` comments. There is no
+arithmetic and no comparison — the template renders, the program
+computes.
+
+Targets: all five. Reference:
+[`docs/stdlib/template.md`](stdlib/template.md) · Demos:
+`examples/template_demo`, `examples/template_edge`.
 
 ## The `base64` package
 

@@ -39,6 +39,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`dom`](#dom-包) | 严格 HTML 解析与 CSS 选择器查询 | 全部五个 |
+| [`template`](#template-包) | 文本加洞,从 json 上下文渲染,步步从严 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
@@ -419,6 +420,21 @@ sel.each(f Block)             // 尾随块走完整个 selection
 选择器带类型、`*`、类、id、属性测试(`[href]`、`=`、`^=`、`$=`、`*=`、`~=`、`|=`)、四个组合器、逗号分组、结构伪类(`:first-child`、`:nth-child(an+b)`、`:not(...)`、`:empty`、`:root`……),以及 goquery 的 `:contains`。伪元素和未知伪类以选择器错误回答——`find` 从不悄悄匹配成空。`script`/`style` 存原始文本,`title`/`textarea` 只存字符引用;标签名和属性名折叠为小写。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/dom.md`](stdlib/dom.md) · 示例:`examples/dom_demo`、`examples/dom_edge`。
+
+## template 包
+
+纯 Emo 写的文本模板引擎:文本加洞,从 `json` 上下文渲染——Go `text/template` 的机制、Emo 自己的表面。步步从严:解析以字节位置拒绝格式错误的动作(`dom.parse` 的方向);渲染拒绝没有文本的东西——缺键、类型不对、下标越界、null 洞、容器洞——从不悄悄输出空文本。上下文是 json 树,`json.decode` 直接可渲染,数字走 `float` 包的精确十进制文本,构造上就逐字节一致。
+
+```emo
+template.render(text, ctx)          // (R, String) —— 一次成型
+template.new()                      // 空集合
+set.with(name, text)                // (R, Set) —— 解析一个具名模板
+set.render(name, ctx)               // (R, String) —— 渲染一个成员
+```
+
+动作:`{{ user.name }}` 数据洞,路径是裸点分(`users[0].name`、`m["a b"]`);过滤器管道(`{{ name | upper }}`——upper/lower/trim/length/join/default/escape_html,固定且 ASCII 安全);`{{ if }}`/`{{ else if }}`/`{{ else }}`/`{{ end }}`,"不是零值"的真值;`{{ for x in e }}` 遍历数组与对象,带 `{{ else }}`;`{{ template "name" e? }}` 引用(绑定不过引用边;深度上限点名链条);`{{- ` / ` -}}` 修剪标记与 `{{! ... }}` 注释。没有算术、没有比较——模板渲染,程序计算。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/template.md`](stdlib/template.md) · 示例:`examples/template_demo`、`examples/template_edge`。
 
 ## base64 包
 

@@ -1,0 +1,128 @@
+require "json"
+require "template"
+
+// The refusal matrix: every parse error shape and every render error
+// shape, each answered as `(R.error, reason)` with the byte position —
+// never a repaired tree, never silent empty text. Every target must
+// print this file's expected.txt byte for byte.
+
+// The context the render refusals run against: a nested object with a
+// null, an array, a float, and a string.
+const ctx = json.object(entries: [
+  ("user", json.object(entries: [
+    ("name", json.string("ada")),
+    ("nick", json.null())
+  ])),
+  ("tags", json.array(items: [json.string("go"), json.string("emo")])),
+  ("mixed", json.array(items: [json.string("a"), json.null()])),
+  ("price", json.float64(19.5)),
+  ("title", json.string("Q"))
+])
+
+// One attempt, one line: the render, or the reason it refused.
+def try_text(label String, text String) {
+  case template.render(text, ctx) {
+    (R.error, why) -> { println(label + " refused: " + why) }
+    (R.ok, out)    -> { println(label + " ok: " + out) }
+  }
+}
+
+// ---- parse refusals ----
+
+try_text("unclosed-action", "Hi {{ name")
+// A bare `}}` outside an action is text — code-generation templates
+// close nested braces in their static text all the time.
+try_text("bare-close-is-text", "Hi }} there")
+try_text("empty-action", "Hi {{ }} there")
+try_text("unexpected-end", "Hi {{ end }}")
+try_text("unexpected-else", "Hi {{ else }}")
+try_text("unclosed-if", "{{ if user }}hi")
+try_text("unclosed-for", "{{ for x in tags }}hi")
+try_text("unclosed-else", "{{ if user }}hi{{ else }}bye")
+try_text("second-else", "{{ if user }}a{{ else }}b{{ else }}c{{ end }}")
+try_text("for-missing-in", "{{ for x tags }}{{ end }}")
+try_text("unknown-filter", "{{ user.name | zap }}")
+try_text("filter-arity-zero", "{{ user.name | join }}")
+try_text("filter-arity-one", "{{ tags | upper(1) }}")
+try_text("dot-needs-name", "{{ user. }}")
+try_text("bracket-needs-key", "{{ tags[abc] }}")
+try_text("bracket-never-closed", "{{ tags[0")
+try_text("reserved-word", "{{ in }}")
+try_text("tag-string-never-closed", "{{ user[\"name }}")
+try_text("comment-never-closed", "x{{! a note")
+try_text("template-needs-quote", "{{ template row }}")
+try_text("else-if-in-for", "{{ for x in tags }}{{ else if user }}{{ end }}")
+try_text("lone-dash", "{{ - }}")
+try_text("bad-escape", "{{ user[\"a\\q\"] }}")
+
+// Nesting past the 512 cap: 513 nested `{{ if }}`, one `{{ end }}` short
+// of balance — the depth refusal comes first.
+def deep_ifs(i Int64, acc String) String {
+  if i == 513 {
+    return acc + "{{ end }}"
+  }
+  return deep_ifs(i + 1, acc + "{{ if user }}")
+}
+try_text("deep-nesting", deep_ifs(0, ""))
+
+// ---- render refusals ----
+
+try_text("missing-key", "{{ user.phone }}")
+try_text("missing-root-key", "{{ ghost }}")
+try_text("kind-mid-path", "{{ user.name.first }}")
+try_text("index-out-of-bounds", "{{ tags[5] }}")
+try_text("index-on-object", "{{ user[0] }}")
+try_text("null-hole", "{{ user.nick }}")
+try_text("array-hole", "{{ tags }}")
+try_text("object-hole", "{{ user }}")
+try_text("for-over-scalar", "{{ for x in title }}{{ end }}")
+try_text("for-over-null", "{{ for x in user.nick }}{{ end }}")
+try_text("filter-kind", "{{ price | upper }}")
+try_text("join-null-element", "{{ mixed | join(\",\") }}")
+try_text("join-separator-kind", "{{ tags | join(5) }}")
+
+// ---- the set ----
+
+// An undefined include; an undefined render name; a redefined name.
+const (R.ok, e1) = template.new().with("page", "{{ template \"ghost\" }}")
+case e1.render("page", ctx) {
+  (R.error, why) -> { println("undefined-include refused: " + why) }
+  (R.ok, out)    -> { println("undefined-include ok: " + out) }
+}
+case e1.render("ghost", ctx) {
+  (R.error, why) -> { println("unknown-name refused: " + why) }
+  (R.ok, out)    -> { println("unknown-name ok: " + out) }
+}
+case e1.with("page", "{{ user.name }}") {
+  (R.error, why) -> { println("redefine refused: " + why) }
+  (R.ok, _)      -> { println("redefine ok") }
+}
+
+// An include cycle rides to the depth cap, and the reason names the
+// chain it refused.
+const (R.ok, c1) = template.new().with("a", "{{ template \"b\" }}")
+const (R.ok, c2) = c1.with("b", "{{ template \"a\" }}")
+case c2.render("a", ctx) {
+  (R.error, why) -> { println("cycle refused: " + why) }
+  (R.ok, out)    -> { println("cycle ok: " + out) }
+}
+
+// A scalar context: no key lookup is possible on it.
+case template.render("{{ x }}", json.string("bare")) {
+  (R.error, why) -> { println("scalar-context refused: " + why) }
+  (R.ok, out)    -> { println("scalar-context ok: " + out) }
+}
+
+// ---- the boundary holds ----
+
+// A quoted key holding `}}` stays inside the string, and an empty
+// comment renders nothing — the refusals above are the grammar's
+// edges, not the text's.
+const ctx2 = json.object(entries: [
+  ("user", json.object(entries: [("name", json.string("ada"))])),
+  ("m", json.object(entries: [("a}}b", json.string("kept"))]))
+])
+case template.render("{{ user[\"name\"] }} and {{ m[\"a}}b\"] }} and {{! }}!", ctx2) {
+  (R.error, why) -> { println("boundary refused: " + why) }
+  (R.ok, out)    -> { println("boundary ok: " + out) }
+}

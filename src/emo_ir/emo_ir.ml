@@ -1191,7 +1191,8 @@ let lower (input : input) : program =
               Hashtbl.replace symbols (m.mpath, d.Ast.def_name)
                 (S_func
                    {
-                     mangled = mangle m.mpath d.Ast.def_name;
+                     mangled =
+                       mangle m.mpath (sanitize_ident d.Ast.def_name);
                      params =
                        List.map (fun p -> p.Ast.param_name) d.Ast.def_params;
                    })
@@ -1226,7 +1227,8 @@ let lower (input : input) : program =
               List.iter
                 (fun d ->
                   let mangled =
-                    mangle m.mpath (g.Ast.group_name ^ "__" ^ d.Ast.def_name)
+                    mangle m.mpath
+                      (g.Ast.group_name ^ "__" ^ sanitize_ident d.Ast.def_name)
                   in
                   let params =
                     List.map (fun p -> p.Ast.param_name) d.Ast.def_params
@@ -1470,7 +1472,8 @@ let lower (input : input) : program =
           | Ast.Item_def d ->
               funcs :=
                 lower_func env ~module_path:m.mpath
-                  ~mangled:(mangle m.mpath d.Ast.def_name)
+                  ~mangled:
+                    (mangle m.mpath (sanitize_ident d.Ast.def_name))
                   ~self:None d
                 :: !funcs
           | Ast.Item_class c ->
@@ -1513,7 +1516,8 @@ let lower (input : input) : program =
                     lower_func env ~module_path:m.mpath
                       ~mangled:
                         (mangle m.mpath
-                           (g.Ast.group_name ^ "__" ^ d.Ast.def_name))
+                           (g.Ast.group_name ^ "__"
+                          ^ sanitize_ident d.Ast.def_name))
                       ~self:None d
                     :: !funcs)
                 g.Ast.group_defs;

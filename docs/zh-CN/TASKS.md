@@ -57,6 +57,7 @@
 | M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 | M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
 | M38 — Wasm 能力 | 75–77 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
+| M39 — 文本模板 | 78 | `template` 包——从 `json` 上下文渲染带洞的文本,Go `text/template` 的机制、Emo 自己的表面,纯 Emo 写在共享运行时之上,五个托管目标逐字节一致:一次成型的 `render` 与解析一次渲染多次的 `Set`(new/with/render),`{{ }}` 数据洞配裸点分路径与七个 ASCII 安全的过滤器管道,`if`/`else if`/`else`/`end` 配"不是零值"的真值,数组与对象上的 `for` 带 `else`,`template` 引用(绑定不过边,深度上限点名链条),`{{- `-` -}}` 修剪标记与 `{{! }}` 注释;解析与渲染都从严,每次失败都是带字节位置的理由。两个 golden 冲出来的后端 bug:IR 的模块级 def mangle 漏了 `sanitize_ident`(`?` 后缀漏进 TS/OCaml 标识符),BEAM 发射器的 threaded-chain case 在 per-branch save 之前注册模式绑定——兄弟分支的绑定泄漏进后继 continuation 的 live 集,erlc 报 unbound variable。 |
 
 ## 设计闸门
 
@@ -1907,4 +1908,55 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
 - [x] **T77.4** — fixture:`wasi-fixture.emo`——iovec 走查逐字节精确、nwritten 经包自己的内存门读回,proc_exit 的代码上 trap 通道,argv 编码(指针数组、后跟 nul 结尾缓冲),EBADF、ENOSYS、random 成功,fdstat 布局,签错的 import 什么都绑不上,path_open 以函数名链接失败。途中发现并当场修掉:dune 的并行 fixture 规则竞跑共享包缓存——共享临时名把兄弟 materialization 的文件 rename 掉、半写文件被 digest、manifest 解析撕裂——在 `materialize` 修掉(每进程临时名、原子 rename、open 失败时重建目录重试一次),并给每条 fixture 动作把 `EMO_CACHE_DIR` 钉到沙盒本地目录(CHECK.md)。
 - [x] **T77.5** — live check:`rustc --target wasm32-wasip1`(1.98.1,std 经用户授权安装)——hello world 经 fd_write 打印带 argv 计数;HashMap 模块经 random_get 播种;`process::exit(7)` 骑到 CLI 退出码且此前的打印存活。全绿。
 - [x] **T77.6** — 文档:`docs/stdlib/wasm.md` EN+zh 的 WASI 节(子集表、诚实边界:无时钟、无文件系统、仅 fd 1/2;`emo` 宿主模块缓议的论证);TASKS/plan/CHECK 更新。
+
+## M39 — 文本模板
+
+`template` 包从 `json` 上下文渲染带洞的文本——Go `text/template` 的机
+制、Emo 自己的表面,纯 Emo 写在共享运行时之上,每个托管目标逐字节给出
+相同答案。raw-strings 决议点名的文本模板这一类就是它;EmoUI 的"UI 不用
+模板语言"决议仍然成立——那条管的是 UI 组合,这台引擎的表达式是 json
+树上的数据路径,从来不是 Emo 代码,checker 看不见它们,运行时也没有任
+何 eval。
+
+### 步骤 78 — 标准库:`template` · `plan/step-78-stdlib-template.md`
+
+**前置:** 步骤 31(json——上下文骑的值树与错误拆分)、47(csv——字节扫
+描纪律与五 target golden 形状)。**完成标准:** `require "template"` 在
+五个目标上逐字节渲染带 json 上下文的模板——一次成型的 `render`、
+`Set`(new/with/render)、`if`/`else if`/`else`/`end`、数组与对象上的
+`for` 带 `else`、带深度上限的 `template` 引用、修剪标记、注释、七个
+ASCII 安全的过滤器——解析与渲染都从严,五条路径都有 golden;
+`dune test` 绿。
+
+- [x] **T78.1** — 包:`stdlib/registry/template/0.1.0`(manifest 五个
+      目标,deps `json` + `float`),`template.emo`——root:`render`、
+      `new`、带 `with`/`render` 的 `Set`——以及 `internal/engine.emo`
+      ——AST、字节扫描器、解析器(以循环走光标,递归只按构造,512 嵌套
+      上限封顶)、渲染器(最近绑定-再根的解析、过滤器表、带深度上限的引
+      用)。
+- [x] **T78.2** — golden:`examples/template_demo`(全走一遍:一次成
+      型、带 partial 的集合、if 链、数组与对象上的 for、for-else、每个
+      过滤器、修剪标记、注释、方括号路径、带与不带管道的引用)与
+      `examples/template_edge`(拒绝矩阵:每种解析错误形状、每种渲染错
+      误形状、引用上限、守住的边界)——两张名单都骑:bootstrap、
+      typescript、c、wasm、beam。
+- [x] **T78.3** — 文档:`docs/stdlib/template.md` + zh 镜像(使用、语
+      法、解析、真值、引用、过滤器、错误、边界),`docs/stdlib.md` 行 +
+      节 + zh 镜像,README 的参考行。
+- [x] **T78.4** — 追踪:`plan/step-78-stdlib-template.md`、
+      `plan/README.md` 的里程碑条目与状态行、CHECK.md 的决议记录、本节
+      与 zh 镜像。
+
+golden 冲出来并当场修掉的两个编译器 bug,都对着全套测试验证过:**IR 的
+模块级 def mangle 漏了 `sanitize_ident`**(`filter_exists?` 下落成裸
+`?`——TypeScript 和 OCaml 的非法标识符;类方法有清洗,模块级 def 和
+`emo` 组成员没有——两处 mangle 都补上),以及 **BEAM 发射器在
+threaded-chain 的 case 路径里,把分支的模式绑定注册在 per-branch save
+之前**(`emit_pattern` 的 `fresh_var` 注册,save 骑在它后面)——兄弟分
+支的模式变量泄漏进外围作用域和后继 continuation 的 live 集,erlc 报
+`unbound variable`(`stmt` 的 case 路径本来就把 save 放在 pattern 之
+前;`expr` 的 threaded case 与 `emit_threaded_control` 现在对齐)。
+`template_edge` 的 golden 还把裸 `}}` 的问题按与计划草稿相反的方向定
+了:动作之外的 `}}` 是文本,不是错误——代码生成模板的静态文本里到处
+是收口的嵌套花括号,Go 自己的扫描器也这么办。
 
