@@ -26,9 +26,9 @@
 | Recipe | 作用 |
 | --- | --- |
 | `just build` | 以 release profile 编译二进制——其余 recipe 共用的唯一制品。 |
-| `just install [PREFIX]` | c target 安装:独立二进制装入 `~/.local/bin`(默认),原子替换并 strip。可重复执行;用 `emo doctor` 验证。 |
+| `just install [PREFIX]` | 开发安装:在 `~/.local/bin`(默认)放置一个指向本树构建产物的符号链接——本树每次 `dune build` 后 `emo` 立即随之更新。可重复执行;用 `emo doctor` 验证。 |
 | `just install-dev` | 经 opam switch 的源码安装。 |
-| `just uninstall [PREFIX]` | 移除独立二进制。 |
+| `just uninstall [PREFIX]` | 移除已安装的 `emo` 链接。 |
 | `just package` | 把本平台的分发归档装配到 `dist/`——单平台,供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
 | `just release TAG` | 在本机完成整个发布：打 tag 并推送到源码托管平台，在本机构建并测试全部三个归档（macOS arm64 原生、两个 Linux 架构走 Docker——镜像用 `just release-image` 一次性构建），公证，再发布到下载站点。 |
 | `just test` | 全量测试套件。 |

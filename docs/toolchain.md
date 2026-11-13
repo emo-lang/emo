@@ -30,9 +30,9 @@ phrase means its opposite — the division of labor is:
 | Recipe | What it does |
 | --- | --- |
 | `just build` | Compile the release binary — the single artifact every other recipe uses. |
-| `just install [PREFIX]` | The c-target install: the standalone binary into `~/.local/bin` by default, atomically replaced and stripped. Re-runnable; verify with `emo doctor`. |
+| `just install [PREFIX]` | The dev install: a symlink in `~/.local/bin` (default) to this tree's build output — every `dune build` here refreshes `emo` immediately. Re-runnable; verify with `emo doctor`. |
 | `just install-dev` | The source install through the opam switch. |
-| `just uninstall [PREFIX]` | Remove the standalone binary. |
+| `just uninstall [PREFIX]` | Remove the installed `emo` link. |
 | `just package` | Assemble this platform's distributable archive into `dist/` — one platform, for quick checks; a release builds all three through `devtools/build-release.sh`. |
 | `just release TAG` | The whole release on this machine: tag and push to the source host, build and test all three archives (macOS arm64 natively, both Linux architectures in Docker — `just release-image` builds their images once), notarize, and publish to the download site. |
 | `just test` | The full test suite. |
