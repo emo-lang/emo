@@ -1,0 +1,35 @@
+// processes — the actor model, in the language's own words
+
+// One process owns the counter and answers every message with a reply
+// to its sender. Recursion is the receive loop's shape, and the tail
+// call is guaranteed.
+def counter(total Int64) Int64 {
+  receive {
+    ("add", n, from) -> {
+      from <- ("count", total + n)
+      return counter(total + n)
+    }
+    ("get", from) -> {
+      from <- ("count", total)
+      return counter(total)
+    }
+  }
+}
+
+const tally = do counter(0)
+const me = self_pid()
+
+tally <- ("add", 5, me)
+receive {
+  ("count", n) -> { println("after add: ${n}") }
+}
+
+tally <- ("add", 7, me)
+receive {
+  ("count", n) -> { println("after add: ${n}") }
+}
+
+tally <- ("get", me)
+receive {
+  ("count", n) -> { println("the tally owns ${n}") }
+}

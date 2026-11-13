@@ -94,6 +94,10 @@ EmoOS is a project of its own under [`projects/emo-os/`](projects/emo-os) — it
 
 The desktop above it is its own project too: [`projects/emo-desktop/`](projects/emo-desktop) — the composited-window GUI on EmoOS's gate, the single-language closure's next mile.
 
+## Emo Playground
+
+[`projects/emo-playground/`](projects/emo-playground) is the web app where a visitor writes Emo in the browser and runs it on the server — written in Emo, served by Emo's own `httpd`, running each submission through Emo's own interpreter under a `--curfew` the toolchain holds for it. Its [README](projects/emo-playground/README.md) holds the decided design and the [task tracker](projects/emo-playground/docs/TASKS.md).
+
 The `riscv64` compilation target is the bare-metal target. It assumes no OS, no libc, and no default runtime; it builds freestanding RISC-V images — the kernel development loop is compile, boot, debug, with no hardware required. QEMU is the target's default runner for that loop, not part of the target itself; the same image runs on real RISC-V hardware.
 
 Writing a kernel shapes the language in four ways:

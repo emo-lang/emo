@@ -67,6 +67,8 @@ ok test.greet.test_greet
 
 `emo run` evaluates the module tree directly and produces no artifact. `emo build` does not accept `--target` as a way to run; `emo run --target` supports only `riscv64` today.
 
+One flag belongs to the interpreter's own run: `emo run --curfew SECONDS` hands the evaluation a wall-clock deadline. Emo has no clock — the standard library's `slog` records the decision — so the one that ends a runaway program lives here, in the toolchain: the evaluator checks the deadline every 65,536 steps, and past it the run ends with exit 124 (the number `timeout(1)` answers) and the verdict on stderr. A `--target` artifact does not consult the curfew, and `--curfew` together with `--target` is refused. The flag exists for the playground ([`projects/emo-playground`](../projects/emo-playground)), whose server gives every submission one; nothing else is asked to use it.
+
 ## `c` (the default target)
 
 ```console

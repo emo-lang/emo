@@ -31,12 +31,12 @@
 
 (rule
  (target emo_ocaml_runtime_data.ml)
- (deps ocaml/emo_ocaml_runtime.ml)
+ (deps ocaml/emo_ocaml_runtime.ml ocaml/emo_ocaml_stub.c)
  (action
   (with-stdout-to
    emo_ocaml_runtime_data.ml
    (bash
-    "printf '(* Generated from src/emo_codegen/ocaml — edit there, not here. *)\\n\\nlet runtime_ml = {ml|' && cat ocaml/emo_ocaml_runtime.ml && printf '|ml}\\n'"))))
+    "printf '(* Generated from src/emo_codegen/ocaml — edit there, not here. *)\\n\\nlet runtime_ml = {ml|' && cat ocaml/emo_ocaml_runtime.ml && printf '|ml}\\n\\nlet runtime_stub_c = {img|' && cat ocaml/emo_ocaml_stub.c && printf '|img}\\n'"))))
 
 ; The wasm host rides the compiler the same way: `emo run --target wasm`
 ; writes it beside a temp copy of the artifact, and the golden tests run

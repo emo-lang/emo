@@ -1,0 +1,8 @@
+// hello — a function, an interpolation, and the run's own words
+
+def greet(whom String) String {
+  return "Hello, ${whom}!"
+}
+
+println(greet("world"))
+println("Emo compiles to c, ocaml, wasm, typescript, beam, and riscv64.")

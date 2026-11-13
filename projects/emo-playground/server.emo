@@ -1,0 +1,21 @@
+require "httpd"
+require "net"
+require "os"
+
+// The server's start: the runs directory comes into being, the
+// listener binds, and the route table takes the handler's seat. The
+// one thing left to the entry is the banner and the wait.
+//
+// A port the process cannot bind ends the program right here — the
+// plain destructuring's runtime error is the honest answer for a
+// server that cannot start.
+
+def start(cfg config.Config) httpd.Server {
+  case os.mkdir(cfg.runs_dir) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+  const (R.ok, listener) = net.listen(cfg.host, cfg.port)
+  const options = httpd.server_options().with_max_body_bytes(65536)
+  return httpd.serve_routes_with(listener, handlers.routes(cfg), options)
+}

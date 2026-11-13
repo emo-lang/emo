@@ -103,7 +103,8 @@ let refuse_manifest_entry ~(file : string) ~(hint : string) : int =
 (* Runs one file through the project pipeline: discover the module tree,
    check every module, then evaluate. Exit codes: 0 success, 1 uncaught
    exception, 65 lex/parse/check, 66 unreadable input or a manifest in
-   place of a program, 70 evaluation. *)
+   place of a program, 70 evaluation. A curfew set by the caller (the
+   `run` command, for --curfew) raises Emo_eval.Curfew_exceeded past it. *)
 let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match Sys.file_exists file with
   | false ->
@@ -808,10 +809,38 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     let oc = open_out_bin rt_path in
                     output_string oc Emo_codegen.ocaml_runtime_ml;
                     close_out oc;
-                    (* ocamlfind invokes its switch's compiler; the switch's
-                   bin dir must be on PATH for ocamlopt.opt to resolve. *)
+                    (* The runtime's POSIX stubs (emo_stub_setpgid, the
+                       process-group discipline the Unix module does not
+                       wrap) ride beside it always — a few lines of C,
+                       compiled the ffi_stubs way. ocamlfind invokes its
+                       switch's compiler; the switch's bin dir must be on
+                       PATH for ocamlopt.opt to resolve. *)
                     let ocamlfind = find_ocamlfind () in
                     let switch_bin = Filename.dirname ocamlfind in
+                    let stub_c_path =
+                      Filename.concat build_dir "emo_ocaml_stub.c"
+                    in
+                    let oc = open_out_bin stub_c_path in
+                    output_string oc Emo_codegen.ocaml_runtime_stub_c;
+                    close_out oc;
+                    let runtime_stub_obj =
+                      let obj_path =
+                        Filename.concat build_dir "emo_ocaml_stub.o"
+                      in
+                      let stdlib_dir =
+                        Filename.concat
+                          (Filename.concat switch_bin "..")
+                          "lib/ocaml"
+                      in
+                      let cc_cmd =
+                        Printf.sprintf "cc -O2 -I %s -c %s -o %s"
+                          (Filename.quote stdlib_dir)
+                          (Filename.quote stub_c_path)
+                          (Filename.quote obj_path)
+                      in
+                      if Emo_tool.run_status cc_cmd <> 0 then raise Stub_cc_failed;
+                      Printf.sprintf " %s" (Filename.quote obj_path)
+                    in
                     (* Foreign bindings get a compiled C wrapper
                    (ffi_stubs): ocaml's stdlib headers live in the
                    switch, so cc can find caml/mlvalues.h there. *)
@@ -863,12 +892,13 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     let link_cmd =
                       Printf.sprintf
                         "PATH=%s:$PATH %s ocamlopt -package unix,ssl -linkpkg \
-                         -I %s -open Emo_ocaml_runtime %s %s %s %s -o %s"
+                         -I %s -open Emo_ocaml_runtime %s %s %s %s %s -o %s"
                         (Filename.quote switch_bin)
                         (Filename.quote ocamlfind) (Filename.quote build_dir)
                         (Filename.quote
                            (Filename.concat build_dir "emo_ocaml_runtime.cmx"))
                         (Filename.quote ml_path) cclib_flags stub_obj
+                        runtime_stub_obj
                         (Filename.quote output)
                     in
                     let exit_code = Emo_tool.run_status compile_runtime in
@@ -1157,9 +1187,27 @@ let run =
              qemu-system-riscv64; wasm: the module runs under Node with the \
              bundled host).")
   in
-  let run file no_color error_limit target locked =
+  let curfew =
+    Arg.(
+      value
+      & opt (some float) None
+      & info [ "curfew" ] ~docv:"SECONDS"
+          ~doc:
+            "Stop the interpreted run when it has run longer than this — a \
+             runaway loop ends with exit 124 and a named verdict instead of \
+             never. The interpreter's own run only: a --target artifact does \
+             not consult it.")
+  in
+  let run file no_color error_limit target curfew locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
+    (match (target, curfew) with
+    | Some _, Some _ ->
+        prerr_endline
+          "emo run: --curfew governs the interpreter's own run — a --target \
+           artifact does not consult it";
+        exit 64
+    | _ -> ());
     match target with
     | Some "riscv64" ->
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
@@ -1242,13 +1290,46 @@ let run =
              other);
         exit 65
     | None -> (
-        match run_file ~file ~color ~error_limit with
-        | 0 -> Cmd.Exit.ok
-        | code -> exit code)
+        (match curfew with
+        | Some seconds -> Emo_eval.set_curfew ~seconds
+        | None -> ());
+        (* The deputized kill: a supervisor (the playground's run
+           engine) names a process group in the environment, and this
+           process — forked into that group — ends the group when its
+           own curfew passes. The run's own verdict is never touched:
+           the flag names a group this process belongs to but never
+           leads, and the kill is the only thing that fires there.
+           Without the knob a curfew verdict is just the banner and
+           exit 124, as before. *)
+        let deputized_group =
+          match Sys.getenv_opt "EMO_RUN_GROUP" with
+          | Some text -> ( try Some (int_of_string text) with _ -> None)
+          | None -> None
+        in
+        let end_deputized_group () =
+          match deputized_group with
+          | Some group ->
+              (try Unix.kill (-group) Sys.sigkill with Unix.Unix_error _ -> ())
+          | None -> ()
+        in
+        match
+          try run_file ~file ~color ~error_limit
+          with Emo_eval.Curfew_exceeded seconds ->
+            end_deputized_group ();
+            prerr_endline
+              (Printf.sprintf "emo: the run passed its curfew of %gs — stopped"
+                 seconds);
+            124
+        with
+        | code ->
+            Emo_eval.clear_curfew ();
+            if code = 0 then Cmd.Exit.ok else exit code)
   in
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
-    Term.(const run $ file $ no_color $ error_limit $ target $ locked_flag ())
+    Term.(
+      const run $ file $ no_color $ error_limit $ target $ curfew
+      $ locked_flag ())
 
 (* True while the source still has open brackets or an unterminated string —
    the REPL keeps reading with a continuation prompt. *)

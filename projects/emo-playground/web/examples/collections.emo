@@ -1,0 +1,20 @@
+// collections — arrays, maps, and the builder that grows one
+
+// arrays are immutable values: a transform answers a new array
+const xs = [3, 1, 2]
+println(xs.length().to_string())
+
+// a map keeps its keys in insertion order
+const scores = Map.new(("ada", 36), ("grace", 45))
+scores.set("linus", 28)
+println("ada -> ${scores.get("ada")}")
+
+// the builder is the one place an array grows without a known length
+const names = ArrayBuilder.new()
+for var i = 0; i < 5; i = i + 1 {
+  names.push("item-${i}")
+}
+const grown = names.to_array()
+println(grown.length().to_string())
+println(grown[0])
+println(grown[4])

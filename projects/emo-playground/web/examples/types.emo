@@ -1,0 +1,49 @@
+// types — a class, an enum, and the case that tells them apart
+
+enum Shape {
+  circle, square
+}
+
+class Form {
+  def init(name String, area Float64) {
+    self.name = name
+    self.area = area
+  }
+
+  def to_string() String {
+    return "${self.name} (${self.area} square units)"
+  }
+}
+
+def describe(kind Shape, form Form) String {
+  case kind {
+    Shape.circle -> {
+      return "a circle: ${form.to_string()}"
+    }
+    Shape.square -> {
+      return "a square: ${form.to_string()}"
+    }
+  }
+}
+
+const disc = Form.new(name: "disc", area: 78.54)
+const tile = Form.new(name: "tile", area: 64.0)
+
+println(describe(Shape.circle, disc))
+println(describe(Shape.square, tile))
+
+// an interface belongs to the consumer: Form implements to_string, so
+// it satisfies Describable without declaring it
+interface Describable {
+  def to_string() String
+}
+
+def widen(form Describable) String {
+  // narrowing: the value learns its class inside the branch
+  if form.is(Form) {
+    return "narrowed back to Form: ${form.name}"
+  }
+  return "still an interface: ${form.to_string()}"
+}
+
+println(widen(disc))

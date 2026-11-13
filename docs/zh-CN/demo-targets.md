@@ -67,6 +67,8 @@ ok test.greet.test_greet
 
 `emo run` 直接对模块树求值，不产生产物。`emo build` 的 `--target` 不是运行方式；`emo run --target` 今天只支持 `riscv64`。
 
+有一个标志属于解释器自己的运行:`emo run --curfew SECONDS` 给这次求值一个墙钟截止。Emo 没有时钟——标准库的 `slog` 记录着这个决定——所以结束失控程序的那个时钟住在这里、住在工具链里:求值器每 65,536 步检查一次截止,过了截止,运行以退出码 124(与 `timeout(1)` 同一个数)结束,stderr 带着裁定。`--target` 的产物不使用 curfew,而 `--curfew` 与 `--target` 同时给出会被拒绝。这个标志为 playground([`projects/emo-playground`](../../projects/emo-playground))而存在——它的服务器给每次提交一个;其余场景不被要求使用它。
+
 ## `c`（默认 target）
 
 ```console

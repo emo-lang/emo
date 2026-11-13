@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emo Playground</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <header>
+    <h1>emo<span class="accent">playground</span></h1>
+    <div class="controls">
+      <label for="examples">examples</label>
+      <select id="examples"><option value="">— pick one —</option></select>
+      <button id="run" title="Ctrl/Cmd+Enter">Run</button>
+    </div>
+  </header>
+  <main>
+    <section id="editor-pane">
+      <textarea id="editor" spellcheck="false" placeholder="write some Emo here, then Run"></textarea>
+    </section>
+    <section id="output-pane">
+      <div id="status" data-state="idle">ready</div>
+      <pre id="stdout" class="pane"></pre>
+      <pre id="stderr" class="pane"></pre>
+    </section>
+  </main>
+  <footer>
+    <p>Your program runs on this server with the Emo interpreter under a
+    <span id="curfew">5</span>s curfew — the standard library is available, stdin is
+    empty, and the working directory is yours alone. There is no sandbox yet:
+    be kind to the machine.</p>
+  </footer>
+  <script src="/web/app.js"></script>
+</body>
+</html>

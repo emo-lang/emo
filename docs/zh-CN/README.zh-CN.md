@@ -94,6 +94,10 @@ EmoOS 是 [`../../projects/emo-os/`](../../projects/emo-os) 下的独立项目�
 
 其上的桌面也是独立项目:[`projects/emo-desktop/`](../../projects/emo-desktop)——EmoOS 门上的合成窗口 GUI,单语言闭环的下一段路。
 
+## Emo Playground
+
+[`projects/emo-playground/`](../../projects/emo-playground) 是访客在浏览器里写 Emo、在服务器上运行它的 web 应用——用 Emo 写成,由 Emo 自己的 `httpd` 服务,每次提交都交给 Emo 自己的解释器,在工具链为它保管的 `--curfew` 之下运行。定案设计与任务追踪都在它的 [README](../../projects/emo-playground/README.zh-CN.md) 里。
+
 `riscv64` 编译目标是裸机目标。它假设没有 OS、没有 libc、没有默认运行时；构建 freestanding 的 RISC-V 镜像——内核开发循环是编译、启动、调试，不需要硬件。QEMU 只是这个循环的默认运行器，不属于目标本身；同一镜像可原样运行在真实 RISC-V 硬件上。
 
 写内核从四个方面塑造语言：

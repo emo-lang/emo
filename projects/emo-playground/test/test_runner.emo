@@ -1,0 +1,106 @@
+require "os"
+
+// The run engine, driven directly. The binary under test is the one
+// running this suite — argv[0], the interpreter itself — so the
+// runner's exec and its --curfew always ride the build the tests
+// belong to, never whatever an installed PATH once answered.
+
+const emo_bin = os.argv()[0]
+
+// The suite drives the run engine directly — no main.emo, no server —
+// so the tick program is prepared here: every run's watchdog execs it,
+// and a missing tick file would answer `internal` for every case.
+runner.prepare_tick("runs")
+
+def contains(hay String, needle String) Bool {
+  return hay.index_of(needle) >= 0
+}
+
+def test_ok_program() {
+  const result = runner.run_code(emo_bin, 5.0, "runs", "println(\"hi\")\nprintln(6 * 7)")
+  expect_equal("ok", result.status)
+  expect_equal("hi\n42\n", result.stdout)
+  expect_equal("", result.stderr)
+}
+
+def test_compile_error_names_the_file() {
+  const result = runner.run_code(emo_bin, 5.0, "runs", "println(1 + \"a\")")
+  expect_equal("compile", result.status)
+  expect_true(contains(result.stderr, "E4004"))
+  expect_true(contains(result.stderr, "main.emo:1:9"))
+}
+
+def test_runaway_stops_at_the_curfew() {
+  const result = runner.run_code(emo_bin, 1.0, "runs", "var n = 0\nwhile true {\n  n = n + 1\n}")
+  if result.status != "curfew" {
+    println("DEBUG curfew stderr: " + result.stderr + " stdout: " + result.stdout)
+  }
+  expect_equal("curfew", result.status)
+  expect_true(contains(result.stderr, "curfew"))
+}
+
+def test_stdlib_packages_are_pinned() {
+  const program = "require \"json\"\nconst (R.ok, d) = json.decode(\"[1, 2]\")\nif d.is(json.JsonArray) {\n  println(d.items().length())\n} else {\n  println(\"not an array\")\n}"
+  const result = runner.run_code(emo_bin, 5.0, "runs", program)
+  expect_equal("ok", result.status)
+  expect_equal("2\n", result.stdout)
+}
+
+def test_a_package_off_the_list_is_refused() {
+  const result = runner.run_code(emo_bin, 5.0, "runs", "require \"dom\"")
+  expect_equal("compile", result.status)
+  expect_true(contains(result.stderr, "E5006"))
+}
+
+def test_the_output_budget_truncates() {
+  const program = "for var i = 0; i < 20000; i = i + 1 {\n  println(\"0123456789012345678901234567890123456789012345678901234567890123\")\n}"
+  const result = runner.run_code(emo_bin, 5.0, "runs", program)
+  expect_equal("ok", result.status)
+  expect_true(contains(result.stdout, "output truncated"))
+}
+
+def test_the_run_directory_is_swept() {
+  const before = os.list_dir("runs")
+  const result = runner.run_code(emo_bin, 5.0, "runs", "println(\"swept\")")
+  if result.status != "ok" {
+    println("DEBUG swept stderr: " + result.stderr)
+  }
+  expect_equal("ok", result.status)
+  const after = os.list_dir("runs")
+  expect_equal(before.length(), after.length())
+}
+
+// The fork escape: a submission that forks two processes deadlocked on
+// each other's pipes holds the run pipes' write ends past its own
+// death — the collectors would never see EOF, and the answer would
+// park until the server restarts. The watchdog's curfew-kill ends the
+// whole group: the answer arrives, status ok, at the curfew plus the
+// margin.
+def test_a_fork_that_lingers_still_answers() {
+  const program = "require \"os\"\nconst (R.ok, (r1, w1)) = os.pipe()\nconst (R.ok, (r2, w2)) = os.pipe()\nconst (R.ok, g1) = os.fork()\nif g1 == 0 {\n  os.close(r1)\n  os.read(r2, 1)\n  os._exit(0)\n}\nconst (R.ok, g2) = os.fork()\nif g2 == 0 {\n  os.close(r2)\n  os.read(r1, 1)\n  os._exit(0)\n}\nos.close(r1)\nos.close(r2)\nos.close(w1)\nos.close(w2)\nprintln(\"parent done\")"
+  const result = runner.run_code(emo_bin, 1.0, "runs", program)
+  expect_equal("ok", result.status)
+  expect_equal("parent done\n", result.stdout)
+  expect_equal("", result.stderr)
+}
+
+// The wedge the curfew cannot see: the run child itself parks in a
+// system call whose answer never comes — no step check ever runs, so
+// the child's own curfew never fires. The watchdog's kill ends the
+// whole group at the curfew plus the margin, and the verdict says what
+// happened: a signal death, exit 137.
+def test_a_wedged_run_is_stopped_by_the_watchdog() {
+  const program = "require \"os\"\nconst (R.ok, (r, w)) = os.pipe()\nconst (R.ok, (r2, w2)) = os.pipe()\nconst (R.ok, pid) = os.fork()\nif pid == 0 {\n  os.close(r)\n  os.read(r2, 1)\n  os._exit(0)\n}\nos.close(r2)\nos.close(w)\nos.read(r, 1)\nprintln(\"unreachable\")"
+  const result = runner.run_code(emo_bin, 1.0, "runs", program)
+  expect_equal("crash", result.status)
+  expect_equal(137, result.exit_code)
+  expect_true(contains(result.stderr, "stopped by signal 9"))
+}
+
+// A broken emo binary: both children's execs fail, no kill ever fires,
+// and the verdict is the runner's own — internal, exit 127.
+def test_a_broken_emo_bin_answers_internal() {
+  const result = runner.run_code("emo-no-such-binary", 1.0, "runs", "println(\"hi\")")
+  expect_equal("internal", result.status)
+  expect_equal(127, result.exit_code)
+}

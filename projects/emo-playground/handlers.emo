@@ -1,0 +1,172 @@
+require "file"
+require "httpd"
+require "json"
+require "os"
+
+// The routes and their handlers: the editor page and its assets, the
+// example list a page fills its dropdown from, and the one API call —
+// POST /api/run — that carries a submission to the run engine.
+//
+// Every path a handler reads from the file system comes through
+// plain_segment: a capture is data, and before it becomes a path it
+// must be refused segments that climb — `.`, `..`, and hidden files
+// with them.
+
+def ends_with(text String, suffix String) Bool {
+  if text.length() < suffix.length() {
+    return false
+  }
+  return text.substring(text.length() - suffix.length(), suffix.length()) == suffix
+}
+
+def plain_segment(name String) Bool {
+  return name != "" && !name.starts_with(".")
+}
+
+def content_type(name String) String {
+  if ends_with(name, ".html") {
+    return "text/html; charset=utf-8"
+  }
+  if ends_with(name, ".css") {
+    return "text/css; charset=utf-8"
+  }
+  if ends_with(name, ".js") {
+    return "text/javascript; charset=utf-8"
+  }
+  return "application/octet-stream"
+}
+
+def asset(cfg config.Config, req httpd.Request) httpd.Response {
+  const rel = req.params.get("path")
+  if !plain_segment(rel) {
+    return httpd.error(404, "404 page not found\n")
+  }
+  case file.read(cfg.web_dir + "/" + rel) {
+    (R.error, _) -> { return httpd.error(404, "404 page not found\n") }
+    (R.ok, data) -> {
+      return httpd.response(200, [("Content-Type", content_type(rel))], data)
+    }
+  }
+}
+
+def index(cfg config.Config, _req httpd.Request) httpd.Response {
+  case file.read(cfg.web_dir + "/index.html") {
+    (R.error, _) -> {
+      return httpd.error(500, "playground: the page could not be read — is the server running from the project directory?\n")
+    }
+    (R.ok, data) -> {
+      return httpd.response(200, [("Content-Type", "text/html; charset=utf-8")], data)
+    }
+  }
+}
+
+// The example list: every .emo file under web/examples, its stem the
+// name the page and /examples/{name} share. The listing arrives in
+// byte order, so the page's dropdown is stable.
+def example_names(cfg config.Config) Array[String] {
+  case os.list_dir(cfg.web_dir + "/examples") {
+    (R.error, _) -> { return [] }
+    (R.ok, entries) -> {
+      const names = ArrayBuilder.new()
+      var i = 0
+      while i < entries.length() {
+        const entry = entries[i]
+        if ends_with(entry, ".emo") && plain_segment(entry) {
+          names.push(entry.substring(0, entry.length() - 4))
+        }
+        i = i + 1
+      }
+      return names.to_array()
+    }
+  }
+}
+
+def examples(cfg config.Config, _req httpd.Request) httpd.Response {
+  const names = example_names(cfg)
+  const items = ArrayBuilder.new()
+  var i = 0
+  while i < names.length() {
+    items.push(json.string(names[i]))
+    i = i + 1
+  }
+  const body = json.array(items.to_array()).encode()
+  return httpd.response(200, [("Content-Type", "application/json")], body)
+}
+
+def example_source(cfg config.Config, req httpd.Request) httpd.Response {
+  const name = req.params.get("name")
+  if !plain_segment(name) {
+    return httpd.error(404, "404 page not found\n")
+  }
+  case file.read(cfg.web_dir + "/examples/" + name + ".emo") {
+    (R.error, _) -> { return httpd.error(404, "404 no such example\n") }
+    (R.ok, data) -> {
+      const body = json.object([("name", json.string(name)), ("code", json.string(data))]).encode()
+      return httpd.response(200, [("Content-Type", "application/json")], body)
+    }
+  }
+}
+
+// The verdict a run answers with. The statuses are the runner's: ok,
+// compile, curfew, crash, internal — the page colors and words each.
+// The curfew rides along so the page's own footer says what the
+// server really enforces.
+def run_json(result runner.RunResult, curfew Float64) String {
+  return json.object([
+    ("status", json.string(result.status)),
+    ("exit", json.int64(result.exit_code)),
+    ("curfew", json.float64(curfew)),
+    ("stdout", json.string(result.stdout)),
+    ("stderr", json.string(result.stderr))
+  ]).encode()
+}
+
+def json_answer(status Int64, body String) httpd.Response {
+  return httpd.response(status, [("Content-Type", "application/json")], body)
+}
+
+def api_run(cfg config.Config, req httpd.Request) httpd.Response {
+  case json.decode(req.body) {
+    (R.error, why) -> {
+      return json_answer(400, json.object([("error", json.string("the body is not JSON: ${why}"))]).encode())
+    }
+    (R.ok, doc) -> {
+      if doc.is(json.JsonObject) {
+        if has_code_field(doc.entries()) {
+          const code = doc.get("code")
+          if code.kind() == json.JsonKind.jstring {
+            const result = runner.run_code(cfg.emo_bin, cfg.curfew, cfg.runs_dir, code.as_string())
+            if result.status == "internal" {
+              return json_answer(500, run_json(result, cfg.curfew))
+            }
+            return json_answer(200, run_json(result, cfg.curfew))
+          }
+          return json_answer(400, json.object([("error", json.string("\"code\" must be a String of Emo source"))]).encode())
+        }
+        return json_answer(400, json.object([("error", json.string("the object needs a \"code\" field — a String of Emo source"))]).encode())
+      }
+      return json_answer(400, json.object([("error", json.string("the body must be {\"code\": \"...\"} — a JSON object"))]).encode())
+    }
+  }
+}
+
+def has_code_field(entries Array[(String, json.Json)]) Bool {
+  var i = 0
+  while i < entries.length() {
+    if entries[i][0] == "code" {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def routes(cfg config.Config) httpd.Router {
+  var r = httpd.router()
+  r = r.get("/", -> (req httpd.Request) { return index(cfg, req) })
+  r = r.get("/web/{path...}", -> (req httpd.Request) { return asset(cfg, req) })
+  r = r.get("/examples", -> (req httpd.Request) { return examples(cfg, req) })
+  r = r.get("/examples/{name}", -> (req httpd.Request) { return example_source(cfg, req) })
+  r = r.post("/api/run", -> (req httpd.Request) { return api_run(cfg, req) })
+  return r
+}

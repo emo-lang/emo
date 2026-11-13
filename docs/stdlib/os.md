@@ -42,6 +42,8 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def kill(pid Int64, sig Int64) (R, Int64)
+def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 ```
@@ -73,6 +75,18 @@ parent's cleanup a second time. `execvp(file, argv)` is the same
 replacement with a lookup: `file` is searched through the `PATH`
 environment variable the way the shell's own lookup is (a name with a
 slash in it is used as-is), and the failure contract is the execv one.
+
+`kill(pid, sig)` sends `sig` to `pid` — a process id, or its negative
+for the whole process group with that id, the discipline a supervisor
+lives by: one call ends a group. The `sig_*` constants are the
+numbers. An out-of-range signal refuses ahead of the call —
+`os: kill 99: invalid signal` — the same fixed reason on every target;
+a kernel refusal is the data-driven value
+(`os: kill: No such process`). `setpgid(pid, pgid)` moves `pid` into
+the process group `pgid` (`pgid 0` means `pid`'s own) — the fork
+child's first call, its own new group made before the exec, is the
+discipline a shell lives by: the parent can then end the whole group
+with one kill of the negative pid.
 
 ## Descriptor plumbing and the terminal
 

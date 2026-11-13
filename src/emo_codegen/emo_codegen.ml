@@ -13,6 +13,8 @@ module Riscv = Emo_riscv
    never linked from the host build tree. *)
 let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
 
+let ocaml_runtime_stub_c = Emo_ocaml_runtime_data.runtime_stub_c
+
 (* The wasm host (src/emo_codegen/wasm — step 56): `emo run --target
    wasm` writes it beside a temp copy of the artifact, and the golden
    tests run it unchanged. *)
@@ -285,11 +287,9 @@ and emit_case env scrutinee branches ~tail =
         let bindings_code =
           String.concat ""
             (List.map
-               (fun (name, index) ->
-                 Printf.sprintf
-                   "let %s = List.nth (match payload with Emo_eval.Tuple xs -> \
-                    xs | _ -> []) %d in\n"
-                   (local name) index)
+               (fun (name, path) ->
+                 Printf.sprintf "let %s = %s in\n" (local name)
+                   (path_nth "payload" path))
                bindings)
         in
         let guard =
@@ -353,18 +353,37 @@ and emit_pattern (p : Emo_ast.pattern) : string =
       let inner = List.map emit_pattern ps in
       Printf.sprintf "Emo_eval.Tuple [%s]" (String.concat "; " inner)
 
-and pattern_bindings (p : Emo_ast.pattern) : (string * int) list =
-  let rec go p position acc =
+and pattern_bindings (p : Emo_ast.pattern) : (string * int list) list =
+  (* Each binding carries its PATH from the payload's root: a flat
+     pattern's binding sits at one index, a nested one's walks through
+     the tuple it sits in (`(R.ok, (r, w))` puts r at [1; 0], w at
+     [1; 1]). Flat positions would read the outer tuple's slots and run
+     past its end — the interpreter and the c target bind through the
+     nesting, so the lowering must too. *)
+  let rec go p path acc =
     match p.Ast.pattern_desc with
-    | Ast.Pattern_binding name -> (name, position) :: acc
+    | Ast.Pattern_binding name -> (name, path) :: acc
     | Ast.Tuple_pattern ps ->
         List.fold_left
-          (fun (pos, acc) sub -> (pos + 1, go sub pos acc))
-          (position, acc) ps
+          (fun (pos, acc) sub -> (pos + 1, go sub (path @ [ pos ]) acc))
+          (0, acc)
+          ps
         |> snd
     | _ -> acc
   in
-  List.rev (go p 0 [])
+  List.rev (go p [] [])
+
+(* The accessor chain a binding's path walks: the root is the matched
+   value, one tuple-match plus List.nth per level, each match keeping
+   the shape refusal explicit. *)
+and path_nth (root : string) (path : int list) : string =
+  List.fold_left
+    (fun code i ->
+      Printf.sprintf
+        "(match %s with Emo_eval.Tuple xs -> List.nth xs %d | _ -> failwith \
+         \"pattern shape\")"
+        code i)
+    root path
 
 and emit_receive env branches ~tail =
   ignore tail;
@@ -392,20 +411,13 @@ and emit_receive env branches ~tail =
         let items_at =
           String.concat "\n"
             (List.map
-               (fun (n, index) ->
-                 Printf.sprintf "let %s = List.nth __items %d in" (local n)
-                   index)
+               (fun (n, path) ->
+                 Printf.sprintf "let %s = %s in" (local n)
+                   (path_nth "payload" path))
                bindings)
         in
         let payload_unpack =
-          if bindings = [] then "true"
-          else
-            Printf.sprintf
-              "(match Emo_runtime.payload_items payload with\n\
-               | __items ->\n\
-               %s\n\
-               %s)"
-              items_at guard_inner
+          if bindings = [] then "true" else Printf.sprintf "%s\n%s" items_at guard_inner
         in
         let payload_return =
           if bindings = [] then Printf.sprintf "Some (%d, [])" i
@@ -415,15 +427,10 @@ and emit_receive env branches ~tail =
             let picked =
               String.concat "; "
                 (List.map
-                   (fun (_, index) ->
-                     Printf.sprintf "List.nth __items %d" index)
+                   (fun (_, path) -> path_nth "payload" path)
                    bindings)
             in
-            Printf.sprintf
-              "(match Emo_runtime.payload_items payload with\n\
-               | __items ->\n\
-               Some (%d, [%s]))"
-              i picked
+            Printf.sprintf "Some (%d, [%s])" i picked
         in
         Printf.sprintf
           "(fun v ->\n\

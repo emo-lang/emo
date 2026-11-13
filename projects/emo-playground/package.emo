@@ -1,0 +1,16 @@
+package {
+  name = "emo/playground"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "crypto" = "0.1.0"
+    "file" = "0.1.0"
+    "http" = "0.1.0"
+    "httpd" = "0.1.0"
+    "json" = "0.1.0"
+    "net" = "0.1.0"
+    "os" = "0.1.0"
+    "rand" = "0.1.0"
+  }
+}

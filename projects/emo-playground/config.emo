@@ -1,0 +1,84 @@
+require "os"
+
+// The playground's configuration: one Config value, read from the
+// environment when the server starts. Every knob has a decided default,
+// and a malformed value stops the program at startup with a message
+// naming the variable — a server that cannot say how it is configured
+// has no business serving.
+//
+//   PG_HOST      the bind address (default 127.0.0.1)
+//   PG_PORT      the bind port (default 8080)
+//   PG_EMO       the emo binary the runner execs (default "emo" on PATH)
+//   PG_CURFEW    the run curfew, whole seconds (default 5)
+//   PG_WEB_DIR   the static assets' directory (default "web")
+//   PG_RUNS_DIR  where one directory per run is created (default "runs")
+
+class Config {
+  def init(host String, port Int64, emo_bin String, curfew Float64, web_dir String, runs_dir String) {
+    self.host = host
+    self.port = port
+    self.emo_bin = emo_bin
+    self.curfew = curfew
+    self.web_dir = web_dir
+    self.runs_dir = runs_dir
+  }
+}
+
+def env_or(name String, fallback String) String {
+  case os.getenv(name) {
+    (R.ok, value) -> { return value }
+    (R.error, _) -> { return fallback }
+  }
+}
+
+// The port: non-empty, digits only, 1..65535. The byte-level check
+// keeps the message the config's own — String has no ordering and no
+// per-character read, but a String's bytes do.
+def digits_only(text String) Bool {
+  const bytes = text.to_bytes()
+  if bytes.length() == 0 {
+    return false
+  }
+  var i = 0
+  while i < bytes.length() {
+    const byte = bytes.get(i)
+    if byte < 48 || byte > 57 {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+def port_of(name String, text String) Int64 {
+  if !digits_only(text) {
+    raise Exception.new(message: "playground: ${name} must be a port number, got \"${text}\"")
+  }
+  const port = text.to_int64()
+  if port < 1 || port > 65535 {
+    raise Exception.new(message: "playground: ${name} must be a port in 1..65535, got ${text}")
+  }
+  return port
+}
+
+def curfew_of(name String, text String) Float64 {
+  if !digits_only(text) {
+    raise Exception.new(message: "playground: ${name} must be a whole number of seconds, got \"${text}\"")
+  }
+  const seconds = text.to_int64()
+  if seconds < 1 || seconds > 120 {
+    raise Exception.new(message: "playground: ${name} must be a curfew in 1..120 seconds, got ${text}")
+  }
+  return seconds.to_float64()
+}
+
+def from_env() Config {
+  return Config.new(
+    host: env_or("PG_HOST", "127.0.0.1"),
+    port: port_of("PG_PORT", env_or("PG_PORT", "8080")),
+    emo_bin: env_or("PG_EMO", "emo"),
+    curfew: curfew_of("PG_CURFEW", env_or("PG_CURFEW", "5")),
+    web_dir: env_or("PG_WEB_DIR", "web"),
+    runs_dir: env_or("PG_RUNS_DIR", "runs")
+  )
+}

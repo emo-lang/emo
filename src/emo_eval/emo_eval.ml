@@ -502,6 +502,10 @@ let global_env () =
     { bound = RuntimeImplFn "os_signal_ignore"; mutable_ = false };
   Hashtbl.replace env.frame "os_signal_default"
     { bound = RuntimeImplFn "os_signal_default"; mutable_ = false };
+  Hashtbl.replace env.frame "os_kill"
+    { bound = RuntimeImplFn "os_kill"; mutable_ = false };
+  Hashtbl.replace env.frame "os_setpgid"
+    { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same
@@ -512,7 +516,49 @@ exception Budget_exceeded of int (* the budget that was hit *)
 let step_budget : int option ref = ref None
 let step_count : int ref = ref 0
 
+(* The curfew: a wall-clock deadline the toolchain hands one run. The
+   playground's server gives every interpreted program one, so a runaway
+   `while true {}` ends with a named verdict instead of parking its
+   connection forever. Emo has no clock — slog's own header records the
+   decision — so the clock lives here, in the toolchain, and the check
+   rides count_step: every curfew_chunk steps, one Unix.gettimeofday
+   answers whether the program is past its curfew. The raise unwinds the
+   whole run (the scheduler re-raises anything that is not an Emo raise),
+   and the CLI renders the verdict and exits 124, the number timeout(1)
+   answers too. *)
+exception Curfew_exceeded of float (* the curfew, in seconds *)
+
+type curfew = {
+  c_deadline : float; (* the wall-clock moment the run must end by *)
+  c_chunk : int; (* steps between clock reads *)
+  c_seconds : float; (* the curfew itself, for the verdict's message *)
+}
+
+let curfew : curfew option ref = ref None
+let curfew_steps : int ref = ref 0
+let curfew_chunk = 65_536
+
+let set_curfew ~(seconds : float) : unit =
+  curfew :=
+    Some
+      {
+        c_deadline = Unix.gettimeofday () +. seconds;
+        c_chunk = curfew_chunk;
+        c_seconds = seconds;
+      }
+
+let clear_curfew () : unit = curfew := None
+
 let count_step () =
+  (match !curfew with
+  | Some { c_deadline; c_chunk; c_seconds } ->
+      incr curfew_steps;
+      if !curfew_steps >= c_chunk then begin
+        curfew_steps := 0;
+        if Unix.gettimeofday () > c_deadline then
+          raise (Curfew_exceeded c_seconds)
+      end
+  | None -> ());
   match !step_budget with
   | Some budget when !step_count >= budget -> raise (Budget_exceeded budget)
   | _ -> step_count := !step_count + 1
@@ -1404,6 +1450,13 @@ let net_error (message : string) : value =
 (* A failed assertion unwinds with the same Exception a `raise` carries —
    the `emo test` runner traps it per test. *)
 let expect_raise span message = net_raise span message
+
+(* The POSIX call OCaml's Unix module does not wrap: the C stub in
+   emo_posix_stub.c raises the module's own Unix_error shape, so
+   os_result's formatting sees "setpgid" and the reason text is
+   byte-identical with the c runtime's. *)
+external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
+external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -3709,20 +3762,43 @@ and apply_runtime_impl span name args =
              (List.length vs))
     | "os_waitpid", [ Int64 pid ] ->
         os_try span (fun () ->
-            let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
-            (* The kernel's raw 16-bit wait encoding, so the Emo-level
-             decoders (exited / exit code / signal) are portable. *)
-            let raw =
-              match status with
-              | WEXITED code -> Int64.shift_left (Int64.of_int code) 8
-              | WSIGNALED sgn -> Int64.of_int sgn
-              | WSTOPPED sgn ->
-                  Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
-            in
-            Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
+            (* The stub answers the kernel's own 16-bit wait status word —
+               OCaml's process_status carries the signal in the runtime's
+               internal numbering — so the Emo-level decoders (exited /
+               exit code / signal) read the kernel encoding, byte-identical
+               with the c runtime's waitpid. *)
+            let raw = emo_stub_waitpid (Int64.to_int pid) in
+            Tuple [ Int64 pid; Int64 (Int64.of_int raw) ])
     | "os_waitpid", vs ->
         error span "E3007"
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_kill", [ Int64 pid; Int64 sig_no ] ->
+        (* The classic range rides ahead of the call, the signal_*
+           discipline: an out-of-range number answers the same fixed
+           reason on every target, not strerror's whim. *)
+        if sig_no < 1L || sig_no > 31L then
+          Tuple
+            [
+              EnumMember ("R", "error");
+              String (Printf.sprintf "os: kill %Ld: invalid signal" sig_no);
+            ]
+        else
+          os_result span (fun () ->
+              Unix.kill (Int64.to_int pid) (Int64.to_int sig_no);
+              Int64 0L)
+    | "os_kill", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_kill` expects (pid Int64, sig Int64), got %d"
+             (List.length vs))
+    | "os_setpgid", [ Int64 pid; Int64 pgid ] ->
+        os_result span (fun () ->
+            emo_stub_setpgid (Int64.to_int pid) (Int64.to_int pgid);
+            Int64 0L)
+    | "os_setpgid", vs ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_setpgid` expects (pid Int64, pgid Int64), got %d"
              (List.length vs))
     | "os_pipe", [] ->
         os_result span (fun () ->

@@ -96,6 +96,40 @@ let run_tests =
              ~color:false ~error_limit:20));
   ]
 
+(* The curfew: a run that will not end gets stopped by the clock the
+   toolchain holds for it — exit 124, the number timeout(1) answers too —
+   while a program that makes its curfew is untouched by it. *)
+let curfew_tests =
+  [
+    tc "a runaway loop stops at its curfew with exit 124" (fun () ->
+        let file =
+          fixture "curfew.emo"
+            "println(\"before\")\nvar n = 0\nwhile true {\n  n = n + 1\n}\n"
+        in
+        Alcotest.(check int)
+          "exit" 124
+          (in_dir (Filename.dirname file) (fun () ->
+               Emo_eval.set_curfew ~seconds:1.0;
+               let code =
+                 try Emo_cli.run_file ~file ~color:false ~error_limit:20
+                 with Emo_eval.Curfew_exceeded _ -> 124
+               in
+               Emo_eval.clear_curfew ();
+               code)));
+    tc "a program that makes its curfew is untouched" (fun () ->
+        let file = fixture "curfew_ok.emo" "println(\"fine\")\n" in
+        Alcotest.(check int)
+          "exit" 0
+          (in_dir (Filename.dirname file) (fun () ->
+               Emo_eval.set_curfew ~seconds:5.0;
+               let code =
+                 try Emo_cli.run_file ~file ~color:false ~error_limit:20
+                 with Emo_eval.Curfew_exceeded _ -> 124
+               in
+               Emo_eval.clear_curfew ();
+               code)));
+  ]
+
 let contains hay needle =
   let n = String.length needle in
   let rec go i =
@@ -1027,6 +1061,114 @@ println("unreachable")
         (contains err
            "the runtime implementation `os_fork` is not available on the wasm \
             target"))
+
+(* The process-group half refuses at the call on wasm like the rest of
+   the process half: the package ships, the capability names itself. *)
+let wasm_process_group_refusal_tests =
+  [
+    tc "wasm os.kill raises naming the capability" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let source =
+          {|
+require "os"
+
+println("before")
+os.kill(1, os.sig_term)
+println("unreachable")
+|}
+        in
+        let entry = scratch_entry "wasm-kill-refusal" source in
+        let dir = Filename.dirname entry in
+        let manifest = Filename.concat dir "package.emo" in
+        write_file manifest
+          {|package {
+  name = "emo/wasm-kill-refusal"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|};
+        let out_wasm = Filename.concat dir "kill.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        let out, err, status =
+          run_cmd
+            (Printf.sprintf "cd %s && node %s %s" (Filename.quote dir)
+               (Filename.quote (Lazy.force wasm_runner_path))
+               (Filename.quote out_wasm))
+        in
+        Alcotest.(check string) "output stops at the call" "before\n" out;
+        (match status with
+        | Unix.WEXITED 1 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "node exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 err));
+        Alcotest.(check bool)
+          "the refusal names os_kill" true
+          (contains err
+             "the runtime implementation `os_kill` is not available on the \
+              wasm target"));
+    tc "wasm os.setpgid raises naming the capability" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let source =
+          {|
+require "os"
+
+println("before")
+os.setpgid(0, 0)
+println("unreachable")
+|}
+        in
+        let entry = scratch_entry "wasm-setpgid-refusal" source in
+        let dir = Filename.dirname entry in
+        let manifest = Filename.concat dir "package.emo" in
+        write_file manifest
+          {|package {
+  name = "emo/wasm-setpgid-refusal"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|};
+        let out_wasm = Filename.concat dir "setpgid.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        let out, err, status =
+          run_cmd
+            (Printf.sprintf "cd %s && node %s %s" (Filename.quote dir)
+               (Filename.quote (Lazy.force wasm_runner_path))
+               (Filename.quote out_wasm))
+        in
+        Alcotest.(check string) "output stops at the call" "before\n" out;
+        (match status with
+        | Unix.WEXITED 1 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "node exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 err));
+        Alcotest.(check bool)
+          "the refusal names os_setpgid" true
+          (contains err
+             "the runtime implementation `os_setpgid` is not available on \
+              the wasm target"));
+  ]
 
 (* `-o` names the artifact on every target, and on beam it names the
    module too: erlc loads a .beam only when the file stem equals the
@@ -6184,12 +6326,14 @@ let () =
     [
       ("smoke", smoke_tests);
       ("run", run_tests);
+      ("curfew", curfew_tests);
       ("repl", repl_tests);
       ("examples", examples_tests);
       ("errors_examples", errors_examples_tests);
       ( "wasm_examples",
         wasm_examples_tests
-        @ [ wasm_file_probe_test; wasm_process_refusal_test ] );
+        @ [ wasm_file_probe_test; wasm_process_refusal_test ]
+        @ wasm_process_group_refusal_tests );
       ("beam_examples", beam_examples_tests);
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);

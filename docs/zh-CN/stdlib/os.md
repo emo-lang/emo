@@ -34,6 +34,8 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def kill(pid Int64, sig Int64) (R, Int64)
+def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 ```
@@ -62,6 +64,16 @@ if os.wait_exited(w[1]) {
 `execvp(file, argv)` 是同一种替换,只是多一步查找:`file` 沿 `PATH`
 环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用),
 失败约定与 execv 相同。
+
+`kill(pid, sig)` 把 `sig` 发给 `pid`——进程 id,或其负数,代表以它
+为 id 的整个进程组,这是监护者赖以生存的纪律:一次调用结束一个组。
+`sig_*` 常量就是这些数字。越界的信号在调用之前就被拒绝——
+`os: kill 99: invalid signal`——每个目标上同样的固定原因;内核的
+拒绝则是数据驱动的值(`os: kill: No such process`)。
+`setpgid(pid, pgid)` 把 `pid` 挪进以 `pgid` 为 id 的进程组
+(`pgid 0` 表示 `pid` 自己的组)——fork 子进程的第一步,在 exec
+之前立起自己的新组,是 shell 赖以生存的纪律:此后父进程用一次负
+pid 的 kill 就能结束整个组。
 
 ## 描述符接线与终端
 
