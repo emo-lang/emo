@@ -117,6 +117,28 @@ emo wasm run demo.wasm
 
 本环宿主表保持为空:模块的 import 若 `wasm` 伺候不了(`spectest` 之外的),链接就诚实地失败。WASI 与 `emo` 宿主模块是下一环。doctor 的 wasm 行点名这条命令;它不需要任何外部工具。
 
+## WASI:其他工具链的模块赖以运行的一环
+
+内建宿主长出了 `wasi_snapshot_preview1`——真实工具链(clang/wasi-sdk、`rustc --target wasm32-wasip1`)发射的表面。十二个函数已实现;命名空间里其余一切在链接时以函数名拒绝——没有哑根:
+
+| 函数 | 应答 |
+| --- | --- |
+| `args_sizes_get`、`args_get` | argv(`emo wasm run` 的多余实参;argv[0] 是工件名) |
+| `environ_sizes_get`、`environ_get` | 空环境 |
+| `proc_exit(code)` | 解卷;CLI 把代码映射为退出码 |
+| `fd_write` | fd 1 和 2 走进程输出通道,iovec 字节原样;其余 fd EBADF |
+| `fd_close`、`fd_seek` | 1/2 上无操作成功 / ESPIPE,其余 EBADF |
+| `fd_fdstat_get` | fd 1/2 应答字符设备带全权(wasi-libc 启动时的 tty 探测读的就是它) |
+| `random_get` | 经 `rand` 包的 OS 熵(真 hello world 里 Rust 的 `RandomState` 就靠它播种) |
+| `clock_time_get` | ENOSYS——语言还没有时钟原语 |
+| `sched_yield` | 成功 |
+
+解析序:显式宿主表最先(调用者可覆盖任何 `wasi_snapshot_preview1` import),然后 wasi 宿主,再 register 命名空间,再 `spectest`。import 签名对着表逐项检查——签错的 import 什么都绑不上。errno 值是 preview1 的编号(EBADF 8、EINVAL 28、ENOSYS 51、ESPIPE 69),由包的 fixture 钉死。
+
+梯子曾点名的 `emo` 宿主模块继续缓议:没有生产者点名它——外来模块不可能,它不认识 Emo——而一个构造要落地需要具体的消费者。想要 Emo 宿主表面的模块走显式宿主表,Emo 程序点名什么模块名它就伺候什么。
+
+live check:`rustc --target wasm32-wasip1` 的 hello world——真 wasi-libc——经 `emo wasm run` 打印,argv 计数与 `process::exit` 的退出码一路骑通;播种 HashMap 的模块经 `random_get` 应答。WASI 的 stdout 就是进程输出通道:先打印再退出(或 trap)的模块,字节照样送达。
+
 ## 一致性
 
 供应商化的 spec 套件随包同住:
@@ -132,7 +154,7 @@ dune build @wasm_runs   # 全部 25135 条运行命令(解释器,约 1 分钟)
 
 ## 它不是什么
 
-- **没有 WASI,也没有 `emo` 宿主模块。** 来自其他工具链的模块在其 import 被表、register 命名空间或 `spectest` 伺候时即可运行——仅此而已。`emo` 宿主模块(及其牵出的 WASI 表面)是阶梯的下一环。
+- **WASI preview1 的文件系统半边仍在门外。** 无 preopen、无 `path_open`——点名的模块在链接时拒绝并带函数名;文件的故事等运行时自己的文件语义被定为 WASI preopen 之时再开,那是独立的一环。
 - **没有 GC 类型。** 解释器瞄准核心 spec 的 MVP 加上述五个扩展——函数引用、SIMD、GC、线程、memory64 都在门外。GC proposal 是出口信号:它落地之日,运行时就能跑 `emo build --target wasm` 的输出。
 - **没有重入。** 宿主闭包回调进本包会腐蚀机器状态;本环拒绝。
 - **只有 `["ocaml", "c"]`,诚实声明。** 解释器在它跑的任何地方消费这个包;两个编译 target 是逐字节验证过的(demo 的金测在两边逐字节一致)。

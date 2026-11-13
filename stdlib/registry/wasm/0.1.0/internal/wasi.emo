@@ -1,0 +1,368 @@
+require "rand"
+
+// The wasi_snapshot_preview1 host (step 74): the twelve preview1
+// functions a real toolchain's module touches to start, print, seed
+// its hashes, and exit. Everything else in the namespace link-refuses
+// with the function's name — no silent stubs, no fakes. The errno
+// values are the preview1 numbering; the fixture pins them.
+//
+// `dispatch` runs inside execution, where the caller instance's
+// linear memory is live: it takes memory 0 and the instance's argv as
+// parameters (the machine state belongs to `internal.instance`, which
+// owns the walk), answers (errno, signal), and mutates the guest
+// memory in place. The signal carries proc_exit's verdict to the trap
+// channel; "" is the normal answer. A guest pointer that runs out of
+// bounds is the guest's mistake and answers EINVAL, not a raise.
+
+const e_success = 0
+const e_io = 29
+const e_badf = 8
+const e_inval = 28
+const e_nosys = 51
+const e_spipe = 69
+
+const f_args_sizes_get = 0
+const f_args_get = 1
+const f_environ_sizes_get = 2
+const f_environ_get = 3
+const f_proc_exit = 4
+const f_fd_write = 5
+const f_fd_close = 6
+const f_fd_seek = 7
+const f_fd_fdstat_get = 8
+const f_random_get = 9
+const f_clock_time_get = 10
+const f_sched_yield = 11
+
+const max_random = 1048576
+
+// The namespace's id table: -1 for a name this rung does not serve,
+// which the link turns into a refusal naming the function.
+def func_id(name String) Int64 {
+  if name == "args_sizes_get" {
+    return f_args_sizes_get
+  }
+  if name == "args_get" {
+    return f_args_get
+  }
+  if name == "environ_sizes_get" {
+    return f_environ_sizes_get
+  }
+  if name == "environ_get" {
+    return f_environ_get
+  }
+  if name == "proc_exit" {
+    return f_proc_exit
+  }
+  if name == "fd_write" {
+    return f_fd_write
+  }
+  if name == "fd_close" {
+    return f_fd_close
+  }
+  if name == "fd_seek" {
+    return f_fd_seek
+  }
+  if name == "fd_fdstat_get" {
+    return f_fd_fdstat_get
+  }
+  if name == "random_get" {
+    return f_random_get
+  }
+  if name == "clock_time_get" {
+    return f_clock_time_get
+  }
+  if name == "sched_yield" {
+    return f_sched_yield
+  }
+  return 0 - 1
+}
+
+// Every preview1 parameter is an i32 save clock_time_get's precision,
+// an i64; the results are one i32, save proc_exit's none. The import
+// check compares these against the import's declared type, so a
+// mistyped import binds to nothing.
+def params_ok(id Int64, kinds Array[Int64], i Int64) Bool {
+  if i >= kinds.length() {
+    return true
+  }
+  var want = 127
+  if id == f_clock_time_get && i == 1 {
+    want = 126
+  }
+  if kinds[i] != want {
+    return false
+  }
+  return params_ok(id, kinds, i + 1)
+}
+
+def param_count(id Int64) Int64 {
+  if id == f_args_sizes_get {
+    return 2
+  }
+  if id == f_args_get {
+    return 2
+  }
+  if id == f_environ_sizes_get {
+    return 2
+  }
+  if id == f_environ_get {
+    return 2
+  }
+  if id == f_proc_exit {
+    return 1
+  }
+  if id == f_fd_write {
+    return 4
+  }
+  if id == f_fd_close {
+    return 1
+  }
+  if id == f_fd_seek {
+    return 4
+  }
+  if id == f_fd_fdstat_get {
+    return 2
+  }
+  if id == f_random_get {
+    return 2
+  }
+  if id == f_clock_time_get {
+    return 3
+  }
+  return 0
+}
+
+def result_count(id Int64) Int64 {
+  if id == f_proc_exit {
+    return 0
+  }
+  return 1
+}
+
+// ---- the dispatch ----
+
+def dispatch(id Int64, args Array[(Int64, Int64)], mem (Box[Bytes], Int64, Bool), argv Array[String]) (Int64, String) {
+  if id == f_proc_exit {
+    return (e_success, "emo-wasm: proc_exit(" + internal.value.sign32(args[0][1]).to_string() + ")")
+  }
+  if id == f_sched_yield {
+    return (e_success, "")
+  }
+  if id == f_args_sizes_get {
+    return (args_sizes(mem, argv, args), "")
+  }
+  if id == f_args_get {
+    return (args_get(mem, argv, args), "")
+  }
+  if id == f_environ_sizes_get {
+    if store_u32(mem, args[0][1], 0)[0] && store_u32(mem, args[1][1], 0)[0] {
+      return (e_success, "")
+    }
+    return (e_inval, "")
+  }
+  if id == f_environ_get {
+    return (e_success, "")
+  }
+  if id == f_fd_write {
+    return (fd_write(mem, args), "")
+  }
+  if id == f_fd_close {
+    const fd = internal.value.sign32(args[0][1])
+    if fd == 1 || fd == 2 {
+      return (e_success, "")
+    }
+    return (e_badf, "")
+  }
+  if id == f_fd_seek {
+    const fd = internal.value.sign32(args[0][1])
+    if fd == 1 || fd == 2 {
+      return (e_spipe, "")
+    }
+    return (e_badf, "")
+  }
+  if id == f_fd_fdstat_get {
+    return (fdstat(mem, args), "")
+  }
+  if id == f_random_get {
+    return (random_get(mem, args), "")
+  }
+  if id == f_clock_time_get {
+    return (e_nosys, "")
+  }
+  return (e_nosys, "")
+}
+
+// ---- the memory io ----
+
+def store_u32(mem (Box[Bytes], Int64, Bool), addr Int64, bits Int64) (Bool, String) {
+  return internal.store.mem_store(mem, addr, 0, 4, bits)
+}
+
+def store_u64(mem (Box[Bytes], Int64, Bool), addr Int64, bits Int64) (Bool, String) {
+  return internal.store.mem_store(mem, addr, 0, 8, bits)
+}
+
+def load_u32(mem (Box[Bytes], Int64, Bool), addr Int64) (Bool, Int64) {
+  const r = internal.store.mem_load(mem, addr, 0, 4, false)
+  return (r[0], r[1])
+}
+
+// A guest-reachable range check for one copy of `n` bytes at `addr`.
+def range_ok(mem (Box[Bytes], Int64, Bool), addr Int64, n Int64) Bool {
+  const b = internal.store.mem_bytes(mem)
+  const a = internal.value.mask32(addr)
+  if n < 0 || a > b.length() || n > b.length() - a {
+    return false
+  }
+  return true
+}
+
+def write_bytes(mem (Box[Bytes], Int64, Bool), addr Int64, data Bytes) Bool {
+  const n = data.length()
+  if !range_ok(mem, addr, n) {
+    return false
+  }
+  internal.store.copy_bytes(internal.store.mem_bytes(mem), data, internal.value.mask32(addr), n)
+  return true
+}
+
+// The argv sizes answer: argc, then the buffer's byte count — one nul
+// past every argument's own bytes.
+def argv_buf_size(argv Array[String], i Int64, acc Int64) Int64 {
+  if i >= argv.length() {
+    return acc
+  }
+  return argv_buf_size(argv, i + 1, acc + argv[i].to_bytes().length() + 1)
+}
+
+def args_sizes(mem (Box[Bytes], Int64, Bool), argv Array[String], args Array[(Int64, Int64)]) Int64 {
+  if !store_u32(mem, args[0][1], argv.length())[0] {
+    return e_inval
+  }
+  if !store_u32(mem, args[1][1], argv_buf_size(argv, 0, 0))[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+def args_get(mem (Box[Bytes], Int64, Bool), argv Array[String], args Array[(Int64, Int64)]) Int64 {
+  const nul = Bytes.new(1)
+  var cursor = args[1][1]
+  var i = 0
+  while i < argv.length() {
+    const data = argv[i].to_bytes()
+    if !store_u32(mem, args[0][1] + i * 4, cursor)[0] {
+      return e_inval
+    }
+    if !write_bytes(mem, cursor, data) {
+      return e_inval
+    }
+    if !write_bytes(mem, cursor + data.length(), nul) {
+      return e_inval
+    }
+    cursor = cursor + data.length() + 1
+    i = i + 1
+  }
+  return e_success
+}
+
+// The iovec walk: `{buf_ptr u32, buf_len u32}` pairs, the bytes
+// gathered in order, the total written back through `nwritten`. The
+// output rides the process output channel raw — no newline
+// translation, the guest's bytes as they are.
+def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  if fd != 1 && fd != 2 {
+    return e_badf
+  }
+  const iovs = args[1][1]
+  const count = internal.value.sign32(args[2][1])
+  if count < 0 {
+    return e_inval
+  }
+  var total = 0
+  var out = ""
+  var i = 0
+  while i < count {
+    const base = iovs + i * 8
+    const p = load_u32(mem, base)
+    if !p[0] {
+      return e_inval
+    }
+    const l = load_u32(mem, base + 4)
+    if !l[0] {
+      return e_inval
+    }
+    const len = internal.value.sign32(l[1])
+    if len < 0 || !range_ok(mem, p[1], len) {
+      return e_inval
+    }
+    const b = internal.store.mem_bytes(mem)
+    const chunk = copy_out(b, internal.value.mask32(p[1]), len)
+    out = out + chunk.to_string()
+    total = total + len
+    i = i + 1
+  }
+  if !store_u32(mem, args[3][1], total)[0] {
+    return e_inval
+  }
+  if total > 0 {
+    printf("%s", [out])
+  }
+  return e_success
+}
+
+def copy_out(b Bytes, at Int64, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, b.get(at + i))
+    i = i + 1
+  }
+  return out
+}
+
+// The fdstat answer for fd 1 and 2: a character device with full
+// rights — what wasi-libc's tty check and Rust's `is_terminal` probe
+// read at startup. Layout: filetype u8, flags u16 at 2, then the two
+// u64 rights words at 8 and 16 (24 bytes).
+def fdstat(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  if fd != 1 && fd != 2 {
+    return e_badf
+  }
+  const at = args[1][1]
+  if !store_u32(mem, at, 2)[0] {
+    return e_inval
+  }
+  const all = 0 - 1
+  if !store_u64(mem, at + 8, all)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, at + 16, all)[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+// OS entropy through the rand package: what Rust's RandomState asks
+// for at initialization even in a hello world. A length past 1 MiB is
+// this rung's documented cap, answered EINVAL.
+def random_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const len = internal.value.sign32(args[1][1])
+  if len < 0 || len > max_random {
+    return e_inval
+  }
+  case rand.bytes(len) {
+    (R.error, _) -> {
+      return e_io
+    }
+    (R.ok, data) -> {
+      if !write_bytes(mem, args[0][1], data) {
+        return e_inval
+      }
+      return e_success
+    }
+  }
+}

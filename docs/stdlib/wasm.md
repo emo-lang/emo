@@ -173,6 +173,45 @@ The host table stays empty at this rung: a module whose imports
 honestly. WASI and the `emo` host module are the next rung. The
 doctor's wasm line names the command; it needs no external tools.
 
+## WASI: the rung other toolchains' modules run on
+
+The built-in host grew `wasi_snapshot_preview1` — the surface real
+toolchains emit (clang/wasi-sdk, `rustc --target wasm32-wasip1`).
+Twelve functions are implemented; everything else in the namespace
+link-refuses with the function's name — no silent stubs:
+
+| function | answers |
+| --- | --- |
+| `args_sizes_get`, `args_get` | the argv (`emo wasm run`'s extra arguments; argv[0] is the artifact's name) |
+| `environ_sizes_get`, `environ_get` | an empty environment |
+| `proc_exit(code)` | unwinds; the CLI maps the code to its exit code |
+| `fd_write` | fds 1 and 2 write through the process output channel, iovec bytes raw; other fds EBADF |
+| `fd_close`, `fd_seek` | no-op success / ESPIPE on 1 and 2, EBADF elsewhere |
+| `fd_fdstat_get` | fd 1/2 answer character device with full rights (what wasi-libc's tty check reads at startup) |
+| `random_get` | OS entropy through the `rand` package (Rust's `RandomState` seeds through it even in a hello world) |
+| `clock_time_get` | ENOSYS — the language has no clock primitive yet |
+| `sched_yield` | success |
+
+Resolution order: the explicit host table first (a caller may override
+any `wasi_snapshot_preview1` import), then the wasi host, then the
+register namespace, then `spectest`. Import signatures are checked
+against the table's shape — a mistyped import binds to nothing. The
+errno values are preview1's numbering (EBADF 8, EINVAL 28, ENOSYS 51,
+ESPIPE 69), pinned by the package's fixture.
+
+The `emo` host module the ladder once named stays deferred: no
+producer names it — a foreign module cannot, it does not know Emo —
+and a construct earns its place with a concrete consumer. A module
+wanting Emo's host surface takes it through the explicit host table,
+which serves any module name an Emo program chooses.
+
+The live check: `rustc --target wasm32-wasip1` hello world — real
+wasi-libc — prints through `emo wasm run` with argv counting and
+`process::exit`'s code riding through; a HashMap-seeding module
+answers through `random_get`. WASI's stdout is the process output
+channel: a module that prints and then exits (or traps) still has its
+bytes delivered.
+
 ## Conformance
 
 The vendored spec suite rides with the package:
@@ -190,10 +229,10 @@ package's `testdata/README.md`.
 
 ## What it is not
 
-- **No WASI, and no `emo` host module.** A module from another
-  toolchain runs when its imports are served by the table, the
-  register namespace, or `spectest` — nothing more. The `emo` host
-  module (and the WASI surface it entails) is the ladder's next rung.
+- **WASI preview1's filesystem half stays out.** No preopens, no
+  `path_open` — a module asking refuses at the link, naming the
+  function; the file story opens when the runtime's own file
+  semantics are decided as WASI preopens, a rung of its own.
 - **No GC types.** The interpreter targets the core spec's MVP plus
   the five extensions above — function references, SIMD, GC, threads,
   and memory64 stay out. The GC proposal is the exit sign: when it

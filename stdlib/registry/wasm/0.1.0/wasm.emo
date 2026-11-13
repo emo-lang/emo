@@ -78,6 +78,14 @@ def register_instance(inst Int64, name String) Int64 {
   return internal.instance.register_instance(inst, name)
 }
 
+// The wasi argv (step 74): what `args_sizes_get` and `args_get`
+// answer for every later instantiation — the convention carries the
+// program's own name first. Defaults to empty; `emo wasm run` sets it
+// from the artifact's name plus any extra arguments.
+def set_wasi_args(args Array[String]) Int64 {
+  return internal.instance.set_wasi_args(args)
+}
+
 // A one-line count summary of a loaded module.
 def describe(module Int64) String {
   return internal.instance.describe(module)

@@ -1897,3 +1897,14 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
 - [x] **T73.2** — `emo wasm run` 命令:`wasm` 组、run 子命令(工件实参、chdir 之前解析绝对路径)、错误判定到 stderr 退出码 1、doctor 行点名命令。
 - [x] **T73.3** — 测试:`test/emo_cli` 的 `wasm_run` 组六用例——导出结果、仅 start 摘要、trap、链接失败带 import 名、畸形工件进 decode 阶段、缺失工件的读取原因。工件以十六进制骑在测试里就地解码(语料纪律:`.wasm` blob 不进仓库),每条钉死前都先对运行时验证过。
 
+### 步骤 74 — WASI preview1:其他工具链的模块赖以运行的一环
+
+**前置:** 步骤 72(包与宿主接口)、73(CLI 环)。**完成标准:** 内建宿主应答 `wasi_snapshot_preview1` 的十二函数子集(args、environ、proc_exit、fd_write、fd_close、fd_seek、fd_fdstat_get、random_get、clock_time_get ENOSYS、sched_yield),其余一律以函数名在链接时拒绝;CLI 收多余实参作为 WASI argv、把 proc_exit 的代码映射为退出码,模块的 stdout 在自身退出后照样送达;真 `rustc --target wasm32-wasip1` 模块(target 经用户授权安装)经 `emo wasm run` 运行——打印、经 random_get 播种 HashMap、经 proc_exit 退出;fixture 钉死 errno 编号与 iovec 走查;`dune runtest` 绿;文档 EN+zh。
+
+- [x] **T74.1** — wasi 宿主:`internal/wasi.emo`——errno 名、函数表、内存 io(iovec 走查、guest 写入、fdstat 布局)、proc_exit 的判定上 trap 通道、argv 消费端。`clock_time_get` 的 precision 参数是 i64——子集里唯一的非 i32,已检查。
+- [x] **T74.2** — 解析臂(显式表→wasi→register→spectest,签名逐项检查)与调度臂(宿主调用触及调用方实例的活内存);包根的 `wasm.set_wasi_args`;包 `deps` 为 random_get 的熵加入 `rand`,demo 的 lockfile 重出。
+- [x] **T74.3** — CLI:多余位置实参即 wasi argv(argv[0] 为工件基名),proc_exit 的代码从 driver 判定行解析并静默映射为退出码。嵌入式 runner 拆出 `run_embedded_deps_out`(二元组:判定与 partial stdout)——先打印后退出(或 trap)的模块字节照样送达。
+- [x] **T74.4** — fixture:`wasi-fixture.emo`——iovec 走查逐字节精确、nwritten 经包自己的内存门读回,proc_exit 的代码上 trap 通道,argv 编码(指针数组、后跟 nul 结尾缓冲),EBADF、ENOSYS、random 成功,fdstat 布局,签错的 import 什么都绑不上,path_open 以函数名链接失败。途中发现并当场修掉:dune 的并行 fixture 规则竞跑共享包缓存——共享临时名把兄弟 materialization 的文件 rename 掉、半写文件被 digest、manifest 解析撕裂——在 `materialize` 修掉(每进程临时名、原子 rename、open 失败时重建目录重试一次),并给每条 fixture 动作把 `EMO_CACHE_DIR` 钉到沙盒本地目录(CHECK.md)。
+- [x] **T74.5** — live check:`rustc --target wasm32-wasip1`(1.98.1,std 经用户授权安装)——hello world 经 fd_write 打印带 argv 计数;HashMap 模块经 random_get 播种;`process::exit(7)` 骑到 CLI 退出码且此前的打印存活。全绿。
+- [x] **T74.6** — 文档:`docs/stdlib/wasm.md` EN+zh 的 WASI 节(子集表、诚实边界:无时钟、无文件系统、仅 fd 1/2;`emo` 宿主模块缓议的论证);TASKS/plan/CHECK 更新。
+

@@ -1713,26 +1713,114 @@ let wasm_run =
       & pos 0 (some string) None
       & info [] ~docv:"ARTIFACT" ~doc:"The .wasm artifact to run.")
   in
-  let run artifact =
+  let extra =
+    Arg.(
+      value & pos_right 0 string []
+      & info [] ~docv:"ARG"
+          ~doc:
+            "Arguments the module reads through WASI's args_get (argv[0] is \
+             the artifact's name).")
+  in
+  (* proc_exit is the module's own exit decision: its code becomes the
+     command's, silently — the code speaks. *)
+  let proc_exit_code why =
+    let prefix = "emo-wasm: proc_exit(" in
+    let plen = String.length prefix in
+    let n = String.length why in
+    let rec find i =
+      if i + plen > n then None
+      else if String.sub why i plen = prefix then Some i
+      else find (i + 1)
+    in
+    match find 0 with
+    | None -> None
+    | Some i -> (
+        let from = i + plen in
+        let stop =
+          let rec go j =
+            if j >= n then None else if why.[j] = ')' then Some j else go (j + 1)
+          in
+          go from
+        in
+        match stop with
+        | None -> None
+        | Some j ->
+            let digits = String.sub why from (j - from) in
+            if
+              digits = ""
+              || not (String.for_all (fun c -> c >= '0' && c <= '9') digits)
+            then None
+            else Some (int_of_string digits))
+  in
+  let run artifact extra =
     let abs_artifact =
       if Filename.is_relative artifact then
         Filename.concat (Sys.getcwd ()) artifact
       else artifact
     in
-    match Emo_project.run_wasm_cli ~artifact:abs_artifact with
-    | Ok body ->
+    (* proc_exit is the module's own exit decision: its code becomes the
+       command's, silently — the code speaks. The driver marks the verdict
+       with its sentinel line; everything it printed before that (the
+       module's own stdout) goes out first. *)
+    let split_exit body =
+      let sentinel = "emo-wasm: proc_exit(" in
+      let slen = String.length sentinel in
+      let n = String.length body in
+      let rec find i =
+        if i + slen > n then None
+        else if String.sub body i slen = sentinel then find_loop i (i + 1)
+        else find (i + 1)
+      and find_loop start i =
+        if i >= n then None
+        else if body.[i] = ')' then Some (start, i)
+        else find_loop start (i + 1)
+      in
+      match find 0 with
+      | None -> (body, None)
+      | Some (start, stop) ->
+          let digits = String.sub body (start + slen) (stop - (start + slen)) in
+          let tail = String.sub body (stop + 1) (n - stop - 1) in
+          let tail =
+            if tail = "\n" then "" else if tail = "\r\n" then "" else tail
+          in
+          if
+            digits = ""
+            || (not (String.for_all (fun c -> c >= '0' && c <= '9') digits))
+            || tail <> ""
+          then (body, None)
+          else
+            let before = String.sub body 0 start in
+            let before =
+              if
+                before <> ""
+                && String.length before >= 1
+                && before.[String.length before - 1] = '\n'
+              then String.sub before 0 (String.length before - 1)
+              else before
+            in
+            (before, Some (int_of_string digits))
+    in
+    match Emo_project.run_wasm_cli ~artifact:abs_artifact ~args:extra with
+    | Ok body -> (
+        let body, code = split_exit body in
         print_string body;
         if body <> "" && body.[String.length body - 1] <> '\n' then
           print_newline ();
-        Cmd.Exit.ok
-    | Error why ->
-        prerr_endline why;
-        exit 1
+        match code with Some c -> exit c | None -> Cmd.Exit.ok)
+    | Error (why, partial) -> (
+        if partial <> "" then (
+          print_string partial;
+          if partial.[String.length partial - 1] <> '\n' then print_newline ());
+        match proc_exit_code why with
+        | Some code -> exit code
+        | None ->
+            prerr_endline why;
+            exit 1)
   in
   Cmd.v
     (Cmd.info "run"
        ~doc:"Run a WebAssembly artifact with the Emo-written runtime.")
-    Term.(const run $ artifact)
+    Term.(const run $ artifact $ extra)
 
 let wasm =
   Cmd.group

@@ -2063,8 +2063,9 @@ let rec remove_tree path =
    resolves `http` against the standard library shipped with the binary —
    never the user's EMO_REGISTRY or manifest registry, which may point at a
    remote endpoint or a fixture the bundled packages are not in. *)
-let run_embedded_deps ~(tag : string) ~(deps : string list) ~(program : string)
-    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+let run_embedded_deps_out ~(tag : string) ~(deps : string list)
+    ~(program : string) ~(globals : (string * Emo_eval.value) list) :
+    (string, string) result * string =
   let reg = bundled_registry () in
   (* Every embedded require pairs with a manifest pin — same as a user
      project — at the highest version the bundled standard library
@@ -2087,7 +2088,7 @@ let run_embedded_deps ~(tag : string) ~(deps : string list) ~(program : string)
       (Ok []) deps
   in
   match pinned with
-  | Error m -> Error m
+  | Error m -> (Error m, "")
   | Ok pins ->
       let deps_block =
         String.concat "\n"
@@ -2149,11 +2150,22 @@ let run_embedded_deps ~(tag : string) ~(deps : string list) ~(program : string)
             run_entry ~entry_file:"main.emo" ~check:false ~sched:Own ~globals ()
           with
           | exception Static_errors ds ->
-              Error
-                (String.concat "; "
-                   (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
-          | exception Emo_eval.Error d -> Error d.Emo_support.Diagnostic.message
-          | _ -> Ok (Buffer.contents out))
+              ( Error
+                  (String.concat "; "
+                     (List.map (fun d -> d.Emo_support.Diagnostic.message) ds)),
+                Buffer.contents out )
+          | exception Emo_eval.Error d ->
+              (Error d.Emo_support.Diagnostic.message, Buffer.contents out)
+          | _ -> (Ok (Buffer.contents out), Buffer.contents out))
+
+(* The exchange programs (publish, login, the fetch transport) read the
+   verdict alone. `emo wasm run` wants the module's partial stdout even
+   when the run errored — a module that prints and then traps still
+   printed — so its runner takes the pair. *)
+let run_embedded_deps ~(tag : string) ~(deps : string list) ~(program : string)
+    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+  let result, _ = run_embedded_deps_out ~tag ~deps ~program ~globals in
+  result
 
 let run_embedded ~(tag : string) ~(program : string)
     ~(globals : (string * Emo_eval.value) list) : (string, string) result =
@@ -2223,12 +2235,17 @@ def call_entry(inst Int64, name String) Bool {
       if why == "unknown export" {
         return false
       }
+      if why.starts_with("emo-wasm: proc_exit(") {
+        println(why)
+        return true
+      }
       raise Exception.new(message: "emo-wasm: " + name + ": " + why)
     }
   }
 }
 
 def run() Int64 {
+  wasm.set_wasi_args(__args)
   case file.read(__artifact) {
     (R.error, why) -> {
       raise Exception.new(message: "emo-wasm: " + why)
@@ -2241,6 +2258,9 @@ def run() Int64 {
         (R.ok, module) -> {
           case wasm.instantiate(module, []) {
             (R.error, why) -> {
+              if why.starts_with("emo-wasm: proc_exit(") {
+                raise Exception.new(message: why)
+              }
               raise Exception.new(message: "emo-wasm: " + why)
             }
             (R.ok, inst) -> {
@@ -2263,10 +2283,21 @@ def run() Int64 {
 run()
 |}
 
-let run_wasm_cli ~(artifact : string) : (string, string) result =
-  run_embedded_deps ~tag:"wasm-run" ~deps:[ "wasm"; "file" ]
-    ~globals:[ ("__artifact", Emo_eval.String artifact) ]
-    ~program:wasm_cli_driver
+let run_wasm_cli ~(artifact : string) ~(args : string list) :
+    (string, string * string) result =
+  let argv = Filename.basename artifact :: args in
+  let result, partial =
+    run_embedded_deps_out ~tag:"wasm-run" ~deps:[ "wasm"; "file" ]
+      ~globals:
+        [
+          ("__artifact", Emo_eval.String artifact);
+          ( "__args",
+            Emo_eval.Array
+              (Array.map (fun a -> Emo_eval.String a) (Array.of_list argv)) );
+        ]
+      ~program:wasm_cli_driver
+  in
+  match result with Ok body -> Ok body | Error why -> Error (why, partial)
 
 (* The HTTP registry's transport: [run_embedded] under a fixed tag. Filled
    at module initialization — the cell exists because [run_embedded] needs

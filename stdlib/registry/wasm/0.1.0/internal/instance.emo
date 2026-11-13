@@ -750,6 +750,11 @@ var reg_handles = []
 var user_host_fns = []
 var pending_hosts = []
 
+// The wasi instance state (step 74): the argv the preview1
+// args_* functions answer, set through the package root's
+// `set_wasi_args` and consumed at dispatch.
+var wasi_args = []
+
 // The `spectest` host module state (T22.9): one table and one memory,
 // allocated once and shared by every importer.
 var spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
@@ -900,6 +905,9 @@ def call_func(m Module, fidx Int64) (Bool, String) {
     }
     if t[0] == 2 {
       return call_host_user(m, fidx, t[1])
+    }
+    if t[0] == 3 {
+      return call_wasi(m, fidx, t[1])
     }
     return call_other(t[1], t[2])
   }
@@ -2100,6 +2108,7 @@ def reset_all() Int64 {
   reg_handles = []
   user_host_fns = []
   pending_hosts = []
+  wasi_args = []
   spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
   spectest_memory = internal.store.mem_new(1, 2, true)
   return 0
@@ -2196,6 +2205,29 @@ def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Box[(In
 
 // ---- imports ----
 
+// The wasi host arm (step 74): function imports only, the name on the
+// built-in id table, the signature matched against the table's shape
+// (every parameter i32, one i32 result save proc_exit's none) — a
+// mistyped import binds to nothing.
+def resolve_wasi(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], itables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], iglobals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Box[Bytes], Int64, Bool)], Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], Array[(Box[(Int64, Int64)], Bool)], Array[(Int64, Int64, Int64)]) {
+  const imp = m.imports[i]
+  if imp.kind != 0 {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  const id = internal.wasi.func_id(imp.field)
+  if id < 0 {
+    return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+  }
+  const ft = m.types[imp.type_idx]
+  if ft.params.length() != internal.wasi.param_count(id) || ft.results.length() != internal.wasi.result_count(id) {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  if !internal.wasi.params_ok(id, ft.params, 0) {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(3, id, 0)))
+}
+
 def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], itables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], iglobals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Box[Bytes], Int64, Bool)], Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], Array[(Box[(Int64, Int64)], Bool)], Array[(Int64, Int64, Int64)]) {
   if i >= m.imports.length() {
     return (true, "", imems, itables, iglobals, targets)
@@ -2215,6 +2247,9 @@ def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], i
     }
     user_host_fns = user_host_fns.append(pending_hosts[ui][2])
     return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(2, user_host_fns.length() - 1, 0)))
+  }
+  if imp.module == "wasi_snapshot_preview1" {
+    return resolve_wasi(m, i, imems, itables, iglobals, targets)
   }
   if imp.module == "spectest" {
     return resolve_host(m, i, imems, itables, iglobals, targets)
@@ -2588,6 +2623,36 @@ def call_host(m Module, fidx Int64, id Int64) (Bool, String) {
   sp = sp - nparams
   host_print(id, args, 0)
   return (true, "")
+}
+
+// The wasi dispatch (step 74): the arguments pop, memory 0 rides to
+// the host, the errno comes back as the one result, and proc_exit's
+// signal rides the trap channel to `call`'s error verdict.
+def call_wasi(m Module, fidx Int64, id Int64) (Bool, String) {
+  const ft = m.types[func_type_idx(m, fidx)]
+  const nparams = ft.params.length()
+  const args = collect_results(sp - nparams, nparams, [])
+  sp = sp - nparams
+  var mem = internal.store.mem_new(1, 0, true)
+  if mems.length() > 0 {
+    mem = mems[0]
+  }
+  const r = internal.wasi.dispatch(id, args, mem, wasi_args)
+  if r[1] != "" {
+    return (false, r[1])
+  }
+  if ft.results.length() > 0 {
+    push(internal.value.i32(r[0]))
+  }
+  return (true, "")
+}
+
+// The instance state's wasi side: the argv `args_sizes_get` and
+// `args_get` answer, set through the package root before
+// `instantiate`.
+def set_wasi_args(args Array[String]) Int64 {
+  wasi_args = args
+  return 0
 }
 
 // The user host table's dispatch (step 72): the import's own signature

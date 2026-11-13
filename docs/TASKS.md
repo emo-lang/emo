@@ -4463,3 +4463,60 @@ docs EN+zh.
       corpus discipline: no `.wasm` blob enters the repository), each
       verified against the runtime before pinning.
 
+### Step 74 — WASI preview1: the rung other toolchains' modules run on
+
+**Prereq:** Steps 72 (the package and its host interface), 73 (the CLI
+rung). **Done when:** the built-in host answers `wasi_snapshot_preview1`'s
+twelve-function subset (args, environ, proc_exit, fd_write, fd_close,
+fd_seek, fd_fdstat_get, random_get, clock_time_get ENOSYS,
+sched_yield) with everything else link-refusing by name; the CLI takes
+extra arguments as the WASI argv and maps proc_exit's code to its exit
+code, and a module's stdout survives its own exit; a real
+`rustc --target wasm32-wasip1` module (target installed with the
+user's approval) runs through `emo wasm run` — printing, seeding its
+HashMaps through random_get, and exiting through proc_exit; the
+fixtures pin the errno numbering and the iovec walk; `dune runtest`
+green; docs EN+zh.
+
+- [x] **T74.1** — The wasi host: `internal/wasi.emo` — the errno
+      names, the function table, the memory io (iovec walks, guest
+      writes, the fdstat layout), proc_exit's verdict on the trap
+      channel, the argv consumer. `clock_time_get`'s precision
+      parameter is an i64 — the one non-i32 in the subset, checked.
+- [x] **T74.2** — The resolution arm (explicit table → wasi → register
+      → spectest, signatures checked) and the dispatch arm (host calls
+      touching the caller instance's live memory);
+      `wasm.set_wasi_args` on the package root; the package's
+      `deps` grows `rand` for random_get's entropy, and the demo's
+      lockfile re-resolves.
+- [x] **T74.3** — The CLI: extra positional arguments as the wasi
+      argv (argv[0] the artifact's basename), proc_exit's code parsed
+      from the driver's verdict line and mapped to the exit code
+      silently. The embedded runner splits into
+      `run_embedded_deps_out` (the pair: verdict and partial stdout) —
+      a module that prints and then exits or traps still has its
+      bytes delivered. The embedded programs stop printing the
+      lockfile-commit notice (already landed with 73).
+- [x] **T74.4** — The fixtures: `wasi-fixture.emo` — the iovec walk
+      byte-exact with nwritten read back through the package's own
+      memory door, proc_exit's code on the trap channel, the argv
+      encoding (pointers, then the nul-terminated buffer), EBADF,
+      ENOSYS, random success, the fdstat layout, the mistyped import
+      binding to nothing, and path_open failing the link with its
+      name. Found and fixed on the way: dune's parallel fixture rules
+      raced the shared package cache — a shared temp name renaming
+      files out from under a sibling materialization, half-written
+      files digesting, a torn manifest parse — fixed in `materialize`
+      (per-process temp, atomic rename, the open retrying behind a
+      fresh directory) and by pinning each fixture action's
+      `EMO_CACHE_DIR` to a sandbox-local directory (CHECK.md).
+- [x] **T74.5** — The live check: `rustc --target wasm32-wasip1`
+      (1.98.1, std installed with the user's approval) — hello world
+      printing through fd_write with argv counting; a HashMap module
+      seeding through random_get; `process::exit(7)` riding to the
+      CLI's exit code with the earlier prints surviving. All green.
+- [x] **T74.6** — The docs: the WASI section in
+      `docs/stdlib/wasm.md` EN+zh (the subset table, the honest edges:
+      no clock, no filesystem, fds 1/2 only; the `emo` host module's
+      deferral argued); TASKS/plan/CHECK updated.
+
