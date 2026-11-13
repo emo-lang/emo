@@ -955,6 +955,14 @@ and emit_expr env (e : Emo_ir.expr) : string =
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_closure_new(&%s__dyn, INT64_C(0), NULL)"
            (c_ident g))
+  | Emo_ir.Global_var g ->
+      (* A module-level `var` read: a longer-lived slot, so the read
+         retains one claim of the cell it owns and pools it. A
+         dynamic-typed read passes the cell; a native-typed read
+         unboxes it. *)
+      let cell = Printf.sprintf "emo_retain(%s)" (c_ident g) in
+      if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety cell
+      else unbox_code (wrap_owned Emo_check.Unknown cell) e.Emo_ir.ety
   | Spawn_value _ -> refuse "spawning a first-class block yet"
   | Make_exception { message; data = None } ->
       wrap_owned e.Emo_ir.ety
@@ -2186,7 +2194,16 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
         else emit_expr env target
       in
       put env "  emo_process_send(%s, %s);\n" pid (as_dyn env message)
-  | Set_global_var _ -> refuse "module-level variable assignment"
+  | Set_global_var { name; value } ->
+      let v = as_dyn env value in
+      let g = c_ident name in
+      (* the same write barrier as a local's overwrite: the new value
+         lands in a temporary first — the expression may read the
+         global being overwritten — so the old cell drops only after
+         the assignment is fully evaluated *)
+      let tmp = fresh_c env "__assign" in
+      put env "  {\n    emo_value %s = emo_retain(%s);\n" tmp v;
+      put env "    emo_release(%s);\n    %s = %s;\n  }\n" g g tmp
   | Set_field { self_; name; value } ->
       let idx = field_index env self_ name in
       put env "  emo_set_field(%s, INT64_C(%d), %s);\n" (as_dyn env self_) idx
@@ -3629,6 +3646,14 @@ let emit (program : Emo_ir.program) : string * string * bool =
     \  edit. */\n\n\
      #include \"emo_c_runtime.h\"\n\n";
   env0.buf <- forward;
+  (* Module-level `var`s: one [emo_value] cell each, declared before
+     every body that reads them, initialized at the root entry's start
+     in declaration order. *)
+  List.iter
+    (fun (g, _) ->
+      Buffer.add_string forward
+        (Printf.sprintf "static emo_value %s;\n" (c_ident g)))
+    program.Emo_ir.pglobals;
   (* Forward declarations: every function keeps its mangled name, each
      cluster contributes its merged function, and every class
      contributes its constructor and methods. Each declaration also
@@ -3914,6 +3939,17 @@ let emit (program : Emo_ir.program) : string * string * bool =
   in
   put env "static void emo_root_entry(void) {\n";
   put env "  emo_pool_enter();\n";
+  (* The module-level `var`s initialize in declaration order before the
+     entry's own top level, mirroring the interpreter: each initializer
+     evaluates once, and the cell retains its own claim of the value. *)
+  List.iter
+    (fun (g, init) ->
+      let v = as_dyn env init in
+      let cg = c_ident g in
+      put env "  {\n    emo_value __ginit = %s;\n" v;
+      put env "    emo_retain(__ginit);\n";
+      put env "    emo_release(%s);\n    %s = __ginit;\n  }\n" cg cg)
+    program.Emo_ir.pglobals;
   emit_stmts env program.pinit;
   put env "  emo_drain();\n  emo_pool_exit();\n";
   put env "}\n\n";

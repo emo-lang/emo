@@ -119,10 +119,11 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/toolchain.md`](toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
 - [`docs/zh-CN/toolchain-distribution.md`](toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
 - [`docs/zh-CN/runtime-and-freestanding.md`](runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
+- [`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md)——`wasm` 包:用 Emo 写的 WebAssembly 运行时(解码器、验证器、解释器)、它的执行面与宿主 import 接口。
 - [`docs/zh-CN/numeric-width.md`](numeric-width.md) —— 所有目标上显式位宽的数值类型。
 - [`docs/zh-CN/var-escape.md`](var-escape.md) —— `var` 逃逸规则。
 - [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
-- [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`httpd`、`valkey`、`json`、`yaml`、`xml`、`dom`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`postgres`、`sql`、`sqlite3`、`term`、`crypto`、`rand`)。
+- [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`httpd`、`valkey`、`json`、`yaml`、`xml`、`dom`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`postgres`、`sql`、`sqlite3`、`term`、`crypto`、`rand`、`wasm`)。
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
 - [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与证据:为什么一棵声明式树能跨 TUI、服务端 HTML、macOS、GTK 4 与 DOM 工作,以及还有什么仍然开放。
 - [`docs/zh-CN/emo-ui-composition.md`](emo-ui-composition.md) —— 一棵 EmoUI 树怎么写出来:子节点为什么是数组而不是块式写法,以及数组写法是否该再长出字面量拼法。

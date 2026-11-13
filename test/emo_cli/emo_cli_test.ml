@@ -6051,6 +6051,113 @@ poke32(0)
         Alcotest.(check int) "six refusals" 6 (List.length got));
   ]
 
+(* ---- emo wasm run ----
+
+   The artifacts ride as hex, decoded here — no .wasm blob enters the
+   repository (the corpus discipline, step 21). Each one was verified
+   against the runtime before pinning; the tests call
+   [Emo_project.run_wasm_cli], the exact function the command term
+   drives. *)
+
+let hex_digit c =
+  match c with
+  | '0' .. '9' -> Char.code c - Char.code '0'
+  | 'a' .. 'f' -> 10 + Char.code c - Char.code 'a'
+  | 'A' .. 'F' -> 10 + Char.code c - Char.code 'A'
+  | _ -> failwith "bad hex digit"
+
+let hex_bytes hex =
+  let n = String.length hex / 2 in
+  let out = Bytes.create n in
+  for i = 0 to n - 1 do
+    Bytes.set out i
+      (Char.chr ((hex_digit hex.[2 * i] * 16) + hex_digit hex.[(2 * i) + 1]))
+  done;
+  Bytes.to_string out
+
+let write_artifact name hex =
+  let path = Filename.concat scratch name in
+  let oc = open_out_bin path in
+  output_string oc (hex_bytes hex);
+  close_out oc;
+  path
+
+let wasm_run_tests =
+  [
+    tc "emo wasm run answers an export's results in the runtime's format"
+      (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:
+              (write_artifact "wasm-run-start.wasm"
+                 "0061736d010000000105016000017e03020100070a01065f737461727400000a0b01090042cb89ec8ff7230b")
+        with
+        | Error why -> Alcotest.fail why
+        | Ok body ->
+            Alcotest.(check bool)
+              "the i64 result rides" true
+              (contains body "1234567890123 : i64"));
+    tc "emo wasm run answers the summary for a module with only a start"
+      (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:
+              (write_artifact "wasm-run-only-start.wasm"
+                 "0061736d01000000010401600000030201000701000801000a040102000b")
+        with
+        | Error why -> Alcotest.fail why
+        | Ok body ->
+            Alcotest.(check bool)
+              "the summary names the start function" true
+              (contains body "start=0"));
+    tc "emo wasm run answers a trap as the error verdict" (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:
+              (write_artifact "wasm-run-trap.wasm"
+                 "0061736d0100000001040160000003020100070a01065f737461727400000a05010300000b")
+        with
+        | Ok body -> Alcotest.fail ("expected the trap, got: " ^ body)
+        | Error why ->
+            Alcotest.(check bool)
+              "the trap names the export" true
+              (contains why "emo-wasm: _start: unreachable"));
+    tc "emo wasm run answers a failed link with the import's name" (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:
+              (write_artifact "wasm-run-link.wasm"
+                 "0061736d01000000010401600000020b0103656e76036c6f670000030201000a040102000b")
+        with
+        | Ok body -> Alcotest.fail ("expected the link failure, got: " ^ body)
+        | Error why ->
+            Alcotest.(check bool)
+              "the reason names the import" true
+              (contains why "unknown import `env`"));
+    tc "emo wasm run refuses a malformed artifact in the decode phase"
+      (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:(write_artifact "wasm-run-malformed.wasm" "0061736d")
+        with
+        | Ok body -> Alcotest.fail ("expected the refusal, got: " ^ body)
+        | Error why ->
+            Alcotest.(check bool)
+              "the phase names the byte" true
+              (contains why "emo-wasm: malformed"));
+    tc "emo wasm run answers a missing artifact with the read's reason"
+      (fun () ->
+        match
+          Emo_project.run_wasm_cli
+            ~artifact:(Filename.concat scratch "wasm-run-missing.wasm")
+        with
+        | Ok body -> Alcotest.fail ("expected the refusal, got: " ^ body)
+        | Error why ->
+            Alcotest.(check bool)
+              "the read names the failure" true
+              (contains why "emo-wasm: file: cannot read"));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -6103,4 +6210,5 @@ let () =
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
       ("browser", browser_tests);
+      ("wasm_run", wasm_run_tests);
     ]

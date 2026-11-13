@@ -2357,6 +2357,41 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
                           ds)))
         in
         Alcotest.(check string) "output" expected output);
+    tc "the wasm_demo example runs through the committed lockfile" (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let dir = Filename.concat examples "wasm_demo" in
+        let entry = Filename.concat dir "main.emo" in
+        Sys.chdir dir;
+        let expected =
+          Emo_project.read_file (Filename.concat dir "expected.txt")
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" expected output);
     tc "the httpd_parse example runs through the committed lockfile" (fun () ->
         use_workspace_registry () |> ignore;
         let examples =

@@ -44,6 +44,7 @@
 | M24 — 宏 | 58–61 | 编译期宏作为唯一的元编程机制:保留的 `// #macro` / `// @name` 指令命名空间(未知名拒绝),宏模型——标量参数加尾随的 `Syntax` 树、运行前先过检查、构造上确定(一切副作用与触碰宿主的内建拒绝)、展开后擦除、拼接的代码随模块一起检查——引用表面与编译期应用参数静态检查,派生应用于类(`Syntax.fields` / `with_methods`),跨模块宏经程序的宏表带限定应用与本地遮蔽——四个试点(`trace`、`memoize`、`derive_eq`、`derive_shared`)在解释器与 c、TypeScript 二进制间逐字节一致,展开骑在 codegen 之前所以每个 target 构造上继承;运行时 `eval`、开放类、`method_missing` 永久拒绝(`CHECK.md`)。 |
 | M25 — postgres 客户端 | 62 | 标准库的第二个原生绑定包、第一个走线协议的数据库客户端:对包内携带的 C shim 的 `foreign def`,libpq 经 manifest 的 `pkg_config` 字段解析;`$1` 风格的 `Param` 参数(text/i64/f64/bool/none)、带类型化受检访问器与按名查找的 `Rows`、`net` 错误二分(宕掉的服务器与被数据破坏的约束以 `(R.error, reason)` 回答、携带服务器消息与 SQLSTATE,违约才 raise);`postgres_demo` 对活服务器骑临时表、三遍逐字节,随 `postgres_available` 探针加入 `c_goldens`;文档 EN+zh,含顺手补上的 `sqlite3` 表行(`CHECK.md`)。 |
 | M26 — Emo shell | 63 | `emosh`,用 Emo 写在 `os` 表面上的通用命令解释器:环境、信号与接线调用(`dup2`/`execvp`/`isatty`/`argv`)落进 `os`,与 fork 纪律并肩;shell 本体把词切成字面与可扩展部件,扩展 `$var`/`$?`/波浪号,逐段 fork 管道并用 `dup2` 接线,把 `<`/`>`/`>>` 开到子进程上,带着承接状态走 `;`/`&&`/`||`,应答八件内建,靠「忽略中断」的纪律活着——shell 忽略,fork 子进程在 exec 前恢复默认——行输入走终端自己的 cooked 模式;fixture 脚本在 ocaml 与 c 双 target 上逐字节一致,退出状态一并钉死(`CHECK.md`)。 |
+| M35 — Wasm 能力 | 72–74 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1470,3 +1471,36 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
 - [x] **T64.5** — 注册:`test/emo_project/emo_project_test.ml` 两个 `tc` 用例,`websocket_demo` 与 `playwright_demo` 进 `c_goldens`,每次改包后 `emo deps resolve` 重出 lockfile。途中发现并当场修掉:c 后端的方法查表拿保留字转义后的调用名(`goto_c`)去比 IR 的裸名,凡 C 关键字命名的方法一律被拒——现在调用名从匹配到的声明自己取。
 - [x] **T64.6** — 文档:`docs/stdlib/websocket.md`、`docs/stdlib/playwright.md` EN+zh,`docs/stdlib.md` 行与节 + zh 镜像,README 引用行,CHECK.md 决策记录,`plan/step-64-playwright.md`,`plan/README.md` 行。途中发现并记录:json 包的转义长度按字符递归,120000 字符的 `json.encode` 在 c 目标上骑穿纤程栈(解释器扛得住;found-not-fixed,demo 手工拼装那条大应答绕开)。
 - [x] **T64.7** — 真实检查:`npm install -g playwright`(1.65.0,chromium headless shell 158.0.8127.18),再经 `examples/playwright_live` 对真 `playwright run-server` 跑完整门面阶梯——握手、带预 launch 浏览器的 initialize、先 context 后 page 两跳、对程序自带 httpd 页面的导航、标题、多字节 DOM 文本、缺失选择器按 30000 ms metadata 死线以错误值应答、真截图、告别——**在 `c` 目标上全绿**;解释器在同一等待中撞上 det 调度器的驻留读墙(found-not-fixed,记入 CHECK.md)。driver 版本已记入 CHECK.md。
+
+## M35 — Wasm 能力
+
+### 步骤 72 — wasm 包:执行面与宿主接口
+
+**前置:** 步骤 20–22(用 Emo 写的运行时:解码器、验证器、解释器、spec 套件金测)。**完成标准:** 包落在 `stdlib/registry/wasm/0.1.0/`,与其他 bundled 包同路解析;声明 `"wasm" = "0.1.0"` 的用户项目能从字节加载模块、用 Emo 闭包伺候其 import、实例化、调用导出、读全局、在线性内存里搬运字节——一切失败都是 `(R.error, reason)` 值,从不 raise;`examples/wasm_demo` 钉住整条阶梯(加载→宿主→实例化→调用→内存往返)逐字节一致;smoke 切片随包从新家骑 `dune test`,`wasm_spec` / `wasm_runs` 别名仍报零 pending 零 failed;文档 EN+zh。
+
+- [x] **T72.1** — 搬家:`runtime/wasm/` → `stdlib/registry/wasm/0.1.0/`——`wasm.emo`、`internal/`、manifest、driver 与 fixture、`testdata/`、包 README,连同承载 smoke 切片与两个别名的 dune 规则;根 `dune` 注释与 `devtools/vendor-wasm-spec` 的输出路径随行;步骤 20–22 的 plan 文件留作历史。
+- [x] **T72.2** — 公开面:R 拆分的执行 def 落包根(`load`、`instantiate`、`call`、`get_global`、`read_memory`、`write_memory`、`register_instance`、`describe`),值构造器(`i32`/`i64`/`f32`/`f64` 与 `from_bits` 一对)与 `as_*` 读取器,`(kind, bits)` 编码一次写清;`load` 从五元组迁移,fixture 随行更新;`decode` 保留诊断判定。
+- [x] **T72.3** — 宿主表:`(module, name, fn)` import 三元组骑 `instantiate`,统一宿主签名 `-> (args Array[(Int64, Int64)]) (Int64, Int64)`,解析序=显式表→register 命名空间→`spectest`;fixture:一个从 `env` 导入的模块由 Emo 闭包伺候,解析序钉死,缺失 import 照旧链接失败。
+- [x] **T72.4** — demo 金测:`examples/wasm_demo/` 带手工构造的模块(十六进制写在 Emo 里,可评审)走完整阶梯;金测经解释器跑,registry 指向 bundled 副本。
+- [x] **T72.5** — 文档:`docs/wasm.md` EN+zh(表面、值编码、宿主接口、边界——尚无 WASI、无 GC 类型、仅 `["ocaml"]`);`docs/stdlib.md` 行与节 + zh 镜像;temp 笔记退役并入新参考;README 行;`plan/README.md` 行;CHECK.md 决策记录。包参考落在
+      `docs/stdlib/wasm.md`(house 的逐包位置),不是 `docs/wasm.md`;
+      temp 笔记移出仓库。`wasm.emo` 的 smoke 驱动从 `main.emo` 改名
+      `smoke.emo`——包根存在 `main.emo` 时 require 绑定的是它,smoke
+      驱动那个文件会遮住公开面。
+- [x] **T72.6** — c 后端长出模块级 `var`:每个 `pglobal` 一格
+      `static emo_value`,声明在所有函数体之前;读取交出 pooled
+      claim(原生类型读取点拆箱);赋值走局部覆盖同款的写屏障;格子
+      在 `emo_root_entry` 开头按声明序初始化。解释器的依赖检查宇宙
+      按 `c` target 解析,没有这一步,包根本无法跨 deps 边被消费。
+      铁证是逐字节一致:五个 fixture 与 demo 金测在解释器与 c 目标
+      应答相同;全仓 `dune runtest` 保持绿;包 manifest 放宽到
+      `["ocaml", "c"]`——验证过的,不是假设的(CHECK.md)。
+
+### 步骤 73 — `emo wasm run`:CLI 环
+
+**前置:** 步骤 72(包与它的执行面)。**完成标准:** `emo wasm run foo.wasm` 经嵌入式 driver 加载、验证、实例化工件——实例的 start 函数运行,入口阶梯应答 `_start`,再 `main`,再对两者都不指认的模块应答一行摘要;结果按运行时的 `value : kind` 格式打印;一切失败(坏工件、链接失败、trap)都以原因与非零退出码应答,从不 raise;纯二进制的机器(无 registry、无项目)即可跑工件;publish/login 嵌入路径行为不变;`dune runtest` 绿;文档 EN+zh。
+
+- [x] **T73.1** — 泛化嵌入式 runner:`run_embedded` 委托 `run_embedded_deps`(依赖清单成为参数);wasm driver 程序落为嵌入式字符串(`__artifact` 全局、入口阶梯、骑公开面的 `value : kind` 结果格式)。嵌入式 scratch 项目不再打印锁文件提交提示——它指向的 manifest 随运行而亡。
+- [x] **T73.2** — `emo wasm run` 命令:`wasm` 组、run 子命令(工件实参、chdir 之前解析绝对路径)、错误判定到 stderr 退出码 1、doctor 行点名命令。
+- [x] **T73.3** — 测试:`test/emo_cli` 的 `wasm_run` 组六用例——导出结果、仅 start 摘要、trap、链接失败带 import 名、畸形工件进 decode 阶段、缺失工件的读取原因。工件以十六进制骑在测试里就地解码(语料纪律:`.wasm` blob 不进仓库),每条钉死前都先对运行时验证过。
+

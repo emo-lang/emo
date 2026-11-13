@@ -83,6 +83,7 @@ The packages:
 | [`sqlite3`](#the-sqlite3-package) | SQLite: prepared statements, stepped rows | `c` |
 | [`postgres`](#the-postgres-package) | PostgreSQL client over libpq: `$1` params, value errors | `c` |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
+| [`wasm`](#the-wasm-package) | a WebAssembly runtime in Emo: decode, validate, execute, host imports | `ocaml`, `c` |
 
 "all five" names the hosted targets those packages declare — `c`,
 `ocaml`, `typescript`, `wasm`, and `beam`. It is the package's list, not
@@ -1195,3 +1196,30 @@ Targets: `["c"]` — the calls are foreign defs, which the interpreter
 refuses (E3009), so `emo run` cannot execute a program that touches the
 package; build it with `emo build`. Reference:
 [`docs/stdlib/term.md`](stdlib/term.md) · Demo: `examples/term_demo`.
+
+## The `wasm` package
+
+A WebAssembly runtime written in Emo — decoder, validator, and
+interpreter, the way wazero is a runtime written in Go. The bar is the
+official spec suite and the bar is met: every binary `assert_malformed`
+and `assert_invalid` case rejected in the right phase, every
+`assert_return` bit-exact across the vendored run corpus.
+
+```emo
+wasm.load(data Bytes)                     // (R, Int64) — the module handle
+wasm.instantiate(module, imports)         // (R, Int64) — the host table rides here
+wasm.call(inst, "fac", [wasm.i64(10)])    // (R, Array[(Int64, Int64)])
+wasm.read_memory(inst, ptr, len)          // (R, Bytes)
+```
+
+A wasm value rides the runtime's `(kind, bits)` pair — the
+constructors (`i32`/`i64`/`f32`/`f64`) build one, the accessors
+(`as_i32` and friends) read one back, and the encoding is pinned in the
+reference. The host table is `(module, name, fn)` triples whose
+closures serve function imports — arguments in, one value out —
+resolving ahead of the register namespace and the built-in `spectest`
+host, and refusing an entry that names no import (a caller's typo,
+surfaced, not carried).
+
+Targets: `["ocaml", "c"]`. Reference:
+[`docs/stdlib/wasm.md`](stdlib/wasm.md) · Demo: `examples/wasm_demo`.

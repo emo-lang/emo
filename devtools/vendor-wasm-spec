@@ -2,7 +2,7 @@
 """Vendor the WebAssembly spec suite's binary-form module cases.
 
 Reads a local checkout of github.com/WebAssembly/spec (fetched by hand,
-once — the pinned revision lives in runtime/wasm/testdata/README.md),
+once — the pinned revision lives in stdlib/registry/wasm/0.1.0/testdata/README.md),
 runs `wast2json --no-check` over its core test files, and writes the
 text case list: one case per line,
 

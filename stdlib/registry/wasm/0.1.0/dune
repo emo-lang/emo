@@ -1,5 +1,5 @@
 ; The smoke rule makes the wasm package non-inert: `dune test` runs
-; `emo run main.emo` and diffs its stdout against expected.txt, so a
+; `emo run smoke.emo` and diffs its stdout against expected.txt, so a
 ; red line here means the runtime's own golden broke. The second pair
 ; runs the full list under the wasm_spec alias (step 21's acceptance
 ; gate).
@@ -8,7 +8,7 @@
  (alias runtest)
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
-  main.emo
+  smoke.emo
   wasm.emo
   cli.emo
   (source_tree .)
@@ -17,7 +17,7 @@
  (action
   (with-stdout-to
    smoke.actual
-   (run %{emo} run main.emo))))
+   (run %{emo} run smoke.emo))))
 
 (rule
  (alias runtest)
@@ -325,3 +325,25 @@
  (deps host-fixture.actual host-fixture.expected.txt)
  (action
   (diff host-fixture.expected.txt host-fixture.actual)))
+
+; The user-host fixture (T72.3).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  host-user-fixture.emo
+  wasm.emo
+  cli.emo
+  (source_tree .)
+  package.emo)
+ (action
+  (with-stdout-to
+   host-user-fixture.actual
+   (run %{emo} run host-user-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps host-user-fixture.actual host-user-fixture.expected.txt)
+ (action
+  (diff host-user-fixture.expected.txt host-user-fixture.actual)))

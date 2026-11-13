@@ -742,6 +742,14 @@ var instances = []
 var reg_names = []
 var reg_handles = []
 
+// The user host table (step 72). `user_host_fns` holds every closure an
+// `instantiate` has taken, indexed by the targets' kind-2 slots;
+// `pending_hosts` is the table of the instantiate in progress, consulted
+// only while `resolve_imports` walks — no code runs inside that walk, so
+// the two never interleave.
+var user_host_fns = []
+var pending_hosts = []
+
 // The `spectest` host module state (T22.9): one table and one memory,
 // allocated once and shared by every importer.
 var spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
@@ -889,6 +897,9 @@ def call_func(m Module, fidx Int64) (Bool, String) {
     const t = instances[cur_inst].targets[fidx]
     if t[0] == 1 {
       return call_host(m, fidx, t[1])
+    }
+    if t[0] == 2 {
+      return call_host_user(m, fidx, t[1])
     }
     return call_other(t[1], t[2])
   }
@@ -2087,6 +2098,8 @@ def reset_all() Int64 {
   instances = []
   reg_names = []
   reg_handles = []
+  user_host_fns = []
+  pending_hosts = []
   spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
   spectest_memory = internal.store.mem_new(1, 2, true)
   return 0
@@ -2188,6 +2201,21 @@ def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], i
     return (true, "", imems, itables, iglobals, targets)
   }
   const imp = m.imports[i]
+  // The explicit host table resolves first (step 72): it serves
+  // function imports only — the closure takes the argument array and
+  // answers one value, so a multi-result import stays unservable here.
+  const ui = find_host_entry(pending_hosts, imp.module, imp.field, 0)
+  if ui >= 0 {
+    if imp.kind != 0 {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
+    const ft = m.types[imp.type_idx]
+    if ft.results.length() > 1 {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
+    user_host_fns = user_host_fns.append(pending_hosts[ui][2])
+    return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(2, user_host_fns.length() - 1, 0)))
+  }
   if imp.module == "spectest" {
     return resolve_host(m, i, imems, itables, iglobals, targets)
   }
@@ -2230,6 +2258,42 @@ def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], i
     return (false, "incompatible import type", imems, itables, iglobals, targets)
   }
   return resolve_imports(m, i + 1, imems, itables, iglobals.append(gg), targets)
+}
+
+// The explicit host table's lookup: the first entry naming this import.
+def find_host_entry(hosts Array[(String, String, Block)], module String, field String, i Int64) Int64 {
+  if i >= hosts.length() {
+    return -1
+  }
+  const e = hosts[i]
+  if e[0] == module && e[1] == field {
+    return i
+  }
+  return find_host_entry(hosts, module, field, i + 1)
+}
+
+// Strictness for the host table: an entry that names no import of the
+// module is a caller's typo, surfaced here instead of lived with.
+def unused_host(hosts Array[(String, String, Block)], m Module, i Int64) String {
+  if i >= hosts.length() {
+    return ""
+  }
+  const e = hosts[i]
+  if host_imported(m, e[0], e[1], 0) {
+    return unused_host(hosts, m, i + 1)
+  }
+  return "host function `" + e[0] + "." + e[1] + "` matches no import of this module"
+}
+
+def host_imported(m Module, module String, field String, i Int64) Bool {
+  if i >= m.imports.length() {
+    return false
+  }
+  const imp = m.imports[i]
+  if imp.module == module && imp.field == field {
+    return true
+  }
+  return host_imported(m, module, field, i + 1)
 }
 
 // The actual limits must sit inside the import's declared limits.
@@ -2375,12 +2439,27 @@ def call_other(h Int64, fidx Int64) (Bool, String) {
 }
 
 def instantiate(handle Int64) (Bool, String, Int64) {
+  return instantiate_with(handle, [])
+}
+
+// Instantiate with an explicit host table: `(module, name, fn)` triples
+// whose closures serve the module's function imports before the register
+// namespace and the spectest host are consulted. Every entry must name
+// an import of this module — an unused entry is the caller's typo, and
+// the link refuses rather than carrying it.
+def instantiate_with(handle Int64, hosts Array[(String, String, Block)]) (Bool, String, Int64) {
   if handle < 0 || handle >= loaded.length() {
     return (false, "no module", -1)
   }
   const m = loaded[handle]
+  const unused = unused_host(hosts, m, 0)
+  if unused != "" {
+    return (false, unused, -1)
+  }
+  pending_hosts = hosts
   const h = instances.length()
   const r = resolve_imports(m, 0, [], [], [], [])
+  pending_hosts = []
   if !r[0] {
     return (false, r[1], -1)
   }
@@ -2509,6 +2588,73 @@ def call_host(m Module, fidx Int64, id Int64) (Bool, String) {
   sp = sp - nparams
   host_print(id, args, 0)
   return (true, "")
+}
+
+// The user host table's dispatch (step 72): the import's own signature
+// governs — the arguments come off the operand stack, the closure's one
+// value comes back when the signature has a result.
+def call_host_user(m Module, fidx Int64, slot Int64) (Bool, String) {
+  const ft = m.types[func_type_idx(m, fidx)]
+  const nparams = ft.params.length()
+  const args = collect_results(sp - nparams, nparams, [])
+  sp = sp - nparams
+  const r = invoke_host(user_host_fns[slot], args)
+  if ft.results.length() > 0 {
+    push(r)
+  }
+  return (true, "")
+}
+
+// The uniform host signature crosses here: a `Block` called with the
+// argument array answers one `(kind, bits)` value. Spelled as a def so
+// the call is typed through the Block parameter — the httpd
+// middleware's shape — rather than through a tuple element.
+def invoke_host(fn Block, args Array[(Int64, Int64)]) (Int64, Int64) {
+  return fn(args)
+}
+
+// The instance's memory 0, bounds-checked before any copy — the
+// store's discipline, exported for the package surface (step 72).
+def read_memory(inst Int64, ptr Int64, len Int64) (Bool, Bytes, String) {
+  if inst < 0 || inst >= instances.length() {
+    return (false, Bytes.new(0), "no instance")
+  }
+  const ms = instances[inst].mems
+  if ms.length() == 0 {
+    return (false, Bytes.new(0), "no memory")
+  }
+  const b = internal.store.mem_bytes(ms[0])
+  if ptr < 0 || len < 0 || ptr > b.length() || len > b.length() - ptr {
+    return (false, Bytes.new(0), "out of bounds memory access")
+  }
+  const out = Bytes.new(len)
+  copy_out(b, out, ptr, 0, len)
+  return (true, out, "")
+}
+
+def copy_out(b Bytes, out Bytes, at Int64, i Int64, n Int64) Int64 {
+  if i == n {
+    return 0
+  }
+  out.set(i, b.get(at + i))
+  return copy_out(b, out, at, i + 1, n)
+}
+
+def write_memory(inst Int64, ptr Int64, data Bytes) (Bool, Int64, String) {
+  if inst < 0 || inst >= instances.length() {
+    return (false, -1, "no instance")
+  }
+  const ms = instances[inst].mems
+  if ms.length() == 0 {
+    return (false, -1, "no memory")
+  }
+  const b = internal.store.mem_bytes(ms[0])
+  const n = data.length()
+  if ptr < 0 || ptr > b.length() || n > b.length() - ptr {
+    return (false, -1, "out of bounds memory access")
+  }
+  internal.store.copy_bytes(b, data, ptr, n)
+  return (true, n, "")
 }
 
 def host_print(id Int64, args Array[(Int64, Int64)], i Int64) Int64 {

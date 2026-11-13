@@ -1699,6 +1699,47 @@ let deps =
     (Cmd.info "deps" ~doc:"Manage dependencies.")
     [ deps_add_cmd; deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
+(* `emo wasm run foo.wasm`: the CLI drives its own interpreter over an
+   embedded Emo driver — the compiler never links the runtime, so the
+   step-20 boundary holds in both directions. The artifact's absolute
+   path rides in as a host-injected binding; the driver reads it
+   through `file` and loads it through `wasm`, both from the standard
+   library shipped inside the binary, so a lone `emo` binary runs an
+   artifact with no registry and no project of its own. *)
+let wasm_run =
+  let artifact =
+    Arg.(
+      required
+      & pos 0 (some string) None
+      & info [] ~docv:"ARTIFACT" ~doc:"The .wasm artifact to run.")
+  in
+  let run artifact =
+    let abs_artifact =
+      if Filename.is_relative artifact then
+        Filename.concat (Sys.getcwd ()) artifact
+      else artifact
+    in
+    match Emo_project.run_wasm_cli ~artifact:abs_artifact with
+    | Ok body ->
+        print_string body;
+        if body <> "" && body.[String.length body - 1] <> '\n' then
+          print_newline ();
+        Cmd.Exit.ok
+    | Error why ->
+        prerr_endline why;
+        exit 1
+  in
+  Cmd.v
+    (Cmd.info "run"
+       ~doc:"Run a WebAssembly artifact with the Emo-written runtime.")
+    Term.(const run $ artifact)
+
+let wasm =
+  Cmd.group
+    (Cmd.info "wasm"
+       ~doc:"Work with WebAssembly artifacts (the Emo-written runtime).")
+    [ wasm_run ]
+
 (* `emo emoji publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
    standard library's own http client, running as an embedded Emo program
@@ -2258,8 +2299,12 @@ let doctor ~(emit : string -> unit) : int =
   else line "beam:" "unavailable — erlc not found";
   if tool_exists "node" then
     line "wasm:"
-      ("ok" ^ tool_version "node" ^ " — `emo run --target wasm` runs it")
-  else line "wasm:" "ok — no external tools needed (Node adds the run path)";
+      ("ok" ^ tool_version "node"
+     ^ " — `emo run --target wasm` runs it; `emo wasm run` needs no tools")
+  else
+    line "wasm:"
+      "ok — no external tools needed; `emo wasm run` executes WebAssembly \
+       artifacts (Node adds the `emo run --target wasm` path)";
   (match riscv_binutils_prefix () with
   | None ->
       line "riscv64:"
@@ -3133,6 +3178,7 @@ let cmd =
       test_cmd;
       build;
       deps;
+      wasm;
       emoji;
       new_cmd;
       doctor_cmd;

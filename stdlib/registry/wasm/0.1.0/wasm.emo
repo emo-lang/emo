@@ -1,0 +1,194 @@
+// The WebAssembly runtime, written in Emo the way wazero is written
+// in Go. Step 21 grew the binary decoder and validator here, step 22
+// the interpreter and the host imports, step 72 the execution surface
+// and the host interface on this root.
+//
+// Two handles cross the boundary: a module handle names a loaded
+// module, an instance handle a live instantiation — both opaque
+// Int64 indexes into the package's own tables. A wasm value rides the
+// runtime's `(kind, bits)` pair of Int64s; the constructors below
+// build one, the `as_*` accessors read one, and docs/wasm.md pins the
+// encoding. Every failure answers `(R.error, reason)` — nothing raises
+// for bad bytes, bad handles, or traps.
+
+def smoke() String {
+  return "emo wasm runtime"
+}
+
+// The diagnostic verdict: (ok, phase, offset, message). `phase` is
+// "malformed" or "invalid"; bad input never raises. The execution
+// surface rides `load` — this one stays for corpus runners and
+// tooling that wants the byte offset spelled out.
+def decode(data Bytes) (Bool, String, Int64, String) {
+  return internal.decode.module_from(data)
+}
+
+// Validate and materialize: on success the handle of a loaded module,
+// ready for `instantiate`. The module records stay inside the package;
+// a caller never sees an unvalidated module.
+def load(data Bytes) (R, Int64) {
+  const v = internal.instance.load(data)
+  if !v[0] {
+    return (R.error, v[1] + ": " + v[3] + " at byte " + v[2].to_string())
+  }
+  return (R.ok, v[4])
+}
+
+// Instantiate a loaded module. `imports` is the host table —
+// `(module, name, fn)` triples whose closures serve the module's
+// function imports before the register namespace and the `spectest`
+// host are consulted; a closure takes the argument array
+// (`Array[(Int64, Int64)]`) and answers one value, and an import whose
+// signature has no result sees its return dropped. Every entry must
+// name an import of this module — an unused entry is a typo, and the
+// link refuses rather than carrying it. A host closure must not call
+// back into this package (re-entrancy would ride through the
+// interpreter's machine state); that refusal is part of the contract.
+def instantiate(module Int64, imports Array[(String, String, Block)]) (R, Int64) {
+  const r = internal.instance.instantiate_with(module, imports)
+  if !r[0] {
+    return (R.error, r[1])
+  }
+  return (R.ok, r[2])
+}
+
+// Call an exported function by name. The results come back as the
+// value array — one `(kind, bits)` pair per result; a trap answers
+// `(R.error, reason)` with the trap's message.
+def call(inst Int64, name String, args Array[(Int64, Int64)]) (R, Array[(Int64, Int64)]) {
+  const r = internal.instance.call(inst, name, args)
+  if !r[0] {
+    return (R.error, r[2])
+  }
+  return (R.ok, r[1])
+}
+
+// Read a global export. The value rides the same `(kind, bits)` pair.
+def get_global(inst Int64, name String) (R, (Int64, Int64)) {
+  const r = internal.instance.get_global(inst, name)
+  if !r[0] {
+    return (R.error, r[2])
+  }
+  return (R.ok, r[1])
+}
+
+// Bind an instance into the import namespace under `name`, so modules
+// loaded later can import its exports.
+def register_instance(inst Int64, name String) Int64 {
+  return internal.instance.register_instance(inst, name)
+}
+
+// A one-line count summary of a loaded module.
+def describe(module Int64) String {
+  return internal.instance.describe(module)
+}
+
+// The instance's linear memory 0, bounds-checked like the store's own
+// accessors: a read of `len` bytes at `ptr`, or a write answering the
+// number of bytes written.
+def read_memory(inst Int64, ptr Int64, len Int64) (R, Bytes) {
+  const r = internal.instance.read_memory(inst, ptr, len)
+  if !r[0] {
+    return (R.error, r[2])
+  }
+  return (R.ok, r[1])
+}
+
+def write_memory(inst Int64, ptr Int64, data Bytes) (R, Int64) {
+  const r = internal.instance.write_memory(inst, ptr, data)
+  if !r[0] {
+    return (R.error, r[2])
+  }
+  return (R.ok, r[1])
+}
+
+// ---- the value constructors ----
+
+// The number constructors store the pattern the runtime carries: an
+// i32's two's-complement 32-bit pattern, an i64's full 64-bit pattern,
+// an f32 rounded through the demotion surgery, an f64's bit pattern.
+def i32(v Int64) (Int64, Int64) {
+  return internal.value.i32(v)
+}
+
+def i64(v Int64) (Int64, Int64) {
+  return internal.value.i64(v)
+}
+
+def f32(v Float64) (Int64, Int64) {
+  return internal.value.f32(internal.floats.demote_f64(v.to_bits()))
+}
+
+def f64(v Float64) (Int64, Int64) {
+  return internal.value.f64(v.to_bits())
+}
+
+// The exact-pattern constructors, for NaN payloads and bit-exact work.
+def i32_from_bits(bits Int64) (Int64, Int64) {
+  return internal.value.i32(bits)
+}
+
+def f32_from_bits(bits Int64) (Int64, Int64) {
+  return internal.value.f32(bits)
+}
+
+def f64_from_bits(bits Int64) (Int64, Int64) {
+  return internal.value.f64(bits)
+}
+
+// ---- the value accessors ----
+//
+// The signed readings match the runtime's own printing: an i32 reads
+// through its 32-bit two's complement, an i64 as itself, the floats
+// through their patterns.
+
+def as_i32(v (Int64, Int64)) (R, Int64) {
+  if v[0] != 127 {
+    return (R.error, "expected i32, got " + kind_name(v[0]))
+  }
+  return (R.ok, internal.value.sign32(v[1]))
+}
+
+def as_i64(v (Int64, Int64)) (R, Int64) {
+  if v[0] != 126 {
+    return (R.error, "expected i64, got " + kind_name(v[0]))
+  }
+  return (R.ok, v[1])
+}
+
+def as_f32(v (Int64, Int64)) (R, Float64) {
+  if v[0] != 125 {
+    return (R.error, "expected f32, got " + kind_name(v[0]))
+  }
+  return (R.ok, Float64.from_bits(internal.floats.promote_f32(v[1])))
+}
+
+def as_f64(v (Int64, Int64)) (R, Float64) {
+  if v[0] != 124 {
+    return (R.error, "expected f64, got " + kind_name(v[0]))
+  }
+  return (R.ok, Float64.from_bits(v[1]))
+}
+
+// The kind byte's name, for the accessors' reasons and the docs.
+def kind_name(kind Int64) String {
+  if kind == 127 {
+    return "i32"
+  }
+  if kind == 126 {
+    return "i64"
+  }
+  if kind == 125 {
+    return "f32"
+  }
+  if kind == 124 {
+    return "f64"
+  }
+  if kind == 112 {
+    return "funcref"
+  }
+  if kind == 111 {
+    return "externref"
+  }
+  return "unknown"
+}

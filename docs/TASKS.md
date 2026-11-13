@@ -52,6 +52,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M25 — The postgres client | 62 | The standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried C shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none), `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE, contract violations raising); `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe; docs EN+zh, with the found-and-fixed `sqlite3` table row (`CHECK.md`). |
 | M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
 | M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
+| M35 — The wasm capability | 72–74 | The Emo-written wasm runtime (steps 20–22) becomes a consumable capability: the package moves into the bundled registry as the `wasm` stdlib package with the execution surface on its root — `load`/`instantiate`/`call`/`get_global`/memory access over the R error split, the `(kind, bits)` value model with its constructors, and a host-import table of Emo closures — resolved like any bundled package; then `emo wasm run` executes a `.wasm` artifact from the CLI over the interpreter, the compiler never linking the runtime; then the `emo` host module (and the WASI surface it entails) runs modules from other toolchains; the conformance aliases (`wasm_spec`/`wasm_runs`) ride with the package (`CHECK.md`). |
 
 ## Design gates
 
@@ -3892,3 +3893,100 @@ in the lockfile suite and in `c_goldens`; docs EN+zh.
       trips the det scheduler's parked-read wall during the same
       wait (found-not-fixed, recorded in CHECK.md). The driver
       version is recorded in CHECK.md.
+
+## M35 — The wasm capability
+
+### Step 72 — The wasm package: the execution surface and the host interface
+
+**Prereq:** Steps 20–22 (the Emo-written runtime: decoder, validator,
+interpreter, spec-suite goldens). **Done when:** the package lives at
+`stdlib/registry/wasm/0.1.0/`, resolved like any bundled package; a user
+project declaring `"wasm" = "0.1.0"` loads a module from bytes, serves
+its imports with Emo closures, instantiates it, calls its exports, reads
+its globals, and moves bytes through its linear memory — every failure
+an `(R.error, reason)` value, never a raise; `examples/wasm_demo` pins
+the ladder (load → host → instantiate → call → memory round-trip)
+byte-identical across runs; the smoke slice rides `dune test` from the
+package's new home and the `wasm_spec` / `wasm_runs` aliases still
+report zero pending and zero failed; docs EN+zh.
+
+- [x] **T72.1** — The move: `runtime/wasm/` →
+      `stdlib/registry/wasm/0.1.0/` — `wasm.emo`, `internal/`, the
+      manifest, the drivers and fixtures, `testdata/`, the package
+      README, and the dune rules carrying the smoke slice and the two
+      aliases; the root `dune` comment and `devtools/vendor-wasm-spec`'s
+      output paths follow; plan steps 20–22 stay as history.
+- [x] **T72.2** — The public surface: the R-split execution defs on
+      the package root (`load`, `instantiate`, `call`, `get_global`,
+      `read_memory`, `write_memory`, `register_instance`, `describe`),
+      the value constructors (`i32`/`i64`/`f32`/`f64` and the
+      `from_bits` pair) and the `as_*` accessors, the `(kind, bits)`
+      encoding documented; `load` migrates from the five-tuple, the
+      fixtures update with it; `decode` keeps its diagnostic verdict.
+- [x] **T72.3** — The host table: `(module, name, fn)` import triples
+      riding `instantiate`, the uniform host signature
+      `-> (args Array[(Int64, Int64)]) (Int64, Int64)`, the resolution
+      order explicit table → register namespace → `spectest`;
+      fixtures: a module importing from `env` served by an Emo
+      closure, the order pinned, a missing import link-failing as
+      before.
+- [x] **T72.4** — The demo golden: `examples/wasm_demo/` with a
+      hand-built module (hex in Emo, reviewable) exercising the whole
+      ladder; the golden runs through the interpreter with the
+      registry pointed at the bundled copy.
+- [x] **T72.5** — The docs: `docs/wasm.md` EN+zh (the surface, the
+      value encoding, the host interface, the limits — no WASI yet, no
+      GC types, `["ocaml"]` only); `docs/stdlib.md` row + section +
+      zh mirror; the temp notes retire to the new reference; README's
+      row; `plan/README.md`'s row; CHECK.md's decision record. The
+      package reference lands at `docs/stdlib/wasm.md` (the house's
+      per-package location), not `docs/wasm.md`; the temp notes move
+      out of the repository. `wasm.emo`'s smoke driver renames from
+      `main.emo` to `smoke.emo` — the package root's `main.emo` is the
+      module a require binds when it exists, and the smoke driver's
+      file would have shadowed the surface.
+- [x] **T72.6** — The c backend grows module-level `var`: one
+      `static emo_value` cell per `pglobal` declared before every body,
+      reads handing out pooled claims (unboxing at native-typed read
+      sites), assignments through the write barrier a local's overwrite
+      uses, the cells initialized in declaration order at
+      `emo_root_entry`'s start; the interpreter's dep-check universe
+      resolves against the `c` target, so without this the package
+      could not be consumed across a deps edge at all. Proven by
+      byte-identity: all five fixtures and the demo golden answer
+      identically on the interpreter and the c target; the whole
+      repo's `dune runtest` stays green; the package's manifest widens
+      to `["ocaml", "c"]` — verified, not assumed (CHECK.md).
+
+### Step 73 — `emo wasm run`: the CLI rung
+
+**Prereq:** Step 72 (the package and its execution surface). **Done
+when:** `emo wasm run foo.wasm` loads, validates, and instantiates the
+artifact through the embedded driver — the instance's start function
+runs, the entry ladder answers `_start`, then `main`, then the
+one-line summary for a module that names neither; results print in the
+runtime's `value : kind` format; every failure (bad artifact, failed
+link, trap) answers with the reason and a nonzero exit, never a raise;
+a binary-only machine (no registry, no project) runs the artifact; the
+publish/login embedded paths behave unchanged; `dune runtest` green;
+docs EN+zh.
+
+- [x] **T73.1** — The generalized embedded runner: `run_embedded`
+      delegates to `run_embedded_deps` (the dependency list a
+      parameter); the wasm driver program lands as an embedded string
+      (`__artifact` global, the entry ladder, the `value : kind`
+      result format over the public surface). The embedded scratch
+      projects stop printing the lockfile-commit notice — the manifest
+      it points at dies with the run.
+- [x] **T73.2** — The `emo wasm run` command: the `wasm` group, the
+      run subcommand (artifact argument, absolute-path resolution
+      before any chdir), the error verdict to stderr with exit 1, the
+      doctor line naming the command.
+- [x] **T73.3** — The tests: six cases in `test/emo_cli`'s
+      `wasm_run` group — the export's results, the start-only summary,
+      the trap, the failed link with the import's name, the malformed
+      artifact in the decode phase, the missing artifact's read
+      reason. The artifacts ride as hex decoded in the test (the
+      corpus discipline: no `.wasm` blob enters the repository), each
+      verified against the runtime before pinning.
+
