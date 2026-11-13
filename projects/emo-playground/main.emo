@@ -1,0 +1,9 @@
+// The playground's entry: one Config from the environment, the tick
+// program the watchdogs run, one listener, one route table — then the
+// wait.
+
+const cfg = config.from_env()
+runner.prepare_tick(cfg.runs_dir)
+const srv = server.start(cfg)
+println("playground serving http://${cfg.host}:${cfg.port.to_string()} — curfew ${cfg.curfew.to_string()}s")
+srv.wait()

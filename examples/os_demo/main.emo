@@ -56,6 +56,46 @@ const w = os.waitpid(pid)
 println(os.wait_exited(w[1]))
 println(os.wait_exit_code(w[1]).to_string())
 
+// ---- process groups: a child of its own, ended by one kill ----
+const (R.ok, (pg_read, pg_write)) = os.pipe()
+const (R.ok, (park_read, park_write)) = os.pipe()
+const (R.ok, group_pid) = os.fork()
+if group_pid == 0 {
+  os.close(pg_read)
+  os.close(park_write)
+  const g = os.setpgid(0, 0)
+  os.write(pg_write, "grouped=" + (g[0] == R.ok).to_string())
+  os.close(pg_write)
+  // Park on a read nobody answers: the kill is what ends this child.
+  os.read(park_read, 1)
+  os._exit(0)
+}
+os.close(pg_write)
+os.close(park_read)
+const (R.ok, note) = os.read(pg_read, 64)
+println(note)
+os.close(pg_read)
+os.kill(-group_pid, os.sig_kill)
+const killed = os.waitpid(group_pid)[1]
+os.close(park_write)
+println(os.wait_signaled(killed))
+println(os.wait_signal(killed).to_string())
+case os.kill(os.getpid(), 99) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)     -> { println("unexpected ok") }
+}
+const (R.ok, gone) = os.fork()
+if gone == 0 { os._exit(0) }
+os.waitpid(gone)
+case os.kill(gone, os.sig_term) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)     -> { println("unexpected ok") }
+}
+case os.setpgid(gone, gone) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)     -> { println("unexpected ok") }
+}
+
 // ---- process identity ----
 println(os.getpid() != os.getppid())
 println(os.getcwd().length() > 0)

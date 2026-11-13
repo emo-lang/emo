@@ -4483,6 +4483,21 @@ emo_value emo_os_signal_ignore(int64_t sig) {
   return emo_os_ok(emo_box_i64(0));
 }
 
+/* Sends sig to pid — or its negative, the whole process group with
+   that id. The classic range rides ahead of the call, the signal_*
+   discipline: an out-of-range number answers the same fixed reason the
+   interpreter does, not strerror's whim. */
+emo_value emo_os_kill(int64_t pid, int64_t sig) {
+  if (sig < 1 || sig > 31) return emo_signal_fail("kill", sig);
+  if (kill((pid_t)pid, (int)sig) < 0) return emo_os_fail("kill", "");
+  return emo_os_ok(emo_box_i64(0));
+}
+
+emo_value emo_os_setpgid(int64_t pid, int64_t pgid) {
+  if (setpgid((pid_t)pid, (pid_t)pgid) < 0) return emo_os_fail("setpgid", "");
+  return emo_os_ok(emo_box_i64(0));
+}
+
 emo_value emo_os_signal_default(int64_t sig) {
   if (sig < 1 || sig > 31) return emo_signal_fail("signal_default", sig);
   signal((int)sig, SIG_DFL);

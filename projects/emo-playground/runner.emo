@@ -1,0 +1,481 @@
+require "crypto"
+require "file"
+require "os"
+require "rand"
+
+// The run engine: one submission's code becomes a fresh directory's
+// main.emo, an own child process runs the interpreter on it under a
+// curfew, and the answer is one RunResult — the verdict, the standard
+// output, and the standard error.
+//
+// The shape is the shell's own: one pipe, one fork, one exec. The
+// parent closes its pipe write end BEFORE the collector process
+// spawns — a collector inherits the descriptors that exist when it
+// starts, and a write end left open anywhere would keep its pipe from
+// ever reaching EOF. The collector is the language's own process: it
+// parks in read while the answering connection stays parked in
+// receive until it has drained. The child's stderr is a file in the
+// run directory, not a pipe — a file never blocks its writer, and a
+// second collector's read on a silent stderr pipe could starve the
+// stdout drain for the whole scheduler. A run's curfew is the
+// toolchain's `--curfew`: Emo has no clock, so the one that ends a
+// runaway program lives in the interpreter the child runs.
+//
+// The curfew bounds the child's own CPU, but a submission may fork:
+// a grandchild that lingers holds the pipes' write ends past its
+// parent's death, and the collectors would never see EOF — the answer
+// would park until the server restarts. The discipline that ends it is
+// the shell's own, in two parts. The child moves itself into its own
+// process group before the exec (`os.setpgid`), so everything it ever
+// forks is in one group and nothing else on the host belongs to it. A
+// second child — the watchdog — runs the tick program (a spinner the
+// server writes beside the run directories once at startup) under its
+// own curfew, the run's plus a margin, and the toolchain's deputized
+// kill (`EMO_RUN_GROUP`) ends that whole group when the watchdog's
+// curfew passes: the write ends close with the group, the collectors
+// drain, the answer arrives. The watchdog is forked by the child
+// before the exec, so it orphans at the child's death and the kernel
+// reaps it: no zombie, no blocking wait. The margin keeps the child's
+// own verdict (0, 65, 66, 124) ahead of the kill — the watchdog starts
+// after the child and its deadline is the run's plus the margin — and
+// covers the run child wedged in a system call, which its own curfew
+// can never reach.
+//
+// The trust model is the server's own (README): the child's working
+// directory is the fresh run directory and its stdin is /dev/null, and
+// nothing else is held back — user code runs with the interpreter's
+// full library surface on the host machine. The curfew bounds the
+// interpreter's own CPU; it does not isolate.
+
+class RunResult {
+  def init(status String, exit_code Int64, stdout String, stderr String) {
+    self.status = status
+    self.exit_code = exit_code
+    self.stdout = stdout
+    self.stderr = stderr
+  }
+}
+
+// The manifest every run directory carries: the interpreter resolves
+// the tree from it, and the standard library's hosted packages are
+// pinned as dependencies — a visitor's `require` names one of these,
+// and the resolution gate refuses what is not on the list with the
+// manifest's own error. The browser-only dom and the bare-metal
+// syscall are absent on purpose, and so are the c-only FFI backends
+// the interpreter cannot link.
+const run_manifest = "package {\n  name = \"playground_run\"\n  version = \"0.1.0\"\n  targets = [\"ocaml\"]\n\n  deps {\n    \"base64\" = \"0.1.0\"\n    \"bufio\" = \"0.1.0\"\n    \"crypto\" = \"0.1.0\"\n    \"csv\" = \"0.1.0\"\n    \"fastmath\" = \"0.1.0\"\n    \"file\" = \"0.1.0\"\n    \"float\" = \"0.1.0\"\n    \"http\" = \"0.1.0\"\n    \"httpd\" = \"0.1.0\"\n    \"json\" = \"0.1.0\"\n    \"math\" = \"0.1.0\"\n    \"net\" = \"0.1.0\"\n    \"os\" = \"0.1.0\"\n    \"plot\" = \"0.1.0\"\n    \"rand\" = \"0.1.0\"\n    \"slog\" = \"0.1.0\"\n    \"sync\" = \"0.1.0\"\n    \"valkey\" = \"0.1.0\"\n    \"websocket\" = \"0.1.0\"\n    \"xml\" = \"0.1.0\"\n    \"yaml\" = \"0.1.0\"\n  }\n}\n"
+
+// The output budget: past it, the stream keeps draining — a silent
+// producer must never wedge the child on a full pipe — but nothing
+// more is kept, and the truncation marker takes the text's place.
+const output_cap = 1_048_576
+
+// The tick: the watchdog's death is the clock the server does not
+// have. Its own curfew is the run's plus a margin — past the run
+// child's deadline, so the child's own verdict (0, 65, 66, 124) always
+// wins, and the kill that fires at the watchdog's curfew exists for
+// the holders the curfew cannot see: the grandchildren a submission
+// forked and left behind, and the run child wedged in a system call.
+const tick_margin = 2.0
+
+// The tick program: a bare spinner, in its own dot-directory beside the
+// run directories. The tick interpreter resolves the server project's
+// dependencies (its entry sits inside the project tree), so it gets a
+// package cache of its own — see the EMO_CACHE_DIR split in run_code —
+// and never touches the user's shared cache.
+const tick_source = "while true {}\n"
+
+// The user's temporary directory: macOS and the Linux desktops name it
+// TMPDIR; /tmp is the honest fallback.
+def tick_base() String {
+  case os.getenv("TMPDIR") {
+    (R.ok, dir) -> { return dir }
+    (R.error, _) -> { return "/tmp" }
+  }
+}
+
+// Writes the tick program once at startup. The run directories' own
+// directory is the one writable place the config already names; the
+// dot-directory inside it is server-owned and no sweep touches it. A
+// failure to write stops the server: a watchdogless runner would park
+// on every submission that forks, and a server that cannot say so has
+// no business serving.
+def prepare_tick(runs_dir String) Void {
+  case os.mkdir(os.getcwd() + "/" + runs_dir) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+  const dir = os.getcwd() + "/" + runs_dir + "/.tick"
+  case os.mkdir(dir) {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+  case file.write(dir + "/tick.emo", tick_source) {
+    (R.error, why) -> {
+      raise Exception.new(
+        message: "playground: the tick program could not be written: ${why}")
+    }
+    (R.ok, _) -> {}
+  }
+}
+
+// Reads one pipe to EOF. Chunks past the cap keep coming and are
+// dropped; the marker rides at the end so the reader can see the cut.
+def read_all(fd Int64) String {
+  const parts = ArrayBuilder.new()
+  var kept = 0
+  var truncated = false
+  var reading = true
+  while reading {
+    case os.read(fd, 65536) {
+      (R.error, _) -> { reading = false }
+      (R.ok, chunk) -> {
+        if chunk.length() == 0 {
+          reading = false
+        } else {
+          if kept < output_cap {
+            const room = output_cap - kept
+            if chunk.length() > room {
+              parts.push(chunk.substring(0, room))
+              kept = output_cap
+              truncated = true
+            } else {
+              parts.push(chunk)
+              kept = kept + chunk.length()
+            }
+          } else {
+            truncated = true
+          }
+        }
+      }
+    }
+  }
+  os.close(fd)
+  if truncated {
+    parts.push("\n... output truncated at ${output_cap} bytes ...\n")
+  }
+  const pieces = parts.to_array()
+  var text = ""
+  var i = 0
+  while i < pieces.length() {
+    text = text + pieces[i]
+    i = i + 1
+  }
+  return text
+}
+
+// A run directory's name: eight random bytes, hex — collisions are
+// the birthday problem over 2^64, and a name that repeats itself is
+// the one way one submission could read another's.
+const hex_digits = "0123456789abcdef".to_bytes()
+
+def fresh_name() String {
+  case rand.bytes(8) {
+    (R.error, why) -> {
+      raise Exception.new(message: "playground: rand.bytes failed: ${why}")
+    }
+    (R.ok, raw) -> {
+      const out = Bytes.new(16)
+      var i = 0
+      while i < 8 {
+        const byte = raw.get(i)
+        out.set(i * 2, hex_digits.get((byte >> 4) & 15))
+        out.set(i * 2 + 1, hex_digits.get(byte & 15))
+        i = i + 1
+      }
+      return "run-" + out.to_string()
+    }
+  }
+}
+
+// Best-effort: a run directory exists for the child, and when the child
+// is done the directory's absence is the goal. Every call's error tuple
+// is ignored on purpose — a directory a restart can sweep is not worth
+// a verdict about. The walk is recursive: a run directory carries the
+// child's private package caches, whose trees outlive the run.
+def sweep_dir(dir String) Void {
+  case os.list_dir(dir) {
+    (R.ok, entries) -> {
+      var i = 0
+      while i < entries.length() {
+        sweep_dir(dir + "/" + entries[i])
+        i = i + 1
+      }
+    }
+    (R.error, _) -> {
+      case os.unlink(dir) {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+    }
+  }
+  os.rmdir(dir)
+}
+
+// Decides the verdict from the child's raw wait status. Exit 0 is the
+// clean run; 65 and 66 are the static stages; 124 is the curfew, the
+// same number timeout(1) answers; 127 is the exec that never happened;
+// a signal death is 128 plus the signal, the shell's own convention.
+def status_of(exited Bool, exit_code Int64) String {
+  if !exited {
+    return "crash"
+  }
+  if exit_code == 0 {
+    return "ok"
+  }
+  if exit_code == 65 || exit_code == 66 {
+    return "compile"
+  }
+  if exit_code == 124 {
+    return "curfew"
+  }
+  if exit_code == 127 {
+    return "internal"
+  }
+  return "crash"
+}
+
+// One stream's drain, sent back to the asking process when EOF
+// arrives. The `do` form takes a call, so each collector is one.
+def collect(me Pid, tag String, fd Int64) Void {
+  me <- (tag, read_all(fd))
+}
+
+// The child's diagnostics spell the run directory's absolute path —
+// the toolchain resolves the entry before it parses. The answer names
+// the file the visitor wrote, nothing about the host: every prefix
+// comes out of both streams. The lockfile notice goes too: the run
+// directory is swept after the child leaves, and "commit it" is
+// nobody's business there.
+const lock_notice = "wrote package.lock — commit it beside the manifest\n"
+
+def scrub(text String, dir String) String {
+  const prefix = dir + "/"
+  var out = text
+  var at = out.index_of(prefix)
+  while at >= 0 {
+    const tail_at = at + prefix.length()
+    out = out.substring(0, at) + out.substring(tail_at, out.length() - tail_at)
+    at = out.index_of(prefix)
+  }
+  var found = out.index_of(lock_notice)
+  while found >= 0 {
+    out = out.substring(0, found) + out.substring(found + lock_notice.length(), out.length() - found - lock_notice.length())
+    found = out.index_of(lock_notice)
+  }
+  return out
+}
+
+// Runs one submission. The code becomes main.emo in a fresh directory
+// under runs_dir; the child runs `emo run main.emo --curfew N` there;
+// the answer is the collected streams and the decoded verdict.
+def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code String) RunResult {
+  const name = fresh_name()
+  // The absolute spelling: the child's chdir needs no assumption about
+  // the server's working directory, and the scrub's prefix must match
+  // the diagnostics' own absolute form.
+  const dir = os.getcwd() + "/" + runs_dir + "/" + name
+  const tick_path = os.getcwd() + "/" + runs_dir + "/.tick/tick.emo"
+  // The tick program must be there before any child execs it: a
+  // missing tick file makes the watchdog die at once, and the kill
+  // that fires for it would steal the answer of a run that never
+  // started.
+  case os.open_read(tick_path) {
+    (R.error, _) -> {
+      return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the tick program is missing — was the server started through main.emo?")
+    }
+    (R.ok, fd) -> { os.close(fd) }
+  }
+  case os.mkdir(dir) {
+    (R.error, why) -> {
+      return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run directory could not be created: ${why}")
+    }
+    (R.ok, _) -> {}
+  }
+  case file.write(dir + "/package.emo", run_manifest) {
+    (R.error, why) -> {
+      sweep_dir(dir)
+      return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run manifest could not be written: ${why}")
+    }
+    (R.ok, _) -> {}
+  }
+  case file.write(dir + "/main.emo", code) {
+    (R.error, why) -> {
+      sweep_dir(dir)
+      return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the program could not be written: ${why}")
+    }
+    (R.ok, _) -> {}
+  }
+
+  const (R.ok, (out_read, out_write)) = os.pipe()
+  // The child's stderr is a file, not a pipe: a file never blocks its
+  // writer, so the child can never wedge on diagnostics the way it
+  // would on a full stderr pipe. The parent reads the file after the
+  // child's death — its EOF (the stdout pipe's) is the same moment.
+  const err_path = dir + "/stderr.txt"
+  case os.open_write(err_path) {
+    (R.error, why) -> {
+      os.close(out_read)
+      os.close(out_write)
+      sweep_dir(dir)
+      return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run's stderr file could not be created: ${why}")
+    }
+    (R.ok, err_fd) -> {
+      case os.fork() {
+        (R.error, why) -> {
+          os.close(out_read)
+          os.close(out_write)
+          os.close(err_fd)
+          sweep_dir(dir)
+          return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the child process could not start: ${why}")
+        }
+    (R.ok, pid) -> {
+      if pid == 0 {
+        // The child: its own process group first — every process this
+        // run ever forks lands in one group that nothing else on the
+        // host belongs to, and the watchdog's curfew-kill ends that
+        // group as one. Then the deputized-kill knob for the watchdog
+        // (the group's id; unset before this process's own exec, so
+        // the run's own verdict is never touched by a kill), stdin
+        // from /dev/null, stdout into the pipe, stderr into the run
+        // directory's own file, the watchdog forked before the exec
+        // (it orphans at this process's death, so nobody here reaps
+        // it), then the interpreter. A failed start is the one way
+        // out — _exit, not a raise, so no parent cleanup can run a
+        // second time.
+        case os.setpgid(0, 0) {
+          (R.error, why) -> {
+            os.write(2, "playground: the run's process group could not be made: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
+        case os.setenv("EMO_RUN_GROUP", os.getpid().to_string()) {
+          (R.error, _) -> {
+            os.write(2, "playground: the run's watchdog could not be deputized\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
+        // The package caches stay out of the user's shared cache, which
+        // two concurrent materializers of the same package can race into
+        // compile verdicts for programs that compile. The run child
+        // resolves the submission's manifest into the run directory's
+        // own cache (swept with the run); the watchdog resolves the
+        // server project's manifest into a temporary cache it shares
+        // with the other watchdogs — same content every time, and out
+        // of the run directory the sweep is about to delete.
+        case os.setenv("EMO_CACHE_DIR", tick_base() + "/emo-playground-tick-cache") {
+          (R.error, why) -> {
+            os.write(2, "playground: the watchdog's cache could not be set: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
+        os.close(out_read)
+        case os.open_read("/dev/null") {
+          (R.ok, devnull) -> {
+            os.dup2(devnull, 0)
+          }
+          (R.error, _) -> {}
+        }
+        os.dup2(out_write, 1)
+        os.dup2(err_fd, 2)
+        os.close(out_write)
+        os.close(err_fd)
+        case os.fork() {
+          (R.error, why) -> {
+            os.write(2, "playground: the run's watchdog could not start: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, 0) -> {
+            // The watchdog: the tick interpreter's stdio is the void —
+            // the curfew banner it ends with is nobody's answer. Its
+            // stderr is a discard file in the run directory rather than
+            // /dev/null, and its curfew is the run's plus the margin,
+            // past the run child's own deadline; the interpreter's
+            // deputized-kill (EMO_RUN_GROUP) ends the whole group when
+            // it passes — the holders the curfew cannot see: a forked
+            // grandchild that lingers, a run child wedged in a system
+            // call.
+            case os.open_write(dir + "/tick.log") {
+              (R.error, _) -> {
+                os._exit(127)
+              }
+              (R.ok, discard) -> {
+                os.dup2(discard, 2)
+                os.close(discard)
+              }
+            }
+            os.dup2(0, 1)
+            const tick_argv = [emo_bin, "run", tick_path, "--curfew", (curfew_seconds + tick_margin).to_string()]
+            os.execvp(emo_bin, tick_argv)
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
+        case os.setenv("EMO_CACHE_DIR", dir + "/.emo-cache") {
+          (R.error, why) -> {
+            os.write(2, "playground: the run's cache could not be set: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
+        case os.unsetenv("EMO_RUN_GROUP") {
+          (R.error, _) -> {}
+          (R.ok, _) -> {}
+        }
+        os.chdir(dir)
+        const argv = [emo_bin, "run", "main.emo", "--curfew", curfew_seconds.to_string()]
+        os.execvp(emo_bin, argv)
+        os._exit(127)
+      }
+
+      // The parent: the stdout write end closes before the collector
+      // spawns, then the stream drains in its own process while this
+      // one waits for its EOF. The EOF is bounded: the run child's own
+      // death closes its write ends, and whatever it forked that
+      // lingers dies with the whole group at the watchdog's curfew.
+      // The stderr file is read after the child is reaped — at the
+      // collector's EOF every holder of the stdout write end is dead,
+      // so the file says its last word.
+      os.close(out_write)
+      os.close(err_fd)
+      const me = self_pid()
+      do collect(me, "stdout", out_read)
+      var out_text = ""
+      while true {
+        receive {
+          ("stdout", text) -> {
+            out_text = text
+            break
+          }
+        }
+      }
+
+      const (wpid, raw_status) = os.waitpid(pid)
+      const exited = os.wait_exited(raw_status)
+      const code = os.wait_exit_code(raw_status)
+      const sig = os.wait_signal(raw_status)
+      var status = status_of(exited, code)
+      var err_text = ""
+      case file.read(err_path) {
+        (R.ok, data) -> { err_text = data }
+        (R.error, _) -> {}
+      }
+      if err_text.length() > output_cap {
+        err_text = err_text.substring(0, output_cap) + "\n... output truncated at ${output_cap} bytes ...\n"
+      }
+      var err = err_text
+      if !exited {
+        err = err + "\nplayground: the program was stopped by signal ${sig}"
+        status = "crash"
+      }
+      sweep_dir(dir)
+      const exit_code = if exited { code } else { 128 + sig }
+      return RunResult.new(status: status, exit_code: exit_code, stdout: scrub(out_text, dir), stderr: scrub(err, dir))
+      }
+    }
+  }
+}}
+

@@ -1178,6 +1178,24 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "os_kill",
+          {
+            vtype =
+              FuncType
+                ([ ("pid", Int64); ("sig", Int64) ],
+                 TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_setpgid",
+          {
+            vtype =
+              FuncType
+                ([ ("pid", Int64); ("pgid", Int64) ],
+                 TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_pipe",
           {
             vtype =

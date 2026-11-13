@@ -78,6 +78,23 @@ def wait_stop_signal(status Int64) Int64 {
   return (status >> 8) & 255
 }
 
+// Sends sig to pid — a process id, or its negative for the whole process
+// group with that id, the discipline a supervisor lives by: one call
+// ends a group. The sig_* constants above are the numbers. An
+// out-of-range signal refuses ahead of the call, the same fixed reason
+// on every target.
+def kill(pid Int64, sig Int64) (R, Int64) {
+  return os_kill(pid, sig)
+}
+
+// Moves pid into the process group pgid (pgid 0 means pid's own). The
+// fork child's first call — its own new group, made before the exec —
+// is the discipline a shell lives by: the parent can then end the
+// whole group with one kill of the negative pid.
+def setpgid(pid Int64, pgid Int64) (R, Int64) {
+  return os_setpgid(pid, pgid)
+}
+
 def pipe() (R, (Int64, Int64)) {
   return os_pipe()
 }

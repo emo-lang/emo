@@ -1,0 +1,165 @@
+require "http"
+require "httpd"
+require "json"
+require "net"
+
+// The routes, driven the way the guide's own tests drive them: a
+// request parsed from the bytes the server would see, dispatched
+// against a fresh table — and one test over the wire, on a port the
+// kernel picks. The Config is the test's own: the binary under test
+// is argv[0], the curfew short, the directories the project's.
+
+def test_config() config.Config {
+  return config.Config.new(
+    host: "127.0.0.1",
+    port: 0,
+    emo_bin: os.argv()[0],
+    curfew: 1.0,
+    web_dir: "web",
+    runs_dir: "runs"
+  )
+}
+
+def fresh_routes() httpd.Router {
+  return handlers.routes(test_config())
+}
+
+// A request exactly as the server would build it from these bytes.
+def request(method String, target String, body String) httpd.Request {
+  const (R.ok, req) = httpd.parse_head(method + " " + target + " HTTP/1.1\r\nHost: test\r\n\r\n")
+  return req.with_body(body)
+}
+
+def contains(hay String, needle String) Bool {
+  return hay.index_of(needle) >= 0
+}
+
+def test_index_is_the_page() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/", ""))
+  expect_equal(200, resp.status)
+  expect_true(contains(resp.body, "<!doctype html>"))
+}
+
+def test_an_asset_serves() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/web/style.css", ""))
+  expect_equal(200, resp.status)
+  expect_true(contains(resp.body, "--bg"))
+}
+
+def test_a_climbing_capture_is_refused() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/web/%2e%2e/package.emo", ""))
+  expect_equal(404, resp.status)
+}
+
+def test_a_hidden_capture_is_refused() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/web/.gitignore", ""))
+  expect_equal(404, resp.status)
+}
+
+def test_the_example_list() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/examples", ""))
+  expect_equal(200, resp.status)
+  case json.decode(resp.body) {
+    (R.error, why) -> { expect_fail("the list is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      if doc.is(json.JsonArray) {
+        expect_true(doc.items().length() >= 5)
+      } else {
+        expect_fail("the list is not an array")
+      }
+    }
+  }
+}
+
+def test_an_example_source() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/examples/hello", ""))
+  expect_equal(200, resp.status)
+  case json.decode(resp.body) {
+    (R.error, why) -> { expect_fail("the source is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      expect_equal("hello", doc.get("name").as_string())
+      expect_true(contains(doc.get("code").as_string(), "greet"))
+    }
+  }
+}
+
+def test_a_missing_example_is_404() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("GET", "/examples/nope", ""))
+  expect_equal(404, resp.status)
+}
+
+def run_body(code String) (R, json.Json) {
+  const body = json.object([("code", json.string(code))]).encode()
+  const resp = httpd.router_dispatch(fresh_routes(), request("POST", "/api/run", body))
+  expect_equal(200, resp.status)
+  return json.decode(resp.body)
+}
+
+def status_of(doc json.Json) String {
+  if doc.is(json.JsonObject) {
+    return doc.get("status").as_string()
+  }
+  return "not an object"
+}
+
+def test_the_api_runs_a_program() {
+  case run_body("println(21 * 2)") {
+    (R.error, why) -> { expect_fail("the answer is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      expect_equal("ok", status_of(doc))
+      expect_equal("42\n", doc.get("stdout").as_string())
+      expect_equal("", doc.get("stderr").as_string())
+    }
+  }
+}
+
+def test_the_api_reports_a_compile_error() {
+  case run_body("println(1 + \"a\")") {
+    (R.error, why) -> { expect_fail("the answer is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      expect_equal("compile", status_of(doc))
+      expect_true(contains(doc.get("stderr").as_string(), "E4004"))
+    }
+  }
+}
+
+def test_the_api_reports_the_curfew() {
+  case run_body("while true {}") {
+    (R.error, why) -> { expect_fail("the answer is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      expect_equal("curfew", status_of(doc))
+      expect_true(contains(doc.get("stderr").as_string(), "curfew"))
+    }
+  }
+}
+
+def test_the_api_refuses_a_body_without_code() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("POST", "/api/run", "{\"text\":\"hi\"}"))
+  expect_equal(400, resp.status)
+}
+
+def test_the_api_refuses_non_json() {
+  const resp = httpd.router_dispatch(fresh_routes(), request("POST", "/api/run", "not json"))
+  expect_equal(400, resp.status)
+}
+
+def test_over_the_wire() {
+  const (R.ok, listener) = net.listen("127.0.0.1", 0)
+  const server = httpd.serve_routes(listener, fresh_routes())
+  const base = "http://127.0.0.1:" + listener.port().to_string()
+  const body = json.object([("code", json.string("println(\"over the wire\")"))]).encode()
+  const (R.ok, resp) = http.request("POST", base + "/api/run", [("Content-Type", "application/json")], body, 30.0)
+  expect_equal(200, resp.status)
+  case json.decode(resp.body) {
+    (R.error, why) -> { expect_fail("the wire answer is not JSON: ${why}") }
+    (R.ok, doc) -> {
+      if status_of(doc) != "ok" {
+        println("DEBUG wire stderr: " + doc.get("stderr").as_string())
+      }
+      expect_equal("ok", status_of(doc))
+      expect_equal("over the wire\n", doc.get("stdout").as_string())
+    }
+  }
+  const (R.ok, _) = server.stop()
+  server.wait()
+}

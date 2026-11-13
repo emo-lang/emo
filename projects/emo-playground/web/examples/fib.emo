@@ -1,0 +1,22 @@
+// fib — recursion, and where it stops being the right tool
+
+def fib(n Int64) Int64 {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+for var i = 0; i <= 15; i = i + 1 {
+  println("fib(${i}) = ${fib(i)}")
+}
+
+// the iterative shape, when the numbers grow
+var a = 0
+var b = 1
+for var i = 0; i < 30; i = i + 1 {
+  const next = a + b
+  a = b
+  b = next
+}
+println("fib(30) = ${a}")

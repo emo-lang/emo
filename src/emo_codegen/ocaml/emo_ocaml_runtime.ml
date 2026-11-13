@@ -28,6 +28,14 @@
    errors are plain messages. *)
 
 module Emo_eval = struct
+(* The POSIX call OCaml's Unix module does not wrap: the C stub rides
+   the runtime (emo_ocaml_stub.c, compiled and linked beside it), and
+   raises the module's own Unix_error shape so os_result's formatting
+   sees "setpgid" and the reason text is byte-identical with the c
+   runtime's and the interpreter's. *)
+external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
+external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+
   (* ---- The value ADT ----
 
      The tagged dynamic representation, reshaped standalone: the
@@ -1438,19 +1446,42 @@ let pf_hash_float conv minus plus space width prec f =
     | "os_waitpid", [ Int64 pid ] ->
         os_try
           (fun () ->
-            let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
-            let raw =
-              match status with
-              | WEXITED code ->
-                  Int64.shift_left (Int64.of_int (code land 255)) 8
-              | WSIGNALED sgn -> Int64.of_int sgn
-              | WSTOPPED sgn ->
-                  Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
-            in
-            Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
+            (* The stub answers the kernel's own 16-bit wait status word —
+               OCaml's process_status carries the signal in the runtime's
+               internal numbering — so the Emo-level decoders read the
+               kernel encoding, byte-identical with the c runtime's. *)
+            let raw = emo_stub_waitpid (Int64.to_int pid) in
+            Tuple [ Int64 pid; Int64 (Int64.of_int raw) ])
     | "os_waitpid", vs ->
         error "E3007"
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_kill", [ Int64 pid; Int64 sig_no ] ->
+        (* The classic range rides ahead of the call, the signal_*
+           discipline: an out-of-range number answers the same fixed
+           reason on every target, not strerror's whim. *)
+        if sig_no < 1L || sig_no > 31L then
+          Tuple
+            [
+              EnumMember ("R", "error");
+              String (Printf.sprintf "os: kill %Ld: invalid signal" sig_no);
+            ]
+        else
+          os_result (fun () ->
+              Unix.kill (Int64.to_int pid) (Int64.to_int sig_no);
+              Int64 0L)
+    | "os_kill", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_kill` expects (pid Int64, sig Int64), got %d"
+             (List.length vs))
+    | "os_setpgid", [ Int64 pid; Int64 pgid ] ->
+        os_result (fun () ->
+            emo_stub_setpgid (Int64.to_int pid) (Int64.to_int pgid);
+            Int64 0L)
+    | "os_setpgid", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_setpgid` expects (pid Int64, pgid Int64), got %d"
              (List.length vs))
     | "os_pipe", [] ->
         os_result
