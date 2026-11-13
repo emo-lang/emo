@@ -892,6 +892,22 @@ def desk_range_line(mx Int64, my Int64) Void {
   gate_line(p)
 }
 
+// The wall clock's line (emo-desktop M26, EmoOS T12.1): `clock <n>`,
+// the gate's verb 29 — the RTC's seconds said on the wire so the
+// golden can hold the bar's first live datum against the host's own
+// time (the face paints it in A26.1).
+def clock_line(n Int64) Void {
+  var p = byte_at(0, 99) // c
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 32)
+  p = num_at(n, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 def desk_win_line(letter Int64, id Int64) Void {
   var p = desk_at()
   p = byte_at(p, letter)
@@ -2681,6 +2697,9 @@ const desk_bar_base = 16088
 const desk_mode_cell = 16096 // the display's mode packed, w above h
 const desk_dock_grant = 16104 // the dock panel's grant and base
 const desk_dock_base = 16112
+const desk_painted_minute = 16120 // the minute the bar's clock painted
+const cal_grant = 16128 // the calendar panel's grant and base —
+const cal_base = 16136 // 0 the panel shut, a toplevel while it shows
 
 // The notification center's cells (emo-desktop M25, A25.2), in the
 // same scratch page: the take's reply (the packed head and the two
@@ -3107,9 +3126,11 @@ def desk_count_text(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, right
 }
 
 // The header bar whole: the material's rows, the wordmark one pad in,
-// the running count at the right edge — the package's `paint_header`
-// mirrored, every call the carve's own.
-def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, running Int64) Void {
+// the wall clock at the right edge and the running count before it —
+// the package's `paint_header` mirrored, every call the carve's own.
+// The clock is `now`, the seconds the caller read (the time verb), the
+// bar's second live fact.
+def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, running Int64, now Int64) Void {
   var y = 0
   while y < emo_desktop.header_height() {
     desk_chrome_row(base, mw, y, y, mh, emo_desktop.header_scrim())
@@ -3117,7 +3138,9 @@ def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, runnin
   }
   const ty = (emo_desktop.header_height() - f.line_height()) / 2
   desk_text(f, base, mw, emo_desktop.header_height(), "EmoOS", 8, ty, emo_desktop.header_accent())
-  desk_count_text(f, base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin(), ty, running, emo_desktop.header_ink())
+  const cw = ui_fb.text_width(f, emo_desktop.clock_text(0))
+  desk_text(f, base, mw, emo_desktop.header_height(), emo_desktop.clock_text(now), mw - emo_desktop.icon_margin() - cw, ty, emo_desktop.header_ink())
+  desk_count_text(f, base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin() - cw - 16, ty, running, emo_desktop.header_ink())
 }
 
 // The dock's strip whole: the material's rows, the shelf's shadow and
@@ -3280,8 +3303,12 @@ def desk_wall_repaint(f ui_fb.raster.Strike) Void {
   }
 }
 
-// The header bar repainted: the running count is its one live fact,
-// and a launch or a death is the news it carries.
+// The header bar repainted: the running count and the wall clock are
+// the two live facts it carries — a launch or a death the one news,
+// the minute's turn the other. Every paint says the seconds it drew
+// from (`clock <epoch>`, the golden's own provenance) and the minute
+// cell keeps, so a wake compares and the next minute's first wake
+// repaints.
 def desk_chrome(f ui_fb.raster.Strike) Void {
   const mode = peek64(buf + desk_mode_cell)
   const mw = mode >> 32
@@ -3297,8 +3324,15 @@ def desk_chrome(f ui_fb.raster.Strike) Void {
   if (m & 4) == 4 {
     running = running + 1
   }
+  var now = 0
+  case syscall.time() {
+    (R.error, _) -> { mark() }
+    (R.ok, t) -> { now = t }
+  }
+  clock_line(now)
+  poke64(buf + desk_painted_minute, now / 60)
   const base = peek64(buf + desk_bar_base)
-  desk_bar_paint(f, base, mw, mh, running)
+  desk_bar_paint(f, base, mw, mh, running, now)
   notify_bell_paint(f, base, mw)
   frame_line(carve_digest(base, mw, emo_desktop.header_height()))
   case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw, emo_desktop.header_height()) {
@@ -3682,6 +3716,59 @@ def notify_panel_toggle(f ui_fb.raster.Strike, c emo_notify.Center, mw Int64,
   desk_chrome(f)
 }
 
+// The clock's cell (emo-desktop M26, A26.2): the bar's right edge —
+// the text `00:00` wide, the calendar's toggle as the bell is the
+// panel's. The hit wears the bell's pad, four either way.
+def clock_hit(f ui_fb.raster.Strike, mw Int64, x Int64, y Int64) Bool {
+  const cw = ui_fb.text_width(f, emo_desktop.clock_text(0))
+  const bx = mw - emo_desktop.icon_margin() - cw
+  return x >= bx - 4 && x <= mw - emo_desktop.icon_margin() + 4 &&
+    y >= 0 && y < emo_desktop.header_height()
+}
+
+// The calendar panel painted: the package's own paint on the carve
+// surface, the way the notify panel's twin calls `paint_panel`.
+def desk_cal_paint(f ui_fb.raster.Strike, base Int64, now Int64) Void {
+  const w = emo_desktop.cal_w()
+  const h = emo_desktop.cal_h()
+  emo_desktop.paint_calendar(Carve.new(base: base, width: w, height: h), f,
+    now)
+}
+
+// The clock's press: the calendar's door turns — open makes the
+// panel's window at its seat under the clock, shut closes it — and
+// the bar repainted either way, its paint's own time the digits.
+def cal_toggle(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
+  if peek64(buf + cal_grant) != 0 {
+    notify_close(buf + cal_grant, buf + cal_base)
+  } else {
+    var now = 0
+    case syscall.time() {
+      (R.error, _) -> { mark() }
+      (R.ok, t) -> { now = t }
+    }
+    if notify_open(buf + cal_grant, buf + cal_base, emo_desktop.cal_w(),
+      emo_desktop.cal_h(), emo_desktop.cal_x(mw), emo_desktop.cal_y()) {
+      desk_cal_paint(f, peek64(buf + cal_base), now)
+      notify_present(peek64(buf + cal_grant), peek64(buf + cal_base),
+        emo_desktop.cal_w(), emo_desktop.cal_h())
+    }
+  }
+  desk_chrome(f)
+}
+
+// Whether the press lands on the open calendar's own ground — the
+// panel's rect, the press it consumes.
+def cal_hit(mw Int64, x Int64, y Int64) Bool {
+  if peek64(buf + cal_grant) == 0 {
+    return false
+  }
+  const cx = emo_desktop.cal_x(mw)
+  const cy = emo_desktop.cal_y()
+  return x >= cx && x < cx + emo_desktop.cal_w() && y >= cy &&
+    y < cy + emo_desktop.cal_h()
+}
+
 // The desktop's own body (emo-desktop A12.1): the dock's panel up,
 // the slots' names poked, the banner and the prompt — then the loop
 // that never returns.
@@ -3733,6 +3820,12 @@ def desktop() Void {
   }
   const mw = out_w(mode)
   const mh = out_h(mode)
+  // The wall clock (emo-desktop M26, EmoOS T12.1): the bar's first
+  // live datum, said on the wire for the golden's own eye.
+  case syscall.time() {
+    (R.error, _) -> { mark() }
+    (R.ok, now) -> { clock_line(now) }
+  }
   const dw = mw
   const dh = emo_desktop.strip_height()
   poke64(buf + desk_mode_cell, (mw << 32) | mh)
@@ -3850,6 +3943,18 @@ def desktop() Void {
         notify_panel_sync(f, nc, mw, mh)
       }
     }
+    // The clock's beat (emo-desktop M26, A26.2): the take has no
+    // heartbeat to ride and neither has the minute — a wake reads the
+    // time and the changed minute is the bar's repaint, the digits
+    // one wake late the honest bound (the toast's own).
+    case syscall.time() {
+      (R.error, _) -> {}
+      (R.ok, now) -> {
+        if now / 60 != peek64(buf + desk_painted_minute) {
+          desk_chrome(f)
+        }
+      }
+    }
     const ev = syscall.input_read()
     const t = ev_type(ev)
     // The death's word (emo-desktop A12.1): type 0x4558, the child's
@@ -3943,17 +4048,32 @@ def desktop() Void {
             }
             notify_panel_sync(f, nc, mw, mh)
           } else {
-            if tile == 0 {
-              desk_launch(f, 0, labels)
-            }
-            if tile == 1 {
-              desk_launch(f, 1, labels)
-            }
-            if tile == 2 {
-              desk_launch(f, 2, labels)
-            }
-            if tile == -1 && py >= emo_desktop.header_height() {
-              desk_icon_press(f, emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))
+            // The clock's press (emo-desktop M26, A26.2): the
+            // calendar's door, and the open panel's own ground the
+            // press it consumes — a press on the bare desktop closes
+            // it first, the popover's way.
+            if clock_hit(f, mw, px, py) {
+              cal_toggle(f, mw, mh)
+            } else {
+              if cal_hit(mw, px, py) {
+                // the panel's own ground: consumed
+              } else {
+                if peek64(buf + cal_grant) != 0 {
+                  notify_close(buf + cal_grant, buf + cal_base)
+                }
+                if tile == 0 {
+                  desk_launch(f, 0, labels)
+                }
+                if tile == 1 {
+                  desk_launch(f, 1, labels)
+                }
+                if tile == 2 {
+                  desk_launch(f, 2, labels)
+                }
+                if tile == -1 && py >= emo_desktop.header_height() {
+                  desk_icon_press(f, emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))
+                }
+              }
             }
           }
         }

@@ -236,6 +236,8 @@ const route_win_desk_open = -1023
 // the notification service's, the rest the compositor's.
 const route_notify_raise = -1027
 const route_notify_take = -1028
+// The wall clock's own answer (emo-desktop M26, EmoOS T12.1): verb
+// 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -511,6 +513,17 @@ def notify_slot_pick() Int64 {
     k = k + 1
   }
   return -1
+}
+
+// The wall clock (emo-desktop M26, EmoOS T12.1): the board's goldfish
+// RTC — TIME_LOW at the page's head, TIME_HIGH at +4 — the pair the
+// nanoseconds since the Unix epoch assemble, the billion the seconds
+// the verb answers. The high word is zero for every year this machine
+// will see; the read is two loads and nothing waits.
+def rtc_seconds() Int64 {
+  const lo = peek32(koff + 0x101000)
+  const hi = peek32(koff + 0x101004)
+  return ((hi << 32) | lo) / 1000000000
 }
 
 // The dispatch: the gate answers what needs no service, routes what
@@ -932,6 +945,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 27 || n == 28 {
     return notify_dispatch(n, r0, r1, r2, r3)
+  }
+  if n == 29 {
+    return rtc_seconds()
   }
   if n == 4 {
     var me = peek64(handoff_caller)

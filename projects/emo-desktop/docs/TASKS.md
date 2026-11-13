@@ -2058,3 +2058,41 @@ toast.
   family; the fs's vocabulary ends at 9 today, and the next verb
   added under it must clear the 27/28 gate (a stride of its own or a
   decode by service, not by op alone).
+
+## M26 — the clock (opened 2026-11-13)
+
+D17's ground, landed: the board's goldfish RTC (`google,goldfish-rtc`
+at `0x101000`, one register page beside the UART's) is the gate's time
+verb — the kernel half is [EmoOS's Step 12](../../emo-os/docs/TASKS.md)
+— so the bar's first live data are the wall time. The header's clock
+reads it; the calendar is the month it names. The clock is the one
+*live* region of the chrome: its pixels cannot be pinned by a golden,
+so the wire's `clock <epoch>` line is held against the host's own time
+and the model carries two skips — the clock's box in the bar and, on
+the open beat, the calendar panel's ring.
+
+- [x] **A26.1** — The clock face: `emo_desktop`'s civil section (the
+  day's y/m/d pack, the weekday rule, `clock_text`'s `HH:MM` in UTC —
+  the machine knows no time zone and the chrome does not pretend to),
+  `paint_header` grown the `now` parameter (the clock at the right
+  edge, the count displaced left of it), and the shell's `desk_chrome`
+  reading the verb per paint — every paint says the seconds it drew
+  from (`clock <epoch>` on the wire, the golden's own provenance) and
+  the painted-minute cell keeps, so the loop's first wake past a
+  minute's turn repaints, the digits one wake late the toast's own
+  honest bound. The bar golden's states feed fixed epochs (2026-03-29
+  09:05, 2026-07-31 23:41) and re-pin; the time corpus module
+  (`emo_time`) stays open for the first consumer outside the chrome.
+- [x] **A26.2** — The calendar: a press on the clock opens the month
+  panel (the shell's toplevel, the notification panel's twin — the
+  package's `paint_calendar` on the carve surface direct), the title
+  the month's `YYYY-MM`, the week's initials, six rows always, today's
+  cell the accent's ground; the popover's way — the open panel consumes
+  its own press, a press on the bare desktop closes it. The golden
+  pins five fixed epochs (a Sunday-start month, a 31-day month at
+  23:41, the month opening on a Thursday at 00:07, the leap day
+  2028-02-29, the year's boundary 2027-01-01) across the five hosted
+  targets; the metal's two beats (open, shut) assert the comp lines
+  and the frame line, the pixels' truth the hosted pins carry — the
+  2038 edge a non-event, the epoch an Int64 the whole way down. The
+  previous/next month's presses stay open, with the corpus module.
