@@ -29,5 +29,26 @@
    ../../stdlib/registry
    (run %{exe:emo_cli_test.exe}))))
 
+; The wayland examples' seat rides @emo_os with the projects/ trees:
+; the socket golden's suite runs here, the default runtest skips it
+; (the gate reads EMO_WAYLAND_EXAMPLES beside the cc_available skip).
+
+(rule
+ (alias emo_os)
+ (deps
+  (source_tree ../../examples)
+  (source_tree ../../stdlib)
+  (source_tree ../../test/emo_sched/fixtures)
+  (file ../../VERSION)
+  emo_cli_test.exe)
+ (action
+  (setenv
+   EMO_WAYLAND_EXAMPLES
+   1
+   (setenv
+    EMO_REGISTRY
+    ../../stdlib/registry
+    (run %{exe:emo_cli_test.exe})))))
+
 ; The bundled registry lives beside the compiler in an install; tests
 ; resolve it from the sandbox's stdlib copy instead.

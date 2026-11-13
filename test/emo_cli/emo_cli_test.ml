@@ -1343,8 +1343,8 @@ println("unreachable")
         Alcotest.(check bool)
           "the refusal names os_setpgid" true
           (contains err
-             "the runtime implementation `os_setpgid` is not available on \
-              the wasm target"));
+             "the runtime implementation `os_setpgid` is not available on the \
+              wasm target"));
   ]
 
 (* `-o` names the artifact on every target, and on beam it names the
@@ -1973,6 +1973,15 @@ let c_examples_tests =
     (fun name ->
       tc (Printf.sprintf "%s compiles to c and runs standalone" name) (fun () ->
           if not (Lazy.force cc_available) then Alcotest.skip ();
+          (* The wayland three run under @emo_os only: the socket
+             golden's suite rides the explicit alias, the way the
+             projects/ trees do — plain `dune runtest` skips them
+             (emo-desktop M18's suite, the rebase's seat lesson). *)
+          if
+            List.mem name
+              [ "wayland_wire"; "wayland_handshake"; "wayland_input" ]
+            && Sys.getenv_opt "EMO_WAYLAND_EXAMPLES" = None
+          then Alcotest.skip ();
           if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
             Alcotest.skip ();
           if name = "postgres_demo" && not (Lazy.force postgres_available) then

@@ -1157,14 +1157,16 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | ( ( "os_getpid" | "os_getppid" | "os_fork" | "os_waitpid" | "os_pipe"
           | "os_execv" | "os__exit" | "os_dup2" | "os_execvp" | "os_isatty"
           | "os_argv" | "os_getenv" | "os_setenv" | "os_unsetenv"
-          | "os_signal_ignore" | "os_signal_default" | "os_kill"
-          | "os_setpgid" ),
+          | "os_signal_ignore" | "os_signal_default" | "os_kill" | "os_setpgid"
+          | "os_sleep_ms" ),
           _ ) ->
           (* the process half: a WasmGC module has no process to fork,
              so these raise when called — the package ships (its fd and
              directory half is real), the capability names itself at
              the call, the interpreter's run-time refusals are the
-             precedent *)
+             precedent; the sleep rides the list beside them (a
+             synchronous pause is the host's to refuse, the wall
+             clock's runtime-impl pattern, emo-desktop M24/M26) *)
           string_const env
             ("the runtime implementation `" ^ name
            ^ "` is not available on the wasm target");

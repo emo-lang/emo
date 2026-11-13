@@ -4440,13 +4440,6 @@ double emo_f64_trunc(double x) { return trunc(x); }
 
 int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
 
-emo_value emo_os_getenv(emo_str name) {
-  char *p = emo_cstr_owned(name);
-  const char *v = getenv(p);
-  if (v == NULL) return emo_os_fail("getenv", p);
-  return emo_os_ok(emo_box_str(emo_str_from_cstr(v)));
-}
-
 int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
 
 emo_value emo_os_fork(void) { return emo_os_ok(emo_box_i64((int64_t)fork())); }
@@ -4725,10 +4718,11 @@ emo_value emo_os_getenv(emo_str name) {
   char *n = emo_cstr_owned(name);
   const char *v = getenv(n);
   if (v == NULL) {
-    /* The unset answer is written by hand — "is not set", not
-       strerror's errno — the same text the interpreter prints. */
+    /* The unset answer is written by hand — the interpreter's own
+       reason, not strerror's errno. */
     char buf[512];
-    snprintf(buf, sizeof buf, "os: getenv %s: is not set", n);
+    snprintf(buf, sizeof buf,
+             "os: getenv %s: the environment does not carry it", n);
     free(n);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
   }

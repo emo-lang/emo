@@ -4085,22 +4085,6 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_argv` expects no arguments, got %d"
              (List.length vs))
-    | "os_getenv", [ String name ] -> (
-        (* The unset answer is written by hand, not ridden through
-         os_result: the reason names the miss (`is not set`), the same
-         text the c runtime prints for it. *)
-        match Sys.getenv_opt name with
-        | Some v -> Tuple [ EnumMember ("R", "ok"); String v ]
-        | None ->
-            Tuple
-              [
-                EnumMember ("R", "error");
-                String (Printf.sprintf "os: getenv %s: is not set" name);
-              ])
-    | "os_getenv", vs ->
-        error span "E3007"
-          (Printf.sprintf "`os_getenv` expects (name String), got %d"
-             (List.length vs))
     | "os_setenv", [ String name; String value ] -> (
         (* The reason names `setenv` — the call the c runtime makes —
          not the OCaml putenv underneath. *)

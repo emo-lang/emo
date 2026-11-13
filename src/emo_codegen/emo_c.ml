@@ -723,7 +723,6 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
       let v = Printf.sprintf "emo_os_isatty(%s)" (arg 0 Emo_check.Int64) in
       if is_dyn use_ty then Printf.sprintf "emo_vbool(%s)" v else v
   | "os_argv" -> Printf.sprintf "emo_os_argv()" (* a cell *)
-  | "os_getenv" -> Printf.sprintf "emo_os_getenv(%s)" (arg 0 Emo_check.String)
   | "os_setenv" ->
       Printf.sprintf "emo_os_setenv(%s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.String)
