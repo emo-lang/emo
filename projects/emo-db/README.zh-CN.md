@@ -152,9 +152,13 @@ scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
 (`col_<oid>`):块值是行数、null 位图,然后是行编码自己宽度的值。
 插入在事务的批量里重读并重写尾部半块,所以 pending 覆盖层与每语句
 快照原样生效;重开像索引 family 一样校验每个列 family。列存表不建
-索引——`PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。在
-step 73 的批量执行器之前,引擎对列存表的 DML 与 SELECT 以具名的
-`0A000` 桥接。
+索引——`PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。执行器(M36)把列存表的 SELECT 路由到块:普
+通投影与 WHERE 骑块物化值上的共享类型化表达式,全局聚合——
+`COUNT`、`SUM`、`AVG`、`MIN`、`MAX`——在块上累加(无 WHERE 的
+`count(*)` 不解码值、直接累加块计数)。选择列表要么全普通项要么全
+聚合调用(否则 `42803` 点名列);UPDATE 与 DELETE 答 `0A000`——列
+引擎只插入——INSERT 经同一事务骑列块。计划文本显示
+`column scan` 与 `aggregate`。
 
 ## 符合性与测量
 
@@ -193,5 +197,7 @@ M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M2
 `postgres` 客户端为金测。M34 于 2026-11-13 落地:126 个用例的语
 料、实测表,以及已交付表面文档收尾弧一。同日 M35 落地:列存格式
 ——解析器的 `STORE = COLUMN` 尾巴、目录的版本 2 `store` 字段、
-1024 行块、列 family 与重开校验——引擎的 DML 与 SELECT 走具名桥
-接。step 73 是列执行器。
+1024 行块、列 family 与重开校验。M36 随后数小时落地:列执行器
+——块扫描带共享 filter 与 project,以及全局聚合
+COUNT/SUM/AVG/MIN/MAX——替换了桥;列存表的 UPDATE 与 DELETE 答
+`0A000`(只插入)。step 74 是双引擎证明。

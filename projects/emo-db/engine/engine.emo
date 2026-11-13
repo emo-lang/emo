@@ -1305,6 +1305,30 @@ class PCreate {
   }
 }
 
+// The column executor's plan nodes: the block scan and the aggregate
+// over it. The filter and project reuse the row path's nodes.
+class PColScan {
+  def init(table_name String) {
+    self.table_name = table_name
+  }
+
+  def text() String {
+    return "column scan " + self.table_name
+  }
+}
+
+class PColAggregate {
+  def init(child Plan, calls Array[String]) {
+    self.child = child
+    self.calls = calls
+  }
+
+  def text() String {
+    return "aggregate " + join_strings(self.calls, 0, "") + "\n  " +
+           self.child.text()
+  }
+}
+
 def join_strings(xs Array[String], i Int64, acc String) String {
   if i >= xs.length() {
     return acc
@@ -1613,10 +1637,6 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
-        case self.bridge_column(table) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
-        }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, _) -> {}
@@ -1637,9 +1657,16 @@ class Engine {
               case build_insert_row(table, targets, row) {
                 (R.error, why) -> { return (R.error, why) }
                 (R.ok, values) -> {
-                  case table.insert_tx(txn, values) {
-                    (R.error, why) -> { return (R.error, record_error(why)) }
-                    (R.ok, _) -> { inserted = inserted + 1 }
+                  if table.store == record.Storage.column {
+                    case table.insert_column_tx(txn, values) {
+                      (R.error, why) -> { return (R.error, record_error(why)) }
+                      (R.ok, _) -> { inserted = inserted + 1 }
+                    }
+                  } else {
+                    case table.insert_tx(txn, values) {
+                      (R.error, why) -> { return (R.error, record_error(why)) }
+                      (R.ok, _) -> { inserted = inserted + 1 }
+                    }
                   }
                 }
               }
@@ -1661,9 +1688,8 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
-        case self.bridge_column(table) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+        if table.store == record.Storage.column {
+          return fail("0A000", "column-store tables are insert-only in v0")
         }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
@@ -1721,9 +1747,8 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
-        case self.bridge_column(table) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+        if table.store == record.Storage.column {
+          return fail("0A000", "column-store tables are insert-only in v0")
         }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
@@ -1803,9 +1828,8 @@ class Engine {
     case self.resolve_table(table_name) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
-        case self.bridge_column(table) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+        if table.store == record.Storage.column {
+          return self.select_column(stmt, table, alias, txn)
         }
         case self.plan_where(table, alias, stmt.where_e) {
           (R.error, why) -> { return (R.error, why) }
@@ -1847,14 +1871,213 @@ class Engine {
     }
   }
 
-  // The column store's v0 bridge: step 72 lands the format, step 73
-  // the batch executor. Until then every DML and SELECT on a column
-  // table answers the named refusal instead of reading the row path.
-  def bridge_column(table record.Table) (R, Bool) {
-    if table.store == record.Storage.column {
-      return fail("0A000", "column-store execution is not supported in v0")
+  // ---- the column executor ----
+  //
+  // A column table's SELECT routes here. The select list is either all
+  // plain items (the block scan with the shared filter and project) or
+  // all aggregate calls (COUNT, SUM, AVG, MIN, MAX over the blocks —
+  // global aggregates; GROUP BY stays refused for both engines until
+  // the shared breadth lands it). The block decode happens once per
+  // block per column; the per-row expressions ride the shared typed
+  // evaluator, and the batch expression evaluator is the named
+  // follow-up.
+
+  def select_column(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case classify_select(stmt.columns) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, kind) -> {
+        if kind == "aggregate" {
+          return self.select_column_aggregate(stmt, table, alias, txn)
+        }
+        return self.select_column_rows(stmt, table, alias, txn)
+      }
     }
-    return (R.ok, true)
+  }
+
+  // The column path's WHERE: the same typed resolution, no index
+  // choice (a column table has none).
+  def column_where(table record.Table, alias String, where_e Array[sql.Expr]) (R, WherePlan) {
+    if where_e.length() == 0 {
+      const scan = PColScan.new(table.name)
+      return (R.ok, WherePlan.new(scan, [], scan))
+    }
+    case resolve_expr(where_e[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, predicate) -> {
+        case require_boolean(predicate.result_type(), "WHERE") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            const scan = PColScan.new(table.name)
+            const plan = PFilter.new(scan, where_e[0])
+            return (R.ok, WherePlan.new(scan, [predicate], plan))
+          }
+        }
+      }
+    }
+  }
+
+  def select_column_rows(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case self.column_where(table, alias, stmt.where_e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        case resolve_projection(stmt.columns, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, pr) -> {
+            const project = PProject.new(wr.plan, pr.names)
+            case table.scan_column_batches(txn) {
+              (R.error, why) -> { return (R.error, record_error(why)) }
+              (R.ok, batches) -> {
+                var out = []
+                var b = 0
+                while b < batches.length() {
+                  const per_column = batches[b][1]
+                  const count = per_column[0].length()
+                  var j = 0
+                  while j < count {
+                    var values = []
+                    var c = 0
+                    while c < per_column.length() {
+                      values = values.append(per_column[c][j])
+                      c = c + 1
+                    }
+                    case filter_row(wr.predicate_e, values) {
+                      (R.error, why) -> { return (R.error, why) }
+                      (R.ok, keep) -> {
+                        if keep {
+                          case project_row(pr.exprs, values) {
+                            (R.error, why) -> { return (R.error, why) }
+                            (R.ok, projected) -> { out = out.append(projected) }
+                          }
+                        }
+                      }
+                    }
+                    j = j + 1
+                  }
+                  b = b + 1
+                }
+                return (R.ok, Result.new("SELECT " + out.length().to_string(),
+                                         pr.names, pr.types, out, project.text()))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def select_column_aggregate(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case self.column_where(table, alias, stmt.where_e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        var aggs = []
+        var names = []
+        var types = []
+        var i = 0
+        while i < stmt.columns.length() {
+          case resolve_aggregate(stmt.columns[i], table, alias) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, agg) -> {
+              aggs = aggs.append(agg)
+              names = names.append(agg.display)
+              types = types.append(agg.t)
+            }
+          }
+          i = i + 1
+        }
+        var calls = []
+        i = 0
+        while i < aggs.length() {
+          calls = calls.append(aggs[i].call_text)
+          i = i + 1
+        }
+        const plan = PColAggregate.new(wr.plan, calls)
+        // The count(*)-only fast path: no WHERE, every aggregate a
+        // count(*) — the block row counts answer without decoding.
+        var all_star = true
+        i = 0
+        while i < aggs.length() {
+          if !aggs[i].star {
+            all_star = false
+          }
+          i = i + 1
+        }
+        if wr.predicate_e.length() == 0 && all_star {
+          case table.column_block_counts(txn) {
+            (R.error, why) -> { return (R.error, record_error(why)) }
+            (R.ok, counts) -> {
+              var total = 0
+              i = 0
+              while i < counts.length() {
+                total = total + counts[i]
+                i = i + 1
+              }
+              var values = []
+              i = 0
+              while i < aggs.length() {
+                values = values.append(record.bigint(total))
+                i = i + 1
+              }
+              return (R.ok, Result.new("SELECT 1", names, types, [values],
+                                       plan.text()))
+            }
+          }
+        }
+        var states = []
+        i = 0
+        while i < aggs.length() {
+          states = states.append(AggState.new(aggs[i].name, aggs[i].star,
+                                              aggs[i].arg, aggs[i].t))
+          i = i + 1
+        }
+        case table.scan_column_batches(txn) {
+          (R.error, why) -> { return (R.error, record_error(why)) }
+          (R.ok, batches) -> {
+            var b = 0
+            while b < batches.length() {
+              const per_column = batches[b][1]
+              const count = per_column[0].length()
+              var j = 0
+              while j < count {
+                var values = []
+                var c = 0
+                while c < per_column.length() {
+                  values = values.append(per_column[c][j])
+                  c = c + 1
+                }
+                case filter_row(wr.predicate_e, values) {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, keep) -> {
+                    if keep {
+                      var k = 0
+                      while k < states.length() {
+                        case states[k].step(values) {
+                          (R.error, why) -> { return (R.error, why) }
+                          (R.ok, _) -> {}
+                        }
+                        k = k + 1
+                      }
+                    }
+                  }
+                }
+                j = j + 1
+              }
+              b = b + 1
+            }
+          }
+        }
+        var values = []
+        i = 0
+        while i < states.length() {
+          case states[i].result() {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, value) -> { values = values.append(value) }
+          }
+          i = i + 1
+        }
+        return (R.ok, Result.new("SELECT 1", names, types, [values],
+                                 plan.text()))
+      }
+    }
   }
 
   def resolve_table(name String) (R, record.Table) {
@@ -2073,6 +2296,242 @@ class Projection {
     self.exprs = exprs
     self.names = names
     self.types = types
+  }
+}
+
+// ---- the column executor's aggregate helpers ----
+
+const aggregate_names = "count,sum,avg,min,max"
+
+def is_aggregate_call(e sql.Expr) Bool {
+  if e.is(sql.FuncCall) {
+    const name = sql.ascii_lower(e.name)
+    if name == "count" || name == "sum" || name == "avg" || name == "min" ||
+       name == "max" {
+      return true
+    }
+  }
+  return false
+}
+
+// The select list is either all plain items or all aggregate calls; a
+// mixture is PostgreSQL's grouping error (there is no GROUP BY in v0).
+def classify_select(items Array[sql.SelItem]) (R, String) {
+  var aggregates = 0
+  var plain = 0
+  var culprit = "*"
+  var i = 0
+  while i < items.length() {
+    const item = items[i]
+    if item.is(sql.SelExpr) {
+      if is_aggregate_call(item.value) {
+        aggregates = aggregates + 1
+      } else {
+        if plain == 0 {
+          const expr = item.value
+          if expr.is(sql.Column) {
+            if expr.parts.length() == 1 {
+              culprit = expr.parts[0]
+            }
+          }
+        }
+        plain = plain + 1
+      }
+    } else {
+      plain = plain + 1
+    }
+    i = i + 1
+  }
+  if aggregates > 0 && plain > 0 {
+    return fail("42803",
+                "column \"" + culprit +
+                "\" must appear in the GROUP BY clause or be used in an aggregate function")
+  }
+  if aggregates > 0 {
+    return (R.ok, "aggregate")
+  }
+  return (R.ok, "rows")
+}
+
+// One resolved aggregate call: the function name (lower-cased), the
+// argument's typed expression (absent for COUNT(*)), the answer's
+// value type, the name the result column carries, and the call's own
+// text for the plan.
+class Aggregate {
+  def init(name String, star Bool, distinct Bool, arg TExpr, t ValType, display String, call_text String) {
+    self.name = name
+    self.star = star
+    self.distinct = distinct
+    self.arg = arg
+    self.t = t
+    self.display = display
+    self.call_text = call_text
+  }
+}
+
+def resolve_aggregate(item sql.SelItem, table record.Table, alias String) (R, Aggregate) {
+  if item.is(sql.SelExpr) {
+    const call = item.value
+    if call.is(sql.FuncCall) {
+      var display = ""
+      if item.alias_e.length() == 1 {
+        display = item.alias_e[0]
+      }
+      return resolve_aggregate_call(call, display, table, alias)
+    }
+    return fail("42803", "column \"*\" must appear in the GROUP BY clause or be used in an aggregate function")
+  }
+  return fail("42803", "column \"*\" must appear in the GROUP BY clause or be used in an aggregate function")
+}
+
+// One resolved aggregate call: the function name (lower-cased), the
+// argument's typed expression (absent for COUNT(*)), the answer's
+// value type, the name the result column carries, and the call's own
+// text for the plan. `display` is the alias when the item wrote one;
+// otherwise the result column is the function's own name, the way
+// PostgreSQL names an unaliased aggregate.
+def resolve_aggregate_call(call sql.FuncCall, display_in String, table record.Table, alias String) (R, Aggregate) {
+  const name = sql.ascii_lower(call.name)
+  if call.distinct {
+    return fail("0A000", "DISTINCT aggregates are not supported in v0")
+  }
+  var display = display_in
+  if display == "" {
+    display = name
+  }
+  const call_text = call.to_string()
+  if name == "count" {
+    if call.star {
+      return (R.ok, Aggregate.new(name, true, false,
+                                  TLit.new(null_value_of(ValType.null_t), ValType.null_t),
+                                  ValType.bigint, display, call_text))
+    }
+    if call.args.length() != 1 {
+      return fail("42883", "function " + name + " does not exist")
+    }
+    case resolve_expr(call.args[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, typed) -> {
+        return (R.ok, Aggregate.new(name, false, false, typed,
+                                    ValType.bigint, display, call_text))
+      }
+    }
+  }
+  if call.star {
+    return fail("42883", "function " + name + "(*) does not exist")
+  }
+  if call.args.length() != 1 {
+    return fail("42883", "function " + name + " does not exist")
+  }
+  case resolve_expr(call.args[0], table, alias) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, typed) -> {
+      const arg_t = typed.result_type()
+      if name == "sum" || name == "avg" {
+        if !(is_numeric(arg_t) || arg_t == ValType.null_t) {
+          return fail("42883",
+                      "function " + name + "(" + lower_type_name(arg_t) +
+                      ") does not exist")
+        }
+        var t = ValType.bigint
+        if name == "avg" || arg_t == ValType.real || arg_t == ValType.double ||
+           arg_t == ValType.null_t {
+          t = ValType.double
+        }
+        return (R.ok, Aggregate.new(name, false, false, typed, t, display,
+                                    call_text))
+      }
+      return (R.ok, Aggregate.new(name, false, false, typed, arg_t, display,
+                                  call_text))
+    }
+  }
+}
+
+// One aggregate's accumulation over the blocks. count counts rows;
+// sum and avg accumulate numerics (integer and bigint in an Int64,
+// real and double in a Float64); min and max keep the extreme value.
+// A sum, avg, min, or max over no rows answers NULL, PostgreSQL's
+// rule; count answers 0.
+class AggState {
+  def init(name String, star Bool, arg TExpr, t ValType) {
+    self.name = name
+    self.star = star
+    self.arg = arg
+    self.t = t
+    self.rows = Box.new(0)
+    self.sum_i = Box.new(0)
+    self.sum_f = Box.new(0.0)
+    self.seen = Box.new(false)
+    self.best = Box.new(null_value_of(t))
+  }
+
+  def step(row Array[record.Value]) (R, Bool) {
+    if self.star {
+      self.rows.replace(self.rows.read() + 1)
+      return (R.ok, true)
+    }
+    case self.arg.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        if v.is_null {
+          return (R.ok, true)
+        }
+        if self.name == "count" {
+          self.rows.replace(self.rows.read() + 1)
+          return (R.ok, true)
+        }
+        if self.name == "sum" || self.name == "avg" {
+          self.seen.replace(true)
+          if self.t == ValType.bigint {
+            self.sum_i.replace(self.sum_i.read() + v.as_i64())
+          } else {
+            self.sum_f.replace(self.sum_f.read() + v.as_f64())
+          }
+          if self.name == "avg" {
+            self.rows.replace(self.rows.read() + 1)
+          }
+          return (R.ok, true)
+        }
+        // min and max
+        if !self.seen.read() {
+          self.seen.replace(true)
+          self.best.replace(v)
+          return (R.ok, true)
+        }
+        case compare_values(v, self.best.read(), self.t) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, order) -> {
+            if (self.name == "min" && order < 0) ||
+               (self.name == "max" && order > 0) {
+              self.best.replace(v)
+            }
+            return (R.ok, true)
+          }
+        }
+      }
+    }
+  }
+
+  def result() (R, record.Value) {
+    if self.name == "count" {
+      return (R.ok, record.bigint(self.rows.read()))
+    }
+    if self.name == "sum" || self.name == "avg" {
+      if !self.seen.read() {
+        return (R.ok, null_value_of(self.t))
+      }
+      if self.name == "avg" {
+        return (R.ok, record.double(self.sum_f.read() / self.rows.read().to_float64()))
+      }
+      if self.t == ValType.bigint {
+        return (R.ok, record.bigint(self.sum_i.read()))
+      }
+      return (R.ok, record.double(self.sum_f.read()))
+    }
+    if !self.seen.read() {
+      return (R.ok, null_value_of(self.t))
+    }
+    return (R.ok, self.best.read())
   }
 }
 

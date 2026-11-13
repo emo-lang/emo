@@ -1772,14 +1772,17 @@ class Table {
   // The first column's block list drives the walk; every other column
   // reads its block through the transaction, so the pending overlay
   // and the statement snapshot apply as they do everywhere.
-  def scan_column_tx(txn Txn) (R, Array[Row]) {
+  // The engine's column executor reads blocks as batches: one entry
+  // per block, the block id plus the block's per-column value arrays
+  // in column order. The row-wise scan below assembles this into rows.
+  def scan_column_batches(txn Txn) (R, Array[(Int64, Array[Array[Value]])]) {
     self.live()
     self.require_column_table()
     case txn.scan_prefix(self.column_cfs[0], column_slot(self.columns[0]),
                          Bytes.new(0)) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, blocks) -> {
-        var rows = []
+        var batches = []
         var b = 0
         while b < blocks.length() {
           const block_id = block_of(blocks[b][0])
@@ -1803,14 +1806,53 @@ class Table {
             }
             c = c + 1
           }
+          batches = batches.append((block_id, per_column))
+          b = b + 1
+        }
+        return (R.ok, batches)
+      }
+    }
+  }
+
+  // The per-block row counts without decoding values: the count(*)-
+  // only fast path's unit.
+  def column_block_counts(txn Txn) (R, Array[Int64]) {
+    self.live()
+    self.require_column_table()
+    case txn.scan_prefix(self.column_cfs[0], column_slot(self.columns[0]),
+                         Bytes.new(0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, blocks) -> {
+        var counts = []
+        var b = 0
+        while b < blocks.length() {
+          counts = counts.append(block_rowcount(blocks[b][1]))
+          b = b + 1
+        }
+        return (R.ok, counts)
+      }
+    }
+  }
+
+  def scan_column_tx(txn Txn) (R, Array[Row]) {
+    self.live()
+    self.require_column_table()
+    case self.scan_column_batches(txn) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, batches) -> {
+        var rows = []
+        var b = 0
+        while b < batches.length() {
+          const block_id = batches[b][0]
+          const per_column = batches[b][1]
           const count = per_column[0].length()
           var j = 0
           while j < count {
             var values = []
-            var c2 = 0
-            while c2 < self.columns.length() {
-              values = values.append(per_column[c2][j])
-              c2 = c2 + 1
+            var c = 0
+            while c < per_column.length() {
+              values = values.append(per_column[c][j])
+              c = c + 1
             }
             rows = rows.append(Row.new(block_id * 1024 + j + 1, values))
             j = j + 1
@@ -1847,6 +1889,13 @@ def block_of(key Bytes) Int64 {
   const block = r.u64be()
   r.finish()
   return block
+}
+
+// A block's row count straight from its first four bytes; the
+// count(*)-only fast path reads this instead of decoding the values.
+def block_rowcount(data Bytes) Int64 {
+  return (data.get(0) << 24) | (data.get(1) << 16) | (data.get(2) << 8) |
+         data.get(3)
 }
 
 // One block of one column: the row count, the null bitmap, then the

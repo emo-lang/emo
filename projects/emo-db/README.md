@@ -199,8 +199,16 @@ partial block inside the transaction's batch, so the pending overlay
 and the statement snapshot apply unchanged; the reopen verifies every
 column family like the index families. Column tables carry no indexes
 — `PRIMARY KEY` and secondary indexes answer `0A000`, and the block
-scan is the access path. Until step 73's batch executor, the engine
-bridges DML and SELECT on a column table with a named `0A000`.
+scan is the access path. The executor (M36) routes a column table's
+SELECT to the blocks: plain projections and WHERE ride the shared
+typed expressions over block-materialized values, and the global
+aggregates — `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` — accumulate over the
+blocks (`count(*)` with no WHERE sums the block counts without
+decoding). A select list is all plain items or all aggregate calls (`42803`
+names the column otherwise); UPDATE and DELETE answer `0A000` — the
+column engine is insert-only — and INSERT rides the column blocks
+through the same transaction. The plan text shows `column scan` and
+`aggregate`.
 
 ## Conformance and measurement
 
@@ -246,5 +254,8 @@ the 126-case corpus, the measured table, and the shipped-surface
 documentation close arc one. M35 landed the same day: the column
 format — the parser's `STORE = COLUMN` tail, the catalog's version-2
 `store` field, the 1024-row blocks, the column families, and the
-reopen's verification — with the engine's named bridge for DML and
-SELECT. Step 73 is the column executor.
+reopen's verification. M36 followed hours later: the column executor —
+the block scan with the shared filter and project, and the global
+aggregates COUNT/SUM/AVG/MIN/MAX — replaced the bridge; UPDATE and
+DELETE on a column table answer `0A000` (insert-only). Step 74 is the
+two-engine proof.

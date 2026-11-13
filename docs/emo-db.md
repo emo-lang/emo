@@ -278,13 +278,17 @@ overlay; the reopen verifies every column family like the index
 families. Column tables carry no indexes: `PRIMARY KEY` and secondary
 indexes answer `0A000`, and the block scan is the access path.
 
-**M36 — The column executor (step 73).** The engine routes by the
-table's storage: column tables get the batch executor — a block scan,
-vectorized filter and project, and the global aggregates COUNT, SUM,
-AVG, MIN, MAX (GROUP BY stays refused for both engines until the
-shared breadth lands it). UPDATE and DELETE on column tables answer
-`0A000` — the v0 column engine is insert-only; the wire, the session
-plane, the locks, and the transactions are the same code.
+**M36 — The column executor (step 73, landed 2026-11-13).** The engine
+routes by the table's storage: a column table's SELECT is all plain
+items (the block scan with the shared filter and project) or all
+aggregate calls (COUNT, SUM, AVG, MIN, MAX — global; GROUP BY stays
+refused for both engines until the shared breadth lands it; a mixture
+answers `42803`). The block is the batch unit — each block's columns
+decode once, then the shared per-row expressions evaluate over the
+materialized values, and `count(*)` with no WHERE sums the block
+counts without decoding. UPDATE and DELETE answer `0A000` — the v0
+column engine is insert-only; the wire, the session plane, the locks,
+and the transactions are the same code.
 
 **M37 — The two-engine proof (step 74).** One database, both
 storages, one session: a row table's point updates beside a column

@@ -54,10 +54,42 @@ error 42804: column "id" is of type bigint but expression is of type text
 error 22001: value too long for type character varying(12)
 CREATE TABLE
 plan: create table cold
-error 0A000: column-store execution is not supported in v0
-error 0A000: column-store execution is not supported in v0
-error 0A000: column-store execution is not supported in v0
-error 0A000: column-store execution is not supported in v0
+INSERT 0 3
+plan: insert cold (3 rows)
+SELECT 3
+plan: project id, name, score
+  column scan cold
+columns: id, name, score
+  (1, ada, 1.5)
+  (2, grace, 2.5)
+  (3, linus, NULL)
+SELECT 2
+plan: project id, name
+  filter id < 3
+  column scan cold
+columns: id, name
+  (1, ada)
+  (2, grace)
+SELECT 1
+plan: aggregate count(*)
+  column scan cold
+columns: count
+  (3)
+SELECT 1
+plan: aggregate count(*), sum(id), avg(score), min(id), max(name)
+  column scan cold
+columns: count, sum, avg, min, max
+  (3, 6, 2.0, 1, linus)
+SELECT 1
+plan: aggregate count(*)
+  filter id > 1
+  column scan cold
+columns: count
+  (2)
+error 42803: column "id" must appear in the GROUP BY clause or be used in an aggregate function
+error 42883: function sum(text) does not exist
+error 0A000: column-store tables are insert-only in v0
+error 0A000: column-store tables are insert-only in v0
 error 0A000: column-store tables carry no primary key in v0
 CREATE TABLE
 plan: create table warm
@@ -69,4 +101,9 @@ plan: project id, name, score, active, handle
 columns: id, name, score, active, handle
   (1, Ada, 99.0, true, ada)
   (2, Grace, NULL, false, grace)
+SELECT 1
+plan: aggregate count(*)
+  column scan cold
+columns: count
+  (3)
 done

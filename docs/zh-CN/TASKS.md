@@ -54,6 +54,7 @@
 | M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
 | M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
 | M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
+| M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1816,3 +1817,28 @@ family;列存表不建索引(`PRIMARY KEY` 与二级索引答 `0A000`);引擎
 - [x] **T72.5** —— `engine`:DDL 映射与桥。
 - [x] **T72.6** —— 闸门:第五个 demo。
 - [x] **T72.7** —— 文档 EN+zh 与收尾。
+
+## M36 —— 列执行器
+
+### 步骤 73 —— 列执行器
+
+**前置:** Step 72(列存格式)。**完成标准:** 列存表上的 SELECT 路由到
+批量执行器——块扫描、骑块物化值的共享 filter 与 project、全局聚合
+COUNT/SUM/AVG/MIN/MAX(零行时 COUNT 答 0、其余答 NULL;SUM 把
+integer 拓宽到 BIGINT、real 到 DOUBLE PRECISION;AVG 是 DOUBLE
+PRECISION;MIN/MAX 答参数类型);选择列表要么全普通项要么全聚合调
+用(混用答 `42803` 并点名列);聚合只能是整个选择项(嵌套调用保留函
+数拒绝);无 WHERE 的 `count(*)` 走块计数快路径;UPDATE 与 DELETE 答
+`0A000: column-store tables are insert-only in v0`,INSERT 经同一事
+务骑列块;计划文本显示 `column scan`/`aggregate`;引擎 demo 长出执
+行器用例且一切经 `projects/emo-db/check.sh` 三遍逐字节一致;文档
+EN+zh;仓库可构建。
+
+- [x] **T73.1** —— 规格:本节 EN+zh 与
+      `plan/step-73-column-executor.md`。
+- [x] **T73.2** —— `record`:`scan_column_batches`、
+      `column_block_counts`、骑批次的 `scan_column_tx`。
+- [x] **T73.3** —— `engine`:路由、拒绝、列计划节点、聚合机器。
+- [x] **T73.4** —— 引擎 demo 的执行器用例。
+- [x] **T73.5** —— 闸门三遍全绿。
+- [x] **T73.6** —— 文档 EN+zh 与收尾。

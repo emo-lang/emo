@@ -62,6 +62,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk, protocol 3.0 only), the ParameterStatus set psql and libpq read, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` at the lexer's own semicolons, RowDescription with the v0 type OIDs (`Result` grows `types`), text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse with PG's fields; an error stops the rest and reports the engine's clean state (`I`); one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached per session, `Engine.end_session` releasing without closing the store; `wire_demo` (ephemeral port through a ready file, finite connection count) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's script and its error stop plus the client's rows/error, byte-identical across three `projects/emo-db/check.sh` runs behind `psql`/`libpq` probes (49 checks); the BEAM `__inst_recv` temp fix (`CHECK.md`). |
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit — six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows in the runner's canonical rendering) over one fresh database per run, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench modes and `bench/run.sh` (warmup plus three timed runs) with the measured table, which found and fixed the read-only statement's WAL fsync and (with the corpus) the DDL-in-transaction block leak; `docs/emo-db.md` grown to the shipped surface (`What shipped`, `Measured`), the corrected stale claims, and the arc-two review of the row store's actual plug points (`CHECK.md`). |
 | M35 — The column format | 72 | The column format and the catalog choice: `CREATE TABLE ... STORE = COLUMN` in the parser (the canonical rendering spells only the written column tail), the catalog's version-2 table definition with a `store` field (a version-1 record reads as row storage), the record layer's column half — one column family per column (`col_<oid>`), 1024-row blocks (row count, null bitmap, the row encoding's widths), the trailing partial block re-read and rewritten inside the transaction, the block scan in rowid order, the reopen's column-family verification, and the row path's named guards; no indexes on column tables (`PRIMARY KEY` and secondary indexes refuse in both layers); the engine's DDL mapping and the named `0A000` bridge for DML/SELECT; the `column_demo` golden (create, 1030 rows across the block boundary, reopen, refusals) three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
+| M36 — The column executor | 73 | The batch executor behind the same surface: the record layer's `scan_column_batches` and `column_block_counts`, the engine's storage routing (SELECT to the column executor, INSERT to the column blocks, UPDATE/DELETE answering the insert-only `0A000`), the column plan nodes, and the global aggregates COUNT/SUM/AVG/MIN/MAX — COUNT answers 0 and the others NULL over zero rows, SUM widens by the argument, AVG is DOUBLE PRECISION, MIN/MAX keep the argument's type, `DISTINCT` aggregates refuse, a mixed select list answers `42803` naming the column, `count(*)` with no WHERE takes the block-count fast path, and the plan text shows `column scan`/`aggregate` — pinned by the engine demo's executor cases, three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 
 ## Design gates
 
@@ -4308,3 +4309,33 @@ golden stays green; docs EN+zh; the repo builds.
 - [x] **T72.5** — `engine`: the DDL mapping and the bridge.
 - [x] **T72.6** — The gate: the fifth demo.
 - [x] **T72.7** — The docs EN+zh and the close-out.
+
+## M36 — The column executor
+
+### Step 73 — The column executor
+
+**Prereq:** Step 72 (the column format). **Done when:** a SELECT on a
+column table routes to the batch executor — the block scan, the shared
+filter and project over block-materialized values, and the global
+aggregates COUNT/SUM/AVG/MIN/MAX (COUNT answers 0 over zero rows, the
+others NULL; SUM widens integer to BIGINT and real to DOUBLE PRECISION;
+AVG is DOUBLE PRECISION; MIN/MAX answer the argument's type); the
+select list is all plain items or all aggregate calls (a mixture
+answers `42803` with the column named); aggregates are whole select
+items only (nested calls keep the function refusal); `count(*)` with no
+WHERE takes the block-count fast path; UPDATE and DELETE answer
+`0A000: column-store tables are insert-only in v0` and INSERT rides the
+column blocks through the same transaction; the plan text shows
+`column scan`/`aggregate`; the engine demo grows the executor's cases
+and everything stays byte-identical three times through
+`projects/emo-db/check.sh`; docs EN+zh; the repo builds.
+
+- [x] **T73.1** — The spec: this section EN+zh and
+      `plan/step-73-column-executor.md`.
+- [x] **T73.2** — `record`: `scan_column_batches`,
+      `column_block_counts`, `scan_column_tx` on the batches.
+- [x] **T73.3** — `engine`: the routing, the refusals, the column plan
+      nodes, and the aggregate machinery.
+- [x] **T73.4** — The engine demo's executor cases.
+- [x] **T73.5** — The gate green three times.
+- [x] **T73.6** — The docs EN+zh and the close-out.
