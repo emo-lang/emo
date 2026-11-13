@@ -28,7 +28,7 @@ slog_demo sync_demo loops error_matching float_methods string_methods
 math_demo math_trig math_inverse_trig branch_var builtin_names
 to_string_render typed_calls typed_sigs typed_methods plot_demo png_demo
 sql_demo sql_edge atomic_cell crypto_hash crypto_aead crypto_sign
-crypto_ecdh file_read bufio_demo os_fs_demo rand_demo"
+crypto_ecdh file_read bufio_demo os_fs_demo rand_demo uuid_demo"
 
 pass=0
 fail=0

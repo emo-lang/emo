@@ -72,6 +72,7 @@ The packages:
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
 | [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
+| [`uuid`](#the-uuid-package) | RFC 9562 UUIDs: v4/v7/v3/v5, the strict text and byte forms | all five |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars, transcendentals, complex, FFT, BLAS1, dense solver | all five |
@@ -749,6 +750,46 @@ Targets: `ocaml`, `c`, `typescript`, `beam` — the wasm host supplies
 no entropy, so the manifest refuses it rather than failing at run
 time. Reference: [`docs/stdlib/rand.md`](stdlib/rand.md) · Demo:
 `examples/rand_demo`.
+
+## The `uuid` package
+
+The RFC 9562 identifier as one immutable 16-byte value: the versions
+as named doors, and the text and byte forms as strict conversions.
+Pure Emo over `crypto` and `rand`, so every target answers
+byte-for-byte.
+
+```emo
+def nil() Uuid
+def max() Uuid
+def from_bytes(data Bytes) (R, Uuid)
+def parse(text String) (R, Uuid)
+def v4() (R, Uuid)
+def v7(now_ms Int64) (R, Uuid)
+def v3(namespace Uuid, name String) Uuid
+def v5(namespace Uuid, name String) Uuid
+def ns_dns() Uuid
+def ns_url() Uuid
+def ns_oid() Uuid
+def ns_x500() Uuid
+```
+
+The `Uuid` value renders itself — `to_string` is the protocol method,
+`println(id)` prints the lowercase hex-and-dash form — and answers
+`to_bytes`, `version`, `variant`, `is_nil?`, `is_max?`, and the RFC's
+big-endian `compare`. `parse` takes exactly the canonical 36-character
+form, hex case-insensitive, and every rejection names the first
+offending byte; a wrong `from_bytes` length is refused the same way.
+`v4` draws 122 random bits from the operating system's entropy;
+`v7(now_ms)` takes the Unix time in milliseconds from the caller's
+own clock — the language has none — over 74 random bits, raising on a
+negative or 48-bit-overflowing timestamp; `v3` and `v5` are the
+deterministic name-based doors over `crypto.legacy`'s digests, the
+four IANA namespace IDs beside them as `ns_dns`/`ns_url`/`ns_oid`/
+`ns_x500`, any `Uuid` a custom namespace. v1/v2/v6 and a v8
+constructor are out, named in the reference.
+
+Targets: all five. Reference: [`docs/stdlib/uuid.md`](stdlib/uuid.md)
+· Demo: `examples/uuid_demo`.
 
 ## The `csv` package
 

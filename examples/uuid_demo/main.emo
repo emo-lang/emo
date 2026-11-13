@@ -1,0 +1,178 @@
+require "uuid"
+
+// The uuid package walked end to end: the RFC 9562 text form, the two
+// special UUIDs, the name-based vectors, and the random doors shown
+// by what the RFC fixes about them — the version, the variant, the
+// timestamp, the order — never by their random bits, so the golden
+// rides every target byte for byte.
+
+// ---- helpers
+
+def refused(text String) String {
+  case uuid.parse(text) {
+    (R.error, why) -> { return why }
+    (R.ok, _)      -> { return "unexpected ok" }
+  }
+}
+
+def same_form(a String, b String) String {
+  case uuid.parse(a) {
+    (R.error, why) -> { return "refused: ${why}" }
+    (R.ok, left)   -> {
+      case uuid.parse(b) {
+        (R.error, why) -> { return "refused: ${why}" }
+        (R.ok, right)  -> {
+          if left == right {
+            return "true"
+          }
+          return "false"
+        }
+      }
+    }
+  }
+}
+
+def order_of(a uuid.Uuid, b uuid.Uuid) Int64 {
+  return a.compare(b)
+}
+
+// The v7 timestamp: the first 48 bits, big-endian — the field the
+// RFC's Section 5.7 lays out.
+def time_of(id uuid.Uuid) Int64 {
+  const b = id.to_bytes()
+  return (b.get(0) << 40) | (b.get(1) << 32) | (b.get(2) << 24) | (b.get(3) << 16) | (b.get(4) << 8) | b.get(5)
+}
+
+// ---- the text form: RFC 9562's Figure 1 example, a version 1 value
+// in the RFC's variant, rendered lowercase either way it arrives.
+case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
+  (R.error, why) -> { println("parse failed: ${why}") }
+  (R.ok, id)     -> {
+    println(id)
+    println(id.version())
+    case id.variant() {
+      uuid.UuidVariant.ncs       -> { println("variant ncs") }
+      uuid.UuidVariant.rfc       -> { println("variant rfc") }
+      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
+      uuid.UuidVariant.future    -> { println("variant future") }
+    }
+    println(id.is_nil?())
+    println(id.is_max?())
+  }
+}
+
+// The hex digits are case-insensitive, as the RFC's own ABNF reads.
+println(same_form("f81d4fae-7dec-11d0-a765-00a0c91e6bf6", "F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6"))
+
+// The canonical form is the only acceptance: the undashed 32-character
+// form, the braces, and the urn prefix are other systems'
+// presentations, and every rejection names the first offending byte.
+println(refused("f81d4fae7dec11d0a76500a0c91e6bf6"))
+println(refused("{f81d4fae-7dec-11d0-a765-00a0c91e6bf6}"))
+println(refused("urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"))
+println(refused("f81d4fae/7dec-11d0-a765-00a0c91e6bf6"))
+println(refused("f81d4fae-7dec-11d0-a765-00a0c91e6bfX"))
+println(refused("f81d4fae-7dec-11d0-a765-00a0c91e6bf"))
+
+// ---- the bytes form: 16 bytes in the RFC's field order, round
+// tripping through from_bytes, a wrong length refused.
+case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
+  (R.error, why) -> { println(why) }
+  (R.ok, id)     -> {
+    println("bytes: " + id.to_bytes().length().to_string())
+    case uuid.from_bytes(id.to_bytes()) {
+      (R.error, why) -> { println(why) }
+      (R.ok, back)   -> {
+        if back == id {
+          println("bytes round trip: true")
+        } else {
+          println("bytes round trip: false")
+        }
+      }
+    }
+  }
+}
+case uuid.from_bytes("f81d4fae".to_bytes()) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+
+// ---- the special UUIDs: the Nil and the Max, each what the RFC's
+// Sections 5.9 and 5.10 say, ordered as the bytes order them.
+println(uuid.nil())
+println(uuid.max())
+println(uuid.nil().is_nil?())
+println(uuid.max().is_max?())
+println(order_of(uuid.nil(), uuid.max()))
+println(order_of(uuid.max(), uuid.nil()))
+println(order_of(uuid.nil(), uuid.nil()))
+
+// ---- the namespace IDs, Section 6.6's Table 3.
+println(uuid.ns_dns())
+println(uuid.ns_url())
+println(uuid.ns_oid())
+println(uuid.ns_x500())
+
+// ---- the name-based versions, deterministic on every target:
+// RFC 9562's Appendix A vectors, and one more name in the URL
+// namespace.
+println(uuid.v3(uuid.ns_dns(), "www.example.com"))
+println(uuid.v5(uuid.ns_dns(), "www.example.com"))
+println(uuid.v5(uuid.ns_url(), "https://emo-lang.cn/"))
+
+// ---- v4: 122 random bits, shown by the version and variant the
+// construction fixes, and by two draws differing.
+case uuid.v4() {
+  (R.error, why) -> { println(why) }
+  (R.ok, fresh)  -> {
+    println(fresh.version())
+    case fresh.variant() {
+      uuid.UuidVariant.ncs       -> { println("variant ncs") }
+      uuid.UuidVariant.rfc       -> { println("variant rfc") }
+      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
+      uuid.UuidVariant.future    -> { println("variant future") }
+    }
+    case uuid.v4() {
+      (R.error, why) -> { println(why) }
+      (R.ok, second) -> {
+        if fresh == second {
+          println("v4 draws differ: false")
+        } else {
+          println("v4 draws differ: true")
+        }
+      }
+    }
+  }
+}
+
+// ---- v7: the caller's clock, 48 bits of Unix time over 74 random
+// bits — RFC 9562's Appendix A.6 timestamp, read back out of the
+// bytes; the same millisecond draws distinct values, and the next
+// millisecond sorts after this one.
+case uuid.v7(1645557742000) {
+  (R.error, why) -> { println(why) }
+  (R.ok, timed)  -> {
+    println(timed.version())
+    case timed.variant() {
+      uuid.UuidVariant.ncs       -> { println("variant ncs") }
+      uuid.UuidVariant.rfc       -> { println("variant rfc") }
+      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
+      uuid.UuidVariant.future    -> { println("variant future") }
+    }
+    println(time_of(timed))
+    case uuid.v7(1645557742000) {
+      (R.error, why) -> { println(why) }
+      (R.ok, again)  -> {
+        if timed == again {
+          println("v7 draws differ: false")
+        } else {
+          println("v7 draws differ: true")
+        }
+      }
+    }
+    case uuid.v7(1645557742001) {
+      (R.error, why) -> { println(why) }
+      (R.ok, later)  -> { println(order_of(timed, later)) }
+    }
+  }
+}

@@ -141,12 +141,12 @@ let contains hay needle =
 
 let queue_input lines =
   let q = ref lines in
-  fun () ->
+  fun _ ->
     match !q with
-    | [] -> None
+    | [] -> Emo_cli.Eof
     | line :: rest ->
         q := rest;
-        Some line
+        Emo_cli.Line line
 
 let repl_tests =
   [
@@ -228,6 +228,154 @@ let read_file path =
   Fun.protect
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
+
+(* The editor tests ride upstream's LINENOISE_ASSUME_TTY hook: the raw-mode
+   setup is skipped, so the real C editor runs over a pipe — the keystrokes
+   carry the bytes a terminal would send (Enter as CR; a bare LF would be
+   inserted into the buffer), and the rendering falls into /dev/null. *)
+let feed_keys (session : (string -> Emo_cli.answer) -> 'a)
+    (keys : (string -> unit) -> unit) : 'a =
+  (* Upstream's two test hooks: the raw-mode setup is skipped, and the
+     width comes from the env instead of the ioctl — fd 1 is no
+     terminal under dune, and the ioctl's fallback queries the cursor
+     by consuming the keystrokes. *)
+  Unix.putenv "LINENOISE_ASSUME_TTY" "1";
+  Unix.putenv "LINENOISE_COLS" "80";
+  let reads, writes = Unix.pipe () in
+  let saved_stdin = Unix.dup Unix.stdin in
+  let saved_stdout = Unix.dup Unix.stdout in
+  let null = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+  Unix.dup2 reads Unix.stdin;
+  Unix.dup2 null Unix.stdout;
+  Unix.close reads;
+  Unix.close null;
+  Fun.protect
+    (fun () ->
+      keys (fun s ->
+          let len = String.length s in
+          if len > 0 && Unix.write writes (Bytes.of_string s) 0 len < len then
+            Alcotest.fail "the keystroke write fell short");
+      Unix.close writes;
+      session Emo_cli.editor_answer)
+    ~finally:(fun () ->
+      (try Unix.close writes with _ -> ());
+      Unix.dup2 saved_stdin Unix.stdin;
+      Unix.close saved_stdin;
+      Unix.dup2 saved_stdout Unix.stdout;
+      Unix.close saved_stdout)
+
+let linenoise_tests =
+  [
+    tc "the continuation prompt indents by the open-bracket depth" (fun () ->
+        Alcotest.(check string)
+          "one open brace" "...   "
+          (Emo_cli.continuation_prompt "def double(n Int64) Int64 {");
+        Alcotest.(check string)
+          "two open braces" "...     "
+          (Emo_cli.continuation_prompt "if x { if y {");
+        Alcotest.(check string)
+          "an unterminated string keeps the plain dots" "... "
+          (Emo_cli.continuation_prompt {|let s = "abc|});
+        Alcotest.(check string)
+          "a stray close indents nothing" "... "
+          (Emo_cli.continuation_prompt "1) + 2"));
+    tc "the history file rides the state directory" (fun () ->
+        let with_env overrides run =
+          let saved =
+            List.map (fun (k, _) -> (k, Sys.getenv_opt k)) overrides
+          in
+          List.iter (fun (k, v) -> Unix.putenv k v) overrides;
+          Fun.protect run ~finally:(fun () ->
+              List.iter
+                (fun (k, v) ->
+                  Unix.putenv k
+                    (match v with Some value -> value | None -> ""))
+                saved)
+        in
+        with_env
+          [ ("EMO_STATE_DIR", "/tmp/state-here") ]
+          (fun () ->
+            Alcotest.(check (option string))
+              "the override replaces the root"
+              (Some "/tmp/state-here/repl-history") (Emo_cli.history_file ()));
+        with_env
+          [ ("EMO_STATE_DIR", ""); ("XDG_STATE_HOME", "/tmp/xdg-state") ]
+          (fun () ->
+            Alcotest.(check (option string))
+              "the xdg home next" (Some "/tmp/xdg-state/emo/repl-history")
+              (Emo_cli.history_file ()));
+        with_env
+          [
+            ("EMO_STATE_DIR", ""); ("XDG_STATE_HOME", ""); ("HOME", "/home/da");
+          ]
+          (fun () ->
+            Alcotest.(check (option string))
+              "the home state last"
+              (Some "/home/da/.local/state/emo/repl-history")
+              (Emo_cli.history_file ()));
+        with_env
+          [ ("EMO_STATE_DIR", ""); ("XDG_STATE_HOME", ""); ("HOME", "") ]
+          (fun () ->
+            Alcotest.(check (option string))
+              "no home, no file" None (Emo_cli.history_file ())));
+    tc "the editor recalls, abandons, and ends" (fun () ->
+        (* the line is typed first, so the preload rides the editor itself *)
+        feed_keys
+          (fun input ->
+            (match input "emo> " with
+            | Emo_cli.Line line ->
+                Alcotest.(check string) "the typed line returns" "40 + 2" line
+            | _ -> Alcotest.fail "expected the typed line");
+            (match input "emo> " with
+            | Emo_cli.Line line ->
+                Alcotest.(check string)
+                  "up-arrow recalls the entry" "40 + 2" line
+            | _ -> Alcotest.fail "expected the recalled line");
+            (match input "emo> " with
+            | Emo_cli.Aborted -> ()
+            | _ -> Alcotest.fail "expected the interrupted edit");
+            (* the interrupt leaked no empty entry — the recall still hits *)
+            (match input "emo> " with
+            | Emo_cli.Line line ->
+                Alcotest.(check string)
+                  "the recall survives the interrupt" "40 + 2" line
+            | _ -> Alcotest.fail "expected the recalled line");
+            match input "emo> " with
+            | Emo_cli.Eof -> ()
+            | _ -> Alcotest.fail "expected the end of input")
+          (fun feed -> feed "40 + 2\r\x1b[A\r\x03\x1b[A\r"));
+    tc "the editor session saves the history and the next session recalls it"
+      (fun () ->
+        let state =
+          Filename.concat scratch ("linenoise-" ^ string_of_int (Unix.getpid ()))
+        in
+        Unix.putenv "EMO_STATE_DIR" state;
+        let out_one = Buffer.create 32 in
+        feed_keys
+          (fun input ->
+            Emo_cli.editor_session (fun input ->
+                Emo_cli.repl_loop ~prompt:false ~input
+                  ~output:(Buffer.add_string out_one)))
+          (fun feed -> feed "1 + 2\r");
+        Alcotest.(check string)
+          "the first session echoes" "= 3\n" (Buffer.contents out_one);
+        let file = Filename.concat state "repl-history" in
+        Alcotest.(check bool)
+          "the history file exists" true (Sys.file_exists file);
+        if Sys.file_exists file then
+          Alcotest.(check bool)
+            "the file carries the line" true
+            (contains (read_file file) "1 + 2");
+        let out_two = Buffer.create 32 in
+        feed_keys
+          (fun input ->
+            Emo_cli.editor_session (fun input ->
+                Emo_cli.repl_loop ~prompt:false ~input
+                  ~output:(Buffer.add_string out_two)))
+          (fun feed -> feed "\x1b[A\r");
+        Alcotest.(check string)
+          "the second session recalls" "= 3\n" (Buffer.contents out_two));
+  ]
 
 let smoke_tests =
   [
@@ -455,6 +603,10 @@ let wasm_goldens =
     "bufio_demo";
     "os_fs_demo";
     "rand_demo";
+    (* step 80: the uuid package — the RFC 9562 identifier as one
+       pure-Emo value; the random doors print only what the RFC
+       fixes about them, so the golden rides every target *)
+    "uuid_demo";
     (* M24: the macro pilots — expansion rides before codegen, so the
        generated declarations compile to wasm like hand-written ones *)
     "trace_macro_demo";
@@ -536,6 +688,9 @@ let beam_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
     "rand_demo";
+    (* uuid_demo: the RFC 9562 vectors pinned, the random doors
+       structure-only — crypto:strong_rand_bytes is the beam's leg *)
+    "uuid_demo";
     "crypto_hash";
     "crypto_aead";
     "crypto_sign";
@@ -766,6 +921,9 @@ let c_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — getentropy is the c leg *)
     "rand_demo";
+    (* uuid_demo: the RFC 9562 vectors pinned, the random doors
+       structure-only — getentropy is the c leg *)
+    "uuid_demo";
     "crypto_aead";
     (* crypto_sign and crypto_ecdh: the RFC 8032 and RFC 7748 vectors
        with Go's ed25519/ecdh companions; crypto_sign_sweep: thirteen
@@ -6328,6 +6486,7 @@ let () =
       ("run", run_tests);
       ("curfew", curfew_tests);
       ("repl", repl_tests);
+      ("repl_edit", linenoise_tests);
       ("examples", examples_tests);
       ("errors_examples", errors_examples_tests);
       ( "wasm_examples",

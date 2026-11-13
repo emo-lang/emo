@@ -1331,9 +1331,12 @@ let run =
       const run $ file $ no_color $ error_limit $ target $ curfew
       $ locked_flag ())
 
-(* True while the source still has open brackets or an unterminated string —
-   the REPL keeps reading with a continuation prompt. *)
-let unbalanced source =
+(* The count of brackets a pending source still has open — the depth the
+   continuation prompt indents by — or None when the lexer cannot scan
+   the text at all (an unterminated string). A stray close can take the
+   count below zero: the input is balanced then, and the prompt shows no
+   indent. *)
+let bracket_depth source : int option =
   match Emo_lexer.lex ~file:"<repl>" ~source with
   | stream ->
       let depth =
@@ -1346,16 +1349,36 @@ let unbalanced source =
           0
           (Emo_lexer.Stream.to_list stream)
       in
-      depth > 0
-  | exception Emo_lexer.Error _ -> true
+      Some depth
+  | exception Emo_lexer.Error _ -> None
+
+(* True while the source still has open brackets or an unterminated string —
+   the REPL keeps reading with a continuation prompt. *)
+let unbalanced source =
+  match bracket_depth source with Some depth -> depth > 0 | None -> true
+
+(* The continuation prompt: two spaces per open bracket, so the line the
+   user types starts where the block stands. Visual guidance only — the
+   editor places no cursor beyond it. *)
+let continuation_prompt pending =
+  match bracket_depth pending with
+  | Some depth when depth > 0 -> "... " ^ String.make (depth * 2) ' '
+  | _ -> "... "
+
+(* What one read of the input answers. `Line` carries the text; `Aborted`
+   discards the pending input and renders a fresh prompt (the editor's
+   Ctrl-C); `Eof` ends the session. *)
+type answer = Line of string | Aborted | Eof
 
 (* The interactive loop: definitions register, statements run, and expression
    lines echo their value (a REPL convenience, not a language rule). Runtime
    errors print and the environment survives. The session's module tree is
    the working directory's, and a require fetches the bundled standard
    library's packages into it on demand — the repl pins nothing, so
-   registry packages stay a project's business. *)
-let repl_loop ~(prompt : bool) ~(input : unit -> string option)
+   registry packages stay a project's business. The prompt text passes to
+   the input function — the editor renders it itself — and when [prompt]
+   holds, the loop renders it through [output] for the plain path. *)
+let repl_loop ~(prompt : bool) ~(input : string -> answer)
     ~(output : string -> unit) : unit =
   let session = Emo_project.discover () in
   Emo_project.install_hooks session;
@@ -1402,11 +1425,15 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
             render (Emo_eval.uncaught_diagnostic (v, span, trace)))
   in
   let rec loop pending =
-    if prompt then output (if pending = "" then "emo> " else "... ");
-    match input () with
-    | None -> if prompt then output "\n"
-    | Some "exit" when pending = "" -> ()
-    | Some line ->
+    let prompt_text =
+      if pending = "" then "emo> " else continuation_prompt pending
+    in
+    if prompt then output prompt_text;
+    match input prompt_text with
+    | Eof -> if prompt then output "\n"
+    | Aborted -> loop ""
+    | Line "exit" when pending = "" -> ()
+    | Line line ->
         let source = if pending = "" then line else pending ^ "\n" ^ line in
         if unbalanced source then loop source
         else
@@ -1415,15 +1442,100 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
   in
   loop ""
 
+(* The history file: `EMO_STATE_DIR` names the directory state files live
+   in (the cache precedent — the value replaces the whole root), else the
+   XDG state home's `emo`, else `$HOME/.local/state/emo`. With no `HOME`
+   there is no file and the session still edits. *)
+let history_file () : string option =
+  match Sys.getenv_opt "EMO_STATE_DIR" with
+  | Some dir when dir <> "" -> Some (Filename.concat dir "repl-history")
+  | _ -> (
+      let state_home =
+        match Sys.getenv_opt "XDG_STATE_HOME" with
+        | Some dir when dir <> "" -> Some dir
+        | _ -> (
+            match Sys.getenv_opt "HOME" with
+            | Some home when home <> "" ->
+                Some (Filename.concat home ".local/state")
+            | None | Some _ -> None)
+      in
+      match state_home with
+      | Some dir -> Some (Filename.concat dir "emo/repl-history")
+      | None -> None)
+
+(* The interactive editor's session: multi-line mode on, the history
+   loaded, every non-empty line as typed added, the file saved at the
+   session's end. A history the file system will not carry — unreadable
+   on load, unwritable on save — is one warning on stderr naming the
+   path and the reason, and the session continues; a missing file is a
+   first session's normal shape and says nothing. Ctrl-C abandons the
+   pending input and the session survives; the input's end ends it. *)
+let ensure_directory path =
+  let rec mkdir_p dir =
+    if dir <> "" && dir <> "/" && not (Sys.file_exists dir) then (
+      mkdir_p (Filename.dirname dir);
+      match Unix.mkdir dir 0o755 with
+      | () -> ()
+      | exception Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+  in
+  mkdir_p path
+
+(* One editor read, mapped onto the repl's answer; the line as typed
+   joins the history. *)
+let editor_answer prompt_text : answer =
+  match Emo_linenoise.read prompt_text with
+  | Emo_linenoise.Line line ->
+      if line <> "" then ignore (Emo_linenoise.history_add line);
+      Line line
+  | Emo_linenoise.Interrupted -> Aborted
+  | Emo_linenoise.End_of_input -> Eof
+  | Emo_linenoise.Lost reason ->
+      prerr_endline
+        (Printf.sprintf "emo repl: input lost (%s), ending the session" reason);
+      Eof
+
+let editor_session (run : (string -> answer) -> unit) : unit =
+  Emo_linenoise.set_multiline true;
+  Emo_linenoise.history_set_max 1000;
+  let file = history_file () in
+  (match file with
+  | Some path -> (
+      match Emo_linenoise.history_load path with
+      | Emo_linenoise.Loaded | Emo_linenoise.No_file -> ()
+      | Emo_linenoise.Failed reason ->
+          prerr_endline
+            (Printf.sprintf "emo repl: history not loaded from %s: %s" path
+               reason))
+  | None -> ());
+  run editor_answer;
+  match file with
+  | Some path -> (
+      ensure_directory (Filename.dirname path);
+      match Emo_linenoise.history_save path with
+      | Ok () -> ()
+      | Error reason ->
+          prerr_endline
+            (Printf.sprintf "emo repl: history not saved to %s: %s" path reason)
+      )
+  | None -> ()
+
 let start_repl () =
-  repl_loop ~prompt:true
-    ~input:(fun () ->
-      match read_line () with
-      | line -> Some line
-      | exception End_of_file -> None)
-    ~output:(fun s ->
-      print_string s;
-      flush stdout);
+  if Unix.isatty Unix.stdin && Unix.isatty Unix.stdout then
+    (* The editor's seat: only where both ends are terminals — the refresh
+       needs both. Pipes and redirects keep the plain path byte for byte. *)
+    editor_session (fun input ->
+        repl_loop ~prompt:false ~input ~output:(fun s ->
+            print_string s;
+            flush stdout))
+  else
+    repl_loop ~prompt:true
+      ~input:(fun _ ->
+        match read_line () with
+        | line -> Line line
+        | exception End_of_file -> Eof)
+      ~output:(fun s ->
+        print_string s;
+        flush stdout);
   0
 
 let repl =

@@ -53,6 +53,35 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 `emo doctor` 会点名工具链;没有源码安装的条件分支,也没有对随包
 库的版本核对——因为根本不随包携带任何库。
 
+## repl 的行编辑器
+
+`emo repl` 用一个 vendored 的
+[linenoise](https://github.com/antirez/linenoise) 编辑输入——redis-cli
+读行用的就是它——经 dune 的 `foreign_stubs` 编进二进制。编辑器给
+会话带来:
+
+- **跨会话的历史召回。** 每一条非空输入按原样进入历史(上限 1000
+  条),会话结束时存进 state 文件:设了 `$EMO_STATE_DIR` 则是
+  `$EMO_STATE_DIR/repl-history`,否则
+  `$XDG_STATE_HOME/emo/repl-history`,再否则
+  `$HOME/.local/state/emo/repl-history`。上下方向键在条目间走动;
+  文件系统带不动的历史在 stderr 上给一条警告、会话继续——文件缺失
+  是首次会话的正常形态,一言不发。
+- **多行编辑。** 长行折过终端的多行仍然可编辑;粘贴整块落地(感知
+  bracketed-paste,大块粘贴在显示上折叠)。
+- **续行提示按括号深度缩进。** 会话收集未闭合块时,`... ` 随每个
+  仍未闭合的 `{`/`(`/`[` 长出两个空格——提示符显示出块所处的位置。
+  缩进只是视觉引导;编辑器不在其外放置光标。
+- **Ctrl-C 放弃而非退出。** 编辑器消费 Ctrl-C;repl 丢弃当前待输入、
+  重新渲染提示符。空行上的 Ctrl-D 结束会话,与一直以来的 EOF 相同。
+
+编辑器只在 stdin 与 stdout 都是终端时入座。管道、重定向、脚本照旧
+走普通读行路径、逐字节不变——`emo repl` 的管道行为、以及驱动会话的
+所有测试,都不触碰终端机制。`repl-history` 文件由库以 0600 写出;
+第二个并发会话的保存会赢得该文件,这是唯一已知的局限。TAB 补全
+刻意缺席——回调本身就在绑定里,但补全什么(关键字、会话内的名字、
+已 require 的包)是另一项设计。
+
 ## 参考
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——
@@ -67,3 +96,5 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 - [`devtools/notarize-release.sh`](../../devtools/notarize-release.sh)
   与 [`devtools/publish-release.sh`](../../devtools/publish-release.sh)
   —— 把构建好的发布送过 Apple 公证、再送上下载站点的后续环节。
+- [`plan/step-79-repl-linenoise.md`](../../plan/step-79-repl-linenoise.md)
+  —— 给 repl 带来行编辑器的步骤(M39)。

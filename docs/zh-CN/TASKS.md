@@ -58,6 +58,8 @@
 | M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
 | M38 — Wasm 能力 | 75–77 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
 | M39 — 文本模板 | 78 | `template` 包——从 `json` 上下文渲染带洞的文本,Go `text/template` 的机制、Emo 自己的表面,纯 Emo 写在共享运行时之上,五个托管目标逐字节一致:一次成型的 `render` 与解析一次渲染多次的 `Set`(new/with/render),`{{ }}` 数据洞配裸点分路径与七个 ASCII 安全的过滤器管道,`if`/`else if`/`else`/`end` 配"不是零值"的真值,数组与对象上的 `for` 带 `else`,`template` 引用(绑定不过边,深度上限点名链条),`{{- `-` -}}` 修剪标记与 `{{! }}` 注释;解析与渲染都从严,每次失败都是带字节位置的理由。两个 golden 冲出来的后端 bug:IR 的模块级 def mangle 漏了 `sanitize_ident`(`?` 后缀漏进 TS/OCaml 标识符),BEAM 发射器的 threaded-chain case 在 per-branch save 之前注册模式绑定——兄弟分支的绑定泄漏进后继 continuation 的 live 集,erlc 报 unbound variable。 |
+| M40 — repl 的行编辑器 | 79 | 交互会话迎来真正的编辑器:vendored 的上游 linenoise(BSD-2,钉在 `a473823d`,两处显式补丁——临时历史条目在 Ctrl-C 与输入结束时按 ENTER 的方式弹栈,阻塞读的判定 errno 越过 stop 的终端探测存活)经 dune 的 `foreign_stubs` 编进 CLI——OCaml CLI 链接的第一份 C——藏在一个绑定模块后面,其桩把库的 errno 判定映射为 OCaml 变体;输入 seam 携带提示文本,并把完成的一行、Ctrl-C 的放弃、输入的结束区分开;编辑器只在 stdin 与 stdout 都是终端时入座,管道与重定向保持普通路径逐字节不变;历史按行存储,会话结束存入 state 文件(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`),读不动写不进在 stderr 上警告、文件缺失沉默;Ctrl-C 放弃当前待输入而非杀死进程;续行提示按每个未闭合括号缩进两个空格;测试经上游的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实的 C 编辑器——敲入的行、上箭头召回、不漏空条目的打断、以及两会话的持久化往返(`CHECK.md`)。 |
+| M41 — 标准库:`uuid` | 80 | `uuid` 包:RFC 9562 的标识符是一个不可变的 16 字节 `Uuid` 值,经 `to_string` 协议方法自我渲染,回答 `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?`,并按 RFC 6.11 的大端 `compare` 排序;`v4` 经 `rand.bytes` 抽 122 个随机位,`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间骑 74 个随机位(负数或超出 48 位的时间戳 raise),`v3`/`v5` 是骑 `crypto.legacy` 的确定性 name-based 门,表 3 的四个 IANA namespace ID 在旁;`parse` 恰好接受规范的 36 字符形式,数字不区分大小写,每次拒绝点名第一个出错的字节,`from_bytes` 拒绝非 16 的长度;作用域对齐 Go 标准 `uuid` 的骨架,v1/v2/v6 与 v8 构造器点名不在包内;`uuid_demo` 骑 RFC 的向量、随机的门只打印结构,五个 target 名单逐字节一致(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1959,4 +1961,82 @@ threaded-chain 的 case 路径里,把分支的模式绑定注册在 per-branch s
 `template_edge` 的 golden 还把裸 `}}` 的问题按与计划草稿相反的方向定
 了:动作之外的 `}}` 是文本,不是错误——代码生成模板的静态文本里到处
 是收口的嵌套花括号,Go 自己的扫描器也这么办。
+
+## M40 — repl 的行编辑器
+
+### 步骤 79 — repl 的行编辑器(linenoise)
+
+**前置:** 步骤 08(repl 本身)。**完成条件:** 交互会话用 vendored 的上游
+linenoise 编辑输入——跨会话持久化的方向键历史召回、长行的多行编辑、
+续行提示按括号深度缩进、Ctrl-C 放弃而非杀死——而管道、重定向与测试
+保持普通读行路径逐字节不变;vendored 的 C 经 dune 的 `foreign_stubs`
+编译,藏在一个把库的 errno 判定映射为变体的绑定模块后面;测试经上游
+的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实编辑器;`dune runtest`
+全绿;文档 EN+zh。
+
+- [x] **T79.1** — vendored 编辑器:`linenoise.c`/`linenoise.h` 钉在上游
+      `a473823d74b93eab2ba83480df16ed37617493f2`(2026-05-01),带两处
+      显式补丁——编辑会话的临时历史条目在 Ctrl-C 与输入结束的出口
+      按 ENTER 的方式弹栈,输入结束并回答 `ENOENT`(上游原本每次
+      Ctrl-C 都向历史泄漏一个空条目);阻塞读的判定 errno 在
+      `linenoiseEditStop` 之前捕获、之后恢复(该清理会探测终端、
+      覆盖判定)。C 桩与 `emo_linenoise` 绑定模块——桩遵循 OCaml
+      混合变体编码(常量构造器与带载荷构造器独立编号);dune 的
+      `foreign_stubs`。
+- [x] **T79.2** — seam:输入函数收到提示文本(编辑器自己渲染),其
+      回答区分 `Line`、`Aborted` 与 `Eof`;`unbalanced` 与续行提示
+      共享括号计数——每个未闭合的 `{`/`(`/`[` 两个空格,lexer 无法
+      扫描待输入时保持纯点;编辑器会话装载、逐行加入并保存历史,
+      附带其警告。
+- [x] **T79.3** — 测试:repl 套件走上新 seam;深度/缩进单元;历史文件
+      的解析(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME`,无 home
+      无文件);管道上的编辑器冒烟——敲入的行、上箭头召回、不漏空
+      条目的 Ctrl-C、输入的结束、以及经 state 文件的两会话持久化
+      往返。
+- [x] **T79.4** — 文档:`docs/toolchain.md` EN+zh 的 repl 节;
+      TASKS/plan/CHECK 更新。
+
+## M41 — 标准库:`uuid`
+
+### Step 80 — `uuid` 包(RFC 9562)
+
+标识符是一个值,版本是铸造它的门。本步的任务,全部落地:
+
+- [x] **T80.1** — 包 `stdlib/registry/uuid/0.1.0`,纯 Emo,骑
+      `crypto` 与 `rand`:`Uuid` 类(`to_string` 协议方法渲染小写
+      hex-and-dash 形式,`to_bytes` 是网络字节序的字节,`version`
+      是第 6 字节的高 4 位,`variant` 按表 1 读第 8 字节的最高位
+      ——`ncs`/`rfc`/`microsoft`/`future`——`is_nil?`/`is_max?`,
+      以及 `compare` 的 RFC 6.11 大端序),和模块的门——
+      `nil`/`max`,`from_bytes`(任意 16 字节;非 16 长度拒绝),
+      `parse`(恰好规范的 36 字符形式,数字不区分大小写,如 RFC
+      自己的 ABNF 所读,点名第一个出错的字节),`v4`(经
+      `rand.bytes` 抽 122 个随机位,熵的 reason 原样透传),
+      `v7(now_ms)`(调用方的时钟——语言没有——48 位 Unix 时间骑
+      74 个随机位;负数或超出 48 位的时间戳 raise,即公元 10889
+      的界限),`v3`/`v5` 走 `crypto.legacy` 的 MD5 与 SHA-1(确
+      定性;namespace 字节接 name 的 UTF-8 字节;任意 `Uuid` 都
+      是自定义 namespace),以及 `ns_dns`/`ns_url`/`ns_oid`/
+      `ns_x500`。一张 `source_of` 映射同时驱动 `parse` 与
+      `to_string`,两个方向读的是同一个 36 字符形状。
+- [x] **T80.2** — golden `examples/uuid_demo`:RFC 图 1 的例子被
+      解析、渲染成小写、读回 version/variant;附录 A.2 与 A.4 的
+      name-based 向量(`5df41881-3aed-3515-88a7-2f4a814cf09e`、
+      `2ed6657d-e927-568b-95e1-2665a8aea6a2`)与 URL namespace 里的
+      另一个名字——冻结前全部对着 Python 标准实现核过;表 3 的
+      namespace ID;Nil/Max 与它们的顺序;16 字节往返与非 16 长
+      度拒绝;严格拒绝(32/35/38/45 字符、第 8 字节的错连字符、
+      第 35 字节的错数字)各带字节偏移;随机的门只打印结构——v4
+      的 version、variant、两次抽取不同;v7 的 version、variant、
+      从字节里读回的 A.6 时间戳 `1645557742000`、同一毫秒两次抽
+      取不同、下一毫秒排在其后——golden 在每个 target 上逐字节
+      一致。
+- [x] **T80.3** — 注册:`uuid_demo` 上 `test/emo_cli` 的
+      `wasm_goldens`、`beam_goldens`、`c_goldens`,以及
+      `test/emo_project` 的 typescript golden 名单与 bootstrap
+      名单;落地前在解释器、`c` target、`typescript` target 上核
+      过逐字节一致。
+- [x] **T80.4** — 文档:`docs/stdlib/uuid.md` EN+zh;`docs/
+      stdlib.md` 的行与节 EN+zh;README 参考名单 EN+zh;
+      TASKS/plan/CHECK 更新。
 

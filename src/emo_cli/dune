@@ -14,7 +14,14 @@
   emo_codegen
   emo_runtime
   emo_project)
- (modules emo_cli version))
+ (modules emo_cli version emo_linenoise)
+ ; The vendored linenoise editor (`linenoise.c`, upstream
+ ; antirez/linenoise at a473823d74b93eab2ba83480df16ed37617493f2, the
+ ; marked emo: patches) and the stubs mapping its verdicts onto
+ ; `emo_linenoise`'s variants — the first C the OCaml CLI links.
+ (foreign_stubs
+  (language c)
+  (names linenoise emo_linenoise_stubs)))
 
 ; The version string is the repository's VERSION file, read at build
 ; time so the binary carries it wherever it runs.

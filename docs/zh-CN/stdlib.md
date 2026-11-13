@@ -43,6 +43,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
+| [`uuid`](#uuid-包) | RFC 9562 UUID:v4/v7/v3/v5,严格的文本与字节形式 | 全部五个 |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
@@ -489,6 +490,29 @@ def drbg_sha256(seed Bytes, length Int64) Bytes
 `bytes` 按目标从 `/dev/urandom`、`getentropy`、Node 的 `crypto.randomBytes` 或 `crypto:strong_rand_bytes` 回答 `(R.ok, bytes)`,来源拒绝时回答 `(R.error, "rand: …")`;负计数 raise。`drbg_sha256` 回答只取决于 seed 的 `length` 个字节,在每个目标上永远相同——fixture 与测试密钥的生成器,不是秘密的来源。
 
 目标:`ocaml`、`c`、`typescript`、`beam`——wasm 宿主不提供熵,所以 manifest 直接拒绝,而不是运行时才失败。参考:[`docs/zh-CN/stdlib/rand.md`](stdlib/rand.md) · 示例:`examples/rand_demo`。
+
+## uuid 包
+
+RFC 9562 的标识符是一个不可变的 16 字节值:各版本是具名的门,文本和字节形式都是严格的转换。纯 Emo,骑 `crypto` 和 `rand`,每个目标逐字节一致。
+
+```emo
+def nil() Uuid
+def max() Uuid
+def from_bytes(data Bytes) (R, Uuid)
+def parse(text String) (R, Uuid)
+def v4() (R, Uuid)
+def v7(now_ms Int64) (R, Uuid)
+def v3(namespace Uuid, name String) Uuid
+def v5(namespace Uuid, name String) Uuid
+def ns_dns() Uuid
+def ns_url() Uuid
+def ns_oid() Uuid
+def ns_x500() Uuid
+```
+
+`Uuid` 值自己渲染自己——`to_string` 是协议方法,`println(id)` 打印小写的 hex-and-dash 形式——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`,以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式,十六进制不区分大小写,每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间——语言没有时钟——骑 74 个随机位,负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门,四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`,任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内,参考文档里点名。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/uuid.md`](stdlib/uuid.md) · 示例:`examples/uuid_demo`。
 
 ## csv 包
 

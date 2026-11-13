@@ -1,0 +1,10 @@
+package {
+  name = "uuid"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    "crypto" = "0.1.0"
+    "rand" = "0.1.0"
+  }
+}
