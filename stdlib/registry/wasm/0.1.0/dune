@@ -1,5 +1,5 @@
 ; The smoke rule makes the wasm package non-inert: `dune test` runs
-; `emo run main.emo` and diffs its stdout against expected.txt, so a
+; `emo run smoke.emo` and diffs its stdout against expected.txt, so a
 ; red line here means the runtime's own golden broke. The second pair
 ; runs the full list under the wasm_spec alias (step 21's acceptance
 ; gate).
@@ -8,7 +8,7 @@
  (alias runtest)
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
-  main.emo
+  smoke.emo
   wasm.emo
   cli.emo
   (source_tree .)
@@ -17,7 +17,10 @@
  (action
   (with-stdout-to
    smoke.actual
-   (run %{emo} run main.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run smoke.emo)))))
 
 (rule
  (alias runtest)
@@ -37,7 +40,10 @@
  (action
   (with-stdout-to
    leb-fixture.actual
-   (run %{emo} run leb-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run leb-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -57,7 +63,10 @@
  (action
   (with-stdout-to
    type-fixture.actual
-   (run %{emo} run type-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run type-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -78,7 +87,10 @@
  (action
   (with-stdout-to
    spec.actual
-   (run %{emo} run spec.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run spec.emo)))))
 
 (rule
  (alias wasm_spec)
@@ -103,7 +115,10 @@
  (action
   (with-stdout-to
    runs-smoke.actual
-   (run %{emo} run runs-smoke.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run runs-smoke.emo)))))
 
 (rule
  (alias runtest)
@@ -122,7 +137,10 @@
   testdata/runs.all.txt
   package.emo)
  (action
-  (run %{emo} build runs.emo --target ocaml -o %{target})))
+  (setenv
+   EMO_CACHE_DIR
+   ".emo-deps-cache"
+   (run %{emo} build runs.emo --target ocaml -o %{target}))))
 
 (rule
  (alias wasm_runs)
@@ -152,7 +170,10 @@
  (action
   (with-stdout-to
    instance-fixture.actual
-   (run %{emo} run instance-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run instance-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -172,7 +193,10 @@
  (action
   (with-stdout-to
    value-fixture.actual
-   (run %{emo} run value-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run value-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -192,7 +216,10 @@
  (action
   (with-stdout-to
    int-fixture.actual
-   (run %{emo} run int-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run int-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -212,7 +239,10 @@
  (action
   (with-stdout-to
    float-fixture.actual
-   (run %{emo} run float-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run float-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -232,7 +262,10 @@
  (action
   (with-stdout-to
    float-convert-fixture.actual
-   (run %{emo} run float-convert-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run float-convert-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -252,7 +285,10 @@
  (action
   (with-stdout-to
    store-fixture.actual
-   (run %{emo} run store-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run store-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -274,7 +310,10 @@
  (action
   (with-stdout-to
    fac-fixture.actual
-   (run %{emo} run fac-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run fac-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -296,7 +335,10 @@
  (action
   (with-stdout-to
    link-fixture.actual
-   (run %{emo} run link-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run link-fixture.emo)))))
 
 (rule
  (alias runtest)
@@ -318,10 +360,63 @@
  (action
   (with-stdout-to
    host-fixture.actual
-   (run %{emo} run host-fixture.emo))))
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run host-fixture.emo)))))
 
 (rule
  (alias runtest)
  (deps host-fixture.actual host-fixture.expected.txt)
  (action
   (diff host-fixture.expected.txt host-fixture.actual)))
+
+; The user-host fixture (T75.3).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  host-user-fixture.emo
+  wasm.emo
+  cli.emo
+  (source_tree .)
+  package.emo)
+ (action
+  (with-stdout-to
+   host-user-fixture.actual
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run host-user-fixture.emo)))))
+
+(rule
+ (alias runtest)
+ (deps host-user-fixture.actual host-user-fixture.expected.txt)
+ (action
+  (diff host-user-fixture.expected.txt host-user-fixture.actual)))
+
+; The wasi fixture (T77.4).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  wasi-fixture.emo
+  wasm.emo
+  cli.emo
+  (source_tree .)
+  package.emo)
+ (action
+  (with-stdout-to
+   wasi-fixture.actual
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run wasi-fixture.emo)))))
+
+(rule
+ (alias runtest)
+ (deps wasi-fixture.actual wasi-fixture.expected.txt)
+ (action
+  (diff wasi-fixture.expected.txt wasi-fixture.actual)))

@@ -1,0 +1,223 @@
+// The wasi fixture (T77.4): hand-built modules riding the preview1
+// host — the iovec walk byte-exact, proc_exit's code on the trap
+// channel, the argv encoding, the honest refusals (EBADF, ENOSYS),
+// the mistyped import binding to nothing, and the unimplemented
+// function failing the link with its name.
+
+const hello_hex = "0061736d01000000010c0260047f7f7f7f017f60000002230116776173695f736e617073686f745f70726576696577310866645f7772697465000003020101050301000107060102676f00010a11010f00410141c000410141c80010001a0b0b1c020041100b08686920776173690a0041c0000b081000000008000000"
+const exit3_hex = "0061736d0100000001080260017f0060000002240116776173695f736e617073686f745f70726576696577310970726f635f65786974000003020101050301000107060102676f00010a08010600410310000b"
+const args_hex = "0061736d01000000010a0260027f7f017f600000024b0216776173695f736e617073686f745f70726576696577310e617267735f73697a65735f676574000016776173695f736e617073686f745f707265766965773108617267735f676574000003020101050301000107060102676f00020a1601140041c00041c80010001a41d00041e00010011a0b"
+const ebadf_hex = "0061736d01000000010d0260047f7f7f7f017f6000017f02230116776173695f736e617073686f745f70726576696577310866645f7772697465000003020101050301000107060102676f00010a10010e00410541c000410041c80010000b"
+const clock_hex = "0061736d01000000010c0260037f7e7f017f6000017f02290116776173695f736e617073686f745f70726576696577310e636c6f636b5f74696d655f676574000003020101050301000107060102676f00010a0d010b004100420041c00010000b"
+const pathopen_hex = "0061736d01000000010d0260057f7f7f7f7f017f60000002240116776173695f736e617073686f745f707265766965773109706174685f6f70656e000003020101050301000107060102676f00010a040102000b"
+const random_hex = "0061736d01000000010b0260027f7f017f6000017f02250116776173695f736e617073686f745f70726576696577310a72616e646f6d5f676574000003020101050301000107060102676f00010a0b01090041c000411010000b"
+const fdstat_hex = "0061736d01000000010b0260027f7f017f6000017f02280116776173695f736e617073686f745f70726576696577310d66645f6664737461745f676574000003020101050301000107060102676f00010a0b010900410141c00010000b"
+const mistyped_hex = "0061736d0100000001080260017f0060000002230116776173695f736e617073686f745f70726576696577310866645f7772697465000003020101050301000107060102676f00010a040102000b"
+
+def load_hex(hex String) Int64 {
+  case wasm.load(internal.corpus.decode_hex(hex)) {
+    (R.error, why) -> {
+      println("load " + why)
+      return -1
+    }
+    (R.ok, module) -> {
+      return module
+    }
+  }
+}
+
+def call_go(module Int64) (R, Array[(Int64, Int64)]) {
+  case wasm.instantiate(module, []) {
+    (R.error, why) -> {
+      return (R.error, [])
+    }
+    (R.ok, inst) -> {
+      return wasm.call(inst, "go", [])
+    }
+  }
+}
+
+def errno_of(r (R, Array[(Int64, Int64)])) Int64 {
+  case r {
+    (R.error, why) -> {
+      println(why)
+      return 0 - 1
+    }
+    (R.ok, results) -> {
+      case wasm.as_i32(results[0]) {
+        (R.error, why) -> {
+          println(why)
+          return 0 - 1
+        }
+        (R.ok, v) -> {
+          return v
+        }
+      }
+    }
+  }
+}
+
+def run() Int64 {
+  var failed = 0
+
+  // The iovec walk: the guest's bytes ride the output channel raw,
+  // and nwritten lands at 72.
+  const hello = load_hex(hello_hex)
+  case wasm.instantiate(hello, []) {
+    (R.error, why) -> {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) -> {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) -> {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) -> {
+          case wasm.read_memory(inst, 72, 4) {
+            (R.error, why) -> {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, data) -> {
+              println("written " + data.get_u32_le(0).to_string())
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // proc_exit rides the trap channel with its code.
+  case call_go(load_hex(exit3_hex)) {
+    (R.error, why) -> {
+      println("exit " + why)
+    }
+    (R.ok, _) -> {
+      println("exit returned")
+      failed = failed + 1
+    }
+  }
+
+  // The argv channel: sizes, then the encoding (pointers, then the
+  // nul-terminated buffer), read back through the package's own
+  // memory door.
+  wasm.set_wasi_args(["prog", "-x"])
+  const args = load_hex(args_hex)
+  case wasm.instantiate(args, []) {
+    (R.error, why) -> {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) -> {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) -> {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) -> {
+          case wasm.read_memory(inst, 64, 4) {
+            (R.error, why) -> {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, counts) -> {
+              println("argc " + counts.get_u32_le(0).to_string())
+            }
+          }
+          case wasm.read_memory(inst, 72, 4) {
+            (R.error, why) -> {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, counts) -> {
+              println("buf " + counts.get_u32_le(0).to_string())
+            }
+          }
+          case wasm.read_memory(inst, 80, 8) {
+            (R.error, why) -> {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, ptrs) -> {
+              const p0 = ptrs.get_u32_le(0)
+              case wasm.read_memory(inst, p0, 5) {
+                (R.error, why) -> {
+                  println("read " + why)
+                  failed = failed + 1
+                }
+                (R.ok, arg0) -> {
+                  println("arg0 " + arg0.to_string())
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  wasm.set_wasi_args([])
+
+  // The honest refusals: a closed fd's EBADF, the clock's ENOSYS.
+  println("ebadf " + errno_of(call_go(load_hex(ebadf_hex))).to_string())
+  println("clock " + errno_of(call_go(load_hex(clock_hex))).to_string())
+
+  // random_get answers success; the entropy itself is not pinned.
+  println("random " + errno_of(call_go(load_hex(random_hex))).to_string())
+
+  // fd 1 is a character device with full rights.
+  const fdstat_module = load_hex(fdstat_hex)
+  case wasm.instantiate(fdstat_module, []) {
+    (R.error, why) -> {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) -> {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) -> {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) -> {
+          case wasm.read_memory(inst, 64, 24) {
+            (R.error, why) -> {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, st) -> {
+              println("filetype " + st.get(0).to_string())
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // The unimplemented function fails the link with its name.
+  case wasm.instantiate(load_hex(pathopen_hex), []) {
+    (R.error, why) -> {
+      println("path " + why)
+    }
+    (R.ok, _) -> {
+      println("path instantiated")
+      failed = failed + 1
+    }
+  }
+
+  // The mistyped import binds to nothing.
+  case wasm.instantiate(load_hex(mistyped_hex), []) {
+    (R.error, why) -> {
+      println("type " + why)
+    }
+    (R.ok, _) -> {
+      println("type instantiated")
+      failed = failed + 1
+    }
+  }
+
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

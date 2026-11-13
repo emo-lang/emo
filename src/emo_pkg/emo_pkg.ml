@@ -893,16 +893,46 @@ module Registry = struct
   let materialize ~(cache_dir : string) (f : fetched) :
       (string, string) result (* the package sources directory *) =
     let pkg_dir = cache_path ~cache_dir f in
+    let rec ensure_dir (dir : string) : unit =
+      match Unix.lstat dir with
+      | { Unix.st_kind = Unix.S_DIR; _ } -> ()
+      | _ -> ()
+      | exception _ -> (
+          (* the parent first, then this one; EEXIST is another
+             materialization having won the race and is fine *)
+          let parent = Filename.dirname dir in
+          if parent <> dir then ensure_dir parent;
+          try Unix.mkdir dir 0o755
+          with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+    in
     let materialize_file (rel, content) =
       let path = Filename.concat pkg_dir rel in
       let dir = Filename.dirname path in
-      if not (Sys.file_exists dir) then
-        ignore
-          (Emo_tool.run_or_warn ~what:"emo deps"
-             ("mkdir -p " ^ Filename.quote dir));
-      let oc = open_out_bin path in
-      output_string oc content;
-      close_out oc
+      (* The temp name is per process — a shared name let two concurrent
+         materializations rename each other's file away — and never ends
+         in a collected extension, so a concurrent collect (another
+         process resolving the same package into the shared cache) never
+         digests a half-written file; the rename lands the content
+         atomically. Parallel materializations of the same package also
+         race the directory itself (an open against a dir another
+         process's tree walk just re-created), so the open retries once
+         behind a fresh ensure_dir instead of failing the resolution. *)
+      let tmp = path ^ ".materializing." ^ string_of_int (Unix.getpid ()) in
+      let rec write ?(again = true) () =
+        try
+          let oc = open_out_bin tmp in
+          output_string oc content;
+          close_out oc;
+          Sys.rename tmp path
+        with Sys_error _ | Unix.Unix_error (Unix.ENOENT, _, _) ->
+          if not again then raise (Sys_error ("cannot materialize " ^ path));
+          ensure_dir (Filename.dirname pkg_dir);
+          ensure_dir pkg_dir;
+          ensure_dir dir;
+          write ~again:false ()
+      in
+      ensure_dir dir;
+      write ()
     in
     try
       List.iter materialize_file f.f_files;

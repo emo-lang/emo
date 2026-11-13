@@ -1,0 +1,10 @@
+load ok
+inst ok
+write 3
+first_byte 69
+env log 7
+greet 7
+put ok
+get 123456
+memory 123456
+wide 1234567890123

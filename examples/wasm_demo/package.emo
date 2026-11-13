@@ -1,0 +1,9 @@
+package {
+  name = "emo/wasm_demo"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "wasm" = "0.1.0"
+  }
+}

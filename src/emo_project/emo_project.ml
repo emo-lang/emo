@@ -1262,6 +1262,12 @@ let unpinned_stdlib_errors (registry : Emo_pkg.Registry.t)
    quietly replaced. With no lockfile at all, the run resolves and records
    the resolution: the file's first appearance, never a rewrite of one,
    announced on stderr so it is not silent. *)
+(* The embedded programs' scratch projects write their resolution lock
+   into a temp tree that dies with the run — the "commit it beside the
+   manifest" notice would be noise pointing at a manifest that does not
+   exist. *)
+let embedded_quiet = ref false
+
 let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) : Emo_pkg.Lockfile.entry list =
   let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
@@ -1283,7 +1289,7 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
             ("could not write " ^ Emo_pkg.Lockfile.filename ^ ": " ^ message);
           false
       in
-      if wrote then
+      if wrote && not !embedded_quiet then
         prerr_endline
           ("wrote " ^ Emo_pkg.Lockfile.filename
          ^ " — commit it beside the manifest");
@@ -2057,23 +2063,41 @@ let rec remove_tree path =
    resolves `http` against the standard library shipped with the binary —
    never the user's EMO_REGISTRY or manifest registry, which may point at a
    remote endpoint or a fixture the bundled packages are not in. *)
-let run_embedded ~(tag : string) ~(program : string)
-    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+let run_embedded_deps_out ~(tag : string) ~(deps : string list)
+    ~(program : string) ~(globals : (string * Emo_eval.value) list) :
+    (string, string) result * string =
   let reg = bundled_registry () in
-  (* The embedded programs require `http` and `json`, and every require
-     pairs with a manifest pin — same as a user project — at the highest
-     version the bundled standard library ships; their own dependencies
-     (`net`, `float`) come through the packages' manifests. *)
+  (* Every embedded require pairs with a manifest pin — same as a user
+     project — at the highest version the bundled standard library
+     ships; each pin's own dependencies come through the package's
+     manifest. *)
   let highest name =
     match List.rev (Emo_pkg.Registry.versions reg ~name) with
     | [] ->
         Error
           (Printf.sprintf "the bundled standard library has no %s package" name)
-    | v :: _ -> Ok v
+    | v :: _ -> Ok (name, v)
   in
-  match (highest "http", highest "json") with
-  | Error m, _ | _, Error m -> Error m
-  | Ok http_version, Ok json_version ->
+  let pinned =
+    List.fold_left
+      (fun acc name ->
+        match (acc, highest name) with
+        | Error m, _ -> Error m
+        | _, Error m -> Error m
+        | Ok ps, Ok p -> Ok (p :: ps))
+      (Ok []) deps
+  in
+  match pinned with
+  | Error m -> (Error m, "")
+  | Ok pins ->
+      let deps_block =
+        String.concat "\n"
+          (List.map
+             (fun (name, v) ->
+               Printf.sprintf "    \"%s\" = \"%s\"" name
+                 (Emo_pkg.Version.to_string v))
+             (List.rev pins))
+      in
       let dir =
         Filename.concat
           (Filename.get_temp_dir_name ())
@@ -2094,14 +2118,11 @@ let run_embedded ~(tag : string) ~(program : string)
   targets = ["ocaml", "c"]
 
   deps {
-    "http" = "%s"
-    "json" = "%s"
+%s
   }
 }
 |}
-           tag
-           (Emo_pkg.Version.to_string http_version)
-           (Emo_pkg.Version.to_string json_version));
+           tag deps_block);
       write "main.emo" program;
       let out = Buffer.create 256 in
       let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
@@ -2112,8 +2133,10 @@ let run_embedded ~(tag : string) ~(program : string)
       Unix.putenv "EMO_REGISTRY" "";
       Emo_eval.set_output (Buffer.add_string out);
       Sys.chdir dir;
+      embedded_quiet := true;
       Fun.protect
         ~finally:(fun () ->
+          embedded_quiet := false;
           Sys.chdir old_cwd;
           (match old_registry with
           | Some v -> Unix.putenv "EMO_REGISTRY" v
@@ -2127,11 +2150,154 @@ let run_embedded ~(tag : string) ~(program : string)
             run_entry ~entry_file:"main.emo" ~check:false ~sched:Own ~globals ()
           with
           | exception Static_errors ds ->
-              Error
-                (String.concat "; "
-                   (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
-          | exception Emo_eval.Error d -> Error d.Emo_support.Diagnostic.message
-          | _ -> Ok (Buffer.contents out))
+              ( Error
+                  (String.concat "; "
+                     (List.map (fun d -> d.Emo_support.Diagnostic.message) ds)),
+                Buffer.contents out )
+          | exception Emo_eval.Error d ->
+              (Error d.Emo_support.Diagnostic.message, Buffer.contents out)
+          | _ -> (Ok (Buffer.contents out), Buffer.contents out))
+
+(* The exchange programs (publish, login, the fetch transport) read the
+   verdict alone. `emo wasm run` wants the module's partial stdout even
+   when the run errored — a module that prints and then traps still
+   printed — so its runner takes the pair. *)
+let run_embedded_deps ~(tag : string) ~(deps : string list) ~(program : string)
+    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+  let result, _ = run_embedded_deps_out ~tag ~deps ~program ~globals in
+  result
+
+let run_embedded ~(tag : string) ~(program : string)
+    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+  run_embedded_deps ~tag ~deps:[ "http"; "json" ] ~program ~globals
+
+(* `emo wasm run`: the artifact's absolute path rides in as a
+   host-injected binding; the driver reads it through `file`, loads it
+   through `wasm`, and instantiates it — the instance's start function
+   runs here, as the spec says it does. The entry ladder follows: the
+   `_start` export, then `main`, then the one-line summary for a module
+   that names neither (initialization is running it). Results print in
+   the runtime's own `value : kind` format. Every failure raises the
+   one Exception — the embedded programs' error channel — and reaches
+   the CLI as the error verdict. *)
+let wasm_cli_driver =
+  {|require "wasm"
+require "file"
+
+def fmt(v (Int64, Int64)) String {
+  var shown = v[1].to_string()
+  case wasm.as_i32(v) {
+    (R.ok, n) -> {
+      shown = n.to_string()
+    }
+    (R.error, _) -> {
+      case wasm.as_i64(v) {
+        (R.ok, n) -> {
+          shown = n.to_string()
+        }
+        (R.error, _) -> {
+          case wasm.as_f32(v) {
+            (R.ok, f) -> {
+              shown = f.to_string()
+            }
+            (R.error, _) -> {
+              case wasm.as_f64(v) {
+                (R.ok, f) -> {
+                  shown = f.to_string()
+                }
+                (R.error, _) -> {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return shown + " : " + wasm.kind_name(v[0])
+}
+
+def print_results(results Array[(Int64, Int64)], i Int64) Int64 {
+  if i >= results.length() {
+    return 0
+  }
+  println(fmt(results[i]))
+  return print_results(results, i + 1)
+}
+
+def call_entry(inst Int64, name String) Bool {
+  case wasm.call(inst, name, []) {
+    (R.ok, results) -> {
+      print_results(results, 0)
+      return true
+    }
+    (R.error, why) -> {
+      if why == "unknown export" {
+        return false
+      }
+      if why.starts_with("emo-wasm: proc_exit(") {
+        println(why)
+        return true
+      }
+      raise Exception.new(message: "emo-wasm: " + name + ": " + why)
+    }
+  }
+}
+
+def run() Int64 {
+  wasm.set_wasi_args(__args)
+  case file.read(__artifact) {
+    (R.error, why) -> {
+      raise Exception.new(message: "emo-wasm: " + why)
+    }
+    (R.ok, text) -> {
+      case wasm.load(text.to_bytes()) {
+        (R.error, why) -> {
+          raise Exception.new(message: "emo-wasm: " + why)
+        }
+        (R.ok, module) -> {
+          case wasm.instantiate(module, []) {
+            (R.error, why) -> {
+              if why.starts_with("emo-wasm: proc_exit(") {
+                raise Exception.new(message: why)
+              }
+              raise Exception.new(message: "emo-wasm: " + why)
+            }
+            (R.ok, inst) -> {
+              if call_entry(inst, "_start") {
+                return 0
+              }
+              if call_entry(inst, "main") {
+                return 0
+              }
+              println(wasm.describe(module))
+              return 0
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+run()
+|}
+
+let run_wasm_cli ~(artifact : string) ~(args : string list) :
+    (string, string * string) result =
+  let argv = Filename.basename artifact :: args in
+  let result, partial =
+    run_embedded_deps_out ~tag:"wasm-run" ~deps:[ "wasm"; "file" ]
+      ~globals:
+        [
+          ("__artifact", Emo_eval.String artifact);
+          ( "__args",
+            Emo_eval.Array
+              (Array.map (fun a -> Emo_eval.String a) (Array.of_list argv)) );
+        ]
+      ~program:wasm_cli_driver
+  in
+  match result with Ok body -> Ok body | Error why -> Error (why, partial)
 
 (* The HTTP registry's transport: [run_embedded] under a fixed tag. Filled
    at module initialization — the cell exists because [run_embedded] needs

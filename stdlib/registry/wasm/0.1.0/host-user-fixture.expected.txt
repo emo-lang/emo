@@ -1,0 +1,5 @@
+env log 42
+sum 42
+override 7
+typo: host function `env.typo` matches no import of this module
+failed 0

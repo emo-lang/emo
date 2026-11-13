@@ -1,0 +1,64 @@
+// The frame-machine fixture (T22.7), riding the step-72 public
+// surface: load, instantiate, call, and read the results back through
+// the value accessors. A recursive `fac` proves the tail-call chain,
+// and a `loop` sum proves structured control, locals, branches, and
+// the numeric walk.
+
+const hex = "0061736d0100000001060160017e017e03030200000710020366616300000673756d5f746f00010a3d0217002000420253047e4201052000200042017d10007e0b0b2301027e0240034020012000550d01200220017c2102200142017c21010c000b0b20020b"
+
+def show_i64(label String, r (R, Array[(Int64, Int64)])) Int64 {
+  case r {
+    (R.error, why) -> {
+      println(label + " " + why)
+      return 1
+    }
+    (R.ok, results) -> {
+      case wasm.as_i64(results[0]) {
+        (R.error, why) -> {
+          println(label + " " + why)
+          return 1
+        }
+        (R.ok, v) -> {
+          println(label + " " + v.to_string())
+          return 0
+        }
+      }
+    }
+  }
+}
+
+def exercise(module Int64) Int64 {
+  var failed = 0
+  case wasm.instantiate(module, []) {
+    (R.error, why) -> {
+      println("inst " + why)
+      return 1
+    }
+    (R.ok, inst) -> {
+      println("inst true ")
+      failed = failed + show_i64("fac5", wasm.call(inst, "fac", [wasm.i64(5)]))
+      failed = failed + show_i64("fac25", wasm.call(inst, "fac", [wasm.i64(25)]))
+      failed = failed + show_i64("sum5", wasm.call(inst, "sum_to", [wasm.i64(5)]))
+      failed = failed + show_i64("sum100", wasm.call(inst, "sum_to", [wasm.i64(100)]))
+    }
+  }
+  return failed
+}
+
+def run() Int64 {
+  var failed = 0
+  case wasm.load(internal.corpus.decode_hex(hex)) {
+    (R.error, why) -> {
+      println("load " + why)
+      failed = failed + 1
+    }
+    (R.ok, module) -> {
+      println("load true ")
+      failed = failed + exercise(module)
+    }
+  }
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

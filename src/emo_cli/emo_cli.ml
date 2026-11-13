@@ -1699,6 +1699,135 @@ let deps =
     (Cmd.info "deps" ~doc:"Manage dependencies.")
     [ deps_add_cmd; deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
+(* `emo wasm run foo.wasm`: the CLI drives its own interpreter over an
+   embedded Emo driver — the compiler never links the runtime, so the
+   step-20 boundary holds in both directions. The artifact's absolute
+   path rides in as a host-injected binding; the driver reads it
+   through `file` and loads it through `wasm`, both from the standard
+   library shipped inside the binary, so a lone `emo` binary runs an
+   artifact with no registry and no project of its own. *)
+let wasm_run =
+  let artifact =
+    Arg.(
+      required
+      & pos 0 (some string) None
+      & info [] ~docv:"ARTIFACT" ~doc:"The .wasm artifact to run.")
+  in
+  let extra =
+    Arg.(
+      value & pos_right 0 string []
+      & info [] ~docv:"ARG"
+          ~doc:
+            "Arguments the module reads through WASI's args_get (argv[0] is \
+             the artifact's name).")
+  in
+  (* proc_exit is the module's own exit decision: its code becomes the
+     command's, silently — the code speaks. *)
+  let proc_exit_code why =
+    let prefix = "emo-wasm: proc_exit(" in
+    let plen = String.length prefix in
+    let n = String.length why in
+    let rec find i =
+      if i + plen > n then None
+      else if String.sub why i plen = prefix then Some i
+      else find (i + 1)
+    in
+    match find 0 with
+    | None -> None
+    | Some i -> (
+        let from = i + plen in
+        let stop =
+          let rec go j =
+            if j >= n then None else if why.[j] = ')' then Some j else go (j + 1)
+          in
+          go from
+        in
+        match stop with
+        | None -> None
+        | Some j ->
+            let digits = String.sub why from (j - from) in
+            if
+              digits = ""
+              || not (String.for_all (fun c -> c >= '0' && c <= '9') digits)
+            then None
+            else Some (int_of_string digits))
+  in
+  let run artifact extra =
+    let abs_artifact =
+      if Filename.is_relative artifact then
+        Filename.concat (Sys.getcwd ()) artifact
+      else artifact
+    in
+    (* proc_exit is the module's own exit decision: its code becomes the
+       command's, silently — the code speaks. The driver marks the verdict
+       with its sentinel line; everything it printed before that (the
+       module's own stdout) goes out first. *)
+    let split_exit body =
+      let sentinel = "emo-wasm: proc_exit(" in
+      let slen = String.length sentinel in
+      let n = String.length body in
+      let rec find i =
+        if i + slen > n then None
+        else if String.sub body i slen = sentinel then find_loop i (i + 1)
+        else find (i + 1)
+      and find_loop start i =
+        if i >= n then None
+        else if body.[i] = ')' then Some (start, i)
+        else find_loop start (i + 1)
+      in
+      match find 0 with
+      | None -> (body, None)
+      | Some (start, stop) ->
+          let digits = String.sub body (start + slen) (stop - (start + slen)) in
+          let tail = String.sub body (stop + 1) (n - stop - 1) in
+          let tail =
+            if tail = "\n" then "" else if tail = "\r\n" then "" else tail
+          in
+          if
+            digits = ""
+            || (not (String.for_all (fun c -> c >= '0' && c <= '9') digits))
+            || tail <> ""
+          then (body, None)
+          else
+            let before = String.sub body 0 start in
+            let before =
+              if
+                before <> ""
+                && String.length before >= 1
+                && before.[String.length before - 1] = '\n'
+              then String.sub before 0 (String.length before - 1)
+              else before
+            in
+            (before, Some (int_of_string digits))
+    in
+    match Emo_project.run_wasm_cli ~artifact:abs_artifact ~args:extra with
+    | Ok body -> (
+        let body, code = split_exit body in
+        print_string body;
+        if body <> "" && body.[String.length body - 1] <> '\n' then
+          print_newline ();
+        match code with Some c -> exit c | None -> Cmd.Exit.ok)
+    | Error (why, partial) -> (
+        if partial <> "" then (
+          print_string partial;
+          if partial.[String.length partial - 1] <> '\n' then print_newline ());
+        match proc_exit_code why with
+        | Some code -> exit code
+        | None ->
+            prerr_endline why;
+            exit 1)
+  in
+  Cmd.v
+    (Cmd.info "run"
+       ~doc:"Run a WebAssembly artifact with the Emo-written runtime.")
+    Term.(const run $ artifact $ extra)
+
+let wasm =
+  Cmd.group
+    (Cmd.info "wasm"
+       ~doc:"Work with WebAssembly artifacts (the Emo-written runtime).")
+    [ wasm_run ]
+
 (* `emo emoji publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
    standard library's own http client, running as an embedded Emo program
@@ -2258,8 +2387,12 @@ let doctor ~(emit : string -> unit) : int =
   else line "beam:" "unavailable — erlc not found";
   if tool_exists "node" then
     line "wasm:"
-      ("ok" ^ tool_version "node" ^ " — `emo run --target wasm` runs it")
-  else line "wasm:" "ok — no external tools needed (Node adds the run path)";
+      ("ok" ^ tool_version "node"
+     ^ " — `emo run --target wasm` runs it; `emo wasm run` needs no tools")
+  else
+    line "wasm:"
+      "ok — no external tools needed; `emo wasm run` executes WebAssembly \
+       artifacts (Node adds the `emo run --target wasm` path)";
   (match riscv_binutils_prefix () with
   | None ->
       line "riscv64:"
@@ -3133,6 +3266,7 @@ let cmd =
       test_cmd;
       build;
       deps;
+      wasm;
       emoji;
       new_cmd;
       doctor_cmd;

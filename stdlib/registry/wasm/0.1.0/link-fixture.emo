@@ -1,0 +1,98 @@
+// The linking fixture (T22.8), riding the step-72 public surface:
+// module B imports a table and a function from module A (registered by
+// name), calls A's function directly, and calls through the shared
+// table indirectly. A missing import is a link failure.
+
+const a_hex = "0061736d010000000105016000017f030403000000040401700002070f0203746162010005736576656e00020908010041000b0200010a1003040041070b040041080b040010000b"
+const b_hex = "0061736d010000000105016000017f02150201410374616201700002014105736576656e0000030302000007160206646972656374000109696e6469726563743100020a0e02040010000b070041011100000b"
+const c_hex = "0061736d010000000105016000017f020d01074d697373696e6701780000"
+
+def show_i32(label String, r (R, Array[(Int64, Int64)])) Int64 {
+  case r {
+    (R.error, why) -> {
+      println(label + " " + why)
+      return 1
+    }
+    (R.ok, results) -> {
+      case wasm.as_i32(results[0]) {
+        (R.error, why) -> {
+          println(label + " " + why)
+          return 1
+        }
+        (R.ok, v) -> {
+          println(label + " " + v.to_string())
+          return 0
+        }
+      }
+    }
+  }
+}
+
+def link_b(module Int64) Int64 {
+  var failed = 0
+  case wasm.instantiate(module, []) {
+    (R.error, why) -> {
+      println("B " + why)
+      failed = failed + 1
+    }
+    (R.ok, b) -> {
+      println("B true ")
+      failed = failed + show_i32("direct", wasm.call(b, "direct", []))
+      failed = failed + show_i32("indirect1", wasm.call(b, "indirect1", []))
+    }
+  }
+  return failed
+}
+
+def run() Int64 {
+  var failed = 0
+  case wasm.load(internal.corpus.decode_hex(a_hex)) {
+    (R.error, why) -> {
+      println("load A " + why)
+      failed = failed + 1
+    }
+    (R.ok, a_module) -> {
+      case wasm.instantiate(a_module, []) {
+        (R.error, why) -> {
+          println("A " + why)
+          failed = failed + 1
+        }
+        (R.ok, a) -> {
+          println("A true ")
+          wasm.register_instance(a, "A")
+          case wasm.load(internal.corpus.decode_hex(b_hex)) {
+            (R.error, why) -> {
+              println("load B " + why)
+              failed = failed + 1
+            }
+            (R.ok, b_module) -> {
+              failed = failed + link_b(b_module)
+            }
+          }
+        }
+      }
+    }
+  }
+  // The missing import is a link failure, never a raise.
+  case wasm.load(internal.corpus.decode_hex(c_hex)) {
+    (R.error, why) -> {
+      println("load C " + why)
+      failed = failed + 1
+    }
+    (R.ok, c_module) -> {
+      case wasm.instantiate(c_module, []) {
+        (R.error, why) -> {
+          println("missing false " + why)
+        }
+        (R.ok, _) -> {
+          println("missing true")
+          failed = failed + 1
+        }
+      }
+    }
+  }
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

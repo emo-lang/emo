@@ -1,0 +1,157 @@
+require "wasm"
+
+// The wasm_demo example: the whole step-72 ladder in one program —
+// load a module from bytes, serve its imports with Emo closures,
+// instantiate, call its exports, and move bytes through the linear
+// memory from both sides. The module is a reviewable hex constant:
+//
+// (type (func (param i32)) (func (param i32 i32)) (func (param i32)
+//        (result i32)) (func (result i32)) (func (result i64)))
+// (import "env" "log" (func (param i32)))
+// (memory 1)
+// (func (export "put") (param i32 i32) local.get 0 local.get 1 i32.store)
+// (func (export "get") (param i32) (result i32) local.get 0 i32.load)
+// (func (export "first_byte") (result i32) i32.const 0 i32.load8_u)
+// (func (export "greet") (result i32) i32.const 7 (call 0) i32.const 7)
+// (func (export "wide") (result i64) i64.const 1234567890123)
+const mod_hex = "0061736d0100000001170560017f0060027f7f0060017f017f6000017f6000017e020b0103656e76036c6f670000030605010203030405030100010729050370757400010367657400020a66697273745f6279746500030567726565740004047769646500050a2e050900200020013602000b070020002802000b070041002d00000b08004107100041070b090042cb89ec8ff7230b"
+
+def nibble(b Int64) Int64 {
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  return 0 - 1
+}
+
+def module_bytes(hex String) Bytes {
+  const src = hex.to_bytes()
+  const out = Bytes.new(src.length() / 2)
+  var i = 0
+  while i < out.length() {
+    const hi = nibble(src.get(i * 2))
+    const lo = nibble(src.get(i * 2 + 1))
+    out.set(i, hi * 16 + lo)
+    i = i + 1
+  }
+  return out
+}
+
+def call_i32(label String, inst Int64, name String, args Array[(Int64, Int64)]) Int64 {
+  var failed = 0
+  case wasm.call(inst, name, args) {
+    (R.error, why) -> {
+      println(label + " " + why)
+      failed = 1
+    }
+    (R.ok, results) -> {
+      case wasm.as_i32(results[0]) {
+        (R.error, why) -> {
+          println(label + " " + why)
+          failed = 1
+        }
+        (R.ok, v) -> {
+          println(label + " " + v.to_string())
+        }
+      }
+    }
+  }
+  return failed
+}
+
+def call_i64(label String, inst Int64, name String, args Array[(Int64, Int64)]) Int64 {
+  var failed = 0
+  case wasm.call(inst, name, args) {
+    (R.error, why) -> {
+      println(label + " " + why)
+      failed = 1
+    }
+    (R.ok, results) -> {
+      case wasm.as_i64(results[0]) {
+        (R.error, why) -> {
+          println(label + " " + why)
+          failed = 1
+        }
+        (R.ok, v) -> {
+          println(label + " " + v.to_string())
+        }
+      }
+    }
+  }
+  return failed
+}
+
+// The instance side of the demo: the host writes the module's memory
+// and the wasm side reads it, the wasm side runs and prints through
+// the host closure, the wasm side stores and the host reads it back,
+// and an i64 export rides the same value model.
+def demo(inst Int64) Int64 {
+  var failed = 0
+  case wasm.write_memory(inst, 0, "EMO".to_bytes()) {
+    (R.error, why) -> {
+      println("write " + why)
+      failed = failed + 1
+    }
+    (R.ok, n) -> {
+      println("write " + n.to_string())
+    }
+  }
+  failed = failed + call_i32("first_byte", inst, "first_byte", [])
+  failed = failed + call_i32("greet", inst, "greet", [])
+  case wasm.call(inst, "put", [wasm.i32(16), wasm.i32(123456)]) {
+    (R.error, why) -> {
+      println("put " + why)
+      failed = failed + 1
+    }
+    (R.ok, _) -> {
+      println("put ok")
+    }
+  }
+  failed = failed + call_i32("get", inst, "get", [wasm.i32(16)])
+  case wasm.read_memory(inst, 16, 4) {
+    (R.error, why) -> {
+      println("read " + why)
+      failed = failed + 1
+    }
+    (R.ok, data) -> {
+      println("memory " + data.get_u32_le(0).to_string())
+    }
+  }
+  failed = failed + call_i64("wide", inst, "wide", [])
+  return failed
+}
+
+def run() Int64 {
+  const log = -> (args Array[(Int64, Int64)]) {
+    println("env log " + args[0][1].to_string())
+    return wasm.i64(0)
+  }
+  var failed = 0
+  case wasm.load(module_bytes(mod_hex)) {
+    (R.error, why) -> {
+      println("load " + why)
+      failed = 1
+    }
+    (R.ok, module) -> {
+      println("load ok")
+      case wasm.instantiate(module, [("env", "log", log)]) {
+        (R.error, why) -> {
+          println("inst " + why)
+          failed = 1
+        }
+        (R.ok, inst) -> {
+          println("inst ok")
+          failed = demo(inst)
+        }
+      }
+    }
+  }
+  return failed
+}
+
+run()

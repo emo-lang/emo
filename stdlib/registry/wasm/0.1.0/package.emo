@@ -1,0 +1,9 @@
+package {
+  name = "wasm"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "rand" = "0.1.0"
+  }
+}
