@@ -259,6 +259,19 @@ export const emoImports = () => ({
       return [1, pending.length];
     }
   },
+  // The clock half of the time package. The wall clock answers UTC
+  // epoch milliseconds — Date.now is exactly that — and the monotonic
+  // clock answers nanoseconds floor'd from performance.now()'s
+  // milliseconds, the reading binary64 can carry. The timing half has
+  // no import: the driver runs the whole program synchronously inside
+  // one call to main, so a sleep cannot park, and the guest raises at
+  // the call instead.
+  time_now_ms: () => {
+    return BigInt(Date.now());
+  },
+  time_mono_ns: () => {
+    return BigInt(Math.trunc(performance.now() * 1e6));
+  },
 });
 export const setMemory = (m) => {
   mem = m;

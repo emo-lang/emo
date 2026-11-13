@@ -65,10 +65,10 @@ packages.
   the `to_string` protocol, sorts through `compare`, and crosses
   process boundaries as a value. The 16 raw bytes stay one
   `to_bytes()` away for storage (the RFC's Section 6.13 advice).
-- **v7's clock is the caller's, and the time is a parameter.** Emo has
-  no clock primitive — the stance `slog` records and `httpd`'s
-  `with_date` follows — so `v7(now_ms Int64)` takes the Unix time in
-  milliseconds. 74 random bits fill the rest, the RFC's base shape
+- **v7's clock is the caller's, and the time is a parameter.** The
+  caller reads `time.now()` and passes it in — the `httpd` `with_date`
+  shape, the package stays clock-free — so `v7(now_ms Int64)` takes the
+  Unix time in milliseconds. 74 random bits fill the rest, the RFC's base shape
   (Section 5.7); no generator state, no hidden counter — the
   monotonicity methods of Section 6.2 are the caller's to run, and two
   same-millisecond draws are distinct but not ordered. A negative

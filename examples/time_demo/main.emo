@@ -1,0 +1,75 @@
+require "time"
+
+// The time package's golden: every part of it that can be pinned is a
+// fixed moment built from parts, so the whole walk is deterministic.
+// The clock's real readings never print — a live wall clock answers
+// something else on every machine — and the timing family's runs end
+// in bounded processes, so the demo terminates on every target.
+
+// The heartbeat's process: three ticks, then the block ends the
+// ticking process with halt() — the stop a tick offers — and hands the
+// owner a done.
+def heart(total Int64, owner Pid) Void {
+  const count = Box.new(0)
+  time.tick(0.05) {
+    count.replace(count.read() + 1)
+    println("tick ${count.read()}")
+    if count.read() == total {
+      owner <- ("demo", "done")
+      halt()
+    }
+  }
+}
+
+// ---- a fixed moment, built from parts ----
+const launch = time.of(year: 2026, month: 11, day: 13, hour: 8, minute: 30, second: 15, ms: 123)
+println(launch.format_iso())
+println(launch.format("YYYY-MM-DD hh:mm:ss"))
+println(launch.format_http())
+println(launch.format("DD/MM/YYYY"))
+println(launch.format("Mmm"))
+
+// ---- the calendar fields ----
+println(launch.year())
+println(launch.month())
+println(launch.day())
+println(launch.hour())
+println(launch.minute())
+println(launch.second())
+println(launch.millisecond())
+println(launch.weekday())
+
+// ---- the differences ----
+const later = time.of(year: 2026, month: 11, day: 15, hour: 8, minute: 30, second: 15, ms: 123)
+println(time.days_between(launch, later))
+println(time.hours_between(launch, later))
+println(time.seconds_between(launch, later))
+println(time.ms_between(launch, later))
+println(launch.before?(later))
+println(launch.after?(later))
+
+// ---- the conversions and the arithmetic ----
+println(time.days(2))
+println(time.weeks(1))
+println(launch.add(time.hours(25)).format("YYYY-MM-DD hh:mm:ss"))
+
+// ---- the monotonic clock measures an interval ----
+const start = time.mono()
+time.sleep(0.02)
+println(time.mono() > start)
+
+// ---- the timing family ----
+// The heartbeat runs its three ticks in its own process; the root
+// parks on the done report and goes on.
+do heart(3, self_pid())
+receive {
+  ("demo", "done") -> { println("the heartbeat ended") }
+}
+
+// The scheduled one-shot: fires once, 0.15 seconds out, and the root's
+// own sleep keeps the program alive until it has.
+time.after(0.15) {
+  println("after fired")
+}
+time.sleep(0.4)
+println("the end")

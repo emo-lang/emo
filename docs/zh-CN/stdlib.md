@@ -52,6 +52,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
+| [`time`](#time-包) | 墙钟、单调时钟、日历与定时家族 | `ocaml`、`c`、`typescript`、`wasm`（时钟半）、`beam` |
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
 | [`sqlite3`](#sqlite3-包) | SQLite:预备语句、逐行步进 | `c` |
 | [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
@@ -262,7 +263,7 @@ r = r.handle("/static/", serve_static) // 全方法,其下整棵子树
 const server = httpd.serve_routes(listener, r)
 ```
 
-最具体的模式胜出(字面量 > 通配 > rest,共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本,连接关闭);语言没有时钟,响应默认不带 `Date`,除非经 `with_date` 注入。
+最具体的模式胜出(字面量 > 通配 > rest,共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本,连接关闭);包本身不碰时钟——`Date` 头需要调用方选定的时区,所以响应默认不带,除非经 `with_date` 注入(`time` 包的 UTC 时钟提供仪器)。
 
 目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 指南:[`docs/zh-CN/httpd-guide.md`](httpd-guide.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
 
@@ -510,7 +511,7 @@ def ns_oid() Uuid
 def ns_x500() Uuid
 ```
 
-`Uuid` 值自己渲染自己——`to_string` 是协议方法,`println(id)` 打印小写的 hex-and-dash 形式——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`,以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式,十六进制不区分大小写,每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间——语言没有时钟——骑 74 个随机位,负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门,四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`,任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内,参考文档里点名。
+`Uuid` 值自己渲染自己——`to_string` 是协议方法,`println(id)` 打印小写的 hex-and-dash 形式——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`,以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式,十六进制不区分大小写,每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟(`time.now()`)取 Unix 毫秒时间,骑 74 个随机位,负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门,四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`,任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内,参考文档里点名。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/uuid.md`](stdlib/uuid.md) · 示例:`examples/uuid_demo`。
 
@@ -727,6 +728,46 @@ wg.stop()
 目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
 [`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例:
 `examples/sync_demo`。
+
+## time 包
+
+时钟:`time.now()` 读操作系统的墙钟(UTC 纪元毫秒的 `Time`),
+`time.mono()` 读单调时钟(纳秒——流逝测量的仪器),日历字段、格
+式化和差距都是读数之上的纯 Emo,golden 能钉住的地方逐字节相同。
+定时家族说秒,和 `net` 的超时一样:`time.sleep(0.25)` 泊车进程;
+`time.after(0.5) { ... }` 把块跑一次、自己的进程;`time.tick(3)
+{ ... }` 是调用进程的心跳——每三秒、永远,块自己的 `halt()` 是停
+止。
+
+```emo
+require "time"
+
+const t = time.now()
+println(t.format_iso())                  // 2026-11-13T08:30:15.123Z
+println(t.format("Www, DD Mmm YYYY"))    // Fri, 13 Nov 2026
+println(t.format_http())                 // Fri, 13 Nov 2026 08:30:15 GMT
+println(t.weekday())                     // 5 —— 星期五
+
+const later = time.of(year: 2026, month: 11, day: 15, hour: 8, minute: 30, second: 15, ms: 123)
+println(time.days_between(t, later))     // 2
+println(time.hours_between(t, later))    // 48
+
+const start = time.mono()
+time.sleep(0.25)
+println(time.mono() > start)             // true
+```
+
+格式化是严格的记号排版,不是 Go 的参考时间——九个记号
+(`YYYY MM DD hh mm ss mmm Mmm Www`),其余是字面量,没拼成完整记号
+的记号字母抛出并点名字节——日历永远是 UTC,所以排版的输出能进
+golden。区间截断到整毫秒(诚实的下限),其余的拒绝:负的或非有限
+的区间、越过 1e9 秒上限的区间,抛出。
+
+目标:`["ocaml", "c", "typescript", "wasm", "beam"]`——时钟半在
+wasm 上经由两个宿主导入运行,定时半在那里于调用处抛出(wasm 驱动
+在一次宿主调用内同步跑完);`riscv64` 和 `browser` 不声明。参考:
+[`docs/zh-CN/stdlib/time.md`](stdlib/time.md) · 示例:
+`examples/time_demo`。
 
 ## sql 包
 

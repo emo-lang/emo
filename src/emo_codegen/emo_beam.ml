@@ -578,6 +578,19 @@ let rec expr env (x : Emo_ir.expr) : unit =
          'erlang':'put'(_rand_k, call 'crypto':'strong_rand_bytes'(";
       expr env n;
       put env ")) { {'emo_enum', 'R', 'ok'}, {'emo_bytes', _rand_k} }"
+  | Runtime_impl { name = "time_now_ms"; args = [] } ->
+      (* the wall clock: the BEAM's own, UTC epoch milliseconds, the
+         reading every other target answers *)
+      put env "call 'os':'system_time'('millisecond')"
+  | Runtime_impl { name = "time_mono_ns"; args = [] } ->
+      (* the monotonic clock, nanoseconds: the BEAM's own *)
+      put env "call 'erlang':'monotonic_time'('nanosecond')"
+  | Runtime_impl { name = "time_sleep_ms"; args = [ ms ] } ->
+      (* the sleep park: timer:sleep blocks the Erlang process, yielding
+         to its peers exactly the way a park does *)
+      put env "call 'timer':'sleep'(";
+      expr env ms;
+      put env ")"
   | Runtime_impl { name; _ } ->
       raise
         (Emo_ir.Lower_error
@@ -2054,7 +2067,10 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
 
 and emit_pattern env (p : Emo_ast.pattern) : unit =
   match p.Emo_ast.pattern_desc with
-  | Emo_ast.Wildcard -> put env "_"
+  | Emo_ast.Wildcard ->
+      (* Core Erlang has no wildcard: every `_` is a variable, so two in
+         one pattern must carry distinct names *)
+      put env (fresh_var env "_")
   | Emo_ast.Pattern_binding name ->
       let v = fresh_var env name in
       put env v

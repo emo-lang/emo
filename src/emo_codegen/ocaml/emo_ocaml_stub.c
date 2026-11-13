@@ -8,13 +8,18 @@
    Emo-level wait_* decoders would read the wrong number. The stub
    answers the kernel's own status word, the same encoding the c
    runtime's waitpid returns, so the decoders and the runner's verdicts
-   are byte-identical across the interpreter and both targets. */
+   are byte-identical across the interpreter and both targets. The same
+   file carries the monotonic clock, which the Unix module does not wrap
+   either: clock_gettime(CLOCK_MONOTONIC), nanoseconds, the same
+   instrument the interpreter and the c runtime read. */
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
+#include <caml/alloc.h>
 #include <caml/unixsupport.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/wait.h>
 
 CAMLprim value emo_stub_setpgid(value v_pid, value v_pgid) {
@@ -33,4 +38,13 @@ CAMLprim value emo_stub_waitpid(value v_pid) {
   caml_leave_blocking_section();
   if (r < 0) unix_error(errno, "waitpid", Nothing);
   CAMLreturn(Val_int(st));
+}
+
+CAMLprim value emo_stub_monotonic_ns(value v_unit) {
+  CAMLparam1(v_unit);
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+    unix_error(errno, "clock_gettime", Nothing);
+  CAMLreturn(
+      caml_copy_int64((int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec));
 }

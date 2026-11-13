@@ -659,6 +659,7 @@ let beam_goldens =
     "template_edge";
     "slog_demo";
     "sync_demo";
+    "time_demo";
     "printf_demo";
     "loops";
     "error_matching";
@@ -869,6 +870,10 @@ let c_goldens =
     "template_demo";
     "template_edge";
     "sync_demo";
+    (* time_demo: the wall clock's deterministic half, the calendar
+       fields, the timing family's bounded runs — the heartbeat's halt
+       is the stop a tick offers *)
+    "time_demo";
     "slog_demo";
     "bufio_demo";
     "printf_demo";

@@ -29,6 +29,30 @@ let _host: EHost;
 // awaits it.
 const _hostMethodMiss = Symbol("host method miss");
 
+// The timing half of the time package: the sleep both hosts share. The
+// timer rides the event loop, so the parked task yields to every other
+// task while it waits; the active-timer set is what a Node shutdown
+// clears, so a task parked past the root's end never holds the loop
+// open. Node clamps one timer at 2^31-1 ms, so a longer sleep re-arms
+// in slices and the contract holds.
+const _sleepTimers = new Set<ReturnType<typeof setTimeout>>();
+
+async function sleepMs(ms: number): Promise<void> {
+  if (!(ms >= 0) || !Number.isFinite(ms)) {
+    throw new Error("`time_sleep_ms` expects a non-negative millisecond count");
+  }
+  if (ms === 0) return;
+  const slice = ms > 2147483647 ? 2147483647 : ms;
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(() => {
+      _sleepTimers.delete(t);
+      resolve();
+    }, slice);
+    _sleepTimers.add(t);
+  });
+  if (ms > slice) await sleepMs(ms - slice);
+}
+
 const _mailboxes = new Map<number, any[]>();
 const _waiters = new Map<number, (msg: any) => void>();
 let _nextPid = 1;

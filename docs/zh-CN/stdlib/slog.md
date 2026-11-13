@@ -47,9 +47,10 @@ def error(handle String, msg String, attrs Map[String, String])
 
 ## 记录
 
-记录写到 stdout,每条一次 `println`,不带时间戳:Emo 没有时钟,
-确定性的输出比调用者不得不伪造的戳记更值钱。手上有时间的调用者,
-把它当作普通属性传进来即可。
+记录写到 stdout,每条一次 `println`,不带时间戳:记录格式不拥有的
+戳记,会让同一条记录在不同目标、在测试里打印得不一样,确定性的输
+出比这更值钱。手上有时间的调用者(`time.now()` 会回答),把它当
+作普通属性传进来即可。
 
 logfmt 格式:
 

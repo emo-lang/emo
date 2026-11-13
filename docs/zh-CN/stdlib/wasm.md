@@ -130,7 +130,7 @@ emo wasm run demo.wasm
 | `fd_close`、`fd_seek` | 1/2 上无操作成功 / ESPIPE,其余 EBADF |
 | `fd_fdstat_get` | fd 1/2 应答字符设备带全权(wasi-libc 启动时的 tty 探测读的就是它) |
 | `random_get` | 经 `rand` 包的 OS 熵(真 hello world 里 Rust 的 `RandomState` 就靠它播种) |
-| `clock_time_get` | ENOSYS——语言还没有时钟原语 |
+| `clock_time_get` | ENOSYS——fixture 钉住这个拒绝;`time` 包经自己的两个导入读时钟 |
 | `sched_yield` | 成功 |
 
 解析序:显式宿主表最先(调用者可覆盖任何 `wasi_snapshot_preview1` import),然后 wasi 宿主,再 register 命名空间,再 `spectest`。import 签名对着表逐项检查——签错的 import 什么都绑不上。errno 值是 preview1 的编号(EBADF 8、EINVAL 28、ENOSYS 51、ESPIPE 69),由包的 fixture 钉死。

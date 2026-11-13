@@ -81,6 +81,7 @@ The packages:
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
+| [`time`](#the-time-package) | the wall clock, the monotonic clock, the calendar, and the timing family | `ocaml`, `c`, `typescript`, `wasm` (clock half), `beam` |
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
 | [`sqlite3`](#the-sqlite3-package) | SQLite: prepared statements, stepped rows | `c` |
 | [`postgres`](#the-postgres-package) | PostgreSQL client over libpq: `$1` params, value errors | `c` |
@@ -374,8 +375,9 @@ a shared prefix); a shape matched with another method answers 405 with
 `Allow`; `//`, `.`, and `..` answer 301 to the cleaned path. Patterns
 parse at registration — malformed or conflicting ones raise. The peer's
 malformed bytes are values (400/431/413 plain text, connection closed);
-the language has no clock, so responses carry no `Date` unless one is
-injected through `with_date`.
+the package stays clock-free — a `Date` header needs a caller-chosen
+zone, so responses carry none unless one is injected through
+`with_date` (the `time` package's UTC clock answers the instrument).
 
 Targets: `["ocaml", "c", "typescript"]`. Reference:
 [`docs/stdlib/httpd.md`](stdlib/httpd.md) · Guide:
@@ -781,7 +783,7 @@ form, hex case-insensitive, and every rejection names the first
 offending byte; a wrong `from_bytes` length is refused the same way.
 `v4` draws 122 random bits from the operating system's entropy;
 `v7(now_ms)` takes the Unix time in milliseconds from the caller's
-own clock — the language has none — over 74 random bits, raising on a
+own clock (`time.now()`) over 74 random bits, raising on a
 negative or 48-bit-overflowing timestamp; `v3` and `v5` are the
 deterministic name-based doors over `crypto.legacy`'s digests, the
 four IANA namespace IDs beside them as `ns_dns`/`ns_url`/`ns_oid`/
@@ -1099,6 +1101,51 @@ application's own messages.
 Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
 [`docs/stdlib/sync.md`](stdlib/sync.md) · Demo:
 `examples/sync_demo`.
+
+## The `time` package
+
+The clock: `time.now()` reads the OS's wall clock (a `Time` of UTC
+epoch milliseconds), `time.mono()` reads the monotonic clock
+(nanoseconds — the elapsed-time instrument), and the calendar fields,
+formatting, and differences are pure Emo over the reading, byte-identical
+wherever a golden can pin them. The timing family speaks seconds, like
+`net`'s timeouts: `time.sleep(0.25)` parks the process;
+`time.after(0.5) { ... }` runs the block once, its own process; and
+`time.tick(3) { ... }` is the calling process's heartbeat — every three
+seconds, forever, the block's own `halt()` the stop.
+
+```emo
+require "time"
+
+const t = time.now()
+println(t.format_iso())                  // 2026-11-13T08:30:15.123Z
+println(t.format("Www, DD Mmm YYYY"))    // Fri, 13 Nov 2026
+println(t.format_http())                 // Fri, 13 Nov 2026 08:30:15 GMT
+println(t.weekday())                     // 5 — Friday
+
+const later = time.of(year: 2026, month: 11, day: 15, hour: 8, minute: 30, second: 15, ms: 123)
+println(time.days_between(t, later))     // 2
+println(time.hours_between(t, later))    // 48
+
+const start = time.mono()
+time.sleep(0.25)
+println(time.mono() > start)             // true
+```
+
+Formatting is a strict token layout, not Go's reference time — nine
+tokens (`YYYY MM DD hh mm ss mmm Mmm Www`), everything else literal,
+a token letter that opens no complete token raises naming the byte —
+and the calendar is UTC always, so a layout's output rides a golden.
+Intervals truncate to whole milliseconds (the honest floor) and refuse
+the rest: a negative or non-finite interval and anything past the
+1e9-second ceiling raise.
+
+Targets: `["ocaml", "c", "typescript", "wasm", "beam"]` — the clock
+half runs on wasm through two host imports, and the timing half raises
+at the call there (the wasm driver is synchronous inside one host
+call); `riscv64` and `browser` stay undeclared. Reference:
+[`docs/stdlib/time.md`](stdlib/time.md) · Demo:
+`examples/time_demo`.
 
 ## The `sql` package
 

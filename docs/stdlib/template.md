@@ -224,8 +224,9 @@ code-generation templates close nested braces in their static text.
   (pure Emo over strings, arrays, and the json tree).
 - **Templates live in strings** — a file's text rides `file.read` into
   the same `with` call; the package reads no filesystem of its own.
-- **The language has no clock**, so there is no date filter; a
-  timestamp arrives as data and is formatted by the program.
+- **There is no date filter** — a timestamp arrives as data (the
+  `time` package's `format` family does the formatting in the
+  program), keeping the filter table fixed and ASCII-safe.
 - `escape_html` is explicit, not automatic — contextual HTML
   auto-escaping (the `html/template` machine) is a later arc, with the
   `dom` package as the likely foundation.

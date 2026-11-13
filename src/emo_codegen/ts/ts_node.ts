@@ -946,6 +946,17 @@ function nodeMethod(recv: any, name: string, args: any[]): any {
 
 function nodeRuntimeImpl(name: string, args: any[]): any {
   switch (name) {
+    case "time_now_ms":
+      // The wall clock, UTC epoch milliseconds: Date.now is exactly
+      // that, and the answer rides the Int64 shape.
+      return BigInt(Date.now());
+    case "time_mono_ns":
+      // The monotonic clock, nanoseconds: hrtime's bigint is exact.
+      return process.hrtime.bigint();
+    case "time_sleep_ms":
+      // Park the task: the timer rides the event loop (sleepMs), and
+      // the promise the emitter awaits is the park.
+      return sleepMs(Number(args[0]));
     case "rand_bytes": {
       // The rand package's entropy source: Node's CSPRNG. The answer is
       // Bytes — a JS string cannot carry raw bytes — and a refused
@@ -1032,6 +1043,11 @@ function nodeRuntimeImpl(name: string, args: any[]): any {
 // then drains: the handles are closed, the timers are cleared, and the
 // pending resumptions unwinding at _endIfShutdown leave nothing behind.
 function nodeShutdown(): void {
+  // The sleep timers a parked task still waits on: cleared, so the
+  // root's end never holds the loop open behind a task the program has
+  // already dropped.
+  for (const t of _sleepTimers) clearTimeout(t);
+  _sleepTimers.clear();
   netShutdown();
 }
 

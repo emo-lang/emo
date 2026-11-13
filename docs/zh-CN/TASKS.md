@@ -60,6 +60,7 @@
 | M39 — 文本模板 | 78 | `template` 包——从 `json` 上下文渲染带洞的文本,Go `text/template` 的机制、Emo 自己的表面,纯 Emo 写在共享运行时之上,五个托管目标逐字节一致:一次成型的 `render` 与解析一次渲染多次的 `Set`(new/with/render),`{{ }}` 数据洞配裸点分路径与七个 ASCII 安全的过滤器管道,`if`/`else if`/`else`/`end` 配"不是零值"的真值,数组与对象上的 `for` 带 `else`,`template` 引用(绑定不过边,深度上限点名链条),`{{- `-` -}}` 修剪标记与 `{{! }}` 注释;解析与渲染都从严,每次失败都是带字节位置的理由。两个 golden 冲出来的后端 bug:IR 的模块级 def mangle 漏了 `sanitize_ident`(`?` 后缀漏进 TS/OCaml 标识符),BEAM 发射器的 threaded-chain case 在 per-branch save 之前注册模式绑定——兄弟分支的绑定泄漏进后继 continuation 的 live 集,erlc 报 unbound variable。 |
 | M40 — repl 的行编辑器 | 79 | 交互会话迎来真正的编辑器:vendored 的上游 linenoise(BSD-2,钉在 `a473823d`,两处显式补丁——临时历史条目在 Ctrl-C 与输入结束时按 ENTER 的方式弹栈,阻塞读的判定 errno 越过 stop 的终端探测存活)经 dune 的 `foreign_stubs` 编进 CLI——OCaml CLI 链接的第一份 C——藏在一个绑定模块后面,其桩把库的 errno 判定映射为 OCaml 变体;输入 seam 携带提示文本,并把完成的一行、Ctrl-C 的放弃、输入的结束区分开;编辑器只在 stdin 与 stdout 都是终端时入座,管道与重定向保持普通路径逐字节不变;历史按行存储,会话结束存入 state 文件(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`),读不动写不进在 stderr 上警告、文件缺失沉默;Ctrl-C 放弃当前待输入而非杀死进程;续行提示按每个未闭合括号缩进两个空格;测试经上游的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实的 C 编辑器——敲入的行、上箭头召回、不漏空条目的打断、以及两会话的持久化往返(`CHECK.md`)。 |
 | M41 — 标准库:`uuid` | 80 | `uuid` 包:RFC 9562 的标识符是一个不可变的 16 字节 `Uuid` 值,经 `to_string` 协议方法自我渲染,回答 `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?`,并按 RFC 6.11 的大端 `compare` 排序;`v4` 经 `rand.bytes` 抽 122 个随机位,`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间骑 74 个随机位(负数或超出 48 位的时间戳 raise),`v3`/`v5` 是骑 `crypto.legacy` 的确定性 name-based 门,表 3 的四个 IANA namespace ID 在旁;`parse` 恰好接受规范的 36 字符形式,数字不区分大小写,每次拒绝点名第一个出错的字节,`from_bytes` 拒绝非 16 的长度;作用域对齐 Go 标准 `uuid` 的骨架,v1/v2/v6 与 v8 构造器点名不在包内;`uuid_demo` 骑 RFC 的向量、随机的门只打印结构,五个 target 名单逐字节一致(`CHECK.md`)。 |
+| M42 — 时钟与心跳 | 81 | `time` 包:墙钟与单调时钟经三个运行时门(`time_now_ms`、`time_mono_ns`、`time_sleep_ms`),其余一切是门上的纯 Emo——UTC 纪元毫秒的 `Time`,日历字段用纯 Emo 计算(Hinnant 的民用历算术),`mono()` 是显式的单调仪器,时长是普通 Int64 毫秒、转换家族(`time.seconds(n)` ……)扮演常量的角色,严格的九记号排版格式化(永远 UTC,`format_iso`/`format_http` 是预设,畸形记号点名字节抛出),以及说秒的定时家族——`sleep` 是精确的泊车(消息只排队,不唤醒),`after` 是自己进程里的排定单发,`tick` 是调用进程永不返回的心跳、块自己的 `halt()` 是停止;wasm 上时钟半经两个宿主导入,定时半在调用处抛出点名能力(os 进程半的先例);golden 冲出一个编译器结构缺口与四个发射器 bug——IR 的 Void 函数体出口位置的裸尾调用被降成 Effect,对每个后端的尾调用机器都不可见(现在降成本来的 Return,C 发射器的 Void return 路径发射它携带的表达式、不再把答案自己的声明重复入池,解释器的帧把 tailness 穿过语句走查),c 后端的 Void return 弃用路径把声明两次入池(emosh 因重复释放的 builder 单元段错误),c 后端的闭包捕获从没走过 `Send` 语句的操作数(只把要发送的 pid 当捕获的块现在能捕获了),TS 发射器的 `receive` 语句没带结尾 `;`(后面一个以 `(` 开头的语句被解析成调用),以及 BEAM 的通配符(一个模式里的两个 `_` 现在降成不同的新变量)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -2012,7 +2013,7 @@ linenoise 编辑输入——跨会话持久化的方向键历史召回、长行�
       `parse`(恰好规范的 36 字符形式,数字不区分大小写,如 RFC
       自己的 ABNF 所读,点名第一个出错的字节),`v4`(经
       `rand.bytes` 抽 122 个随机位,熵的 reason 原样透传),
-      `v7(now_ms)`(调用方的时钟——语言没有——48 位 Unix 时间骑
+      `v7(now_ms)`(调用方的时钟——`time.now()`——48 位 Unix 时间骑
       74 个随机位;负数或超出 48 位的时间戳 raise,即公元 10889
       的界限),`v3`/`v5` 走 `crypto.legacy` 的 MD5 与 SHA-1(确
       定性;namespace 字节接 name 的 UTF-8 字节;任意 `Uuid` 都
@@ -2039,4 +2040,75 @@ linenoise 编辑输入——跨会话持久化的方向键历史召回、长行�
 - [x] **T80.4** — 文档:`docs/stdlib/uuid.md` EN+zh;`docs/
       stdlib.md` 的行与节 EN+zh;README 参考名单 EN+zh;
       TASKS/plan/CHECK 更新。
+
+## M42 — 时钟与心跳
+
+### 步骤 81 — 标准库:`time`
+
+**前置:** 步骤 12(定时家族泊车的进程)。**完成条件:**
+`require "time"` 给程序墙钟(`time.now()`,UTC 纪元毫秒的 `Time`,
+日历字段用纯 Emo 计算)、单调时钟(`time.mono()`,纳秒)、严格的
+九记号排版格式化(`format`/`format_iso`/`format_http`,永远
+UTC)、普通 Int64 毫秒上的 between 与转换家族,以及说秒的定时家
+族——`sleep`、`after`、`tick`——可钉住的部分在解释器、ocaml、
+c、typescript、beam 上逐字节相同,wasm 目标经两个宿主导入承载时钟
+半、在调用处抛出定时半;演示 golden(`examples/time_demo`)上
+bootstrap、c、typescript、beam 四个名单;文档 EN+zh。
+
+- [x] **T81.1** — 门:checker 的表、解释器的帧绑定与分发臂、
+      `Sleep` effect 走两个 OCaml 调度器(解释器的 `emo_sched_det`
+      与编译运行时自己的)、两个运行时旁边的 POSIX 单调时钟桩
+      (`emo_posix_stub.c`、`emo_ocaml_stub.c`)、C 运行时的三个函数
+      加调度器里的睡眠泊车(send 永不唤醒睡眠者)、wasm 的导入对与
+      定时拒绝、TypeScript 宿主的三个臂(Node 与浏览器,shutdown
+      清睡眠计时器)、BEAM 的降级臂(`os:system_time`、
+      `erlang:monotonic_time`、`timer:sleep`)。
+- [x] **T81.2** — 包:`stdlib/registry/time/0.1.0`——`Time` 类
+      (UTC 日历字段、`format`、预设)、转换家族、
+      `now`/`of`/`of_ms`/`mono`、定时家族、between 家族——门之上
+      的纯 Emo。
+- [x] **T81.3** — golden:`examples/time_demo`——从字段构造的固定
+      时刻、每个格式记号、日历字段、between 家族、转换、一次睡眠
+      前后的 `mono`、以块的 `halt` 收尾的三次 tick、一次
+      `after`——上 bootstrap、c、typescript、beam 名单。
+- [x] **T81.4** — 文档:`docs/stdlib/time.md` + zh-CN 镜像、
+      `docs/stdlib.md` 的表行 + 小节 + 镜像、demo-targets 的导入
+      表、以及把过时的"没有时钟"立场更新为点名归属(slog 的记
+      录、httpd 的 `Date` 段、template 参考的边界列表)。
+- [x] **T81.5** — 跟踪:`plan/step-81-stdlib-time.md`、
+      `plan/README.md` 的里程碑 bullet 与状态行、`docs/TASKS.md` 的
+      M42 节 + zh 镜像、CHECK.md 的定案记录。
+
+### 在这里发现并修掉
+
+- **IR 的 Void 函数体出口位置把裸尾调用降成了 Effect,而每个后端
+  的尾调用机器都只认 `Return_stmt (Call f)`**——以自调用收尾的
+  Void 函数(`tick_loop(ms, f)`)在每个后端上每次调用长一层栈:C
+  发射器往 8 MiB 纤维里发一条普通递归调用,TS 发射器保持 await 形
+  状(每次 tick 一节 promise 链),解释器内联求值调用。降级现在把
+  出口位置的裸调用变成它本来的 Return(函数体、`if` 的两个分支、
+  `case`/`receive` 分支;循环体保持自己的 effect;一等块调用仍是
+  普通出口),C 发射器的 Void return 路径发射它携带的表达式,解释
+  器的帧把 tailness 穿过语句走查。
+- **c 后端的 Void return 弃用路径把同一份声明两次入池**——Void 函
+  数体的 return 现在求值它携带的表达式,但 `emit_expr` 自己就把动
+  态答案入池("动态结果落进池"的规则),弃用路径又包了一次:
+  `emo_autorelease(emo_autorelease(call))` 把同一个字放进语句的池
+  两次,drain 就释放两次——shell(emosh)在读 `emo_builder_to_array`
+  的 freelist 单元时段错误。弃用路径保留表达式自己的声明;只有语
+  句形状的构造器(`emit_runtime_impl`、spawn 位、foreign call——
+  裸字符串)才拿语句自己的包。
+- **c 后端的闭包捕获从没走过 `Send` 语句的操作数**——
+  `closure_free` 在语句处停下,于是一个块对外层绑定的唯一使用就是
+  它要发送的 pid(心跳的 `owner <- (...)`)时什么都捕获不到,构建
+  拒绝(`the variable `owner` here`)。走查现在覆盖 send 的目标与
+  消息,以及 raise 的值。
+- **TS 发射器的 `receive` 语句没带结尾 `;`**——后面一个以 `(` 开
+  头的语句被解析成对 receive 回答的调用
+  (`await E.receive(...)(await time__after(...))`)。语句形式现在
+  以序列器规则早已写明的分号收尾。
+- **BEAM 发射器的模式降级发出字面 `_`**——Core Erlang 没有通配
+  符,一个模式里的两个 `_`(日历解构
+  `const (y, _, _) = ...`)以重复变量相撞。通配符现在降成互不相同
+  的新变量。
 

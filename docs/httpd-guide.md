@@ -1368,12 +1368,13 @@ process mid-conversation, with no answer on the wire at all.
   wrong for streaming (SSE, large media), which waits on the named
   response-writer form. An in-memory file, likewise: `file.read` gives
   the whole asset to one `String`.
-- **No `Date` by default.** The language has no clock; the wire stays
+- **No `Date` by default.** The package stays clock-free and the wire
   byte-deterministic unless you inject one through
   `options().with_date(-> () { return date_string() })` — the block's
-  string stamps every response that did not set its own. Caches treat
-  a missing `Date` as unknown age, which is fine behind a proxy that
-  adds its own.
+  string stamps every response that did not set its own
+  (`time.now().format_http()` is the reading). Caches treat a missing
+  `Date` as unknown age, which is fine behind a proxy that adds its
+  own.
 - **Logging is `println`** or the `slog` package's structured records
   — a middleware like `logged` above is the natural place, one line
   per request, and it runs in the connection's process so it never

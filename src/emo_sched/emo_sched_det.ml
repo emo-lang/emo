@@ -383,6 +383,18 @@ let rec handler state (proc : Emo_eval.process) () :
                     Hashtbl.replace state.waiters proc.Emo_eval.pid
                       (proc, select, k);
                     None)
+        | Emo_eval.Sleep (ms, _) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                (* The timer list is the IO deadlines' own: the pump fires
+                   due timers when the run queue empties, and the wake
+                   re-queues the parked continuation. A message queues in
+                   the process's mailbox and waits for the wake — sleep
+                   is woken early by nothing. *)
+                add_timer state
+                  (Int64.to_float ms /. 1000.0)
+                  (fun () -> Queue.add (Continue (proc, k)) state.runq);
+                None)
         | Emo_eval.Net_resolve (host, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
