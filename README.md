@@ -119,10 +119,11 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/toolchain.md`](docs/toolchain.md) — building and installing the `emo` CLI: why dune is the one OCaml step, and the justfile automation.
 - [`docs/toolchain-distribution.md`](docs/toolchain-distribution.md) — how the toolchain is distributed: the OCaml requirement, `emo doctor`, and deferring the `c` backend.
 - [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.
+- [`docs/stdlib/wasm.md`](docs/stdlib/wasm.md) — the `wasm` package: a WebAssembly runtime written in Emo (decoder, validator, interpreter), its execution surface, and the host-import interface.
 - [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
 - [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
 - [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
-- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `httpd`, `valkey`, `websocket`, `playwright`, `json`, `yaml`, `xml`, `dom`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `postgres`, `sql`, `sqlite3`, `term`, `crypto`, `rand`).
+- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `httpd`, `valkey`, `websocket`, `playwright`, `json`, `yaml`, `xml`, `dom`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `postgres`, `sql`, `sqlite3`, `term`, `crypto`, `rand`, `wasm`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
 - [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and the evidence: why one declarative tree works across TUI, server-rendered HTML, macOS, GTK 4, and the DOM, and what remains open.
 - [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why children are an array rather than a block form, and whether the array form earns a literal spelling.

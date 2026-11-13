@@ -54,6 +54,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`sqlite3`](#sqlite3-包) | SQLite:预备语句、逐行步进 | `c` |
 | [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
+| [`wasm`](wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
 
@@ -855,3 +856,19 @@ Shift-Tab 与 Alt+按键背后的序列。raw mode 下 Ctrl-C 是按键事件,�
 所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
 考:[`docs/zh-CN/stdlib/term.md`](stdlib/term.md) · 示例:
 `examples/term_demo`。
+
+## wasm 包
+
+用 Emo 写的 WebAssembly 运行时——解码器、验证器、解释器,正如 wazero 是用 Go 写的运行时。验收线是官方 spec 套件,而且已经到达:每条二进制 `assert_malformed` 与 `assert_invalid` 都在正确的阶段被拒绝,供应商化运行语料的每条 `assert_return` 都逐位精确。
+
+```emo
+wasm.load(data Bytes)                     // (R, Int64)——模块句柄
+wasm.instantiate(module, imports)         // (R, Int64)——宿主表骑在这里
+wasm.call(inst, "fac", [wasm.i64(10)])    // (R, Array[(Int64, Int64)])
+wasm.read_memory(inst, ptr, len)          // (R, Bytes)
+```
+
+一个 wasm 值骑运行时的 `(kind, bits)` 对——构造器(`i32`/`i64`/`f32`/`f64`)造一个,读取器(`as_i32` 等)读回来,编码在参考文档里一次写清。宿主表是 `(module, name, fn)` 三元组,其闭包伺候函数 import——实参进、一个值出——解析先于 register 命名空间与内建 `spectest` 宿主,并拒绝什么都没指认的条目(调用者的笔误,当场浮出,不被携带)。
+
+目标:`["ocaml", "c"]`。参考:
+[`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md) · 示例:`examples/wasm_demo`。

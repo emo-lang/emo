@@ -13,13 +13,16 @@ const basic = "0061736d0100000001060160017f017f030201000404017000010503010001060
 const with_elem = "0061736d010000000105016000017f030201000404017000020907010041010b01000a0601040041030b"
 
 def show(label String, hex String) Int64 {
-  const r = wasm.load(internal.corpus.decode_hex(hex))
-  if !r[0] {
-    println(label + ": " + r[1] + " " + r[3])
-    return 1
+  case wasm.load(internal.corpus.decode_hex(hex)) {
+    (R.error, why) -> {
+      println(label + ": " + why)
+      return 1
+    }
+    (R.ok, module) -> {
+      println(label + ": " + wasm.describe(module))
+      return 0
+    }
   }
-  println(label + ": " + internal.instance.describe(r[4]))
-  return 0
 }
 
 def run() Int64 {
@@ -27,10 +30,14 @@ def run() Int64 {
   failed = failed + show("basic", basic)
   failed = failed + show("with_elem", with_elem)
   // A malformed module never reaches the registry.
-  const bad = wasm.load(internal.corpus.decode_hex("0061736d"))
-  println("bad: ok=" + bad[0].to_string() + " phase=" + bad[1] + " handle=" + bad[4].to_string())
-  if bad[0] {
-    failed = failed + 1
+  case wasm.load(internal.corpus.decode_hex("0061736d")) {
+    (R.error, why) -> {
+      println("bad: " + why)
+    }
+    (R.ok, _) -> {
+      println("bad: accepted")
+      failed = failed + 1
+    }
   }
   println("failed " + failed.to_string())
   return failed

@@ -1,0 +1,115 @@
+// The user-host fixture (T72.3): the explicit host table serves
+// function imports with Emo closures — arguments in, one value back —
+// before the register namespace and the spectest host are consulted
+// (an entry naming `spectest.print_i32` overrides the built-in host,
+// proven by the line the closure prints); and an entry naming no
+// import is refused as the caller's typo.
+
+// (type (func) (func (param i32)) (func (param i32 i32) (result i32))
+//        (func (result i32)))
+// (func (import "env" "log_i32") (param i32))
+// (func (import "env" "add") (param i32 i32) (result i32))
+// (func (export "run") (i32.const 42) (call 1))
+// (func (export "sum") (result i32) (i32.const 20) (i32.const 22) (call 2))
+const mod_hex = "0061736d0100000001120460000060017f0060027f7f017f6000017f02190203656e76076c6f675f693332000103656e760361646400020303020003070d020372756e00020373756d00030a11020600412a10000b08004114411610010b"
+
+// (type (func (param i32)))
+// (func (import "spectest" "print_i32") (param i32))
+// (func (export "go") (i32.const 7) (call 0))
+const spec_hex = "0061736d0100000001050160017f00021601087370656374657374097072696e745f69333200000302010007060102676f00010a08010600410710000b"
+
+def run() Int64 {
+  var failed = 0
+  case wasm.load(internal.corpus.decode_hex(mod_hex)) {
+    (R.error, why) -> {
+      println("load " + why)
+      failed = failed + 1
+    }
+    (R.ok, module) -> {
+      const log = -> (args Array[(Int64, Int64)]) {
+        println("env log " + args[0][1].to_string())
+        return wasm.i64(0)
+      }
+      const add = -> (args Array[(Int64, Int64)]) {
+        return wasm.i32(args[0][1] + args[1][1])
+      }
+      case wasm.instantiate(module, [("env", "log_i32", log), ("env", "add", add)]) {
+        (R.error, why) -> {
+          println("inst " + why)
+          failed = failed + 1
+        }
+        (R.ok, inst) -> {
+          case wasm.call(inst, "run", []) {
+            (R.error, why) -> {
+              println("run " + why)
+              failed = failed + 1
+            }
+            (R.ok, _) -> {
+            }
+          }
+          case wasm.call(inst, "sum", []) {
+            (R.error, why) -> {
+              println("sum " + why)
+              failed = failed + 1
+            }
+            (R.ok, results) -> {
+              case wasm.as_i32(results[0]) {
+                (R.error, why) -> {
+                  println("sum " + why)
+                  failed = failed + 1
+                }
+                (R.ok, v) -> {
+                  println("sum " + v.to_string())
+                }
+              }
+            }
+          }
+        }
+      }
+      // The resolution order: the explicit table wins over the built-in
+      // spectest host for the same import.
+      case wasm.load(internal.corpus.decode_hex(spec_hex)) {
+        (R.error, why) -> {
+          println("load spec " + why)
+          failed = failed + 1
+        }
+        (R.ok, spec_module) -> {
+          const override = -> (args Array[(Int64, Int64)]) {
+            println("override " + args[0][1].to_string())
+            return wasm.i64(0)
+          }
+          case wasm.instantiate(spec_module, [("spectest", "print_i32", override)]) {
+            (R.error, why) -> {
+              println("inst spec " + why)
+              failed = failed + 1
+            }
+            (R.ok, spec_inst) -> {
+              case wasm.call(spec_inst, "go", []) {
+                (R.error, why) -> {
+                  println("go " + why)
+                  failed = failed + 1
+                }
+                (R.ok, _) -> {
+                }
+              }
+            }
+          }
+        }
+      }
+      // The unused entry is the caller's typo, refused.
+      case wasm.instantiate(module, [("env", "typo", log)]) {
+        (R.error, why) -> {
+          println("typo: " + why)
+        }
+        (R.ok, _) -> {
+          println("typo: accepted")
+          failed = failed + 1
+        }
+      }
+    }
+  }
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

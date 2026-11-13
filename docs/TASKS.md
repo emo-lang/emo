@@ -64,6 +64,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M35 — The column format | 72 | The column format and the catalog choice: `CREATE TABLE ... STORE = COLUMN` in the parser (the canonical rendering spells only the written column tail), the catalog's version-2 table definition with a `store` field (a version-1 record reads as row storage), the record layer's column half — one column family per column (`col_<oid>`), 1024-row blocks (row count, null bitmap, the row encoding's widths), the trailing partial block re-read and rewritten inside the transaction, the block scan in rowid order, the reopen's column-family verification, and the row path's named guards; no indexes on column tables (`PRIMARY KEY` and secondary indexes refuse in both layers); the engine's DDL mapping and the named `0A000` bridge for DML/SELECT; the `column_demo` golden (create, 1030 rows across the block boundary, reopen, refusals) three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 | M36 — The column executor | 73 | The batch executor behind the same surface: the record layer's `scan_column_batches` and `column_block_counts`, the engine's storage routing (SELECT to the column executor, INSERT to the column blocks, UPDATE/DELETE answering the insert-only `0A000`), the column plan nodes, and the global aggregates COUNT/SUM/AVG/MIN/MAX — COUNT answers 0 and the others NULL over zero rows, SUM widens by the argument, AVG is DOUBLE PRECISION, MIN/MAX keep the argument's type, `DISTINCT` aggregates refuse, a mixed select list answers `42803` naming the column, `count(*)` with no WHERE takes the block-count fast path, and the plan text shows `column scan`/`aggregate` — pinned by the engine demo's executor cases, three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 | M37 — The two-engine proof | 74 | Both engines in one database, one session, one transaction over the wire: `htap_demo` seeds a row table and a column table (1100 rows across the block boundary) through the engine and serves the wire; psql and the `postgres` client each drive a script that reads both engines, carries the row table's UPDATE and the column table's INSERT inside one BEGIN/COMMIT, and reads the post-commit aggregates (`1100|605550|1.0|row-999` seeded, `1|11.0` updated, `1101|606651` after), pinned byte-for-byte behind the probes; the corpus's `column.test` lifts it to 141 cases (the DDL, the projections, the five aggregates, the zero-row rule `0|NULL`, and the mixing/type/DISTINCT/star/insert-only/primary-key refusals); the bench's column modes record the first measured comparison — the block scan 304 ms / 32895 rows per second against the row store's 675 ms / 14815, the aggregate 142 ms / 70423 — through `projects/emo-db/check.sh` green 3x (76 checks) (`CHECK.md`). |
+| M35 — The wasm capability | 72–74 | The Emo-written wasm runtime (steps 20–22) becomes a consumable capability: the package moves into the bundled registry as the `wasm` stdlib package with the execution surface on its root — `load`/`instantiate`/`call`/`get_global`/memory access over the R error split, the `(kind, bits)` value model with its constructors, and a host-import table of Emo closures — resolved like any bundled package; then `emo wasm run` executes a `.wasm` artifact from the CLI over the interpreter, the compiler never linking the runtime; then the `emo` host module (and the WASI surface it entails) runs modules from other toolchains; the conformance aliases (`wasm_spec`/`wasm_runs`) ride with the package (`CHECK.md`). |
 
 ## Design gates
 
@@ -4366,3 +4367,99 @@ with the measured numbers recorded; docs EN+zh; the repo builds.
 - [x] **T74.4** — The corpus's `column.test`.
 - [x] **T74.5** — The bench's column modes and the recorded numbers.
 - [x] **T74.6** — The docs EN+zh and the close-out.
+## M35 — The wasm capability
+
+### Step 72 — The wasm package: the execution surface and the host interface
+
+**Prereq:** Steps 20–22 (the Emo-written runtime: decoder, validator,
+interpreter, spec-suite goldens). **Done when:** the package lives at
+`stdlib/registry/wasm/0.1.0/`, resolved like any bundled package; a user
+project declaring `"wasm" = "0.1.0"` loads a module from bytes, serves
+its imports with Emo closures, instantiates it, calls its exports, reads
+its globals, and moves bytes through its linear memory — every failure
+an `(R.error, reason)` value, never a raise; `examples/wasm_demo` pins
+the ladder (load → host → instantiate → call → memory round-trip)
+byte-identical across runs; the smoke slice rides `dune test` from the
+package's new home and the `wasm_spec` / `wasm_runs` aliases still
+report zero pending and zero failed; docs EN+zh.
+
+- [x] **T72.1** — The move: `runtime/wasm/` →
+      `stdlib/registry/wasm/0.1.0/` — `wasm.emo`, `internal/`, the
+      manifest, the drivers and fixtures, `testdata/`, the package
+      README, and the dune rules carrying the smoke slice and the two
+      aliases; the root `dune` comment and `devtools/vendor-wasm-spec`'s
+      output paths follow; plan steps 20–22 stay as history.
+- [x] **T72.2** — The public surface: the R-split execution defs on
+      the package root (`load`, `instantiate`, `call`, `get_global`,
+      `read_memory`, `write_memory`, `register_instance`, `describe`),
+      the value constructors (`i32`/`i64`/`f32`/`f64` and the
+      `from_bits` pair) and the `as_*` accessors, the `(kind, bits)`
+      encoding documented; `load` migrates from the five-tuple, the
+      fixtures update with it; `decode` keeps its diagnostic verdict.
+- [x] **T72.3** — The host table: `(module, name, fn)` import triples
+      riding `instantiate`, the uniform host signature
+      `-> (args Array[(Int64, Int64)]) (Int64, Int64)`, the resolution
+      order explicit table → register namespace → `spectest`;
+      fixtures: a module importing from `env` served by an Emo
+      closure, the order pinned, a missing import link-failing as
+      before.
+- [x] **T72.4** — The demo golden: `examples/wasm_demo/` with a
+      hand-built module (hex in Emo, reviewable) exercising the whole
+      ladder; the golden runs through the interpreter with the
+      registry pointed at the bundled copy.
+- [x] **T72.5** — The docs: `docs/wasm.md` EN+zh (the surface, the
+      value encoding, the host interface, the limits — no WASI yet, no
+      GC types, `["ocaml"]` only); `docs/stdlib.md` row + section +
+      zh mirror; the temp notes retire to the new reference; README's
+      row; `plan/README.md`'s row; CHECK.md's decision record. The
+      package reference lands at `docs/stdlib/wasm.md` (the house's
+      per-package location), not `docs/wasm.md`; the temp notes move
+      out of the repository. `wasm.emo`'s smoke driver renames from
+      `main.emo` to `smoke.emo` — the package root's `main.emo` is the
+      module a require binds when it exists, and the smoke driver's
+      file would have shadowed the surface.
+- [x] **T72.6** — The c backend grows module-level `var`: one
+      `static emo_value` cell per `pglobal` declared before every body,
+      reads handing out pooled claims (unboxing at native-typed read
+      sites), assignments through the write barrier a local's overwrite
+      uses, the cells initialized in declaration order at
+      `emo_root_entry`'s start; the interpreter's dep-check universe
+      resolves against the `c` target, so without this the package
+      could not be consumed across a deps edge at all. Proven by
+      byte-identity: all five fixtures and the demo golden answer
+      identically on the interpreter and the c target; the whole
+      repo's `dune runtest` stays green; the package's manifest widens
+      to `["ocaml", "c"]` — verified, not assumed (CHECK.md).
+
+### Step 73 — `emo wasm run`: the CLI rung
+
+**Prereq:** Step 72 (the package and its execution surface). **Done
+when:** `emo wasm run foo.wasm` loads, validates, and instantiates the
+artifact through the embedded driver — the instance's start function
+runs, the entry ladder answers `_start`, then `main`, then the
+one-line summary for a module that names neither; results print in the
+runtime's `value : kind` format; every failure (bad artifact, failed
+link, trap) answers with the reason and a nonzero exit, never a raise;
+a binary-only machine (no registry, no project) runs the artifact; the
+publish/login embedded paths behave unchanged; `dune runtest` green;
+docs EN+zh.
+
+- [x] **T73.1** — The generalized embedded runner: `run_embedded`
+      delegates to `run_embedded_deps` (the dependency list a
+      parameter); the wasm driver program lands as an embedded string
+      (`__artifact` global, the entry ladder, the `value : kind`
+      result format over the public surface). The embedded scratch
+      projects stop printing the lockfile-commit notice — the manifest
+      it points at dies with the run.
+- [x] **T73.2** — The `emo wasm run` command: the `wasm` group, the
+      run subcommand (artifact argument, absolute-path resolution
+      before any chdir), the error verdict to stderr with exit 1, the
+      doctor line naming the command.
+- [x] **T73.3** — The tests: six cases in `test/emo_cli`'s
+      `wasm_run` group — the export's results, the start-only summary,
+      the trap, the failed link with the import's name, the malformed
+      artifact in the decode phase, the missing artifact's read
+      reason. The artifacts ride as hex decoded in the test (the
+      corpus discipline: no `.wasm` blob enters the repository), each
+      verified against the runtime before pinning.
+

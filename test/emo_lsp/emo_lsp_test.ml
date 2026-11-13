@@ -465,10 +465,12 @@ let test_builtin_hover () =
         "println hover" true
         (Lsp_util.starts_with ~prefix:"```emo\nprintln(value)" value)
   | None -> Alcotest.fail "println has no hover");
-  (* a bare capability type *)
+  (* a bare capability type — the offset sits inside the word, since the
+     scanner treats `.` as a word character and a following `.new()` would
+     ride into the two-segment member hover *)
   (match
-     Lsp_completion.builtin_hover_at ~items "const b = Bytes.new()"
-       (String.length "const b = ")
+     Lsp_completion.builtin_hover_at ~items "const b = Bytes"
+       (String.length "const b = Byt")
    with
   | Some value ->
       Alcotest.(check bool)

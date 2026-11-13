@@ -254,7 +254,7 @@ def is_link_error(msg String) Bool {
 }
 
 def exec_module(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {
-  const lr = wasm.load(internal.corpus.decode_hex(parts[3]))
+  const lr = internal.instance.load(internal.corpus.decode_hex(parts[3]))
   var actual = "ok"
   var inst = -1
   if !lr[0] {
