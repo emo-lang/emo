@@ -78,11 +78,21 @@ const output_cap = 1_048_576
 // forked and left behind, and the run child wedged in a system call.
 const tick_margin = 2.0
 
-// The tick program: a bare spinner. The tick interpreter's module tree
-// is this file alone, in its own directory — nothing a submission
-// writes can reach it, and a compile failure there can never race a
-// verdict.
+// The tick program: a bare spinner, in its own dot-directory beside the
+// run directories. The tick interpreter resolves the server project's
+// dependencies (its entry sits inside the project tree), so it gets a
+// package cache of its own — see the EMO_CACHE_DIR split in run_code —
+// and never touches the user's shared cache.
 const tick_source = "while true {}\n"
+
+// The user's temporary directory: macOS and the Linux desktops name it
+// TMPDIR; /tmp is the honest fallback.
+def tick_base() String {
+  case os.getenv("TMPDIR") {
+    (R.ok, dir) -> { return dir }
+    (R.error, _) -> { return "/tmp" }
+  }
+}
 
 // Writes the tick program once at startup. The run directories' own
 // directory is the one writable place the config already names; the
@@ -181,17 +191,23 @@ def fresh_name() String {
 // Best-effort: a run directory exists for the child, and when the child
 // is done the directory's absence is the goal. Every call's error tuple
 // is ignored on purpose — a directory a restart can sweep is not worth
-// a verdict about.
+// a verdict about. The walk is recursive: a run directory carries the
+// child's private package caches, whose trees outlive the run.
 def sweep_dir(dir String) Void {
   case os.list_dir(dir) {
     (R.ok, entries) -> {
       var i = 0
       while i < entries.length() {
-        os.unlink(dir + "/" + entries[i])
+        sweep_dir(dir + "/" + entries[i])
         i = i + 1
       }
     }
-    (R.error, _) -> {}
+    (R.error, _) -> {
+      case os.unlink(dir) {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+    }
   }
   os.rmdir(dir)
 }
@@ -341,6 +357,21 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
           }
           (R.ok, _) -> {}
         }
+        // The package caches stay out of the user's shared cache, which
+        // two concurrent materializers of the same package can race into
+        // compile verdicts for programs that compile. The run child
+        // resolves the submission's manifest into the run directory's
+        // own cache (swept with the run); the watchdog resolves the
+        // server project's manifest into a temporary cache it shares
+        // with the other watchdogs — same content every time, and out
+        // of the run directory the sweep is about to delete.
+        case os.setenv("EMO_CACHE_DIR", tick_base() + "/emo-playground-tick-cache") {
+          (R.error, why) -> {
+            os.write(2, "playground: the watchdog's cache could not be set: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
         os.close(out_read)
         case os.open_read("/dev/null") {
           (R.ok, devnull) -> {
@@ -383,6 +414,13 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
           }
           (R.ok, _) -> {}
         }
+        case os.setenv("EMO_CACHE_DIR", dir + "/.emo-cache") {
+          (R.error, why) -> {
+            os.write(2, "playground: the run's cache could not be set: ${why}\n")
+            os._exit(127)
+          }
+          (R.ok, _) -> {}
+        }
         case os.unsetenv("EMO_RUN_GROUP") {
           (R.error, _) -> {}
           (R.ok, _) -> {}
@@ -402,6 +440,7 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
       // collector's EOF every holder of the stdout write end is dead,
       // so the file says its last word.
       os.close(out_write)
+      os.close(err_fd)
       const me = self_pid()
       do collect(me, "stdout", out_read)
       var out_text = ""

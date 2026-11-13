@@ -27,7 +27,12 @@ One submission is one fresh directory and one child process:
    process group first, and forks a watchdog before the exec: a second
    interpreter running the tick program (a bare spinner the server
    wrote beside the run directories once at startup) under its own
-   curfew, the run's plus a margin.
+   curfew, the run's plus a margin. Each child resolves into its own
+   package cache — the run child's lives in the run directory, the
+   watchdog's in the temporary directory shared with the other
+   watchdogs — so neither ever materializes into the user's shared
+   cache, where two concurrent materializers of the same package can
+   race into compile verdicts for programs that compile.
 4. The parent closes its pipe write end, then one collector
    process drains stdout to EOF while the answering connection stays
    parked in `receive`. Streams past the 1 MiB output budget keep

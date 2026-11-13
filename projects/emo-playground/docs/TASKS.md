@@ -67,11 +67,16 @@ browser and runs it on the server. The decided design lives in the
   The child's stderr is a file in the run directory rather than a
   second pipe — a file never blocks its writer, and a second
   collector's read on a silent stderr pipe could starve the stdout
-  drain for the whole scheduler. stdlib tests: os_demo's process-group
-  section, byte-identical across the interpreter and the c target; the
-  wasm refusals for both new names; toolchain tests: the escape's
-  answer arriving at the curfew plus the margin, the wedge stopped by
-  the watchdog, the broken-emo verdict.
+  drain for the whole scheduler. Each child resolves into its own
+  package cache (the run child's in the run directory, the watchdog's
+  in the temporary directory), because the watchdog's tick child
+  resolves the server project's manifest and the two children
+  materializing the same package into the user's shared cache race
+  into compile verdicts for programs that compile. stdlib tests:
+  os_demo's process-group section, byte-identical across the
+  interpreter and the c target; the wasm refusals for both new names;
+  toolchain tests: the escape's answer arriving at the curfew plus the
+  margin, the wedge stopped by the watchdog, the broken-emo verdict.
 - [ ] **P2.2** — The isolation story: the trust model states plainly
   that user code runs with the interpreter's full library surface on
   the host. A public deployment wants a real boundary — a container or
