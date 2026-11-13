@@ -1515,8 +1515,10 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       emit_expr env (d + 1) addr;
       if env.native then
         (* the volatile 32-bit load, inline (T7.1): raw address in, the
-           zero-extended word the raw payload — lw clears the top half *)
-        put env "    lw a0, 0(a0)\n"
+           zero-extended word the raw payload — lwu, for lw would sign-
+           extend the top bit and the word is unsigned (the wall clock's
+           low half, emo-desktop M26, was the first word to catch it) *)
+        put env "    lwu a0, 0(a0)\n"
       else begin
         box_if_numeric env addr.Emo_ir.ety;
         call_runtime env "emo_peek32";
@@ -4870,14 +4872,16 @@ emo_poke64:
     ret
 
 # emo_peek32 (T7.1): a0 = the address; a0 = the word, zero-extended,
-# boxed — the 32-bit device line's tagged-world entry.
+# boxed — the 32-bit device line's tagged-world entry (lwu, not lw:
+# the word is unsigned, and the wall clock's low half was the first
+# to catch the sign extension, emo-desktop M26).
     .globl emo_peek32
 emo_peek32:
     addi sp, sp, -16
     sd ra, 0(sp)
     andi a0, a0, -32
     ld t0, 8(a0)
-    lw a0, 0(t0)
+    lwu a0, 0(t0)
     call emo_box_i64
     ld ra, 0(sp)
     addi sp, sp, 16
