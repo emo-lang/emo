@@ -913,3 +913,26 @@ its completion.
   `notify`/`notify_take`, the metal provider's take, and the shell's
   card and panel — the first take claims the center, the service's
   owner rule answering as designed.
+
+## Step 12 — the RTC's verb, the clock's kernel side (M26, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-13. The desktop's half is emo-desktop M26, whose
+tracker records the milestone's shape (D17); the bar's clock has had no
+wall time to read, and the board's goldfish RTC is its ground.
+
+- [x] **T12.1** — The RTC's page and the time verb: `sv39.emo` maps
+  the goldfish RTC's page (`0x101000`, the MMIO's own list beside the
+  UART's and the PLIC's), and `gate.emo` answers verb 29 with the
+  seconds since the Unix epoch — TIME_LOW at the page's head,
+  TIME_HIGH at +4, the pair assembled, no service between (a device
+  read, the gate's own). The syscall stub grows `time()` (the
+  `(R, Int64)` answer), and the desktop image builds against it.
+  **Landed 2026-11-13 — the desktop's `clock <epoch>` line is the
+  proof.**
+- [x] **T12.2** — The golden's beat: `run.sh` holds the machine's
+  seconds against the host's own (`date +%s`, two minutes the run's
+  travel) — the RTC is the same wall the host reads, so a drifted
+  answer names the page, the alias or the high word — and the clock
+  line joins the ordered chain at the desktop era's start. **Landed
+  2026-11-13 — the line answered within the tolerance on both
+  transports.**

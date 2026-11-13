@@ -3384,7 +3384,12 @@ def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
 // the walk's gate; the row's scale the sizes the walk carries (T10.4).
 def comp_toplevel_entry(entry Int64, x Int64, y Int64) Int64 {
   var row = grant_row_of(peek64(entry))
-  if peek64(row + 56) != 0 {
+  // The walk's row can die under it: the flush's wait is a yield, and
+  // the death notice served in it releases the runs the row named
+  // (emo-desktop M26's metal runs caught the panel's compose walking
+  // into the card's close) — a row gone mid-walk is the prune's own
+  // dead entry, its pixels the next composition's to repair.
+  if row != 0 && peek64(row + 56) != 0 {
     var base = peek64(row + 16)
     var w = peek64(row + 32)
     var h = peek64(row + 40)
@@ -3537,8 +3542,12 @@ def comp_clear() Void {
 // that held the size being theirs to lose.
 def comp_paint_record(entry Int64, x Int64, y Int64) Void {
   var row = grant_row_of(peek64(entry))
-  poke64(comp_paint_xy_at(entry), (x << 32) | y)
-  poke64(comp_paint_wh_at(entry), comp_surface_wh(row))
+  if row != 0 {
+    poke64(comp_paint_xy_at(entry), (x << 32) | y)
+    poke64(comp_paint_wh_at(entry), comp_surface_wh(row))
+  } else {
+    println("comp: the record's row is nobody's")
+  }
 }
 
 // The popups of one toplevel off the stack (emo-desktop A16.2, EmoOS
@@ -3935,6 +3944,11 @@ def comp_cursor_place(gpu Pid, me Pid) Void {
     // their own rects, so an early walk of their damage is repaired
     // again at their own turn.
     if peek64(comp_dmg_w) != 0 {
+      // the walk's contract (T8.15): the stack pruned before the walk,
+      // the rows live — the press's raise composes beside the client's
+      // own close, a door's turn the raise's box must not walk into
+      // dead (the notification card's, emo-desktop M26's metal runs)
+      comp_stack_prune()
       comp_compose(gpu, me)
     }
   }
@@ -4050,6 +4064,9 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
         gate_reply(caller_of(w), -4)
       } else {
         var row = grant_row_of(grant)
+        if row == 0 {
+          gate_reply(caller_of(w), -4)
+        } else {
         var wh = comp_surface_wh(row)
         var ww = wh >> 32
         var hh = wh & 4294967295
@@ -4076,6 +4093,7 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
           var nb = comp_abs_pos(entry, x, y)
           comp_dmg_mark(nb >> 32, nb & 4294967295, ww, hh)
           gate_reply(caller_of(w), 0)
+        }
         }
       }
     } else {
@@ -4351,6 +4369,7 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                         gate_post(isvc, 13 << 32)
                       }
                       device_wake()
+                      comp_stack_prune()
                       var sum = comp_compose(gpu, me)
                       println("comp ${both >> 32} ${both & 4294967295} ${sum & 4294967295}")
                       gate_reply(caller_of(w), 0)
@@ -4361,7 +4380,7 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                   if op == pointer_op {
                     comp_cursor_place(gpu, me)
                   } else {
-                    println("comp: the verb is nobody's")
+                    println("comp: the verb is nobody's (${op})")
                     halt()
                   }
                 }

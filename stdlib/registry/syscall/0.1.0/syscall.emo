@@ -269,6 +269,18 @@ def notify_take(buf Int64, cap Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The wall clock (emo-desktop M26, EmoOS T12.1, verb 29): the seconds
+// since the Unix epoch, UTC — the board's goldfish RTC read by the gate
+// itself (no service between: one register page, two loads). The answer
+// is (R.ok, the seconds); the gate never refuses this verb.
+def time() (R, Int64) {
+  var answer = ecall(29, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
 // caller parks, and the answer is the tick — the next composition's
 // completion, the flush that put a frame on the display. The

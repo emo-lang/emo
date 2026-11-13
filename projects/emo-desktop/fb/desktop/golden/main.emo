@@ -66,10 +66,35 @@ def main() {
   emo_desktop.wallpaper(wall, 256, 192)
   println("wall ${ui_fb_frame.digest(wall)}")
   const bar = ui_fb_canvas.canvas(256, 24)
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 2)
+  // the clock's epochs (emo-desktop M26, A26.1): the bar reads the
+  // seconds the caller hands it — 2026-03-29 09:05 UTC with two apps
+  // running, 2026-07-31 23:41 with none — the digits' own pins
+  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 2, 1774775100)
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 0)
+  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 0, 1785541260)
   println("bar ${ui_fb_frame.digest(bar)}")
+  // the calendar panel's five: a Sunday-start month whose today is
+  // the 29th, a 31-day month whose today is the 31st at 23:41, a
+  // month opening on a Thursday with the day's clock 00:07, the leap
+  // day 2028-02-29 06:30, and the year's boundary 2027-01-01 00:00 —
+  // the grid's first row, the last cell, the single digits, the 29th
+  // of a short month and the year's turn each pinned. A canvas a
+  // state: the ground's alpha blends over whatever the canvas holds.
+  const cal1 = ui_fb_canvas.canvas(emo_desktop.cal_w(), emo_desktop.cal_h())
+  emo_desktop.paint_calendar(cal1, f, 1774775100)
+  println("cal ${ui_fb_frame.digest(cal1)}")
+  const cal2 = ui_fb_canvas.canvas(emo_desktop.cal_w(), emo_desktop.cal_h())
+  emo_desktop.paint_calendar(cal2, f, 1785541260)
+  println("cal ${ui_fb_frame.digest(cal2)}")
+  const cal3 = ui_fb_canvas.canvas(emo_desktop.cal_w(), emo_desktop.cal_h())
+  emo_desktop.paint_calendar(cal3, f, 1767226020)
+  println("cal ${ui_fb_frame.digest(cal3)}")
+  const cal4 = ui_fb_canvas.canvas(emo_desktop.cal_w(), emo_desktop.cal_h())
+  emo_desktop.paint_calendar(cal4, f, 1835418600)
+  println("cal ${ui_fb_frame.digest(cal4)}")
+  const cal5 = ui_fb_canvas.canvas(emo_desktop.cal_w(), emo_desktop.cal_h())
+  emo_desktop.paint_calendar(cal5, f, 1798761600)
+  println("cal ${ui_fb_frame.digest(cal5)}")
   const icons = ui_fb_canvas.canvas(384, 256)
   emo_desktop.paint_icon_doc(icons, 280, 32, false)
   emo_desktop.paint_icon_folder(icons, 280, 108, false)

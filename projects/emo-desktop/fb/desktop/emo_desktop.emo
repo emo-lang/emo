@@ -401,13 +401,16 @@ def count_text(s ui_fb.Surface, f ui_fb.raster.Strike, right Int64,
 // The header bar onto its own surface, whole from scratch: the
 // wallpaper's formula under the header's scrim, row by row — the bar
 // samples the display's own rows, `mw` and `mh` the mode — then the
-// wordmark one pad in, the running count at the right edge — the one
-// live fact the bar carries (the desktop knows its own children's
-// residency; the wall clock and the foreground app's name it does not
-// know, and the bar does not pretend to). The text sits centered in
-// the bar's height, the line box's own.
+// wordmark one pad in, the wall clock at the right edge and the
+// running count before it. The clock is `now` — the seconds the
+// caller read, never the bar's own (the bar has no clock of its own;
+// the time verb and the caller's wake are its ground, D17) — and the
+// count is the one fact the desktop keeps (its own children's
+// residency; the foreground app's name it does not know, and the bar
+// does not pretend to). The text sits centered in the bar's height,
+// the line box's own.
 def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
-                 mw Int64, mh Int64, running Int64) Void {
+                 mw Int64, mh Int64, running Int64, now Int64) Void {
   var y = 0
   while y < header_height() {
     material_row(s, y, y, w, mw, mh, header_scrim())
@@ -415,7 +418,198 @@ def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
   }
   const ty = (header_height() - f.line_height()) / 2
   ui_fb.text(f, "EmoOS", 8, ty, header_accent(), s)
-  count_text(s, f, w - icon_margin(), ty, running, header_ink())
+  const cw = ui_fb.text_width(f, clock_text(0))
+  ui_fb.text(f, clock_text(now), w - icon_margin() - cw, ty, header_ink(), s)
+  count_text(s, f, w - icon_margin() - cw - 16, ty, running, header_ink())
+}
+
+// ---- the wall clock (emo-desktop M26, D17) ----
+//
+// The board's RTC answers the seconds since the Unix epoch (the time
+// verb, EmoOS T12.1) and the bar and the calendar read it in UTC —
+// the machine knows no time zone, and the chrome does not pretend to
+// (D15). The conversions are the civil calendar's integer arithmetic;
+// every division sees a non-negative dividend for any date the RTC
+// can report, so truncation is the floor and no correction rides
+// along.
+
+// The civil pack: `(y << 16) | (m << 8) | d` — the year above, the
+// month and the day below, lifted by shift and mask. `day` the days
+// since the epoch; the form is the civil calendar's own.
+def civil(day Int64) Int64 {
+  const z = day + 719468
+  const era = z / 146097
+  const doe = z - era * 146097
+  const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  const y = yoe + era * 400
+  const doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  const mp = (5 * doy + 2) / 153
+  const d = doy - (153 * mp + 2) / 5 + 1
+  var m = mp + 3
+  if mp >= 10 {
+    m = mp - 9
+  }
+  var yy = y
+  if m <= 2 {
+    yy = y + 1
+  }
+  return (yy << 16) | (m << 8) | d
+}
+
+// The weekday of `day`, Sunday 0 — the epoch's own day was a
+// Thursday, the +4 the pack needs.
+def weekday(day Int64) Int64 {
+  var r = (day + 4) % 7
+  if r < 0 {
+    r = r + 7
+  }
+  return r
+}
+
+// `HH:MM`, UTC — the bar's clock, the five bytes the strike draws.
+def clock_text(now Int64) String {
+  const day = now / 86400
+  const secs = now - day * 86400
+  const hh = secs / 3600
+  const mm = (secs - hh * 3600) / 60
+  var hs = "${hh}"
+  if hh < 10 {
+    hs = "0${hh}"
+  }
+  var ms = "${mm}"
+  if mm < 10 {
+    ms = "0${mm}"
+  }
+  return "${hs}:${ms}"
+}
+
+// Whether y leaps — the every-four, except the hundreds, except the
+// four-hundreds.
+def civil_leap(y Int64) Bool {
+  if y % 4 != 0 {
+    return false
+  }
+  if y % 100 != 0 {
+    return true
+  }
+  return y % 400 == 0
+}
+
+// The month's length.
+def civil_dim(y Int64, m Int64) Int64 {
+  if m == 2 {
+    if civil_leap(y) {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  return 31
+}
+
+// The calendar panel's metrics: a cell 36 wide and 24 high, the grid
+// seven across and six down whatever the month, the title a line
+// above it, the pad around the whole — the panel 276 by 220.
+def cal_pad() Int64 {
+  return 12
+}
+
+def cal_cell_w() Int64 {
+  return 36
+}
+
+def cal_cell_h() Int64 {
+  return 24
+}
+
+def cal_title_h() Int64 {
+  return 28
+}
+
+def cal_w() Int64 {
+  return 7 * cal_cell_w() + 2 * cal_pad()
+}
+
+def cal_h() Int64 {
+  return cal_pad() + cal_title_h() + 7 * cal_cell_h() + cal_pad()
+}
+
+// The panel's seat: the display's right edge under the bar's clock,
+// the top the header's height plus the toast's own gap.
+def cal_x(w Int64) Int64 {
+  return w - cal_w() - 8
+}
+
+def cal_y() Int64 {
+  return header_height() + 8
+}
+
+// The panel's ground: the toast's own grades and radius — the panel
+// floats over the desktop's icons, the alpha for what it covers.
+def cal_ground_top() Int64 {
+  return 0xE64A5468
+}
+
+def cal_ground_bottom() Int64 {
+  return 0xE6363E4C
+}
+
+// The calendar panel whole: the title the month's `YYYY-MM`, the
+// week's initials under it, the days the grid — today's cell the
+// accent's rounded ground behind its number. Six rows always, the
+// month's empties nothing at all.
+def paint_calendar(s ui_fb.Surface, f ui_fb.raster.Strike, now Int64) Void {
+  const w = cal_w()
+  const h = cal_h()
+  s.shadow(0, 0, w, h, 12, 8, 0x80000000)
+  s.rounded(0, 0, w, h, 12, cal_ground_top(), cal_ground_bottom())
+  const c = civil(now / 86400)
+  const y = c >> 16
+  const m = (c >> 8) & 255
+  const d = c & 255
+  var ms = "${m}"
+  if m < 10 {
+    ms = "0${m}"
+  }
+  const title = "${y}-${ms}"
+  ui_fb.text(f, title, (w - ui_fb.text_width(f, title)) / 2, cal_pad(),
+    0xF8F8F0, s)
+  const initials = ["S", "M", "T", "W", "T", "F", "S"]
+  var wcol = 0
+  while wcol < 7 {
+    const x = cal_pad() + wcol * cal_cell_w() +
+      (cal_cell_w() - ui_fb.text_width(f, initials[wcol])) / 2
+    ui_fb.text(f, initials[wcol], x, cal_pad() + cal_title_h() + 2, 0xB8BCC4, s)
+    wcol = wcol + 1
+  }
+  const dim = civil_dim(y, m)
+  const first = weekday(now / 86400 - (d - 1))
+  var row = 0
+  while row < 6 {
+    var gcol = 0
+    while gcol < 7 {
+      const n = row * 7 + gcol - first + 1
+      if n >= 1 && n <= dim {
+        const x = cal_pad() + gcol * cal_cell_w()
+        const ty = cal_pad() + cal_title_h() + cal_cell_h() + row * cal_cell_h()
+        if n == d {
+          s.rounded(x + 2, ty + 1, cal_cell_w() - 4, cal_cell_h() - 2, 6,
+            0xFFE86890, 0xFFE86890)
+        }
+        const ns = "${n}"
+        const nx = x + (cal_cell_w() - ui_fb.text_width(f, ns)) / 2
+        if n == d {
+          ui_fb.text(f, ns, nx, ty + 1, 0x20242C, s)
+        } else {
+          ui_fb.text(f, ns, nx, ty + 1, 0xF8F8F0, s)
+        }
+      }
+      gcol = gcol + 1
+    }
+    row = row + 1
+  }
 }
 
 // The selection's blend word: the tile steel at a low coverage laid
