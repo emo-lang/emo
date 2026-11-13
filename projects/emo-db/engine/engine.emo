@@ -32,12 +32,14 @@ def fail(code String, message String) (R, Block) {
 }
 
 // The command's answer: the PG command tag (`SELECT 3`, `INSERT 0 3`,
-// `UPDATE 1`, `DELETE 1`, `CREATE TABLE`), the projected columns (a
-// SELECT only), the rows, and the plan text the embedded face prints.
+// `UPDATE 1`, `DELETE 1`, `CREATE TABLE`), the projected columns and
+// their value types (a SELECT only; the wire's RowDescription needs
+// them), the rows, and the plan text the embedded face prints.
 class Result {
-  def init(tag String, columns Array[String], rows Array[Array[record.Value]], plan String) {
+  def init(tag String, columns Array[String], types Array[ValType], rows Array[Array[record.Value]], plan String) {
     self.tag = tag
     self.columns = columns
+    self.types = types
     self.rows = rows
     self.plan = plan
   }
@@ -1454,7 +1456,7 @@ class Engine {
       (R.error, why) -> { return (R.error, record_error(why)) }
       (R.ok, txn) -> {
         self.txn.replace([txn])
-        return (R.ok, Result.new("BEGIN", [], [], ""))
+        return (R.ok, Result.new("BEGIN", [], [], [], ""))
       }
     }
   }
@@ -1472,7 +1474,7 @@ class Engine {
       (R.ok, _) -> {
         self.txn.replace([])
         self.release_locks()
-        return (R.ok, Result.new("COMMIT", [], [], ""))
+        return (R.ok, Result.new("COMMIT", [], [], [], ""))
       }
     }
   }
@@ -1482,7 +1484,7 @@ class Engine {
       return fail("25P01", "there is no transaction in progress")
     }
     self.abort_tx()
-    return (R.ok, Result.new("ROLLBACK", [], [], ""))
+    return (R.ok, Result.new("ROLLBACK", [], [], [], ""))
   }
 
   def abort_tx() {
@@ -1586,7 +1588,7 @@ class Engine {
         return (R.error, record_error(why))
       }
       (R.ok, _) -> {
-        return (R.ok, Result.new("CREATE TABLE", [], [],
+        return (R.ok, Result.new("CREATE TABLE", [], [], [],
                                  PCreate.new(name).text()))
       }
     }
@@ -1628,7 +1630,7 @@ class Engine {
               }
               r = r + 1
             }
-            return (R.ok, Result.new("INSERT 0 " + inserted.to_string(), [], [],
+            return (R.ok, Result.new("INSERT 0 " + inserted.to_string(), [], [], [],
                                      PInsert.new(table.name, stmt.rows.length()).text()))
           }
         }
@@ -1680,7 +1682,7 @@ class Engine {
                       }
                       i = i + 1
                     }
-                    return (R.ok, Result.new("UPDATE " + updated.to_string(), [], [],
+                    return (R.ok, Result.new("UPDATE " + updated.to_string(), [], [], [],
                                              plan.text()))
                   }
                 }
@@ -1728,7 +1730,7 @@ class Engine {
                   }
                   i = i + 1
                 }
-                return (R.ok, Result.new("DELETE " + deleted.to_string(), [], [],
+                return (R.ok, Result.new("DELETE " + deleted.to_string(), [], [], [],
                                          plan.text()))
               }
             }
@@ -1806,7 +1808,8 @@ class Engine {
                       i = i + 1
                     }
                     return (R.ok, Result.new("SELECT " + out.length().to_string(),
-                                             pr.names, out, project.text()))
+                                             pr.names, pr.types, out,
+                                             project.text()))
                   }
                 }
               }
@@ -1852,6 +1855,17 @@ class Engine {
         }
       }
     }
+  }
+
+  // Ends a session over a Store it does not own: the open transaction,
+  // if any, aborts and every held lock is released; the shared Store
+  // stays open for the other sessions. A server's connection loop calls
+  // this when its client goes away; the embedded caller closes instead.
+  def end_session() {
+    if self.in_tx() {
+      self.abort_tx()
+    }
+    self.release_locks()
   }
 
   def close() {
@@ -2018,15 +2032,17 @@ def project_row(exprs Array[TExpr], row Array[record.Value]) (R, Array[record.Va
 // ---- projection resolution ----
 
 class Projection {
-  def init(exprs Array[TExpr], names Array[String]) {
+  def init(exprs Array[TExpr], names Array[String], types Array[ValType]) {
     self.exprs = exprs
     self.names = names
+    self.types = types
   }
 }
 
 def resolve_projection(items Array[sql.SelItem], table record.Table, alias String) (R, Projection) {
   var exprs = []
   var names = []
+  var types = []
   var i = 0
   while i < items.length() {
     const item = items[i]
@@ -2040,8 +2056,10 @@ def resolve_projection(items Array[sql.SelItem], table record.Table, alias Strin
       }
       var c = 0
       while c < table.columns.length() {
-        exprs = exprs.append(TColumn.new(c, val_type_of(table.columns[c].kind)))
+        const ct = val_type_of(table.columns[c].kind)
+        exprs = exprs.append(TColumn.new(c, ct))
         names = names.append(table.columns[c].name)
+        types = types.append(ct)
         c = c + 1
       }
     } else {
@@ -2051,6 +2069,7 @@ def resolve_projection(items Array[sql.SelItem], table record.Table, alias Strin
           (R.error, why) -> { return (R.error, why) }
           (R.ok, typed) -> {
             exprs = exprs.append(typed)
+            types = types.append(typed.result_type())
             if item.alias_e.length() == 1 {
               names = names.append(item.alias_e[0])
             } else {
@@ -2070,7 +2089,7 @@ def resolve_projection(items Array[sql.SelItem], table record.Table, alias Strin
   if exprs.length() == 0 {
     return fail("42601", "the select list is empty")
   }
-  return (R.ok, Projection.new(exprs, names))
+  return (R.ok, Projection.new(exprs, names, types))
 }
 
 // ---- INSERT / UPDATE helpers ----

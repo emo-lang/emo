@@ -1033,6 +1033,7 @@ each answering `to_string()` with the canonical rendering.
 
 ```emo
 def parse(text String) (R, Stmt)
+def split(text String) (R, Array[String])
 ```
 
 `SELECT` end to end — distinct select lists, joins with `ON`/`USING`,
@@ -1042,7 +1043,8 @@ qualified columns, calls, `CAST`, `CASE`, `EXISTS`, subqueries, and the
 operator tower with standard precedence. Beside `SELECT`, `CREATE
 TABLE` (the v0 types, `NOT NULL`, `PRIMARY KEY`), multi-row `INSERT ...
 VALUES`, `UPDATE ... SET ... [WHERE]`, `DELETE FROM ... [WHERE]`, and
-`BEGIN`/`COMMIT`/`ROLLBACK` parse and render canonically. Malformed input is the value
+`BEGIN`/`COMMIT`/`ROLLBACK` parse and render canonically; `split` cuts a
+multi-statement string at the lexer's own semicolons. Malformed input is the value
 `(R.error, reason)`, the reason stating what failed at what byte
 offset; nothing raises, no error codes, no nil.
 

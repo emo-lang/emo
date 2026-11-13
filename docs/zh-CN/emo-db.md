@@ -79,7 +79,9 @@ PRECISION 在 v0 都按 binary64 存储;REAL 的 4 字节收窄等 Float32 或
 Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 带 PG 错误字段约定的 ErrorResponse、多语句字符串。psql 靠这些就开得
 动全部表面。挂起:extended protocol(prepared statements——多数驱
-动的默认)、scram-sha-256、SSL。
+动的默认)、scram-sha-256、SSL。标准库 `postgres` 客户端在这条路径
+上与会话:零参数语句走 `PQexec`;带参数的语句仍说扩展协议,对 v0
+诚实失败。
 
 **D9 —— 天梯。** 弧一是里程碑 M28–M34,一里程碑一步,步骤 65 到
 71。退出标准在 `docs/zh-CN/TASKS.md`;天梯形状:
@@ -91,7 +93,7 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
 | M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点(scan/filter/project、insert/update/delete)、骑记录层的表达式求值、嵌入式测试面。v0 的 SELECT 是单表(投影、WHERE、等值索引扫描);连接、聚合、ORDER BY/LIMIT 与子查询等 M34。 |
 | M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、每事务一个 WriteBatch 且 COMMIT 做 fsync、Emo 锁管理器。v0 是表级锁。 |
-| M33 —— 线协议 | 70 | PG 协议 v3 simple 路径;psql 端到端、`postgres` 客户端直连。 |
+| M33 —— 线协议 | 70 | PG 协议 v3 简单路径:启动(拒 SSL/GSSENC、trust 认证)、ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、带 v0 OID 的 RowDescription、文本格式 DataRow、CommandComplete、EmptyQueryResponse 与 ErrorResponse;每连接一个骑共享 Store 与表锁的会话 actor;psql 端到端,`postgres` 客户端走它零参数的简单路径。 |
 | M34 —— 符合性与文档 | 71 | SQL 语料、实测性能表、文档 EN+zh。 |
 
 **D10 —— 字节视图:`Bytes` 以借用视图过 C ABI。** RocksDB 的键与
@@ -163,6 +165,9 @@ HTAP 的门在这里开。
 
 按开放陈述,各自等自己的证据或决策:
 
+- 失败事务状态——语句出错后线协议报 ReadyForQuery `I`,因为引擎立
+刻中止并释放事务;PostgreSQL 的 `E`(只有 ROLLBACK 能离开的块)等待
+一个保留失败块的事务模型。
 - extended protocol——psql 与 libpq simple 路径之外的驱动提出需求
 之时。
 - scram-sha-256 与 SSL——真认证与真传输安全;`crypto` 包已经握着

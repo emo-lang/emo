@@ -4,8 +4,8 @@ emo-db 是 Emo 自己的客户端-服务器 SQL 数据库:一条 PostgreSQL 方�
 门面,底下先接行存的 OLTP、后接列存的 OLAP。设计定案见
 [`docs/zh-CN/emo-db.md`](../../docs/zh-CN/emo-db.md);本目录是项目本体。
 M28(RocksDB 存储半边)、M29(记录层)、M30(SQL 门面的 DML/DDL)、
-M31(计划器与执行器)与 M32(事务与会话面)已经落地;线协议与符合性
-收尾在 M33–M34 跟上。
+M31(计划器与执行器)、M32(事务与会话面)与 M33(PostgreSQL 线协议)
+已经落地;符合性收尾在 M34 跟上。
 
 ## 布局
 
@@ -31,9 +31,20 @@ M31(计划器与执行器)与 M32(事务与会话面)已经落地;线协议与�
   错误值;关闭再重开。
 - `txn_demo/` —— 会话面金测:一个锁管理器进程、两个骑同一 Store 的
   会话进程、读已提交、写-写阻塞与死锁。
-- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查三个包、把四
-  个 demo 各跑三遍对照各自的 `expected.txt`,并钉死两条拒绝(解释器
-  E3009、非 `c` target 的 E5007)。
+- `wire/` —— 项目内的 `emo/wire` 包:PostgreSQL 协议 v3 的简单查询
+  路径跑在 `net` 上——启动(拒 SSL/GSSENC、trust 认证)、
+  ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的
+  Query、带 v0 类型 OID 的 RowDescription、文本格式 DataRow、
+  CommandComplete、EmptyQueryResponse 与 ErrorResponse。每连接一个
+  会话 actor,骑共享 Store 与会话面的表锁。
+- `wire_demo/` —— 线协议服务器:全新数据库、经 ready 文件报告端口的
+  临时监听、固定数量的连接。
+- `wire_client/` —— 标准库 `postgres` 客户端对 emo-db:跑与 psql 相
+  同的 SQL 脚本,走 libpq 的简单路径。
+- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查四个包、把四
+  个嵌入式 demo 各跑三遍对照各自的 `expected.txt`、用 psql 与
+  `postgres` 客户端驱动线协议(每个阶段一台全新服务器,各自逐字节钉
+  死),并钉死两条拒绝(解释器 E3009、非 `c` target 的 E5007)。
 
 ## 绑定的形状
 
@@ -100,6 +111,28 @@ COMMIT/ROLLBACK;锁管理器是一个 Emo 进程,带 FIFO 等待队列、
 wait-for 图,死锁以 `40P01` 中止。`txn_demo` 跑两个会话与管理器,
 展示读已提交、写-写阻塞与死锁。
 
+## 线协议
+
+`emo/wire` 让服务器成真。`net` 监听接受连接;每连接一个进程读启动
+包、在 trust 下答 AuthenticationOk、发 ParameterStatus 集合、
+BackendKeyData 与 ReadyForQuery,然后跑简单查询循环。一个 Query 字
+符串可以带多条语句:`sql.split` 在词法器自己的分号处切分,每条语句
+走会话的引擎。SELECT 答 RowDescription(名字、OID、大小、文本格式)
+与每行一条 DataRow——整数十进制、浮点用自己的渲染、布尔用 PG 的
+`t`/`f`、BYTEA 用 `\x` 十六进制、NULL 用 -1 长度——再答
+CommandComplete。命令只答自己的标签。空字符串答 EmptyQueryResponse。
+
+错误答 ErrorResponse(SQLSTATE 与主消息),停掉剩余语句,并让会话干
+净:引擎已经中止事务、释放锁,所以 ReadyForQuery 报 `I`,下一条
+Query 照常工作。psql 驱动整个表面;标准库 `postgres` 客户端的零参
+数语句走 libpq 的简单路径(`PQexec`),同一个服务器不需要扩展协议。
+每个连接各自一个骑共享 Store 的 Engine,以及一个骑服务器唯一锁管理
+器进程的 `RemoteLocks` 客户端,所以 M32 的表锁跨连接仲裁。
+
+v0 的线协议只有简单路径:扩展协议(Parse/Bind/Execute)、SSL、
+scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
+兼容级别(`16.4`),因为工具会解析它;产品自己的版本留在包里。
+
 ## 跑闸门
 
 RocksDB 必须能被 `pkg-config` 解析:
@@ -110,8 +143,10 @@ $ sudo apt install librocksdb-dev # Debian/Ubuntu
 $ ./check.sh
 ```
 
-库缺失时闸门大声失败,不静默跳过——绑定就是被测的东西。`EMO` 可指
-向另一个编译器二进制;默认是
+库缺失时闸门大声失败,不静默跳过——绑定就是被测的东西。线协议两个
+阶段是例外:`PATH` 上没有 psql 就跳过 psql 阶段,`pkg-config` 解析不
+到 libpq 就跳过 `postgres` 客户端阶段(与标准库探针相同的 Homebrew
+keg 回退)。`EMO` 可指向另一个编译器二进制;默认是
 `../../_build/default/src/emo_cli/emo.exe`。
 
 ## 状态
@@ -119,4 +154,5 @@ $ ./check.sh
 M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M29
 同日落地:记录层、记录层金测、以及目录的重开路径。M30 落地 SQL 门
 面的 DDL/DML,M31 落地嵌入式计划器/执行器及其金测,M32 落地事务与
-会话面及其两会话金测。下一步是 M33——PostgreSQL 线协议。
+会话面及其两会话金测,M33 落地 PostgreSQL 线协议,psql 与
+`postgres` 客户端为金测。下一步是 M34——符合性与文档。

@@ -115,9 +115,11 @@ class Conn {
 }
 ```
 
-Every statement runs through libpq's `PQexecParams` with `$1`, `$2`,
-... placeholders, the values supplied as `Param` values in the order
-the array carries them. `postgres.i64(18)` arrives as `18`,
+A statement with parameters runs through libpq's `PQexecParams` with
+`$1`, `$2`, ... placeholders, the values supplied as `Param` values in
+the order the array carries them. A statement with none takes the
+simple query path (`PQexec`) — the one a PostgreSQL-protocol server
+without the extended protocol answers. `postgres.i64(18)` arrives as `18`,
 `postgres.f64(1.5)` as its round-tripping decimal, `postgres.bool(b)`
 as `true`/`false`, `postgres.none()` as SQL NULL — not the empty
 string, not zero. The server infers each parameter's type from the
@@ -132,8 +134,8 @@ const (R.ok, n) = conn.exec(
 
 `exec` answers the count the server reports — rows inserted, updated,
 or deleted; a command with no count (`CREATE TABLE`, most DDL) answers
-0. `PQexecParams` carries exactly one statement: no semicolon batches,
-the protocol's own rule. `query` answers the rows a `SELECT` (or a
+0. The package carries exactly one statement per call: no semicolon
+batches. `query` answers the rows a `SELECT` (or a
 `RETURNING`) produced.
 
 The two doors check each other: a statement that returned rows refuses

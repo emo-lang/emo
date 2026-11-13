@@ -12,6 +12,20 @@ def why(text String) {
   }
 }
 
+def why_split(text String) {
+  case sql.split(text) {
+    (R.error, why) -> { println(why) }
+    (R.ok, pieces) -> {
+      println(pieces.length().to_string())
+      var i = 0
+      while i < pieces.length() {
+        println("  " + pieces[i])
+        i = i + 1
+      }
+    }
+  }
+}
+
 // ---- malformed inputs: every failure is a value with a position ----
 why("")
 why("SELECT FROM")
@@ -69,6 +83,11 @@ def fill_char(buf Bytes, i Int64, n Int64, c Int64) {
 
 why("SELECT " + parens(512) + " FROM t")
 why("SELECT " + parens(513) + " FROM t")
+
+// ---- splitting edges ----
+why_split("SELECT 'unterminated")
+why_split("SELECT 1;; SELECT 2")
+why_split("")
 
 // ---- transaction-control edges ----
 why("BEGIN NOW")

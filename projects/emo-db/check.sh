@@ -72,6 +72,38 @@ if ! echo 'int main(void){return 0;}' |
   exit 1
 fi
 
+# --- psql and libpq, the wire phase's optional counterparties ------------
+#
+# The wire itself needs only RocksDB; psql is the interactive proof and
+# libpq the standard client's proof. A machine without either skips the
+# matching phase rather than failing the gate. libpq resolution takes
+# the Homebrew kegs the postgres probe uses, appended to any path the
+# RocksDB probe set.
+
+PSQL=""
+if command -v psql >/dev/null 2>&1; then
+  PSQL=$(command -v psql)
+fi
+
+LIBPQ=0
+if pkg-config --exists libpq 2>/dev/null; then
+  LIBPQ=1
+else
+  for dir in /opt/homebrew/opt/postgresql@18/lib/postgresql/pkgconfig \
+             /opt/homebrew/opt/libpq/lib/pkgconfig \
+             /opt/homebrew/lib/postgresql@18/pkgconfig \
+             /usr/local/opt/postgresql@18/lib/postgresql/pkgconfig \
+             /usr/local/opt/libpq/lib/pkgconfig; do
+    if [ -d "$dir" ] &&
+      PKG_CONFIG_PATH="${dir}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
+        pkg-config --exists libpq 2>/dev/null; then
+      export PKG_CONFIG_PATH="${dir}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+      LIBPQ=1
+      break
+    fi
+  done
+fi
+
 # --- the binding and the record layer type-check -------------------------
 
 ( cd rocksdb && "$EMO" check rocksdb.emo ) >"$OUT/binding.log" 2>&1 &&
@@ -85,27 +117,53 @@ expect 0 "the binding type-checks" "$rc"
 
 sum=$(cat rocksdb/package.emo rocksdb/rocksdb.emo rocksdb/internal/*.emo \
   rocksdb/emo_rocksdb_shim.c record/package.emo record/record.emo \
-  record/internal/*.emo engine/package.emo engine/engine.emo \
+  record/internal/*.emo engine/package.emo engine/*.emo \
+  wire/package.emo wire/*.emo \
   ../../stdlib/registry/sql/0.1.0/package.emo \
   ../../stdlib/registry/sql/0.1.0/sql.emo \
   ../../stdlib/registry/float/0.1.0/package.emo \
   ../../stdlib/registry/float/0.1.0/float.emo \
-  ../../stdlib/registry/float/0.1.0/internal/*.emo |
+  ../../stdlib/registry/float/0.1.0/internal/*.emo \
+  ../../stdlib/registry/net/0.1.0/package.emo \
+  ../../stdlib/registry/net/0.1.0/net.emo \
+  ../../stdlib/registry/os/0.1.0/package.emo \
+  ../../stdlib/registry/os/0.1.0/os.emo \
+  ../../stdlib/registry/file/0.1.0/package.emo \
+  ../../stdlib/registry/file/0.1.0/file.emo \
+  ../../stdlib/registry/postgres/0.1.0/package.emo \
+  ../../stdlib/registry/postgres/0.1.0/postgres.emo \
+  ../../stdlib/registry/postgres/0.1.0/internal/*.emo \
+  ../../stdlib/registry/postgres/0.1.0/emo_postgres_shim.c |
   cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 mkdir -p "$REG/emo/rocksdb/0.1.0/internal" "$REG/emo/record/0.1.0/internal" \
-  "$REG/emo/engine/0.1.0" "$REG/sql/0.1.0" "$REG/float/0.1.0/internal"
+  "$REG/emo/engine/0.1.0" "$REG/emo/wire/0.1.0" "$REG/sql/0.1.0" \
+  "$REG/float/0.1.0/internal" "$REG/net/0.1.0" "$REG/os/0.1.0" \
+  "$REG/file/0.1.0" "$REG/postgres/0.1.0/internal"
 cp rocksdb/package.emo rocksdb/rocksdb.emo "$REG/emo/rocksdb/0.1.0/"
 cp rocksdb/internal/*.emo "$REG/emo/rocksdb/0.1.0/internal/"
 cp rocksdb/emo_rocksdb_shim.c "$REG/emo/rocksdb/0.1.0/"
 cp record/package.emo record/record.emo "$REG/emo/record/0.1.0/"
 cp record/internal/*.emo "$REG/emo/record/0.1.0/internal/"
-cp engine/package.emo engine/engine.emo "$REG/emo/engine/0.1.0/"
+cp engine/package.emo engine/*.emo "$REG/emo/engine/0.1.0/"
+cp wire/package.emo wire/*.emo "$REG/emo/wire/0.1.0/"
 cp ../../stdlib/registry/sql/0.1.0/package.emo \
   ../../stdlib/registry/sql/0.1.0/sql.emo "$REG/sql/0.1.0/"
 cp ../../stdlib/registry/float/0.1.0/package.emo \
   ../../stdlib/registry/float/0.1.0/float.emo "$REG/float/0.1.0/"
 cp ../../stdlib/registry/float/0.1.0/internal/*.emo "$REG/float/0.1.0/internal/"
+cp ../../stdlib/registry/net/0.1.0/package.emo \
+  ../../stdlib/registry/net/0.1.0/net.emo "$REG/net/0.1.0/"
+cp ../../stdlib/registry/os/0.1.0/package.emo \
+  ../../stdlib/registry/os/0.1.0/os.emo "$REG/os/0.1.0/"
+cp ../../stdlib/registry/file/0.1.0/package.emo \
+  ../../stdlib/registry/file/0.1.0/file.emo "$REG/file/0.1.0/"
+cp ../../stdlib/registry/postgres/0.1.0/package.emo \
+  ../../stdlib/registry/postgres/0.1.0/postgres.emo "$REG/postgres/0.1.0/"
+cp ../../stdlib/registry/postgres/0.1.0/internal/*.emo \
+  "$REG/postgres/0.1.0/internal/"
+cp ../../stdlib/registry/postgres/0.1.0/emo_postgres_shim.c \
+  "$REG/postgres/0.1.0/"
 
 ( cd record && EMO_REGISTRY="$REG" "$EMO" check record.emo ) \
   >"$OUT/record.log" 2>&1 && rc=0 || rc=$?
@@ -115,10 +173,16 @@ expect 0 "the record layer type-checks" "$rc"
   >"$OUT/engine.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the engine type-checks" "$rc"
 
+( cd wire && EMO_REGISTRY="$REG" "$EMO" check wire.emo ) \
+  >"$OUT/wire.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the wire type-checks" "$rc"
+
 # The demos' locks are committed. A missing one is a package change that
 # skipped `emo deps resolve`, not something the gate should paper over.
 for lock in kv_demo/package.lock record_demo/package.lock \
-            engine_demo/package.lock txn_demo/package.lock; do
+            engine_demo/package.lock txn_demo/package.lock \
+            wire/package.lock wire_demo/package.lock \
+            wire_client/package.lock; do
   if [ ! -f "$lock" ]; then
     echo "check.sh: $lock is missing — run" >&2
     echo "  (cd $(dirname "$lock") && EMO_REGISTRY=$REG \"$EMO\" deps resolve)" >&2
@@ -192,6 +256,101 @@ while [ "$run" -le 3 ]; do
     "txn run $run is byte-identical"
   run=$((run + 1))
 done
+
+# --- build and run the wire golden ---------------------------------------
+#
+# Phase A: a fresh server serves two psql connections — the script's
+# multi-statement string (DDL, DML, a transaction, and a SELECT), then
+# the error script, whose first SELECT answers, whose missing table
+# answers ErrorResponse, and whose third statement must never run.
+# Phase B: another fresh server serves the standard library's postgres
+# client, which runs the same script through libpq's simple path.
+# Both phases stop by the server's own max-connections count, so the
+# gate never kills a process.
+
+( cd wire_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/wire_demo" ) >"$OUT/wire-demo-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the wire server builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+if [ "$LIBPQ" -eq 1 ]; then
+  ( cd wire_client && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+      -o "$OUT/wire_client" ) >"$OUT/wire-client-build.log" 2>&1 \
+    && rc=0 || rc=$?
+  expect 0 "the wire client builds on c" "$rc"
+  if [ "$rc" -ne 0 ]; then exit 1; fi
+fi
+
+if [ -n "$PSQL" ]; then
+  portfile="$OUT/psql-port.txt"
+  : >"$portfile"
+  ( cd wire_demo && "$OUT/wire_demo" 0 2 "$portfile" ) \
+    >"$OUT/psql-server.log" 2>&1 &
+  srv=$!
+  tries=0
+  while [ ! -s "$portfile" ] && [ "$tries" -lt 100 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ ! -s "$portfile" ]; then
+    echo "check.sh: the psql phase's server wrote no port" >&2
+    exit 1
+  fi
+  port=$(cat "$portfile")
+
+  "$PSQL" "host=127.0.0.1 port=$port user=emo dbname=emo" -X -A -t \
+    -c "create table items (id bigint not null primary key, name text not null, price double precision, active boolean, payload bytea); insert into items (id, name, price, active, payload) values (1, 'Ada', 9.5, true, null), (2, 'Grace', 3.25, false, null); select id, name, price, active, payload from items; begin; update items set price = 10.5 where id = 1; select id, price from items where id = 1; commit;" \
+    >"$OUT/psql-run.txt" 2>"$OUT/psql-run.err" && rc=0 || rc=$?
+  expect 0 "psql runs the script" "$rc"
+  expect_same_file wire_demo/psql_expected.txt "$OUT/psql-run.txt" \
+    "psql's rows and command tags are byte-identical"
+
+  "$PSQL" "host=127.0.0.1 port=$port user=emo dbname=emo" -X -A -t \
+    -c "select id from items where id = 1; select * from missing; select id from items where id = 2" \
+    >"$OUT/psql-error.txt" 2>"$OUT/psql-error.err" && rc=0 || rc=$?
+  expect 1 "psql exits 1 on the error" "$rc"
+  expect_same_file wire_demo/psql_error_expected.txt "$OUT/psql-error.txt" \
+    "the error stopped the rest of the string"
+  expect_same_file wire_demo/psql_error_stderr.txt "$OUT/psql-error.err" \
+    "the ErrorResponse carries the SQLSTATE's message"
+
+  wait "$srv" && rc=0 || rc=$?
+  expect 0 "the psql server exits 0" "$rc"
+  expect_same_file wire_demo/expected.txt "$OUT/psql-server.log" \
+    "the psql server's own output is stable"
+else
+  echo "skip psql: not on PATH"
+fi
+
+if [ "$LIBPQ" -eq 1 ]; then
+  portfile="$OUT/client-port.txt"
+  : >"$portfile"
+  ( cd wire_demo && "$OUT/wire_demo" 0 1 "$portfile" ) \
+    >"$OUT/client-server.log" 2>&1 &
+  srv=$!
+  tries=0
+  while [ ! -s "$portfile" ] && [ "$tries" -lt 100 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ ! -s "$portfile" ]; then
+    echo "check.sh: the client phase's server wrote no port" >&2
+    exit 1
+  fi
+  port=$(cat "$portfile")
+
+  "$OUT/wire_client" "$port" >"$OUT/client-run.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "the postgres client runs the script" "$rc"
+  expect_same_file wire_client/expected.txt "$OUT/client-run.txt" \
+    "the client's rows, tags, and error are byte-identical"
+
+  wait "$srv" && rc=0 || rc=$?
+  expect 0 "the client server exits 0" "$rc"
+  expect_same_file wire_demo/expected.txt "$OUT/client-server.log" \
+    "the client server's own output is stable"
+else
+  echo "skip postgres client: libpq is not resolvable through pkg-config"
+fi
 
 # --- the refusals ---------------------------------------------------------
 

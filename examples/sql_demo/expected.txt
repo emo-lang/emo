@@ -45,5 +45,10 @@ DELETE FROM users
 BEGIN
 COMMIT
 ROLLBACK
+2
+-- a ; in a comment
+SELECT 1
+SELECT ';' AS semi
+0
 sql: expected an expression at byte 7
 sql: expected an expression at byte 26

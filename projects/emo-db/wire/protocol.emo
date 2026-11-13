@@ -1,0 +1,278 @@
+require "emo/engine"
+require "emo/record"
+
+// The PostgreSQL protocol v3 message forms this server speaks: the
+// startup handshake, AuthenticationOk under trust, the ParameterStatus
+// set, BackendKeyData, ReadyForQuery, the query cycle's
+// RowDescription/DataRow/CommandComplete/EmptyQueryResponse, and
+// ErrorResponse with PG's field convention. Every builder answers the
+// framed bytes the connection writes; the reader side is the startup
+// parse here and the frontend framing in the server's loop.
+//
+// The result's value types become PG's v0 OIDs; every DataRow value is
+// text format (format code 0), the only format the simple query path
+// needs. NULL is the -1 length; a BYTEA renders PG's `\x` hex.
+
+// One frontend/backend message: the type byte, the length (itself
+// included), and the payload.
+def frame(kind String, payload String) String {
+  const b = buf.Buf.new()
+  b.raw(kind)
+  b.u32be(payload.length() + 4)
+  b.raw(payload)
+  return b.finish()
+}
+
+// The big-endian Int64 at byte offset `i` of `s`.
+def int32_at(s String, i Int64) Int64 {
+  const b = s.to_bytes()
+  return (b.get(i) << 24) | (b.get(i + 1) << 16) | (b.get(i + 2) << 8) |
+         b.get(i + 3)
+}
+
+const version_3 = 196608
+const ssl_request = 80877103
+const gssenc_request = 80877104
+const cancel_request = 80877102
+
+class Startup {
+  def init(code Int64, params Map[String, String]) {
+    self.code = code
+    self.params = params
+  }
+
+  def param(name String) String {
+    if self.params.has(name) {
+      return self.params.get(name)
+    }
+    return ""
+  }
+}
+
+// Parses a startup packet's body: the Int64 code first, then NUL-
+// terminated name/value pairs and the terminating NUL. SSLRequest,
+// GSSENCRequest, and CancelRequest carry no parameters; the server
+// answers the first two with `N` and closes the third.
+def parse_startup(body String) (R, Startup) {
+  if body.length() < 4 {
+    return (R.error, "wire: a startup message is shorter than 4 bytes")
+  }
+  const code = int32_at(body, 0)
+  if code == ssl_request || code == gssenc_request || code == cancel_request {
+    return (R.ok, Startup.new(code, Map.new()))
+  }
+  if code != version_3 {
+    return (R.error,
+            "wire: unsupported frontend protocol ${code}; this server speaks 3.0")
+  }
+  var params = Map.new()
+  var pos = 4
+  var done = false
+  while !done {
+    if pos >= body.length() {
+      return (R.error, "wire: the startup parameters end without a terminator")
+    }
+    if body.to_bytes().get(pos) == 0 {
+      done = true
+      pos = pos + 1
+    } else {
+      case cstr_at(body, pos) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, key) -> {
+          case cstr_at(body, key[1]) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, value) -> {
+              params.set(key[0], value[0])
+              pos = value[1]
+            }
+          }
+        }
+      }
+    }
+  }
+  return (R.ok, Startup.new(code, params))
+}
+
+// The NUL-terminated String at `start`, and the position past its NUL.
+def cstr_at(s String, start Int64) (R, (String, Int64)) {
+  const b = s.to_bytes()
+  var i = start
+  while i < b.length() {
+    if b.get(i) == 0 {
+      return (R.ok, (s.substring(start, i - start), i + 1))
+    }
+    i = i + 1
+  }
+  return (R.error, "wire: a NUL-terminated field runs past the message")
+}
+
+// ---- the backend messages ----
+
+def auth_ok() String {
+  const b = buf.Buf.new()
+  b.u32be(0)
+  return frame("R", b.finish())
+}
+
+def parameter_status(name String, value String) String {
+  const b = buf.Buf.new()
+  b.cstr(name)
+  b.cstr(value)
+  return frame("S", b.finish())
+}
+
+def backend_key(pid Int64, secret Int64) String {
+  const b = buf.Buf.new()
+  b.u32be(pid)
+  b.u32be(secret)
+  return frame("K", b.finish())
+}
+
+def ready_for_query(status String) String {
+  const b = buf.Buf.new()
+  b.raw(status)
+  return frame("Z", b.finish())
+}
+
+def command_complete(tag String) String {
+  const b = buf.Buf.new()
+  b.cstr(tag)
+  return frame("C", b.finish())
+}
+
+def empty_query_response() String {
+  return frame("I", "")
+}
+
+// PG's field convention: severity (S and V), SQLSTATE (C), and the
+// primary message (M). The trailing NUL closes the field list.
+def error_response(code String, message String) String {
+  const b = buf.Buf.new()
+  b.u8(83)
+  b.cstr("ERROR")
+  b.u8(86)
+  b.cstr("ERROR")
+  b.u8(67)
+  b.cstr(code)
+  b.u8(77)
+  b.cstr(message)
+  b.u8(0)
+  return frame("E", b.finish())
+}
+
+// RowDescription: one field per projected column — name, table oid 0,
+// attribute number 0, the type's OID and size, typmod -1, text format.
+def row_description(columns Array[String], types Array[engine.ValType]) String {
+  const b = buf.Buf.new()
+  b.u16be(columns.length())
+  var i = 0
+  while i < columns.length() {
+    b.cstr(columns[i])
+    b.u32be(0)
+    b.u16be(0)
+    b.u32be(oid_of(types[i]))
+    b.u16be(size_of(types[i]))
+    b.u32be(0 - 1)
+    b.u16be(0)
+    i = i + 1
+  }
+  return frame("T", b.finish())
+}
+
+// DataRow: the field count, then each value's length and bytes; a NULL
+// is the length -1 with no bytes.
+def data_row(values Array[record.Value]) String {
+  const b = buf.Buf.new()
+  b.u16be(values.length())
+  var i = 0
+  while i < values.length() {
+    if values[i].is_null {
+      b.u32be(0 - 1)
+    } else {
+      const text = value_text(values[i])
+      b.u32be(text.length())
+      b.raw(text)
+    }
+    i = i + 1
+  }
+  return frame("D", b.finish())
+}
+
+// ---- the v0 type mapping ----
+
+def oid_of(t engine.ValType) Int64 {
+  if t == engine.ValType.integer {
+    return 23
+  }
+  if t == engine.ValType.bigint {
+    return 20
+  }
+  if t == engine.ValType.real {
+    return 700
+  }
+  if t == engine.ValType.double {
+    return 701
+  }
+  if t == engine.ValType.varchar {
+    return 1043
+  }
+  if t == engine.ValType.boolean {
+    return 16
+  }
+  if t == engine.ValType.bytea {
+    return 17
+  }
+  return 25
+}
+
+def size_of(t engine.ValType) Int64 {
+  if t == engine.ValType.integer {
+    return 4
+  }
+  if t == engine.ValType.bigint {
+    return 8
+  }
+  if t == engine.ValType.real {
+    return 4
+  }
+  if t == engine.ValType.double {
+    return 8
+  }
+  if t == engine.ValType.boolean {
+    return 1
+  }
+  return 0 - 1
+}
+
+// The text format of one value: decimal integers, the float's own
+// rendering, `t`/`f` for booleans (PG's spelling), text as itself, and
+// BYTEA as `\x` plus lower-case hex.
+def value_text(v record.Value) String {
+  case v.kind {
+    record.ColType.integer -> { return v.as_i64().to_string() }
+    record.ColType.bigint -> { return v.as_i64().to_string() }
+    record.ColType.real -> { return v.as_f64().to_string() }
+    record.ColType.double -> { return v.as_f64().to_string() }
+    record.ColType.text -> { return v.as_text() }
+    record.ColType.varchar -> { return v.as_text() }
+    record.ColType.boolean -> {
+      if v.as_bool() {
+        return "t"
+      }
+      return "f"
+    }
+    record.ColType.bytea -> { return "\\x" + hex_text(v.as_bytes()) }
+  }
+}
+
+def hex_text(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}

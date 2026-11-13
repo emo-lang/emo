@@ -1,0 +1,335 @@
+require "emo/engine"
+require "emo/record"
+require "sql"
+
+// emo-db's PostgreSQL wire, protocol v3's simple query path. A `net`
+// listener accepts; one process per connection reads the startup
+// packet, answers trust authentication and the server parameters, and
+// runs the Query cycle: split the string with `sql.split`, execute each
+// statement through the session's engine, stream RowDescription /
+// DataRow / CommandComplete, and answer ReadyForQuery with the session's
+// transaction status. An error becomes an ErrorResponse, stops the rest
+// of the string, and leaves the session clean (the engine aborts the
+// transaction and releases its locks).
+//
+// Each connection owns an Engine over the shared Store and a
+// `RemoteLocks` client over the server's one lock-manager process, so
+// the table locks of the transaction plane arbitrate across
+// connections. The server stops after `max_connections` sessions when
+// that is nonzero; zero serves forever.
+
+class Options {
+  def init(max_connections Int64, max_startup_bytes Int64, max_message_bytes Int64, server_version String) {
+    self.max_connections = max_connections
+    self.max_startup_bytes = max_startup_bytes
+    self.max_message_bytes = max_message_bytes
+    self.server_version = server_version
+  }
+
+  // 0 serves forever; a positive number stops accepting after that many
+  // sessions have ended.
+  def with_max_connections(n Int64) Options {
+    return Options.new(max_connections: n, max_startup_bytes: self.max_startup_bytes, max_message_bytes: self.max_message_bytes, server_version: self.server_version)
+  }
+
+  def with_max_startup_bytes(n Int64) Options {
+    return Options.new(max_connections: self.max_connections, max_startup_bytes: n, max_message_bytes: self.max_message_bytes, server_version: self.server_version)
+  }
+
+  def with_max_message_bytes(n Int64) Options {
+    return Options.new(max_connections: self.max_connections, max_startup_bytes: self.max_startup_bytes, max_message_bytes: n, server_version: self.server_version)
+  }
+
+  // The compatibility level reported as server_version — tools parse a
+  // PostgreSQL number, so the product's own version does not go here.
+  def with_server_version(version String) Options {
+    return Options.new(max_connections: self.max_connections, max_startup_bytes: self.max_startup_bytes, max_message_bytes: self.max_message_bytes, server_version: version)
+  }
+}
+
+def options() Options {
+  return Options.new(max_connections: 0, max_startup_bytes: 10000, max_message_bytes: 1048576, server_version: "16.4")
+}
+
+// Serves connections from `listener` over `store`; answers the number of
+// sessions that ran. The caller reads the bound port from the listener
+// (or passes an ephemeral one and reports it) before calling.
+def serve(listener TcpListener, store record.Store, opts Options) Int64 {
+  const manager = engine.locks.start_lock_manager()
+  return accept_loop(listener, store, opts, manager, 0)
+}
+
+def accept_loop(listener TcpListener, store record.Store, opts Options, manager Pid, served Int64) Int64 {
+  if opts.max_connections > 0 && served >= opts.max_connections {
+    case listener.close() {
+      (R.error, _) -> {}
+      (R.ok, _) -> {}
+    }
+    return drain(served)
+  }
+  case listener.accept() {
+    (R.error, _) -> {
+      case listener.close() {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+      return served
+    }
+    (R.ok, conn) -> {
+      do session(conn, store, manager, served + 1, opts, self_pid())
+      return accept_loop(listener, store, opts, manager, served + 1)
+    }
+  }
+}
+
+// Waits for every accepted session to report its close, so the server's
+// process does not exit over a live connection.
+def drain(pending Int64) Int64 {
+  if pending <= 0 {
+    return 0
+  }
+  receive {
+    ("closed", _) -> { return drain(pending - 1) }
+  }
+}
+
+// One connection, one engine, one lock client. The shared Store stays
+// open; end_session aborts an open transaction and releases the locks
+// the session held.
+def session(conn TcpConn, store record.Store, manager Pid, id Int64, opts Options, server Pid) Int64 {
+  const eng = engine.Engine.new(store, [engine.locks.RemoteLocks.new(manager, id)], [], Map.new())
+  const rc = serve_session(conn, eng, opts)
+  eng.end_session()
+  case conn.close() {
+    (R.error, _) -> {}
+    (R.ok, _) -> {}
+  }
+  server <- ("closed", id)
+  return rc
+}
+
+def serve_session(conn TcpConn, eng engine.Engine, opts Options) Int64 {
+  case read_startup(conn, opts.max_startup_bytes) {
+    (R.error, _) -> { return 0 }
+    (R.ok, startup) -> {
+      if startup.code == protocol.cancel_request {
+        return 0
+      }
+      if !handshake(conn, startup, opts) {
+        return 0
+      }
+      return query_loop(conn, eng, opts)
+    }
+  }
+}
+
+// Reads startup packets until a real startup arrives: SSLRequest and
+// GSSENCRequest are answered with the single byte `N` (no TLS here),
+// and the peer resends. A CancelRequest is handed back to the caller,
+// which closes.
+def read_startup(conn TcpConn, max_bytes Int64) (R, protocol.Startup) {
+  case read_body(conn, max_bytes) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, body) -> {
+      case protocol.parse_startup(body) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, startup) -> {
+          if startup.code == protocol.ssl_request ||
+             startup.code == protocol.gssenc_request {
+            case conn.write("N") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, _) -> { return read_startup(conn, max_bytes) }
+            }
+          }
+          return (R.ok, startup)
+        }
+      }
+    }
+  }
+}
+
+// AuthenticationOk (trust), the ParameterStatus set psql and libpq
+// read, BackendKeyData, and the first ReadyForQuery.
+def handshake(conn TcpConn, startup protocol.Startup, opts Options) Bool {
+  var user = startup.param("user")
+  if user == "" {
+    user = "emo"
+  }
+  var out = protocol.auth_ok()
+  out = out + protocol.parameter_status("server_version", opts.server_version)
+  out = out + protocol.parameter_status("server_encoding", "UTF8")
+  out = out + protocol.parameter_status("client_encoding", "UTF8")
+  out = out + protocol.parameter_status("application_name", startup.param("application_name"))
+  out = out + protocol.parameter_status("is_superuser", "on")
+  out = out + protocol.parameter_status("session_authorization", user)
+  out = out + protocol.parameter_status("DateStyle", "ISO, MDY")
+  out = out + protocol.parameter_status("IntervalStyle", "postgres")
+  out = out + protocol.parameter_status("TimeZone", "UTC")
+  out = out + protocol.parameter_status("integer_datetimes", "on")
+  out = out + protocol.parameter_status("standard_conforming_strings", "on")
+  out = out + protocol.backend_key(1, 0)
+  out = out + protocol.ready_for_query("I")
+  return send(conn, out)
+}
+
+def query_loop(conn TcpConn, eng engine.Engine, opts Options) Int64 {
+  case conn.read_exactly(1) {
+    (R.error, _) -> { return 0 }
+    (R.ok, kind) -> {
+      case read_body(conn, opts.max_message_bytes) {
+        (R.error, why) -> {
+          send(conn, protocol.error_response("08P01", why))
+          return 0
+        }
+        (R.ok, body) -> {
+          if kind == "X" {
+            return 0
+          }
+          if kind == "Q" {
+            case strip_nul(body) {
+              (R.error, why) -> {
+                send(conn, protocol.error_response("08P01", why))
+                return 0
+              }
+              (R.ok, text) -> {
+                case handle_query(conn, eng, text) {
+                  (R.error, _) -> { return 0 }
+                  (R.ok, _) -> { return query_loop(conn, eng, opts) }
+                }
+              }
+            }
+          } else {
+            send(conn, protocol.error_response("08P01", "wire: unsupported frontend message `" + kind + "`"))
+            return 0
+          }
+        }
+      }
+    }
+  }
+}
+
+// The Query string's statements: split, execute each, and answer one
+// ReadyForQuery at the end. An empty string is EmptyQueryResponse; an
+// error answers ErrorResponse, stops the rest, and the engine has
+// already aborted the transaction, so the ready status is truthful.
+def handle_query(conn TcpConn, eng engine.Engine, text String) (R, Bool) {
+  case sql.split(text) {
+    (R.error, why) -> {
+      if !send(conn, protocol.error_response("42601", why)) {
+        return (R.error, "wire: the connection is gone")
+      }
+      return ready(conn, eng)
+    }
+    (R.ok, stmts) -> {
+      if stmts.length() == 0 {
+        if !send(conn, protocol.empty_query_response()) {
+          return (R.error, "wire: the connection is gone")
+        }
+        return ready(conn, eng)
+      }
+      var i = 0
+      while i < stmts.length() {
+        case eng.execute(stmts[i]) {
+          (R.error, why) -> {
+            case split_error(why) {
+              (code, message) -> {
+                if !send(conn, protocol.error_response(code, message)) {
+                  return (R.error, "wire: the connection is gone")
+                }
+              }
+            }
+            return ready(conn, eng)
+          }
+          (R.ok, result) -> {
+            case send_result(conn, result) {
+              (R.error, _) -> { return (R.error, "wire: the connection is gone") }
+              (R.ok, _) -> {}
+            }
+          }
+        }
+        i = i + 1
+      }
+      return ready(conn, eng)
+    }
+  }
+}
+
+def ready(conn TcpConn, eng engine.Engine) (R, Bool) {
+  var status = "I"
+  if eng.in_tx() {
+    status = "T"
+  }
+  if !send(conn, protocol.ready_for_query(status)) {
+    return (R.error, "wire: the connection is gone")
+  }
+  return (R.ok, true)
+}
+
+def send_result(conn TcpConn, result engine.Result) (R, Bool) {
+  if result.columns.length() > 0 {
+    if !send(conn, protocol.row_description(result.columns, result.types)) {
+      return (R.error, "wire: the connection is gone")
+    }
+    var i = 0
+    while i < result.rows.length() {
+      if !send(conn, protocol.data_row(result.rows[i])) {
+        return (R.error, "wire: the connection is gone")
+      }
+      i = i + 1
+    }
+  }
+  if !send(conn, protocol.command_complete(result.tag)) {
+    return (R.error, "wire: the connection is gone")
+  }
+  return (R.ok, true)
+}
+
+// The engine's `code: message` split at the first ": "; anything else
+// is an internal failure with XX000.
+def split_error(why String) (String, String) {
+  const at = why.index_of(": ")
+  if at < 0 {
+    return ("XX000", why)
+  }
+  return (why.substring(0, at), why.substring(at + 2, why.length() - at - 2))
+}
+
+// The Query body's trailing NUL, which the protocol requires.
+def strip_nul(body String) (R, String) {
+  if body.length() == 0 {
+    return (R.error, "wire: an empty Query message")
+  }
+  if body.to_bytes().get(body.length() - 1) != 0 {
+    return (R.error, "wire: a Query message does not end with NUL")
+  }
+  return (R.ok, body.substring(0, body.length() - 1))
+}
+
+// Reads one length-prefixed body: the 4-byte length (itself included),
+// then the payload. Both the startup packet and every later message use
+// this framing.
+def read_body(conn TcpConn, max_bytes Int64) (R, String) {
+  case conn.read_exactly(4) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, head) -> {
+      const n = protocol.int32_at(head, 0)
+      if n < 4 {
+        return (R.error, "wire: a message length below 4")
+      }
+      if n > max_bytes {
+        return (R.error, "wire: a message of ${n} bytes is over the ${max_bytes}-byte limit")
+      }
+      if n == 4 {
+        return (R.ok, "")
+      }
+      return conn.read_exactly(n - 4)
+    }
+  }
+}
+
+def send(conn TcpConn, bytes String) Bool {
+  case conn.write(bytes) {
+    (R.error, _) -> { return false }
+    (R.ok, _) -> { return true }
+  }
+}

@@ -105,6 +105,19 @@ incrementally shippable steps — one file per step, executed in order.
   write-write block, and the deadlock on `c`. The `sql` package grows
   the three transaction statements. The plan is
   `plan/step-69-transactions-session.md`.
+- **M33 — The wire (step 70):** PostgreSQL protocol v3's simple query
+  path in a new `emo/wire` package over `net` — startup with the
+  SSL/GSSENC refusal and trust authentication, ParameterStatus /
+  BackendKeyData / ReadyForQuery, Query with a multi-statement string
+  (split by `sql.split` over the lexer's tokens), RowDescription with
+  the v0 type OIDs, text-format DataRow, CommandComplete,
+  EmptyQueryResponse, and ErrorResponse; one session actor per
+  connection over the shared Store with the table locks, and the
+  `postgres` client's zero-parameter statements taking libpq's simple
+  path. psql and the client are both goldens behind availability
+  probes. The engine's lock manager moves into the package
+  (`engine.locks`) for the server to share. The plan is
+  `plan/step-70-wire.md`.
 
 ## Ground rules
 
@@ -197,5 +210,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 67 | The SQL front-end's DML and DDL | landed — the `sql` package grows `CREATE TABLE` (the v0 types, column-level `NOT NULL`/`PRIMARY KEY`), multi-row `INSERT ... VALUES` with an optional column list, `UPDATE ... SET ... [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`: one class per statement behind `Stmt`, canonical `to_string()` renderings, the SELECT grammar untouched, and the parser validates the statement shape (duplicate columns/assignments, row widths, a positive `VARCHAR(n)`, the unsupported tails by name); `sql_demo` and `sql_edge` are byte-identical on the interpreter and all five hosted targets, with both locks re-resolved (`plan/step-67-sql-dml-ddl.md`) |
 | 68 | The planner and executor | landed — the `emo/engine` package over `emo/sql` and `emo/record`: the analyzer (table/alias/column resolution, the v0 type mapping, numeric/text conformance, the PG-shaped `code: message` failures), typed expressions with SQL's three-valued NULL logic (comparisons, AND/OR, arithmetic, `||`, IS/IN/BETWEEN/LIKE/CASE), the scan/filter/project plan with an equality index scan, CREATE TABLE (the v0 types, the primary-key index), INSERT (column list, NULL fill, coercion, not-null/duplicate mapping), and UPDATE/DELETE (the record layer's new update/delete, index entries rewritten in one batch); the embedded engine demo pins SQL text in and rows out with the plan tree on `c` (`plan/step-68-planner-executor.md`) |
 | 69 | Transactions and the session plane | landed — the `sql` package's `BEGIN`/`COMMIT`/`ROLLBACK`; the record layer's `Txn` (one WriteBatch, a per-statement snapshot, the pending overlay, the rowid counters, the `Table` tx methods, commit/rollback); the engine's transaction state, autocommit path, `LockClient`, and table-level locks; the lock-manager process (owners, FIFO waiters, the wait-for graph, the deadlock abort, the release grant); the two-session `txn_demo` (read committed, write-write block, deadlock) three runs byte-identical on `c` (`plan/step-69-transactions-session.md`) |
+| 70 | The wire | landed — PostgreSQL protocol v3's simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk), the ParameterStatus set, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` over the lexer's tokens, RowDescription with the v0 OIDs, text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached through `RemoteLocks`, `Result.types` carrying the projection types; `wire_demo` (ephemeral port through a ready file, a max-connection stop) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's multi-statement script, the error stop, the client's rows and error, byte-identical across three `check.sh` runs; also the BEAM emitter's `__inst_recv` temp fix, found by the new `sql_demo` loop (`plan/step-70-wire.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

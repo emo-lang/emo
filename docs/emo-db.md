@@ -104,7 +104,13 @@ authentication, Query / RowDescription / DataRow / CommandComplete /
 ReadyForQuery, ErrorResponse with PG's error-field convention,
 multi-statement strings. psql drives the whole surface with this.
 Deferred: the extended protocol (prepared statements — what most
-drivers default to), scram-sha-256, SSL.
+drivers default to), scram-sha-256, SSL. The standard library's
+`postgres` client meets the server on this path by taking `PQexec` for
+a zero-parameter statement; a parameterized statement still speaks the
+extended protocol and fails honestly against v0. The standard library's
+`postgres` client meets the server on this path by taking `PQexec` for
+a zero-parameter statement; a parameterized statement still speaks the
+extended protocol and fails honestly against v0.
 
 **D9 — The ladder.** Arc one is milestones M28–M34, one milestone per
 step, steps 65 through 71. The exit criteria live in `docs/TASKS.md`;
@@ -117,7 +123,7 @@ the ladder's shape:
 | M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for M34. |
 | M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, one WriteBatch per transaction with the COMMIT's fsync, the Emo lock manager. Table-level locks in v0. |
-| M33 — The wire | 70 | PG protocol v3, simple path; psql end-to-end and the `postgres` client connecting. |
+| M33 — The wire | 70 | PG protocol v3, simple path: startup (SSL/GSSENC refused, trust authentication), ParameterStatus/BackendKeyData/ReadyForQuery, Query with multi-statement strings, RowDescription with the v0 OIDs, text-format DataRow, CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store and the table locks; psql end-to-end and the `postgres` client through its zero-parameter simple path. |
 | M34 — Conformance and documentation | 71 | The SQL corpus, the measured-performance table, docs EN+zh. |
 
 **D10 — The byte view: `Bytes` crosses the C ABI as a borrowed view.**
@@ -206,6 +212,10 @@ follows.
 
 Stated as open, each waiting on its own evidence or decision:
 
+- The failed-transaction state — the wire reports ReadyForQuery `I`
+after a statement error because the engine aborts and releases the
+transaction immediately; PostgreSQL's `E` (a block that only ROLLBACK
+leaves) waits for a transaction model that keeps the failed block.
 - The extended protocol — when a driver beyond psql and libpq's
 simple path demands it.
 - scram-sha-256 and SSL — real authentication and real transport

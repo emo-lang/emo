@@ -197,10 +197,18 @@ int64_t emo_postgres_exec_fire(int64_t conn_handle, const char *sql,
       return 0;
     }
   }
-  PGresult *res =
-      PQexecParams(conn, sql, stg->n, NULL,
-                   stg->n > 0 ? (const char *const *)stg->values : NULL,
-                   NULL, NULL, 0 /* every answer in text format */);
+  /* No parameters means the simple query path: PQexec sends Query and
+     reads the ordinary result stream, which is all a server that does
+     not speak the extended protocol needs. A parameterized statement
+     takes PQexecParams. */
+  PGresult *res;
+  if (stg->n == 0) {
+    res = PQexec(conn, sql);
+  } else {
+    res = PQexecParams(conn, sql, stg->n, NULL,
+                       (const char *const *)stg->values, NULL, NULL,
+                       0 /* every answer in text format */);
+  }
   emo_pg_stage_free(stg);
   return res != NULL ? (int64_t)(intptr_t)res : -1;
 }

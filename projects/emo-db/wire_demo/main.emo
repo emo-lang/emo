@@ -1,0 +1,59 @@
+require "emo/wire"
+require "emo/record"
+require "net"
+require "emo/rocksdb"
+require "file"
+require "os"
+
+// emo-db's wire server (M33): a fresh database, a listener, and the
+// PostgreSQL simple-query path. Arguments: port (0 = an ephemeral
+// port), then the number of sessions to serve (0 = forever), then the
+// ready-file path — the demo writes the bound port there so a gate can
+// start it, read the port, and run psql without a sleep loop. The
+// server's own stdout stays static: `listening` and `done`.
+
+def arg(argv Array[String], i Int64, fallback Int64) Int64 {
+  if i < argv.length() {
+    return argv[i].to_int64()
+  }
+  return fallback
+}
+
+def main() {
+  const path = ".emo-build/wire-db"
+  const argv = os.argv()
+  const port = arg(argv, 1, 0)
+  const max = arg(argv, 2, 0)
+  var ready = ""
+  if argv.length() > 3 {
+    ready = argv[3]
+  }
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  case record.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, store) -> {
+      case net.listen("127.0.0.1", port) {
+        (R.error, why) -> { raise Exception.new(message: why) }
+        (R.ok, listener) -> {
+          const bound = listener.port()
+          println("listening")
+          if ready != "" {
+            case file.write(ready, bound.to_string()) {
+              (R.error, why) -> { raise Exception.new(message: why) }
+              (R.ok, _) -> {}
+            }
+          }
+          wire.serve(listener, store,
+                     wire.options().with_max_connections(max))
+          store.close()
+          println("done")
+        }
+      }
+    }
+  }
+}
+
+main()

@@ -75,6 +75,26 @@ reordered; one statement per `parse` call; expression nesting capped at
 integers beyond `Int64` (`-9223372036854775808` itself reaches, the
 sign folds into the literal) and floats beyond binary64.
 
+## Splitting a query string
+
+```emo
+def split(text String) (R, Array[String])
+```
+
+The protocol's Query carries one string that may hold several
+statements. `split` lexes once and cuts at the lexer's own `t_semi`
+tokens, so a semicolon inside a string literal, a quoted identifier, a
+`--` comment, or a `/* */` comment never cuts; empty pieces are
+dropped, and a string with no statement answers an empty array. A
+lexer error is the split's error — an unterminated literal stays the
+same `42601` the parser would give, never a silently cut statement.
+Each returned piece is trimmed and parses on its own with `parse`.
+
+```emo
+const (R.ok, parts) = sql.split("select 1; select ';' as semi")
+// two statements: "select 1" and "select ';' as semi"
+```
+
 ## Supported statements
 
 `SELECT` end to end: a `DISTINCT` select list (`*`, `t.*`,
@@ -121,7 +141,8 @@ Not supported — each answers `(R.error, reason)`, never a guess:
 and `UNIQUE`/`DEFAULT`/`CHECK`/`REFERENCES`, `CREATE INDEX`, `UPDATE ...
 FROM`, `DELETE ... USING`, `WITH`, set operations
 (`UNION`/`INTERSECT`/`EXCEPT`), window functions, bracket-style quoted
-identifiers, `ESCAPE` on `LIKE`, and multiple statements in one call.
+identifiers, `ESCAPE` on `LIKE` (and `parse` takes one statement;
+`split` is the multi-statement door).
 
 ## Rendering
 

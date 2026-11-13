@@ -106,8 +106,9 @@ class Conn {
 }
 ```
 
-每条语句都经 libpq 的 `PQexecParams` 执行,占位符是 `$1`、
-`$2`、……,取值按数组顺序以 `Param` 供给。`postgres.i64(18)`
+带参数的语句经 libpq 的 `PQexecParams` 执行,占位符是 `$1`、
+`$2`、……,取值按数组顺序以 `Param` 供给;零参数语句走简单查询路径
+(`PQexec`)——不跑扩展协议的 PostgreSQL 协议服务器也能回答的那条。`postgres.i64(18)`
 到达时是 `18`,`postgres.f64(1.5)` 是可往返的十进制,
 `postgres.bool(b)` 是 `true`/`false`,`postgres.none()` 是
 SQL NULL——不是空串,不是零。服务端从语句推断每个参数的类型,
@@ -120,8 +121,8 @@ const (R.ok, n) = conn.exec(
 ```
 
 `exec` 以服务端报告的条数作答——插入、更新、删除的行数;没有
-条数的命令(`CREATE TABLE` 与多数 DDL)答 0。`PQexecParams`
-一次只带一条语句:不允许分号批量,这是线协议自己的规矩。
+条数的命令(`CREATE TABLE` 与多数 DDL)答 0。本包每次调用只带一条
+语句:不允许分号批量。
 `query` 以 `SELECT`(或 `RETURNING`)产出的行集作答。
 
 两扇门互相把关:返回了行的语句会拒绝 `exec`(“the statement

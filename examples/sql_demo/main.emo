@@ -127,6 +127,17 @@ println(t2.to_string())
 const (R.ok, t3) = sql.parse("ROLLBACK")
 println(t3.to_string())
 
+// ---- splitting a multi-statement string ----
+const (R.ok, pieces) = sql.split("-- a ; in a comment\nSELECT 1; SELECT ';' AS semi;  ;; ")
+println(pieces.length().to_string())
+var p = 0
+while p < pieces.length() {
+  println(pieces[p])
+  p = p + 1
+}
+const (R.ok, none) = sql.split("  ;;  ")
+println(none.length().to_string())
+
 // ---- a malformed statement is a value, not a crash ----
 case sql.parse("SELECT FROM") {
   (R.error, why) -> { println(why) }

@@ -1,0 +1,86 @@
+// The wire's byte writer: big-endian integers, raw bytes, and
+// NUL-terminated strings into a growable buffer, then one String for
+// the connection. A PostgreSQL message's length counts itself, so the
+// builders write the payload first and frame it after.
+//
+// The writer is package machinery; the server's message functions in
+// internal.protocol are the only callers.
+const initial_capacity = 128
+
+class Buf {
+  def init() {
+    self.buf = Box.new(Bytes.new(initial_capacity))
+    self.len = Box.new(0)
+  }
+
+  def ensure(n Int64) {
+    const need = self.len.read() + n
+    if need > self.buf.read().length() {
+      var cap = self.buf.read().length()
+      if cap == 0 {
+        cap = initial_capacity
+      }
+      while cap < need {
+        cap = cap * 2
+      }
+      const next = Bytes.new(cap)
+      const old = self.buf.read()
+      var i = 0
+      while i < self.len.read() {
+        next.set(i, old.get(i))
+        i = i + 1
+      }
+      self.buf.replace(next)
+    }
+  }
+
+  def u8(v Int64) {
+    if v < 0 || v > 255 {
+      raise Exception.new(message: "wire: byte value ${v} is outside 0-255")
+    }
+    self.ensure(1)
+    const p = self.len.read()
+    self.buf.read().set(p, v)
+    self.len.replace(p + 1)
+  }
+
+  def u16be(v Int64) {
+    self.u8((v >> 8) & 255)
+    self.u8(v & 255)
+  }
+
+  // Two's complement through the mask, so -1 writes ff ff ff ff.
+  def u32be(v Int64) {
+    self.u8((v >> 24) & 255)
+    self.u8((v >> 16) & 255)
+    self.u8((v >> 8) & 255)
+    self.u8(v & 255)
+  }
+
+  def raw(s String) {
+    const b = s.to_bytes()
+    self.ensure(b.length())
+    var i = 0
+    const p = self.len.read()
+    while i < b.length() {
+      self.buf.read().set(p + i, b.get(i))
+      i = i + 1
+    }
+    self.len.replace(p + b.length())
+  }
+
+  def cstr(s String) {
+    self.raw(s)
+    self.u8(0)
+  }
+
+  def finish() String {
+    const out = Bytes.new(self.len.read())
+    var i = 0
+    while i < self.len.read() {
+      out.set(i, self.buf.read().get(i))
+      i = i + 1
+    }
+    return out.to_string()
+  }
+}

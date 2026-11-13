@@ -1358,6 +1358,40 @@ def err(at Int64, what String) String {
   return "sql: " + what + " at byte " + at.to_string()
 }
 
+// ---- statement splitting ----
+
+// Splits a query string into its statements at the lexer's own
+// semicolons: quotes, doubled quotes, `--` comments, and `/* */`
+// comments hide a semicolon exactly as they hide it from the parser.
+// Empty pieces are dropped; a string with no statement answers an
+// empty array. A lexer error is the split's error — an unterminated
+// string stays a lexer error, never a silent cut.
+def split(text String) (R, Array[String]) {
+  case lex(text) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, toks)   -> {
+      var out = []
+      var start = 0
+      var i = 0
+      while i < toks.length() {
+        if toks[i].kind == Tk.t_semi {
+          const piece = text.substring(start, toks[i].pos - start).trim()
+          if piece != "" {
+            out = out.append(piece)
+          }
+          start = toks[i].pos + 1
+        }
+        i = i + 1
+      }
+      const last = text.substring(start, text.length() - start).trim()
+      if last != "" {
+        out = out.append(last)
+      }
+      return (R.ok, out)
+    }
+  }
+}
+
 // ---- parser ----
 
 // The parser is index-based over the token array; every function takes

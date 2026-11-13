@@ -51,7 +51,7 @@
 | M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型与列级 NOT NULL/PRIMARY KEY 的 CREATE TABLE、带可选列清单的多行 INSERT ... VALUES、UPDATE ... SET ... [WHERE]、DELETE FROM ... [WHERE]——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动,解析器做形状检查(重复列/赋值、行宽、正的 VARCHAR 长度、按名拒绝不支持的尾部);语句级与表达式级金测在解释器与全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
 | M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:`emo/engine` 包骑 `emo/sql` 与 `emo/record`——计划节点(scan、filter、project、insert、update、delete)、带 SQL 三值 NULL 逻辑的类型化表达式求值、单表 SELECT(投影、WHERE;索引列上的等值变成索引扫描)、CREATE TABLE(v0 类型、主键索引)、INSERT、UPDATE 与 DELETE(记录层新增的 update/delete 在一次批量里重写行与索引条目),以及 PG 形状的 `code: message` 错误(`42P01`、`42703`、`42883`、`42804`、`23505`、`23502`、`22001`、`22012`、`0A000`、`42601`)——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出并打印计划树,经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
 | M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
-| M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的 simple query 路径:startup 带 trust 认证、Query/RowDescription/DataRow/CommandComplete/ReadyForQuery、带 PG 错误字段约定的 ErrorResponse、多语句查询串、空结果、错误路径把事务状态收干净——`net` 上一连接一个会话 actor(`httpd` 形状);psql 端到端开动全部表面,标准库的 `postgres` 客户端直连并跑同一脚本,两者都作为金测骑在可用性探针后面(`CHECK.md`)。 |
+| M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
 | M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料(语句、结果、错误——文本可比)、实测性能表(只写测过的数字)、文档收尾——`docs/emo-db.md` 长成已交付表面的参考、文档 EN+zh、README 行、弧二速写对照弧一实际建出的东西复核(`CHECK.md`)。 |
 
 ## 设计闸门
@@ -1723,3 +1723,41 @@ rowid 计数);引擎的会话面经 Emo 锁管理器进程持有表锁、阻塞�
 - [x] **T69.9** —— 闸门:第四个 demo 与构建失败守卫。
 - [x] **T69.10** —— 文档 EN+zh 与设计记录注记。
 - [x] **T69.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M33 —— 线协议
+
+### 步骤 70 —— 线协议
+
+**前置:** Step 66(记录层)、Step 67(SQL 门面)、Step 68(引擎)、
+Step 69(事务与锁管理器)。**完成标准:** emo-db 经 `net` 说 PostgreSQL
+协议 v3 的简单查询路径——启动(拒绝 SSL/GSSENC、trust 认证)、
+ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、
+带 v0 类型 OID 的 RowDescription、文本格式 DataRow、CommandComplete、
+EmptyQueryResponse,以及遵循 PG 字段约定的 ErrorResponse;错误终止后
+续语句并让会话的事务状态干净;每连接一个会话 actor,骑共享 Store 与
+Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户端经
+新的零参数简单路径连上并跑同一脚本,两者在 `psql`/`libpq` 可用性探
+针后逐字节钉死;既有金测保持绿;文档 EN+zh;仓库可构建。
+
+- [x] **T70.1** —— 规格:本节 EN+zh 与 `plan/step-70-wire.md`。
+- [x] **T70.2** —— `sql.split`:在词法器自己的 token 流上切分语句;
+      `sql_demo`/`sql_edge` 用例与六条路径。
+- [x] **T70.3** —— 引擎的 `Result.types`(投影值类型,供
+      RowDescription),以及 `engine.start_lock_manager` /
+      `engine.RemoteLocks` 从 `txn_demo` 移进包。
+- [x] **T70.4** —— `postgres` shim 的零参数 `PQexec` 简单路径,让标
+      准客户端能对不跑扩展协议的服务器说话。
+- [x] **T70.5** —— `emo/wire`:字节缓冲、启动消息各形态(SSLRequest/
+      GSSENCRequest 答 `N`、CancelRequest 关闭)、后端消息构造器、v0
+      的 OID 与文本编码。
+- [x] **T70.6** —— 查询循环:切分、空查询、多语句执行、错误响应与
+      停止、ReadyForQuery 的事务状态、干净的 abort。
+- [x] **T70.7** —— 会话 actor 与 accept 循环:每连接一个骑共享 Store
+      的 Engine 与 `RemoteLocks`、最大连接数的停止、锁管理器。
+- [x] **T70.8** —— `wire_demo`(服务器,带 ready 文件)与
+      `wire_client`(`postgres` 客户端)及各自金测。
+- [x] **T70.9** —— 闸门:构建 wire 包与两个 demo,探测 `psql` 与
+      `libpq`,跑两个阶段,钉死金测。
+- [x] **T70.10** —— 文档 EN+zh:项目 README、设计记录的线协议注记、
+      `postgres` 零参数路径、`sql.split` API。
+- [x] **T70.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。

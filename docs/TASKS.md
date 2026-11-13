@@ -59,7 +59,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types and column-level NOT NULL/PRIMARY KEY, multi-row INSERT ... VALUES with an optional column list, UPDATE ... SET ... [WHERE], and DELETE FROM ... [WHERE] — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched, and the parser's shape checks (duplicate columns/assignments, row widths, a positive VARCHAR length, the unsupported tails by name); statement and expression goldens byte-identical on the interpreter and all five hosted targets (`CHECK.md`). |
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: the `emo/engine` package over `emo/sql` and `emo/record` — plan nodes (scan, filter, project, insert, update, delete), typed expression evaluation with SQL's three-valued NULL logic, single-table SELECT (projection, WHERE; an equality on an indexed column becomes an index scan), CREATE TABLE (the v0 types, a primary-key index), INSERT, UPDATE and DELETE (the record layer's new update/delete rewrite the row and its index entries in one batch), and the PG-shaped `code: message` errors (`42P01`, `42703`, `42883`, `42804`, `23505`, `23502`, `22001`, `22012`, `0A000`, `42601`) — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with the plan tree printed, through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M32 — Transactions and the session plane | 69 | The transaction model of D6: BEGIN/COMMIT/ROLLBACK over the record layer's `Txn` — one WriteBatch per transaction committed atomically, a per-statement snapshot (read committed), a pending overlay for read-your-writes, the rowid counters published on commit, and the catalog's next-rowid change in the same write; the engine's session state, `LockClient`, and table-level write locks held to commit/rollback; an Emo lock-manager process with a FIFO of waiters, a wait-for graph, and a deadlock that aborts the requester with `40P01`; a two-session golden showing the read-committed pair, the write-write block, and the deadlock, pinned byte-for-byte on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path: startup with trust authentication, Query/RowDescription/DataRow/CommandComplete/ReadyForQuery, ErrorResponse with PG's error-field convention, multi-statement query strings, empty results, and the error path restoring clean transaction state — one session actor per connection over `net` (the `httpd` shape); psql drives the whole surface end-to-end and the standard library's `postgres` client connects and runs the same script, both as goldens behind availability probes (`CHECK.md`). |
+| M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk, protocol 3.0 only), the ParameterStatus set psql and libpq read, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` at the lexer's own semicolons, RowDescription with the v0 type OIDs (`Result` grows `types`), text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse with PG's fields; an error stops the rest and reports the engine's clean state (`I`); one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached per session, `Engine.end_session` releasing without closing the store; `wire_demo` (ephemeral port through a ready file, finite connection count) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's script and its error stop plus the client's rows/error, byte-identical across three `projects/emo-db/check.sh` runs behind `psql`/`libpq` probes (49 checks); the BEAM `__inst_recv` temp fix (`CHECK.md`). |
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit (statements, results, errors — text-comparable), a measured-performance table (numbers only where measured), and the documentation pass — `docs/emo-db.md` grown to the shipped surface, docs EN+zh, the README rows, and the arc-two sketch reviewed against what arc one actually built (`CHECK.md`). |
 
 ## Design gates
@@ -4188,4 +4188,55 @@ builds.
       guards.
 - [x] **T69.10** — The docs EN+zh and the design record's notes.
 - [x] **T69.11** — The close-out: TASKS, the plan README, CHECK.md,
+      build/fmt.
+
+## M33 — The wire
+
+### Step 70 — The wire
+
+**Prereq:** Step 66 (the record layer), Step 67 (the SQL front-end),
+Step 68 (the engine), Step 69 (transactions and the lock manager).
+**Done when:** emo-db speaks PostgreSQL protocol v3's simple query path
+over `net` — startup (with the SSL/GSSENC refusal and trust
+authentication), ParameterStatus/BackendKeyData/ReadyForQuery,
+Query with a multi-statement string, RowDescription with the v0 type
+OIDs, DataRow in text format, CommandComplete, EmptyQueryResponse, and
+ErrorResponse with PG's field convention; an error stops the remaining
+statements and leaves the session's transaction state clean; one
+session actor per connection, over a shared Store, with the table
+locks of Step 69; psql drives the surface end-to-end and the standard
+library's `postgres` client connects and runs the same script through
+its new zero-parameter simple path, both pinned byte-for-byte behind
+`psql`/`libpq` availability probes; the existing goldens stay green;
+docs EN+zh; the repo builds.
+
+- [x] **T70.1** — The spec: this section EN+zh and
+      `plan/step-70-wire.md`.
+- [x] **T70.2** — `sql.split`, the statement splitter over the
+      lexer's own token stream, and its `sql_demo`/`sql_edge` cases on
+      the six paths.
+- [x] **T70.3** — The engine's `Result.types` (the projection's value
+      types for RowDescription), and `engine.start_lock_manager` /
+      `engine.RemoteLocks` moved out of `txn_demo` into the package.
+- [x] **T70.4** — The `postgres` shim's zero-parameter `PQexec` simple
+      path, so the standard client can talk to a server without the
+      extended protocol.
+- [x] **T70.5** — `emo/wire`: the byte buffer, the startup message
+      forms (SSLRequest/GSSENCRequest answered `N`, CancelRequest
+      closed), the backend message builders, and the v0 OIDs and text
+      encoding.
+- [x] **T70.6** — The query cycle: split, empty query, multi-statement
+      execution, error response and stop, ReadyForQuery's transaction
+      status, and the clean abort.
+- [x] **T70.7** — The session actor and the accept loop: one Engine
+      and one `RemoteLocks` per connection over the shared Store, the
+      max-connections stop, and the lock manager.
+- [x] **T70.8** — `wire_demo` (the server, with the ready file) and
+      `wire_client` (the `postgres` client), with their goldens.
+- [x] **T70.9** — The gate: build the wire package and the two demos,
+      probe `psql` and `libpq`, run the two phases, pin the goldens.
+- [x] **T70.10** — The docs EN+zh: the project README, the design
+      record's wire notes, the `postgres` zero-parameter path, the
+      `sql.split` API.
+- [x] **T70.11** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.

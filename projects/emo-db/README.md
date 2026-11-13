@@ -5,8 +5,8 @@ surface over two engines — a row store for OLTP first, a column store
 for OLAP later. The design record is [`docs/emo-db.md`](../../docs/emo-db.md);
 this directory is the project. M28 (the RocksDB half), M29 (the record
 layer), M30 (the SQL front-end's DML/DDL), M31 (the planner and
-executor), and M32 (transactions and the session plane) are landed; the
-wire and the conformance pass follow in M33–M34.
+executor), M32 (transactions and the session plane), and M33 (the
+PostgreSQL wire) are landed; the conformance pass follows in M34.
 
 ## Layout
 
@@ -37,10 +37,24 @@ wire and the conformance pass follow in M33–M34.
 - `txn_demo/` — the session-plane golden: a lock-manager process, two
   session processes over one Store, read committed, a write-write
   block, and a deadlock.
+- `wire/` — the project-local `emo/wire` package: PostgreSQL protocol
+  v3's simple query path over `net` — startup (SSL/GSSENC refused,
+  trust authentication), ParameterStatus/BackendKeyData/ReadyForQuery,
+  Query with a multi-statement string, RowDescription with the v0 type
+  OIDs, text-format DataRow, CommandComplete, EmptyQueryResponse, and
+  ErrorResponse. One session actor per connection over the shared
+  Store, with the table locks of the session plane.
+- `wire_demo/` — the wire server: a fresh database, an ephemeral
+  listener reported through a ready file, and a fixed number of
+  connections.
+- `wire_client/` — the standard library's `postgres` client against
+  emo-db: the same SQL script psql runs, through libpq's simple path.
 - `check.sh` — the gate: resolve RocksDB, stage the registry, check the
-  three packages, build and run the four demos three times against
-  their `expected.txt`, and pin the two refusals (the interpreter's
-  E3009 and a non-`c` target's E5007).
+  four packages, build and run the four embedded demos three times
+  against their `expected.txt`, drive the wire through psql and the
+  `postgres` client (one fresh server per phase, each byte-pinned),
+  and pin the two refusals (the interpreter's E3009 and a non-`c`
+  target's E5007).
 
 ## The binding's shape
 
@@ -126,6 +140,36 @@ Emo process with a FIFO of waiters, a wait-for graph, and a `40P01`
 abort for a deadlock. `txn_demo` runs two sessions and the manager to
 show read committed, the write-write block, and the deadlock.
 
+## The wire
+
+`emo/wire` makes the server real. A `net` listener accepts; one process
+per connection reads the startup packet, answers AuthenticationOk under
+trust, sends the ParameterStatus set, BackendKeyData, and
+ReadyForQuery, then runs the simple query cycle. A Query string may
+hold several statements: `sql.split` cuts it at the lexer's own
+semicolons, and each statement runs through the session's engine. A
+SELECT answers RowDescription (name, OID, size, text format) and one
+DataRow per row — integers as decimal, floats as their own rendering,
+booleans as PG's `t`/`f`, BYTEA as `\x` hex, NULL as the -1 length —
+then CommandComplete. A command answers only its tag. An empty string
+answers EmptyQueryResponse.
+
+An error answers ErrorResponse with the SQLSTATE and the primary
+message, stops the remaining statements, and leaves the session clean:
+the engine has already aborted the transaction and released its locks,
+so ReadyForQuery reports `I` and the next Query works. psql drives the
+whole surface; the standard library's `postgres` client connects over
+libpq's simple path for zero-parameter statements (`PQexec`), which is
+the same server without the extended protocol. Each connection has its
+own Engine over the shared Store and a `RemoteLocks` client over the
+server's one lock-manager process, so the table locks of M32 arbitrate
+across connections.
+
+The v0 wire is the simple path only: the extended protocol (Parse/
+Bind/Execute), SSL, scram-sha-256, and cancel requests are not spoken.
+`server_version` reports the PostgreSQL compatibility level (`16.4`)
+because tools parse it; the product's own version stays in the package.
+
 ## Running the gate
 
 RocksDB must be resolvable through `pkg-config`:
@@ -137,14 +181,19 @@ $ ./check.sh
 ```
 
 The gate fails loudly when the library is missing rather than skipping —
-the binding is the thing under test. `EMO` may point at a different
-compiler binary; the default is `../../_build/default/src/emo_cli/emo.exe`.
+the binding is the thing under test. The wire phases are the exception:
+psql is skipped when it is not on `PATH`, and the `postgres` client's
+phase is skipped when libpq is not resolvable through `pkg-config` (the
+same Homebrew-keg fallback the standard library's probe uses). `EMO`
+may point at a different compiler binary; the default is
+`../../_build/default/src/emo_cli/emo.exe`.
 
 ## Status
 
 M28 landed 2026-11-12: the binding, the KV golden, and the C ABI's byte
 view. M29 landed the same day: the record layer, the record golden, and
 the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, M31
-the embedded planner/executor and its golden, and M32 the transaction
-and session plane with its two-session golden. M33 — the PostgreSQL wire
-— is next.
+the embedded planner/executor and its golden, M32 the transaction and
+session plane with its two-session golden, and M33 the PostgreSQL wire
+with psql and the `postgres` client as goldens. M34 — conformance and
+documentation — is next.
