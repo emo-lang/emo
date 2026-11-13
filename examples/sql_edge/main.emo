@@ -12,11 +12,24 @@ def why(text String) {
   }
 }
 
+def why_split(text String) {
+  case sql.split(text) {
+    (R.error, why) -> { println(why) }
+    (R.ok, pieces) -> {
+      println(pieces.length().to_string())
+      var i = 0
+      while i < pieces.length() {
+        println("  " + pieces[i])
+        i = i + 1
+      }
+    }
+  }
+}
+
 // ---- malformed inputs: every failure is a value with a position ----
 why("")
 why("SELECT FROM")
 why("SELECT * FROM")
-why("INSERT INTO t VALUES (1)")
 why("SELECT * FROM t WHERE")
 why("SELECT (1 FROM t")
 why("SELECT 'unterminated")
@@ -70,3 +83,48 @@ def fill_char(buf Bytes, i Int64, n Int64, c Int64) {
 
 why("SELECT " + parens(512) + " FROM t")
 why("SELECT " + parens(513) + " FROM t")
+
+// ---- storage-tail edges ----
+why("CREATE TABLE t (id BIGINT) STORE = TEXT")
+why("CREATE TABLE t (id BIGINT) STORE =")
+why("CREATE TABLE t (id BIGINT) STORE")
+why("CREATE TABLE t (id BIGINT) WITH (store = column)")
+
+// ---- splitting edges ----
+why_split("SELECT 'unterminated")
+why_split("SELECT 1;; SELECT 2")
+why_split("")
+
+// ---- transaction-control edges ----
+why("BEGIN NOW")
+why("COMMIT WORK")
+why("ROLLBACK AND CHAIN")
+
+// ---- DDL and DML edges ----
+why("CREATE TABLE")
+why("CREATE TABLE t")
+why("CREATE TABLE t ()")
+why("CREATE TABLE t (id VARCHAR(0))")
+why("CREATE TABLE t (id VARCHAR)")
+why("CREATE TABLE t (id DOUBLE)")
+why("CREATE TABLE t (id SERIAL)")
+why("CREATE TABLE t (id INTEGER, id TEXT)")
+why("CREATE TABLE t (id INTEGER, PRIMARY KEY (id))")
+why("CREATE TABLE t (id INTEGER UNIQUE)")
+why("CREATE TABLE t (id INTEGER) AS SELECT 1")
+why("INSERT INTO t")
+why("INSERT INTO t VALUES")
+why("INSERT INTO t VALUES (1), (2, 3)")
+why("INSERT INTO t (a, b) VALUES (1)")
+why("INSERT INTO t (a, a) VALUES (1, 2)")
+why("INSERT INTO t VALUES (1) ON CONFLICT DO NOTHING")
+why("INSERT INTO t VALUES (1) RETURNING id")
+why("INSERT INTO t SELECT * FROM x")
+why("UPDATE t SET")
+why("UPDATE t SET a = 1, a = 2")
+why("UPDATE t SET a = 1 FROM x")
+why("UPDATE t SET a = 1 RETURNING a")
+why("DELETE t")
+why("DELETE FROM t WHERE")
+why("DELETE FROM t USING x")
+why("DELETE FROM t RETURNING *")

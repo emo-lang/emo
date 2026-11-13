@@ -1,0 +1,103 @@
+# The error surface: parse failures with their byte offsets, the
+# unsupported statements and tails, and the SQLSTATE families the
+# engine answers.
+
+statement error
+SELECT FROM
+----
+42601: sql: expected an expression at byte 7
+
+statement error
+SELECT * FROM
+----
+42601: sql: expected a table name at byte 13
+
+statement error
+SELEC 1
+----
+42601: sql: expected SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, BEGIN, COMMIT, or ROLLBACK at byte 0
+
+statement error
+CREATE TABLE
+----
+42601: sql: expected a table name after CREATE TABLE at byte 12
+
+statement error
+CREATE TABLE t
+----
+42601: sql: expected `(` after the table name at byte 14
+
+statement error
+INSERT INTO
+----
+42601: sql: expected a table name after INSERT INTO at byte 11
+
+statement error
+INSERT INTO t VALUES
+----
+42601: sql: expected `(` starting a VALUES row at byte 20
+
+statement error
+UPDATE t SET
+----
+42601: sql: expected a column name in SET at byte 12
+
+statement error
+DELETE FROM
+----
+42601: sql: expected a table name after DELETE FROM at byte 11
+
+statement error
+;
+----
+42601: sql: expected SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, BEGIN, COMMIT, or ROLLBACK at byte 0
+
+statement error
+SELECT 1; SELECT 2
+----
+42601: sql: expected end of statement at byte 10
+
+statement error
+SELECT 'unterminated
+----
+42601: sql: unterminated literal at byte 7
+
+statement error
+SELECT /* unterminated
+----
+42601: sql: unterminated comment at byte 7
+
+statement error
+DROP TABLE t
+----
+42601: sql: expected SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, BEGIN, COMMIT, or ROLLBACK at byte 0
+
+statement error
+CREATE INDEX idx ON t (id)
+----
+42601: sql: expected TABLE after CREATE at byte 7
+
+statement error
+INSERT INTO t (id) VALUES (1) RETURNING id
+----
+42601: sql: RETURNING is not supported at byte 30
+
+statement error
+UPDATE t SET id = 1 WHERE id = 1 RETURNING id
+----
+42601: sql: RETURNING is not supported at byte 33
+
+statement error
+DELETE FROM t WHERE id = 1 RETURNING id
+----
+42601: sql: RETURNING is not supported at byte 27
+
+statement error
+INSERT INTO t (id) VALUES (1) ON CONFLICT DO NOTHING
+----
+42601: sql: ON CONFLICT is not supported at byte 30
+
+statement error
+SELECT * FROM t WHERE id = 1 UNION SELECT * FROM t
+----
+42601: sql: expected GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, or end of statement at byte 29

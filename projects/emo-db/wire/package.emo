@@ -1,0 +1,11 @@
+package {
+  name = "emo/wire"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "emo/engine" = "0.1.0"
+    "emo/record" = "0.1.0"
+    "sql" = "0.1.0"
+  }
+}

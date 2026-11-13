@@ -1,0 +1,139 @@
+# Transactions: BEGIN/COMMIT/ROLLBACK, read-your-writes, rollback and
+# the abort-on-error rule, and the state errors.
+
+statement ok
+CREATE TABLE tx (
+  id BIGINT NOT NULL PRIMARY KEY,
+  note TEXT
+)
+----
+CREATE TABLE
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement ok
+INSERT INTO tx (id, note) VALUES (1, 'uncommitted')
+----
+INSERT 0 1
+
+query
+SELECT id, note FROM tx
+----
+1|uncommitted
+
+statement ok
+ROLLBACK
+----
+ROLLBACK
+
+query
+SELECT id FROM tx
+----
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement ok
+INSERT INTO tx (id, note) VALUES (2, 'committed')
+----
+INSERT 0 1
+
+statement ok
+COMMIT
+----
+COMMIT
+
+query
+SELECT id, note FROM tx
+----
+2|committed
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement error
+BEGIN
+----
+25001: there is already a transaction in progress
+
+statement ok
+COMMIT
+----
+COMMIT
+
+statement error
+COMMIT
+----
+25P01: there is no transaction in progress
+
+statement error
+ROLLBACK
+----
+25P01: there is no transaction in progress
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement error
+CREATE TABLE in_tx (id BIGINT)
+----
+0A000: DDL inside a transaction is not supported in v0
+
+statement error
+COMMIT
+----
+25P01: there is no transaction in progress
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement ok
+INSERT INTO tx (id, note) VALUES (3, 'gone')
+----
+INSERT 0 1
+
+statement error
+INSERT INTO tx (id, note) VALUES (2, 'duplicate')
+----
+23505: duplicate key value violates unique constraint "tx_pkey"
+
+query
+SELECT id FROM tx
+----
+2
+
+statement error
+COMMIT
+----
+25P01: there is no transaction in progress
+
+statement ok
+BEGIN
+----
+BEGIN
+
+statement ok
+UPDATE tx SET note = 'pending' WHERE id = 2
+----
+UPDATE 1
+
+statement ok
+ROLLBACK
+----
+ROLLBACK
+
+query
+SELECT id, note FROM tx WHERE id = 2
+----
+2|committed

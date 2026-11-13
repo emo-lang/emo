@@ -1,0 +1,187 @@
+require "emo/engine"
+require "emo/record"
+require "emo/rocksdb"
+require "os"
+
+// emo-db's benchmark workloads (M34): one named mode per run, printing
+// only counts so the timing is the shell's. The modes share one table,
+// `bench_users`, and one schema:
+//
+//   insert-autocommit <path> <n>   a fresh database; n single-row
+//                                 INSERTs, each in its own transaction
+//   insert-batch <path> <n>        a fresh database; BEGIN, n INSERTs,
+//                                 COMMIT — one fsynced write for the batch
+//   seed <path> <n>                a fresh database; n rows in one
+//                                 transaction (the read modes' fixture)
+//   lookup <path> <n> <rows>       n primary-key lookups over `rows` rows
+//   scan <path>                    one full table scan
+//   update <path> <n> <rows>       n primary-key UPDATEs, autocommit
+//
+// `bench/run.sh` supplies the sizes and times the binary; this program
+// never measures itself (the language has no clock).
+
+def arg(argv Array[String], i Int64, fallback Int64) Int64 {
+  if i < argv.length() {
+    return argv[i].to_int64()
+  }
+  return fallback
+}
+
+def main() {
+  const argv = os.argv()
+  if argv.length() < 3 {
+    raise Exception.new(message: "usage: bench <mode> <path> [n] [rows]")
+  }
+  const mode = argv[1]
+  const path = argv[2]
+  if mode == "insert-autocommit" {
+    const n = arg(argv, 3, 100)
+    const eng = fresh(path)
+    var i = 1
+    while i <= n {
+      run_or_die(eng, insert_sql(i))
+      i = i + 1
+    }
+    eng.close()
+    println("ok " + n.to_string())
+  } else {
+    if mode == "insert-batch" {
+      const n = arg(argv, 3, 100)
+      const eng = fresh(path)
+      run_or_die(eng, "BEGIN")
+      var i = 1
+      while i <= n {
+        run_or_die(eng, insert_sql(i))
+        i = i + 1
+      }
+      run_or_die(eng, "COMMIT")
+      eng.close()
+      println("ok " + n.to_string())
+    } else {
+      if mode == "seed" {
+        const n = arg(argv, 3, 100)
+        const eng = fresh(path)
+        run_or_die(eng, "BEGIN")
+        var i = 1
+        while i <= n {
+          run_or_die(eng, insert_sql(i))
+          i = i + 1
+        }
+        run_or_die(eng, "COMMIT")
+        eng.close()
+        println("seeded " + n.to_string())
+      } else {
+        if mode == "lookup" {
+          const n = arg(argv, 3, 100)
+          const rows = arg(argv, 4, n)
+          const eng = open_or_die(path)
+          var i = 0
+          while i < n {
+            const id = (i % rows) + 1
+            run_or_die(eng, "SELECT id, name, score FROM bench_users WHERE id = " + id.to_string())
+            i = i + 1
+          }
+          eng.close()
+          println("ok " + n.to_string())
+        } else {
+          if mode == "column-seed" {
+            const n = arg(argv, 3, 100)
+            const eng = fresh_column(path)
+            run_or_die(eng, "BEGIN")
+            var i = 1
+            while i <= n {
+              run_or_die(eng, column_insert_sql(i))
+              i = i + 1
+            }
+            run_or_die(eng, "COMMIT")
+            eng.end_session()
+            println("seeded " + n.to_string())
+          } else {
+            if mode == "column-scan" {
+              const eng = open_or_die(path)
+              const result = run_or_die(eng, "SELECT id, name, score FROM bench_cold")
+              eng.end_session()
+              println("rows " + result.rows.length().to_string())
+            } else {
+              if mode == "column-agg" {
+                const eng = open_or_die(path)
+                const result = run_or_die(eng, "SELECT count(*), sum(id), avg(score) FROM bench_cold")
+                eng.end_session()
+                println("rows " + result.rows.length().to_string())
+              } else {
+                if mode == "scan" {
+                  const eng = open_or_die(path)
+                  const result = run_or_die(eng, "SELECT id, name, score FROM bench_users")
+                  eng.close()
+                  println("rows " + result.rows.length().to_string())
+                } else {
+                  if mode == "update" {
+                    const n = arg(argv, 3, 100)
+                    const rows = arg(argv, 4, n)
+                    const eng = open_or_die(path)
+                    var i = 0
+                    while i < n {
+                      const id = (i % rows) + 1
+                      run_or_die(eng, "UPDATE bench_users SET score = score + 1.0 WHERE id = " + id.to_string())
+                      i = i + 1
+                    }
+                    eng.close()
+                    println("ok " + n.to_string())
+                  } else {
+                    raise Exception.new(message: "bench: no such mode `" + mode + "`")
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def fresh_column(path String) engine.Engine {
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  const eng = open_or_die(path)
+  run_or_die(eng, "CREATE TABLE bench_cold (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN")
+  return eng
+}
+
+def column_insert_sql(i Int64) String {
+  const s = i.to_string()
+  return "INSERT INTO bench_cold (id, name, score) VALUES (" + s + ", 'user-" + s + "', " + s + ".0)"
+}
+
+def insert_sql(i Int64) String {
+  const s = i.to_string()
+  return "INSERT INTO bench_users (id, name, score) VALUES (" + s + ", 'user-" + s + "', " + s + ".0)"
+}
+
+def fresh(path String) engine.Engine {
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  const eng = open_or_die(path)
+  run_or_die(eng, "CREATE TABLE bench_users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION)")
+  return eng
+}
+
+def open_or_die(path String) engine.Engine {
+  case engine.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, eng) -> { return eng }
+  }
+}
+
+def run_or_die(eng engine.Engine, sql String) engine.Result {
+  case eng.execute(sql) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, result) -> { return result }
+  }
+}
+
+main()

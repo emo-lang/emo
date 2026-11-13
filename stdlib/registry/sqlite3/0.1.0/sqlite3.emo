@@ -10,16 +10,18 @@
 //
 // Handles are opaque Int64s over SQLite's pointers. Bind indices are
 // 1-based — they name the ?NNN parameters in the SQL text; column
-// indices are 0-based, SQLite's convention. Strings cross the C
-// boundary NUL-terminated, so a String carrying an embedded NUL
-// truncates there; blobs are out of scope until Bytes can cross the
-// FFI.
+// indices are 0-based, SQLite's convention.
 //
 // The package is c-target only: its calls are `foreign def`s against
 // emo_sqlite3_shim.c, which the build compiles and links together with
 // the system sqlite3 library the manifest's `link` field names. The
 // interpreter refuses foreign code (E3009), so `emo run` cannot execute
 // a program that touches this package — build it with `emo build`.
+//
+// Strings cross the C boundary NUL-terminated, so a String carrying an
+// embedded NUL truncates there. Blobs are not exposed yet: the C ABI
+// now carries Bytes (the emo-db byte view), so a blob surface is a
+// package change rather than a language one.
 
 // Opens the database at `path` (":memory:" for a transient in-memory
 // database), raising when SQLite cannot open it.

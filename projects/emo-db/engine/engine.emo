@@ -1,0 +1,2878 @@
+require "sql"
+require "emo/record"
+
+// The embedded SQL engine: the first full text-to-rows path over the
+// record layer. It parses with the `sql` package, resolves names and
+// types against the record catalog, chooses a table scan or an
+// equality index scan, and executes CREATE TABLE, INSERT, single-table
+// SELECT, UPDATE, and DELETE. There is no wire yet — the public face is
+// `execute`, which answers a `Result` (the command tag, the projected
+// columns and rows, and the plan text) or a String reason shaped
+// `code: message` — the PG-shaped error the wire will map in M33.
+//
+// The v0 expression surface: literals, column references, parentheses,
+// unary +/-, NOT, comparisons, AND/OR, numeric arithmetic, text `||`,
+// IS [NOT] NULL/TRUE/FALSE, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE
+// (`%`/`_`, byte-oriented), and CASE. NULL follows SQL's three-valued
+// logic. DISTINCT, joins, subqueries, GROUP BY/HAVING, ORDER BY,
+// LIMIT/OFFSET, aggregates, function calls, CAST, and parameters refuse
+// with 0A000 — the parser still parses them; the executor says no.
+//
+// The package is c-target only: it rides the record layer, which rides
+// the RocksDB binding.
+
+// ---- errors and results ----
+
+// ---- errors and results ----
+
+// The PG-shaped failure: a String reason `code: message` — the shape
+// the wire will split into ErrorResponse's SQLSTATE and message in M33.
+def fail(code String, message String) (R, Block) {
+  return (R.error, code + ": " + message)
+}
+
+// The command's answer: the PG command tag (`SELECT 3`, `INSERT 0 3`,
+// `UPDATE 1`, `DELETE 1`, `CREATE TABLE`), the projected columns and
+// their value types (a SELECT only; the wire's RowDescription needs
+// them), the rows, and the plan text the embedded face prints.
+class Result {
+  def init(tag String, columns Array[String], types Array[ValType], rows Array[Array[record.Value]], plan String) {
+    self.tag = tag
+    self.columns = columns
+    self.types = types
+    self.rows = rows
+    self.plan = plan
+  }
+}
+
+// ---- the v0 value types ----
+
+enum ValType { null_t, integer, bigint, real, double, text, varchar, boolean, bytea }
+
+def val_type_of(kind record.ColType) ValType {
+  case kind {
+    record.ColType.integer -> { return ValType.integer }
+    record.ColType.bigint -> { return ValType.bigint }
+    record.ColType.real -> { return ValType.real }
+    record.ColType.double -> { return ValType.double }
+    record.ColType.text -> { return ValType.text }
+    record.ColType.varchar -> { return ValType.varchar }
+    record.ColType.boolean -> { return ValType.boolean }
+    record.ColType.bytea -> { return ValType.bytea }
+  }
+}
+
+def col_type_of(t ValType) record.ColType {
+  case t {
+    ValType.null_t -> { return record.ColType.text }
+    ValType.integer -> { return record.ColType.integer }
+    ValType.bigint -> { return record.ColType.bigint }
+    ValType.real -> { return record.ColType.real }
+    ValType.double -> { return record.ColType.double }
+    ValType.text -> { return record.ColType.text }
+    ValType.varchar -> { return record.ColType.varchar }
+    ValType.boolean -> { return record.ColType.boolean }
+    ValType.bytea -> { return record.ColType.bytea }
+  }
+}
+
+def type_name(t ValType) String {
+  case t {
+    ValType.null_t -> { return "NULL" }
+    ValType.integer -> { return "INTEGER" }
+    ValType.bigint -> { return "BIGINT" }
+    ValType.real -> { return "REAL" }
+    ValType.double -> { return "DOUBLE PRECISION" }
+    ValType.text -> { return "TEXT" }
+    ValType.varchar -> { return "VARCHAR" }
+    ValType.boolean -> { return "BOOLEAN" }
+    ValType.bytea -> { return "BYTEA" }
+  }
+}
+
+def lower_type_name(t ValType) String {
+  return sql.ascii_lower(type_name(t))
+}
+
+def is_numeric(t ValType) Bool {
+  return t == ValType.integer || t == ValType.bigint || t == ValType.real ||
+         t == ValType.double
+}
+
+def numeric_rank(t ValType) Int64 {
+  if t == ValType.integer {
+    return 1
+  }
+  if t == ValType.bigint {
+    return 2
+  }
+  if t == ValType.real {
+    return 3
+  }
+  return 4
+}
+
+def is_string_type(t ValType) Bool {
+  return t == ValType.text || t == ValType.varchar
+}
+
+def numeric_result(a ValType) ValType {
+  if a == ValType.integer {
+    return ValType.integer
+  }
+  if a == ValType.bigint {
+    return ValType.bigint
+  }
+  if a == ValType.real {
+    return ValType.real
+  }
+  return ValType.double
+}
+
+// ---- values ----
+
+def null_value_of(t ValType) record.Value {
+  return record.Value.new(col_type_of(t), true, 0, 0.0, false, Bytes.new(0))
+}
+
+def null_bool_value() record.Value {
+  return record.Value.new(record.ColType.boolean, true, 0, 0.0, false, Bytes.new(0))
+}
+
+def is_true(v record.Value) Bool {
+  return !v.is_null && v.as_bool()
+}
+
+// The numeric/text widening v0 allows on assignment; a narrowing
+// conversion waits for an explicit CAST (which v0 refuses).
+def coerce_value(v record.Value, to ValType) (R, record.Value) {
+  if v.is_null {
+    return (R.ok, null_value_of(to))
+  }
+  const from = val_type_of(v.kind)
+  if from == to {
+    return (R.ok, v)
+  }
+  if from == ValType.integer && to == ValType.bigint {
+    return (R.ok, record.bigint(v.as_i64()))
+  }
+  if (from == ValType.integer || from == ValType.bigint) &&
+     (to == ValType.real || to == ValType.double) {
+    const f = v.as_i64().to_float64()
+    if to == ValType.real {
+      return (R.ok, record.real(f))
+    }
+    return (R.ok, record.double(f))
+  }
+  if from == ValType.real && to == ValType.double {
+    return (R.ok, record.double(v.as_f64()))
+  }
+  if is_string_type(from) && is_string_type(to) {
+    return (R.ok, record.Value.new(col_type_of(to), false, 0, 0.0, false, v.data))
+  }
+  return fail("42804",
+              "cannot convert " + lower_type_name(from) + " to " +
+              lower_type_name(to))
+}
+
+def compare_text(a String, b String) Int64 {
+  const x = a.to_bytes()
+  const y = b.to_bytes()
+  var i = 0
+  while i < x.length() && i < y.length() {
+    if x.get(i) < y.get(i) {
+      return 0 - 1
+    }
+    if x.get(i) > y.get(i) {
+      return 1
+    }
+    i = i + 1
+  }
+  if x.length() < y.length() {
+    return 0 - 1
+  }
+  if x.length() > y.length() {
+    return 1
+  }
+  return 0
+}
+
+def compare_bytes(a Bytes, b Bytes) Int64 {
+  var i = 0
+  while i < a.length() && i < b.length() {
+    if a.get(i) < b.get(i) {
+      return 0 - 1
+    }
+    if a.get(i) > b.get(i) {
+      return 1
+    }
+    i = i + 1
+  }
+  if a.length() < b.length() {
+    return 0 - 1
+  }
+  if a.length() > b.length() {
+    return 1
+  }
+  return 0
+}
+
+// Both values are non-null and already conform to `t`.
+def compare_values(a record.Value, b record.Value, t ValType) (R, Int64) {
+  case coerce_value(a, t) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, x) -> {
+      case coerce_value(b, t) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, y) -> {
+          if t == ValType.integer || t == ValType.bigint {
+            const xi = x.as_i64()
+            const yi = y.as_i64()
+            if xi < yi {
+              return (R.ok, 0 - 1)
+            }
+            if xi > yi {
+              return (R.ok, 1)
+            }
+            return (R.ok, 0)
+          }
+          if t == ValType.real || t == ValType.double {
+            const xf = x.as_f64()
+            const yf = y.as_f64()
+            if xf < yf {
+              return (R.ok, 0 - 1)
+            }
+            if xf > yf {
+              return (R.ok, 1)
+            }
+            return (R.ok, 0)
+          }
+          if is_string_type(t) {
+            return (R.ok, compare_text(x.as_text(), y.as_text()))
+          }
+          if t == ValType.boolean {
+            if x.as_bool() == y.as_bool() {
+              return (R.ok, 0)
+            }
+            if x.as_bool() {
+              return (R.ok, 1)
+            }
+            return (R.ok, 0 - 1)
+          }
+          return (R.ok, compare_bytes(x.as_bytes(), y.as_bytes()))
+        }
+      }
+    }
+  }
+}
+
+// ---- the typed expression tree ----
+
+interface TExpr {
+  def result_type() ValType
+  def eval(row Array[record.Value]) (R, record.Value)
+}
+
+class TLit {
+  def init(value record.Value, t ValType) {
+    self.value = value
+    self.t = t
+  }
+
+  def result_type() ValType {
+    return self.t
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    return (R.ok, self.value)
+  }
+}
+
+class TColumn {
+  def init(index Int64, t ValType) {
+    self.index = index
+    self.t = t
+  }
+
+  def result_type() ValType {
+    return self.t
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    if self.index >= row.length() {
+      return fail("XX000", "internal error: a column read outside the row")
+    }
+    return (R.ok, row[self.index])
+  }
+}
+
+class TUnary {
+  def init(op sql.UnOp, operand TExpr, t ValType) {
+    self.op = op
+    self.operand = operand
+    self.t = t
+  }
+
+  def result_type() ValType {
+    return self.t
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    case self.operand.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        if self.op == sql.UnOp.not {
+          if v.is_null {
+            return (R.ok, null_bool_value())
+          }
+          return (R.ok, record.boolean(!v.as_bool()))
+        }
+        if v.is_null {
+          return (R.ok, null_value_of(self.t))
+        }
+        if self.t == ValType.integer {
+          return (R.ok, record.integer(0 - v.as_i64()))
+        }
+        if self.t == ValType.bigint {
+          return (R.ok, record.bigint(0 - v.as_i64()))
+        }
+        if self.t == ValType.real {
+          return (R.ok, record.real(0.0 - v.as_f64()))
+        }
+        if self.t == ValType.double {
+          return (R.ok, record.double(0.0 - v.as_f64()))
+        }
+        return (R.ok, v)
+      }
+    }
+  }
+}
+
+class TBinary {
+  def init(op sql.BinOp, left TExpr, right TExpr, t ValType, common ValType) {
+    self.op = op
+    self.left = left
+    self.right = right
+    self.t = t
+    self.common = common
+  }
+
+  def result_type() ValType {
+    return self.t
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    case self.left.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, a) -> {
+        case self.right.eval(row) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, b) -> {
+            return eval_binary(self, a, b)
+          }
+        }
+      }
+    }
+  }
+}
+
+def eval_binary(node TBinary, a record.Value, b record.Value) (R, record.Value) {
+  const op = node.op
+  if op == sql.BinOp.and {
+    return eval_and(a, b)
+  }
+  if op == sql.BinOp.or {
+    return eval_or(a, b)
+  }
+  if op == sql.BinOp.eq || op == sql.BinOp.ne || op == sql.BinOp.lt ||
+     op == sql.BinOp.le || op == sql.BinOp.gt || op == sql.BinOp.ge {
+    if a.is_null || b.is_null {
+      return (R.ok, null_bool_value())
+    }
+    case compare_values(a, b, node.common) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, c) -> {
+        var result = false
+        if op == sql.BinOp.eq {
+          result = c == 0
+        }
+        if op == sql.BinOp.ne {
+          result = c != 0
+        }
+        if op == sql.BinOp.lt {
+          result = c < 0
+        }
+        if op == sql.BinOp.le {
+          result = c <= 0
+        }
+        if op == sql.BinOp.gt {
+          result = c > 0
+        }
+        if op == sql.BinOp.ge {
+          result = c >= 0
+        }
+        return (R.ok, record.boolean(result))
+      }
+    }
+  }
+  if op == sql.BinOp.concat {
+    if a.is_null || b.is_null {
+      return (R.ok, null_value_of(ValType.text))
+    }
+    return (R.ok, record.text(a.as_text() + b.as_text()))
+  }
+  // Arithmetic.
+  if a.is_null || b.is_null {
+    return (R.ok, null_value_of(node.t))
+  }
+  if node.t == ValType.integer || node.t == ValType.bigint {
+    const x = a.as_i64()
+    const y = b.as_i64()
+    if (op == sql.BinOp.div || op == sql.BinOp.mod) && y == 0 {
+      return fail("22012", "division by zero")
+    }
+    var value = 0
+    if op == sql.BinOp.add {
+      value = x + y
+    }
+    if op == sql.BinOp.sub {
+      value = x - y
+    }
+    if op == sql.BinOp.mul {
+      value = x * y
+    }
+    if op == sql.BinOp.div {
+      value = x / y
+    }
+    if op == sql.BinOp.mod {
+      value = x % y
+    }
+    if node.t == ValType.integer && (value < -2147483648 || value > 2147483647) {
+      return fail("22003", "integer out of range")
+    }
+    if node.t == ValType.integer {
+      return (R.ok, record.integer(value))
+    }
+    return (R.ok, record.bigint(value))
+  }
+  const xf = a.as_f64()
+  const yf = b.as_f64()
+  if (op == sql.BinOp.div || op == sql.BinOp.mod) && yf == 0.0 {
+    return fail("22012", "division by zero")
+  }
+  var f = 0.0
+  if op == sql.BinOp.add {
+    f = xf + yf
+  }
+  if op == sql.BinOp.sub {
+    f = xf - yf
+  }
+  if op == sql.BinOp.mul {
+    f = xf * yf
+  }
+  if op == sql.BinOp.div {
+    f = xf / yf
+  }
+  if node.t == ValType.real {
+    return (R.ok, record.real(f))
+  }
+  return (R.ok, record.double(f))
+}
+
+// SQL's three-valued AND/OR: a NULL is unknown, and a decisive side
+// decides even when the other is unknown.
+def eval_and(a record.Value, b record.Value) (R, record.Value) {
+  if !a.is_null && !a.as_bool() {
+    return (R.ok, record.boolean(false))
+  }
+  if !b.is_null && !b.as_bool() {
+    return (R.ok, record.boolean(false))
+  }
+  if a.is_null || b.is_null {
+    return (R.ok, null_bool_value())
+  }
+  return (R.ok, record.boolean(true))
+}
+
+def eval_or(a record.Value, b record.Value) (R, record.Value) {
+  if !a.is_null && a.as_bool() {
+    return (R.ok, record.boolean(true))
+  }
+  if !b.is_null && b.as_bool() {
+    return (R.ok, record.boolean(true))
+  }
+  if a.is_null || b.is_null {
+    return (R.ok, null_bool_value())
+  }
+  return (R.ok, record.boolean(false))
+}
+
+class TLike {
+  def init(value TExpr, pattern TExpr, negated Bool) {
+    self.value = value
+    self.pattern = pattern
+    self.negated = negated
+  }
+
+  def result_type() ValType {
+    return ValType.boolean
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    case self.value.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        case self.pattern.eval(row) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, p) -> {
+            if v.is_null || p.is_null {
+              return (R.ok, null_bool_value())
+            }
+            var matched = like_bytes(v.as_text().to_bytes(), p.as_text().to_bytes(), 0, 0)
+            if self.negated {
+              matched = !matched
+            }
+            return (R.ok, record.boolean(matched))
+          }
+        }
+      }
+    }
+  }
+}
+
+// `%` matches any run, `_` one byte; v0 is byte-oriented (ASCII
+// patterns and data behave exactly as SQL expects).
+def like_bytes(s Bytes, p Bytes, si Int64, pi Int64) Bool {
+  if pi >= p.length() {
+    return si >= s.length()
+  }
+  const c = p.get(pi)
+  if c == 37 {
+    var i = si
+    while i <= s.length() {
+      if like_bytes(s, p, i, pi + 1) {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+  if si >= s.length() {
+    return false
+  }
+  if c == 95 || c == s.get(si) {
+    return like_bytes(s, p, si + 1, pi + 1)
+  }
+  return false
+}
+
+class TIn {
+  def init(value TExpr, choices Array[TExpr], common ValType, negated Bool) {
+    self.value = value
+    self.choices = choices
+    self.common = common
+    self.negated = negated
+  }
+
+  def result_type() ValType {
+    return ValType.boolean
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    case self.value.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        var saw_null = v.is_null
+        var i = 0
+        while i < self.choices.length() {
+          case self.choices[i].eval(row) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, c) -> {
+              if c.is_null {
+                saw_null = true
+              } else {
+                if !v.is_null {
+                  case compare_values(v, c, self.common) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, cmp) -> {
+                      if cmp == 0 {
+                        if self.negated {
+                          return (R.ok, record.boolean(false))
+                        }
+                        return (R.ok, record.boolean(true))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          i = i + 1
+        }
+        if saw_null {
+          return (R.ok, null_bool_value())
+        }
+        if self.negated {
+          return (R.ok, record.boolean(true))
+        }
+        return (R.ok, record.boolean(false))
+      }
+    }
+  }
+}
+
+class TIsTest {
+  def init(value TExpr, target sql.IsKind, negated Bool) {
+    self.value = value
+    self.target = target
+    self.negated = negated
+  }
+
+  def result_type() ValType {
+    return ValType.boolean
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    case self.value.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        var result = false
+        if self.target == sql.IsKind.is_null {
+          result = v.is_null
+        }
+        if self.target == sql.IsKind.is_true {
+          result = !v.is_null && v.as_bool()
+        }
+        if self.target == sql.IsKind.is_false {
+          result = !v.is_null && !v.as_bool()
+        }
+        if self.negated {
+          result = !result
+        }
+        return (R.ok, record.boolean(result))
+      }
+    }
+  }
+}
+
+class TCase {
+  def init(operand_e Array[TExpr], whens Array[(TExpr, TExpr)], else_e Array[TExpr], common ValType, t ValType) {
+    self.operand_e = operand_e
+    self.whens = whens
+    self.else_e = else_e
+    self.common = common
+    self.t = t
+  }
+
+  def result_type() ValType {
+    return self.t
+  }
+
+  def eval(row Array[record.Value]) (R, record.Value) {
+    if self.operand_e.length() == 1 {
+      case self.operand_e[0].eval(row) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, operand) -> {
+          return eval_simple_case(self, row, operand)
+        }
+      }
+    }
+    var i = 0
+    while i < self.whens.length() {
+      case self.whens[i][0].eval(row) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, condition) -> {
+          if is_true(condition) {
+            return finish_case(self, self.whens[i][1], row)
+          }
+        }
+      }
+      i = i + 1
+    }
+    return finish_case_else(self, row)
+  }
+}
+
+def eval_simple_case(node TCase, row Array[record.Value], operand record.Value) (R, record.Value) {
+  var i = 0
+  while i < node.whens.length() {
+    case node.whens[i][0].eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, when_value) -> {
+        if !operand.is_null && !when_value.is_null {
+          case compare_values(operand, when_value, node.common) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, cmp) -> {
+              if cmp == 0 {
+                return finish_case(node, node.whens[i][1], row)
+              }
+            }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return finish_case_else(node, row)
+}
+
+def finish_case(node TCase, branch TExpr, row Array[record.Value]) (R, record.Value) {
+  case branch.eval(row) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v) -> { return coerce_value(v, node.t) }
+  }
+}
+
+def finish_case_else(node TCase, row Array[record.Value]) (R, record.Value) {
+  if node.else_e.length() == 1 {
+    return finish_case(node, node.else_e[0], row)
+  }
+  return (R.ok, null_value_of(node.t))
+}
+
+// ---- the analyzer ----
+
+def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
+  if expr.is(sql.NullLit) {
+    return (R.ok, TLit.new(null_value_of(ValType.null_t), ValType.null_t))
+  }
+  if expr.is(sql.BoolLit) {
+    return (R.ok, TLit.new(record.boolean(expr.value), ValType.boolean))
+  }
+  if expr.is(sql.IntLit) {
+    const v = expr.value
+    if v < -2147483648 || v > 2147483647 {
+      return (R.ok, TLit.new(record.bigint(v), ValType.bigint))
+    }
+    return (R.ok, TLit.new(record.integer(v), ValType.integer))
+  }
+  if expr.is(sql.FloatLit) {
+    return (R.ok, TLit.new(record.double(expr.value), ValType.double))
+  }
+  if expr.is(sql.StrLit) {
+    return (R.ok, TLit.new(record.text(expr.value), ValType.text))
+  }
+  if expr.is(sql.Column) {
+    case resolve_column(expr, table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, column) -> { return (R.ok, column) }
+    }
+  }
+  if expr.is(sql.Paren) {
+    return resolve_expr(expr.inner, table, alias)
+  }
+  if expr.is(sql.Unary) {
+    case resolve_expr(expr.operand, table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, operand) -> {
+        if expr.op == sql.UnOp.not {
+          case require_boolean(operand.result_type(), "NOT") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {
+              return (R.ok, TUnary.new(expr.op, operand, ValType.boolean))
+            }
+          }
+        }
+        case require_numeric(operand.result_type(), unop_text(expr.op)) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            return (R.ok, TUnary.new(expr.op, operand, operand.result_type()))
+          }
+        }
+      }
+    }
+  }
+  if expr.is(sql.Binary) {
+    return resolve_binary(expr, table, alias)
+  }
+  if expr.is(sql.Like) {
+    case resolve_expr(expr.value, table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value) -> {
+        case resolve_expr(expr.pattern, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, pattern) -> {
+            case require_string(value.result_type(), "LIKE") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, _) -> {
+                case require_string(pattern.result_type(), "LIKE") {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, _) -> {
+                    return (R.ok, TLike.new(value, pattern, expr.negated))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if expr.is(sql.Between) {
+    case resolve_expr(expr.value, table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value) -> {
+        case resolve_expr(expr.low, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, low) -> {
+            case resolve_expr(expr.high, table, alias) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, high) -> {
+                case common_three(value.result_type(), low.result_type(),
+                                  high.result_type(), "BETWEEN") {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, common) -> {
+                    const ge = TBinary.new(sql.BinOp.ge, value, low, ValType.boolean, common)
+                    const le = TBinary.new(sql.BinOp.le, value, high, ValType.boolean, common)
+                    const both = TBinary.new(sql.BinOp.and, ge, le, ValType.boolean, ValType.boolean)
+                    if expr.negated {
+                      return (R.ok, TUnary.new(sql.UnOp.not, both, ValType.boolean))
+                    }
+                    return (R.ok, both)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if expr.is(sql.InTest) {
+    return resolve_in(expr, table, alias)
+  }
+  if expr.is(sql.IsTest) {
+    case resolve_expr(expr.value, table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value) -> {
+        if expr.target == sql.IsKind.is_null {
+          return (R.ok, TIsTest.new(value, expr.target, expr.negated))
+        }
+        case require_boolean(value.result_type(), "IS TRUE/FALSE") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            return (R.ok, TIsTest.new(value, expr.target, expr.negated))
+          }
+        }
+      }
+    }
+  }
+  if expr.is(sql.CaseExpr) {
+    return resolve_case(expr, table, alias)
+  }
+  if expr.is(sql.FuncCall) {
+    return fail("0A000", "function calls are not supported in v0")
+  }
+  if expr.is(sql.Cast) {
+    return fail("0A000", "CAST is not supported in v0")
+  }
+  if expr.is(sql.Exists) || expr.is(sql.Subquery) {
+    return fail("0A000", "subqueries are not supported in v0")
+  }
+  if expr.is(sql.Param) {
+    return fail("0A000", "parameters are not supported in the embedded engine")
+  }
+  return fail("0A000", "this expression is not supported in v0")
+}
+
+def resolve_binary(expr sql.Binary, table record.Table, alias String) (R, TExpr) {
+  case resolve_expr(expr.left, table, alias) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, left) -> {
+      case resolve_expr(expr.right, table, alias) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, right) -> {
+          const l = left.result_type()
+          const r = right.result_type()
+          if expr.op == sql.BinOp.and || expr.op == sql.BinOp.or {
+            case require_boolean(l, binop_text(expr.op)) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, _) -> {
+                case require_boolean(r, binop_text(expr.op)) {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, _) -> {
+                    return (R.ok, TBinary.new(expr.op, left, right, ValType.boolean, ValType.boolean))
+                  }
+                }
+              }
+            }
+          }
+          if expr.op == sql.BinOp.eq || expr.op == sql.BinOp.ne ||
+             expr.op == sql.BinOp.lt || expr.op == sql.BinOp.le ||
+             expr.op == sql.BinOp.gt || expr.op == sql.BinOp.ge {
+            case common_type(l, r, binop_text(expr.op)) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, common) -> {
+                return (R.ok, TBinary.new(expr.op, left, right, ValType.boolean, common))
+              }
+            }
+          }
+          if expr.op == sql.BinOp.concat {
+            if !(is_string_type(l) || l == ValType.null_t) ||
+               !(is_string_type(r) || r == ValType.null_t) {
+              return fail("42883",
+                          "operator does not exist: " + lower_type_name(l) +
+                          " || " + lower_type_name(r))
+            }
+            return (R.ok, TBinary.new(expr.op, left, right, ValType.text, ValType.text))
+          }
+          if !(is_numeric(l) || l == ValType.null_t) ||
+             !(is_numeric(r) || r == ValType.null_t) {
+            return fail("42883",
+                        "operator does not exist: " + lower_type_name(l) + " " +
+                        binop_text(expr.op) + " " + lower_type_name(r))
+          }
+          case common_type(l, r, binop_text(expr.op)) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, common) -> {
+              if expr.op == sql.BinOp.mod && !is_integer_type(common) {
+                return fail("42883",
+                            "operator does not exist: " +
+                            lower_type_name(common) + " % " +
+                            lower_type_name(common))
+              }
+              return (R.ok, TBinary.new(expr.op, left, right, common, common))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def resolve_in(expr sql.InTest, table record.Table, alias String) (R, TExpr) {
+  case resolve_expr(expr.value, table, alias) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, value) -> {
+      var choices = []
+      var common = value.result_type()
+      var i = 0
+      while i < expr.choices.length() {
+        const choice_expr = expr.choices[i]
+        if choice_expr.is(sql.Subquery) {
+          return fail("0A000", "IN (subquery) is not supported in v0")
+        }
+        case resolve_expr(choice_expr, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, choice) -> {
+            case common_type(common, choice.result_type(), "IN") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, next) -> {
+                common = next
+                choices = choices.append(choice)
+              }
+            }
+          }
+        }
+        i = i + 1
+      }
+      return (R.ok, TIn.new(value, choices, common, expr.negated))
+    }
+  }
+}
+
+def resolve_case(expr sql.CaseExpr, table record.Table, alias String) (R, TExpr) {
+  var operand_e = []
+  var operand_type = ValType.null_t
+  if expr.operand_e.length() == 1 {
+    case resolve_expr(expr.operand_e[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, operand) -> {
+        operand_e = [operand]
+        operand_type = operand.result_type()
+      }
+    }
+  }
+  var whens = []
+  var result_type = ValType.null_t
+  var common = operand_type
+  var i = 0
+  while i < expr.whens.length() {
+    const pair = expr.whens[i]
+    case resolve_expr(pair[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, condition) -> {
+        if expr.operand_e.length() == 1 {
+          case common_type(common, condition.result_type(), "CASE") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, next) -> { common = next }
+          }
+        } else {
+          case require_boolean(condition.result_type(), "CASE WHEN") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {}
+          }
+        }
+        case resolve_expr(pair[1], table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, branch) -> {
+            case common_type(result_type, branch.result_type(), "CASE") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, next) -> {
+                result_type = next
+                whens = whens.append((condition, branch))
+              }
+            }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  var else_e = []
+  if expr.else_e.length() == 1 {
+    case resolve_expr(expr.else_e[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, branch) -> {
+        case common_type(result_type, branch.result_type(), "CASE") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, next) -> {
+            result_type = next
+            else_e = [branch]
+          }
+        }
+      }
+    }
+  }
+  if result_type == ValType.null_t {
+    result_type = ValType.text
+  }
+  return (R.ok, TCase.new(operand_e, whens, else_e, common, result_type))
+}
+
+def resolve_column(expr sql.Column, table record.Table, alias String) (R, TColumn) {
+  const parts = expr.parts
+  var name = ""
+  if parts.length() == 1 {
+    name = parts[0]
+  } else {
+    if parts.length() == 2 {
+      if parts[0] != alias {
+        return fail("42703", "column \"" + parts[0] + "." + parts[1] + "\" does not exist")
+      }
+      name = parts[1]
+    } else {
+      return fail("0A000", "schema-qualified column names are not supported in v0")
+    }
+  }
+  var i = 0
+  while i < table.columns.length() {
+    if table.columns[i].name == name {
+      return (R.ok, TColumn.new(i, val_type_of(table.columns[i].kind)))
+    }
+    i = i + 1
+  }
+  return fail("42703", "column \"" + name + "\" does not exist")
+}
+
+def unop_text(op sql.UnOp) String {
+  if op == sql.UnOp.not {
+    return "NOT"
+  }
+  if op == sql.UnOp.neg {
+    return "-"
+  }
+  return "+"
+}
+
+def binop_text(op sql.BinOp) String {
+  if op == sql.BinOp.or {
+    return "OR"
+  }
+  if op == sql.BinOp.and {
+    return "AND"
+  }
+  if op == sql.BinOp.eq {
+    return "="
+  }
+  if op == sql.BinOp.ne {
+    return "<>"
+  }
+  if op == sql.BinOp.lt {
+    return "<"
+  }
+  if op == sql.BinOp.le {
+    return "<="
+  }
+  if op == sql.BinOp.gt {
+    return ">"
+  }
+  if op == sql.BinOp.ge {
+    return ">="
+  }
+  if op == sql.BinOp.add {
+    return "+"
+  }
+  if op == sql.BinOp.sub {
+    return "-"
+  }
+  if op == sql.BinOp.mul {
+    return "*"
+  }
+  if op == sql.BinOp.div {
+    return "/"
+  }
+  if op == sql.BinOp.mod {
+    return "%"
+  }
+  return "||"
+}
+
+def is_integer_type(t ValType) Bool {
+  return t == ValType.integer || t == ValType.bigint
+}
+
+def require_boolean(t ValType, what String) (R, Bool) {
+  if t == ValType.boolean {
+    return (R.ok, true)
+  }
+  if t == ValType.null_t {
+    return (R.ok, true)
+  }
+  return fail("42804",
+              "argument of " + what + " must be type boolean, not type " +
+              lower_type_name(t))
+}
+
+def require_numeric(t ValType, what String) (R, Bool) {
+  if is_numeric(t) || t == ValType.null_t {
+    return (R.ok, true)
+  }
+  return fail("42883",
+              "operator does not exist: " + what + " " + lower_type_name(t))
+}
+
+def require_string(t ValType, what String) (R, Bool) {
+  if is_string_type(t) || t == ValType.null_t {
+    return (R.ok, true)
+  }
+  return fail("42883",
+              "operator does not exist: " + what + " " + lower_type_name(t))
+}
+
+// The common type of a comparison's or arithmetic's two sides: NULL
+// yields to the other side, numbers widen, text and varchar meet at
+// text, and the rest must match exactly.
+def common_type(a ValType, b ValType, op String) (R, ValType) {
+  if a == ValType.null_t {
+    return (R.ok, b)
+  }
+  if b == ValType.null_t {
+    return (R.ok, a)
+  }
+  if a == b {
+    return (R.ok, a)
+  }
+  if is_numeric(a) && is_numeric(b) {
+    if numeric_rank(a) >= numeric_rank(b) {
+      return (R.ok, numeric_result(a))
+    }
+    return (R.ok, numeric_result(b))
+  }
+  if is_string_type(a) && is_string_type(b) {
+    return (R.ok, ValType.text)
+  }
+  return fail("42883",
+              "operator does not exist: " + lower_type_name(a) + " " + op +
+              " " + lower_type_name(b))
+}
+
+def common_three(a ValType, b ValType, c ValType, op String) (R, ValType) {
+  case common_type(a, b, op) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ab) -> { return common_type(ab, c, op) }
+  }
+}
+
+def conforms(from ValType, to ValType) Bool {
+  if from == ValType.null_t {
+    return true
+  }
+  if from == to {
+    return true
+  }
+  if is_numeric(from) && is_numeric(to) {
+    return numeric_rank(from) <= numeric_rank(to)
+  }
+  if is_string_type(from) && is_string_type(to) {
+    return true
+  }
+  return false
+}
+
+def require_conforms(from ValType, to ValType, column_name String) (R, Bool) {
+  if conforms(from, to) {
+    return (R.ok, true)
+  }
+  return fail("42804",
+              "column \"" + column_name + "\" is of type " +
+              lower_type_name(to) + " but expression is of type " +
+              lower_type_name(from))
+}
+
+def utf8_len(b Bytes) Int64 {
+  var n = 0
+  var i = 0
+  while i < b.length() {
+    if (b.get(i) & 192) != 128 {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  return n
+}
+
+// ---- the plan ----
+
+interface Plan {
+  def text() String
+}
+
+class PScan {
+  def init(index_name String, keys Array[record.Value], caption String) {
+    self.index_name = index_name
+    self.keys = keys
+    self.caption = caption
+  }
+
+  def text() String {
+    return self.caption
+  }
+}
+
+class PFilter {
+  def init(child Plan, predicate sql.Expr) {
+    self.child = child
+    self.predicate = predicate
+  }
+
+  def text() String {
+    return "filter " + self.predicate.to_string() + "\n  " + self.child.text()
+  }
+}
+
+class PProject {
+  def init(child Plan, names Array[String]) {
+    self.child = child
+    self.names = names
+  }
+
+  def text() String {
+    return "project " + join_strings(self.names, 0, "") + "\n  " + self.child.text()
+  }
+}
+
+class PInsert {
+  def init(table_name String, rows Int64) {
+    self.table_name = table_name
+    self.rows = rows
+  }
+
+  def text() String {
+    return "insert " + self.table_name + " (" + self.rows.to_string() + " rows)"
+  }
+}
+
+class PUpdate {
+  def init(table_name String, child Plan) {
+    self.table_name = table_name
+    self.child = child
+  }
+
+  def text() String {
+    return "update " + self.table_name + "\n  " + self.child.text()
+  }
+}
+
+class PDelete {
+  def init(table_name String, child Plan) {
+    self.table_name = table_name
+    self.child = child
+  }
+
+  def text() String {
+    return "delete " + self.table_name + "\n  " + self.child.text()
+  }
+}
+
+class PCreate {
+  def init(table_name String) {
+    self.table_name = table_name
+  }
+
+  def text() String {
+    return "create table " + self.table_name
+  }
+}
+
+// The column executor's plan nodes: the block scan and the aggregate
+// over it. The filter and project reuse the row path's nodes.
+class PColScan {
+  def init(table_name String) {
+    self.table_name = table_name
+  }
+
+  def text() String {
+    return "column scan " + self.table_name
+  }
+}
+
+class PColAggregate {
+  def init(child Plan, calls Array[String]) {
+    self.child = child
+    self.calls = calls
+  }
+
+  def text() String {
+    return "aggregate " + join_strings(self.calls, 0, "") + "\n  " +
+           self.child.text()
+  }
+}
+
+def join_strings(xs Array[String], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return join_strings(xs, 1, xs[0])
+  }
+  return join_strings(xs, i + 1, acc + ", " + xs[i])
+}
+
+// ---- the engine ----
+
+def open(path String) (R, Engine) {
+  case record.open(path) {
+    (R.error, why) -> { return fail("XX000", "open: " + why) }
+    (R.ok, store) -> { return (R.ok, Engine.new(store, [], [], Map.new())) }
+  }
+}
+
+// Opens an engine whose writes acquire table locks through `locks`; the
+// M32 session demo uses this, the embedded face does not.
+def open_locked(path String, locks LockClient) (R, Engine) {
+  case record.open(path) {
+    (R.error, why) -> { return fail("XX000", "open: " + why) }
+    (R.ok, store) -> { return (R.ok, Engine.new(store, [locks], [], Map.new())) }
+  }
+}
+
+// The session's door to the lock manager. The engine calls it before a
+// write; the client may block until the lock is granted and answers a
+// PG-shaped failure on a deadlock. In an explicit transaction the lock
+// is held until COMMIT/ROLLBACK; in autocommit it is released after the
+// statement.
+interface LockClient {
+  def acquire(table String) (R, Bool)
+  def release(table String) Void
+}
+
+class Engine {
+  def init(store record.Store, locks Array[LockClient], txn Array[record.Txn], held Map[String, Bool]) {
+    self.store = store
+    self.locks = locks
+    self.txn = Box.new(txn)
+    self.held = held
+    self.closed = Box.new(false)
+  }
+
+  // Parses and dispatches one statement. BEGIN/COMMIT/ROLLBACK move the
+  // session's transaction state; every other statement runs inside the
+  // open transaction or, without one, in its own autocommit transaction.
+  def execute(text String) (R, Result) {
+    self.live()
+    case sql.parse(text) {
+      (R.error, why) -> { return fail("42601", why) }
+      (R.ok, stmt) -> { return self.dispatch(stmt) }
+    }
+  }
+
+  def dispatch(stmt sql.Stmt) (R, Result) {
+    if stmt.is(sql.Begin) {
+      return self.begin_transaction()
+    }
+    if stmt.is(sql.Commit) {
+      return self.commit_transaction()
+    }
+    if stmt.is(sql.Rollback) {
+      return self.rollback_transaction()
+    }
+    if stmt.is(sql.CreateTable) {
+      if self.in_tx() {
+        // The refusal is a failed statement like any other: the
+        // transaction aborts and its locks release, PostgreSQL's rule.
+        self.abort_tx()
+        return fail("0A000", "DDL inside a transaction is not supported in v0")
+      }
+      return self.create_table(stmt)
+    }
+    if self.in_tx() {
+      const txn = self.current_txn()
+      case txn.begin_statement() {
+        (R.error, why) -> {
+          self.abort_tx()
+          return (R.error, record_error(why))
+        }
+        (R.ok, _) -> {
+          case self.run_statement(stmt, txn) {
+            (R.error, why) -> {
+              // A failed statement aborts the transaction, as PostgreSQL
+              // does; the session is idle and the locks are released.
+              self.abort_tx()
+              return (R.error, why)
+            }
+            (R.ok, result) -> { return (R.ok, result) }
+          }
+        }
+      }
+    }
+    case self.store.begin() {
+      (R.error, why) -> { return (R.error, record_error(why)) }
+      (R.ok, txn) -> {
+        case self.run_statement(stmt, txn) {
+          (R.error, why) -> {
+            case txn.rollback() {
+              (R.error, _) -> {}
+              (R.ok, _) -> {}
+            }
+            self.release_locks()
+            return (R.error, why)
+          }
+          (R.ok, result) -> {
+            case txn.commit() {
+              (R.error, why) -> {
+                case txn.rollback() {
+                  (R.error, _) -> {}
+                  (R.ok, _) -> {}
+                }
+                self.release_locks()
+                return (R.error, record_error(why))
+              }
+              (R.ok, _) -> {
+                self.release_locks()
+                return (R.ok, result)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def run_statement(stmt sql.Stmt, txn record.Txn) (R, Result) {
+    if stmt.is(sql.Select) {
+      return self.select(stmt, txn)
+    }
+    if stmt.is(sql.Insert) {
+      return self.insert(stmt, txn)
+    }
+    if stmt.is(sql.Update) {
+      return self.update(stmt, txn)
+    }
+    if stmt.is(sql.Delete) {
+      return self.delete(stmt, txn)
+    }
+    return fail("0A000", "this statement is not supported in v0")
+  }
+
+  def begin_transaction() (R, Result) {
+    if self.in_tx() {
+      return fail("25001", "there is already a transaction in progress")
+    }
+    case self.store.begin() {
+      (R.error, why) -> { return (R.error, record_error(why)) }
+      (R.ok, txn) -> {
+        self.txn.replace([txn])
+        return (R.ok, Result.new("BEGIN", [], [], [], ""))
+      }
+    }
+  }
+
+  def commit_transaction() (R, Result) {
+    if !self.in_tx() {
+      return fail("25P01", "there is no transaction in progress")
+    }
+    const txn = self.current_txn()
+    case txn.commit() {
+      (R.error, why) -> {
+        self.abort_tx()
+        return (R.error, record_error(why))
+      }
+      (R.ok, _) -> {
+        self.txn.replace([])
+        self.release_locks()
+        return (R.ok, Result.new("COMMIT", [], [], [], ""))
+      }
+    }
+  }
+
+  def rollback_transaction() (R, Result) {
+    if !self.in_tx() {
+      return fail("25P01", "there is no transaction in progress")
+    }
+    self.abort_tx()
+    return (R.ok, Result.new("ROLLBACK", [], [], [], ""))
+  }
+
+  def abort_tx() {
+    if self.in_tx() {
+      const txn = self.current_txn()
+      case txn.rollback() {
+        (R.error, _) -> {}
+        (R.ok, _) -> {}
+      }
+      self.txn.replace([])
+    }
+    self.release_locks()
+  }
+
+  def in_tx() Bool {
+    return self.txn.read().length() == 1
+  }
+
+  def current_txn() record.Txn {
+    return self.txn.read()[0]
+  }
+
+  def acquire(table String) (R, Bool) {
+    if self.locks.length() == 0 {
+      return (R.ok, true)
+    }
+    if self.held.has(table) {
+      return (R.ok, true)
+    }
+    case self.locks[0].acquire(table) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {
+        self.held.set(table, true)
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def release_locks() {
+    if self.locks.length() == 1 {
+      const names = self.held.keys()
+      var i = 0
+      while i < names.length() {
+        self.locks[0].release(names[i])
+        i = i + 1
+      }
+    }
+    const names = self.held.keys()
+    var j = 0
+    while j < names.length() {
+      self.held.remove(names[j])
+      j = j + 1
+    }
+  }
+
+  def create_table(stmt sql.CreateTable) (R, Result) {
+    const parts = stmt.parts
+    if parts.length() != 1 {
+      return fail("0A000", "schema-qualified table names are not supported in v0")
+    }
+    const name = parts[0]
+    var primary_count = 0
+    var i = 0
+    while i < stmt.columns.length() {
+      if stmt.columns[i].primary {
+        primary_count = primary_count + 1
+      }
+      i = i + 1
+    }
+    if primary_count > 1 {
+      return fail("42P16", "multiple primary keys for table \"" + name + "\" are not allowed")
+    }
+    const column_store = stmt.store == sql.StoreKind.column
+    if column_store && primary_count == 1 {
+      return fail("0A000", "column-store tables carry no primary key in v0")
+    }
+    var columns = []
+    var primary_name = ""
+    var j = 0
+    while j < stmt.columns.length() {
+      const col = stmt.columns[j]
+      var cdef = record.column(col.name, map_sql_type(col.kind))
+      if col.kind == sql.SqlType.varchar {
+        cdef = record.varchar_column(col.name, col.varchar_len)
+      }
+      if col.not_null || col.primary {
+        cdef = cdef.not_null()
+      }
+      if col.primary {
+        cdef = cdef.primary_key()
+        primary_name = col.name
+      }
+      columns = columns.append(cdef)
+      j = j + 1
+    }
+    var indexes = []
+    if primary_name != "" {
+      indexes = [record.unique_index(name + "_pkey", [primary_name])]
+    }
+    var store = record.Storage.row
+    if column_store {
+      store = record.Storage.column
+    }
+    case self.store.create_table_store(name, columns, indexes, store) {
+      (R.error, why) -> {
+        if why.index_of("already exists") >= 0 {
+          return fail("42P07", "relation \"" + name + "\" already exists")
+        }
+        return (R.error, record_error(why))
+      }
+      (R.ok, _) -> {
+        return (R.ok, Result.new("CREATE TABLE", [], [], [],
+                                 PCreate.new(name).text()))
+      }
+    }
+  }
+
+  def insert(stmt sql.Insert, txn record.Txn) (R, Result) {
+    const parts = stmt.parts
+    if parts.length() != 1 {
+      return fail("0A000", "schema-qualified table names are not supported in v0")
+    }
+    case self.resolve_table(parts[0]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, table) -> {
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
+        case resolve_targets(table, stmt.columns) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, targets) -> {
+            var inserted = 0
+            var r = 0
+            while r < stmt.rows.length() {
+              const row = stmt.rows[r]
+              if row.length() != targets.length() {
+                return fail("42601",
+                            "INSERT has " + row.length().to_string() +
+                            " expressions but " + targets.length().to_string() +
+                            " target columns")
+              }
+              case build_insert_row(table, targets, row) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, values) -> {
+                  if table.store == record.Storage.column {
+                    case table.insert_column_tx(txn, values) {
+                      (R.error, why) -> { return (R.error, record_error(why)) }
+                      (R.ok, _) -> { inserted = inserted + 1 }
+                    }
+                  } else {
+                    case table.insert_tx(txn, values) {
+                      (R.error, why) -> { return (R.error, record_error(why)) }
+                      (R.ok, _) -> { inserted = inserted + 1 }
+                    }
+                  }
+                }
+              }
+              r = r + 1
+            }
+            return (R.ok, Result.new("INSERT 0 " + inserted.to_string(), [], [], [],
+                                     PInsert.new(table.name, stmt.rows.length()).text()))
+          }
+        }
+      }
+    }
+  }
+
+  def update(stmt sql.Update, txn record.Txn) (R, Result) {
+    const parts = stmt.parts
+    if parts.length() != 1 {
+      return fail("0A000", "schema-qualified table names are not supported in v0")
+    }
+    case self.resolve_table(parts[0]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, table) -> {
+        if table.store == record.Storage.column {
+          return fail("0A000", "column-store tables are insert-only in v0")
+        }
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
+        case resolve_assignments(table, stmt.sets) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, assignments) -> {
+            case self.plan_where(table, table.name, stmt.where_e) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, wr) -> {
+                const plan = PUpdate.new(table.name, wr.plan)
+                case scan_rows(table, wr.scan, txn) {
+                  (R.error, why) -> { return (R.error, record_error(why)) }
+                  (R.ok, rows) -> {
+                    var updated = 0
+                    var i = 0
+                    while i < rows.length() {
+                      const row = rows[i]
+                      case filter_row(wr.predicate_e, row.values) {
+                        (R.error, why) -> { return (R.error, why) }
+                        (R.ok, keep) -> {
+                          if keep {
+                            case build_update_row(table, assignments, row) {
+                              (R.error, why) -> { return (R.error, why) }
+                              (R.ok, values) -> {
+                                case table.update_tx(txn, row.rowid, values) {
+                                  (R.error, why) -> { return (R.error, record_error(why)) }
+                                  (R.ok, _) -> { updated = updated + 1 }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                      i = i + 1
+                    }
+                    return (R.ok, Result.new("UPDATE " + updated.to_string(), [], [], [],
+                                             plan.text()))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def delete(stmt sql.Delete, txn record.Txn) (R, Result) {
+    const parts = stmt.parts
+    if parts.length() != 1 {
+      return fail("0A000", "schema-qualified table names are not supported in v0")
+    }
+    case self.resolve_table(parts[0]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, table) -> {
+        if table.store == record.Storage.column {
+          return fail("0A000", "column-store tables are insert-only in v0")
+        }
+        case self.acquire(table.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
+        case self.plan_where(table, table.name, stmt.where_e) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, wr) -> {
+            const plan = PDelete.new(table.name, wr.plan)
+            case scan_rows(table, wr.scan, txn) {
+              (R.error, why) -> { return (R.error, record_error(why)) }
+              (R.ok, rows) -> {
+                var deleted = 0
+                var i = 0
+                while i < rows.length() {
+                  const row = rows[i]
+                  case filter_row(wr.predicate_e, row.values) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, keep) -> {
+                      if keep {
+                        case table.delete_tx(txn, row.rowid) {
+                          (R.error, why) -> { return (R.error, record_error(why)) }
+                          (R.ok, _) -> { deleted = deleted + 1 }
+                        }
+                      }
+                    }
+                  }
+                  i = i + 1
+                }
+                return (R.ok, Result.new("DELETE " + deleted.to_string(), [], [], [],
+                                         plan.text()))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def select(stmt sql.Select, txn record.Txn) (R, Result) {
+    if stmt.distinct {
+      return fail("0A000", "DISTINCT is not supported in v0")
+    }
+    if stmt.from_t.length() != 1 {
+      return fail("0A000", "joins and multiple tables are not supported in v0")
+    }
+    if stmt.group_by.length() > 0 {
+      return fail("0A000", "GROUP BY is not supported in v0")
+    }
+    if stmt.having_e.length() == 1 {
+      return fail("0A000", "HAVING is not supported in v0")
+    }
+    if stmt.order_by.length() > 0 {
+      return fail("0A000", "ORDER BY is not supported in v0")
+    }
+    if stmt.limit_e.length() == 1 {
+      return fail("0A000", "LIMIT is not supported in v0")
+    }
+    if stmt.offset_e.length() == 1 {
+      return fail("0A000", "OFFSET is not supported in v0")
+    }
+    case from_parts(stmt.from_t[0]) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, fr) -> {
+        const parts = fr[0]
+        const alias_parts = fr[1]
+        if parts.length() != 1 {
+          return fail("0A000", "schema-qualified table names are not supported in v0")
+        }
+        const alias = if alias_parts.length() == 1 { alias_parts[0] } else { parts[0] }
+        return self.select_named(stmt, parts[0], alias, txn)
+      }
+    }
+  }
+
+  def select_named(stmt sql.Select, table_name String, alias String, txn record.Txn) (R, Result) {
+    case self.resolve_table(table_name) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, table) -> {
+        if table.store == record.Storage.column {
+          return self.select_column(stmt, table, alias, txn)
+        }
+        case self.plan_where(table, alias, stmt.where_e) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, wr) -> {
+            case resolve_projection(stmt.columns, table, alias) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, pr) -> {
+                const project = PProject.new(wr.plan, pr.names)
+                case scan_rows(table, wr.scan, txn) {
+                  (R.error, why) -> { return (R.error, record_error(why)) }
+                  (R.ok, rows) -> {
+                    var out = []
+                    var i = 0
+                    while i < rows.length() {
+                      const row = rows[i]
+                      case filter_row(wr.predicate_e, row.values) {
+                        (R.error, why) -> { return (R.error, why) }
+                        (R.ok, keep) -> {
+                          if keep {
+                            case project_row(pr.exprs, row.values) {
+                              (R.error, why) -> { return (R.error, why) }
+                              (R.ok, values) -> { out = out.append(values) }
+                            }
+                          }
+                        }
+                      }
+                      i = i + 1
+                    }
+                    return (R.ok, Result.new("SELECT " + out.length().to_string(),
+                                             pr.names, pr.types, out,
+                                             project.text()))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---- the column executor ----
+  //
+  // A column table's SELECT routes here. The select list is either all
+  // plain items (the block scan with the shared filter and project) or
+  // all aggregate calls (COUNT, SUM, AVG, MIN, MAX over the blocks —
+  // global aggregates; GROUP BY stays refused for both engines until
+  // the shared breadth lands it). The block decode happens once per
+  // block per column; the per-row expressions ride the shared typed
+  // evaluator, and the batch expression evaluator is the named
+  // follow-up.
+
+  def select_column(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case classify_select(stmt.columns) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, kind) -> {
+        if kind == "aggregate" {
+          return self.select_column_aggregate(stmt, table, alias, txn)
+        }
+        return self.select_column_rows(stmt, table, alias, txn)
+      }
+    }
+  }
+
+  // The column path's WHERE: the same typed resolution, no index
+  // choice (a column table has none).
+  def column_where(table record.Table, alias String, where_e Array[sql.Expr]) (R, WherePlan) {
+    if where_e.length() == 0 {
+      const scan = PColScan.new(table.name)
+      return (R.ok, WherePlan.new(scan, [], scan))
+    }
+    case resolve_expr(where_e[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, predicate) -> {
+        case require_boolean(predicate.result_type(), "WHERE") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            const scan = PColScan.new(table.name)
+            const plan = PFilter.new(scan, where_e[0])
+            return (R.ok, WherePlan.new(scan, [predicate], plan))
+          }
+        }
+      }
+    }
+  }
+
+  def select_column_rows(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case self.column_where(table, alias, stmt.where_e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        case resolve_projection(stmt.columns, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, pr) -> {
+            const project = PProject.new(wr.plan, pr.names)
+            case table.scan_column_batches(txn) {
+              (R.error, why) -> { return (R.error, record_error(why)) }
+              (R.ok, batches) -> {
+                var out = []
+                var b = 0
+                while b < batches.length() {
+                  const per_column = batches[b][1]
+                  const count = per_column[0].length()
+                  var j = 0
+                  while j < count {
+                    var values = []
+                    var c = 0
+                    while c < per_column.length() {
+                      values = values.append(per_column[c][j])
+                      c = c + 1
+                    }
+                    case filter_row(wr.predicate_e, values) {
+                      (R.error, why) -> { return (R.error, why) }
+                      (R.ok, keep) -> {
+                        if keep {
+                          case project_row(pr.exprs, values) {
+                            (R.error, why) -> { return (R.error, why) }
+                            (R.ok, projected) -> { out = out.append(projected) }
+                          }
+                        }
+                      }
+                    }
+                    j = j + 1
+                  }
+                  b = b + 1
+                }
+                return (R.ok, Result.new("SELECT " + out.length().to_string(),
+                                         pr.names, pr.types, out, project.text()))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  def select_column_aggregate(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
+    case self.column_where(table, alias, stmt.where_e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, wr) -> {
+        var aggs = []
+        var names = []
+        var types = []
+        var i = 0
+        while i < stmt.columns.length() {
+          case resolve_aggregate(stmt.columns[i], table, alias) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, agg) -> {
+              aggs = aggs.append(agg)
+              names = names.append(agg.display)
+              types = types.append(agg.t)
+            }
+          }
+          i = i + 1
+        }
+        var calls = []
+        i = 0
+        while i < aggs.length() {
+          calls = calls.append(aggs[i].call_text)
+          i = i + 1
+        }
+        const plan = PColAggregate.new(wr.plan, calls)
+        // The count(*)-only fast path: no WHERE, every aggregate a
+        // count(*) — the block row counts answer without decoding.
+        var all_star = true
+        i = 0
+        while i < aggs.length() {
+          if !aggs[i].star {
+            all_star = false
+          }
+          i = i + 1
+        }
+        if wr.predicate_e.length() == 0 && all_star {
+          case table.column_block_counts(txn) {
+            (R.error, why) -> { return (R.error, record_error(why)) }
+            (R.ok, counts) -> {
+              var total = 0
+              i = 0
+              while i < counts.length() {
+                total = total + counts[i]
+                i = i + 1
+              }
+              var values = []
+              i = 0
+              while i < aggs.length() {
+                values = values.append(record.bigint(total))
+                i = i + 1
+              }
+              return (R.ok, Result.new("SELECT 1", names, types, [values],
+                                       plan.text()))
+            }
+          }
+        }
+        var states = []
+        i = 0
+        while i < aggs.length() {
+          states = states.append(AggState.new(aggs[i].name, aggs[i].star,
+                                              aggs[i].arg, aggs[i].t))
+          i = i + 1
+        }
+        case table.scan_column_batches(txn) {
+          (R.error, why) -> { return (R.error, record_error(why)) }
+          (R.ok, batches) -> {
+            var b = 0
+            while b < batches.length() {
+              const per_column = batches[b][1]
+              const count = per_column[0].length()
+              var j = 0
+              while j < count {
+                var values = []
+                var c = 0
+                while c < per_column.length() {
+                  values = values.append(per_column[c][j])
+                  c = c + 1
+                }
+                case filter_row(wr.predicate_e, values) {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, keep) -> {
+                    if keep {
+                      var k = 0
+                      while k < states.length() {
+                        case states[k].step(values) {
+                          (R.error, why) -> { return (R.error, why) }
+                          (R.ok, _) -> {}
+                        }
+                        k = k + 1
+                      }
+                    }
+                  }
+                }
+                j = j + 1
+              }
+              b = b + 1
+            }
+          }
+        }
+        var values = []
+        i = 0
+        while i < states.length() {
+          case states[i].result() {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, value) -> { values = values.append(value) }
+          }
+          i = i + 1
+        }
+        return (R.ok, Result.new("SELECT 1", names, types, [values],
+                                 plan.text()))
+      }
+    }
+  }
+
+  def resolve_table(name String) (R, record.Table) {
+    case self.store.table(name) {
+      (R.error, why) -> {
+        return fail("42P01", "relation \"" + name + "\" does not exist")
+      }
+      (R.ok, table) -> { return (R.ok, table) }
+    }
+  }
+
+  // The WHERE analysis and the scan choice: an equality between an
+  // indexed column and a constant becomes an index scan; anything else
+  // is a table scan. The typed predicate stays as the filter either
+  // way, so the index is an access optimization, not a semantic change.
+  def plan_where(table record.Table, alias String, where_e Array[sql.Expr]) (R, WherePlan) {
+    if where_e.length() == 0 {
+      const scan = table_scan(table)
+      return (R.ok, WherePlan.new(scan, [], scan))
+    }
+    case resolve_expr(where_e[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, predicate) -> {
+        case require_boolean(predicate.result_type(), "WHERE") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            case choose_scan(table, alias, where_e[0]) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, scan) -> {
+                const plan = PFilter.new(scan, where_e[0])
+                return (R.ok, WherePlan.new(scan, [predicate], plan))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Ends a session over a Store it does not own: the open transaction,
+  // if any, aborts and every held lock is released; the shared Store
+  // stays open for the other sessions. A server's connection loop calls
+  // this when its client goes away; the embedded caller closes instead.
+  def end_session() {
+    if self.in_tx() {
+      self.abort_tx()
+    }
+    self.release_locks()
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "engine: close: already closed")
+    }
+    if self.in_tx() {
+      self.abort_tx()
+    }
+    self.store.close()
+    self.closed.replace(true)
+  }
+
+  def live() {
+    if self.closed.read() {
+      raise Exception.new(message: "engine: the engine is closed")
+    }
+  }
+}
+
+class WherePlan {
+  def init(scan Plan, predicate_e Array[TExpr], plan Plan) {
+    self.scan = scan
+    self.predicate_e = predicate_e
+    self.plan = plan
+  }
+}
+
+def table_scan(table record.Table) Plan {
+  return PScan.new("", [], "table scan " + table.name)
+}
+
+def from_parts(ref sql.TableRef) (R, (Array[String], Array[String])) {
+  if ref.is(sql.TblNamed) {
+    return (R.ok, (ref.parts, ref.alias_e))
+  }
+  return fail("0A000", "joins and subqueries in FROM are not supported in v0")
+}
+
+def choose_scan(table record.Table, alias String, where sql.Expr) (R, Plan) {
+  const expr = unwrap_paren(where)
+  if expr.is(sql.Binary) {
+    if expr.op == sql.BinOp.eq {
+      const left = expr.left
+      const right = expr.right
+      if left.is(sql.Column) {
+        if is_constant(right) {
+          return plan_index_column(table, alias, left, right)
+        }
+      }
+      if right.is(sql.Column) {
+        if is_constant(left) {
+          return plan_index_column(table, alias, right, left)
+        }
+      }
+    }
+  }
+  return (R.ok, table_scan(table))
+}
+
+def unwrap_paren(expr sql.Expr) sql.Expr {
+  if expr.is(sql.Paren) {
+    return unwrap_paren(expr.inner)
+  }
+  return expr
+}
+
+def plan_index_column(table record.Table, alias String, column_expr sql.Column, constant_expr sql.Expr) (R, Plan) {
+  case resolve_column(column_expr, table, alias) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, tcol) -> {
+      const column = table.columns[tcol.index]
+      case index_for(table, column.oid) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, index_name) -> {
+          if index_name == "" {
+            return (R.ok, table_scan(table))
+          }
+          case resolve_expr(constant_expr, table, alias) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, typed) -> {
+              case typed.eval([]) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, value) -> {
+                  case coerce_value(value, val_type_of(column.kind)) {
+                    (R.error, why) -> { return (R.error, why) }
+                    (R.ok, key) -> {
+                      return (R.ok,
+                              PScan.new(index_name, [key],
+                                        "index scan " + index_name + " (" +
+                                        column.name + " = " +
+                                        constant_expr.to_string() + ")"))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The single-column index on `oid`, if one exists.
+def index_for(table record.Table, oid Int64) (R, String) {
+  var i = 0
+  while i < table.indexes.length() {
+    const idx = table.indexes[i]
+    if idx.column_oids.length() == 1 && idx.column_oids[0] == oid {
+      return (R.ok, idx.name)
+    }
+    i = i + 1
+  }
+  return (R.ok, "")
+}
+
+// The index planner's constant subset: literals, unary signs on them,
+// and parentheses. A general constant expression waits for a later
+// planner; anything else falls back to a table scan.
+def is_constant(expr sql.Expr) Bool {
+  if expr.is(sql.Paren) {
+    return is_constant(expr.inner)
+  }
+  if expr.is(sql.Unary) {
+    return is_constant(expr.operand)
+  }
+  return expr.is(sql.NullLit) || expr.is(sql.BoolLit) || expr.is(sql.IntLit) ||
+         expr.is(sql.FloatLit) || expr.is(sql.StrLit)
+}
+
+def scan_rows(table record.Table, scan Plan, txn record.Txn) (R, Array[record.Row]) {
+  if scan.is(PScan) {
+    if scan.index_name != "" {
+      return table.scan_index_tx(txn, scan.index_name, scan.keys)
+    }
+  }
+  return table.scan_tx(txn)
+}
+
+def filter_row(predicate_e Array[TExpr], row Array[record.Value]) (R, Bool) {
+  if predicate_e.length() == 0 {
+    return (R.ok, true)
+  }
+  case predicate_e[0].eval(row) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, value) -> { return (R.ok, is_true(value)) }
+  }
+}
+
+def project_row(exprs Array[TExpr], row Array[record.Value]) (R, Array[record.Value]) {
+  var out = []
+  var i = 0
+  while i < exprs.length() {
+    case exprs[i].eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, value) -> { out = out.append(value) }
+    }
+    i = i + 1
+  }
+  return (R.ok, out)
+}
+
+// ---- projection resolution ----
+
+class Projection {
+  def init(exprs Array[TExpr], names Array[String], types Array[ValType]) {
+    self.exprs = exprs
+    self.names = names
+    self.types = types
+  }
+}
+
+// ---- the column executor's aggregate helpers ----
+
+const aggregate_names = "count,sum,avg,min,max"
+
+def is_aggregate_call(e sql.Expr) Bool {
+  if e.is(sql.FuncCall) {
+    const name = sql.ascii_lower(e.name)
+    if name == "count" || name == "sum" || name == "avg" || name == "min" ||
+       name == "max" {
+      return true
+    }
+  }
+  return false
+}
+
+// The select list is either all plain items or all aggregate calls; a
+// mixture is PostgreSQL's grouping error (there is no GROUP BY in v0).
+def classify_select(items Array[sql.SelItem]) (R, String) {
+  var aggregates = 0
+  var plain = 0
+  var culprit = "*"
+  var i = 0
+  while i < items.length() {
+    const item = items[i]
+    if item.is(sql.SelExpr) {
+      if is_aggregate_call(item.value) {
+        aggregates = aggregates + 1
+      } else {
+        if plain == 0 {
+          const expr = item.value
+          if expr.is(sql.Column) {
+            if expr.parts.length() == 1 {
+              culprit = expr.parts[0]
+            }
+          }
+        }
+        plain = plain + 1
+      }
+    } else {
+      plain = plain + 1
+    }
+    i = i + 1
+  }
+  if aggregates > 0 && plain > 0 {
+    return fail("42803",
+                "column \"" + culprit +
+                "\" must appear in the GROUP BY clause or be used in an aggregate function")
+  }
+  if aggregates > 0 {
+    return (R.ok, "aggregate")
+  }
+  return (R.ok, "rows")
+}
+
+// One resolved aggregate call: the function name (lower-cased), the
+// argument's typed expression (absent for COUNT(*)), the answer's
+// value type, the name the result column carries, and the call's own
+// text for the plan.
+class Aggregate {
+  def init(name String, star Bool, distinct Bool, arg TExpr, t ValType, display String, call_text String) {
+    self.name = name
+    self.star = star
+    self.distinct = distinct
+    self.arg = arg
+    self.t = t
+    self.display = display
+    self.call_text = call_text
+  }
+}
+
+def resolve_aggregate(item sql.SelItem, table record.Table, alias String) (R, Aggregate) {
+  if item.is(sql.SelExpr) {
+    const call = item.value
+    if call.is(sql.FuncCall) {
+      var display = ""
+      if item.alias_e.length() == 1 {
+        display = item.alias_e[0]
+      }
+      return resolve_aggregate_call(call, display, table, alias)
+    }
+    return fail("42803", "column \"*\" must appear in the GROUP BY clause or be used in an aggregate function")
+  }
+  return fail("42803", "column \"*\" must appear in the GROUP BY clause or be used in an aggregate function")
+}
+
+// One resolved aggregate call: the function name (lower-cased), the
+// argument's typed expression (absent for COUNT(*)), the answer's
+// value type, the name the result column carries, and the call's own
+// text for the plan. `display` is the alias when the item wrote one;
+// otherwise the result column is the function's own name, the way
+// PostgreSQL names an unaliased aggregate.
+def resolve_aggregate_call(call sql.FuncCall, display_in String, table record.Table, alias String) (R, Aggregate) {
+  const name = sql.ascii_lower(call.name)
+  if call.distinct {
+    return fail("0A000", "DISTINCT aggregates are not supported in v0")
+  }
+  var display = display_in
+  if display == "" {
+    display = name
+  }
+  const call_text = call.to_string()
+  if name == "count" {
+    if call.star {
+      return (R.ok, Aggregate.new(name, true, false,
+                                  TLit.new(null_value_of(ValType.null_t), ValType.null_t),
+                                  ValType.bigint, display, call_text))
+    }
+    if call.args.length() != 1 {
+      return fail("42883", "function " + name + " does not exist")
+    }
+    case resolve_expr(call.args[0], table, alias) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, typed) -> {
+        return (R.ok, Aggregate.new(name, false, false, typed,
+                                    ValType.bigint, display, call_text))
+      }
+    }
+  }
+  if call.star {
+    return fail("42883", "function " + name + "(*) does not exist")
+  }
+  if call.args.length() != 1 {
+    return fail("42883", "function " + name + " does not exist")
+  }
+  case resolve_expr(call.args[0], table, alias) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, typed) -> {
+      const arg_t = typed.result_type()
+      if name == "sum" || name == "avg" {
+        if !(is_numeric(arg_t) || arg_t == ValType.null_t) {
+          return fail("42883",
+                      "function " + name + "(" + lower_type_name(arg_t) +
+                      ") does not exist")
+        }
+        var t = ValType.bigint
+        if name == "avg" || arg_t == ValType.real || arg_t == ValType.double ||
+           arg_t == ValType.null_t {
+          t = ValType.double
+        }
+        return (R.ok, Aggregate.new(name, false, false, typed, t, display,
+                                    call_text))
+      }
+      return (R.ok, Aggregate.new(name, false, false, typed, arg_t, display,
+                                  call_text))
+    }
+  }
+}
+
+// One aggregate's accumulation over the blocks. count counts rows;
+// sum and avg accumulate numerics (integer and bigint in an Int64,
+// real and double in a Float64); min and max keep the extreme value.
+// A sum, avg, min, or max over no rows answers NULL, PostgreSQL's
+// rule; count answers 0.
+class AggState {
+  def init(name String, star Bool, arg TExpr, t ValType) {
+    self.name = name
+    self.star = star
+    self.arg = arg
+    self.t = t
+    self.rows = Box.new(0)
+    self.sum_i = Box.new(0)
+    self.sum_f = Box.new(0.0)
+    self.seen = Box.new(false)
+    self.best = Box.new(null_value_of(t))
+  }
+
+  def step(row Array[record.Value]) (R, Bool) {
+    if self.star {
+      self.rows.replace(self.rows.read() + 1)
+      return (R.ok, true)
+    }
+    case self.arg.eval(row) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v) -> {
+        if v.is_null {
+          return (R.ok, true)
+        }
+        if self.name == "count" {
+          self.rows.replace(self.rows.read() + 1)
+          return (R.ok, true)
+        }
+        if self.name == "sum" || self.name == "avg" {
+          self.seen.replace(true)
+          if self.t == ValType.bigint {
+            self.sum_i.replace(self.sum_i.read() + v.as_i64())
+          } else {
+            self.sum_f.replace(self.sum_f.read() + v.as_f64())
+          }
+          if self.name == "avg" {
+            self.rows.replace(self.rows.read() + 1)
+          }
+          return (R.ok, true)
+        }
+        // min and max
+        if !self.seen.read() {
+          self.seen.replace(true)
+          self.best.replace(v)
+          return (R.ok, true)
+        }
+        case compare_values(v, self.best.read(), self.t) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, order) -> {
+            if (self.name == "min" && order < 0) ||
+               (self.name == "max" && order > 0) {
+              self.best.replace(v)
+            }
+            return (R.ok, true)
+          }
+        }
+      }
+    }
+  }
+
+  def result() (R, record.Value) {
+    if self.name == "count" {
+      return (R.ok, record.bigint(self.rows.read()))
+    }
+    if self.name == "sum" || self.name == "avg" {
+      if !self.seen.read() {
+        return (R.ok, null_value_of(self.t))
+      }
+      if self.name == "avg" {
+        return (R.ok, record.double(self.sum_f.read() / self.rows.read().to_float64()))
+      }
+      if self.t == ValType.bigint {
+        return (R.ok, record.bigint(self.sum_i.read()))
+      }
+      return (R.ok, record.double(self.sum_f.read()))
+    }
+    if !self.seen.read() {
+      return (R.ok, null_value_of(self.t))
+    }
+    return (R.ok, self.best.read())
+  }
+}
+
+def resolve_projection(items Array[sql.SelItem], table record.Table, alias String) (R, Projection) {
+  var exprs = []
+  var names = []
+  var types = []
+  var i = 0
+  while i < items.length() {
+    const item = items[i]
+    if item.is(sql.SelStar) {
+      const parts = item.parts
+      if parts.length() == 1 && parts[0] != alias {
+        return fail("42P01", "missing FROM-clause entry for table \"" + parts[0] + "\"")
+      }
+      if parts.length() > 1 {
+        return fail("0A000", "schema-qualified stars are not supported in v0")
+      }
+      var c = 0
+      while c < table.columns.length() {
+        const ct = val_type_of(table.columns[c].kind)
+        exprs = exprs.append(TColumn.new(c, ct))
+        names = names.append(table.columns[c].name)
+        types = types.append(ct)
+        c = c + 1
+      }
+    } else {
+      if item.is(sql.SelExpr) {
+        const value_expr = item.value
+        case resolve_expr(value_expr, table, alias) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, typed) -> {
+            exprs = exprs.append(typed)
+            types = types.append(typed.result_type())
+            if item.alias_e.length() == 1 {
+              names = names.append(item.alias_e[0])
+            } else {
+              if value_expr.is(sql.Column) {
+                const parts = value_expr.parts
+                names = names.append(parts[parts.length() - 1])
+              } else {
+                names = names.append("?column?")
+              }
+            }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  if exprs.length() == 0 {
+    return fail("42601", "the select list is empty")
+  }
+  return (R.ok, Projection.new(exprs, names, types))
+}
+
+// ---- INSERT / UPDATE helpers ----
+
+def resolve_targets(table record.Table, columns Array[String]) (R, Array[Int64]) {
+  if columns.length() == 0 {
+    var all = []
+    var i = 0
+    while i < table.columns.length() {
+      all = all.append(i)
+      i = i + 1
+    }
+    return (R.ok, all)
+  }
+  var targets = []
+  var i = 0
+  while i < columns.length() {
+    var found = 0 - 1
+    var c = 0
+    while c < table.columns.length() {
+      if table.columns[c].name == columns[i] {
+        found = c
+      }
+      c = c + 1
+    }
+    if found < 0 {
+      return fail("42703", "column \"" + columns[i] + "\" does not exist")
+    }
+    targets = targets.append(found)
+    i = i + 1
+  }
+  return (R.ok, targets)
+}
+
+def build_insert_row(table record.Table, targets Array[Int64], exprs Array[sql.Expr]) (R, Array[record.Value]) {
+  var values = []
+  var i = 0
+  while i < table.columns.length() {
+    values = values.append(null_value_of(val_type_of(table.columns[i].kind)))
+    i = i + 1
+  }
+  var t = 0
+  while t < targets.length() {
+    const position = targets[t]
+    const column = table.columns[position]
+    const expr = exprs[t]
+    if uses_column(expr) {
+      return fail("42703", "column references are not allowed in VALUES")
+    }
+    case resolve_expr(expr, table, table.name) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, typed) -> {
+        case require_conforms(typed.result_type(), val_type_of(column.kind), column.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            case typed.eval([]) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, value) -> {
+                case finish_assignment(value, column) {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, coerced) -> {
+                    values = replace_value(values, position, coerced)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    t = t + 1
+  }
+  // The nulls left in the row must be legal for their columns.
+  var c = 0
+  while c < table.columns.length() {
+    if values[c].is_null && !table.columns[c].nullable {
+      return fail("23502",
+                  "null value in column \"" + table.columns[c].name +
+                  "\" violates not-null constraint")
+    }
+    c = c + 1
+  }
+  return (R.ok, values)
+}
+
+def replace_value(values Array[record.Value], position Int64, value record.Value) Array[record.Value] {
+  var out = []
+  var i = 0
+  while i < values.length() {
+    if i == position {
+      out = out.append(value)
+    } else {
+      out = out.append(values[i])
+    }
+    i = i + 1
+  }
+  return out
+}
+
+def finish_assignment(value record.Value, column record.Column) (R, record.Value) {
+  if value.is_null {
+    if !column.nullable {
+      return fail("23502",
+                  "null value in column \"" + column.name +
+                  "\" violates not-null constraint")
+    }
+    return (R.ok, null_value_of(val_type_of(column.kind)))
+  }
+  if column.kind == record.ColType.varchar &&
+     utf8_len(value.data) > column.varchar_len {
+    return fail("22001",
+                "value too long for type character varying(" +
+                column.varchar_len.to_string() + ")")
+  }
+  return coerce_value(value, val_type_of(column.kind))
+}
+
+class UpdateSet {
+  def init(index Int64, expr TExpr) {
+    self.index = index
+    self.expr = expr
+  }
+}
+
+def resolve_assignments(table record.Table, sets Array[sql.Assignment]) (R, Array[UpdateSet]) {
+  var out = []
+  var i = 0
+  while i < sets.length() {
+    const set = sets[i]
+    var position = 0 - 1
+    var c = 0
+    while c < table.columns.length() {
+      if table.columns[c].name == set.column {
+        position = c
+      }
+      c = c + 1
+    }
+    if position < 0 {
+      return fail("42703", "column \"" + set.column + "\" does not exist")
+    }
+    const column = table.columns[position]
+    case resolve_expr(set.value, table, table.name) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, typed) -> {
+        case require_conforms(typed.result_type(), val_type_of(column.kind), column.name) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {
+            out = out.append(UpdateSet.new(position, typed))
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return (R.ok, out)
+}
+
+def build_update_row(table record.Table, assignments Array[UpdateSet], row record.Row) (R, Array[record.Value]) {
+  var values = []
+  var i = 0
+  while i < table.columns.length() {
+    const set_position = assignment_position(assignments, i)
+    if set_position < 0 {
+      values = values.append(row.values[i])
+    } else {
+      case assignments[set_position].expr.eval(row.values) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, value) -> {
+          case finish_assignment(value, table.columns[i]) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, coerced) -> { values = values.append(coerced) }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return (R.ok, values)
+}
+
+def assignment_position(assignments Array[UpdateSet], index Int64) Int64 {
+  var i = 0
+  while i < assignments.length() {
+    if assignments[i].index == index {
+      return i
+    }
+    i = i + 1
+  }
+  return 0 - 1
+}
+
+// ---- catalog/type mapping and record-error mapping ----
+
+def map_sql_type(kind sql.SqlType) record.ColType {
+  case kind {
+    sql.SqlType.integer -> { return record.ColType.integer }
+    sql.SqlType.bigint -> { return record.ColType.bigint }
+    sql.SqlType.real -> { return record.ColType.real }
+    sql.SqlType.double -> { return record.ColType.double }
+    sql.SqlType.text -> { return record.ColType.text }
+    sql.SqlType.varchar -> { return record.ColType.varchar }
+    sql.SqlType.boolean -> { return record.ColType.boolean }
+    sql.SqlType.bytea -> { return record.ColType.bytea }
+  }
+}
+
+def record_error(reason String) String {
+  if reason.index_of("duplicate key") >= 0 {
+    const name = index_name_of(reason)
+    if name == "" {
+      return "23505: duplicate key value violates a unique constraint"
+    }
+    return "23505: duplicate key value violates unique constraint \"" + name + "\""
+  }
+  if reason.index_of("NOT NULL") >= 0 {
+    return "23502: null value in a column violates a not-null constraint"
+  }
+  return "XX000: internal error: " + reason
+}
+
+def index_name_of(reason String) String {
+  const marker = "index \""
+  const at = reason.index_of(marker)
+  if at < 0 {
+    return ""
+  }
+  const start = at + 7
+  if start >= reason.length() {
+    return ""
+  }
+  const rest = reason.substring(start, reason.length() - start)
+  const end = rest.index_of("\"")
+  if end < 0 {
+    return ""
+  }
+  return rest.substring(0, end)
+}
+
+// The INSERT VALUES check: a VALUES expression must not name a column.
+def uses_column(expr sql.Expr) Bool {
+  if expr.is(sql.Column) {
+    return true
+  }
+  if expr.is(sql.Paren) {
+    return uses_column(expr.inner)
+  }
+  if expr.is(sql.Unary) {
+    return uses_column(expr.operand)
+  }
+  if expr.is(sql.Binary) {
+    return uses_column(expr.left) || uses_column(expr.right)
+  }
+  if expr.is(sql.Like) {
+    return uses_column(expr.value) || uses_column(expr.pattern)
+  }
+  if expr.is(sql.Between) {
+    return uses_column(expr.value) || uses_column(expr.low) ||
+           uses_column(expr.high)
+  }
+  if expr.is(sql.InTest) {
+    var i = 0
+    while i < expr.choices.length() {
+      if uses_column(expr.choices[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    return uses_column(expr.value)
+  }
+  if expr.is(sql.IsTest) {
+    return uses_column(expr.value)
+  }
+  if expr.is(sql.CaseExpr) {
+    var i = 0
+    if expr.operand_e.length() == 1 && uses_column(expr.operand_e[0]) {
+      return true
+    }
+    while i < expr.whens.length() {
+      if uses_column(expr.whens[i][0]) || uses_column(expr.whens[i][1]) {
+        return true
+      }
+      i = i + 1
+    }
+    if expr.else_e.length() == 1 && uses_column(expr.else_e[0]) {
+      return true
+    }
+    return false
+  }
+  return false
+}

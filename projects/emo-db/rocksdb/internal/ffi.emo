@@ -1,0 +1,86 @@
+// The raw bindings behind the rocksdb package: one `foreign def` per
+// shim function in emo_rocksdb_shim.c. Everything here is c-target
+// only and subtree-private — callers outside the package cannot reach
+// these names; the public API lives in rocksdb.emo.
+//
+// Handles cross as pointer-sized Int64s: an open database, a column
+// family, a write batch, an iterator, and a snapshot bundle. Keys and
+// values cross as Bytes — the C ABI's borrowed view (D10) — so a key
+// or value may carry any byte, embedded NULs included; the shim never
+// retains an input view, and an out-parameter view is written through
+// by the callee up to the Bytes' length.
+//
+// Every failing call records its message in the shim's last-error
+// buffer; last_error() reads it, and the facade turns it into
+// "rocksdb: <op>: <message>". Calls are serialized by the cooperative
+// scheduler, so the one buffer is the natural shape.
+
+// ---- open, close, column families ----
+
+// The column family staging: names arrive one add at a time because a
+// `foreign def` cannot take an array. cfs_add answers 0 on success.
+foreign def cfs_new() Int64 = "emo_rocksdb_cfs_new"
+foreign def cfs_add(stage Int64, name String) Int64 = "emo_rocksdb_cfs_add"
+foreign def cfs_free(stage Int64) Void = "emo_rocksdb_cfs_free"
+
+// Opens (or creates, when `create`) the database with the staged
+// column families. The list must include "default". Answers 0 on
+// failure; last_error() says why.
+foreign def open(stage Int64, path String, create Bool) Int64 = "emo_rocksdb_open"
+foreign def close(db Int64) Void = "emo_rocksdb_close"
+
+// A column family handle by name (0 when absent), or a new one.
+foreign def cf(db Int64, name String) Int64 = "emo_rocksdb_cf"
+foreign def cf_create(db Int64, name String) Int64 = "emo_rocksdb_cf_create"
+foreign def cf_list_count(db Int64) Int64 = "emo_rocksdb_cf_list_count"
+foreign def cf_list_name(db Int64, i Int64) String = "emo_rocksdb_cf_list_name"
+
+// Removes the database's directory tree. A missing path is success.
+foreign def destroy_db(path String) Int64 = "emo_rocksdb_destroy_db"
+
+// The column families that exist at `path`, before any open. A missing
+// path answers an empty list. The handle must be freed with list_free.
+foreign def list_new(path String) Int64 = "emo_rocksdb_list_new"
+foreign def list_count(list Int64) Int64 = "emo_rocksdb_list_count"
+foreign def list_name(list Int64, i Int64) String = "emo_rocksdb_list_name"
+foreign def list_free(list Int64) Void = "emo_rocksdb_list_free"
+
+// ---- reads and writes ----
+
+// 0 on success. get_len answers the value's length, -1 for a missing
+// key, -2 for a failure; get_into copies into `out` and answers the
+// length, -1 missing, -2 failure, -3 when `out` is too small.
+foreign def put(db Int64, cf Int64, key Bytes, value Bytes) Int64 = "emo_rocksdb_put"
+foreign def get_len(db Int64, cf Int64, key Bytes, snap Int64) Int64 = "emo_rocksdb_get_len"
+foreign def get_into(db Int64, cf Int64, key Bytes, out Bytes, snap Int64) Int64 = "emo_rocksdb_get_into"
+foreign def delete(db Int64, cf Int64, key Bytes) Int64 = "emo_rocksdb_delete"
+
+// ---- write batches ----
+
+foreign def batch_new() Int64 = "emo_rocksdb_batch_new"
+foreign def batch_put(batch Int64, cf Int64, key Bytes, value Bytes) Int64 = "emo_rocksdb_batch_put"
+foreign def batch_delete(batch Int64, cf Int64, key Bytes) Int64 = "emo_rocksdb_batch_delete"
+foreign def batch_write(db Int64, batch Int64, sync Bool) Int64 = "emo_rocksdb_batch_write"
+foreign def batch_close(batch Int64) Void = "emo_rocksdb_batch_close"
+
+// ---- iterators ----
+
+foreign def iter_new(db Int64, cf Int64, snap Int64) Int64 = "emo_rocksdb_iter_new"
+foreign def iter_seek(iter Int64, key Bytes) Int64 = "emo_rocksdb_iter_seek"
+foreign def iter_seek_to_first(iter Int64) Void = "emo_rocksdb_iter_seek_to_first"
+foreign def iter_valid(iter Int64) Bool = "emo_rocksdb_iter_valid"
+foreign def iter_next(iter Int64) Void = "emo_rocksdb_iter_next"
+foreign def iter_key_len(iter Int64) Int64 = "emo_rocksdb_iter_key_len"
+foreign def iter_key_into(iter Int64, out Bytes) Int64 = "emo_rocksdb_iter_key_into"
+foreign def iter_value_len(iter Int64) Int64 = "emo_rocksdb_iter_value_len"
+foreign def iter_value_into(iter Int64, out Bytes) Int64 = "emo_rocksdb_iter_value_into"
+foreign def iter_close(iter Int64) Void = "emo_rocksdb_iter_close"
+
+// ---- snapshots ----
+
+foreign def snapshot_new(db Int64) Int64 = "emo_rocksdb_snapshot_new"
+foreign def snapshot_close(db Int64, snap Int64) Void = "emo_rocksdb_snapshot_close"
+
+// ---- the shim's one error slot ----
+
+foreign def last_error() String = "emo_rocksdb_last_error"

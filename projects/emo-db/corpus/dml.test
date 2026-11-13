@@ -1,0 +1,133 @@
+# DML: multi-row INSERT with and without a column list, coercion on
+# assignment, UPDATE and DELETE with and without WHERE, the constraint
+# failures, and the command tags.
+
+statement ok
+CREATE TABLE items (
+  id BIGINT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  qty INTEGER,
+  price DOUBLE PRECISION
+)
+----
+CREATE TABLE
+
+statement ok
+INSERT INTO items (id, name, qty, price) VALUES (1, 'Ada', 3, 9.5), (2, 'Grace', 5, 3.25), (3, 'Linus', NULL, NULL)
+----
+INSERT 0 3
+
+statement ok
+INSERT INTO items VALUES (4, 'Alan', 1, 1.0)
+----
+INSERT 0 1
+
+query
+SELECT id, name, qty, price FROM items
+----
+1|Ada|3|9.5
+2|Grace|5|3.25
+3|Linus|NULL|NULL
+4|Alan|1|1.0
+
+statement ok
+UPDATE items SET qty = qty + 1, price = price * 2.0 WHERE id = 1
+----
+UPDATE 1
+
+query
+SELECT id, qty, price FROM items WHERE id = 1
+----
+1|4|19.0
+
+statement ok
+UPDATE items SET qty = 0 WHERE id = 2
+----
+UPDATE 1
+
+statement ok
+UPDATE items SET price = 7.5
+----
+UPDATE 4
+
+query
+SELECT id, price FROM items WHERE id < 3
+----
+1|7.5
+2|7.5
+
+statement ok
+DELETE FROM items WHERE id = 3
+----
+DELETE 1
+
+query
+SELECT id FROM items
+----
+1
+2
+4
+
+statement ok
+INSERT INTO items (id, name) VALUES (5, 'Five')
+----
+INSERT 0 1
+
+statement error
+INSERT INTO items (id, name) VALUES (5, 'Other')
+----
+23505: duplicate key value violates unique constraint "items_pkey"
+
+statement error
+UPDATE items SET id = 1 WHERE id = 2
+----
+23505: duplicate key value violates unique constraint "items_pkey"
+
+statement ok
+UPDATE items SET id = 20 WHERE id = 2
+----
+UPDATE 1
+
+statement ok
+DELETE FROM items
+----
+DELETE 4
+
+query
+SELECT id FROM items
+----
+
+statement error
+INSERT INTO items (id, name) VALUES (6, NULL)
+----
+23502: null value in column "name" violates not-null constraint
+
+statement error
+INSERT INTO items (id) VALUES (NULL)
+----
+23502: null value in column "id" violates not-null constraint
+
+statement error
+INSERT INTO items VALUES (6, 'Six')
+----
+42601: INSERT has 2 expressions but 4 target columns
+
+statement error
+UPDATE items SET nope = 1 WHERE id = 1
+----
+42703: column "nope" does not exist
+
+statement error
+UPDATE items SET id = 1, id = 2 WHERE id = 1
+----
+42601: sql: duplicate assignment to column "id" at byte 17
+
+statement error
+UPDATE items SET id = 1 FROM other WHERE id = 1
+----
+42601: sql: UPDATE ... FROM is not supported at byte 24
+
+statement error
+DELETE FROM items USING other WHERE items.id = other.id
+----
+42601: sql: DELETE ... USING is not supported at byte 18

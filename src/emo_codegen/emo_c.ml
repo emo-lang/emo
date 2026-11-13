@@ -727,6 +727,10 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
                  cb_name env iname;
                  Printf.sprintf "(void *)(%s)" (as_dyn env arg);
                ]
+           | Emo_check.Bytes ->
+               (* a borrowed view of the cell's inline bytes: {data, len},
+                  valid for the call only (the shim must not retain it) *)
+               [ Printf.sprintf "emo_bytes_view_build(%s)" (as_dyn env arg) ]
            | Emo_check.TupleType _ | Emo_check.ClassType _ ->
                (* the struct, by value, flattened by the shape's build
                   converter — the argument expression stays one textual
@@ -751,6 +755,11 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
   | Emo_check.TupleType _ ->
       (* the returned struct becomes the tuple word *)
       Printf.sprintf "%s(%s)" (shape_make_name env f.Emo_ir.fresult) call
+  | Emo_check.Bytes ->
+      (* the checker refuses this; the emitter keeps the same answer —
+         ownership of a C buffer cannot cross here, so reads take an
+         out-parameter *)
+      refuse "a Bytes-typed foreign return (take an out-parameter)"
   | Emo_check.ClassType _ ->
       (* the checker refuses a class-shaped return; this is the
          emitter's own guard *)
@@ -2506,6 +2515,7 @@ let foreign_c_type (t : Emo_check.t) : string =
   | Emo_check.Float64 -> "double"
   | Emo_check.Bool -> "bool"
   | Emo_check.String -> "const char *"
+  | Emo_check.Bytes -> "emo_bytes_view"
   | Emo_check.Void -> "void"
   | _ -> refuse (Printf.sprintf "`%s` across the C ABI" (Emo_check.to_string t))
 

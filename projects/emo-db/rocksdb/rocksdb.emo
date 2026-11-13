@@ -1,0 +1,481 @@
+// The rocksdb package: emo-db's storage half, a direct-style binding
+// over RocksDB's official C API. A Db is one open database; a Cf is
+// one column family inside it. Keys and values are Bytes, so they
+// carry arbitrary binary data — embedded NULs included.
+//
+// Following the standard library's convention, expected failures are
+// values: open, get, put, batch_write, and the rest answer (R.ok, ...)
+// or (R.error, reason), the reason a String beginning "rocksdb: "
+// that carries RocksDB's own status text. A missing key is not an
+// error: get answers an empty array (absent) or a one-element array
+// (present), the same 0-or-1 reading the sql package uses for absent
+// clauses. Only contract violations raise: touching a closed database,
+// using a handle after its owner closed, reading past an iterator's
+// end, or mixing a batch with another database's column family.
+//
+// The package is c-target only: its calls are `foreign def`s against
+// emo_rocksdb_shim.c, which the build compiles and links together
+// with the system RocksDB the manifest's `pkg_config` field resolves.
+// The interpreter refuses foreign code (E3009), so `emo run` cannot
+// execute a program that touches this package — build it with
+// `emo build` on a machine whose pkg-config resolves `rocksdb`.
+//
+// The scheduler's cooperative model serializes every call into the
+// shim, so no lock lives here. Transactions and the lock manager are
+// the database's own (D6); this package is the KV half beneath them.
+//
+// Lifecycle: every Batch, Snapshot, and Iter counts as an open handle
+// on its Db; Db.close refuses while one is open, so RocksDB's memory
+// is never freed from under a live handle.
+
+// Opens the database at `path`. `cfs` names every column family the
+// database has, "default" included — RocksDB requires the full list at
+// open; `create` creates the database (and missing column families)
+// when they are absent. The catalog owns that list from M29 on.
+def open(path String, cfs Array[String], create Bool) (R, Db) {
+  const stage = internal.ffi.cfs_new()
+  if stage == 0 {
+    return (R.error, "rocksdb: open: out of memory")
+  }
+  var i = 0
+  while i < cfs.length() {
+    if internal.ffi.cfs_add(stage, cfs[i]) != 0 {
+      internal.ffi.cfs_free(stage)
+      return (R.error, "rocksdb: open: out of memory staging the column families")
+    }
+    i = i + 1
+  }
+  const handle = internal.ffi.open(stage, path, create)
+  internal.ffi.cfs_free(stage)
+  if handle == 0 {
+    return (R.error, internal.reason.last("open"))
+  }
+  return (R.ok, Db.new(handle))
+}
+
+// Removes the database's directory tree — the clean-start door the
+// demo and the tests use. A path that does not exist is success: the
+// caller's intent is already satisfied.
+def destroy_db(path String) (R, Bool) {
+  if internal.ffi.destroy_db(path) != 0 {
+    return (R.error, internal.reason.last("destroy_db"))
+  }
+  return (R.ok, true)
+}
+
+// The column families that already exist at `path`, before any open —
+// the list `open` must name. A path that does not exist answers an
+// empty array: the caller is about to create the database. A database
+// answers its own names, "default" included.
+def list_families(path String) (R, Array[String]) {
+  const list = internal.ffi.list_new(path)
+  if list == 0 {
+    return (R.error, internal.reason.last("list_families"))
+  }
+  const n = internal.ffi.list_count(list)
+  var names = []
+  var i = 0
+  while i < n {
+    names = names.append(internal.ffi.list_name(list, i))
+    i = i + 1
+  }
+  internal.ffi.list_free(list)
+  return (R.ok, names)
+}
+
+// One open database. close() it when done; every Batch, Snapshot, and
+// Iter made from it must be closed first.
+class Db {
+  def init(handle Int64) {
+    self.handle = handle
+    self.closed = Box.new(false)
+    self.open_handles = Box.new(0)
+  }
+
+  // The column family named `name`; (R.error, ...) when the database
+  // does not have it.
+  def cf(name String) (R, Cf) {
+    self.live()
+    const handle = internal.ffi.cf(self.handle, name)
+    if handle == 0 {
+      return (R.error, internal.reason.last("cf"))
+    }
+    return (R.ok, Cf.new(self, name, handle))
+  }
+
+  // Creates a column family and answers its handle. RocksDB persists
+  // the family; the next open must name it to find it.
+  def cf_create(name String) (R, Cf) {
+    self.live()
+    const handle = internal.ffi.cf_create(self.handle, name)
+    if handle == 0 {
+      return (R.error, internal.reason.last("cf_create"))
+    }
+    return (R.ok, Cf.new(self, name, handle))
+  }
+
+  // The column families this handle knows, in open order. A family
+  // another process created after this open is not visible until the
+  // database is reopened.
+  def cf_list() (R, Array[String]) {
+    self.live()
+    const n = internal.ffi.cf_list_count(self.handle)
+    if n < 0 {
+      return (R.error, internal.reason.last("cf_list"))
+    }
+    var out = []
+    var i = 0
+    while i < n {
+      out = out.append(internal.ffi.cf_list_name(self.handle, i))
+      i = i + 1
+    }
+    return (R.ok, out)
+  }
+
+  // A snapshot of the database as this call sees it. Reads made at the
+  // snapshot keep that view after later writes; close() it when done,
+  // after every iterator made from it.
+  def snapshot() (R, Snapshot) {
+    self.live()
+    const handle = internal.ffi.snapshot_new(self.handle)
+    if handle == 0 {
+      return (R.error, internal.reason.last("snapshot"))
+    }
+    self.attach()
+    return (R.ok, Snapshot.new(self, handle))
+  }
+
+  // A write batch. Its puts and deletes buffer in RocksDB's WriteBatch
+  // and reach the database in one atomic write at write().
+  def batch() (R, Batch) {
+    self.live()
+    const handle = internal.ffi.batch_new()
+    if handle == 0 {
+      return (R.error, "rocksdb: batch: out of memory")
+    }
+    self.attach()
+    return (R.ok, Batch.new(self, handle))
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: close: the database is already closed")
+    }
+    const open = self.open_handles.read()
+    if open != 0 {
+      raise Exception.new(
+        message: "rocksdb: close: ${open} open handles must be closed first")
+    }
+    internal.ffi.close(self.handle)
+    self.closed.replace(true)
+  }
+
+  // The guards the package's own classes walk through.
+  def live() {
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: the database is closed")
+    }
+  }
+
+  def attach() {
+    self.open_handles.replace(self.open_handles.read() + 1)
+  }
+
+  def detach() {
+    self.open_handles.replace(self.open_handles.read() - 1)
+  }
+}
+
+// One column family. Writes go straight to the database unless they
+// are staged in a Batch; reads take the latest state or a snapshot.
+class Cf {
+  def init(db Db, name String, handle Int64) {
+    self.db = db
+    self.name = name
+    self.handle = handle
+  }
+
+  def put(key Bytes, value Bytes) (R, Cf) {
+    self.live()
+    if internal.ffi.put(self.db.handle, self.handle, key, value) != 0 {
+      return (R.error, internal.reason.last("put"))
+    }
+    return (R.ok, self)
+  }
+
+  def delete(key Bytes) (R, Cf) {
+    self.live()
+    if internal.ffi.delete(self.db.handle, self.handle, key) != 0 {
+      return (R.error, internal.reason.last("delete"))
+    }
+    return (R.ok, self)
+  }
+
+  // The value at `key` in the latest state: an empty array when the
+  // key is absent, a one-element array when it is present.
+  def get(key Bytes) (R, Array[Bytes]) {
+    return self.get_with(key, 0)
+  }
+
+  // The value at `key` as the snapshot sees it.
+  def get_at(key Bytes, snap Snapshot) (R, Array[Bytes]) {
+    snap.check_db(self.db)
+    return self.get_with(key, snap.handle)
+  }
+
+  def get_with(key Bytes, snap Int64) (R, Array[Bytes]) {
+    self.live()
+    const n = internal.ffi.get_len(self.db.handle, self.handle, key, snap)
+    if n == -1 {
+      return (R.ok, [])
+    }
+    if n < 0 {
+      return (R.error, internal.reason.last("get"))
+    }
+    const out = Bytes.new(n)
+    if internal.ffi.get_into(self.db.handle, self.handle, key, out, snap) < 0 {
+      return (R.error, internal.reason.last("get"))
+    }
+    return (R.ok, [out])
+  }
+
+  // An iterator over the family at the latest state. seek() it, then
+  // walk with valid()/next(); close() when done.
+  def iter() (R, Iter) {
+    return self.iter_with(0, [])
+  }
+
+  // An iterator pinned to a snapshot. Close the iterator before the
+  // snapshot — the snapshot refuses to close while one is live.
+  def iter_at(snap Snapshot) (R, Iter) {
+    snap.check_db(self.db)
+    return self.iter_with(snap.handle, [snap])
+  }
+
+  def iter_with(snap Int64, snapshots Array[Snapshot]) (R, Iter) {
+    self.live()
+    if snapshots.length() == 1 {
+      snapshots[0].attach_iter()
+    }
+    self.db.attach()
+    const handle = internal.ffi.iter_new(self.db.handle, self.handle, snap)
+    if handle == 0 {
+      self.db.detach()
+      if snapshots.length() == 1 {
+        snapshots[0].detach_iter()
+      }
+      return (R.error, internal.reason.last("iter"))
+    }
+    return (R.ok, Iter.new(self.db, handle, snapshots))
+  }
+
+  def live() {
+    self.db.live()
+  }
+}
+
+// A write batch: puts and deletes buffer here and land in one atomic
+// RocksDB write at write().
+class Batch {
+  def init(db Db, handle Int64) {
+    self.db = db
+    self.handle = handle
+    self.closed = Box.new(false)
+  }
+
+  def put(cf Cf, key Bytes, value Bytes) (R, Batch) {
+    self.live()
+    self.same_db(cf)
+    if internal.ffi.batch_put(self.handle, cf.handle, key, value) != 0 {
+      return (R.error, internal.reason.last("batch_put"))
+    }
+    return (R.ok, self)
+  }
+
+  def delete(cf Cf, key Bytes) (R, Batch) {
+    self.live()
+    self.same_db(cf)
+    if internal.ffi.batch_delete(self.handle, cf.handle, key) != 0 {
+      return (R.error, internal.reason.last("batch_delete"))
+    }
+    return (R.ok, self)
+  }
+
+  // Commits the batch: one WriteBatch, one atomic write. The batch is
+  // reusable after this (RocksDB keeps its buffer); close() it when
+  // the work is done.
+  def write() (R, Batch) {
+    return self.write_with(false)
+  }
+
+  // The transaction's COMMIT: the same atomic write, with the WAL asked
+  // to fsync before the call answers.
+  def write_sync() (R, Batch) {
+    return self.write_with(true)
+  }
+
+  def write_with(sync Bool) (R, Batch) {
+    self.live()
+    if internal.ffi.batch_write(self.db.handle, self.handle, sync) != 0 {
+      return (R.error, internal.reason.last("batch_write"))
+    }
+    return (R.ok, self)
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: batch: close: already closed")
+    }
+    internal.ffi.batch_close(self.handle)
+    self.closed.replace(true)
+    self.db.detach()
+  }
+
+  def live() {
+    self.db.live()
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: the batch is closed")
+    }
+  }
+
+  def same_db(cf Cf) {
+    if cf.db.handle != self.db.handle {
+      raise Exception.new(
+        message: "rocksdb: the batch and the column family belong to different databases")
+    }
+  }
+}
+
+// A read snapshot. Reads at it keep the state it was made in; the
+// iterator count is the lifecycle guard behind close().
+class Snapshot {
+  def init(db Db, handle Int64) {
+    self.db = db
+    self.handle = handle
+    self.closed = Box.new(false)
+    self.iters = Box.new(0)
+  }
+
+  def attach_iter() {
+    self.iters.replace(self.iters.read() + 1)
+  }
+
+  def detach_iter() {
+    self.iters.replace(self.iters.read() - 1)
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: snapshot: close: already closed")
+    }
+    const running = self.iters.read()
+    if running != 0 {
+      raise Exception.new(
+        message: "rocksdb: snapshot: ${running} iterators must be closed first")
+    }
+    internal.ffi.snapshot_close(self.db.handle, self.handle)
+    self.closed.replace(true)
+    self.db.detach()
+  }
+
+  def live() {
+    self.db.live()
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: the snapshot is closed")
+    }
+  }
+
+  def check_db(db Db) {
+    self.live()
+    if self.db.handle != db.handle {
+      raise Exception.new(
+        message: "rocksdb: the snapshot belongs to another database")
+    }
+  }
+}
+
+// An iterator over one column family. seek() positions it; valid()
+// says whether it points at a row; next() moves forward. key() and
+// value() answer the current row's bytes.
+class Iter {
+  def init(db Db, handle Int64, snapshots Array[Snapshot]) {
+    self.db = db
+    self.handle = handle
+    self.snapshots = snapshots
+    self.closed = Box.new(false)
+  }
+
+  // Positions at the first key at or after `key` — the prefix scan's
+  // door: seek(prefix), then walk while the key still starts with it.
+  def seek(key Bytes) {
+    self.live()
+    if internal.ffi.iter_seek(self.handle, key) != 0 {
+      raise Exception.new(message: "rocksdb: seek: the iterator refused the key")
+    }
+  }
+
+  def seek_to_first() {
+    self.live()
+    internal.ffi.iter_seek_to_first(self.handle)
+  }
+
+  def valid() Bool {
+    self.live()
+    return internal.ffi.iter_valid(self.handle)
+  }
+
+  def next() {
+    self.live()
+    internal.ffi.iter_next(self.handle)
+  }
+
+  def key() (R, Bytes) {
+    return self.part(false, "iter_key")
+  }
+
+  def value() (R, Bytes) {
+    return self.part(true, "iter_value")
+  }
+
+  def part(want_value Bool, op String) (R, Bytes) {
+    self.live()
+    if !internal.ffi.iter_valid(self.handle) {
+      raise Exception.new(message: "rocksdb: the iterator is not valid")
+    }
+    var n = internal.ffi.iter_key_len(self.handle)
+    if want_value {
+      n = internal.ffi.iter_value_len(self.handle)
+    }
+    if n < 0 {
+      return (R.error, internal.reason.last(op))
+    }
+    const out = Bytes.new(n)
+    var got = internal.ffi.iter_key_into(self.handle, out)
+    if want_value {
+      got = internal.ffi.iter_value_into(self.handle, out)
+    }
+    if got < 0 {
+      return (R.error, internal.reason.last(op))
+    }
+    return (R.ok, out)
+  }
+
+  def close() {
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: iter: close: already closed")
+    }
+    internal.ffi.iter_close(self.handle)
+    self.closed.replace(true)
+    self.db.detach()
+    if self.snapshots.length() == 1 {
+      self.snapshots[0].detach_iter()
+    }
+  }
+
+  def live() {
+    self.db.live()
+    if self.closed.read() {
+      raise Exception.new(message: "rocksdb: the iterator is closed")
+    }
+  }
+}

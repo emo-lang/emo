@@ -126,6 +126,7 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
 - [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and the evidence: why one declarative tree works across TUI, server-rendered HTML, macOS, GTK 4, and the DOM, and what remains open.
 - [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why children are an array rather than a block form, and whether the array form earns a literal spelling.
+- [`docs/emo-db.md`](docs/emo-db.md) — the emo-db design record: one SQL surface over two engines; arc one shipped (the row store behind the PostgreSQL wire, on RocksDB) and arc two's column format is landed, with the measured numbers in `projects/emo-db/bench`.
 - [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md), [`docs/visualization.md`](docs/visualization.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
 

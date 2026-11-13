@@ -1,0 +1,14 @@
+create: 0
+insert: 2
+rows: 2
+  1 Ada 9.5 true null
+  2 Grace 3.25 false null
+begin: 0
+update: 1
+in-tx: 1
+  1 10.5
+commit: 0
+missing: postgres: query: relation "missing" does not exist (sqlstate 42P01)
+after: 1
+  2 3.25
+done

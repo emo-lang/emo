@@ -1,0 +1,144 @@
+// The session plane's lock manager: one Emo process owns the write
+// locks, and a session blocks in receive until it is granted one. The
+// engine calls a LockClient before a write; `RemoteLocks` is that
+// client over a manager process, keyed by an explicit session id (a
+// Pid cannot be compared or rendered on the c target, so the id is the
+// key and the Pid only the reply address).
+//
+// The manager's state is the three maps it threads through its loop:
+// `owners` maps a table to its holder, `waiters` is the FIFO per table
+// (session id + reply address), and `waiting` maps a session to the
+// table it is parked on — the wait-for graph the deadlock check walks.
+// A release grants the first waiter; an acquire that closes a cycle
+// answers the requester `40P01: deadlock detected` and removes it from
+// the queue.
+
+def start_lock_manager() Pid {
+  return do lock_manager(Map.new(), Map.new(), Map.new())
+}
+
+def lock_manager(owners Map[String, Int64], waiters Map[String, Array[(Int64, Pid)]], waiting Map[Int64, String]) {
+  receive {
+    (tag, table, id, who) -> {
+      if tag == "acquire" {
+        if !owners.has(table) {
+          owners.set(table, id)
+          who <- ("granted", table)
+        } else {
+          const owner = owners.get(table)
+          if owner == id {
+            who <- ("granted", table)
+          } else {
+            const queue = waiters_of(waiters, table)
+            waiters.set(table, queue.append((id, who)))
+            waiting.set(id, table)
+            if deadlock(id, owners, waiting) {
+              waiters.set(table, without(waiters.get(table), id))
+              waiting.remove(id)
+              who <- ("deadlock", table)
+            }
+          }
+        }
+      } else {
+        if owners.has(table) {
+          if owners.get(table) == id {
+            owners.remove(table)
+            if waiters.has(table) {
+              const queue = waiters.get(table)
+              if queue.length() > 0 {
+                const next = queue[0]
+                owners.set(table, next[0])
+                waiting.remove(next[0])
+                waiters.set(table, drop_first(queue))
+                next[1] <- ("granted", table)
+              }
+            }
+          }
+        }
+      }
+      lock_manager(owners, waiters, waiting)
+    }
+  }
+}
+
+// Follow the wait-for chain from the requester: it waits for a table's
+// owner; if that owner is itself waiting, follow its table's owner; a
+// chain that reaches the requester is a cycle.
+def deadlock(start Int64, owners Map[String, Int64], waiting Map[Int64, String]) Bool {
+  var current = start
+  var steps = 0
+  while steps < 64 {
+    if !waiting.has(current) {
+      return false
+    }
+    const table = waiting.get(current)
+    if !owners.has(table) {
+      return false
+    }
+    const owner = owners.get(table)
+    if owner == start {
+      return true
+    }
+    if owner == current {
+      return false
+    }
+    current = owner
+    steps = steps + 1
+  }
+  return false
+}
+
+def waiters_of(waiters Map[String, Array[(Int64, Pid)]], table String) Array[(Int64, Pid)] {
+  if waiters.has(table) {
+    return waiters.get(table)
+  }
+  return []
+}
+
+def without(queue Array[(Int64, Pid)], id Int64) Array[(Int64, Pid)] {
+  var out = []
+  var i = 0
+  while i < queue.length() {
+    if queue[i][0] != id {
+      out = out.append(queue[i])
+    }
+    i = i + 1
+  }
+  return out
+}
+
+def drop_first(queue Array[(Int64, Pid)]) Array[(Int64, Pid)] {
+  var out = []
+  var i = 1
+  while i < queue.length() {
+    out = out.append(queue[i])
+    i = i + 1
+  }
+  return out
+}
+
+// The engine's LockClient over the manager process: acquire sends the
+// request and parks in receive; a deadlock reply becomes the 40P01
+// reason the engine's error path carries.
+class RemoteLocks {
+  def init(manager_pid Pid, id Int64) {
+    self.manager = manager_pid
+    self.id = id
+  }
+
+  def acquire(table String) (R, Bool) {
+    self.manager <- ("acquire", table, self.id, self_pid())
+    receive {
+      (tag, _) -> {
+        if tag == "deadlock" {
+          return (R.error, "40P01: deadlock detected")
+        }
+        return (R.ok, true)
+      }
+    }
+  }
+
+  def release(table String) Void {
+    self.manager <- ("release", table, self.id, self_pid())
+  }
+}

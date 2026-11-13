@@ -1,0 +1,8 @@
+ddl.test 6 cases
+types.test 13 cases
+dml.test 24 cases
+select.test 36 cases
+column.test 15 cases
+transactions.test 27 cases
+errors.test 20 cases
+cases 141, failed 0

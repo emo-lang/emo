@@ -1,7 +1,6 @@
 sql: empty input at byte 0
 sql: expected an expression at byte 7
 sql: expected a table name at byte 13
-sql: expected SELECT at byte 0
 sql: expected an expression at byte 21
 sql: expected `)` after the expression at byte 10
 sql: unterminated literal at byte 7
@@ -36,3 +35,42 @@ parsed: SELECT 2.2250738585072014e-308 FROM t
 parsed: SELECT 9007199254740993 FROM t
 parsed: SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) FROM t
 sql: nesting deeper than 512 at byte 520
+sql: expected ROW or COLUMN after STORE = at byte 35
+sql: expected ROW or COLUMN after STORE = at byte 34
+sql: expected `=` after STORE at byte 32
+sql: expected end of statement at byte 27
+sql: unterminated literal at byte 7
+2
+  SELECT 1
+  SELECT 2
+0
+sql: expected end of statement at byte 6
+sql: expected end of statement at byte 7
+sql: expected end of statement at byte 9
+sql: expected a table name after CREATE TABLE at byte 12
+sql: expected `(` after the table name at byte 14
+sql: expected a column name at byte 16
+sql: VARCHAR length must be positive at byte 27
+sql: expected `(` after VARCHAR at byte 26
+sql: expected PRECISION after DOUBLE at byte 25
+sql: expected a column type (INTEGER, BIGINT, REAL, DOUBLE PRECISION, TEXT, VARCHAR(n), BOOLEAN, BYTEA) at byte 19
+sql: duplicate column "id" at byte 16
+sql: table-level constraints are not supported in v0 at byte 28
+sql: constraint `UNIQUE` is not supported in v0 at byte 27
+sql: expected end of statement at byte 28
+sql: expected VALUES after the insert target at byte 13
+sql: expected `(` starting a VALUES row at byte 20
+sql: every VALUES row must have the same number of expressions at byte 21
+sql: the column list and the VALUES rows disagree on the number of columns at byte 28
+sql: duplicate column "a" at byte 14
+sql: ON CONFLICT is not supported at byte 25
+sql: RETURNING is not supported at byte 25
+sql: expected VALUES after the insert target at byte 14
+sql: expected a column name in SET at byte 12
+sql: duplicate assignment to column "a" at byte 13
+sql: UPDATE ... FROM is not supported at byte 19
+sql: RETURNING is not supported at byte 19
+sql: expected FROM after DELETE at byte 7
+sql: expected an expression at byte 19
+sql: DELETE ... USING is not supported at byte 14
+sql: RETURNING is not supported at byte 14

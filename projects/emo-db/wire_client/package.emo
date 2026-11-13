@@ -1,0 +1,10 @@
+package {
+  name = "emo/emo_db_wire_client"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "postgres" = "0.1.0"
+    "os" = "0.1.0"
+  }
+}

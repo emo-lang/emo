@@ -1,0 +1,79 @@
+require "postgres"
+require "os"
+
+// The standard library's `postgres` client against emo-db's wire (M33):
+// the same SQL script psql runs, through libpq's simple query path (the
+// package's zero-parameter route). One connection carries the whole
+// sequence — create, insert, select, BEGIN/UPDATE/SELECT/COMMIT, a
+// missing table's error — and a select after the error proves the
+// session is clean and usable. The port is argv[1], written by the
+// gate from the server's ready file.
+
+def main() {
+  const port = os.argv()[1].to_int64()
+  const opts = postgres.options().with_host("127.0.0.1").with_port(port).with_user("emo").with_database("emo")
+  case postgres.connect(opts) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, conn) -> {
+      run(conn)
+      conn.close()
+      println("done")
+    }
+  }
+}
+
+def exec_tag(conn postgres.Conn, label String, sql String) {
+  case conn.exec(sql, []) {
+    (R.ok, n) -> { println(label + ": " + n.to_string()) }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def query_tag(conn postgres.Conn, label String, sql String, echo Bool) {
+  case conn.query(sql, []) {
+    (R.ok, rows) -> {
+      println(label + ": " + rows.count().to_string())
+      if echo {
+        var r = 0
+        while r < rows.count() {
+          var payload = "null"
+          if !rows.is_null(r, 4) {
+            payload = "bytes"
+          }
+          println("  " + rows.i64(r, 0).to_string() + " " + rows.text(r, 1) +
+                  " " + rows.f64(r, 2).to_string() + " " +
+                  rows.bool(r, 3).to_string() + " " + payload)
+          r = r + 1
+        }
+      } else {
+        var r = 0
+        while r < rows.count() {
+          println("  " + rows.i64(r, 0).to_string() + " " +
+                  rows.f64(r, 1).to_string())
+          r = r + 1
+        }
+      }
+      rows.finish()
+    }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def run(conn postgres.Conn) {
+  exec_tag(conn, "create",
+           "create table items (id bigint not null primary key, name text not null, price double precision, active boolean, payload bytea)")
+  exec_tag(conn, "insert",
+           "insert into items (id, name, price, active, payload) values (1, 'Ada', 9.5, true, null), (2, 'Grace', 3.25, false, null)")
+  query_tag(conn, "rows", "select id, name, price, active, payload from items", true)
+  exec_tag(conn, "begin", "begin")
+  exec_tag(conn, "update", "update items set price = 10.5 where id = 1")
+  query_tag(conn, "in-tx", "select id, price from items where id = 1", false)
+  exec_tag(conn, "commit", "commit")
+  case conn.query("select * from missing", []) {
+    (R.ok, _) -> { println("missing: unexpected rows") }
+    (R.error, why) -> { println("missing: " + why) }
+  }
+  query_tag(conn, "after", "select id, price from items where id = 2", false)
+}
+
+main()

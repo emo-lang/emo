@@ -1,0 +1,40 @@
+# The DDL surface: the v0 types, column-level NOT NULL and PRIMARY KEY,
+# the primary-key index, and the refusals the parser and catalog answer.
+
+statement ok
+CREATE TABLE users (
+  id BIGINT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  score DOUBLE PRECISION
+)
+----
+CREATE TABLE
+
+statement error
+CREATE TABLE users (id BIGINT)
+----
+42P07: relation "users" already exists
+
+statement ok
+CREATE TABLE orders (
+  id BIGINT NOT NULL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  total DOUBLE PRECISION
+)
+----
+CREATE TABLE
+
+statement error
+CREATE TABLE bad_pk (id BIGINT PRIMARY KEY, other BIGINT PRIMARY KEY)
+----
+42P16: multiple primary keys for table "bad_pk" are not allowed
+
+statement error
+CREATE TABLE bad_varchar (name VARCHAR(0))
+----
+42601: sql: VARCHAR length must be positive at byte 39
+
+statement error
+CREATE TABLE bad_constraint (id BIGINT, UNIQUE (id))
+----
+42601: sql: table-level constraints are not supported in v0 at byte 40

@@ -21,5 +21,38 @@ SELECT 'it''s' FROM t
 SELECT "weird name", t."odd col" FROM "my table" AS t
 SELECT a.city, a.n FROM (SELECT city, count(*) AS n FROM users GROUP BY city) AS a WHERE a.n > 5
 SELECT * FROM a CROSS JOIN b, c NATURAL INNER JOIN d
+CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, rating REAL, active BOOLEAN, note TEXT, payload BYTEA, rank INTEGER, handle VARCHAR(12))
+9
+true
+true
+DOUBLE PRECISION
+VARCHAR(12)
+CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, v VARCHAR(3))
+INSERT INTO users (id, name) VALUES (1, 'Ada'), (2, 'Grace')
+2
+2
+'Grace'
+INSERT INTO users VALUES (3, 'Linus', 88.0, NULL, TRUE, NULL, NULL, NULL, NULL)
+true
+UPDATE users SET name = 'Ada', active = TRUE WHERE id = 1
+2
+name
+1
+DELETE FROM users WHERE id = 1
+1
+DELETE FROM users
+0
+BEGIN
+COMMIT
+ROLLBACK
+2
+-- a ; in a comment
+SELECT 1
+SELECT ';' AS semi
+0
+CREATE TABLE cold (id BIGINT) STORE = COLUMN
+true
+CREATE TABLE plain (id BIGINT)
+CREATE TABLE plain (id BIGINT)
 sql: expected an expression at byte 7
 sql: expected an expression at byte 26

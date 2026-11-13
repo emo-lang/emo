@@ -65,7 +65,15 @@ let class_fields (c : Emo_ir.class_) : string list =
    through loop functions or continuations — only real source
    bindings do. *)
 let beam_temps =
-  [ "__recv"; "__thread"; "_spawnarg"; "_spawnpid"; "_spawnself"; "case" ]
+  [
+    "__recv";
+    "__inst_recv";
+    "__thread";
+    "_spawnarg";
+    "_spawnpid";
+    "_spawnself";
+    "case";
+  ]
 
 let fresh_var env name =
   env.fresh <- env.fresh + 1;

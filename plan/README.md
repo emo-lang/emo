@@ -67,6 +67,102 @@ incrementally shippable steps — one file per step, executed in order.
   naming the capability), and `bufio` resolve and answer byte-for-byte
   alongside the pure packages; the sockets' refusal stands. The plan
   is `plan/step-56-wasm-file-io.md`.
+- **M28 — The RocksDB half (step 65):** emo-db's storage half as the
+  project-local `emo/rocksdb` binding — a package-carried C shim over
+  RocksDB's official C API, keys and values crossing as `Bytes`
+  through the C ABI's borrowed byte view (D10), resolved through the
+  manifest's `pkg_config` field, and a KV golden (writes, a batch
+  commit, a prefix scan, snapshot isolation, close/reopen) run three
+  times byte-identical on `c`. The design record is `docs/emo-db.md`;
+  the plan is `plan/step-65-emo-db-rocksdb.md`.
+- **M29 — The record layer (step 66):** the catalog over its own
+  column family, the v0 row encoding (null bitmap, fixed-width and
+  length-prefixed values), the rowid inside the insert's WriteBatch,
+  and one column family per secondary index; a table-creation, insert,
+  and index-scan golden on `c`. The format is
+  `plan/step-66-record-layer.md`.
+- **M30 — The SQL front-end's DML and DDL (step 67):** the `sql`
+  package grows `CREATE TABLE` (the v0 types, `NOT NULL`,
+  `PRIMARY KEY`), multi-row `INSERT ... VALUES`, `UPDATE ... SET ...
+  [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`; pure Emo,
+  canonical renderings, the SELECT grammar untouched, and the two
+  examples' goldens byte-identical on all five hosted targets. The plan
+  is `plan/step-67-sql-dml-ddl.md`.
+- **M31 — The planner and executor (step 68):** the `emo/engine` package
+  over the SQL AST and the record layer — the analyzer's name/type
+  resolution, the typed expressions with three-valued NULL logic, the
+  scan/filter/project plan (an equality on an indexed column becomes an
+  index scan), CREATE TABLE/INSERT/UPDATE/DELETE, the plan text, and
+  the PG-shaped error strings; an embedded SQL-in/rows-out golden on
+  `c`. The record layer grows `Table.update`/`delete` with index
+  maintenance. The plan is `plan/step-68-planner-executor.md`.
+- **M32 — Transactions and the session plane (step 69):** BEGIN/COMMIT/
+  ROLLBACK over the record layer's `Txn` (one WriteBatch, a
+  per-statement snapshot, a pending overlay for read-your-writes, the
+  rowid counters published on commit), the engine's session state and
+  table locks, and an Emo lock-manager process with a wait-for graph and
+  the deadlock abort; a two-session golden shows read committed, the
+  write-write block, and the deadlock on `c`. The `sql` package grows
+  the three transaction statements. The plan is
+  `plan/step-69-transactions-session.md`.
+- **M37 — The two-engine proof (step 74):** `htap_demo` seeds a row
+  table and a column table (1100 rows, across the block boundary)
+  through the engine and serves the wire; psql and the `postgres`
+  client both drive a script that reads both engines, carries the row
+  table's UPDATE and the column table's INSERT inside one
+  BEGIN/COMMIT, and reads the post-commit aggregates — each phase a
+  fresh server, pinned byte-for-byte behind the availability probes;
+  the corpus gains `column.test` (15 cases: the DDL, the projections,
+  the five aggregates, the zero-row rule, and the refusals), and the
+  bench gains the column rows (the block scan 304 ms for 10000 rows
+  against the row store's 675; the aggregate 142 ms). The plan is
+  `plan/step-74-two-engines.md`.
+- **M36 — The column executor (step 73):** a column table's SELECT
+  routes to the blocks — plain projections and WHERE through the
+  shared typed expressions over block-materialized values, and the
+  global aggregates COUNT/SUM/AVG/MIN/MAX accumulating over the blocks
+  (the `count(*)` fast path sums the block counts without decoding);
+  the select list is all plain or all aggregate (`42803` names the
+  column otherwise), aggregates are whole select items only,
+  UPDATE/DELETE answer the insert-only `0A000`, and INSERT rides the
+  column blocks through the same transaction; the plan text shows
+  `column scan` and `aggregate`. The plan is
+  `plan/step-73-column-executor.md`.
+- **M35 — The column format (step 72):** `CREATE TABLE ... STORE =
+  COLUMN` in the parser (the canonical rendering spells only the
+  written column tail) and the catalog's version-2 table definition
+  (a `store` field; a version-1 record reads as row storage); the
+  record layer's column half — one column family per column, 1024-row
+  blocks (row count, null bitmap, the row encoding's widths), the
+  trailing partial block re-read and rewritten inside the transaction,
+  the block scan in rowid order, and the reopen's column-family
+  verification; no indexes on column tables (the engine and the record
+  layer both refuse `PRIMARY KEY` and secondary indexes), and the
+  engine's named `0A000` bridge for DML and SELECT until step 73's
+  batch executor. The plan is `plan/step-72-column-format.md`.
+- **M34 — Conformance and documentation (step 71):** the SQL corpus as
+  data — six `.test` files, 126 cases, `statement ok`/`statement
+  error`/`query` with pinned tags, rows, and `code: message` lines —
+  run against one fresh database by a data-only runner, three runs
+  byte-identical through the gate; the bench (`bench/run.sh`, warmup
+  plus three timed runs) and the measured table, which found and fixed
+  the read-only statement's fsync; the shipped-surface documentation,
+  the corrected stale claims, and the arc-two review against the row
+  store's actual plug points. The plan is
+  `plan/step-71-conformance.md`.
+- **M33 — The wire (step 70):** PostgreSQL protocol v3's simple query
+  path in a new `emo/wire` package over `net` — startup with the
+  SSL/GSSENC refusal and trust authentication, ParameterStatus /
+  BackendKeyData / ReadyForQuery, Query with a multi-statement string
+  (split by `sql.split` over the lexer's tokens), RowDescription with
+  the v0 type OIDs, text-format DataRow, CommandComplete,
+  EmptyQueryResponse, and ErrorResponse; one session actor per
+  connection over the shared Store with the table locks, and the
+  `postgres` client's zero-parameter statements taking libpq's simple
+  path. psql and the client are both goldens behind availability
+  probes. The engine's lock manager moves into the package
+  (`engine.locks`) for the server to share. The plan is
+  `plan/step-70-wire.md`.
 
 ## Ground rules
 
@@ -154,5 +250,15 @@ incrementally shippable steps — one file per step, executed in order.
 | 62 | The standard library: `postgres` | landed — the standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none) through `PQexecParams`, `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE; contract violations raise); the FFI's no-array wall bridged by a shim-side staging with a bound-mask tripwire, the no-tuple-return wall by `_ok`/read pairs, every C status numeral normalized in the shim; `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe (pkg-config resolution with the Homebrew-keg fallback, a tiny `-lpq` link, one TCP connect); E3009 and E5007 verified live; docs EN+zh, with the found-and-fixed `sqlite3` table row (`plan/step-62-postgres.md`) |
 | 63 | The Emo shell: `emosh` | landed — `projects/emo-shell`, the general-purpose command interpreter written in Emo over the grown `os` surface: `dup2`/`execvp`/`isatty`/`argv` and the environment and signal halves land in `os` in place at 0.1.0 (the net+TLS precedent; three example locks re-resolved), with reasons byte-identical across the interpreter and the c runtime by construction (the getenv miss hand-written, setenv named over the OCaml putenv, the signal range guard ahead of the call) and the generated c main capturing argc/argv through `emo_args_set`; the shell lexes words into literal and expandable parts (a bare run one part, so `$` reaches its name), expands `$var`/`${var}`/`$?`/`$0`/the leading tilde with no IFS re-splitting, parses lines into items (pipeline + connector) strict about empty stages and loose exactly where the classics are, walks `;`/`&&`/`||` with the carried status, forks pipelines per stage wired through pipes and `dup2`, opens `<`/`>`/`>>` onto the child, answers the eight builtins (`cd` `pwd` `echo` `exit` `export` `unset` `true` `false`), folds exit statuses into the kernel's low byte, and lives by the ignored-interrupt discipline — the shell ignores sig_pipe everywhere and sig_int/sig_quit interactively, the fork child resets all three before its exec; every byte through raw `os.write` (never a buffered stdout, so a fork child's output survives `_exit` and the two targets compare byte for byte), errors as `(R.error, reason)` values (the shell has no catch to survive), six fixture scripts with pinned merged output and exit statuses byte-identical on the ocaml and c targets in one Alcotest case (`emosh_golden`); docs EN+zh (`emosh-guide.md`, the grown `os.md`), TASKS M26/Step 63, CHECK.md's decision record; found-and-fixed: the byte-per-part lexer hiding `$names`, the line-start refusal eating `> log`, and the `pwd` golden pinning the sandbox's cwd (`plan/step-63-emosh.md`) |
 | 64 | Browser automation: the `websocket` and `playwright` packages | landed — RFC 6455 as a stdlib package over `net` (client dial with accept verification reading the answer's headers to the blank line, server accept checking upgrade/version/key, one text message per exchange, masking by role, pings answered, closes answered with the socket taken down, fragmented receives joined past 4096 pieces), then the Playwright client speaking the driver's channel protocol to `playwright run-server` through those frames — the pre-launched-browser shape (`denyLaunch`), `?browser=` selection, the root-channel initialize handshake, and the core doors (goto answering a PageResponse tree, click/fill/press on the main frame, title/content, text_content's null `Text`, screenshot's base64 into `Bytes`), driver refusals as `(R.error, "playwright: " + text)` with the dispatcher's wrapping unwrapped; both demos carry their own counterparty so the goldens need no browser and no Node — byte-identical on the interpreter and the `c` target; found and fixed: the c backend's reserved-word method lookup (`Page.goto` the first carrier), found-not-fixed: the json package's per-character escape-length recursion riding past the c fiber stack at 120000 chars (`plan/step-64-playwright.md`) |
+| 65 | emo-db's RocksDB half | landed — `projects/emo-db/` with the project-local `emo/rocksdb` binding: a package-carried C shim over the official C API (`pkg_config = ["rocksdb"]`), open/close, column families (staged names at open, lookup, create, list), get/put/delete, WriteBatch, iterators, and snapshots bundling their read options; the C ABI's `Bytes` borrowed view (D10) carries arbitrary binary keys and values, with reads filling caller-owned out-parameters and `Bytes` returns refused; `(R, reason)` for storage failures, missing keys as an empty result, contract violations raising, and Db-level lifetime counters refusing a close under live batches/snapshots/iterators; the KV golden runs three times byte-identical through `projects/emo-db/check.sh` (text and embedded-NUL values, an atomic batch, a prefix scan, snapshot isolation, close/reopen), with E3009 and E5007 verified live; docs EN+zh (`plan/step-65-emo-db-rocksdb.md`) |
+| 66 | emo-db's record layer | landed — the `emo/record` package over the binding: the catalog CF (tables/columns/types/indexes by oid), the v0 row encoding (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), the rowid inside the insert's WriteBatch, and one CF per secondary index (`idx_<oid>`, value-marker + rowid keys, equality-prefix scans); `rocksdb.list_families` reopens a database with index families, the catalog verifies every index CF, and the record demo's golden covers every type, a duplicate unique key, three index scans, and a reopen (`plan/step-66-record-layer.md`) |
+| 67 | The SQL front-end's DML and DDL | landed — the `sql` package grows `CREATE TABLE` (the v0 types, column-level `NOT NULL`/`PRIMARY KEY`), multi-row `INSERT ... VALUES` with an optional column list, `UPDATE ... SET ... [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`: one class per statement behind `Stmt`, canonical `to_string()` renderings, the SELECT grammar untouched, and the parser validates the statement shape (duplicate columns/assignments, row widths, a positive `VARCHAR(n)`, the unsupported tails by name); `sql_demo` and `sql_edge` are byte-identical on the interpreter and all five hosted targets, with both locks re-resolved (`plan/step-67-sql-dml-ddl.md`) |
+| 68 | The planner and executor | landed — the `emo/engine` package over `emo/sql` and `emo/record`: the analyzer (table/alias/column resolution, the v0 type mapping, numeric/text conformance, the PG-shaped `code: message` failures), typed expressions with SQL's three-valued NULL logic (comparisons, AND/OR, arithmetic, `||`, IS/IN/BETWEEN/LIKE/CASE), the scan/filter/project plan with an equality index scan, CREATE TABLE (the v0 types, the primary-key index), INSERT (column list, NULL fill, coercion, not-null/duplicate mapping), and UPDATE/DELETE (the record layer's new update/delete, index entries rewritten in one batch); the embedded engine demo pins SQL text in and rows out with the plan tree on `c` (`plan/step-68-planner-executor.md`) |
+| 69 | Transactions and the session plane | landed — the `sql` package's `BEGIN`/`COMMIT`/`ROLLBACK`; the record layer's `Txn` (one WriteBatch, a per-statement snapshot, the pending overlay, the rowid counters, the `Table` tx methods, commit/rollback); the engine's transaction state, autocommit path, `LockClient`, and table-level locks; the lock-manager process (owners, FIFO waiters, the wait-for graph, the deadlock abort, the release grant); the two-session `txn_demo` (read committed, write-write block, deadlock) three runs byte-identical on `c` (`plan/step-69-transactions-session.md`) |
+| 70 | The wire | landed — PostgreSQL protocol v3's simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk), the ParameterStatus set, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` over the lexer's tokens, RowDescription with the v0 OIDs, text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached through `RemoteLocks`, `Result.types` carrying the projection types; `wire_demo` (ephemeral port through a ready file, a max-connection stop) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's multi-statement script, the error stop, the client's rows and error, byte-identical across three `check.sh` runs; also the BEAM emitter's `__inst_recv` temp fix, found by the new `sql_demo` loop (`plan/step-70-wire.md`) |
+| 71 | Conformance and documentation | landed — the SQL corpus in the SQLLogicTest spirit: six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows rendered canonically) over one fresh database per run, executed by the data-only `corpus_runner` with per-file counts and collected failures, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench (`bench.emo` modes, `bench/run.sh` timing with one warmup and three timed runs) and `bench/results.md`'s measured table; the measurement found and fixed the read-only statement's WAL fsync (a write-less transaction closes without a batch write) and the corpus found and fixed the DDL-in-transaction refusal leaving the block open; the shipped-surface and measured sections, the corrected stale claims, and the arc-two review of the row store's actual plug points (`plan/step-71-conformance.md`) |
+| 72 | The column format | landed — `sql`'s `StoreKind` and the `CREATE TABLE ... STORE = COLUMN` tail (row renders nothing, column renders verbatim, `STORE = TEXT` refuses by name), the catalog's version-2 table definition with the `store` field (a version-1 record decodes as row storage), the record layer's `Storage`/`TableMeta.store`, `create_table_store` refusing column indexes and a primary column, one column family per column (`col_<oid>`), the 1024-row block encoding (row count, null bitmap, the row encoding's widths), `insert_column_tx` rewriting the trailing block through the transaction, `scan_column_tx` walking blocks in rowid order, the reopen's column-family verification, the row path's named guards, the engine's DDL mapping and the `0A000` bridge, the `column_demo` golden (1030 rows across the block boundary, reopen, refusals) three runs byte-identical on `c` through the gate (66 checks), and the encoding-order bug the golden caught on its first run (`plan/step-72-column-format.md`) |
+| 73 | The column executor | landed — the record layer's `scan_column_batches` (block id + per-column value arrays) and `column_block_counts` (row counts without decoding), `scan_column_tx` rebuilt on the batches; the engine's routing (SELECT branches to `select_column`, INSERT branches to `insert_column_tx`), the insert-only refusals, the `PColScan`/`PColAggregate` plan nodes, and the aggregate machinery (`classify_select` with the `42803` mixing error naming the column, `resolve_aggregate` with the alias/name rule and the type mapping — COUNT bigint, SUM bigint/double by the argument, AVG double, MIN/MAX the argument's type, `DISTINCT` aggregates refused, zero-row sums NULL — and `AggState` stepping per row and answering); the `count(*)`-only no-WHERE fast path; the engine demo's column section grew to the executor's cases (scan, filter, the five aggregates, the mixing and type errors, the insert-only refusals, the reopen) three runs byte-identical on `c` through the gate (66 checks) (`plan/step-73-column-executor.md`) |
+| 74 | The two-engine proof | landed — `htap_demo` (the seeding server: `items` a row table, `cold_items` a column table with 1100 rows across the block boundary, both seeded through the engine, then the wire served exactly as wire_demo) and `htap_client` (the standard `postgres` package reading both engines, then one BEGIN/COMMIT carrying the row UPDATE and the column INSERT, then the post-commit reads); the gate's two-engine phases pinned byte-for-byte behind the psql/libpq probes (psql: the seeded aggregates `1100|605550|1.0|row-999`, the cross-engine transaction `BEGIN/UPDATE 1/INSERT 0 1/COMMIT`, and the post-commit `1101|606651`); the corpus's `column.test` (15 cases: the DDL, the projection and filtered projection, the five aggregates, the zero-row rule `0|NULL`, the mixing/type/DISTINCT/star/insert-only/primary-key refusals) lifting the corpus to 141 cases; the bench's column modes (`column-seed`, `column-scan`, `column-agg`) and the measured rows (the block scan 304 ms / 32895 rows per second, the aggregate 142 ms / 70423 rows per second) (`plan/step-74-two-engines.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

@@ -1,7 +1,9 @@
 // The postgres package: a direct-style client over libpq, PostgreSQL's
-// own C library. A Conn is one server connection; every statement runs
-// through PQexecParams with $1, $2, ... parameters supplied as Param
-// values, and a query answers a Rows you read while it is live.
+// own C library. A Conn is one server connection; a statement with
+// parameters runs through PQexecParams with $1, $2, ... supplied as
+// Param values, while a zero-parameter statement takes the simple query
+// path (PQexec) — the one a server without the extended protocol
+// answers. A query answers a Rows you read while it is live.
 //
 // Following the standard library's convention, expected failures are
 // values: connect, exec, and query answer (R.ok, ...) or (R.error,

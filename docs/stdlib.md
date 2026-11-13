@@ -1027,18 +1027,25 @@ Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
 
 The SQL parser: SQL text in, an abstract syntax tree out. Pure Emo
 over the shared runtimes — a parsed tree is one class per grammar node
-(`Select` statements, `Expr` expressions, `TableRef` table references),
+(`Select`/`CreateTable`/`Insert`/`Update`/`Delete` statements, `Expr`
+expressions, `TableRef` table references),
 each answering `to_string()` with the canonical rendering.
 
 ```emo
 def parse(text String) (R, Stmt)
+def split(text String) (R, Array[String])
 ```
 
 `SELECT` end to end — distinct select lists, joins with `ON`/`USING`,
 `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET` — and the
 full expression grammar underneath: literals, parameters (`?`, `?NNN`),
 qualified columns, calls, `CAST`, `CASE`, `EXISTS`, subqueries, and the
-operator tower with standard precedence. Malformed input is the value
+operator tower with standard precedence. Beside `SELECT`, `CREATE
+TABLE` (the v0 types, `NOT NULL`, `PRIMARY KEY`), multi-row `INSERT ...
+VALUES`, `UPDATE ... SET ... [WHERE]`, `DELETE FROM ... [WHERE]`, and
+`BEGIN`/`COMMIT`/`ROLLBACK` parse and render canonically, with the
+`STORE = COLUMN` storage tail on `CREATE TABLE`; `split` cuts a
+multi-statement string at the lexer's own semicolons. Malformed input is the value
 `(R.error, reason)`, the reason stating what failed at what byte
 offset; nothing raises, no error codes, no nil.
 

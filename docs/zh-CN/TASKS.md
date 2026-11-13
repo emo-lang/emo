@@ -8,6 +8,7 @@
 
 - **编号规则:** `T<步骤>.<序号>` —— 步骤号对应 `plan/step-NN-*.md`。
 - **利用闲余时间推进:** 步骤内的任务按顺序排列;完成任意前缀任务后,代码树都处于一致状态。步骤边界是检查点,此时仓库必须能构建且 `dune test` 全绿。
+- **开工前先写小节:** 步骤开始时就把该步骤的小节写进本文件,每个任务以一次闲余时间能完成为尺寸。
 - **基本规则**(来自 `plan/README.md`):
   - 构建不红才开下一步,绝不在红构建上开始下一个步骤。
   - 根目录 `README.md` 是设计的唯一权威来源。下文标注了临时决定;依赖它的任务开工前,先在 `CHECK.md` / `README.md` 里落定。
@@ -44,6 +45,17 @@
 | M24 — 宏 | 58–61 | 编译期宏作为唯一的元编程机制:保留的 `// #macro` / `// @name` 指令命名空间(未知名拒绝),宏模型——标量参数加尾随的 `Syntax` 树、运行前先过检查、构造上确定(一切副作用与触碰宿主的内建拒绝)、展开后擦除、拼接的代码随模块一起检查——引用表面与编译期应用参数静态检查,派生应用于类(`Syntax.fields` / `with_methods`),跨模块宏经程序的宏表带限定应用与本地遮蔽——四个试点(`trace`、`memoize`、`derive_eq`、`derive_shared`)在解释器与 c、TypeScript 二进制间逐字节一致,展开骑在 codegen 之前所以每个 target 构造上继承;运行时 `eval`、开放类、`method_missing` 永久拒绝(`CHECK.md`)。 |
 | M25 — postgres 客户端 | 62 | 标准库的第二个原生绑定包、第一个走线协议的数据库客户端:对包内携带的 C shim 的 `foreign def`,libpq 经 manifest 的 `pkg_config` 字段解析;`$1` 风格的 `Param` 参数(text/i64/f64/bool/none)、带类型化受检访问器与按名查找的 `Rows`、`net` 错误二分(宕掉的服务器与被数据破坏的约束以 `(R.error, reason)` 回答、携带服务器消息与 SQLSTATE,违约才 raise);`postgres_demo` 对活服务器骑临时表、三遍逐字节,随 `postgres_available` 探针加入 `c_goldens`;文档 EN+zh,含顺手补上的 `sqlite3` 表行(`CHECK.md`)。 |
 | M26 — Emo shell | 63 | `emosh`,用 Emo 写在 `os` 表面上的通用命令解释器:环境、信号与接线调用(`dup2`/`execvp`/`isatty`/`argv`)落进 `os`,与 fork 纪律并肩;shell 本体把词切成字面与可扩展部件,扩展 `$var`/`$?`/波浪号,逐段 fork 管道并用 `dup2` 接线,把 `<`/`>`/`>>` 开到子进程上,带着承接状态走 `;`/`&&`/`||`,应答八件内建,靠「忽略中断」的纪律活着——shell 忽略,fork 子进程在 exec 前恢复默认——行输入走终端自己的 cooked 模式;fixture 脚本在 ocaml 与 c 双 target 上逐字节一致,退出状态一并钉死(`CHECK.md`)。 |
+| M27 — `websocket` 与 `playwright` 包 | 64 | 用 Emo 做浏览器自动化:RFC 6455 的两端作为骑 `net` 的标准库包(客户端拨号并验证握手、服务端 accept 检查 upgrade/version/key、每轮交换一条文本消息、按角色掩码、ping 有应答、close 有应答、分片接收拼接过 4096 片),然后 `playwright` 客户端穿这些帧对官方 `playwright run-server` 说驱动的 channel 协议——pre-launched-browser 形态、根 channel 上的 initialize 握手、核心门集(goto/click/fill/press/title/content/text_content/screenshot/close)走 `net` 错误二分;两个 demo 各自带对手方(回声服务器;一个以真线格式应答、带分片消息、一个 ping 与八字节长度形态的迷你驱动),金测因此既不需要浏览器也不需要 Node,解释器与 `c` target 逐字节一致(`CHECK.md`)。 |
+| M28 —— RocksDB 半边 | 65 | emo-db 的第一笔落地:`projects/emo-db/` 脚手架与项目内的 `emo/rocksdb` 绑定——骑官方 RocksDB C API 的包内 C shim(open/close、get/put/delete、WriteBatch 原子写、iterator、快照、column family),经 `foreign def` 与 manifest 的 `pkg_config` 字段解析(`postgres` 先例);C ABI 长出 `Bytes` 借用视图(D10),键与值因此携带任意二进制数据,读操作填写调用方自己的 out 参数;调度器的协作模型让每次调用天然串行,shim 自己不长锁;其余 target 在解析处拒绝、解释器在运行时拒绝(E3009/E5007 活体验证);KV demo——文本与内嵌 NUL 的值、批量提交、读、前缀扫描、可见的快照隔离、关闭再重开——经 `projects/emo-db/check.sh` 在 `c` 上跑三遍逐字节一致(`CHECK.md`)。 |
+| M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型、索引与 oid 计数按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、4 字节 INTEGER、8 字节 BIGINT/REAL/DOUBLE、boolean、带长度前缀的 TEXT/VARCHAR/BYTEA)、插入的 WriteBatch 里的 rowid 分配、以及每索引一个 column family(名 `idx_<oid>`,键由被索引值加 rowid 编成)的二级索引——共享的 `data` family 以表 oid + rowid 为键,目录经 `rocksdb.list_families` 重开并校验索引 CF,索引扫描是等值前缀;record demo 在目录里建表、插入覆盖每种类型的行(NULL、BYTEA 内嵌 NUL、UTF-8 TEXT)、按 rowid 读、扫表、经唯一与非唯一索引找行、并重开 store,`c` 上逐字节钉死(`CHECK.md`)。 |
+| M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型与列级 NOT NULL/PRIMARY KEY 的 CREATE TABLE、带可选列清单的多行 INSERT ... VALUES、UPDATE ... SET ... [WHERE]、DELETE FROM ... [WHERE]——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动,解析器做形状检查(重复列/赋值、行宽、正的 VARCHAR 长度、按名拒绝不支持的尾部);语句级与表达式级金测在解释器与全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
+| M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:`emo/engine` 包骑 `emo/sql` 与 `emo/record`——计划节点(scan、filter、project、insert、update、delete)、带 SQL 三值 NULL 逻辑的类型化表达式求值、单表 SELECT(投影、WHERE;索引列上的等值变成索引扫描)、CREATE TABLE(v0 类型、主键索引)、INSERT、UPDATE 与 DELETE(记录层新增的 update/delete 在一次批量里重写行与索引条目),以及 PG 形状的 `code: message` 错误(`42P01`、`42703`、`42883`、`42804`、`23505`、`23502`、`22001`、`22012`、`0A000`、`42601`)——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出并打印计划树,经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
+| M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
+| M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
+| M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
+| M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
+| M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
+| M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1470,3 +1482,385 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
 - [x] **T64.5** — 注册:`test/emo_project/emo_project_test.ml` 两个 `tc` 用例,`websocket_demo` 与 `playwright_demo` 进 `c_goldens`,每次改包后 `emo deps resolve` 重出 lockfile。途中发现并当场修掉:c 后端的方法查表拿保留字转义后的调用名(`goto_c`)去比 IR 的裸名,凡 C 关键字命名的方法一律被拒——现在调用名从匹配到的声明自己取。
 - [x] **T64.6** — 文档:`docs/stdlib/websocket.md`、`docs/stdlib/playwright.md` EN+zh,`docs/stdlib.md` 行与节 + zh 镜像,README 引用行,CHECK.md 决策记录,`plan/step-64-playwright.md`,`plan/README.md` 行。途中发现并记录:json 包的转义长度按字符递归,120000 字符的 `json.encode` 在 c 目标上骑穿纤程栈(解释器扛得住;found-not-fixed,demo 手工拼装那条大应答绕开)。
 - [x] **T64.7** — 真实检查:`npm install -g playwright`(1.65.0,chromium headless shell 158.0.8127.18),再经 `examples/playwright_live` 对真 `playwright run-server` 跑完整门面阶梯——握手、带预 launch 浏览器的 initialize、先 context 后 page 两跳、对程序自带 httpd 页面的导航、标题、多字节 DOM 文本、缺失选择器按 30000 ms metadata 死线以错误值应答、真截图、告别——**在 `c` 目标上全绿**;解释器在同一等待中撞上 det 调度器的驻留读墙(found-not-fixed,记入 CHECK.md)。driver 版本已记入 CHECK.md。
+
+## M28 —— RocksDB 半边
+
+### 步骤 65 —— emo-db 的 RocksDB 半边
+
+**前置:** Step 38(原生绑定机制:manifest 的 `link`/`pkg_config` 字
+段、包内携带的 C 源、E5007 诚实闸门),Step 62(包的解剖:shim、暂
+存、错误二分、金测),`docs/emo-db.md` D1–D9(D10 由 T65.1 落定)。
+**完成标准:** 项目内的 `emo/rocksdb` 绑定在 `c` target 上打开/关闭
+数据库与 column family、读写任意 `Bytes`、原子提交 WriteBatch、迭
+代、前缀扫描、按快照读——全部经 `projects/emo-db/check.sh`,其 KV
+金测跑三遍逐字节一致;C ABI 的 `Bytes` 借用视图作为 D10 落地;解释
+器以 E3009 拒绝、其余 target 在解析处以 E5007 拒绝,两者活体验证;
+文档 EN+zh;仓库可构建。
+
+- [x] **T65.1** —— 设计记录 EN+zh 落 D10:`Bytes` 的借用
+      `{data, len}` 视图、仅参数位、读走 out 参数、返回拒绝、仅
+      `c`;D1 的绑定句、架构的存储项、两条开放项,以及 M28 表行。
+      纯文档;这段措辞就是后续任务实现的契约。
+- [x] **T65.2** —— 运行时的字节视图:`emo_c_runtime.h`/`.c` 里的
+      `emo_bytes_view` 与 `emo_bytes_view_build`(cell 的内联字节加
+      长度,只在调用期间借用);纯增量,尚无程序使用时 `dune build`
+      保持绿。
+- [x] **T65.3** —— 检查器:`Bytes` 只加进 `c` target 的 `ffi_ok`;
+      `Bytes` 的 foreign 返回报 E4200 并带 out 参数文案;struct 形状
+      字段层仍拒绝;`emo_check_test.ml` 的四个 `bytes_ffi` 用例钉住
+      合法参数、被拒返回、非 c 拒绝、被拒字段。测试二进制可构建;
+      行为另经 `emo check`/`emo build --target ocaml` 手工探针验证。
+- [x] **T65.4** —— 发射器:`foreign_c_type` 把 `Bytes` 映射为
+      `emo_bytes_view`,调用点用 `emo_bytes_view_build` 造视图,返回
+      位置保留拒绝守卫。编译器可构建;T65.11 的 demo `c` 构建是端到
+      端证明。
+- [x] **T65.5** —— `docs/intro/native-builds.md` + zh:FFI 层段落点
+      名 `Int64`、`Void` 返回、struct 形状、回调与 `Bytes`(借用、
+      拒绝返回、out 参数)。
+- [x] **T65.6** —— 绑定的骨架、打开/关闭与 column family:
+      `projects/emo-db/rocksdb/` 的 `package.emo`(`emo/rocksdb`,
+      `targets = ["c"]`,`pkg_config = ["rocksdb"]`)、
+      `internal/ffi.emo`、`internal/reason.emo`、shim 的包装与唯一的
+      last-error 缓冲、`cfs_new`/`cfs_add`/`cfs_free`/`open`/
+      `close`、`cf`/`cf_create`/`cf_list` 与 `destroy_db`,以及门面
+      的 `Db`/`Cf` 与 `(R, reason)` 二分。`emo check` 绿;demo 的
+      open/close 与列族节拍验证它。
+- [x] **T65.7** —— 值:`put`/`get_len`/`get_into`/`delete` 穿过 shim
+      与 `Cf`,两遍读(先问长度,再拷进调用方的 `Bytes`),0-or-1
+      的 `get`,以及存储失败的 `(R, reason)` 二分与契约违约
+      raise。demo 的文本、NUL、空值与缺失节拍验证它。途中发现并当
+      场修掉:RocksDB 状态为 NULL 是成功,而第一版 shim 的错误助手
+      把它当失败——现在 `emo_rdb_check` 分开 void 形状调用与
+      NULL-即失败两类。另定:`(R, Void)` 不是合法形状,写操作返回资
+      源。
+- [x] **T65.8** —— 批量:`batch_new`/`batch_put`/`batch_delete`/
+      `batch_write`/`batch_close`、`Batch` 门面、同库守卫,以及 Db
+      的活句柄计数。demo 的批量节拍把两 put 一 delete 放进一次
+      写。
+- [x] **T65.9** —— 迭代器:`iter_new`/`iter_seek`/
+      `iter_seek_to_first`/`iter_valid`/`iter_next`/`iter_key`/
+      `iter_value`/`iter_close`、键值拷贝对,与 `Iter` 门面。表面足
+      以做前缀扫描:demo seek 前缀,键仍以前缀开头就继续走。
+- [x] **T65.10** —— 快照与生命周期守卫:`snapshot_new`/
+      `snapshot_close`、shim 的 snapshot + readoptions 捆绑、
+      `Snapshot` 门面与迭代器计数、`Db.close` 在有活
+      batch/snapshot/iter 时拒绝、`Snapshot.close` 在有活迭代器时
+      拒绝、重复 close raise。demo 的快照节拍验证它。途中发现并当
+      场修掉:`close` 里的局部
+      `const live` 撞上 `live()` 方法(E4004)——改名 `running`。
+- [x] **T65.11** —— demo 骨架与文本节拍:`projects/emo-db/kv_demo`
+      (`package.emo`、`main.emo` 的 die-on-failure 助手)、destroy、
+      以 `default` + `notes` 打开、一次文本 put/get,并播下
+      `expected.txt`。在 `c` 上可构建可跑。
+- [x] **T65.12** —— 二进制证明:四字节值 `00 01 ff 41` 往返
+      (bytes=4,value=0001ff41),空值存在且零字节,缺失键是空结果
+      ——NUL 结尾跨界分不清的三个边。
+- [x] **T65.13** —— 批量与前缀扫描节拍:三效果 batch(两 put 一
+      delete),以及从 `user:` seek 走三个键、停在 `other:1`。
+- [x] **T65.14** —— 快照、`cf_create` 与重开节拍:快照答旧值、最
+      新态答新值,该快照上的迭代器读旧视图并在快照之前关闭,open 之
+      后创建的列族持久化,重开找到字节与三个列族名。`expected.txt`
+      最终十二行。途中发现并当场修掉:只被 thunk 使用的顶层 const
+      仍会发出根条目局部变量、招来 unused-variable 警告——`digits`
+      挪进 `hex`,第二个 const 内联。
+- [x] **T65.15** —— 闸门:`projects/emo-db/check.sh` 解析 RocksDB
+      (默认 pkg-config,再 Homebrew keg,再一次小链接探针),把绑定
+      暂存进按内容命名的 registry,检查包、构建 demo、跑三遍对照
+      `expected.txt`,并活体钉死 E3009(exit 70)与 E5007
+      (exit 65)。最后一次改包后用 `emo deps resolve` 生成并提交
+      `kv_demo/package.lock`。
+- [x] **T65.16** —— `projects/emo-db/README.md` + zh:布局、绑定的
+      形状(二进制键值、错误二分、生命周期)、RocksDB 前置、闸门,
+      以及 M28 状态。
+- [x] **T65.17** —— 收尾:TASKS 行 EN+zh、`plan/README.md` 的 M28
+      条目与步骤行、`CHECK.md` 条目、sqlite3 的 blob 说明(文档
+      EN+zh、包内注释、重解析的
+      `examples/sqlite3_demo/package.lock`)、
+      `plan/step-65-emo-db-rocksdb.md`,以及 `dune build` /
+      `dune build @fmt` 绿。
+
+## M29 —— 记录层
+
+### 步骤 66 —— 记录层
+
+**前置:** Step 65(`emo/rocksdb` 绑定与 `Bytes` 视图)。
+**完成标准:** 项目内的 `emo/record` 包在目录里建表、插入覆盖 v0 类型
+子集的行(NULL、BYTEA 里内嵌 NUL、UTF-8 TEXT),按 rowid 读回、扫表、
+经二级索引找到行——全部在 `c` target 上经
+`projects/emo-db/check.sh`,其 record 金测跑三遍逐字节一致,且 KV
+金测与 E3009/E5007 钉死保持绿;目录与索引 CF 重开后仍在;文档
+EN+zh;仓库可构建。
+
+- [x] **T66.1** —— 规格与追踪:`plan/step-66-record-layer.md`(编码契
+      约)、plan README 行,以及本节的 EN+zh。
+- [x] **T66.2** —— 设计注记:`docs/emo-db.md` + zh——D7 的 REAL
+      注、架构里共享的 `data` CF、M29 行,以及开放项(范围扫描、
+      流式扫描)。
+- [x] **T66.3** —— `rocksdb.list_families(path)`:shim 的 list 句柄
+      骑 `rocksdb_list_column_families`(`list_new`/`count`/`name`/
+      `free`,路径不存在答空),FFI 声明,以及门面的
+      `(R, Array[String])`。KV demo 的闸门保持绿。
+- [x] **T66.4** —— `projects/emo-db/record/` 骨架与
+      `internal/codec.emo`:u8/u32/u64/i32/i64/bytes/string 的
+      `Buf`/`Reader`(带边界检查),外加 UTF-8 长度与前缀助手。编码
+      器与目录编解码住在 `record.emo`——内部模块调用根 def 会构成
+      模块环。
+- [x] **T66.5** —— `record.emo` 的公开类型:`ColType`、`Column`、
+      `Index`、`ColumnDef`、`IndexDef`、`Value`、`Row`、`Table`、
+      `Store`、值构造器、`type_name`,以及契约检查(名字唯一、索引
+      引用列、VARCHAR 长度为正、primary 蕴含 NOT NULL)。
+- [x] **T66.6** —— 行编码/解码、值编码、索引键编码、VARCHAR 码点
+      检查,以及畸形输入的守卫(在 `record.emo` 里)。
+- [x] **T66.7** —— 目录键、表定义编码/解码、oid 计数,以及经绑定
+      的 load/save(在 `record.emo` 里)。
+- [x] **T66.8** —— `Store.open`/`close`/`table`/`tables`/
+      `create_table`:CF 枚举、基础 CF 打开、目录加载与索引 CF 校验、
+      oid 分配、索引 CF 创建、目录批量写,以及重开路径。
+- [x] **T66.9** —— `Table.insert`:值校验、唯一索引前缀检查、rowid、行/索
+      引/目录批量、成功后计数更新,以及重复键的错误值。
+- [x] **T66.10** —— `Table.get`/`scan`/`scan_index`:按键读行、表前
+      缀扫描、带 rowid 后缀的索引前缀扫描,以及有序结果。
+- [x] **T66.11** —— `projects/emo-db/record_demo/` 骨架:destroy、
+      打开、建 `users`、列目录、关闭;播下 `expected.txt`。
+- [x] **T66.12** —— demo 的插入节拍:三行覆盖每种类型、NULL、
+      BYTEA 内嵌 NUL、UTF-8 TEXT,以及重复唯一键答错误值。
+- [x] **T66.13** —— demo 的读节拍:按 rowid 取、扫表、按名字索引
+      等值扫描、按 id 索引扫描,以及重开后列目录与行。
+- [x] **T66.14** —— 闸门:暂存 `emo/record`、构建 record demo、跑三
+      遍对照 `expected.txt`,并保持 KV demo 与 E3009/E5007 钉死绿;
+      record demo 的 lock 经 `emo deps resolve`。
+- [x] **T66.15** —— 项目 README + zh:记录层的格式、demo 与闸门。
+- [x] **T66.16** —— 收尾:TASKS EN+zh、plan README、M29 行、
+      `CHECK.md` 条目,以及 `dune build`/`@fmt` 绿。
+
+## M30 —— SQL 门面长 DML 与 DDL
+
+### 步骤 67 —— SQL 门面长 DML 与 DDL
+
+**前置:** Step 30(`sql` 包的 SELECT 表面与表达式语法)。**完成标准:**
+`sql` 包在 `SELECT` 旁解析 `CREATE TABLE`(v0 列类型、`NOT NULL`、
+`PRIMARY KEY`)、多行 `INSERT`、`UPDATE`、`DELETE`,每个树都能渲染回
+规范 SQL,畸形输入答理由与字节偏移;SELECT 语法不动;
+`example/sql_demo` 与 `sql_edge` 在解释器与全部五个 hosted target
+上打印钉死的字节;文档 EN+zh;仓库可构建。
+
+- [x] **T67.1** —— 规格与本节的 EN+zh。
+- [x] **T67.2** —— AST:四个 `StmtKind` 成员、`SqlType`、`ColumnDef`、
+      `CreateTable`/`Insert`/`Update`/`Delete`、`Assignment`,以及规范
+      渲染器。
+- [x] **T67.3** —— token 助手与 `is_reserved` 的新词。
+- [x] **T67.4** —— `parse_create_table`:名字路径、列清单、类型(含
+      `DOUBLE PRECISION` 与 `VARCHAR(n)`)、约束、重复列检查、不受
+      支持约束的拒绝。
+- [x] **T67.5** —— `parse_insert`:`INTO`、可选列清单、VALUES 行、
+      行宽检查、重复列、不受支持的尾部。
+- [x] **T67.6** —— `parse_update`:SET 赋值、重复检查、可选 WHERE、
+      尾随 token 拒绝。
+- [x] **T67.7** —— `parse_delete`:FROM、可选 WHERE、尾随 token 拒
+      绝。
+- [x] **T67.8** —— `parse_stmt` 分发五种语句。
+- [x] **T67.9** —— `examples/sql_demo`:DDL/DML 解析、渲染与 AST 读
+      取;重出 `expected.txt`。
+- [x] **T67.10** —— `examples/sql_edge`:旧的 INSERT 拒绝替换;新的
+      畸形 DDL/DML 用例;重出 `expected.txt`。
+- [x] **T67.11** —— 包头注释、`docs/stdlib/sql.md` + zh,以及索引行
+      (措辞若动)。
+- [x] **T67.12** —— 收尾:两个 `sql` lock 重解析、`plan/README.md`、
+      M30 行、`CHECK.md`、`dune build`/`@fmt`,以及证据。
+
+## M31 —— 计划器与执行器
+
+### 步骤 68 —— 计划器与执行器
+
+**前置:** Step 66(记录层)与 Step 67(SQL AST 的 DDL/DML)。**完成标
+准:** 一个嵌入式引擎在 `c` target 上把 SQL 文本变成行——CREATE
+TABLE、INSERT、带 WHERE 与投影的单表 SELECT(表扫描与等值索引扫
+描)、UPDATE、DELETE——计划文本钉死,PG 形状的错误(`42P01`、`42703`、
+`42883`、`42804`、`23505`、`23502`、`22012`、`0A000`)以值回答;
+engine demo 经 `projects/emo-db/check.sh` 跑三遍逐字节一致;record/KV
+金测与 E3009/E5007 钉死保持绿;文档 EN+zh;仓库可构建。
+
+- [x] **T68.1** —— 规格与本节的 EN+zh。
+- [x] **T68.2** —— 记录层的 `Table.update`/`delete`:索引维护与唯一
+      检查。
+- [x] **T68.3** —— 引擎骨架:manifest、`SqlError`、`Result`、
+      `open`/`close`。
+- [x] **T68.4** —— 分析器:表/别名/列解析、类型映射、符合性、PG 形
+      状错误。
+- [x] **T68.5** —— 类型化表达式与求值器(3VL、IS/IN/BETWEEN/LIKE/
+      CASE、强制转换、运行时错误)。
+- [x] **T68.6** —— CREATE TABLE 执行(类型、约束、pkey 索引、拒
+      绝)。
+- [x] **T68.7** —— INSERT 执行(列清单、NULL 填充、强制转换、
+      NOT NULL、重复键映射)。
+- [x] **T68.8** —— SELECT 计划/执行(扫描选择、过滤、投影)。
+- [x] **T68.9** —— UPDATE/DELETE 计划/执行。
+- [x] **T68.10** —— 计划文本与结果的 plan 字段。
+- [x] **T68.11** —— engine demo 与 `expected.txt`。
+- [x] **T68.12** —— 闸门:暂存 engine、构建/跑 demo 三遍。
+- [x] **T68.13** —— 项目 README + zh、包文档、lock。
+- [x] **T68.14** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M32 —— 事务与会话面
+
+### 步骤 69 —— 事务与会话面
+
+**前置:** Step 66(记录层)、Step 67(SQL AST)、Step 68(引擎)。**完成
+标准:** BEGIN/COMMIT/ROLLBACK 骑记录层新增的事务(一个 WriteBatch、
+每语句一个快照、穿过 pending 覆盖层的读己之写、commit 时才发布
+rowid 计数);引擎的会话面经 Emo 锁管理器进程持有表锁、阻塞第二个写
+者、以 `40P01` 中止死锁、在 commit/rollback 时释放;两会话金测在
+`c` 上展示读已提交、阻塞与死锁,经 `projects/emo-db/check.sh` 跑三
+遍逐字节一致;既有金测与 E3009/E5007 钉死保持绿;文档 EN+zh;仓库可
+构建。
+
+- [x] **T69.1** —— 规格与本节的 EN+zh。
+- [x] **T69.2** —— `sql`:`BEGIN`/`COMMIT`/`ROLLBACK`、示例用例、五
+      target 重跑。
+- [x] **T69.3** —— 记录层 `Txn` 与 `Table` 的 tx 方法。
+- [x] **T69.4** —— 引擎的事务状态与 autocommit 路径。
+- [x] **T69.5** —— `LockClient` 接口与引擎的表锁。
+- [x] **T69.6** —— 锁管理器进程与死锁检查。
+- [x] **T69.7** —— 会话进程与 `RemoteLocks`。
+- [x] **T69.8** —— `txn_demo`:三个场景与 `expected.txt`。
+- [x] **T69.9** —— 闸门:第四个 demo 与构建失败守卫。
+- [x] **T69.10** —— 文档 EN+zh 与设计记录注记。
+- [x] **T69.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M33 —— 线协议
+
+### 步骤 70 —— 线协议
+
+**前置:** Step 66(记录层)、Step 67(SQL 门面)、Step 68(引擎)、
+Step 69(事务与锁管理器)。**完成标准:** emo-db 经 `net` 说 PostgreSQL
+协议 v3 的简单查询路径——启动(拒绝 SSL/GSSENC、trust 认证)、
+ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、
+带 v0 类型 OID 的 RowDescription、文本格式 DataRow、CommandComplete、
+EmptyQueryResponse,以及遵循 PG 字段约定的 ErrorResponse;错误终止后
+续语句并让会话的事务状态干净;每连接一个会话 actor,骑共享 Store 与
+Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户端经
+新的零参数简单路径连上并跑同一脚本,两者在 `psql`/`libpq` 可用性探
+针后逐字节钉死;既有金测保持绿;文档 EN+zh;仓库可构建。
+
+- [x] **T70.1** —— 规格:本节 EN+zh 与 `plan/step-70-wire.md`。
+- [x] **T70.2** —— `sql.split`:在词法器自己的 token 流上切分语句;
+      `sql_demo`/`sql_edge` 用例与六条路径。
+- [x] **T70.3** —— 引擎的 `Result.types`(投影值类型,供
+      RowDescription),以及 `engine.start_lock_manager` /
+      `engine.RemoteLocks` 从 `txn_demo` 移进包。
+- [x] **T70.4** —— `postgres` shim 的零参数 `PQexec` 简单路径,让标
+      准客户端能对不跑扩展协议的服务器说话。
+- [x] **T70.5** —— `emo/wire`:字节缓冲、启动消息各形态(SSLRequest/
+      GSSENCRequest 答 `N`、CancelRequest 关闭)、后端消息构造器、v0
+      的 OID 与文本编码。
+- [x] **T70.6** —— 查询循环:切分、空查询、多语句执行、错误响应与
+      停止、ReadyForQuery 的事务状态、干净的 abort。
+- [x] **T70.7** —— 会话 actor 与 accept 循环:每连接一个骑共享 Store
+      的 Engine 与 `RemoteLocks`、最大连接数的停止、锁管理器。
+- [x] **T70.8** —— `wire_demo`(服务器,带 ready 文件)与
+      `wire_client`(`postgres` 客户端)及各自金测。
+- [x] **T70.9** —— 闸门:构建 wire 包与两个 demo,探测 `psql` 与
+      `libpq`,跑两个阶段,钉死金测。
+- [x] **T70.10** —— 文档 EN+zh:项目 README、设计记录的线协议注记、
+      `postgres` 零参数路径、`sql.split` API。
+- [x] **T70.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M34 —— 符合性与文档
+
+### 步骤 71 —— 符合性与文档
+
+**前置:** Step 65–70(整个行存弧)。**完成标准:** 引擎的 SQL 表面有一
+套 SQLLogicTest 精神的文本可比语料——语句用例钉死命令标签、查询用例
+钉死行、错误用例钉死 `code: message`——对一台全新数据库跑,经
+`projects/emo-db/check.sh` 三遍逐字节一致;实测性能表只记录 bench 脚
+本真正测出的数字,并写明机器、日期与方法;`docs/emo-db.md` 长出已交
+付表面一节、语料与基准的指针、被修正的过时说法,以及对照弧一实际建
+出东西的弧二复核(EN+zh);项目 README 带上新闸门与 M34 状态;仓库可
+构建。
+
+- [x] **T71.1** —— 规格:本节 EN+zh 与
+      `plan/step-71-conformance.md`。
+- [x] **T71.2** —— 语料格式与 `corpus_runner`:每次一台全新数据库、
+      按文件计数、收集失败并以非零退出。
+- [x] **T71.3** —— 语料文件:DDL、v0 类型、DML、SELECT 及其表达式、
+      事务,以及错误/SQLSTATE 表面。
+- [x] **T71.4** —— 闸门:构建语料 runner 并跑三遍逐字节一致。
+- [x] **T71.5** —— bench 程序与 `bench/run.sh`(一次预热加三次计时),
+      以及实测记录。
+- [x] **T71.6** —— 闸门的 bench 烟测:核对各模式计数,不钉时间。
+- [x] **T71.7** —— `docs/emo-db.md` + zh:已交付表面、语料与基准两
+      节、实测表、被修正的开放项,以及弧二复核。
+- [x] **T71.8** —— 项目 README EN+zh:语料、bench、闸门新检查与
+      M34 状态。
+- [x] **T71.9** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M35 —— 列存格式
+
+### 步骤 72 —— 列存格式
+
+**前置:** Step 71(弧一收尾)。**完成标准:** `CREATE TABLE ...
+STORE = COLUMN` 可以解析(规范渲染写出 `STORE = COLUMN`,`STORE =
+ROW` 是默认),目录的表定义升到版本 2 带 `store` 字段而版本 1 记录
+读作行存,记录层把列存表按每列一个 column family 里的 1024 行块存
+储——插入走事务的 pending 覆盖层与批量、整块扫描、重开时校验列
+family;列存表不建索引(`PRIMARY KEY` 与二级索引答 `0A000`);引擎
+映射 DDL 并以具名的 `0A000` 桥接 DML/SELECT;记录层金测(建表、插
+入、重开、扫描、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节一
+致;所有既有金测保持绿;文档 EN+zh;仓库可构建。
+
+- [x] **T72.1** —— 规格:本节 EN+zh 与
+      `plan/step-72-column-format.md`。
+- [x] **T72.2** —— `sql`:`StoreKind`、`CreateTable.store`、尾巴
+      解析、渲染、示例、六条路径。
+- [x] **T72.3** —— `record`:`Storage`、`TableMeta.store`、版本 2
+      编码、列 family、列插入与扫描、重开校验。
+- [x] **T72.4** —— `column_demo` 与其金测。
+- [x] **T72.5** —— `engine`:DDL 映射与桥。
+- [x] **T72.6** —— 闸门:第五个 demo。
+- [x] **T72.7** —— 文档 EN+zh 与收尾。
+
+## M36 —— 列执行器
+
+### 步骤 73 —— 列执行器
+
+**前置:** Step 72(列存格式)。**完成标准:** 列存表上的 SELECT 路由到
+批量执行器——块扫描、骑块物化值的共享 filter 与 project、全局聚合
+COUNT/SUM/AVG/MIN/MAX(零行时 COUNT 答 0、其余答 NULL;SUM 把
+integer 拓宽到 BIGINT、real 到 DOUBLE PRECISION;AVG 是 DOUBLE
+PRECISION;MIN/MAX 答参数类型);选择列表要么全普通项要么全聚合调
+用(混用答 `42803` 并点名列);聚合只能是整个选择项(嵌套调用保留函
+数拒绝);无 WHERE 的 `count(*)` 走块计数快路径;UPDATE 与 DELETE 答
+`0A000: column-store tables are insert-only in v0`,INSERT 经同一事
+务骑列块;计划文本显示 `column scan`/`aggregate`;引擎 demo 长出执
+行器用例且一切经 `projects/emo-db/check.sh` 三遍逐字节一致;文档
+EN+zh;仓库可构建。
+
+- [x] **T73.1** —— 规格:本节 EN+zh 与
+      `plan/step-73-column-executor.md`。
+- [x] **T73.2** —— `record`:`scan_column_batches`、
+      `column_block_counts`、骑批次的 `scan_column_tx`。
+- [x] **T73.3** —— `engine`:路由、拒绝、列计划节点、聚合机器。
+- [x] **T73.4** —— 引擎 demo 的执行器用例。
+- [x] **T73.5** —— 闸门三遍全绿。
+- [x] **T73.6** —— 文档 EN+zh 与收尾。
+
+## M37 —— 双引擎证明
+
+### 步骤 74 —— 双引擎证明
+
+**前置:** Step 72–73(列存格式与列执行器)。**完成标准:** 一台数据库
+同时持两种存储,一次会话在一个事务里跨过它们——`htap_demo` 经引擎播种
+行表与列存表(1100 行,跨过块边界)后服务线协议;psql 跑一个脚本:读两
+台引擎、在 BEGIN/COMMIT 里更新行表并向列存表插入、再读提交后的聚合,
+逐字节钉死;标准库 `postgres` 客户端经其简单路径跑同一脚本,钉死;语
+料长出 `column.test`(DDL、投影、五个聚合、零行规则、混用/类型/
+DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;bench 长
+出列存扫描与列存聚合两行并记录实测数字;文档 EN+zh;仓库可构建。
+
+- [x] **T74.1** —— 规格:本节 EN+zh 与
+      `plan/step-74-two-engines.md`。
+- [x] **T74.2** —— `htap_demo` 与 `htap_client` 及各自金测。
+- [x] **T74.3** —— 闸门的双引擎阶段。
+- [x] **T74.4** —— 语料的 `column.test`。
+- [x] **T74.5** —— bench 的列存模式与实测数字。
+- [x] **T74.6** —— 文档 EN+zh 与收尾。

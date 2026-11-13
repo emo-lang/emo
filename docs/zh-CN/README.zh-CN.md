@@ -126,6 +126,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
 - [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与证据:为什么一棵声明式树能跨 TUI、服务端 HTML、macOS、GTK 4 与 DOM 工作,以及还有什么仍然开放。
 - [`docs/zh-CN/emo-ui-composition.md`](emo-ui-composition.md) —— 一棵 EmoUI 树怎么写出来:子节点为什么是数组而不是块式写法,以及数组写法是否该再长出字面量拼法。
+- [`docs/zh-CN/emo-db.md`](emo-db.md) —— emo-db 的设计定案:一条 SQL 门面、两台引擎(先行存、后列存),存储层骑 RocksDB,OLTP 先行的天梯。
 - [`docs/zh-CN/industrial-software.md`](industrial-software.md)、[`docs/zh-CN/sql-database.md`](sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](rtos-assessment.md)、[`docs/zh-CN/xv6.md`](xv6.md)、[`docs/zh-CN/visualization.md`](visualization.md) —— 可行性与市场评估。
 - [`docs/zh-CN/TASKS.md`](TASKS.md) —— 实现任务清单。
 

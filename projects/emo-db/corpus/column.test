@@ -1,0 +1,92 @@
+# The column surface through the engine: the DDL, the block-backed
+# projection and filter, the five global aggregates, the zero-row rule
+# (count answers 0, the rest NULL), and the refusals (a mixed select
+# list, a non-numeric sum, DISTINCT aggregates, the insert-only write
+# path, and a column table's primary key).
+
+statement ok
+CREATE TABLE cold_events (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN
+----
+CREATE TABLE
+
+statement ok
+INSERT INTO cold_events (id, name, score) VALUES (1, 'r1', 1.0), (2, 'r2', 2.0), (3, 'r3', 3.0), (4, 'r4', 4.0), (5, 'r5', 5.0), (6, 'r6', 6.0), (7, 'r7', 7.0), (8, 'r8', 8.0), (9, 'r9', 9.0), (10, 'r10', 10.0), (11, 'r11', 11.0), (12, 'r12', 12.0)
+----
+INSERT 0 12
+
+query
+SELECT * FROM cold_events
+----
+1|r1|1.0
+2|r2|2.0
+3|r3|3.0
+4|r4|4.0
+5|r5|5.0
+6|r6|6.0
+7|r7|7.0
+8|r8|8.0
+9|r9|9.0
+10|r10|10.0
+11|r11|11.0
+12|r12|12.0
+
+query
+SELECT id, name FROM cold_events WHERE id < 3
+----
+1|r1
+2|r2
+
+query
+SELECT count(*), sum(id), avg(score), min(id), max(name) FROM cold_events
+----
+12|78|6.5|1|r9
+
+query
+SELECT count(*), sum(id) FROM cold_events WHERE id > 100
+----
+0|NULL
+
+query
+SELECT count(*) FROM cold_events WHERE id > 10
+----
+2
+
+statement error
+SELECT id, count(*) FROM cold_events
+----
+42803: column "id" must appear in the GROUP BY clause or be used in an aggregate function
+
+statement error
+SELECT sum(name) FROM cold_events
+----
+42883: function sum(text) does not exist
+
+statement error
+SELECT avg(name) FROM cold_events
+----
+42883: function avg(text) does not exist
+
+statement error
+SELECT count(DISTINCT id) FROM cold_events
+----
+0A000: DISTINCT aggregates are not supported in v0
+
+statement error
+SELECT min(*) FROM cold_events
+----
+42883: function min(*) does not exist
+
+statement error
+UPDATE cold_events SET id = 1
+----
+0A000: column-store tables are insert-only in v0
+
+statement error
+DELETE FROM cold_events
+----
+0A000: column-store tables are insert-only in v0
+
+statement error
+CREATE TABLE cold_pk (id BIGINT PRIMARY KEY) STORE = COLUMN
+----
+0A000: column-store tables carry no primary key in v0

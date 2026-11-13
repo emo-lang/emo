@@ -1,0 +1,2 @@
+ddl.test 6 cases
+cases 6, failed 0

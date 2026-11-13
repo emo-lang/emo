@@ -17,7 +17,7 @@ built myapp
   foreign def sqrt(x Float64) Float64 = "sqrt"
   ```
 
-  `Float64`、`String` 与 `Bool` 现在可跨界；其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
+  `Float64`、`String` 与 `Bool` 在一切兑现 `foreign def` 的 target 上都能跨界；`c` target 的层还允 `Int64`、`Void` 返回、struct 形状、单方法接口回调与 `Bytes`。`Bytes` 参数以借用的 `{data, len}` 视图跨界——只在调用期间有效，C 侧绝不保留——二进制载荷因此能原样携带内嵌 NUL；`Bytes` 返回被拒绝，读操作改为填写调用方自己的 out 参数（先问长度，再拷入）。其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
 - **C 经接口回调进 Emo。** `foreign def` 的参数可以名一个单方法接口——它就是回调类型。`c` 目标向 C 侧传递一个生成的 trampoline 和作为不透明 `void *userdata` 的对象；回调的 C 签名是该方法的参数（与任何 foreign 实参同样封送）后跟收尾的 `void *userdata`,调用它即分发到接收者自己的方法：
 
   ```emo

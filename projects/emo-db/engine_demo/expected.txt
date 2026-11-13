@@ -1,0 +1,109 @@
+CREATE TABLE
+plan: create table users
+INSERT 0 3
+plan: insert users (3 rows)
+SELECT 3
+plan: project id, name, score, active, handle
+  table scan users
+columns: id, name, score, active, handle
+  (1, Ada, 95.5, true, ada)
+  (2, Grace, NULL, false, grace)
+  (3, Linus, 88.0, true, NULL)
+SELECT 2
+plan: project name, score
+  filter active = TRUE
+  table scan users
+columns: name, score
+  (Ada, 95.5)
+  (Linus, 88.0)
+SELECT 1
+plan: project name
+  filter id = 2
+  index scan users_pkey (id = 2)
+columns: name
+  (Grace)
+UPDATE 1
+plan: update users
+  filter id = 1
+  index scan users_pkey (id = 1)
+SELECT 1
+plan: project id, score
+  filter id = 1
+  index scan users_pkey (id = 1)
+columns: id, score
+  (1, 99.0)
+DELETE 1
+plan: delete users
+  filter id = 3
+  index scan users_pkey (id = 3)
+SELECT 2
+plan: project id, name, score, active, handle
+  table scan users
+columns: id, name, score, active, handle
+  (1, Ada, 99.0, true, ada)
+  (2, Grace, NULL, false, grace)
+error 42P01: relation "missing" does not exist
+error 42703: column "nope" does not exist
+error 42883: operator does not exist: bigint + text
+error 0A000: DISTINCT is not supported in v0
+error 0A000: CAST is not supported in v0
+error 22012: division by zero
+error 23505: duplicate key value violates unique constraint "users_pkey"
+error 23502: null value in column "name" violates not-null constraint
+error 42804: column "id" is of type bigint but expression is of type text
+error 22001: value too long for type character varying(12)
+CREATE TABLE
+plan: create table cold
+INSERT 0 3
+plan: insert cold (3 rows)
+SELECT 3
+plan: project id, name, score
+  column scan cold
+columns: id, name, score
+  (1, ada, 1.5)
+  (2, grace, 2.5)
+  (3, linus, NULL)
+SELECT 2
+plan: project id, name
+  filter id < 3
+  column scan cold
+columns: id, name
+  (1, ada)
+  (2, grace)
+SELECT 1
+plan: aggregate count(*)
+  column scan cold
+columns: count
+  (3)
+SELECT 1
+plan: aggregate count(*), sum(id), avg(score), min(id), max(name)
+  column scan cold
+columns: count, sum, avg, min, max
+  (3, 6, 2.0, 1, linus)
+SELECT 1
+plan: aggregate count(*)
+  filter id > 1
+  column scan cold
+columns: count
+  (2)
+error 42803: column "id" must appear in the GROUP BY clause or be used in an aggregate function
+error 42883: function sum(text) does not exist
+error 0A000: column-store tables are insert-only in v0
+error 0A000: column-store tables are insert-only in v0
+error 0A000: column-store tables carry no primary key in v0
+CREATE TABLE
+plan: create table warm
+CREATE TABLE
+plan: create table plain
+SELECT 2
+plan: project id, name, score, active, handle
+  table scan users
+columns: id, name, score, active, handle
+  (1, Ada, 99.0, true, ada)
+  (2, Grace, NULL, false, grace)
+SELECT 1
+plan: aggregate count(*)
+  column scan cold
+columns: count
+  (3)
+done

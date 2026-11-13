@@ -140,6 +140,16 @@ bool emo_str_eq(emo_str a, emo_str b);
 const char *emo_str_cstr(emo_str s);
 emo_str emo_str_from_cstr(const char *cs);
 
+/* A Bytes crossing OUT (the emo-db byte view, D10): the C side
+   receives a borrowed view of the cell's inline bytes, valid for the
+   duration of the call only — it must not retain `data`. The same
+   view carries an out-parameter: the callee writes up to `len` bytes
+   through `data`, and the Emo side owns the buffer. */
+typedef struct {
+  unsigned char *data;
+  int64_t len;
+} emo_bytes_view;
+
 /* ---- The dynamic world (T23.4) ---- */
 
 /* Boxing: a native scalar into the dynamic world. String copies its
@@ -363,6 +373,7 @@ int64_t emo_bytes_get(emo_value b, int64_t i);
 int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v); /* returns v */
 emo_value emo_bytes_of_str(emo_value s); /* copies into a cell */
 emo_str emo_str_of_bytes(emo_value b); /* borrows the cell's bytes */
+emo_bytes_view emo_bytes_view_build(emo_value b); /* borrows the cell's bytes */
 
 int64_t emo_bytes_get_u16_le(emo_value b, int64_t i);
 int64_t emo_bytes_get_u32_le(emo_value b, int64_t i);

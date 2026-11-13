@@ -1,0 +1,157 @@
+require "emo/engine"
+require "emo/record"
+require "emo/rocksdb"
+
+// The embedded engine end to end (M31): SQL text in, rows out. The
+// golden walks CREATE TABLE, a multi-row INSERT, a table scan, a
+// filtered scan, an equality index scan, UPDATE, DELETE, the error
+// values, and a close/reopen — printing the command tag, the plan tree,
+// and the projected rows.
+
+const path = ".emo-build/engine-db"
+
+def hex(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}
+
+def show(value record.Value) String {
+  if value.is_null {
+    return "NULL"
+  }
+  case value.kind {
+    record.ColType.integer -> { return value.as_i64().to_string() }
+    record.ColType.bigint -> { return value.as_i64().to_string() }
+    record.ColType.real -> { return value.as_f64().to_string() }
+    record.ColType.double -> { return value.as_f64().to_string() }
+    record.ColType.text -> { return value.as_text() }
+    record.ColType.varchar -> { return value.as_text() }
+    record.ColType.boolean -> { return value.as_bool().to_string() }
+    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+  }
+}
+
+def show_values(values Array[record.Value]) String {
+  var out = "("
+  var i = 0
+  while i < values.length() {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + show(values[i])
+    i = i + 1
+  }
+  return out + ")"
+}
+
+def join(xs Array[String]) String {
+  var out = ""
+  var i = 0
+  while i < xs.length() {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + xs[i]
+    i = i + 1
+  }
+  return out
+}
+
+def open_or_die(path String) engine.Engine {
+  case engine.open(path) {
+    (R.error, e) -> { raise Exception.new(message: e) }
+    (R.ok, eng) -> { return eng }
+  }
+}
+
+def run(eng engine.Engine, text String) {
+  case eng.execute(text) {
+    (R.error, e) -> { println("error " + e) }
+    (R.ok, r) -> {
+      println(r.tag)
+      println("plan: " + r.plan)
+      if r.columns.length() > 0 {
+        println("columns: " + join(r.columns))
+      }
+      var i = 0
+      while i < r.rows.length() {
+        println("  " + show_values(r.rows[i]))
+        i = i + 1
+      }
+    }
+  }
+}
+
+// ---- a clean start -------------------------------------------------------
+
+case rocksdb.destroy_db(path) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, _) -> {}
+}
+
+const eng = open_or_die(path)
+
+// ---- DDL and DML ---------------------------------------------------------
+
+run(eng, "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, active BOOLEAN, handle VARCHAR(12))")
+run(eng, "INSERT INTO users (id, name, score, active, handle) VALUES (1, 'Ada', 95.5, TRUE, 'ada'), (2, 'Grace', NULL, FALSE, 'grace'), (3, 'Linus', 88.0, TRUE, NULL)")
+
+// ---- SELECT: the table scan, the filter, and the index scan --------------
+
+run(eng, "SELECT * FROM users")
+run(eng, "SELECT name, score FROM users WHERE active = TRUE")
+run(eng, "SELECT name FROM users WHERE id = 2")
+
+// ---- UPDATE and DELETE ---------------------------------------------------
+
+run(eng, "UPDATE users SET score = 99.0 WHERE id = 1")
+run(eng, "SELECT id, score FROM users WHERE id = 1")
+run(eng, "DELETE FROM users WHERE id = 3")
+run(eng, "SELECT * FROM users")
+
+// ---- the PG-shaped errors ------------------------------------------------
+
+run(eng, "SELECT * FROM missing")
+run(eng, "SELECT nope FROM users")
+run(eng, "SELECT id + name FROM users")
+run(eng, "SELECT DISTINCT name FROM users")
+run(eng, "SELECT CAST(id AS TEXT) FROM users")
+run(eng, "SELECT 1 / 0 FROM users")
+run(eng, "INSERT INTO users (id, name) VALUES (2, 'Duplicate')")
+run(eng, "INSERT INTO users (id) VALUES (4)")
+run(eng, "INSERT INTO users (id, name) VALUES ('x', 'Bad')")
+run(eng, "INSERT INTO users (id, name, handle) VALUES (4, 'Too Long', 'this-is-too-long')")
+
+// ---- the column executor (M36): blocks, filters, aggregates -------------
+
+run(eng, "CREATE TABLE cold (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN")
+run(eng, "INSERT INTO cold (id, name, score) VALUES (1, 'ada', 1.5), (2, 'grace', 2.5), (3, 'linus', NULL)")
+run(eng, "SELECT * FROM cold")
+run(eng, "SELECT id, name FROM cold WHERE id < 3")
+run(eng, "SELECT count(*) FROM cold")
+run(eng, "SELECT count(*), sum(id), avg(score), min(id), max(name) FROM cold")
+run(eng, "SELECT count(*) FROM cold WHERE id > 1")
+run(eng, "SELECT id, count(*) FROM cold")
+run(eng, "SELECT sum(name) FROM cold")
+run(eng, "UPDATE cold SET name = 'b'")
+run(eng, "DELETE FROM cold")
+run(eng, "CREATE TABLE coldpk (id BIGINT PRIMARY KEY) STORE = COLUMN")
+run(eng, "CREATE TABLE warm (id BIGINT) STORE = ROW")
+run(eng, "CREATE TABLE plain (id BIGINT)")
+
+// ---- the catalog survives a reopen --------------------------------------
+
+eng.close()
+const again = open_or_die(path)
+run(again, "SELECT * FROM users")
+run(again, "SELECT count(*) FROM cold")
+again.close()
+
+println("done")

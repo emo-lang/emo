@@ -1,0 +1,286 @@
+require "emo/record"
+require "emo/rocksdb"
+
+// The record layer end to end (M29): create a table in the catalog,
+// insert rows covering every v0 type (NULLs, an embedded NUL in BYTEA,
+// UTF-8 TEXT), read by rowid, scan the table, find rows through unique
+// and non-unique secondary indexes, and reopen the store to prove the
+// catalog and the rows survive.
+//
+// Values print through their typed accessors; BYTEA prints as hex so the
+// embedded NUL is visible. Every run starts from a destroyed database.
+
+const path = ".emo-build/record-db"
+
+def hex(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}
+
+def show(value record.Value) String {
+  if value.is_null {
+    return "NULL"
+  }
+  case value.kind {
+    record.ColType.integer -> { return value.as_i64().to_string() }
+    record.ColType.bigint -> { return value.as_i64().to_string() }
+    record.ColType.real -> { return value.as_f64().to_string() }
+    record.ColType.double -> { return value.as_f64().to_string() }
+    record.ColType.text -> { return value.as_text() }
+    record.ColType.varchar -> { return value.as_text() }
+    record.ColType.boolean -> { return value.as_bool().to_string() }
+    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+  }
+}
+
+def show_row(row record.Row) String {
+  var out = "rowid " + row.rowid.to_string() + ":"
+  var i = 0
+  while i < row.values.length() {
+    out = out + " " + show(row.values[i])
+    i = i + 1
+  }
+  return out
+}
+
+def show_rows(rows Array[record.Row]) {
+  var i = 0
+  while i < rows.length() {
+    println("  " + show_row(rows[i]))
+    i = i + 1
+  }
+}
+
+def joined(xs Array[String]) String {
+  var out = ""
+  var i = 0
+  while i < xs.length() {
+    if i > 0 {
+      out = out + ","
+    }
+    out = out + xs[i]
+    i = i + 1
+  }
+  return out
+}
+
+def open_or_die(path String) record.Store {
+  case record.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, store) -> { return store }
+  }
+}
+
+def table_or_die(store record.Store, name String) record.Table {
+  case store.table(name) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, table) -> { return table }
+  }
+}
+
+def create_or_die(store record.Store) record.Table {
+  const columns = [
+    record.column("id", record.ColType.bigint).primary_key(),
+    record.column("name", record.ColType.text).not_null(),
+    record.column("score", record.ColType.double),
+    record.column("rating", record.ColType.real),
+    record.column("active", record.ColType.boolean),
+    record.column("note", record.ColType.text),
+    record.column("payload", record.ColType.bytea),
+    record.column("rank", record.ColType.integer),
+    record.varchar_column("handle", 12)
+  ]
+  const indexes = [
+    record.unique_index("users_id", ["id"]),
+    record.unique_index("users_name", ["name"]),
+    record.index("users_active", ["active"])
+  ]
+  case store.create_table("users", columns, indexes) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, table) -> { return table }
+  }
+}
+
+def insert_or_die(table record.Table, values Array[record.Value]) Int64 {
+  case table.insert(values) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, rowid) -> { return rowid }
+  }
+}
+
+def scan_or_die(table record.Table) Array[record.Row] {
+  case table.scan() {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, rows) -> { return rows }
+  }
+}
+
+def scan_index_or_die(table record.Table, name String, keys Array[record.Value]) Array[record.Row] {
+  case table.scan_index(name, keys) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, rows) -> { return rows }
+  }
+}
+
+def column_type(column record.Column) String {
+  if column.kind == record.ColType.varchar {
+    return "VARCHAR(" + column.varchar_len.to_string() + ")"
+  }
+  return record.type_name(column.kind)
+}
+
+def type_list(table record.Table) String {
+  var out = []
+  var i = 0
+  while i < table.columns.length() {
+    out = out.append(column_type(table.columns[i]))
+    i = i + 1
+  }
+  return joined(out)
+}
+
+def index_list(table record.Table) String {
+  var out = []
+  var i = 0
+  while i < table.indexes.length() {
+    out = out.append(table.indexes[i].name)
+    i = i + 1
+  }
+  return joined(out)
+}
+
+def seed(users record.Table) {
+  const binary = Bytes.new(3)
+  binary.set(0, 0)
+  binary.set(1, 1)
+  binary.set(2, 255)
+
+  const row1 = [
+    record.bigint(1),
+    record.text("Ada"),
+    record.double(95.5),
+    record.real(4.5),
+    record.boolean(true),
+    record.text("alpha"),
+    record.bytea(binary),
+    record.integer(7),
+    record.varchar("ada")
+  ]
+  const row2 = [
+    record.bigint(2),
+    record.text("Grace"),
+    record.null_value(),
+    record.null_value(),
+    record.boolean(false),
+    record.null_value(),
+    record.bytea(Bytes.new(0)),
+    record.null_value(),
+    record.varchar("grace")
+  ]
+  const row3 = [
+    record.bigint(3),
+    record.text("Linus"),
+    record.double(88.0),
+    record.real(3.25),
+    record.boolean(true),
+    record.text("γ"),
+    record.bytea(Bytes.new(1)),
+    record.integer(-3),
+    record.null_value()
+  ]
+  const one = insert_or_die(users, row1)
+  const two = insert_or_die(users, row2)
+  const three = insert_or_die(users, row3)
+  println("insert: rowids=${one},${two},${three}")
+}
+
+def duplicate_attempt(users record.Table) {
+  const duplicate = [
+    record.bigint(4),
+    record.text("Ada"),
+    record.null_value(),
+    record.null_value(),
+    record.boolean(false),
+    record.null_value(),
+    record.null_value(),
+    record.null_value(),
+    record.null_value()
+  ]
+  case users.insert(duplicate) {
+    (R.error, why) -> { println("duplicate: " + why) }
+    (R.ok, _) -> { raise Exception.new(message: "record demo: the duplicate was accepted") }
+  }
+}
+
+// ---- a clean start -------------------------------------------------------
+
+case rocksdb.destroy_db(path) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, _) -> {}
+}
+
+const store = open_or_die(path)
+const users = create_or_die(store)
+println("create: users columns=${users.columns.length()} types=${type_list(users)} indexes=${index_list(users)}")
+
+seed(users)
+duplicate_attempt(users)
+
+// ---- reads: by rowid, the table scan, the index scans --------------------
+
+case users.get(2) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, found) -> {
+    if found.length() != 1 {
+      raise Exception.new(message: "record demo: row 2 is missing")
+    }
+    println("get 2: " + show_row(found[0]))
+  }
+}
+case users.get(99) {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, found) -> { println("get 99: found=${found.length()}") }
+}
+
+const rows = scan_or_die(users)
+println("scan: ${rows.length()} rows")
+show_rows(rows)
+
+const by_name = scan_index_or_die(users, "users_name", [record.text("Grace")])
+println("index users_name Grace: ${by_name.length()} row(s)")
+show_rows(by_name)
+
+const by_active = scan_index_or_die(users, "users_active", [record.boolean(true)])
+println("index users_active true: ${by_active.length()} row(s)")
+show_rows(by_active)
+
+const by_id = scan_index_or_die(users, "users_id", [record.bigint(3)])
+println("index users_id 3: ${by_id.length()} row(s)")
+show_rows(by_id)
+
+// ---- close, reopen: the catalog and the rows survive ---------------------
+
+store.close()
+const again = open_or_die(path)
+const users_again = table_or_die(again, "users")
+var names = []
+var t = 0
+const all = again.tables()
+while t < all.length() {
+  names = names.append(all[t].name)
+  t = t + 1
+}
+println("reopen: tables=${joined(names)} columns=${users_again.columns.length()} types=${type_list(users_again)} indexes=${index_list(users_again)}")
+const again_rows = scan_or_die(users_again)
+println("reopen scan: ${again_rows.length()} rows")
+show_rows(again_rows)
+again.close()
+
+println("done")
