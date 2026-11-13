@@ -94,7 +94,7 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 | M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点(scan/filter/project、insert/update/delete)、骑记录层的表达式求值、嵌入式测试面。v0 的 SELECT 是单表(投影、WHERE、等值索引扫描);连接、聚合、ORDER BY/LIMIT 与子查询等 M34。 |
 | M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、每事务一个 WriteBatch 且 COMMIT 做 fsync、Emo 锁管理器。v0 是表级锁。 |
 | M33 —— 线协议 | 70 | PG 协议 v3 简单路径:启动(拒 SSL/GSSENC、trust 认证)、ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、带 v0 OID 的 RowDescription、文本格式 DataRow、CommandComplete、EmptyQueryResponse 与 ErrorResponse;每连接一个骑共享 Store 与表锁的会话 actor;psql 端到端,`postgres` 客户端走它零参数的简单路径。 |
-| M34 —— 符合性与文档 | 71 | SQL 语料、实测性能表、文档 EN+zh。 |
+| M34 —— 符合性与文档 | 71 | SQL 语料——SQLLogicTest 精神的 126 个文本可比用例,骑一台全新数据库,钉死标签、行与 `code: message`——实测性能表(`projects/emo-db/bench`)、已交付表面文档,以及弧二复核。 |
 
 **D10 —— 字节视图:`Bytes` 以借用视图过 C ABI。** RocksDB 的键与
 值是任意字节——内嵌的 NUL 是普通数据——而 sqlite3/postgres 绑定的
@@ -134,20 +134,94 @@ get/put/delete、WriteBatch、iterator、快照、column family。键与值
 是事务冲突,不是内存安全。M28 验证了这个前提;若某个 hosted
 runtime 将来长出真并行,就在那里重查。
 
+## 已交付
+
+弧一以 PostgreSQL 门面背后的行存收尾。天梯,按包自顶向下:
+
+- **`emo/rocksdb`**(`projects/emo-db/rocksdb`)——骑 RocksDB 官方
+  API 的 C shim:open/close、get/put/delete、WriteBatch、iterator、
+  快照、column family、`list_families`,以及 COMMIT 的 `write_sync`。
+  键与值是 `Bytes`(D10)。
+- **`emo/record`**(`projects/emo-db/record`)——目录 column
+  family(表、列、类型、索引、oid 与 rowid 计数)、v0 类型的行编
+  码、rowid 分配、每索引一个 column family,以及 `Txn`:一个
+  WriteBatch、每语句一个快照(读已提交)、读己之写的 pending 覆盖
+  层、只在 commit 时发布 rowid 计数。
+- **`sql`**(标准库,五个 target 全部逐字节一致)——SELECT、
+  CREATE TABLE、INSERT、UPDATE、DELETE 与 BEGIN/COMMIT/ROLLBACK 的
+  AST 与解析器、规范渲染、多语句字符串的 `split`,以及用字节偏移
+  回答而不是猜测的形状检查。
+- **`emo/engine`**(`projects/emo-db/engine`)——分析器、带三值 NULL
+  逻辑的类型化表达式、带等值索引扫描的 scan/filter/project 计划、
+  四个执行器、会话面(事务状态、经 `LockClient` 的表锁),以及带
+  wait-for 图与 `40P01` 的锁管理器进程。
+- **`emo/wire`**(`projects/emo-db/wire`)——`net` 上的协议 v3 简单
+  查询路径:每连接一个会话 actor、trust 认证、ParameterStatus 集
+  合、多语句 Query 字符串、带 v0 OID 的 RowDescription、文本格式
+  DataRow、CommandComplete、EmptyQueryResponse、ErrorResponse 与
+  ReadyForQuery。
+
+v0 的 SQL 表面,准确地说:CREATE TABLE 带八个 v0 类型与列级
+`NOT NULL`/`PRIMARY KEY`;INSERT 带可选列清单与一行或多行;UPDATE
+与 DELETE 带可选 WHERE;单表 SELECT 带投影、别名,以及比较、
+AND/OR/NOT、算术、文本 `||`、`IS`、`IN`、`BETWEEN`、`LIKE` 与
+`CASE` 的 WHERE——索引列与常量的等值变索引扫描,其余表扫描;以及
+骑读已提交的 BEGIN/COMMIT/ROLLBACK。其余一切按名答 `0A000`——连
+接、子查询、GROUP BY/HAVING、ORDER BY/LIMIT、DISTINCT、聚合、函
+数、CAST、参数——或用各自失败家族的 PG 形状码回答:`42601` 解析、
+`42P01` 缺关系、`42703` 缺列、`42883` 缺操作符、`42804` 类型不
+符、`23505` 唯一、`23502` 非空、`22001` 超长、`22012` 除零、
+`42P07` 表重复、`42P16` 多主键、`25001`/`25P01` 事务状态。
+
+语料就是把表面写成数据:`projects/emo-db/corpus/` 放六个 `.test`
+文件(ddl、types、dml、select、transactions、errors),126 个用
+例,SQLLogicTest 精神——`statement ok` 带可选钉死的命令标签、
+`statement error` 带钉死的 `code: message` 行、`query` 带钉死的行
+(规范渲染:`|` 分隔、NULL 写 `NULL`、布尔写 `true`/`false`)。一
+个 runner(`corpus_runner`)每次调用销毁并重开一台数据库、按顺序
+执行各文件,闸门把它的输出对照三遍逐字节。
+
+## 实测
+
+只写 bench 脚本测出的数字(`projects/emo-db/bench/run.sh`,2026-11-
+13,Darwin arm64,c target;一次预热加三次计时,均值毫秒每次;
+`bench/results.md` 携带记录):
+
+| 工作负载 | 规模 | 毫秒每次 | 每秒 |
+| --- | --- | ---: | ---: |
+| INSERT,autocommit | 200 行,每行一个事务 | 1160 | 172 插入 |
+| INSERT,一个事务 | 10000 行,一次 COMMIT | 6680 | 1497 插入 |
+| 主键查找 | 10000 次查找,骑 10000 行 | 1037 | 9643 查找 |
+| 全表扫描 | 10000 行,一条 SELECT | 580 | 17241 行 |
+| UPDATE,autocommit | 200 行按主键 | 1305 | 153 更新 |
+
+autocommit 的行是每次一条 fsync 过的写——持久化点就是点。未测:线
+协议的单查询延迟、并发会话、大于内存的表,以及弧二的列引擎。
+
 ## 弧二 —— OLAP 形状(方向已定,切法未定)
 
-- 列存 v1 同样骑 RocksDB:每列一个 column family,列块作 value。单
-一存储依赖对两弧都成立;自有 Parquet 式段文件格式留作一条由性能证
-据挣来的决策。
-- 列批上的向量化表达式求值;扫描靠块级 min/max 统计剪枝。
-- `CREATE TABLE ... STORE = COLUMN` 进目录;planner 按表存储路由。
-HTAP 的门在这里开。
-- 本弧重开的语言缺口:RocksDB 之外的二进制文件 IO(`os` 的 Bytes 形
-状 fd 面)。到那时这个需求已与所有搬运二进制数据的 Emo 程序共享
-——正是评估说过的缺口该关上的方式。
+弧一的 planner 现在已经建到可以插,所以速写按行存实际建出的东西
+复核:
 
-本弧的里程碑切法,等弧一的 planner 建到可以插的时候再写——不预
-写。
+- **插点是计划,不是解析器。** 分析器、AST、类型规则与目录都与存
+储无关;列引擎会坐在同一个 scan/filter/project 形状与同一个
+`Result` 背后。弧一的节点一次物化一行,所以列引擎的批形状执行器
+是同一接口下的第二个实现。
+- **目录还没有存储选择。** `STORE = COLUMN` 是第一个 schema 变
+更:目录表记录里的一个字段,加上 planner 按它路由。
+- **存储布局已经显出形状。** 每索引一个 column family 正是 v0 自己
+的先例,对应每列一个 column family;列块会作为值住在这些 family
+里,过同一个 `Bytes` 借用视图。
+- **共享阻塞在类型系统。** NUMERIC(语言里的 Int128 或 bignum)与
+DATE/TIMESTAMP(日历包)与引擎无关;弧二继承先落地的那一个。
+- **线协议与会话面已经与引擎无关。** 同一套协议、事务、锁与快照
+服务列存,不需要第二个控制面。
+- **真正的代码在向量化求值器。** 靠块级 min/max 统计剪枝的扫描;
+自有 Parquet 式段文件格式只有在 column family 布局的证据要求的时
+候才做。
+
+本弧的里程碑切法是下一个设计动作,不在本次文档里:弧一带着点名
+的插点收尾,切法从它们出发。
 
 ## 诚实的代价
 
@@ -180,12 +254,12 @@ HTAP 的门在这里开。
 - `Bytes` 的 foreign 返回——out 参数的规则覆盖弧一的全部读路径;返
 回位置等一个真需要它的 API。
 - 索引上的范围扫描——v0 的索引键只保证精确前缀、不保序;比较编码
-与计划器的范围节点随 M34 的符合性广度落地。
+与计划器的范围节点等后面的计划器里程碑。语料钉住现状。
 - 流式扫描——v0 物化整行;游标形状的记录 API 等一个消费它的计划
 节点。
 - SELECT 的其余部分——连接、聚合、`GROUP BY`/`HAVING`、`ORDER
-BY`/`LIMIT`、子查询、`DISTINCT` 与 `CAST`——v0 引擎拒绝它们;随
-M34 的符合性广度落地。
+BY`/`LIMIT`、子查询、`DISTINCT` 与 `CAST`——v0 引擎拒绝它们,语
+料钉住每一条拒绝;后面的广度里程碑再落地。
 - 记录 API 的非事务写——绑定的普通 `write` 没开 RocksDB 的
 `sync`;事务的 COMMIT 调 `write_sync`。直接调记录 API 且需要持久性
 的调用方走事务。

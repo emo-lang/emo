@@ -181,6 +181,7 @@ expect 0 "the wire type-checks" "$rc"
 # skipped `emo deps resolve`, not something the gate should paper over.
 for lock in kv_demo/package.lock record_demo/package.lock \
             engine_demo/package.lock txn_demo/package.lock \
+            corpus_runner/package.lock bench/package.lock \
             wire/package.lock wire_demo/package.lock \
             wire_client/package.lock; do
   if [ ! -f "$lock" ]; then
@@ -256,6 +257,51 @@ while [ "$run" -le 3 ]; do
     "txn run $run is byte-identical"
   run=$((run + 1))
 done
+
+# --- build and run the SQL corpus -----------------------------------------
+#
+# The corpus is data: six files, one fresh database per run, the case
+# expectations pinned as text. The runner prints one line per file and
+# the total; three runs must agree byte for byte.
+
+( cd corpus_runner && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/corpus_runner" ) >"$OUT/corpus-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the corpus runner builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+run=1
+while [ "$run" -le 3 ]; do
+  ( cd corpus_runner && "$OUT/corpus_runner" ../corpus/ddl.test \
+      ../corpus/types.test ../corpus/dml.test ../corpus/select.test \
+      ../corpus/transactions.test ../corpus/errors.test ) \
+    >"$OUT/corpus-run-$run.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "corpus run $run exits 0" "$rc"
+  expect_same_file corpus/expected.txt "$OUT/corpus-run-$run.txt" \
+    "corpus run $run is byte-identical"
+  run=$((run + 1))
+done
+
+# --- build the bench and smoke its counts ---------------------------------
+#
+# The bench's numbers are measured by bench/run.sh, never by the gate;
+# the gate checks that every mode still runs and answers its count.
+
+( cd bench && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/bench" ) >"$OUT/bench-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the bench builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+bench_db=$OUT/bench-smoke-db
+( cd bench && "$OUT/bench" insert-autocommit "$bench_db" 25 &&
+    "$OUT/bench" seed "$bench_db" 100 &&
+    "$OUT/bench" lookup "$bench_db" 40 100 &&
+    "$OUT/bench" scan "$bench_db" &&
+    "$OUT/bench" update "$bench_db" 40 100 &&
+    "$OUT/bench" insert-batch "$bench_db" 25 ) \
+  >"$OUT/bench-smoke.txt" 2>&1 && rc=0 || rc=$?
+expect 0 "the bench modes run" "$rc"
+expect_same_file bench/smoke_expected.txt "$OUT/bench-smoke.txt" \
+  "the bench modes answer their counts"
 
 # --- build and run the wire golden ---------------------------------------
 #

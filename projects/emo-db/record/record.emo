@@ -1796,6 +1796,14 @@ class Txn {
 
   def commit() (R, Txn) {
     self.live()
+    // A transaction that buffered nothing — an explicit BEGIN/COMMIT
+    // with no writes, or an autocommit SELECT — has nothing to make
+    // durable, so it closes without touching the WAL. A read-only
+    // statement must not pay a COMMIT's fsync.
+    if self.pending.length() == 0 {
+      self.close_resources()
+      return (R.ok, self)
+    }
     // COMMIT is the transaction's durability point: the batch write
     // asks the WAL to fsync before it answers.
     case self.batch.write_sync() {

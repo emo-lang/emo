@@ -3,10 +3,11 @@
 emo-db is Emo's own client-server SQL database: one PostgreSQL-dialect
 surface over two engines — a row store for OLTP first, a column store
 for OLAP later. The design record is [`docs/emo-db.md`](../../docs/emo-db.md);
-this directory is the project. M28 (the RocksDB half), M29 (the record
-layer), M30 (the SQL front-end's DML/DDL), M31 (the planner and
-executor), M32 (transactions and the session plane), and M33 (the
-PostgreSQL wire) are landed; the conformance pass follows in M34.
+this directory is the project. Arc one is closed: M28 (the RocksDB
+half), M29 (the record layer), M30 (the SQL front-end's DML/DDL), M31
+(the planner and executor), M32 (transactions and the session plane),
+M33 (the PostgreSQL wire), and M34 (conformance and documentation) are
+landed; arc two — the column engine — starts as a design act.
 
 ## Layout
 
@@ -49,12 +50,22 @@ PostgreSQL wire) are landed; the conformance pass follows in M34.
   connections.
 - `wire_client/` — the standard library's `postgres` client against
   emo-db: the same SQL script psql runs, through libpq's simple path.
+- `corpus/` — the SQL surface as data: six `.test` files and 126 cases
+  in the SQLLogicTest spirit, `statement ok` with a pinned tag,
+  `statement error` with a pinned `code: message` line, and `query`
+  with pinned rows.
+- `corpus_runner/` — the corpus's only code: one fresh database per
+  invocation, the files in argument order, per-file counts, failures
+  collected.
+- `bench/` — the benchmark workloads and `run.sh`; `results.md`
+  records the measured numbers.
 - `check.sh` — the gate: resolve RocksDB, stage the registry, check the
   four packages, build and run the four embedded demos three times
-  against their `expected.txt`, drive the wire through psql and the
-  `postgres` client (one fresh server per phase, each byte-pinned),
-  and pin the two refusals (the interpreter's E3009 and a non-`c`
-  target's E5007).
+  against their `expected.txt`, run the corpus three times
+  byte-identical, smoke the bench's counts, drive the wire through psql
+  and the `postgres` client (one fresh server per phase, each
+  byte-pinned), and pin the two refusals (the interpreter's E3009 and a
+  non-`c` target's E5007).
 
 ## The binding's shape
 
@@ -170,6 +181,20 @@ Bind/Execute), SSL, scram-sha-256, and cancel requests are not spoken.
 `server_version` reports the PostgreSQL compatibility level (`16.4`)
 because tools parse it; the product's own version stays in the package.
 
+## Conformance and measurement
+
+The corpus states the SQL surface as data and the runner is its only
+code. A record is a header (`statement ok`, `statement error`, or
+`query`), the statement's lines, and after `----` the expectation — a
+command tag, a `code: message` line, or the rows in the runner's
+canonical rendering (`|`-separated, `NULL`, `true`/`false`). 126 cases
+over one fresh database; the gate runs it three times byte-identical.
+
+The bench's modes print counts only — `bench/run.sh` times them (one
+warmup, three timed runs) and writes `bench/results.md`; the design
+record carries the measured table. The gate checks the modes run and
+answer their counts, never a time.
+
 ## Running the gate
 
 RocksDB must be resolvable through `pkg-config`:
@@ -195,5 +220,6 @@ view. M29 landed the same day: the record layer, the record golden, and
 the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, M31
 the embedded planner/executor and its golden, M32 the transaction and
 session plane with its two-session golden, and M33 the PostgreSQL wire
-with psql and the `postgres` client as goldens. M34 — conformance and
-documentation — is next.
+with psql and the `postgres` client as goldens. M34 landed 2026-11-13:
+the 126-case corpus, the measured table, and the shipped-surface
+documentation close arc one.

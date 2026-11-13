@@ -1,0 +1,13 @@
+package {
+  name = "emo/emo_db_corpus"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "emo/engine" = "0.1.0"
+    "emo/record" = "0.1.0"
+    "emo/rocksdb" = "0.1.0"
+    "file" = "0.1.0"
+    "os" = "0.1.0"
+  }
+}

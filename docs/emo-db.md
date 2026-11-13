@@ -124,7 +124,7 @@ the ladder's shape:
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for M34. |
 | M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, one WriteBatch per transaction with the COMMIT's fsync, the Emo lock manager. Table-level locks in v0. |
 | M33 — The wire | 70 | PG protocol v3, simple path: startup (SSL/GSSENC refused, trust authentication), ParameterStatus/BackendKeyData/ReadyForQuery, Query with multi-statement strings, RowDescription with the v0 OIDs, text-format DataRow, CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store and the table locks; psql end-to-end and the `postgres` client through its zero-parameter simple path. |
-| M34 — Conformance and documentation | 71 | The SQL corpus, the measured-performance table, docs EN+zh. |
+| M34 — Conformance and documentation | 71 | The SQL corpus — 126 text-comparable cases in the SQLLogicTest spirit over one fresh database, tags, rows, and `code: message` errors pinned — the measured-performance table (`projects/emo-db/bench`), the shipped-surface documentation, and the arc-two review. |
 
 **D10 — The byte view: `Bytes` crosses the C ABI as a borrowed view.**
 RocksDB's keys and values are arbitrary bytes — an embedded NUL is
@@ -176,23 +176,113 @@ arbitrates transactional conflict, not memory safety. M28 verifies
 this premise; if a hosted runtime ever grows true parallelism, the
 premise is re-checked there.
 
+## What shipped
+
+Arc one closes with a row store behind the PostgreSQL surface. The
+ladder, top to bottom as packages:
+
+- **`emo/rocksdb`** (`projects/emo-db/rocksdb`) — the C shim over
+  RocksDB's official API: open/close, get/put/delete, WriteBatch,
+  iterators, snapshots, column families, `list_families`, and the
+  COMMIT's `write_sync`. Keys and values are `Bytes` (D10).
+- **`emo/record`** (`projects/emo-db/record`) — the catalog column
+  family (tables, columns, types, indexes, oid and rowid counters), the
+  row encoding over the v0 types, rowid allocation, one column family
+  per index, and the `Txn`: one WriteBatch, a per-statement snapshot
+  (read committed), a pending overlay for read-your-writes, the
+  rowid counters published only at commit.
+- **`sql`** (standard library, pure Emo on all five targets) — the AST
+  and parser for SELECT, CREATE TABLE, INSERT, UPDATE, DELETE, and
+  BEGIN/COMMIT/ROLLBACK, the canonical renderings, `split` for
+  multi-statement strings, and the shape checks that answer byte-offset
+  errors instead of guessing.
+- **`emo/engine`** (`projects/emo-db/engine`) — the analyzer, the typed
+  expressions with three-valued NULL logic, the scan/filter/project
+  plan with an equality index scan, the four executors, the session
+  plane (transaction state, table locks through a `LockClient`), and
+  the lock-manager process with a wait-for graph and `40P01`.
+- **`emo/wire`** (`projects/emo-db/wire`) — protocol v3's simple query
+  path over `net`: one session actor per connection, trust
+  authentication, the ParameterStatus set, multi-statement Query
+  strings, RowDescription with the v0 OIDs, text-format DataRow,
+  CommandComplete, EmptyQueryResponse, ErrorResponse, and
+  ReadyForQuery.
+
+The v0 SQL surface, stated exactly: CREATE TABLE with the eight v0
+types and column-level `NOT NULL`/`PRIMARY KEY`; INSERT with an
+optional column list and one or more rows; UPDATE and DELETE with an
+optional WHERE; single-table SELECT with a projection, aliases, and a
+WHERE over comparisons, AND/OR/NOT, arithmetic, text `||`, `IS`, `IN`,
+`BETWEEN`, `LIKE`, and `CASE` — an equality between an indexed column
+and a constant becomes an index scan, everything else a table scan; and
+BEGIN/COMMIT/ROLLBACK over read committed. Everything else answers
+`0A000` by name — joins, subqueries, GROUP BY/HAVING, ORDER BY/LIMIT,
+DISTINCT, aggregates, functions, CAST, parameters — or the PG-shaped
+code for its own failure family: `42601` parse, `42P01` missing
+relation, `42703` missing column, `42883` missing operator,
+`42804` type mismatch, `23505` unique, `23502` not-null, `22001` too
+long, `22012` division by zero, `42P07` duplicate table, `42P16`
+multiple primary keys, `25001`/`25P01` transaction state.
+
+The corpus is the surface as data: `projects/emo-db/corpus/` holds six
+`.test` files (ddl, types, dml, select, transactions, errors) and 126
+cases in the SQLLogicTest spirit — `statement ok` with an optional
+pinned command tag, `statement error` with a pinned
+`code: message` line, and `query` with pinned rows rendered canonically
+(`|`-separated, NULL as `NULL`, booleans `true`/`false`). One runner
+(`corpus_runner`) destroys and reopens one database per invocation,
+executes the files in order, and the gate compares its transcript
+across three runs byte for byte.
+
+## Measured
+
+Numbers only where the bench script measured them (`projects/emo-db/bench/run.sh`,
+2026-11-13, Darwin arm64, c target; one warmup and three timed runs,
+the mean in milliseconds per run; `bench/results.md` carries the
+record):
+
+| workload | size | ms per run | per second |
+| --- | --- | ---: | ---: |
+| INSERT, autocommit | 200 rows, one transaction each | 1160 | 172 inserts |
+| INSERT, one transaction | 10000 rows, one COMMIT | 6680 | 1497 inserts |
+| primary-key lookup | 10000 lookups over 10000 rows | 1037 | 9643 lookups |
+| full table scan | 10000 rows, one SELECT | 580 | 17241 rows |
+| UPDATE, autocommit | 200 rows by primary key | 1305 | 153 updates |
+
+The autocommit rows are one fsynced write each — the durability point
+is the point. Not measured: the wire's per-query latency, concurrent
+sessions, tables larger than memory, and arc two's column engine.
+
 ## Arc two — the OLAP shape (direction decided, cut open)
 
-- Columnar v1 rides RocksDB too: one column family per column, column
-blocks as values. The single storage dependency holds for both arcs;
-a Parquet-like segment format of our own stays a decision that
-performance evidence earns later.
-- Vectorized expression evaluation over column batches; scans pruned
-by block-level min/max statistics.
-- `CREATE TABLE ... STORE = COLUMN` joins the catalog; the planner
-routes by the table's storage. The HTAP door opens here.
-- The language gap this arc reopens: binary file IO beyond RocksDB
-(`os`'s Bytes-shaped fd surface). By then the need is shared with
-every Emo program that moves binary data — exactly how the assessment
-said the gap should close.
+Arc one's planner now exists to plug into, so the sketch is reviewed
+against what the row store actually built:
 
-The arc's milestone cut is written when arc one's planner exists to
-plug into — not before.
+- **The plug point is the plan, not the parser.** The analyzer, the
+  AST, the type rules, and the catalog are storage-agnostic; a column
+  engine would sit behind the same scan/filter/project shape and the
+  same `Result`. Arc one's nodes materialize one row at a time, so a
+  column engine's batch-shaped executor is the second implementation
+  behind one interface.
+- **The catalog carries no storage choice yet.** `STORE = COLUMN` is
+  the first schema change: one field in the catalog's table record,
+  and the planner routing by it.
+- **The storage layout already shows the shape.** One column family
+  per index is v0's own precedent for one column family per column;
+  column blocks would ride as values in those families, crossing the
+  same `Bytes` borrowed view.
+- **The shared blockers are the type system's.** NUMERIC (Int128 or a
+  bignum in the language) and DATE/TIMESTAMP (a calendar package) are
+  engine-agnostic; arc two inherits whatever lands first.
+- **The wire and the session plane are engine-agnostic already.** The
+  same protocol, transactions, locks, and snapshots serve the column
+  store without a second control plane.
+- **The vectorized evaluator is the real new code.** Scans pruned by
+  block-level min/max statistics, and a Parquet-like segment format of
+  our own only if the column-family layout's evidence demands it.
+
+The arc's milestone cut is the next design act, not this pass: arc one
+closes with the plug points named, and the cut starts from them.
 
 ## The honest costs
 
@@ -230,12 +320,14 @@ the pg_dump shape; both plausible, neither decided.
 arc-one read; a return position waits for an API that truly needs one.
 - Range scans over an index — the v0 index key is exact-prefix capable,
 not order-preserving; the comparison encoding and the planner's range
-nodes wait for M34's conformance breadth.
+nodes wait for a later planner milestone. The corpus pins the current
+shape.
 - Streaming scans — v0 materializes rows; a cursor-shaped record API
 waits for a plan node that consumes one.
 - The rest of SELECT — joins, aggregates, `GROUP BY`/`HAVING`, `ORDER
 BY`/`LIMIT`, subqueries, `DISTINCT`, and `CAST` — the v0 engine
-refuses them; they land with M34's conformance breadth.
+refuses them, and the corpus pins each refusal; a later breadth
+milestone lands them.
 - The record API's non-transactional writes — the binding's plain
 `write` leaves RocksDB's `sync` off; the transaction's COMMIT calls
 `write_sync`. A direct record-API caller that needs durability takes the

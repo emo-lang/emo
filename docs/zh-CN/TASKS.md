@@ -52,7 +52,7 @@
 | M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:`emo/engine` 包骑 `emo/sql` 与 `emo/record`——计划节点(scan、filter、project、insert、update、delete)、带 SQL 三值 NULL 逻辑的类型化表达式求值、单表 SELECT(投影、WHERE;索引列上的等值变成索引扫描)、CREATE TABLE(v0 类型、主键索引)、INSERT、UPDATE 与 DELETE(记录层新增的 update/delete 在一次批量里重写行与索引条目),以及 PG 形状的 `code: message` 错误(`42P01`、`42703`、`42883`、`42804`、`23505`、`23502`、`22001`、`22012`、`0A000`、`42601`)——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出并打印计划树,经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
 | M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
 | M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
-| M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料(语句、结果、错误——文本可比)、实测性能表(只写测过的数字)、文档收尾——`docs/emo-db.md` 长成已交付表面的参考、文档 EN+zh、README 行、弧二速写对照弧一实际建出的东西复核(`CHECK.md`)。 |
+| M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1761,3 +1761,32 @@ Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户�
 - [x] **T70.10** —— 文档 EN+zh:项目 README、设计记录的线协议注记、
       `postgres` 零参数路径、`sql.split` API。
 - [x] **T70.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M34 —— 符合性与文档
+
+### 步骤 71 —— 符合性与文档
+
+**前置:** Step 65–70(整个行存弧)。**完成标准:** 引擎的 SQL 表面有一
+套 SQLLogicTest 精神的文本可比语料——语句用例钉死命令标签、查询用例
+钉死行、错误用例钉死 `code: message`——对一台全新数据库跑,经
+`projects/emo-db/check.sh` 三遍逐字节一致;实测性能表只记录 bench 脚
+本真正测出的数字,并写明机器、日期与方法;`docs/emo-db.md` 长出已交
+付表面一节、语料与基准的指针、被修正的过时说法,以及对照弧一实际建
+出东西的弧二复核(EN+zh);项目 README 带上新闸门与 M34 状态;仓库可
+构建。
+
+- [x] **T71.1** —— 规格:本节 EN+zh 与
+      `plan/step-71-conformance.md`。
+- [x] **T71.2** —— 语料格式与 `corpus_runner`:每次一台全新数据库、
+      按文件计数、收集失败并以非零退出。
+- [x] **T71.3** —— 语料文件:DDL、v0 类型、DML、SELECT 及其表达式、
+      事务,以及错误/SQLSTATE 表面。
+- [x] **T71.4** —— 闸门:构建语料 runner 并跑三遍逐字节一致。
+- [x] **T71.5** —— bench 程序与 `bench/run.sh`(一次预热加三次计时),
+      以及实测记录。
+- [x] **T71.6** —— 闸门的 bench 烟测:核对各模式计数,不钉时间。
+- [x] **T71.7** —— `docs/emo-db.md` + zh:已交付表面、语料与基准两
+      节、实测表、被修正的开放项,以及弧二复核。
+- [x] **T71.8** —— 项目 README EN+zh:语料、bench、闸门新检查与
+      M34 状态。
+- [x] **T71.9** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。

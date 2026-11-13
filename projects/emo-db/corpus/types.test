@@ -1,0 +1,79 @@
+# The v0 type subset: every column kind, NULLs, integer and float
+# boundaries, UTF-8 text, the VARCHAR code-point count, and the
+# coercion refusals.
+
+statement ok
+CREATE TABLE typed (
+  i INTEGER,
+  b BIGINT,
+  r REAL,
+  d DOUBLE PRECISION,
+  t TEXT,
+  v VARCHAR(5),
+  f BOOLEAN,
+  y BYTEA
+)
+----
+CREATE TABLE
+
+statement ok
+INSERT INTO typed (i, b, r, d, t, v, f, y) VALUES (2147483647, 9223372036854775807, 1, 2.25, 'Ada', 'héllo', TRUE, NULL)
+----
+INSERT 0 1
+
+statement ok
+INSERT INTO typed (i, b, r, d, t, v, f) VALUES (-2147483648, -9223372036854775808, -1, -2.25, 'O''Brien', 'abc', FALSE)
+----
+INSERT 0 1
+
+statement ok
+INSERT INTO typed (i) VALUES (NULL)
+----
+INSERT 0 1
+
+query
+SELECT i, b, r, d, t, v, f, y FROM typed
+----
+2147483647|9223372036854775807|1.0|2.25|Ada|héllo|true|NULL
+-2147483648|-9223372036854775808|-1.0|-2.25|O'Brien|abc|false|NULL
+NULL|NULL|NULL|NULL|NULL|NULL|NULL|NULL
+
+statement ok
+UPDATE typed SET t = 'Zoë' WHERE i = 2147483647
+----
+UPDATE 1
+
+query
+SELECT t, v FROM typed WHERE i = 2147483647
+----
+Zoë|héllo
+
+statement error
+INSERT INTO typed (v) VALUES ('abcdef')
+----
+22001: value too long for type character varying(5)
+
+statement error
+INSERT INTO typed (r) VALUES (1.5)
+----
+42804: column "r" is of type real but expression is of type double precision
+
+statement error
+INSERT INTO typed (i) VALUES (2147483648)
+----
+42804: column "i" is of type integer but expression is of type bigint
+
+statement error
+INSERT INTO typed (f) VALUES (1)
+----
+42804: column "f" is of type boolean but expression is of type integer
+
+statement error
+INSERT INTO typed (t) VALUES (42)
+----
+42804: column "t" is of type text but expression is of type integer
+
+statement error
+INSERT INTO typed (b) VALUES (9223372036854775808)
+----
+42601: sql: integer out of range at byte 48

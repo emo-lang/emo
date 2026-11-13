@@ -1375,6 +1375,9 @@ class Engine {
     }
     if stmt.is(sql.CreateTable) {
       if self.in_tx() {
+        // The refusal is a failed statement like any other: the
+        // transaction aborts and its locks release, PostgreSQL's rule.
+        self.abort_tx()
         return fail("0A000", "DDL inside a transaction is not supported in v0")
       }
       return self.create_table(stmt)

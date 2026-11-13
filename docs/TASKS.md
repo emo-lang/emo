@@ -60,7 +60,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: the `emo/engine` package over `emo/sql` and `emo/record` — plan nodes (scan, filter, project, insert, update, delete), typed expression evaluation with SQL's three-valued NULL logic, single-table SELECT (projection, WHERE; an equality on an indexed column becomes an index scan), CREATE TABLE (the v0 types, a primary-key index), INSERT, UPDATE and DELETE (the record layer's new update/delete rewrite the row and its index entries in one batch), and the PG-shaped `code: message` errors (`42P01`, `42703`, `42883`, `42804`, `23505`, `23502`, `22001`, `22012`, `0A000`, `42601`) — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with the plan tree printed, through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M32 — Transactions and the session plane | 69 | The transaction model of D6: BEGIN/COMMIT/ROLLBACK over the record layer's `Txn` — one WriteBatch per transaction committed atomically, a per-statement snapshot (read committed), a pending overlay for read-your-writes, the rowid counters published on commit, and the catalog's next-rowid change in the same write; the engine's session state, `LockClient`, and table-level write locks held to commit/rollback; an Emo lock-manager process with a FIFO of waiters, a wait-for graph, and a deadlock that aborts the requester with `40P01`; a two-session golden showing the read-committed pair, the write-write block, and the deadlock, pinned byte-for-byte on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk, protocol 3.0 only), the ParameterStatus set psql and libpq read, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` at the lexer's own semicolons, RowDescription with the v0 type OIDs (`Result` grows `types`), text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse with PG's fields; an error stops the rest and reports the engine's clean state (`I`); one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached per session, `Engine.end_session` releasing without closing the store; `wire_demo` (ephemeral port through a ready file, finite connection count) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's script and its error stop plus the client's rows/error, byte-identical across three `projects/emo-db/check.sh` runs behind `psql`/`libpq` probes (49 checks); the BEAM `__inst_recv` temp fix (`CHECK.md`). |
-| M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit (statements, results, errors — text-comparable), a measured-performance table (numbers only where measured), and the documentation pass — `docs/emo-db.md` grown to the shipped surface, docs EN+zh, the README rows, and the arc-two sketch reviewed against what arc one actually built (`CHECK.md`). |
+| M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit — six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows in the runner's canonical rendering) over one fresh database per run, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench modes and `bench/run.sh` (warmup plus three timed runs) with the measured table, which found and fixed the read-only statement's WAL fsync and (with the corpus) the DDL-in-transaction block leak; `docs/emo-db.md` grown to the shipped surface (`What shipped`, `Measured`), the corrected stale claims, and the arc-two review of the row store's actual plug points (`CHECK.md`). |
 
 ## Design gates
 
@@ -4239,4 +4239,41 @@ docs EN+zh; the repo builds.
       record's wire notes, the `postgres` zero-parameter path, the
       `sql.split` API.
 - [x] **T70.11** — The close-out: TASKS, the plan README, CHECK.md,
+      build/fmt.
+
+## M34 — Conformance and documentation
+
+### Step 71 — Conformance and documentation
+
+**Prereq:** Steps 65–70 (the whole row-store arc). **Done when:** the
+engine's SQL surface has a text-comparable corpus in the SQLLogicTest
+spirit — statement cases with pinned command tags, query cases with
+pinned rows, and error cases with pinned `code: message` strings —
+run against one fresh database and byte-identical three times through
+`projects/emo-db/check.sh`; a measured-performance table records only
+numbers the bench script actually measured, with the machine, date, and
+method; `docs/emo-db.md` grows a shipped-surface section, the corpus
+and benchmark pointers, corrected stale claims, and an arc-two review
+against what arc one built (EN+zh); the project READMEs carry the new
+gate and the M34 status; the repo builds.
+
+- [x] **T71.1** — The spec: this section EN+zh and
+      `plan/step-71-conformance.md`.
+- [x] **T71.2** — The corpus format and `corpus_runner` — one fresh
+      database per invocation, per-file counts, failures collected and
+      a nonzero exit.
+- [x] **T71.3** — The corpus files: DDL, the v0 types, DML, SELECT and
+      its expressions, transactions, and the error/SQLSTATE surface.
+- [x] **T71.4** — The gate: build and run the corpus three times
+      byte-identical.
+- [x] **T71.5** — The bench program and `bench/run.sh` (warmup plus
+      three timed runs), and the recorded measurement.
+- [x] **T71.6** — The gate's bench smoke: the modes' counts checked
+      without pinning a time.
+- [x] **T71.7** — `docs/emo-db.md` + zh: the shipped surface, the
+      corpus and benchmark sections, the measured table, the corrected
+      open items, and the arc-two review.
+- [x] **T71.8** — The project READMEs EN+zh: the corpus, the bench, the
+      gate's new checks, and the M34 status.
+- [x] **T71.9** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.
