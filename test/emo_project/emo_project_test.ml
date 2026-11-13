@@ -3964,6 +3964,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "rand_demo")
           "rand_demo" "main.emo");
+    tc "uuid_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "uuid_demo")
+          "uuid_demo" "main.emo");
     tc "crypto_aead compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
@@ -4107,6 +4112,7 @@ let ts_golden_tests =
       ("http_roundtrip", "main.emo");
       ("atomic_cell", "main.emo");
       ("rand_demo", "main.emo");
+      ("uuid_demo", "main.emo");
       ("crypto_hash", "main.emo");
       ("crypto_aead", "main.emo");
       ("crypto_sign", "main.emo");

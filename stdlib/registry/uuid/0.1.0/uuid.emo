@@ -1,0 +1,362 @@
+require "crypto"
+require "rand"
+
+// The RFC 9562 UUID package: the identifier as one 16-byte value, the
+// versions as named doors, and the text and byte forms as strict
+// conversions. Pure Emo over the shared runtimes — the digests come
+// from crypto, the entropy from rand — so every target answers
+// byte-for-byte.
+//
+// The value is opaque by the RFC's own advice (Section 6.12): a UUID
+// is constructed, compared, ordered, and rendered, and its fields are
+// read back only where the RFC names them — `version` and `variant`,
+// the two the layout tables define. A UUID is any 16 bytes: `parse`
+// is strict about the text, not about the bits, so the custom and
+// reserved layouts ride the same value.
+//
+// The error split is the standard library's: a malformed text or a
+// wrong length is the value `(R.error, reason)`, the reason beginning
+// `uuid:` and naming the first offending byte; a caller's contract
+// violation — a negative or oversized v7 timestamp — raises; and an
+// entropy refusal carries the rand source's own reason.
+
+enum UuidVariant { ncs, rfc, microsoft, future }
+
+// Output position to nibble index: the 36-character form's five hex
+// runs and four dashes, one map both directions read. A dash
+// position answers -1.
+def source_of(i Int64) Int64 {
+  if i < 8 {
+    return i
+  }
+  if i == 8 {
+    return -1
+  }
+  if i < 13 {
+    return i - 1
+  }
+  if i == 13 {
+    return -1
+  }
+  if i < 18 {
+    return i - 2
+  }
+  if i == 18 {
+    return -1
+  }
+  if i < 23 {
+    return i - 3
+  }
+  if i == 23 {
+    return -1
+  }
+  return i - 4
+}
+
+// The hex digit's value 0-15, both cases; -1 for anything else.
+def nibble(b Int64) Int64 {
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  return -1
+}
+
+// n bytes, every one v — the constructor for the fixed patterns.
+def filled(n Int64, v Int64) Bytes {
+  const out = Bytes.new(n)
+  for var i = 0; i < n; i = i + 1 {
+    out.set(i, v)
+  }
+  return out
+}
+
+// Every byte v — the Nil and Max questions read through this.
+def all_bytes(b Bytes, v Int64) Bool {
+  for var i = 0; i < 16; i = i + 1 {
+    if b.get(i) != v {
+      return false
+    }
+  }
+  return true
+}
+
+// a then b, one buffer — the name-based hash input's shape.
+def joined(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(a.length() + b.length())
+  for var i = 0; i < a.length(); i = i + 1 {
+    out.set(i, a.get(i))
+  }
+  for var i = 0; i < b.length(); i = i + 1 {
+    out.set(a.length() + i, b.get(i))
+  }
+  return out
+}
+
+// The 32-hex-character constants the namespace doors read through.
+def hex_bytes(text String) Bytes {
+  const src = text.to_bytes()
+  const out = Bytes.new(src.length() / 2)
+  for var i = 0; i < src.length(); i = i + 2 {
+    out.set(i / 2, nibble(src.get(i)) * 16 + nibble(src.get(i + 1)))
+  }
+  return out
+}
+
+def err_at(at Int64, what String) String {
+  return "uuid: " + what + " at byte " + at.to_string()
+}
+
+class Uuid {
+  def init(data Bytes) {
+    if data.length() != 16 {
+      raise Exception.new(message: "uuid: a UUID is 16 bytes, got " + data.length().to_string())
+    }
+    self.data = data
+  }
+
+  // The canonical rendering: lowercase hex-and-dash, the form RFC
+  // 9562's ABNF defines. This is the protocol method, so `println(id)`
+  // prints the identifier itself.
+  def to_string() String {
+    const digits = "0123456789abcdef".to_bytes()
+    const src = self.data
+    const out = Bytes.new(36)
+    for var i = 0; i < 36; i = i + 1 {
+      const at = source_of(i)
+      if at < 0 {
+        out.set(i, 45)
+      } else {
+        const b = src.get(at / 2)
+        const v = if at % 2 == 0 { (b >> 4) & 0xF } else { b & 0xF }
+        out.set(i, digits.get(v))
+      }
+    }
+    return out.to_string()
+  }
+
+  // The 16 bytes in the RFC's field order (Section 4: network byte
+  // order) — the binary form database storage wants (Section 6.13).
+  def to_bytes() Bytes {
+    return self.data
+  }
+
+  // The version field: the high nibble of octet 6, 0 through 15.
+  def version() Int64 {
+    return (self.data.get(6) >> 4) & 0xF
+  }
+
+  // The variant field: the top bits of octet 8, as RFC 9562's Table 1
+  // reads them. The Nil UUID answers `ncs` and the Max UUID `future`,
+  // exactly as the table places them.
+  def variant() UuidVariant {
+    const top = (self.data.get(8) >> 5) & 7
+    if top <= 3 {
+      return UuidVariant.ncs
+    }
+    if top <= 5 {
+      return UuidVariant.rfc
+    }
+    if top == 6 {
+      return UuidVariant.microsoft
+    }
+    return UuidVariant.future
+  }
+
+  // The Nil UUID: all 128 bits zero (Section 5.9).
+  def is_nil?() Bool {
+    return all_bytes(self.data, 0)
+  }
+
+  // The Max UUID: all 128 bits one (Section 5.10).
+  def is_max?() Bool {
+    return all_bytes(self.data, 255)
+  }
+
+  // The RFC 9562 ordering (Section 6.11): the big-endian bytes,
+  // compared left to right — the order a database index gets for free,
+  // and the order the time-ordered versions sort in.
+  def compare(other Uuid) Int64 {
+    const a = self.data
+    const b = other.data
+    for var i = 0; i < 16; i = i + 1 {
+      const x = a.get(i)
+      const y = b.get(i)
+      if x < y {
+        return -1
+      }
+      if x > y {
+        return 1
+      }
+    }
+    return 0
+  }
+}
+
+// The Nil UUID, `00000000-0000-0000-0000-000000000000` — "no such
+// value here" (Section 5.9).
+def nil() Uuid {
+  return Uuid.new(data: filled(16, 0))
+}
+
+// The Max UUID, `ffffffff-ffff-ffff-ffff-ffffffffffff` — the inverse
+// sentinel (Section 5.10).
+def max() Uuid {
+  return Uuid.new(data: filled(16, 255))
+}
+
+// The value from its 16 bytes, any bit pattern — a UUID is the bytes,
+// whatever the version and variant fields hold. A length other than
+// 16 is `(R.error, reason)`.
+def from_bytes(data Bytes) (R, Uuid) {
+  if data.length() != 16 {
+    return (R.error, "uuid: expected 16 bytes, got " + data.length().to_string())
+  }
+  return (R.ok, Uuid.new(data: data))
+}
+
+// The value from text: the canonical hex-and-dash form and nothing
+// else — 36 characters, a dash at 8, 13, 18, and 23, hex digits
+// elsewhere. The hex digits are case-insensitive, as the RFC's own
+// ABNF reads (both cases are HEXDIG); the answer renders lowercase.
+// The braces, the `urn:uuid:` prefix, and the 32-character undashed
+// form are other systems' presentations, not this form — a caller
+// strips them itself, visibly, before the call.
+def parse(text String) (R, Uuid) {
+  const src = text.to_bytes()
+  const n = src.length()
+  if n != 36 {
+    return (R.error, "uuid: expected 36 characters, got " + n.to_string())
+  }
+  const out = filled(16, 0)
+  for var i = 0; i < 36; i = i + 1 {
+    const at = source_of(i)
+    if at < 0 {
+      if src.get(i) != 45 {
+        return (R.error, err_at(i, "expected a dash"))
+      }
+    } else {
+      const v = nibble(src.get(i))
+      if v < 0 {
+        return (R.error, err_at(i, "expected a hex digit"))
+      }
+      const bi = at / 2
+      if at % 2 == 0 {
+        out.set(bi, v * 16 + (out.get(bi) & 0xF))
+      } else {
+        out.set(bi, (out.get(bi) & 0xF0) | v)
+      }
+    }
+  }
+  return (R.ok, Uuid.new(data: out))
+}
+
+// A version 4 UUID: 122 random bits over the operating system's
+// entropy source (Section 5.4, Section 6.9). A refused source is
+// `(R.error, reason)`, the reason the rand package's own.
+def v4() (R, Uuid) {
+  case rand.bytes(16) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, raw)     -> {
+      raw.set(6, (raw.get(6) & 0x0F) | 0x40)
+      raw.set(8, (raw.get(8) & 0x3F) | 0x80)
+      return (R.ok, Uuid.new(data: raw))
+    }
+  }
+}
+
+// A version 7 UUID: the Unix epoch in milliseconds over the caller's
+// own clock — the language has none (the slog stance) — and 74 random
+// bits over it, the RFC's base shape (Section 5.7). Two UUIDs minted
+// in the same millisecond are distinct but not ordered; the
+// generator-state counters of Section 6.2 are the caller's to run.
+// A negative timestamp raises; one that does not fit the 48-bit field
+// raises too — the field is honest to the year 10889, and anything
+// larger is a units mistake, not a time.
+def v7(now_ms Int64) (R, Uuid) {
+  if now_ms < 0 {
+    raise Exception.new(message: "uuid: the v7 timestamp must not be negative")
+  }
+  if now_ms >= 281474976710656 {
+    raise Exception.new(message: "uuid: the v7 timestamp does not fit the 48-bit field")
+  }
+  case rand.bytes(16) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, raw)     -> {
+      raw.set(0, (now_ms >> 40) & 0xFF)
+      raw.set(1, (now_ms >> 32) & 0xFF)
+      raw.set(2, (now_ms >> 24) & 0xFF)
+      raw.set(3, (now_ms >> 16) & 0xFF)
+      raw.set(4, (now_ms >> 8) & 0xFF)
+      raw.set(5, now_ms & 0xFF)
+      raw.set(6, (raw.get(6) & 0x0F) | 0x70)
+      raw.set(8, (raw.get(8) & 0x3F) | 0x80)
+      return (R.ok, Uuid.new(data: raw))
+    }
+  }
+}
+
+// A version 3 UUID: MD5 over the namespace and the name's UTF-8
+// bytes, version and variant stamped over the digest (Section 5.3).
+// Deterministic — the same namespace and name answer the same UUID on
+// every target, forever. MD5 is broken for every security purpose;
+// v5 is the version to prefer.
+def v3(namespace Uuid, name String) Uuid {
+  return name_based(3, namespace, name)
+}
+
+// A version 5 UUID: SHA-1 over the namespace and the name's UTF-8
+// bytes, the first 128 bits taken, version and variant stamped over
+// the digest (Section 5.5). Deterministic like v3.
+def v5(namespace Uuid, name String) Uuid {
+  return name_based(5, namespace, name)
+}
+
+// The DNS namespace ID (Section 6.6, Table 3). A name is the host's
+// canonical form, as the name's own specification states it.
+def ns_dns() Uuid {
+  return Uuid.new(data: hex_bytes("6ba7b8109dad11d180b400c04fd430c8"))
+}
+
+// The URL namespace ID (Section 6.6, Table 3). A name is the URL, as
+// the URL's own specification states it.
+def ns_url() Uuid {
+  return Uuid.new(data: hex_bytes("6ba7b8119dad11d180b400c04fd430c8"))
+}
+
+// The ISO OID namespace ID (Section 6.6, Table 3). A name is the OID
+// in dot notation without the leading dot.
+def ns_oid() Uuid {
+  return Uuid.new(data: hex_bytes("6ba7b8129dad11d180b400c04fd430c8"))
+}
+
+// The X.500 directory namespace ID (Section 6.6, Table 3). A name is
+// the distinguished name in the directory's own text form.
+def ns_x500() Uuid {
+  return Uuid.new(data: hex_bytes("6ba7b8149dad11d180b400c04fd430c8"))
+}
+
+// The name-based assembly both v3 and v5 ride: namespace bytes, then
+// the name's UTF-8 bytes, through the version's digest; the first 16
+// bytes of the digest fill the layout, and the version and variant
+// fields stamp over it (Sections 5.3, 5.5). Any Uuid serves as a
+// custom namespace, the way Section 6.6 provides for.
+def name_based(version Int64, namespace Uuid, name String) Uuid {
+  if version != 3 && version != 5 {
+    raise Exception.new(message: "uuid: the name-based versions are 3 and 5")
+  }
+  const input = joined(namespace.to_bytes(), name.to_bytes())
+  const digest = if version == 3 { crypto.legacy.md5(input) } else { crypto.legacy.sha1(input) }
+  const out = filled(16, 0)
+  for var i = 0; i < 16; i = i + 1 {
+    out.set(i, digest.get(i))
+  }
+  out.set(6, (out.get(6) & 0x0F) | (version << 4))
+  out.set(8, (out.get(8) & 0x3F) | 0x80)
+  return Uuid.new(data: out)
+}

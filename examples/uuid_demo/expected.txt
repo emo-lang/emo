@@ -1,0 +1,37 @@
+f81d4fae-7dec-11d0-a765-00a0c91e6bf6
+1
+variant rfc
+false
+false
+true
+uuid: expected 36 characters, got 32
+uuid: expected 36 characters, got 38
+uuid: expected 36 characters, got 45
+uuid: expected a dash at byte 8
+uuid: expected a hex digit at byte 35
+uuid: expected 36 characters, got 35
+bytes: 16
+bytes round trip: true
+uuid: expected 16 bytes, got 8
+00000000-0000-0000-0000-000000000000
+ffffffff-ffff-ffff-ffff-ffffffffffff
+true
+true
+-1
+1
+0
+6ba7b810-9dad-11d1-80b4-00c04fd430c8
+6ba7b811-9dad-11d1-80b4-00c04fd430c8
+6ba7b812-9dad-11d1-80b4-00c04fd430c8
+6ba7b814-9dad-11d1-80b4-00c04fd430c8
+5df41881-3aed-3515-88a7-2f4a814cf09e
+2ed6657d-e927-568b-95e1-2665a8aea6a2
+f8d0520f-fc63-545c-b81a-bd50bd026153
+4
+variant rfc
+v4 draws differ: true
+7
+variant rfc
+1645557742000
+v7 draws differ: true
+-1

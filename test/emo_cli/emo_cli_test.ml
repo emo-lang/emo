@@ -603,6 +603,10 @@ let wasm_goldens =
     "bufio_demo";
     "os_fs_demo";
     "rand_demo";
+    (* step 80: the uuid package — the RFC 9562 identifier as one
+       pure-Emo value; the random doors print only what the RFC
+       fixes about them, so the golden rides every target *)
+    "uuid_demo";
     (* M24: the macro pilots — expansion rides before codegen, so the
        generated declarations compile to wasm like hand-written ones *)
     "trace_macro_demo";
@@ -684,6 +688,9 @@ let beam_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — crypto:strong_rand_bytes is the beam's leg *)
     "rand_demo";
+    (* uuid_demo: the RFC 9562 vectors pinned, the random doors
+       structure-only — crypto:strong_rand_bytes is the beam's leg *)
+    "uuid_demo";
     "crypto_hash";
     "crypto_aead";
     "crypto_sign";
@@ -914,6 +921,9 @@ let c_goldens =
     (* rand_demo: the deterministic stream pinned, the OS source
        smoke-tested — getentropy is the c leg *)
     "rand_demo";
+    (* uuid_demo: the RFC 9562 vectors pinned, the random doors
+       structure-only — getentropy is the c leg *)
+    "uuid_demo";
     "crypto_aead";
     (* crypto_sign and crypto_ecdh: the RFC 8032 and RFC 7748 vectors
        with Go's ed25519/ecdh companions; crypto_sign_sweep: thirteen
