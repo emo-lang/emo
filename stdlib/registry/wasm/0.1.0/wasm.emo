@@ -1,6 +1,6 @@
 // The WebAssembly runtime, written in Emo the way wazero is written
 // in Go. Step 21 grew the binary decoder and validator here, step 22
-// the interpreter and the host imports, step 72 the execution surface
+// the interpreter and the host imports, step 75 the execution surface
 // and the host interface on this root.
 //
 // Two handles cross the boundary: a module handle names a loaded
@@ -78,7 +78,7 @@ def register_instance(inst Int64, name String) Int64 {
   return internal.instance.register_instance(inst, name)
 }
 
-// The wasi argv (step 74): what `args_sizes_get` and `args_get`
+// The wasi argv (step 77): what `args_sizes_get` and `args_get`
 // answer for every later instantiation — the convention carries the
 // program's own name first. Defaults to empty; `emo wasm run` sets it
 // from the artifact's name plus any extra arguments.

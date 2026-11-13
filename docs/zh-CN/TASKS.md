@@ -56,7 +56,7 @@
 | M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 | M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 | M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
-| M35 — Wasm 能力 | 72–74 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
+| M38 — Wasm 能力 | 75–77 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1865,22 +1865,22 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
 - [x] **T74.4** —— 语料的 `column.test`。
 - [x] **T74.5** —— bench 的列存模式与实测数字。
 - [x] **T74.6** —— 文档 EN+zh 与收尾。
-## M35 — Wasm 能力
+## M38 — Wasm 能力
 
-### 步骤 72 — wasm 包:执行面与宿主接口
+### 步骤 75 — wasm 包:执行面与宿主接口
 
 **前置:** 步骤 20–22(用 Emo 写的运行时:解码器、验证器、解释器、spec 套件金测)。**完成标准:** 包落在 `stdlib/registry/wasm/0.1.0/`,与其他 bundled 包同路解析;声明 `"wasm" = "0.1.0"` 的用户项目能从字节加载模块、用 Emo 闭包伺候其 import、实例化、调用导出、读全局、在线性内存里搬运字节——一切失败都是 `(R.error, reason)` 值,从不 raise;`examples/wasm_demo` 钉住整条阶梯(加载→宿主→实例化→调用→内存往返)逐字节一致;smoke 切片随包从新家骑 `dune test`,`wasm_spec` / `wasm_runs` 别名仍报零 pending 零 failed;文档 EN+zh。
 
-- [x] **T72.1** — 搬家:`runtime/wasm/` → `stdlib/registry/wasm/0.1.0/`——`wasm.emo`、`internal/`、manifest、driver 与 fixture、`testdata/`、包 README,连同承载 smoke 切片与两个别名的 dune 规则;根 `dune` 注释与 `devtools/vendor-wasm-spec` 的输出路径随行;步骤 20–22 的 plan 文件留作历史。
-- [x] **T72.2** — 公开面:R 拆分的执行 def 落包根(`load`、`instantiate`、`call`、`get_global`、`read_memory`、`write_memory`、`register_instance`、`describe`),值构造器(`i32`/`i64`/`f32`/`f64` 与 `from_bits` 一对)与 `as_*` 读取器,`(kind, bits)` 编码一次写清;`load` 从五元组迁移,fixture 随行更新;`decode` 保留诊断判定。
-- [x] **T72.3** — 宿主表:`(module, name, fn)` import 三元组骑 `instantiate`,统一宿主签名 `-> (args Array[(Int64, Int64)]) (Int64, Int64)`,解析序=显式表→register 命名空间→`spectest`;fixture:一个从 `env` 导入的模块由 Emo 闭包伺候,解析序钉死,缺失 import 照旧链接失败。
-- [x] **T72.4** — demo 金测:`examples/wasm_demo/` 带手工构造的模块(十六进制写在 Emo 里,可评审)走完整阶梯;金测经解释器跑,registry 指向 bundled 副本。
-- [x] **T72.5** — 文档:`docs/wasm.md` EN+zh(表面、值编码、宿主接口、边界——尚无 WASI、无 GC 类型、仅 `["ocaml"]`);`docs/stdlib.md` 行与节 + zh 镜像;temp 笔记退役并入新参考;README 行;`plan/README.md` 行;CHECK.md 决策记录。包参考落在
+- [x] **T75.1** — 搬家:`runtime/wasm/` → `stdlib/registry/wasm/0.1.0/`——`wasm.emo`、`internal/`、manifest、driver 与 fixture、`testdata/`、包 README,连同承载 smoke 切片与两个别名的 dune 规则;根 `dune` 注释与 `devtools/vendor-wasm-spec` 的输出路径随行;步骤 20–22 的 plan 文件留作历史。
+- [x] **T75.2** — 公开面:R 拆分的执行 def 落包根(`load`、`instantiate`、`call`、`get_global`、`read_memory`、`write_memory`、`register_instance`、`describe`),值构造器(`i32`/`i64`/`f32`/`f64` 与 `from_bits` 一对)与 `as_*` 读取器,`(kind, bits)` 编码一次写清;`load` 从五元组迁移,fixture 随行更新;`decode` 保留诊断判定。
+- [x] **T75.3** — 宿主表:`(module, name, fn)` import 三元组骑 `instantiate`,统一宿主签名 `-> (args Array[(Int64, Int64)]) (Int64, Int64)`,解析序=显式表→register 命名空间→`spectest`;fixture:一个从 `env` 导入的模块由 Emo 闭包伺候,解析序钉死,缺失 import 照旧链接失败。
+- [x] **T75.4** — demo 金测:`examples/wasm_demo/` 带手工构造的模块(十六进制写在 Emo 里,可评审)走完整阶梯;金测经解释器跑,registry 指向 bundled 副本。
+- [x] **T75.5** — 文档:`docs/wasm.md` EN+zh(表面、值编码、宿主接口、边界——尚无 WASI、无 GC 类型、仅 `["ocaml"]`);`docs/stdlib.md` 行与节 + zh 镜像;temp 笔记退役并入新参考;README 行;`plan/README.md` 行;CHECK.md 决策记录。包参考落在
       `docs/stdlib/wasm.md`(house 的逐包位置),不是 `docs/wasm.md`;
       temp 笔记移出仓库。`wasm.emo` 的 smoke 驱动从 `main.emo` 改名
       `smoke.emo`——包根存在 `main.emo` 时 require 绑定的是它,smoke
       驱动那个文件会遮住公开面。
-- [x] **T72.6** — c 后端长出模块级 `var`:每个 `pglobal` 一格
+- [x] **T75.6** — c 后端长出模块级 `var`:每个 `pglobal` 一格
       `static emo_value`,声明在所有函数体之前;读取交出 pooled
       claim(原生类型读取点拆箱);赋值走局部覆盖同款的写屏障;格子
       在 `emo_root_entry` 开头按声明序初始化。解释器的依赖检查宇宙
@@ -1889,22 +1889,22 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
       应答相同;全仓 `dune runtest` 保持绿;包 manifest 放宽到
       `["ocaml", "c"]`——验证过的,不是假设的(CHECK.md)。
 
-### 步骤 73 — `emo wasm run`:CLI 环
+### 步骤 76 — `emo wasm run`:CLI 环
 
-**前置:** 步骤 72(包与它的执行面)。**完成标准:** `emo wasm run foo.wasm` 经嵌入式 driver 加载、验证、实例化工件——实例的 start 函数运行,入口阶梯应答 `_start`,再 `main`,再对两者都不指认的模块应答一行摘要;结果按运行时的 `value : kind` 格式打印;一切失败(坏工件、链接失败、trap)都以原因与非零退出码应答,从不 raise;纯二进制的机器(无 registry、无项目)即可跑工件;publish/login 嵌入路径行为不变;`dune runtest` 绿;文档 EN+zh。
+**前置:** 步骤 75(包与它的执行面)。**完成标准:** `emo wasm run foo.wasm` 经嵌入式 driver 加载、验证、实例化工件——实例的 start 函数运行,入口阶梯应答 `_start`,再 `main`,再对两者都不指认的模块应答一行摘要;结果按运行时的 `value : kind` 格式打印;一切失败(坏工件、链接失败、trap)都以原因与非零退出码应答,从不 raise;纯二进制的机器(无 registry、无项目)即可跑工件;publish/login 嵌入路径行为不变;`dune runtest` 绿;文档 EN+zh。
 
-- [x] **T73.1** — 泛化嵌入式 runner:`run_embedded` 委托 `run_embedded_deps`(依赖清单成为参数);wasm driver 程序落为嵌入式字符串(`__artifact` 全局、入口阶梯、骑公开面的 `value : kind` 结果格式)。嵌入式 scratch 项目不再打印锁文件提交提示——它指向的 manifest 随运行而亡。
-- [x] **T73.2** — `emo wasm run` 命令:`wasm` 组、run 子命令(工件实参、chdir 之前解析绝对路径)、错误判定到 stderr 退出码 1、doctor 行点名命令。
-- [x] **T73.3** — 测试:`test/emo_cli` 的 `wasm_run` 组六用例——导出结果、仅 start 摘要、trap、链接失败带 import 名、畸形工件进 decode 阶段、缺失工件的读取原因。工件以十六进制骑在测试里就地解码(语料纪律:`.wasm` blob 不进仓库),每条钉死前都先对运行时验证过。
+- [x] **T76.1** — 泛化嵌入式 runner:`run_embedded` 委托 `run_embedded_deps`(依赖清单成为参数);wasm driver 程序落为嵌入式字符串(`__artifact` 全局、入口阶梯、骑公开面的 `value : kind` 结果格式)。嵌入式 scratch 项目不再打印锁文件提交提示——它指向的 manifest 随运行而亡。
+- [x] **T76.2** — `emo wasm run` 命令:`wasm` 组、run 子命令(工件实参、chdir 之前解析绝对路径)、错误判定到 stderr 退出码 1、doctor 行点名命令。
+- [x] **T76.3** — 测试:`test/emo_cli` 的 `wasm_run` 组六用例——导出结果、仅 start 摘要、trap、链接失败带 import 名、畸形工件进 decode 阶段、缺失工件的读取原因。工件以十六进制骑在测试里就地解码(语料纪律:`.wasm` blob 不进仓库),每条钉死前都先对运行时验证过。
 
-### 步骤 74 — WASI preview1:其他工具链的模块赖以运行的一环
+### 步骤 77 — WASI preview1:其他工具链的模块赖以运行的一环
 
-**前置:** 步骤 72(包与宿主接口)、73(CLI 环)。**完成标准:** 内建宿主应答 `wasi_snapshot_preview1` 的十二函数子集(args、environ、proc_exit、fd_write、fd_close、fd_seek、fd_fdstat_get、random_get、clock_time_get ENOSYS、sched_yield),其余一律以函数名在链接时拒绝;CLI 收多余实参作为 WASI argv、把 proc_exit 的代码映射为退出码,模块的 stdout 在自身退出后照样送达;真 `rustc --target wasm32-wasip1` 模块(target 经用户授权安装)经 `emo wasm run` 运行——打印、经 random_get 播种 HashMap、经 proc_exit 退出;fixture 钉死 errno 编号与 iovec 走查;`dune runtest` 绿;文档 EN+zh。
+**前置:** 步骤 75(包与宿主接口)、73(CLI 环)。**完成标准:** 内建宿主应答 `wasi_snapshot_preview1` 的十二函数子集(args、environ、proc_exit、fd_write、fd_close、fd_seek、fd_fdstat_get、random_get、clock_time_get ENOSYS、sched_yield),其余一律以函数名在链接时拒绝;CLI 收多余实参作为 WASI argv、把 proc_exit 的代码映射为退出码,模块的 stdout 在自身退出后照样送达;真 `rustc --target wasm32-wasip1` 模块(target 经用户授权安装)经 `emo wasm run` 运行——打印、经 random_get 播种 HashMap、经 proc_exit 退出;fixture 钉死 errno 编号与 iovec 走查;`dune runtest` 绿;文档 EN+zh。
 
-- [x] **T74.1** — wasi 宿主:`internal/wasi.emo`——errno 名、函数表、内存 io(iovec 走查、guest 写入、fdstat 布局)、proc_exit 的判定上 trap 通道、argv 消费端。`clock_time_get` 的 precision 参数是 i64——子集里唯一的非 i32,已检查。
-- [x] **T74.2** — 解析臂(显式表→wasi→register→spectest,签名逐项检查)与调度臂(宿主调用触及调用方实例的活内存);包根的 `wasm.set_wasi_args`;包 `deps` 为 random_get 的熵加入 `rand`,demo 的 lockfile 重出。
-- [x] **T74.3** — CLI:多余位置实参即 wasi argv(argv[0] 为工件基名),proc_exit 的代码从 driver 判定行解析并静默映射为退出码。嵌入式 runner 拆出 `run_embedded_deps_out`(二元组:判定与 partial stdout)——先打印后退出(或 trap)的模块字节照样送达。
-- [x] **T74.4** — fixture:`wasi-fixture.emo`——iovec 走查逐字节精确、nwritten 经包自己的内存门读回,proc_exit 的代码上 trap 通道,argv 编码(指针数组、后跟 nul 结尾缓冲),EBADF、ENOSYS、random 成功,fdstat 布局,签错的 import 什么都绑不上,path_open 以函数名链接失败。途中发现并当场修掉:dune 的并行 fixture 规则竞跑共享包缓存——共享临时名把兄弟 materialization 的文件 rename 掉、半写文件被 digest、manifest 解析撕裂——在 `materialize` 修掉(每进程临时名、原子 rename、open 失败时重建目录重试一次),并给每条 fixture 动作把 `EMO_CACHE_DIR` 钉到沙盒本地目录(CHECK.md)。
-- [x] **T74.5** — live check:`rustc --target wasm32-wasip1`(1.98.1,std 经用户授权安装)——hello world 经 fd_write 打印带 argv 计数;HashMap 模块经 random_get 播种;`process::exit(7)` 骑到 CLI 退出码且此前的打印存活。全绿。
-- [x] **T74.6** — 文档:`docs/stdlib/wasm.md` EN+zh 的 WASI 节(子集表、诚实边界:无时钟、无文件系统、仅 fd 1/2;`emo` 宿主模块缓议的论证);TASKS/plan/CHECK 更新。
+- [x] **T77.1** — wasi 宿主:`internal/wasi.emo`——errno 名、函数表、内存 io(iovec 走查、guest 写入、fdstat 布局)、proc_exit 的判定上 trap 通道、argv 消费端。`clock_time_get` 的 precision 参数是 i64——子集里唯一的非 i32,已检查。
+- [x] **T77.2** — 解析臂(显式表→wasi→register→spectest,签名逐项检查)与调度臂(宿主调用触及调用方实例的活内存);包根的 `wasm.set_wasi_args`;包 `deps` 为 random_get 的熵加入 `rand`,demo 的 lockfile 重出。
+- [x] **T77.3** — CLI:多余位置实参即 wasi argv(argv[0] 为工件基名),proc_exit 的代码从 driver 判定行解析并静默映射为退出码。嵌入式 runner 拆出 `run_embedded_deps_out`(二元组:判定与 partial stdout)——先打印后退出(或 trap)的模块字节照样送达。
+- [x] **T77.4** — fixture:`wasi-fixture.emo`——iovec 走查逐字节精确、nwritten 经包自己的内存门读回,proc_exit 的代码上 trap 通道,argv 编码(指针数组、后跟 nul 结尾缓冲),EBADF、ENOSYS、random 成功,fdstat 布局,签错的 import 什么都绑不上,path_open 以函数名链接失败。途中发现并当场修掉:dune 的并行 fixture 规则竞跑共享包缓存——共享临时名把兄弟 materialization 的文件 rename 掉、半写文件被 digest、manifest 解析撕裂——在 `materialize` 修掉(每进程临时名、原子 rename、open 失败时重建目录重试一次),并给每条 fixture 动作把 `EMO_CACHE_DIR` 钉到沙盒本地目录(CHECK.md)。
+- [x] **T77.5** — live check:`rustc --target wasm32-wasip1`(1.98.1,std 经用户授权安装)——hello world 经 fd_write 打印带 argv 计数;HashMap 模块经 random_get 播种;`process::exit(7)` 骑到 CLI 退出码且此前的打印存活。全绿。
+- [x] **T77.6** — 文档:`docs/stdlib/wasm.md` EN+zh 的 WASI 节(子集表、诚实边界:无时钟、无文件系统、仅 fd 1/2;`emo` 宿主模块缓议的论证);TASKS/plan/CHECK 更新。
 

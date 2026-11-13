@@ -1,6 +1,6 @@
-# Step 74 — WASI preview1: the rung other toolchains' modules run on
+# Step 77 — WASI preview1: the rung other toolchains' modules run on
 
-**Milestone:** M35 · **Prereq:** step 72 (the package and its host
+**Milestone:** M38 · **Prereq:** step 75 (the package and its host
 interface), 73 (the CLI rung) · **Status:** done
 
 The ladder's third rung: modules from other toolchains run. The
@@ -10,7 +10,7 @@ wasm32-wasip1`). The `emo` host module the ladder once named is
 **explicitly deferred**: no producer names it — a foreign module
 cannot, it does not know Emo — and the design's rule is that a
 construct earns its place with a concrete consumer. A module wanting
-Emo's host surface takes it through the explicit host table (step 72),
+Emo's host surface takes it through the explicit host table (step 75),
 which already serves any module name an Emo program chooses; when a
 real producer for an `emo` namespace appears, the rung opens.
 
@@ -104,15 +104,15 @@ EBADF 8, EINVAL 28, ENOSYS 51, ESPIPE 69.
 
 ## Tasks
 
-- [x] **T74.1** — The wasi host: errnos, the twelve functions, the
+- [x] **T77.1** — The wasi host: errnos, the twelve functions, the
       memory io, proc_exit's trap, the argv consumer.
-- [x] **T74.2** — The resolution and dispatch arms; `set_wasi_args`
+- [x] **T77.2** — The resolution and dispatch arms; `set_wasi_args`
       on the package root.
-- [x] **T74.3** — The CLI's extra arguments and the proc_exit
+- [x] **T77.3** — The CLI's extra arguments and the proc_exit
       mapping; the driver's entry ladder grows the wasi verdict.
-- [x] **T74.4** — The fixtures and the demo lockfile refresh.
-- [x] **T74.5** — The live check.
-- [x] **T74.6** — The docs and the close-out.
+- [x] **T77.4** — The fixtures and the demo lockfile refresh.
+- [x] **T77.5** — The live check.
+- [x] **T77.6** — The docs and the close-out.
 
 ## Acceptance
 

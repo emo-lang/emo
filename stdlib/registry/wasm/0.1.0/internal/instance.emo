@@ -742,7 +742,7 @@ var instances = []
 var reg_names = []
 var reg_handles = []
 
-// The user host table (step 72). `user_host_fns` holds every closure an
+// The user host table (step 75). `user_host_fns` holds every closure an
 // `instantiate` has taken, indexed by the targets' kind-2 slots;
 // `pending_hosts` is the table of the instantiate in progress, consulted
 // only while `resolve_imports` walks — no code runs inside that walk, so
@@ -750,7 +750,7 @@ var reg_handles = []
 var user_host_fns = []
 var pending_hosts = []
 
-// The wasi instance state (step 74): the argv the preview1
+// The wasi instance state (step 77): the argv the preview1
 // args_* functions answer, set through the package root's
 // `set_wasi_args` and consumed at dispatch.
 var wasi_args = []
@@ -2205,7 +2205,7 @@ def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Box[(In
 
 // ---- imports ----
 
-// The wasi host arm (step 74): function imports only, the name on the
+// The wasi host arm (step 77): function imports only, the name on the
 // built-in id table, the signature matched against the table's shape
 // (every parameter i32, one i32 result save proc_exit's none) — a
 // mistyped import binds to nothing.
@@ -2233,7 +2233,7 @@ def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], i
     return (true, "", imems, itables, iglobals, targets)
   }
   const imp = m.imports[i]
-  // The explicit host table resolves first (step 72): it serves
+  // The explicit host table resolves first (step 75): it serves
   // function imports only — the closure takes the argument array and
   // answers one value, so a multi-result import stays unservable here.
   const ui = find_host_entry(pending_hosts, imp.module, imp.field, 0)
@@ -2625,7 +2625,7 @@ def call_host(m Module, fidx Int64, id Int64) (Bool, String) {
   return (true, "")
 }
 
-// The wasi dispatch (step 74): the arguments pop, memory 0 rides to
+// The wasi dispatch (step 77): the arguments pop, memory 0 rides to
 // the host, the errno comes back as the one result, and proc_exit's
 // signal rides the trap channel to `call`'s error verdict.
 def call_wasi(m Module, fidx Int64, id Int64) (Bool, String) {
@@ -2655,7 +2655,7 @@ def set_wasi_args(args Array[String]) Int64 {
   return 0
 }
 
-// The user host table's dispatch (step 72): the import's own signature
+// The user host table's dispatch (step 75): the import's own signature
 // governs — the arguments come off the operand stack, the closure's one
 // value comes back when the signature has a result.
 def call_host_user(m Module, fidx Int64, slot Int64) (Bool, String) {
@@ -2679,7 +2679,7 @@ def invoke_host(fn Block, args Array[(Int64, Int64)]) (Int64, Int64) {
 }
 
 // The instance's memory 0, bounds-checked before any copy — the
-// store's discipline, exported for the package surface (step 72).
+// store's discipline, exported for the package surface (step 75).
 def read_memory(inst Int64, ptr Int64, len Int64) (Bool, Bytes, String) {
   if inst < 0 || inst >= instances.length() {
     return (false, Bytes.new(0), "no instance")

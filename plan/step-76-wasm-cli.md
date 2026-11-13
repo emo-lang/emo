@@ -1,6 +1,6 @@
-# Step 73 — `emo wasm run`: the CLI rung
+# Step 76 — `emo wasm run`: the CLI rung
 
-**Milestone:** M35 · **Prereq:** step 72 (the package and its execution
+**Milestone:** M38 · **Prereq:** step 75 (the package and its execution
 surface) · **Status:** done
 
 The ladder's second rung: the CLI executes a `.wasm` artifact. The
@@ -45,7 +45,7 @@ failure, and exits with the verdict's code.
 
 **Strictness.** The host table stays empty: a module whose imports the
 package cannot serve (anything beyond `spectest`) links-fails honestly
-with the import's name — WASI is step 74's rung, not a silent stub
+with the import's name — WASI is step 77's rung, not a silent stub
 here. No arguments reach the module (the MVP has no argv channel; a
 module that wants data gets it through memory, and the CLI adds no
 fiction).
@@ -69,26 +69,26 @@ fiction).
 
 ### Out
 
-- WASI and the `emo` host module — step 74.
+- WASI and the `emo` host module — step 77.
 - Running the output of `emo build --target wasm` (the GC proposal's
   types) — the ladder's exit sign, unchanged.
 - `emo wasm inspect`/`dis` and friends — no consumer has asked.
 - Arguments, environments, clocks for the module — the `emo` host
-  module's surface is step 74's design, not smuggled in here.
+  module's surface is step 77's design, not smuggled in here.
 
 ## Tasks
 
-- [x] **T73.1** — The generalized embedded runner: `run_embedded`
+- [x] **T76.1** — The generalized embedded runner: `run_embedded`
       delegates to a form that takes the dependency list; the wasm
       driver program lands as an embedded string (`__artifact` global,
       the exchange framing, the entry ladder `_start` → `main` →
       summary, the `value : kind` result format over the public
       surface).
-- [x] **T73.2** — The `emo wasm run` command: the `wasm` group, the
+- [x] **T76.2** — The `emo wasm run` command: the `wasm` group, the
       run subcommand (artifact argument, absolute-path resolution
       before any chdir), the status-line-to-exit-code mapping, the
       doctor line.
-- [x] **T73.3** — The tests and the docs.
+- [x] **T76.3** — The tests and the docs.
 
 ## Acceptance
 

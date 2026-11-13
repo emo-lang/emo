@@ -1,6 +1,6 @@
 require "rand"
 
-// The wasi_snapshot_preview1 host (step 74): the twelve preview1
+// The wasi_snapshot_preview1 host (step 77): the twelve preview1
 // functions a real toolchain's module touches to start, print, seed
 // its hashes, and exit. Everything else in the namespace link-refuses
 // with the function's name — no silent stubs, no fakes. The errno

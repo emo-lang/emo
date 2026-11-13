@@ -371,7 +371,7 @@
  (action
   (diff host-fixture.expected.txt host-fixture.actual)))
 
-; The user-host fixture (T72.3).
+; The user-host fixture (T75.3).
 
 (rule
  (alias runtest)
@@ -396,7 +396,7 @@
  (action
   (diff host-user-fixture.expected.txt host-user-fixture.actual)))
 
-; The wasi fixture (T74.4).
+; The wasi fixture (T77.4).
 
 (rule
  (alias runtest)

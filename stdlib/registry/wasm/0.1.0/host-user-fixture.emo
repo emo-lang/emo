@@ -1,4 +1,4 @@
-// The user-host fixture (T72.3): the explicit host table serves
+// The user-host fixture (T75.3): the explicit host table serves
 // function imports with Emo closures — arguments in, one value back —
 // before the register namespace and the spectest host are consulted
 // (an entry naming `spectest.print_i32` overrides the built-in host,

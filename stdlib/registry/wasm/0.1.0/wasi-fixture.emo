@@ -1,4 +1,4 @@
-// The wasi fixture (T74.4): hand-built modules riding the preview1
+// The wasi fixture (T77.4): hand-built modules riding the preview1
 // host — the iovec walk byte-exact, proc_exit's code on the trap
 // channel, the argv encoding, the honest refusals (EBADF, ENOSYS),
 // the mistyped import binding to nothing, and the unimplemented

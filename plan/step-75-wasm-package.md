@@ -1,6 +1,6 @@
-# Step 72 — The wasm package: the execution surface and the host interface
+# Step 75 — The wasm package: the execution surface and the host interface
 
-**Milestone:** M35 · **Prereq:** steps 20–22 (the runtime), 56 · **Status:** done
+**Milestone:** M38 · **Prereq:** steps 20–22 (the runtime), 56 · **Status:** done
 
 The Emo-written wasm runtime (`runtime/wasm/`, steps 20–22) decodes,
 validates, and executes WebAssembly modules — the full core spec, the
@@ -14,16 +14,16 @@ can declare. `docs/wasm-runtime-temp.md` recorded exactly this gap.
 This step closes the first rung of the ladder the temp notes pointed at.
 The rungs, decided now:
 
-1. **Step 72 (this step)** — the execution surface and the host
+1. **Step 75 (this step)** — the execution surface and the host
    interface, exported from the package root, with the package moved
    into the bundled registry as the `wasm` stdlib package.
-2. **Step 73** — the CLI rung: `emo wasm run` executes a `.wasm`
+2. **Step 76** — the CLI rung: `emo wasm run` executes a `.wasm`
    artifact. Its plan is written when it starts; the decided direction
    is that the CLI drives its own interpreter over an Emo driver that
    reads the artifact path through `os.argv` (M26 landed it) — the
    compiler never links the runtime, so the step-20 boundary holds in
    both directions.
-3. **Step 74** — the host-module rung: an `emo` host module (and the
+3. **Step 77** — the host-module rung: an `emo` host module (and the
    WASI surface that reality demands) so modules from other toolchains
    run. Its plan is written when it starts.
 
@@ -43,7 +43,7 @@ then it is a bundled package, not a published one.
 
 **The boundary against the compiler holds.** No file under `src/` reads
 anything under `stdlib/registry/wasm/`; the dependency never runs the
-other way. Step 73's CLI rung runs the driver through the interpreter
+other way. Step 76's CLI rung runs the driver through the interpreter
 as data, never as a linked module — the coupling the boundary forbids
 is OCaml reaching the runtime's files, not the CLI invoking Emo code.
 
@@ -112,8 +112,8 @@ never a raise.
 
 ### Out
 
-- WASI and the `emo` host module — step 74.
-- The CLI — step 73.
+- WASI and the `emo` host module — step 77.
+- The CLI — step 76.
 - Running the output of `emo build --target wasm` inside the runtime
   (the GC proposal's types) — the ladder's exit sign, unchanged.
 - Host-function re-entrancy (a host import calling back into the
@@ -121,7 +121,7 @@ never a raise.
 - Other compilation targets for the package: `["ocaml", "c"]` are
   claimed because both are verified byte-for-byte; the rest join when
   verified, never assumed. (The `c` claim forced a language-side task:
-  the c backend grew module-level `var` — T72.6.)
+  the c backend grew module-level `var` — T75.6.)
 - Performance work: the interpreter stays interpreter-first.
 - The text format (`.wat`), threads, SIMD, exceptions, memory64 —
   unchanged from steps 21–22.
@@ -162,34 +162,34 @@ Marked as provisional per `plan/README.md`; the settled ones move into
 Sizes: **S** is one short sitting, **M** an evening, **L** several.
 Any prefix of this list leaves the repo building and `dune test` green.
 
-- [x] **T72.1** — *The move.* **(M)** `runtime/wasm/` →
+- [x] **T75.1** — *The move.* **(M)** `runtime/wasm/` →
       `stdlib/registry/wasm/0.1.0/`, manifest and rules intact; the
       root `dune` comment, the alias wiring, and
       `devtools/vendor-wasm-spec`'s paths follow; the smoke slice and
       both aliases pass from the new home.
-- [x] **T72.2** — *The public surface.* **(M)** The R-split execution
+- [x] **T75.2** — *The public surface.* **(M)** The R-split execution
       defs on the package root (`load`, `instantiate`, `call`,
       `get_global`, `read_memory`, `write_memory`,
       `register_instance`, `describe`), the value constructors and
       `as_*` accessors, the package README's surface section. The
       fixtures update from the five-tuple `load`.
-- [x] **T72.3** — *The host table.* **(M)** The `(module, name, fn)`
+- [x] **T75.3** — *The host table.* **(M)** The `(module, name, fn)`
       import triples riding `instantiate`, the resolution order, the
       uniform host signature through `call_host`; fixtures: a module
       importing from `env` served by an Emo closure, the resolution
       order pinned, a missing import link-failing as before.
-- [x] **T72.4** — *The demo golden.* **(S)** `examples/wasm_demo/`:
+- [x] **T75.4** — *The demo golden.* **(S)** `examples/wasm_demo/`:
       a hand-built module (hex in Emo, reviewable) exercising load →
       host → instantiate → call → memory round-trip; the golden runs
       through the interpreter with the registry pointed at the bundled
       copy.
-- [x] **T72.5** — *The docs.* **(S)** `docs/stdlib/wasm.md` EN + zh
+- [x] **T75.5** — *The docs.* **(S)** `docs/stdlib/wasm.md` EN + zh
       — what the package offers, the surface, the value encoding, the
       host interface, the limits (no WASI yet, no GC types,
       `["ocaml", "c"]` only); `docs/stdlib.md` row + section; the temp
       notes retire to the new reference; README rows; `docs/TASKS.md`
       and `plan/README.md` closed out.
-- [x] **T72.6** — *The c backend's module-level `var`.* **(M)** The
+- [x] **T75.6** — *The c backend's module-level `var`.* **(M)** The
       interpreter's dep-check universe resolves against the `c`
       target, so a package consumable across a deps edge must claim
       `c` — and the c backend refused `Global_var`/`Set_global_var`.
