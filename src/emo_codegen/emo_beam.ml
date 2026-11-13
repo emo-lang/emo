@@ -1335,6 +1335,10 @@ and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
               put env scratch;
               put env "})\n")
         | b :: rest ->
+            (* the pattern's bindings scope to the branch: the save
+               rides ahead of `emit_pattern`, whose fresh names
+               register, so a sibling arm never sees them *)
+            let saved_arm = env.local_map in
             put env "  <";
             emit_pattern env b.Emo_ir.pattern;
             put env "> ";
@@ -1346,6 +1350,7 @@ and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
             | None -> put env "when 'true' ->\n");
             emit_threaded_body env assigned b.Emo_ir.body;
             put env "\n";
+            env.local_map <- saved_arm;
             emit_branches rest
       in
       emit_branches branches;

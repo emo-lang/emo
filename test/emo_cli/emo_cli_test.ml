@@ -380,6 +380,8 @@ let wasm_goldens =
     "xml_demo";
     "dom_demo";
     "dom_edge";
+    "template_demo";
+    "template_edge";
     "slog_demo";
     "sync_demo";
     "loops";
@@ -467,6 +469,8 @@ let beam_goldens =
     "xml_demo";
     "dom_demo";
     "dom_edge";
+    "template_demo";
+    "template_edge";
     "slog_demo";
     "sync_demo";
     "printf_demo";
@@ -673,6 +677,8 @@ let c_goldens =
     "xml_demo";
     "dom_demo";
     "dom_edge";
+    "template_demo";
+    "template_edge";
     "sync_demo";
     "slog_demo";
     "bufio_demo";

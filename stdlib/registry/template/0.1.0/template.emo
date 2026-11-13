@@ -1,0 +1,94 @@
+require "json"
+
+// The template package: text with holes, rendered from a `json`
+// context — the shape of Go's text/template with Emo's own surface,
+// written in pure Emo over the shared runtimes, so every hosted target
+// answers alike.
+//
+// A template is text with actions. `{{ user.name }}` renders a value
+// from the context; `{{ if }}` / `{{ else if }}` / `{{ else }}` /
+// `{{ end }}` choose; `{{ for x in e }}` ranges an array or an object
+// (with `{{ else }}` for the empty case); `{{ template "name" }}`
+// includes a named template from the set; `{{- ` and ` -}}` trim the
+// neighboring whitespace; `{{! ... }}` comments. Paths are bare dotted
+// paths (`user.name`, `users[0].name`, `m["a b"]`), pipelines run
+// filters left to right (`{{ name | upper }}`), and the filter table
+// is fixed and ASCII-safe: upper, lower, trim, length, join, default,
+// escape_html.
+//
+// Strictness at every step. Parsing refuses malformed input the way
+// dom.parse does: an unclosed `{{`, a stray `}}`, an unmatched
+// `{{ end }}`, an unknown filter, a bad path — `(R.error, reason)` with
+// the byte position, never a repaired tree. Rendering refuses what has
+// no text: a missing key, a wrong kind, an out-of-bounds index, a null
+// hole, a container hole — the reason names the path, the byte, and
+// the fact. There is no arithmetic and no comparison in a template:
+// the template renders, the program computes.
+//
+// The context is the json tree, so `json.decode(text)` renders
+// directly and numbers render through the float package's
+// exact-decimal text — byte-identical by construction. The value
+// split: strings verbatim, integers decimal, floats exact-decimal,
+// booleans true/false; null refuses (guard it with `{{ if }}` or
+// supply `| default(...)`); arrays and objects refuse (iterate them
+// with `for`, or use `| length` / `| join`).
+
+def render(text String, ctx json.Json) (R, String) {
+  case internal.engine.parse_template(text) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, body)   -> {
+      case internal.engine.render_nodes(body, [], ctx, [], "", 1, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, out)    -> { return (R.ok, out) }
+      }
+    }
+  }
+}
+
+// An empty set: `with` parses templates into it by name, `render`
+// renders one of them. A set is the parse-once-render-many shape —
+// build it at startup, render it per request.
+def new() Set {
+  return Set.new(parts: [])
+}
+
+class Set {
+  def init(parts Array[(String, Array[internal.engine.TplNode])]) {
+    self.parts = parts
+  }
+
+  // Parse `text` as the template `name` into the set. Malformed text
+  // answers `(R.error, reason)`; a name already in the set refuses —
+  // redefinition would be a silent replacement.
+  def with(name String, text String) (R, Set) {
+    case internal.engine.parse_template(text) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, body)   -> {
+        var k = 0
+        while k < self.parts.length() {
+          if self.parts[k][0] == name {
+            return (R.error, "template: `" + name + "` is already defined")
+          }
+          k = k + 1
+        }
+        return (R.ok, Set.new(parts: self.parts.append((name, body))))
+      }
+    }
+  }
+
+  // Render the named template. An undefined name refuses; a render
+  // error inside an included template names it in the reason.
+  def render(name String, ctx json.Json) (R, String) {
+    var k = 0
+    while k < self.parts.length() {
+      if self.parts[k][0] == name {
+        case internal.engine.render_nodes(self.parts[k][1], [], ctx, self.parts, name, 1, [name]) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, out)    -> { return (R.ok, out) }
+        }
+      }
+      k = k + 1
+    }
+    return (R.error, "template: no template named `" + name + "` in the set")
+  }
+}

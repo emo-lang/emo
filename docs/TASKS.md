@@ -4520,3 +4520,66 @@ green; docs EN+zh.
       no clock, no filesystem, fds 1/2 only; the `emo` host module's
       deferral argued); TASKS/plan/CHECK updated.
 
+## M39 — Text templates
+
+The `template` package renders text with holes from a `json` context —
+Go `text/template`'s mechanism with Emo's own surface, pure Emo over
+the shared runtimes, so every hosted target answers byte for byte. It
+is the text-templating genre the raw-strings settle named as its
+revisit trigger; EmoUI's "no template language" ruling stands — that
+was about UI composition, and this engine's expressions are data paths
+over the json tree, never Emo code, so the checker never sees them and
+nothing evals at runtime.
+
+### Step 78 — The standard library: `template` · `plan/step-78-stdlib-template.md`
+
+**Prereq:** Step 31 (json — the value tree the context rides and the
+error split) and step 47 (csv — the byte-scanner discipline and the
+all-five-golden shape). **Done when:** `require "template"` renders a
+template with a json context byte-identically on all five targets —
+the one-shot `render`, the `Set` (new/with/render), `if`/`else
+if`/`else`/`end`, `for` over arrays and objects with `else`,
+`template` includes with the depth cap, trim markers, comments, seven
+ASCII-safe filters — parse strict and render strict, goldens on all
+five paths; `dune test` green.
+
+- [x] **T78.1** — The package: `stdlib/registry/template/0.1.0`
+      (manifest over all five targets, deps `json` + `float`),
+      `template.emo` — the root: `render`, `new`, the `Set` with
+      `with`/`render` — and `internal/engine.emo` — the AST, the byte
+      scanner, the parser (loop-based, recursion bounded by the 512
+      nesting cap), and the renderer (nearest-binding-then-root
+      resolution, the filter table, includes with the depth cap).
+- [x] **T78.2** — The goldens: `examples/template_demo` (the whole
+      walk: one-shot, the set with partials, if chains, for over
+      arrays and objects, for-else, every filter, trim markers,
+      comments, bracket paths, includes with and without a pipeline)
+      and `examples/template_edge` (the refusal matrix: every parse
+      error shape, every render error shape, the include cap, the
+      boundary that holds) — both on all five golden lists:
+      bootstrap, typescript, c, wasm, beam.
+- [x] **T78.3** — The docs: `docs/stdlib/template.md` + zh-CN mirror
+      (using, the grammar, resolution, truthiness, includes, filters,
+      errors, boundaries), `docs/stdlib.md` row + section + zh mirror,
+      README's references line.
+- [x] **T78.4** — The tracking: `plan/step-78-stdlib-template.md`,
+      `plan/README.md`'s milestone bullet and status row, CHECK.md's
+      settle record, this section and its zh mirror.
+
+Two compiler bugs the goldens flushed, both verified against the full
+suite: **the IR's module-level def mangle skipped `sanitize_ident`**
+(`filter_exists?` lowered to a raw `?` — illegal in TypeScript and
+OCaml identifiers; class methods had the sanitizer, module-level defs
+and `emo` group members did not — both mangle sites now sanitize), and
+**the BEAM emitter's case-in-threaded-chain path registered a branch's
+pattern bindings into the scope before the per-branch save** — the
+map's save rode after `emit_pattern`, whose `fresh_var` registers — so
+a sibling arm's pattern variables leaked into the enclosing scope and
+into a later continuation's live set, dying as `unbound variable` in
+erlc (the `stmt` case path already had the save before the pattern;
+`expr`'s threaded case and `emit_threaded_control`'s now match it).
+The `template_edge` golden also settled the bare-`}}` question the
+other way from the plan draft: a `}}` outside an action is text, not
+an error — code-generation templates close nested braces in their
+static text, and Go's own scanner agrees.
+

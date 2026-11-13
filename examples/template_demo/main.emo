@@ -1,0 +1,108 @@
+require "json"
+require "template"
+
+// The template package end to end: one-shot rendering, a set with
+// partials, the control tags, every filter, the trim markers, and the
+// bracket paths. Every target must print this file's expected.txt byte
+// for byte — the package is pure Emo over the shared runtimes.
+
+// The context: a json document with every kind — nested objects, an
+// array of objects, a null, booleans, a float, and an empty array.
+const ctx = json.object(entries: [
+  ("title", json.string("Quarterly")),
+  ("user", json.object(entries: [
+    ("name", json.string("ada")),
+    ("city", json.string("上海")),
+    ("nick", json.null()),
+    ("bio", json.string("<b> & \"quotes\""))
+  ])),
+  ("tags", json.array(items: [json.string("go"), json.string("emo")])),
+  ("scores", json.array(items: [json.int64(9), json.int64(8), json.int64(10)])),
+  ("price", json.float64(19.5)),
+  ("flags", json.object(entries: [
+    ("bold", json.bool(true)),
+    ("italic", json.bool(false))
+  ])),
+  ("rows", json.array(items: [
+    json.object(entries: [("item", json.string("tea")), ("qty", json.int64(2))]),
+    json.object(entries: [("item", json.string("cup")), ("qty", json.int64(1))])
+  ])),
+  ("empty", json.array(items: [])),
+  ("premium", json.bool(true)),
+  ("trial", json.bool(false))
+])
+
+// ---- one-shot ----
+
+// Nested paths, a filter, truthiness, a join, and the exact-decimal
+// float rendering all in one template.
+case template.render("Hello, {{ user.name | upper }} of {{ user.city }}!\n{{ if tags }}Tags: {{ tags | join(\", \") }}\n{{ end }}Price: {{ price }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// The zero-value rule: 0, the empty string, an empty array, and null
+// are all false; a bool carries itself.
+case template.render("{{ if premium }}premium{{ else if trial }}trial{{ else }}free{{ end }}\n{{ if empty }}has rows{{ else }}empty{{ end }}\n{{ if flags.italic }}italic{{ else }}upright{{ end }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- the set ----
+
+// Parse once at startup, render many: a page assembled from a header,
+// a footer, and a row partial that the loop passes each element into.
+const (R.ok, s1) = template.new().with("page", "{{ template \"header\" }}{{ for r in rows }}{{ template \"row\" r }}{{ end }}{{ template \"footer\" }}")
+const (R.ok, s2) = s1.with("header", "# {{ title }}\n")
+const (R.ok, s3) = s2.with("row", "- {{ item }} x{{ qty }}\n")
+const (R.ok, set) = s3.with("footer", "total: {{ rows | length }} rows\n")
+case set.render("page", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- control tags ----
+
+// Two bindings: the index and the element; the key and the value.
+case template.render("{{ for i, t in tags }}{{ i }}:{{ t }} {{ end }}\n{{ for k, v in flags }}{{ k }}={{ v }} {{ end }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// The empty case: zero iterations take the `{{ else }}`.
+case template.render("{{ for x in empty }}row\n{{ else }}nothing\n{{ end }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- filters ----
+
+case template.render("{{ user.nick | default(\"anon\") }}\n{{ user.bio | escape_html }}\n{{ scores | join(\" + \") }} = {{ scores | length }}\n{{ tags | length }} tags, {{ title | length }} bytes\n{{ user.name | upper }} / {{ tags | join(\"|\") | lower }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- trim markers and comments ----
+
+// `{{- ` trims the text before the action, ` -}}` the text after; a
+// comment renders nothing.
+case template.render("A\n  {{- if flags.bold -}}\n  B\n  {{- end -}}\n  C\nx{{! a note }}y", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- bracket paths ----
+
+case template.render("{{ flags[\"bold\"] }} {{ scores[1] }} {{ rows[0].item }} {{ user[\"city\"] }}", ctx) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
+
+// ---- decoded json ----
+
+// A decoded document renders directly — the context is the json tree.
+const (R.ok, doc) = json.decode("{\"who\":\"zoe\",\"n\":3,\"ok\":true}")
+case template.render("{{ who }} did {{ n }} ({{ ok }})", doc) {
+  (R.error, why) -> { println("error: " + why) }
+  (R.ok, out)    -> { println(out) }
+}
