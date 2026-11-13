@@ -50,6 +50,12 @@ echo "running: seed 10000" >&2
 "$BENCH" seed "$DB" 10000 >/dev/null
 echo "running: update 200" >&2
 update=$(ms_per_run "$BENCH" update "$DB" 200 10000)
+echo "running: column-seed 10000" >&2
+"$BENCH" column-seed "$DB" 10000 >/dev/null
+echo "running: column-scan 10000" >&2
+column_scan=$(ms_per_run "$BENCH" column-scan "$DB")
+echo "running: column-agg 10000" >&2
+column_agg=$(ms_per_run "$BENCH" column-agg "$DB")
 
 rate() {
   awk -v n="$1" -v ms="$2" 'BEGIN { if (ms > 0) printf "%.0f", n * 1000 / ms; else printf "-" }'
@@ -73,5 +79,7 @@ OUT=$PWD/bench/results.md
   echo "| primary-key lookup | 10000 lookups over 10000 rows | ${lookup} | $(rate 10000 "$lookup") lookups |"
   echo "| full table scan | 10000 rows, one SELECT | ${scan} | $(rate 10000 "$scan") rows |"
   echo "| UPDATE, autocommit | 200 rows by primary key | ${update} | $(rate 200 "$update") updates |"
+  echo "| column-store scan | 10000 rows, one SELECT | ${column_scan} | $(rate 10000 "$column_scan") rows |"
+  echo "| column-store aggregate | count(*), sum(id), avg(score) over 10000 rows | ${column_agg} | $(rate 10000 "$column_agg") rows |"
 } >"$OUT"
 cat "$OUT"

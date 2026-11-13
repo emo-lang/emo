@@ -63,6 +63,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit — six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows in the runner's canonical rendering) over one fresh database per run, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench modes and `bench/run.sh` (warmup plus three timed runs) with the measured table, which found and fixed the read-only statement's WAL fsync and (with the corpus) the DDL-in-transaction block leak; `docs/emo-db.md` grown to the shipped surface (`What shipped`, `Measured`), the corrected stale claims, and the arc-two review of the row store's actual plug points (`CHECK.md`). |
 | M35 — The column format | 72 | The column format and the catalog choice: `CREATE TABLE ... STORE = COLUMN` in the parser (the canonical rendering spells only the written column tail), the catalog's version-2 table definition with a `store` field (a version-1 record reads as row storage), the record layer's column half — one column family per column (`col_<oid>`), 1024-row blocks (row count, null bitmap, the row encoding's widths), the trailing partial block re-read and rewritten inside the transaction, the block scan in rowid order, the reopen's column-family verification, and the row path's named guards; no indexes on column tables (`PRIMARY KEY` and secondary indexes refuse in both layers); the engine's DDL mapping and the named `0A000` bridge for DML/SELECT; the `column_demo` golden (create, 1030 rows across the block boundary, reopen, refusals) three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 | M36 — The column executor | 73 | The batch executor behind the same surface: the record layer's `scan_column_batches` and `column_block_counts`, the engine's storage routing (SELECT to the column executor, INSERT to the column blocks, UPDATE/DELETE answering the insert-only `0A000`), the column plan nodes, and the global aggregates COUNT/SUM/AVG/MIN/MAX — COUNT answers 0 and the others NULL over zero rows, SUM widens by the argument, AVG is DOUBLE PRECISION, MIN/MAX keep the argument's type, `DISTINCT` aggregates refuse, a mixed select list answers `42803` naming the column, `count(*)` with no WHERE takes the block-count fast path, and the plan text shows `column scan`/`aggregate` — pinned by the engine demo's executor cases, three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
+| M37 — The two-engine proof | 74 | Both engines in one database, one session, one transaction over the wire: `htap_demo` seeds a row table and a column table (1100 rows across the block boundary) through the engine and serves the wire; psql and the `postgres` client each drive a script that reads both engines, carries the row table's UPDATE and the column table's INSERT inside one BEGIN/COMMIT, and reads the post-commit aggregates (`1100|605550|1.0|row-999` seeded, `1|11.0` updated, `1101|606651` after), pinned byte-for-byte behind the probes; the corpus's `column.test` lifts it to 141 cases (the DDL, the projections, the five aggregates, the zero-row rule `0|NULL`, and the mixing/type/DISTINCT/star/insert-only/primary-key refusals); the bench's column modes record the first measured comparison — the block scan 304 ms / 32895 rows per second against the row store's 675 ms / 14815, the aggregate 142 ms / 70423 — through `projects/emo-db/check.sh` green 3x (76 checks) (`CHECK.md`). |
 
 ## Design gates
 
@@ -4339,3 +4340,29 @@ and everything stays byte-identical three times through
 - [x] **T73.4** — The engine demo's executor cases.
 - [x] **T73.5** — The gate green three times.
 - [x] **T73.6** — The docs EN+zh and the close-out.
+
+## M37 — The two-engine proof
+
+### Step 74 — The two-engine proof
+
+**Prereq:** Steps 72–73 (the column format and the column executor).
+**Done when:** one database holds both storages and one session crosses
+them inside one transaction — `htap_demo` seeds a row table and a
+column table (1100 rows, across the block boundary) through the engine
+and serves the wire; psql runs a script that reads both engines, updates
+the row table and inserts into the column table inside BEGIN/COMMIT,
+and reads the post-commit aggregates, pinned byte-for-byte; the standard
+library's `postgres` client runs the same script through its simple
+path, pinned; the corpus gains `column.test` (the DDL, projections, the
+five aggregates, the zero-row rule, the mixing/type/DISTINCT/insert-only/
+primary-key refusals) and the runner's transcript stays byte-identical
+three times; the bench gains the column-scan and column-aggregate rows
+with the measured numbers recorded; docs EN+zh; the repo builds.
+
+- [x] **T74.1** — The spec: this section EN+zh and
+      `plan/step-74-two-engines.md`.
+- [x] **T74.2** — `htap_demo` and `htap_client` with their goldens.
+- [x] **T74.3** — The gate's two-engine phases.
+- [x] **T74.4** — The corpus's `column.test`.
+- [x] **T74.5** — The bench's column modes and the recorded numbers.
+- [x] **T74.6** — The docs EN+zh and the close-out.

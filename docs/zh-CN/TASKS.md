@@ -55,6 +55,7 @@
 | M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
 | M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 | M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
+| M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1842,3 +1843,24 @@ EN+zh;仓库可构建。
 - [x] **T73.4** —— 引擎 demo 的执行器用例。
 - [x] **T73.5** —— 闸门三遍全绿。
 - [x] **T73.6** —— 文档 EN+zh 与收尾。
+
+## M37 —— 双引擎证明
+
+### 步骤 74 —— 双引擎证明
+
+**前置:** Step 72–73(列存格式与列执行器)。**完成标准:** 一台数据库
+同时持两种存储,一次会话在一个事务里跨过它们——`htap_demo` 经引擎播种
+行表与列存表(1100 行,跨过块边界)后服务线协议;psql 跑一个脚本:读两
+台引擎、在 BEGIN/COMMIT 里更新行表并向列存表插入、再读提交后的聚合,
+逐字节钉死;标准库 `postgres` 客户端经其简单路径跑同一脚本,钉死;语
+料长出 `column.test`(DDL、投影、五个聚合、零行规则、混用/类型/
+DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;bench 长
+出列存扫描与列存聚合两行并记录实测数字;文档 EN+zh;仓库可构建。
+
+- [x] **T74.1** —— 规格:本节 EN+zh 与
+      `plan/step-74-two-engines.md`。
+- [x] **T74.2** —— `htap_demo` 与 `htap_client` 及各自金测。
+- [x] **T74.3** —— 闸门的双引擎阶段。
+- [x] **T74.4** —— 语料的 `column.test`。
+- [x] **T74.5** —— bench 的列存模式与实测数字。
+- [x] **T74.6** —— 文档 EN+zh 与收尾。

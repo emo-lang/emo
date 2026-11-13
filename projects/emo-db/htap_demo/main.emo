@@ -1,0 +1,88 @@
+require "emo/wire"
+require "emo/record"
+require "emo/rocksdb"
+require "emo/engine"
+require "net"
+require "file"
+require "os"
+
+// The two-engine proof's server (M37): one database holding a row
+// table and a column table, seeded through the engine, then served
+// over the PostgreSQL simple query path exactly as wire_demo serves.
+// The seed crosses the engines on purpose — `items` is a row table
+// with three rows, `cold_items` is a column table with 1100 rows, so
+// every served aggregate walks two blocks.
+//
+// Arguments: port (0 = ephemeral), the number of sessions to serve
+// (0 = forever), and the ready-file path the bound port is written to.
+// The stdout stays static: `listening` and `done`.
+
+def arg(argv Array[String], i Int64, fallback Int64) Int64 {
+  if i < argv.length() {
+    return argv[i].to_int64()
+  }
+  return fallback
+}
+
+def run_or_die(eng engine.Engine, sql String) {
+  case eng.execute(sql) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+}
+
+def seed(store record.Store) {
+  const eng = engine.Engine.new(store, [], [], Map.new())
+  run_or_die(eng, "CREATE TABLE items (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, price DOUBLE PRECISION)")
+  run_or_die(eng, "INSERT INTO items (id, name, price) VALUES (1, 'Ada', 9.5), (2, 'Grace', 3.25), (3, 'Linus', NULL)")
+  run_or_die(eng, "CREATE TABLE cold_items (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN")
+  run_or_die(eng, "BEGIN")
+  var i = 1
+  while i <= 1100 {
+    const s = i.to_string()
+    run_or_die(eng, "INSERT INTO cold_items (id, name, score) VALUES (" + s + ", 'row-" + s + "', " + s + ".0)")
+    i = i + 1
+  }
+  run_or_die(eng, "COMMIT")
+  eng.end_session()
+}
+
+def main() {
+  const path = ".emo-build/htap-db"
+  const argv = os.argv()
+  const port = arg(argv, 1, 0)
+  const max = arg(argv, 2, 0)
+  var ready = ""
+  if argv.length() > 3 {
+    ready = argv[3]
+  }
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  case record.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, store) -> {
+      seed(store)
+      case net.listen("127.0.0.1", port) {
+        (R.error, why) -> { raise Exception.new(message: why) }
+        (R.ok, listener) -> {
+          const bound = listener.port()
+          println("listening")
+          if ready != "" {
+            case file.write(ready, bound.to_string()) {
+              (R.error, why) -> { raise Exception.new(message: why) }
+              (R.ok, _) -> {}
+            }
+          }
+          wire.serve(listener, store,
+                     wire.options().with_max_connections(max))
+          store.close()
+          println("done")
+        }
+      }
+    }
+  }
+}
+
+main()

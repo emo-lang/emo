@@ -84,32 +84,75 @@ def main() {
           eng.close()
           println("ok " + n.to_string())
         } else {
-          if mode == "scan" {
-            const eng = open_or_die(path)
-            const result = run_or_die(eng, "SELECT id, name, score FROM bench_users")
-            eng.close()
-            println("rows " + result.rows.length().to_string())
+          if mode == "column-seed" {
+            const n = arg(argv, 3, 100)
+            const eng = fresh_column(path)
+            run_or_die(eng, "BEGIN")
+            var i = 1
+            while i <= n {
+              run_or_die(eng, column_insert_sql(i))
+              i = i + 1
+            }
+            run_or_die(eng, "COMMIT")
+            eng.end_session()
+            println("seeded " + n.to_string())
           } else {
-            if mode == "update" {
-              const n = arg(argv, 3, 100)
-              const rows = arg(argv, 4, n)
+            if mode == "column-scan" {
               const eng = open_or_die(path)
-              var i = 0
-              while i < n {
-                const id = (i % rows) + 1
-                run_or_die(eng, "UPDATE bench_users SET score = score + 1.0 WHERE id = " + id.to_string())
-                i = i + 1
-              }
-              eng.close()
-              println("ok " + n.to_string())
+              const result = run_or_die(eng, "SELECT id, name, score FROM bench_cold")
+              eng.end_session()
+              println("rows " + result.rows.length().to_string())
             } else {
-              raise Exception.new(message: "bench: no such mode `" + mode + "`")
+              if mode == "column-agg" {
+                const eng = open_or_die(path)
+                const result = run_or_die(eng, "SELECT count(*), sum(id), avg(score) FROM bench_cold")
+                eng.end_session()
+                println("rows " + result.rows.length().to_string())
+              } else {
+                if mode == "scan" {
+                  const eng = open_or_die(path)
+                  const result = run_or_die(eng, "SELECT id, name, score FROM bench_users")
+                  eng.close()
+                  println("rows " + result.rows.length().to_string())
+                } else {
+                  if mode == "update" {
+                    const n = arg(argv, 3, 100)
+                    const rows = arg(argv, 4, n)
+                    const eng = open_or_die(path)
+                    var i = 0
+                    while i < n {
+                      const id = (i % rows) + 1
+                      run_or_die(eng, "UPDATE bench_users SET score = score + 1.0 WHERE id = " + id.to_string())
+                      i = i + 1
+                    }
+                    eng.close()
+                    println("ok " + n.to_string())
+                  } else {
+                    raise Exception.new(message: "bench: no such mode `" + mode + "`")
+                  }
+                }
+              }
             }
           }
         }
       }
     }
   }
+}
+
+def fresh_column(path String) engine.Engine {
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  const eng = open_or_die(path)
+  run_or_die(eng, "CREATE TABLE bench_cold (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN")
+  return eng
+}
+
+def column_insert_sql(i Int64) String {
+  const s = i.to_string()
+  return "INSERT INTO bench_cold (id, name, score) VALUES (" + s + ", 'user-" + s + "', " + s + ".0)"
 }
 
 def insert_sql(i Int64) String {

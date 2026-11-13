@@ -1,0 +1,107 @@
+require "postgres"
+require "os"
+
+// The two-engine proof's client (M37): the standard library's
+// `postgres` package against the seeding server, through libpq's
+// simple path (the zero-parameter route). The script is the psql
+// phase's: both engines read, then one BEGIN/COMMIT carrying the row
+// table's UPDATE and the column table's INSERT, then the post-commit
+// reads. The port is argv[1], written by the gate from the ready file.
+
+def main() {
+  const port = os.argv()[1].to_int64()
+  const opts = postgres.options().with_host("127.0.0.1").with_port(port).with_user("emo").with_database("emo")
+  case postgres.connect(opts) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, conn) -> {
+      run(conn)
+      conn.close()
+      println("done")
+    }
+  }
+}
+
+def query_rows(conn postgres.Conn, label String, sql String, price_col Int64) {
+  case conn.query(sql, []) {
+    (R.ok, rows) -> {
+      println(label + ": " + rows.count().to_string())
+      var r = 0
+      while r < rows.count() {
+        var price = "-"
+        if !rows.is_null(r, price_col) {
+          price = rows.f64(r, price_col).to_string()
+        }
+        println("  " + rows.i64(r, 0).to_string() + " " + rows.text(r, 1) + " " + price)
+        r = r + 1
+      }
+      rows.finish()
+    }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def query_one(conn postgres.Conn, label String, sql String) {
+  case conn.query(sql, []) {
+    (R.ok, rows) -> {
+      println(label + ": " + rows.count().to_string())
+      var r = 0
+      while r < rows.count() {
+        var price = "-"
+        if !rows.is_null(r, 1) {
+          price = rows.f64(r, 1).to_string()
+        }
+        println("  " + rows.i64(r, 0).to_string() + " " + price)
+        r = r + 1
+      }
+      rows.finish()
+    }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def query_agg(conn postgres.Conn, label String, sql String) {
+  case conn.query(sql, []) {
+    (R.ok, rows) -> {
+      println(label + ": " + rows.i64(0, 0).to_string() + " " +
+              rows.i64(0, 1).to_string())
+      rows.finish()
+    }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def query_cold(conn postgres.Conn, label String, sql String) {
+  case conn.query(sql, []) {
+    (R.ok, rows) -> {
+      var score = "-"
+      if !rows.is_null(0, 2) {
+        score = rows.f64(0, 2).to_string()
+      }
+      println(label + ": " + rows.i64(0, 0).to_string() + " " +
+              rows.i64(0, 1).to_string() + " " + score + " " +
+              rows.text(0, 3))
+      rows.finish()
+    }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def exec_tag(conn postgres.Conn, label String, sql String) {
+  case conn.exec(sql, []) {
+    (R.ok, n) -> { println(label + ": " + n.to_string()) }
+    (R.error, why) -> { println(label + ": " + why) }
+  }
+}
+
+def run(conn postgres.Conn) {
+  query_rows(conn, "items", "select id, name, price from items", 2)
+  query_cold(conn, "cold", "select count(*), sum(id), min(score), max(name) from cold_items")
+  exec_tag(conn, "begin", "begin")
+  exec_tag(conn, "update", "update items set price = 11.0 where id = 1")
+  exec_tag(conn, "insert", "insert into cold_items (id, name, score) values (1101, 'new', 4.0)")
+  exec_tag(conn, "commit", "commit")
+  query_one(conn, "row", "select id, price from items where id = 1")
+  query_agg(conn, "cold2", "select count(*), sum(id) from cold_items")
+}
+
+main()

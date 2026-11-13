@@ -248,10 +248,15 @@ record):
 | primary-key lookup | 10000 lookups over 10000 rows | 1037 | 9643 lookups |
 | full table scan | 10000 rows, one SELECT | 580 | 17241 rows |
 | UPDATE, autocommit | 200 rows by primary key | 1305 | 153 updates |
+| column-store scan | 10000 rows, one SELECT | 304 | 32895 rows |
+| column-store aggregate | count(*), sum(id), avg(score) over 10000 rows | 142 | 70423 rows |
 
 The autocommit rows are one fsynced write each — the durability point
-is the point. Not measured: the wire's per-query latency, concurrent
-sessions, tables larger than memory, and arc two's column engine.
+is the point. The column rows are the arc-two executor's first
+measurements (2026-11-13): the block scan answers 10000 rows in 304 ms
+against the row store's 675, and the aggregate walks the same rows in
+142 ms. Not measured: the wire's per-query latency, concurrent
+sessions, tables larger than memory.
 
 ## Arc two — the column engine (cut settled 2026-11-13)
 
@@ -290,11 +295,20 @@ counts without decoding. UPDATE and DELETE answer `0A000` — the v0
 column engine is insert-only; the wire, the session plane, the locks,
 and the transactions are the same code.
 
-**M37 — The two-engine proof (step 74).** One database, both
-storages, one session: a row table's point updates beside a column
-table's aggregates over the wire (psql and the `postgres` client), the
-corpus gains the column surface, the bench gains the column-scan row,
-and the docs record the numbers.
+**M37 — The two-engine proof (step 74, landed 2026-11-13).** One
+database, both storages, one session: `htap_demo` seeds a row table
+and a column table (1100 rows, across the block boundary) through the
+engine and serves the wire; psql and the `postgres` client both run a
+script that reads both engines, then updates the row table and inserts
+into the column table inside one BEGIN/COMMIT — one WriteBatch, one
+fsync, both engines — and reads the post-commit aggregates, each phase
+pinned byte-for-byte behind the availability probes. The corpus gains
+`column.test` (15 cases: the DDL, the projection and filtered
+projection, the five aggregates, the zero-row rule — count 0, the rest
+NULL — and the mixing/type/DISTINCT/insert-only/primary-key refusals),
+and the bench gains the column rows: the block scan answers 10000 rows
+in 304 ms against the row store's 675, and the aggregate walks the
+same rows in 142 ms.
 
 Deferred inside the arc, each its own later step when evidence asks:
 block-level min/max pruning, column-table indexes, column UPDATE and

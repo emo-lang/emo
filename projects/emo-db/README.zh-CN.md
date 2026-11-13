@@ -45,6 +45,11 @@ DML/DDL)、M31(计划器与执行器)、M32(事务与会话面)、M33
 - `column_demo/` —— 列存格式的金测:`STORE = COLUMN` 建列存表、一个
   事务里 1030 行跨过 1024 行的块边界、按 rowid 序的块扫描、重开,以
   及不建索引/不要主键的拒绝。
+- `htap_demo/` —— 双引擎证明的服务器:经引擎播种行表与列存表
+  (1100 行,跨过块边界)后服务线协议。
+- `htap_client/` —— 标准 `postgres` 客户端的双引擎脚本:读两台引
+  擎,然后一个 BEGIN/COMMIT 同时携带行表的 UPDATE 与列存表的
+  INSERT。
 - `corpus/` —— SQL 表面写成数据:六个 `.test` 文件、126 个用例,
   SQLLogicTest 精神——`statement ok` 钉标签、`statement error` 钉
   `code: message` 行、`query` 钉行。
@@ -54,7 +59,8 @@ DML/DDL)、M31(计划器与执行器)、M32(事务与会话面)、M33
 - `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查四个包、把五
   个嵌入式 demo 各跑三遍对照各自的 `expected.txt`、把语料跑三遍逐字
   节一致、烟测 bench 的计数、用 psql 与 `postgres` 客户端驱动线协议
-  (每个阶段一台全新服务器,各自逐字节钉死),并钉死两条拒绝(解释
+  (每个阶段一台全新服务器,各自逐字节钉死)、以同样方式证明一台数
+  据库里的两台引擎,并钉死两条拒绝(解释
   器 E3009、非 `c` target 的 E5007)。
 
 ## 绑定的形状
@@ -160,6 +166,13 @@ scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
 引擎只插入——INSERT 经同一事务骑列块。计划文本显示
 `column scan` 与 `aggregate`。
 
+两台引擎在同一台数据库相遇:`htap_demo` 播种 `items`(行表)与
+`cold_items`(列存表,1100 行跨过块边界)并服务线协议;psql 与
+`postgres` 客户端都跑一个脚本——读两台引擎,然后在 BEGIN/COMMIT 里
+携带行表的 UPDATE 与列存表的 INSERT(一个 WriteBatch、一次
+fsync),再读提交后的聚合。bench 的列存两行是本弧的首个实测对照:
+块扫描 304 ms 答 10000 行,行存 675 ms。
+
 ## 符合性与测量
 
 语料把 SQL 表面写成数据,runner 是它唯一的代码。一条记录是表头
@@ -200,4 +213,7 @@ M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M2
 1024 行块、列 family 与重开校验。M36 随后数小时落地:列执行器
 ——块扫描带共享 filter 与 project,以及全局聚合
 COUNT/SUM/AVG/MIN/MAX——替换了桥;列存表的 UPDATE 与 DELETE 答
-`0A000`(只插入)。step 74 是双引擎证明。
+`0A000`(只插入)。M37 同日收尾本弧:`htap_demo` 与 `htap_client`
+在 wire 上证明一台数据库、一个事务里的两台引擎,语料的
+`column.test` 以 15 个用例写下列存表面,bench 的列存两行记录首个
+实测对照(10000 行:块扫描 304 ms,行存 675 ms)。

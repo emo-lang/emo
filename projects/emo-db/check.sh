@@ -182,7 +182,8 @@ expect 0 "the wire type-checks" "$rc"
 for lock in kv_demo/package.lock record_demo/package.lock \
             engine_demo/package.lock txn_demo/package.lock \
             corpus_runner/package.lock bench/package.lock \
-            column_demo/package.lock \
+            column_demo/package.lock htap_demo/package.lock \
+            htap_client/package.lock \
             wire/package.lock wire_demo/package.lock \
             wire_client/package.lock; do
   if [ ! -f "$lock" ]; then
@@ -274,7 +275,8 @@ run=1
 while [ "$run" -le 3 ]; do
   ( cd corpus_runner && "$OUT/corpus_runner" ../corpus/ddl.test \
       ../corpus/types.test ../corpus/dml.test ../corpus/select.test \
-      ../corpus/transactions.test ../corpus/errors.test ) \
+      ../corpus/column.test ../corpus/transactions.test \
+      ../corpus/errors.test ) \
     >"$OUT/corpus-run-$run.txt" 2>&1 && rc=0 || rc=$?
   expect 0 "corpus run $run exits 0" "$rc"
   expect_same_file corpus/expected.txt "$OUT/corpus-run-$run.txt" \
@@ -299,6 +301,89 @@ while [ "$run" -le 3 ]; do
   run=$((run + 1))
 done
 
+# --- build and run the two-engine golden ----------------------------------
+#
+# One database, both storages: htap_demo seeds a row table and a column
+# table (1100 rows, across the block boundary), then serves the wire.
+# The psql phase and the client phase each get a fresh server, and each
+# script updates the row table and inserts into the column table inside
+# one BEGIN/COMMIT.
+
+( cd htap_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/htap_demo" ) >"$OUT/htap-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the two-engine server builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+if [ "$LIBPQ" -eq 1 ]; then
+  ( cd htap_client && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+      -o "$OUT/htap_client" ) >"$OUT/htap-client-build.log" 2>&1 \
+    && rc=0 || rc=$?
+  expect 0 "the two-engine client builds on c" "$rc"
+  if [ "$rc" -ne 0 ]; then exit 1; fi
+fi
+
+if [ -n "$PSQL" ]; then
+  portfile="$OUT/htap-psql-port.txt"
+  : >"$portfile"
+  ( cd htap_demo && "$OUT/htap_demo" 0 1 "$portfile" ) \
+    >"$OUT/htap-psql-server.log" 2>&1 &
+  srv=$!
+  tries=0
+  while [ ! -s "$portfile" ] && [ "$tries" -lt 300 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ ! -s "$portfile" ]; then
+    echo "check.sh: the two-engine phase's server wrote no port" >&2
+    exit 1
+  fi
+  port=$(cat "$portfile")
+
+  "$PSQL" "host=127.0.0.1 port=$port user=emo dbname=emo" -X -A -t \
+    -c "select id, name, price from items; select count(*), sum(id), min(score), max(name) from cold_items; begin; update items set price = 11.0 where id = 1; insert into cold_items (id, name, score) values (1101, 'new', 4.0); commit; select id, price from items where id = 1; select count(*), sum(id) from cold_items" \
+    >"$OUT/htap-psql.txt" 2>"$OUT/htap-psql.err" && rc=0 || rc=$?
+  expect 0 "psql drives both engines" "$rc"
+  expect_same_file htap_demo/psql_expected.txt "$OUT/htap-psql.txt" \
+    "psql's two-engine script is byte-identical"
+
+  wait "$srv" && rc=0 || rc=$?
+  expect 0 "the two-engine server exits 0" "$rc"
+  expect_same_file htap_demo/expected.txt "$OUT/htap-psql-server.log" \
+    "the two-engine server's own output is stable"
+else
+  echo "skip two-engine psql: psql is not on PATH"
+fi
+
+if [ "$LIBPQ" -eq 1 ]; then
+  portfile="$OUT/htap-client-port.txt"
+  : >"$portfile"
+  ( cd htap_demo && "$OUT/htap_demo" 0 1 "$portfile" ) \
+    >"$OUT/htap-client-server.log" 2>&1 &
+  srv=$!
+  tries=0
+  while [ ! -s "$portfile" ] && [ "$tries" -lt 300 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if [ ! -s "$portfile" ]; then
+    echo "check.sh: the two-engine client phase's server wrote no port" >&2
+    exit 1
+  fi
+  port=$(cat "$portfile")
+
+  "$OUT/htap_client" "$port" >"$OUT/htap-client.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "the postgres client drives both engines" "$rc"
+  expect_same_file htap_client/expected.txt "$OUT/htap-client.txt" \
+    "the client's two-engine script is byte-identical"
+
+  wait "$srv" && rc=0 || rc=$?
+  expect 0 "the two-engine client server exits 0" "$rc"
+  expect_same_file htap_demo/expected.txt "$OUT/htap-client-server.log" \
+    "the two-engine client server's own output is stable"
+else
+  echo "skip two-engine client: libpq is not resolvable through pkg-config"
+fi
+
 # --- build the bench and smoke its counts ---------------------------------
 #
 # The bench's numbers are measured by bench/run.sh, never by the gate;
@@ -315,7 +400,10 @@ bench_db=$OUT/bench-smoke-db
     "$OUT/bench" lookup "$bench_db" 40 100 &&
     "$OUT/bench" scan "$bench_db" &&
     "$OUT/bench" update "$bench_db" 40 100 &&
-    "$OUT/bench" insert-batch "$bench_db" 25 ) \
+    "$OUT/bench" insert-batch "$bench_db" 25 &&
+    "$OUT/bench" column-seed "$bench_db" 25 &&
+    "$OUT/bench" column-scan "$bench_db" &&
+    "$OUT/bench" column-agg "$bench_db" ) \
   >"$OUT/bench-smoke.txt" 2>&1 && rc=0 || rc=$?
 expect 0 "the bench modes run" "$rc"
 expect_same_file bench/smoke_expected.txt "$OUT/bench-smoke.txt" \

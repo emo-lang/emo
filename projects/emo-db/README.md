@@ -55,6 +55,12 @@ format) is landed.
   with `STORE = COLUMN`, 1030 rows across the 1024-row block boundary
   in one transaction, the block scan in rowid order, a reopen, and the
   no-indexes/no-primary-key refusals.
+- `htap_demo/` — the two-engine proof's server: a row table and a
+  column table (1100 rows, across the block boundary) seeded through
+  the engine, then served over the wire.
+- `htap_client/` — the standard `postgres` client's two-engine script:
+  both engines read, then one BEGIN/COMMIT carrying the row table's
+  UPDATE and the column table's INSERT.
 - `corpus/` — the SQL surface as data: six `.test` files and 126 cases
   in the SQLLogicTest spirit, `statement ok` with a pinned tag,
   `statement error` with a pinned `code: message` line, and `query`
@@ -69,7 +75,8 @@ format) is landed.
   against their `expected.txt`, run the corpus three times
   byte-identical, smoke the bench's counts, drive the wire through psql
   and the `postgres` client (one fresh server per phase, each
-  byte-pinned), and pin the two refusals (the interpreter's E3009 and a
+  byte-pinned), prove both engines in one database the same way, and
+  pin the two refusals (the interpreter's E3009 and a
   non-`c` target's E5007).
 
 ## The binding's shape
@@ -210,6 +217,15 @@ column engine is insert-only — and INSERT rides the column blocks
 through the same transaction. The plan text shows `column scan` and
 `aggregate`.
 
+The two engines meet in one database: `htap_demo` seeds `items` (a row
+table) and `cold_items` (a column table with 1100 rows across the
+block boundary) and serves the wire; psql and the `postgres` client
+both run a script that reads both engines, then carries the row
+table's UPDATE and the column table's INSERT inside one BEGIN/COMMIT —
+one WriteBatch, one fsync — and reads the post-commit aggregates. The
+bench's column rows are the arc's first measured comparison: the block
+scan answers 10000 rows in 304 ms against the row store's 675.
+
 ## Conformance and measurement
 
 The corpus states the SQL surface as data and the runner is its only
@@ -257,5 +273,9 @@ format — the parser's `STORE = COLUMN` tail, the catalog's version-2
 reopen's verification. M36 followed hours later: the column executor —
 the block scan with the shared filter and project, and the global
 aggregates COUNT/SUM/AVG/MIN/MAX — replaced the bridge; UPDATE and
-DELETE on a column table answer `0A000` (insert-only). Step 74 is the
-two-engine proof.
+DELETE on a column table answer `0A000` (insert-only). M37 closed the
+arc the same day: `htap_demo` and `htap_client` prove both engines in
+one database and one transaction over the wire, the corpus's
+`column.test` states the column surface as 15 more cases, and the
+bench's column rows record the first measured comparison (the block
+scan 304 ms against the row store's 675 for 10000 rows).
