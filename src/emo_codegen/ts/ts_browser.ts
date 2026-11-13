@@ -155,6 +155,19 @@ function domDeliver(tag: bigint): void {
 
 function browserRuntimeImpl(name: string, args: any[]): any {
   switch (name) {
+    case "time_now_ms":
+      // The wall clock, UTC epoch milliseconds: Date.now is exactly
+      // that, and the answer rides the Int64 shape.
+      return BigInt(Date.now());
+    case "time_mono_ns":
+      // The monotonic clock, nanoseconds, floor'd from
+      // performance.now()'s milliseconds — the reading binary64 can
+      // carry.
+      return BigInt(Math.trunc(performance.now() * 1e6));
+    case "time_sleep_ms":
+      // Park the task: the timer rides the event loop (sleepMs), and
+      // the promise the emitter awaits is the park.
+      return sleepMs(Number(args[0]));
     case "dom_root":
       return domRoot();
     case "dom_element":

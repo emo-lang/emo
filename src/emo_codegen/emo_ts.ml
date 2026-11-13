@@ -374,7 +374,8 @@ let rec expr env (e : Emo_ir.expr) : string =
       else if name = "fence" then "E.fence()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
   | Runtime_impl { name; args } ->
-      if env.browser && not (is_dom name) then
+      if env.browser && (not (is_dom name)) && not (Emo_ir.is_time_impl name)
+      then
         raise
           (Emo_ir.Lower_error
              (Printf.sprintf
@@ -570,7 +571,8 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       (* The receive in tail position is the def's value: a method or a
          callee def whose last statement receives answers through it,
          and dropping the return answered undefined instead. *)
-      if tail then Printf.sprintf "return %s;" receive else receive
+      if tail then Printf.sprintf "return %s;" receive
+      else Printf.sprintf "%s;" receive
   | Raise e -> Printf.sprintf "E.throwException(%s);" (expr env e)
   | Return_stmt e -> (
       if env.in_receive then

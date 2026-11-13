@@ -1,0 +1,460 @@
+// The time package: the clock, the difference, and the heartbeat. The
+// OS's wall clock and monotonic clock ride three runtime doors — the
+// wall clock answers UTC epoch milliseconds, the coarsest resolution
+// every hosted target's wall clock honestly carries, and the monotonic
+// clock answers nanoseconds where its host carries them — and every
+// other part of the package is pure Emo over those readings, so the
+// answers that can be pinned are byte-identical on every target the
+// package declares.
+//
+//   require "time"
+//   const t = time.now()
+//   println(t.format_iso())        // 2026-11-13T08:30:15.123Z
+//   println(t.format("Www, DD Mmm YYYY hh:mm:ss GMT"))
+//
+// A moment is a `Time` — an immutable value whose calendar fields
+// (year, month, day, hour, minute, second, millisecond, weekday) are
+// computed in pure Emo over the millisecond reading, UTC always, so
+// they answer the same on every target and a golden can pin them.
+// Differences are Int64 milliseconds — the arithmetic every target
+// shares — with the `*_between` family answering the common units and
+// the conversion family (`time.seconds(2)`, `time.days(3)`, …) playing
+// the constants' role for `add` and `of_ms`.
+//
+// The timing family speaks seconds, the way `net`'s timeouts do:
+//
+//   time.sleep(0.25)             // a quarter of a second
+//   time.after(30.0) { ... }     // one run, thirty seconds out, its own process
+//   time.tick(3) { ... }         // every three seconds, in the caller
+//
+// The interval truncates to whole milliseconds — the package's honest
+// floor — and refuses the rest loudly: a negative or non-finite
+// interval, and anything past the 1e9-second ceiling, raises. Only the
+// target's own timer limit clamps, and the reference says where.
+//
+// `tick` is the calling process's heartbeat and never returns: the
+// block runs in the caller each interval, forever, and a raise or
+// `halt()` inside the block is the stop — the same discipline Go's own
+// `time.Tick` states ("it offers no way to stop it once started").
+// `after` is the scheduled one-shot: the block runs in its own process,
+// once, the interval out. A ticker a caller can stop waits for
+// receive-with-deadline, a mechanism the package deliberately does not
+// invent here.
+//
+// Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. On `wasm`
+// the clock half runs (the two host imports answer) and the timing
+// half raises at the call naming the capability — the wasm driver runs
+// the whole program synchronously inside one host call, so there is no
+// event loop to park on yet. The `riscv64` and `browser` targets stay
+// undeclared.
+
+// ---- the conversions: durations are Int64 milliseconds ----
+
+def milliseconds(n Int64) Int64 {
+  return n
+}
+
+def seconds(n Int64) Int64 {
+  return n * 1000
+}
+
+def minutes(n Int64) Int64 {
+  return n * 60000
+}
+
+def hours(n Int64) Int64 {
+  return n * 3600000
+}
+
+def days(n Int64) Int64 {
+  return n * 86400000
+}
+
+def weeks(n Int64) Int64 {
+  return n * 604800000
+}
+
+// The timing family's one conversion: a Float64 number of seconds
+// becomes the whole milliseconds the interval names, truncated. A
+// negative or non-finite interval, and anything past the 1e9-second
+// ceiling (about 31 years), raises — the caller's mistake, named at
+// the call.
+def duration(seconds Float64) Int64 {
+  if !(seconds >= 0.0) {
+    raise Exception.new(
+      message: "time: the interval must be a non-negative number of seconds, got ${seconds}"
+    )
+  }
+  if seconds > 1000000000.0 {
+    raise Exception.new(
+      message: "time: the interval must not exceed 1000000000 seconds, got ${seconds}"
+    )
+  }
+  return (seconds * 1000.0).to_int64()
+}
+
+// ---- the floor arithmetic the calendar needs ----
+
+// Int64's / and % truncate toward zero; the calendar floors. A day
+// count before 1970 is negative, so every day division goes through
+// here.
+def floor_div(a Int64, b Int64) Int64 {
+  const q = a / b
+  if a % b != 0 && (a < 0) != (b < 0) {
+    return q - 1
+  }
+  return q
+}
+
+def floor_mod(a Int64, b Int64) Int64 {
+  return a - floor_div(a, b) * b
+}
+
+// The civil calendar from the day count — Howard Hinnant's algorithm,
+// pure integer arithmetic over the whole Int64 day range. The interior
+// divisions all run on non-negative values, where truncation and
+// floor agree. Answers (year, month, day-of-month) for the UTC date.
+def civil_from_days(z Int64) (Int64, Int64, Int64) {
+  const shifted = z + 719468
+  const era = floor_div(shifted, 146097)
+  const doe = shifted - era * 146097
+  const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  const y = yoe + era * 400
+  const doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  const mp = (5 * doy + 2) / 153
+  const dom = doy - (153 * mp + 2) / 5 + 1
+  const m = if mp < 10 { mp + 3 } else { mp - 9 }
+  const year = if m <= 2 { y + 1 } else { y }
+  return (year, m, dom)
+}
+
+def civil_from_ms(ms Int64) (Int64, Int64, Int64) {
+  return civil_from_days(floor_div(ms, 86400000))
+}
+
+// The time of day: the milliseconds since the moment's UTC midnight.
+def day_ms(ms Int64) Int64 {
+  return ms - floor_div(ms, 86400000) * 86400000
+}
+
+// ---- the calendar's names, the short English forms ----
+
+const month_names = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+]
+
+const day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+def pad2(n Int64) String {
+  if n < 10 {
+    return "0" + n.to_string()
+  }
+  return n.to_string()
+}
+
+def pad3(n Int64) String {
+  if n < 10 {
+    return "00" + n.to_string()
+  }
+  if n < 100 {
+    return "0" + n.to_string()
+  }
+  return n.to_string()
+}
+
+// Years render zero-padded to four digits — a year wider prints full,
+// a negative year a minus sign in front of the padded absolute value.
+def year_text(y Int64) String {
+  if y < 0 {
+    return "-" + pad4(0 - y)
+  }
+  return pad4(y)
+}
+
+def pad4(n Int64) String {
+  if n < 10 {
+    return "000" + n.to_string()
+  }
+  if n < 100 {
+    return "00" + n.to_string()
+  }
+  if n < 1000 {
+    return "0" + n.to_string()
+  }
+  return n.to_string()
+}
+
+// The strict token layout. Nine tokens — YYYY, MM, DD, hh, mm, ss,
+// mmm, Mmm (the month's short name), Www (the weekday's short name) —
+// everything else literal, byte for byte. A token letter that opens no
+// complete token is a malformed layout, not a literal: the raise names
+// the byte and the rest of the layout, and nothing is guessed.
+def format_ms(ms Int64, layout String) String {
+  const (year, month, dom) = civil_from_ms(ms)
+  const weekday = floor_mod(floor_div(ms, 86400000) + 4, 7)
+  const tod = day_ms(ms)
+  var out = ""
+  var i = 0
+  const len = layout.length()
+  while i < len {
+    const rest = layout.substring(i, len - i)
+    if rest.starts_with("YYYY") {
+      out = out + year_text(year)
+      i = i + 4
+    } else {
+      if rest.starts_with("Mmm") {
+        out = out + month_names[month - 1]
+        i = i + 3
+      } else {
+        if rest.starts_with("Www") {
+          out = out + day_names[weekday]
+          i = i + 3
+        } else {
+          if rest.starts_with("mmm") {
+            out = out + pad3(tod % 1000)
+            i = i + 3
+          } else {
+            if rest.starts_with("MM") {
+              out = out + pad2(month)
+              i = i + 2
+            } else {
+              if rest.starts_with("DD") {
+                out = out + pad2(dom)
+                i = i + 2
+              } else {
+                if rest.starts_with("hh") {
+                  out = out + pad2(tod / 3600000)
+                  i = i + 2
+                } else {
+                  if rest.starts_with("mm") {
+                    out = out + pad2(tod % 3600000 / 60000)
+                    i = i + 2
+                  } else {
+                    if rest.starts_with("ss") {
+                      out = out + pad2(tod % 60000 / 1000)
+                      i = i + 2
+                    } else {
+                      const c = layout.substring(i, 1)
+                      if c == "Y" || c == "M" || c == "D" || c == "h" || c == "m" || c == "s" {
+                        raise Exception.new(
+                          message: "time: unknown layout token at byte ${i}: ${rest}"
+                        )
+                      }
+                      out = out + c
+                      i = i + 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
+// ---- the clock ----
+
+// The OS's wall clock, UTC: the moment now is.
+def now() Time {
+  return Time.new(time_now_ms())
+}
+
+// The moment at the given epoch milliseconds.
+def of_ms(ms Int64) Time {
+  return Time.new(ms)
+}
+
+// The moment at the given UTC calendar parts.
+def of(year Int64, month Int64, day Int64, hour Int64, minute Int64, second Int64, ms Int64) Time {
+  return Time.new(days_from_civil(year, month, day) * 86400000
+    + hour * 3600000 + minute * 60000 + second * 1000 + ms)
+}
+
+// The monotonic clock: a reading that never goes back, the instrument
+// an elapsed measurement rides. The wall clock can jump; this cannot.
+// Subtract two readings — the unit is nanoseconds, and the resolution
+// is the target's own.
+def mono() Int64 {
+  return time_mono_ns()
+}
+
+// The reverse of the civil calendar: the day count the given UTC date
+// names (Howard Hinnant's days_from_civil), the same arithmetic
+// `civil_from_days` walks out of.
+def days_from_civil(y Int64, m Int64, d Int64) Int64 {
+  const yy = if m <= 2 { y - 1 } else { y }
+  const era = floor_div(yy, 400)
+  const yoe = yy - era * 400
+  const mp = if m > 2 { m - 3 } else { m + 9 }
+  const doy = (153 * mp + 2) / 5 + d - 1
+  const doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  return era * 146097 + doe - 719468
+}
+
+// ---- the timing family: seconds, like net's timeouts ----
+
+// Parks the calling process for the interval. A message that arrives
+// queues in the mailbox and waits for the wake — sleep is woken early
+// by nothing.
+def sleep(seconds Float64) Void {
+  time_sleep_ms(duration(seconds))
+}
+
+// Runs the block once, the interval out, in its own process. The
+// caller continues at once; the block's own raise kills only its
+// process. There is no cancel — the interval is the scheduled run's
+// whole contract.
+def after(seconds Float64, f Block) Void {
+  const ms = duration(seconds)
+  do after_run(ms, f)
+}
+
+def after_run(ms Int64, f Block) Void {
+  time_sleep_ms(ms)
+  f()
+}
+
+// Runs the block in the calling process every interval, forever — the
+// heartbeat. It never returns: the block's raise or `halt()` is the
+// stop, and the code after a tick is the code a heartbeat program
+// never reaches. The first run comes one interval in.
+def tick(seconds Float64, f Block) Void {
+  tick_loop(duration(seconds), f)
+}
+
+def tick_loop(ms Int64, f Block) Void {
+  time_sleep_ms(ms)
+  f()
+  tick_loop(ms, f)
+}
+
+// ---- the differences ----
+
+// The milliseconds from the moment to now — signed, negative when the
+// moment is the future. The wall clock is the instrument here, so a
+// clock adjustment shows up; for a never-goes-back measurement, take
+// two `mono()` readings and subtract.
+def since(t Time) Int64 {
+  return time_now_ms() - t.unix_ms()
+}
+
+def ms_between(a Time, b Time) Int64 {
+  return b.unix_ms() - a.unix_ms()
+}
+
+def seconds_between(a Time, b Time) Float64 {
+  return ms_between(a, b).to_float64() / 1000.0
+}
+
+def minutes_between(a Time, b Time) Int64 {
+  return ms_between(a, b) / 60000
+}
+
+def hours_between(a Time, b Time) Int64 {
+  return ms_between(a, b) / 3600000
+}
+
+def days_between(a Time, b Time) Int64 {
+  return ms_between(a, b) / 86400000
+}
+
+// ---- the moment ----
+
+class Time {
+  def init(ms Int64) {
+    self.ms = ms
+  }
+
+  // The whole moment as its epoch milliseconds.
+  def unix_ms() Int64 {
+    return self.ms
+  }
+
+  // The moment ms later — a negative count moves back.
+  def add(ms Int64) Time {
+    return Time.new(self.ms + ms)
+  }
+
+  def before?(other Time) Bool {
+    return self.ms < other.unix_ms()
+  }
+
+  def after?(other Time) Bool {
+    return self.ms > other.unix_ms()
+  }
+
+  // The whole days since the epoch, floored — the raw day count the
+  // calendar arithmetic walks from.
+  def epoch_days() Int64 {
+    return floor_div(self.ms, 86400000)
+  }
+
+  // The UTC calendar fields. Every one is pure arithmetic over the
+  // millisecond reading, so the answers are the same on every target.
+  def year() Int64 {
+    const (y, _, _) = civil_from_ms(self.ms)
+    return y
+  }
+
+  def month() Int64 {
+    const (_, m, _) = civil_from_ms(self.ms)
+    return m
+  }
+
+  def day() Int64 {
+    const (_, _, d) = civil_from_ms(self.ms)
+    return d
+  }
+
+  def hour() Int64 {
+    return day_ms(self.ms) / 3600000
+  }
+
+  def minute() Int64 {
+    return day_ms(self.ms) % 3600000 / 60000
+  }
+
+  def second() Int64 {
+    return day_ms(self.ms) % 60000 / 1000
+  }
+
+  def millisecond() Int64 {
+    return day_ms(self.ms) % 1000
+  }
+
+  // The weekday: 0 Sunday, 1 Monday, … 6 Saturday. The epoch's first
+  // midnight was a Thursday.
+  def weekday() Int64 {
+    return floor_mod(self.epoch_days() + 4, 7)
+  }
+
+  // The strict token layout — see format_ms. The calendar is UTC
+  // always: a layout's output is the same on every target and in every
+  // process, which is what makes it printable in a golden.
+  def format(layout String) String {
+    return format_ms(self.ms, layout)
+  }
+
+  // RFC 3339 with milliseconds: 2026-11-13T08:30:15.123Z
+  def format_iso() String {
+    return self.format("YYYY-MM-DDThh:mm:ss.mmmZ")
+  }
+
+  // IMF-fixdate, the HTTP Date header's form:
+  // Fri, 13 Nov 2026 08:30:15 GMT
+  // Composed, not one layout: an uppercase M opens a token, so the
+  // literal GMT rides outside the layout's grammar.
+  def format_http() String {
+    return self.format("Www, DD Mmm YYYY hh:mm:ss") + " GMT"
+  }
+
+  // The default rendering is the ISO form — the moment itself, not a
+  // structure dump.
+  def to_string() String {
+    return self.format_iso()
+  }
+}

@@ -35,6 +35,10 @@ module Emo_eval = struct
    runtime's and the interpreter's. *)
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+(* The monotonic clock, which the Unix module does not wrap either:
+   clock_gettime(CLOCK_MONOTONIC), nanoseconds, the same instrument the
+   interpreter and the c runtime read. *)
+external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
   (* ---- The value ADT ----
 
@@ -245,6 +249,11 @@ external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
         -> value Effect.t
     | File_read : string -> value Effect.t
     | File_write : string * string -> value Effect.t
+(* The timing half: [Sleep] parks the performing process for the given
+   milliseconds; the scheduler keeps the parked continuation on its
+   timer list — the one the IO deadlines ride — and fires due timers
+   when the run queue empties. *)
+  | Sleep : int64 -> unit Effect.t
 
   (* The net failures are values: the handler finishes the parked
      continuation with (R.ok, value) or (R.error, reason) — the same
@@ -1577,6 +1586,35 @@ let pf_hash_float conv minus plus space width prec f =
     | "rand_bytes", vs ->
         error "E3007"
           (Printf.sprintf "`rand_bytes` expects (n Int64), got %d"
+             (List.length vs))
+    (* ---- the time package: the clock doors and the sleep park ---- *)
+    | "time_now_ms", [] ->
+        Int64 (Int64.of_float (Unix.gettimeofday () *. 1000.0))
+    | "time_now_ms", vs ->
+        error "E3007"
+          (Printf.sprintf "`time_now_ms` expects no arguments, got %d"
+             (List.length vs))
+    | "time_mono_ns", [] -> Int64 (emo_stub_monotonic_ns ())
+    | "time_mono_ns", vs ->
+        error "E3007"
+          (Printf.sprintf "`time_mono_ns` expects no arguments, got %d"
+             (List.length vs))
+    | "time_sleep_ms", [ Int64 ms ] ->
+        if ms < 0L then error "E3007"
+            "`time_sleep_ms` expects a non-negative millisecond count"
+        else begin
+          Effect.perform (Sleep ms);
+          Void
+        end
+    | "time_sleep_ms", [ v ] ->
+        error "E3001"
+          (Printf.sprintf
+             "`time_sleep_ms` expects an Int64 millisecond count, got %s"
+             (type_name v))
+    | "time_sleep_ms", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`time_sleep_ms` expects (ms Int64), got %d arguments"
              (List.length vs))
     | "os_write", [ Int64 fd; String data ] ->
         os_result
@@ -3421,6 +3459,17 @@ module Emo_runtime = struct
                       Hashtbl.replace state.cwaiters proc.Emo_eval.pid
                         (proc, matcher, k);
                       None)
+          | Emo_eval.Sleep ms ->
+              Some
+                (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                  (* The timer list is the IO deadlines' own: the pump
+                     fires due timers when the run queue empties, and the
+                     wake re-queues the parked continuation. A message
+                     queues in the process's mailbox and waits for the
+                     wake — sleep is woken early by nothing. *)
+                  add_timer state (Int64.to_float ms /. 1000.0)
+                    (fun () -> Queue.add (Continue (proc, k)) state.runq);
+                  None)
           | Emo_eval.Net_close_listener l ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->

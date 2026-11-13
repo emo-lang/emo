@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/random.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <stdarg.h>
@@ -2327,11 +2328,13 @@ typedef struct emo_process {
   struct emo_process *next_run;   /* the run queue's linkage */
   struct emo_process *next_table; /* the live-process table's linkage */
   emo_msg *inbox_head, *inbox_tail;
-  int blocked;     /* parked on receive or io */
+  int blocked;     /* parked on receive, io, or sleep */
   int finished;    /* body returned or halted */
   int64_t wait_fd; /* -1: parked on a mailbox; >= 0: parked on io */
   int wait_write;  /* 0: wait for readability; 1: writability (the TLS
                       handshake's WANT_WRITE park) */
+  int64_t wait_until; /* 0: not sleeping; else the monotonic ms deadline
+                         the time package's sleep park wakes at */
   emo_value *spawn_args;
   int64_t spawn_nargs;
   void *top_frame; /* the fiber's autorelease-pool frame stack (emo_frame) */
@@ -2497,6 +2500,7 @@ int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
   p->pid = emo_next_pid++;
   p->wait_fd = -1;
   p->wait_write = 0;
+  p->wait_until = 0;
   p->entry = entry;
   if (nargs > 0) {
     p->spawn_args = malloc((size_t)nargs * sizeof(emo_value));
@@ -2704,8 +2708,13 @@ void emo_process_send(int64_t pid, emo_value message) {
     fprintf(stderr, "[trace] send %lld -> %lld\n",
             (long long)emo_current->pid, (long long)pid);
   if (target->blocked) {
-    target->blocked = 0;
-    emo_runq_push(target);
+    /* A sleeper stays parked: the deadline is the sleep's contract, and
+       a message queues in the mailbox for the wake. A process parked on
+       its mailbox (or, historically, on an fd) wakes on the send. */
+    if (target->wait_until == 0) {
+      target->blocked = 0;
+      emo_runq_push(target);
+    }
   }
   /* Sending yields the sender's slice: the sender re-joins the run
      queue at the tail (emo_sched_det's Continue policy), so a
@@ -2748,13 +2757,48 @@ void emo_mailbox_take_current(void *m) {
   free(dead);
 }
 
+/* ---- the time package: the clock doors and the sleep park ---- */
+
+int64_t emo_time_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+}
+
+int64_t emo_time_mono_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
+}
+
+static int64_t emo_time_mono_ms(void) { return emo_time_mono_ns() / 1000000; }
+
+/* ---- the scheduler ---- */
+
 void emo_scheduler_run(void) {
   for (;;) {
     emo_process *p = emo_runq_pop();
     if (p == NULL) {
-      /* No runnable work: poll the io-waiters; mailbox-parked fibers
-         can only be woken by a send, so with no io-waiter ready and
-         nothing runnable, any remainder is deadlocked. */
+      /* No runnable work: wake the sleepers whose deadline has passed,
+         then poll the io-waiters toward the nearest sleep deadline;
+         mailbox-parked fibers can only be woken by a send, so with no
+         io-waiter ready, no sleeper due, and nothing runnable, any
+         remainder is deadlocked. */
+      int64_t now = emo_time_mono_ms();
+      int64_t nearest = 0;
+      int woke_sleeper = 0;
+      for (emo_process *q = emo_process_table; q; q = q->next_table)
+        if (!q->finished && q->blocked && q->wait_until > 0) {
+          if (q->wait_until <= now) {
+            q->wait_until = 0;
+            q->blocked = 0;
+            emo_runq_push(q);
+            woke_sleeper = 1;
+          } else if (nearest == 0 || q->wait_until < nearest) {
+            nearest = q->wait_until;
+          }
+        }
+      if (woke_sleeper) continue;
       struct pollfd fds[64];
       emo_process *waiters[64];
       int n = 0;
@@ -2783,6 +2827,14 @@ void emo_scheduler_run(void) {
         if (woke) continue;
         /* io-waiters exist: keep polling (their readiness can still
            arrive from outside the process) */
+        continue;
+      }
+      if (nearest > 0) {
+        /* Sleepers only: wait toward the nearest deadline; the next
+           iteration fires what is due. */
+        int64_t remaining = nearest - emo_time_mono_ms();
+        if (remaining > 1000) remaining = 1000;
+        poll(NULL, 0, (int)(remaining < 0 ? 0 : remaining));
         continue;
       }
       int deadlocked = 0;
@@ -4502,6 +4554,27 @@ emo_value emo_os_signal_default(int64_t sig) {
   if (sig < 1 || sig > 31) return emo_signal_fail("signal_default", sig);
   signal((int)sig, SIG_DFL);
   return emo_os_ok(emo_box_i64(0));
+}
+
+/* ---- the time package: the clock doors and the sleep park ----
+
+   The wall clock answers UTC epoch milliseconds — the coarsest
+   resolution every hosted target's wall clock honestly carries — and
+   the monotonic clock nanoseconds. The clocks themselves live above
+   the scheduler, which sleeps toward the nearest deadline. Sleep parks
+   the fiber: the process records its deadline, the scheduler waits
+   toward it when the run queue empties, and the wake re-queues the
+   fiber. A message queues in the process's mailbox and waits for the
+   wake — send never wakes a sleeper. */
+
+void emo_time_sleep_ms(int64_t ms) {
+  if (ms <= 0) return;
+  if (getenv("EMO_TRACE"))
+    fprintf(stderr, "[trace] sleep %lld (pid %lld)\n", (long long)ms,
+            (long long)emo_current->pid);
+  emo_current->wait_until = emo_time_mono_ms() + ms;
+  emo_current->blocked = 1;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
 }
 
 /* ---- The dynamic builtin send ----

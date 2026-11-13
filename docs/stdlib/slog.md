@@ -57,9 +57,10 @@ and the format.
 ## The records
 
 Records go to stdout, one `println` per record, and carry no
-timestamp: Emo has no clock, and deterministic output is worth more
-than stamps the caller would have to fake. A caller with a time in
-hand passes it as an ordinary attribute.
+timestamp: a stamp the record format does not own would make the same
+record print differently on different targets and in the tests, and
+deterministic output is worth more. A caller with a time in hand —
+`time.now()` answers — passes it as an ordinary attribute.
 
 The logfmt format:
 

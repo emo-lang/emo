@@ -534,6 +534,11 @@ emo_value emo_os_unsetenv(emo_str name);
 emo_value emo_os_signal_ignore(int64_t sig);
 emo_value emo_os_signal_default(int64_t sig);
 
+/* ---- the time package: the clock doors and the sleep park ---- */
+int64_t emo_time_now_ms(void);  /* the wall clock, UTC epoch milliseconds */
+int64_t emo_time_mono_ns(void); /* the monotonic clock, nanoseconds */
+void emo_time_sleep_ms(int64_t ms); /* park the calling fiber */
+
 /* ---- The integer core (T23.2) ---- */
 
 /* Wrap-around Int64 division and remainder: INT64_MIN / -1 wraps to

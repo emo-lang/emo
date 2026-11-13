@@ -69,6 +69,7 @@ let t_os_path = 51
 let t_os_rename = 52
 let t_os_getcwd = 53
 let t_rand_bytes = 54
+let t_time_i64 = 55
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -217,6 +218,8 @@ let runtime_types : W.typ list =
     (* os_getcwd: () -> (tag, payload size) *)
     W.FuncT ([ W.I64 ], [ W.I32; W.I32 ]);
     (* rand_bytes: (n) -> (tag, payload size) *)
+    W.FuncT ([], [ W.I64 ]);
+    (* time_now_ms / time_mono_ns: () -> the reading, i64 *)
   ]
 
 let i_print = 0
@@ -237,9 +240,11 @@ let i_os_rename = 14
 let i_os_getcwd = 15
 let i_os_chdir = 16
 let i_rand_bytes = 17
+let i_time_now_ms = 18
+let i_time_mono_ns = 19
 
 (* Every defined function's index follows the imports. *)
-let import_count = 18
+let import_count = 20
 
 (* Runtime function indices: imports 0..import_count-1, then these —
    written relative to the import count, so a new host import shifts
@@ -1131,6 +1136,24 @@ let rec expr env (x : Emo_ir.expr) : unit =
             @ r_pair env
                 ~ok:(payload @ [ W.Struct_new t_vbytes ])
                 ~err:(payload @ [ W.Struct_new t_vstring ]))
+      | "time_now_ms", [] ->
+          (* the wall clock, UTC epoch milliseconds: the host answers,
+             the i64 boxes straight into a value *)
+          es env [ W.Call i_time_now_ms; W.Struct_new t_vint ]
+      | "time_mono_ns", [] ->
+          (* the monotonic clock, nanoseconds: the same one-line answer *)
+          es env [ W.Call i_time_mono_ns; W.Struct_new t_vint ]
+      | "time_sleep_ms", _ ->
+          (* the timing half: the wasm driver runs the whole program
+             synchronously inside one host call — there is no event loop
+             to park on, and no honest sleep until the driver learns to
+             await — so the capability names itself at the call, the os
+             process half's discipline *)
+          string_const env
+            "the runtime implementation `time_sleep_ms` is not available on \
+             the wasm target";
+          e env (W.Call (rt "throw"));
+          e env W.Unreachable
       | ( ( "os_getpid" | "os_getppid" | "os_fork" | "os_waitpid" | "os_pipe"
           | "os_execv" | "os__exit" | "os_dup2" | "os_execvp" | "os_isatty"
           | "os_argv" | "os_getenv" | "os_setenv" | "os_unsetenv"
@@ -8146,6 +8169,12 @@ let assemble (program : Emo_ir.program) : W.module_ =
           W.imodule = "emo";
           W.iname = "rand_bytes";
           W.itype_idx = t_rand_bytes;
+        };
+        { W.imodule = "emo"; W.iname = "time_now_ms"; W.itype_idx = t_time_i64 };
+        {
+          W.imodule = "emo";
+          W.iname = "time_mono_ns";
+          W.itype_idx = t_time_i64;
         };
       ];
     funcs;

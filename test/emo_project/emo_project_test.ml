@@ -4021,6 +4021,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "sync_demo")
           "sync_demo" "main.emo");
+    tc "time_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "time_demo")
+          "time_demo" "main.emo");
     tc "plot_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -4104,6 +4109,7 @@ let ts_golden_tests =
       ("slog_demo", "main.emo");
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");
+      ("time_demo", "main.emo");
       ("plot_demo", "main.emo");
       ("string_methods", "main.emo");
       ("png_demo", "main.emo");

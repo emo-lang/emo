@@ -706,6 +706,15 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
       Printf.sprintf "emo_os_signal_ignore(%s)" (arg 0 Emo_check.Int64)
   | "os_signal_default" ->
       Printf.sprintf "emo_os_signal_default(%s)" (arg 0 Emo_check.Int64)
+  (* ---- the time package: the clock doors and the sleep park ---- *)
+  | "time_now_ms" ->
+      let v = Printf.sprintf "emo_time_now_ms()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "time_mono_ns" ->
+      let v = Printf.sprintf "emo_time_mono_ns()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "time_sleep_ms" ->
+      Printf.sprintf "emo_time_sleep_ms(%s)" (arg 0 Emo_check.Int64)
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 (* `printf` is the language's own: the format rides as a String, the data
@@ -1662,7 +1671,16 @@ and closure_free env (cparams : (string * Emo_check.t) list)
             pattern_bound_names b.Emo_ir.pattern bound;
             List.iter st b.Emo_ir.body)
           branches
-    | Receive _ | Send _ | Raise _ -> ()
+    | Receive _ -> ()
+    (* The send's own operands are the closure's captures: a block whose
+       only use of an outer binding is the pid it sends to — the
+       heartbeat's `owner <- (...)` — still captures it, so the capture
+       walk cannot stop at the statement. The raised value is the same
+       shape: a block may raise what it captured. *)
+    | Send { target; message } ->
+        ex target;
+        ex message
+    | Raise v -> ex v
     | Return_stmt e -> ex e
     | While { cond; body; _ } ->
         ex cond;
@@ -2389,12 +2407,25 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
           | None ->
               (* every exit releases the body's owned bindings, drains
                  the statement's pool, and closes the frame's autorelease
-                 pool — the frame gives nothing back but the result *)
+                 pool — the frame gives nothing back but the result. A
+                 Void body's return may carry the expression it ends
+                 with (the lowering turns a bare trailing call into the
+                 return it is): it evaluates, its answer discards, and
+                 the body's own epilogue follows. The discard keeps the
+                 expression's own claim — emit_expr pools a dynamic
+                 answer itself, and wrapping again would pool the same
+                 word twice — a use-after-free at the drain. *)
               let unwind () =
                 List.iter (fun l -> put env "%s" l) (unwind_lines env.owned []);
                 put env "  emo_drain();\n  emo_pool_exit();\n"
               in
               if env.fresult = Emo_check.Void then begin
+                (match e.Emo_ir.desc with
+                | Const (Ast.L_bool false) -> ()
+                | Const _ -> ()
+                | _ ->
+                    let v = emit_expr env e in
+                    put env "  (void)(%s);\n" v);
                 unwind ();
                 put env "  return;\n"
               end

@@ -68,6 +68,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M39 — Text templates | 78 | The `template` package renders text with holes from a `json` context — Go `text/template`'s mechanism, Emo's own surface, pure Emo over the shared runtimes, byte-identical on all five targets: one-shot `render` and the parse-once-render-many `Set` (new/with/render), `{{ }}` holes over bare dotted paths and bracket paths with seven ASCII-safe filter pipelines, `if`/`else if`/`else`/`end` on "not the zero value" truthiness, `for` over arrays and objects with `else`, `template` includes (bindings never cross the edge, the depth cap names the chain), `{{- `-` -}}` trim markers and `{{! }}` comments; parse and render both strict, every failure a `(R.error, reason)` with the byte position; the goldens flushed two backend bugs — the IR's module-level def mangle skipped `sanitize_ident` (a `?` suffix leaking into TS/OCaml identifiers), and the BEAM emitter's threaded-chain case registered a branch's pattern bindings before the per-branch save, a sibling arm's bindings leaking into a later continuation's live set, dying as erlc `unbound variable` (`CHECK.md`). |
 | M40 — The repl's line editor | 79 | The interactive session gains a real editor: the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches — the temp history entry pops on Ctrl-C and end-of-input as ENTER pops it, and the blocking read's verdict errno survives the stop's terminal-probing cleanup) compiles into the CLI through dune's `foreign_stubs` — the first C the OCaml CLI links — behind a binding module whose stubs map the library's errno verdicts onto OCaml variants; the input seam carries the prompt text and distinguishes a completed line from Ctrl-C's abandonment and the input's end; the editor takes the seat only when stdin and stdout are both terminals, pipes and redirects keeping the plain path byte for byte; the history rides per line, saved at the session's end to the state file (`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`), with the unreadable and unwritable cases warning on stderr and the missing file silent; Ctrl-C abandons the pending input instead of killing the process; the continuation prompt indents by two spaces per open bracket; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — typed lines, up-arrow recall, the interrupt that leaks no empty history entry, and a two-session persistence round-trip (`CHECK.md`). |
 | M41 — The standard library: `uuid` | 80 | The `uuid` package: the RFC 9562 identifier as one immutable 16-byte `Uuid` value rendering itself through the `to_string` protocol, answering `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?` and sorting through the RFC 6.11 big-endian `compare`; `v4` drawing 122 random bits over `rand.bytes`, `v7(now_ms)` taking the Unix time in milliseconds from the caller's own clock over 74 random bits (a negative or 48-bit-overflowing timestamp raising), and `v3`/`v5` the deterministic name-based doors over `crypto.legacy` with the four IANA namespace IDs of Table 3; `parse` taking exactly the canonical 36-character form, case-insensitive on the digits, every rejection naming the first offending byte, and `from_bytes` refusing a length other than 16; scoped to Go's standard `uuid` spine, v1/v2/v6 and a v8 constructor out, named; `uuid_demo` riding the RFC's vectors with the random doors printed structure-only, byte-identical on all five target lists (`CHECK.md`). |
+| M42 — The clock and the heartbeat | 81 | The `time` package: the wall clock and the monotonic clock over three runtime doors (`time_now_ms`, `time_mono_ns`, `time_sleep_ms`), everything else pure Emo over them — a `Time` of UTC epoch milliseconds whose calendar fields compute in pure Emo (Hinnant's civil arithmetic), `mono()` the explicit monotonic instrument, durations plain Int64 milliseconds with the conversion family (`time.seconds(n)` …) playing the constants' role, the strict nine-token layout formatting (UTC always, `format_iso`/`format_http` the presets, a malformed token raising naming the byte), and the seconds-speaking timing family — `sleep` the exact-ish park (messages queue, never wake it), `after` the scheduled one-shot in its own process, `tick` the calling process's never-returning heartbeat whose block's own `halt()` is the stop; on wasm the clock half rides two host imports and the timing half raises at the call naming the capability (the os process-half precedent); the goldens flushed a compiler-structure gap and four emitter bugs — the IR's Void-body exit positions lowered a bare trailing call as an Effect, invisible to every backend's tail machinery (now lowered as the Return it is, with the C emitter's Void return path emitting its expression without re-pooling the answer's own claim, and the interpreter's frame threading tailness through the statement walk), the c backend's Void-return discard pooling the claim twice (emosh segfaulted on a doubly-released builder cell), the c backend's closure capture never walking a `Send` statement's operands (a block whose only capture is the pid it sends to now captures it), the TS emitter's `receive` statement carrying no trailing `;` (a following `(`-opening statement parsed as a call), and the BEAM wildcard (two `_` in one pattern now lower as distinct fresh variables) (`CHECK.md`). |
 
 ## Design gates
 
@@ -4648,7 +4649,7 @@ tasks, all landed:
       36-character form, hex case-insensitive per the RFC's own
       ABNF, the first offending byte named), `v4` (122 random bits
       over `rand.bytes`, the entropy reason passed through),
-      `v7(now_ms)` (the caller's clock — the language has none — 48
+      `v7(now_ms)` (the caller's clock — `time.now()` — 48
       bits of Unix time over 74 random bits; a negative or
       48-bit-overflowing timestamp raises, the year-10889 bound),
       `v3`/`v5` over `crypto.legacy`'s MD5 and SHA-1 (deterministic;
@@ -4681,4 +4682,92 @@ tasks, all landed:
 - [x] **T80.4** — The docs: `docs/stdlib/uuid.md` EN+zh; the
       `docs/stdlib.md` row and section EN+zh; the README reference
       lists EN+zh; TASKS/plan/CHECK updated.
+
+## M42 — The clock and the heartbeat
+
+### Step 81 — The standard library: `time`
+
+**Prereq:** Step 12 (the processes the timing family parks). **Done
+when:** `require "time"` gives a program the wall clock
+(`time.now()`, a `Time` of UTC epoch milliseconds whose calendar
+fields compute in pure Emo), the monotonic clock (`time.mono()`,
+nanoseconds), the strict nine-token layout formatting
+(`format`/`format_iso`/`format_http`, UTC always), the between and
+conversion families over plain Int64 milliseconds, and the
+seconds-speaking timing family — `sleep`, `after`, and `tick` —
+byte-identical in its deterministic parts on the interpreter, ocaml,
+c, typescript, and beam, with the wasm target carrying the clock half
+through two host imports and raising the timing half at the call; the
+demo golden (`examples/time_demo`) rides the bootstrap, c, typescript,
+and beam lists; docs EN+zh.
+
+- [x] **T81.1** — The doors: the checker's table, the interpreter's
+      frame bindings and dispatch arms, the `Sleep` effect through both
+      OCaml schedulers (the interpreter's `emo_sched_det` and the
+      compiled runtime's own), the POSIX monotonic stub beside both
+      runtimes (`emo_posix_stub.c`, `emo_ocaml_stub.c`), the C
+      runtime's three functions plus the sleeper park in its scheduler
+      (send never wakes a sleeper), the wasm import pair and the
+      timing refusal, the TypeScript hosts' three arms (Node and
+      browser, shutdown clearing the sleep timers), and the BEAM
+      lowering arms (`os:system_time`, `erlang:monotonic_time`,
+      `timer:sleep`).
+- [x] **T81.2** — The package: `stdlib/registry/time/0.1.0` — the
+      `Time` class (the UTC calendar fields, `format`, the presets),
+      the conversion family, `now`/`of`/`of_ms`/`mono`, the timing
+      family, and the between family — pure Emo over the doors.
+- [x] **T81.3** — The golden: `examples/time_demo` — a fixed moment
+      built from parts, every format token, the calendar fields, the
+      between family, the conversions, `mono` around a sleep, three
+      ticks ending in the block's `halt`, and one `after` — on the
+      bootstrap, c, typescript, and beam lists.
+- [x] **T81.4** — The docs: `docs/stdlib/time.md` + zh-CN mirror, the
+      `docs/stdlib.md` row + section + mirror, the demo-targets import
+      table, and the stale "no clock" stances updated to name the
+      owner (slog's records, httpd's `Date` paragraphs, the template
+      reference's boundary list).
+- [x] **T81.5** — The tracking: `plan/step-81-stdlib-time.md`,
+      `plan/README.md`'s milestone bullet and status row,
+      `docs/TASKS.md`'s M42 section + zh mirror, CHECK.md's settle
+      record.
+
+### Found and fixed here
+
+- **The IR's Void-body exit positions lowered a bare trailing call as
+  an Effect, and every backend's tail machinery keyed on
+  `Return_stmt (Call f)`** — so a Void function ending in a self-call
+  (`tick_loop(ms, f)`) grew its stack per call on every backend: the C
+  emitter emitted a plain recursive call into an 8 MiB fiber, the TS
+  emitter kept the await shape (a promise chain per tick), and the
+  interpreter evaluated the call inline. The lowering now turns the
+  exit-position bare call into the Return it is (the body, an `if`'s
+  two branches, a `case`/`receive` branch; loop bodies keep their
+  effects; a first-class block call stays a plain exit), the C
+  emitter's Void return path emits the expression it carries, and the
+  interpreter's frame threads tailness through the statement walk.
+- **The c backend's Void-return discard pooled its claim twice.** The
+  Void body's return now evaluates the expression it carries — but
+  `emit_expr` pools a dynamic answer itself (the "a dynamic result
+  lands in the pool" rule), and the discard wrapped it again:
+  `emo_autorelease(emo_autorelease(call))` put the same word in the
+  statement's pool twice, and the drain released it twice — the shell
+  (emosh) segfaulted on `emo_builder_to_array` reading a freelist
+  cell. The discard keeps the expression's own claim; only the
+  statement-shaped builders (`emit_runtime_impl`, the spawn site, the
+  foreign call — raw strings) take the statement's own wrap.
+- **The c backend's closure capture never walked a `Send` statement's
+  operands** — `closure_free` stopped at the statement, so a block
+  whose only use of an outer binding is the pid it sends to (the
+  heartbeat's `owner <- (...)`) captured nothing and the build refused
+  (`the variable `owner` here`). The walk now covers the send's target
+  and message, and the raised value.
+- **The TS emitter's `receive` statement carried no trailing `;`** — a
+  following statement that opens with `(` parsed as a call of the
+  receive's answer (`await E.receive(...)(await time__after(...))`).
+  The statement form now ends with the semicolon the sequencer's rule
+  already states.
+- **The BEAM emitter's pattern lowering emitted the literal `_`** —
+  Core Erlang has no wildcard, so two `_` in one pattern (the calendar
+  destructures `const (y, _, _) = ...`) collide as duplicate
+  variables. A wildcard now lowers as a distinct fresh variable.
 

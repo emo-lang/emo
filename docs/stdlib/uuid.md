@@ -88,9 +88,10 @@ notation, the X.500 distinguished name.
 over the draw. The general-purpose door: a refused entropy source
 answers `(R.error, reason)`, the reason the `rand` package's own.
 
-**v7** — the Unix epoch in milliseconds over the caller's own clock —
-the language has none (the stance `slog` records) — and 74 random bits
-over it, the RFC's base shape (Section 5.7). `v7(1645557742000)` is
+**v7** — the Unix epoch in milliseconds, read from the caller's own
+clock (`time.now()`, the `time` package) and passed in — the package
+stays clock-free — with 74 random bits over it, the RFC's base shape
+(Section 5.7). `v7(1645557742000)` is
 the call; the caller owns the clock, and two UUIDs minted in the same
 millisecond are distinct but not ordered — the generator-state
 counters of Section 6.2 are the caller's to run. A negative timestamp

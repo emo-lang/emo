@@ -1382,6 +1382,18 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        (* The time package's doors: the wall clock, the monotonic
+           clock, and the sleep park. *)
+        ( "time_now_ms",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "time_mono_ns",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "time_sleep_ms",
+          {
+            vtype = FuncType ([ ("ms", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
       ];
     depth = 0;
     ret = None;

@@ -203,10 +203,11 @@ const server = httpd.serve_with(listener, handler, options())
 ```
 
 `with_date` is the one way a response gains a `Date` header: the
-language has no clock (the stance `slog` records), so default output is
-byte-deterministic, and a caller with a clock stamps every response the
-block's string. A handler's own `Date` header stands over the injected
-one.
+package stays clock-free so default output is byte-deterministic — a
+`Date` header needs a caller-chosen zone (`time`'s calendar is UTC),
+and a caller with a clock stamps every response the block's string
+(`time.now().format_http()` is the instrument). A handler's own `Date`
+header stands over the injected one.
 
 ## Strictness on the wire
 

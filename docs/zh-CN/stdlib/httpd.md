@@ -144,7 +144,7 @@ def options() httpd.ServerOptions {
 const server = httpd.serve_with(listener, handler, options())
 ```
 
-`with_date` 是响应长出 `Date` 头的唯一途径:语言没有时钟(`slog` 记录的立场),默认输出逐字节确定,手上有钟的调用方用这个块给每个响应盖戳。处理者自己的 `Date` 头压过注入的。
+`with_date` 是响应长出 `Date` 头的唯一途径:包保持无钟,默认输出逐字节确定——`Date` 头需要一个调用方选定的时区(`time` 的日历是 UTC),手上有钟的调用方用这个块给每个响应盖戳(`time.now().format_http()` 就是那个读数)。处理者自己的 `Date` 头压过注入的。
 
 ## 线上的严格性
 
@@ -155,5 +155,5 @@ const server = httpd.serve_with(listener, handler, options())
 - **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝——与 `net` 声明的覆盖面一致。在 `c` 上 UDP 与 Unix 域 socket 仍被拒绝(继承自 `net`)。
 - **整体缓冲的响应。** 处理者以一个 `Response` 值应答,所以线上恒知长度;流式响应(SSE、大文件)是已点名的后续项,以独立的 writer 形态到来。
 - **仅 HTTP/1.1。** 无 HTTP/2、无 WebSocket、无响应 chunked、无压缩、无按主机名的模式——各自至多是已点名的后续项。
-- **不注入就没有 `Date`**——见 `with_date`;语言没有时钟原语。
+- **不注入就没有 `Date`**——见 `with_date`;包保持无钟(`time` 的 UTC 时钟是那个读数)。
 - **百分比解码仅限可打印 ASCII。** 解码到 0x20–0x7E 之外的逃逸被拒绝并点名字节;字节级精确的查询与路径值等公开的 Bytes 桥。

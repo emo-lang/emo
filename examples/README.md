@@ -17,6 +17,11 @@ language's design, not just its features.
 - **[`tcp_echo/`](tcp_echo/)** — direct-style networking: a server and
   a client in one program, with the standard library resolved through
   the registry.
+- **[`time_demo/`](time_demo/)** — the clock and the heartbeat: a
+  fixed moment built from parts and formatted through the strict token
+  layouts, the calendar fields, the between family, the conversions,
+  the monotonic clock around a sleep, three ticks ending in the block's
+  own `halt()`, and one scheduled `after`.
 - **[`numerics/`](numerics/)** — the compiled backends: `foreign def` C
   bindings and a specialized numeric kernel, compiled to one binary.
 

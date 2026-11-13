@@ -179,13 +179,17 @@ let is_builtin = function
    its functions, so the emitter gates each target by prefix. *)
 let is_dom_impl name = String.length name >= 4 && String.sub name 0 4 = "dom_"
 
+(* The time package's clock and timing doors: the wall clock, the
+   monotonic clock, and the sleep park. *)
+let is_time_impl name = String.length name >= 5 && String.sub name 0 5 = "time_"
+
 let is_runtime_impl = function
   | name ->
       (String.length name >= 4 && String.sub name 0 4 = "net_")
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
       || (String.length name >= 3 && String.sub name 0 3 = "os_")
       || (String.length name >= 5 && String.sub name 0 5 = "rand_")
-      || is_dom_impl name
+      || is_time_impl name || is_dom_impl name
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =
   match
@@ -887,18 +891,79 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
   in
   let fbody = lower_stmts env d.Ast.def_body in
   env.locals <- saved;
+  let fresult =
+    match d.Ast.def_return with
+    | Some r -> decl_type env r
+    | None -> Emo_check.Void
+  in
+  let fbody =
+    match fresult with Emo_check.Void -> void_tails fbody | _ -> fbody
+  in
   {
     fname = mangled;
     fmodule = module_path;
     fparams = param_types;
-    fresult =
-      (match d.Ast.def_return with
-      | Some r -> decl_type env r
-      | None -> Emo_check.Void);
+    fresult;
     fbody;
     fspecializable = false;
     fforeign = None;
   }
+
+(* A Void body's exit-position bare call is a tail call, and every
+   backend's tail machinery keys on `Return_stmt (Call f)` — the
+   heartbeat's `tick_loop(ms, f)` trailing its own body, the receive
+   loop's per-branch call. The lowering makes the truth visible: the
+   last statement of the body, of an `if`'s two branches, of a `case` or
+   `receive` branch, when it is a bare call to a named function, lowers
+   as the return it is. Loop bodies are not exits and keep their
+   effects; a first-class block call (`f()`) is a plain exit — the
+   backends cannot rebind it, and a closure's own tail stays the call
+   shape it already was. *)
+and void_tails (stmts : stmt list) : stmt list =
+  let is_tailable = function { desc = Call _; _ } -> true | _ -> false in
+  let rec rewrite_branches (stmts : stmt list) : stmt list =
+    match List.rev stmts with
+    | Effect e :: rev_rest when is_tailable e ->
+        rewrite_tail (List.rev rev_rest) @ [ Return_stmt e ]
+    | _ -> rewrite_tail stmts
+  and rewrite_tail (stmts : stmt list) : stmt list =
+    List.map
+      (fun (s : stmt) ->
+        match s with
+        | If { cond; then_; else_ } ->
+            If
+              {
+                cond;
+                then_ = rewrite_branches then_;
+                else_ = rewrite_branches else_;
+              }
+        | Case { scrutinee; branches } ->
+            Case
+              {
+                scrutinee;
+                branches =
+                  List.map
+                    (fun (b : branch) ->
+                      { b with body = rewrite_branches b.body })
+                    branches;
+              }
+        | Receive { branches } ->
+            Receive
+              {
+                branches =
+                  List.map
+                    (fun (b : branch) ->
+                      { b with body = rewrite_branches b.body })
+                    branches;
+              }
+        | While _ | For _ -> s
+        | _ -> s)
+      stmts
+  in
+  match List.rev stmts with
+  | Effect e :: rev_rest when is_tailable e ->
+      rewrite_tail (List.rev rev_rest) @ [ Return_stmt e ]
+  | _ -> rewrite_tail stmts
 
 (* The IR's own read of a written type annotation — the checker's
    decl_to_type mirrored over the IR's symbol tables, so a signature's

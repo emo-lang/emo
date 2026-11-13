@@ -189,7 +189,7 @@ link-refuses with the function's name — no silent stubs:
 | `fd_close`, `fd_seek` | no-op success / ESPIPE on 1 and 2, EBADF elsewhere |
 | `fd_fdstat_get` | fd 1/2 answer character device with full rights (what wasi-libc's tty check reads at startup) |
 | `random_get` | OS entropy through the `rand` package (Rust's `RandomState` seeds through it even in a hello world) |
-| `clock_time_get` | ENOSYS — the language has no clock primitive yet |
+| `clock_time_get` | ENOSYS — the fixture pins the refusal; the `time` package carries its own clock imports |
 | `sched_yield` | success |
 
 Resolution order: the explicit host table first (a caller may override

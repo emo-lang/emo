@@ -67,7 +67,7 @@ ok test.greet.test_greet
 
 `emo run` evaluates the module tree directly and produces no artifact. `emo build` does not accept `--target` as a way to run; `emo run --target` supports only `riscv64` today.
 
-One flag belongs to the interpreter's own run: `emo run --curfew SECONDS` hands the evaluation a wall-clock deadline. Emo has no clock — the standard library's `slog` records the decision — so the one that ends a runaway program lives here, in the toolchain: the evaluator checks the deadline every 65,536 steps, and past it the run ends with exit 124 (the number `timeout(1)` answers) and the verdict on stderr. A `--target` artifact does not consult the curfew, and `--curfew` together with `--target` is refused. The flag exists for the playground ([`projects/emo-playground`](../projects/emo-playground)), whose server gives every submission one; nothing else is asked to use it.
+One flag belongs to the interpreter's own run: `emo run --curfew SECONDS` hands the evaluation a wall-clock deadline. A program reads the clock through the standard library's `time` package, but a runaway program need not cooperate — so the deadline that ends it lives here, in the toolchain: the evaluator checks the deadline every 65,536 steps, and past it the run ends with exit 124 (the number `timeout(1)` answers) and the verdict on stderr. A `--target` artifact does not consult the curfew, and `--curfew` together with `--target` is refused. The flag exists for the playground ([`projects/emo-playground`](../projects/emo-playground)), whose server gives every submission one; nothing else is asked to use it.
 
 ## `c` (the default target)
 
@@ -158,8 +158,10 @@ The artifact is a **WasmGC** module (values are GC structs and arrays) plus a re
 | `emo.os_getcwd` | `() -> (i32 tag, i32 size)` | the working directory |
 | `emo.os_chdir` | `(i32 ptr, i32 len) -> (i32 tag, i64 zero)` | change the working directory |
 | `emo.rand_bytes` | `(i64 n) -> (i32 tag, i32 size)` | n bytes from the host's entropy source (Node's CSPRNG), through `fetch` |
+| `emo.time_now_ms` | `() -> i64` | the wall clock, UTC epoch milliseconds (the `time` package's clock half) |
+| `emo.time_mono_ns` | `() -> i64` | the monotonic clock, nanoseconds floor'd from `performance.now()` |
 
-Every syscall answers `(tag, …)` — tag 0 ok, tag 1 error — and stashes its payload (the file contents, or the whole reason text `file: cannot read …: …` / `os: …: …`, formatted by the host) for the guest's `fetch` call, which copies it into a buffer the guest bump-allocated. Descriptors live in the host; 0/1/2 are stdio, files count from 3.
+Every syscall answers `(tag, …)` — tag 0 ok, tag 1 error — and stashes its payload (the file contents, or the whole reason text `file: cannot read …: …` / `os: …: …`, formatted by the host) for the guest's `fetch` call, which copies it into a buffer the guest bump-allocated. Descriptors live in the host; 0/1/2 are stdio, files count from 3. The `time` package's timing half has no import: the driver runs the whole program synchronously inside one call to `main`, so `time.sleep` raises at the call naming the capability.
 
 It exports `main` (the entry, called after instantiation) and `mem` (the linear memory the host must use to decode strings; the guest's bump allocator starts at 65536, so page 0 stays the host's). Running it therefore means supplying an `emo` host — or just `emo run --target wasm main.emo`, which builds and runs the module under Node with the bundled host (`emo doctor` reports whether Node is present).
 

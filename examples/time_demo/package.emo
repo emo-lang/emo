@@ -1,0 +1,9 @@
+package {
+  name = "emo/time_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "beam"]
+
+  deps {
+    "time" = "0.1.0"
+  }
+}

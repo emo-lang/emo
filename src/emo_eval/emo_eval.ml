@@ -506,6 +506,12 @@ let global_env () =
     { bound = RuntimeImplFn "os_kill"; mutable_ = false };
   Hashtbl.replace env.frame "os_setpgid"
     { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
+  Hashtbl.replace env.frame "time_now_ms"
+    { bound = RuntimeImplFn "time_now_ms"; mutable_ = false };
+  Hashtbl.replace env.frame "time_mono_ns"
+    { bound = RuntimeImplFn "time_mono_ns"; mutable_ = false };
+  Hashtbl.replace env.frame "time_sleep_ms"
+    { bound = RuntimeImplFn "time_sleep_ms"; mutable_ = false };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same
@@ -519,13 +525,13 @@ let step_count : int ref = ref 0
 (* The curfew: a wall-clock deadline the toolchain hands one run. The
    playground's server gives every interpreted program one, so a runaway
    `while true {}` ends with a named verdict instead of parking its
-   connection forever. Emo has no clock — slog's own header records the
-   decision — so the clock lives here, in the toolchain, and the check
-   rides count_step: every curfew_chunk steps, one Unix.gettimeofday
-   answers whether the program is past its curfew. The raise unwinds the
-   whole run (the scheduler re-raises anything that is not an Emo raise),
-   and the CLI renders the verdict and exits 124, the number timeout(1)
-   answers too. *)
+   connection forever. The language's clock is the time package's, but a
+   curfew is toolchain business — the check rides count_step with its
+   own Unix.gettimeofday, every curfew_chunk steps answering whether the
+   program is past its curfew. The raise unwinds the whole run (the
+   scheduler re-raises anything that is not an Emo raise), and the CLI
+   renders the verdict and exits 124, the number timeout(1) answers
+   too. *)
 exception Curfew_exceeded of float (* the curfew, in seconds *)
 
 type curfew = {
@@ -592,6 +598,7 @@ let refuse_purity span name =
 
 let host_touched name =
   (String.length name >= 3 && String.sub name 0 3 = "os_")
+  || (String.length name >= 5 && String.sub name 0 5 = "time_")
   || name = "rand_bytes"
 
 (* The module system hooks: the project layer installs discovery (a
@@ -1117,6 +1124,14 @@ type _ Effect.t +=
   | Send : (int * value * Emo_support.Span.t) -> unit Effect.t
   | Self_pid : int Effect.t
   | Receive : (value -> selected option) -> selected Effect.t
+  | (* The timing half: [Sleep] parks the performing process for the
+       given milliseconds. The schedulers keep the parked continuation
+       on their timer lists — the same lists the IO deadlines ride — and
+       the loop fires due timers when the run queue empties, so a
+       heartbeat keeps the program alive without a fd to poll. *)
+      Sleep :
+      (int64 * Emo_support.Span.t)
+      -> unit Effect.t
 
 (* ---- Networking core ----
    Socket operations follow the process operations: the evaluator performs
@@ -1347,6 +1362,8 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
+            | Sleep (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`sleep`")
             | Net_resolve (_, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
@@ -1454,9 +1471,13 @@ let expect_raise span message = net_raise span message
 (* The POSIX call OCaml's Unix module does not wrap: the C stub in
    emo_posix_stub.c raises the module's own Unix_error shape, so
    os_result's formatting sees "setpgid" and the reason text is
-   byte-identical with the c runtime's. *)
+   byte-identical with the c runtime's. The same stub carries the
+   monotonic clock, which the Unix module does not wrap either —
+   clock_gettime(CLOCK_MONOTONIC), nanoseconds, the same instrument the
+   c runtime and the other backends read. *)
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -3865,6 +3886,40 @@ and apply_runtime_impl span name args =
         if n < 0L then
           error span "E3007" "`rand_bytes` expects a non-negative count"
         else rand_result (fun () -> Bytes (read_entropy (Int64.to_int n)))
+    (* ---- the time package: the clock doors and the sleep park. The
+       wall clock answers UTC epoch milliseconds — the coarsest
+       resolution every hosted target's wall clock honestly carries —
+       and the monotonic clock nanoseconds, the elapsed-time
+       instrument. Sleep parks the process through the Sleep effect;
+       the schedulers park the continuation on their timer lists. ---- *)
+    | "time_now_ms", [] ->
+        Int64 (Int64.of_float (Unix.gettimeofday () *. 1000.0))
+    | "time_now_ms", vs ->
+        error span "E3007"
+          (Printf.sprintf "`time_now_ms` expects no arguments, got %d"
+             (List.length vs))
+    | "time_mono_ns", [] -> Int64 (emo_stub_monotonic_ns ())
+    | "time_mono_ns", vs ->
+        error span "E3007"
+          (Printf.sprintf "`time_mono_ns` expects no arguments, got %d"
+             (List.length vs))
+    | "time_sleep_ms", [ Int64 ms ] ->
+        if ms < 0L then
+          error span "E3007"
+            "`time_sleep_ms` expects a non-negative millisecond count"
+        else begin
+          Effect.perform (Sleep (ms, span));
+          Void
+        end
+    | "time_sleep_ms", [ v ] ->
+        error span "E3001"
+          (Printf.sprintf
+             "`time_sleep_ms` expects an Int64 millisecond count, got %s"
+             (type_name v))
+    | "time_sleep_ms", vs ->
+        error span "E3007"
+          (Printf.sprintf "`time_sleep_ms` expects (ms Int64), got %d arguments"
+             (List.length vs))
     | "os_read", [ Int64 fd; Int64 n ] ->
         if n < 0L then
           error span "E3007" "`os_read` expects a non-negative count"
@@ -4231,7 +4286,14 @@ and eval_frame closure frame span =
                     (Printf.sprintf "reached the end of %s without `return`"
                        closure.def_name)
             | stmt :: rest ->
-                let () = eval_stmt frame stmt in
+                (* The body's last statement is its exit: when the body
+                   may end without a return, a bare call there is the
+                   tail call the frame rebinds on. *)
+                let () =
+                  match rest with
+                  | [] -> eval_stmt frame stmt ~tail:true
+                  | _ -> eval_stmt frame stmt
+                in
                 run rest
           in
           run closure.body
@@ -4250,10 +4312,43 @@ and eval_frame closure frame span =
   in
   loop closure frame
 
-and eval_stmt env s =
+and eval_stmt ?(tail = false) env s =
   count_step ();
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e when tail -> (
+      (* The exit-position bare call is the return it is: a closure
+         callee — a named def or a block value — rebinds the frame, and
+         an instance method tail-calls with `self`; anything else
+         evaluates with its answer dropped, the statement's own
+         semantics. Loop bodies are not exits and never arrive here
+         with the flag on. *)
+      match e.Ast.desc with
+      | Ast.Call ({ Ast.desc = Ast.Member (recv, mname); _ }, arg_exprs) -> (
+          let base = eval_expr env recv in
+          match base with
+          | Instance i when List.mem_assoc mname i.iclass.cmethods ->
+              let closure = List.assoc mname i.iclass.cmethods in
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    (arg_name, eval_expr env arg_value))
+                  arg_exprs
+              in
+              raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+          | _ -> ignore (eval_expr env e))
+      | Ast.Call (callee, arg_exprs) -> (
+          match eval_expr env callee with
+          | ArrowBlock closure ->
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    (arg_name, eval_expr env arg_value))
+                  arg_exprs
+              in
+              raise (Tail_call (closure, args, []))
+          | _ -> ignore (eval_expr env e))
+      | _ -> ignore (eval_expr env e))
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
   | Ast.Binding { mutable_; pattern; init } -> (
       match pattern.Ast.pattern_desc with
@@ -4341,10 +4436,10 @@ and eval_stmt env s =
   | Ast.If { cond; then_body; else_body } -> (
       let c = eval_expr env cond in
       match c with
-      | Bool true -> List.iter (eval_stmt env) then_body
+      | Bool true -> eval_stmts env then_body ~tail
       | Bool false -> (
           match else_body with
-          | Some body -> List.iter (eval_stmt env) body
+          | Some body -> eval_stmts env body ~tail
           | None -> ())
       | v ->
           error cond.Ast.span "E3001"
@@ -4374,7 +4469,7 @@ and eval_stmt env s =
                              (type_name gv)))
                 | None -> true
               in
-              if guard_holds then List.iter (eval_stmt frame) branch.Ast.body
+              if guard_holds then eval_stmts frame branch.Ast.body ~tail
               else try_branches rest
       in
       try_branches branches
@@ -4409,7 +4504,7 @@ and eval_stmt env s =
         try_branch 0 branches
       in
       let (Selected (i, frame)) = Effect.perform (Receive select) in
-      List.iter (eval_stmt frame) (List.nth branches i).Ast.body
+      eval_stmts frame (List.nth branches i).Ast.body ~tail
   | Ast.Send { target; message } ->
       let pid =
         match eval_expr env target with
@@ -4476,6 +4571,19 @@ and eval_stmt env s =
       try iterate () with Break_signal -> ())
   | Ast.Break -> raise Break_signal
   | Ast.Continue -> raise Continue_signal
+
+(* A statement list's tailness: the exit positions thread [tail] to
+   their last statement — the last statement of a Void body, of an
+   `if`'s branches, of a `case`/`receive` branch, when it is a bare
+   call, is the return the frame's rebind iterates on. Loop bodies are
+   not exits; the loop arms pass the flag off before their bodies. *)
+and eval_stmts env stmts ~tail =
+  match stmts with
+  | [] -> ()
+  | [ s ] -> eval_stmt env s ~tail
+  | s :: rest ->
+      eval_stmt env s;
+      eval_stmts env rest ~tail
 
 and eval_expr env e =
   count_step ();
@@ -4887,6 +4995,9 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
                     Some
                       (fun (_ : (a, _) continuation) ->
                         refused nowhere "`receive`")
+                | Sleep (_, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) -> refused span "`sleep`")
                 | Net_resolve (_, span) ->
                     Some
                       (fun (_ : (a, _) continuation) ->
