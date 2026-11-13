@@ -1,0 +1,246 @@
+require "emo/record"
+require "emo/rocksdb"
+
+// The column store's format half (M35): create a column table, insert
+// rows across the 1024-row block boundary inside one transaction (the
+// trailing block is re-read and rewritten through the pending
+// overlay), scan the blocks back in rowid order, close and reopen to
+// prove the column families and the blocks survive, and answer the
+// refusals the format owes (no indexes, no primary key on a column
+// table).
+//
+// Every run starts from a destroyed database. Values print through
+// their typed accessors; BYTEA prints as hex.
+
+const path = ".emo-build/column-db"
+
+def hex(b Bytes) String {
+  const digits = "0123456789abcdef"
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const v = b.get(i)
+    out = out + digits.substring(v >> 4, 1) + digits.substring(v & 15, 1)
+    i = i + 1
+  }
+  return out
+}
+
+def show(value record.Value) String {
+  if value.is_null {
+    return "NULL"
+  }
+  case value.kind {
+    record.ColType.integer -> { return value.as_i64().to_string() }
+    record.ColType.bigint -> { return value.as_i64().to_string() }
+    record.ColType.real -> { return value.as_f64().to_string() }
+    record.ColType.double -> { return value.as_f64().to_string() }
+    record.ColType.text -> { return value.as_text() }
+    record.ColType.varchar -> { return value.as_text() }
+    record.ColType.boolean -> { return value.as_bool().to_string() }
+    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+  }
+}
+
+def show_row(row record.Row) String {
+  var out = "rowid " + row.rowid.to_string() + ":"
+  var i = 0
+  while i < row.values.length() {
+    out = out + " " + show(row.values[i])
+    i = i + 1
+  }
+  return out
+}
+
+def open_or_die(path String) record.Store {
+  case record.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, store) -> { return store }
+  }
+}
+
+def create_or_die(store record.Store) record.Table {
+  const columns = [
+    record.column("id", record.ColType.bigint),
+    record.column("name", record.ColType.text),
+    record.column("score", record.ColType.double),
+    record.column("active", record.ColType.boolean),
+    record.column("payload", record.ColType.bytea)
+  ]
+  case store.create_table_store("events", columns, [], record.Storage.column) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, table) -> { return table }
+  }
+}
+
+def show_or_die(what String, rows Array[record.Row], at Int64, count Int64) {
+  println(what + ": " + rows.length().to_string() + " rows")
+  var i = at
+  while i < count {
+    println("  " + show_row(rows[i]))
+    i = i + 1
+  }
+}
+
+def main() {
+  case rocksdb.destroy_db(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, _) -> {}
+  }
+  case record.open(path) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, store) -> {
+      const table = create_or_die(store)
+      println("created: " + table.name + " (column)")
+
+      // 1030 rows in one transaction: block 0 fills to rowid 1024,
+      // block 1 takes the last six. Row 3's payload carries an
+      // embedded NUL; row 4's text is UTF-8.
+      case store.begin() {
+        (R.error, why) -> { raise Exception.new(message: why) }
+        (R.ok, txn) -> {
+          var i = 1
+          var inserted = 0
+          while i <= 1030 {
+            var payload = record.null_value()
+            if i == 3 {
+              const raw = Bytes.new(3)
+              raw.set(0, 0)
+              raw.set(1, 255)
+              raw.set(2, 1)
+              payload = record.bytea(raw)
+            }
+            var name = "row-" + i.to_string()
+            if i == 4 {
+              name = "Zoë"
+            }
+            const values = [
+              record.bigint(i),
+              record.text(name),
+              record.double(i.to_float64()),
+              record.boolean((i % 2) == 0),
+              payload
+            ]
+            case table.insert_column_tx(txn, values) {
+              (R.error, why) -> { raise Exception.new(message: why) }
+              (R.ok, _) -> { inserted = inserted + 1 }
+            }
+            i = i + 1
+          }
+          case txn.commit() {
+            (R.error, why) -> { raise Exception.new(message: why) }
+            (R.ok, _) -> {}
+          }
+          println("inserted: " + inserted.to_string())
+        }
+      }
+
+      case store.begin() {
+        (R.error, why) -> { raise Exception.new(message: why) }
+        (R.ok, txn) -> {
+          case table.scan_column_tx(txn) {
+            (R.error, why) -> { raise Exception.new(message: why) }
+            (R.ok, rows) -> {
+              show_or_die("scan", rows, 0, 2)
+              println("  boundary: " + show_row(rows[1023]))
+              println("  first of block 1: " + show_row(rows[1024]))
+              println("  last: " + show_row(rows[rows.length() - 1]))
+            }
+          }
+          txn.rollback()
+        }
+      }
+
+      store.close()
+
+      case record.open(path) {
+        (R.error, why) -> { raise Exception.new(message: why) }
+        (R.ok, reopened) -> {
+          const again = table_or_die(reopened, "events")
+          println("reopened: " + again.name + " (column)")
+          case reopened.begin() {
+            (R.error, why) -> { raise Exception.new(message: why) }
+            (R.ok, txn) -> {
+              case again.scan_column_tx(txn) {
+                (R.error, why) -> { raise Exception.new(message: why) }
+                (R.ok, rows) -> {
+                  show_or_die("rescan", rows, 0, 2)
+                  println("  boundary: " + show_row(rows[1023]))
+                }
+              }
+              txn.rollback()
+            }
+          }
+          reopened.close()
+        }
+      }
+
+      // The format's refusals are values.
+      case store_open_and_refuse_indexes(path) {
+        (R.error, why) -> { println("refusal: " + why) }
+        (R.ok, _) -> { println("refusal: unexpected ok") }
+      }
+      case store_open_and_refuse_primary(path) {
+        (R.error, why) -> { println("refusal: " + why) }
+        (R.ok, _) -> { println("refusal: unexpected ok") }
+      }
+      println("done")
+    }
+  }
+}
+
+def table_or_die(store record.Store, name String) record.Table {
+  case store.table(name) {
+    (R.error, why) -> { raise Exception.new(message: why) }
+    (R.ok, table) -> { return table }
+  }
+}
+
+def store_open_and_refuse_indexes(path String) (R, Bool) {
+  case record.open(path) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, store) -> {
+      const columns = [
+        record.column("id", record.ColType.bigint),
+        record.column("name", record.ColType.text)
+      ]
+      const indexes = [record.index("events_name", ["name"])]
+      case store.create_table_store("with_index", columns, indexes,
+                                    record.Storage.column) {
+        (R.error, why) -> {
+          store.close()
+          return (R.error, why)
+        }
+        (R.ok, _) -> {
+          store.close()
+          return (R.ok, true)
+        }
+      }
+    }
+  }
+}
+
+def store_open_and_refuse_primary(path String) (R, Bool) {
+  case record.open(path) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, store) -> {
+      const columns = [
+        record.column("id", record.ColType.bigint).primary_key(),
+        record.column("name", record.ColType.text)
+      ]
+      case store.create_table_store("with_primary", columns, [],
+                                    record.Storage.column) {
+        (R.error, why) -> {
+          store.close()
+          return (R.error, why)
+        }
+        (R.ok, _) -> {
+          store.close()
+          return (R.ok, true)
+        }
+      }
+    }
+  }
+}
+
+main()

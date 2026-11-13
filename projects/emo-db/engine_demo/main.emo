@@ -129,6 +129,17 @@ run(eng, "INSERT INTO users (id) VALUES (4)")
 run(eng, "INSERT INTO users (id, name) VALUES ('x', 'Bad')")
 run(eng, "INSERT INTO users (id, name, handle) VALUES (4, 'Too Long', 'this-is-too-long')")
 
+// ---- the column store's format (M35): the DDL maps, the DML bridges -----
+
+run(eng, "CREATE TABLE cold (id BIGINT, name TEXT) STORE = COLUMN")
+run(eng, "INSERT INTO cold (id, name) VALUES (1, 'a')")
+run(eng, "SELECT id FROM cold")
+run(eng, "UPDATE cold SET name = 'b'")
+run(eng, "DELETE FROM cold")
+run(eng, "CREATE TABLE coldpk (id BIGINT PRIMARY KEY) STORE = COLUMN")
+run(eng, "CREATE TABLE warm (id BIGINT) STORE = ROW")
+run(eng, "CREATE TABLE plain (id BIGINT)")
+
 // ---- the catalog survives a reopen --------------------------------------
 
 eng.close()

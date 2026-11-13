@@ -138,6 +138,17 @@ while p < pieces.length() {
 const (R.ok, none) = sql.split("  ;;  ")
 println(none.length().to_string())
 
+// ---- the storage tail ----
+const (R.ok, cold) = sql.parse("CREATE TABLE cold (id BIGINT) STORE = COLUMN")
+println(cold.to_string())
+if cold.is(sql.CreateTable) {
+  println(cold.store == sql.StoreKind.column)
+}
+const (R.ok, plain) = sql.parse("CREATE TABLE plain (id BIGINT) STORE = ROW")
+println(plain.to_string())
+const (R.ok, silent) = sql.parse("CREATE TABLE plain (id BIGINT)")
+println(silent.to_string())
+
 // ---- a malformed statement is a value, not a crash ----
 case sql.parse("SELECT FROM") {
   (R.error, why) -> { println(why) }

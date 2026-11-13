@@ -1560,6 +1560,10 @@ class Engine {
     if primary_count > 1 {
       return fail("42P16", "multiple primary keys for table \"" + name + "\" are not allowed")
     }
+    const column_store = stmt.store == sql.StoreKind.column
+    if column_store && primary_count == 1 {
+      return fail("0A000", "column-store tables carry no primary key in v0")
+    }
     var columns = []
     var primary_name = ""
     var j = 0
@@ -1583,7 +1587,11 @@ class Engine {
     if primary_name != "" {
       indexes = [record.unique_index(name + "_pkey", [primary_name])]
     }
-    case self.store.create_table(name, columns, indexes) {
+    var store = record.Storage.row
+    if column_store {
+      store = record.Storage.column
+    }
+    case self.store.create_table_store(name, columns, indexes, store) {
       (R.error, why) -> {
         if why.index_of("already exists") >= 0 {
           return fail("42P07", "relation \"" + name + "\" already exists")
@@ -1605,6 +1613,10 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.bridge_column(table) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, _) -> {}
@@ -1649,6 +1661,10 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.bridge_column(table) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, _) -> {}
@@ -1705,6 +1721,10 @@ class Engine {
     case self.resolve_table(parts[0]) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.bridge_column(table) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case self.acquire(table.name) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, _) -> {}
@@ -1783,6 +1803,10 @@ class Engine {
     case self.resolve_table(table_name) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, table) -> {
+        case self.bridge_column(table) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, _) -> {}
+        }
         case self.plan_where(table, alias, stmt.where_e) {
           (R.error, why) -> { return (R.error, why) }
           (R.ok, wr) -> {
@@ -1821,6 +1845,16 @@ class Engine {
         }
       }
     }
+  }
+
+  // The column store's v0 bridge: step 72 lands the format, step 73
+  // the batch executor. Until then every DML and SELECT on a column
+  // table answers the named refusal instead of reading the row path.
+  def bridge_column(table record.Table) (R, Bool) {
+    if table.store == record.Storage.column {
+      return fail("0A000", "column-store execution is not supported in v0")
+    }
+    return (R.ok, true)
   }
 
   def resolve_table(name String) (R, record.Table) {

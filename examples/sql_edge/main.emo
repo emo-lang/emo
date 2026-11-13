@@ -84,6 +84,12 @@ def fill_char(buf Bytes, i Int64, n Int64, c Int64) {
 why("SELECT " + parens(512) + " FROM t")
 why("SELECT " + parens(513) + " FROM t")
 
+// ---- storage-tail edges ----
+why("CREATE TABLE t (id BIGINT) STORE = TEXT")
+why("CREATE TABLE t (id BIGINT) STORE =")
+why("CREATE TABLE t (id BIGINT) STORE")
+why("CREATE TABLE t (id BIGINT) WITH (store = column)")
+
 // ---- splitting edges ----
 why_split("SELECT 'unterminated")
 why_split("SELECT 1;; SELECT 2")

@@ -105,6 +105,18 @@ incrementally shippable steps — one file per step, executed in order.
   write-write block, and the deadlock on `c`. The `sql` package grows
   the three transaction statements. The plan is
   `plan/step-69-transactions-session.md`.
+- **M35 — The column format (step 72):** `CREATE TABLE ... STORE =
+  COLUMN` in the parser (the canonical rendering spells only the
+  written column tail) and the catalog's version-2 table definition
+  (a `store` field; a version-1 record reads as row storage); the
+  record layer's column half — one column family per column, 1024-row
+  blocks (row count, null bitmap, the row encoding's widths), the
+  trailing partial block re-read and rewritten inside the transaction,
+  the block scan in rowid order, and the reopen's column-family
+  verification; no indexes on column tables (the engine and the record
+  layer both refuse `PRIMARY KEY` and secondary indexes), and the
+  engine's named `0A000` bridge for DML and SELECT until step 73's
+  batch executor. The plan is `plan/step-72-column-format.md`.
 - **M34 — Conformance and documentation (step 71):** the SQL corpus as
   data — six `.test` files, 126 cases, `statement ok`/`statement
   error`/`query` with pinned tags, rows, and `code: message` lines —
@@ -222,5 +234,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 69 | Transactions and the session plane | landed — the `sql` package's `BEGIN`/`COMMIT`/`ROLLBACK`; the record layer's `Txn` (one WriteBatch, a per-statement snapshot, the pending overlay, the rowid counters, the `Table` tx methods, commit/rollback); the engine's transaction state, autocommit path, `LockClient`, and table-level locks; the lock-manager process (owners, FIFO waiters, the wait-for graph, the deadlock abort, the release grant); the two-session `txn_demo` (read committed, write-write block, deadlock) three runs byte-identical on `c` (`plan/step-69-transactions-session.md`) |
 | 70 | The wire | landed — PostgreSQL protocol v3's simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk), the ParameterStatus set, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` over the lexer's tokens, RowDescription with the v0 OIDs, text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached through `RemoteLocks`, `Result.types` carrying the projection types; `wire_demo` (ephemeral port through a ready file, a max-connection stop) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's multi-statement script, the error stop, the client's rows and error, byte-identical across three `check.sh` runs; also the BEAM emitter's `__inst_recv` temp fix, found by the new `sql_demo` loop (`plan/step-70-wire.md`) |
 | 71 | Conformance and documentation | landed — the SQL corpus in the SQLLogicTest spirit: six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows rendered canonically) over one fresh database per run, executed by the data-only `corpus_runner` with per-file counts and collected failures, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench (`bench.emo` modes, `bench/run.sh` timing with one warmup and three timed runs) and `bench/results.md`'s measured table; the measurement found and fixed the read-only statement's WAL fsync (a write-less transaction closes without a batch write) and the corpus found and fixed the DDL-in-transaction refusal leaving the block open; the shipped-surface and measured sections, the corrected stale claims, and the arc-two review of the row store's actual plug points (`plan/step-71-conformance.md`) |
+| 72 | The column format | landed — `sql`'s `StoreKind` and the `CREATE TABLE ... STORE = COLUMN` tail (row renders nothing, column renders verbatim, `STORE = TEXT` refuses by name), the catalog's version-2 table definition with the `store` field (a version-1 record decodes as row storage), the record layer's `Storage`/`TableMeta.store`, `create_table_store` refusing column indexes and a primary column, one column family per column (`col_<oid>`), the 1024-row block encoding (row count, null bitmap, the row encoding's widths), `insert_column_tx` rewriting the trailing block through the transaction, `scan_column_tx` walking blocks in rowid order, the reopen's column-family verification, the row path's named guards, the engine's DDL mapping and the `0A000` bridge, the `column_demo` golden (1030 rows across the block boundary, reopen, refusals) three runs byte-identical on `c` through the gate (66 checks), and the encoding-order bug the golden caught on its first run (`plan/step-72-column-format.md`) |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

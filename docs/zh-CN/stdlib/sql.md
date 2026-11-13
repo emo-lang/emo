@@ -62,7 +62,9 @@ const (R.ok, parts) = sql.split("select 1; select ';' as semi")
 
 ### CREATE TABLE
 
-`CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, handle VARCHAR(12))`。v0 类型是 `INTEGER`、`BIGINT`、`REAL`、`DOUBLE PRECISION`、`TEXT`、`VARCHAR(n)`、`BOOLEAN`、`BYTEA`——精确拼写,没有别名(`INT`、`BOOL`、`SERIAL` 等拒绝);`VARCHAR` 需要正的 `(n)`。支持列级 `NOT NULL` 与 `PRIMARY KEY`,各自至多一次、顺序任意;规范渲染先写 `NOT NULL` 再写 `PRIMARY KEY`。重复列名拒绝。
+`CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION, handle VARCHAR(12))`。v0 类型是 `INTEGER`、`BIGINT`、`REAL`、`DOUBLE PRECISION`、`TEXT`、`VARCHAR(n)`、`BOOLEAN`、`BYTEA`——精确拼写,没有别名(`INT`、`BOOL`、`SERIAL` 等拒绝);`VARCHAR` 需要正的 `(n)`。支持列级 `NOT NULL` 与 `PRIMARY KEY`,各自至多一次、顺序任意;规范渲染先写 `NOT NULL` 再写 `PRIMARY KEY`。重复列名拒绝。列清单之后的存储尾巴——`STORE = ROW`(默认,渲染时不
+写)或 `STORE = COLUMN`(原样渲染)——点名表的存储;`STORE =` 之后
+的其他内容按名拒绝。
 
 ### INSERT
 

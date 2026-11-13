@@ -27,6 +27,17 @@ require "emo/rocksdb"
 
 enum ColType { integer, bigint, real, double, text, varchar, boolean, bytea }
 
+// A table's storage choice: the row encoding (the default), or the
+// column blocks of the column store.
+enum Storage { row, column }
+
+def storage_name(store Storage) String {
+  if store == Storage.column {
+    return "column"
+  }
+  return "row"
+}
+
 def type_name(kind ColType) String {
   case kind {
     ColType.integer -> { return "INTEGER" }
@@ -222,12 +233,13 @@ class Index {
 // The catalog's table record, before the runtime column families are
 // attached. The Store turns it into a Table.
 class TableMeta {
-  def init(oid Int64, name String, columns Array[Column], indexes Array[Index], next_rowid Int64) {
+  def init(oid Int64, name String, columns Array[Column], indexes Array[Index], next_rowid Int64, store Storage) {
     self.oid = oid
     self.name = name
     self.columns = columns
     self.indexes = indexes
     self.next_rowid = next_rowid
+    self.store = store
   }
 }
 
@@ -587,9 +599,17 @@ def catalog_table_prefix() Bytes {
   return b.finish()
 }
 
+// The table definition's encoding. Version 2 carries the storage
+// choice; version 1 (before the column store) had none, and decodes as
+// row storage, so an old database opens unchanged.
 def encode_table(meta TableMeta) Bytes {
   const b = internal.codec.Buf.new()
-  b.u8(1)
+  b.u8(2)
+  if meta.store == Storage.column {
+    b.u8(1)
+  } else {
+    b.u8(0)
+  }
   b.string(meta.name)
   b.u64be(meta.next_rowid)
   b.u32be(meta.columns.length())
@@ -635,9 +655,15 @@ def encode_table(meta TableMeta) Bytes {
 def decode_table(data Bytes) TableMeta {
   const r = internal.codec.Reader.new(data)
   const version = r.u8()
-  if version != 1 {
+  if version != 1 && version != 2 {
     raise Exception.new(
       message: "record: catalog: unknown table-definition version ${version}")
+  }
+  var store = Storage.row
+  if version == 2 {
+    if r.u8() == 1 {
+      store = Storage.column
+    }
   }
   const name = r.string()
   const next_rowid = r.u64be()
@@ -673,7 +699,7 @@ def decode_table(data Bytes) TableMeta {
     j = j + 1
   }
   r.finish()
-  return TableMeta.new(0, name, columns, indexes, next_rowid)
+  return TableMeta.new(0, name, columns, indexes, next_rowid, store)
 }
 
 // The table's oid is the key's suffix, not part of the value; decode_at
@@ -688,7 +714,7 @@ def decode_at(key Bytes, data Bytes) TableMeta {
   const oid = r.u64be()
   r.finish()
   const meta = decode_table(data)
-  return TableMeta.new(oid, meta.name, meta.columns, meta.indexes, meta.next_rowid)
+  return TableMeta.new(oid, meta.name, meta.columns, meta.indexes, meta.next_rowid, meta.store)
 }
 
 def read_counter(catalog rocksdb.Cf, key Bytes) Int64 {
@@ -788,8 +814,22 @@ def open(path String) (R, Store) {
               cfs = cfs.append(cf_required(db, cf_name))
               k = k + 1
             }
+            var col_cfs = []
+            if meta.store == Storage.column {
+              var c = 0
+              while c < meta.columns.length() {
+                const cf_name = "col_" + meta.columns[c].oid.to_string()
+                if !has_name(existing, cf_name) {
+                  raise Exception.new(
+                    message: "record: open: the column column family " + cf_name +
+                             " of table " + meta.name + " is missing")
+                }
+                col_cfs = col_cfs.append(cf_required(db, cf_name))
+                c = c + 1
+              }
+            }
             tables = tables.append(
-              Table.new(db, catalog, data, meta, cfs))
+              Table.new(db, catalog, data, meta, cfs, col_cfs))
             t = t + 1
           }
           return (R.ok, Store.new(db, catalog, data, tables,
@@ -839,12 +879,19 @@ class Store {
   // positive VARCHAR length, a primary column that is NOT NULL, and
   // indexes that name real columns.
   def create_table(name String, columns Array[ColumnDef], indexes Array[IndexDef]) (R, Table) {
+    return self.create_table_store(name, columns, indexes, Storage.row)
+  }
+
+  def create_table_store(name String, columns Array[ColumnDef], indexes Array[IndexDef], store Storage) (R, Table) {
     self.live()
     if name == "" {
       raise Exception.new(message: "record: create_table: the table name is empty")
     }
     if columns.length() == 0 {
       raise Exception.new(message: "record: create_table: the table has no columns")
+    }
+    if store == Storage.column && indexes.length() > 0 {
+      return (R.error, "record: create_table: a column-store table carries no indexes")
     }
     const table_oid = self.next_table_oid.read()
     var next_index_oid = self.next_index_oid.read()
@@ -862,6 +909,9 @@ class Store {
         raise Exception.new(
           message: "record: create_table: primary column \"" + col_def.name +
                    "\" is nullable")
+      }
+      if store == Storage.column && col_def.primary {
+        return (R.error, "record: create_table: a column-store table carries no primary key")
       }
       if col_def.kind == ColType.varchar && col_def.varchar_len <= 0 {
         raise Exception.new(
@@ -911,9 +961,9 @@ class Store {
       }
       t = t + 1
     }
-    // The index families first, then the catalog batch: a crash between
-    // them leaves an orphan family, never a catalog entry whose family
-    // is missing.
+    // The families first, then the catalog batch: a crash between them
+    // leaves an orphan family, never a catalog entry whose family is
+    // missing. A column table gets one family per column.
     var index_cfs = []
     var k = 0
     while k < idxs.length() {
@@ -923,7 +973,18 @@ class Store {
       }
       k = k + 1
     }
-    const meta = TableMeta.new(table_oid, name, cols, idxs, 1)
+    var column_cfs = []
+    if store == Storage.column {
+      var c = 0
+      while c < cols.length() {
+        case self.db.cf_create("col_" + cols[c].oid.to_string()) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, cf) -> { column_cfs = column_cfs.append(cf) }
+        }
+        c = c + 1
+      }
+    }
+    const meta = TableMeta.new(table_oid, name, cols, idxs, 1, store)
     const encoded = encode_table(meta)
     case self.db.batch() {
       (R.error, why) -> { return (R.error, why) }
@@ -961,7 +1022,8 @@ class Store {
         batch.close()
       }
     }
-    const created = Table.new(self.db, self.catalog, self.data, meta, index_cfs)
+    const created = Table.new(self.db, self.catalog, self.data, meta, index_cfs,
+                              column_cfs)
     self.table_list.replace(self.table_list.read().append(created))
     self.next_table_oid.replace(table_oid + 1)
     self.next_index_oid.replace(next_index_oid)
@@ -1031,7 +1093,7 @@ def column_position(columns Array[Column], oid Int64) Int64 {
 // its rowid counter. The Table is bound to its Store's database; every
 // operation checks that the database is still open.
 class Table {
-  def init(db rocksdb.Db, catalog rocksdb.Cf, data rocksdb.Cf, meta TableMeta, index_cfs Array[rocksdb.Cf]) {
+  def init(db rocksdb.Db, catalog rocksdb.Cf, data rocksdb.Cf, meta TableMeta, index_cfs Array[rocksdb.Cf], column_cfs Array[rocksdb.Cf]) {
     self.db = db
     self.catalog = catalog
     self.data = data
@@ -1040,7 +1102,27 @@ class Table {
     self.columns = meta.columns
     self.indexes = meta.indexes
     self.index_cfs = index_cfs
+    self.column_cfs = column_cfs
+    self.store = meta.store
     self.next_rowid = Box.new(meta.next_rowid)
+  }
+
+  // The row path's guard: a column-store table's rows live in blocks,
+  // so every row-encoding method refuses it by name.
+  def require_row_table() {
+    if self.store == Storage.column {
+      raise Exception.new(
+        message: "record: column-store table \"" + self.name +
+                 "\" does not take the row path")
+    }
+  }
+
+  def require_column_table() {
+    if self.store == Storage.row {
+      raise Exception.new(
+        message: "record: row-store table \"" + self.name +
+                 "\" does not take the column path")
+    }
   }
 
   // Inserts one row and answers its rowid. The row, every index entry,
@@ -1050,6 +1132,7 @@ class Table {
   // raises — the caller laid out the row against the wrong table.
   def insert(values Array[Value]) (R, Int64) {
     self.live()
+    self.require_row_table()
     check_row(self.columns, values)
     var i = 0
     while i < self.indexes.length() {
@@ -1088,7 +1171,7 @@ class Table {
     const next = rowid + 1
     const row = encode_row(self.columns, values)
     const key = row_key(self.oid, rowid)
-    const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes, next)
+    const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes, next, self.store)
     const encoded_table = encode_table(meta)
     case self.db.batch() {
       (R.error, why) -> { return (R.error, why) }
@@ -1140,6 +1223,7 @@ class Table {
   // an error value — the executor matched the row before the call.
   def update(rowid Int64, values Array[Value]) (R, Table) {
     self.live()
+    self.require_row_table()
     check_row(self.columns, values)
     case self.get(rowid) {
       (R.error, why) -> { return (R.error, why) }
@@ -1237,6 +1321,7 @@ class Table {
   // its scan matched.
   def delete(rowid Int64) (R, Table) {
     self.live()
+    self.require_row_table()
     case self.get(rowid) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, found) -> {
@@ -1287,6 +1372,7 @@ class Table {
   // one-element array when it is present.
   def get(rowid Int64) (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     const key = row_key(self.oid, rowid)
     case self.data.get(key) {
       (R.error, why) -> { return (R.error, why) }
@@ -1303,6 +1389,7 @@ class Table {
   // Every row in rowid order.
   def scan() (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     const prefix = table_prefix(self.oid)
     case self.data.iter() {
       (R.error, why) -> { return (R.error, why) }
@@ -1347,6 +1434,7 @@ class Table {
   // values must match the index's columns in order and type.
   def scan_index(index_name String, key_values Array[Value]) (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     var pos = -1
     var i = 0
     while i < self.indexes.length() {
@@ -1409,6 +1497,7 @@ class Table {
 
   def insert_tx(txn Txn, values Array[Value]) (R, Int64) {
     self.live()
+    self.require_row_table()
     check_row(self.columns, values)
     var i = 0
     while i < self.indexes.length() {
@@ -1445,7 +1534,7 @@ class Table {
       k = k + 1
     }
     const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes,
-                               txn.rowid_next(self))
+                               txn.rowid_next(self), self.store)
     const encoded = encode_table(meta)
     case txn.put(self.catalog, "catalog", table_key(self.oid), encoded) {
       (R.error, why) -> { return (R.error, why) }
@@ -1456,6 +1545,7 @@ class Table {
 
   def get_tx(txn Txn, rowid Int64) (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     case txn.get(self.data, "data", row_key(self.oid, rowid)) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, found) -> {
@@ -1469,6 +1559,7 @@ class Table {
 
   def scan_tx(txn Txn) (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     case txn.scan_prefix(self.data, "data", table_prefix(self.oid)) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, entries) -> {
@@ -1487,6 +1578,7 @@ class Table {
 
   def scan_index_tx(txn Txn, index_name String, key_values Array[Value]) (R, Array[Row]) {
     self.live()
+    self.require_row_table()
     var pos = 0 - 1
     var i = 0
     while i < self.indexes.length() {
@@ -1525,6 +1617,7 @@ class Table {
 
   def update_tx(txn Txn, rowid Int64, values Array[Value]) (R, Table) {
     self.live()
+    self.require_row_table()
     check_row(self.columns, values)
     case self.get_tx(txn, rowid) {
       (R.error, why) -> { return (R.error, why) }
@@ -1585,6 +1678,7 @@ class Table {
 
   def delete_tx(txn Txn, rowid Int64) (R, Table) {
     self.live()
+    self.require_row_table()
     case self.get_tx(txn, rowid) {
       (R.error, why) -> { return (R.error, why) }
       (R.ok, found) -> {
@@ -1611,9 +1705,224 @@ class Table {
     }
   }
 
+  // ---- the column path ----
+  //
+  // A column-store table's rows live as 1024-row blocks, one column
+  // family per column, keyed by the block id. A block value is the row
+  // count, the null bitmap (1 = NULL, the row encoding's convention),
+  // then the non-null values in order. An insert reads the trailing
+  // block through the transaction, appends the row, and puts it back;
+  // a fresh block starts at the next block id.
+
+  // Inserts one row into the column blocks and answers its rowid. No
+  // index maintenance and no unique check — the column store's v0
+  // carries neither. A NULL rides the block's bitmap; a NOT NULL
+  // violation is the caller's check_row.
+  def insert_column_tx(txn Txn, values Array[Value]) (R, Int64) {
+    self.live()
+    self.require_column_table()
+    check_row(self.columns, values)
+    const rowid = txn.next_rowid(self)
+    const block = (rowid - 1) / 1024
+    const slot = (rowid - 1) % 1024
+    var i = 0
+    while i < self.columns.length() {
+      const cf = self.column_cfs[i]
+      const key = block_key(block)
+      case txn.get(cf, column_slot(self.columns[i]), key) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, found) -> {
+          var block_values = []
+          if found.length() == 1 {
+            block_values = decode_block(self.columns[i], found[0])
+            if block_values.length() != slot {
+              return (R.error,
+                      "record: insert: the block holds " +
+                      block_values.length().to_string() + " rows, expected " +
+                      slot.to_string())
+            }
+          } else {
+            if slot != 0 {
+              return (R.error,
+                      "record: insert: the block is missing at row " +
+                      rowid.to_string())
+            }
+          }
+          block_values = block_values.append(values[i])
+          case txn.put(cf, column_slot(self.columns[i]), key,
+                       encode_block(block_values)) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {}
+          }
+        }
+      }
+      i = i + 1
+    }
+    const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes,
+                               txn.rowid_next(self), self.store)
+    const encoded = encode_table(meta)
+    case txn.put(self.catalog, "catalog", table_key(self.oid), encoded) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, _) -> {}
+    }
+    return (R.ok, rowid)
+  }
+
+  // Scans the table block by block and answers rows in rowid order.
+  // The first column's block list drives the walk; every other column
+  // reads its block through the transaction, so the pending overlay
+  // and the statement snapshot apply as they do everywhere.
+  def scan_column_tx(txn Txn) (R, Array[Row]) {
+    self.live()
+    self.require_column_table()
+    case txn.scan_prefix(self.column_cfs[0], column_slot(self.columns[0]),
+                         Bytes.new(0)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, blocks) -> {
+        var rows = []
+        var b = 0
+        while b < blocks.length() {
+          const block_id = block_of(blocks[b][0])
+          var per_column = []
+          per_column = per_column.append(
+            decode_block(self.columns[0], blocks[b][1]))
+          var c = 1
+          while c < self.columns.length() {
+            case txn.get(self.column_cfs[c], column_slot(self.columns[c]),
+                         block_key(block_id)) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, found) -> {
+                if found.length() != 1 {
+                  return (R.error,
+                          "record: scan: the block " + block_id.to_string() +
+                          " of column \"" + self.columns[c].name + "\" is missing")
+                }
+                per_column = per_column.append(
+                  decode_block(self.columns[c], found[0]))
+              }
+            }
+            c = c + 1
+          }
+          const count = per_column[0].length()
+          var j = 0
+          while j < count {
+            var values = []
+            var c2 = 0
+            while c2 < self.columns.length() {
+              values = values.append(per_column[c2][j])
+              c2 = c2 + 1
+            }
+            rows = rows.append(Row.new(block_id * 1024 + j + 1, values))
+            j = j + 1
+          }
+          b = b + 1
+        }
+        return (R.ok, rows)
+      }
+    }
+  }
+
   def live() {
     self.db.live()
   }
+}
+
+// ---- the column blocks ----
+
+const block_rows = 1024
+
+// The column family's pending-map slot and the block id's key.
+def column_slot(column Column) String {
+  return "col:" + column.oid.to_string()
+}
+
+def block_key(block Int64) Bytes {
+  const b = internal.codec.Buf.new()
+  b.u64be(block)
+  return b.finish()
+}
+
+def block_of(key Bytes) Int64 {
+  const r = internal.codec.Reader.new(key)
+  const block = r.u64be()
+  r.finish()
+  return block
+}
+
+// One block of one column: the row count, the null bitmap, then the
+// non-null values in order (the row encoding's own widths).
+def encode_block(values Array[Value]) Bytes {
+  const count = values.length()
+  const b = internal.codec.Buf.new()
+  b.u32be(count)
+  const bitmap_len = (count + 7) / 8
+  var byte_index = 0
+  while byte_index < bitmap_len {
+    var bits = 0
+    var bit = 0
+    while bit < 8 {
+      const row = byte_index * 8 + bit
+      if row < count && values[row].is_null {
+        bits = bits | (1 << bit)
+      }
+      bit = bit + 1
+    }
+    b.u8(bits)
+    byte_index = byte_index + 1
+  }
+  var i = 0
+  while i < count {
+    if !values[i].is_null {
+      write_value_raw(values[i], b)
+    }
+    i = i + 1
+  }
+  return b.finish()
+}
+
+def write_value_raw(value Value, b internal.codec.Buf) {
+  case value.kind {
+    ColType.integer -> { b.i32be(value.i64) }
+    ColType.bigint -> { b.i64be(value.i64) }
+    ColType.real -> { b.u64be(value.f64.to_bits()) }
+    ColType.double -> { b.u64be(value.f64.to_bits()) }
+    ColType.boolean -> {
+      if value.flag {
+        b.u8(1)
+      } else {
+        b.u8(0)
+      }
+    }
+    ColType.text -> { b.bytes(value.data) }
+    ColType.varchar -> { b.bytes(value.data) }
+    ColType.bytea -> { b.bytes(value.data) }
+  }
+}
+
+def decode_block(column Column, data Bytes) Array[Value] {
+  const r = internal.codec.Reader.new(data)
+  const count = r.u32be()
+  const bitmap_len = (count + 7) / 8
+  const bitmap = Bytes.new(bitmap_len)
+  var i = 0
+  while i < bitmap_len {
+    bitmap.set(i, r.u8())
+    i = i + 1
+  }
+  var values = []
+  var row = 0
+  while row < count {
+    const byte = bitmap.get(row / 8)
+    const bit = (byte >> (row % 8)) & 1
+    if bit == 1 {
+      values = values.append(null_value_for(column))
+    } else {
+      values = values.append(read_value(r, column))
+    }
+    row = row + 1
+  }
+  r.finish()
+  return values
 }
 
 // ---- transactions ----

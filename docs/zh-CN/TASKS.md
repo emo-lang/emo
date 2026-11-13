@@ -53,6 +53,7 @@
 | M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
 | M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
 | M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
+| M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -1790,3 +1791,28 @@ Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户�
 - [x] **T71.8** —— 项目 README EN+zh:语料、bench、闸门新检查与
       M34 状态。
 - [x] **T71.9** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
+
+## M35 —— 列存格式
+
+### 步骤 72 —— 列存格式
+
+**前置:** Step 71(弧一收尾)。**完成标准:** `CREATE TABLE ...
+STORE = COLUMN` 可以解析(规范渲染写出 `STORE = COLUMN`,`STORE =
+ROW` 是默认),目录的表定义升到版本 2 带 `store` 字段而版本 1 记录
+读作行存,记录层把列存表按每列一个 column family 里的 1024 行块存
+储——插入走事务的 pending 覆盖层与批量、整块扫描、重开时校验列
+family;列存表不建索引(`PRIMARY KEY` 与二级索引答 `0A000`);引擎
+映射 DDL 并以具名的 `0A000` 桥接 DML/SELECT;记录层金测(建表、插
+入、重开、扫描、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节一
+致;所有既有金测保持绿;文档 EN+zh;仓库可构建。
+
+- [x] **T72.1** —— 规格:本节 EN+zh 与
+      `plan/step-72-column-format.md`。
+- [x] **T72.2** —— `sql`:`StoreKind`、`CreateTable.store`、尾巴
+      解析、渲染、示例、六条路径。
+- [x] **T72.3** —— `record`:`Storage`、`TableMeta.store`、版本 2
+      编码、列 family、列插入与扫描、重开校验。
+- [x] **T72.4** —— `column_demo` 与其金测。
+- [x] **T72.5** —— `engine`:DDL 映射与桥。
+- [x] **T72.6** —— 闸门:第五个 demo。
+- [x] **T72.7** —— 文档 EN+zh 与收尾。

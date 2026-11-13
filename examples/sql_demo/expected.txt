@@ -50,5 +50,9 @@ ROLLBACK
 SELECT 1
 SELECT ';' AS semi
 0
+CREATE TABLE cold (id BIGINT) STORE = COLUMN
+true
+CREATE TABLE plain (id BIGINT)
+CREATE TABLE plain (id BIGINT)
 sql: expected an expression at byte 7
 sql: expected an expression at byte 26

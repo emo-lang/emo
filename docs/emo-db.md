@@ -253,36 +253,50 @@ The autocommit rows are one fsynced write each — the durability point
 is the point. Not measured: the wire's per-query latency, concurrent
 sessions, tables larger than memory, and arc two's column engine.
 
-## Arc two — the OLAP shape (direction decided, cut open)
+## Arc two — the column engine (cut settled 2026-11-13)
 
-Arc one's planner now exists to plug into, so the sketch is reviewed
-against what the row store actually built:
+Arc one's planner is the plug point, and the cut is settled: three
+milestones, one step each, the arc's own discipline. The facts the
+review rested on — the plan interface, the catalog, the
+column-family-per-index precedent, the engine-agnostic wire and
+session plane, the type system's shared blockers — are what the cut
+starts from.
 
-- **The plug point is the plan, not the parser.** The analyzer, the
-  AST, the type rules, and the catalog are storage-agnostic; a column
-  engine would sit behind the same scan/filter/project shape and the
-  same `Result`. Arc one's nodes materialize one row at a time, so a
-  column engine's batch-shaped executor is the second implementation
-  behind one interface.
-- **The catalog carries no storage choice yet.** `STORE = COLUMN` is
-  the first schema change: one field in the catalog's table record,
-  and the planner routing by it.
-- **The storage layout already shows the shape.** One column family
-  per index is v0's own precedent for one column family per column;
-  column blocks would ride as values in those families, crossing the
-  same `Bytes` borrowed view.
-- **The shared blockers are the type system's.** NUMERIC (Int128 or a
-  bignum in the language) and DATE/TIMESTAMP (a calendar package) are
-  engine-agnostic; arc two inherits whatever lands first.
-- **The wire and the session plane are engine-agnostic already.** The
-  same protocol, transactions, locks, and snapshots serve the column
-  store without a second control plane.
-- **The vectorized evaluator is the real new code.** Scans pruned by
-  block-level min/max statistics, and a Parquet-like segment format of
-  our own only if the column-family layout's evidence demands it.
+**M35 — The column format (step 72, landed 2026-11-13).** `CREATE
+TABLE ... STORE = COLUMN` joins the parser (the tail after the column list; `STORE =
+ROW` is the default and renders only when written) and the catalog
+(the table definition moves to version 2 with a `store` field; a
+version-1 record reads as row storage, so an old database opens
+unchanged). The record layer's column half: one column family per
+column (`col_<oid>`), 1024-row blocks — a block value is the row
+count, the null bitmap (128 bytes for 1024 rows), then the values
+(4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, 1-byte BOOLEAN,
+length-prefixed TEXT/VARCHAR/BYTEA) — and the trailing partial block
+is re-read and rewritten inside the transaction's batch on every
+insert. One `Store`, one `Txn`, the same snapshots and pending
+overlay; the reopen verifies every column family like the index
+families. Column tables carry no indexes: `PRIMARY KEY` and secondary
+indexes answer `0A000`, and the block scan is the access path.
 
-The arc's milestone cut is the next design act, not this pass: arc one
-closes with the plug points named, and the cut starts from them.
+**M36 — The column executor (step 73).** The engine routes by the
+table's storage: column tables get the batch executor — a block scan,
+vectorized filter and project, and the global aggregates COUNT, SUM,
+AVG, MIN, MAX (GROUP BY stays refused for both engines until the
+shared breadth lands it). UPDATE and DELETE on column tables answer
+`0A000` — the v0 column engine is insert-only; the wire, the session
+plane, the locks, and the transactions are the same code.
+
+**M37 — The two-engine proof (step 74).** One database, both
+storages, one session: a row table's point updates beside a column
+table's aggregates over the wire (psql and the `postgres` client), the
+corpus gains the column surface, the bench gains the column-scan row,
+and the docs record the numbers.
+
+Deferred inside the arc, each its own later step when evidence asks:
+block-level min/max pruning, column-table indexes, column UPDATE and
+DELETE, GROUP BY and the rest of the SELECT breadth (for both engines
+together, in the shared front-end), NUMERIC and DATE/TIMESTAMP, and
+the binary fd surface `os` would need for a segment format of our own.
 
 ## The honest costs
 
@@ -332,4 +346,3 @@ milestone lands them.
 `write` leaves RocksDB's `sync` off; the transaction's COMMIT calls
 `write_sync`. A direct record-API caller that needs durability takes the
 transaction.
-- Arc two's milestone cut.

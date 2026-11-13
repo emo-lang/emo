@@ -1,0 +1,10 @@
+package {
+  name = "emo/emo_db_column_demo"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "emo/record" = "0.1.0"
+    "emo/rocksdb" = "0.1.0"
+  }
+}

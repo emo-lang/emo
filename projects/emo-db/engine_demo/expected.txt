@@ -52,6 +52,17 @@ error 23505: duplicate key value violates unique constraint "users_pkey"
 error 23502: null value in column "name" violates not-null constraint
 error 42804: column "id" is of type bigint but expression is of type text
 error 22001: value too long for type character varying(12)
+CREATE TABLE
+plan: create table cold
+error 0A000: column-store execution is not supported in v0
+error 0A000: column-store execution is not supported in v0
+error 0A000: column-store execution is not supported in v0
+error 0A000: column-store execution is not supported in v0
+error 0A000: column-store tables carry no primary key in v0
+CREATE TABLE
+plan: create table warm
+CREATE TABLE
+plan: create table plain
 SELECT 2
 plan: project id, name, score, active, handle
   table scan users

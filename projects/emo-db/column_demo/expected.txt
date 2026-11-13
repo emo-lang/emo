@@ -1,0 +1,16 @@
+created: events (column)
+inserted: 1030
+scan: 1030 rows
+  rowid 1: 1 row-1 1.0 false NULL
+  rowid 2: 2 row-2 2.0 true NULL
+  boundary: rowid 1024: 1024 row-1024 1024.0 true NULL
+  first of block 1: rowid 1025: 1025 row-1025 1025.0 false NULL
+  last: rowid 1030: 1030 row-1030 1030.0 true NULL
+reopened: events (column)
+rescan: 1030 rows
+  rowid 1: 1 row-1 1.0 false NULL
+  rowid 2: 2 row-2 2.0 true NULL
+  boundary: rowid 1024: 1024 row-1024 1024.0 true NULL
+refusal: record: create_table: a column-store table carries no indexes
+refusal: record: create_table: a column-store table carries no primary key
+done

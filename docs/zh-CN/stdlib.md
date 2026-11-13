@@ -706,7 +706,8 @@ def split(text String) (R, Array[String])
 运算符体系。`SELECT` 旁还解析并规范渲染 `CREATE TABLE`(v0 类型、
 `NOT NULL`、`PRIMARY KEY`)、多行 `INSERT ... VALUES`、
 `UPDATE ... SET ... [WHERE]`、`DELETE FROM ... [WHERE]` 与
-`BEGIN`/`COMMIT`/`ROLLBACK`;`split` 在词法器自己的分号处切分多语句
+`BEGIN`/`COMMIT`/`ROLLBACK`,以及 `CREATE TABLE` 的
+`STORE = COLUMN` 存储尾巴;`split` 在词法器自己的分号处切分多语句
 字符串。格式错误的输入返回值 `(R.error, reason)`,reason 准确说明发生了什么、在哪个
 字节偏移;不 raise、没有错误码、没有 nil。
 

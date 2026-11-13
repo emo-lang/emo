@@ -182,6 +182,7 @@ expect 0 "the wire type-checks" "$rc"
 for lock in kv_demo/package.lock record_demo/package.lock \
             engine_demo/package.lock txn_demo/package.lock \
             corpus_runner/package.lock bench/package.lock \
+            column_demo/package.lock \
             wire/package.lock wire_demo/package.lock \
             wire_client/package.lock; do
   if [ ! -f "$lock" ]; then
@@ -278,6 +279,23 @@ while [ "$run" -le 3 ]; do
   expect 0 "corpus run $run exits 0" "$rc"
   expect_same_file corpus/expected.txt "$OUT/corpus-run-$run.txt" \
     "corpus run $run is byte-identical"
+  run=$((run + 1))
+done
+
+# --- build and run the column-format golden -------------------------------
+
+( cd column_demo && EMO_REGISTRY="$REG" "$EMO" build main.emo \
+    -o "$OUT/column_demo" ) >"$OUT/column-build.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the column demo builds on c" "$rc"
+if [ "$rc" -ne 0 ]; then exit 1; fi
+
+run=1
+while [ "$run" -le 3 ]; do
+  ( cd column_demo && "$OUT/column_demo" ) \
+    >"$OUT/column-run-$run.txt" 2>&1 && rc=0 || rc=$?
+  expect 0 "column run $run exits 0" "$rc"
+  expect_same_file column_demo/expected.txt "$OUT/column-run-$run.txt" \
+    "column run $run is byte-identical"
   run=$((run + 1))
 done
 

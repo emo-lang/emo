@@ -49,6 +49,7 @@ require "float"
 // ---- kinds ----
 
 enum StmtKind { select, create_table, insert, update, delete, begin, commit, rollback }
+enum StoreKind { row, column }
 enum SelKind { star, expr }
 enum TableKind { named, join, subquery }
 enum JoinKind { inner, left, right, full, cross }
@@ -218,10 +219,13 @@ class ColumnDef {
 // CREATE TABLE name (column definitions). The table name is a dotted
 // path like every other table reference; the executor decides whether a
 // schema qualifier is meaningful.
+// A CREATE TABLE. `store` is the storage choice: `row` is the default
+// and renders nothing, `column` renders the `STORE = COLUMN` tail.
 class CreateTable {
-  def init(parts Array[String], columns Array[ColumnDef]) {
+  def init(parts Array[String], columns Array[ColumnDef], store StoreKind) {
     self.parts = parts
     self.columns = columns
+    self.store = store
   }
 
   def kind() StmtKind {
@@ -229,8 +233,12 @@ class CreateTable {
   }
 
   def to_string() String {
+    var tail = ""
+    if self.store == StoreKind.column {
+      tail = " STORE = COLUMN"
+    }
     return "CREATE TABLE " + dot_join(self.parts, 0, "") + " (" +
-           comma_column_defs(self.columns, 0, "") + ")"
+           comma_column_defs(self.columns, 0, "") + ")" + tail
   }
 }
 
@@ -1547,7 +1555,14 @@ def parse_create_table(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
                   }
                   case want_kind(toks, cr[1], Tk.t_rparen, "`)` after the column definitions") {
                     (R.error, why) -> { return (R.error, why) }
-                    (R.ok, e) -> { return (R.ok, (CreateTable.new(nr[0], columns), e)) }
+                    (R.ok, e) -> {
+                      case parse_store_tail(toks, e) {
+                        (R.error, why) -> { return (R.error, why) }
+                        (R.ok, sr) -> {
+                          return (R.ok, (CreateTable.new(nr[0], columns, sr[0]), sr[1]))
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -1555,6 +1570,29 @@ def parse_create_table(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
           }
         }
       }
+    }
+  }
+}
+
+// The optional storage tail after the column list: `STORE = ROW` is
+// the default and answers `row`; only a written `STORE = COLUMN`
+// answers `column`. Any other tail is an end-of-statement error at the
+// tail's own position.
+def parse_store_tail(toks Array[Tok], i Int64) (R, (StoreKind, Int64)) {
+  if !at_kw(toks, i, "store") {
+    return (R.ok, (StoreKind.row, i))
+  }
+  case want_kind(toks, i + 1, Tk.t_eq, "`=` after STORE") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, eq) -> {
+      if at_kw(toks, eq, "row") {
+        return (R.ok, (StoreKind.row, eq + 1))
+      }
+      if at_kw(toks, eq, "column") {
+        return (R.ok, (StoreKind.column, eq + 1))
+      }
+      const t = peek(toks, eq)
+      return (R.error, err(t.pos, "expected ROW or COLUMN after STORE ="))
     }
   }
 }

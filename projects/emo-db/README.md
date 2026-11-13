@@ -7,7 +7,8 @@ this directory is the project. Arc one is closed: M28 (the RocksDB
 half), M29 (the record layer), M30 (the SQL front-end's DML/DDL), M31
 (the planner and executor), M32 (transactions and the session plane),
 M33 (the PostgreSQL wire), and M34 (conformance and documentation) are
-landed; arc two — the column engine — starts as a design act.
+landed. Arc two — the column engine — is under way: M35 (the column
+format) is landed.
 
 ## Layout
 
@@ -50,6 +51,10 @@ landed; arc two — the column engine — starts as a design act.
   connections.
 - `wire_client/` — the standard library's `postgres` client against
   emo-db: the same SQL script psql runs, through libpq's simple path.
+- `column_demo/` — the column format's golden: a column table created
+  with `STORE = COLUMN`, 1030 rows across the 1024-row block boundary
+  in one transaction, the block scan in rowid order, a reopen, and the
+  no-indexes/no-primary-key refusals.
 - `corpus/` — the SQL surface as data: six `.test` files and 126 cases
   in the SQLLogicTest spirit, `statement ok` with a pinned tag,
   `statement error` with a pinned `code: message` line, and `query`
@@ -60,7 +65,7 @@ landed; arc two — the column engine — starts as a design act.
 - `bench/` — the benchmark workloads and `run.sh`; `results.md`
   records the measured numbers.
 - `check.sh` — the gate: resolve RocksDB, stage the registry, check the
-  four packages, build and run the four embedded demos three times
+  four packages, build and run the five embedded demos three times
   against their `expected.txt`, run the corpus three times
   byte-identical, smoke the bench's counts, drive the wire through psql
   and the `postgres` client (one fresh server per phase, each
@@ -181,6 +186,22 @@ Bind/Execute), SSL, scram-sha-256, and cancel requests are not spoken.
 `server_version` reports the PostgreSQL compatibility level (`16.4`)
 because tools parse it; the product's own version stays in the package.
 
+## The column store
+
+Arc two's first landing is the format (M35). `CREATE TABLE ... STORE =
+COLUMN` names a column table; the catalog's table definition carries a
+`store` field (version 2; a version-1 record reads as row storage, so
+an old database opens unchanged). A column table's rows live as
+1024-row blocks, one column family per column (`col_<oid>`): the block
+value is the row count, the null bitmap, then the values in the row
+encoding's own widths. An insert re-reads and rewrites the trailing
+partial block inside the transaction's batch, so the pending overlay
+and the statement snapshot apply unchanged; the reopen verifies every
+column family like the index families. Column tables carry no indexes
+— `PRIMARY KEY` and secondary indexes answer `0A000`, and the block
+scan is the access path. Until step 73's batch executor, the engine
+bridges DML and SELECT on a column table with a named `0A000`.
+
 ## Conformance and measurement
 
 The corpus states the SQL surface as data and the runner is its only
@@ -222,4 +243,8 @@ the embedded planner/executor and its golden, M32 the transaction and
 session plane with its two-session golden, and M33 the PostgreSQL wire
 with psql and the `postgres` client as goldens. M34 landed 2026-11-13:
 the 126-case corpus, the measured table, and the shipped-surface
-documentation close arc one.
+documentation close arc one. M35 landed the same day: the column
+format — the parser's `STORE = COLUMN` tail, the catalog's version-2
+`store` field, the 1024-row blocks, the column families, and the
+reopen's verification — with the engine's named bridge for DML and
+SELECT. Step 73 is the column executor.

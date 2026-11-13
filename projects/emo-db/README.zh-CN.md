@@ -5,8 +5,8 @@ emo-db 是 Emo 自己的客户端-服务器 SQL 数据库:一条 PostgreSQL 方�
 [`docs/zh-CN/emo-db.md`](../../docs/zh-CN/emo-db.md);本目录是项目本体。
 弧一收尾:M28(RocksDB 存储半边)、M29(记录层)、M30(SQL 门面的
 DML/DDL)、M31(计划器与执行器)、M32(事务与会话面)、M33
-(PostgreSQL 线协议)与 M34(符合性与文档)都已落地;弧二——列引
-擎——以一个设计动作开场。
+(PostgreSQL 线协议)与 M34(符合性与文档)都已落地。弧二——列引
+擎——进行中:M35(列存格式)已落地。
 
 ## 布局
 
@@ -42,13 +42,16 @@ DML/DDL)、M31(计划器与执行器)、M32(事务与会话面)、M33
   临时监听、固定数量的连接。
 - `wire_client/` —— 标准库 `postgres` 客户端对 emo-db:跑与 psql 相
   同的 SQL 脚本,走 libpq 的简单路径。
+- `column_demo/` —— 列存格式的金测:`STORE = COLUMN` 建列存表、一个
+  事务里 1030 行跨过 1024 行的块边界、按 rowid 序的块扫描、重开,以
+  及不建索引/不要主键的拒绝。
 - `corpus/` —— SQL 表面写成数据:六个 `.test` 文件、126 个用例,
   SQLLogicTest 精神——`statement ok` 钉标签、`statement error` 钉
   `code: message` 行、`query` 钉行。
 - `corpus_runner/` —— 语料唯一的代码:每次调用一台全新数据库、按参
   数顺序执行文件、按文件计数、收集失败。
 - `bench/` —— 基准工作负载与 `run.sh`;`results.md` 记录实测数字。
-- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查四个包、把四
+- `check.sh` —— 闸门:解析 RocksDB、暂存 registry、检查四个包、把五
   个嵌入式 demo 各跑三遍对照各自的 `expected.txt`、把语料跑三遍逐字
   节一致、烟测 bench 的计数、用 psql 与 `postgres` 客户端驱动线协议
   (每个阶段一台全新服务器,各自逐字节钉死),并钉死两条拒绝(解释
@@ -141,6 +144,18 @@ v0 的线协议只有简单路径:扩展协议(Parse/Bind/Execute)、SSL、
 scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
 兼容级别(`16.4`),因为工具会解析它;产品自己的版本留在包里。
 
+## 列存
+
+弧二的第一落是格式(M35)。`CREATE TABLE ... STORE = COLUMN` 点名列
+存表;目录的表定义带 `store` 字段(版本 2;版本 1 记录读作行存,旧
+库原样打开)。列存表的行住在 1024 行块里,每列一个 column family
+(`col_<oid>`):块值是行数、null 位图,然后是行编码自己宽度的值。
+插入在事务的批量里重读并重写尾部半块,所以 pending 覆盖层与每语句
+快照原样生效;重开像索引 family 一样校验每个列 family。列存表不建
+索引——`PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。在
+step 73 的批量执行器之前,引擎对列存表的 DML 与 SELECT 以具名的
+`0A000` 桥接。
+
 ## 符合性与测量
 
 语料把 SQL 表面写成数据,runner 是它唯一的代码。一条记录是表头
@@ -176,4 +191,7 @@ M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M2
 面的 DDL/DML,M31 落地嵌入式计划器/执行器及其金测,M32 落地事务与
 会话面及其两会话金测,M33 落地 PostgreSQL 线协议,psql 与
 `postgres` 客户端为金测。M34 于 2026-11-13 落地:126 个用例的语
-料、实测表,以及已交付表面文档收尾弧一。
+料、实测表,以及已交付表面文档收尾弧一。同日 M35 落地:列存格式
+——解析器的 `STORE = COLUMN` 尾巴、目录的版本 2 `store` 字段、
+1024 行块、列 family 与重开校验——引擎的 DML 与 SELECT 走具名桥
+接。step 73 是列执行器。

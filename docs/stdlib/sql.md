@@ -114,7 +114,10 @@ score DOUBLE PRECISION, handle VARCHAR(12))`. The v0 types are
 `SERIAL`, … refuse), and `VARCHAR` needs a positive `(n)`. Column-level
 `NOT NULL` and `PRIMARY KEY` are supported, each at most once and in
 either order; the canonical rendering writes `NOT NULL` before
-`PRIMARY KEY`. Duplicate column names refuse.
+`PRIMARY KEY`. Duplicate column names refuse. The storage tail after
+the column list — `STORE = ROW` (the default, rendering nothing) or
+`STORE = COLUMN` (rendered back verbatim) — names the table's storage;
+anything else after `STORE =` refuses by name.
 
 ### INSERT
 

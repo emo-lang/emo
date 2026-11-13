@@ -61,6 +61,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M32 — Transactions and the session plane | 69 | The transaction model of D6: BEGIN/COMMIT/ROLLBACK over the record layer's `Txn` — one WriteBatch per transaction committed atomically, a per-statement snapshot (read committed), a pending overlay for read-your-writes, the rowid counters published on commit, and the catalog's next-rowid change in the same write; the engine's session state, `LockClient`, and table-level write locks held to commit/rollback; an Emo lock-manager process with a FIFO of waiters, a wait-for graph, and a deadlock that aborts the requester with `40P01`; a two-session golden showing the read-committed pair, the write-write block, and the deadlock, pinned byte-for-byte on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
 | M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk, protocol 3.0 only), the ParameterStatus set psql and libpq read, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` at the lexer's own semicolons, RowDescription with the v0 type OIDs (`Result` grows `types`), text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse with PG's fields; an error stops the rest and reports the engine's clean state (`I`); one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached per session, `Engine.end_session` releasing without closing the store; `wire_demo` (ephemeral port through a ready file, finite connection count) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's script and its error stop plus the client's rows/error, byte-identical across three `projects/emo-db/check.sh` runs behind `psql`/`libpq` probes (49 checks); the BEAM `__inst_recv` temp fix (`CHECK.md`). |
 | M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit — six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows in the runner's canonical rendering) over one fresh database per run, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench modes and `bench/run.sh` (warmup plus three timed runs) with the measured table, which found and fixed the read-only statement's WAL fsync and (with the corpus) the DDL-in-transaction block leak; `docs/emo-db.md` grown to the shipped surface (`What shipped`, `Measured`), the corrected stale claims, and the arc-two review of the row store's actual plug points (`CHECK.md`). |
+| M35 — The column format | 72 | The column format and the catalog choice: `CREATE TABLE ... STORE = COLUMN` in the parser (the canonical rendering spells only the written column tail), the catalog's version-2 table definition with a `store` field (a version-1 record reads as row storage), the record layer's column half — one column family per column (`col_<oid>`), 1024-row blocks (row count, null bitmap, the row encoding's widths), the trailing partial block re-read and rewritten inside the transaction, the block scan in rowid order, the reopen's column-family verification, and the row path's named guards; no indexes on column tables (`PRIMARY KEY` and secondary indexes refuse in both layers); the engine's DDL mapping and the named `0A000` bridge for DML/SELECT; the `column_demo` golden (create, 1030 rows across the block boundary, reopen, refusals) three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
 
 ## Design gates
 
@@ -4277,3 +4278,33 @@ gate and the M34 status; the repo builds.
       gate's new checks, and the M34 status.
 - [x] **T71.9** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.
+
+## M35 — The column format
+
+### Step 72 — The column format
+
+**Prereq:** Step 71 (arc one closed). **Done when:** `CREATE TABLE ...
+STORE = COLUMN` parses (the canonical rendering spells `STORE =
+COLUMN`, `STORE = ROW` is the default), the catalog's table definition
+moves to version 2 with a `store` field while a version-1 record reads
+as row storage, and the record layer stores a column table as 1024-row
+blocks in one column family per column — insert through the
+transaction's pending overlay and batch, a full-block scan, and the
+reopen's column-family verification; column tables carry no indexes
+(`PRIMARY KEY` and secondary indexes answer `0A000`); the engine maps
+the DDL and bridges DML/SELECT with the named `0A000`; a record-layer
+golden (create, insert, reopen, scan, the refusals) runs three times
+byte-identical through `projects/emo-db/check.sh`; every existing
+golden stays green; docs EN+zh; the repo builds.
+
+- [x] **T72.1** — The spec: this section EN+zh and
+      `plan/step-72-column-format.md`.
+- [x] **T72.2** — `sql`: `StoreKind`, `CreateTable.store`, the tail
+      parse, the rendering, the examples, the six paths.
+- [x] **T72.3** — `record`: `Storage`, `TableMeta.store`, the
+      version-2 encoding, the column families, the column insert and
+      scan, the reopen verification.
+- [x] **T72.4** — `column_demo` and its golden.
+- [x] **T72.5** — `engine`: the DDL mapping and the bridge.
+- [x] **T72.6** — The gate: the fifth demo.
+- [x] **T72.7** — The docs EN+zh and the close-out.
