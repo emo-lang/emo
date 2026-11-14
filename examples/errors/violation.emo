@@ -6,7 +6,7 @@
 //   emo run violation.emo
 
 def connect(host String) {
-  raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+  raise Exception.with_data("connect timed out", { "op": "connect", "peer": host })
 }
 
 connect("10.0.0.1:443")

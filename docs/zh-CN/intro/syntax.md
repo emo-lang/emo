@@ -143,11 +143,11 @@ case file.read(path) {
 const (R.ok, body) = file.read(path)
 ```
 
-**违例**——被破坏的契约、bug——用抛出表达。`Exception` 是语言中唯一的异常类，携带 `message` 与可选的 `data` Map；Map 装机器可读的上下文（对端地址、文件描述符），供崩溃报告与监督库读回：
+**违例**——被破坏的契约、bug——用抛出表达。`Exception` 是语言中唯一的异常类。它的构造器取 `message` String；若崩溃需要携带机器可读的上下文（对端地址、文件描述符）供崩溃报告与监督库读回，`Exception.with_data` 取 message 与 `data` Map。两者都是定元构造器——没有可选参数：
 
 ```emo
 raise Exception.new(message: "queue drained below zero")
-raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+raise Exception.with_data("connect timed out", { "op": "connect", "peer": host })
 ```
 
 抛出无法被捕获——Emo 没有 catch 构造——且 `raise` 的操作数必须是 `Exception` 实例。两个内置名字都是保留的：任何声明——无论何种形式——都不能取 `Exception`,也不能取结果枚举 `R`。未捕获的异常只杀死出错的进程，监督是库层面的事（见[并发](concurrency.md)）。没有受检异常。

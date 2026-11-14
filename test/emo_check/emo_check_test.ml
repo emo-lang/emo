@@ -979,9 +979,12 @@ println(size({ 1: "x", 2: "y" }))|}
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
-    tc "Exception.new checks its message and optional data" (fun () ->
+    tc "Exception.new and Exception.with_data check their arguments" (fun () ->
+        let diagnostics = check {|raise Exception.new("boom")|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         let diagnostics =
-          check {|raise Exception.new("boom", { "kind": "io" })|}
+          check {|raise Exception.with_data("boom", { "kind": "io" })|}
         in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
@@ -991,15 +994,21 @@ println(size({ 1: "x", 2: "y" }))|}
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
         let diagnostics = check {|Exception.new("a", "b", "c")|} in
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
-        let diagnostics =
-          check {|Exception.new(data: { "k": 1 }, message: "x")|}
-        in
+        let diagnostics = check {|Exception.new("a", { "k": 1 })|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
+        let diagnostics = check {|Exception.with_data("a")|} in
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
-    tc "Exception.new is strict about the argument types" (fun () ->
+    tc "Exception.new and Exception.with_data are strict about the types"
+      (fun () ->
         let diagnostics = check "Exception.new(123)" in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004");
-        let diagnostics = check {|Exception.new("x", 42)|} in
+        let diagnostics = check {|Exception.with_data("x", 42)|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "Exception.with_data keeps message-first named order" (fun () ->
+        let diagnostics =
+          check {|Exception.with_data(data: { "k": 1 }, message: "x")|}
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
     tc "a provably unhashable key is an error" (fun () ->
         let diagnostics = check {|const bad = { [1]: "x" }|} in
         Alcotest.(check bool) "E4020" true (has_code diagnostics "E4020"));

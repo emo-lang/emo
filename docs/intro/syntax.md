@@ -143,11 +143,11 @@ When a failure is not expected, a binding pattern says so — a pattern that doe
 const (R.ok, body) = file.read(path)
 ```
 
-A **violation** — a broken contract, a bug — raises. `Exception` is the language's one exception class, carrying a `message` and an optional `data` Map of machine-readable context (a peer address, a file descriptor) that the crash report and supervision libraries read back:
+A **violation** — a broken contract, a bug — raises. `Exception` is the language's one exception class. Its constructor takes the `message` String; when the crash should carry machine-readable context (a peer address, a file descriptor) that the crash report and supervision libraries read back, `Exception.with_data` takes the message and a `data` Map. Both are fixed-arity constructors — no argument is optional:
 
 ```emo
 raise Exception.new(message: "queue drained below zero")
-raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+raise Exception.with_data("connect timed out", { "op": "connect", "peer": host })
 ```
 
 A raise cannot be caught — Emo has no catch construct — and the `raise` operand must be an `Exception` instance. Both built-in names are reserved: no declaration, whatever its kind, can take `Exception`, and none can take the result enum `R`. Uncaught exceptions kill only the offending process, and supervision is library-level (see [Concurrency](concurrency.md)). There are no checked exceptions.

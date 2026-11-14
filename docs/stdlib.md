@@ -39,8 +39,8 @@ Two conventions hold across every package:
   notes.txt: Permission denied`; `file` errors surface as `os:`
   because the shared os runtime performs the syscall). No error codes,
   no nil. A raise is reserved for contract violations: `Exception` is
-  the one exception class, its optional `data` Map carries
-  machine-readable context instead of message concatenation, and a
+  the one exception class; `Exception.with_data` carries a `data` Map
+  of machine-readable context instead of message concatenation, and a
   raise ends the process. End of stream is not an error: the empty
   string ends a stream.
 - **Pure Emo where the language suffices.** The format packages and

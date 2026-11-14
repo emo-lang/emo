@@ -1847,16 +1847,10 @@ and eval_method env span recv mname arg_exprs =
                       iclass = c;
                       ifields = [ ("message", v); ("data", empty_data) ];
                     }
-              | [ (Some "message", mv); (Some "data", dv) ]
-              | [ (Some "message", mv); (None, dv) ]
-              | [ (None, mv); (Some "data", dv) ]
-              | [ (None, mv); (None, dv) ] ->
-                  Instance
-                    { iclass = c; ifields = [ ("message", mv); ("data", dv) ] }
               | _ ->
                   error span "E3007"
-                    "`Exception.new` expects `message` and an optional `data` \
-                     Map")
+                    "`Exception.new` expects exactly one argument, the message \
+                     String; a data Map goes to `Exception.with_data`")
           | None ->
               if List.length args > 0 then
                 error span "E3007"
@@ -1864,6 +1858,18 @@ and eval_method env span recv mname arg_exprs =
                      "class `%s` declares no `init`; `new` takes no arguments"
                      c.cname);
               Instance { iclass = c; ifields = [] })
+      | ClassDef c, "with_data" when c.builtin_exception -> (
+          let args = eval_args_named () in
+          match args with
+          | [ (Some "message", mv); (Some "data", dv) ]
+          | [ (Some "message", mv); (None, dv) ]
+          | [ (None, mv); (Some "data", dv) ]
+          | [ (None, mv); (None, dv) ] ->
+              Instance
+                { iclass = c; ifields = [ ("message", mv); ("data", dv) ] }
+          | _ ->
+              error span "E3007"
+                "`Exception.with_data` expects `message` and `data`")
       | ClassDef c, m ->
           error span "E3007"
             (Printf.sprintf "class `%s` has no member `%s`" c.cname m)

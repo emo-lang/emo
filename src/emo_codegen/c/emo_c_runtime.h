@@ -494,7 +494,7 @@ int64_t emo_unsupported(const char *what);
 emo_value emo_make_exception(emo_value message); /* the value is the
                                                     message cell */
 
-/* `Exception.new(message, data)`: a non-empty data Map renders
+/* `Exception.with_data(message, data)`: a non-empty data Map renders
    alongside the message (the interpreter's uncaught rule); an empty
    one changes nothing. */
 emo_value emo_make_exception_data(emo_value message, emo_value data);

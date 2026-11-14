@@ -617,6 +617,25 @@ and lower_call env span callee args =
                              lower_map_arg env arg_value)
                            args);
                   }
+              | Ast.Type_ident "Exception" when name = "with_data" -> (
+                  (* The shipped exception's data-carrying constructor;
+                     the checker fixed the arity and the order. *)
+                  match args with
+                  | [ { Ast.arg_value = mv; _ }; { Ast.arg_value = dv; _ } ] ->
+                      {
+                        ety = type_of env span;
+                        desc =
+                          Make_exception
+                            {
+                              message = lower_expr env mv;
+                              data = Some (lower_expr env dv);
+                            };
+                      }
+                  | _ ->
+                      raise
+                        (Lower_error
+                           "`Exception.with_data` takes a message and a data \
+                            Map"))
               | _ when name = "new" -> (
                   (* A declared class, bare or module-qualified. *)
                   match resolve_class env recv with

@@ -605,7 +605,7 @@ println(e.message)|}));
         Alcotest.(check string)
           "fields" "rich\n2\nnet\n7\n"
           (run_program
-             {|const e = Exception.new("rich", { "kind": "net", "code": 7 })
+             {|const e = Exception.with_data("rich", { "kind": "net", "code": 7 })
 println(e.message)
 println(e.data.length())
 println(e.data.get("kind"))
@@ -621,6 +621,11 @@ println(e.data.get("code"))|}));
           program_err "Exception.new(message: \"a\", other: 1)"
         in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "Exception.with_data is strict about its arguments" (fun () ->
+        let diagnostic = program_err {|Exception.with_data("boom")|} in
+        Alcotest.(check string) "code" "E4009" (code_of diagnostic);
+        let diagnostic = program_err {|Exception.with_data("a", "b")|} in
+        Alcotest.(check string) "code" "E4004" (code_of diagnostic));
     tc "raising the exception instance terminates uncaught" (fun () ->
         let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
@@ -632,7 +637,7 @@ println(e.data.get("code"))|}));
     tc "uncaught data-carrying exceptions report data beside the message"
       (fun () ->
         let diagnostic =
-          program_err {|raise Exception.new("disk blew up", { "fd": 3 })|}
+          program_err {|raise Exception.with_data("disk blew up", { "fd": 3 })|}
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
@@ -1160,7 +1165,7 @@ println(English.new().is(Greeter))  // true — structural interface check|}));
     tc "an uncaught raise prints non-empty data beside the message" (fun () ->
         let diagnostic =
           program_err
-            {|raise Exception.new(message: "boom", data: { "peer": "10.0.0.1:80" })|}
+            {|raise Exception.with_data(message: "boom", data: { "peer": "10.0.0.1:80" })|}
         in
         Alcotest.(check bool)
           "data rides along" true

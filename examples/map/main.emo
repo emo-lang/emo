@@ -53,5 +53,5 @@ println(size({ "tea": 3, "coffee": 4 }))
 // itself stays the interpreter's uncaught-exception diagnostic, so no
 // target here raises.
 def detonate(data Map[String, Int64]) {
-  raise Exception.new("the launch code was wrong", data)
+  raise Exception.with_data("the launch code was wrong", data)
 }

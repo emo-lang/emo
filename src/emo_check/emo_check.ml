@@ -2551,13 +2551,14 @@ and check_method_call ctx env span recv mname args : t =
         Bytes)
   else if
     match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Exception", "new" -> true
+    | Ast.Type_ident "Exception", ("new" | "with_data") -> true
     | _ -> false
   then (
-    (* The shipped exception class takes a message and an optional data
-       argument. The message is a String; the data is any Map, stored on
-       the instance and read back through `e.data`. Named arguments must
-       keep message-first order: the runtime binds the pair positionally. *)
+    (* The shipped exception class: `new` takes the message String, and
+       `with_data` takes the message and a data Map — two fixed-arity
+       constructors, no optional argument. The data rides the instance
+       and reads back through `e.data`. Named arguments keep
+       message-first order: the runtime binds positionally. *)
     let arg_values =
       List.map
         (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
@@ -2568,23 +2569,29 @@ and check_method_call ctx env span recv mname args : t =
     let check_arg label ok v =
       if not (ok v) then
         report ctx span "E4004"
-          (Printf.sprintf "`Exception.new` expects %s, got %s" label
+          (Printf.sprintf "`Exception.%s` expects %s, got %s" mname label
              (to_string v))
     in
-    match arg_values with
-    | [ (Some "message", mt) ] | [ (None, mt) ] ->
+    match (mname, arg_values) with
+    | "new", [ (Some "message", mt) ] | "new", [ (None, mt) ] ->
         check_arg "`message` to be a String" message_ok mt;
         ClassType "Exception"
-    | [ (Some "message", mt); (Some "data", dt) ]
-    | [ (Some "message", mt); (None, dt) ]
-    | [ (None, mt); (Some "data", dt) ]
-    | [ (None, mt); (None, dt) ] ->
+    | "with_data", [ (Some "message", mt); (Some "data", dt) ]
+    | "with_data", [ (Some "message", mt); (None, dt) ]
+    | "with_data", [ (None, mt); (Some "data", dt) ]
+    | "with_data", [ (None, mt); (None, dt) ] ->
         check_arg "`message` to be a String" message_ok mt;
         check_arg "`data` to be a Map" data_ok dt;
         ClassType "Exception"
+    | "new", _ ->
+        report ctx span "E4009"
+          "`Exception.new` expects exactly one argument, the message String; a \
+           data Map goes to `Exception.with_data`";
+        ClassType "Exception"
     | _ ->
         report ctx span "E4009"
-          "`Exception.new` expects `message` and an optional `data` Map";
+          "`Exception.with_data` expects `message` and `data`: a String and a \
+           Map";
         ClassType "Exception")
   else if
     match (recv.Ast.desc, mname) with
