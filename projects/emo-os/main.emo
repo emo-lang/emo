@@ -248,11 +248,13 @@ const comp_hidden = comp_page + 3192
 // owner's rewrite. Beside them the active desk's cell and the focus
 // each desk remembers: the switch the outgoing desk's memory and the
 // incoming desk's restore. The count four is the vocabulary's bound —
-// the roles' precedent, desktop-abi.md's to pin. Past the hidden
-// words.
-const comp_workspace = comp_page + 3264
-const comp_desk_cell = comp_page + 3328
-const comp_desk_focus = comp_page + 3336
+// the roles' precedent, desktop-abi.md's to pin. Past the stash's
+// twelve seats (+3264..+3359, declared beside the stash's own defs
+// below — the map's lesson a third time: the first cut sat these words
+// at +3264 and every surface's landing zeroed a stashed request).
+const comp_workspace = comp_page + 3360
+const comp_desk_cell = comp_page + 3424
+const comp_desk_focus = comp_page + 3432
 const comp_desks = 4
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
@@ -3466,7 +3468,8 @@ const comp_stash_count = comp_page + 432
 // The cells sit past the hidden words (+3192..+3255), twelve seats to
 // +3359 — the frame callbacks' cells at +480 keep their distance (the
 // first cut of the twelve ran +440..+536 and would have written the
-// parks' pids over, the map's own lesson twice in one day).
+// parks' pids over, the map's own lesson twice in one day). The
+// workspace words (emo-desktop M27) follow at +3360.
 const comp_stash_cells = comp_page + 3264
 const comp_stash_depth = 12
 
