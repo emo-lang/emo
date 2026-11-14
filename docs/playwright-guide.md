@@ -161,7 +161,7 @@ crash.
 
 - Package overview and limits: [`docs/stdlib/playwright.md`](stdlib/playwright.md)
   · [`docs/zh-CN/stdlib/playwright.md`](zh-CN/stdlib/playwright.md)
-- Chinese version: [`docs/zh-CN/playwright-get-started.md`](zh-CN/playwright-get-started.md)
+- Chinese version: [`docs/zh-CN/playwright-guide.md`](zh-CN/playwright-guide.md)
 - The live example: `examples/playwright_live` (serves its own page through
   `httpd`, run by hand)
 - The browser-free golden: `examples/playwright_demo` (carries its own

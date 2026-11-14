@@ -133,6 +133,6 @@ case playwright.connect("127.0.0.1", 9933, 30.0) {
 
 - 包概览与限制:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) ·
   [`docs/stdlib/playwright.md`](../stdlib/playwright.md)
-- 英文版:[`docs/playwright-get-started.md`](../playwright-get-started.md)
+- 英文版:[`docs/playwright-guide.md`](../playwright-guide.md)
 - 可跑的真机示例:`examples/playwright_live`(自己经 `httpd` 提供页面,手工运行)
 - 不需要浏览器的金测示例:`examples/playwright_demo`(自带迷你 driver)

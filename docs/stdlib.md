@@ -462,7 +462,7 @@ pw.close()                               // (R, Playwright)
 
 Targets: `["ocaml", "c", "typescript"]`. Reference:
 [`docs/stdlib/playwright.md`](stdlib/playwright.md) · Guide:
-[`docs/playwright-get-started.md`](playwright-get-started.md) · Demo:
+[`docs/playwright-guide.md`](playwright-guide.md) · Demo:
 `examples/playwright_demo`.
 
 ## The `json` package
