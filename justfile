@@ -151,3 +151,34 @@ release TAG:
 # test: run the full test suite
 test:
     dune test
+
+# Run the test suite with Alcotest's per-case output, so a hang points
+# at the test case it is stuck in. `--force` reruns suites dune would
+# otherwise skip, `--no-buffer` streams a suite's output instead of
+# holding it until the suite exits, `-j 1` keeps the suites from
+# interleaving, and `script` gives the tests a terminal — Alcotest
+# prints the name of the case it is running only when its output is a
+# tty. Without `script`, the completed case names still stream.
+#
+# test-verbose: run the test suite, printing each test case name as it starts
+test-verbose:
+    #!/bin/sh
+    set -e
+    export ALCOTEST_VERBOSE=1
+    case "$(uname -s)" in
+    Darwin)
+        script -q /dev/null dune test --force --no-buffer -j 1 --display quiet
+        ;;
+    *)
+        if script --version 2>/dev/null | grep -q util-linux; then
+            script -q -e -c "dune test --force --no-buffer -j 1 --display quiet" /dev/null
+        else
+            dune test --force --no-buffer -j 1 --display quiet
+        fi
+        ;;
+    esac
+
+alias tv := test-verbose
+
+push:
+    git push origin && git push atom
