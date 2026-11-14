@@ -2112,3 +2112,29 @@ bootstrap、c、typescript、beam 四个名单;文档 EN+zh。
   `const (y, _, _) = ...`)以重复变量相撞。通配符现在降成互不相同
   的新变量。
 
+
+## M43 — 锁刷新
+
+### Step 82 — `emo deps resolve`:诚实地解析,廉价地刷新
+
+**Prereq:** 无。**完成标准:** `emo deps resolve` 按项目自己声明的
+targets(或显式 `--target`)解析,并与其他命令一样尊重
+`EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,六个门禁消费它;`just lock-refresh` 一条命令重钉全树所有过期锁;CHECK.md 的 c-target-only 注记退役。(计划:
+`plan/step-82-deps-resolve.md`。)
+
+- [ ] **T82.1** — 按项目 targets 解析:去掉 resolve 处理器里的
+      `~target:"c"` 硬编码,按声明的每个 target 各解一轮,逐依赖、点名
+      target 地拒绝,新增 `--target <t>`,退役 CHECK.md 的
+      c-target-only 注记——即 T4.3 在案的那条 found-not-fixed。
+- [ ] **T82.2** — `scripts/stage-registry.sh`:家族 staging 映射(包 →
+      源目录 → 文件集)收敛一处;六个 `check.sh` 的 staging 块改为消费
+      它;各门禁 staged 的文件集与之前逐字节一致,摘要一个都不动。
+- [ ] **T82.3** — `just lock-refresh`:遍历每个被跟踪
+      `package.lock` 所在目录,原地解析,逐目录报告结果,`REGISTRY=<dir>`
+      为家族项目透传;改包源后的刷新流程写在 recipe 旁。
+- [ ] **T82.4** — 测试:声明多 target 的 manifest 仅在全部 target
+      可行时解析;`riscv64`-only 依赖在 `riscv64`-only 项目里可解析;
+      过期检出重钉是幂等的(第二次 resolve 零变化)。
+- [ ] **T82.5** — 文档:`docs/toolchain.md` 的依赖节(及 zh-CN
+      镜像)写明 targets 规则、registry 链与刷新流程;CHECK.md 退役的
+      注记指向这里。
