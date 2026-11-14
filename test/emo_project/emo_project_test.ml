@@ -4514,17 +4514,23 @@ let () =
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);
       ("riscv_native", riscv_native_tests);
-      ("ts_golden", ts_golden_tests);
       ("cross_module", cross_module_tests);
     ]
   in
-  (* Each bootstrap case compiles and runs a whole example — the suite's
-     long pole. They are opt-in: `dune build @bootstrap` (just
-     test-bootstrap) sets EMO_BOOTSTRAP and runs only that group; a
-     plain `dune test` leaves it out. *)
+  (* The two example-driven groups compile and run a whole example per
+     case, the suite's long poles. They are opt-in: `dune build
+     @bootstrap` / `@ts_golden` (just test-bootstrap / test-ts-golden)
+     set the env var and run only that group; a plain `dune test`
+     leaves both out. *)
   let groups =
-    match Sys.getenv_opt "EMO_BOOTSTRAP" with
-    | Some "1" -> [ ("bootstrap", bootstrap_tests) ]
+    match (Sys.getenv_opt "EMO_BOOTSTRAP", Sys.getenv_opt "EMO_TS_GOLDEN") with
+    | Some "1", Some "1" ->
+        [
+          ("bootstrap", bootstrap_tests);
+          ("ts_golden", ts_golden_tests);
+        ]
+    | Some "1", _ -> [ ("bootstrap", bootstrap_tests) ]
+    | _, Some "1" -> [ ("ts_golden", ts_golden_tests) ]
     | _ -> all_groups
   in
   Alcotest.run ~bail:true "emo_project" groups

@@ -739,8 +739,12 @@ let emit_func env (f : Emo_ir.func) : string =
        }"
       f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname body f.Emo_ir.fname
   else if tramp then
+    (* `break` closes the driver on the base case: a Void def falls off
+       the end of its body, and without it the `for (;;)` spins forever
+       (float.copy_range hung the typescript target this way). A body
+       that ends in `return` or `continue` never reaches it. *)
     Printf.sprintf
-      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  }\n}"
+      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  break;\n  }\n}"
       f.Emo_ir.fname params body
   else
     Printf.sprintf "async function %s(%s) {\n%s\n}" f.Emo_ir.fname params body

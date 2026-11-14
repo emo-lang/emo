@@ -28,8 +28,9 @@
     %{workspace_root}/_build/default/src/emo_cli/emo.exe
     (run %{exe:emo_project_test.exe})))))
 
-; The example bootstrap builds compile and run every example, so they
-; live behind their own alias instead of @runtest: `dune build @bootstrap`.
+; The example-driven groups compile and run a whole example per case, so
+; they live behind their own aliases instead of @runtest:
+; `dune build @bootstrap` and `dune build @ts_golden`.
 (rule
  (alias bootstrap)
  (deps
@@ -42,6 +43,27 @@
  (action
   (setenv
    EMO_BOOTSTRAP
+   1
+   (setenv
+    EMO_EXAMPLES_DIR
+    %{workspace_root}/examples
+    (setenv
+     EMO_EXE
+     %{workspace_root}/_build/default/src/emo_cli/emo.exe
+     (run %{exe:emo_project_test.exe}))))))
+
+(rule
+ (alias ts_golden)
+ (deps
+  (source_tree ../../examples)
+  (source_tree ../../projects)
+  (source_tree ../../stdlib)
+  (source_tree ../../test/emo_sched/fixtures)
+  ../../src/emo_cli/emo.exe
+  emo_project_test.exe)
+ (action
+  (setenv
+   EMO_TS_GOLDEN
    1
    (setenv
     EMO_EXAMPLES_DIR

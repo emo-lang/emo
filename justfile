@@ -186,6 +186,11 @@ alias tv := test-verbose
 test-bootstrap:
     dune build @bootstrap
 
+# test-ts-golden: run the typescript example goldens — every example
+# compiled and run on the typescript target (opt-in; outside `dune test`)
+test-ts-golden:
+    dune build @ts_golden
+
 # Re-pin every stale package.lock in the tree — the one command to run
 # after a package's sources change. Each tracked lock's directory
 # resolves in place through `emo deps resolve`; the family packages the
