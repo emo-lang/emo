@@ -1297,7 +1297,15 @@ function wrap64(x: bigint): bigint {
   return BigInt.asIntN(64, x);
 }
 
+// The selective receive's no-match sentinel. It must never be a value a
+// branch body could produce: a `false` sentinel once swallowed a branch
+// whose def returned the Bool false, requeueing the message and parking
+// the process forever. A unique symbol is out of the value model's
+// reach.
+const E_NO_MATCH = Symbol("emo: no branch matched");
+
 const E: any = {
+  noMatch: E_NO_MATCH,
   float: (v: number) => new EFloat(v),
   char: (c: string) => new EChar(c),
   tuple: (...items: any[]) => new ETuple(items),
@@ -1835,13 +1843,15 @@ const E: any = {
   },
 
   // Selective receive: the dispatch runs each branch's body for the
-  // first message it matches (returning anything but false); non-
+  // first message it matches (returning E.noMatch when none does); non-
   // matching messages stay in the mailbox in order; no match means the
   // task waits for the next delivery. A branch that RETURNS A VALUE
   // from its enclosing def throws EReturn(value) — the value answers
   // this receive here, not the process wrapper: a receive inside a
   // method or a callee def would otherwise end the whole program at
-  // the wrapper, the return silently lost.
+  // the wrapper, the return silently lost. The value may be anything
+  // the language can produce — including the Bool false — so the
+  // no-match test compares against the unique sentinel, never a value.
   async receive(dispatch: (msg: any) => Promise<any>): Promise<any> {
     const pid = _host.currentPid();
     if (pid === null) throw new Error("receive() outside a process");
@@ -1860,7 +1870,7 @@ const E: any = {
         const msg = q[i];
         q.splice(i, 1);
         const r = await taken(msg);
-        if (r !== false) return r;
+        if (r !== E_NO_MATCH) return r;
         q.splice(i, 0, msg);
         i++;
       }
@@ -1869,7 +1879,7 @@ const E: any = {
       const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
       _endIfShutdown();
       const r = await taken(fresh);
-      if (r !== false) return r;
+      if (r !== E_NO_MATCH) return r;
       // No branch took it: keep it at the head so FIFO order holds.
       q.unshift(fresh);
     }

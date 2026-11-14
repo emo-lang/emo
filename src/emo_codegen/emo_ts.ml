@@ -533,7 +533,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       (* Same shape as `case`: guards nest inside the bindings' scope. *)
       let rec chain bs =
         match bs with
-        | [] -> "return false;"
+        | [] -> "return E.noMatch;"
         | b :: rest -> (
             let test = pattern_test scratch b.Emo_ir.pattern in
             let bindings =
