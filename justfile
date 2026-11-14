@@ -15,20 +15,20 @@ default:
 build:
     dune build --profile release src/emo_cli/emo.exe
 
-# Install the release binary into PREFIX (default ~/.local/bin): a
-# standalone executable, nothing beside it — the c-target install,
-# where `emo build` afterwards needs only the system cc. Verify with
-# `emo doctor`.
+# Install the release binary into PREFIX (default ~/.local/bin) as a
+# symlink to this tree's build output — the dev install: every `dune
+# build` here refreshes the installed `emo` immediately, no reinstall.
+# The link rides the tree — moving or removing this checkout (or
+# `dune clean`) breaks `emo` until the next build here. The binary
+# itself is still the standalone c-target build, where `emo build`
+# afterwards needs only the system cc. Verify with `emo doctor`.
 #
-# install: install the standalone binary (PREFIX, default ~/.local/bin)
+# install: install the release binary as a symlink (PREFIX, default ~/.local/bin)
 install PREFIX="$HOME/.local/bin":
     dune build --profile release src/emo_cli/emo.exe
     mkdir -p {{PREFIX}}
-    cp _build/default/src/emo_cli/emo.exe {{PREFIX}}/emo.incoming
-    chmod 755 {{PREFIX}}/emo.incoming
-    strip {{PREFIX}}/emo.incoming
-    mv {{PREFIX}}/emo.incoming {{PREFIX}}/emo
-    @echo "installed {{PREFIX}}/emo — verify with: emo doctor"
+    ln -sfn "{{justfile_directory()}}/_build/default/src/emo_cli/emo.exe" "{{PREFIX}}/emo"
+    @echo "linked {{PREFIX}}/emo -> _build/default/src/emo_cli/emo.exe — verify with: emo doctor"
 
 # Build and install through the opam switch instead — the source
 # install, which also brings the ocaml compilation target.
@@ -38,10 +38,10 @@ install-dev:
     dune build
     dune install --bindir=$HOME/.local/bin emo
 
-# Remove the standalone install (the install-dev route is uninstalled
+# Remove the dev install (the install-dev route is uninstalled
 # through opam).
 #
-# uninstall: remove the standalone binary
+# uninstall: remove the installed emo link
 uninstall PREFIX="$HOME/.local/bin":
     rm -f {{PREFIX}}/emo
 
