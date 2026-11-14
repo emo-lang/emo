@@ -34,9 +34,9 @@ def is_max?() Bool          // 128 位全一(5.10 节)
 def compare(other Uuid) Int64
 ```
 
-`to_string` 是协议方法,所以 `println(id)` 打印的就是标识符本身——
-小写 hex-and-dash,RFC 的 ABNF 定义的形式,无论解析它的文本是什么大
-小写。
+`to_string` 回答标识符本身——小写 hex-and-dash,RFC 的 ABNF 定义的形
+式,无论解析它的文本是什么大小写;渲染出来的值(println、插值)是结构
+转储,所以文本形式要写 `id.to_string()`。
 
 `compare` 是 RFC 9562 的排序(6.11 节):大端字节从左到右比较——在前
 答 `-1`,在后答 `+1`,相等答 `0`。这是数据库索引免费拿到的顺序,也

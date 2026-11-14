@@ -511,7 +511,7 @@ def ns_oid() Uuid
 def ns_x500() Uuid
 ```
 
-`Uuid` 值自己渲染自己——`to_string` 是协议方法,`println(id)` 打印小写的 hex-and-dash 形式——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`,以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式,十六进制不区分大小写,每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟(`time.now()`)取 Unix 毫秒时间,骑 74 个随机位,负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门,四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`,任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内,参考文档里点名。
+`Uuid` 值经 `to_string` 回答它的规范形式——`id.to_string()` 是小写的 hex-and-dash 形式,而渲染出来的值是结构转储——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`,以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式,十六进制不区分大小写,每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟(`time.now()`)取 Unix 毫秒时间,骑 74 个随机位,负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门,四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`,任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内,参考文档里点名。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/uuid.md`](stdlib/uuid.md) · 示例:`examples/uuid_demo`。
 

@@ -1,8 +1,8 @@
-// The to_string protocol: a class that defines `def to_string() String`
-// supplies the rendering everywhere a value becomes text — println,
-// interpolation, and containers rendering their elements. A class
-// without one renders as its structure dump, the defined default —
-// strings quoted inside, byte-identical on every target.
+// Rendering is structural: println, interpolation, and containers render
+// every instance as its structure dump — strings quoted inside,
+// byte-identical on every target. A class's own `def to_string` is an
+// ordinary method: it answers only an explicit call, never a rendered
+// value.
 
 class Local {
   def init(n Int64) {

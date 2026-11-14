@@ -2521,9 +2521,8 @@ raise Ink.new()|}
         Alcotest.(check bool)
           "emoji is fine" false
           (has_code diagnostics "E4025"));
-    tc "protocol names carry their contracts in class and interface bodies"
-      (fun () ->
-        let wrong =
+    tc "to_string and length are ordinary method names" (fun () ->
+        let fine =
           [
             {|class Rep {
   def init() {
@@ -2550,40 +2549,16 @@ raise Ink.new()|}
 }|};
             {|interface Sized { def to_string(i Int64) String }|};
             {|interface Sized { def length() String }|};
+            {|def to_string(v Int64) String { return "x" }|};
           ]
         in
         List.iter
           (fun source ->
             let diagnostics = check source in
-            Alcotest.(check bool)
-              ("E4026 of " ^ source) true
-              (has_code diagnostics "E4026"))
-          wrong;
-        (* the contract holds: a matching definition and an ordinary
-           same-named top-level def both pass *)
-        Alcotest.(check int)
-          "matching contract" 0
-          (List.length
-             (check
-                {|class Rep {
-  def init() {
-  }
-
-  def to_string() String {
-    return "r"
-  }
-
-  def length() Int64 {
-    return 7
-  }
-}|}));
-        Alcotest.(check int)
-          "top-level to_string is ordinary" 0
-          (List.length (check {|def to_string(v Int64) String { return "x" }|}));
-        Alcotest.(check int)
-          "a matching interface contract" 0
-          (List.length (check {|interface Sized { def length() Int64 }|})));
-    tc "a misspelled member answers with its near miss" (fun () ->
+            Alcotest.(check int)
+              ("diagnostics of " ^ source) 0
+              (List.length diagnostics))
+          fine);    tc "a misspelled member answers with its near miss" (fun () ->
         let diagnostics =
           check
             {|class Rep {

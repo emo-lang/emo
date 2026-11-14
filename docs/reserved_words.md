@@ -24,7 +24,7 @@ Reserved words are lowercase and case-sensitive. Their capitalized spellings
 | `def` | Function or method definition. |
 | `do` | Starts a process from a call and yields its pid. |
 | `else` | The alternative branch of an `if`. |
-| `emo` | Function group declaration; in expression position, `emo.` accesses the language's protocol registry. |
+| `emo` | Function group declaration. |
 | `enum` | Enum declaration. |
 | `for` | Three-clause loop. |
 | `if` | Conditional statement, or the one-line conditional expression. |
@@ -233,15 +233,13 @@ Two words that look special are ordinary identifiers:
   called as `quote(s)`, and sql's `data.get(i) == quote` ends an `if`
   condition whose `{` opens the body.
 
-## Protocol names
+## `to_string` and `length`
 
-`to_string` and `length` are ordinary identifiers everywhere except one
-position: as a `def` name inside a class or interface body, they carry a
-language protocol's contract — `def to_string() String` and
-`def length() Int64` — and any other signature is a compile error stating
-the contract. The complete set of protocol names is the `emo` registry (see
-[protocols.md](protocols.md)); bindings, fields, parameters, top-level
-functions, and group members with either name are fine.
+`to_string` and `length` are ordinary identifiers everywhere: bindings,
+fields, parameters, top-level functions, group members, and methods of a
+class or interface all carry either name without special rules. No
+language construct dispatches on them — `to_string` answers only an
+explicit call.
 
 ## The directive namespace
 

@@ -776,8 +776,9 @@ def ns_oid() Uuid
 def ns_x500() Uuid
 ```
 
-The `Uuid` value renders itself — `to_string` is the protocol method,
-`println(id)` prints the lowercase hex-and-dash form — and answers
+The `Uuid` value answers its canonical form through `to_string` —
+`id.to_string()` is the lowercase hex-and-dash form, while a rendered
+value is the structure dump — and answers
 `to_bytes`, `version`, `variant`, `is_nil?`, `is_max?`, and the RFC's
 big-endian `compare`. `parse` takes exactly the canonical 36-character
 form, hex case-insensitive, and every rejection names the first

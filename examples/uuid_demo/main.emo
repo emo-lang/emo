@@ -48,7 +48,7 @@ def time_of(id uuid.Uuid) Int64 {
 case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
   (R.error, why) -> { println("parse failed: ${why}") }
   (R.ok, id)     -> {
-    println(id)
+    println(id.to_string())
     println(id.version())
     case id.variant() {
       uuid.UuidVariant.ncs       -> { println("variant ncs") }
@@ -99,8 +99,8 @@ case uuid.from_bytes("f81d4fae".to_bytes()) {
 
 // ---- the special UUIDs: the Nil and the Max, each what the RFC's
 // Sections 5.9 and 5.10 say, ordered as the bytes order them.
-println(uuid.nil())
-println(uuid.max())
+println(uuid.nil().to_string())
+println(uuid.max().to_string())
 println(uuid.nil().is_nil?())
 println(uuid.max().is_max?())
 println(order_of(uuid.nil(), uuid.max()))
@@ -108,17 +108,17 @@ println(order_of(uuid.max(), uuid.nil()))
 println(order_of(uuid.nil(), uuid.nil()))
 
 // ---- the namespace IDs, Section 6.6's Table 3.
-println(uuid.ns_dns())
-println(uuid.ns_url())
-println(uuid.ns_oid())
-println(uuid.ns_x500())
+println(uuid.ns_dns().to_string())
+println(uuid.ns_url().to_string())
+println(uuid.ns_oid().to_string())
+println(uuid.ns_x500().to_string())
 
 // ---- the name-based versions, deterministic on every target:
 // RFC 9562's Appendix A vectors, and one more name in the URL
 // namespace.
-println(uuid.v3(uuid.ns_dns(), "www.example.com"))
-println(uuid.v5(uuid.ns_dns(), "www.example.com"))
-println(uuid.v5(uuid.ns_url(), "https://emo-lang.cn/"))
+println(uuid.v3(uuid.ns_dns(), "www.example.com").to_string())
+println(uuid.v5(uuid.ns_dns(), "www.example.com").to_string())
+println(uuid.v5(uuid.ns_url(), "https://emo-lang.cn/").to_string())
 
 // ---- v4: 122 random bits, shown by the version and variant the
 // construction fixes, and by two draws differing.

@@ -452,8 +452,8 @@ class Time {
     return self.format("Www, DD Mmm YYYY hh:mm:ss") + " GMT"
   }
 
-  // The default rendering is the ISO form — the moment itself, not a
-  // structure dump.
+  // The moment's text form: the ISO rendering, for callers who want the
+  // time itself rather than the structure dump a value renders as.
   def to_string() String {
     return self.format_iso()
   }

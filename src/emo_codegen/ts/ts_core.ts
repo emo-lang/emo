@@ -630,8 +630,8 @@ function deepEq(a: any, b: any): boolean {
 // Inside a map's rendering, strings show quoted — the debug form the
 // interpreter's Map rendering uses.
 // The synchronous rendering, for the paths that cannot await (error
-// messages, NoMethodError, the host's crash report). Instances fall
-// back to the class name here; the value protocol runs through toStrA.
+// messages, NoMethodError, the host's crash report). An instance
+// renders as its structure dump, like every other target's.
 function toStr(v: any): string {
   if (typeof v === "number") return String(v);
   if (typeof v === "bigint") return v.toString();
@@ -666,8 +666,16 @@ function toStr(v: any): string {
   if (v instanceof EEnum) return v.member;
   if (v instanceof EPid) return "<pid " + v.id + ">";
   if (v instanceof EEmoException) return toStr(v.messageValue);
-  if (v && typeof v === "object" && v.constructor && v.constructor.__emo)
-    return v.constructor.__emo;
+  if (v && typeof v === "object" && v.constructor && v.constructor.__emo) {
+    const fields: string[] = v.constructor.__emoFields ?? [];
+    return (
+      "#" +
+      classDisplayName(v.constructor.__emo) +
+      "(" +
+      fields.map((n: string) => n + ": " + toStrDbg(v[n])).join(", ") +
+      ")"
+    );
+  }
   return String(v);
 }
 
@@ -684,18 +692,12 @@ function classDisplayName(full: string): string {
     : full;
 }
 
-// The one stringification rule, as the value protocol needs it:
-// interpolation, println, and `.to_string()` share it. It is async
-// because an instance's own `to_string` — the `emo.to_string`
-// protocol entry — is a method call on this target; the structure
-// dump is the defined default.
-//
-// The rule stays synchronous unless an instance's own `to_string` is
-// actually on the path: a plain value answers a string with no
-// promise, so the emitted `instanceof Promise ? await : ...` keeps the
-// scheduler's turn order byte-for-byte where no protocol rides. A
-// protocol value answers a promise, and only then does the caller
-// yield its turn.
+// The one stringification rule: interpolation, println, and `.to_string()`
+// share it. An instance renders as its structure dump on every target; a
+// class's own `to_string` answers only an explicit call, never a rendered
+// value. A plain value answers a string with no promise, so the emitted
+// `instanceof Promise ? await : ...` keeps the scheduler's turn order
+// byte-for-byte.
 function joinP(
   parts: (string | Promise<string>)[],
   open: string,
@@ -753,15 +755,6 @@ function toStrP(v: any): string | Promise<string> {
   if (v instanceof EPid) return "<pid " + v.id + ">";
   if (v instanceof EEmoException) return toStrP(v.messageValue);
   if (v && typeof v === "object" && v.constructor && v.constructor.__emo) {
-    if (typeof v.to_string === "function") {
-      // the one async branch: an instance's own to_string is a method
-      // call, and its answer rides a promise
-      return Promise.resolve(v.to_string()).then((r: any) => {
-        if (typeof r !== "string")
-          throw new Error("`to_string` must answer a String (E3015)");
-        return r;
-      });
-    }
     const fields: string[] = v.constructor.__emoFields ?? [];
     const items: (string | Promise<string>)[] = [];
     for (const n of fields)
@@ -1331,10 +1324,9 @@ const E: any = {
   eq: deepEq,
   ne: (a: any, b: any) => !deepEq(a, b),
   truthy: (b: any) => b === true,
-  // The value protocol stays synchronous unless an instance's own
-  // `to_string` actually rides the path: these answer a plain value
-  // then, and the emitter's conditional await (against E._r) yields a
-  // turn only when the answer is a promise.
+  // Rendering stays synchronous: every rendered value answers a plain
+  // string, and the emitter's conditional await (against E._r) is a
+  // no-op unless an answer is a promise.
   _r: null as any,
   println: printlnP,
   printf,

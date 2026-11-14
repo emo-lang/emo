@@ -121,8 +121,8 @@ class Uuid {
   }
 
   // The canonical rendering: lowercase hex-and-dash, the form RFC
-  // 9562's ABNF defines. This is the protocol method, so `println(id)`
-  // prints the identifier itself.
+  // 9562's ABNF defines. `to_string` is an ordinary method, so a rendered
+  // value is the structure dump and `id.to_string()` is this form.
   def to_string() String {
     const digits = "0123456789abcdef".to_bytes()
     const src = self.data

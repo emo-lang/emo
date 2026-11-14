@@ -38,9 +38,10 @@ def is_max?() Bool          // all 128 bits one (Section 5.10)
 def compare(other Uuid) Int64
 ```
 
-`to_string` is the protocol method, so `println(id)` prints the
-identifier itself — lowercase hex-and-dash, the form the RFC's ABNF
-defines, whatever case the text it was parsed from wore.
+`to_string` answers the identifier itself — lowercase hex-and-dash, the
+form the RFC's ABNF defines, whatever case the text it was parsed from
+wore; a rendered value (println, interpolation) is the structure dump,
+so call `id.to_string()` for the text form.
 
 `compare` is the RFC 9562 ordering (Section 6.11): the big-endian
 bytes, compared left to right — `-1` before, `+1` after, `0` equal.

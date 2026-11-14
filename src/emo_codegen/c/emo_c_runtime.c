@@ -2170,20 +2170,8 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   }
   case EMO_INSTANCE: {
     const emo_vtable *vt = (const emo_vtable *)*emo_payload(v);
-    /* A class's own `to_string` answers first — the `emo.to_string`
-       protocol entry — and the structure dump below is the defined
-       default. */
-    for (int64_t i = 0; i < vt->method_count; i++) {
-      if (vt->methods[i].method_arity == 0 &&
-          strcmp(vt->methods[i].method_name, "to_string") == 0) {
-        emo_value s = vt->methods[i].thunk(v, NULL);
-        if ((s & 7) != 0 || emo_cell_kind(s) != EMO_STRING)
-          emo_fatal("`to_string` must answer a String (E3015)");
-        emo_str str = emo_str_of(s);
-        fwrite(str.bytes, 1, (size_t)str.len, out);
-        return;
-      }
-    }
+    /* Structural rendering, byte-identical with the interpreter: a
+       class's own `to_string` answers only an explicit call. */
     fprintf(out, "#%s(", emo_class_display(vt));
     for (int64_t i = 0; i < vt->field_count; i++) {
       if (i > 0) fputs(", ", out);

@@ -377,7 +377,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                    }))
       deps_pairs
   in
-  (* The short name `emo` is the protocol registry's: no package — this
+  (* The short name `emo` is the language keyword's: no package — this
      one or a dependency — binds under it. *)
   let binds_as_emo n =
     let short =
@@ -393,9 +393,9 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
         raise
           (manifest_error "E5105"
              (Printf.sprintf
-                "package `%s` would bind as `emo`, the protocol registry's name"
+                "package `%s` would bind as `emo`, the language keyword's name"
                 n)
-             ~hint:"choose another name; `emo.to_string(x)` is the registry"))
+             ~hint:"choose another name; `emo` is a reserved word"))
     (name :: List.map fst deps);
   { name; version; targets; link; pkg_config; frameworks; registry; deps }
 

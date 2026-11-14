@@ -283,8 +283,8 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Make_enum { enum_name; member } ->
       Printf.sprintf "E.enum_(%S, %S)" enum_name member
   | Interpolate es ->
-      (* the conditional await keeps the turn order where no protocol
-         rides: a plain value answers a string with no promise *)
+      (* the conditional await keeps the turn order: a rendered value
+         answers a string with no promise *)
       Printf.sprintf
         "(E._r = E.interpolate([%s]), (E._r instanceof Promise) ? (await E._r) \
          : E._r)"

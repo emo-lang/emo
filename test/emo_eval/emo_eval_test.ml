@@ -1051,10 +1051,9 @@ println("${Color.red}")|}));
              {|const e = Exception.new(message: "boom")
 println(e.to_string())
 println("${e}")|}));
-    tc "a class's to_string answers println, interpolation, and the call"
-      (fun () ->
+    tc "a class's to_string answers only an explicit call" (fun () ->
         Alcotest.(check string)
-          "protocol" "(1, 2)\n(1, 2)\nat (1, 2)\n"
+          "render" "#Point(x: 1, y: 2)\n(1, 2)\nat #Point(x: 1, y: 2)\n"
           (run_program
              {|class Point {
   def init(x Int64, y Int64) {
@@ -1070,10 +1069,12 @@ const p = Point.new(1, 2)
 println(p)
 println(p.to_string())
 println("at ${p}")|}));
-    tc "containers render their elements through the class's to_string"
-      (fun () ->
+    tc "containers render their elements as structure dumps" (fun () ->
         Alcotest.(check string)
-          "protocol" "[(1, 2), (3, 4)]\n{\"k\": (5, 6)}\n((7, 8), 9)\n"
+          "render"
+          "[#Point(x: 1, y: 2), #Point(x: 3, y: 4)]\n\
+           {\"k\": #Point(x: 5, y: 6)}\n\
+           (#Point(x: 7, y: 8), 9)\n"
           (run_program
              {|class Point {
   def init(x Int64, y Int64) {
@@ -1088,25 +1089,6 @@ println("at ${p}")|}));
 println([Point.new(1, 2), Point.new(3, 4)])
 println({"k": Point.new(5, 6)})
 println("${(Point.new(7, 8), 9)}")|}));
-    tc "the emo registry entries are the method calls" (fun () ->
-        Alcotest.(check string)
-          "registry" "(1, 2)\n5\n3\n2\n42\n"
-          (run_program
-             {|class Point {
-  def init(x Int64, y Int64) {
-    self.x = x
-    self.y = y
-  }
-
-  def to_string() String {
-    return "(${self.x}, ${self.y})"
-  }
-}
-println(emo.to_string(Point.new(1, 2)))
-println(emo.length("hello"))
-println(emo.length([1, 2, 3]))
-println(emo.length({"a": 1, "b": 2}))
-println(emo.to_string(42))|}));
   ]
 
 let object_acceptance_tests =

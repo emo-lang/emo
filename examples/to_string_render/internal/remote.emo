@@ -1,5 +1,5 @@
-// A class with the protocol method and one without: the rendering
-// rules ride the module boundary.
+// A class with a `to_string` method and one without: the rendering rule
+// rides the module boundary, and neither answer changes a rendered value.
 class Remote {
   def init(n Int64) {
     self.n = n

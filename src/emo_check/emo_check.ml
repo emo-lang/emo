@@ -397,26 +397,6 @@ let rec decl_to_type ?(lenient = false) ctx
    signatures, field names. Shared by module collection and the program's
    type pre-registration. *)
 
-(* The language protocol names carry their contracts into any class or
-   interface body — the registry entries dispatch on them, so a
-   signature drift would be a silent non-satisfaction (a same-named
-   method that never answers). Elsewhere the names are ordinary. *)
-let protocol_contract (name : string) : (t * string) option =
-  match name with
-  | "to_string" -> Some (String, "def to_string() String")
-  | "length" -> Some (Int64, "def length() Int64")
-  | _ -> None
-
-let check_protocol_def ctx span name (params : int) (ret : t) =
-  match protocol_contract name with
-  | Some (want, contract) ->
-      if params <> 0 || ret <> want then
-        report ctx span "E4026"
-          (Printf.sprintf
-             "`%s` is a language protocol (emo.%s): the contract is `%s`" name
-             name contract)
-  | None -> ()
-
 (* One suggestion for a misspelled member: the closest declared name
    within two edits — `to_str` for `to_string`, `lenght` for `length`. *)
 let near_miss (name : string) (declared : string list) : string option =
@@ -460,9 +440,6 @@ let class_info_of ctx (c : Ast.class_def) : class_info =
               if String.equal d.Ast.def_name "init" then Unknown
               else Void (* a method with no type declaration *)
         in
-        check_protocol_def ctx d.Ast.def_span d.Ast.def_name
-          (List.length d.Ast.def_params)
-          mret;
         ( d.Ast.def_name,
           {
             mparams =
@@ -494,9 +471,6 @@ let interface_sigs_of ctx (i : Ast.interface_def) :
   List.map
     (fun s ->
       let ret = decl_to_type ctx s.Ast.sig_return in
-      check_protocol_def ctx s.Ast.sig_span s.Ast.sig_name
-        (List.length s.Ast.sig_params)
-        ret;
       ( s.Ast.sig_name,
         List.map
           (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
@@ -2694,7 +2668,6 @@ and check_method_call ctx env span recv mname args : t =
                        c);
                 ClassType c)
         | None -> Unknown)
-    | ClassType _, "to_string" -> builtin0 String
     | ClassType _, "is" -> one_expected Bool
     | ClassType c, _ -> (
         match Hashtbl.find_opt ctx.classes c with
@@ -2705,6 +2678,7 @@ and check_method_call ctx env span recv mname args : t =
                   (c ^ "." ^ mname)
                   (FuncType (mi.mparams, mi.mret))
                   args
+            | None when String.equal mname "to_string" -> builtin0 String
             | None ->
                 report ctx span "E4001"
                   ?hint:
@@ -2715,7 +2689,6 @@ and check_method_call ctx env span recv mname args : t =
                      mname);
                 Unknown)
         | None -> Unknown)
-    | InterfaceType _, "to_string" -> builtin0 String
     | InterfaceType _, "is" -> one_expected Bool
     | InterfaceType i, _ -> (
         match Hashtbl.find_opt ctx.interfaces i with
@@ -2728,6 +2701,7 @@ and check_method_call ctx env span recv mname args : t =
                   (i ^ "." ^ mname)
                   (FuncType (iptypes, iret))
                   args
+            | None when String.equal mname "to_string" -> builtin0 String
             | None ->
                 report ctx span "E4001"
                   ?hint:
@@ -4012,7 +3986,7 @@ let check_items ctx (items : Ast.item list) : unit =
          check_directive_args ctx item;
          match item.Ast.item_desc with
          | Ast.Item_require name ->
-             (* the short name `emo` is the protocol registry's — a
+             (* the short name `emo` is the language keyword's — a
                 require cannot bind a package under it *)
              let short =
                match String.index_opt name '/' with
@@ -4022,8 +3996,8 @@ let check_items ctx (items : Ast.item list) : unit =
              if String.equal short "emo" then
                report ctx item.Ast.item_span "E4025"
                  (Printf.sprintf
-                    "`require \"%s\"` would bind as `emo`, the protocol \
-                     registry's name"
+                    "`require \"%s\"` would bind as `emo`, the language \
+                     keyword's name"
                     name);
              ctx.requires := (name, item.Ast.item_span) :: !(ctx.requires);
              env

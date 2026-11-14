@@ -1604,19 +1604,17 @@ let loop_tests =
     tc "the loop body opens on the header's line" (fun () ->
         let diagnostic = program_err "while x < 10\n{ x = x + 1 }" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
-    tc "the registry entry call parses and errors in its own shapes" (fun () ->
-        (* a registry call is the keyword's one expression use *)
-        ignore (parse_program "println(emo.to_string(p))");
+    tc "emo is not an expression" (fun () ->
         List.iter
           (fun source ->
             let diagnostic = program_err source in
             Alcotest.(check string)
               ("code of " ^ source) "E2028" (code_of diagnostic))
           [
+            "println(emo.to_string(p))";
             "const x = emo";
             "const f = emo.to_string";
-            "println(emo.to_string())";
-            "println(emo.to_string(name: p))";
+            "println(emo.length(name: p))";
           ]);
   ]
 

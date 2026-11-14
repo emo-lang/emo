@@ -667,21 +667,12 @@ external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
     | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
     | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
     | UdpSocket u -> Printf.sprintf "<udp %s>" u.udesc
-    | Obj o -> (
-      (* A class's own `to_string` answers first — the `emo.to_string`
-         protocol entry — and the structure dump below is the defined
-         default. Method tables take the receiver first. *)
-      match Hashtbl.find_opt o.omethods "to_string" with
-      | Some (0, f) -> (
-          match f [ Obj o ] with
-          | String s -> s
-          | _ -> error "E3015" "`to_string` must answer a String")
-      | _ ->
-          let fields =
-            String.concat ", "
-              (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) o.ofields)
-          in
-          "#" ^ class_display o.ocname ^ "(" ^ fields ^ ")")
+    | Obj o ->
+        let fields =
+          String.concat ", "
+            (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) o.ofields)
+        in
+        "#" ^ class_display o.ocname ^ "(" ^ fields ^ ")"
     | CompiledFn f -> Printf.sprintf "<block %s>" f.fdesc
     | ClassDef c -> c.cname
     | Instance i ->
