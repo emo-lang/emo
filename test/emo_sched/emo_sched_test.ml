@@ -390,17 +390,18 @@ let determinism_tests =
           List.exists
             (fun e ->
               match (e, event) with
-              | Emo_sched_det.Spawned _, Emo_sched_det.Spawned _ -> true
-              | Emo_sched_det.Sent (f, _), Emo_sched_det.Sent (f', _) -> f = f'
+              | Emo_sched_det.Spawned a, Emo_sched_det.Spawned b -> a = b
+              | Emo_sched_det.Sent (f, t), Emo_sched_det.Sent (f', t') ->
+                  f = f' && t = t'
               | _ -> false)
             log
         in
         Alcotest.(check bool)
           "records a spawn" true
-          (has (Emo_sched_det.Spawned 1));
+          (has (Emo_sched_det.Spawned 2));
         Alcotest.(check bool)
           "records a send" true
-          (has (Emo_sched_det.Sent (0, 1)));
+          (has (Emo_sched_det.Sent (1, 2)));
         Alcotest.(check bool)
           "records exits" true
           (List.exists
