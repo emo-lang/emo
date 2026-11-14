@@ -13,7 +13,8 @@
 ; wasm_spec / wasm_runs aliases for the full wasm corpora.
 ; The QEMU metal suite over the projects/ trees is opt-in too:
 ; @emo_os, not part of @runtest. The example-driven groups are opt-in
-; too: @bootstrap and @ts_golden, not part of @runtest.
+; too: @bootstrap and @ts_golden, not part of @runtest, and the
+; beam-compiling cases behind @beam.
 
 (alias
  (name default)

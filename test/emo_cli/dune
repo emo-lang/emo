@@ -29,5 +29,28 @@
    ../../stdlib/registry
    (run %{exe:emo_cli_test.exe}))))
 
+; The beam-compiling cases run erlc, the suite's slowest target, so they
+; are opt-in: `dune build @beam` sets EMO_BEAM and runs those groups
+; alone. A plain `dune test` leaves them out.
+(rule
+ (alias beam)
+ (deps
+  (source_tree ../../examples)
+  (source_tree ../../stdlib)
+  (source_tree ../../test/emo_sched/fixtures)
+  (file ../../VERSION)
+  emo_cli_test.exe)
+ (action
+  (setenv
+   EMO_BEAM
+   1
+   (setenv
+    EMO_REGISTRY
+    ../../stdlib/registry
+    (run
+     %{exe:emo_cli_test.exe}
+     test
+     "^(beam_|root_end|cross_target|hosted_bindings|atomic_surface)")))))
+
 ; The bundled registry lives beside the compiler in an install; tests
 ; resolve it from the sandbox's stdlib copy instead.

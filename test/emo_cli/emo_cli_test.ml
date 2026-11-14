@@ -1,6 +1,12 @@
 let tc name f = Alcotest.test_case name `Quick f
 let run_cmd = Emo_test_support.run_cmd
 
+(* erlc is the suite's slowest target, so beam builds are opt-in:
+   EMO_BEAM=1 (dune build @beam, just test-beam, just test-full)
+   enables them; a plain `dune test` leaves them out. *)
+let beam_enabled = Sys.getenv_opt "EMO_BEAM" = Some "1"
+let skip_unless_beam () = if not beam_enabled then Alcotest.skip ()
+
 let contains hay needle =
   let n = String.length needle in
   let rec go i =
@@ -1538,6 +1544,7 @@ let root_end_tests =
           "root done\n");
     tc "the beam root ending leaves nothing it spawned alive" (fun () ->
         if not (Lazy.force erl_available) then Alcotest.skip ();
+        skip_unless_beam ();
         let entry = scratch_entry "root-end-beam" root_end_parked in
         let out_core =
           Filename.concat (Filename.dirname entry) "emo_main.core"
@@ -4406,7 +4413,7 @@ let resolve_targets_tests =
   targets = [%s]
 
   deps {
-    %s = "0.1.0"
+    "%s" = "0.1.0"
   }
 }
 |}
@@ -5478,6 +5485,7 @@ case net_connect("127.0.0.1", listener.port(), 5.0) {
           "echo: hello\ndone\n");
     tc "a for loop in a class init keeps its value on beam" (fun () ->
         if not (Lazy.force erl_available) then Alcotest.skip ();
+        skip_unless_beam ();
         let entry =
           scratch_entry "beam-init-loop"
             {|class Grid {
@@ -5510,6 +5518,7 @@ main()
           "[0, 1, 2]\n");
     tc "a compiled build leaves the test/ tree out" (fun () ->
         if not (Lazy.force erl_available) then Alcotest.skip ();
+        skip_unless_beam ();
         let entry =
           scratch_entry "beam-excludes-tests"
             {|def main() {
@@ -5793,7 +5802,7 @@ let check_hosted ?(files = []) name source expected =
              (Filename.quote (Lazy.force wasm_runner_path))
              (Filename.quote (Filename.concat dir "app.wasm"))))
   end;
-  if Lazy.force erl_available then
+  if beam_enabled && Lazy.force erl_available then
     target "beam" "app" (fun () ->
         run_cmd
           (Printf.sprintf
@@ -5978,7 +5987,7 @@ println(served)
                ("node " ^ Filename.quote (Filename.concat dir "app-ts.ts")))
             expected
         end;
-        if Lazy.force erl_available then begin
+        if beam_enabled && Lazy.force erl_available then begin
           Alcotest.(check int)
             "beam build" 0
             (build_entry ~target:"beam" entry (Filename.concat dir "app"));
@@ -6562,7 +6571,7 @@ let wasm_run_tests =
   ]
 
 let () =
-  Alcotest.run ~bail:true "emo_cli"
+  let suite =
     [
       ("smoke", smoke_tests);
       ("run", run_tests);
@@ -6619,3 +6628,13 @@ let () =
       ("browser", browser_tests);
       ("wasm_run", wasm_run_tests);
     ]
+  in
+  let beam_groups =
+    [ "beam_examples"; "beam_naming"; "beam_block"; "beam_var" ]
+  in
+  let suite =
+    if beam_enabled then suite
+    else
+      List.filter (fun (name, _) -> not (List.mem name beam_groups)) suite
+  in
+  Alcotest.run ~bail:true "emo_cli" suite

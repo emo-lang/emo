@@ -181,15 +181,35 @@ test-verbose:
 
 alias tv := test-verbose
 
-# test-bootstrap: run the example bootstrap builds — every example
-# compiled and run against its golden (opt-in; outside `dune test`)
+# Every example compiled and run against its golden (opt-in; outside
+# `dune test`).
+#
+# test-bootstrap: run the example bootstrap builds
 test-bootstrap:
     dune build @bootstrap
 
-# test-ts-golden: run the typescript example goldens — every example
-# compiled and run on the typescript target (opt-in; outside `dune test`)
+# Every example compiled and run on the typescript target (opt-in;
+# outside `dune test`).
+#
+# test-ts-golden: run the typescript example goldens
 test-ts-golden:
     dune build @ts_golden
+
+# The beam-compiling cases, which run erlc (opt-in; outside `dune test`).
+#
+# test-beam: run the beam-compiling cases
+test-beam:
+    dune build @beam
+
+# Everything: the @runtest suites, the opt-in example groups, the full
+# wasm corpora, and the metal suite.
+#
+# test-full: run every test suite, including the opt-in gates
+test-full:
+    EMO_BEAM=1 dune test --stop-on-first-error
+    dune build --stop-on-first-error @bootstrap @ts_golden
+    dune build --stop-on-first-error @wasm_spec @wasm_runs
+    dune build --stop-on-first-error @emo_os
 
 # Re-pin every stale package.lock in the tree — the one command to run
 # after a package's sources change. Each tracked lock's directory
