@@ -240,6 +240,20 @@ const comp_paint_wh = comp_page + 3128
 // open-by-pid clears it again. The entry stays: the position and the
 // grant are the restore's own memory. Past the painted records.
 const comp_hidden = comp_page + 3192
+// The workspace words per stack slot (emo-desktop M27, EmoOS T13.1):
+// the toplevel's desk — the walk paints a toplevel whose word is the
+// shown one, and everything hanging from it rides its iteration the
+// hidden window's own way. The word is the shown desk at the surface's
+// declaration (the landing no client chose), the assignment verb the
+// owner's rewrite. Beside them the active desk's cell and the focus
+// each desk remembers: the switch the outgoing desk's memory and the
+// incoming desk's restore. The count four is the vocabulary's bound —
+// the roles' precedent, desktop-abi.md's to pin. Past the hidden
+// words.
+const comp_workspace = comp_page + 3264
+const comp_desk_cell = comp_page + 3328
+const comp_desk_focus = comp_page + 3336
+const comp_desks = 4
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims
@@ -2471,6 +2485,10 @@ def comp_stack_add(grant Int64, role Int64) Int64 {
   poke64(comp_paint_xy_at(entry), 0)
   poke64(comp_paint_wh_at(entry), 0)
   poke64(comp_hidden_at(entry), 0)
+  // The landing (emo-desktop M27, EmoOS T13.1): the shown desk at the
+  // surface's declaration — every window carries its workspace by
+  // construction, the word only the toplevels' walk reads.
+  poke64(comp_workspace_at(entry), peek64(comp_desk_cell))
   poke64(comp_top_cell, top + 1)
   return entry
 }
@@ -2508,6 +2526,7 @@ def comp_stack_remove(entry Int64) Void {
     poke64(comp_paint_xy_at(e), peek64(comp_paint_xy_at(e + comp_entry)))
     poke64(comp_paint_wh_at(e), peek64(comp_paint_wh_at(e + comp_entry)))
     poke64(comp_hidden_at(e), peek64(comp_hidden_at(e + comp_entry)))
+    poke64(comp_workspace_at(e), peek64(comp_workspace_at(e + comp_entry)))
     e = e + comp_entry
   }
   poke64(comp_top_cell, top - 1)
@@ -2527,6 +2546,7 @@ def comp_stack_raise(entry Int64) Void {
   var pxy = peek64(comp_paint_xy_at(entry))
   var pwh = peek64(comp_paint_wh_at(entry))
   var phid = peek64(comp_hidden_at(entry))
+  var pdesk = peek64(comp_workspace_at(entry))
   comp_stack_remove(entry)
   var top = peek64(comp_top_cell)
   var e = comp_stack + (top * comp_entry)
@@ -2538,6 +2558,7 @@ def comp_stack_raise(entry Int64) Void {
   poke64(comp_paint_xy_at(e), pxy)
   poke64(comp_paint_wh_at(e), pwh)
   poke64(comp_hidden_at(e), phid)
+  poke64(comp_workspace_at(e), pdesk)
   poke64(comp_top_cell, top + 1)
 }
 
@@ -2598,6 +2619,12 @@ def comp_paint_wh_at(entry Int64) Int64 {
 
 def comp_hidden_at(entry Int64) Int64 {
   return comp_hidden + ((entry - comp_stack) / comp_entry) * 8
+}
+
+// The stack slot's workspace word: the array beside it, the hidden
+// word's own neighborhood (emo-desktop M27, EmoOS T13.1).
+def comp_workspace_at(entry Int64) Int64 {
+  return comp_workspace + ((entry - comp_stack) / comp_entry) * 8
 }
 
 // The scale a row's walk honors (EmoOS T10.4): the negotiation field
@@ -3605,6 +3632,68 @@ def comp_raise_mark(entry Int64) Void {
   }
 }
 
+// The topmost live, unhidden toplevel of a desk, the given grant
+// excepted — the focus's fall the minimize, the assignment and the
+// switch share (emo-desktop M27, EmoOS T13.1). 0 the desk holds none.
+def comp_desk_top(desk Int64, except Int64) Int64 {
+  var i = peek64(comp_top_cell)
+  while i > 0 {
+    i = i - 1
+    var e = comp_stack + (i * comp_entry)
+    if peek64(e + 24) == role_toplevel && peek64(e) != except &&
+       peek64(comp_hidden_at(e)) == 0 &&
+       peek64(comp_workspace_at(e)) == desk {
+      var row = grant_row_of(peek64(e))
+      if row != 0 {
+        return peek64(e)
+      }
+    }
+  }
+  return 0
+}
+
+// The focus a desk's switch leaves behind and the one it restores
+// (emo-desktop M27, EmoOS T13.1): the outgoing desk remembers the
+// toplevel that held the focus (the wallpaper's and the none's are
+// nobody's to remember), the incoming desk shows its own again while
+// the memory lives there, falling to its topmost toplevel when it does
+// not, to the wallpaper when it holds none. The losing focus's popups
+// fold; the caller marks the damage, kicks the input service and wakes
+// the device, the composed reply its own.
+def comp_desk_focus_take(old_desk Int64, new_desk Int64) Void {
+  var was = peek64(comp_focus_cell)
+  var wentry = comp_stack_find(was)
+  if was != 0 && wentry != 0 && peek64(wentry + 24) == role_toplevel &&
+     peek64(comp_workspace_at(wentry)) == old_desk {
+    poke64(comp_desk_focus + (old_desk * 8), was)
+  } else {
+    poke64(comp_desk_focus + (old_desk * 8), 0)
+  }
+  var next = peek64(comp_desk_focus + (new_desk * 8))
+  var nentry = comp_stack_find(next)
+  if next == 0 || nentry == 0 || peek64(nentry + 24) != role_toplevel ||
+     peek64(comp_hidden_at(nentry)) != 0 ||
+     peek64(comp_workspace_at(nentry)) != new_desk {
+    next = comp_desk_top(new_desk, 0)
+  }
+  if next != was && was != 0 {
+    comp_popups_fold(was)
+  }
+  if next != 0 {
+    poke64(comp_focus_cell, next)
+  } else {
+    var wg = peek64(comp_wallpaper_cell)
+    if wg != 0 {
+      var wrow = grant_row_of(wg)
+      if wrow != 0 {
+        poke64(comp_focus_cell, wg)
+      }
+    } else {
+      poke64(comp_focus_cell, 0)
+    }
+  }
+}
+
 def comp_compose(gpu Pid, me Pid) Int64 {
   // The generation's first composition repaints the whole mode (T10.1):
   // the slate it meets is nobody's — the boot's own gradient, an era
@@ -3676,6 +3765,12 @@ def comp_compose(gpu Pid, me Pid) Int64 {
     // iteration, so a hidden window's whole tree is the one skip
     // (emo-desktop A16.3, EmoOS T10.3)
     if peek64(comp_hidden_at(entry)) != 0 {
+      i = i + 1
+      continue
+    }
+    // the toplevel of another desk paints nothing, its children riding
+    // its iteration the same one skip (emo-desktop M27, EmoOS T13.1)
+    if peek64(comp_workspace_at(entry)) != peek64(comp_desk_cell) {
       i = i + 1
       continue
     }
@@ -4241,11 +4336,14 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                 // damage, the hidden word set, the entry kept (the
                 // position and the grant are the restore's own memory).
                 // The focus the window held falls to the topmost
-                // visible toplevel beside it, or to the wallpaper the
-                // way a background press does, and the held reads are
-                // judged by the news. The composed reply: the window's
-                // disappearance is on the display before the answer,
-                // the frame-lands-whole discipline op 17 replies by.
+                // visible toplevel beside it — visible the shown desk's
+                // own, another desk's window nobody's to focus
+                // (emo-desktop M27, EmoOS T13.1) — or to the wallpaper
+                // the way a background press does, and the held reads
+                // are judged by the news. The composed reply: the
+                // window's disappearance is on the display before the
+                // answer, the frame-lands-whole discipline op 17
+                // replies by.
                 var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
                 var grant = peek64(seat)
                 poke64(seat, 0)
@@ -4264,20 +4362,7 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                     poke64(comp_hidden_at(entry), 1)
                     comp_popups_fold(grant)
                     if peek64(comp_focus_cell) == grant {
-                      var ni = peek64(comp_top_cell)
-                      var next = 0
-                      while ni > 0 && next == 0 {
-                        ni = ni - 1
-                        var ne = comp_stack + (ni * comp_entry)
-                        if peek64(ne + 24) == role_toplevel &&
-                           peek64(ne) != grant &&
-                           peek64(comp_hidden_at(ne)) == 0 {
-                          var nrow = grant_row_of(peek64(ne))
-                          if nrow != 0 {
-                            next = peek64(ne)
-                          }
-                        }
-                      }
+                      var next = comp_desk_top(peek64(comp_desk_cell), grant)
                       if next != 0 {
                         poke64(comp_focus_cell, next)
                       } else {
@@ -4348,6 +4433,21 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                       gate_reply(caller_of(w), -4)
                     } else {
                       var grant = peek64(fentry)
+                      // The follow (emo-desktop M27, EmoOS T13.1): the
+                      // dock tile opens the app wherever it lives — a
+                      // window of another desk shows that desk first,
+                      // the outgoing desk's memory and the incoming
+                      // desk's restore the switch's own, the whole mode
+                      // the damage the desks' trade rides on. The
+                      // window's own focusing is this verb's, the
+                      // memory's restore beside the point here.
+                      var fdesk = peek64(comp_workspace_at(fentry))
+                      if fdesk != peek64(comp_desk_cell) {
+                        comp_desk_focus_take(peek64(comp_desk_cell), fdesk)
+                        poke64(comp_desk_cell, fdesk)
+                        comp_dmg_mark(0, 0, peek64(comp_mode_w),
+                          peek64(comp_mode_h))
+                      }
                       var was = peek64(comp_focus_cell)
                       var both = comp_abs_pos(fentry, peek64(fentry + 8),
                         peek64(fentry + 16))
@@ -4377,11 +4477,164 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
                     }
                   }
                 } else {
-                  if op == pointer_op {
-                    comp_cursor_place(gpu, me)
+                  if op == 30 {
+                    // The assignment (emo-desktop M27, EmoOS T13.2): the
+                    // owner's grant rewrites the toplevel's workspace
+                    // word — off the shown desk's eye or onto it, the
+                    // painted rect the pixels the move unmakes, the
+                    // seat the pixels it makes. The focused one moved
+                    // off loses the focus the minimize's fall answers,
+                    // its popups folding with it; the children ride the
+                    // parent the walk's own way. The composed reply,
+                    // the walk's news on the display before the answer.
+                    var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                    var grant = peek64(seat)
+                    var nd = peek64(seat + 8)
+                    poke64(seat, 0)
+                    poke64(seat + 8, 0)
+                    comp_stack_prune()
+                    var entry = comp_stack_find(grant)
+                    if entry == 0 || peek64(entry + 24) != role_toplevel ||
+                       nd < 0 || nd >= comp_desks {
+                      gate_reply(caller_of(w), -4)
+                    } else {
+                      var od = peek64(comp_workspace_at(entry))
+                      var both = comp_abs_pos(entry, peek64(entry + 8),
+                        peek64(entry + 16))
+                      if nd != od {
+                        var shown = peek64(comp_desk_cell)
+                        if od == shown {
+                          var pb = peek64(comp_paint_xy_at(entry))
+                          var pwh = peek64(comp_paint_wh_at(entry))
+                          comp_dmg_mark(pb >> 32, pb & 4294967295,
+                            pwh >> 32, pwh & 4294967295)
+                          if peek64(comp_focus_cell) == grant {
+                            var next = comp_desk_top(shown, grant)
+                            if next != 0 {
+                              poke64(comp_focus_cell, next)
+                            } else {
+                              var wg = peek64(comp_wallpaper_cell)
+                              if wg != 0 {
+                                var wrow = grant_row_of(wg)
+                                if wrow != 0 {
+                                  poke64(comp_focus_cell, wg)
+                                }
+                              }
+                            }
+                            comp_popups_fold(grant)
+                            var isvc = peek64(input_svc_cell)
+                            if isvc != 0 {
+                              gate_post(isvc, 13 << 32)
+                            }
+                            device_wake()
+                          }
+                        } else {
+                          if nd == shown {
+                            var row = grant_row_of(grant)
+                            if row != 0 {
+                              var wh = comp_surface_wh(row)
+                              comp_dmg_mark(both >> 32, both & 4294967295,
+                                wh >> 32, wh & 4294967295)
+                            }
+                          }
+                        }
+                        poke64(comp_workspace_at(entry), nd)
+                      }
+                      var sum = comp_compose(gpu, me)
+                      println("comp ${both >> 32} ${both & 4294967295} ${sum & 4294967295}")
+                      gate_reply(caller_of(w), 0)
+                      comp_cb_reply()
+                    }
                   } else {
-                    println("comp: the verb is nobody's (${op})")
-                    halt()
+                    if op == 31 {
+                      // The switch (emo-desktop M27, EmoOS T13.2): the
+                      // shell's word — the panel authority the desktop's
+                      // open answers to, the same scan. The outgoing
+                      // desk remembers its focus, the incoming shows its
+                      // own; the whole mode the damage, the desks'
+                      // windows trading places and each desk's painted
+                      // records the other's stale news. The composed
+                      // reply, the switch on the display before the
+                      // answer; a show of the shown desk the quiet
+                      // answer, nothing changed, nothing composed.
+                      var seat = comp_slots + (comp_slot_of(w) * comp_slot_bytes)
+                      var nd = peek64(seat)
+                      poke64(seat, 0)
+                      var ai = 0
+                      var ok = 0
+                      while ai < peek64(comp_top_cell) && ok == 0 {
+                        var ae = comp_stack + (ai * comp_entry)
+                        if peek64(ae + 24) == role_panel {
+                          var arow = grant_row_of(peek64(ae))
+                          if arow != 0 && peek64(arow + 8) == caller_of(w) {
+                            ok = 1
+                          }
+                        }
+                        ai = ai + 1
+                      }
+                      if ok == 0 {
+                        gate_reply(caller_of(w), -3)
+                      } else {
+                        if nd < 0 || nd >= comp_desks {
+                          gate_reply(caller_of(w), -4)
+                        } else {
+                          var od = peek64(comp_desk_cell)
+                          if nd != od {
+                            comp_desk_focus_take(od, nd)
+                            poke64(comp_desk_cell, nd)
+                            comp_dmg_mark(0, 0, peek64(comp_mode_w),
+                              peek64(comp_mode_h))
+                            var isvc = peek64(input_svc_cell)
+                            if isvc != 0 {
+                              gate_post(isvc, 13 << 32)
+                            }
+                            device_wake()
+                            var sum = comp_compose(gpu, me)
+                            println("comp 0 0 ${sum & 4294967295}")
+                            gate_reply(caller_of(w), 0)
+                            comp_cb_reply()
+                          } else {
+                            gate_reply(caller_of(w), 0)
+                          }
+                        }
+                      }
+                    } else {
+                      if op == 29 {
+                        // The query (emo-desktop M27, EmoOS T13.2, verb
+                        // 32's op — 32 itself would decode as seat 1's
+                        // op 0, the request word packing the seat at
+                        // thirty-two): the active desk and the occupied
+                        // ones packed — the occupancy bit set while a
+                        // live toplevel carries the desk, hidden or not
+                        // (the minimized are alive where they are). The
+                        // pager's per-paint read, the clock's own habit;
+                        // the answer's word: the active desk in the low
+                        // byte, the occupancy mask above it.
+                        comp_stack_prune()
+                        var active = peek64(comp_desk_cell)
+                        var mask = 0
+                        var qi = 0
+                        while qi < peek64(comp_top_cell) {
+                          var qe = comp_stack + (qi * comp_entry)
+                          if peek64(qe + 24) == role_toplevel {
+                            var qrow = grant_row_of(peek64(qe))
+                            if qrow != 0 {
+                              mask = mask |
+                                (1 << peek64(comp_workspace_at(qe)))
+                            }
+                          }
+                          qi = qi + 1
+                        }
+                        gate_reply(caller_of(w), active | (mask << 8))
+                      } else {
+                        if op == pointer_op {
+                          comp_cursor_place(gpu, me)
+                        } else {
+                          println("comp: the verb is nobody's (${op})")
+                          halt()
+                        }
+                      }
+                    }
                   }
                 }
               }

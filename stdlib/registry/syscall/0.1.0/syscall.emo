@@ -281,6 +281,47 @@ def time() (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The workspace assigned (emo-desktop M27, EmoOS T13.2, verb 30): the
+// caller's toplevel carries another desk — off the shown one's eye or
+// onto it, the pixels the move unmakes and makes the answer's own
+// composition repaints. A desk holds four the machine's bound; a grant
+// that is no live toplevel, or a desk past the bound, is "bad
+// argument"; a grant this process does not own, "not writable".
+def win_workspace(grant Int64, desk Int64) (R, Int64) {
+  var answer = ecall(30, grant, desk, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desk shown (emo-desktop M27, EmoOS T13.2, verb 31): the shell's
+// switch — the named desk's windows on the display, the outgoing desk's
+// focus remembered, the incoming desk's restored. The caller must own a
+// panel (the desktop's authority, the desktop's open's own rule); an
+// app's switch is "not writable", a desk past the bound "bad
+// argument". Showing the shown desk answers plainly, nothing composed.
+def desk_show(desk Int64) (R, Int64) {
+  var answer = ecall(31, desk, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The desks asked (emo-desktop M27, EmoOS T13.2, verb 32): the packed
+// word — the active desk in the low byte, the occupancy mask above it,
+// a bit set while a live toplevel carries the desk (the minimized are
+// alive where they are). The pager's per-paint read, the clock's own
+// habit; the gate never refuses this verb.
+def desk_workspace() (R, Int64) {
+  var answer = ecall(32, 0, 0, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
 // caller parks, and the answer is the tick — the next composition's
 // completion, the flush that put a frame on the display. The
