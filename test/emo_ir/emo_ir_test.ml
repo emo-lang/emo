@@ -390,6 +390,93 @@ def pick(n Int64) String {
         Alcotest.(check bool)
           "pick specialized" true
           (find_func program "pick").Emo_ir.fspecializable);
+    tc "a non-tail if keeps its branch's trailing call as an effect" (fun () ->
+        (* A Void body's tail rewrite keys on exit position: a bare call
+           ending an `if` that is *not* the body's last statement is still
+           an effect. Folding it into a return kills the rest of the block —
+           the shape that turned the shell's fork child into a fork loop. *)
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def note(n Int64) Void {
+  return
+}
+
+def run(n Int64) Void {
+  if n > 0 {
+    note(n)
+  }
+  if n > 1 {
+    note(n + 1)
+  }
+  note(n + 2)
+}
+|} );
+            ]
+            ~entry:[]
+        in
+        let f = find_func program "run" in
+        let effect_call = function
+          | [ Emo_ir.Effect { desc = Emo_ir.Call { func; _ }; _ } ] -> func
+          | _ -> "not an effect call"
+        in
+        (match f.Emo_ir.fbody with
+        | [ Emo_ir.If { then_; _ }; Emo_ir.If { then_ = then2; _ }; last ] ->
+            Alcotest.(check string)
+              "first branch keeps the effect" "note"
+              (effect_call then_);
+            Alcotest.(check string)
+              "second branch keeps the effect" "note"
+              (effect_call then2);
+            (match last with
+            | Emo_ir.Return_stmt { desc = Emo_ir.Call { func; _ }; _ } ->
+                Alcotest.(check string) "the body's last call is a return" "note"
+                  func
+            | _ -> Alcotest.fail "expected the body's last call to be a return")
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected two ifs and a tail call, got %d stmts"
+                 (List.length other)));
+        ignore program);
+    tc "a tail-position if returns from both branches" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def note(n Int64) Void {
+  return
+}
+
+def pick(n Int64) Void {
+  if n > 0 {
+    note(n)
+  } else {
+    note(n + 1)
+  }
+}
+|} );
+            ]
+            ~entry:[]
+        in
+        let f = find_func program "pick" in
+        let is_return_call = function
+          | [ Emo_ir.Return_stmt { desc = Emo_ir.Call _; _ } ] -> true
+          | _ -> false
+        in
+        (match f.Emo_ir.fbody with
+        | [ Emo_ir.If { then_; else_; _ } ] ->
+            Alcotest.(check bool) "then branch is a tail return" true
+              (is_return_call then_);
+            Alcotest.(check bool) "else branch is a tail return" true
+              (is_return_call else_)
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected one tail-position if, got %d stmts"
+                 (List.length other)));
+        ignore program);
   ]
 
 let () = Alcotest.run "emo_ir" [ ("ir", ir_tests) ]

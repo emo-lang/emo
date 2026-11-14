@@ -913,57 +913,52 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
    backend's tail machinery keys on `Return_stmt (Call f)` — the
    heartbeat's `tick_loop(ms, f)` trailing its own body, the receive
    loop's per-branch call. The lowering makes the truth visible: the
-   last statement of the body, of an `if`'s two branches, of a `case` or
-   `receive` branch, when it is a bare call to a named function, lowers
-   as the return it is. Loop bodies are not exits and keep their
-   effects; a first-class block call (`f()`) is a plain exit — the
-   backends cannot rebind it, and a closure's own tail stays the call
-   shape it already was. *)
+   last statement of an exit-position block — the body, an `if`'s two
+   branches, a `case` or `receive` branch — when it is a bare call to a
+   named function, lowers as the return it is. Only a statement in that
+   position is an exit; a `call` before it keeps its effect, or the
+   rest of the block would become dead code. Loop bodies are not exits
+   and keep their effects; a first-class block call (`f()`) is a plain
+   exit — the backends cannot rebind it, and a closure's own tail stays
+   the call shape it already was. *)
 and void_tails (stmts : stmt list) : stmt list =
   let is_tailable = function { desc = Call _; _ } -> true | _ -> false in
-  let rec rewrite_branches (stmts : stmt list) : stmt list =
+  let rec rewrite_exit (stmts : stmt list) : stmt list =
     match List.rev stmts with
-    | Effect e :: rev_rest when is_tailable e ->
-        rewrite_tail (List.rev rev_rest) @ [ Return_stmt e ]
-    | _ -> rewrite_tail stmts
-  and rewrite_tail (stmts : stmt list) : stmt list =
-    List.map
-      (fun (s : stmt) ->
-        match s with
-        | If { cond; then_; else_ } ->
-            If
-              {
-                cond;
-                then_ = rewrite_branches then_;
-                else_ = rewrite_branches else_;
-              }
-        | Case { scrutinee; branches } ->
-            Case
-              {
-                scrutinee;
-                branches =
-                  List.map
-                    (fun (b : branch) ->
-                      { b with body = rewrite_branches b.body })
-                    branches;
-              }
-        | Receive { branches } ->
-            Receive
-              {
-                branches =
-                  List.map
-                    (fun (b : branch) ->
-                      { b with body = rewrite_branches b.body })
-                    branches;
-              }
-        | While _ | For _ -> s
-        | _ -> s)
-      stmts
+    | [] -> []
+    | last :: rev_rest ->
+        let last =
+          match last with
+          | Effect e when is_tailable e -> Return_stmt e
+          | If { cond; then_; else_ } ->
+              If
+                {
+                  cond;
+                  then_ = rewrite_exit then_;
+                  else_ = rewrite_exit else_;
+                }
+          | Case { scrutinee; branches } ->
+              Case
+                {
+                  scrutinee;
+                  branches =
+                    List.map
+                      (fun (b : branch) -> { b with body = rewrite_exit b.body })
+                      branches;
+                }
+          | Receive { branches } ->
+              Receive
+                {
+                  branches =
+                    List.map
+                      (fun (b : branch) -> { b with body = rewrite_exit b.body })
+                      branches;
+                }
+          | _ -> last
+        in
+        List.rev_append rev_rest [ last ]
   in
-  match List.rev stmts with
-  | Effect e :: rev_rest when is_tailable e ->
-      rewrite_tail (List.rev rev_rest) @ [ Return_stmt e ]
-  | _ -> rewrite_tail stmts
+  rewrite_exit stmts
 
 (* The IR's own read of a written type annotation — the checker's
    decl_to_type mirrored over the IR's symbol tables, so a signature's
