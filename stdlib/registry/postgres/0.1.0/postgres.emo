@@ -55,27 +55,27 @@ class Param {
   // raises.
   def stage(stg Int64, i Int64) {
     case self.kind {
-      ParamKind.text -> {
+      ParamKind.text then {
         if internal.ffi.bind_text(stg, i, self.text) != 0 {
           raise Exception.new(message: "postgres: parameter ${i} could not be staged")
         }
       }
-      ParamKind.i64 -> {
+      ParamKind.i64 then {
         if internal.ffi.bind_i64(stg, i, self.i64) != 0 {
           raise Exception.new(message: "postgres: parameter ${i} could not be staged")
         }
       }
-      ParamKind.f64 -> {
+      ParamKind.f64 then {
         if internal.ffi.bind_f64(stg, i, self.f64) != 0 {
           raise Exception.new(message: "postgres: parameter ${i} could not be staged")
         }
       }
-      ParamKind.bool -> {
+      ParamKind.bool then {
         if internal.ffi.bind_bool(stg, i, self.flag) != 0 {
           raise Exception.new(message: "postgres: parameter ${i} could not be staged")
         }
       }
-      ParamKind.none -> {
+      ParamKind.none then {
         if internal.ffi.bind_none(stg, i) != 0 {
           raise Exception.new(message: "postgres: parameter ${i} could not be staged")
         }

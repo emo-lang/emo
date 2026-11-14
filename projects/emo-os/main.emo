@@ -767,7 +767,7 @@ def console_service(boss Pid) Void {
   boss <- self_pid()
   while true {
     receive {
-      w -> {
+      w then {
         var op = op_of(w)
         if op == 1 {
           // The write's bytes stage whole in the caller's slot (T8.15):
@@ -1009,7 +1009,7 @@ def process_service(boss Pid) Void {
       process_serve(w)
     } else {
       receive {
-        x -> {
+        x then {
           if op_of(x) >= 0 {
             process_serve(x)
           } else {
@@ -1187,7 +1187,7 @@ def blk_service(boss Pid) Void {
     var d = 0
     var n = 0
     receive {
-      (x, f, y, c) -> {
+      (x, f, y, c) then {
         w = x
         from = f
         d = y
@@ -1515,7 +1515,7 @@ def gpu_service(boss Pid) Void {
   boss <- self_pid()
   while true {
     receive {
-      (a, b, c) -> {
+      (a, b, c) then {
         // The kernel's own mailbox (the boot smoke's protocol): op 0
         // the whole-screen flush, op 1 the mode packed, op 2 a rect
         // flush (T8.11: the compositor's cursor plane presents the
@@ -1558,7 +1558,7 @@ def gpu_service(boss Pid) Void {
           }
         }
       }
-      w -> {
+      w then {
         // The gate's posts (T8.4, T8.5): verb 10 present — the
         // fullscreen commit is the device's (the rect the mode's to
         // judge), a window's commit is the ready flag and the damage
@@ -2237,7 +2237,7 @@ def input_service(boss Pid) Void {
     // binding carries.
     input_hold_serve(dev, q)
     receive {
-      x -> {
+      x then {
         var op = op_of(x)
         if op == 2 || op == 12 || op == 13 || op == 18 {
           input_parked(x, dev, q)
@@ -3825,7 +3825,7 @@ def comp_await_flush() Void {
   var flushed = false
   while !flushed {
     receive {
-      r -> {
+      r then {
         if op_of(r) >= 0 {
           comp_stash_push(r)
         } else {
@@ -4388,7 +4388,7 @@ def comp_service(boss Pid, gpu Pid) Void {
   poke64(comp_dmg_first, 1)
   gpu <- (1 << 32, me2, 0)
   receive {
-    m -> {
+    m then {
       var mw = 0
       mw = m
       poke64(comp_mode_w, op_of(mw))
@@ -4411,13 +4411,13 @@ def comp_service(boss Pid, gpu Pid) Void {
       comp_word(w, gpu, me2)
     } else {
       receive {
-        x -> {
+        x then {
           if op_of(x) >= 0 {
             comp_word(x, gpu, me2)
           } else {
             var kop = 0
             case x {
-              (a, b, c, d, e, f) -> { kop = a }
+              (a, b, c, d, e, f) then { kop = a }
             }
             if kop == 0 {
               running = false
@@ -4452,7 +4452,7 @@ def comp_supervisor(boss Pid, gpu Pid) Void {
   boss <- inst
   while true {
     receive {
-      w -> {
+      w then {
         if op_of(w) == notice_op {
           if caller_of(w) == pid_num(inst) {
             do comp_run(me3, gpu)
@@ -4479,7 +4479,7 @@ def wait_pid() Pid {
   var done = false
   while !done {
     receive {
-      x -> {
+      x then {
         if op_of(x) < 0 {
           got = x
           done = true
@@ -4505,7 +4505,7 @@ def supervisor(boss Pid, blk Pid) Void {
   boss <- inst
   while true {
     receive {
-      w -> {
+      w then {
         if op_of(w) == notice_op {
           if caller_of(w) == pid_num(inst) {
             poke64(fs_pid_cell, 0)
@@ -4585,7 +4585,7 @@ def read_byte(console Pid) Int64 {
   console <- self_pid()
   var b = 0
   receive {
-    got -> { b = got }
+    got then { b = got }
   }
   return b
 }
@@ -4648,21 +4648,21 @@ uart_init()
 println("Hello, EmoOS!")
 sv39_report()
 tick_proof()
-receive { c1 -> {
+receive { c1 then {
   poke64(console_svc_cell, pid_num(c1))
   console_svc = c1
 } }
-receive { c2 -> { poke64(process_svc_cell, pid_num(c2)) } }
-receive { c3 -> { blk_svc = c3 } }
-receive { g1 -> {
+receive { c2 then { poke64(process_svc_cell, pid_num(c2)) } }
+receive { c3 then { blk_svc = c3 } }
+receive { g1 then {
   poke64(gpu_svc_cell, pid_num(g1))
   gpu_svc = g1
 } }
-receive { i1 -> {
+receive { i1 then {
   poke64(input_svc_cell, pid_num(i1))
   input_svc = i1
 } }
-receive { p1 -> {} }
+receive { p1 then {} }
 
 // The display's flush smoke (T8.1): the root asks the driver for the
 // mode (the answer that verb 11 will one day route), paints the
@@ -4675,12 +4675,12 @@ receive { p1 -> {} }
 gpu_svc <- (1 << 32, me, 0)
 var mode = 0
 receive {
-  m -> { mode = m }
+  m then { mode = m }
 }
 gpu_paint(koff + screen_base, gpu_height(mode), gpu_width(mode) / 2)
 gpu_svc <- (0, me, 0)
 receive {
-  g2 -> {
+  g2 then {
     if g2 != 0 {
       println("gpu: the flush answered ${g2}")
       halt()
@@ -4693,23 +4693,23 @@ println("gpu flush ok")
 // lineage's shape — the spawn, the pages' generation, the death
 // notice the restart answers.
 do comp_supervisor(me, gpu_svc)
-receive { n1 -> {
+receive { n1 then {
   poke64(comp_svc_cell, pid_num(n1))
   comp_svc = n1
 } }
 
 do supervisor(me, blk_svc)
-receive { f1 -> { fs_svc = f1 } }
+receive { f1 then { fs_svc = f1 } }
 do reader(input_svc, me, 1)
 do reader(input_svc, me, 2)
 do reader(input_svc, me, 3)
 do reader(input_svc, me, 4)
 var root_b = read_byte(input_svc)
 println("0:${root_b}")
-receive { done1 -> {} }
-receive { done2 -> {} }
-receive { done3 -> {} }
-receive { done4 -> {} }
+receive { done1 then {} }
+receive { done2 then {} }
+receive { done3 then {} }
+receive { done4 then {} }
 
 // The disk ELFs' install (emo-desktop A11.1): the three apps' images,
 // embedded in this image, written onto the volume through the first
@@ -4777,11 +4777,11 @@ def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
     label String) Void {
   var me2 = self_pid()
   fs <- (7, me2, namea, nlen, namea, 0)
-  receive { ans -> {
+  receive { ans then {
     if ans < 0 {
       var size = blobend - bloba
       fs <- (6, me2, namea, nlen, bloba, size)
-      receive { wrote -> {
+      receive { wrote then {
         if wrote != size {
           println("fs: the install wrote ${wrote}, not ${size}")
           halt()
@@ -4829,7 +4829,7 @@ put_boot_name(scratch)
 var boot_len = put_boot_text(scratch + 64)
 fs_svc <- (6, me, scratch, 8, scratch + 64, boot_len)
 receive {
-  wrote -> {
+  wrote then {
     if wrote != boot_len {
       println("fs: the write answered ${wrote}, not ${boot_len}")
       halt()
@@ -4837,10 +4837,10 @@ receive {
   }
 }
 fs_svc <- (0, me, 0, 0, 0, 0)
-receive { f2 -> { fs_svc = f2 } }
+receive { f2 then { fs_svc = f2 } }
 fs_svc <- (7, me, scratch, 8, scratch + 1024, 2048)
 receive {
-  got -> {
+  got then {
     if got != boot_len {
       println("fs: the read answered ${got}, not ${boot_len}")
       halt()
@@ -4859,7 +4859,7 @@ println("fs restart ok")
 // the pages' generation one higher — the state the restart reads
 // back, the fs's cache-rebuild analog.
 comp_svc <- (0, me, 0, 0, 0, 0)
-receive { n2 -> {
+receive { n2 then {
   poke64(comp_svc_cell, pid_num(n2))
   comp_svc = n2
 } }

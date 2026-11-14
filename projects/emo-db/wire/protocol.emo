@@ -77,11 +77,11 @@ def parse_startup(body String) (R, Startup) {
       pos = pos + 1
     } else {
       case cstr_at(body, pos) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, key) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, key) then {
           case cstr_at(body, key[1]) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, value) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, value) then {
               params.set(key[0], value[0])
               pos = value[1]
             }
@@ -249,19 +249,19 @@ def size_of(t engine.ValType) Int64 {
 // BYTEA as `\x` plus lower-case hex.
 def value_text(v record.Value) String {
   case v.kind {
-    record.ColType.integer -> { return v.as_i64().to_string() }
-    record.ColType.bigint -> { return v.as_i64().to_string() }
-    record.ColType.real -> { return v.as_f64().to_string() }
-    record.ColType.double -> { return v.as_f64().to_string() }
-    record.ColType.text -> { return v.as_text() }
-    record.ColType.varchar -> { return v.as_text() }
-    record.ColType.boolean -> {
+    record.ColType.integer then { return v.as_i64().to_string() }
+    record.ColType.bigint then { return v.as_i64().to_string() }
+    record.ColType.real then { return v.as_f64().to_string() }
+    record.ColType.double then { return v.as_f64().to_string() }
+    record.ColType.text then { return v.as_text() }
+    record.ColType.varchar then { return v.as_text() }
+    record.ColType.boolean then {
       if v.as_bool() {
         return "t"
       }
       return "f"
     }
-    record.ColType.bytea -> { return "\\x" + hex_text(v.as_bytes()) }
+    record.ColType.bytea then { return "\\x" + hex_text(v.as_bytes()) }
   }
 }
 

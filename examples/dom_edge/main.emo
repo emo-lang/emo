@@ -9,109 +9,109 @@ require "dom"
 // ---- the strict parser refuses ----
 
 case dom.parse("<div>unclosed") {
-  (R.error, why) -> { println("unclosed: " + why) }
-  (R.ok, _)      -> { println("unclosed parsed?") }
+  (R.error, why) then { println("unclosed: " + why) }
+  (R.ok, _)      then { println("unclosed parsed?") }
 }
 case dom.parse("<b>x<i>y</i></b>") {
-  (R.error, why) -> { println("ok-nest: no") }
-  (R.ok, doc)    -> { println("ok-nest: roots=" + doc.roots().length().to_string()) }
+  (R.error, why) then { println("ok-nest: no") }
+  (R.ok, doc)    then { println("ok-nest: roots=" + doc.roots().length().to_string()) }
 }
 case dom.parse("<b>x</i>") {
-  (R.error, why) -> { println("misnest: " + why) }
-  (R.ok, _)      -> { println("misnest parsed?") }
+  (R.error, why) then { println("misnest: " + why) }
+  (R.ok, _)      then { println("misnest parsed?") }
 }
 case dom.parse("</div>") {
-  (R.error, why) -> { println("stray: " + why) }
-  (R.ok, _)      -> { println("stray parsed?") }
+  (R.error, why) then { println("stray: " + why) }
+  (R.ok, _)      then { println("stray parsed?") }
 }
 case dom.parse("<p>a</p></p>") {
-  (R.error, why) -> { println("extra-close: " + why) }
-  (R.ok, _)      -> { println("extra-close parsed?") }
+  (R.error, why) then { println("extra-close: " + why) }
+  (R.ok, _)      then { println("extra-close parsed?") }
 }
 case dom.parse("<div class=\"a\" class=\"b\">x</div>") {
-  (R.error, why) -> { println("dup-attr: " + why) }
-  (R.ok, _)      -> { println("dup-attr parsed?") }
+  (R.error, why) then { println("dup-attr: " + why) }
+  (R.ok, _)      then { println("dup-attr parsed?") }
 }
 case dom.parse("<div/>x") {
-  (R.error, why) -> { println("selfclose: " + why) }
-  (R.ok, _)      -> { println("selfclose parsed?") }
+  (R.error, why) then { println("selfclose: " + why) }
+  (R.ok, _)      then { println("selfclose parsed?") }
 }
 case dom.parse("<br></br>") {
-  (R.error, why) -> { println("void-close: " + why) }
-  (R.ok, _)      -> { println("void-close parsed?") }
+  (R.error, why) then { println("void-close: " + why) }
+  (R.ok, _)      then { println("void-close parsed?") }
 }
 case dom.parse("<p>a < b</p>") {
-  (R.error, why) -> { println("raw-lt: " + why) }
-  (R.ok, _)      -> { println("raw-lt parsed?") }
+  (R.error, why) then { println("raw-lt: " + why) }
+  (R.ok, _)      then { println("raw-lt parsed?") }
 }
 case dom.parse("<p>AT&T</p>") {
-  (R.error, why) -> { println("bare-amp: " + why) }
-  (R.ok, _)      -> { println("bare-amp parsed?") }
+  (R.error, why) then { println("bare-amp: " + why) }
+  (R.ok, _)      then { println("bare-amp parsed?") }
 }
 case dom.parse("<p>&#zz;</p>") {
-  (R.error, why) -> { println("bad-ref: " + why) }
-  (R.ok, _)      -> { println("bad-ref parsed?") }
+  (R.error, why) then { println("bad-ref: " + why) }
+  (R.ok, _)      then { println("bad-ref parsed?") }
 }
 case dom.parse("<p>&#0;</p>") {
-  (R.error, why) -> { println("zero-ref: " + why) }
-  (R.ok, _)      -> { println("zero-ref parsed?") }
+  (R.error, why) then { println("zero-ref: " + why) }
+  (R.ok, _)      then { println("zero-ref parsed?") }
 }
 case dom.parse("<p>&#xD800;</p>") {
-  (R.error, why) -> { println("surrogate: " + why) }
-  (R.ok, _)      -> { println("surrogate parsed?") }
+  (R.error, why) then { println("surrogate: " + why) }
+  (R.ok, _)      then { println("surrogate parsed?") }
 }
 case dom.parse("<p>a<![CDATA[x]]>b</p>") {
-  (R.error, why) -> { println("cdata: " + why) }
-  (R.ok, _)      -> { println("cdata parsed?") }
+  (R.error, why) then { println("cdata: " + why) }
+  (R.ok, _)      then { println("cdata parsed?") }
 }
 case dom.parse("<?php echo 1; ?>") {
-  (R.error, why) -> { println("pi: " + why) }
-  (R.ok, _)      -> { println("pi parsed?") }
+  (R.error, why) then { println("pi: " + why) }
+  (R.ok, _)      then { println("pi parsed?") }
 }
 case dom.parse("<div></div attr>") {
-  (R.error, why) -> { println("close-attrs: " + why) }
-  (R.ok, _)      -> { println("close-attrs parsed?") }
+  (R.error, why) then { println("close-attrs: " + why) }
+  (R.ok, _)      then { println("close-attrs parsed?") }
 }
 case dom.parse("<ul><li>a<li>b</ul>") {
-  (R.error, why) -> { println("implied-end: " + why) }
-  (R.ok, _)      -> { println("implied-end parsed?") }
+  (R.error, why) then { println("implied-end: " + why) }
+  (R.ok, _)      then { println("implied-end parsed?") }
 }
 
 // ---- character references at their corners ----
 
 case dom.parse("<p>&amp; &lt; &gt; &quot; &apos; &nbsp;x</p>") {
-  (R.error, why) -> { println("named: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("named: " + why) }
+  (R.ok, doc)    then {
     case doc.find("p") {
-      (R.ok, p)    -> { println("named=" + p.text()) }
-      (R.error, w) -> { println("named: " + w) }
+      (R.ok, p)    then { println("named=" + p.text()) }
+      (R.error, w) then { println("named: " + w) }
     }
   }
 }
 case dom.parse("<p>&#169; &#xA9; &#Xa9;</p>") {
-  (R.error, why) -> { println("numeric: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("numeric: " + why) }
+  (R.ok, doc)    then {
     case doc.find("p") {
-      (R.ok, p)    -> { println("numeric=" + p.text()) }
-      (R.error, w) -> { println("numeric: " + w) }
+      (R.ok, p)    then { println("numeric=" + p.text()) }
+      (R.error, w) then { println("numeric: " + w) }
     }
   }
 }
 case dom.parse("<p>&copy; stays literal</p>") {
-  (R.error, why) -> { println("unknown: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("unknown: " + why) }
+  (R.ok, doc)    then {
     case doc.find("p") {
-      (R.ok, p)    -> { println("unknown=" + p.text()) }
-      (R.error, w) -> { println("unknown: " + w) }
+      (R.ok, p)    then { println("unknown=" + p.text()) }
+      (R.error, w) then { println("unknown: " + w) }
     }
   }
 }
 case dom.parse("<a title=\"a &amp; b\">q</a>") {
-  (R.error, why) -> { println("attr-ref: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("attr-ref: " + why) }
+  (R.ok, doc)    then {
     case doc.find("a") {
-      (R.ok, a)    -> { println("attr-ref=" + a.attr_or("title", "?")) }
-      (R.error, w) -> { println("attr-ref: " + w) }
+      (R.ok, a)    then { println("attr-ref=" + a.attr_or("title", "?")) }
+      (R.error, w) then { println("attr-ref: " + w) }
     }
   }
 }
@@ -119,75 +119,75 @@ case dom.parse("<a title=\"a &amp; b\">q</a>") {
 // ---- raw text and RCDATA ----
 
 case dom.parse("<script>if (a<b && c>d) { run(\"x\"); }</script>") {
-  (R.error, why) -> { println("script: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("script: " + why) }
+  (R.ok, doc)    then {
     case doc.find("script") {
-      (R.ok, s)    -> { println("script=" + s.text()) }
-      (R.error, w) -> { println("script: " + w) }
+      (R.ok, s)    then { println("script=" + s.text()) }
+      (R.error, w) then { println("script: " + w) }
     }
   }
 }
 case dom.parse("<SCRIPT>x < y</SCRIPT>") {
-  (R.error, why) -> { println("script-upper: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("script-upper: " + why) }
+  (R.ok, doc)    then {
     case doc.find("script") {
-      (R.ok, s)    -> { println("script-upper=" + s.text()) }
-      (R.error, w) -> { println("script-upper: " + w) }
+      (R.ok, s)    then { println("script-upper=" + s.text()) }
+      (R.error, w) then { println("script-upper: " + w) }
     }
   }
 }
 case dom.parse("<style>a > .b { color: red }</style>") {
-  (R.error, why) -> { println("style: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("style: " + why) }
+  (R.ok, doc)    then {
     case doc.find("style") {
-      (R.ok, s)    -> { println("style=" + s.text()) }
-      (R.error, w) -> { println("style: " + w) }
+      (R.ok, s)    then { println("style=" + s.text()) }
+      (R.error, w) then { println("style: " + w) }
     }
   }
 }
 case dom.parse("<textarea>1 &lt; 2 and < not markup</textarea>") {
-  (R.error, why) -> { println("textarea: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("textarea: " + why) }
+  (R.ok, doc)    then {
     case doc.find("textarea") {
-      (R.ok, t)    -> { println("textarea=" + t.text()) }
-      (R.error, w) -> { println("textarea: " + w) }
+      (R.ok, t)    then { println("textarea=" + t.text()) }
+      (R.error, w) then { println("textarea: " + w) }
     }
   }
 }
 case dom.parse("<script>never ends") {
-  (R.error, why) -> { println("script-open: " + why) }
-  (R.ok, _)      -> { println("script-open parsed?") }
+  (R.error, why) then { println("script-open: " + why) }
+  (R.ok, _)      then { println("script-open parsed?") }
 }
 
 // ---- attribute shapes ----
 
 case dom.parse("<input type=checkbox checked>") {
-  (R.error, why) -> { println("attrs: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("attrs: " + why) }
+  (R.ok, doc)    then {
     case doc.find("input") {
-      (R.ok, i)    -> {
+      (R.ok, i)    then {
         println("type=" + i.attr_or("type", "?") + " checked=" + i.attr_or("checked", "?"))
         println("input-outer=" + i.outer_html())
       }
-      (R.error, w) -> { println("attrs: " + w) }
+      (R.error, w) then { println("attrs: " + w) }
     }
   }
 }
 case dom.parse("<a href=/rel path>x</a>") {
-  (R.error, why) -> { println("unquoted: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("unquoted: " + why) }
+  (R.ok, doc)    then {
     case doc.find("a") {
-      (R.ok, a)    -> { println("href=" + a.attr_or("href", "?")) }
-      (R.error, w) -> { println("unquoted: " + w) }
+      (R.ok, a)    then { println("href=" + a.attr_or("href", "?")) }
+      (R.error, w) then { println("unquoted: " + w) }
     }
   }
 }
 case dom.parse("<my-widget data-value=\"7\">in</my-widget>") {
-  (R.error, why) -> { println("custom: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("custom: " + why) }
+  (R.ok, doc)    then {
     case doc.find("my-widget") {
-      (R.ok, w)    -> { println("custom=" + w.text() + " data=" + w.attr_or("data-value", "?")) }
-      (R.error, e) -> { println("custom: " + e) }
+      (R.ok, w)    then { println("custom=" + w.text() + " data=" + w.attr_or("data-value", "?")) }
+      (R.error, e) then { println("custom: " + e) }
     }
   }
 }
@@ -195,28 +195,28 @@ case dom.parse("<my-widget data-value=\"7\">in</my-widget>") {
 // ---- fragments and whitespace ----
 
 case dom.parse("") {
-  (R.error, why) -> { println("empty: " + why) }
-  (R.ok, doc)    -> { println("empty: roots=" + doc.roots().length().to_string()) }
+  (R.error, why) then { println("empty: " + why) }
+  (R.ok, doc)    then { println("empty: roots=" + doc.roots().length().to_string()) }
 }
 case dom.parse("just text, no elements") {
-  (R.error, why) -> { println("text-only: " + why) }
-  (R.ok, doc)    -> { println("text-only: nodes=" + doc.all().length().to_string()) }
+  (R.error, why) then { println("text-only: " + why) }
+  (R.ok, doc)    then { println("text-only: nodes=" + doc.all().length().to_string()) }
 }
 case dom.parse("<p>a</p>\n<p>b</p>") {
-  (R.error, why) -> { println("fragment: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("fragment: " + why) }
+  (R.ok, doc)    then {
     case doc.find("p") {
-      (R.ok, p)    -> { println("fragment=" + p.text()) }
-      (R.error, w) -> { println("fragment: " + w) }
+      (R.ok, p)    then { println("fragment=" + p.text()) }
+      (R.error, w) then { println("fragment: " + w) }
     }
   }
 }
 case dom.parse("<pre>  kept\n  as-is</pre>") {
-  (R.error, why) -> { println("pre: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("pre: " + why) }
+  (R.ok, doc)    then {
     case doc.find("pre") {
-      (R.ok, p)    -> { println("pre=[" + p.text() + "]") }
-      (R.error, w) -> { println("pre: " + w) }
+      (R.ok, p)    then { println("pre=[" + p.text() + "]") }
+      (R.error, w) then { println("pre: " + w) }
     }
   }
 }
@@ -224,61 +224,61 @@ case dom.parse("<pre>  kept\n  as-is</pre>") {
 // ---- the selector compiler refuses ----
 
 case dom.parse("<p>probe</p>") {
-  (R.error, why) -> { println("probe: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("probe: " + why) }
+  (R.ok, doc)    then {
     case doc.find("") {
-      (R.error, w) -> { println("sel-empty: " + w) }
-      (R.ok, _)    -> { println("sel-empty parsed?") }
+      (R.error, w) then { println("sel-empty: " + w) }
+      (R.ok, _)    then { println("sel-empty parsed?") }
     }
     case doc.find("li::before") {
-      (R.error, w) -> { println("sel-element: " + w) }
-      (R.ok, _)    -> { println("sel-element parsed?") }
+      (R.error, w) then { println("sel-element: " + w) }
+      (R.ok, _)    then { println("sel-element parsed?") }
     }
     case doc.find(":hover") {
-      (R.error, w) -> { println("sel-hover: " + w) }
-      (R.ok, _)    -> { println("sel-hover parsed?") }
+      (R.error, w) then { println("sel-hover: " + w) }
+      (R.ok, _)    then { println("sel-hover parsed?") }
     }
     case doc.find("p.") {
-      (R.error, w) -> { println("sel-dot: " + w) }
-      (R.ok, _)    -> { println("sel-dot parsed?") }
+      (R.error, w) then { println("sel-dot: " + w) }
+      (R.ok, _)    then { println("sel-dot parsed?") }
     }
     case doc.find("[href") {
-      (R.error, w) -> { println("sel-bracket: " + w) }
-      (R.ok, _)    -> { println("sel-bracket parsed?") }
+      (R.error, w) then { println("sel-bracket: " + w) }
+      (R.ok, _)    then { println("sel-bracket parsed?") }
     }
     case doc.find("p >") {
-      (R.error, w) -> { println("sel-dangling: " + w) }
-      (R.ok, _)    -> { println("sel-dangling parsed?") }
+      (R.error, w) then { println("sel-dangling: " + w) }
+      (R.ok, _)    then { println("sel-dangling parsed?") }
     }
     case doc.find("p \"str\"") {
-      (R.error, w) -> { println("sel-string: " + w) }
-      (R.ok, _)    -> { println("sel-string parsed?") }
+      (R.error, w) then { println("sel-string: " + w) }
+      (R.ok, _)    then { println("sel-string parsed?") }
     }
     case doc.find("li:nth-child(2x+1)") {
-      (R.error, w) -> { println("sel-nth: " + w) }
-      (R.ok, _)    -> { println("sel-nth parsed?") }
+      (R.error, w) then { println("sel-nth: " + w) }
+      (R.ok, _)    then { println("sel-nth parsed?") }
     }
 
     // ---- selector corners that do work ----
     case doc.find("*") {
-      (R.ok, s)    -> { println("universal=" + s.length().to_string()) }
-      (R.error, w) -> { println("universal: " + w) }
+      (R.ok, s)    then { println("universal=" + s.length().to_string()) }
+      (R.error, w) then { println("universal: " + w) }
     }
     case doc.find("p , p") {
-      (R.ok, s)    -> { println("dedup-groups=" + s.length().to_string()) }
-      (R.error, w) -> { println("groups: " + w) }
+      (R.ok, s)    then { println("dedup-groups=" + s.length().to_string()) }
+      (R.error, w) then { println("groups: " + w) }
     }
     case doc.find("p:nth-child(1), p:last-child") {
-      (R.ok, s)    -> { println("nth-forms=" + s.length().to_string()) }
-      (R.error, w) -> { println("nth-forms: " + w) }
+      (R.ok, s)    then { println("nth-forms=" + s.length().to_string()) }
+      (R.error, w) then { println("nth-forms: " + w) }
     }
     case doc.find("p:first-of-type") {
-      (R.ok, s)    -> { println("first-of-type=" + s.length().to_string()) }
-      (R.error, w) -> { println("first-of-type: " + w) }
+      (R.ok, s)    then { println("first-of-type=" + s.length().to_string()) }
+      (R.error, w) then { println("first-of-type: " + w) }
     }
     case doc.find("p:empty") {
-      (R.ok, s)    -> { println("empty-p=" + s.length().to_string()) }
-      (R.error, w) -> { println("empty-p: " + w) }
+      (R.ok, s)    then { println("empty-p=" + s.length().to_string()) }
+      (R.error, w) then { println("empty-p: " + w) }
     }
   }
 }

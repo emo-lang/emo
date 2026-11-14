@@ -17,10 +17,10 @@ class Form {
 
 def describe(kind Shape, form Form) String {
   case kind {
-    Shape.circle -> {
+    Shape.circle then {
       return "a circle: ${form.to_string()}"
     }
-    Shape.square -> {
+    Shape.square then {
       return "a square: ${form.to_string()}"
     }
   }

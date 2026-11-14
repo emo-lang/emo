@@ -52,8 +52,8 @@ println(s.padding())
 println(s.align())
 
 case s.width() {
-  (R.ok, w) -> { println("width ${w}") }
-  (R.error, _) -> { println("width auto") }
+  (R.ok, w) then { println("width ${w}") }
+  (R.error, _) then { println("width auto") }
 }
 
 // An interface naming itself, and a class field holding a List and a Map

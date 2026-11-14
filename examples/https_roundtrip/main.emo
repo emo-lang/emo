@@ -36,8 +36,8 @@ plain.close()
 println("a plain-HTTP client was turned away")
 
 case http.request("GET", "https://localhost:" + listener.port().to_string() + "/hello", [], "", 5.0) {
-  (R.error, why) -> { println("request failed: ${why}") }
-  (R.ok, resp)   -> {
+  (R.error, why) then { println("request failed: ${why}") }
+  (R.ok, resp)   then {
     println(resp.body)
     println(resp.status)
   }

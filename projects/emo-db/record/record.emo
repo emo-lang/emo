@@ -40,14 +40,14 @@ def storage_name(store Storage) String {
 
 def type_name(kind ColType) String {
   case kind {
-    ColType.integer -> { return "INTEGER" }
-    ColType.bigint -> { return "BIGINT" }
-    ColType.real -> { return "REAL" }
-    ColType.double -> { return "DOUBLE PRECISION" }
-    ColType.text -> { return "TEXT" }
-    ColType.varchar -> { return "VARCHAR" }
-    ColType.boolean -> { return "BOOLEAN" }
-    ColType.bytea -> { return "BYTEA" }
+    ColType.integer then { return "INTEGER" }
+    ColType.bigint then { return "BIGINT" }
+    ColType.real then { return "REAL" }
+    ColType.double then { return "DOUBLE PRECISION" }
+    ColType.text then { return "TEXT" }
+    ColType.varchar then { return "VARCHAR" }
+    ColType.boolean then { return "BOOLEAN" }
+    ColType.bytea then { return "BYTEA" }
   }
 }
 
@@ -273,8 +273,8 @@ def has_name(names Array[String], name String) Bool {
 
 def cf_required(db rocksdb.Db, name String) rocksdb.Cf {
   case db.cf(name) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, cf) -> { return cf }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, cf) then { return cf }
   }
 }
 
@@ -366,47 +366,47 @@ def index_has_null(index Index, columns Array[Column], values Array[Value]) Bool
 
 def write_value(b internal.codec.Buf, column Column, value Value) {
   case column.kind {
-    ColType.integer -> { b.i32be(value.i64) }
-    ColType.bigint -> { b.i64be(value.i64) }
-    ColType.real -> { b.u64be(value.f64.to_bits()) }
-    ColType.double -> { b.u64be(value.f64.to_bits()) }
-    ColType.boolean -> {
+    ColType.integer then { b.i32be(value.i64) }
+    ColType.bigint then { b.i64be(value.i64) }
+    ColType.real then { b.u64be(value.f64.to_bits()) }
+    ColType.double then { b.u64be(value.f64.to_bits()) }
+    ColType.boolean then {
       if value.flag {
         b.u8(1)
       } else {
         b.u8(0)
       }
     }
-    ColType.text -> { b.bytes(value.data) }
-    ColType.varchar -> { b.bytes(value.data) }
-    ColType.bytea -> { b.bytes(value.data) }
+    ColType.text then { b.bytes(value.data) }
+    ColType.varchar then { b.bytes(value.data) }
+    ColType.bytea then { b.bytes(value.data) }
   }
 }
 
 def read_value(r internal.codec.Reader, column Column) Value {
   case column.kind {
-    ColType.integer -> {
+    ColType.integer then {
       return Value.new(ColType.integer, false, r.i32be(), 0.0, false, Bytes.new(0))
     }
-    ColType.bigint -> {
+    ColType.bigint then {
       return Value.new(ColType.bigint, false, r.i64be(), 0.0, false, Bytes.new(0))
     }
-    ColType.real -> {
+    ColType.real then {
       return Value.new(ColType.real, false, 0, Float64.from_bits(r.u64be()), false, Bytes.new(0))
     }
-    ColType.double -> {
+    ColType.double then {
       return Value.new(ColType.double, false, 0, Float64.from_bits(r.u64be()), false, Bytes.new(0))
     }
-    ColType.boolean -> {
+    ColType.boolean then {
       return Value.new(ColType.boolean, false, 0, 0.0, r.u8() != 0, Bytes.new(0))
     }
-    ColType.text -> {
+    ColType.text then {
       return Value.new(ColType.text, false, 0, 0.0, false, r.bytes())
     }
-    ColType.varchar -> {
+    ColType.varchar then {
       return Value.new(ColType.varchar, false, 0, 0.0, false, r.bytes())
     }
-    ColType.bytea -> {
+    ColType.bytea then {
       return Value.new(ColType.bytea, false, 0, 0.0, false, r.bytes())
     }
   }
@@ -552,28 +552,28 @@ def rowid_of(key Bytes) Int64 {
 
 def kind_tag(kind ColType) Int64 {
   case kind {
-    ColType.integer -> { return 1 }
-    ColType.bigint -> { return 2 }
-    ColType.real -> { return 3 }
-    ColType.double -> { return 4 }
-    ColType.text -> { return 5 }
-    ColType.varchar -> { return 6 }
-    ColType.boolean -> { return 7 }
-    ColType.bytea -> { return 8 }
+    ColType.integer then { return 1 }
+    ColType.bigint then { return 2 }
+    ColType.real then { return 3 }
+    ColType.double then { return 4 }
+    ColType.text then { return 5 }
+    ColType.varchar then { return 6 }
+    ColType.boolean then { return 7 }
+    ColType.bytea then { return 8 }
   }
 }
 
 def kind_of(tag Int64) ColType {
   case tag {
-    1 -> { return ColType.integer }
-    2 -> { return ColType.bigint }
-    3 -> { return ColType.real }
-    4 -> { return ColType.double }
-    5 -> { return ColType.text }
-    6 -> { return ColType.varchar }
-    7 -> { return ColType.boolean }
-    8 -> { return ColType.bytea }
-    _ -> {
+    1 then { return ColType.integer }
+    2 then { return ColType.bigint }
+    3 then { return ColType.real }
+    4 then { return ColType.double }
+    5 then { return ColType.text }
+    6 then { return ColType.varchar }
+    7 then { return ColType.boolean }
+    8 then { return ColType.bytea }
+    _ then {
       raise Exception.new(message: "record: unknown type tag ${tag}")
     }
   }
@@ -719,8 +719,8 @@ def decode_at(key Bytes, data Bytes) TableMeta {
 
 def read_counter(catalog rocksdb.Cf, key Bytes) Int64 {
   case catalog.get(key) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, found) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, found) then {
       if found.length() == 0 {
         return 1
       }
@@ -734,22 +734,22 @@ def read_counter(catalog rocksdb.Cf, key Bytes) Int64 {
 
 def iter_required(catalog rocksdb.Cf) rocksdb.Iter {
   case catalog.iter() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, it) -> { return it }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, it) then { return it }
   }
 }
 
 def key_required(it rocksdb.Iter) Bytes {
   case it.key() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, key) -> { return key }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, key) then { return key }
   }
 }
 
 def value_required(it rocksdb.Iter) Bytes {
   case it.value() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, value) -> { return value }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, value) then { return value }
   }
 }
 
@@ -781,8 +781,8 @@ def load(catalog rocksdb.Cf) CatalogState {
 // not a family to recreate silently.
 def open(path String) (R, Store) {
   case rocksdb.list_families(path) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, existing) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, existing) then {
       var names = ["default", "catalog", "data"]
       var i = 0
       while i < existing.length() {
@@ -792,8 +792,8 @@ def open(path String) (R, Store) {
         i = i + 1
       }
       case rocksdb.open(path, names, true) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, db) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, db) then {
           const catalog = cf_required(db, "catalog")
           const data = cf_required(db, "data")
           const state = load(catalog)
@@ -968,8 +968,8 @@ class Store {
     var k = 0
     while k < idxs.length() {
       case self.db.cf_create("idx_" + idxs[k].oid.to_string()) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, cf) -> { index_cfs = index_cfs.append(cf) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, cf) then { index_cfs = index_cfs.append(cf) }
       }
       k = k + 1
     }
@@ -978,8 +978,8 @@ class Store {
       var c = 0
       while c < cols.length() {
         case self.db.cf_create("col_" + cols[c].oid.to_string()) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, cf) -> { column_cfs = column_cfs.append(cf) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, cf) then { column_cfs = column_cfs.append(cf) }
         }
         c = c + 1
       }
@@ -987,37 +987,37 @@ class Store {
     const meta = TableMeta.new(table_oid, name, cols, idxs, 1, store)
     const encoded = encode_table(meta)
     case self.db.batch() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, batch) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, batch) then {
         case batch.put(self.catalog, table_key(table_oid), encoded) {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case batch.put(self.catalog, meta_key(1),
                        internal.codec.u64(table_oid + 1)) {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case batch.put(self.catalog, meta_key(2),
                        internal.codec.u64(next_index_oid)) {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case batch.write() {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         batch.close()
       }
@@ -1140,17 +1140,17 @@ class Table {
       if idx.unique && !index_has_null(idx, self.columns, values) {
         const prefix = index_prefix_row(idx, self.columns, values)
         case self.index_cfs[i].iter() {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, it) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, it) then {
             var duplicate = false
             it.seek(prefix)
             if it.valid() {
               case it.key() {
-                (R.error, why) -> {
+                (R.error, why) then {
                   it.close()
                   return (R.error, why)
                 }
-                (R.ok, key) -> {
+                (R.ok, key) then {
                   if internal.codec.starts_with(key, prefix) {
                     duplicate = true
                   }
@@ -1174,41 +1174,41 @@ class Table {
     const meta = TableMeta.new(self.oid, self.name, self.columns, self.indexes, next, self.store)
     const encoded_table = encode_table(meta)
     case self.db.batch() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, batch) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, batch) then {
         case batch.put(self.data, key, row) {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         var k = 0
         while k < self.indexes.length() {
           const prefix = index_prefix_row(self.indexes[k], self.columns, values)
           const entry = index_entry(prefix, rowid)
           case batch.put(self.index_cfs[k], entry, Bytes.new(0)) {
-            (R.error, why) -> {
+            (R.error, why) then {
               batch.close()
               return (R.error, why)
             }
-            (R.ok, _) -> {}
+            (R.ok, _) then {}
           }
           k = k + 1
         }
         case batch.put(self.catalog, table_key(self.oid), encoded_table) {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case batch.write() {
-          (R.error, why) -> {
+          (R.error, why) then {
             batch.close()
             return (R.error, why)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         batch.close()
       }
@@ -1226,8 +1226,8 @@ class Table {
     self.require_row_table()
     check_row(self.columns, values)
     case self.get(rowid) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.error, "record: update: no row with rowid " + rowid.to_string())
         }
@@ -1238,17 +1238,17 @@ class Table {
           if idx.unique && !index_has_null(idx, self.columns, values) {
             const prefix = index_prefix_row(idx, self.columns, values)
             case self.index_cfs[i].iter() {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, it) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, it) then {
                 var duplicate = false
                 it.seek(prefix)
                 if it.valid() {
                   case it.key() {
-                    (R.error, why) -> {
+                    (R.error, why) then {
                       it.close()
                       return (R.error, why)
                     }
-                    (R.ok, key) -> {
+                    (R.ok, key) then {
                       if internal.codec.starts_with(key, prefix) &&
                          rowid_of(key) != rowid {
                         duplicate = true
@@ -1269,14 +1269,14 @@ class Table {
         const row = encode_row(self.columns, values)
         const key = row_key(self.oid, rowid)
         case self.db.batch() {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, batch) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, batch) then {
             case batch.put(self.data, key, row) {
-              (R.error, why) -> {
+              (R.error, why) then {
                 batch.close()
                 return (R.error, why)
               }
-              (R.ok, _) -> {}
+              (R.ok, _) then {}
             }
             var k = 0
             while k < self.indexes.length() {
@@ -1284,29 +1284,29 @@ class Table {
               const old_prefix = index_prefix_row(idx, self.columns, old_values)
               const old_entry = index_entry(old_prefix, rowid)
               case batch.delete(self.index_cfs[k], old_entry) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   batch.close()
                   return (R.error, why)
                 }
-                (R.ok, _) -> {}
+                (R.ok, _) then {}
               }
               const new_prefix = index_prefix_row(idx, self.columns, values)
               const new_entry = index_entry(new_prefix, rowid)
               case batch.put(self.index_cfs[k], new_entry, Bytes.new(0)) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   batch.close()
                   return (R.error, why)
                 }
-                (R.ok, _) -> {}
+                (R.ok, _) then {}
               }
               k = k + 1
             }
             case batch.write() {
-              (R.error, why) -> {
+              (R.error, why) then {
                 batch.close()
                 return (R.error, why)
               }
-              (R.ok, _) -> {}
+              (R.ok, _) then {}
             }
             batch.close()
           }
@@ -1323,42 +1323,42 @@ class Table {
     self.live()
     self.require_row_table()
     case self.get(rowid) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.ok, self)
         }
         const old_values = found[0].values
         const key = row_key(self.oid, rowid)
         case self.db.batch() {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, batch) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, batch) then {
             case batch.delete(self.data, key) {
-              (R.error, why) -> {
+              (R.error, why) then {
                 batch.close()
                 return (R.error, why)
               }
-              (R.ok, _) -> {}
+              (R.ok, _) then {}
             }
             var k = 0
             while k < self.indexes.length() {
               const prefix = index_prefix_row(self.indexes[k], self.columns, old_values)
               const entry = index_entry(prefix, rowid)
               case batch.delete(self.index_cfs[k], entry) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   batch.close()
                   return (R.error, why)
                 }
-                (R.ok, _) -> {}
+                (R.ok, _) then {}
               }
               k = k + 1
             }
             case batch.write() {
-              (R.error, why) -> {
+              (R.error, why) then {
                 batch.close()
                 return (R.error, why)
               }
-              (R.ok, _) -> {}
+              (R.ok, _) then {}
             }
             batch.close()
           }
@@ -1375,8 +1375,8 @@ class Table {
     self.require_row_table()
     const key = row_key(self.oid, rowid)
     case self.data.get(key) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.ok, [])
         }
@@ -1392,27 +1392,27 @@ class Table {
     self.require_row_table()
     const prefix = table_prefix(self.oid)
     case self.data.iter() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, it) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, it) then {
         var rows = []
         var done = false
         it.seek(prefix)
         while it.valid() && !done {
           case it.key() {
-            (R.error, why) -> {
+            (R.error, why) then {
               it.close()
               return (R.error, why)
             }
-            (R.ok, key) -> {
+            (R.ok, key) then {
               if !internal.codec.starts_with(key, prefix) {
                 done = true
               } else {
                 case it.value() {
-                  (R.error, why) -> {
+                  (R.error, why) then {
                     it.close()
                     return (R.error, why)
                   }
-                  (R.ok, blob) -> {
+                  (R.ok, blob) then {
                     const rowid = rowid_of(key)
                     rows = rows.append(
                       Row.new(rowid, decode_row(self.columns, blob)))
@@ -1450,28 +1450,28 @@ class Table {
     check_index(idx, self.columns, key_values)
     const prefix = index_prefix_key(idx, self.columns, key_values)
     case self.index_cfs[pos].iter() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, it) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, it) then {
         var rows = []
         var done = false
         it.seek(prefix)
         while it.valid() && !done {
           case it.key() {
-            (R.error, why) -> {
+            (R.error, why) then {
               it.close()
               return (R.error, why)
             }
-            (R.ok, key) -> {
+            (R.ok, key) then {
               if !internal.codec.starts_with(key, prefix) {
                 done = true
               } else {
                 const rowid = rowid_of(key)
                 case self.get(rowid) {
-                  (R.error, why) -> {
+                  (R.error, why) then {
                     it.close()
                     return (R.error, why)
                   }
-                  (R.ok, found) -> {
+                  (R.ok, found) then {
                     if found.length() == 1 {
                       rows = rows.append(found[0])
                     }
@@ -1505,8 +1505,8 @@ class Table {
       if idx.unique && !index_has_null(idx, self.columns, values) {
         const prefix = index_prefix_row(idx, self.columns, values)
         case txn.scan_prefix(self.index_cfs[i], index_slot(idx), prefix) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, entries) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, entries) then {
             if entries.length() > 0 {
               return (R.error,
                       "record: insert: duplicate key on index \"" + idx.name + "\"")
@@ -1520,16 +1520,16 @@ class Table {
     const row = encode_row(self.columns, values)
     const key = row_key(self.oid, rowid)
     case txn.put(self.data, "data", key, row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {}
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {}
     }
     var k = 0
     while k < self.indexes.length() {
       const prefix = index_prefix_row(self.indexes[k], self.columns, values)
       const entry = index_entry(prefix, rowid)
       case txn.put(self.index_cfs[k], index_slot(self.indexes[k]), entry, Bytes.new(0)) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _) -> {}
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _) then {}
       }
       k = k + 1
     }
@@ -1537,8 +1537,8 @@ class Table {
                                txn.rowid_next(self), self.store)
     const encoded = encode_table(meta)
     case txn.put(self.catalog, "catalog", table_key(self.oid), encoded) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {}
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {}
     }
     return (R.ok, rowid)
   }
@@ -1547,8 +1547,8 @@ class Table {
     self.live()
     self.require_row_table()
     case txn.get(self.data, "data", row_key(self.oid, rowid)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.ok, [])
         }
@@ -1561,8 +1561,8 @@ class Table {
     self.live()
     self.require_row_table()
     case txn.scan_prefix(self.data, "data", table_prefix(self.oid)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, entries) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, entries) then {
         var rows = []
         var i = 0
         while i < entries.length() {
@@ -1594,15 +1594,15 @@ class Table {
     check_index(idx, self.columns, key_values)
     const prefix = index_prefix_key(idx, self.columns, key_values)
     case txn.scan_prefix(self.index_cfs[pos], index_slot(idx), prefix) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, entries) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, entries) then {
         var rows = []
         var k = 0
         while k < entries.length() {
           const rowid = rowid_of(entries[k][0])
           case self.get_tx(txn, rowid) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, found) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, found) then {
               if found.length() == 1 {
                 rows = rows.append(found[0])
               }
@@ -1620,8 +1620,8 @@ class Table {
     self.require_row_table()
     check_row(self.columns, values)
     case self.get_tx(txn, rowid) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.error, "record: update: no row with rowid " + rowid.to_string())
         }
@@ -1632,8 +1632,8 @@ class Table {
           if idx.unique && !index_has_null(idx, self.columns, values) {
             const prefix = index_prefix_row(idx, self.columns, values)
             case txn.scan_prefix(self.index_cfs[i], index_slot(idx), prefix) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, entries) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, entries) then {
                 var k = 0
                 while k < entries.length() {
                   if rowid_of(entries[k][0]) != rowid {
@@ -1650,8 +1650,8 @@ class Table {
         const row = encode_row(self.columns, values)
         const key = row_key(self.oid, rowid)
         case txn.put(self.data, "data", key, row) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {}
         }
         var j = 0
         while j < self.indexes.length() {
@@ -1660,14 +1660,14 @@ class Table {
           const old_prefix = index_prefix_row(idx, self.columns, old_values)
           const old_entry = index_entry(old_prefix, rowid)
           case txn.delete(self.index_cfs[j], slot, old_entry) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {}
           }
           const new_prefix = index_prefix_row(idx, self.columns, values)
           const new_entry = index_entry(new_prefix, rowid)
           case txn.put(self.index_cfs[j], slot, new_entry, Bytes.new(0)) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {}
           }
           j = j + 1
         }
@@ -1680,23 +1680,23 @@ class Table {
     self.live()
     self.require_row_table()
     case self.get_tx(txn, rowid) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, found) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, found) then {
         if found.length() == 0 {
           return (R.ok, self)
         }
         const old_values = found[0].values
         case txn.delete(self.data, "data", row_key(self.oid, rowid)) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {}
         }
         var i = 0
         while i < self.indexes.length() {
           const prefix = index_prefix_row(self.indexes[i], self.columns, old_values)
           const entry = index_entry(prefix, rowid)
           case txn.delete(self.index_cfs[i], index_slot(self.indexes[i]), entry) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {}
           }
           i = i + 1
         }
@@ -1730,8 +1730,8 @@ class Table {
       const cf = self.column_cfs[i]
       const key = block_key(block)
       case txn.get(cf, column_slot(self.columns[i]), key) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, found) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, found) then {
           var block_values = []
           if found.length() == 1 {
             block_values = decode_block(self.columns[i], found[0])
@@ -1751,8 +1751,8 @@ class Table {
           block_values = block_values.append(values[i])
           case txn.put(cf, column_slot(self.columns[i]), key,
                        encode_block(block_values)) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {}
           }
         }
       }
@@ -1762,8 +1762,8 @@ class Table {
                                txn.rowid_next(self), self.store)
     const encoded = encode_table(meta)
     case txn.put(self.catalog, "catalog", table_key(self.oid), encoded) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {}
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {}
     }
     return (R.ok, rowid)
   }
@@ -1780,8 +1780,8 @@ class Table {
     self.require_column_table()
     case txn.scan_prefix(self.column_cfs[0], column_slot(self.columns[0]),
                          Bytes.new(0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, blocks) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, blocks) then {
         var batches = []
         var b = 0
         while b < blocks.length() {
@@ -1793,8 +1793,8 @@ class Table {
           while c < self.columns.length() {
             case txn.get(self.column_cfs[c], column_slot(self.columns[c]),
                          block_key(block_id)) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, found) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, found) then {
                 if found.length() != 1 {
                   return (R.error,
                           "record: scan: the block " + block_id.to_string() +
@@ -1821,8 +1821,8 @@ class Table {
     self.require_column_table()
     case txn.scan_prefix(self.column_cfs[0], column_slot(self.columns[0]),
                          Bytes.new(0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, blocks) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, blocks) then {
         var counts = []
         var b = 0
         while b < blocks.length() {
@@ -1838,8 +1838,8 @@ class Table {
     self.live()
     self.require_column_table()
     case self.scan_column_batches(txn) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, batches) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, batches) then {
         var rows = []
         var b = 0
         while b < batches.length() {
@@ -1931,20 +1931,20 @@ def encode_block(values Array[Value]) Bytes {
 
 def write_value_raw(value Value, b internal.codec.Buf) {
   case value.kind {
-    ColType.integer -> { b.i32be(value.i64) }
-    ColType.bigint -> { b.i64be(value.i64) }
-    ColType.real -> { b.u64be(value.f64.to_bits()) }
-    ColType.double -> { b.u64be(value.f64.to_bits()) }
-    ColType.boolean -> {
+    ColType.integer then { b.i32be(value.i64) }
+    ColType.bigint then { b.i64be(value.i64) }
+    ColType.real then { b.u64be(value.f64.to_bits()) }
+    ColType.double then { b.u64be(value.f64.to_bits()) }
+    ColType.boolean then {
       if value.flag {
         b.u8(1)
       } else {
         b.u8(0)
       }
     }
-    ColType.text -> { b.bytes(value.data) }
-    ColType.varchar -> { b.bytes(value.data) }
-    ColType.bytea -> { b.bytes(value.data) }
+    ColType.text then { b.bytes(value.data) }
+    ColType.varchar then { b.bytes(value.data) }
+    ColType.bytea then { b.bytes(value.data) }
   }
 }
 
@@ -2016,8 +2016,8 @@ class Txn {
       old[0].close()
     }
     case self.db.snapshot() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, snap) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, snap) then {
         self.snapshots.replace([snap])
         return (R.ok, true)
       }
@@ -2027,8 +2027,8 @@ class Txn {
   def put(cf rocksdb.Cf, slot String, key Bytes, value Bytes) (R, Bool) {
     self.live()
     case self.batch.put(cf, key, value) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {
         self.pending.set(pending_key(slot, key), Pending.new(slot, key, value, false))
         return (R.ok, true)
       }
@@ -2038,8 +2038,8 @@ class Txn {
   def delete(cf rocksdb.Cf, slot String, key Bytes) (R, Bool) {
     self.live()
     case self.batch.delete(cf, key) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {
         self.pending.set(pending_key(slot, key), Pending.new(slot, key, Bytes.new(0), true))
         return (R.ok, true)
       }
@@ -2077,19 +2077,19 @@ class Txn {
   def scan_prefix(cf rocksdb.Cf, slot String, prefix Bytes) (R, Array[(Bytes, Bytes)]) {
     self.live()
     case self.iter_at(cf) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, it) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, it) then {
         var out = []
         const seen = Map.new()
         var done = false
         it.seek(prefix)
         while it.valid() && !done {
           case it.key() {
-            (R.error, why) -> {
+            (R.error, why) then {
               it.close()
               return (R.error, why)
             }
-            (R.ok, key) -> {
+            (R.ok, key) then {
               if !internal.codec.starts_with(key, prefix) {
                 done = true
               } else {
@@ -2101,11 +2101,11 @@ class Txn {
                   }
                 } else {
                   case it.value() {
-                    (R.error, why) -> {
+                    (R.error, why) then {
                       it.close()
                       return (R.error, why)
                     }
-                    (R.ok, value) -> { out = out.append((key, value)) }
+                    (R.ok, value) then { out = out.append((key, value)) }
                   }
                 }
                 seen.set(hex_key(key), true)
@@ -2165,8 +2165,8 @@ class Txn {
     // COMMIT is the transaction's durability point: the batch write
     // asks the WAL to fsync before it answers.
     case self.batch.write_sync() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {
         const names = self.touched.keys()
         var i = 0
         while i < names.length() {
@@ -2205,15 +2205,15 @@ class Txn {
 
 def begin_txn(db rocksdb.Db) (R, Txn) {
   case db.batch() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, batch) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, batch) then {
       const txn = Txn.new(db, batch, [], Map.new(), Map.new(), Map.new())
       case txn.begin_statement() {
-        (R.error, why) -> {
+        (R.error, why) then {
           batch.close()
           return (R.error, why)
         }
-        (R.ok, _) -> { return (R.ok, txn) }
+        (R.ok, _) then { return (R.ok, txn) }
       }
     }
   }

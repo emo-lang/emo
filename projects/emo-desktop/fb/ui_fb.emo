@@ -138,8 +138,8 @@ def paints_box(n ui.Node) Bool {
 // the core's `Style` carries it.
 def fixed(slot (R, Float64)) Int64 {
   case slot {
-    (R.ok, v) -> { return v.to_int64() }
-    (R.error, _) -> { return -1 }
+    (R.ok, v) then { return v.to_int64() }
+    (R.error, _) then { return -1 }
   }
 }
 
@@ -814,8 +814,8 @@ class Fb {
     while more {
       const step = self.input.next()
       case step {
-        (R.ok, tag) -> { self.sink.read().deliver(tag) }
-        (R.error, _) -> { more = false }
+        (R.ok, tag) then { self.sink.read().deliver(tag) }
+        (R.error, _) then { more = false }
       }
     }
   }

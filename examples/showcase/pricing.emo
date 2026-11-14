@@ -2,8 +2,8 @@
 // guard.
 def price(qty Int64) Int64 {
   case qty {
-    0 -> { return 0 }
-    n when n > 10 -> { return n * 8 }
-    n -> { return n * 10 }
+    0 then { return 0 }
+    n when n > 10 then { return n * 8 }
+    n then { return n * 10 }
   }
 }

@@ -553,8 +553,8 @@ class Model {
 
 def update(msg Msg, model Model) Model {
   case msg {
-    Msg.increment -> { return Model.new(count: model.count + 1) }
-    Msg.decrement -> { return Model.new(count: model.count - 1) }
+    Msg.increment then { return Model.new(count: model.count + 1) }
+    Msg.decrement then { return Model.new(count: model.count - 1) }
   }
 }
 

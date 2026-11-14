@@ -207,14 +207,14 @@ def encode(v Xml) String {
 def decode(text String) (R, Xml) {
   const data = text.to_bytes()
   case skip_prolog(data, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, p0)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, p0)     then {
       case parse_node(data, p0, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, r)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, r)      then {
           case skip_prolog(data, r[1]) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, after)  -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, after)  then {
               if after < data.length() {
                 return (R.error, err(after, "content after the root element"))
               }
@@ -246,20 +246,20 @@ def skip_prolog(data Bytes, i Int64) (R, Int64) {
   }
   if is_open(data, ws, 63) {
     case scan_stop2(data, ws + 2) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, stop)   -> { return skip_prolog(data, stop) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, stop)   then { return skip_prolog(data, stop) }
     }
   }
   if is_open(data, ws, 33) {
     if comment_at(data, ws) {
       case scan_stop3(data, ws + 4) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, stop)   -> { return skip_prolog(data, stop) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, stop)   then { return skip_prolog(data, stop) }
       }
     }
     case skip_doctype(data, ws + 2, 0) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, after)  -> { return skip_prolog(data, after) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, after)  then { return skip_prolog(data, after) }
     }
   }
   return (R.ok, ws)
@@ -324,14 +324,14 @@ def parse_node(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   }
   if comment_at(data, pos) {
     case scan_stop3(data, pos + 4) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, stop)   -> { return parse_node(data, stop, depth) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, stop)   then { return parse_node(data, stop, depth) }
     }
   }
   if is_open(data, pos, 63) {
     case scan_stop2(data, pos + 2) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, stop)   -> { return parse_node(data, stop, depth) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, stop)   then { return parse_node(data, stop, depth) }
     }
   }
   if cdata_at(data, pos) {
@@ -390,8 +390,8 @@ def comment_at(data Bytes, i Int64) Bool {
 def parse_cdata(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   const start = pos + 9
   case cdata_end(data, start) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, stop)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, stop)   then {
       return (R.ok, (XmlText.new(text: slice_text(data, start, stop)), stop + 3))
     }
   }
@@ -415,12 +415,12 @@ def cdata_end(data Bytes, i Int64) (R, Int64) {
 def parse_text(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   const e = text_end(data, pos)
   case text_len(data, pos, e, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, len)    -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, len)    then {
       const out = Bytes.new(len)
       case text_fill(data, pos, e, out, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, r)      -> { return (R.ok, (XmlText.new(text: out.to_string()), r[0])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, r)      then { return (R.ok, (XmlText.new(text: out.to_string()), r[0])) }
       }
     }
   }
@@ -443,8 +443,8 @@ def text_len(data Bytes, pos Int64, e Int64, n Int64) (R, Int64) {
   }
   if data.get(pos) == 38 {
     case entity(data, pos + 1, e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er)     -> { return text_len(data, er[1], e, n + utf8_len(er[0])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er)     then { return text_len(data, er[1], e, n + utf8_len(er[0])) }
     }
   }
   return text_len(data, pos + 1, e, n + 1)
@@ -457,8 +457,8 @@ def text_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (R, (Int64, In
   }
   if data.get(pos) == 38 {
     case entity(data, pos + 1, e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er)     then {
         const nw = utf8_put(out, w, er[0])
         return text_fill(data, er[1], e, out, nw)
       }
@@ -476,8 +476,8 @@ def entity(data Bytes, i Int64, e Int64) (R, (Int64, Int64)) {
   const c = data.get(i)
   if c == 35 {
     case hex_or_dec(data, i + 1, e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, h)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, h)      then {
         if h[0] < 0 {
           return (R.error, err(i, "unknown or malformed entity"))
         }
@@ -589,8 +589,8 @@ def parse_element(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
     return (R.error, err(pos, "expected an element name"))
   }
   case parse_attrs(data, ne, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ar)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ar)     then {
       const after = skip_ws(data, ar[1])
       if after >= data.length() {
         return (R.error, err(pos, "unterminated element"))
@@ -608,8 +608,8 @@ def parse_element(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
         return (R.error, err(after, "expected `>`"))
       }
       case parse_children(data, after + 1, depth + 1, name, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, cr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, cr)     then {
           return (R.ok, (XmlElement.new(name: name, attrs: ar[0], children: cr[0]), cr[1]))
         }
       }
@@ -651,8 +651,8 @@ def parse_attrs(data Bytes, i Int64, acc Array[(String, String)]) (R, (Array[(St
     return (R.error, err(w2, "expected a quoted attribute value"))
   }
   case attr_value(data, w2 + 1, q) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, vr)     -> { return parse_attrs(data, vr[1], acc.append((aname, vr[0]))) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, vr)     then { return parse_attrs(data, vr[1], acc.append((aname, vr[0]))) }
   }
 }
 
@@ -671,15 +671,15 @@ def dup_attr(attrs Array[(String, String)], name String, i Int64) Bool {
 // decoded. A raw `<` inside fails the decode.
 def attr_value(data Bytes, i Int64, q Int64) (R, (String, Int64)) {
   case attr_value_end(data, i, q) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, e)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, e)      then {
       case attr_len(data, i, e, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, len)    -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, len)    then {
           const out = Bytes.new(len)
           case attr_fill(data, i, e, out, 0) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, r)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, r)      then {
               // r[0] sits on the closing quote; resume past it.
               return (R.ok, (out.to_string(), r[0] + 1))
             }
@@ -709,8 +709,8 @@ def attr_len(data Bytes, pos Int64, e Int64, n Int64) (R, Int64) {
   }
   if data.get(pos) == 38 {
     case entity(data, pos + 1, e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er)     -> { return attr_len(data, er[1], e, n + utf8_len(er[0])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er)     then { return attr_len(data, er[1], e, n + utf8_len(er[0])) }
     }
   }
   return attr_len(data, pos + 1, e, n + 1)
@@ -722,8 +722,8 @@ def attr_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (R, (Int64, In
   }
   if data.get(pos) == 38 {
     case entity(data, pos + 1, e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er)     then {
         const nw = utf8_put(out, w, er[0])
         return attr_fill(data, er[1], e, out, nw)
       }
@@ -744,13 +744,13 @@ def parse_children(data Bytes, pos Int64, depth Int64, name String, acc Array[Xm
   }
   if data.get(pos) != 60 {
     case parse_text(data, pos, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, tr)     -> { return parse_children(data, tr[1], depth, name, acc.append(tr[0])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, tr)     then { return parse_children(data, tr[1], depth, name, acc.append(tr[0])) }
     }
   }
   case parse_node(data, pos, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_children(data, r[1], depth, name, acc.append(r[0])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_children(data, r[1], depth, name, acc.append(r[0])) }
   }
 }
 

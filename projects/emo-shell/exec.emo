@@ -68,11 +68,11 @@ def main_entry() Int64 {
 def run_line(sh shell.Shell, line String) Void {
   if line != "" {
     case lex.tokenize(line) {
-      (R.error, why) -> { refuse(sh, why) }
-      (R.ok, tokens) -> {
+      (R.error, why) then { refuse(sh, why) }
+      (R.ok, tokens) then {
         case parse.parse(tokens) {
-          (R.error, why) -> { refuse(sh, why) }
-          (R.ok, items) -> { run_items(sh, items) }
+          (R.error, why) then { refuse(sh, why) }
+          (R.ok, items) then { run_items(sh, items) }
         }
       }
     }
@@ -129,11 +129,11 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
   var why = ""
   for var p = 0; p < n - 1; p = p + 1 {
     case os.pipe() {
-      (R.error, reason) -> {
+      (R.error, reason) then {
         made = false
         why = reason
       }
-      (R.ok, ends) -> {
+      (R.ok, ends) then {
         reads.push(ends[0])
         writes.push(ends[1])
       }
@@ -151,11 +151,11 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
   var i = 0
   while forked && i < n {
     case os.fork() {
-      (R.error, reason) -> {
+      (R.error, reason) then {
         forked = false
         sh.err("emosh: " + reason)
       }
-      (R.ok, pid) -> {
+      (R.ok, pid) then {
         if pid == 0 {
           in_child(sh, stages[i], i, n, read_fds, write_fds)
         } else {
@@ -207,11 +207,11 @@ def run_simple(sh shell.Shell, cmd parse.Cmd) Int64 {
     return builtin.run(sh, argv)
   }
   case os.fork() {
-    (R.error, reason) -> {
+    (R.error, reason) then {
       sh.err("emosh: " + reason)
       return 1
     }
-    (R.ok, pid) -> {
+    (R.ok, pid) then {
       if pid == 0 {
         child_reset_signals()
         const status = apply_redirs(sh, cmd.redirs)
@@ -259,11 +259,11 @@ def apply_redirs(sh shell.Shell, redirs Array[parse.Redir]) Int64 {
     const path = expand.word(redir.word, sh.status(), sh.name)
     if redir.op == lex.op_lt() {
       case os.open_read(path) {
-        (R.error, why) -> {
+        (R.error, why) then {
           sh.err("emosh: " + why)
           status = 1
         }
-        (R.ok, fd) -> {
+        (R.ok, fd) then {
           os.dup2(fd, 0)
           os.close(fd)
         }
@@ -271,22 +271,22 @@ def apply_redirs(sh shell.Shell, redirs Array[parse.Redir]) Int64 {
     } else {
       if redir.op == lex.op_gt() {
         case os.open_write(path) {
-          (R.error, why) -> {
+          (R.error, why) then {
             sh.err("emosh: " + why)
             status = 1
           }
-          (R.ok, fd) -> {
+          (R.ok, fd) then {
             os.dup2(fd, 1)
             os.close(fd)
           }
         }
       } else {
         case os.open_append(path) {
-          (R.error, why) -> {
+          (R.error, why) then {
             sh.err("emosh: " + why)
             status = 1
           }
-          (R.ok, fd) -> {
+          (R.ok, fd) then {
             os.dup2(fd, 1)
             os.close(fd)
           }

@@ -46,6 +46,7 @@ let keyword_items : item list =
     kw "continue" "skip to the next iteration";
     kw "case" "pattern match";
     kw "when" "branch guard";
+    kw "then" "branch body";
     kw "receive" "receive a process message";
     kw "return" "return from a function";
     kw "raise" "raise an exception";

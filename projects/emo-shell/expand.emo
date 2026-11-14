@@ -77,8 +77,8 @@ def expand_tilde(text String) String {
     return text
   }
   case os.getenv("HOME") {
-    (R.ok, home) -> { return home + text.substring(1, text.length() - 1) }
-    (R.error, _)  -> { return text }
+    (R.ok, home) then { return home + text.substring(1, text.length() - 1) }
+    (R.error, _)  then { return text }
   }
 }
 
@@ -139,7 +139,7 @@ def dollars(text String, status Int64, name String) String {
 // One variable's value; unset answers the empty string.
 def value_of(name String) String {
   case os.getenv(name) {
-    (R.ok, value) -> { return value }
-    (R.error, _)  -> { return "" }
+    (R.ok, value) then { return value }
+    (R.error, _)  then { return "" }
   }
 }

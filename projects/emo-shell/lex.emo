@@ -111,8 +111,8 @@ def tokenize(line String) (R, Array[Tok]) {
           } else {
             if ch == "\"" {
               case through_double_quote(line, i + 1) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, quoted) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, quoted) then {
                   if cur != "" {
                     parts.push(expand.Part.new(text: cur, lit: false))
                     cur = ""

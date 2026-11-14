@@ -42,11 +42,11 @@ def drbg_sha256(seed Bytes, length Int64) Bytes
 
 ```emo
 case rand.bytes(32) {
-  (R.ok, seed) -> {
+  (R.ok, seed) then {
     const public = crypto.sign.ed25519_public(seed)
     // …
   }
-  (R.error, why) -> { println(why) }
+  (R.error, why) then { println(why) }
 }
 ```
 

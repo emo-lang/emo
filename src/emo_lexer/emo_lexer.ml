@@ -16,6 +16,7 @@ module Token = struct
     | Case
     | When
     | Receive
+    | Then
     | Return
     | Raise
     | Self
@@ -154,6 +155,7 @@ let keyword_of_string = function
   | "case" -> Some Token.Case
   | "when" -> Some Token.When
   | "receive" -> Some Token.Receive
+  | "then" -> Some Token.Then
   | "return" -> Some Token.Return
   | "raise" -> Some Token.Raise
   | "self" -> Some Token.Self

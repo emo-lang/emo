@@ -16,60 +16,60 @@ require "valkey"
 
 def run_client(v valkey.Valkey) Int64 {
   case v.ping() {
-    (R.error, why) -> { println("ping failed: ${why}") }
-    (R.ok, pong)   -> { println(pong) }
+    (R.error, why) then { println("ping failed: ${why}") }
+    (R.ok, pong)   then { println(pong) }
   }
   case v.echo("hello valkey") {
-    (R.error, why) -> { println("echo failed: ${why}") }
-    (R.ok, back)   -> { println(back) }
+    (R.error, why) then { println("echo failed: ${why}") }
+    (R.ok, back)   then { println(back) }
   }
   case v.set("greeting", "hola") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.get("greeting") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.get("missing") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.is_null?()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.is_null?()) }
   }
   case v.append("greeting", " !") {
-    (R.error, why) -> { println("append failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("append failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.strlen("greeting") {
-    (R.error, why) -> { println("strlen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("strlen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.getrange("greeting", 0, 1) {
-    (R.error, why) -> { println("getrange failed: ${why}") }
-    (R.ok, text)   -> { println(text) }
+    (R.error, why) then { println("getrange failed: ${why}") }
+    (R.ok, text)   then { println(text) }
   }
   case v.set_ex("session", "u1", 300) {
-    (R.error, why) -> { println("set_ex failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set_ex failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.get("session") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.setnx("greeting", "nope") {
-    (R.error, why) -> { println("setnx failed: ${why}") }
-    (R.ok, took)   -> { println(took) }
+    (R.error, why) then { println("setnx failed: ${why}") }
+    (R.ok, took)   then { println(took) }
   }
   case v.setnx("fresh", "yes") {
-    (R.error, why) -> { println("setnx failed: ${why}") }
-    (R.ok, took)   -> { println(took) }
+    (R.error, why) then { println("setnx failed: ${why}") }
+    (R.ok, took)   then { println(took) }
   }
   case v.mset([("k1", "v1"), ("k2", "v2")]) {
-    (R.error, why) -> { println("mset failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("mset failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.mget(["k1", "greeting", "k2", "nope"]) {
-    (R.error, why) -> { println("mget failed: ${why}") }
-    (R.ok, replies) -> {
+    (R.error, why) then { println("mget failed: ${why}") }
+    (R.ok, replies) then {
       print_reply("k1", replies[0])
       print_reply("greeting", replies[1])
       print_reply("k2", replies[2])
@@ -77,248 +77,248 @@ def run_client(v valkey.Valkey) Int64 {
     }
   }
   case v.incr("hits") {
-    (R.error, why) -> { println("incr failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("incr failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.incr("hits") {
-    (R.error, why) -> { println("incr failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("incr failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.incr_by("hits", 10) {
-    (R.error, why) -> { println("incr_by failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("incr_by failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.decr("hits") {
-    (R.error, why) -> { println("decr failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("decr failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.exists(["greeting", "k1", "nope"]) {
-    (R.error, why) -> { println("exists failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("exists failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.del(["k1", "nope"]) {
-    (R.error, why) -> { println("del failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("del failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.exists(["k1"]) {
-    (R.error, why) -> { println("exists failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("exists failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.type("greeting") {
-    (R.error, why) -> { println("type failed: ${why}") }
-    (R.ok, name)   -> { println(name) }
+    (R.error, why) then { println("type failed: ${why}") }
+    (R.ok, name)   then { println(name) }
   }
   case v.expire("greeting", 60) {
-    (R.error, why) -> { println("expire failed: ${why}") }
-    (R.ok, set)    -> { println(set) }
+    (R.error, why) then { println("expire failed: ${why}") }
+    (R.ok, set)    then { println(set) }
   }
   case v.ttl("greeting") {
-    (R.error, why) -> { println("ttl failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("ttl failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.persist("greeting") {
-    (R.error, why) -> { println("persist failed: ${why}") }
-    (R.ok, kept)   -> { println(kept) }
+    (R.error, why) then { println("persist failed: ${why}") }
+    (R.ok, kept)   then { println(kept) }
   }
   case v.ttl("greeting") {
-    (R.error, why) -> { println("ttl failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("ttl failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.ttl("missing") {
-    (R.error, why) -> { println("ttl failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("ttl failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.set("user:1", "u1") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.set("user:2", "u2") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.keys("user:*") {
-    (R.error, why) -> { println("keys failed: ${why}") }
-    (R.ok, names)  -> { print_strings(names) }
+    (R.error, why) then { println("keys failed: ${why}") }
+    (R.ok, names)  then { print_strings(names) }
   }
   case v.rename("fresh", "renamed") {
-    (R.error, why) -> { println("rename failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("rename failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.get("renamed") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.set("strkey", "plain") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.lpush("strkey", ["x"]) {
-    (R.error, why) -> { println(why) }
-    (R.ok, n)      -> { println("unexpected ${n}") }
+    (R.error, why) then { println(why) }
+    (R.ok, n)      then { println("unexpected ${n}") }
   }
   case v.command(["OBJECT", "ENCODING", "greeting"]) {
-    (R.error, why) -> { println(why) }
-    (R.ok, reply)  -> { println("unexpected reply") }
+    (R.error, why) then { println(why) }
+    (R.ok, reply)  then { println("unexpected reply") }
   }
   case v.hset("person:1", "name", "wang") {
-    (R.error, why) -> { println("hset failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("hset failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.hset("person:1", "city", "shanghai") {
-    (R.error, why) -> { println("hset failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("hset failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.hget("person:1", "name") {
-    (R.error, why) -> { println("hget failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("hget failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.hget("person:1", "missing") {
-    (R.error, why) -> { println("hget failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.is_null?()) }
+    (R.error, why) then { println("hget failed: ${why}") }
+    (R.ok, reply)  then { println(reply.is_null?()) }
   }
   case v.hgetall("person:1") {
-    (R.error, why) -> { println("hgetall failed: ${why}") }
-    (R.ok, pairs)  -> { print_pairs(pairs) }
+    (R.error, why) then { println("hgetall failed: ${why}") }
+    (R.ok, pairs)  then { print_pairs(pairs) }
   }
   case v.hlen("person:1") {
-    (R.error, why) -> { println("hlen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("hlen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.hexists("person:1", "city") {
-    (R.error, why) -> { println("hexists failed: ${why}") }
-    (R.ok, there)  -> { println(there) }
+    (R.error, why) then { println("hexists failed: ${why}") }
+    (R.ok, there)  then { println(there) }
   }
   case v.hkeys("person:1") {
-    (R.error, why) -> { println("hkeys failed: ${why}") }
-    (R.ok, names)  -> { print_strings(names) }
+    (R.error, why) then { println("hkeys failed: ${why}") }
+    (R.ok, names)  then { print_strings(names) }
   }
   case v.hvals("person:1") {
-    (R.error, why) -> { println("hvals failed: ${why}") }
-    (R.ok, values) -> { print_strings(values) }
+    (R.error, why) then { println("hvals failed: ${why}") }
+    (R.ok, values) then { print_strings(values) }
   }
   case v.hdel("person:1", ["city"]) {
-    (R.error, why) -> { println("hdel failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("hdel failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.hlen("person:1") {
-    (R.error, why) -> { println("hlen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("hlen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.rpush("queue", ["a", "b"]) {
-    (R.error, why) -> { println("rpush failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("rpush failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.lpush("queue", ["c"]) {
-    (R.error, why) -> { println("lpush failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("lpush failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.lrange("queue", 0, -1) {
-    (R.error, why) -> { println("lrange failed: ${why}") }
-    (R.ok, items)  -> { print_strings(items) }
+    (R.error, why) then { println("lrange failed: ${why}") }
+    (R.ok, items)  then { print_strings(items) }
   }
   case v.llen("queue") {
-    (R.error, why) -> { println("llen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("llen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.lindex("queue", 1) {
-    (R.error, why) -> { println("lindex failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("lindex failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.lset("queue", 1, "A") {
-    (R.error, why) -> { println("lset failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("lset failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.lrange("queue", 0, -1) {
-    (R.error, why) -> { println("lrange failed: ${why}") }
-    (R.ok, items)  -> { print_strings(items) }
+    (R.error, why) then { println("lrange failed: ${why}") }
+    (R.ok, items)  then { print_strings(items) }
   }
   case v.lpop("queue") {
-    (R.error, why) -> { println("lpop failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("lpop failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.rpop("queue") {
-    (R.error, why) -> { println("rpop failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("rpop failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.llen("queue") {
-    (R.error, why) -> { println("llen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("llen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.lpop("queue") {
-    (R.error, why) -> { println("lpop failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("lpop failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.lpop("queue") {
-    (R.error, why) -> { println("lpop failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.is_null?()) }
+    (R.error, why) then { println("lpop failed: ${why}") }
+    (R.ok, reply)  then { println(reply.is_null?()) }
   }
   case v.sadd("tags", ["em", "lex"]) {
-    (R.error, why) -> { println("sadd failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("sadd failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.sadd("tags", ["em", "ico"]) {
-    (R.error, why) -> { println("sadd failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("sadd failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.scard("tags") {
-    (R.error, why) -> { println("scard failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("scard failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.sismember("tags", "em") {
-    (R.error, why) -> { println("sismember failed: ${why}") }
-    (R.ok, there)  -> { println(there) }
+    (R.error, why) then { println("sismember failed: ${why}") }
+    (R.ok, there)  then { println(there) }
   }
   case v.sismember("tags", "nope") {
-    (R.error, why) -> { println("sismember failed: ${why}") }
-    (R.ok, there)  -> { println(there) }
+    (R.error, why) then { println("sismember failed: ${why}") }
+    (R.ok, there)  then { println(there) }
   }
   case v.smembers("tags") {
-    (R.error, why) -> { println("smembers failed: ${why}") }
-    (R.ok, names)  -> { print_strings(names) }
+    (R.error, why) then { println("smembers failed: ${why}") }
+    (R.ok, names)  then { print_strings(names) }
   }
   case v.srem("tags", ["em"]) {
-    (R.error, why) -> { println("srem failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("srem failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.scard("tags") {
-    (R.error, why) -> { println("scard failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("scard failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.set("bin", "line1\r\nline2") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.get("bin") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string().to_bytes().length()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string().to_bytes().length()) }
   }
   case v.set("who", "王") {
-    (R.error, why) -> { println("set failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("set failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.strlen("who") {
-    (R.error, why) -> { println("strlen failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("strlen failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.get("who") {
-    (R.error, why) -> { println("get failed: ${why}") }
-    (R.ok, reply)  -> { println(reply.as_string()) }
+    (R.error, why) then { println("get failed: ${why}") }
+    (R.ok, reply)  then { println(reply.as_string()) }
   }
   case v.select(0) {
-    (R.error, why) -> { println("select failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("select failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.auth("secret") {
-    (R.error, why) -> { println("auth failed: ${why}") }
-    (R.ok, ok)     -> { println(ok) }
+    (R.error, why) then { println("auth failed: ${why}") }
+    (R.ok, ok)     then { println(ok) }
   }
   case v.dbsize() {
-    (R.error, why) -> { println("dbsize failed: ${why}") }
-    (R.ok, n)      -> { println(n) }
+    (R.error, why) then { println("dbsize failed: ${why}") }
+    (R.ok, n)      then { println(n) }
   }
   case v.close() {
-    (R.error, why) -> { println("close failed: ${why}") }
-    (R.ok, _)      -> { println("closed") }
+    (R.error, why) then { println("close failed: ${why}") }
+    (R.ok, _)      then { println("closed") }
   }
   return 0
 }
@@ -436,8 +436,8 @@ def collect_names(names Array[String], prefix String, i Int64, acc Array[String]
 
 def serve(listener TcpListener, db Db) Int64 {
   case listener.accept() {
-    (R.error, why) -> { return 0 }
-    (R.ok, conn)   -> { return connection(conn, db) }
+    (R.error, why) then { return 0 }
+    (R.ok, conn)   then { return connection(conn, db) }
   }
 }
 
@@ -445,8 +445,8 @@ def connection(conn TcpConn, db Db) Int64 {
   var live = true
   while live {
     case read_request(conn) {
-      (R.error, why) -> { live = false }
-      (R.ok, args)   -> { dispatch(args, conn, db) }
+      (R.error, why) then { live = false }
+      (R.ok, args)   then { dispatch(args, conn, db) }
     }
   }
   conn.close()
@@ -458,8 +458,8 @@ def connection(conn TcpConn, db Db) Int64 {
 // always well-formed.
 def read_request(conn TcpConn) (R, Array[String]) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.error, "the client closed the connection")
       }
@@ -476,13 +476,13 @@ def read_args(conn TcpConn, n Int64, acc Array[String]) (R, Array[String]) {
     return (R.ok, acc)
   }
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, head)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, head)   then {
       if head.substring(0, 1) == "$" {
         const length = head.substring(1, head.length() - 1).to_int64()
         case conn.read_exactly(length) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, arg)    -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, arg)    then {
             conn.read_line()
             return read_args(conn, n - 1, acc.append(arg))
           }
@@ -500,38 +500,38 @@ def wrong_type() String {
 def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
   const op = args[0]
   case op {
-    "PING" -> {
+    "PING" then {
       if args.length() == 1 {
         write_simple(conn, "PONG")
       } else {
         write_bulk(conn, args[1])
       }
     }
-    "ECHO" -> {
+    "ECHO" then {
       write_bulk(conn, args[1])
     }
-    "SELECT" -> {
+    "SELECT" then {
       write_simple(conn, "OK")
     }
-    "AUTH" -> {
+    "AUTH" then {
       write_simple(conn, "OK")
     }
-    "DBSIZE" -> {
+    "DBSIZE" then {
       write_int(conn, db.strings.length() + db.lists.length() + db.sets.length() + db.hashes.length())
     }
-    "TYPE" -> {
+    "TYPE" then {
       write_bulk(conn, db.type_of(args[1]))
     }
-    "EXISTS" -> {
+    "EXISTS" then {
       write_int(conn, count_present(args, db, 1, 0))
     }
-    "DEL" -> {
+    "DEL" then {
       write_int(conn, remove_keys(args, db, 1, 0))
     }
-    "RENAME" -> {
+    "RENAME" then {
       move_key(args[1], args[2], conn, db)
     }
-    "KEYS" -> {
+    "KEYS" then {
       const pattern = args[1]
       const mark = pattern.substring(pattern.length() - 1, 1)
       if mark == "*" {
@@ -540,12 +540,12 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         write_error(conn, "ERR unsupported pattern in the demo server")
       }
     }
-    "SET" -> {
+    "SET" then {
       db.clear(args[1])
       db.strings.set(args[1], args[2])
       write_simple(conn, "OK")
     }
-    "SETNX" -> {
+    "SETNX" then {
       if db.type_of(args[1]) != "none" {
         write_int(conn, 0)
       } else {
@@ -553,7 +553,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         write_int(conn, 1)
       }
     }
-    "GET" -> {
+    "GET" then {
       const t = db.type_of(args[1])
       if t == "string" {
         write_bulk(conn, db.strings.get(args[1]))
@@ -565,7 +565,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "APPEND" -> {
+    "APPEND" then {
       const t = db.type_of(args[1])
       if t == "string" {
         const grown = db.strings.get(args[1]) + args[2]
@@ -580,7 +580,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "STRLEN" -> {
+    "STRLEN" then {
       const t = db.type_of(args[1])
       if t == "string" {
         write_int(conn, db.strings.get(args[1]).to_bytes().length())
@@ -592,7 +592,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "GETRANGE" -> {
+    "GETRANGE" then {
       const t = db.type_of(args[1])
       if t == "string" {
         write_bulk(conn, text_slice(db.strings.get(args[1]), args[2].to_int64(), args[3].to_int64()))
@@ -604,19 +604,19 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "INCR" -> {
+    "INCR" then {
       bump(conn, db, args[1], 1)
     }
-    "DECR" -> {
+    "DECR" then {
       bump(conn, db, args[1], 0 - 1)
     }
-    "INCRBY" -> {
+    "INCRBY" then {
       bump(conn, db, args[1], args[2].to_int64())
     }
-    "DECRBY" -> {
+    "DECRBY" then {
       bump(conn, db, args[1], 0 - args[2].to_int64())
     }
-    "MSET" -> {
+    "MSET" then {
       var i = 1
       while i < args.length() {
         db.clear(args[i])
@@ -625,10 +625,10 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
       }
       write_simple(conn, "OK")
     }
-    "MGET" -> {
+    "MGET" then {
       write_mget(conn, db, args)
     }
-    "EXPIRE" -> {
+    "EXPIRE" then {
       if db.type_of(args[1]) != "none" {
         db.expiry.set(args[1], args[2].to_int64())
         write_int(conn, 1)
@@ -636,7 +636,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         write_int(conn, 0)
       }
     }
-    "PERSIST" -> {
+    "PERSIST" then {
       if db.expiry.has(args[1]) {
         db.expiry.remove(args[1])
         write_int(conn, 1)
@@ -644,7 +644,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         write_int(conn, 0)
       }
     }
-    "TTL" -> {
+    "TTL" then {
       if db.expiry.has(args[1]) {
         write_int(conn, db.expiry.get(args[1]))
       } else {
@@ -655,19 +655,19 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "LPUSH" -> {
+    "LPUSH" then {
       push(conn, db, args[1], args, "head")
     }
-    "RPUSH" -> {
+    "RPUSH" then {
       push(conn, db, args[1], args, "tail")
     }
-    "LPOP" -> {
+    "LPOP" then {
       pop(conn, db, args[1], "head")
     }
-    "RPOP" -> {
+    "RPOP" then {
       pop(conn, db, args[1], "tail")
     }
-    "LLEN" -> {
+    "LLEN" then {
       const t = db.type_of(args[1])
       if t == "list" {
         write_int(conn, db.lists.get(args[1]).length())
@@ -679,7 +679,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "LRANGE" -> {
+    "LRANGE" then {
       const t = db.type_of(args[1])
       if t == "list" {
         write_array(conn, lrange_slice(db.lists.get(args[1]), args[2].to_int64(), args[3].to_int64()))
@@ -691,7 +691,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "LINDEX" -> {
+    "LINDEX" then {
       const t = db.type_of(args[1])
       if t == "list" {
         const list = db.lists.get(args[1])
@@ -712,7 +712,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "LSET" -> {
+    "LSET" then {
       const t = db.type_of(args[1])
       if t == "list" {
         const list = db.lists.get(args[1])
@@ -734,7 +734,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "SADD" -> {
+    "SADD" then {
       const t = db.type_of(args[1])
       if t == "set" || t == "none" {
         var members = []
@@ -748,7 +748,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         write_error(conn, wrong_type())
       }
     }
-    "SREM" -> {
+    "SREM" then {
       const t = db.type_of(args[1])
       if t == "set" {
         const members = db.sets.get(args[1])
@@ -769,7 +769,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "SMEMBERS" -> {
+    "SMEMBERS" then {
       const t = db.type_of(args[1])
       if t == "set" {
         write_array(conn, db.sets.get(args[1]))
@@ -781,7 +781,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "SISMEMBER" -> {
+    "SISMEMBER" then {
       const t = db.type_of(args[1])
       if t == "set" {
         if has_member(db.sets.get(args[1]), args[2], 0) {
@@ -797,7 +797,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "SCARD" -> {
+    "SCARD" then {
       const t = db.type_of(args[1])
       if t == "set" {
         write_int(conn, db.sets.get(args[1]).length())
@@ -809,7 +809,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HSET" -> {
+    "HSET" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         const fields = db.hashes.get(args[1])
@@ -830,7 +830,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HGET" -> {
+    "HGET" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         const fields = db.hashes.get(args[1])
@@ -847,7 +847,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HDEL" -> {
+    "HDEL" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         const fields = db.hashes.get(args[1])
@@ -872,7 +872,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HEXISTS" -> {
+    "HEXISTS" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         if db.hashes.get(args[1]).has(args[2]) {
@@ -888,7 +888,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HLEN" -> {
+    "HLEN" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         write_int(conn, db.hashes.get(args[1]).length())
@@ -900,7 +900,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HKEYS" -> {
+    "HKEYS" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         write_array(conn, db.hashes.get(args[1]).keys())
@@ -912,7 +912,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HVALS" -> {
+    "HVALS" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         write_array(conn, hash_values(db.hashes.get(args[1])))
@@ -924,7 +924,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    "HGETALL" -> {
+    "HGETALL" then {
       const t = db.type_of(args[1])
       if t == "hash" {
         write_hgetall(conn, db.hashes.get(args[1]))
@@ -936,7 +936,7 @@ def dispatch(args Array[String], conn TcpConn, db Db) Int64 {
         }
       }
     }
-    _ -> {
+    _ then {
       write_error(conn, "ERR unknown command '" + op + "'")
     }
   }
@@ -1325,6 +1325,6 @@ const db = Db.new(strings: Map.new(), lists: Map.new(), sets: Map.new(), hashes:
 do serve(listener, db)
 
 case valkey.connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed") }
-  (R.ok, v)      -> { run_client(v) }
+  (R.error, why) then { println("connect failed") }
+  (R.ok, v)      then { run_client(v) }
 }

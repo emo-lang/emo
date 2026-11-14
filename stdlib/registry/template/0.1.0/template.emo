@@ -35,11 +35,11 @@ require "json"
 
 def render(text String, ctx json.Json) (R, String) {
   case internal.engine.parse_template(text) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, body)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, body)   then {
       case internal.engine.render_nodes(body, [], ctx, [], "", 1, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, out)    -> { return (R.ok, out) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, out)    then { return (R.ok, out) }
       }
     }
   }
@@ -62,8 +62,8 @@ class Set {
   // redefinition would be a silent replacement.
   def with(name String, text String) (R, Set) {
     case internal.engine.parse_template(text) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, body)   -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, body)   then {
         var k = 0
         while k < self.parts.length() {
           if self.parts[k][0] == name {
@@ -83,8 +83,8 @@ class Set {
     while k < self.parts.length() {
       if self.parts[k][0] == name {
         case internal.engine.render_nodes(self.parts[k][1], [], ctx, self.parts, name, 1, [name]) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, out)    -> { return (R.ok, out) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, out)    then { return (R.ok, out) }
         }
       }
       k = k + 1

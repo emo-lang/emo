@@ -48,8 +48,8 @@ class HttpResponse {
 require "http"
 
 case http.get("http://127.0.0.1:8901/hello.txt") {
-  (R.error, why) -> { println("request failed: ${why}") }
-  (R.ok, resp)   -> {
+  (R.error, why) then { println("request failed: ${why}") }
+  (R.ok, resp)   then {
     println(resp.status)                 // 200
     println(resp.header("content-type")) // text/plain
     println(resp.body)

@@ -235,7 +235,7 @@ def heart(total Int64, owner Pid) Void {
 
 do heart(3, self_pid())
 receive {
-  ("demo", "done") -> { println("the heartbeat ended") }
+  ("demo", "done") then { println("the heartbeat ended") }
 }
 ```
 

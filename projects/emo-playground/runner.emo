@@ -89,8 +89,8 @@ const tick_source = "while true {}\n"
 // TMPDIR; /tmp is the honest fallback.
 def tick_base() String {
   case os.getenv("TMPDIR") {
-    (R.ok, dir) -> { return dir }
-    (R.error, _) -> { return "/tmp" }
+    (R.ok, dir) then { return dir }
+    (R.error, _) then { return "/tmp" }
   }
 }
 
@@ -102,20 +102,20 @@ def tick_base() String {
 // no business serving.
 def prepare_tick(runs_dir String) Void {
   case os.mkdir(os.getcwd() + "/" + runs_dir) {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
   const dir = os.getcwd() + "/" + runs_dir + "/.tick"
   case os.mkdir(dir) {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
   case file.write(dir + "/tick.emo", tick_source) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(
         message: "playground: the tick program could not be written: ${why}")
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
 }
 
@@ -128,8 +128,8 @@ def read_all(fd Int64) String {
   var reading = true
   while reading {
     case os.read(fd, 65536) {
-      (R.error, _) -> { reading = false }
-      (R.ok, chunk) -> {
+      (R.error, _) then { reading = false }
+      (R.ok, chunk) then {
         if chunk.length() == 0 {
           reading = false
         } else {
@@ -171,10 +171,10 @@ const hex_digits = "0123456789abcdef".to_bytes()
 
 def fresh_name() String {
   case rand.bytes(8) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "playground: rand.bytes failed: ${why}")
     }
-    (R.ok, raw) -> {
+    (R.ok, raw) then {
       const out = Bytes.new(16)
       var i = 0
       while i < 8 {
@@ -195,17 +195,17 @@ def fresh_name() String {
 // child's private package caches, whose trees outlive the run.
 def sweep_dir(dir String) Void {
   case os.list_dir(dir) {
-    (R.ok, entries) -> {
+    (R.ok, entries) then {
       var i = 0
       while i < entries.length() {
         sweep_dir(dir + "/" + entries[i])
         i = i + 1
       }
     }
-    (R.error, _) -> {
+    (R.error, _) then {
       case os.unlink(dir) {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
     }
   }
@@ -281,30 +281,30 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
   // that fires for it would steal the answer of a run that never
   // started.
   case os.open_read(tick_path) {
-    (R.error, _) -> {
+    (R.error, _) then {
       return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the tick program is missing — was the server started through main.emo?")
     }
-    (R.ok, fd) -> { os.close(fd) }
+    (R.ok, fd) then { os.close(fd) }
   }
   case os.mkdir(dir) {
-    (R.error, why) -> {
+    (R.error, why) then {
       return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run directory could not be created: ${why}")
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
   case file.write(dir + "/package.emo", run_manifest) {
-    (R.error, why) -> {
+    (R.error, why) then {
       sweep_dir(dir)
       return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run manifest could not be written: ${why}")
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
   case file.write(dir + "/main.emo", code) {
-    (R.error, why) -> {
+    (R.error, why) then {
       sweep_dir(dir)
       return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the program could not be written: ${why}")
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
 
   const (R.ok, (out_read, out_write)) = os.pipe()
@@ -314,22 +314,22 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
   // child's death — its EOF (the stdout pipe's) is the same moment.
   const err_path = dir + "/stderr.txt"
   case os.open_write(err_path) {
-    (R.error, why) -> {
+    (R.error, why) then {
       os.close(out_read)
       os.close(out_write)
       sweep_dir(dir)
       return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the run's stderr file could not be created: ${why}")
     }
-    (R.ok, err_fd) -> {
+    (R.ok, err_fd) then {
       case os.fork() {
-        (R.error, why) -> {
+        (R.error, why) then {
           os.close(out_read)
           os.close(out_write)
           os.close(err_fd)
           sweep_dir(dir)
           return RunResult.new(status: "internal", exit_code: 0, stdout: "", stderr: "playground: the child process could not start: ${why}")
         }
-    (R.ok, pid) -> {
+    (R.ok, pid) then {
       if pid == 0 {
         // The child: its own process group first — every process this
         // run ever forks lands in one group that nothing else on the
@@ -344,18 +344,18 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
         // out — _exit, not a raise, so no parent cleanup can run a
         // second time.
         case os.setpgid(0, 0) {
-          (R.error, why) -> {
+          (R.error, why) then {
             os.write(2, "playground: the run's process group could not be made: ${why}\n")
             os._exit(127)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case os.setenv("EMO_RUN_GROUP", os.getpid().to_string()) {
-          (R.error, _) -> {
+          (R.error, _) then {
             os.write(2, "playground: the run's watchdog could not be deputized\n")
             os._exit(127)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         // The package caches stay out of the user's shared cache, which
         // two concurrent materializers of the same package can race into
@@ -366,29 +366,29 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
         // with the other watchdogs — same content every time, and out
         // of the run directory the sweep is about to delete.
         case os.setenv("EMO_CACHE_DIR", tick_base() + "/emo-playground-tick-cache") {
-          (R.error, why) -> {
+          (R.error, why) then {
             os.write(2, "playground: the watchdog's cache could not be set: ${why}\n")
             os._exit(127)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         os.close(out_read)
         case os.open_read("/dev/null") {
-          (R.ok, devnull) -> {
+          (R.ok, devnull) then {
             os.dup2(devnull, 0)
           }
-          (R.error, _) -> {}
+          (R.error, _) then {}
         }
         os.dup2(out_write, 1)
         os.dup2(err_fd, 2)
         os.close(out_write)
         os.close(err_fd)
         case os.fork() {
-          (R.error, why) -> {
+          (R.error, why) then {
             os.write(2, "playground: the run's watchdog could not start: ${why}\n")
             os._exit(127)
           }
-          (R.ok, 0) -> {
+          (R.ok, 0) then {
             // The watchdog: the tick interpreter's stdio is the void —
             // the curfew banner it ends with is nobody's answer. Its
             // stderr is a discard file in the run directory rather than
@@ -399,10 +399,10 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
             // grandchild that lingers, a run child wedged in a system
             // call.
             case os.open_write(dir + "/tick.log") {
-              (R.error, _) -> {
+              (R.error, _) then {
                 os._exit(127)
               }
-              (R.ok, discard) -> {
+              (R.ok, discard) then {
                 os.dup2(discard, 2)
                 os.close(discard)
               }
@@ -412,18 +412,18 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
             os.execvp(emo_bin, tick_argv)
             os._exit(127)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case os.setenv("EMO_CACHE_DIR", dir + "/.emo-cache") {
-          (R.error, why) -> {
+          (R.error, why) then {
             os.write(2, "playground: the run's cache could not be set: ${why}\n")
             os._exit(127)
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
         case os.unsetenv("EMO_RUN_GROUP") {
-          (R.error, _) -> {}
-          (R.ok, _) -> {}
+          (R.error, _) then {}
+          (R.ok, _) then {}
         }
         os.chdir(dir)
         const argv = [emo_bin, "run", "main.emo", "--curfew", curfew_seconds.to_string()]
@@ -446,7 +446,7 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
       var out_text = ""
       while true {
         receive {
-          ("stdout", text) -> {
+          ("stdout", text) then {
             out_text = text
             break
           }
@@ -460,8 +460,8 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
       var status = status_of(exited, code)
       var err_text = ""
       case file.read(err_path) {
-        (R.ok, data) -> { err_text = data }
-        (R.error, _) -> {}
+        (R.ok, data) then { err_text = data }
+        (R.error, _) then {}
       }
       if err_text.length() > output_cap {
         err_text = err_text.substring(0, output_cap) + "\n... output truncated at ${output_cap} bytes ...\n"

@@ -54,16 +54,16 @@ def mark() Void {
   poke8(buf, 63B)
   var r = syscall.write(buf, 1)
   case r {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
 }
 
 def line(len Int64) Void {
   var r = syscall.write(buf, len)
   case r {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -248,8 +248,8 @@ def seat_menu_open(f ui_fb.raster.Strike, surf Win) Void {
   var g = 0
   var b = 0
   case syscall.win_new(menu_width(f), menu_height(f)) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       g = ans & 4294967295
       b = (ans >> 32) << 12
     }
@@ -258,16 +258,16 @@ def seat_menu_open(f ui_fb.raster.Strike, surf Win) Void {
     poke64(seat_menug, g)
     poke64(seat_menub, b)
     case syscall.win_role(g, 1) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     case syscall.win_parent(g, peek64(seat_grant)) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     case syscall.win_move(g, menu_x(), menu_y()) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     const ms = win(g, b, menu_width(f), menu_height(f))
     ms.fill(0, 0, menu_width(f), menu_height(f), menu_paper())
@@ -282,8 +282,8 @@ def seat_menu_open(f ui_fb.raster.Strike, surf Win) Void {
       i = i + 1
     }
     case syscall.present(g, 0, 0, menu_width(f), menu_height(f)) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 }
@@ -299,8 +299,8 @@ def seat_menu_close() Void {
   const g = peek64(seat_menug)
   if g != 0 {
     case syscall.win_close(g) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     poke64(seat_menug, 0)
   }
@@ -334,25 +334,25 @@ def seat_toggle_max(surf Win) Void {
     poke64(seat_savedx, peek64(seat_wx))
     poke64(seat_savedy, peek64(seat_wy))
     case syscall.win_scale(peek64(seat_grant), s) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     case syscall.win_move(peek64(seat_grant), nx, ny) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     poke64(seat_scale, s)
     poke64(seat_wx, nx)
     poke64(seat_wy, ny)
   } else {
     case syscall.win_scale(peek64(seat_grant), 1) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     case syscall.win_move(peek64(seat_grant), peek64(seat_savedx),
       peek64(seat_savedy)) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
     poke64(seat_scale, 1)
     poke64(seat_wx, peek64(seat_savedx))
@@ -383,8 +383,8 @@ def seat_press(f ui_fb.raster.Strike, raw Int64, surf Win) Int64 {
         }
         if item == 1 {
           case syscall.win_minimize(peek64(seat_grant)) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
         }
         if item == 2 {
@@ -445,8 +445,8 @@ def seat_drag_step(raw Int64, surf Win) Void {
     }
     nx = nx - (nx & 1)
     case syscall.win_move(peek64(seat_grant), nx, ny) {
-      (R.error, _) -> {}
-      (R.ok, _) -> {
+      (R.error, _) then {}
+      (R.ok, _) then {
         poke64(seat_wx, nx)
         poke64(seat_wy, ny)
         poke64(seat_drag, 2)
@@ -488,8 +488,8 @@ class Keys {
     poke64(seat_maxx, 1)
     poke64(seat_maxy, 1)
     case syscall.input_info(0) {
-      (R.error, _) -> {}
-      (R.ok, m) -> {
+      (R.error, _) then {}
+      (R.ok, m) then {
         poke64(seat_maxx, m >> 32)
         poke64(seat_maxy, m & 4294967295)
       }
@@ -916,8 +916,8 @@ class Win {
   def present() {
     frame_line(round_digest(self.base, self.width, self.height))
     case syscall.present(self.grant, 0, 0, self.width, self.height) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 
@@ -936,15 +936,15 @@ class Win {
     while i < steps - 1 {
       var off = r * (steps - i) * (steps - i) / (steps * steps)
       case syscall.win_move(self.grant, x, y + off) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       self.present()
       i = i + 1
     }
     case syscall.win_move(self.grant, x, y) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 
@@ -959,8 +959,8 @@ class Win {
     while i <= steps {
       var off = r * i * i / (steps * steps)
       case syscall.win_move(self.grant, x, y + off) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       self.present()
       i = i + 1

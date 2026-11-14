@@ -37,15 +37,15 @@ const ctx = json.object(entries: [
 // Nested paths, a filter, truthiness, a join, and the exact-decimal
 // float rendering all in one template.
 case template.render("Hello, {{ user.name | upper }} of {{ user.city }}!\n{{ if tags }}Tags: {{ tags | join(\", \") }}\n{{ end }}Price: {{ price }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // The zero-value rule: 0, the empty string, an empty array, and null
 // are all false; a bool carries itself.
 case template.render("{{ if premium }}premium{{ else if trial }}trial{{ else }}free{{ end }}\n{{ if empty }}has rows{{ else }}empty{{ end }}\n{{ if flags.italic }}italic{{ else }}upright{{ end }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- the set ----
@@ -57,29 +57,29 @@ const (R.ok, s2) = s1.with("header", "# {{ title }}\n")
 const (R.ok, s3) = s2.with("row", "- {{ item }} x{{ qty }}\n")
 const (R.ok, set) = s3.with("footer", "total: {{ rows | length }} rows\n")
 case set.render("page", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- control tags ----
 
 // Two bindings: the index and the element; the key and the value.
 case template.render("{{ for i, t in tags }}{{ i }}:{{ t }} {{ end }}\n{{ for k, v in flags }}{{ k }}={{ v }} {{ end }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // The empty case: zero iterations take the `{{ else }}`.
 case template.render("{{ for x in empty }}row\n{{ else }}nothing\n{{ end }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- filters ----
 
 case template.render("{{ user.nick | default(\"anon\") }}\n{{ user.bio | escape_html }}\n{{ scores | join(\" + \") }} = {{ scores | length }}\n{{ tags | length }} tags, {{ title | length }} bytes\n{{ user.name | upper }} / {{ tags | join(\"|\") | lower }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- trim markers and comments ----
@@ -87,15 +87,15 @@ case template.render("{{ user.nick | default(\"anon\") }}\n{{ user.bio | escape_
 // `{{- ` trims the text before the action, ` -}}` the text after; a
 // comment renders nothing.
 case template.render("A\n  {{- if flags.bold -}}\n  B\n  {{- end -}}\n  C\nx{{! a note }}y", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- bracket paths ----
 
 case template.render("{{ flags[\"bold\"] }} {{ scores[1] }} {{ rows[0].item }} {{ user[\"city\"] }}", ctx) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }
 
 // ---- decoded json ----
@@ -103,6 +103,6 @@ case template.render("{{ flags[\"bold\"] }} {{ scores[1] }} {{ rows[0].item }} {
 // A decoded document renders directly — the context is the json tree.
 const (R.ok, doc) = json.decode("{\"who\":\"zoe\",\"n\":3,\"ok\":true}")
 case template.render("{{ who }} did {{ n }} ({{ ok }})", doc) {
-  (R.error, why) -> { println("error: " + why) }
-  (R.ok, out)    -> { println(out) }
+  (R.error, why) then { println("error: " + why) }
+  (R.ok, out)    then { println(out) }
 }

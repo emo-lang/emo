@@ -61,6 +61,7 @@ let keyword_spelling = function
   | Tok.Case -> "case"
   | Tok.When -> "when"
   | Tok.Receive -> "receive"
+  | Tok.Then -> "then"
   | Tok.Return -> "return"
   | Tok.Raise -> "raise"
   | Tok.Self -> "self"
@@ -124,6 +125,13 @@ let at_keyword st k = kind st = Tok.Keyword k
 
 let expect_op st op ?hint what =
   if at_op st op then advance st |> ignore
+  else
+    error "E2001" (span st)
+      (Printf.sprintf "expected %s, found %s" what (describe_here st))
+      ?hint
+
+let expect_keyword st k ?hint what =
+  if at_keyword st k then advance st |> ignore
   else
     error "E2001" (span st)
       (Printf.sprintf "expected %s, found %s" what (describe_here st))
@@ -832,9 +840,10 @@ and parse_stmt st =
 (* `:chain` — the success-chain sugar, a pure rewrite into nested cases.
    Each step line states the shape the next value must have (a bare line
    expects `(R.ok, _)`); the first value that misses falls to the `else`
-   arms, and the `then` body runs when every line matched. `chain`,
-   `from`, and `then` are not reserved words — the colon pairs with the
-   sugar name, and an unknown name is a compile error. *)
+   arms, and the `then` body runs when every line matched. `chain` and
+   `from` are not reserved words — the colon pairs with the sugar name,
+   and an unknown name is a compile error. `then` is the branch-body
+   keyword `case` and `receive` branches share. *)
 and parse_chain st =
   let colon_tok = advance st in
   let name =
@@ -860,7 +869,7 @@ and parse_chain st =
   expect_op st Tok.RBrace "`}`" |> ignore;
   let then_body =
     match kind st with
-    | Tok.Lower_ident "then" ->
+    | Tok.Keyword Tok.Then ->
         if newline_before st then
           error "E2005" (span st) "`then` must stay on the closing brace's line"
             ~hint:"write `} then {`";
@@ -2058,7 +2067,9 @@ and parse_branches st =
           Some (parse_expr st))
         else None
       in
-      expect_op st Tok.Arrow "`->`" |> ignore;
+      expect_keyword st Tok.Then "`then`"
+        ~hint:"a branch body starts with `then`: `pattern then { ... }`"
+      |> ignore;
       let body, _ = parse_block st in
       branches := { Ast.pattern; guard; body } :: !branches;
       loop ())

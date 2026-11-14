@@ -12,8 +12,8 @@ def main() {
   const port = os.argv()[1].to_int64()
   const opts = postgres.options().with_host("127.0.0.1").with_port(port).with_user("emo").with_database("emo")
   case postgres.connect(opts) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, conn) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, conn) then {
       run(conn)
       conn.close()
       println("done")
@@ -23,7 +23,7 @@ def main() {
 
 def query_rows(conn postgres.Conn, label String, sql String, price_col Int64) {
   case conn.query(sql, []) {
-    (R.ok, rows) -> {
+    (R.ok, rows) then {
       println(label + ": " + rows.count().to_string())
       var r = 0
       while r < rows.count() {
@@ -36,13 +36,13 @@ def query_rows(conn postgres.Conn, label String, sql String, price_col Int64) {
       }
       rows.finish()
     }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
 def query_one(conn postgres.Conn, label String, sql String) {
   case conn.query(sql, []) {
-    (R.ok, rows) -> {
+    (R.ok, rows) then {
       println(label + ": " + rows.count().to_string())
       var r = 0
       while r < rows.count() {
@@ -55,24 +55,24 @@ def query_one(conn postgres.Conn, label String, sql String) {
       }
       rows.finish()
     }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
 def query_agg(conn postgres.Conn, label String, sql String) {
   case conn.query(sql, []) {
-    (R.ok, rows) -> {
+    (R.ok, rows) then {
       println(label + ": " + rows.i64(0, 0).to_string() + " " +
               rows.i64(0, 1).to_string())
       rows.finish()
     }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
 def query_cold(conn postgres.Conn, label String, sql String) {
   case conn.query(sql, []) {
-    (R.ok, rows) -> {
+    (R.ok, rows) then {
       var score = "-"
       if !rows.is_null(0, 2) {
         score = rows.f64(0, 2).to_string()
@@ -82,14 +82,14 @@ def query_cold(conn postgres.Conn, label String, sql String) {
               rows.text(0, 3))
       rows.finish()
     }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
 def exec_tag(conn postgres.Conn, label String, sql String) {
   case conn.exec(sql, []) {
-    (R.ok, n) -> { println(label + ": " + n.to_string()) }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.ok, n) then { println(label + ": " + n.to_string()) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 

@@ -66,10 +66,10 @@ def paired() ui.Node {
 // metrics the grid's three strikes pinned.
 def iface() raster.Strike {
   case raster.strike(raster.inter(), 16) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "the interface strike refused: ${why}")
     }
-    (R.ok, s) -> { return s }
+    (R.ok, s) then { return s }
   }
 }
 
@@ -207,10 +207,10 @@ def strike_checks() {
     "a descender's ink may start left of the pen")
   const m = raster.strike(raster.mono(), 16)
   case m {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "the mono strike refused: ${why}")
     }
-    (R.ok, ms) -> {
+    (R.ok, ms) then {
       check(ms.advance(ms.glyph_of("A")) == 10
         && ms.advance(ms.glyph_of("i")) == 10
         && ms.advance(ms.glyph_of("W")) == 10,
@@ -219,10 +219,10 @@ def strike_checks() {
   }
   const big = raster.strike(raster.inter(), 24)
   case big {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "the 24-pixel strike refused: ${why}")
     }
-    (R.ok, s24) -> {
+    (R.ok, s24) then {
       word_is(s24.line_height(), 30, "the interface face's line box at 24")
       check(s24.advance(a) == 17 && s24.ink_w(a) == 16 && s24.ink_h(a) == 18,
         "and the capital scales with it")

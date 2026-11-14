@@ -567,7 +567,7 @@ require "net"
 // time, in arrival order, so two requests can never race on it.
 def counter(n Int64) Int64 {
   receive {
-    ("next", from) -> {
+    ("next", from) then {
       from <- ("count", n + 1)
       return counter(n + 1)
     }
@@ -578,7 +578,7 @@ def counter(n Int64) Int64 {
 def next_visit(visits Pid) Int64 {
   visits <- ("next", self_pid())
   receive {
-    ("count", n) -> { return n }
+    ("count", n) then { return n }
   }
 }
 
@@ -636,12 +636,12 @@ require "json"
 // that can fail travels as the usual (R.ok, value) / (R.error, reason).
 def notes_store(notes Map[Int64, String], next_id Int64) Int64 {
   receive {
-    ("notes", "add", text, from) -> {
+    ("notes", "add", text, from) then {
       notes.set(next_id, text)
       from <- ("notes", "added", next_id)
       return notes_store(notes, next_id + 1)
     }
-    ("notes", "get", id, from) -> {
+    ("notes", "get", id, from) then {
       if notes.has(id) {
         from <- ("notes", "got", (R.ok, notes.get(id)))
       } else {
@@ -649,7 +649,7 @@ def notes_store(notes Map[Int64, String], next_id Int64) Int64 {
       }
       return notes_store(notes, next_id)
     }
-    ("notes", "delete", id, from) -> {
+    ("notes", "delete", id, from) then {
       if notes.has(id) {
         notes.remove(id)
         from <- ("notes", "deleted", (R.ok, id))
@@ -658,7 +658,7 @@ def notes_store(notes Map[Int64, String], next_id Int64) Int64 {
       }
       return notes_store(notes, next_id)
     }
-    ("notes", "list", from) -> {
+    ("notes", "list", from) then {
       from <- ("notes", "all", notes)
       return notes_store(notes, next_id)
     }
@@ -668,28 +668,28 @@ def notes_store(notes Map[Int64, String], next_id Int64) Int64 {
 def add_note(store Pid, text String) Int64 {
   store <- ("notes", "add", text, self_pid())
   receive {
-    ("notes", "added", id) -> { return id }
+    ("notes", "added", id) then { return id }
   }
 }
 
 def find_note(store Pid, id Int64) (R, String) {
   store <- ("notes", "get", id, self_pid())
   receive {
-    ("notes", "got", answer) -> { return answer }
+    ("notes", "got", answer) then { return answer }
   }
 }
 
 def delete_note(store Pid, id Int64) (R, Int64) {
   store <- ("notes", "delete", id, self_pid())
   receive {
-    ("notes", "deleted", answer) -> { return answer }
+    ("notes", "deleted", answer) then { return answer }
   }
 }
 
 def all_notes(store Pid) Map[Int64, String] {
   store <- ("notes", "list", self_pid())
   receive {
-    ("notes", "all", notes) -> { return notes }
+    ("notes", "all", notes) then { return notes }
   }
 }
 
@@ -719,8 +719,8 @@ def has_key(entries Array[(String, json.Json)], key String) Bool {
 // The body's `text` field, or the reason the body is not a note.
 def text_field(body String) (R, String) {
   case json.decode(body) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, doc) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, doc) then {
       if doc.is(json.JsonObject) {
         if !has_key(doc.entries(), "text") {
           return (R.error, "the object needs a \"text\" field")
@@ -763,8 +763,8 @@ def list_notes(store Pid, req httpd.Request) httpd.Response {
 
 def create_note(store Pid, req httpd.Request) httpd.Response {
   case text_field(req.body) {
-    (R.error, why) -> { return json_error(400, why) }
-    (R.ok, text) -> {
+    (R.error, why) then { return json_error(400, why) }
+    (R.ok, text) then {
       const id = add_note(store, text)
       const headers = [("Content-Type", "application/json"), ("Location", "/notes/" + id.to_string())]
       return httpd.response(201, headers, json.encode(note_json(id, text)) + "\n")
@@ -774,11 +774,11 @@ def create_note(store Pid, req httpd.Request) httpd.Response {
 
 def show_note(store Pid, req httpd.Request) httpd.Response {
   case parse_id(req.params.get("id")) {
-    (R.error, _) -> { return json_error(404, "no such note") }
-    (R.ok, id) -> {
+    (R.error, _) then { return json_error(404, "no such note") }
+    (R.ok, id) then {
       case find_note(store, id) {
-        (R.error, why) -> { return json_error(404, why) }
-        (R.ok, text) -> { return json_response(200, note_json(id, text)) }
+        (R.error, why) then { return json_error(404, why) }
+        (R.ok, text) then { return json_response(200, note_json(id, text)) }
       }
     }
   }
@@ -786,11 +786,11 @@ def show_note(store Pid, req httpd.Request) httpd.Response {
 
 def remove_note(store Pid, req httpd.Request) httpd.Response {
   case parse_id(req.params.get("id")) {
-    (R.error, _) -> { return json_error(404, "no such note") }
-    (R.ok, id) -> {
+    (R.error, _) then { return json_error(404, "no such note") }
+    (R.ok, id) then {
       case delete_note(store, id) {
-        (R.error, why) -> { return json_error(404, why) }
-        (R.ok, _) -> { return httpd.response(204, [], "") }
+        (R.error, why) then { return json_error(404, why) }
+        (R.ok, _) then { return httpd.response(204, [], "") }
       }
     }
   }
@@ -1015,8 +1015,8 @@ def show_form(req httpd.Request) httpd.Response {
 
 def greet(req httpd.Request) httpd.Response {
   case httpd.parse_query(req.body) {
-    (R.error, why) -> { return httpd.error(400, why + "\n") }
-    (R.ok, fields) -> {
+    (R.error, why) then { return httpd.error(400, why + "\n") }
+    (R.ok, fields) then {
       if !fields.has("name") || fields.get("name") == "" {
         return httpd.error(400, "the form needs a name\n")
       }
@@ -1115,8 +1115,8 @@ def static_file(req httpd.Request) httpd.Response {
     return httpd.error(404, "404 page not found\n")
   }
   case file.read("public/" + rel) {
-    (R.error, _) -> { return httpd.error(404, "404 page not found\n") }
-    (R.ok, data) -> { return httpd.response(200, [("Content-Type", content_type(rel))], data) }
+    (R.error, _) then { return httpd.error(404, "404 page not found\n") }
+    (R.ok, data) then { return httpd.response(200, [("Content-Type", content_type(rel))], data) }
   }
 }
 
@@ -1258,7 +1258,7 @@ const server = httpd.serve_with(listener, app(self_pid()), options())
 println("listening on http://127.0.0.1:8080")
 
 receive {
-  "shutdown" -> { println("shutdown requested, draining") }
+  "shutdown" then { println("shutdown requested, draining") }
 }
 const (R.ok, _) = server.stop()
 server.wait()

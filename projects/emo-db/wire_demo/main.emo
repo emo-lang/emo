@@ -29,21 +29,21 @@ def main() {
     ready = argv[3]
   }
   case rocksdb.destroy_db(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
   case record.open(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, store) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, store) then {
       case net.listen("127.0.0.1", port) {
-        (R.error, why) -> { raise Exception.new(message: why) }
-        (R.ok, listener) -> {
+        (R.error, why) then { raise Exception.new(message: why) }
+        (R.ok, listener) then {
           const bound = listener.port()
           println("listening")
           if ready != "" {
             case file.write(ready, bound.to_string()) {
-              (R.error, why) -> { raise Exception.new(message: why) }
-              (R.ok, _) -> {}
+              (R.error, why) then { raise Exception.new(message: why) }
+              (R.ok, _) then {}
             }
           }
           wire.serve(listener, store,

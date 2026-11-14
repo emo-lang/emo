@@ -119,28 +119,28 @@ println("size224: " + d224.size().to_string() + " block: " + d224.block_size().t
 // digit accepted, and every rejection naming its offset.
 println("hex empty: [" + crypto.hex_encode(Bytes.new(0)) + "]")
 case crypto.hex_decode("") {
-  (R.ok, v) -> { println("hex empty decode: [" + crypto.hex_encode(v) + "]") }
-  (R.error, why) -> { println(why) }
+  (R.ok, v) then { println("hex empty decode: [" + crypto.hex_encode(v) + "]") }
+  (R.error, why) then { println(why) }
 }
 case crypto.hex_decode("BA7816bF") {
-  (R.ok, v) -> { println("hex mixed case: " + crypto.hex_encode(v)) }
-  (R.error, why) -> { println(why) }
+  (R.ok, v) then { println("hex mixed case: " + crypto.hex_encode(v)) }
+  (R.error, why) then { println(why) }
 }
 case crypto.hex_decode("abc") {
-  (R.ok, _) -> { println("unexpected ok") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _) then { println("unexpected ok") }
+  (R.error, why) then { println(why) }
 }
 case crypto.hex_decode("zz") {
-  (R.ok, _) -> { println("unexpected ok") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _) then { println("unexpected ok") }
+  (R.error, why) then { println(why) }
 }
 case crypto.hex_decode("ab0g") {
-  (R.ok, _) -> { println("unexpected ok") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _) then { println("unexpected ok") }
+  (R.error, why) then { println(why) }
 }
 case crypto.hex_decode("abz0") {
-  (R.ok, _) -> { println("unexpected ok") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _) then { println("unexpected ok") }
+  (R.error, why) then { println(why) }
 }
 
 // ---- the 64-bit family: the same messages through SHA-512,
@@ -243,8 +243,8 @@ println("iface512: " + iface_digest(crypto.sha2.new512()))
 // hex decoder — each output pinned against the Go oracle.
 def hex_str(text String) Bytes {
   case crypto.hex_decode(text) {
-    (R.ok, v) -> { return v }
-    (R.error, why) -> { println(why) }
+    (R.ok, v) then { return v }
+    (R.error, why) then { println(why) }
   }
   return Bytes.new(0)
 }

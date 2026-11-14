@@ -339,8 +339,8 @@ class Document {
   // order. A selector that does not compile answers the error.
   def find(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(all_nodes(self.items, 0, []), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(all_nodes(self.items, 0, []), s, self.root_id)) }
     }
   }
 
@@ -443,8 +443,8 @@ class Selection {
   // attribute is absent — the caller's explicit default.
   def attr_or(name String, fallback String) String {
     case self.attr(name) {
-      (R.ok, v)    -> { return v }
-      (R.error, _) -> { return fallback }
+      (R.ok, v)    then { return v }
+      (R.error, _) then { return fallback }
     }
   }
 
@@ -479,8 +479,8 @@ class Selection {
   // document order, duplicates collapsed.
   def find(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then {
         return (R.ok, Selection.new(find_over(self.items, 0, s, self.root_id, Map.new(), []), self.root_id))
       }
     }
@@ -494,8 +494,8 @@ class Selection {
   // The element children of every node that the selector matches.
   def children_filtered(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.children().nodes(), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.children().nodes(), s, self.root_id)) }
     }
   }
 
@@ -517,8 +517,8 @@ class Selection {
   // The ancestors of every node that the selector matches.
   def parents_filtered(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.parents().nodes(), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.parents().nodes(), s, self.root_id)) }
     }
   }
 
@@ -526,8 +526,8 @@ class Selection {
   // matches; nodes with no such ancestor contribute nothing.
   def closest(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then {
         return (R.ok, Selection.new(closest_over(self.items, 0, s, self.root_id, Map.new(), []), self.root_id))
       }
     }
@@ -546,8 +546,8 @@ class Selection {
   // The following element siblings that the selector matches.
   def next_filtered(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.next_all().nodes(), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.next_all().nodes(), s, self.root_id)) }
     }
   }
 
@@ -564,8 +564,8 @@ class Selection {
   // The preceding element siblings that the selector matches.
   def prev_filtered(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.prev_all().nodes(), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.prev_all().nodes(), s, self.root_id)) }
     }
   }
 
@@ -577,16 +577,16 @@ class Selection {
   // The element siblings of every node that the selector matches.
   def siblings_filtered(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.siblings().nodes(), s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.siblings().nodes(), s, self.root_id)) }
     }
   }
 
   // The nodes of this selection that the selector matches.
   def filter(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, match_selection(self.items, s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, match_selection(self.items, s, self.root_id)) }
     }
   }
 
@@ -594,8 +594,8 @@ class Selection {
   // non-element nodes never match, so they stay.
   def not(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, Selection.new(not_over(self.items, 0, s, self.root_id, []), self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, Selection.new(not_over(self.items, 0, s, self.root_id, []), self.root_id)) }
     }
   }
 
@@ -603,16 +603,16 @@ class Selection {
   // descendant.
   def has(sel String) (R, Selection) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, Selection.new(has_over(self.items, 0, s, self.root_id, []), self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, Selection.new(has_over(self.items, 0, s, self.root_id, []), self.root_id)) }
     }
   }
 
   // Whether any node of the selection matches the selector.
   def is?(sel String) (R, Bool) {
     case compile_selector(sel) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, s)      -> { return (R.ok, is_over(self.items, 0, s, self.root_id)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, s)      then { return (R.ok, is_over(self.items, 0, s, self.root_id)) }
     }
   }
 
@@ -752,8 +752,8 @@ class Sel {
 def parse(text String) (R, Document) {
   const data = text.to_bytes()
   case parse_nodes(data, 0, 0, 0, "", -1, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       wire_roots(r[0], 0)
       return (R.ok, Document.new(nodes: r[0], root_id: root_element_id(r[0])))
     }
@@ -1000,8 +1000,8 @@ def question_at(data Bytes, i Int64) Bool {
 // anything else is an error naming both sides.
 def parse_close(data Bytes, i Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
   case scan_close_tag(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const name = r[0]
       const after = r[1]
       if is_void_element(name) {
@@ -1022,8 +1022,8 @@ def parse_close(data Bytes, i Int64, idc Int64, stop_tag String, opener Int64, a
 // `>`. Answers `(name, position after `>`)`.
 def scan_close_tag(data Bytes, i Int64) (R, (String, Int64)) {
   case scan_tag_name(data, i + 2, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const name = r[0]
       if name == "" {
         return (R.error, err_at(i, "an empty closing tag — name the element you mean to close"))
@@ -1042,8 +1042,8 @@ def scan_close_tag(data Bytes, i Int64) (R, (String, Int64)) {
 
 def parse_comment(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
   case scan_comment(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const node = CommentNode.new(nid: idc, text: r[0], parent_e: [])
       return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
     }
@@ -1091,8 +1091,8 @@ def doctype_at(data Bytes, i Int64) Bool {
 
 def parse_doctype(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
   case scan_doctype(data, i + 9, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const node = DoctypeNode.new(nid: idc, text: r[0], parent_e: [])
       return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
     }
@@ -1112,8 +1112,8 @@ def scan_doctype(data Bytes, i Int64, start Int64) (R, (String, Int64)) {
 
 def parse_element_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
   case parse_element(data, i, depth, idc) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       return parse_nodes(data, r[1], depth, r[2], stop_tag, opener, acc.append(r[0]))
     }
   }
@@ -1121,8 +1121,8 @@ def parse_element_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag Str
 
 def parse_text_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String, opener Int64, acc Array[Node]) (R, (Array[Node], Int64, Int64)) {
   case read_text(data, i, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const node = TextNode.new(nid: idc, text: r[0], parent_e: [])
       return parse_nodes(data, r[1], depth, idc + 1, stop_tag, opener, acc.append(node))
     }
@@ -1131,11 +1131,11 @@ def parse_text_root(data Bytes, i Int64, depth Int64, idc Int64, stop_tag String
 
 def parse_element(data Bytes, i Int64, depth Int64, idc Int64) (R, (Node, Int64, Int64)) {
   case scan_tag_name(data, i + 1, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       case parse_attrs(data, r[1], r[0], i, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, a)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, a)      then {
           const name = r[0]
           const attrs = a[0]
           const after_tag = a[1]
@@ -1163,8 +1163,8 @@ def parse_element(data Bytes, i Int64, depth Int64, idc Int64) (R, (Node, Int64,
 // tag; the element takes its id before the children's.
 def element_with_children(data Bytes, i Int64, opener Int64, depth Int64, idc Int64, name String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
   case parse_nodes(data, i, depth + 1, idc + 1, name, opener, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kids)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kids)   then {
       const node = Element.new(nid: idc, tag: name, attrs: attrs, children: kids[0], parent_e: [])
       return (R.ok, (node, kids[1], kids[2]))
     }
@@ -1207,8 +1207,8 @@ def parse_attrs(data Bytes, i Int64, tag String, tag_pos Int64, acc Array[(Strin
     return (R.error, err_at(k, "expected an attribute name inside `<" + tag + ">`"))
   }
   case scan_attr_name(data, k, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, n)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, n)      then {
       const name = n[0]
       if attr_has(acc, name, 0) {
         return (R.error, err_at(k, "a duplicate attribute `" + name + "` on `<" + tag + ">`"))
@@ -1261,8 +1261,8 @@ def parse_attr_value(data Bytes, i Int64, tag String, tag_pos Int64, name String
 
 def quoted_value(data Bytes, i Int64, quote Int64, tag String, tag_pos Int64, name String, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
   case read_quoted(data, i + 1, quote, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then {
       return parse_attrs(data, v[1], tag, tag_pos, acc.append((name, v[0])))
     }
   }
@@ -1270,8 +1270,8 @@ def quoted_value(data Bytes, i Int64, quote Int64, tag String, tag_pos Int64, na
 
 def unquoted_value(data Bytes, i Int64, tag String, tag_pos Int64, name String, acc Array[(String, String)]) (R, (Array[(String, String)], Int64, Bool)) {
   case read_unquoted(data, i, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then {
       return parse_attrs(data, v[1], tag, tag_pos, acc.append((name, v[0])))
     }
   }
@@ -1312,8 +1312,8 @@ def scan_quoted_plain(data Bytes, i Int64, quote Int64) Int64 {
 
 def quoted_entity(data Bytes, i Int64, quote Int64, acc String) (R, (String, Int64)) {
   case decode_entity(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return read_quoted(data, r[1], quote, acc + r[0]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return read_quoted(data, r[1], quote, acc + r[0]) }
   }
 }
 
@@ -1352,8 +1352,8 @@ def scan_unquoted_plain(data Bytes, i Int64) Int64 {
 
 def unquoted_entity(data Bytes, i Int64, acc String) (R, (String, Int64)) {
   case decode_entity(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return read_unquoted(data, r[1], acc + r[0]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return read_unquoted(data, r[1], acc + r[0]) }
   }
 }
 
@@ -1376,8 +1376,8 @@ def read_text(data Bytes, i Int64, acc String) (R, (String, Int64)) {
 
 def text_entity(data Bytes, i Int64, acc String) (R, (String, Int64)) {
   case decode_entity(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return read_text(data, r[1], acc + r[0]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return read_text(data, r[1], acc + r[0]) }
   }
 }
 
@@ -1474,8 +1474,8 @@ def numeric_codepoint(digits String, hex Bool, at Int64, after Int64) (R, (Strin
     base = 16
   }
   case ref_value(digits, base, 0) {
-    (R.error, why) -> { return (R.error, err_at(at, why)) }
-    (R.ok, cp)     -> {
+    (R.error, why) then { return (R.error, err_at(at, why)) }
+    (R.ok, cp)     then {
       if cp == 0 {
         return (R.error, err_at(at, "the character reference names no character (`&#0;`)"))
       }
@@ -1540,11 +1540,11 @@ def ref_digit(b Int64, hex Bool) Int64 {
 // references — ending at the case-insensitive close tag.
 def parse_raw_content(data Bytes, i Int64, opener Int64, idc Int64, tag String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
   case scan_special_end(data, i, tag) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, stop)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, stop)   then {
       case expect_special_close(data, stop, tag, opener) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, after)  -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, after)  then {
           const content = bytes_slice(data, i, stop)
           const node = Element.new(nid: idc, tag: tag, attrs: attrs, children: one_text_child(idc + 1, content), parent_e: [])
           return (R.ok, (node, after, after_text_id(idc, content)))
@@ -1559,11 +1559,11 @@ def parse_raw_content(data Bytes, i Int64, opener Int64, idc Int64, tag String, 
 // parse.
 def parse_rcdata_content(data Bytes, i Int64, opener Int64, idc Int64, tag String, attrs Array[(String, String)]) (R, (Node, Int64, Int64)) {
   case read_rcdata(data, i, tag, "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       case expect_special_close(data, r[1], tag, opener) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, after)  -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, after)  then {
           const node = Element.new(nid: idc, tag: tag, attrs: attrs, children: one_text_child(idc + 1, r[0]), parent_e: [])
           return (R.ok, (node, after, after_text_id(idc, r[0])))
         }
@@ -1651,8 +1651,8 @@ def read_rcdata(data Bytes, i Int64, tag String, acc String) (R, (String, Int64)
 
 def rcdata_entity(data Bytes, j Int64, tag String, acc String) (R, (String, Int64)) {
   case decode_entity(data, j) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return read_rcdata(data, r[1], tag, acc + r[0]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return read_rcdata(data, r[1], tag, acc + r[0]) }
   }
 }
 
@@ -1985,8 +1985,8 @@ def two_char_tok(data Bytes, i Int64, kind Tk, acc Array[Tok]) (R, Array[Tok]) {
 def compile_selector(text String) (R, Sel) {
   const data = text.to_bytes()
   case lex_selector(data, 0, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, toks)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, toks)   then {
       return parse_sel(data, toks, 0, [])
     }
   }
@@ -1999,8 +1999,8 @@ def parse_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Chain]) (R, Sel) {
     return (R.error, sel_err(t.pos(), "an empty selector"))
   }
   case parse_chain(data, toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const acc2 = acc.append(r[0])
       const after = toks[r[1]]
       if after.kind() == Tk.t_comma {
@@ -2018,8 +2018,8 @@ def parse_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Chain]) (R, Sel) {
 // compounds is the descendant combinator.
 def parse_chain(data Bytes, toks Array[Tok], i Int64) (R, (Chain, Int64)) {
   case parse_compound(data, toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       return parse_chain_rest(data, toks, r[1], [Compound.new(comb: "", simples: r[0])])
     }
   }
@@ -2050,8 +2050,8 @@ def parse_chain_rest(data Bytes, toks Array[Tok], i Int64, parts Array[Compound]
     }
   }
   case parse_compound(data, toks, j) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       return parse_chain_rest(data, toks, r[1], parts.append(Compound.new(comb: comb, simples: r[0])))
     }
   }
@@ -2114,8 +2114,8 @@ def type_simple(t Tok) Simple {
 // The identifier after `.` — class names stay case-sensitive.
 def class_simple(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
   case simple_name(toks, i, "`.`") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const simple = Simple.new(kind: SelKind.s_class, name: r[0], op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
       return parse_compound_loop(data, toks, r[1], acc.append(simple))
     }
@@ -2125,8 +2125,8 @@ def class_simple(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (A
 // The identifier after `#` — id values stay case-sensitive.
 def id_simple(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (Array[Simple], Int64)) {
   case simple_name(toks, i, "`#`") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       const simple = Simple.new(kind: SelKind.s_id, name: r[0], op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
       return parse_compound_loop(data, toks, r[1], acc.append(simple))
     }
@@ -2150,8 +2150,8 @@ def parse_attr_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, 
   }
   const name = t.text().lower()
   case attr_op_text(toks[i + 1]) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, o)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, o)      then {
       if o == "" {
         const simple = Simple.new(kind: SelKind.s_attr, name: name, op: "", val: "", pseudo: PseudoKind.ps_none, nth_a: 0, nth_b: 0, nots: [])
         return parse_compound_loop(data, toks, i + 2, acc.append(simple))
@@ -2265,8 +2265,8 @@ def parse_nth_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple], name 
     return (R.error, sel_err(lp.pos(), "`:" + name + "` expects parentheses"))
   }
   case nth_paren(toks, i + 1) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, rp)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, rp)     then {
       return nth_argument(data, toks, lp, rp, acc, name)
     }
   }
@@ -2275,8 +2275,8 @@ def parse_nth_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple], name 
 def nth_argument(data Bytes, toks Array[Tok], lp Tok, rp Int64, acc Array[Simple], name String) (R, (Array[Simple], Int64)) {
   const raw = bytes_slice(data, lp.pos() + 1, toks[rp].pos())
   case parse_anb(raw) {
-    (R.error, why) -> { return (R.error, sel_err(lp.pos(), why)) }
-    (R.ok, ab)     -> {
+    (R.error, why) then { return (R.error, sel_err(lp.pos(), why)) }
+    (R.ok, ab)     then {
       var pseudo = PseudoKind.ps_nth_child
       if name == "nth-last-child" {
         pseudo = PseudoKind.ps_nth_last_child
@@ -2309,8 +2309,8 @@ def parse_not_sel(data Bytes, toks Array[Tok], i Int64, acc Array[Simple]) (R, (
     return (R.error, sel_err(lp.pos(), "`:not` expects parentheses"))
   }
   case parse_compound(data, toks, i + 1) {
-    (R.error, _)  -> { return (R.error, sel_err(lp.pos(), "`:not` expects a compound selector in parentheses")) }
-    (R.ok, r)     -> {
+    (R.error, _)  then { return (R.error, sel_err(lp.pos(), "`:not` expects a compound selector in parentheses")) }
+    (R.ok, r)     then {
       const rp = toks[r[1]]
       if rp.kind() != Tk.t_rparen {
         return (R.error, sel_err(rp.pos(), "expected `)` to close `:not(`"))
@@ -2363,8 +2363,8 @@ def anb_parts(t String) (R, (Int64, Int64)) {
     return anb_constant(t)
   }
   case anb_a(t.substring(0, npos)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, a)      -> { return anb_b(a, t, npos) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, a)      then { return anb_b(a, t, npos) }
   }
 }
 
@@ -2382,8 +2382,8 @@ def anb_a(s String) (R, Int64) {
 
 def anb_constant(t String) (R, (Int64, Int64)) {
   case int_strict(t, "an :nth argument") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> { return (R.ok, (0, v)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then { return (R.ok, (0, v)) }
   }
 }
 
@@ -2400,8 +2400,8 @@ def anb_b(a Int64, t String, npos Int64) (R, (Int64, Int64)) {
     return (R.error, "the `b` of an :nth argument needs a sign")
   }
   case int_strict(rest, "the `b` of an :nth argument") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, b)      -> { return (R.ok, (a, b)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, b)      then { return (R.ok, (a, b)) }
   }
 }
 
@@ -2434,8 +2434,8 @@ def int_strict(s String, what String) (R, Int64) {
 
 def signed_digits(body String, neg Bool, what String, s String) (R, Int64) {
   case digits_value(body, 0) {
-    (R.error, _) -> { return (R.error, "`" + s + "` is not " + what) }
-    (R.ok, v)    -> {
+    (R.error, _) then { return (R.error, "`" + s + "` is not " + what) }
+    (R.ok, v)    then {
       if neg {
         return (R.ok, 0 - v)
       }
@@ -2501,8 +2501,8 @@ def matches_chain(n Element, parts Array[Compound], k Int64, root_id Int64) Bool
 // The child combinator: the parent must match the rest.
 def chain_parent(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
   case n.parent() {
-    (R.error, _) -> { return false }
-    (R.ok, p)    -> {
+    (R.error, _) then { return false }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return false
       }
@@ -2515,16 +2515,16 @@ def chain_parent(n Element, parts Array[Compound], k Int64, root_id Int64) Bool 
 // must match the rest.
 def chain_prev(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
   case prev_element(n) {
-    (R.error, _) -> { return false }
-    (R.ok, p)    -> { return matches_chain(p, parts, k, root_id) }
+    (R.error, _) then { return false }
+    (R.ok, p)    then { return matches_chain(p, parts, k, root_id) }
   }
 }
 
 // The descendant combinator: try every ancestor.
 def any_ancestor(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
   case n.parent() {
-    (R.error, _) -> { return false }
-    (R.ok, p)    -> {
+    (R.error, _) then { return false }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return false
       }
@@ -2540,8 +2540,8 @@ def any_ancestor(n Element, parts Array[Compound], k Int64, root_id Int64) Bool 
 // The general-sibling combinator: try every preceding element.
 def any_prev_sibling(n Element, parts Array[Compound], k Int64, root_id Int64) Bool {
   case prev_element(n) {
-    (R.error, _) -> { return false }
-    (R.ok, p)    -> {
+    (R.error, _) then { return false }
+    (R.ok, p)    then {
       if matches_chain(p, parts, k, root_id) {
         return true
       }
@@ -2562,37 +2562,37 @@ def matches_compound(n Element, simples Array[Simple], i Int64, root_id Int64) B
 
 def match_simple(n Element, s Simple, root_id Int64) Bool {
   case s.kind() {
-    SelKind.s_universal -> { return true }
-    SelKind.s_type      -> {
+    SelKind.s_universal then { return true }
+    SelKind.s_type      then {
       const tag = n.tag()
       return tag == s.name()
     }
-    SelKind.s_id        -> { return id_is(n, s.name()) }
-    SelKind.s_class     -> { return class_is(n, s.name()) }
-    SelKind.s_attr      -> { return attr_match(n, s) }
-    SelKind.s_pseudo    -> { return pseudo_match(n, s, root_id) }
+    SelKind.s_id        then { return id_is(n, s.name()) }
+    SelKind.s_class     then { return class_is(n, s.name()) }
+    SelKind.s_attr      then { return attr_match(n, s) }
+    SelKind.s_pseudo    then { return pseudo_match(n, s, root_id) }
   }
 }
 
 def id_is(n Element, name String) Bool {
   case n.attr("id") {
-    (R.ok, v)    -> { return v == name }
-    (R.error, _) -> { return false }
+    (R.ok, v)    then { return v == name }
+    (R.error, _) then { return false }
   }
 }
 
 def class_is(n Element, name String) Bool {
   case n.attr("class") {
-    (R.ok, v)    -> { return word_list_has(v, name) }
-    (R.error, _) -> { return false }
+    (R.ok, v)    then { return word_list_has(v, name) }
+    (R.error, _) then { return false }
   }
 }
 
 // The attribute test: bare presence, then the five relations.
 def attr_match(n Element, s Simple) Bool {
   case n.attr(s.name()) {
-    (R.error, _) -> { return false }
-    (R.ok, v)    -> {
+    (R.error, _) then { return false }
+    (R.ok, v)    then {
       const op = s.op()
       if op == "" {
         return true
@@ -2647,23 +2647,23 @@ def ends_with_str(hay String, needle String) Bool {
 
 def pseudo_match(n Element, s Simple, root_id Int64) Bool {
   case s.pseudo() {
-    PseudoKind.ps_first_child   -> { return no_prev_element(n) }
-    PseudoKind.ps_last_child    -> { return no_next_element(n) }
-    PseudoKind.ps_only_child    -> { return no_prev_element(n) && no_next_element(n) }
-    PseudoKind.ps_nth_child     -> { return nth_ok(s.nth_a(), s.nth_b(), element_index(n)) }
-    PseudoKind.ps_nth_last_child -> { return nth_ok(s.nth_a(), s.nth_b(), element_index_from_end(n)) }
-    PseudoKind.ps_first_of_type -> { return no_prev_type(n) }
-    PseudoKind.ps_last_of_type  -> { return no_next_type(n) }
-    PseudoKind.ps_only_of_type  -> { return no_prev_type(n) && no_next_type(n) }
-    PseudoKind.ps_nth_of_type   -> { return nth_ok(s.nth_a(), s.nth_b(), type_index(n)) }
-    PseudoKind.ps_not           -> { return not_walk(s.nots(), 0, n, root_id) }
-    PseudoKind.ps_empty         -> { return is_empty_element(n) }
-    PseudoKind.ps_root          -> { return n.id() == root_id }
-    PseudoKind.ps_contains      -> {
+    PseudoKind.ps_first_child   then { return no_prev_element(n) }
+    PseudoKind.ps_last_child    then { return no_next_element(n) }
+    PseudoKind.ps_only_child    then { return no_prev_element(n) && no_next_element(n) }
+    PseudoKind.ps_nth_child     then { return nth_ok(s.nth_a(), s.nth_b(), element_index(n)) }
+    PseudoKind.ps_nth_last_child then { return nth_ok(s.nth_a(), s.nth_b(), element_index_from_end(n)) }
+    PseudoKind.ps_first_of_type then { return no_prev_type(n) }
+    PseudoKind.ps_last_of_type  then { return no_next_type(n) }
+    PseudoKind.ps_only_of_type  then { return no_prev_type(n) && no_next_type(n) }
+    PseudoKind.ps_nth_of_type   then { return nth_ok(s.nth_a(), s.nth_b(), type_index(n)) }
+    PseudoKind.ps_not           then { return not_walk(s.nots(), 0, n, root_id) }
+    PseudoKind.ps_empty         then { return is_empty_element(n) }
+    PseudoKind.ps_root          then { return n.id() == root_id }
+    PseudoKind.ps_contains      then {
       const text = n.text()
       return text.index_of(s.val()) != -1
     }
-    PseudoKind.ps_none          -> { return false }
+    PseudoKind.ps_none          then { return false }
   }
 }
 
@@ -2712,29 +2712,29 @@ def nth_ok(a Int64, b Int64, idx Int64) Bool {
 // reading browsers give the `html` element.
 def no_prev_element(n Element) Bool {
   case prev_element(n) {
-    (R.error, _) -> { return true }
-    (R.ok, _)    -> { return false }
+    (R.error, _) then { return true }
+    (R.ok, _)    then { return false }
   }
 }
 
 def no_next_element(n Element) Bool {
   case next_element(n) {
-    (R.error, _) -> { return true }
-    (R.ok, _)    -> { return false }
+    (R.error, _) then { return true }
+    (R.ok, _)    then { return false }
   }
 }
 
 def no_prev_type(n Element) Bool {
   case prev_of_type(n) {
-    (R.error, _) -> { return true }
-    (R.ok, _)    -> { return false }
+    (R.error, _) then { return true }
+    (R.ok, _)    then { return false }
   }
 }
 
 def no_next_type(n Element) Bool {
   case next_of_type(n) {
-    (R.error, _) -> { return true }
-    (R.ok, _)    -> { return false }
+    (R.error, _) then { return true }
+    (R.ok, _)    then { return false }
   }
 }
 
@@ -2756,8 +2756,8 @@ def type_index(n Element) Int64 {
 // from the last sibling backwards.
 def sibling_index(n Element, of_type Bool, from_end Bool) Int64 {
   case n.parent() {
-    (R.error, _) -> { return 1 }
-    (R.ok, p)    -> {
+    (R.error, _) then { return 1 }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return 1
       }
@@ -2811,8 +2811,8 @@ def next_element(n Element) (R, Element) {
 
 def sibling_step(n Element, forward Bool) (R, Element) {
   case n.parent() {
-    (R.error, _) -> { return (R.error, "no parent") }
-    (R.ok, p)    -> {
+    (R.error, _) then { return (R.error, "no parent") }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return (R.error, "no parent")
       }
@@ -2849,8 +2849,8 @@ def next_of_type(n Element) (R, Element) {
 
 def type_step(n Element, forward Bool) (R, Element) {
   case n.parent() {
-    (R.error, _) -> { return (R.error, "no parent") }
-    (R.ok, p)    -> {
+    (R.error, _) then { return (R.error, "no parent") }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return (R.error, "no parent")
       }
@@ -2981,13 +2981,13 @@ def parent_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node])
     return acc
   }
   case ns[i].parent() {
-    (R.ok, p)    -> {
+    (R.ok, p)    then {
       if seen.has(p.id()) == false {
         seen.set(p.id(), true)
         return parent_over(ns, i + 1, seen, acc.append(p))
       }
     }
-    (R.error, _) -> {}
+    (R.error, _) then {}
   }
   return parent_over(ns, i + 1, seen, acc)
 }
@@ -3002,8 +3002,8 @@ def parents_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[Node]
 // The ancestors of one node, nearest first.
 def parent_chain(n Node, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
   case n.parent() {
-    (R.error, _) -> { return acc }
-    (R.ok, p)    -> {
+    (R.error, _) then { return acc }
+    (R.ok, p)    then {
       if seen.has(p.id()) {
         return acc
       }
@@ -3033,8 +3033,8 @@ def closest_walk(n Node, s Sel, root_id Int64, seen Map[Int64, Bool], acc Array[
     }
   }
   case n.parent() {
-    (R.error, _) -> { return acc }
-    (R.ok, p)    -> { return closest_walk(p, s, root_id, seen, acc) }
+    (R.error, _) then { return acc }
+    (R.ok, p)    then { return closest_walk(p, s, root_id, seen, acc) }
   }
 }
 
@@ -3049,8 +3049,8 @@ def siblings_over(ns Array[Node], i Int64, forward Bool, seen Map[Int64, Bool], 
 
 def siblings_of(n Node, forward Bool, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
   case n.parent() {
-    (R.error, _) -> { return acc }
-    (R.ok, p)    -> {
+    (R.error, _) then { return acc }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return acc
       }
@@ -3106,8 +3106,8 @@ def siblings_all_over(ns Array[Node], i Int64, seen Map[Int64, Bool], acc Array[
 
 def siblings_all_of(n Node, seen Map[Int64, Bool], acc Array[Node]) Array[Node] {
   case n.parent() {
-    (R.error, _) -> { return acc }
-    (R.ok, p)    -> {
+    (R.error, _) then { return acc }
+    (R.ok, p)    then {
       if p.is_element?() == false {
         return acc
       }

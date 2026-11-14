@@ -54,43 +54,43 @@ def joined(xs Array[String]) String {
 // failure is not something this golden has a meaningful answer for.
 def open_or_die(path String, cfs Array[String]) rocksdb.Db {
   case rocksdb.open(path, cfs, true) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, db) -> { return db }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, db) then { return db }
   }
 }
 
 def cf_create_or_die(db rocksdb.Db, name String) rocksdb.Cf {
   case db.cf_create(name) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, cf) -> { return cf }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, cf) then { return cf }
   }
 }
 
 def cf_or_die(db rocksdb.Db, name String) rocksdb.Cf {
   case db.cf(name) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, cf) -> { return cf }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, cf) then { return cf }
   }
 }
 
 def put_or_die(cf rocksdb.Cf, key Bytes, value Bytes) {
   case cf.put(key, value) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
 }
 
 def get_or_die(cf rocksdb.Cf, key Bytes) Array[Bytes] {
   case cf.get(key) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, found) -> { return found }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, found) then { return found }
   }
 }
 
 def get_at_or_die(cf rocksdb.Cf, key Bytes, snap rocksdb.Snapshot) Array[Bytes] {
   case cf.get_at(key, snap) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, found) -> { return found }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, found) then { return found }
   }
 }
 
@@ -103,72 +103,72 @@ def only(found Array[Bytes], what String) Bytes {
 
 def batch_or_die(db rocksdb.Db) rocksdb.Batch {
   case db.batch() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, batch) -> { return batch }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, batch) then { return batch }
   }
 }
 
 def snapshot_or_die(db rocksdb.Db) rocksdb.Snapshot {
   case db.snapshot() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, snap) -> { return snap }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, snap) then { return snap }
   }
 }
 
 def iter_or_die(cf rocksdb.Cf) rocksdb.Iter {
   case cf.iter() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, it) -> { return it }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, it) then { return it }
   }
 }
 
 def iter_at_or_die(cf rocksdb.Cf, snap rocksdb.Snapshot) rocksdb.Iter {
   case cf.iter_at(snap) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, it) -> { return it }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, it) then { return it }
   }
 }
 
 def batch_put_or_die(batch rocksdb.Batch, cf rocksdb.Cf, key Bytes, value Bytes) {
   case batch.put(cf, key, value) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
 }
 
 def batch_delete_or_die(batch rocksdb.Batch, cf rocksdb.Cf, key Bytes) {
   case batch.delete(cf, key) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
 }
 
 def batch_write_or_die(batch rocksdb.Batch) {
   case batch.write() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
 }
 
 def iter_key(it rocksdb.Iter) Bytes {
   case it.key() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, key) -> { return key }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, key) then { return key }
   }
 }
 
 def iter_value(it rocksdb.Iter) Bytes {
   case it.value() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, value) -> { return value }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, value) then { return value }
   }
 }
 
 // ---- a clean start -------------------------------------------------------
 
 case rocksdb.destroy_db(path) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, _) -> {}
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, _) then {}
 }
 
 const db = open_or_die(path, ["default", "notes"])
@@ -255,8 +255,8 @@ db.close()
 const again = open_or_die(path, ["default", "notes", "indexes"])
 const persisted = only(get_or_die(cf_or_die(again, "notes"), "user:1".to_bytes()), "user:1 after reopen")
 case again.cf_list() {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, names) -> { println("reopen: user:1=${hex(persisted)} families=${joined(names)}") }
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, names) then { println("reopen: user:1=${hex(persisted)} families=${joined(names)}") }
 }
 again.close()
 

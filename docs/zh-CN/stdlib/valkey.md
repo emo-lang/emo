@@ -117,8 +117,8 @@ interface Reply {
 
 ```emo
 case v.command(["OBJECT", "ENCODING", "greeting"]) {
-  (R.error, why)      -> { println("refused: ${why}") }
-  (R.ok, reply)       -> {
+  (R.error, why)      then { println("refused: ${why}") }
+  (R.ok, reply)       then {
     if reply.is_null?() {
       println("nothing there")
     } else {
@@ -148,19 +148,19 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 // ...一个服务器进程在 listener 上 accept ...
 
 case valkey.connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed") }
-  (R.ok, v)      -> {
+  (R.error, why) then { println("connect failed") }
+  (R.ok, v)      then {
     case v.ping() {
-      (R.error, why) -> { println("ping failed: ${why}") }
-      (R.ok, pong)   -> { println(pong) }        // PONG
+      (R.error, why) then { println("ping failed: ${why}") }
+      (R.ok, pong)   then { println(pong) }        // PONG
     }
     case v.set("greeting", "hola") {
-      (R.error, why) -> { println("set failed: ${why}") }
-      (R.ok, ok)     -> { println(ok) }          // OK
+      (R.error, why) then { println("set failed: ${why}") }
+      (R.ok, ok)     then { println(ok) }          // OK
     }
     case v.get("greeting") {
-      (R.error, why) -> { println("get failed: ${why}") }
-      (R.ok, reply)  -> { println(reply.as_string()) }   // hola
+      (R.error, why) then { println("get failed: ${why}") }
+      (R.ok, reply)  then { println(reply.as_string()) }   // hola
     }
     v.close()
   }

@@ -17,18 +17,18 @@ def run_client(ws websocket.Websocket) {
   round_trip_big(ws, make_big("", 0))
   round_trip(ws, "last one")
   case ws.close() {
-    (R.error, why) -> { println("close failed: ${why}") }
-    (R.ok, _)      -> { println("closed") }
+    (R.error, why) then { println("close failed: ${why}") }
+    (R.ok, _)      then { println("closed") }
   }
 }
 
 def round_trip(ws websocket.Websocket, message String) {
   case ws.send_text(message) {
-    (R.error, why) -> { println("send failed: ${why}") }
-    (R.ok, _)      -> {
+    (R.error, why) then { println("send failed: ${why}") }
+    (R.ok, _)      then {
       case ws.recv_message() {
-        (R.error, why) -> { println("recv failed: ${why}") }
-        (R.ok, back)   -> { println(back) }
+        (R.error, why) then { println("recv failed: ${why}") }
+        (R.ok, back)   then { println(back) }
       }
     }
   }
@@ -38,11 +38,11 @@ def round_trip(ws websocket.Websocket, message String) {
 // count, the wire carries the bytes.
 def round_trip_big(ws websocket.Websocket, message String) {
   case ws.send_text(message) {
-    (R.error, why) -> { println("send failed: ${why}") }
-    (R.ok, _)      -> {
+    (R.error, why) then { println("send failed: ${why}") }
+    (R.ok, _)      then {
       case ws.recv_message() {
-        (R.error, why) -> { println("recv failed: ${why}") }
-        (R.ok, back)   -> { println(back.length()) }
+        (R.error, why) then { println("recv failed: ${why}") }
+        (R.ok, back)   then { println(back.length()) }
       }
     }
   }
@@ -61,26 +61,26 @@ def make_big(acc String, i Int64) String {
 
 def echo_serve(listener TcpListener) {
   case listener.accept() {
-    (R.error, why) -> { }
-    (R.ok, conn)   -> { echo_session(conn) }
+    (R.error, why) then { }
+    (R.ok, conn)   then { echo_session(conn) }
   }
 }
 
 def echo_session(conn TcpConn) {
   case websocket.accept(conn) {
-    (R.error, why) -> { }
-    (R.ok, ws)     -> { echo_loop(ws) }
+    (R.error, why) then { }
+    (R.ok, ws)     then { echo_loop(ws) }
   }
 }
 
 // Echo until the client's close frame ends the message stream.
 def echo_loop(ws websocket.Websocket) {
   case ws.recv_message() {
-    (R.error, why) -> { }
-    (R.ok, text)   -> {
+    (R.error, why) then { }
+    (R.ok, text)   then {
       case ws.send_text(text) {
-        (R.error, why) -> { }
-        (R.ok, _)      -> { echo_loop(ws) }
+        (R.error, why) then { }
+        (R.ok, _)      then { echo_loop(ws) }
       }
     }
   }
@@ -92,6 +92,6 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 do echo_serve(listener)
 
 case websocket.connect("127.0.0.1", listener.port(), "/", 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, ws)     -> { run_client(ws) }
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, ws)     then { run_client(ws) }
 }

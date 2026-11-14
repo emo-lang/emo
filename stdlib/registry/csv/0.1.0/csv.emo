@@ -59,23 +59,23 @@ def parse_records(data Bytes, pos Int64, n Int64, d Int64, acc Array[Array[Strin
     return (R.ok, acc)
   }
   case parse_record(data, pos, n, d) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, rr)     -> { return parse_records(data, rr[1], n, d, acc.append(rr[0])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, rr)     then { return parse_records(data, rr[1], n, d, acc.append(rr[0])) }
   }
 }
 
 def parse_record(data Bytes, pos Int64, n Int64, d Int64) (R, (Array[String], Int64)) {
   case parse_field(data, pos, n, d) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, fr)     -> { return parse_rest_fields(data, fr[1], n, d, [fr[0]]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, fr)     then { return parse_rest_fields(data, fr[1], n, d, [fr[0]]) }
   }
 }
 
 def parse_rest_fields(data Bytes, stop Int64, n Int64, d Int64, acc Array[String]) (R, (Array[String], Int64)) {
   if stop < n && data.get(stop) == d {
     case parse_field(data, stop + 1, n, d) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, fr)     -> { return parse_rest_fields(data, fr[1], n, d, acc.append(fr[0])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, fr)     then { return parse_rest_fields(data, fr[1], n, d, acc.append(fr[0])) }
     }
   }
   return (R.ok, (acc, consume_terminator(data, stop, n)))
@@ -134,8 +134,8 @@ def scan_unquoted(data Bytes, i Int64, n Int64, d Int64) Int64 {
 def parse_quoted(data Bytes, i Int64, n Int64, d Int64) (R, (String, Int64)) {
   const inner = i + 1
   case measure_quoted(data, inner, n, 0, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, mr)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, mr)     then {
       const len = mr[0]
       const stop = mr[1]
       if len == 0 {

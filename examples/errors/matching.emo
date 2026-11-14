@@ -8,6 +8,6 @@ const path = "config.data"
 file.write(path, "payload line")
 
 case file.read(path) {
-  (R.ok, body)   -> { println(body) }
-  (R.error, why) -> { println("read failed: ${why}") }
+  (R.ok, body)   then { println(body) }
+  (R.error, why) then { println("read failed: ${why}") }
 }

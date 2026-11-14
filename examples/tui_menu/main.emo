@@ -56,8 +56,8 @@ def clamp(n Int64, low Int64, high Int64) Int64 {
 def update(msg Msg, m Model) Model {
   const last = items().length() - 1
   case msg {
-    Msg.up -> { return m.with_index(clamp(m.index() - 1, 0, last)) }
-    Msg.down -> { return m.with_index(clamp(m.index() + 1, 0, last)) }
+    Msg.up then { return m.with_index(clamp(m.index() - 1, 0, last)) }
+    Msg.down then { return m.with_index(clamp(m.index() + 1, 0, last)) }
   }
 }
 

@@ -38,7 +38,7 @@ class Model {
 
 def update(msg Msg, m Model) Model {
   case msg {
-    Msg.save -> { return m.with_saves(m.saves() + 1) }
+    Msg.save then { return m.with_saves(m.saves() + 1) }
   }
 }
 

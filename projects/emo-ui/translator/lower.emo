@@ -365,10 +365,10 @@ class Lowerer {
 def translate(source String) String {
   const d = source.to_bytes()
   case tree.parse(d) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "emoui: " + why)
     }
-    (R.ok, model) -> {
+    (R.ok, model) then {
       return Lowerer.new().run(model)
     }
   }

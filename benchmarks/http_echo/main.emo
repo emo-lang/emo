@@ -12,5 +12,5 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 }
 
 receive {
-  _ -> { return 0 }
+  _ then { return 0 }
 }

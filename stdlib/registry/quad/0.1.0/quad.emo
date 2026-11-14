@@ -63,9 +63,9 @@ def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
   epsabs Float64, epsrel Float64) (R, (Float64, Float64)) {
   var code = 0
   case range {
-    InfiniteRange.from_bound -> { code = 1 }
-    InfiniteRange.to_bound   -> { code = -1 }
-    InfiniteRange.whole_line -> { code = 2 }
+    InfiniteRange.from_bound then { code = 1 }
+    InfiniteRange.to_bound   then { code = -1 }
+    InfiniteRange.whole_line then { code = 2 }
   }
   const (result, abserr, neval, ier) = internal.ffi.integrate_infinite(bound,
     code, epsabs, epsrel, f)

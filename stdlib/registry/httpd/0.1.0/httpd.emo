@@ -99,17 +99,17 @@ def parse_head(raw String) (R, Request) {
   }
   const lines = raw.substring(0, raw.length() - 4).split("\r\n")
   case parse_request_line(lines[0]) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parts)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)   then {
       case parse_header_lines(lines, 1, []) {
-        (R.error, why)  -> { return (R.error, why) }
-        (R.ok, headers) -> {
+        (R.error, why)  then { return (R.error, why) }
+        (R.ok, headers) then {
           case require_host(headers, parts[2]) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _)      then {
               case split_target(parts[1]) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, split)  -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, split)  then {
                   return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: "", params: Map.new()))
                 }
               }
@@ -199,8 +199,8 @@ def split_target(target String) (R, (String, Map[String, String])) {
   }
   const path = target.substring(0, q)
   case parse_query(target.substring(q + 1, target.length() - q - 1)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, query)  -> { return (R.ok, (path, query)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, query)  then { return (R.ok, (path, query)) }
   }
 }
 
@@ -220,11 +220,11 @@ def parse_query(raw String) (R, Map[String, String]) {
       return (R.error, "httpd: bad request: the query pair `" + pair + "` carries no `=`")
     }
     case percent_decode(pair.substring(0, eq)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, key)    -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, key)    then {
         case percent_decode(pair.substring(eq + 1, pair.length() - eq - 1)) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, value)  -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, value)  then {
             if !out.has(key) {
               out.set(key, value)
             }
@@ -490,8 +490,8 @@ def server_options() ServerOptions {
 def write_simple(conn TcpConn, status Int64, message String) (R, TcpConn) {
   const head = "HTTP/1.1 " + status.to_string() + " " + reason_phrase(status) + "\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + message.length().to_string() + "\r\nConnection: close\r\n\r\n" + message
   case conn.write(head) {
-    (R.error, _) -> { return conn.close() }
-    (R.ok, _)    -> { return conn.close() }
+    (R.error, _) then { return conn.close() }
+    (R.ok, _)    then { return conn.close() }
   }
 }
 
@@ -531,8 +531,8 @@ def read_head(conn TcpConn, max_bytes Int64) (R, (String, Int64)) {
 
 def read_head_lines(conn TcpConn, max_bytes Int64, total Int64, lines Array[String]) (R, (String, Int64)) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.ok, (join_head(lines), 0))
       }
@@ -563,11 +563,11 @@ def read_chunked(conn TcpConn, max_body Int64) (R, (String, Int64)) {
 
 def read_chunk_loop(conn TcpConn, max_body Int64, out String, total Int64) (R, (String, Int64)) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       case chunk_size(line) {
-        (R.error, why) -> { return (R.ok, (why, 400)) }
-        (R.ok, size)   -> {
+        (R.error, why) then { return (R.ok, (why, 400)) }
+        (R.ok, size)   then {
           if size == 0 {
             return read_trailers(conn, out)
           }
@@ -576,8 +576,8 @@ def read_chunk_loop(conn TcpConn, max_body Int64, out String, total Int64) (R, (
             return (R.ok, ("httpd: the request body exceeds the server's limit", 413))
           }
           case conn.read_exactly(size + 2) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, data)   -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, data)   then {
               const n = data.length()
               if n < 2 || data.substring(n - 2, 2) != "\r\n" {
                 return (R.ok, ("httpd: bad request: a chunk's data does not end with its CRLF", 400))
@@ -608,8 +608,8 @@ def chunk_size(line String) (R, Int64) {
 // names and values ignored this side of the wire.
 def read_trailers(conn TcpConn, body String) (R, (String, Int64)) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.ok, (body, 0))
       }
@@ -663,18 +663,18 @@ def connection_loop(c TcpConn, handler Block, options ServerOptions, counter Pid
     }
   }
   case read_head(conn, options.max_header_bytes) {
-    (R.error, _) -> { return connection_done(conn, counter) }
-    (R.ok, parts) -> {
+    (R.error, _) then { return connection_done(conn, counter) }
+    (R.ok, parts) then {
       if parts[1] != 0 {
         write_simple(conn, parts[1], parts[0])
         return connection_done(conn, counter)
       }
       case parse_head(parts[0]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           write_simple(conn, 400, why)
           return connection_done(conn, counter)
         }
-        (R.ok, req) -> {
+        (R.ok, req) then {
           return answer_request(conn, handler, options, counter, req)
         }
       }
@@ -701,16 +701,16 @@ def answer_request(c TcpConn, handler Block, options ServerOptions, counter Pid,
     }
     if req.header("Expect").lower() == "100-continue" {
       case conn.write("HTTP/1.1 100 Continue\r\n\r\n") {
-        (R.error, _) -> { return connection_done(conn, counter) }
-        (R.ok, _)    -> { }
+        (R.error, _) then { return connection_done(conn, counter) }
+        (R.ok, _)    then { }
       }
     }
     if options.read_timeout > 0.0 {
       conn = conn.set_timeout(options.read_timeout)
     }
     case read_chunked(conn, options.max_body_bytes) {
-      (R.error, _) -> { return connection_done(conn, counter) }
-      (R.ok, parts) -> {
+      (R.error, _) then { return connection_done(conn, counter) }
+      (R.ok, parts) then {
         if parts[1] != 0 {
           write_simple(conn, parts[1], parts[0])
           return connection_done(conn, counter)
@@ -732,16 +732,16 @@ def answer_request(c TcpConn, handler Block, options ServerOptions, counter Pid,
       if n > 0 {
         if req.header("Expect").lower() == "100-continue" {
           case conn.write("HTTP/1.1 100 Continue\r\n\r\n") {
-            (R.error, _) -> { return connection_done(conn, counter) }
-            (R.ok, _)    -> { }
+            (R.error, _) then { return connection_done(conn, counter) }
+            (R.ok, _)    then { }
           }
         }
         if options.read_timeout > 0.0 {
           conn = conn.set_timeout(options.read_timeout)
         }
         case conn.read_exactly(n) {
-          (R.error, _) -> { return connection_done(conn, counter) }
-          (R.ok, data) -> { body = data }
+          (R.error, _) then { return connection_done(conn, counter) }
+          (R.ok, data) then { body = data }
         }
       }
     }
@@ -759,8 +759,8 @@ def answer_request(c TcpConn, handler Block, options ServerOptions, counter Pid,
     conn = conn.set_timeout(options.read_timeout)
   }
   case conn.write(response_head(req2, resp, keep, date)) {
-    (R.error, _) -> { return connection_done(conn, counter) }
-    (R.ok, _)    -> {
+    (R.error, _) then { return connection_done(conn, counter) }
+    (R.ok, _)    then {
       if keep {
         return connection_loop(conn, handler, options, counter, false)
       }
@@ -788,30 +788,30 @@ def connection_done(conn TcpConn, counter Pid) Int64 {
 // answering waits — no caller ever mails a dead pid.
 def counter_process(count Int64, closed Bool, stopping Bool, waiters Array[Pid]) Int64 {
   receive {
-    ("httpd", "add") -> {
+    ("httpd", "add") then {
       return counter_process(count + 1, closed, stopping, waiters)
     }
-    ("httpd", "done") -> {
+    ("httpd", "done") then {
       const left = count - 1
       if closed && left == 0 {
         return counter_release(waiters)
       }
       return counter_process(left, closed, stopping, waiters)
     }
-    ("httpd", "stop") -> {
+    ("httpd", "stop") then {
       return counter_process(count, closed, true, waiters)
     }
-    ("httpd", "state?", who) -> {
+    ("httpd", "state?", who) then {
       who <- ("httpd", "state", if stopping { "stopping" } else { "serving" })
       return counter_process(count, closed, stopping, waiters)
     }
-    ("httpd", "close") -> {
+    ("httpd", "close") then {
       if count == 0 {
         return counter_release(waiters)
       }
       return counter_process(count, true, stopping, waiters)
     }
-    ("httpd", "wait", who) -> {
+    ("httpd", "wait", who) then {
       if closed && count == 0 {
         who <- ("httpd", "drained")
         return counter_process(count, closed, stopping, waiters)
@@ -831,15 +831,15 @@ def counter_release(waiters Array[Pid]) Int64 {
 
 def counter_released() Int64 {
   receive {
-    ("httpd", "wait", who) -> {
+    ("httpd", "wait", who) then {
       who <- ("httpd", "drained")
       return counter_released()
     }
-    ("httpd", "state?", who) -> {
+    ("httpd", "state?", who) then {
       who <- ("httpd", "state", "stopping")
       return counter_released()
     }
-    _ -> { return counter_released() }
+    _ then { return counter_released() }
   }
 }
 
@@ -851,13 +851,13 @@ def counter_released() Int64 {
 // The counter, told before the listener closes, says which.
 def accept_loop(listener TcpListener, handler Block, options ServerOptions, counter Pid) Int64 {
   case listener.accept() {
-    (R.error, _) -> {
+    (R.error, _) then {
       if server_state(counter) == "stopping" {
         return 0
       }
       return accept_loop(listener, handler, options, counter)
     }
-    (R.ok, conn) -> {
+    (R.ok, conn) then {
       counter <- ("httpd", "add")
       do serve_connection(conn, handler, options, counter)
       return accept_loop(listener, handler, options, counter)
@@ -870,7 +870,7 @@ def accept_loop(listener TcpListener, handler Block, options ServerOptions, coun
 def server_state(counter Pid) String {
   counter <- ("httpd", "state?", self_pid())
   receive {
-    ("httpd", "state", state) -> { return state }
+    ("httpd", "state", state) then { return state }
   }
 }
 
@@ -889,8 +889,8 @@ class Server {
     c <- ("httpd", "stop")
     const l = self.listener
     case l.close() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {
         c <- ("httpd", "close")
         return (R.ok, self)
       }
@@ -901,7 +901,7 @@ class Server {
     const c = self.counter
     c <- ("httpd", "wait", self_pid())
     receive {
-      ("httpd", "drained") -> { return self }
+      ("httpd", "drained") then { return self }
     }
   }
 }
@@ -986,8 +986,8 @@ class Router {
   // /users/{id}`) or none (`/static/` answers every method).
   def handle(pattern String, handler Block) Router {
     case parse_pattern(pattern) {
-      (R.error, why) -> { raise Exception.new(why) }
-      (R.ok, parts)  -> {
+      (R.error, why) then { raise Exception.new(why) }
+      (R.ok, parts)  then {
         return add_checked(self.routes, parts[0], parts[1], parts[2], parts[3], parts[4], handler)
       }
     }
@@ -1021,8 +1021,8 @@ def parse_pattern(pattern String) (R, (String, String, Array[String], Bool, Stri
   const space = pattern.index_of(" ")
   if space < 0 {
     case parse_path(pattern) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, parts)  -> { return (R.ok, ("", parts[0], parts[1], parts[2], parts[3])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, parts)  then { return (R.ok, ("", parts[0], parts[1], parts[2], parts[3])) }
     }
   }
   const method = pattern.substring(0, space)
@@ -1030,8 +1030,8 @@ def parse_pattern(pattern String) (R, (String, String, Array[String], Bool, Stri
     return (R.error, "httpd: the pattern `" + pattern + "` reads `" + method + "` where a method goes — a method is an uppercase token (`GET /path`)")
   }
   case parse_path(pattern.substring(space + 1, pattern.length() - space - 1)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parts)  -> { return (R.ok, (method, parts[0], parts[1], parts[2], parts[3])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)  then { return (R.ok, (method, parts[0], parts[1], parts[2], parts[3])) }
   }
 }
 
@@ -1062,8 +1062,8 @@ def parse_path(path String) (R, (String, Array[String], Bool, String)) {
     inner = path.substring(0, path.length() - 1)
   }
   case parse_segments(inner.split("/"), 1, [], "") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parts)  -> { return (R.ok, (path, parts[0], subtree, parts[1])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)  then { return (R.ok, (path, parts[0], subtree, parts[1])) }
   }
 }
 
@@ -1121,8 +1121,8 @@ def add_checked(routes Array[Route], method String, path String, tokens Array[St
 
 def register_bare(routes Array[Route], method String, pattern String, handler Block) Router {
   case parse_bare_pattern(pattern) {
-    (R.error, why) -> { raise Exception.new(why) }
-    (R.ok, parts)  -> {
+    (R.error, why) then { raise Exception.new(why) }
+    (R.ok, parts)  then {
       return add_checked(routes, method, parts[0], parts[1], parts[2], parts[3], handler)
     }
   }
@@ -1200,8 +1200,8 @@ def route_match_one(route Route, method String, path String) (R, (Map[String, St
     }
   }
   case route_shape(route, path) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, params) -> { return (R.ok, (params, route.tokens)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, params) then { return (R.ok, (params, route.tokens)) }
   }
 }
 
@@ -1328,10 +1328,10 @@ def route_best_index(routes Array[Route], method String, path String, i Int64, h
     return 0 - 1
   }
   case route_match_one(routes[i], method, path) {
-    (R.error, _) -> {
+    (R.error, _) then {
       return route_best_index(routes, method, path, i + 1, have, best, best_tokens)
     }
-    (R.ok, (_, tokens)) -> {
+    (R.ok, (_, tokens)) then {
       if !have || more_specific(tokens, best_tokens) {
         return route_best_index(routes, method, path, i + 1, true, i, tokens)
       }
@@ -1347,8 +1347,8 @@ def route_scan(routes Array[Route], method String, path String) (R, (Route, Map[
   }
   const route = routes[best]
   case route_match_one(route, method, path) {
-    (R.error, why)      -> { return (R.error, why) }
-    (R.ok, (params, _)) -> { return (R.ok, (route, params)) }
+    (R.error, why)      then { return (R.error, why) }
+    (R.ok, (params, _)) then { return (R.ok, (route, params)) }
   }
 }
 
@@ -1364,8 +1364,8 @@ def allow_from(routes Array[Route], path String, i Int64, acc Array[String]) Str
     return join_commas(acc, 0)
   }
   case route_shape(routes[i], path) {
-    (R.error, _) -> { return allow_from(routes, path, i + 1, acc) }
-    (R.ok, _)    -> {
+    (R.error, _) then { return allow_from(routes, path, i + 1, acc) }
+    (R.ok, _)    then {
       if contains_str(acc, routes[i].method, 0) {
         return allow_from(routes, path, i + 1, acc)
       }
@@ -1404,8 +1404,8 @@ def route_slash(routes Array[Route], method String, path String) Bool {
     return false
   }
   case route_scan(routes, method, path + "/") {
-    (R.error, _) -> { return false }
-    (R.ok, _)    -> { return true }
+    (R.error, _) then { return false }
+    (R.ok, _)    then { return true }
   }
 }
 
@@ -1469,8 +1469,8 @@ def decode_params(params Map[String, String]) (R, Map[String, String]) {
   for var i = 0; i < keys.length(); i = i + 1 {
     const key = keys[i]
     case decode_segments(params.get(key)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value)  -> { out.set(key, value) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value)  then { out.set(key, value) }
     }
   }
   return (R.ok, out)
@@ -1489,8 +1489,8 @@ def decode_join(parts Array[String], i Int64, acc String) (R, String) {
     return (R.ok, acc)
   }
   case percent_decode_raw(parts[i]) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, piece)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, piece)  then {
       if i == 0 {
         return decode_join(parts, i + 1, piece)
       }
@@ -1509,7 +1509,7 @@ def router_dispatch(routes Router, req Request) Response {
   }
   const table = routes.routes
   case route_scan(table, req.method, req.path) {
-    (R.error, _) -> {
+    (R.error, _) then {
       if route_slash(table, req.method, req.path) {
         return response(301, [("Location", req.path + "/" + query_suffix(req.target))], "")
       }
@@ -1519,10 +1519,10 @@ def router_dispatch(routes Router, req Request) Response {
       }
       return error(404, "404 page not found\n")
     }
-    (R.ok, (route, params)) -> {
+    (R.ok, (route, params)) then {
       case decode_params(params) {
-        (R.error, why) -> { return error(400, why) }
-        (R.ok, decoded) -> {
+        (R.error, why) then { return error(400, why) }
+        (R.ok, decoded) then {
           const h = route.handler
           return h(req.with_params(decoded))
         }

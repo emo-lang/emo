@@ -10,18 +10,18 @@ require "uuid"
 
 def refused(text String) String {
   case uuid.parse(text) {
-    (R.error, why) -> { return why }
-    (R.ok, _)      -> { return "unexpected ok" }
+    (R.error, why) then { return why }
+    (R.ok, _)      then { return "unexpected ok" }
   }
 }
 
 def same_form(a String, b String) String {
   case uuid.parse(a) {
-    (R.error, why) -> { return "refused: ${why}" }
-    (R.ok, left)   -> {
+    (R.error, why) then { return "refused: ${why}" }
+    (R.ok, left)   then {
       case uuid.parse(b) {
-        (R.error, why) -> { return "refused: ${why}" }
-        (R.ok, right)  -> {
+        (R.error, why) then { return "refused: ${why}" }
+        (R.ok, right)  then {
           if left == right {
             return "true"
           }
@@ -46,15 +46,15 @@ def time_of(id uuid.Uuid) Int64 {
 // ---- the text form: RFC 9562's Figure 1 example, a version 1 value
 // in the RFC's variant, rendered lowercase either way it arrives.
 case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
-  (R.error, why) -> { println("parse failed: ${why}") }
-  (R.ok, id)     -> {
+  (R.error, why) then { println("parse failed: ${why}") }
+  (R.ok, id)     then {
     println(id.to_string())
     println(id.version())
     case id.variant() {
-      uuid.UuidVariant.ncs       -> { println("variant ncs") }
-      uuid.UuidVariant.rfc       -> { println("variant rfc") }
-      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
-      uuid.UuidVariant.future    -> { println("variant future") }
+      uuid.UuidVariant.ncs       then { println("variant ncs") }
+      uuid.UuidVariant.rfc       then { println("variant rfc") }
+      uuid.UuidVariant.microsoft then { println("variant microsoft") }
+      uuid.UuidVariant.future    then { println("variant future") }
     }
     println(id.is_nil?())
     println(id.is_max?())
@@ -77,12 +77,12 @@ println(refused("f81d4fae-7dec-11d0-a765-00a0c91e6bf"))
 // ---- the bytes form: 16 bytes in the RFC's field order, round
 // tripping through from_bytes, a wrong length refused.
 case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
-  (R.error, why) -> { println(why) }
-  (R.ok, id)     -> {
+  (R.error, why) then { println(why) }
+  (R.ok, id)     then {
     println("bytes: " + id.to_bytes().length().to_string())
     case uuid.from_bytes(id.to_bytes()) {
-      (R.error, why) -> { println(why) }
-      (R.ok, back)   -> {
+      (R.error, why) then { println(why) }
+      (R.ok, back)   then {
         if back == id {
           println("bytes round trip: true")
         } else {
@@ -93,8 +93,8 @@ case uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") {
   }
 }
 case uuid.from_bytes("f81d4fae".to_bytes()) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 
 // ---- the special UUIDs: the Nil and the Max, each what the RFC's
@@ -123,18 +123,18 @@ println(uuid.v5(uuid.ns_url(), "https://emo-lang.cn/").to_string())
 // ---- v4: 122 random bits, shown by the version and variant the
 // construction fixes, and by two draws differing.
 case uuid.v4() {
-  (R.error, why) -> { println(why) }
-  (R.ok, fresh)  -> {
+  (R.error, why) then { println(why) }
+  (R.ok, fresh)  then {
     println(fresh.version())
     case fresh.variant() {
-      uuid.UuidVariant.ncs       -> { println("variant ncs") }
-      uuid.UuidVariant.rfc       -> { println("variant rfc") }
-      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
-      uuid.UuidVariant.future    -> { println("variant future") }
+      uuid.UuidVariant.ncs       then { println("variant ncs") }
+      uuid.UuidVariant.rfc       then { println("variant rfc") }
+      uuid.UuidVariant.microsoft then { println("variant microsoft") }
+      uuid.UuidVariant.future    then { println("variant future") }
     }
     case uuid.v4() {
-      (R.error, why) -> { println(why) }
-      (R.ok, second) -> {
+      (R.error, why) then { println(why) }
+      (R.ok, second) then {
         if fresh == second {
           println("v4 draws differ: false")
         } else {
@@ -150,19 +150,19 @@ case uuid.v4() {
 // bytes; the same millisecond draws distinct values, and the next
 // millisecond sorts after this one.
 case uuid.v7(1645557742000) {
-  (R.error, why) -> { println(why) }
-  (R.ok, timed)  -> {
+  (R.error, why) then { println(why) }
+  (R.ok, timed)  then {
     println(timed.version())
     case timed.variant() {
-      uuid.UuidVariant.ncs       -> { println("variant ncs") }
-      uuid.UuidVariant.rfc       -> { println("variant rfc") }
-      uuid.UuidVariant.microsoft -> { println("variant microsoft") }
-      uuid.UuidVariant.future    -> { println("variant future") }
+      uuid.UuidVariant.ncs       then { println("variant ncs") }
+      uuid.UuidVariant.rfc       then { println("variant rfc") }
+      uuid.UuidVariant.microsoft then { println("variant microsoft") }
+      uuid.UuidVariant.future    then { println("variant future") }
     }
     println(time_of(timed))
     case uuid.v7(1645557742000) {
-      (R.error, why) -> { println(why) }
-      (R.ok, again)  -> {
+      (R.error, why) then { println(why) }
+      (R.ok, again)  then {
         if timed == again {
           println("v7 draws differ: false")
         } else {
@@ -171,8 +171,8 @@ case uuid.v7(1645557742000) {
       }
     }
     case uuid.v7(1645557742001) {
-      (R.error, why) -> { println(why) }
-      (R.ok, later)  -> { println(order_of(timed, later)) }
+      (R.error, why) then { println(why) }
+      (R.ok, later)  then { println(order_of(timed, later)) }
     }
   }
 }

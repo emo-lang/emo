@@ -50,11 +50,11 @@ A key is the draw, and nothing more is needed:
 
 ```emo
 case rand.bytes(32) {
-  (R.ok, seed) -> {
+  (R.ok, seed) then {
     const public = crypto.sign.ed25519_public(seed)
     // …
   }
-  (R.error, why) -> { println(why) }
+  (R.error, why) then { println(why) }
 }
 ```
 

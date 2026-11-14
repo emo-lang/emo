@@ -34,31 +34,31 @@ def exchange(conn TcpConn, raw String, head_only Bool) Int64 {
 // printed — status line, headers, body (unless the method was HEAD).
 def read_response(conn TcpConn, head_only Bool) Int64 {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("read failed: " + why)
       return 0
     }
-    (R.ok, status) -> {
+    (R.ok, status) then {
       if status.starts_with("HTTP/1.1 100") {
         // The interim answer's header block goes unread into nothing,
         // then the walk continues at the real status line.
         case read_headers(conn, []) {
-          (R.error, why) -> {
+          (R.error, why) then {
             println("read failed: " + why)
             return 0
           }
-          (R.ok, _) -> {
+          (R.ok, _) then {
             return read_response(conn, head_only)
           }
         }
       }
       println(status)
       case read_headers(conn, []) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("read failed: " + why)
           return 0
         }
-        (R.ok, parts) -> {
+        (R.ok, parts) then {
           for var i = 0; i < parts.length(); i = i + 1 {
             println(parts[i][0] + ": " + parts[i][1])
           }
@@ -67,16 +67,16 @@ def read_response(conn TcpConn, head_only Bool) Int64 {
             return 0
           }
           case body_of(parts) {
-            (R.error, _) -> {
+            (R.error, _) then {
               println("")
             }
-            (R.ok, n) -> {
+            (R.ok, n) then {
               if n > 0 {
                 case conn.read_exactly(n) {
-                  (R.error, why) -> {
+                  (R.error, why) then {
                     println("read failed: " + why)
                   }
-                  (R.ok, data) -> {
+                  (R.ok, data) then {
                     println(data)
                   }
                 }
@@ -92,10 +92,10 @@ def read_response(conn TcpConn, head_only Bool) Int64 {
 
 def read_headers(conn TcpConn, acc Array[(String, String)]) (R, Array[(String, String)]) {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       return (R.error, why)
     }
-    (R.ok, line) -> {
+    (R.ok, line) then {
       if line == "" {
         return (R.ok, acc)
       }
@@ -152,10 +152,10 @@ exchange(conn, "GET /second HTTP/1.1\r\nHost: h\r\n\r\n", false)
 println("== close-negotiated")
 exchange(conn, "GET /last HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", false)
 case conn.read_line() {
-  (R.error, _) -> {
+  (R.error, _) then {
     println("eof")
   }
-  (R.ok, line) -> {
+  (R.ok, line) then {
     if line == "" {
       println("eof")
     } else {

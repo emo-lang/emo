@@ -60,8 +60,8 @@ An ordinary Emo program:
 ```emo
 const loaded = wasm.load(bytes)          // (R, handle)
 case loaded {
-  (R.error, why) -> { ... }
-  (R.ok, module) -> {
+  (R.error, why) then { ... }
+  (R.ok, module) then {
     const inst = wasm.instantiate(module, [
       ("env", "log", -> (args Array[(Int64, Int64)]) {
         return wasm.i64(0)

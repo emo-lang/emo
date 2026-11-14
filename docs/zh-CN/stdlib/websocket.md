@@ -49,14 +49,14 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 do echo_serve(listener)                  // accept,然后回声直到对端关闭
 
 case websocket.connect("127.0.0.1", listener.port(), "/", 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, ws)     -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, ws)     then {
     case ws.send_text("hello 回环") {
-      (R.error, why) -> { println("send failed: ${why}") }
-      (R.ok, _)      -> {
+      (R.error, why) then { println("send failed: ${why}") }
+      (R.ok, _)      then {
         case ws.recv_message() {
-          (R.error, why) -> { println("recv failed: ${why}") }
-          (R.ok, back)   -> { println(back) }
+          (R.error, why) then { println("recv failed: ${why}") }
+          (R.ok, back)   then { println(back) }
         }
       }
     }

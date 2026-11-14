@@ -381,12 +381,12 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   var got = false
   while !got {
     receive {
-      x -> {
+      x then {
         if op_of(x) >= 0 {
           stash_push(x)
         } else {
           case x {
-            (mk, sz) -> {
+            (mk, sz) then {
               if mk != 10 {
                 println("exec: a stranger answered the transaction")
                 halt()
@@ -412,12 +412,12 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   var got2 = false
   while !got2 {
     receive {
-      x -> {
+      x then {
         if op_of(x) >= 0 {
           stash_push(x)
         } else {
           case x {
-            (mk, sz) -> {
+            (mk, sz) then {
               if mk != 10 {
                 println("exec: a stranger answered the transaction")
                 halt()

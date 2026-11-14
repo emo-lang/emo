@@ -77,9 +77,9 @@ class SvgRenderer {
   def text(x Float64, y Float64, body String, size Float64, anchor Anchor, weight Weight, fill (Int64, Int64, Int64)) Void {
     var a = "start"
     case anchor {
-      Anchor.start -> { a = "start" }
-      Anchor.middle -> { a = "middle" }
-      Anchor.end -> { a = "end" }
+      Anchor.start then { a = "start" }
+      Anchor.middle then { a = "middle" }
+      Anchor.end then { a = "end" }
     }
     var wt = "normal"
     if weight == Weight.bold {

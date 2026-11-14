@@ -21,9 +21,9 @@ def sign(x Int64) Int64 {
 def bucket(x Int64) Int64 {
   var y = 0
   case x {
-    0 -> { y = 10 }
-    1 -> { y = 20 }
-    _ -> { y = 30 }
+    0 then { y = 10 }
+    1 then { y = 20 }
+    _ then { y = 30 }
   }
   return y
 }

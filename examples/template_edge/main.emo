@@ -22,8 +22,8 @@ const ctx = json.object(entries: [
 // One attempt, one line: the render, or the reason it refused.
 def try_text(label String, text String) {
   case template.render(text, ctx) {
-    (R.error, why) -> { println(label + " refused: " + why) }
-    (R.ok, out)    -> { println(label + " ok: " + out) }
+    (R.error, why) then { println(label + " refused: " + why) }
+    (R.ok, out)    then { println(label + " ok: " + out) }
   }
 }
 
@@ -86,16 +86,16 @@ try_text("join-separator-kind", "{{ tags | join(5) }}")
 // An undefined include; an undefined render name; a redefined name.
 const (R.ok, e1) = template.new().with("page", "{{ template \"ghost\" }}")
 case e1.render("page", ctx) {
-  (R.error, why) -> { println("undefined-include refused: " + why) }
-  (R.ok, out)    -> { println("undefined-include ok: " + out) }
+  (R.error, why) then { println("undefined-include refused: " + why) }
+  (R.ok, out)    then { println("undefined-include ok: " + out) }
 }
 case e1.render("ghost", ctx) {
-  (R.error, why) -> { println("unknown-name refused: " + why) }
-  (R.ok, out)    -> { println("unknown-name ok: " + out) }
+  (R.error, why) then { println("unknown-name refused: " + why) }
+  (R.ok, out)    then { println("unknown-name ok: " + out) }
 }
 case e1.with("page", "{{ user.name }}") {
-  (R.error, why) -> { println("redefine refused: " + why) }
-  (R.ok, _)      -> { println("redefine ok") }
+  (R.error, why) then { println("redefine refused: " + why) }
+  (R.ok, _)      then { println("redefine ok") }
 }
 
 // An include cycle rides to the depth cap, and the reason names the
@@ -103,14 +103,14 @@ case e1.with("page", "{{ user.name }}") {
 const (R.ok, c1) = template.new().with("a", "{{ template \"b\" }}")
 const (R.ok, c2) = c1.with("b", "{{ template \"a\" }}")
 case c2.render("a", ctx) {
-  (R.error, why) -> { println("cycle refused: " + why) }
-  (R.ok, out)    -> { println("cycle ok: " + out) }
+  (R.error, why) then { println("cycle refused: " + why) }
+  (R.ok, out)    then { println("cycle ok: " + out) }
 }
 
 // A scalar context: no key lookup is possible on it.
 case template.render("{{ x }}", json.string("bare")) {
-  (R.error, why) -> { println("scalar-context refused: " + why) }
-  (R.ok, out)    -> { println("scalar-context ok: " + out) }
+  (R.error, why) then { println("scalar-context refused: " + why) }
+  (R.ok, out)    then { println("scalar-context ok: " + out) }
 }
 
 // ---- the boundary holds ----
@@ -123,6 +123,6 @@ const ctx2 = json.object(entries: [
   ("m", json.object(entries: [("a}}b", json.string("kept"))]))
 ])
 case template.render("{{ user[\"name\"] }} and {{ m[\"a}}b\"] }} and {{! }}!", ctx2) {
-  (R.error, why) -> { println("boundary refused: " + why) }
-  (R.ok, out)    -> { println("boundary ok: " + out) }
+  (R.error, why) then { println("boundary refused: " + why) }
+  (R.ok, out)    then { println("boundary ok: " + out) }
 }

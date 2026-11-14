@@ -71,8 +71,8 @@ class Conn {
     self.next_id.replace(id + 1)
     const message = json.object([("id", json.int64(id)), ("guid", json.string(guid)), ("method", json.string(method)), ("params", params), ("metadata", json.object([("timeout", json.int64(timeout_ms))]))])
     case self.ws.send_text(message.encode()) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> { return self.pump_for(id) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then { return self.pump_for(id) }
     }
   }
 
@@ -84,8 +84,8 @@ class Conn {
   // socket, the two halves the package already speaks in order.
   def shutdown() (R, Conn) {
     case self.ws.close() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> { return (R.ok, self) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then { return (R.ok, self) }
     }
   }
 
@@ -99,11 +99,11 @@ class Conn {
   // Read messages until the one answering `id` arrives.
   def pump_for(id Int64) (R, json.Json) {
     case self.ws.recv_message() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, text)   -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, text)   then {
         case json.decode(text) {
-          (R.error, why) -> { return (R.error, "playwright: the server sent a malformed message (" + why + ")") }
-          (R.ok, doc)    -> { return self.dispatch(id, doc) }
+          (R.error, why) then { return (R.error, "playwright: the server sent a malformed message (" + why + ")") }
+          (R.ok, doc)    then { return self.dispatch(id, doc) }
         }
       }
     }
@@ -137,11 +137,11 @@ class Conn {
     if kind == "__create__" {
       const params = field(doc, "params")
       case string_field(params, "guid", "a create event without a guid") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, guid)   -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, guid)   then {
           case string_field(params, "type", "a create event without a type") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, type_name) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, type_name) then {
               if field(params, "initializer").is_null?() {
                 return (R.error, "playwright: a create event without an initializer")
               }

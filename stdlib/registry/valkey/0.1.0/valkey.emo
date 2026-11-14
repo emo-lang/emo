@@ -149,8 +149,8 @@ class Valkey {
       raise Exception.new(message: "valkey: a command needs at least one argument")
     }
     case self.conn.write(encode_request(args)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> { return read_reply(self.conn) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then { return read_reply(self.conn) }
     }
   }
 
@@ -160,8 +160,8 @@ class Valkey {
 
   def close() (R, Valkey) {
     case self.conn.close() {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> { return (R.ok, self) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then { return (R.ok, self) }
     }
   }
 
@@ -169,29 +169,29 @@ class Valkey {
 
   def ping() (R, String) {
     case self.command(["PING"]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("PING", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("PING", reply) }
     }
   }
 
   def echo(msg String) (R, String) {
     case self.command(["ECHO", msg]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("ECHO", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("ECHO", reply) }
     }
   }
 
   def select(db Int64) (R, String) {
     case self.command(["SELECT", db.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("SELECT", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("SELECT", reply) }
     }
   }
 
   def auth(password String) (R, String) {
     case self.command(["AUTH", password]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("AUTH", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("AUTH", reply) }
     }
   }
 
@@ -203,22 +203,22 @@ class Valkey {
 
   def set(key String, value String) (R, String) {
     case self.command(["SET", key, value]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("SET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("SET", reply) }
     }
   }
 
   def set_ex(key String, value String, seconds Int64) (R, String) {
     case self.command(["SET", key, value, "EX", seconds.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("SET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("SET", reply) }
     }
   }
 
   def setnx(key String, value String) (R, Bool) {
     case self.command(["SETNX", key, value]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return bool_reply("SETNX", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return bool_reply("SETNX", reply) }
     }
   }
 
@@ -227,8 +227,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `MSET` needs at least one pair")
     }
     case self.command(append_all(["MSET"], flatten_pairs(pairs, 0, []), 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("MSET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("MSET", reply) }
     }
   }
 
@@ -237,8 +237,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `MGET` needs at least one key")
     }
     case self.command(append_all(["MGET"], keys, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return array_reply("MGET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return array_reply("MGET", reply) }
     }
   }
 
@@ -247,8 +247,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `DEL` needs at least one key")
     }
     case self.command(append_all(["DEL"], keys, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("DEL", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("DEL", reply) }
     }
   }
 
@@ -257,106 +257,106 @@ class Valkey {
       raise Exception.new(message: "valkey: `EXISTS` needs at least one key")
     }
     case self.command(append_all(["EXISTS"], keys, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("EXISTS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("EXISTS", reply) }
     }
   }
 
   def incr(key String) (R, Int64) {
     case self.command(["INCR", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("INCR", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("INCR", reply) }
     }
   }
 
   def decr(key String) (R, Int64) {
     case self.command(["DECR", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("DECR", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("DECR", reply) }
     }
   }
 
   def incr_by(key String, n Int64) (R, Int64) {
     case self.command(["INCRBY", key, n.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("INCRBY", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("INCRBY", reply) }
     }
   }
 
   def decr_by(key String, n Int64) (R, Int64) {
     case self.command(["DECRBY", key, n.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("DECRBY", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("DECRBY", reply) }
     }
   }
 
   def append(key String, value String) (R, Int64) {
     case self.command(["APPEND", key, value]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("APPEND", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("APPEND", reply) }
     }
   }
 
   def strlen(key String) (R, Int64) {
     case self.command(["STRLEN", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("STRLEN", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("STRLEN", reply) }
     }
   }
 
   def getrange(key String, start Int64, stop Int64) (R, String) {
     case self.command(["GETRANGE", key, start.to_string(), stop.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("GETRANGE", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("GETRANGE", reply) }
     }
   }
 
   def keys(pattern String) (R, Array[String]) {
     case self.command(["KEYS", pattern]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_array_reply("KEYS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_array_reply("KEYS", reply) }
     }
   }
 
   def dbsize() (R, Int64) {
     case self.command(["DBSIZE"]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("DBSIZE", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("DBSIZE", reply) }
     }
   }
 
   def type(key String) (R, String) {
     case self.command(["TYPE", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("TYPE", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("TYPE", reply) }
     }
   }
 
   def rename(key String, new_key String) (R, String) {
     case self.command(["RENAME", key, new_key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("RENAME", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("RENAME", reply) }
     }
   }
 
   def expire(key String, seconds Int64) (R, Bool) {
     case self.command(["EXPIRE", key, seconds.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return bool_reply("EXPIRE", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return bool_reply("EXPIRE", reply) }
     }
   }
 
   def ttl(key String) (R, Int64) {
     case self.command(["TTL", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("TTL", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("TTL", reply) }
     }
   }
 
   def persist(key String) (R, Bool) {
     case self.command(["PERSIST", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return bool_reply("PERSIST", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return bool_reply("PERSIST", reply) }
     }
   }
 
@@ -364,8 +364,8 @@ class Valkey {
 
   def hset(key String, field String, value String) (R, Int64) {
     case self.command(["HSET", key, field, value]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("HSET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("HSET", reply) }
     }
   }
 
@@ -378,43 +378,43 @@ class Valkey {
       raise Exception.new(message: "valkey: `HDEL` needs at least one field")
     }
     case self.command(append_all(["HDEL", key], fields, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("HDEL", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("HDEL", reply) }
     }
   }
 
   def hexists(key String, field String) (R, Bool) {
     case self.command(["HEXISTS", key, field]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return bool_reply("HEXISTS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return bool_reply("HEXISTS", reply) }
     }
   }
 
   def hlen(key String) (R, Int64) {
     case self.command(["HLEN", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("HLEN", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("HLEN", reply) }
     }
   }
 
   def hkeys(key String) (R, Array[String]) {
     case self.command(["HKEYS", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_array_reply("HKEYS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_array_reply("HKEYS", reply) }
     }
   }
 
   def hvals(key String) (R, Array[String]) {
     case self.command(["HVALS", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_array_reply("HVALS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_array_reply("HVALS", reply) }
     }
   }
 
   def hgetall(key String) (R, Array[(String, String)]) {
     case self.command(["HGETALL", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return pair_array_reply("HGETALL", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return pair_array_reply("HGETALL", reply) }
     }
   }
 
@@ -425,8 +425,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `LPUSH` needs at least one value")
     }
     case self.command(append_all(["LPUSH", key], values, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("LPUSH", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("LPUSH", reply) }
     }
   }
 
@@ -435,8 +435,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `RPUSH` needs at least one value")
     }
     case self.command(append_all(["RPUSH", key], values, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("RPUSH", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("RPUSH", reply) }
     }
   }
 
@@ -450,15 +450,15 @@ class Valkey {
 
   def lrange(key String, start Int64, stop Int64) (R, Array[String]) {
     case self.command(["LRANGE", key, start.to_string(), stop.to_string()]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_array_reply("LRANGE", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_array_reply("LRANGE", reply) }
     }
   }
 
   def llen(key String) (R, Int64) {
     case self.command(["LLEN", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("LLEN", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("LLEN", reply) }
     }
   }
 
@@ -468,8 +468,8 @@ class Valkey {
 
   def lset(key String, index Int64, value String) (R, String) {
     case self.command(["LSET", key, index.to_string(), value]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_reply("LSET", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_reply("LSET", reply) }
     }
   }
 
@@ -480,8 +480,8 @@ class Valkey {
       raise Exception.new(message: "valkey: `SADD` needs at least one member")
     }
     case self.command(append_all(["SADD", key], members, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("SADD", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("SADD", reply) }
     }
   }
 
@@ -490,29 +490,29 @@ class Valkey {
       raise Exception.new(message: "valkey: `SREM` needs at least one member")
     }
     case self.command(append_all(["SREM", key], members, 0)) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("SREM", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("SREM", reply) }
     }
   }
 
   def smembers(key String) (R, Array[String]) {
     case self.command(["SMEMBERS", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return string_array_reply("SMEMBERS", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return string_array_reply("SMEMBERS", reply) }
     }
   }
 
   def sismember(key String, member String) (R, Bool) {
     case self.command(["SISMEMBER", key, member]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return bool_reply("SISMEMBER", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return bool_reply("SISMEMBER", reply) }
     }
   }
 
   def scard(key String) (R, Int64) {
     case self.command(["SCARD", key]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, reply)  -> { return int_reply("SCARD", reply) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, reply)  then { return int_reply("SCARD", reply) }
     }
   }
 }
@@ -525,11 +525,11 @@ class Valkey {
 
 def connect(host String, port Int64, timeout Float64) (R, Valkey) {
   case checked_timeout(timeout) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then {
       case net.connect(host, port, timeout) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, conn)   then { return open_valkey(conn, timeout) }
       }
     }
   }
@@ -537,11 +537,11 @@ def connect(host String, port Int64, timeout Float64) (R, Valkey) {
 
 def connect_unix(path String, timeout Float64) (R, Valkey) {
   case checked_timeout(timeout) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then {
       case net.connect_unix(path, timeout) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, conn)   then { return open_valkey(conn, timeout) }
       }
     }
   }
@@ -549,11 +549,11 @@ def connect_unix(path String, timeout Float64) (R, Valkey) {
 
 def connect_tls(host String, port Int64, timeout Float64) (R, Valkey) {
   case checked_timeout(timeout) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then {
       case net.tls_connect(host, port, timeout) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, conn)   then { return open_valkey(conn, timeout) }
       }
     }
   }
@@ -561,11 +561,11 @@ def connect_tls(host String, port Int64, timeout Float64) (R, Valkey) {
 
 def connect_tls_insecure(host String, port Int64, timeout Float64) (R, Valkey) {
   case checked_timeout(timeout) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then {
       case net.tls_connect_insecure(host, port, timeout) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, conn)   -> { return open_valkey(conn, timeout) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, conn)   then { return open_valkey(conn, timeout) }
       }
     }
   }
@@ -609,8 +609,8 @@ def encode_bulks(args Array[String], i Int64, acc String) String {
 // error value, not a crash.
 def read_reply(conn TcpConn) (R, Reply) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.error, "valkey: the server closed the connection")
       }
@@ -656,11 +656,11 @@ def read_bulk_reply(conn TcpConn, length_text String) (R, Reply) {
   }
   if int_text_ok(length_text) {
     case conn.read_exactly(length_text.to_int64()) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value)  -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value)  then {
         case conn.read_line() {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, tail)   -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, tail)   then {
             if tail == "" {
               return (R.ok, ReplyString.new(value: value))
             }
@@ -687,8 +687,8 @@ def read_array_reply(conn TcpConn, count_text String) (R, Reply) {
     var i = 0
     while i < n {
       case read_reply(conn) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, reply)  -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, reply)  then {
           items = items.append(reply)
           i = i + 1
         }

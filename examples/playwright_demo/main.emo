@@ -30,30 +30,30 @@ require "playwright"
 def run_client(pw playwright.Playwright) {
   const browser = pw.browser()
   case browser.version() {
-    (R.error, why) -> { println("version failed: ${why}") }
-    (R.ok, v)      -> { println("browser version: ${v}") }
+    (R.error, why) then { println("version failed: ${why}") }
+    (R.ok, v)      then { println("browser version: ${v}") }
   }
   case browser.new_page() {
-    (R.error, why) -> { println("new_page failed: ${why}") }
-    (R.ok, page)   -> {
+    (R.error, why) then { println("new_page failed: ${why}") }
+    (R.ok, page)   then {
       println("page opened")
       run_page(page)
     }
   }
   case browser.close() {
-    (R.error, why) -> { println("browser close failed: ${why}") }
-    (R.ok, _)      -> { println("browser closed") }
+    (R.error, why) then { println("browser close failed: ${why}") }
+    (R.ok, _)      then { println("browser closed") }
   }
   case pw.close() {
-    (R.error, why) -> { println("close failed: ${why}") }
-    (R.ok, _)      -> { println("connection closed") }
+    (R.error, why) then { println("close failed: ${why}") }
+    (R.ok, _)      then { println("connection closed") }
   }
 }
 
 def run_page(page playwright.Page) {
   case page.goto("https://example.com/") {
-    (R.error, why) -> { println("goto failed: ${why}") }
-    (R.ok, resp)   -> {
+    (R.error, why) then { println("goto failed: ${why}") }
+    (R.ok, resp)   then {
       if resp.is_null?() {
         println("goto: no response")
       } else {
@@ -62,50 +62,50 @@ def run_page(page playwright.Page) {
     }
   }
   case page.title() {
-    (R.error, why) -> { println("title failed: ${why}") }
-    (R.ok, text)   -> { println("title: ${text}") }
+    (R.error, why) then { println("title failed: ${why}") }
+    (R.ok, text)   then { println("title: ${text}") }
   }
   // The content's reading is its length — the golden pins the count,
   // the wire carries the document, fragmented across frames.
   case page.content() {
-    (R.error, why) -> { println("content failed: ${why}") }
-    (R.ok, text)   -> { println("content: ${text.length()} bytes") }
+    (R.error, why) then { println("content failed: ${why}") }
+    (R.ok, text)   then { println("content: ${text.length()} bytes") }
   }
   case page.text_content("#gone") {
-    (R.error, why) -> { println("text_content failed: ${why}") }
-    (R.ok, text)   -> { println("text_content #gone is null: ${text.is_null?()}") }
+    (R.error, why) then { println("text_content failed: ${why}") }
+    (R.ok, text)   then { println("text_content #gone is null: ${text.is_null?()}") }
   }
   case page.text_content("#hello") {
-    (R.error, why) -> { println("text_content failed: ${why}") }
-    (R.ok, text)   -> { println("text_content #hello: ${text.as_string()}") }
+    (R.error, why) then { println("text_content failed: ${why}") }
+    (R.ok, text)   then { println("text_content #hello: ${text.as_string()}") }
   }
   case page.click("#link") {
-    (R.error, why) -> { println("click failed: ${why}") }
-    (R.ok, _)      -> { println("clicked #link") }
+    (R.error, why) then { println("click failed: ${why}") }
+    (R.ok, _)      then { println("clicked #link") }
   }
   case page.fill("#box", "hello driver") {
-    (R.error, why) -> { println("fill failed: ${why}") }
-    (R.ok, _)      -> { println("filled #box") }
+    (R.error, why) then { println("fill failed: ${why}") }
+    (R.ok, _)      then { println("filled #box") }
   }
   case page.press("#box", "Enter") {
-    (R.error, why) -> { println("press failed: ${why}") }
-    (R.ok, _)      -> { println("pressed Enter") }
+    (R.error, why) then { println("press failed: ${why}") }
+    (R.ok, _)      then { println("pressed Enter") }
   }
   case page.screenshot() {
-    (R.error, why) -> { println("screenshot failed: ${why}") }
-    (R.ok, png)    -> { println("screenshot: ${png.length()} bytes") }
+    (R.error, why) then { println("screenshot failed: ${why}") }
+    (R.ok, png)    then { println("screenshot: ${png.length()} bytes") }
   }
   case page.click("#missing") {
-    (R.error, why) -> { println("click #missing failed: ${why}") }
-    (R.ok, _)      -> { println("clicked #missing") }
+    (R.error, why) then { println("click #missing failed: ${why}") }
+    (R.ok, _)      then { println("clicked #missing") }
   }
   case page.fill("#gone", "nope") {
-    (R.error, why) -> { println("fill #gone failed: ${why}") }
-    (R.ok, _)      -> { println("filled #gone") }
+    (R.error, why) then { println("fill #gone failed: ${why}") }
+    (R.ok, _)      then { println("filled #gone") }
   }
   case page.close() {
-    (R.error, why) -> { println("page close failed: ${why}") }
-    (R.ok, _)      -> { println("page closed") }
+    (R.error, why) then { println("page close failed: ${why}") }
+    (R.ok, _)      then { println("page closed") }
   }
 }
 
@@ -130,11 +130,11 @@ const wire_pong = 10
 // names.
 def fake_accept(conn TcpConn) (R, String) {
   case fake_request_key(conn, "", false, false, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, key)    -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, key)    then {
       case conn.write(fake_answer(key)) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> { return (R.ok, key) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then { return (R.ok, key) }
       }
     }
   }
@@ -145,8 +145,8 @@ def fake_request_key(conn TcpConn, key String, upgrade_ok Bool, version_ok Bool,
     return (R.error, "too many header lines")
   }
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         if key == "" {
           return (R.error, "no key in the request")
@@ -199,8 +199,8 @@ def fake_answer(key String) String {
 // client only sends after our reply lands.
 def fake_read_any(conn TcpConn) (R, WireFrame) {
   case fake_read_raw(conn) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frame)  -> { return (R.ok, frame) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frame)  then { return (R.ok, frame) }
   }
 }
 
@@ -208,8 +208,8 @@ def fake_read_any(conn TcpConn) (R, WireFrame) {
 // our pings); data frames and closes pass through.
 def fake_read_frame(conn TcpConn) (R, WireFrame) {
   case fake_read_raw(conn) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frame)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frame)  then {
       if frame.opcode == wire_pong {
         return fake_read_frame(conn)
       }
@@ -220,23 +220,23 @@ def fake_read_frame(conn TcpConn) (R, WireFrame) {
 
 def fake_read_raw(conn TcpConn) (R, WireFrame) {
   case conn.read_exactly(2) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, head)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, head)   then {
       const b = head.to_bytes()
       const opcode = b.get(0) & 15
       if (b.get(1) & 128) == 0 {
         return (R.error, "the client sent a bare frame")
       }
       case fake_read_length(conn, b.get(1) & 127) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, n)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, n)      then {
           case conn.read_exactly(4) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, key_text) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, key_text) then {
               const mask = key_text.to_bytes()
               case conn.read_exactly(n) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, text)   -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, text)   then {
                   const raw = text.to_bytes()
                   const out = Bytes.new(n)
                   var i = 0
@@ -261,16 +261,16 @@ def fake_read_length(conn TcpConn, first Int64) (R, Int64) {
   }
   if first == 126 {
     case conn.read_exactly(2) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, text)   -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, text)   then {
         const b = text.to_bytes()
         return (R.ok, (b.get(0) << 8) + b.get(1))
       }
     }
   }
   case conn.read_exactly(8) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, text)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, text)   then {
       const b = text.to_bytes()
       var n = 0
       var i = 0
@@ -286,8 +286,8 @@ def fake_read_length(conn TcpConn, first Int64) (R, Int64) {
 // One frame out, bare — the driver is the server side.
 def fake_send_frame(conn TcpConn, opcode Int64, payload Bytes) (R, Int64) {
   case conn.write(wire_frame(opcode, payload)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> { return (R.ok, 0) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then { return (R.ok, 0) }
   }
 }
 
@@ -331,8 +331,8 @@ def fake_send_text(conn TcpConn, text String) (R, Int64) {
 // client's assembly is what this exercises.
 def fake_send_fragment(conn TcpConn, opcode Int64, payload Bytes) (R, Int64) {
   case conn.write(wire_fragment(opcode, payload)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> { return (R.ok, 0) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then { return (R.ok, 0) }
   }
 }
 
@@ -352,8 +352,8 @@ def wire_fragment(opcode Int64, payload Bytes) String {
 // method checked against the script's expectation, the id out.
 def expect_call(conn TcpConn, method String) (R, Int64) {
   case fake_read_frame(conn) {
-    (R.error, why) -> { return (R.error, "reading the call: " + why) }
-    (R.ok, frame)  -> {
+    (R.error, why) then { return (R.error, "reading the call: " + why) }
+    (R.ok, frame)  then {
       if frame.opcode == wire_close {
         return (R.error, "the client closed before `" + method + "`")
       }
@@ -361,8 +361,8 @@ def expect_call(conn TcpConn, method String) (R, Int64) {
         return (R.error, "the client's call rode a non-text frame")
       }
       case json_of(frame.payload.to_string()) {
-        (R.error, why) -> { return (R.error, "the client's call was malformed (" + why + ")") }
-        (R.ok, doc)    -> {
+        (R.error, why) then { return (R.error, "the client's call was malformed (" + why + ")") }
+        (R.ok, doc)    then {
           const got = doc.get("method")
           if got.is_null?() {
             return (R.error, "the client's call carries no method")
@@ -430,23 +430,23 @@ def drive_session(conn TcpConn) (R, Int64) {
   } then {
     return drain_until_close(conn)
   } else {
-    (R.error, why) -> { return (R.error, why) }
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
 def step_initialize(conn TcpConn) (R, Int64) {
   case expect_call(conn, "initialize") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       case send_event(conn, "pw-root", "__create__", create_params("Playwright", "pw-root", json.object([("chromium", ref("bt-chromium")), ("firefox", ref("bt-firefox")), ("webkit", ref("bt-webkit")), ("preLaunchedBrowser", ref("browser-1"))]))) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then {
           case send_event(conn, "bt-chromium", "__create__", create_params("BrowserType", "bt-chromium", json.object([("name", json.string("chromium"))]))) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _)      then {
               case send_event(conn, "browser-1", "__create__", create_params("Browser", "browser-1", json.object([("version", json.string("1.50.0"))]))) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, _)      -> { return send_reply(conn, id, json.object([("playwright", ref("pw-root"))])) }
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, _)      then { return send_reply(conn, id, json.object([("playwright", ref("pw-root"))])) }
               }
             }
           }
@@ -463,20 +463,20 @@ def step_initialize(conn TcpConn) (R, Int64) {
 // spews; the client must skip it.
 def step_new_page(conn TcpConn) (R, Int64) {
   case expect_call(conn, "newContext") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       case send_event(conn, "browser-1", "pageEvent", json.object([("note", json.string("an event the client must skip"))])) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then {
           case send_reply(conn, id, json.object([("context", ref("context-1"))])) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _)      then {
               case expect_call(conn, "newPage") {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, id2)    -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, id2)    then {
                   case send_event(conn, "context-1", "__create__", create_params("Page", "page-1", json.object([("mainFrame", ref("frame-1"))]))) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, _)      -> { return send_reply(conn, id2, json.object([("page", ref("page-1"))])) }
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, _)      then { return send_reply(conn, id2, json.object([("page", ref("page-1"))])) }
                   }
                 }
               }
@@ -490,11 +490,11 @@ def step_new_page(conn TcpConn) (R, Int64) {
 
 def step_goto(conn TcpConn) (R, Int64) {
   case expect_call(conn, "goto") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       case send_event(conn, "frame-1", "__create__", create_params("Response", "response-1", json.object([("status", json.int64(200)), ("url", json.string("https://example.com/"))]))) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> { return send_reply(conn, id, json.object([("response", ref("response-1"))])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then { return send_reply(conn, id, json.object([("response", ref("response-1"))])) }
       }
     }
   }
@@ -502,8 +502,8 @@ def step_goto(conn TcpConn) (R, Int64) {
 
 def step_title(conn TcpConn) (R, Int64) {
   case expect_call(conn, "title") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.string("例子页面"))])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([("value", json.string("例子页面"))])) }
   }
 }
 
@@ -511,12 +511,12 @@ def step_title(conn TcpConn) (R, Int64) {
 // the client must join them before decoding.
 def step_content(conn TcpConn) (R, Int64) {
   case expect_call(conn, "content") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       const document = json.object([("id", json.int64(id)), ("result", json.object([("value", json.string(full_document()))]))]).encode()
       case fake_send_fragment(conn, wire_text, document.substring(0, 30000).to_bytes()) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> { return fake_send_frame(conn, 0, document.substring(30000, document.length() - 30000).to_bytes()) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then { return fake_send_frame(conn, 0, document.substring(30000, document.length() - 30000).to_bytes()) }
       }
     }
   }
@@ -536,22 +536,22 @@ def make_x(acc String, i Int64) String {
 
 def step_text_null(conn TcpConn) (R, Int64) {
   case expect_call(conn, "textContent") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.null())])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([("value", json.null())])) }
   }
 }
 
 def step_text_hello(conn TcpConn) (R, Int64) {
   case expect_call(conn, "textContent") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([("value", json.string("你好,世界"))])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([("value", json.string("你好,世界"))])) }
   }
 }
 
 def step_click(conn TcpConn) (R, Int64) {
   case expect_call(conn, "click") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([])) }
   }
 }
 
@@ -560,14 +560,14 @@ def step_click(conn TcpConn) (R, Int64) {
 // reads the pong back — the proof the client's control frames work.
 def step_fill(conn TcpConn) (R, Int64) {
   case expect_call(conn, "fill") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       case fake_send_frame(conn, wire_ping, "hb".to_bytes()) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then {
           case fake_read_any(conn) {
-            (R.error, why) -> { return (R.error, "reading the pong: " + why) }
-            (R.ok, pong)   -> {
+            (R.error, why) then { return (R.error, "reading the pong: " + why) }
+            (R.ok, pong)   then {
               if pong.opcode != wire_pong {
                 return (R.error, "the client did not answer the ping")
               }
@@ -582,8 +582,8 @@ def step_fill(conn TcpConn) (R, Int64) {
 
 def step_press(conn TcpConn) (R, Int64) {
   case expect_call(conn, "press") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([])) }
   }
 }
 
@@ -596,8 +596,8 @@ def step_press(conn TcpConn) (R, Int64) {
 // print anyway (the base64 alphabet carries nothing to escape).
 def step_screenshot(conn TcpConn) (R, Int64) {
   case expect_call(conn, "screenshot") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then {
       const binary = base64.encode(fake_png().to_string())
       const doc = "{\"id\":" + id.to_string() + ",\"result\":{\"binary\":\"" + binary + "\"}}"
       return fake_send_text(conn, doc)
@@ -620,29 +620,29 @@ def fake_png() Bytes {
 // The refusal shape: the driver's errors ride one level of wrapping.
 def step_click_error(conn TcpConn) (R, Int64) {
   case expect_call(conn, "click") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_error(conn, id, "timeout 30000ms exceeded") }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_error(conn, id, "timeout 30000ms exceeded") }
   }
 }
 
 def step_fill_error(conn TcpConn) (R, Int64) {
   case expect_call(conn, "fill") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_error(conn, id, "element is not visible") }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_error(conn, id, "element is not visible") }
   }
 }
 
 def step_page_close(conn TcpConn) (R, Int64) {
   case expect_call(conn, "close") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([])) }
   }
 }
 
 def step_browser_close(conn TcpConn) (R, Int64) {
   case expect_call(conn, "close") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, id)     -> { return send_reply(conn, id, json.object([])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, id)     then { return send_reply(conn, id, json.object([])) }
   }
 }
 
@@ -650,12 +650,12 @@ def step_browser_close(conn TcpConn) (R, Int64) {
 // the close frame, answers it, and lets the socket go.
 def drain_until_close(conn TcpConn) (R, Int64) {
   case fake_read_frame(conn) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frame)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frame)  then {
       if frame.opcode == wire_close {
         case fake_send_frame(conn, wire_close, Bytes.new(0)) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _)      -> { return (R.ok, 0) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _)      then { return (R.ok, 0) }
         }
       }
       return drain_until_close(conn)
@@ -669,14 +669,14 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
 def fake_driver(listener TcpListener) {
   case listener.accept() {
-    (R.error, why) -> { }
-    (R.ok, conn)   -> {
+    (R.error, why) then { }
+    (R.ok, conn)   then {
       case fake_accept(conn) {
-        (R.error, why) -> { }
-        (R.ok, _)      -> {
+        (R.error, why) then { }
+        (R.ok, _)      then {
           case drive_session(conn) {
-            (R.error, why) -> { }
-            (R.ok, _)      -> { }
+            (R.error, why) then { }
+            (R.ok, _)      then { }
           }
         }
       }
@@ -687,6 +687,6 @@ def fake_driver(listener TcpListener) {
 do fake_driver(listener)
 
 case playwright.connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, pw)     -> { run_client(pw) }
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, pw)     then { run_client(pw) }
 }

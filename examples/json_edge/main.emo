@@ -98,18 +98,18 @@ if back.is(json.JsonObject) {
 
 // ---- malformed input: the failure comes back as a value ----
 case json.decode("{\"a\":}") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 case json.decode("[1, 2") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 case json.decode("{\"a\": 1} trailing") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 case json.decode(open_array(514) + close_array(514)) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }

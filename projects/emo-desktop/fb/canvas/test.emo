@@ -63,10 +63,10 @@ def canvas_checks() {
 // The interface strike, built once — the Inter face at 16 pixels.
 def iface() ui_fb.raster.Strike {
   case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "the interface strike refused: ${why}")
     }
-    (R.ok, s) -> { return s }
+    (R.ok, s) then { return s }
   }
 }
 

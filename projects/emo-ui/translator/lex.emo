@@ -140,8 +140,8 @@ def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
 def span_to(data Bytes, i Int64, stops String) (R, (String, Int64)) {
   const r = span_walk(data, i, stops.to_bytes(), 0, List.new([]))
   case r {
-    (R.ok, end) -> { return (R.ok, (trim(data, i, end), end)) }
-    (R.error, x) -> { return (R.error, x) }
+    (R.ok, end) then { return (R.ok, (trim(data, i, end), end)) }
+    (R.error, x) then { return (R.error, x) }
   }
 }
 

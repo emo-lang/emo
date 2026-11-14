@@ -87,11 +87,11 @@ require "net"
 
 def echo_once(listener TcpListener) Int64 {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("echo: ${line}\n")
           conn.close()
         }
@@ -105,13 +105,13 @@ const (R.ok, listener) = net.listen("127.0.0.1", 0)
 do echo_once(listener)
 
 case net.connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.set_timeout(5.0)
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }  // echo: hello
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }  // echo: hello
     }
     conn.close()
   }
@@ -128,8 +128,8 @@ const (R.ok, b) = net.udp_bind("127.0.0.1", 0)
 
 a.send_to("127.0.0.1", b.port(), "ping")
 case b.recv_from() {
-  (R.error, why)             -> { println("recv failed: ${why}") }
-  (R.ok, (data, host, port)) -> {
+  (R.error, why)             then { println("recv failed: ${why}") }
+  (R.ok, (data, host, port)) then {
     println(data + " from " + host + ":" + port.to_string())
   }
 }
@@ -144,8 +144,8 @@ require "net"
 
 def serve(listener TcpListener) Int64 {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       conn.write("secure: hello\n")
       conn.close()
     }
@@ -157,12 +157,12 @@ const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "tls-cert.pem", "tls-key
 do serve(listener)
 
 case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }  // secure: hello
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }  // secure: hello
     }
     conn.close()
   }
@@ -177,8 +177,8 @@ require "net"
 const options = net.tls_client_options().with_ca_file("internal-ca.pem").with_client_certificate("client.pem", "client-key.pem").with_server_name("api.internal.example")
 
 case net.tls_connect_with("10.0.0.7", 443, 5.0, options) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     conn.close()
   }

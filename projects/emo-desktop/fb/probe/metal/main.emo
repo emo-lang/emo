@@ -96,13 +96,13 @@ class Tally {
 def main() {
   const holder = ArrayBuilder.new()
   case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
-    (R.error, why) -> {
+    (R.error, why) then {
       // the loud end the probe itself prints — the lowerer refuses no
       // input this program feeds it, so a refusal here is a lowered
       // wrong answer, and the probe's count shows it
       println("strike refused: ${why}")
     }
-    (R.ok, s) -> { holder.push(s) }
+    (R.ok, s) then { holder.push(s) }
   }
   const f = holder.get(0)
   const e = ui_fb.measure(ui_fb_frame.tree(), 1024, f)

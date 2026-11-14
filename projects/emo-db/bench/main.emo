@@ -142,8 +142,8 @@ def main() {
 
 def fresh_column(path String) engine.Engine {
   case rocksdb.destroy_db(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
   const eng = open_or_die(path)
   run_or_die(eng, "CREATE TABLE bench_cold (id BIGINT, name TEXT, score DOUBLE PRECISION) STORE = COLUMN")
@@ -162,8 +162,8 @@ def insert_sql(i Int64) String {
 
 def fresh(path String) engine.Engine {
   case rocksdb.destroy_db(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
   const eng = open_or_die(path)
   run_or_die(eng, "CREATE TABLE bench_users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION)")
@@ -172,15 +172,15 @@ def fresh(path String) engine.Engine {
 
 def open_or_die(path String) engine.Engine {
   case engine.open(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, eng) -> { return eng }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, eng) then { return eng }
   }
 }
 
 def run_or_die(eng engine.Engine, sql String) engine.Result {
   case eng.execute(sql) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, result) -> { return result }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, result) then { return result }
   }
 }
 

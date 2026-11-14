@@ -11,11 +11,11 @@ def parse_flag(raw String) (R, String) {
 }
 
 case parse_flag("on") {
-  (R.ok, value)  -> { println(value) }
-  (R.error, why) -> { println("read failed: ${why}") }
+  (R.ok, value)  then { println(value) }
+  (R.error, why) then { println("read failed: ${why}") }
 }
 
 case parse_flag("off") {
-  (R.ok, value)  -> { println(value) }
-  (R.error, why) -> { println("read failed: ${why}") }
+  (R.ok, value)  then { println(value) }
+  (R.error, why) then { println("read failed: ${why}") }
 }

@@ -57,10 +57,10 @@ class WaitGroup {
   def done() Void {
     self.pid <- ("sync", "dec", self_pid())
     receive {
-      ("sync", "underflow") -> {
+      ("sync", "underflow") then {
         raise Exception.new(message: "sync: the countdown already drained")
       }
-      ("sync", "ok") -> { }
+      ("sync", "ok") then { }
     }
   }
 
@@ -70,8 +70,8 @@ class WaitGroup {
   def wait() Void {
     self.pid <- ("sync", "wait", self_pid())
     receive {
-      ("sync", "drained") -> { }
-      ("sync", "stopped") -> {
+      ("sync", "drained") then { }
+      ("sync", "stopped") then {
         raise Exception.new(message: "sync: the wait group was stopped under the wait")
       }
     }
@@ -95,7 +95,7 @@ def counter_start(n Int64) Int64 {
 // waiting pids, and this loop is the only code that touches them.
 def counter(count Int64, waiters List) Int64 {
   receive {
-    ("sync", "dec", from) -> {
+    ("sync", "dec", from) then {
       if count == 0 {
         from <- ("sync", "underflow")
         return counter(count, waiters)
@@ -108,7 +108,7 @@ def counter(count Int64, waiters List) Int64 {
       }
       return counter(left, waiters)
     }
-    ("sync", "wait", from) -> {
+    ("sync", "wait", from) then {
       if count == 0 {
         from <- ("sync", "drained")
         return counter(count, waiters)
@@ -116,7 +116,7 @@ def counter(count Int64, waiters List) Int64 {
       waiters.push_back(from)
       return counter(count, waiters)
     }
-    ("sync", "stop") -> {
+    ("sync", "stop") then {
       release(waiters, "stopped")
       return halt()
     }

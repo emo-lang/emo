@@ -12,9 +12,9 @@ require "os"
 
 def read_all(acc String) String {
   case os.read(0, 65536) {
-    (R.ok, "")    -> { return acc }
-    (R.ok, chunk) -> { return read_all(acc + chunk) }
-    (R.error, why) -> {
+    (R.ok, "")    then { return acc }
+    (R.ok, chunk) then { return read_all(acc + chunk) }
+    (R.error, why) then {
       raise Exception.new(message: "emoui: reading stdin: " + why)
     }
   }
@@ -22,10 +22,10 @@ def read_all(acc String) String {
 
 def write_all(out String) {
   case os.write(1, out) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "emoui: writing stdout: " + why)
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
     }
   }
 }

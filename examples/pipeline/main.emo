@@ -14,11 +14,11 @@
 // The doubler forwards every order, doubled, to the next stage.
 def doubler(next Pid) Int64 {
   receive {
-    (id, n) -> {
+    (id, n) then {
       next <- (id, n * 2)
       return doubler(next)
     }
-    "done" -> {
+    "done" then {
       next <- "done"
       return halt()
     }
@@ -29,11 +29,11 @@ def doubler(next Pid) Int64 {
 // back to the entry process when the line closes.
 def labeler(count Int64, boss Pid) Int64 {
   receive {
-    (id, n) -> {
+    (id, n) then {
       println("order ${id}: ${n} units")
       return labeler(count + 1, boss)
     }
-    "done" -> {
+    "done" then {
       boss <- (self_pid(), count)
       return halt()
     }
@@ -56,7 +56,7 @@ const line = do doubler(lab)
 feed(line, 1)
 
 receive {
-  (who, handled) -> {
+  (who, handled) then {
     println("the line handled ${handled} orders")
   }
 }

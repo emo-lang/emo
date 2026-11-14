@@ -54,8 +54,8 @@ class Websocket {
   // server sends bare.
   def send_text(data String) (R, Websocket) {
     case send_frame(self.conn, !self.server_side, op_text, data.to_bytes()) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> { return (R.ok, self) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then { return (R.ok, self) }
     }
   }
 
@@ -65,8 +65,8 @@ class Websocket {
   // this door is then the error value naming the end.
   def recv_message() (R, String) {
     case next_data_frame(self) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, first)  -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, first)  then {
         if first.fin {
           return (R.ok, first.payload.to_string())
         }
@@ -88,11 +88,11 @@ class Websocket {
     body.set(0, 3)
     body.set(1, 232)
     case send_frame(self.conn, !self.server_side, op_close, body) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _)      then {
         case self.conn.close() {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _)      -> { return (R.ok, self) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _)      then { return (R.ok, self) }
         }
       }
     }
@@ -126,11 +126,11 @@ def connect_either(host String, port Int64, path String, timeout Float64, verify
     raise Exception.new(message: "websocket: the path must start with `/`")
   }
   case checked_timeout(timeout) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then {
       case net.connect(host, port, timeout) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, conn)   -> { return dial(conn, host, port, path, timeout, verify) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, conn)   then { return dial(conn, host, port, path, timeout, verify) }
       }
     }
   }
@@ -146,12 +146,12 @@ def checked_timeout(timeout Float64) (R, Int64) {
 def dial(conn TcpConn, host String, port Int64, path String, timeout Float64, verify Bool) (R, Websocket) {
   conn.set_timeout(timeout)
   case rand.bytes(16) {
-    (R.error, why) -> { return (R.error, "websocket: the handshake key needs entropy (" + why + ")") }
-    (R.ok, key_bytes) -> {
+    (R.error, why) then { return (R.error, "websocket: the handshake key needs entropy (" + why + ")") }
+    (R.ok, key_bytes) then {
       const key = base64.encode(key_bytes.to_string())
       case conn.write(handshake_request(path, host, port, key)) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> { return read_answer(conn, key, verify) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, _)      then { return read_answer(conn, key, verify) }
       }
     }
   }
@@ -167,8 +167,8 @@ def handshake_request(path String, host String, port Int64, key String) String {
 // headers and skips only that check.
 def read_answer(conn TcpConn, key String, verify Bool) (R, Websocket) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.error, "websocket: the peer hung up during the handshake")
       }
@@ -199,8 +199,8 @@ def read_accept_header(conn TcpConn, key String, seen Int64, accept String, veri
     return (R.error, "websocket: the handshake answer carries too many header lines")
   }
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         if verify {
           if accept == "" {
@@ -241,15 +241,15 @@ def accept_for(key String) String {
 // is computed from; anything else is refused before any frame moves.
 def accept(conn TcpConn) (R, Websocket) {
   case read_request_line(conn) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> { return read_upgrade_headers(conn, 0, "", false, false) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then { return read_upgrade_headers(conn, 0, "", false, false) }
   }
 }
 
 def read_request_line(conn TcpConn) (R, Int64) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.error, "websocket: the peer hung up before the handshake request")
       }
@@ -266,8 +266,8 @@ def read_upgrade_headers(conn TcpConn, seen Int64, key String, upgrade_ok Bool, 
     return (R.error, "websocket: the handshake request carries too many header lines")
   }
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         if key == "" {
           return (R.error, "websocket: the handshake request carries no key")
@@ -279,8 +279,8 @@ def read_upgrade_headers(conn TcpConn, seen Int64, key String, upgrade_ok Bool, 
           return (R.error, "websocket: the handshake request carries no version header")
         }
         case conn.write(accept_answer(key)) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _)      -> { return (R.ok, Websocket.new(conn: conn, server_side: true)) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _)      then { return (R.ok, Websocket.new(conn: conn, server_side: true)) }
         }
       }
       const lower = line.lower()
@@ -315,8 +315,8 @@ def send_frame(conn TcpConn, masked Bool, opcode Int64, payload Bytes) (R, TcpCo
     return conn.write(bare_frame(opcode, payload))
   }
   case rand.bytes(4) {
-    (R.error, why) -> { return (R.error, "websocket: a frame mask needs entropy (" + why + ")") }
-    (R.ok, mask)   -> { return conn.write(masked_frame(opcode, payload, mask)) }
+    (R.error, why) then { return (R.error, "websocket: a frame mask needs entropy (" + why + ")") }
+    (R.ok, mask)   then { return conn.write(masked_frame(opcode, payload, mask)) }
   }
 }
 
@@ -377,8 +377,8 @@ def frame_head(opcode Int64, n Int64, masked Bool) String {
 // payload, and the payload it names is unmasked on its way out.
 def recv_frame(ws Websocket) (R, Frame) {
   case ws.conn.read_exactly(2) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, head)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, head)   then {
       const b = head.to_bytes()
       const first = b.get(0)
       const second = b.get(1)
@@ -392,8 +392,8 @@ def recv_frame(ws Websocket) (R, Frame) {
         return (R.error, "websocket: the peer sent a bare frame — clients must mask")
       }
       case read_length(ws.conn, second & 127) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, n)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, n)      then {
           if peer_masked {
             return read_masked_payload(ws.conn, fin, opcode, n)
           }
@@ -410,16 +410,16 @@ def read_length(conn TcpConn, first Int64) (R, Int64) {
   }
   if first == 126 {
     case conn.read_exactly(2) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, text)   -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, text)   then {
         const b = text.to_bytes()
         return (R.ok, (b.get(0) << 8) + b.get(1))
       }
     }
   }
   case conn.read_exactly(8) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, text)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, text)   then {
       const b = text.to_bytes()
       var n = 0
       var i = 0
@@ -437,12 +437,12 @@ def read_length(conn TcpConn, first Int64) (R, Int64) {
 
 def read_masked_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
   case conn.read_exactly(4) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, key_text) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, key_text) then {
       const mask = key_text.to_bytes()
       case conn.read_exactly(n) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, text)   -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, text)   then {
           const raw = text.to_bytes()
           const out = Bytes.new(n)
           var i = 0
@@ -459,8 +459,8 @@ def read_masked_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame
 
 def read_bare_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
   case conn.read_exactly(n) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, text)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, text)   then {
       return (R.ok, Frame.new(opcode: opcode, fin: fin, payload: text.to_bytes()))
     }
   }
@@ -472,8 +472,8 @@ def read_bare_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) 
 // closed, and the end named in the reason.
 def next_data_frame(ws Websocket) (R, Frame) {
   case recv_frame(ws) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frame)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frame)  then {
       const opcode = frame.opcode
       if opcode == op_ping {
         return answer_ping(ws, frame)
@@ -494,8 +494,8 @@ def next_data_frame(ws Websocket) (R, Frame) {
 
 def answer_ping(ws Websocket, frame Frame) (R, Frame) {
   case send_frame(ws.conn, !ws.server_side, op_pong, frame.payload) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> { return next_data_frame(ws) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _)      then { return next_data_frame(ws) }
   }
 }
 
@@ -504,11 +504,11 @@ def peer_closed(ws Websocket) (R, Frame) {
   body.set(0, 3)
   body.set(1, 232)
   case send_frame(ws.conn, !ws.server_side, op_close, body) {
-    (R.error, why) -> { return (R.error, "websocket: the peer closed the connection (the goodbye could not be sent: " + why + ")") }
-    (R.ok, _)      -> {
+    (R.error, why) then { return (R.error, "websocket: the peer closed the connection (the goodbye could not be sent: " + why + ")") }
+    (R.ok, _)      then {
       case ws.conn.close() {
-        (R.error, why) -> { return (R.error, "websocket: the peer closed the connection (" + why + ")") }
-        (R.ok, _)      -> { return (R.error, "websocket: the peer closed the connection") }
+        (R.error, why) then { return (R.error, "websocket: the peer closed the connection (" + why + ")") }
+        (R.ok, _)      then { return (R.error, "websocket: the peer closed the connection") }
       }
     }
   }
@@ -522,8 +522,8 @@ def assemble(ws Websocket, first Frame, count Int64) (R, String) {
     return (R.error, "websocket: a message fragmented into too many pieces")
   }
   case next_data_frame(ws) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frame)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frame)  then {
       if frame.opcode != op_continuation {
         return (R.error, "websocket: a fragment was interrupted by a new message")
       }

@@ -56,12 +56,12 @@
   },
   "Case": {
     "prefix": "case",
-    "body": ["case ${1:value} {", "\t${2:pattern} -> {", "\t\t$0", "\t}", "}"],
+    "body": ["case ${1:value} {", "\t${2:pattern} then {", "\t\t$0", "\t}", "}"],
     "description": "A case expression"
   },
   "Receive": {
     "prefix": "receive",
-    "body": ["receive {", "\t${1:pattern} -> {", "\t\t$0", "\t}", "}"],
+    "body": ["receive {", "\t${1:pattern} then {", "\t\t$0", "\t}", "}"],
     "description": "A selective receive"
   },
   "Arrow block": {

@@ -119,8 +119,8 @@ def event_of(n ui.Node) Int64 {
 // A fixed extent from the style's `(R, Float64)` slot, or -1.0 for auto.
 def fixed(slot (R, Float64)) Float64 {
   case slot {
-    (R.ok, v) -> { return v }
-    (R.error, _) -> { return 0.0 - 1.0 }
+    (R.ok, v) then { return v }
+    (R.error, _) then { return 0.0 - 1.0 }
   }
 }
 

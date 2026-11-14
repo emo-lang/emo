@@ -12,8 +12,8 @@ def ponger(n Int64, pinger Pid) Int64 {
 def driver(n Int64, pong Pid) Int64 {
   pong <- (n, self_pid())
   receive {
-    "ack" -> { return driver(n - 1, pong) }
-    "done" -> { return 0 }
+    "ack" then { return driver(n - 1, pong) }
+    "done" then { return 0 }
   }
 }
 

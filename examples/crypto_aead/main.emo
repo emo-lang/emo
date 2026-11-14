@@ -22,8 +22,8 @@ def zeros(n Int64) Bytes {
 
 def from_hex(text String) Bytes {
   case crypto.hex_decode(text) {
-    (R.ok, v) -> { return v }
-    (R.error, why) -> { println(why) }
+    (R.ok, v) then { return v }
+    (R.error, why) then { println(why) }
   }
   return Bytes.new(0)
 }
@@ -66,8 +66,8 @@ const aad3 = from_hex("50515253c0c1c2c3c4c5c6c7")
 const sealed = crypto.cipher.chacha20_poly1305_seal(k3, n3, msg, aad3)
 println("seal 2.8.2: " + crypto.hex_encode(sealed))
 case crypto.cipher.chacha20_poly1305_open(k3, n3, sealed, aad3) {
-  (R.ok, pt) -> { println("open 2.8.2: " + pt.to_string()) }
-  (R.error, why) -> { println(why) }
+  (R.ok, pt) then { println("open 2.8.2: " + pt.to_string()) }
+  (R.error, why) then { println(why) }
 }
 const tampered = seq(sealed.length(), 0)
 var ti = 0
@@ -77,16 +77,16 @@ while ti < sealed.length() {
 }
 set_byte(tampered, 0, get_byte(sealed, 0) ^ 1)
 case crypto.cipher.chacha20_poly1305_open(k3, n3, tampered, aad3) {
-  (R.ok, _) -> { println("tamper: UNEXPECTED OK") }
-  (R.error, why) -> { println("tamper: " + why) }
+  (R.ok, _) then { println("tamper: UNEXPECTED OK") }
+  (R.error, why) then { println("tamper: " + why) }
 }
 case crypto.cipher.chacha20_poly1305_open(k3, n3, sealed, from_hex("50515253c0c1c2c3c4c5c6c8")) {
-  (R.ok, _) -> { println("wrong aad: UNEXPECTED OK") }
-  (R.error, why) -> { println("wrong aad: " + why) }
+  (R.ok, _) then { println("wrong aad: UNEXPECTED OK") }
+  (R.error, why) then { println("wrong aad: " + why) }
 }
 case crypto.cipher.chacha20_poly1305_open(k3, n3, sub(sealed, 0, 15), aad3) {
-  (R.ok, _) -> { println("truncated: UNEXPECTED OK") }
-  (R.error, why) -> { println("truncated: " + why) }
+  (R.ok, _) then { println("truncated: UNEXPECTED OK") }
+  (R.error, why) then { println("truncated: " + why) }
 }
 
 // ---- the sizes around the block and pad16 boundaries, each sealed
@@ -100,14 +100,14 @@ for var s = 0; s < 9; s = s + 1 {
   const box = crypto.cipher.chacha20_poly1305_seal(k3, n3, pt, aad)
   println("seal " + sizes[s].to_string() + "/" + aad_sizes[aad_at].to_string() + ": " + crypto.hex_encode(box))
   case crypto.cipher.chacha20_poly1305_open(k3, n3, box, aad) {
-    (R.ok, back) -> {
+    (R.ok, back) then {
       if crypto.constant_time_compare(back, pt) {
         println("open " + sizes[s].to_string() + "/" + aad_sizes[aad_at].to_string() + ": ok")
       } else {
         println("open " + sizes[s].to_string() + "/" + aad_sizes[aad_at].to_string() + ": MISMATCH")
       }
     }
-    (R.error, why) -> { println(why) }
+    (R.error, why) then { println(why) }
   }
 }
 
@@ -138,14 +138,14 @@ for var gs = 0; gs < 9; gs = gs + 1 {
   const box = crypto.cipher.aes_gcm_seal(ak, an, gpt, gaad)
   println("gcm seal " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": " + crypto.hex_encode(box))
   case crypto.cipher.aes_gcm_open(ak, an, box, gaad) {
-    (R.ok, back) -> {
+    (R.ok, back) then {
       if crypto.constant_time_compare(back, gpt) {
         println("gcm open " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": ok")
       } else {
         println("gcm open " + gsizes[gs].to_string() + "/" + gaads[ga].to_string() + ": MISMATCH")
       }
     }
-    (R.error, why) -> { println(why) }
+    (R.error, why) then { println(why) }
   }
 }
 println("gcm128 seal: " + crypto.hex_encode(crypto.cipher.aes_gcm_seal(seq(16, 0), an, seq(40, 0x40), seq(12, 0xa0))))

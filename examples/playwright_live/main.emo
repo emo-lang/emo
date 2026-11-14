@@ -32,20 +32,20 @@ const server = httpd.serve(listener, app)
 const url = "http://127.0.0.1:" + listener.port().to_string() + "/"
 
 case playwright.connect("127.0.0.1", 9933, 30.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, pw)     -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, pw)     then {
     const browser = pw.browser()
     case browser.version() {
-      (R.error, why) -> { println("version failed: ${why}") }
-      (R.ok, v)      -> { println("browser version: ${v}") }
+      (R.error, why) then { println("version failed: ${why}") }
+      (R.ok, v)      then { println("browser version: ${v}") }
     }
     case browser.new_page() {
-      (R.error, why) -> { println("new_page failed: ${why}") }
-      (R.ok, page)   -> {
+      (R.error, why) then { println("new_page failed: ${why}") }
+      (R.ok, page)   then {
         println("page opened")
         case page.goto(url) {
-          (R.error, why) -> { println("goto failed: ${why}") }
-          (R.ok, resp)   -> {
+          (R.error, why) then { println("goto failed: ${why}") }
+          (R.ok, resp)   then {
             if resp.is_null?() {
               println("goto: no response")
             } else {
@@ -54,34 +54,34 @@ case playwright.connect("127.0.0.1", 9933, 30.0) {
           }
         }
         case page.title() {
-          (R.error, why) -> { println("title failed: ${why}") }
-          (R.ok, text)   -> { println("title: ${text}") }
+          (R.error, why) then { println("title failed: ${why}") }
+          (R.ok, text)   then { println("title: ${text}") }
         }
         case page.text_content("#hello") {
-          (R.error, why) -> { println("text_content failed: ${why}") }
-          (R.ok, text)   -> { println("#hello: ${text.as_string()}") }
+          (R.error, why) then { println("text_content failed: ${why}") }
+          (R.ok, text)   then { println("#hello: ${text.as_string()}") }
         }
         case page.text_content("#nothing") {
-          (R.error, why) -> { println("text_content failed: ${why}") }
-          (R.ok, text)   -> { println("#nothing is null: ${text.is_null?()}") }
+          (R.error, why) then { println("text_content failed: ${why}") }
+          (R.ok, text)   then { println("#nothing is null: ${text.is_null?()}") }
         }
         case page.fill("#missing-input", "words") {
-          (R.error, why) -> { println("fill #missing-input failed: ${why}") }
-          (R.ok, _)      -> { println("filled #missing-input") }
+          (R.error, why) then { println("fill #missing-input failed: ${why}") }
+          (R.ok, _)      then { println("filled #missing-input") }
         }
         case page.screenshot() {
-          (R.error, why) -> { println("screenshot failed: ${why}") }
-          (R.ok, png)    -> { println("screenshot: ${png.length()} bytes") }
+          (R.error, why) then { println("screenshot failed: ${why}") }
+          (R.ok, png)    then { println("screenshot: ${png.length()} bytes") }
         }
         case page.close() {
-          (R.error, why) -> { println("page close failed: ${why}") }
-          (R.ok, _)      -> { println("page closed") }
+          (R.error, why) then { println("page close failed: ${why}") }
+          (R.ok, _)      then { println("page closed") }
         }
       }
     }
     case pw.close() {
-      (R.error, why) -> { println("close failed: ${why}") }
-      (R.ok, _)      -> { println("connection closed") }
+      (R.error, why) then { println("close failed: ${why}") }
+      (R.ok, _)      then { println("connection closed") }
     }
   }
 }

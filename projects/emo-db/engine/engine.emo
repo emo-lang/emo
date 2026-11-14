@@ -51,42 +51,42 @@ enum ValType { null_t, integer, bigint, real, double, text, varchar, boolean, by
 
 def val_type_of(kind record.ColType) ValType {
   case kind {
-    record.ColType.integer -> { return ValType.integer }
-    record.ColType.bigint -> { return ValType.bigint }
-    record.ColType.real -> { return ValType.real }
-    record.ColType.double -> { return ValType.double }
-    record.ColType.text -> { return ValType.text }
-    record.ColType.varchar -> { return ValType.varchar }
-    record.ColType.boolean -> { return ValType.boolean }
-    record.ColType.bytea -> { return ValType.bytea }
+    record.ColType.integer then { return ValType.integer }
+    record.ColType.bigint then { return ValType.bigint }
+    record.ColType.real then { return ValType.real }
+    record.ColType.double then { return ValType.double }
+    record.ColType.text then { return ValType.text }
+    record.ColType.varchar then { return ValType.varchar }
+    record.ColType.boolean then { return ValType.boolean }
+    record.ColType.bytea then { return ValType.bytea }
   }
 }
 
 def col_type_of(t ValType) record.ColType {
   case t {
-    ValType.null_t -> { return record.ColType.text }
-    ValType.integer -> { return record.ColType.integer }
-    ValType.bigint -> { return record.ColType.bigint }
-    ValType.real -> { return record.ColType.real }
-    ValType.double -> { return record.ColType.double }
-    ValType.text -> { return record.ColType.text }
-    ValType.varchar -> { return record.ColType.varchar }
-    ValType.boolean -> { return record.ColType.boolean }
-    ValType.bytea -> { return record.ColType.bytea }
+    ValType.null_t then { return record.ColType.text }
+    ValType.integer then { return record.ColType.integer }
+    ValType.bigint then { return record.ColType.bigint }
+    ValType.real then { return record.ColType.real }
+    ValType.double then { return record.ColType.double }
+    ValType.text then { return record.ColType.text }
+    ValType.varchar then { return record.ColType.varchar }
+    ValType.boolean then { return record.ColType.boolean }
+    ValType.bytea then { return record.ColType.bytea }
   }
 }
 
 def type_name(t ValType) String {
   case t {
-    ValType.null_t -> { return "NULL" }
-    ValType.integer -> { return "INTEGER" }
-    ValType.bigint -> { return "BIGINT" }
-    ValType.real -> { return "REAL" }
-    ValType.double -> { return "DOUBLE PRECISION" }
-    ValType.text -> { return "TEXT" }
-    ValType.varchar -> { return "VARCHAR" }
-    ValType.boolean -> { return "BOOLEAN" }
-    ValType.bytea -> { return "BYTEA" }
+    ValType.null_t then { return "NULL" }
+    ValType.integer then { return "INTEGER" }
+    ValType.bigint then { return "BIGINT" }
+    ValType.real then { return "REAL" }
+    ValType.double then { return "DOUBLE PRECISION" }
+    ValType.text then { return "TEXT" }
+    ValType.varchar then { return "VARCHAR" }
+    ValType.boolean then { return "BOOLEAN" }
+    ValType.bytea then { return "BYTEA" }
   }
 }
 
@@ -220,11 +220,11 @@ def compare_bytes(a Bytes, b Bytes) Int64 {
 // Both values are non-null and already conform to `t`.
 def compare_values(a record.Value, b record.Value, t ValType) (R, Int64) {
   case coerce_value(a, t) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, x) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, x) then {
       case coerce_value(b, t) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, y) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, y) then {
           if t == ValType.integer || t == ValType.bigint {
             const xi = x.as_i64()
             const yi = y.as_i64()
@@ -319,8 +319,8 @@ class TUnary {
 
   def eval(row Array[record.Value]) (R, record.Value) {
     case self.operand.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v) then {
         if self.op == sql.UnOp.not {
           if v.is_null {
             return (R.ok, null_bool_value())
@@ -363,11 +363,11 @@ class TBinary {
 
   def eval(row Array[record.Value]) (R, record.Value) {
     case self.left.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, a) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, a) then {
         case self.right.eval(row) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, b) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, b) then {
             return eval_binary(self, a, b)
           }
         }
@@ -390,8 +390,8 @@ def eval_binary(node TBinary, a record.Value, b record.Value) (R, record.Value) 
       return (R.ok, null_bool_value())
     }
     case compare_values(a, b, node.common) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, c) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, c) then {
         var result = false
         if op == sql.BinOp.eq {
           result = c == 0
@@ -520,11 +520,11 @@ class TLike {
 
   def eval(row Array[record.Value]) (R, record.Value) {
     case self.value.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v) then {
         case self.pattern.eval(row) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, p) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, p) then {
             if v.is_null || p.is_null {
               return (R.ok, null_bool_value())
             }
@@ -580,21 +580,21 @@ class TIn {
 
   def eval(row Array[record.Value]) (R, record.Value) {
     case self.value.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v) then {
         var saw_null = v.is_null
         var i = 0
         while i < self.choices.length() {
           case self.choices[i].eval(row) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, c) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, c) then {
               if c.is_null {
                 saw_null = true
               } else {
                 if !v.is_null {
                   case compare_values(v, c, self.common) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, cmp) -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, cmp) then {
                       if cmp == 0 {
                         if self.negated {
                           return (R.ok, record.boolean(false))
@@ -634,8 +634,8 @@ class TIsTest {
 
   def eval(row Array[record.Value]) (R, record.Value) {
     case self.value.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v) then {
         var result = false
         if self.target == sql.IsKind.is_null {
           result = v.is_null
@@ -671,8 +671,8 @@ class TCase {
   def eval(row Array[record.Value]) (R, record.Value) {
     if self.operand_e.length() == 1 {
       case self.operand_e[0].eval(row) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, operand) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, operand) then {
           return eval_simple_case(self, row, operand)
         }
       }
@@ -680,8 +680,8 @@ class TCase {
     var i = 0
     while i < self.whens.length() {
       case self.whens[i][0].eval(row) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, condition) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, condition) then {
           if is_true(condition) {
             return finish_case(self, self.whens[i][1], row)
           }
@@ -697,12 +697,12 @@ def eval_simple_case(node TCase, row Array[record.Value], operand record.Value) 
   var i = 0
   while i < node.whens.length() {
     case node.whens[i][0].eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, when_value) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, when_value) then {
         if !operand.is_null && !when_value.is_null {
           case compare_values(operand, when_value, node.common) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, cmp) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, cmp) then {
               if cmp == 0 {
                 return finish_case(node, node.whens[i][1], row)
               }
@@ -718,8 +718,8 @@ def eval_simple_case(node TCase, row Array[record.Value], operand record.Value) 
 
 def finish_case(node TCase, branch TExpr, row Array[record.Value]) (R, record.Value) {
   case branch.eval(row) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v) -> { return coerce_value(v, node.t) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v) then { return coerce_value(v, node.t) }
   }
 }
 
@@ -754,8 +754,8 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
   }
   if expr.is(sql.Column) {
     case resolve_column(expr, table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, column) -> { return (R.ok, column) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, column) then { return (R.ok, column) }
     }
   }
   if expr.is(sql.Paren) {
@@ -763,19 +763,19 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
   }
   if expr.is(sql.Unary) {
     case resolve_expr(expr.operand, table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, operand) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, operand) then {
         if expr.op == sql.UnOp.not {
           case require_boolean(operand.result_type(), "NOT") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {
               return (R.ok, TUnary.new(expr.op, operand, ValType.boolean))
             }
           }
         }
         case require_numeric(operand.result_type(), unop_text(expr.op)) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             return (R.ok, TUnary.new(expr.op, operand, operand.result_type()))
           }
         }
@@ -787,17 +787,17 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
   }
   if expr.is(sql.Like) {
     case resolve_expr(expr.value, table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value) then {
         case resolve_expr(expr.pattern, table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, pattern) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, pattern) then {
             case require_string(value.result_type(), "LIKE") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, _) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, _) then {
                 case require_string(pattern.result_type(), "LIKE") {
-                  (R.error, why) -> { return (R.error, why) }
-                  (R.ok, _) -> {
+                  (R.error, why) then { return (R.error, why) }
+                  (R.ok, _) then {
                     return (R.ok, TLike.new(value, pattern, expr.negated))
                   }
                 }
@@ -810,18 +810,18 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
   }
   if expr.is(sql.Between) {
     case resolve_expr(expr.value, table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value) then {
         case resolve_expr(expr.low, table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, low) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, low) then {
             case resolve_expr(expr.high, table, alias) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, high) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, high) then {
                 case common_three(value.result_type(), low.result_type(),
                                   high.result_type(), "BETWEEN") {
-                  (R.error, why) -> { return (R.error, why) }
-                  (R.ok, common) -> {
+                  (R.error, why) then { return (R.error, why) }
+                  (R.ok, common) then {
                     const ge = TBinary.new(sql.BinOp.ge, value, low, ValType.boolean, common)
                     const le = TBinary.new(sql.BinOp.le, value, high, ValType.boolean, common)
                     const both = TBinary.new(sql.BinOp.and, ge, le, ValType.boolean, ValType.boolean)
@@ -843,14 +843,14 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
   }
   if expr.is(sql.IsTest) {
     case resolve_expr(expr.value, table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value) then {
         if expr.target == sql.IsKind.is_null {
           return (R.ok, TIsTest.new(value, expr.target, expr.negated))
         }
         case require_boolean(value.result_type(), "IS TRUE/FALSE") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             return (R.ok, TIsTest.new(value, expr.target, expr.negated))
           }
         }
@@ -877,20 +877,20 @@ def resolve_expr(expr sql.Expr, table record.Table, alias String) (R, TExpr) {
 
 def resolve_binary(expr sql.Binary, table record.Table, alias String) (R, TExpr) {
   case resolve_expr(expr.left, table, alias) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, left) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, left) then {
       case resolve_expr(expr.right, table, alias) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, right) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, right) then {
           const l = left.result_type()
           const r = right.result_type()
           if expr.op == sql.BinOp.and || expr.op == sql.BinOp.or {
             case require_boolean(l, binop_text(expr.op)) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, _) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, _) then {
                 case require_boolean(r, binop_text(expr.op)) {
-                  (R.error, why) -> { return (R.error, why) }
-                  (R.ok, _) -> {
+                  (R.error, why) then { return (R.error, why) }
+                  (R.ok, _) then {
                     return (R.ok, TBinary.new(expr.op, left, right, ValType.boolean, ValType.boolean))
                   }
                 }
@@ -901,8 +901,8 @@ def resolve_binary(expr sql.Binary, table record.Table, alias String) (R, TExpr)
              expr.op == sql.BinOp.lt || expr.op == sql.BinOp.le ||
              expr.op == sql.BinOp.gt || expr.op == sql.BinOp.ge {
             case common_type(l, r, binop_text(expr.op)) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, common) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, common) then {
                 return (R.ok, TBinary.new(expr.op, left, right, ValType.boolean, common))
               }
             }
@@ -923,8 +923,8 @@ def resolve_binary(expr sql.Binary, table record.Table, alias String) (R, TExpr)
                         binop_text(expr.op) + " " + lower_type_name(r))
           }
           case common_type(l, r, binop_text(expr.op)) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, common) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, common) then {
               if expr.op == sql.BinOp.mod && !is_integer_type(common) {
                 return fail("42883",
                             "operator does not exist: " +
@@ -942,8 +942,8 @@ def resolve_binary(expr sql.Binary, table record.Table, alias String) (R, TExpr)
 
 def resolve_in(expr sql.InTest, table record.Table, alias String) (R, TExpr) {
   case resolve_expr(expr.value, table, alias) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, value) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, value) then {
       var choices = []
       var common = value.result_type()
       var i = 0
@@ -953,11 +953,11 @@ def resolve_in(expr sql.InTest, table record.Table, alias String) (R, TExpr) {
           return fail("0A000", "IN (subquery) is not supported in v0")
         }
         case resolve_expr(choice_expr, table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, choice) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, choice) then {
             case common_type(common, choice.result_type(), "IN") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, next) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, next) then {
                 common = next
                 choices = choices.append(choice)
               }
@@ -976,8 +976,8 @@ def resolve_case(expr sql.CaseExpr, table record.Table, alias String) (R, TExpr)
   var operand_type = ValType.null_t
   if expr.operand_e.length() == 1 {
     case resolve_expr(expr.operand_e[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, operand) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, operand) then {
         operand_e = [operand]
         operand_type = operand.result_type()
       }
@@ -990,25 +990,25 @@ def resolve_case(expr sql.CaseExpr, table record.Table, alias String) (R, TExpr)
   while i < expr.whens.length() {
     const pair = expr.whens[i]
     case resolve_expr(pair[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, condition) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, condition) then {
         if expr.operand_e.length() == 1 {
           case common_type(common, condition.result_type(), "CASE") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, next) -> { common = next }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, next) then { common = next }
           }
         } else {
           case require_boolean(condition.result_type(), "CASE WHEN") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {}
           }
         }
         case resolve_expr(pair[1], table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, branch) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, branch) then {
             case common_type(result_type, branch.result_type(), "CASE") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, next) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, next) then {
                 result_type = next
                 whens = whens.append((condition, branch))
               }
@@ -1022,11 +1022,11 @@ def resolve_case(expr sql.CaseExpr, table record.Table, alias String) (R, TExpr)
   var else_e = []
   if expr.else_e.length() == 1 {
     case resolve_expr(expr.else_e[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, branch) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, branch) then {
         case common_type(result_type, branch.result_type(), "CASE") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, next) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, next) then {
             result_type = next
             else_e = [branch]
           }
@@ -1179,8 +1179,8 @@ def common_type(a ValType, b ValType, op String) (R, ValType) {
 
 def common_three(a ValType, b ValType, c ValType, op String) (R, ValType) {
   case common_type(a, b, op) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ab) -> { return common_type(ab, c, op) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ab) then { return common_type(ab, c, op) }
   }
 }
 
@@ -1343,8 +1343,8 @@ def join_strings(xs Array[String], i Int64, acc String) String {
 
 def open(path String) (R, Engine) {
   case record.open(path) {
-    (R.error, why) -> { return fail("XX000", "open: " + why) }
-    (R.ok, store) -> { return (R.ok, Engine.new(store, [], [], Map.new())) }
+    (R.error, why) then { return fail("XX000", "open: " + why) }
+    (R.ok, store) then { return (R.ok, Engine.new(store, [], [], Map.new())) }
   }
 }
 
@@ -1352,8 +1352,8 @@ def open(path String) (R, Engine) {
 // M32 session demo uses this, the embedded face does not.
 def open_locked(path String, locks LockClient) (R, Engine) {
   case record.open(path) {
-    (R.error, why) -> { return fail("XX000", "open: " + why) }
-    (R.ok, store) -> { return (R.ok, Engine.new(store, [locks], [], Map.new())) }
+    (R.error, why) then { return fail("XX000", "open: " + why) }
+    (R.ok, store) then { return (R.ok, Engine.new(store, [locks], [], Map.new())) }
   }
 }
 
@@ -1382,8 +1382,8 @@ class Engine {
   def execute(text String) (R, Result) {
     self.live()
     case sql.parse(text) {
-      (R.error, why) -> { return fail("42601", why) }
-      (R.ok, stmt) -> { return self.dispatch(stmt) }
+      (R.error, why) then { return fail("42601", why) }
+      (R.ok, stmt) then { return self.dispatch(stmt) }
     }
   }
 
@@ -1409,46 +1409,46 @@ class Engine {
     if self.in_tx() {
       const txn = self.current_txn()
       case txn.begin_statement() {
-        (R.error, why) -> {
+        (R.error, why) then {
           self.abort_tx()
           return (R.error, record_error(why))
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           case self.run_statement(stmt, txn) {
-            (R.error, why) -> {
+            (R.error, why) then {
               // A failed statement aborts the transaction, as PostgreSQL
               // does; the session is idle and the locks are released.
               self.abort_tx()
               return (R.error, why)
             }
-            (R.ok, result) -> { return (R.ok, result) }
+            (R.ok, result) then { return (R.ok, result) }
           }
         }
       }
     }
     case self.store.begin() {
-      (R.error, why) -> { return (R.error, record_error(why)) }
-      (R.ok, txn) -> {
+      (R.error, why) then { return (R.error, record_error(why)) }
+      (R.ok, txn) then {
         case self.run_statement(stmt, txn) {
-          (R.error, why) -> {
+          (R.error, why) then {
             case txn.rollback() {
-              (R.error, _) -> {}
-              (R.ok, _) -> {}
+              (R.error, _) then {}
+              (R.ok, _) then {}
             }
             self.release_locks()
             return (R.error, why)
           }
-          (R.ok, result) -> {
+          (R.ok, result) then {
             case txn.commit() {
-              (R.error, why) -> {
+              (R.error, why) then {
                 case txn.rollback() {
-                  (R.error, _) -> {}
-                  (R.ok, _) -> {}
+                  (R.error, _) then {}
+                  (R.ok, _) then {}
                 }
                 self.release_locks()
                 return (R.error, record_error(why))
               }
-              (R.ok, _) -> {
+              (R.ok, _) then {
                 self.release_locks()
                 return (R.ok, result)
               }
@@ -1480,8 +1480,8 @@ class Engine {
       return fail("25001", "there is already a transaction in progress")
     }
     case self.store.begin() {
-      (R.error, why) -> { return (R.error, record_error(why)) }
-      (R.ok, txn) -> {
+      (R.error, why) then { return (R.error, record_error(why)) }
+      (R.ok, txn) then {
         self.txn.replace([txn])
         return (R.ok, Result.new("BEGIN", [], [], [], ""))
       }
@@ -1494,11 +1494,11 @@ class Engine {
     }
     const txn = self.current_txn()
     case txn.commit() {
-      (R.error, why) -> {
+      (R.error, why) then {
         self.abort_tx()
         return (R.error, record_error(why))
       }
-      (R.ok, _) -> {
+      (R.ok, _) then {
         self.txn.replace([])
         self.release_locks()
         return (R.ok, Result.new("COMMIT", [], [], [], ""))
@@ -1518,8 +1518,8 @@ class Engine {
     if self.in_tx() {
       const txn = self.current_txn()
       case txn.rollback() {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
       self.txn.replace([])
     }
@@ -1542,8 +1542,8 @@ class Engine {
       return (R.ok, true)
     }
     case self.locks[0].acquire(table) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, _) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, _) then {
         self.held.set(table, true)
         return (R.ok, true)
       }
@@ -1616,13 +1616,13 @@ class Engine {
       store = record.Storage.column
     }
     case self.store.create_table_store(name, columns, indexes, store) {
-      (R.error, why) -> {
+      (R.error, why) then {
         if why.index_of("already exists") >= 0 {
           return fail("42P07", "relation \"" + name + "\" already exists")
         }
         return (R.error, record_error(why))
       }
-      (R.ok, _) -> {
+      (R.ok, _) then {
         return (R.ok, Result.new("CREATE TABLE", [], [], [],
                                  PCreate.new(name).text()))
       }
@@ -1635,15 +1635,15 @@ class Engine {
       return fail("0A000", "schema-qualified table names are not supported in v0")
     }
     case self.resolve_table(parts[0]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, table) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, table) then {
         case self.acquire(table.name) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {}
         }
         case resolve_targets(table, stmt.columns) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, targets) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, targets) then {
             var inserted = 0
             var r = 0
             while r < stmt.rows.length() {
@@ -1655,17 +1655,17 @@ class Engine {
                             " target columns")
               }
               case build_insert_row(table, targets, row) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, values) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, values) then {
                   if table.store == record.Storage.column {
                     case table.insert_column_tx(txn, values) {
-                      (R.error, why) -> { return (R.error, record_error(why)) }
-                      (R.ok, _) -> { inserted = inserted + 1 }
+                      (R.error, why) then { return (R.error, record_error(why)) }
+                      (R.ok, _) then { inserted = inserted + 1 }
                     }
                   } else {
                     case table.insert_tx(txn, values) {
-                      (R.error, why) -> { return (R.error, record_error(why)) }
-                      (R.ok, _) -> { inserted = inserted + 1 }
+                      (R.error, why) then { return (R.error, record_error(why)) }
+                      (R.ok, _) then { inserted = inserted + 1 }
                     }
                   }
                 }
@@ -1686,39 +1686,39 @@ class Engine {
       return fail("0A000", "schema-qualified table names are not supported in v0")
     }
     case self.resolve_table(parts[0]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, table) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, table) then {
         if table.store == record.Storage.column {
           return fail("0A000", "column-store tables are insert-only in v0")
         }
         case self.acquire(table.name) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {}
         }
         case resolve_assignments(table, stmt.sets) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, assignments) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, assignments) then {
             case self.plan_where(table, table.name, stmt.where_e) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, wr) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, wr) then {
                 const plan = PUpdate.new(table.name, wr.plan)
                 case scan_rows(table, wr.scan, txn) {
-                  (R.error, why) -> { return (R.error, record_error(why)) }
-                  (R.ok, rows) -> {
+                  (R.error, why) then { return (R.error, record_error(why)) }
+                  (R.ok, rows) then {
                     var updated = 0
                     var i = 0
                     while i < rows.length() {
                       const row = rows[i]
                       case filter_row(wr.predicate_e, row.values) {
-                        (R.error, why) -> { return (R.error, why) }
-                        (R.ok, keep) -> {
+                        (R.error, why) then { return (R.error, why) }
+                        (R.ok, keep) then {
                           if keep {
                             case build_update_row(table, assignments, row) {
-                              (R.error, why) -> { return (R.error, why) }
-                              (R.ok, values) -> {
+                              (R.error, why) then { return (R.error, why) }
+                              (R.ok, values) then {
                                 case table.update_tx(txn, row.rowid, values) {
-                                  (R.error, why) -> { return (R.error, record_error(why)) }
-                                  (R.ok, _) -> { updated = updated + 1 }
+                                  (R.error, why) then { return (R.error, record_error(why)) }
+                                  (R.ok, _) then { updated = updated + 1 }
                                 }
                               }
                             }
@@ -1745,33 +1745,33 @@ class Engine {
       return fail("0A000", "schema-qualified table names are not supported in v0")
     }
     case self.resolve_table(parts[0]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, table) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, table) then {
         if table.store == record.Storage.column {
           return fail("0A000", "column-store tables are insert-only in v0")
         }
         case self.acquire(table.name) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {}
         }
         case self.plan_where(table, table.name, stmt.where_e) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, wr) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, wr) then {
             const plan = PDelete.new(table.name, wr.plan)
             case scan_rows(table, wr.scan, txn) {
-              (R.error, why) -> { return (R.error, record_error(why)) }
-              (R.ok, rows) -> {
+              (R.error, why) then { return (R.error, record_error(why)) }
+              (R.ok, rows) then {
                 var deleted = 0
                 var i = 0
                 while i < rows.length() {
                   const row = rows[i]
                   case filter_row(wr.predicate_e, row.values) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, keep) -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, keep) then {
                       if keep {
                         case table.delete_tx(txn, row.rowid) {
-                          (R.error, why) -> { return (R.error, record_error(why)) }
-                          (R.ok, _) -> { deleted = deleted + 1 }
+                          (R.error, why) then { return (R.error, record_error(why)) }
+                          (R.ok, _) then { deleted = deleted + 1 }
                         }
                       }
                     }
@@ -1811,8 +1811,8 @@ class Engine {
       return fail("0A000", "OFFSET is not supported in v0")
     }
     case from_parts(stmt.from_t[0]) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, fr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, fr) then {
         const parts = fr[0]
         const alias_parts = fr[1]
         if parts.length() != 1 {
@@ -1826,32 +1826,32 @@ class Engine {
 
   def select_named(stmt sql.Select, table_name String, alias String, txn record.Txn) (R, Result) {
     case self.resolve_table(table_name) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, table) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, table) then {
         if table.store == record.Storage.column {
           return self.select_column(stmt, table, alias, txn)
         }
         case self.plan_where(table, alias, stmt.where_e) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, wr) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, wr) then {
             case resolve_projection(stmt.columns, table, alias) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, pr) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, pr) then {
                 const project = PProject.new(wr.plan, pr.names)
                 case scan_rows(table, wr.scan, txn) {
-                  (R.error, why) -> { return (R.error, record_error(why)) }
-                  (R.ok, rows) -> {
+                  (R.error, why) then { return (R.error, record_error(why)) }
+                  (R.ok, rows) then {
                     var out = []
                     var i = 0
                     while i < rows.length() {
                       const row = rows[i]
                       case filter_row(wr.predicate_e, row.values) {
-                        (R.error, why) -> { return (R.error, why) }
-                        (R.ok, keep) -> {
+                        (R.error, why) then { return (R.error, why) }
+                        (R.ok, keep) then {
                           if keep {
                             case project_row(pr.exprs, row.values) {
-                              (R.error, why) -> { return (R.error, why) }
-                              (R.ok, values) -> { out = out.append(values) }
+                              (R.error, why) then { return (R.error, why) }
+                              (R.ok, values) then { out = out.append(values) }
                             }
                           }
                         }
@@ -1884,8 +1884,8 @@ class Engine {
 
   def select_column(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
     case classify_select(stmt.columns) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, kind) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, kind) then {
         if kind == "aggregate" {
           return self.select_column_aggregate(stmt, table, alias, txn)
         }
@@ -1902,11 +1902,11 @@ class Engine {
       return (R.ok, WherePlan.new(scan, [], scan))
     }
     case resolve_expr(where_e[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, predicate) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, predicate) then {
         case require_boolean(predicate.result_type(), "WHERE") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             const scan = PColScan.new(table.name)
             const plan = PFilter.new(scan, where_e[0])
             return (R.ok, WherePlan.new(scan, [predicate], plan))
@@ -1918,15 +1918,15 @@ class Engine {
 
   def select_column_rows(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
     case self.column_where(table, alias, stmt.where_e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, wr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, wr) then {
         case resolve_projection(stmt.columns, table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, pr) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, pr) then {
             const project = PProject.new(wr.plan, pr.names)
             case table.scan_column_batches(txn) {
-              (R.error, why) -> { return (R.error, record_error(why)) }
-              (R.ok, batches) -> {
+              (R.error, why) then { return (R.error, record_error(why)) }
+              (R.ok, batches) then {
                 var out = []
                 var b = 0
                 while b < batches.length() {
@@ -1941,12 +1941,12 @@ class Engine {
                       c = c + 1
                     }
                     case filter_row(wr.predicate_e, values) {
-                      (R.error, why) -> { return (R.error, why) }
-                      (R.ok, keep) -> {
+                      (R.error, why) then { return (R.error, why) }
+                      (R.ok, keep) then {
                         if keep {
                           case project_row(pr.exprs, values) {
-                            (R.error, why) -> { return (R.error, why) }
-                            (R.ok, projected) -> { out = out.append(projected) }
+                            (R.error, why) then { return (R.error, why) }
+                            (R.ok, projected) then { out = out.append(projected) }
                           }
                         }
                       }
@@ -1967,16 +1967,16 @@ class Engine {
 
   def select_column_aggregate(stmt sql.Select, table record.Table, alias String, txn record.Txn) (R, Result) {
     case self.column_where(table, alias, stmt.where_e) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, wr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, wr) then {
         var aggs = []
         var names = []
         var types = []
         var i = 0
         while i < stmt.columns.length() {
           case resolve_aggregate(stmt.columns[i], table, alias) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, agg) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, agg) then {
               aggs = aggs.append(agg)
               names = names.append(agg.display)
               types = types.append(agg.t)
@@ -2003,8 +2003,8 @@ class Engine {
         }
         if wr.predicate_e.length() == 0 && all_star {
           case table.column_block_counts(txn) {
-            (R.error, why) -> { return (R.error, record_error(why)) }
-            (R.ok, counts) -> {
+            (R.error, why) then { return (R.error, record_error(why)) }
+            (R.ok, counts) then {
               var total = 0
               i = 0
               while i < counts.length() {
@@ -2030,8 +2030,8 @@ class Engine {
           i = i + 1
         }
         case table.scan_column_batches(txn) {
-          (R.error, why) -> { return (R.error, record_error(why)) }
-          (R.ok, batches) -> {
+          (R.error, why) then { return (R.error, record_error(why)) }
+          (R.ok, batches) then {
             var b = 0
             while b < batches.length() {
               const per_column = batches[b][1]
@@ -2045,14 +2045,14 @@ class Engine {
                   c = c + 1
                 }
                 case filter_row(wr.predicate_e, values) {
-                  (R.error, why) -> { return (R.error, why) }
-                  (R.ok, keep) -> {
+                  (R.error, why) then { return (R.error, why) }
+                  (R.ok, keep) then {
                     if keep {
                       var k = 0
                       while k < states.length() {
                         case states[k].step(values) {
-                          (R.error, why) -> { return (R.error, why) }
-                          (R.ok, _) -> {}
+                          (R.error, why) then { return (R.error, why) }
+                          (R.ok, _) then {}
                         }
                         k = k + 1
                       }
@@ -2069,8 +2069,8 @@ class Engine {
         i = 0
         while i < states.length() {
           case states[i].result() {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, value) -> { values = values.append(value) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, value) then { values = values.append(value) }
           }
           i = i + 1
         }
@@ -2082,10 +2082,10 @@ class Engine {
 
   def resolve_table(name String) (R, record.Table) {
     case self.store.table(name) {
-      (R.error, why) -> {
+      (R.error, why) then {
         return fail("42P01", "relation \"" + name + "\" does not exist")
       }
-      (R.ok, table) -> { return (R.ok, table) }
+      (R.ok, table) then { return (R.ok, table) }
     }
   }
 
@@ -2099,14 +2099,14 @@ class Engine {
       return (R.ok, WherePlan.new(scan, [], scan))
     }
     case resolve_expr(where_e[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, predicate) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, predicate) then {
         case require_boolean(predicate.result_type(), "WHERE") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             case choose_scan(table, alias, where_e[0]) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, scan) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, scan) then {
                 const plan = PFilter.new(scan, where_e[0])
                 return (R.ok, WherePlan.new(scan, [predicate], plan))
               }
@@ -2195,24 +2195,24 @@ def unwrap_paren(expr sql.Expr) sql.Expr {
 
 def plan_index_column(table record.Table, alias String, column_expr sql.Column, constant_expr sql.Expr) (R, Plan) {
   case resolve_column(column_expr, table, alias) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, tcol) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, tcol) then {
       const column = table.columns[tcol.index]
       case index_for(table, column.oid) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, index_name) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, index_name) then {
           if index_name == "" {
             return (R.ok, table_scan(table))
           }
           case resolve_expr(constant_expr, table, alias) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, typed) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, typed) then {
               case typed.eval([]) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, value) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, value) then {
                   case coerce_value(value, val_type_of(column.kind)) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, key) -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, key) then {
                       return (R.ok,
                               PScan.new(index_name, [key],
                                         "index scan " + index_name + " (" +
@@ -2271,8 +2271,8 @@ def filter_row(predicate_e Array[TExpr], row Array[record.Value]) (R, Bool) {
     return (R.ok, true)
   }
   case predicate_e[0].eval(row) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, value) -> { return (R.ok, is_true(value)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, value) then { return (R.ok, is_true(value)) }
   }
 }
 
@@ -2281,8 +2281,8 @@ def project_row(exprs Array[TExpr], row Array[record.Value]) (R, Array[record.Va
   var i = 0
   while i < exprs.length() {
     case exprs[i].eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, value) -> { out = out.append(value) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, value) then { out = out.append(value) }
     }
     i = i + 1
   }
@@ -2410,8 +2410,8 @@ def resolve_aggregate_call(call sql.FuncCall, display_in String, table record.Ta
       return fail("42883", "function " + name + " does not exist")
     }
     case resolve_expr(call.args[0], table, alias) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, typed) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, typed) then {
         return (R.ok, Aggregate.new(name, false, false, typed,
                                     ValType.bigint, display, call_text))
       }
@@ -2424,8 +2424,8 @@ def resolve_aggregate_call(call sql.FuncCall, display_in String, table record.Ta
     return fail("42883", "function " + name + " does not exist")
   }
   case resolve_expr(call.args[0], table, alias) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, typed) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, typed) then {
       const arg_t = typed.result_type()
       if name == "sum" || name == "avg" {
         if !(is_numeric(arg_t) || arg_t == ValType.null_t) {
@@ -2471,8 +2471,8 @@ class AggState {
       return (R.ok, true)
     }
     case self.arg.eval(row) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v) then {
         if v.is_null {
           return (R.ok, true)
         }
@@ -2499,8 +2499,8 @@ class AggState {
           return (R.ok, true)
         }
         case compare_values(v, self.best.read(), self.t) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, order) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, order) then {
             if (self.name == "min" && order < 0) ||
                (self.name == "max" && order > 0) {
               self.best.replace(v)
@@ -2562,8 +2562,8 @@ def resolve_projection(items Array[sql.SelItem], table record.Table, alias Strin
       if item.is(sql.SelExpr) {
         const value_expr = item.value
         case resolve_expr(value_expr, table, alias) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, typed) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, typed) then {
             exprs = exprs.append(typed)
             types = types.append(typed.result_type())
             if item.alias_e.length() == 1 {
@@ -2636,17 +2636,17 @@ def build_insert_row(table record.Table, targets Array[Int64], exprs Array[sql.E
       return fail("42703", "column references are not allowed in VALUES")
     }
     case resolve_expr(expr, table, table.name) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, typed) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, typed) then {
         case require_conforms(typed.result_type(), val_type_of(column.kind), column.name) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             case typed.eval([]) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, value) -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, value) then {
                 case finish_assignment(value, column) {
-                  (R.error, why) -> { return (R.error, why) }
-                  (R.ok, coerced) -> {
+                  (R.error, why) then { return (R.error, why) }
+                  (R.ok, coerced) then {
                     values = replace_value(values, position, coerced)
                   }
                 }
@@ -2728,11 +2728,11 @@ def resolve_assignments(table record.Table, sets Array[sql.Assignment]) (R, Arra
     }
     const column = table.columns[position]
     case resolve_expr(set.value, table, table.name) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, typed) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, typed) then {
         case require_conforms(typed.result_type(), val_type_of(column.kind), column.name) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, _) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, _) then {
             out = out.append(UpdateSet.new(position, typed))
           }
         }
@@ -2752,11 +2752,11 @@ def build_update_row(table record.Table, assignments Array[UpdateSet], row recor
       values = values.append(row.values[i])
     } else {
       case assignments[set_position].expr.eval(row.values) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, value) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, value) then {
           case finish_assignment(value, table.columns[i]) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, coerced) -> { values = values.append(coerced) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, coerced) then { values = values.append(coerced) }
           }
         }
       }
@@ -2781,14 +2781,14 @@ def assignment_position(assignments Array[UpdateSet], index Int64) Int64 {
 
 def map_sql_type(kind sql.SqlType) record.ColType {
   case kind {
-    sql.SqlType.integer -> { return record.ColType.integer }
-    sql.SqlType.bigint -> { return record.ColType.bigint }
-    sql.SqlType.real -> { return record.ColType.real }
-    sql.SqlType.double -> { return record.ColType.double }
-    sql.SqlType.text -> { return record.ColType.text }
-    sql.SqlType.varchar -> { return record.ColType.varchar }
-    sql.SqlType.boolean -> { return record.ColType.boolean }
-    sql.SqlType.bytea -> { return record.ColType.bytea }
+    sql.SqlType.integer then { return record.ColType.integer }
+    sql.SqlType.bigint then { return record.ColType.bigint }
+    sql.SqlType.real then { return record.ColType.real }
+    sql.SqlType.double then { return record.ColType.double }
+    sql.SqlType.text then { return record.ColType.text }
+    sql.SqlType.varchar then { return record.ColType.varchar }
+    sql.SqlType.boolean then { return record.ColType.boolean }
+    sql.SqlType.bytea then { return record.ColType.bytea }
   }
 }
 

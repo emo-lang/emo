@@ -57,8 +57,8 @@ while f < fast.count() {
 fast.finish()
 
 case conn.query("select * from no_such_table", []) {
-  (R.ok, _)      -> { println("unexpected ok") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
+  (R.error, why) then { println(why) }
 }
 
 conn.close()

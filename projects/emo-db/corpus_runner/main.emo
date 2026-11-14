@@ -44,14 +44,14 @@ def show(value record.Value) String {
     return "NULL"
   }
   case value.kind {
-    record.ColType.integer -> { return value.as_i64().to_string() }
-    record.ColType.bigint -> { return value.as_i64().to_string() }
-    record.ColType.real -> { return value.as_f64().to_string() }
-    record.ColType.double -> { return value.as_f64().to_string() }
-    record.ColType.text -> { return value.as_text() }
-    record.ColType.varchar -> { return value.as_text() }
-    record.ColType.boolean -> { return value.as_bool().to_string() }
-    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+    record.ColType.integer then { return value.as_i64().to_string() }
+    record.ColType.bigint then { return value.as_i64().to_string() }
+    record.ColType.real then { return value.as_f64().to_string() }
+    record.ColType.double then { return value.as_f64().to_string() }
+    record.ColType.text then { return value.as_text() }
+    record.ColType.varchar then { return value.as_text() }
+    record.ColType.boolean then { return value.as_bool().to_string() }
+    record.ColType.bytea then { return "0x" + hex(value.as_bytes()) }
   }
 }
 
@@ -76,23 +76,23 @@ def base_name(path String) String {
 def main() {
   const argv = os.argv()
   case rocksdb.destroy_db(db_path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
   case engine.open(db_path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, eng) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, eng) then {
       var total = 0
       var failed = 0
       var f = 1
       while f < argv.length() {
         case file.read(argv[f]) {
-          (R.error, why) -> {
+          (R.error, why) then {
             println("FAIL " + base_name(argv[f]) + ": " + why)
             total = total + 1
             failed = failed + 1
           }
-          (R.ok, text) -> {
+          (R.ok, text) then {
             const counts = run_file(eng, base_name(argv[f]), text)
             println(base_name(argv[f]) + " " + counts[0].to_string() + " cases")
             total = total + counts[0]
@@ -160,12 +160,12 @@ def run_file(eng engine.Engine, name String, text String) (Int64, Int64) {
         } else {
           const sql = join_lines(sql_lines)
           case run_case(eng, kind, sql, expected) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("FAIL " + name + ":" + at.to_string() + ": " + why)
               cases = cases + 1
               failed = failed + 1
             }
-            (R.ok, _) -> { cases = cases + 1 }
+            (R.ok, _) then { cases = cases + 1 }
           }
         }
       }
@@ -189,7 +189,7 @@ def join_lines(xs Array[String]) String {
 
 def run_case(eng engine.Engine, kind String, sql String, expected Array[String]) (R, Bool) {
   case eng.execute(sql) {
-    (R.error, why) -> {
+    (R.error, why) then {
       if kind == "error" {
         if expected.length() == 0 {
           return (R.error, "statement error needs a `----` expectation")
@@ -201,7 +201,7 @@ def run_case(eng engine.Engine, kind String, sql String, expected Array[String])
       }
       return (R.error, "unexpected error: " + why)
     }
-    (R.ok, result) -> {
+    (R.ok, result) then {
       if kind == "error" {
         return (R.error, "expected an error, got " + result.tag)
       }

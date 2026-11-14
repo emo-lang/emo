@@ -29,14 +29,14 @@ def show(value record.Value) String {
     return "NULL"
   }
   case value.kind {
-    record.ColType.integer -> { return value.as_i64().to_string() }
-    record.ColType.bigint -> { return value.as_i64().to_string() }
-    record.ColType.real -> { return value.as_f64().to_string() }
-    record.ColType.double -> { return value.as_f64().to_string() }
-    record.ColType.text -> { return value.as_text() }
-    record.ColType.varchar -> { return value.as_text() }
-    record.ColType.boolean -> { return value.as_bool().to_string() }
-    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+    record.ColType.integer then { return value.as_i64().to_string() }
+    record.ColType.bigint then { return value.as_i64().to_string() }
+    record.ColType.real then { return value.as_f64().to_string() }
+    record.ColType.double then { return value.as_f64().to_string() }
+    record.ColType.text then { return value.as_text() }
+    record.ColType.varchar then { return value.as_text() }
+    record.ColType.boolean then { return value.as_bool().to_string() }
+    record.ColType.bytea then { return "0x" + hex(value.as_bytes()) }
   }
 }
 
@@ -73,15 +73,15 @@ def joined(xs Array[String]) String {
 
 def open_or_die(path String) record.Store {
   case record.open(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, store) -> { return store }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, store) then { return store }
   }
 }
 
 def table_or_die(store record.Store, name String) record.Table {
   case store.table(name) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, table) -> { return table }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, table) then { return table }
   }
 }
 
@@ -103,29 +103,29 @@ def create_or_die(store record.Store) record.Table {
     record.index("users_active", ["active"])
   ]
   case store.create_table("users", columns, indexes) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, table) -> { return table }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, table) then { return table }
   }
 }
 
 def insert_or_die(table record.Table, values Array[record.Value]) Int64 {
   case table.insert(values) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, rowid) -> { return rowid }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, rowid) then { return rowid }
   }
 }
 
 def scan_or_die(table record.Table) Array[record.Row] {
   case table.scan() {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, rows) -> { return rows }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, rows) then { return rows }
   }
 }
 
 def scan_index_or_die(table record.Table, name String, keys Array[record.Value]) Array[record.Row] {
   case table.scan_index(name, keys) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, rows) -> { return rows }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, rows) then { return rows }
   }
 }
 
@@ -214,16 +214,16 @@ def duplicate_attempt(users record.Table) {
     record.null_value()
   ]
   case users.insert(duplicate) {
-    (R.error, why) -> { println("duplicate: " + why) }
-    (R.ok, _) -> { raise Exception.new(message: "record demo: the duplicate was accepted") }
+    (R.error, why) then { println("duplicate: " + why) }
+    (R.ok, _) then { raise Exception.new(message: "record demo: the duplicate was accepted") }
   }
 }
 
 // ---- a clean start -------------------------------------------------------
 
 case rocksdb.destroy_db(path) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, _) -> {}
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, _) then {}
 }
 
 const store = open_or_die(path)
@@ -236,8 +236,8 @@ duplicate_attempt(users)
 // ---- reads: by rowid, the table scan, the index scans --------------------
 
 case users.get(2) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, found) -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, found) then {
     if found.length() != 1 {
       raise Exception.new(message: "record demo: row 2 is missing")
     }
@@ -245,8 +245,8 @@ case users.get(2) {
   }
 }
 case users.get(99) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, found) -> { println("get 99: found=${found.length()}") }
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, found) then { println("get 99: found=${found.length()}") }
 }
 
 const rows = scan_or_die(users)

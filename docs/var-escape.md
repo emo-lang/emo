@@ -25,7 +25,7 @@ def probe(flag Bool) Int64 {
   if flag {
     var x = 1
     if flag {
-      const g = -> {
+      const g = then {
         return x      // error[E4012]: the var `x` cannot be captured ...
       }
       return g()
@@ -41,7 +41,7 @@ This is the conservative-but-simple approximation the plan called for,
 not a borrow checker:
 
 - A `var` and an arrow block in the *same* block are accepted
-  (`var x = 1` next to `const g = -> { return x }`), even though `g`
+  (`var x = 1` next to `const g = then { return x }`), even though `g`
   could in principle be returned. The checker does not track whether
   the block value escapes.
 - A `var` captured from the same depth as the arrow block is likewise

@@ -127,8 +127,8 @@ def reason_num(why String) Int64 {
 
 def reason_of(answer (R, Int64)) Int64 {
   case answer {
-    (R.error, why) -> { return reason_num(why) }
-    (R.ok, _) -> { return 0 }
+    (R.error, why) then { return reason_num(why) }
+    (R.ok, _) then { return 0 }
   }
 }
 
@@ -156,16 +156,16 @@ def mark() Void {
   poke8(buf, 63B)
   var r = syscall.write(buf, 1)
   case r {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
 }
 
 def gate_line(len Int64) Void {
   var r = syscall.write(buf, len)
   case r {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -348,16 +348,16 @@ if peek64(reach_cell) != 0 {
 if peek64(screen_cell) != 0 {
   poke64(screen_cell, 0)
   case syscall.output_info(0) {
-    (R.error, _) -> { mark() }
-    (R.ok, mode) -> {
+    (R.error, _) then { mark() }
+    (R.ok, mode) then {
       output_line(mode)
       const screen = Carve.new(base: screen_base, width: out_w(mode),
         height: out_h(mode))
       sprite_upload()
       const sholder = ArrayBuilder.new()
       case desk_strike() {
-        (R.error, _) -> { mark() }
-        (R.ok, s2) -> { sholder.push(s2) }
+        (R.error, _) then { mark() }
+        (R.ok, s2) then { sholder.push(s2) }
       }
       const b = ui_fb.backend(screen, Keys.new(), sholder.get(0))
       ui.run(ui_fb_frame.counter.view, ui_fb_frame.counter.update,
@@ -535,8 +535,8 @@ class Carve {
   def present() {
     frame_line(carve_digest(self.base, self.width, self.height))
     case syscall.present(0, 0, 0, self.width, self.height) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> { present_ok() }
+      (R.error, _) then { mark() }
+      (R.ok, _) then { present_ok() }
     }
   }
 }
@@ -744,8 +744,8 @@ class Win {
   def present() {
     frame_line(ui_fb_winbuf.round_digest(self.base, self.width, self.height))
     case syscall.present(self.grant, 0, 0, self.width, self.height) {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 }
@@ -842,8 +842,8 @@ def role_refused_line(role Int64, reason Int64) Void {
 // it has no grant for — the refusal is the proof.
 def role_refusal(grant Int64, role Int64) Void {
   case syscall.win_role(grant, role) {
-    (R.error, why) -> { role_refused_line(role, reason_num(why)) }
-    (R.ok, _) -> { mark() }
+    (R.error, why) then { role_refused_line(role, reason_num(why)) }
+    (R.ok, _) then { mark() }
   }
 }
 
@@ -1490,13 +1490,13 @@ if peek64(key_cell) != 0 {
   // The grant's edge (T8.4): the pass holds no display grant — the
   // present is the permission refusal, the reason number on the wire.
   case syscall.present(0, 0, 0, 1, 1) {
-    (R.error, why) -> { present_refused_line(reason_num(why)) }
-    (R.ok, _) -> { mark() }
+    (R.error, why) then { present_refused_line(reason_num(why)) }
+    (R.ok, _) then { mark() }
   }
   // The grant table's edge (T8.5): no window exists yet — the close
   // is the argument refusal, the unknown grant the table cannot name.
   case syscall.win_close(1) {
-    (R.error, why) -> {
+    (R.error, why) then {
       var cp = byte_at(0, 99) // c
       cp = byte_at(cp, 108) // l
       cp = byte_at(cp, 111) // o
@@ -1508,7 +1508,7 @@ if peek64(key_cell) != 0 {
       cp = byte_at(cp, 10)
       gate_line(cp)
     }
-    (R.ok, _) -> { mark() }
+    (R.ok, _) then { mark() }
   }
   syscall.exit(0)
 }
@@ -1530,7 +1530,7 @@ if peek64(key_cell) != 0 {
 if peek64(win_cell) != 0 {
   poke64(win_cell, 0)
   case syscall.win_new(512, 128) {
-    (R.error, why) -> {
+    (R.error, why) then {
       var wp = byte_at(0, 119) // w
       wp = byte_at(wp, 105) // i
       wp = byte_at(wp, 110) // n
@@ -1540,16 +1540,16 @@ if peek64(win_cell) != 0 {
       wp = byte_at(wp, 10)
       gate_line(wp)
     }
-    (R.ok, ans) -> {
+    (R.ok, ans) then {
       var id = win_id(ans)
       win_line(id)
       case syscall.present(id, 0, 0, 512, 128) {
-        (R.error, why) -> { present_refused_line(reason_num(why)) }
-        (R.ok, _) -> { mark() }
+        (R.error, why) then { present_refused_line(reason_num(why)) }
+        (R.ok, _) then { mark() }
       }
       case syscall.win_role(id, 0) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       role_refusal(id, 0)
       paint_win(win_base(ans), 128, 256, 0x57494E00)
@@ -1581,36 +1581,36 @@ if peek64(win_cell) != 0 {
       // the values grew; the row is left at 1 again, the pass's own
       // geometry the one the walk carried before it.
       case syscall.win_format(id, 0) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { fmt_ok_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { fmt_ok_line() }
       }
       case syscall.win_format(id, 1) {
-        (R.error, _) -> { fmt_no_line() }
-        (R.ok, _) -> { mark() }
+        (R.error, _) then { fmt_no_line() }
+        (R.ok, _) then { mark() }
       }
       case syscall.win_scale(id, 1) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { scale_ok_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { scale_ok_line() }
       }
       case syscall.win_scale(id, 2) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { scale_two_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { scale_two_line() }
       }
       case syscall.win_scale(id, 0) {
-        (R.error, _) -> { scale_no_line() }
-        (R.ok, _) -> { mark() }
+        (R.error, _) then { scale_no_line() }
+        (R.ok, _) then { mark() }
       }
       case syscall.win_scale(id, 1) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       case syscall.desktop_version() {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { protocol_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { protocol_line() }
       }
       case syscall.present(id, 0, 0, 512, 128) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { win_shown_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { win_shown_line() }
       }
       // The roles' substance (emo-desktop A9.3): a popup and a
       // subsurface hang from this toplevel by verb 19 — their
@@ -1621,49 +1621,49 @@ if peek64(win_cell) != 0 {
       // and closed — the runs home before the pass moves its own.
       var ppop = 0
       case syscall.win_new(128, 64) {
-        (R.error, _) -> { mark() }
-        (R.ok, pans) -> {
+        (R.error, _) then { mark() }
+        (R.ok, pans) then {
           ppop = win_id(pans)
           case syscall.win_role(ppop, 1) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           case syscall.win_parent(ppop, id) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           case syscall.win_move(ppop, 48, 32) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           paint_win(win_base(pans), 64, 64, 0x504F5000)
           case syscall.present(ppop, 0, 0, 128, 64) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> { popup_up_line() }
+            (R.error, _) then { mark() }
+            (R.ok, _) then { popup_up_line() }
           }
         }
       }
       var psub = 0
       case syscall.win_new(64, 64) {
-        (R.error, _) -> { mark() }
-        (R.ok, sans) -> {
+        (R.error, _) then { mark() }
+        (R.ok, sans) then {
           psub = win_id(sans)
           case syscall.win_role(psub, 2) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           case syscall.win_parent(psub, id) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           case syscall.win_move(psub, 400, 32) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           paint_win(win_base(sans), 64, 32, 0x53554200)
           case syscall.present(psub, 0, 0, 64, 64) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> { sub_up_line() }
+            (R.error, _) then { mark() }
+            (R.ok, _) then { sub_up_line() }
           }
         }
       }
@@ -1674,66 +1674,66 @@ if peek64(win_cell) != 0 {
       var pmw = 0
       var pmh = 0
       case syscall.output_info(0) {
-        (R.error, _) -> { mark() }
-        (R.ok, m) -> {
+        (R.error, _) then { mark() }
+        (R.ok, m) then {
             pmw = m >> 32
             pmh = m & 4294967295
           }
       }
       case syscall.win_new(pmw, 32) {
-        (R.error, _) -> { mark() }
-        (R.ok, qans) -> {
+        (R.error, _) then { mark() }
+        (R.ok, qans) then {
           ppan = win_id(qans)
           case syscall.win_role(ppan, 3) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           case syscall.win_parent(ppan, id) {
-            (R.error, _) -> { parent_panel_line() }
-            (R.ok, _) -> { mark() }
+            (R.error, _) then { parent_panel_line() }
+            (R.ok, _) then { mark() }
           }
           case syscall.win_move(ppan, 0, pmh - 32) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           paint_win(win_base(qans), 32, pmw / 2, 0x504E4C00)
           case syscall.present(ppan, 0, 0, pmw, 32) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> { panel_up_line() }
+            (R.error, _) then { mark() }
+            (R.ok, _) then { panel_up_line() }
           }
         }
       }
       case syscall.win_parent(ppop, 99) {
-        (R.error, _) -> { parent_gone_line() }
-        (R.ok, _) -> { mark() }
+        (R.error, _) then { parent_gone_line() }
+        (R.ok, _) then { mark() }
       }
       case syscall.win_move(id, 16, 32) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { win_moved_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { win_moved_line() }
       }
       case syscall.present(id, 0, 0, 512, 128) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       case syscall.win_focus(id) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { win_focused_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { win_focused_line() }
       }
       case syscall.win_close(ppop) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { popup_closed_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { popup_closed_line() }
       }
       case syscall.win_close(psub) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { sub_closed_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { sub_closed_line() }
       }
       case syscall.win_close(ppan) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { panel_closed_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { panel_closed_line() }
       }
       case syscall.win_close(id) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> { win_closed_line() }
+        (R.error, _) then { mark() }
+        (R.ok, _) then { win_closed_line() }
       }
     }
   }
@@ -1745,8 +1745,8 @@ if peek64(win_cell) != 0 {
   // the line it wakes to is the callback's proof on the wire.
   win_zero_line()
   case syscall.win_frame() {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> { cb_ok_line() }
+    (R.error, _) then { mark() }
+    (R.ok, _) then { cb_ok_line() }
   }
   syscall.exit(0)
 }
@@ -1786,21 +1786,21 @@ if peek64(client_cell) != 0 {
   var cplace_x = 96
   var cword = 0x57494E00
   case syscall.win_new(384, 128) {
-    (R.error, _) -> { mark() }
-    (R.ok, cans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, cans) then {
       var cid = win_id(cans)
       case syscall.win_role(cid, 0) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       case syscall.win_move(cid, cplace_x, 320) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       paint_win(win_base(cans), 128, 192, cword)
       case syscall.present(cid, 0, 0, 384, 128) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       client_up_line(cid)
       poke64(0x20000000, 0) // the kill: a store the table maps nothing —
@@ -1812,26 +1812,26 @@ if peek64(client_cell) != 0 {
 if peek64(client2_cell) != 0 {
   poke64(client2_cell, 0)
   case syscall.win_new(384, 128) {
-    (R.error, _) -> { mark() }
-    (R.ok, cans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, cans) then {
       var cid = win_id(cans)
       case syscall.win_role(cid, 0) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       case syscall.win_move(cid, 512, 320) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       paint_win(win_base(cans), 128, 192, 0x52454200)
       case syscall.present(cid, 0, 0, 384, 128) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
       client_up_line(cid)
       case syscall.win_close(cid) {
-        (R.error, _) -> { mark() }
-        (R.ok, _) -> {}
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
       }
     }
   }
@@ -1875,21 +1875,21 @@ if peek64(desk_cell) != 0 {
   poke64(desk_cell, 0)
   const thelder = ArrayBuilder.new()
   case desk_strike() {
-    (R.error, _) -> { mark() }
-    (R.ok, s) -> { thelder.push(s) }
+    (R.error, _) then { mark() }
+    (R.ok, s) then { thelder.push(s) }
   }
   const tf = thelder.get(0)
   var mode = 0
   case syscall.output_info(0) {
-    (R.error, _) -> { mark() }
-    (R.ok, m) -> { mode = m }
+    (R.error, _) then { mark() }
+    (R.ok, m) then { mode = m }
   }
   // The pointer's axes, packed as the display's mode is: the X's
   // maximum above the Y's.
   var range = 0
   case syscall.input_info(0) {
-    (R.error, _) -> { mark() }
-    (R.ok, r) -> { range = r }
+    (R.error, _) then { mark() }
+    (R.ok, r) then { range = r }
   }
   const mw = out_w(mode)
   const mh = out_h(mode)
@@ -1901,8 +1901,8 @@ if peek64(desk_cell) != 0 {
   var ga = 0
   var base_a = 0
   case syscall.win_new(ww, wh) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       ga = win_id(ans)
       base_a = win_base(ans)
     }
@@ -1910,8 +1910,8 @@ if peek64(desk_cell) != 0 {
   var gb = 0
   var base_b = 0
   case syscall.win_new(ww, wh) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       gb = win_id(ans)
       base_b = win_base(ans)
     }
@@ -1924,8 +1924,8 @@ if peek64(desk_cell) != 0 {
   var gd = 0
   var base_d = 0
   case syscall.win_new(dw, dh) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       gd = win_id(ans)
       base_d = win_base(ans)
     }
@@ -1933,32 +1933,32 @@ if peek64(desk_cell) != 0 {
   desk_win_line(97, ga) // a
   desk_win_line(98, gb) // b
   case syscall.win_role(ga, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_role(gb, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_role(gd, 3) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   var ax = 64
   var ay = 128
   var bx = 576
   var by = 384
   case syscall.win_move(ga, ax, ay) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_move(gb, bx, by) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_move(gd, 0, mh - dh) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   // The start's park (the counter's shape): the pass waits for the
   // run's first byte before its first frame — the beat between the
@@ -2005,14 +2005,14 @@ if peek64(desk_cell) != 0 {
       // fresh window's own.
       if b == 99 {
         case syscall.win_close(gb) {
-          (R.error, _) -> { mark() }
-          (R.ok, _) -> {}
+          (R.error, _) then { mark() }
+          (R.ok, _) then {}
         }
         var ngb = 0
         var nbase = 0
         case syscall.win_new(ww, wh) {
-          (R.error, _) -> { mark() }
-          (R.ok, ans) -> {
+          (R.error, _) then { mark() }
+          (R.ok, ans) then {
             ngb = win_id(ans)
             nbase = win_base(ans)
           }
@@ -2020,12 +2020,12 @@ if peek64(desk_cell) != 0 {
         gb = ngb
         base_b = nbase
         case syscall.win_role(gb, 0) {
-          (R.error, _) -> { mark() }
-          (R.ok, _) -> {}
+          (R.error, _) then { mark() }
+          (R.ok, _) then {}
         }
         case syscall.win_move(gb, bx, by) {
-          (R.error, _) -> { mark() }
-          (R.ok, _) -> {}
+          (R.error, _) then { mark() }
+          (R.ok, _) then {}
         }
         wb = Win.new(grant: gb, base: base_b, width: ww, height: wh)
         ui_fb_win.paint(wb, tf, ui_fb_win.title_b(), false, 0)
@@ -2061,8 +2061,8 @@ if peek64(desk_cell) != 0 {
         const ny = dragged(py, gdy, wh, mh, false)
         if nx != ax || ny != ay {
           case syscall.win_move(ga, nx, ny) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {
               ax = nx
               ay = ny
             }
@@ -2074,8 +2074,8 @@ if peek64(desk_cell) != 0 {
         const ny = dragged(py, gdy, wh, mh, false)
         if nx != bx || ny != by {
           case syscall.win_move(gb, nx, ny) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {
               bx = nx
               by = ny
             }
@@ -2122,8 +2122,8 @@ if peek64(desk_cell) != 0 {
         }
         if hit != 0 && hit != focused {
           case syscall.win_focus(hit) {
-            (R.error, _) -> { mark() }
-            (R.ok, _) -> {}
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
           }
           if focused == ga {
             ui_fb_win.paint(wa, tf, ui_fb_win.title_a(), false, keys_a)
@@ -2176,16 +2176,16 @@ if peek64(desk_cell) != 0 {
     }
   }
   case syscall.win_close(ga) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_close(gb) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_close(gd) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   syscall.exit(0)
 }
@@ -2273,16 +2273,16 @@ var fn = put_name(fs_name)
 fill(fs_data, 600)
 var fs_ok = true
 case syscall.file_write(fs_name, fn, fs_data, 600) {
-  (R.error, _) -> { fs_ok = false }
-  (R.ok, wn) -> {
+  (R.error, _) then { fs_ok = false }
+  (R.ok, wn) then {
     if wn != 600 {
       fs_ok = false
     }
   }
 }
 case syscall.file_read(fs_name, fn, fs_back, 2048) {
-  (R.error, _) -> { fs_ok = false }
-  (R.ok, rn) -> {
+  (R.error, _) then { fs_ok = false }
+  (R.ok, rn) then {
     if rn != 600 {
       fs_ok = false
     }
@@ -2293,17 +2293,17 @@ if !same(fs_data, fs_back, 600) {
 }
 var tn = put_tmp(fs_tmp)
 case syscall.file_write(fs_tmp, tn, fs_data, 1) {
-  (R.error, _) -> { fs_ok = false }
-  (R.ok, _) -> {}
+  (R.error, _) then { fs_ok = false }
+  (R.ok, _) then {}
 }
 case syscall.file_remove(fs_tmp, tn) {
-  (R.error, _) -> { fs_ok = false }
-  (R.ok, _) -> {}
+  (R.error, _) then { fs_ok = false }
+  (R.ok, _) then {}
 }
 var listed = 0
 case syscall.file_list(fs_names, 256) {
-  (R.error, _) -> { fs_ok = false }
-  (R.ok, ln) -> { listed = ln }
+  (R.error, _) then { fs_ok = false }
+  (R.ok, ln) then { listed = ln }
 }
 var xp = byte_at(0, 102) // f
 xp = byte_at(xp, 115) // s
@@ -2345,23 +2345,23 @@ gate_line(lp)
 // reports is the survival proof.
 poke64(doomed_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 poke64(greedy_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 poke64(smash_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 poke64(reach_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 
 // The process proof (T4.4): spawn a child — it re-enters this top
@@ -2372,12 +2372,12 @@ case syscall.spawn() {
 poke64(child_cell, 1)
 var spawned = syscall.spawn()
 case spawned {
-  (R.error, _) -> { mark() }
-  (R.ok, pid) -> {
+  (R.error, _) then { mark() }
+  (R.ok, pid) then {
     var waited = syscall.wait(pid)
     case waited {
-      (R.error, _) -> { mark() }
-      (R.ok, code) -> {
+      (R.error, _) then { mark() }
+      (R.ok, code) then {
         var wp = byte_at(0, 119) // w
         wp = byte_at(wp, 97) // a
         wp = byte_at(wp, 105) // i
@@ -2404,19 +2404,19 @@ case spawned {
 poke64(screen_cell, 1)
 var screen_spawned = syscall.spawn()
 case screen_spawned {
-  (R.error, _) -> { mark() }
-  (R.ok, spid) -> {
+  (R.error, _) then { mark() }
+  (R.ok, spid) then {
     var screen_waited = syscall.wait(spid)
     case screen_waited {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 }
 poke64(screen_cell, 1)
 var screen_again = syscall.spawn()
 case screen_again {
-  (R.error, why) -> {
+  (R.error, why) then {
     poke64(screen_cell, 0)
     var scp = byte_at(0, 115) // s
     scp = byte_at(scp, 99) // c
@@ -2430,7 +2430,7 @@ case screen_again {
     scp = byte_at(scp, 10)
     gate_line(scp)
   }
-  (R.ok, _) -> { mark() }
+  (R.ok, _) then { mark() }
 }
 
 // The input merge's proof (T8.3): the machine's keyboard beyond the
@@ -2441,12 +2441,12 @@ case screen_again {
 poke64(key_cell, 1)
 var key_spawned = syscall.spawn()
 case key_spawned {
-  (R.error, _) -> { mark() }
-  (R.ok, kpid) -> {
+  (R.error, _) then { mark() }
+  (R.ok, kpid) then {
     var key_waited = syscall.wait(kpid)
     case key_waited {
-      (R.error, _) -> { mark() }
-      (R.ok, _) -> {}
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
     }
   }
 }
@@ -2457,8 +2457,8 @@ case key_spawned {
 // parent's wait.
 poke64(win_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 
 // The client's kill and rebirth (emo-desktop A9.2): the entry parks on
@@ -2472,18 +2472,18 @@ case syscall.spawn() {
 var cgate = syscall.read()
 poke64(client_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, _) -> {}
+  (R.error, _) then { mark() }
+  (R.ok, _) then {}
 }
 var cwalk = syscall.read()
 poke64(client2_cell, 1)
 case syscall.spawn() {
-  (R.error, _) -> { mark() }
-  (R.ok, c2pid) -> {
+  (R.error, _) then { mark() }
+  (R.ok, c2pid) then {
     var c2wait = syscall.wait(c2pid)
     case c2wait {
-      (R.error, _) -> { mark() }
-      (R.ok, code) -> {
+      (R.error, _) then { mark() }
+      (R.ok, code) then {
         if code == 0 {
           var bp = byte_at(0, 99) // c
           bp = byte_at(bp, 108) // l
@@ -2518,12 +2518,12 @@ var cgate3 = syscall.read() // the third era gate: the run's hand has
 poke64(desk_cell, 1)
 var desk_spawned = syscall.spawn()
 case desk_spawned {
-  (R.error, _) -> { mark() }
-  (R.ok, dpid) -> {
+  (R.error, _) then { mark() }
+  (R.ok, dpid) then {
     var desk_waited = syscall.wait(dpid)
     case desk_waited {
-      (R.error, _) -> { mark() }
-      (R.ok, code) -> {
+      (R.error, _) then { mark() }
+      (R.ok, code) then {
         var dp = desk_at()
         dp = num_at(code, dp)
         dp = byte_at(dp, 10)
@@ -2704,13 +2704,13 @@ def desk_launch(f ui_fb.raster.Strike, slot Int64, labels Array[String]) Void {
   var name = buf + desk_names + (slot * 12)
   if peek64(buf + desk_pids + (slot * 8)) != 0 {
     case syscall.win_desk_open(peek64(buf + desk_pids + (slot * 8))) {
-      (R.error, _) -> { desk_running_line(name, desk_nlen(slot)) }
-      (R.ok, _) -> {}
+      (R.error, _) then { desk_running_line(name, desk_nlen(slot)) }
+      (R.ok, _) then {}
     }
   } else {
     case syscall.exec(name, desk_flen(slot)) {
-      (R.error, why) -> { shell.desk_err(why) }
-      (R.ok, child) -> {
+      (R.error, why) then { shell.desk_err(why) }
+      (R.ok, child) then {
         poke64(buf + desk_pids + (slot * 8), child)
         desk_up_line(name, desk_nlen(slot))
         desk_dock(f, labels)
@@ -2738,8 +2738,8 @@ def desk_exec_cmd(f ui_fb.raster.Strike, e Int64, n Int64, labels Array[String])
       desk_running_line(buf + desk_names + (slot * 12), desk_nlen(slot))
     } else {
       case syscall.exec(name, nlen) {
-        (R.error, why) -> { shell.desk_err(why) }
-        (R.ok, child) -> {
+        (R.error, why) then { shell.desk_err(why) }
+        (R.ok, child) then {
           if slot >= 0 {
             poke64(buf + desk_pids + (slot * 8), child)
             desk_up_line(buf + desk_names + (slot * 12), desk_nlen(slot))
@@ -2920,8 +2920,8 @@ def desk_view_build() Void {
 // refresh's comparison the command loop's.
 def desk_list_load() Void {
   case syscall.file_list(buf + desk_list, 2048) {
-    (R.error, _) -> { mark() }
-    (R.ok, n) -> {
+    (R.error, _) then { mark() }
+    (R.ok, n) then {
       poke64(buf + desk_list_len, n)
       var d = 0
       var i = 0
@@ -3154,8 +3154,8 @@ def desk_strip_paint(f ui_fb.raster.Strike, base Int64, grant Int64, mw Int64, m
   desk_dock_paint(f, base, mw, mh - emo_desktop.strip_height(), labels, focused, running)
   frame_line(carve_digest(base, mw, emo_desktop.strip_height()))
   case syscall.present(grant, 0, 0, mw, emo_desktop.strip_height()) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -3260,8 +3260,8 @@ def desk_wall_repaint(f ui_fb.raster.Strike) Void {
   desk_icons_paint(f, base, mw, mh)
   frame_line(carve_digest(base, mw, mh))
   case syscall.present(peek64(buf + desk_wall_grant), 0, 0, mw, mh) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -3286,8 +3286,8 @@ def desk_chrome(f ui_fb.raster.Strike) Void {
   desk_bar_paint(f, base, mw, mh, running)
   frame_line(carve_digest(base, mw, emo_desktop.header_height()))
   case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw, emo_desktop.header_height()) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -3361,8 +3361,8 @@ def desk_icon_press(f ui_fb.raster.Strike, hit Int64) Void {
 // costs one list and one fold — no present, no frame.
 def desk_icons_refresh(f ui_fb.raster.Strike) Void {
   case syscall.file_list(buf + desk_tmp, 2048) {
-    (R.error, _) -> { mark() }
-    (R.ok, n) -> {
+    (R.error, _) then { mark() }
+    (R.ok, n) then {
       var d = 0
       var i = 0
       while i < n {
@@ -3420,8 +3420,8 @@ def desk_strike() (R, ui_fb.raster.Strike) {
 def desktop() Void {
   const fholder = ArrayBuilder.new()
   case desk_strike() {
-    (R.error, _) -> { mark() }
-    (R.ok, s) -> { fholder.push(s) }
+    (R.error, _) then { mark() }
+    (R.ok, s) then { fholder.push(s) }
   }
   const f = fholder.get(0)
   shell.sh_init()
@@ -3460,8 +3460,8 @@ def desktop() Void {
   poke64(buf + desk_pids + 16, 0)
   var mode = 0
   case syscall.output_info(0) {
-    (R.error, _) -> { mark() }
-    (R.ok, m) -> { mode = m }
+    (R.error, _) then { mark() }
+    (R.ok, m) then { mode = m }
   }
   const mw = out_w(mode)
   const mh = out_h(mode)
@@ -3480,19 +3480,19 @@ def desktop() Void {
   var gw = 0
   var base_w = 0
   case syscall.win_new(mw, mh) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       gw = win_id(ans)
       base_w = win_base(ans)
     }
   }
   case syscall.win_role(gw, 4) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_move(gw, 0, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   poke64(buf + desk_wall_grant, gw)
   poke64(buf + desk_wall_base, base_w)
@@ -3501,19 +3501,19 @@ def desktop() Void {
   var gh = 0
   var base_h = 0
   case syscall.win_new(mw, emo_desktop.header_height()) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       gh = win_id(ans)
       base_h = win_base(ans)
     }
   }
   case syscall.win_role(gh, 3) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_move(gh, 0, 0) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   poke64(buf + desk_bar_grant, gh)
   poke64(buf + desk_bar_base, base_h)
@@ -3521,19 +3521,19 @@ def desktop() Void {
   var gd = 0
   var base_d = 0
   case syscall.win_new(dw, dh) {
-    (R.error, _) -> { mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { mark() }
+    (R.ok, ans) then {
       gd = win_id(ans)
       base_d = win_base(ans)
     }
   }
   case syscall.win_role(gd, 3) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   case syscall.win_move(gd, 0, mh - dh) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   poke64(buf + desk_dock_grant, gd)
   poke64(buf + desk_dock_base, base_d)
@@ -3546,8 +3546,8 @@ def desktop() Void {
   // itself, the tile the strip's own policy names.
   var range = 0
   case syscall.input_info(0) {
-    (R.error, _) -> { mark() }
-    (R.ok, r) -> { range = r }
+    (R.error, _) then { mark() }
+    (R.ok, r) then { range = r }
   }
   const max_x = out_w(range)
   const max_y = out_h(range)

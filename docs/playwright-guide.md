@@ -60,29 +60,29 @@ require "dom"
 require "playwright"
 
 case playwright.connect("127.0.0.1", 9933, 30.0) {
-  (R.error, why) -> { println("connect: ${why}") }
-  (R.ok, pw)     -> {
+  (R.error, why) then { println("connect: ${why}") }
+  (R.ok, pw)     then {
     const browser = pw.browser()
     case browser.new_page() {
-      (R.error, why) -> { println("new_page: ${why}") }
-      (R.ok, page)   -> {
+      (R.error, why) then { println("new_page: ${why}") }
+      (R.ok, page)   then {
         case page.goto("https://example.com") {
-          (R.error, why) -> { println("goto: ${why}") }
-          (R.ok, resp)   -> {
+          (R.error, why) then { println("goto: ${why}") }
+          (R.ok, resp)   then {
             if !resp.is_null?() {
               println("${resp.status()} ${resp.url()}")
             }
           }
         }
         case page.content() {
-          (R.error, why) -> { println("content: ${why}") }
-          (R.ok, html)   -> {
+          (R.error, why) then { println("content: ${why}") }
+          (R.ok, html)   then {
             case dom.parse(html) {
-              (R.error, why) -> { println("parse: ${why}") }
-              (R.ok, doc)    -> {
+              (R.error, why) then { println("parse: ${why}") }
+              (R.ok, doc)    then {
                 case doc.find("h1") {
-                  (R.error, why) -> { println("find: ${why}") }
-                  (R.ok, hits)   -> {
+                  (R.error, why) then { println("find: ${why}") }
+                  (R.ok, hits)   then {
                     println("h1 count: ${hits.length()}")
                     println("h1 text: ${hits.text()}")
                   }
@@ -92,14 +92,14 @@ case playwright.connect("127.0.0.1", 9933, 30.0) {
           }
         }
         case page.close() {
-          (R.error, why) -> { println("close: ${why}") }
-          (R.ok, _)      -> {}
+          (R.error, why) then { println("close: ${why}") }
+          (R.ok, _)      then {}
         }
       }
     }
     case pw.close() {
-      (R.error, why) -> { println("close: ${why}") }
-      (R.ok, _)      -> {}
+      (R.error, why) then { println("close: ${why}") }
+      (R.ok, _)      then {}
     }
   }
 }

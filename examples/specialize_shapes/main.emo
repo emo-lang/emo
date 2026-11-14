@@ -8,8 +8,8 @@ def label(n Int64) String {
   const k = Kind.fast
   const t = Kind
   case k {
-    Kind.fast -> { return "fast:${n}" }
-    Kind.slow -> { return "slow:${n}" }
+    Kind.fast then { return "fast:${n}" }
+    Kind.slow then { return "slow:${n}" }
   }
 }
 

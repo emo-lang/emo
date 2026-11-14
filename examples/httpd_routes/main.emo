@@ -45,10 +45,10 @@ def static_handler(req httpd.Request) httpd.Response {
 def probe_get(base String, path String) Int64 {
   println("== GET " + path)
   case http.get(base + path) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("   error: " + why)
     }
-    (R.ok, resp) -> {
+    (R.ok, resp) then {
       println("   " + resp.status.to_string())
       println("   " + resp.body)
     }
@@ -59,10 +59,10 @@ def probe_get(base String, path String) Int64 {
 def probe_post(base String, path String, body String) Int64 {
   println("== POST " + path)
   case http.post(base + path, body) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("   error: " + why)
     }
-    (R.ok, resp) -> {
+    (R.ok, resp) then {
       println("   " + resp.status.to_string())
       println("   " + resp.body)
     }
@@ -73,10 +73,10 @@ def probe_post(base String, path String, body String) Int64 {
 def probe_header(base String, path String, name String) Int64 {
   println("== GET " + path)
   case http.get(base + path) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("   error: " + why)
     }
-    (R.ok, resp) -> {
+    (R.ok, resp) then {
       println("   " + resp.status.to_string())
       println("   " + name + ": " + resp.header(name))
     }

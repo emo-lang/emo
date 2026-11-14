@@ -31,14 +31,14 @@ def show(value record.Value) String {
     return "NULL"
   }
   case value.kind {
-    record.ColType.integer -> { return value.as_i64().to_string() }
-    record.ColType.bigint -> { return value.as_i64().to_string() }
-    record.ColType.real -> { return value.as_f64().to_string() }
-    record.ColType.double -> { return value.as_f64().to_string() }
-    record.ColType.text -> { return value.as_text() }
-    record.ColType.varchar -> { return value.as_text() }
-    record.ColType.boolean -> { return value.as_bool().to_string() }
-    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+    record.ColType.integer then { return value.as_i64().to_string() }
+    record.ColType.bigint then { return value.as_i64().to_string() }
+    record.ColType.real then { return value.as_f64().to_string() }
+    record.ColType.double then { return value.as_f64().to_string() }
+    record.ColType.text then { return value.as_text() }
+    record.ColType.varchar then { return value.as_text() }
+    record.ColType.boolean then { return value.as_bool().to_string() }
+    record.ColType.bytea then { return "0x" + hex(value.as_bytes()) }
   }
 }
 
@@ -54,8 +54,8 @@ def show_row(row record.Row) String {
 
 def open_or_die(path String) record.Store {
   case record.open(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, store) -> { return store }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, store) then { return store }
   }
 }
 
@@ -68,8 +68,8 @@ def create_or_die(store record.Store) record.Table {
     record.column("payload", record.ColType.bytea)
   ]
   case store.create_table_store("events", columns, [], record.Storage.column) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, table) -> { return table }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, table) then { return table }
   }
 }
 
@@ -84,12 +84,12 @@ def show_or_die(what String, rows Array[record.Row], at Int64, count Int64) {
 
 def main() {
   case rocksdb.destroy_db(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
   case record.open(path) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, store) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, store) then {
       const table = create_or_die(store)
       println("created: " + table.name + " (column)")
 
@@ -97,8 +97,8 @@ def main() {
       // block 1 takes the last six. Row 3's payload carries an
       // embedded NUL; row 4's text is UTF-8.
       case store.begin() {
-        (R.error, why) -> { raise Exception.new(message: why) }
-        (R.ok, txn) -> {
+        (R.error, why) then { raise Exception.new(message: why) }
+        (R.ok, txn) then {
           var i = 1
           var inserted = 0
           while i <= 1030 {
@@ -122,25 +122,25 @@ def main() {
               payload
             ]
             case table.insert_column_tx(txn, values) {
-              (R.error, why) -> { raise Exception.new(message: why) }
-              (R.ok, _) -> { inserted = inserted + 1 }
+              (R.error, why) then { raise Exception.new(message: why) }
+              (R.ok, _) then { inserted = inserted + 1 }
             }
             i = i + 1
           }
           case txn.commit() {
-            (R.error, why) -> { raise Exception.new(message: why) }
-            (R.ok, _) -> {}
+            (R.error, why) then { raise Exception.new(message: why) }
+            (R.ok, _) then {}
           }
           println("inserted: " + inserted.to_string())
         }
       }
 
       case store.begin() {
-        (R.error, why) -> { raise Exception.new(message: why) }
-        (R.ok, txn) -> {
+        (R.error, why) then { raise Exception.new(message: why) }
+        (R.ok, txn) then {
           case table.scan_column_tx(txn) {
-            (R.error, why) -> { raise Exception.new(message: why) }
-            (R.ok, rows) -> {
+            (R.error, why) then { raise Exception.new(message: why) }
+            (R.ok, rows) then {
               show_or_die("scan", rows, 0, 2)
               println("  boundary: " + show_row(rows[1023]))
               println("  first of block 1: " + show_row(rows[1024]))
@@ -154,16 +154,16 @@ def main() {
       store.close()
 
       case record.open(path) {
-        (R.error, why) -> { raise Exception.new(message: why) }
-        (R.ok, reopened) -> {
+        (R.error, why) then { raise Exception.new(message: why) }
+        (R.ok, reopened) then {
           const again = table_or_die(reopened, "events")
           println("reopened: " + again.name + " (column)")
           case reopened.begin() {
-            (R.error, why) -> { raise Exception.new(message: why) }
-            (R.ok, txn) -> {
+            (R.error, why) then { raise Exception.new(message: why) }
+            (R.ok, txn) then {
               case again.scan_column_tx(txn) {
-                (R.error, why) -> { raise Exception.new(message: why) }
-                (R.ok, rows) -> {
+                (R.error, why) then { raise Exception.new(message: why) }
+                (R.ok, rows) then {
                   show_or_die("rescan", rows, 0, 2)
                   println("  boundary: " + show_row(rows[1023]))
                 }
@@ -177,12 +177,12 @@ def main() {
 
       // The format's refusals are values.
       case store_open_and_refuse_indexes(path) {
-        (R.error, why) -> { println("refusal: " + why) }
-        (R.ok, _) -> { println("refusal: unexpected ok") }
+        (R.error, why) then { println("refusal: " + why) }
+        (R.ok, _) then { println("refusal: unexpected ok") }
       }
       case store_open_and_refuse_primary(path) {
-        (R.error, why) -> { println("refusal: " + why) }
-        (R.ok, _) -> { println("refusal: unexpected ok") }
+        (R.error, why) then { println("refusal: " + why) }
+        (R.ok, _) then { println("refusal: unexpected ok") }
       }
       println("done")
     }
@@ -191,15 +191,15 @@ def main() {
 
 def table_or_die(store record.Store, name String) record.Table {
   case store.table(name) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, table) -> { return table }
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, table) then { return table }
   }
 }
 
 def store_open_and_refuse_indexes(path String) (R, Bool) {
   case record.open(path) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, store) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, store) then {
       const columns = [
         record.column("id", record.ColType.bigint),
         record.column("name", record.ColType.text)
@@ -207,11 +207,11 @@ def store_open_and_refuse_indexes(path String) (R, Bool) {
       const indexes = [record.index("events_name", ["name"])]
       case store.create_table_store("with_index", columns, indexes,
                                     record.Storage.column) {
-        (R.error, why) -> {
+        (R.error, why) then {
           store.close()
           return (R.error, why)
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           store.close()
           return (R.ok, true)
         }
@@ -222,19 +222,19 @@ def store_open_and_refuse_indexes(path String) (R, Bool) {
 
 def store_open_and_refuse_primary(path String) (R, Bool) {
   case record.open(path) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, store) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, store) then {
       const columns = [
         record.column("id", record.ColType.bigint).primary_key(),
         record.column("name", record.ColType.text)
       ]
       case store.create_table_store("with_primary", columns, [],
                                     record.Storage.column) {
-        (R.error, why) -> {
+        (R.error, why) then {
           store.close()
           return (R.error, why)
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           store.close()
           return (R.ok, true)
         }

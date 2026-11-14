@@ -57,8 +57,8 @@ def cd(sh shell.Shell, words Array[String]) Int64 {
   var target = ""
   if words.length() == 1 {
     case os.getenv("HOME") {
-      (R.ok, home) -> { target = home }
-      (R.error, _) -> {
+      (R.ok, home) then { target = home }
+      (R.error, _) then {
         sh.err("emosh: cd: HOME not set")
         return 1
       }
@@ -67,11 +67,11 @@ def cd(sh shell.Shell, words Array[String]) Int64 {
     target = words[1]
   }
   case os.chdir(target) {
-    (R.error, why) -> {
+    (R.error, why) then {
       sh.err("emosh: cd: " + why)
       return 1
     }
-    (R.ok, _) -> { return 0 }
+    (R.ok, _) then { return 0 }
   }
 }
 
@@ -135,11 +135,11 @@ def export(sh shell.Shell, words Array[String]) Int64 {
         status = 1
       } else {
         case os.setenv(name, value) {
-          (R.error, why) -> {
+          (R.error, why) then {
             sh.err("emosh: export: " + why)
             status = 1
           }
-          (R.ok, _) -> {}
+          (R.ok, _) then {}
         }
       }
     }
@@ -157,11 +157,11 @@ def unset(sh shell.Shell, words Array[String]) Int64 {
       status = 1
     } else {
       case os.unsetenv(words[i]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           sh.err("emosh: unset: " + why)
           status = 1
         }
-        (R.ok, _) -> {}
+        (R.ok, _) then {}
       }
     }
   }

@@ -139,8 +139,8 @@ sel.each() -> (i Int64, one dom.Selection) {
 
 ```emo
 case dom.parse(page) {
-  (R.error, why) -> { println(why) }   // "dom: ... at byte 84"
-  (R.ok, doc)    -> { ... }
+  (R.error, why) then { println(why) }   // "dom: ... at byte 84"
+  (R.ok, doc)    then { ... }
 }
 ```
 

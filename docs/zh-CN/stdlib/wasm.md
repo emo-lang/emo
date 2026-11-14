@@ -20,20 +20,20 @@ deps {
 
 ```emo
 case wasm.load(module_bytes(hex)) {
-  (R.error, why) -> { println("load " + why) }
-  (R.ok, module) -> {
+  (R.error, why) then { println("load " + why) }
+  (R.ok, module) then {
     case wasm.instantiate(module, [("env", "log", -> (args Array[(Int64, Int64)]) {
       println("env log " + args[0][1].to_string())
       return wasm.i64(0)
     })]) {
-      (R.error, why) -> { println("inst " + why) }
-      (R.ok, inst) -> {
+      (R.error, why) then { println("inst " + why) }
+      (R.ok, inst) then {
         case wasm.call(inst, "fac", [wasm.i64(10)]) {
-          (R.error, trap) -> { println("trap " + trap) }
-          (R.ok, results) -> {
+          (R.error, trap) then { println("trap " + trap) }
+          (R.ok, results) then {
             case wasm.as_i64(results[0]) {
-              (R.ok, v) -> { println("fac(10) = " + v.to_string()) }
-              (R.error, why) -> { println(why) }
+              (R.ok, v) then { println("fac(10) = " + v.to_string()) }
+              (R.error, why) then { println(why) }
             }
           }
         }

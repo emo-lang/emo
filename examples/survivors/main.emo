@@ -47,7 +47,7 @@ def main() {
   var total = 0
   while got < 4 {
     receive {
-      b -> {
+      b then {
         var v = b.read()
         println(v)
         total = total + v

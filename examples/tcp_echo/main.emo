@@ -18,21 +18,21 @@ require "net"
 // prefix, and close politely when the client says goodbye.
 def echo_server(listener TcpListener, boss Pid) Int64 {
   case listener.accept() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("accept failed: ${why}")
       return halt()
     }
-    (R.ok, conn) -> { return echo_loop(conn, boss) }
+    (R.ok, conn) then { return echo_loop(conn, boss) }
   }
 }
 
 def echo_loop(conn TcpConn, boss Pid) Int64 {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("read failed: ${why}")
       return halt()
     }
-    (R.ok, line) -> {
+    (R.ok, line) then {
       if line == "bye" {
         conn.write("goodbye\n")
         conn.close()
@@ -50,16 +50,16 @@ def chat(conn TcpConn, lines Array[String], i Int64) Int64 {
   if i == lines.length() {
     conn.write("bye\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     return 0
   }
   conn.write("${lines[i]}\n")
   case conn.read_line() {
-    (R.error, why) -> { println("read failed: ${why}") }
-    (R.ok, line)   -> { println(line) }
+    (R.error, why) then { println("read failed: ${why}") }
+    (R.ok, line)   then { println(line) }
   }
   return chat(conn, lines, i + 1)
 }
@@ -72,20 +72,20 @@ const server = do echo_server(listener, self_pid())
 // A miss comes back as a value: this host can never resolve, so the
 // connect answers (R.error, reason) instead of ending the process.
 case net.connect("256.256.256.256", 80, 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> { conn.close() }
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then { conn.close() }
 }
 
 case net.connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.set_timeout(5.0)
     chat(conn, [ "你好, socket", "direct style", "no callbacks" ], 0)
   }
 }
 
 receive {
-  "served" -> {
+  "served" then {
     println("server closed cleanly")
   }
 }

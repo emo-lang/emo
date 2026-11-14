@@ -16,11 +16,11 @@ const mistyped_hex = "0061736d0100000001080260017f0060000002230116776173695f736e
 
 def load_hex(hex String) Int64 {
   case wasm.load(internal.corpus.decode_hex(hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("load " + why)
       return -1
     }
-    (R.ok, module) -> {
+    (R.ok, module) then {
       return module
     }
   }
@@ -28,10 +28,10 @@ def load_hex(hex String) Int64 {
 
 def call_go(module Int64) (R, Array[(Int64, Int64)]) {
   case wasm.instantiate(module, []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       return (R.error, [])
     }
-    (R.ok, inst) -> {
+    (R.ok, inst) then {
       return wasm.call(inst, "go", [])
     }
   }
@@ -39,17 +39,17 @@ def call_go(module Int64) (R, Array[(Int64, Int64)]) {
 
 def errno_of(r (R, Array[(Int64, Int64)])) Int64 {
   case r {
-    (R.error, why) -> {
+    (R.error, why) then {
       println(why)
       return 0 - 1
     }
-    (R.ok, results) -> {
+    (R.ok, results) then {
       case wasm.as_i32(results[0]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println(why)
           return 0 - 1
         }
-        (R.ok, v) -> {
+        (R.ok, v) then {
           return v
         }
       }
@@ -64,23 +64,23 @@ def run() Int64 {
   // and nwritten lands at 72.
   const hello = load_hex(hello_hex)
   case wasm.instantiate(hello, []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("inst " + why)
       failed = failed + 1
     }
-    (R.ok, inst) -> {
+    (R.ok, inst) then {
       case wasm.call(inst, "go", []) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("go " + why)
           failed = failed + 1
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           case wasm.read_memory(inst, 72, 4) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("read " + why)
               failed = failed + 1
             }
-            (R.ok, data) -> {
+            (R.ok, data) then {
               println("written " + data.get_u32_le(0).to_string())
             }
           }
@@ -91,10 +91,10 @@ def run() Int64 {
 
   // proc_exit rides the trap channel with its code.
   case call_go(load_hex(exit3_hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("exit " + why)
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
       println("exit returned")
       failed = failed + 1
     }
@@ -106,48 +106,48 @@ def run() Int64 {
   wasm.set_wasi_args(["prog", "-x"])
   const args = load_hex(args_hex)
   case wasm.instantiate(args, []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("inst " + why)
       failed = failed + 1
     }
-    (R.ok, inst) -> {
+    (R.ok, inst) then {
       case wasm.call(inst, "go", []) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("go " + why)
           failed = failed + 1
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           case wasm.read_memory(inst, 64, 4) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("read " + why)
               failed = failed + 1
             }
-            (R.ok, counts) -> {
+            (R.ok, counts) then {
               println("argc " + counts.get_u32_le(0).to_string())
             }
           }
           case wasm.read_memory(inst, 72, 4) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("read " + why)
               failed = failed + 1
             }
-            (R.ok, counts) -> {
+            (R.ok, counts) then {
               println("buf " + counts.get_u32_le(0).to_string())
             }
           }
           case wasm.read_memory(inst, 80, 8) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("read " + why)
               failed = failed + 1
             }
-            (R.ok, ptrs) -> {
+            (R.ok, ptrs) then {
               const p0 = ptrs.get_u32_le(0)
               case wasm.read_memory(inst, p0, 5) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   println("read " + why)
                   failed = failed + 1
                 }
-                (R.ok, arg0) -> {
+                (R.ok, arg0) then {
                   println("arg0 " + arg0.to_string())
                 }
               }
@@ -169,23 +169,23 @@ def run() Int64 {
   // fd 1 is a character device with full rights.
   const fdstat_module = load_hex(fdstat_hex)
   case wasm.instantiate(fdstat_module, []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("inst " + why)
       failed = failed + 1
     }
-    (R.ok, inst) -> {
+    (R.ok, inst) then {
       case wasm.call(inst, "go", []) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("go " + why)
           failed = failed + 1
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           case wasm.read_memory(inst, 64, 24) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("read " + why)
               failed = failed + 1
             }
-            (R.ok, st) -> {
+            (R.ok, st) then {
               println("filetype " + st.get(0).to_string())
             }
           }
@@ -196,10 +196,10 @@ def run() Int64 {
 
   // The unimplemented function fails the link with its name.
   case wasm.instantiate(load_hex(pathopen_hex), []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("path " + why)
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
       println("path instantiated")
       failed = failed + 1
     }
@@ -207,10 +207,10 @@ def run() Int64 {
 
   // The mistyped import binds to nothing.
   case wasm.instantiate(load_hex(mistyped_hex), []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("type " + why)
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
       println("type instantiated")
       failed = failed + 1
     }

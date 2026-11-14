@@ -11,10 +11,10 @@ require "emo/ui"
 
 def align_css(a ui.Align) String {
   case a {
-    ui.Align.start -> { return "flex-start" }
-    ui.Align.center -> { return "center" }
-    ui.Align.end -> { return "flex-end" }
-    ui.Align.stretch -> { return "stretch" }
+    ui.Align.start then { return "flex-start" }
+    ui.Align.center then { return "center" }
+    ui.Align.end then { return "flex-end" }
+    ui.Align.stretch then { return "stretch" }
   }
 }
 
@@ -79,12 +79,12 @@ def declarations(kind String, s ui.Style) Array[(String, String)] {
   out.push(("align-items", align_css(s.align())))
   out.push(("flex-grow", grow_css(s.grow())))
   case s.width() {
-    (R.ok, v) -> { out.push(("width", px(v))) }
-    (R.error, _) -> { }
+    (R.ok, v) then { out.push(("width", px(v))) }
+    (R.error, _) then { }
   }
   case s.height() {
-    (R.ok, v) -> { out.push(("height", px(v))) }
-    (R.error, _) -> { }
+    (R.ok, v) then { out.push(("height", px(v))) }
+    (R.error, _) then { }
   }
   return out.to_array()
 }

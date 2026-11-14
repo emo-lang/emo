@@ -29,10 +29,10 @@ def indent(depth Int64) String {
 
 def align_name(a ui.Align) String {
   case a {
-    ui.Align.start -> { return "start" }
-    ui.Align.center -> { return "center" }
-    ui.Align.end -> { return "end" }
-    ui.Align.stretch -> { return "stretch" }
+    ui.Align.start then { return "start" }
+    ui.Align.center then { return "center" }
+    ui.Align.end then { return "end" }
+    ui.Align.stretch then { return "stretch" }
   }
 }
 
@@ -41,8 +41,8 @@ def align_name(a ui.Align) String {
 // print, which is why the slot is destructured rather than interpolated.
 def extent(slot (R, Float64)) String {
   case slot {
-    (R.ok, v) -> { return v.to_string() }
-    (R.error, _) -> { return "auto" }
+    (R.ok, v) then { return v.to_string() }
+    (R.error, _) then { return "auto" }
   }
 }
 

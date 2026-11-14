@@ -2,11 +2,11 @@
 // catalog group, counts, and reports back to the boss.
 def run(count Int64, boss Pid) Int64 {
   receive {
-    (id, total) -> {
+    (id, total) then {
       println("shipped " + Catalog.line(id, total))
       return run(count + 1, boss)
     }
-    "done" -> {
+    "done" then {
       boss <- (self_pid(), count)
       return halt()
     }

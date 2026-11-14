@@ -33,12 +33,12 @@ def main() {
   // The strikes at the grid's three sizes, by the error convention —
   // and the refusal a zero size earns, pinned beside them.
   case ui_fb.raster.strike(fi, 0) {
-    (R.error, why) -> { println("strike inter 0 refused: ${why}") }
-    (R.ok, _) -> { println("strike inter 0 unexpectedly ok") }
+    (R.error, why) then { println("strike inter 0 refused: ${why}") }
+    (R.ok, _) then { println("strike inter 0 unexpectedly ok") }
   }
   case ui_fb.raster.strike(fi, 16) {
-    (R.error, why) -> { println("strike inter 16 refused: ${why}") }
-    (R.ok, s) -> {
+    (R.error, why) then { println("strike inter 16 refused: ${why}") }
+    (R.ok, s) then {
       println("strike inter 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike inter 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike inter 16 digest ${ui_fb.raster.advances_digest(s)}")
@@ -48,8 +48,8 @@ def main() {
     }
   }
   case ui_fb.raster.strike(fi, 24) {
-    (R.error, why) -> { println("strike inter 24 refused: ${why}") }
-    (R.ok, s) -> {
+    (R.error, why) then { println("strike inter 24 refused: ${why}") }
+    (R.ok, s) then {
       println("strike inter 24 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike inter 24 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike inter 24 digest ${ui_fb.raster.advances_digest(s)}")
@@ -59,8 +59,8 @@ def main() {
     }
   }
   case ui_fb.raster.strike(fm, 16) {
-    (R.error, why) -> { println("strike mono 16 refused: ${why}") }
-    (R.ok, s) -> {
+    (R.error, why) then { println("strike mono 16 refused: ${why}") }
+    (R.ok, s) then {
       println("strike mono 16 ascent ${s.ascent()} descent ${s.descent()} line ${s.line_height()} max_dim ${s.max_dim()} slot ${s.slot_words()}")
       println("strike mono 16 advances A ${s.advance(s.glyph_of("A"))} f ${s.advance(s.glyph_of("f"))} i ${s.advance(s.glyph_of("i"))} space ${s.advance(1)}")
       println("strike mono 16 digest ${ui_fb.raster.advances_digest(s)}")

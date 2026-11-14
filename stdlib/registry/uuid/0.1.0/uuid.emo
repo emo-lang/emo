@@ -261,8 +261,8 @@ def parse(text String) (R, Uuid) {
 // `(R.error, reason)`, the reason the rand package's own.
 def v4() (R, Uuid) {
   case rand.bytes(16) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, raw)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, raw)     then {
       raw.set(6, (raw.get(6) & 0x0F) | 0x40)
       raw.set(8, (raw.get(8) & 0x3F) | 0x80)
       return (R.ok, Uuid.new(data: raw))
@@ -286,8 +286,8 @@ def v7(now_ms Int64) (R, Uuid) {
     raise Exception.new(message: "uuid: the v7 timestamp does not fit the 48-bit field")
   }
   case rand.bytes(16) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, raw)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, raw)     then {
       raw.set(0, (now_ms >> 40) & 0xFF)
       raw.set(1, (now_ms >> 32) & 0xFF)
       raw.set(2, (now_ms >> 24) & 0xFF)

@@ -27,14 +27,14 @@ def show(value record.Value) String {
     return "NULL"
   }
   case value.kind {
-    record.ColType.integer -> { return value.as_i64().to_string() }
-    record.ColType.bigint -> { return value.as_i64().to_string() }
-    record.ColType.real -> { return value.as_f64().to_string() }
-    record.ColType.double -> { return value.as_f64().to_string() }
-    record.ColType.text -> { return value.as_text() }
-    record.ColType.varchar -> { return value.as_text() }
-    record.ColType.boolean -> { return value.as_bool().to_string() }
-    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+    record.ColType.integer then { return value.as_i64().to_string() }
+    record.ColType.bigint then { return value.as_i64().to_string() }
+    record.ColType.real then { return value.as_f64().to_string() }
+    record.ColType.double then { return value.as_f64().to_string() }
+    record.ColType.text then { return value.as_text() }
+    record.ColType.varchar then { return value.as_text() }
+    record.ColType.boolean then { return value.as_bool().to_string() }
+    record.ColType.bytea then { return "0x" + hex(value.as_bytes()) }
   }
 }
 
@@ -66,15 +66,15 @@ def join(xs Array[String]) String {
 
 def open_or_die(path String) engine.Engine {
   case engine.open(path) {
-    (R.error, e) -> { raise Exception.new(message: e) }
-    (R.ok, eng) -> { return eng }
+    (R.error, e) then { raise Exception.new(message: e) }
+    (R.ok, eng) then { return eng }
   }
 }
 
 def run(eng engine.Engine, text String) {
   case eng.execute(text) {
-    (R.error, e) -> { println("error " + e) }
-    (R.ok, r) -> {
+    (R.error, e) then { println("error " + e) }
+    (R.ok, r) then {
       println(r.tag)
       println("plan: " + r.plan)
       if r.columns.length() > 0 {
@@ -92,8 +92,8 @@ def run(eng engine.Engine, text String) {
 // ---- a clean start -------------------------------------------------------
 
 case rocksdb.destroy_db(path) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, _) -> {}
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, _) then {}
 }
 
 const eng = open_or_die(path)

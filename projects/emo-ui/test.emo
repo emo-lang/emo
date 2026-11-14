@@ -48,8 +48,8 @@ class Model {
 
 def update(msg Msg, m Model) Model {
   case msg {
-    Msg.inc -> { return m.with_count(m.count() + 1) }
-    Msg.dec -> { return m.with_count(m.count() - 1) }
+    Msg.inc then { return m.with_count(m.count() + 1) }
+    Msg.dec then { return m.with_count(m.count() - 1) }
   }
 }
 

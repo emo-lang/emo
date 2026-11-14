@@ -10,78 +10,78 @@ const page = "<!doctype html>\n<html>\n<head>\n  <title>Field notes</title>\n</h
 // The tag of a selection's first element, for the tour's printing.
 def tag_of(sel dom.Selection) String {
   case sel.at(0) {
-    (R.ok, n) -> {
+    (R.ok, n) then {
       if n.is_element?() {
         return n.as_element().tag()
       }
       return "-"
     }
-    (R.error, _) -> { return "-" }
+    (R.error, _) then { return "-" }
   }
 }
 
 case dom.parse(page) {
-  (R.error, why) -> { println("parse: " + why) }
-  (R.ok, doc)    -> {
+  (R.error, why) then { println("parse: " + why) }
+  (R.ok, doc)    then {
     println("roots=" + doc.roots().length().to_string())
 
     // ---- find: id, class, type, and the structural combinators ----
     case doc.find("#title") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("title=" + sel.text())
         println("title-outer=" + sel.outer_html())
       }
     }
     case doc.find("section.entry > h2") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("h2-count=" + sel.length().to_string())
         println("h2-first=" + sel.first().text())
         println("h2-last=" + sel.last().text())
       }
     }
     case doc.find("h1 + main") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("h1+main=" + sel.length().to_string()) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("h1+main=" + sel.length().to_string()) }
     }
     case doc.find("ul li, footer") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("group=" + sel.length().to_string() + " text=" + sel.text()) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("group=" + sel.length().to_string() + " text=" + sel.text()) }
     }
 
     // ---- slicing a selection ----
     case doc.find("li") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("li=" + sel.length().to_string())
         println("eq1=" + sel.eq(1).text())
         println("eq-2=" + sel.eq(-2).text())
         println("slice(1,3)=" + sel.slice(1, 3).text())
         case sel.at(1) {
-          (R.ok, n)    -> {
+          (R.ok, n)    then {
             println("at1-kind=" + n.kind().to_string() + " elem=" + (if n.is_element?() { n.as_element().tag() } else { "-" }))
           }
-          (R.error, w) -> { println("at: " + w) }
+          (R.error, w) then { println("at: " + w) }
         }
       }
     }
 
     // ---- attributes: the strict door and the forgiving one ----
     case doc.find("a") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("href=" + sel.attr_or("href", "none"))
         case sel.attr("href") {
-          (R.ok, v)    -> { println("href-strict=" + v) }
-          (R.error, w) -> { println("href: " + w) }
+          (R.ok, v)    then { println("href-strict=" + v) }
+          (R.error, w) then { println("href: " + w) }
         }
         println("alt=" + sel.attr_or("alt", "absent"))
       }
     }
     case doc.find("img") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("img-outer=" + sel.outer_html())
         println("img-html=" + sel.html())
       }
@@ -89,83 +89,83 @@ case dom.parse(page) {
 
     // ---- pseudo-classes ----
     case doc.find("li:nth-child(2n+1)") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("nth-odd=" + sel.text()) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("nth-odd=" + sel.text()) }
     }
     case doc.find("li:not(.mid)") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("not-mid=" + sel.text()) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("not-mid=" + sel.text()) }
     }
     case doc.find("section") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         case sel.has("a") {
-          (R.ok, h)    -> { println("sections-with-a=" + h.length().to_string()) }
-          (R.error, w) -> { println("has: " + w) }
+          (R.ok, h)    then { println("sections-with-a=" + h.length().to_string()) }
+          (R.error, w) then { println("has: " + w) }
         }
       }
     }
     case doc.find("p:contains(sieves)") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("contains=" + sel.length().to_string())
         println("p-html=" + sel.html())
       }
     }
     case doc.find(":root") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("root=" + tag_of(sel.first())) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("root=" + tag_of(sel.first())) }
     }
 
     // ---- traversal ----
     case doc.find("#toc") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("toc-children=" + sel.children().length().to_string())
         println("toc-parent=" + tag_of(sel.parent().first()))
         println("toc-parents=" + sel.parents().length().to_string())
         case sel.closest("main") {
-          (R.ok, c)    -> { println("toc-closest-main=" + tag_of(c.first())) }
-          (R.error, w) -> { println("closest: " + w) }
+          (R.ok, c)    then { println("toc-closest-main=" + tag_of(c.first())) }
+          (R.error, w) then { println("closest: " + w) }
         }
       }
     }
     case doc.find("footer") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("footer-prev=" + tag_of(sel.prev().first()))
         println("footer-prev-all=" + sel.prev_all().length().to_string())
         case sel.parents_filtered("body") {
-          (R.ok, p)    -> { println("footer-in-body=" + p.length().to_string()) }
-          (R.error, w) -> { println("parents: " + w) }
+          (R.ok, p)    then { println("footer-in-body=" + p.length().to_string()) }
+          (R.error, w) then { println("parents: " + w) }
         }
       }
     }
 
     // ---- filtering ----
     case doc.find("section") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         case sel.filter(".featured") {
-          (R.ok, f)    -> {
+          (R.ok, f)    then {
             case f.first().find("h2") {
-              (R.ok, h)    -> { println("featured=" + h.first().text()) }
-              (R.error, w) -> { println("featured: " + w) }
+              (R.ok, h)    then { println("featured=" + h.first().text()) }
+              (R.error, w) then { println("featured: " + w) }
             }
           }
-          (R.error, w) -> { println("filter: " + w) }
+          (R.error, w) then { println("filter: " + w) }
         }
         case sel.is?(".featured") {
-          (R.ok, v)    -> { println("is-featured=" + (if v { "yes" } else { "no" })) }
-          (R.error, w) -> { println("is: " + w) }
+          (R.ok, v)    then { println("is-featured=" + (if v { "yes" } else { "no" })) }
+          (R.error, w) then { println("is: " + w) }
         }
       }
     }
 
     // ---- each: the trailing block walks the selection ----
     case doc.find("li") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> {
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then {
         println("each:")
         sel.each() -> (i Int64, one dom.Selection) {
           println("  " + i.to_string() + " " + one.text())
@@ -180,18 +180,18 @@ case dom.parse(page) {
     // ---- the node face and the round trip ----
     println("all-nodes=" + doc.all().length().to_string())
     case doc.find("*") {
-      (R.error, why) -> { println("find: " + why) }
-      (R.ok, sel)    -> { println("all-elements=" + sel.length().to_string()) }
+      (R.error, why) then { println("find: " + why) }
+      (R.ok, sel)    then { println("all-elements=" + sel.length().to_string()) }
     }
     const canonical = doc.encode()
     println("encode-lines=" + canonical.split("\n").length().to_string())
     case dom.parse(canonical) {
-      (R.error, why) -> { println("reparse: " + why) }
-      (R.ok, again)  -> {
+      (R.error, why) then { println("reparse: " + why) }
+      (R.ok, again)  then {
         println("reparse-roots=" + again.roots().length().to_string())
         case again.find("#title") {
-          (R.ok, t)    -> { println("reparse-title=" + t.text()) }
-          (R.error, w) -> { println("reparse: " + w) }
+          (R.ok, t)    then { println("reparse-title=" + t.text()) }
+          (R.error, w) then { println("reparse: " + w) }
         }
       }
     }

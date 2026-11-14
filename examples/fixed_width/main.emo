@@ -67,6 +67,6 @@ println(step(255B))
 
 // ... and through case patterns.
 case step(9B) {
-  10B -> { println("byte ten") }
-  _ -> { println("other") }
+  10B then { println("byte ten") }
+  _ then { println("other") }
 }

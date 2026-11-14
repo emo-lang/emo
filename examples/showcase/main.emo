@@ -30,8 +30,8 @@ const order = Order.new(id: 7, qty: 3)
 println(order.describe())
 
 case order.band() {
-  (Status.bulk, label) -> { println("band: ${label}") }
-  (Status.ok, label) -> { println("band: ${label}") }
+  (Status.bulk, label) then { println("band: ${label}") }
+  (Status.ok, label) then { println("band: ${label}") }
 }
 
 // ---- state: a Box ----
@@ -83,6 +83,6 @@ const wh = do warehouse.run(rep)
 feed(wh, 1)
 
 receive {
-  (who, handled) -> { println("handled ${handled} orders") }
+  (who, handled) then { println("handled ${handled} orders") }
 }
 

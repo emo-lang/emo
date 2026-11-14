@@ -85,20 +85,20 @@ def classify(age Int64) (Outcome, String) {
 }
 
 case classify(28) {
-  (Outcome.ok, label) -> { println("28 -> ${label}") }
-  (Outcome.err, label) -> { println("28 -> ${label}") }
+  (Outcome.ok, label) then { println("28 -> ${label}") }
+  (Outcome.err, label) then { println("28 -> ${label}") }
 }
 
 case classify(12) {
-  (Outcome.ok, label) -> { println("12 -> ${label}") }
-  (Outcome.err, label) -> { println("12 -> ${label}") }
+  (Outcome.ok, label) then { println("12 -> ${label}") }
+  (Outcome.err, label) then { println("12 -> ${label}") }
 }
 
 // A branch may carry a guard:
 case (Outcome.ok, 42) {
-  (Outcome.ok, v) when v > 40 -> { println("a big answer: ${v}") }
-  (Outcome.ok, v) -> { println("a small answer: ${v}") }
-  (Outcome.err, label) -> { println("no answer: ${label}") }
+  (Outcome.ok, v) when v > 40 then { println("a big answer: ${v}") }
+  (Outcome.ok, v) then { println("a small answer: ${v}") }
+  (Outcome.err, label) then { println("no answer: ${label}") }
 }
 
 // ---- 5 · Arrays: fixed, transformed, never mutated ----

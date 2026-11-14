@@ -42,8 +42,8 @@ def asset(cfg config.Config, req httpd.Request) httpd.Response {
     return httpd.error(404, "404 page not found\n")
   }
   case file.read(cfg.web_dir + "/" + rel) {
-    (R.error, _) -> { return httpd.error(404, "404 page not found\n") }
-    (R.ok, data) -> {
+    (R.error, _) then { return httpd.error(404, "404 page not found\n") }
+    (R.ok, data) then {
       return httpd.response(200, [("Content-Type", content_type(rel))], data)
     }
   }
@@ -51,10 +51,10 @@ def asset(cfg config.Config, req httpd.Request) httpd.Response {
 
 def index(cfg config.Config, _req httpd.Request) httpd.Response {
   case file.read(cfg.web_dir + "/index.html") {
-    (R.error, _) -> {
+    (R.error, _) then {
       return httpd.error(500, "playground: the page could not be read — is the server running from the project directory?\n")
     }
-    (R.ok, data) -> {
+    (R.ok, data) then {
       return httpd.response(200, [("Content-Type", "text/html; charset=utf-8")], data)
     }
   }
@@ -65,8 +65,8 @@ def index(cfg config.Config, _req httpd.Request) httpd.Response {
 // byte order, so the page's dropdown is stable.
 def example_names(cfg config.Config) Array[String] {
   case os.list_dir(cfg.web_dir + "/examples") {
-    (R.error, _) -> { return [] }
-    (R.ok, entries) -> {
+    (R.error, _) then { return [] }
+    (R.ok, entries) then {
       const names = ArrayBuilder.new()
       var i = 0
       while i < entries.length() {
@@ -99,8 +99,8 @@ def example_source(cfg config.Config, req httpd.Request) httpd.Response {
     return httpd.error(404, "404 page not found\n")
   }
   case file.read(cfg.web_dir + "/examples/" + name + ".emo") {
-    (R.error, _) -> { return httpd.error(404, "404 no such example\n") }
-    (R.ok, data) -> {
+    (R.error, _) then { return httpd.error(404, "404 no such example\n") }
+    (R.ok, data) then {
       const body = json.object([("name", json.string(name)), ("code", json.string(data))]).encode()
       return httpd.response(200, [("Content-Type", "application/json")], body)
     }
@@ -127,10 +127,10 @@ def json_answer(status Int64, body String) httpd.Response {
 
 def api_run(cfg config.Config, req httpd.Request) httpd.Response {
   case json.decode(req.body) {
-    (R.error, why) -> {
+    (R.error, why) then {
       return json_answer(400, json.object([("error", json.string("the body is not JSON: ${why}"))]).encode())
     }
-    (R.ok, doc) -> {
+    (R.ok, doc) then {
       if doc.is(json.JsonObject) {
         if has_code_field(doc.entries()) {
           const code = doc.get("code")

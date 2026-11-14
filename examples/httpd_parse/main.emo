@@ -44,7 +44,7 @@ for var i = 0; i < heads.length(); i = i + 1 {
   const fixture = heads[i]
   println("== " + fixture[0])
   case httpd.parse_head(fixture[1]) {
-    (R.error, why) -> { println("err " + why) }
-    (R.ok, req)    -> { print_request(req) }
+    (R.error, why) then { println("err " + why) }
+    (R.ok, req)    then { print_request(req) }
   }
 }

@@ -49,8 +49,8 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 }
 
 case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/items", [("Content-Type", "text/plain")], "payload", 5.0) {
-  (R.error, why) -> { println("request failed: ${why}") }
-  (R.ok, resp)   -> {
+  (R.error, why) then { println("request failed: ${why}") }
+  (R.ok, resp)   then {
     println(resp.status) // 201
     println(resp.body)   // POST /items payload
   }

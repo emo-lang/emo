@@ -45,17 +45,17 @@ def module_bytes(hex String) Bytes {
 def call_i32(label String, inst Int64, name String, args Array[(Int64, Int64)]) Int64 {
   var failed = 0
   case wasm.call(inst, name, args) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println(label + " " + why)
       failed = 1
     }
-    (R.ok, results) -> {
+    (R.ok, results) then {
       case wasm.as_i32(results[0]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println(label + " " + why)
           failed = 1
         }
-        (R.ok, v) -> {
+        (R.ok, v) then {
           println(label + " " + v.to_string())
         }
       }
@@ -67,17 +67,17 @@ def call_i32(label String, inst Int64, name String, args Array[(Int64, Int64)]) 
 def call_i64(label String, inst Int64, name String, args Array[(Int64, Int64)]) Int64 {
   var failed = 0
   case wasm.call(inst, name, args) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println(label + " " + why)
       failed = 1
     }
-    (R.ok, results) -> {
+    (R.ok, results) then {
       case wasm.as_i64(results[0]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println(label + " " + why)
           failed = 1
         }
-        (R.ok, v) -> {
+        (R.ok, v) then {
           println(label + " " + v.to_string())
         }
       }
@@ -93,32 +93,32 @@ def call_i64(label String, inst Int64, name String, args Array[(Int64, Int64)]) 
 def demo(inst Int64) Int64 {
   var failed = 0
   case wasm.write_memory(inst, 0, "EMO".to_bytes()) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("write " + why)
       failed = failed + 1
     }
-    (R.ok, n) -> {
+    (R.ok, n) then {
       println("write " + n.to_string())
     }
   }
   failed = failed + call_i32("first_byte", inst, "first_byte", [])
   failed = failed + call_i32("greet", inst, "greet", [])
   case wasm.call(inst, "put", [wasm.i32(16), wasm.i32(123456)]) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("put " + why)
       failed = failed + 1
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
       println("put ok")
     }
   }
   failed = failed + call_i32("get", inst, "get", [wasm.i32(16)])
   case wasm.read_memory(inst, 16, 4) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("read " + why)
       failed = failed + 1
     }
-    (R.ok, data) -> {
+    (R.ok, data) then {
       println("memory " + data.get_u32_le(0).to_string())
     }
   }
@@ -133,18 +133,18 @@ def run() Int64 {
   }
   var failed = 0
   case wasm.load(module_bytes(mod_hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("load " + why)
       failed = 1
     }
-    (R.ok, module) -> {
+    (R.ok, module) then {
       println("load ok")
       case wasm.instantiate(module, [("env", "log", log)]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("inst " + why)
           failed = 1
         }
-        (R.ok, inst) -> {
+        (R.ok, inst) then {
           println("inst ok")
           failed = demo(inst)
         }

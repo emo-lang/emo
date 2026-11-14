@@ -63,8 +63,8 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
   var going = true
   while going {
     case parse_pipeline(tokens, i) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, stage) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, stage) then {
         var conn = ""
         var next = stage[1]
         if next < tokens.length() {
@@ -98,18 +98,18 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
 def parse_pipeline(tokens Array[lex.Tok], start Int64) (R, (Array[Cmd], Int64)) {
   const stages = ArrayBuilder.new()
   case parse_command(tokens, start) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, first) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, first) then {
       stages.push(first[0])
       var i = first[1]
       var piping = true
       while piping && i < tokens.length() && tokens[i].kind == lex.op_pipe() {
         case parse_command(tokens, i + 1) {
-          (R.error, why) -> {
+          (R.error, why) then {
             piping = false
             return (R.error, why)
           }
-          (R.ok, stage) -> {
+          (R.ok, stage) then {
             stages.push(stage[0])
             i = stage[1]
           }

@@ -19,7 +19,7 @@ def start_lock_manager() Pid {
 
 def lock_manager(owners Map[String, Int64], waiters Map[String, Array[(Int64, Pid)]], waiting Map[Int64, String]) {
   receive {
-    (tag, table, id, who) -> {
+    (tag, table, id, who) then {
       if tag == "acquire" {
         if !owners.has(table) {
           owners.set(table, id)
@@ -129,7 +129,7 @@ class RemoteLocks {
   def acquire(table String) (R, Bool) {
     self.manager <- ("acquire", table, self.id, self_pid())
     receive {
-      (tag, _) -> {
+      (tag, _) then {
         if tag == "deadlock" {
           return (R.error, "40P01: deadlock detected")
         }

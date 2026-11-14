@@ -16,7 +16,7 @@ def probe(flag Bool) Int64 {
   if flag {
     var x = 1
     if flag {
-      const g = -> {
+      const g = then {
         return x      // error[E4012]: the var `x` cannot be captured ...
       }
       return g()
@@ -30,7 +30,7 @@ def probe(flag Bool) Int64 {
 
 这是计划中要求的、保守但简单的近似,不是借用检查器:
 
-- `var` 与箭头块在*同一个*块里时是接受的(`var x = 1` 紧挨着 `const g = -> { return x }`),即使 `g` 原则上可能被返回。检查器不跟踪块值是否逃逸。
+- `var` 与箭头块在*同一个*块里时是接受的(`var x = 1` 紧挨着 `const g = then { return x }`),即使 `g` 原则上可能被返回。检查器不跟踪块值是否逃逸。
 - 从与箭头块相同深度捕获的 `var` 同样接受。
 
 因此实际实现的规则比 README 中最坏情况的读法更窄:它只拒绝那些 `var` 的块可以证明包围了箭头块定义处的捕获——也就是闭包按构造必然比变量活得久的形状。其余情况交给运行时纪律(`Box` 是长期可变状态的既定载体)。

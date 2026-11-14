@@ -79,7 +79,7 @@ syn match emoType '\<[A-Z][A-Za-z0-9_]*\>'
 " over the general `emoType` pattern.
 
 syn keyword emoBoolean true false
-syn keyword emoConditional if else case when
+syn keyword emoConditional if else case when then
 syn keyword emoKeyword const def class emo enum interface require var
 syn keyword emoRepeat for while
 syn keyword emoSelf self

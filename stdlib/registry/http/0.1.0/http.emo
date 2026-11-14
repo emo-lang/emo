@@ -49,22 +49,22 @@ def request_value(method String, path String, headers Array[(String, String)], b
 // failing the same way.
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse) {
   case parse_url(url) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parts)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)  then {
       case parts {
-        ("http", host, port, path) -> {
+        ("http", host, port, path) then {
           case net.connect(host, port, timeout) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
           }
         }
-        ("https", host, port, path) -> {
+        ("https", host, port, path) then {
           case net.tls_connect(host, port, timeout) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
           }
         }
-        _ -> { return (R.error, "http: unsupported url scheme in `" + url + "`") }
+        _ then { return (R.error, "http: unsupported url scheme in `" + url + "`") }
       }
     }
   }
@@ -80,22 +80,22 @@ def get(url String) (R, HttpResponse) {
 // url has no TLS leg, so the policy applies only to `https`.
 def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse) {
   case parse_url(url) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parts)  -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)  then {
       case parts {
-        ("http", host, port, path) -> {
+        ("http", host, port, path) then {
           case net.connect(host, port, timeout) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
           }
         }
-        ("https", host, port, path) -> {
+        ("https", host, port, path) then {
           case net.tls_connect_with(host, port, timeout, tls_options) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
           }
         }
-        _ -> { return (R.error, "http: unsupported url scheme in `" + url + "`") }
+        _ then { return (R.error, "http: unsupported url scheme in `" + url + "`") }
       }
     }
   }
@@ -117,18 +117,18 @@ def delete(url String) (R, HttpResponse) {
 // each exchange (Connection: close), so no pooling to reason about.
 def exchange(conn TcpConn, method String, host String, path String, headers Array[(String, String)], body String) (R, HttpResponse) {
   case conn.write(request_head(method, host, path, headers, body) + body) {
-    (R.error, why) -> {
+    (R.error, why) then {
       conn.close()
       return (R.error, why)
     }
-    (R.ok, _) -> { }
+    (R.ok, _) then { }
   }
   case read_response(conn) {
-    (R.error, why) -> {
+    (R.error, why) then {
       conn.close()
       return (R.error, why)
     }
-    (R.ok, resp)   -> {
+    (R.ok, resp)   then {
       conn.close()
       return (R.ok, resp)
     }
@@ -210,15 +210,15 @@ def join(lines Array[String], sep String, i Int64, acc String) String {
 
 def read_response(conn TcpConn) (R, HttpResponse) {
   case read_status(conn) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, status) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, status) then {
       case read_headers(conn, []) {
-        (R.error, why)  -> { return (R.error, why) }
-        (R.ok, headers) -> {
+        (R.error, why)  then { return (R.error, why) }
+        (R.ok, headers) then {
           const length = header_value(headers, "content-length")
           case read_body(conn, length) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, body)   -> { return (R.ok, response(status, headers, body)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, body)   then { return (R.ok, response(status, headers, body)) }
           }
         }
       }
@@ -235,8 +235,8 @@ def read_body(conn TcpConn, length String) (R, String) {
 
 def read_status(conn TcpConn) (R, Int64) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       const parts = line.split(" ")
       return (R.ok, parts[1].to_int64())
     }
@@ -245,8 +245,8 @@ def read_status(conn TcpConn) (R, Int64) {
 
 def read_headers(conn TcpConn, acc Array[(String, String)]) (R, Array[(String, String)]) {
   case conn.read_line() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, line)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line)   then {
       if line == "" {
         return (R.ok, acc)
       }

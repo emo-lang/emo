@@ -55,17 +55,17 @@ const me = self_pid()
 
 do doubler(me, 21)
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 
 do packer(me, 3)
 receive {
-  box -> { println(box.read()) }
+  box then { println(box.read()) }
 }
 
 do twin(me, 4)
 receive {
-  (a, b) -> {
+  (a, b) then {
     println(a)
     println(b)
   }
@@ -74,21 +74,21 @@ receive {
 do low(me)
 do high(me)
 receive {
-  n when n > 3 -> { println(n) }
+  n when n > 3 then { println(n) }
 }
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 
 const gone = do bye(me)
 receive {
-  "bye" -> { println("bye got") }
+  "bye" then { println("bye got") }
 }
 gone <- "late"
 do fresh(me)
 receive {
-  "late" -> { println("late came back") }
-  "fresh" -> { println("fresh got") }
+  "late" then { println("late came back") }
+  "fresh" then { println("fresh got") }
 }
 
 do carry(me, 1)
@@ -98,22 +98,22 @@ do carry(me, 4)
 do carry(me, 5)
 do carry(me, 6)
 receive {
-  n when n == 4 -> { println(n) }
+  n when n == 4 then { println(n) }
 }
 receive {
-  n when n == 1 -> { println(n) }
+  n when n == 1 then { println(n) }
 }
 receive {
-  n when n == 6 -> { println(n) }
+  n when n == 6 then { println(n) }
 }
 receive {
-  n when n == 2 -> { println(n) }
+  n when n == 2 then { println(n) }
 }
 receive {
-  n when n == 5 -> { println(n) }
+  n when n == 5 then { println(n) }
 }
 receive {
-  n when n == 3 -> { println(n) }
+  n when n == 3 then { println(n) }
 }
 
 println(gone)

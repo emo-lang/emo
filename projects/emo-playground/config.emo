@@ -26,8 +26,8 @@ class Config {
 
 def env_or(name String, fallback String) String {
   case os.getenv(name) {
-    (R.ok, value) -> { return value }
-    (R.error, _) -> { return fallback }
+    (R.ok, value) then { return value }
+    (R.error, _) then { return fallback }
   }
 }
 

@@ -21,6 +21,6 @@ do sender(me)
 // wakes this process ahead of the sender, the copy-out delivers the
 // box, and the sender ends with nothing left queued.
 receive {
-  box -> { println(box.read()) }
+  box then { println(box.read()) }
 }
 println("outlived")

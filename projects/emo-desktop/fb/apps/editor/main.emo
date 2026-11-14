@@ -24,30 +24,30 @@ def strike() (R, ui_fb.raster.Strike) {
 def main() {
   const holder = ArrayBuilder.new()
   case strike() {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, s) -> { holder.push(s) }
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, s) then { holder.push(s) }
   }
   const fs = holder.get(0)
   var ge = 0
   var base_e = 0
   case syscall.win_new(384, 128) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, ans) -> {
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, ans) then {
       ge = ans & 4294967295
       base_e = (ans >> 32) << 12
     }
   }
   case syscall.win_role(ge, 0) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, _) then {}
   }
   // the window's place derives from the mode (emo-desktop A14.3): the
   // lower-left quadrant, under the browser's
   var mw = 0
   var mh = 0
   case syscall.output_info(0) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, m) -> {
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, m) then {
     mw = m >> 32
     mh = m & 4294967295
   }
@@ -57,14 +57,14 @@ def main() {
   var fx = (mw - 384) / 4 - 10
   var fy = (mh - 128) / 2
   case syscall.win_move(ge, fx, fy + 128 / 4) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, _) then {}
   }
   // the mount takes the focus (emo-desktop A11.2): the newest window
   // up is the one the stream's keys serve until a click names another
   case syscall.win_focus(ge) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, _) then {}
   }
   const we = ui_fb_winbuf.win(ge, base_e, 384, 128)
   const ch = ui_fb_win.chrome(we, fs, "editor")
@@ -79,8 +79,8 @@ def main() {
     ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10], we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {
-    (R.error, _) -> { ui_fb_winbuf.mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { ui_fb_winbuf.mark() }
+    (R.ok, _) then {}
   }
   syscall.exit(0)
 }

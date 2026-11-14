@@ -28,10 +28,10 @@ os.rmdir(dir)
 // The misses answer as values: the removed directory and a descriptor
 // that was never open each come back as (R.error, reason).
 case os.list_dir(dir) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)       -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)       then { println("unexpected ok") }
 }
 case os.read(999, 5) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }

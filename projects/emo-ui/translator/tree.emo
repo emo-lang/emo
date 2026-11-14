@@ -209,8 +209,8 @@ def parse_top(data Bytes, i Int64, header String,
   if lex.starts_with(data, i, "def") && word_end(data, i + 3) {
     const r = parse_def(data, i)
     case r {
-      (R.error, why)      -> { return (R.error, why) }
-      (R.ok, found)       -> {
+      (R.error, why)      then { return (R.error, why) }
+      (R.ok, found)       then {
         return parse_top(data, found[1], header, defs.append(found[0]))
       }
     }
@@ -262,15 +262,15 @@ def parse_def(data Bytes, i Int64) (R, (ViewDef, Int64)) {
   const j = i + 3
   const r = lex.span_to(data, j, "{")
   case r {
-    (R.error, x) -> {
+    (R.error, x) then {
       return fail_def(at, "unterminated def header")
     }
-    (R.ok, found) -> {
+    (R.ok, found) then {
       const header = "def" + " " + found[0]
       const body = parse_block(data, found[1] + 1)
       case body {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, got)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, got)     then {
           if got[0].length() != 1 {
             return fail_def(at,
               "the body of a view def is exactly one tree, not "
@@ -315,12 +315,12 @@ def parse_block(data Bytes, i Int64) (R, (Array[TreeItem], Int64)) {
   }
   const r = parse_item(data, j)
   case r {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, got)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, got)     then {
       const rest = parse_block(data, got[1])
       case rest {
-        (R.error, why2) -> { return (R.error, why2) }
-        (R.ok, tail)    -> {
+        (R.error, why2) then { return (R.error, why2) }
+        (R.ok, tail)    then {
           return (R.ok, (concat_items([got[0]], tail[0], 0), tail[1]))
         }
       }
@@ -342,8 +342,8 @@ def parse_item(data Bytes, i Int64) (R, (TreeItem, Int64)) {
   }
   const a = parse_args(data, j + 1)
   case a {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, got)    -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, got)    then {
       // parse_args answers the index of the closing `)`; the tail
       // starts after it.
       return parse_tail(data, got[1] + 1, p[0], got[0], at)
@@ -361,8 +361,8 @@ def parse_tail(data Bytes, i Int64, path String, args Array[Arg],
   if b == 123 {
     const kids = parse_block(data, j + 1)
     case kids {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, got)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, got)     then {
         return (R.ok, (Container.new(path: path, args: args, kids: got[0],
           line: at), got[1] + 1))
       }
@@ -391,16 +391,16 @@ def parse_iter(data Bytes, i Int64, path String, args Array[Arg],
   }
   const t = lex.span_to(data, k + bind.length(), ")")
   case t {
-    (R.error, x) -> { return fail_item(at, "unterminated binding") }
-    (R.ok, found) -> {
+    (R.error, x) then { return fail_item(at, "unterminated binding") }
+    (R.ok, found) then {
       const b = lex.skip_ws(data, found[1] + 1)
       if lex.peek(data, b) != 123 {
         return fail_item(at, "expected { to open the iteration's body")
       }
       const kids = parse_block(data, b + 1)
       case kids {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, got)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, got)     then {
           return (R.ok, (Iter.new(src: args[0].expr(), bind: bind,
             kids: got[0], line: at), got[1] + 1))
         }
@@ -413,16 +413,16 @@ def parse_cond(data Bytes, i Int64) (R, (TreeItem, Int64)) {
   const at = lex.line_of(data, i)
   const c = lex.span_to(data, i + 2, "{")
   case c {
-    (R.error, x) -> { return fail_item(at, "unterminated if condition") }
-    (R.ok, found) -> {
+    (R.error, x) then { return fail_item(at, "unterminated if condition") }
+    (R.ok, found) then {
       const kids = parse_block(data, found[1] + 1)
       case kids {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, got)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, got)     then {
           const e = parse_else(data, got[1] + 1, at)
           case e {
-            (R.error, why2) -> { return (R.error, why2) }
-            (R.ok, tail)    -> {
+            (R.error, why2) then { return (R.error, why2) }
+            (R.ok, tail)    then {
               // parse_else answers the position after what it
               // consumed: after its block's `}` when an else is
               // present, its own position when not.
@@ -447,8 +447,8 @@ def parse_else(data Bytes, i Int64, at Int64) (R, (Array[TreeItem], Int64)) {
   }
   const kids = parse_block(data, b + 1)
   case kids {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, got)    -> { return (R.ok, (got[0], got[1] + 1)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, got)    then { return (R.ok, (got[0], got[1] + 1)) }
   }
 }
 
@@ -463,15 +463,15 @@ def parse_args(data Bytes, i Int64) (R, (Array[Arg], Int64)) {
   }
   const r = parse_arg(data, j)
   case r {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, got)    -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, got)    then {
       const sep = lex.skip_ws(data, got[1])
       const b = lex.peek(data, sep)
       if b == 44 {
         const rest = parse_args(data, sep + 1)
         case rest {
-          (R.error, why2) -> { return (R.error, why2) }
-          (R.ok, tail)    -> {
+          (R.error, why2) then { return (R.error, why2) }
+          (R.ok, tail)    then {
             return (R.ok, (concat_args([got[0]], tail[0], 0), tail[1]))
           }
         }
@@ -502,10 +502,10 @@ def parse_arg(data Bytes, i Int64) (R, (Arg, Int64)) {
   }
   const e = lex.span_to(data, j, ",)")
   case e {
-    (R.error, x) -> {
+    (R.error, x) then {
       return fail_arg(at, "unterminated argument")
     }
-    (R.ok, found) -> {
+    (R.ok, found) then {
       return (R.ok, (Arg.new(name: name, expr: found[0]), found[1]))
     }
   }

@@ -34,6 +34,7 @@ Reserved words are lowercase and case-sensitive. Their capitalized spellings
 | `require` | Brings a package's short name into scope. |
 | `return` | Returns from a function. |
 | `self` | The current instance inside a class method. |
+| `then` | Introduces the body of a `case` or `receive` branch. |
 | `var` | Mutable block-scoped binding. |
 | `when` | Guard on a `case` or `receive` branch. |
 | `while` | Condition loop. |
@@ -106,10 +107,14 @@ var count = 0
   next iteration, running a `for`'s post clause first. Both are errors outside
   a loop.
 - **`case`** matches a value against patterns. Branches are
-  `pattern -> { ... }`, the first match wins, and a scrutinee that matches no
+  `pattern then { ... }`, the first match wins, and a scrutinee that matches no
   branch is a runtime error. Enum matching must cover every member wherever the
   type is decidable.
-- **`when`** adds a guard to a branch: `Color.red when signal.is_bright?() -> { ... }`.
+- **`when`** adds a guard to a branch: `Color.red when signal.is_bright?() then { ... }`.
+- **`then`** introduces a branch's body: every `case` and `receive` branch reads
+  `pattern then { ... }` (the guard, when present, sits between the pattern and
+  `then`). The arrow stays out of branch position — `->` belongs to the
+  parameterized block, the anonymous function, and nothing else.
 
 ```emo
 if n >= 90 {
@@ -128,13 +133,13 @@ for var i = 0; i < 100; i = i + 1 {
 }
 
 case color {
-  Color.red when signal.is_bright?() -> {
+  Color.red when signal.is_bright?() then {
     println("bright red")
   }
-  Color.red -> {
+  Color.red then {
     println("dark red")
   }
-  Color.green -> {
+  Color.green then {
     println("green")
   }
 }
@@ -168,7 +173,7 @@ def discount(cart Cart) Int64 {
 
 ```emo
 receive {
-  (from, request) -> {
+  (from, request) then {
     from <- (self_pid(), handle(request))
   }
 }
@@ -202,7 +207,7 @@ matches anything and binds nothing:
 
 ```emo
 case pair {
-  (_, count) -> {
+  (_, count) then {
     println(count)
   }
 }
@@ -255,5 +260,7 @@ side (`@`) resolves the macro name in scope. The rules live in
 The colon-plus-name forms (`:chain` and later sugar) are not reserved words
 at all: the colon pairs with an ordinary identifier, looked up in the
 compiler's sugar table. An unknown `:name` is a compile error, but the words
-sugar forms use — `chain`, `from`, `then` — remain legal identifiers
-everywhere else. See [syntax.md](intro/syntax.md).
+sugar forms use — `chain`, `from` — remain legal identifiers everywhere else.
+(`:chain`'s success body is written with `then`, the same reserved word that
+introduces every `case` and `receive` branch body.) See
+[syntax.md](intro/syntax.md).

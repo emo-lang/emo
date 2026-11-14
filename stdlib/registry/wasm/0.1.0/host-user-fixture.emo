@@ -21,11 +21,11 @@ const spec_hex = "0061736d0100000001050160017f0002160108737065637465737409707269
 def run() Int64 {
   var failed = 0
   case wasm.load(internal.corpus.decode_hex(mod_hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("load " + why)
       failed = failed + 1
     }
-    (R.ok, module) -> {
+    (R.ok, module) then {
       const log = -> (args Array[(Int64, Int64)]) {
         println("env log " + args[0][1].to_string())
         return wasm.i64(0)
@@ -34,31 +34,31 @@ def run() Int64 {
         return wasm.i32(args[0][1] + args[1][1])
       }
       case wasm.instantiate(module, [("env", "log_i32", log), ("env", "add", add)]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("inst " + why)
           failed = failed + 1
         }
-        (R.ok, inst) -> {
+        (R.ok, inst) then {
           case wasm.call(inst, "run", []) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("run " + why)
               failed = failed + 1
             }
-            (R.ok, _) -> {
+            (R.ok, _) then {
             }
           }
           case wasm.call(inst, "sum", []) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("sum " + why)
               failed = failed + 1
             }
-            (R.ok, results) -> {
+            (R.ok, results) then {
               case wasm.as_i32(results[0]) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   println("sum " + why)
                   failed = failed + 1
                 }
-                (R.ok, v) -> {
+                (R.ok, v) then {
                   println("sum " + v.to_string())
                 }
               }
@@ -69,27 +69,27 @@ def run() Int64 {
       // The resolution order: the explicit table wins over the built-in
       // spectest host for the same import.
       case wasm.load(internal.corpus.decode_hex(spec_hex)) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("load spec " + why)
           failed = failed + 1
         }
-        (R.ok, spec_module) -> {
+        (R.ok, spec_module) then {
           const override = -> (args Array[(Int64, Int64)]) {
             println("override " + args[0][1].to_string())
             return wasm.i64(0)
           }
           case wasm.instantiate(spec_module, [("spectest", "print_i32", override)]) {
-            (R.error, why) -> {
+            (R.error, why) then {
               println("inst spec " + why)
               failed = failed + 1
             }
-            (R.ok, spec_inst) -> {
+            (R.ok, spec_inst) then {
               case wasm.call(spec_inst, "go", []) {
-                (R.error, why) -> {
+                (R.error, why) then {
                   println("go " + why)
                   failed = failed + 1
                 }
-                (R.ok, _) -> {
+                (R.ok, _) then {
                 }
               }
             }
@@ -98,10 +98,10 @@ def run() Int64 {
       }
       // The unused entry is the caller's typo, refused.
       case wasm.instantiate(module, [("env", "typo", log)]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println("typo: " + why)
         }
-        (R.ok, _) -> {
+        (R.ok, _) then {
           println("typo: accepted")
           failed = failed + 1
         }

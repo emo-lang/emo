@@ -59,8 +59,8 @@ const ctx = json.object(entries: [
   ]))
 ])
 case template.render(text, ctx) {
-  (R.error, why) -> { println("refused: " + why) }
-  (R.ok, out)    -> { println(out) }        // Hello, ADA of 上海!
+  (R.error, why) then { println("refused: " + why) }
+  (R.ok, out)    then { println(out) }        // Hello, ADA of 上海!
 }
 ```
 

@@ -14,11 +14,11 @@ const with_elem = "0061736d010000000105016000017f0302010004040170000209070100410
 
 def show(label String, hex String) Int64 {
   case wasm.load(internal.corpus.decode_hex(hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println(label + ": " + why)
       return 1
     }
-    (R.ok, module) -> {
+    (R.ok, module) then {
       println(label + ": " + wasm.describe(module))
       return 0
     }
@@ -31,10 +31,10 @@ def run() Int64 {
   failed = failed + show("with_elem", with_elem)
   // A malformed module never reaches the registry.
   case wasm.load(internal.corpus.decode_hex("0061736d")) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("bad: " + why)
     }
-    (R.ok, _) -> {
+    (R.ok, _) then {
       println("bad: accepted")
       failed = failed + 1
     }

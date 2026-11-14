@@ -41,14 +41,14 @@ def show(value record.Value) String {
     return "NULL"
   }
   case value.kind {
-    record.ColType.integer -> { return value.as_i64().to_string() }
-    record.ColType.bigint -> { return value.as_i64().to_string() }
-    record.ColType.real -> { return value.as_f64().to_string() }
-    record.ColType.double -> { return value.as_f64().to_string() }
-    record.ColType.text -> { return value.as_text() }
-    record.ColType.varchar -> { return value.as_text() }
-    record.ColType.boolean -> { return value.as_bool().to_string() }
-    record.ColType.bytea -> { return "0x" + hex(value.as_bytes()) }
+    record.ColType.integer then { return value.as_i64().to_string() }
+    record.ColType.bigint then { return value.as_i64().to_string() }
+    record.ColType.real then { return value.as_f64().to_string() }
+    record.ColType.double then { return value.as_f64().to_string() }
+    record.ColType.text then { return value.as_text() }
+    record.ColType.varchar then { return value.as_text() }
+    record.ColType.boolean then { return value.as_bool().to_string() }
+    record.ColType.bytea then { return "0x" + hex(value.as_bytes()) }
   }
 }
 
@@ -81,10 +81,10 @@ def session(store record.Store, manager_pid Pid, id Int64) {
 
 def session_loop(eng engine.Engine) {
   receive {
-    ("exec", text, reply) -> {
+    ("exec", text, reply) then {
       case eng.execute(text) {
-        (R.ok, result) -> { reply <- ("ok", text, result) }
-        (R.error, why) -> { reply <- ("error", text, why) }
+        (R.ok, result) then { reply <- ("ok", text, result) }
+        (R.error, why) then { reply <- ("error", text, why) }
       }
       session_loop(eng)
     }
@@ -111,7 +111,7 @@ def show_reply(label String, text String, result engine.Result) {
 def ask(who Pid, label String, text String) {
   who <- ("exec", text, self_pid())
   receive {
-    (tag, said, payload) -> {
+    (tag, said, payload) then {
       if tag == "ok" {
         show_reply(label, said, payload)
       } else {
@@ -127,7 +127,7 @@ def tell(who Pid, text String) {
 
 def await(label String) {
   receive {
-    (tag, said, payload) -> {
+    (tag, said, payload) then {
       if tag == "ok" {
         show_reply(label, said, payload)
       } else {
@@ -141,19 +141,19 @@ def await(label String) {
 
 def run_or_die(eng engine.Engine, text String) {
   case eng.execute(text) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, _) -> {}
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, _) then {}
   }
 }
 
 case rocksdb.destroy_db(path) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, _) -> {}
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, _) then {}
 }
 
 case record.open(path) {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, store) -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, store) then {
     const seeder = engine.Engine.new(store, [], [], Map.new())
     run_or_die(seeder, "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION)")
     run_or_die(seeder, "CREATE TABLE orders (id BIGINT NOT NULL PRIMARY KEY, total DOUBLE PRECISION)")

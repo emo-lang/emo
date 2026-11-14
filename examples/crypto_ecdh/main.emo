@@ -19,8 +19,8 @@ def seq(n Int64, start Int64) Bytes {
 
 def from_hex(text String) Bytes {
   case crypto.hex_decode(text) {
-    (R.ok, v) -> { return v }
-    (R.error, why) -> { println(why) }
+    (R.ok, v) then { return v }
+    (R.error, why) then { println(why) }
   }
   return Bytes.new(0)
 }
@@ -31,8 +31,8 @@ def set_byte(b Bytes, i Int64, v Int64) Void {
 
 def shared(label String, scalar Bytes, point Bytes) Void {
   case crypto.ecdh.x25519(scalar, point) {
-    (R.ok, v) -> { println(label + ": " + crypto.hex_encode(v)) }
-    (R.error, why) -> {
+    (R.ok, v) then { println(label + ": " + crypto.hex_encode(v)) }
+    (R.error, why) then {
       println(label + ": refused")
       println(label + " reason: " + why)
     }
@@ -71,8 +71,8 @@ var k = 1
 while k <= 4 {
   const scalar = seq(32, k * 0x11)
   case crypto.ecdh.x25519(scalar, public_b) {
-    (R.ok, v) -> { println("sweep " + k.to_string() + ": " + crypto.hex_encode(crypto.ecdh.x25519_public(scalar)) + " " + crypto.hex_encode(v)) }
-    (R.error, why) -> { println(why) }
+    (R.ok, v) then { println("sweep " + k.to_string() + ": " + crypto.hex_encode(crypto.ecdh.x25519_public(scalar)) + " " + crypto.hex_encode(v)) }
+    (R.error, why) then { println(why) }
   }
   k = k + 1
 }

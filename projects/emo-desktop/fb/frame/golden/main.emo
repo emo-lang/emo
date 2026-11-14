@@ -75,8 +75,8 @@ class Eye {
 
   const holder = ArrayBuilder.new()
   case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
-    (R.error, why) -> { println("the interface strike refused: ${why}") }
-    (R.ok, s) -> { holder.push(s) }
+    (R.error, why) then { println("the interface strike refused: ${why}") }
+    (R.ok, s) then { holder.push(s) }
   }
   const f = holder.get(0)
 

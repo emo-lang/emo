@@ -109,9 +109,9 @@ println(bumped(c))
 // once double-boxed and printed a pointer
 def verdict(n Int64) String {
   case n {
-    0 -> { return "zero" }
-    1 -> { return "one" }
-    m -> { return "many:${m}" }
+    0 then { return "zero" }
+    1 then { return "one" }
+    m then { return "many:${m}" }
   }
 }
 

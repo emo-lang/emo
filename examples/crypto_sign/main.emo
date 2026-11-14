@@ -13,8 +13,8 @@ require "crypto"
 
 def from_hex(text String) Bytes {
   case crypto.hex_decode(text) {
-    (R.ok, v) -> { return v }
-    (R.error, why) -> { println(why) }
+    (R.ok, v) then { return v }
+    (R.error, why) then { println(why) }
   }
   return Bytes.new(0)
 }

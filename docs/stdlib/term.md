@@ -140,10 +140,10 @@ def main() {
   while more {
     const (R.ok, key) = term.read_key()
     case key {
-      (term.Key.ctrl, 3) -> { more = false }
-      (term.Key.enter, _) -> { println("enter") }
-      (term.Key.char, code) -> { println("char ${code}") }
-      _ -> {}
+      (term.Key.ctrl, 3) then { more = false }
+      (term.Key.enter, _) then { println("enter") }
+      (term.Key.char, code) then { println("char ${code}") }
+      _ then {}
     }
   }
   term.restore()

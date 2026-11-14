@@ -193,14 +193,14 @@ class ColumnDef {
 
   def type_text() String {
     case self.kind {
-      SqlType.integer -> { return "INTEGER" }
-      SqlType.bigint -> { return "BIGINT" }
-      SqlType.real -> { return "REAL" }
-      SqlType.double -> { return "DOUBLE PRECISION" }
-      SqlType.text -> { return "TEXT" }
-      SqlType.varchar -> { return "VARCHAR(" + self.varchar_len.to_string() + ")" }
-      SqlType.boolean -> { return "BOOLEAN" }
-      SqlType.bytea -> { return "BYTEA" }
+      SqlType.integer then { return "INTEGER" }
+      SqlType.bigint then { return "BIGINT" }
+      SqlType.real then { return "REAL" }
+      SqlType.double then { return "DOUBLE PRECISION" }
+      SqlType.text then { return "TEXT" }
+      SqlType.varchar then { return "VARCHAR(" + self.varchar_len.to_string() + ")" }
+      SqlType.boolean then { return "BOOLEAN" }
+      SqlType.bytea then { return "BYTEA" }
     }
   }
 
@@ -1067,14 +1067,14 @@ def lex(text String) (R, Array[Tok]) {
 
 def lex_all(data Bytes, pos Int64, acc Array[Tok]) (R, Array[Tok]) {
   case skip_trivia(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, t)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, t)      then {
       if t >= data.length() {
         return (R.ok, acc.append(Tok.new(kind: Tk.t_eof, text: "", pos: t)))
       }
       case lex_token(data, t) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, r)      -> { return lex_all(data, r[1], acc.append(r[0])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, r)      then { return lex_all(data, r[1], acc.append(r[0])) }
       }
     }
   }
@@ -1214,8 +1214,8 @@ def lex_ident(data Bytes, start Int64, i Int64) (R, (Tok, Int64)) {
 // the identifier a"b).
 def lex_quoted(data Bytes, pos Int64) (R, (Tok, Int64)) {
   case scan_quoted(data, pos + 1, 34, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, end_)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, end_)   then {
       const out = Bytes.new(decoded_len(data, pos + 1, 34))
       fill_decoded(data, pos + 1, 34, out, 0)
       return (R.ok, (Tok.new(kind: Tk.t_qident, text: out.to_string(), pos: pos), end_))
@@ -1227,8 +1227,8 @@ def lex_quoted(data Bytes, pos Int64) (R, (Tok, Int64)) {
 // SQL has no backslash escapes — a backslash is an ordinary character.
 def lex_string(data Bytes, pos Int64) (R, (Tok, Int64)) {
   case scan_quoted(data, pos + 1, 39, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, end_)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, end_)   then {
       const out = Bytes.new(decoded_len(data, pos + 1, 39))
       fill_decoded(data, pos + 1, 39, out, 0)
       return (R.ok, (Tok.new(kind: Tk.t_string, text: out.to_string(), pos: pos), end_))
@@ -1376,8 +1376,8 @@ def err(at Int64, what String) String {
 // string stays a lexer error, never a silent cut.
 def split(text String) (R, Array[String]) {
   case lex(text) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, toks)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, toks)   then {
       var out = []
       var start = 0
       var i = 0
@@ -1409,11 +1409,11 @@ def split(text String) (R, Array[String]) {
 
 def parse(text String) (R, Stmt) {
   case lex(text) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, toks)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, toks)   then {
       case parse_stmt(toks, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, r)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, r)      then {
           var i = r[1]
           if at_kind(toks, i, Tk.t_semi) {
             i = i + 1
@@ -1469,11 +1469,11 @@ def parse_select(toks Array[Tok], i Int64, depth Int64) (R, (Stmt, Int64)) {
     j = j + 1
   }
   case parse_sel_items(toks, j, depth, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, cr)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, cr)     then {
       case parse_opt_from(toks, cr[1], depth) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, fr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, fr)     then {
           return parse_clauses(toks, fr[1], depth, 0, distinct, cr[0], fr[0], [], [], [], [], [], [])
         }
       }
@@ -1488,38 +1488,38 @@ def parse_select(toks Array[Tok], i Int64, depth Int64) (R, (Stmt, Int64)) {
 def parse_clauses(toks Array[Tok], i Int64, depth Int64, stage Int64, distinct Bool, columns Array[SelItem], from_t Array[TableRef], where_e Array[Expr], group_by Array[Expr], having_e Array[Expr], order_by Array[OrderItem], limit_e Array[Expr], offset_e Array[Expr]) (R, (Stmt, Int64)) {
   if at_kw(toks, i, "where") && stage < 1 {
     case parse_expr(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 1, distinct, columns, from_t, [r[0]], group_by, having_e, order_by, limit_e, offset_e) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 1, distinct, columns, from_t, [r[0]], group_by, having_e, order_by, limit_e, offset_e) }
     }
   }
   if at_kw(toks, i, "group") && at_kw(toks, i + 1, "by") && stage < 2 {
     case parse_expr_list(toks, i + 2, depth, []) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 2, distinct, columns, from_t, where_e, r[0], having_e, order_by, limit_e, offset_e) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 2, distinct, columns, from_t, where_e, r[0], having_e, order_by, limit_e, offset_e) }
     }
   }
   if at_kw(toks, i, "having") && stage < 3 {
     case parse_expr(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 3, distinct, columns, from_t, where_e, group_by, [r[0]], order_by, limit_e, offset_e) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 3, distinct, columns, from_t, where_e, group_by, [r[0]], order_by, limit_e, offset_e) }
     }
   }
   if at_kw(toks, i, "order") && at_kw(toks, i + 1, "by") && stage < 4 {
     case parse_order_list(toks, i + 2, depth, []) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 4, distinct, columns, from_t, where_e, group_by, having_e, r[0], limit_e, offset_e) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 4, distinct, columns, from_t, where_e, group_by, having_e, r[0], limit_e, offset_e) }
     }
   }
   if at_kw(toks, i, "limit") && stage < 5 {
     case parse_expr(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 5, distinct, columns, from_t, where_e, group_by, having_e, order_by, [r[0]], offset_e) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 5, distinct, columns, from_t, where_e, group_by, having_e, order_by, [r[0]], offset_e) }
     }
   }
   if at_kw(toks, i, "offset") && stage < 6 {
     case parse_expr(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 6, distinct, columns, from_t, where_e, group_by, having_e, order_by, limit_e, [r[0]]) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_clauses(toks, r[1], depth, 6, distinct, columns, from_t, where_e, group_by, having_e, order_by, limit_e, [r[0]]) }
     }
   }
   const tk = peek(toks, i).kind
@@ -1537,28 +1537,28 @@ def parse_clauses(toks Array[Tok], i Int64, depth Int64, stage Int64, distinct B
 // CREATE TABLE name (column definitions).
 def parse_create_table(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   case want_kw(toks, i + 1, "table", "TABLE after CREATE") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j) then {
       case parse_target_name(toks, j, "expected a table name after CREATE TABLE") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nr) then {
           case want_kind(toks, nr[1], Tk.t_lparen, "`(` after the table name") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, k) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, k) then {
               case parse_column_defs(toks, k, []) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, cr) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, cr) then {
                   const columns = cr[0]
                   const dup = duplicate_column(columns)
                   if dup != "" {
                     return (R.error, err(peek(toks, k).pos, "duplicate column \"" + dup + "\""))
                   }
                   case want_kind(toks, cr[1], Tk.t_rparen, "`)` after the column definitions") {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, e) -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, e) then {
                       case parse_store_tail(toks, e) {
-                        (R.error, why) -> { return (R.error, why) }
-                        (R.ok, sr) -> {
+                        (R.error, why) then { return (R.error, why) }
+                        (R.ok, sr) then {
                           return (R.ok, (CreateTable.new(nr[0], columns, sr[0]), sr[1]))
                         }
                       }
@@ -1583,8 +1583,8 @@ def parse_store_tail(toks Array[Tok], i Int64) (R, (StoreKind, Int64)) {
     return (R.ok, (StoreKind.row, i))
   }
   case want_kind(toks, i + 1, Tk.t_eq, "`=` after STORE") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, eq) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, eq) then {
       if at_kw(toks, eq, "row") {
         return (R.ok, (StoreKind.row, eq + 1))
       }
@@ -1599,8 +1599,8 @@ def parse_store_tail(toks Array[Tok], i Int64) (R, (StoreKind, Int64)) {
 
 def parse_column_defs(toks Array[Tok], i Int64, acc Array[ColumnDef]) (R, (Array[ColumnDef], Int64)) {
   case parse_column_def(toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r) then {
       const next = r[1]
       if at_kind(toks, next, Tk.t_comma) {
         return parse_column_defs(toks, next + 1, acc.append(r[0]))
@@ -1620,11 +1620,11 @@ def parse_column_def(toks Array[Tok], i Int64) (R, (ColumnDef, Int64)) {
     return (R.error, err(peek(toks, i).pos, "table-level constraints are not supported in v0"))
   }
   case parse_ident_name(toks, i, "expected a column name") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, nr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, nr) then {
       case parse_type(toks, nr[1]) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, tr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, tr) then {
           return parse_column_constraints(toks, nr[0], tr[0], tr[1], tr[2], false, false)
         }
       }
@@ -1638,8 +1638,8 @@ def parse_column_constraints(toks Array[Tok], name String, kind SqlType, varchar
       return (R.error, err(peek(toks, i).pos, "NOT NULL appears twice on column \"" + name + "\""))
     }
     case want_kw(toks, i + 1, "null", "NULL after NOT") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j) then {
         return parse_column_constraints(toks, name, kind, varchar_len, j, true, primary)
       }
     }
@@ -1649,8 +1649,8 @@ def parse_column_constraints(toks Array[Tok], name String, kind SqlType, varchar
       return (R.error, err(peek(toks, i).pos, "PRIMARY KEY appears twice on column \"" + name + "\""))
     }
     case want_kw(toks, i + 1, "key", "KEY after PRIMARY") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j) then {
         return parse_column_constraints(toks, name, kind, varchar_len, j, not_null, true)
       }
     }
@@ -1691,24 +1691,24 @@ def parse_type(toks Array[Tok], i Int64) (R, (SqlType, Int64, Int64)) {
   }
   if at_kw(toks, i, "double") {
     case want_kw(toks, i + 1, "precision", "PRECISION after DOUBLE") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j) -> { return (R.ok, (SqlType.double, 0, j)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j) then { return (R.ok, (SqlType.double, 0, j)) }
     }
   }
   if at_kw(toks, i, "varchar") {
     case want_kind(toks, i + 1, Tk.t_lparen, "`(` after VARCHAR") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j) then {
         const t = peek(toks, j)
         if t.kind != Tk.t_number || !plain_digits(t.text) {
           return (R.error, err(t.pos, "VARCHAR length must be a positive integer"))
         }
         case positive_number(t.text, t.pos) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, n) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, n) then {
             case want_kind(toks, j + 1, Tk.t_rparen, "`)` after the VARCHAR length") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, e) -> { return (R.ok, (SqlType.varchar, n, e)) }
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, e) then { return (R.ok, (SqlType.varchar, n, e)) }
             }
           }
         }
@@ -1741,8 +1741,8 @@ def plain_digits_b(data Bytes, i Int64) Bool {
 def positive_number(text String, pos Int64) (R, Int64) {
   const data = text.to_bytes()
   case acc_digits(data, 0, data.length(), pos, 0, false) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, n) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, n) then {
       if n <= 0 {
         return (R.error, err(pos, "VARCHAR length must be positive"))
       }
@@ -1754,11 +1754,11 @@ def positive_number(text String, pos Int64) (R, Int64) {
 // INSERT INTO name [(columns)] VALUES (row), (row), ...
 def parse_insert(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   case want_kw(toks, i + 1, "into", "INTO after INSERT") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j) then {
       case parse_target_name(toks, j, "expected a table name after INSERT INTO") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nr) -> { return parse_insert_after_name(toks, nr[0], nr[1]) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nr) then { return parse_insert_after_name(toks, nr[0], nr[1]) }
       }
     }
   }
@@ -1767,15 +1767,15 @@ def parse_insert(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
 def parse_insert_after_name(toks Array[Tok], parts Array[String], i Int64) (R, (Stmt, Int64)) {
   if at_kind(toks, i, Tk.t_lparen) {
     case parse_name_list(toks, i + 1, []) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, cr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, cr) then {
         const dup = duplicate_string(cr[0])
         if dup != "" {
           return (R.error, err(peek(toks, i).pos, "duplicate column \"" + dup + "\""))
         }
         case want_kind(toks, cr[1], Tk.t_rparen, "`)` after the column list") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, e) -> { return parse_insert_values(toks, parts, cr[0], e) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, e) then { return parse_insert_values(toks, parts, cr[0], e) }
         }
       }
     }
@@ -1785,11 +1785,11 @@ def parse_insert_after_name(toks Array[Tok], parts Array[String], i Int64) (R, (
 
 def parse_insert_values(toks Array[Tok], parts Array[String], columns Array[String], i Int64) (R, (Stmt, Int64)) {
   case want_kw(toks, i, "values", "VALUES after the insert target") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v) then {
       case parse_rows(toks, v, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, rr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, rr) then {
           const rows = rr[0]
           const width_error = row_width_error(rows, columns)
           if width_error != "" {
@@ -1810,8 +1810,8 @@ def parse_insert_values(toks Array[Tok], parts Array[String], columns Array[Stri
 
 def parse_name_list(toks Array[Tok], i Int64, acc Array[String]) (R, (Array[String], Int64)) {
   case parse_ident_name(toks, i, "expected a column name") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r) then {
       const next = r[1]
       if at_kind(toks, next, Tk.t_comma) {
         return parse_name_list(toks, next + 1, acc.append(r[0]))
@@ -1826,8 +1826,8 @@ def parse_name_list(toks Array[Tok], i Int64, acc Array[String]) (R, (Array[Stri
 
 def parse_rows(toks Array[Tok], i Int64, acc Array[Array[Expr]]) (R, (Array[Array[Expr]], Int64)) {
   case parse_row(toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r) then {
       const next = r[1]
       if at_kind(toks, next, Tk.t_comma) {
         return parse_rows(toks, next + 1, acc.append(r[0]))
@@ -1839,14 +1839,14 @@ def parse_rows(toks Array[Tok], i Int64, acc Array[Array[Expr]]) (R, (Array[Arra
 
 def parse_row(toks Array[Tok], i Int64) (R, (Array[Expr], Int64)) {
   case want_kind(toks, i, Tk.t_lparen, "`(` starting a VALUES row") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j) then {
       case parse_expr_list(toks, j, 0, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, er) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, er) then {
           case want_kind(toks, er[1], Tk.t_rparen, "`)` after the VALUES row") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, e) -> { return (R.ok, (er[0], e)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, e) then { return (R.ok, (er[0], e)) }
           }
         }
       }
@@ -1878,14 +1878,14 @@ def row_width_error(rows Array[Array[Expr]], columns Array[String]) String {
 // UPDATE name SET column = expression, ... [WHERE expression]
 def parse_update(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   case parse_target_name(toks, i + 1, "expected a table name after UPDATE") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, nr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, nr) then {
       case want_kw(toks, nr[1], "set", "SET after the update target") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, j) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, j) then {
           case parse_assignments(toks, j, []) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, ar) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, ar) then {
               const dup = duplicate_assignment(ar[0])
               if dup != "" {
                 return (R.error, err(peek(toks, j).pos, "duplicate assignment to column \"" + dup + "\""))
@@ -1902,8 +1902,8 @@ def parse_update(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
 def parse_update_where(toks Array[Tok], parts Array[String], assignments Array[Assignment], i Int64) (R, (Stmt, Int64)) {
   if at_kw(toks, i, "where") {
     case parse_expr(toks, i + 1, 0) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, wr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, wr) then {
         return update_tail(toks, parts, assignments, [wr[0]], wr[1])
       }
     }
@@ -1923,14 +1923,14 @@ def update_tail(toks Array[Tok], parts Array[String], assignments Array[Assignme
 
 def parse_assignments(toks Array[Tok], i Int64, acc Array[Assignment]) (R, (Array[Assignment], Int64)) {
   case parse_ident_name(toks, i, "expected a column name in SET") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, cr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, cr) then {
       case want_kind(toks, cr[1], Tk.t_eq, "`=` after the column name") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, j) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, j) then {
           case parse_expr(toks, j, 0) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, er) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, er) then {
               const assignment = Assignment.new(cr[0], er[0])
               if at_kind(toks, er[1], Tk.t_comma) {
                 return parse_assignments(toks, er[1] + 1, acc.append(assignment))
@@ -1947,11 +1947,11 @@ def parse_assignments(toks Array[Tok], i Int64, acc Array[Assignment]) (R, (Arra
 // DELETE FROM name [WHERE expression]
 def parse_delete(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
   case want_kw(toks, i + 1, "from", "FROM after DELETE") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j) then {
       case parse_target_name(toks, j, "expected a table name after DELETE FROM") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nr) -> { return parse_delete_where(toks, nr[0], nr[1]) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nr) then { return parse_delete_where(toks, nr[0], nr[1]) }
       }
     }
   }
@@ -1960,8 +1960,8 @@ def parse_delete(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
 def parse_delete_where(toks Array[Tok], parts Array[String], i Int64) (R, (Stmt, Int64)) {
   if at_kw(toks, i, "where") {
     case parse_expr(toks, i + 1, 0) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, wr) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, wr) then {
         return delete_tail(toks, parts, [wr[0]], wr[1])
       }
     }
@@ -2033,8 +2033,8 @@ def duplicate_assignment(assignments Array[Assignment]) String {
 
 def parse_sel_items(toks Array[Tok], i Int64, depth Int64, acc Array[SelItem]) (R, (Array[SelItem], Int64)) {
   case parse_sel_item(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       if at_kind(toks, r[1], Tk.t_comma) {
         return parse_sel_items(toks, r[1] + 1, depth, acc.append(r[0]))
       }
@@ -2049,8 +2049,8 @@ def parse_sel_item(toks Array[Tok], i Int64, depth Int64) (R, (SelItem, Int64)) 
   }
   if at_kind(toks, i, Tk.t_ident) || at_kind(toks, i, Tk.t_qident) {
     case scan_star_path(toks, i) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, sr)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, sr)     then {
         if sr[0] {
           return (R.ok, (SelStar.new(parts: sr[1]), sr[2]))
         }
@@ -2058,11 +2058,11 @@ def parse_sel_item(toks Array[Tok], i Int64, depth Int64) (R, (SelItem, Int64)) 
     }
   }
   case parse_expr(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       case parse_opt_alias(toks, r[1]) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, ar)     -> { return (R.ok, (SelExpr.new(value: r[0], alias_e: ar[0]), ar[1])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, ar)     then { return (R.ok, (SelExpr.new(value: r[0], alias_e: ar[0]), ar[1])) }
       }
     }
   }
@@ -2097,8 +2097,8 @@ def parse_opt_from(toks Array[Tok], i Int64, depth Int64) (R, (Array[TableRef], 
 
 def parse_from_list(toks Array[Tok], i Int64, depth Int64, acc Array[TableRef]) (R, (Array[TableRef], Int64)) {
   case parse_table_ref(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       if at_kind(toks, r[1], Tk.t_comma) {
         return parse_from_list(toks, r[1] + 1, depth, acc.append(r[0]))
       }
@@ -2109,8 +2109,8 @@ def parse_from_list(toks Array[Tok], i Int64, depth Int64, acc Array[TableRef]) 
 
 def parse_table_ref(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, Int64)) {
   case parse_table_primary(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_join_tail(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_join_tail(toks, r[1], r[0], depth) }
   }
 }
 
@@ -2119,14 +2119,14 @@ def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, In
   if t.kind == Tk.t_lparen {
     if at_kw(toks, i + 1, "select") {
       case parse_select(toks, i + 1, depth + 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, sr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, sr)     then {
           case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, j)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, j)      then {
               case parse_opt_alias(toks, j) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, ar)     -> { return (R.ok, (TblSubquery.new(query: sr[0], alias_e: ar[0]), ar[1])) }
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, ar)     then { return (R.ok, (TblSubquery.new(query: sr[0], alias_e: ar[0]), ar[1])) }
               }
             }
           }
@@ -2137,11 +2137,11 @@ def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, In
   }
   if t.kind == Tk.t_ident || t.kind == Tk.t_qident {
     case scan_name_path(toks, i) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, pr)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, pr)     then {
         case parse_opt_alias(toks, pr[1]) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, ar)     -> { return (R.ok, (TblNamed.new(parts: pr[0], alias_e: ar[0]), ar[1])) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, ar)     then { return (R.ok, (TblNamed.new(parts: pr[0], alias_e: ar[0]), ar[1])) }
         }
       }
     }
@@ -2153,17 +2153,17 @@ def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, In
 // left side in a new TblJoin.
 def parse_join_tail(toks Array[Tok], i Int64, left TableRef, depth Int64) (R, (TableRef, Int64)) {
   case match_join(toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, m)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, m)      then {
       if !m[0] {
         return (R.ok, (left, i))
       }
       case parse_table_primary(toks, m[3], depth) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, rr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, rr)     then {
           case parse_join_condition(toks, rr[1], m[1], m[2], depth) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, jr)     -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, jr)     then {
               const joined = TblJoin.new(left: left, right: rr[0], jtype: m[2], natural: m[1], on_e: jr[0], using: jr[1])
               return parse_join_tail(toks, jr[2], joined, depth)
             }
@@ -2239,8 +2239,8 @@ def parse_join_condition(toks Array[Tok], i Int64, natural Bool, jtype JoinKind,
   }
   if at_kw(toks, i, "on") {
     case parse_expr(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, ([r[0]], [], r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, ([r[0]], [], r[1])) }
     }
   }
   if at_kw(toks, i, "using") {
@@ -2254,8 +2254,8 @@ def parse_join_condition(toks Array[Tok], i Int64, natural Bool, jtype JoinKind,
 
 def parse_using_cols(toks Array[Tok], i Int64) (R, (Array[Expr], Array[String], Int64)) {
   case want_kind(toks, i, Tk.t_lparen, "`(` after USING") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j)      -> { return parse_using_rest(toks, j, []) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j)      then { return parse_using_rest(toks, j, []) }
   }
 }
 
@@ -2269,8 +2269,8 @@ def parse_using_rest(toks Array[Tok], i Int64, acc Array[String]) (R, (Array[Exp
     return parse_using_rest(toks, i + 2, cols)
   }
   case want_kind(toks, i + 1, Tk.t_rparen, "`)` after the USING column list") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j)      -> { return (R.ok, ([], cols, j)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j)      then { return (R.ok, ([], cols, j)) }
   }
 }
 
@@ -2387,16 +2387,16 @@ def parse_expr(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
 
 def parse_or(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_and(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_or_rest(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_or_rest(toks, r[1], r[0], depth) }
   }
 }
 
 def parse_or_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
   if at_kw(toks, i, "or") {
     case parse_and(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_or_rest(toks, r[1], Binary.new(op: BinOp.or, left: acc, right: r[0]), depth) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_or_rest(toks, r[1], Binary.new(op: BinOp.or, left: acc, right: r[0]), depth) }
     }
   }
   return (R.ok, (acc, i))
@@ -2404,16 +2404,16 @@ def parse_or_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, In
 
 def parse_and(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_not(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_and_rest(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_and_rest(toks, r[1], r[0], depth) }
   }
 }
 
 def parse_and_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
   if at_kw(toks, i, "and") {
     case parse_not(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return parse_and_rest(toks, r[1], Binary.new(op: BinOp.and, left: acc, right: r[0]), depth) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return parse_and_rest(toks, r[1], Binary.new(op: BinOp.and, left: acc, right: r[0]), depth) }
     }
   }
   return (R.ok, (acc, i))
@@ -2422,8 +2422,8 @@ def parse_and_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, I
 def parse_not(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   if at_kw(toks, i, "not") {
     case parse_not(toks, i + 1, depth + 1) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.not, operand: r[0]), r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, (Unary.new(op: UnOp.not, operand: r[0]), r[1])) }
     }
   }
   return parse_pred(toks, i, depth)
@@ -2434,8 +2434,8 @@ def parse_not(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
 // than folding left silently.
 def parse_pred(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_add(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_pred_tail(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_pred_tail(toks, r[1], r[0], depth) }
   }
 }
 
@@ -2450,20 +2450,20 @@ def parse_pred_tail(toks Array[Tok], i Int64, left Expr, depth Int64) (R, (Expr,
   }
   if at_kw(toks, j, "like") {
     case parse_add(toks, j + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, (Like.new(value: left, pattern: r[0], negated: negated), r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, (Like.new(value: left, pattern: r[0], negated: negated), r[1])) }
     }
   }
   if at_kw(toks, j, "between") {
     case parse_add(toks, j + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, lo)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, lo)     then {
         if !at_kw(toks, lo[1], "and") {
           return (R.error, err(peek(toks, lo[1]).pos, "expected AND after the BETWEEN lower bound"))
         }
         case parse_add(toks, lo[1] + 1, depth) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, hi)     -> { return (R.ok, (Between.new(value: left, low: lo[0], high: hi[0], negated: negated), hi[1])) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, hi)     then { return (R.ok, (Between.new(value: left, low: lo[0], high: hi[0], negated: negated), hi[1])) }
         }
       }
     }
@@ -2495,8 +2495,8 @@ def parse_pred_tail(toks Array[Tok], i Int64, left Expr, depth Int64) (R, (Expr,
   const tk = peek(toks, j).kind
   if tk == Tk.t_eq || tk == Tk.t_ne || tk == Tk.t_lt || tk == Tk.t_le || tk == Tk.t_gt || tk == Tk.t_ge {
     case parse_add(toks, j + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, (Binary.new(op: binop_of(tk), left: left, right: r[0]), r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, (Binary.new(op: binop_of(tk), left: left, right: r[0]), r[1])) }
     }
   }
   return (R.ok, (left, i))
@@ -2516,28 +2516,28 @@ def binop_of(tk Tk) BinOp {
 // plain expression choices.
 def parse_in_tail(toks Array[Tok], i Int64, left Expr, negated Bool, depth Int64) (R, (Expr, Int64)) {
   case want_kind(toks, i, Tk.t_lparen, "`(` after IN") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j)      then {
       if at_kind(toks, j, Tk.t_rparen) {
         return (R.error, err(peek(toks, j).pos, "empty IN list"))
       }
       if at_kw(toks, j, "select") {
         case parse_select(toks, j, depth + 1) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, sr)     -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, sr)     then {
             case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, k)      -> { return (R.ok, (InTest.new(value: left, choices: [Subquery.new(query: sr[0])], negated: negated), k)) }
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, k)      then { return (R.ok, (InTest.new(value: left, choices: [Subquery.new(query: sr[0])], negated: negated), k)) }
             }
           }
         }
       }
       case parse_expr_list(toks, j, depth + 1, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, lr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, lr)     then {
           case want_kind(toks, lr[1], Tk.t_rparen, "`)` after the IN list") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, k)      -> { return (R.ok, (InTest.new(value: left, choices: lr[0], negated: negated), k)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, k)      then { return (R.ok, (InTest.new(value: left, choices: lr[0], negated: negated), k)) }
           }
         }
       }
@@ -2547,8 +2547,8 @@ def parse_in_tail(toks Array[Tok], i Int64, left Expr, negated Bool, depth Int64
 
 def parse_add(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_mul(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_add_rest(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_add_rest(toks, r[1], r[0], depth) }
   }
 }
 
@@ -2556,8 +2556,8 @@ def parse_add_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, I
   const tk = peek(toks, i).kind
   if tk == Tk.t_plus || tk == Tk.t_minus || tk == Tk.t_concat {
     case parse_mul(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then {
         const op = if tk == Tk.t_plus { BinOp.add } else { if tk == Tk.t_minus { BinOp.sub } else { BinOp.concat } }
         return parse_add_rest(toks, r[1], Binary.new(op: op, left: acc, right: r[0]), depth)
       }
@@ -2568,8 +2568,8 @@ def parse_add_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, I
 
 def parse_mul(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_unary(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return parse_mul_rest(toks, r[1], r[0], depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return parse_mul_rest(toks, r[1], r[0], depth) }
   }
 }
 
@@ -2577,8 +2577,8 @@ def parse_mul_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, I
   const tk = peek(toks, i).kind
   if tk == Tk.t_star || tk == Tk.t_slash || tk == Tk.t_percent {
     case parse_unary(toks, i + 1, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then {
         const op = if tk == Tk.t_star { BinOp.mul } else { if tk == Tk.t_slash { BinOp.div } else { BinOp.mod } }
         return parse_mul_rest(toks, r[1], Binary.new(op: op, left: acc, right: r[0]), depth)
       }
@@ -2594,19 +2594,19 @@ def parse_unary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
     if at_kind(toks, i + 1, Tk.t_number) {
       const t = peek(toks, i + 1)
       case number_value(t.text, t.pos, true) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, v)      -> { return (R.ok, (v, i + 2)) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, v)      then { return (R.ok, (v, i + 2)) }
       }
     }
     case parse_unary(toks, i + 1, depth + 1) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.neg, operand: r[0]), r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, (Unary.new(op: UnOp.neg, operand: r[0]), r[1])) }
     }
   }
   if at_kind(toks, i, Tk.t_plus) {
     case parse_unary(toks, i + 1, depth + 1) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.pos, operand: r[0]), r[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then { return (R.ok, (Unary.new(op: UnOp.pos, operand: r[0]), r[1])) }
     }
   }
   return parse_primary(toks, i, depth)
@@ -2619,8 +2619,8 @@ def parse_primary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   const t = peek(toks, i)
   if t.kind == Tk.t_number {
     case number_value(t.text, t.pos, false) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v)      -> { return (R.ok, (v, i + 1)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v)      then { return (R.ok, (v, i + 1)) }
     }
   }
   if t.kind == Tk.t_string {
@@ -2632,21 +2632,21 @@ def parse_primary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   if t.kind == Tk.t_lparen {
     if at_kw(toks, i + 1, "select") {
       case parse_select(toks, i + 1, depth + 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, sr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, sr)     then {
           case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, j)      -> { return (R.ok, (Subquery.new(query: sr[0]), j)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, j)      then { return (R.ok, (Subquery.new(query: sr[0]), j)) }
           }
         }
       }
     }
     case parse_expr(toks, i + 1, depth + 1) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then {
         case want_kind(toks, r[1], Tk.t_rparen, "`)` after the expression") {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, j)      -> { return (R.ok, (Paren.new(inner: r[0]), j)) }
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, j)      then { return (R.ok, (Paren.new(inner: r[0]), j)) }
         }
       }
     }
@@ -2686,8 +2686,8 @@ def parse_primary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
 // call; otherwise a column reference.
 def parse_column_or_call(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case scan_name_path(toks, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, pr)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, pr)     then {
       if pr[0].length() == 1 && at_kind(toks, pr[1], Tk.t_lparen) {
         return parse_call_args(toks, pr[1], pr[0][0], depth)
       }
@@ -2721,22 +2721,22 @@ def parse_call_args(toks Array[Tok], i Int64, name String, depth Int64) (R, (Exp
       return (R.error, err(peek(toks, k).pos, "DISTINCT does not take a `*` argument"))
     }
     case want_kind(toks, k + 1, Tk.t_rparen, "`)` after `*`") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: true, distinct: false, args: []), j)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j)      then { return (R.ok, (FuncCall.new(name: name, star: true, distinct: false, args: []), j)) }
     }
   }
   if at_kind(toks, k, Tk.t_rparen) {
     case want_kind(toks, k, Tk.t_rparen, "`)`") {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: []), j)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, j)      then { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: []), j)) }
     }
   }
   case parse_expr_list(toks, k, depth + 1, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, lr)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, lr)     then {
       case want_kind(toks, lr[1], Tk.t_rparen, "`)` after the argument list") {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: lr[0]), j)) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, j)      then { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: lr[0]), j)) }
       }
     }
   }
@@ -2744,8 +2744,8 @@ def parse_call_args(toks Array[Tok], i Int64, name String, depth Int64) (R, (Exp
 
 def parse_expr_list(toks Array[Tok], i Int64, depth Int64, acc Array[Expr]) (R, (Array[Expr], Int64)) {
   case parse_expr(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       if at_kind(toks, r[1], Tk.t_comma) {
         return parse_expr_list(toks, r[1] + 1, depth, acc.append(r[0]))
       }
@@ -2756,14 +2756,14 @@ def parse_expr_list(toks Array[Tok], i Int64, depth Int64, acc Array[Expr]) (R, 
 
 def parse_case(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case parse_case_operand(toks, i + 1, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, or_)    -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, or_)    then {
       case parse_when_clauses(toks, or_[1], depth + 1, []) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, wr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, wr)     then {
           case parse_case_else(toks, wr[1], depth + 1) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, er)     -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, er)     then {
               if !at_kw(toks, er[1], "end") {
                 return (R.error, err(peek(toks, er[1]).pos, "expected END or ELSE in the CASE expression"))
               }
@@ -2782,8 +2782,8 @@ def parse_case_operand(toks Array[Tok], i Int64, depth Int64) (R, (Array[Expr], 
     return (R.ok, ([], i))
   }
   case parse_expr(toks, i, depth + 1) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return (R.ok, ([r[0]], r[1])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return (R.ok, ([r[0]], r[1])) }
   }
 }
 
@@ -2792,8 +2792,8 @@ def parse_case_else(toks Array[Tok], i Int64, depth Int64) (R, (Array[Expr], Int
     return (R.ok, ([], i))
   }
   case parse_expr(toks, i + 1, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> { return (R.ok, ([r[0]], r[1])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then { return (R.ok, ([r[0]], r[1])) }
   }
 }
 
@@ -2805,14 +2805,14 @@ def parse_when_clauses(toks Array[Tok], i Int64, depth Int64, acc Array[(Expr, E
     return (R.ok, (acc, i))
   }
   case parse_expr(toks, i + 1, depth + 1) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, cr)     -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, cr)     then {
       if !at_kw(toks, cr[1], "then") {
         return (R.error, err(peek(toks, cr[1]).pos, "expected THEN after the WHEN condition"))
       }
       case parse_expr(toks, cr[1] + 1, depth + 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, vr)     -> { return parse_when_clauses(toks, vr[1], depth, acc.append((cr[0], vr[0]))) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, vr)     then { return parse_when_clauses(toks, vr[1], depth, acc.append((cr[0], vr[0]))) }
       }
     }
   }
@@ -2820,20 +2820,20 @@ def parse_when_clauses(toks Array[Tok], i Int64, depth Int64, acc Array[(Expr, E
 
 def parse_cast(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case want_kind(toks, i + 1, Tk.t_lparen, "`(` after CAST") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j)      then {
       case parse_expr(toks, j, depth) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, r)      -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, r)      then {
           if !at_kw(toks, r[1], "as") {
             return (R.error, err(peek(toks, r[1]).pos, "expected AS in the CAST expression"))
           }
           case parse_type_name(toks, r[1] + 1) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, tr)     -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, tr)     then {
               case want_kind(toks, tr[1], Tk.t_rparen, "`)` after the CAST type") {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, k)      -> { return (R.ok, (Cast.new(value: r[0], type_name: tr[0]), k)) }
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, k)      then { return (R.ok, (Cast.new(value: r[0], type_name: tr[0]), k)) }
               }
             }
           }
@@ -2867,8 +2867,8 @@ def parse_type_name(toks Array[Tok], i Int64) (R, (String, Int64)) {
     j = j + 2
   }
   case want_kind(toks, j, Tk.t_rparen, "`)` after the type parameters") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, k)      -> { return (R.ok, (s + ")", k)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, k)      then { return (R.ok, (s + ")", k)) }
   }
 }
 
@@ -2888,17 +2888,17 @@ def all_digits_b(data Bytes, i Int64) Bool {
 
 def parse_exists(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
   case want_kind(toks, i + 1, Tk.t_lparen, "`(` after EXISTS") {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, j)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, j)      then {
       if !at_kw(toks, j, "select") {
         return (R.error, err(peek(toks, j).pos, "expected a subquery after EXISTS"))
       }
       case parse_select(toks, j, depth + 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, sr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, sr)     then {
           case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, k)      -> { return (R.ok, (Exists.new(query: sr[0]), k)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, k)      then { return (R.ok, (Exists.new(query: sr[0]), k)) }
           }
         }
       }
@@ -2908,8 +2908,8 @@ def parse_exists(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
 
 def parse_order_list(toks Array[Tok], i Int64, depth Int64, acc Array[OrderItem]) (R, (Array[OrderItem], Int64)) {
   case parse_expr(toks, i, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, r)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, r)      then {
       var dir = SortDir.asc
       var j = r[1]
       if at_kw(toks, j, "asc") {
@@ -2963,15 +2963,15 @@ def number_value(text String, base Int64, neg Bool) (R, Expr) {
   }
   if !has_dot && !has_exp {
     case acc_digits(data, 0, ie, base, 0, neg) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, n)      -> { return (R.ok, IntLit.new(value: if neg { 0 - n } else { n })) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, n)      then { return (R.ok, IntLit.new(value: if neg { 0 - n } else { n })) }
     }
   }
   const int_len = ie
   const frac_len = if has_dot { fe - ie - 1 } else { 0 }
   case float.parse_decimal(data, 0, int_len, frac_len, exp_val, neg) {
-    (R.error, _) -> { return (R.error, err(base, "number out of range")) }
-    (R.ok, x)    -> { return (R.ok, FloatLit.new(value: x)) }
+    (R.error, _) then { return (R.error, err(base, "number out of range")) }
+    (R.ok, x)    then { return (R.ok, FloatLit.new(value: x)) }
   }
 }
 
@@ -3027,8 +3027,8 @@ def param_value(t Tok, i Int64) (R, (Expr, Int64)) {
     return (R.ok, (Param.new(index: 0), i + 1))
   }
   case acc_digits(data, 1, data.length(), t.pos, 0, false) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, n)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, n)      then {
       if n == 0 {
         return (R.error, err(t.pos, "parameter index must be at least 1"))
       }

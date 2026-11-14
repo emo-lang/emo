@@ -362,14 +362,14 @@ def rtrim_ws(s String) String {
 // later names dotted, brackets as written.
 def seg_text(s TplSeg, first Bool) String {
   case s.kind() {
-    SegKind.segname -> {
+    SegKind.segname then {
       if first {
         return s.name()
       }
       return "." + s.name()
     }
-    SegKind.segidx  -> { return "[" + s.idx().to_string() + "]" }
-    SegKind.segstr  -> { return "[\"" + s.name() + "\"]" }
+    SegKind.segidx  then { return "[" + s.idx().to_string() + "]" }
+    SegKind.segstr  then { return "[\"" + s.name() + "\"]" }
   }
 }
 
@@ -385,13 +385,13 @@ def path_text(path Array[TplSeg], upto Int64) String {
 
 def kind_name(v json.Json) String {
   case v.kind() {
-    json.JsonKind.jnull   -> { return "null" }
-    json.JsonKind.jbool   -> { return "a bool" }
-    json.JsonKind.jint    -> { return "an integer" }
-    json.JsonKind.jfloat  -> { return "a float" }
-    json.JsonKind.jstring -> { return "a string" }
-    json.JsonKind.jarray  -> { return "an array" }
-    json.JsonKind.jobject -> { return "an object" }
+    json.JsonKind.jnull   then { return "null" }
+    json.JsonKind.jbool   then { return "a bool" }
+    json.JsonKind.jint    then { return "an integer" }
+    json.JsonKind.jfloat  then { return "a float" }
+    json.JsonKind.jstring then { return "a string" }
+    json.JsonKind.jarray  then { return "an array" }
+    json.JsonKind.jobject then { return "an object" }
   }
 }
 
@@ -476,8 +476,8 @@ class TplParser {
   // or `{{ else }}` at the top level.
   def parse() (R, Array[TplNode]) {
     case self.parse_body(1, false) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, r)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, r)      then {
         if r[1] == 1 {
           return (R.error, terr(r[2], "unexpected `{{ end }}`"))
         }
@@ -546,16 +546,16 @@ class TplParser {
         self.skip_ws()
         if self.cur() < self.n() && self.data.get(self.cur()) == 33 {
           case self.read_comment() {
-            (R.error, why) -> { failing = why }
-            (R.ok, ctr)    -> {
+            (R.error, why) then { failing = why }
+            (R.ok, ctr)    then {
               prev_tr = ctr
               tstart = self.cur()
             }
           }
         } else {
           case self.peek_word(j) {
-            (R.error, why) -> { failing = why }
-            (R.ok, w)      -> {
+            (R.error, why) then { failing = why }
+            (R.ok, w)      then {
               if w == "end" {
                 stop = 1
                 stop_at = j
@@ -567,11 +567,11 @@ class TplParser {
                   go = false
                 } else {
                   case self.read_tag(j) {
-                  (R.error, why) -> { failing = why }
-                  (R.ok, tg)     -> {
+                  (R.error, why) then { failing = why }
+                  (R.ok, tg)     then {
                     case self.dispatch_tag(tg[0], tg[1], depth, j) {
-                      (R.error, why) -> { failing = why }
-                      (R.ok, nr)     -> {
+                      (R.error, why) then { failing = why }
+                      (R.ok, nr)     then {
                         if nr[1].length() == 1 {
                           acc.push(nr[1][0])
                         }
@@ -608,8 +608,8 @@ class TplParser {
         failing = terr(at, "`{{` is never closed")
       } else {
         case self.read_token() {
-          (R.error, why) -> { failing = why }
-          (R.ok, t)      -> {
+          (R.error, why) then { failing = why }
+          (R.ok, t)      then {
             if t.kind() == TokKind.tend {
               tr = t.trim()
               go = false
@@ -659,8 +659,8 @@ class TplParser {
     var w = ""
     var failing = ""
     case self.read_token() {
-      (R.error, why) -> { failing = why }
-      (R.ok, t)      -> {
+      (R.error, why) then { failing = why }
+      (R.ok, t)      then {
         if t.kind() == TokKind.tident {
           w = t.text()
         }
@@ -697,8 +697,8 @@ class TplParser {
     }
     if b == 34 {
       case self.read_string() {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, s)      -> { return (R.ok, Tok.new(tk: TokKind.tstring, s: s, n: 0, c: 0, at: at, tr: false)) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, s)      then { return (R.ok, Tok.new(tk: TokKind.tstring, s: s, n: 0, c: 0, at: at, tr: false)) }
       }
     }
     if b >= 48 && b <= 57 {
@@ -811,28 +811,28 @@ class TplParser {
     }
     if w == "if" {
       case self.parse_if(toks, tr, depth, at) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nr)     -> { return (R.ok, (nr[1], [nr[0]])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nr)     then { return (R.ok, (nr[1], [nr[0]])) }
       }
     }
     if w == "for" {
       case self.parse_for(toks, tr, depth, at) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nr)     -> { return (R.ok, (nr[1], [nr[0]])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nr)     then { return (R.ok, (nr[1], [nr[0]])) }
       }
     }
     if w == "template" {
       case self.parse_include(toks, at) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nd)     -> { return (R.ok, (tr, [nd])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nd)     then { return (R.ok, (tr, [nd])) }
       }
     }
     if w == "true" || w == "false" || w == "in" {
       return (R.error, terr(t0.pos(), "`" + w + "` is reserved"))
     }
     case self.parse_pipe_toks(toks, 0, at) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, pipe)   -> { return (R.ok, (tr, [TplHoleNode.new(hpipe: pipe, hpos: at)])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, pipe)   then { return (R.ok, (tr, [TplHoleNode.new(hpipe: pipe, hpos: at)])) }
     }
   }
 
@@ -841,8 +841,8 @@ class TplParser {
       return (R.error, terr(at, "`{{ if }}` needs a condition"))
     }
     case self.parse_pipe_toks(toks, 1, at) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, cond)   -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, cond)   then {
         const arms = ArrayBuilder.new()
         const else_e = ArrayBuilder.new()
         var end_tr = false
@@ -852,26 +852,26 @@ class TplParser {
         var done = false
         while !done && failing == "" {
           case self.parse_body(depth + 1, cur_tr) {
-            (R.error, why) -> { failing = why }
-            (R.ok, r)      -> {
+            (R.error, why) then { failing = why }
+            (R.ok, r)      then {
               arms.push(TplArm.new(acond: cur_cond, abody: r[0]))
               if r[1] == 0 {
                 failing = terr(at, "`{{ if }}` is never closed")
               } else {
                 if r[1] == 2 {
                   case self.read_tag(r[2]) {
-                    (R.error, why) -> { failing = why }
-                    (R.ok, et)     -> {
+                    (R.error, why) then { failing = why }
+                    (R.ok, et)     then {
                       case self.parse_else_tag(et[0], et[1], at) {
-                        (R.error, why) -> { failing = why }
-                        (R.ok, er)     -> {
+                        (R.error, why) then { failing = why }
+                        (R.ok, er)     then {
                           if er[0].length() == 1 {
                             cur_cond = er[0][0]
                             cur_tr = et[1]
                           } else {
                             case self.parse_body(depth + 1, et[1]) {
-                              (R.error, why) -> { failing = why }
-                              (R.ok, r2)     -> {
+                              (R.error, why) then { failing = why }
+                              (R.ok, r2)     then {
                                 if r2[1] == 0 {
                                   failing = terr(et[0][0].pos(), "`{{ else }}` is never closed")
                                 } else {
@@ -879,8 +879,8 @@ class TplParser {
                                     failing = terr(r2[2], "unexpected `{{ else }}`")
                                   } else {
                                     case self.read_tag(r2[2]) {
-                                      (R.error, why) -> { failing = why }
-                                      (R.ok, et2)    -> {
+                                      (R.error, why) then { failing = why }
+                                      (R.ok, et2)    then {
                                         var x = 0
                                         while x < r2[0].length() {
                                           else_e.push(r2[0][x])
@@ -901,8 +901,8 @@ class TplParser {
                   }
                 } else {
                   case self.read_tag(r[2]) {
-                    (R.error, why) -> { failing = why }
-                    (R.ok, et)     -> {
+                    (R.error, why) then { failing = why }
+                    (R.ok, et)     then {
                       end_tr = et[1]
                       done = true
                     }
@@ -933,8 +933,8 @@ class TplParser {
       return (R.error, terr(at, "`{{ else if }}` needs a condition"))
     }
     case self.parse_pipe_toks(toks, 2, at) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, cond)   -> { return (R.ok, ([cond], tr)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, cond)   then { return (R.ok, ([cond], tr)) }
     }
   }
 
@@ -964,27 +964,27 @@ class TplParser {
       return (R.error, terr(p, "`{{ for }}` expects `in`"))
     }
     case self.parse_pipe_toks(toks, k + 1, at) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, src)    -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, src)    then {
         case self.parse_body(depth + 1, tr) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, r)      -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, r)      then {
             if r[1] == 0 {
               return (R.error, terr(at, "`{{ for }}` is never closed"))
             }
             if r[1] == 2 {
               case self.read_tag(r[2]) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, et)     -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, et)     then {
                   case self.parse_else_tag(et[0], et[1], at) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, er)     -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, er)     then {
                       if er[0].length() == 1 {
                         return (R.error, terr(et[0][0].pos(), "`{{ else if }}` belongs to `{{ if }}`"))
                       }
                       case self.parse_body(depth + 1, et[1]) {
-                        (R.error, why) -> { return (R.error, why) }
-                        (R.ok, r2)     -> {
+                        (R.error, why) then { return (R.error, why) }
+                        (R.ok, r2)     then {
                           if r2[1] == 0 {
                             return (R.error, terr(et[0][0].pos(), "`{{ else }}` is never closed"))
                           }
@@ -992,8 +992,8 @@ class TplParser {
                             return (R.error, terr(r2[2], "unexpected `{{ else }}`"))
                           }
                           case self.read_tag(r2[2]) {
-                            (R.error, why) -> { return (R.error, why) }
-                            (R.ok, et2)    -> {
+                            (R.error, why) then { return (R.error, why) }
+                            (R.ok, et2)    then {
                               return (R.ok, (TplForNode.new(fname1: name1, fname2: name2, fsrc: src, fbody: r[0], felse_e: r2[0], fpos: at), et2[1]))
                             }
                           }
@@ -1005,8 +1005,8 @@ class TplParser {
               }
             }
             case self.read_tag(r[2]) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, et)     -> {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, et)     then {
                 return (R.ok, (TplForNode.new(fname1: name1, fname2: name2, fsrc: src, fbody: r[0], felse_e: [], fpos: at), et[1]))
               }
             }
@@ -1029,8 +1029,8 @@ class TplParser {
       return (R.ok, TplIncludeNode.new(xname: nm, xsrc_e: [], xpos: at))
     }
     case self.parse_pipe_toks(toks, 2, at) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, src)    -> { return (R.ok, TplIncludeNode.new(xname: nm, xsrc_e: [src], xpos: at)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, src)    then { return (R.ok, TplIncludeNode.new(xname: nm, xsrc_e: [src], xpos: at)) }
     }
   }
 
@@ -1045,8 +1045,8 @@ class TplParser {
       return (R.error, terr(p, "expected a path"))
     }
     case self.parse_path_toks(toks, from) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, pr)     -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, pr)     then {
         const steps = ArrayBuilder.new()
         var k = pr[1]
         var failing = ""
@@ -1068,8 +1068,8 @@ class TplParser {
                   var k2 = k + 2
                   if k2 < toks.length() && toks[k2].kind() == TokKind.tsym && toks[k2].sym() == 40 {
                     case self.parse_args_toks(toks, k2 + 1, toks[k].pos()) {
-                      (R.error, why) -> { failing = why }
-                      (R.ok, ar)     -> {
+                      (R.error, why) then { failing = why }
+                      (R.ok, ar)     then {
                         var x = 0
                         while x < ar[0].length() {
                           args.push(ar[0][x])
@@ -1132,8 +1132,8 @@ class TplParser {
           }
         } else {
           case self.parse_arg_toks(toks, i) {
-            (R.error, why) -> { failing = why }
-            (R.ok, ar)     -> {
+            (R.error, why) then { failing = why }
+            (R.ok, ar)     then {
               args.push(ar[0])
               want_arg = false
               i = ar[1]
@@ -1179,8 +1179,8 @@ class TplParser {
         return (R.ok, (TplArg.new(akind: ArgKind.abool, apath_e: [], astring: "", aint: 0, abool: false, aat: t.pos()), k + 1))
       }
       case self.parse_path_toks(toks, k) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, pr)     -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, pr)     then {
           return (R.ok, (TplArg.new(akind: ArgKind.apath, apath_e: pr[0], astring: "", aint: 0, abool: false, aat: t.pos()), pr[1]))
         }
       }
@@ -1247,19 +1247,19 @@ class TplParser {
 
 def tok_spell(t Tok) String {
   case t.kind() {
-    TokKind.tident   -> { return "`" + t.text() + "`" }
-    TokKind.tstring  -> { return "a string" }
-    TokKind.tint     -> { return "a number" }
-    TokKind.tsym     -> { return "`" + byte_str(t.sym()) + "`" }
-    TokKind.tend     -> { return "`}}`" }
+    TokKind.tident   then { return "`" + t.text() + "`" }
+    TokKind.tstring  then { return "a string" }
+    TokKind.tint     then { return "a number" }
+    TokKind.tsym     then { return "`" + byte_str(t.sym()) + "`" }
+    TokKind.tend     then { return "`}}`" }
   }
 }
 
 def parse_template(text String) (R, Array[TplNode]) {
   const p = TplParser.new(src: text)
   case p.parse() {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, nodes)  -> { return (R.ok, nodes) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, nodes)  then { return (R.ok, nodes) }
   }
 }
 
@@ -1282,46 +1282,46 @@ def render_nodes(nodes Array[TplNode], bnd Array[(String, json.Json)], root json
   while i < nodes.length() {
     const nd = nodes[i]
     case nd.kind() {
-      TplKind.ttext -> {
+      TplKind.ttext then {
         if nd.is(TplTextNode) {
           out = out + nd.text()
         }
       }
-      TplKind.thole -> {
+      TplKind.thole then {
         if nd.is(TplHoleNode) {
           case eval_pipe(nd.pipe(), bnd, root, who) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, v)      -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, v)      then {
               const ps = path_text(nd.pipe().path(), nd.pipe().path().length())
               case render_value(v, ps, nd.pos(), who) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, s)      -> { out = out + s }
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, s)      then { out = out + s }
               }
             }
           }
         }
       }
-      TplKind.tif -> {
+      TplKind.tif then {
         if nd.is(TplIfNode) {
           case exec_if(nd, bnd, root, parts, who, depth, chain) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, s)      -> { out = out + s }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, s)      then { out = out + s }
           }
         }
       }
-      TplKind.tfor -> {
+      TplKind.tfor then {
         if nd.is(TplForNode) {
           case exec_for(nd, bnd, root, parts, who, depth, chain) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, s)      -> { out = out + s }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, s)      then { out = out + s }
           }
         }
       }
-      TplKind.tinclude -> {
+      TplKind.tinclude then {
         if nd.is(TplIncludeNode) {
           case exec_include(nd, bnd, root, parts, who, depth, chain) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, s)      -> { out = out + s }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, s)      then { out = out + s }
           }
         }
       }
@@ -1335,8 +1335,8 @@ def exec_if(nd TplIfNode, bnd Array[(String, json.Json)], root json.Json, parts 
   var i = 0
   while i < nd.arms().length() {
     case eval_pipe(nd.arms()[i].cond(), bnd, root, who) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v)      -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v)      then {
         if truthy(v) {
           return render_nodes(nd.arms()[i].body(), bnd, root, parts, who, depth, chain)
         }
@@ -1349,8 +1349,8 @@ def exec_if(nd TplIfNode, bnd Array[(String, json.Json)], root json.Json, parts 
 
 def exec_for(nd TplForNode, bnd Array[(String, json.Json)], root json.Json, parts Array[(String, Array[TplNode])], who String, depth Int64, chain Array[String]) (R, String) {
   case eval_pipe(nd.src(), bnd, root, who) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then {
       if v.is(json.JsonArray) {
         const items = v.items()
         if items.length() == 0 {
@@ -1367,8 +1367,8 @@ def exec_for(nd TplForNode, bnd Array[(String, json.Json)], root json.Json, part
             nb = nb.append((nd.name1(), items[k]))
           }
           case render_nodes(nd.body(), nb, root, parts, who, depth, chain) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, s)      -> { out = out + s }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, s)      then { out = out + s }
           }
           k = k + 1
         }
@@ -1390,8 +1390,8 @@ def exec_for(nd TplForNode, bnd Array[(String, json.Json)], root json.Json, part
             nb = nb.append((nd.name1(), es[k][1]))
           }
           case render_nodes(nd.body(), nb, root, parts, who, depth, chain) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, s)      -> { out = out + s }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, s)      then { out = out + s }
           }
           k = k + 1
         }
@@ -1427,8 +1427,8 @@ def exec_include(nd TplIncludeNode, bnd Array[(String, json.Json)], root json.Js
   const cr_e = ArrayBuilder.new()
   if nd.src_e().length() == 1 {
     case eval_pipe(nd.src_e()[0], bnd, root, who) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, v)      -> { cr_e.push(v) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, v)      then { cr_e.push(v) }
     }
   }
   var cr = root
@@ -1455,8 +1455,8 @@ def chain_text(chain Array[String]) String {
 
 def eval_pipe(p TplPipe, bnd Array[(String, json.Json)], root json.Json, who String) (R, json.Json) {
   case resolve_path(p.path(), bnd, root, p.pos(), who) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> { return apply_steps(p.steps(), 0, v, bnd, root, who) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then { return apply_steps(p.steps(), 0, v, bnd, root, who) }
   }
 }
 
@@ -1466,11 +1466,11 @@ def apply_steps(steps Array[TplStep], i Int64, v json.Json, bnd Array[(String, j
   }
   const st = steps[i]
   case eval_args(st.args(), 0, [], bnd, root, who) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, argv)   -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, argv)   then {
       case apply_filter(st.name(), v, argv, st.pos(), who) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, nv)     -> { return apply_steps(steps, i + 1, nv, bnd, root, who) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, nv)     then { return apply_steps(steps, i + 1, nv, bnd, root, who) }
       }
     }
   }
@@ -1481,17 +1481,17 @@ def eval_args(args Array[TplArg], i Int64, acc Array[json.Json], bnd Array[(Stri
     return (R.ok, acc)
   }
   case eval_arg(args[i], bnd, root, who) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v)      -> { return eval_args(args, i + 1, acc.append(v), bnd, root, who) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v)      then { return eval_args(args, i + 1, acc.append(v), bnd, root, who) }
   }
 }
 
 def eval_arg(a TplArg, bnd Array[(String, json.Json)], root json.Json, who String) (R, json.Json) {
   case a.kind() {
-    ArgKind.apath   -> { return resolve_path(a.path_e(), bnd, root, a.pos(), who) }
-    ArgKind.astring -> { return (R.ok, json.JsonString.new(value: a.string())) }
-    ArgKind.aint    -> { return (R.ok, json.JsonInt.new(value: a.int())) }
-    ArgKind.abool   -> { return (R.ok, json.JsonBool.new(value: a.bool())) }
+    ArgKind.apath   then { return resolve_path(a.path_e(), bnd, root, a.pos(), who) }
+    ArgKind.astring then { return (R.ok, json.JsonString.new(value: a.string())) }
+    ArgKind.aint    then { return (R.ok, json.JsonInt.new(value: a.int())) }
+    ArgKind.abool   then { return (R.ok, json.JsonBool.new(value: a.bool())) }
   }
 }
 
@@ -1500,8 +1500,8 @@ def eval_arg(a TplArg, bnd Array[(String, json.Json)], root json.Json, who Strin
 // walking, no scope chain through data, no root escape.
 def resolve_path(path Array[TplSeg], bnd Array[(String, json.Json)], root json.Json, at Int64, who String) (R, json.Json) {
   case first_value(path[0], bnd, root, at, who) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v0)     -> { return walk_path(path, 1, v0, at, who) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v0)     then { return walk_path(path, 1, v0, at, who) }
   }
 }
 
@@ -1518,8 +1518,8 @@ def first_value(s0 TplSeg, bnd Array[(String, json.Json)], root json.Json, at In
     return (R.error, rerr(who, at, "`" + nm + "`: the context is not an object"))
   }
   case obj_get(root, nm) {
-    (R.error, _) -> { return (R.error, rerr(who, at, "the context holds no key `" + nm + "`")) }
-    (R.ok, v)    -> { return (R.ok, v) }
+    (R.error, _) then { return (R.error, rerr(who, at, "the context holds no key `" + nm + "`")) }
+    (R.ok, v)    then { return (R.ok, v) }
   }
 }
 
@@ -1558,10 +1558,10 @@ def walk_path(path Array[TplSeg], i Int64, v json.Json, at Int64, who String) (R
     return (R.error, rerr(who, at, "`" + upto + "` is " + kind_name(v) + ", not an object"))
   }
   case obj_get(v, s.name()) {
-    (R.error, _) -> {
+    (R.error, _) then {
       return (R.error, rerr(who, at, "`" + path_text(path, i + 1) + "`: the object holds no key `" + s.name() + "`"))
     }
-    (R.ok, nv)   -> { return walk_path(path, i + 1, nv, at, who) }
+    (R.ok, nv)   then { return walk_path(path, i + 1, nv, at, who) }
   }
 }
 
@@ -1569,18 +1569,18 @@ def walk_path(path Array[TplSeg], i Int64, v json.Json, at Int64, who String) (R
 // string, an empty array, an empty object are false.
 def truthy(v json.Json) Bool {
   case v.kind() {
-    json.JsonKind.jnull   -> { return false }
-    json.JsonKind.jbool   -> { return v.as_bool() }
-    json.JsonKind.jint    -> { return v.as_int() != 0 }
-    json.JsonKind.jfloat  -> { return v.as_float() != 0.0 }
-    json.JsonKind.jstring -> { return v.as_string() != "" }
-    json.JsonKind.jarray  -> {
+    json.JsonKind.jnull   then { return false }
+    json.JsonKind.jbool   then { return v.as_bool() }
+    json.JsonKind.jint    then { return v.as_int() != 0 }
+    json.JsonKind.jfloat  then { return v.as_float() != 0.0 }
+    json.JsonKind.jstring then { return v.as_string() != "" }
+    json.JsonKind.jarray  then {
       if v.is(json.JsonArray) {
         return v.items().length() > 0
       }
       return false
     }
-    json.JsonKind.jobject -> {
+    json.JsonKind.jobject then {
       if v.is(json.JsonObject) {
         return v.entries().length() > 0
       }
@@ -1594,18 +1594,18 @@ def truthy(v json.Json) Bool {
 // and the containers refuse — a hole has no text of its own.
 def render_value(v json.Json, path_s String, at Int64, who String) (R, String) {
   case v.kind() {
-    json.JsonKind.jnull   -> { return (R.error, rerr(who, at, "`" + path_s + "` is null and cannot render")) }
-    json.JsonKind.jbool   -> {
+    json.JsonKind.jnull   then { return (R.error, rerr(who, at, "`" + path_s + "` is null and cannot render")) }
+    json.JsonKind.jbool   then {
       if v.as_bool() {
         return (R.ok, "true")
       }
       return (R.ok, "false")
     }
-    json.JsonKind.jint    -> { return (R.ok, v.as_int().to_string()) }
-    json.JsonKind.jfloat  -> { return (R.ok, float.to_text(v.as_float())) }
-    json.JsonKind.jstring -> { return (R.ok, v.as_string()) }
-    json.JsonKind.jarray  -> { return (R.error, rerr(who, at, "`" + path_s + "` is an array and cannot render")) }
-    json.JsonKind.jobject -> { return (R.error, rerr(who, at, "`" + path_s + "` is an object and cannot render")) }
+    json.JsonKind.jint    then { return (R.ok, v.as_int().to_string()) }
+    json.JsonKind.jfloat  then { return (R.ok, float.to_text(v.as_float())) }
+    json.JsonKind.jstring then { return (R.ok, v.as_string()) }
+    json.JsonKind.jarray  then { return (R.error, rerr(who, at, "`" + path_s + "` is an array and cannot render")) }
+    json.JsonKind.jobject then { return (R.error, rerr(who, at, "`" + path_s + "` is an object and cannot render")) }
   }
 }
 
@@ -1613,18 +1613,18 @@ def render_value(v json.Json, path_s String, at Int64, who String) (R, String) {
 // minus null and the containers, which refuse with the element index.
 def scalar_text(v json.Json) (R, String) {
   case v.kind() {
-    json.JsonKind.jnull   -> { return (R.error, "null") }
-    json.JsonKind.jbool   -> {
+    json.JsonKind.jnull   then { return (R.error, "null") }
+    json.JsonKind.jbool   then {
       if v.as_bool() {
         return (R.ok, "true")
       }
       return (R.ok, "false")
     }
-    json.JsonKind.jint    -> { return (R.ok, v.as_int().to_string()) }
-    json.JsonKind.jfloat  -> { return (R.ok, float.to_text(v.as_float())) }
-    json.JsonKind.jstring -> { return (R.ok, v.as_string()) }
-    json.JsonKind.jarray  -> { return (R.error, "an array") }
-    json.JsonKind.jobject -> { return (R.error, "an object") }
+    json.JsonKind.jint    then { return (R.ok, v.as_int().to_string()) }
+    json.JsonKind.jfloat  then { return (R.ok, float.to_text(v.as_float())) }
+    json.JsonKind.jstring then { return (R.ok, v.as_string()) }
+    json.JsonKind.jarray  then { return (R.error, "an array") }
+    json.JsonKind.jobject then { return (R.error, "an object") }
   }
 }
 
@@ -1673,10 +1673,10 @@ def apply_filter(name String, recv json.Json, args Array[json.Json], at Int64, w
           out = out + sep
         }
         case scalar_text(items[i]) {
-          (R.error, why) -> {
+          (R.error, why) then {
             return (R.error, rerr(who, at, "`join`: element " + i.to_string() + " is " + why))
           }
-          (R.ok, s)      -> { out = out + s }
+          (R.ok, s)      then { out = out + s }
         }
         i = i + 1
       }

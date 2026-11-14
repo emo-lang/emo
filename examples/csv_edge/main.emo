@@ -20,8 +20,8 @@ def bytes_of(vals Array[Int64]) Bytes {
 
 def show(label String, r (R, Array[Array[String]])) {
   case r {
-    (R.ok, rows) -> { println(label + " -> " + render(rows)) }
-    (R.error, why) -> { println(label + " !! " + why) }
+    (R.ok, rows) then { println(label + " -> " + render(rows)) }
+    (R.error, why) then { println(label + " !! " + why) }
   }
 }
 
@@ -29,8 +29,8 @@ def show(label String, r (R, Array[Array[String]])) {
 // UTF-8 but invisible.
 def show_len(label String, r (R, Array[Array[String]])) {
   case r {
-    (R.ok, rows) -> { println(label + " -> " + rows[0][0].to_bytes().length().to_string()) }
-    (R.error, why) -> { println(label + " !! " + why) }
+    (R.ok, rows) then { println(label + " -> " + rows[0][0].to_bytes().length().to_string()) }
+    (R.error, why) then { println(label + " !! " + why) }
   }
 }
 

@@ -13,8 +13,8 @@ def main() {
   const port = os.argv()[1].to_int64()
   const opts = postgres.options().with_host("127.0.0.1").with_port(port).with_user("emo").with_database("emo")
   case postgres.connect(opts) {
-    (R.error, why) -> { raise Exception.new(message: why) }
-    (R.ok, conn) -> {
+    (R.error, why) then { raise Exception.new(message: why) }
+    (R.ok, conn) then {
       run(conn)
       conn.close()
       println("done")
@@ -24,14 +24,14 @@ def main() {
 
 def exec_tag(conn postgres.Conn, label String, sql String) {
   case conn.exec(sql, []) {
-    (R.ok, n) -> { println(label + ": " + n.to_string()) }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.ok, n) then { println(label + ": " + n.to_string()) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
 def query_tag(conn postgres.Conn, label String, sql String, echo Bool) {
   case conn.query(sql, []) {
-    (R.ok, rows) -> {
+    (R.ok, rows) then {
       println(label + ": " + rows.count().to_string())
       if echo {
         var r = 0
@@ -55,7 +55,7 @@ def query_tag(conn postgres.Conn, label String, sql String, echo Bool) {
       }
       rows.finish()
     }
-    (R.error, why) -> { println(label + ": " + why) }
+    (R.error, why) then { println(label + ": " + why) }
   }
 }
 
@@ -70,8 +70,8 @@ def run(conn postgres.Conn) {
   query_tag(conn, "in-tx", "select id, price from items where id = 1", false)
   exec_tag(conn, "commit", "commit")
   case conn.query("select * from missing", []) {
-    (R.ok, _) -> { println("missing: unexpected rows") }
-    (R.error, why) -> { println("missing: " + why) }
+    (R.ok, _) then { println("missing: unexpected rows") }
+    (R.error, why) then { println("missing: " + why) }
   }
   query_tag(conn, "after", "select id, price from items where id = 2", false)
 }

@@ -38,6 +38,7 @@ let pp_kind fmt (k : Token.kind) =
         | Case -> "case"
         | When -> "when"
         | Receive -> "receive"
+        | Then -> "then"
         | Return -> "return"
         | Raise -> "raise"
         | Self -> "self"

@@ -62,20 +62,20 @@ def serve(listener TcpListener, store record.Store, opts Options) Int64 {
 def accept_loop(listener TcpListener, store record.Store, opts Options, manager Pid, served Int64) Int64 {
   if opts.max_connections > 0 && served >= opts.max_connections {
     case listener.close() {
-      (R.error, _) -> {}
-      (R.ok, _) -> {}
+      (R.error, _) then {}
+      (R.ok, _) then {}
     }
     return drain(served)
   }
   case listener.accept() {
-    (R.error, _) -> {
+    (R.error, _) then {
       case listener.close() {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
       return served
     }
-    (R.ok, conn) -> {
+    (R.ok, conn) then {
       do session(conn, store, manager, served + 1, opts, self_pid())
       return accept_loop(listener, store, opts, manager, served + 1)
     }
@@ -89,7 +89,7 @@ def drain(pending Int64) Int64 {
     return 0
   }
   receive {
-    ("closed", _) -> { return drain(pending - 1) }
+    ("closed", _) then { return drain(pending - 1) }
   }
 }
 
@@ -101,8 +101,8 @@ def session(conn TcpConn, store record.Store, manager Pid, id Int64, opts Option
   const rc = serve_session(conn, eng, opts)
   eng.end_session()
   case conn.close() {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
   server <- ("closed", id)
   return rc
@@ -110,8 +110,8 @@ def session(conn TcpConn, store record.Store, manager Pid, id Int64, opts Option
 
 def serve_session(conn TcpConn, eng engine.Engine, opts Options) Int64 {
   case read_startup(conn, opts.max_startup_bytes) {
-    (R.error, _) -> { return 0 }
-    (R.ok, startup) -> {
+    (R.error, _) then { return 0 }
+    (R.ok, startup) then {
       if startup.code == protocol.cancel_request {
         return 0
       }
@@ -129,16 +129,16 @@ def serve_session(conn TcpConn, eng engine.Engine, opts Options) Int64 {
 // which closes.
 def read_startup(conn TcpConn, max_bytes Int64) (R, protocol.Startup) {
   case read_body(conn, max_bytes) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, body) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, body) then {
       case protocol.parse_startup(body) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, startup) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, startup) then {
           if startup.code == protocol.ssl_request ||
              startup.code == protocol.gssenc_request {
             case conn.write("N") {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, _) -> { return read_startup(conn, max_bytes) }
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, _) then { return read_startup(conn, max_bytes) }
             }
           }
           return (R.ok, startup)
@@ -174,27 +174,27 @@ def handshake(conn TcpConn, startup protocol.Startup, opts Options) Bool {
 
 def query_loop(conn TcpConn, eng engine.Engine, opts Options) Int64 {
   case conn.read_exactly(1) {
-    (R.error, _) -> { return 0 }
-    (R.ok, kind) -> {
+    (R.error, _) then { return 0 }
+    (R.ok, kind) then {
       case read_body(conn, opts.max_message_bytes) {
-        (R.error, why) -> {
+        (R.error, why) then {
           send(conn, protocol.error_response("08P01", why))
           return 0
         }
-        (R.ok, body) -> {
+        (R.ok, body) then {
           if kind == "X" {
             return 0
           }
           if kind == "Q" {
             case strip_nul(body) {
-              (R.error, why) -> {
+              (R.error, why) then {
                 send(conn, protocol.error_response("08P01", why))
                 return 0
               }
-              (R.ok, text) -> {
+              (R.ok, text) then {
                 case handle_query(conn, eng, text) {
-                  (R.error, _) -> { return 0 }
-                  (R.ok, _) -> { return query_loop(conn, eng, opts) }
+                  (R.error, _) then { return 0 }
+                  (R.ok, _) then { return query_loop(conn, eng, opts) }
                 }
               }
             }
@@ -214,13 +214,13 @@ def query_loop(conn TcpConn, eng engine.Engine, opts Options) Int64 {
 // already aborted the transaction, so the ready status is truthful.
 def handle_query(conn TcpConn, eng engine.Engine, text String) (R, Bool) {
   case sql.split(text) {
-    (R.error, why) -> {
+    (R.error, why) then {
       if !send(conn, protocol.error_response("42601", why)) {
         return (R.error, "wire: the connection is gone")
       }
       return ready(conn, eng)
     }
-    (R.ok, stmts) -> {
+    (R.ok, stmts) then {
       if stmts.length() == 0 {
         if !send(conn, protocol.empty_query_response()) {
           return (R.error, "wire: the connection is gone")
@@ -230,9 +230,9 @@ def handle_query(conn TcpConn, eng engine.Engine, text String) (R, Bool) {
       var i = 0
       while i < stmts.length() {
         case eng.execute(stmts[i]) {
-          (R.error, why) -> {
+          (R.error, why) then {
             case split_error(why) {
-              (code, message) -> {
+              (code, message) then {
                 if !send(conn, protocol.error_response(code, message)) {
                   return (R.error, "wire: the connection is gone")
                 }
@@ -240,10 +240,10 @@ def handle_query(conn TcpConn, eng engine.Engine, text String) (R, Bool) {
             }
             return ready(conn, eng)
           }
-          (R.ok, result) -> {
+          (R.ok, result) then {
             case send_result(conn, result) {
-              (R.error, _) -> { return (R.error, "wire: the connection is gone") }
-              (R.ok, _) -> {}
+              (R.error, _) then { return (R.error, "wire: the connection is gone") }
+              (R.ok, _) then {}
             }
           }
         }
@@ -310,8 +310,8 @@ def strip_nul(body String) (R, String) {
 // this framing.
 def read_body(conn TcpConn, max_bytes Int64) (R, String) {
   case conn.read_exactly(4) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, head) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, head) then {
       const n = protocol.int32_at(head, 0)
       if n < 4 {
         return (R.error, "wire: a message length below 4")
@@ -329,7 +329,7 @@ def read_body(conn TcpConn, max_bytes Int64) (R, String) {
 
 def send(conn TcpConn, bytes String) Bool {
   case conn.write(bytes) {
-    (R.error, _) -> { return false }
-    (R.ok, _) -> { return true }
+    (R.error, _) then { return false }
+    (R.ok, _) then { return true }
   }
 }

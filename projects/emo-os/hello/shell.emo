@@ -281,8 +281,8 @@ def sh_init() Void {
 // discarded in both arms.
 def out(a Int64, n Int64) Void {
   case syscall.write(a, n) {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
 }
 
@@ -464,8 +464,8 @@ def cmd_ls(e Int64, n Int64) Void {
     err_line(sh_c_ls, 2, sh_m_badarg, 12)
   } else {
     case syscall.file_list(sh_names, 256) {
-      (R.error, why) -> { err_file(sh_c_ls, 2, why) }
-      (R.ok, ln) -> { out(sh_names, ln) }
+      (R.error, why) then { err_file(sh_c_ls, 2, why) }
+      (R.ok, ln) then { out(sh_names, ln) }
     }
   }
 }
@@ -477,8 +477,8 @@ def cmd_cat(e Int64, n Int64) Void {
     err_line(sh_c_cat, 3, sh_m_badarg, 12)
   } else {
     case syscall.file_read(sh_line + ns, ne - ns, sh_back, 2048) {
-      (R.error, why) -> { err_file(sh_c_cat, 3, why) }
-      (R.ok, size) -> {
+      (R.error, why) then { err_file(sh_c_cat, 3, why) }
+      (R.ok, size) then {
         var copied = size
         if copied > 2048 {
           copied = 2048
@@ -505,8 +505,8 @@ def cmd_write(e Int64, n Int64) Void {
       tl = n - ne - 1
     }
     case syscall.file_write(sh_line + ns, ne - ns, sh_line + ts, tl) {
-      (R.error, why) -> { err_file(sh_c_write, 5, why) }
-      (R.ok, _) -> {}
+      (R.error, why) then { err_file(sh_c_write, 5, why) }
+      (R.ok, _) then {}
     }
   }
 }
@@ -518,8 +518,8 @@ def cmd_rm(e Int64, n Int64) Void {
     err_line(sh_c_rm, 2, sh_m_badarg, 12)
   } else {
     case syscall.file_remove(sh_line + ns, ne - ns) {
-      (R.error, why) -> { err_file(sh_c_rm, 2, why) }
-      (R.ok, _) -> {}
+      (R.error, why) then { err_file(sh_c_rm, 2, why) }
+      (R.ok, _) then {}
     }
   }
 }
@@ -536,11 +536,11 @@ def cmd_counter(e Int64, n Int64) Void {
   } else {
     poke64(sh_ui_cell, 1)
     case syscall.spawn() {
-      (R.error, why) -> { err_file(sh_c_counter, 7, why) }
-      (R.ok, pid) -> {
+      (R.error, why) then { err_file(sh_c_counter, 7, why) }
+      (R.ok, pid) then {
         case syscall.wait(pid) {
-          (R.error, why) -> { err_file(sh_c_counter, 7, why) }
-          (R.ok, _) -> {}
+          (R.error, why) then { err_file(sh_c_counter, 7, why) }
+          (R.ok, _) then {}
         }
       }
     }

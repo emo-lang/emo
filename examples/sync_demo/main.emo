@@ -31,7 +31,7 @@ def waiter(wg sync.WaitGroup, collector Pid) {
 // Counts n awake reports, then tells the boss the act is over.
 def collector(n Int64, boss Pid, token String) Int64 {
   receive {
-    "awake" -> {
+    "awake" then {
       if n > 1 {
         return collector(n - 1, boss, token)
       }
@@ -51,9 +51,9 @@ def tally(a Int64, b Int64, c Int64) Int64 {
     return 0
   }
   receive {
-    "act1" -> { return tally(1, b, c) }
-    "act2" -> { return tally(a, 1, c) }
-    "act3" -> { return tally(a, b, 1) }
+    "act1" then { return tally(1, b, c) }
+    "act2" then { return tally(a, 1, c) }
+    "act3" then { return tally(a, b, 1) }
   }
 }
 

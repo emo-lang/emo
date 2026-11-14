@@ -16,17 +16,17 @@ def indent(depth Int64) String {
 
 def extent(x (R, Float64)) String {
   case x {
-    (R.ok, v) -> { return v.to_string() }
-    (R.error, _) -> { return "auto" }
+    (R.ok, v) then { return v.to_string() }
+    (R.error, _) then { return "auto" }
   }
 }
 
 def align_name(a ui.Align) String {
   case a {
-    ui.Align.start -> { return "start" }
-    ui.Align.center -> { return "center" }
-    ui.Align.end -> { return "end" }
-    ui.Align.stretch -> { return "stretch" }
+    ui.Align.start then { return "start" }
+    ui.Align.center then { return "center" }
+    ui.Align.end then { return "end" }
+    ui.Align.stretch then { return "stretch" }
   }
 }
 

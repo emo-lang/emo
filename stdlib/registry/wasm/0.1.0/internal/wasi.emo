@@ -355,10 +355,10 @@ def random_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 
     return e_inval
   }
   case rand.bytes(len) {
-    (R.error, _) -> {
+    (R.error, _) then {
       return e_io
     }
-    (R.ok, data) -> {
+    (R.ok, data) then {
       if !write_bytes(mem, args[0][1], data) {
         return e_inval
       }

@@ -48,14 +48,14 @@ println(full.name())
 
 // ---- malformed input: the failure comes back as a value ----
 case xml.decode("<a><b></a>") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 case xml.decode("<a>") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 case xml.decode("<a>&nope;</a>") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }

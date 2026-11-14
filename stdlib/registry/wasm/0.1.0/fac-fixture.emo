@@ -8,17 +8,17 @@ const hex = "0061736d0100000001060160017e017e03030200000710020366616300000673756
 
 def show_i64(label String, r (R, Array[(Int64, Int64)])) Int64 {
   case r {
-    (R.error, why) -> {
+    (R.error, why) then {
       println(label + " " + why)
       return 1
     }
-    (R.ok, results) -> {
+    (R.ok, results) then {
       case wasm.as_i64(results[0]) {
-        (R.error, why) -> {
+        (R.error, why) then {
           println(label + " " + why)
           return 1
         }
-        (R.ok, v) -> {
+        (R.ok, v) then {
           println(label + " " + v.to_string())
           return 0
         }
@@ -30,11 +30,11 @@ def show_i64(label String, r (R, Array[(Int64, Int64)])) Int64 {
 def exercise(module Int64) Int64 {
   var failed = 0
   case wasm.instantiate(module, []) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("inst " + why)
       return 1
     }
-    (R.ok, inst) -> {
+    (R.ok, inst) then {
       println("inst true ")
       failed = failed + show_i64("fac5", wasm.call(inst, "fac", [wasm.i64(5)]))
       failed = failed + show_i64("fac25", wasm.call(inst, "fac", [wasm.i64(25)]))
@@ -48,11 +48,11 @@ def exercise(module Int64) Int64 {
 def run() Int64 {
   var failed = 0
   case wasm.load(internal.corpus.decode_hex(hex)) {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("load " + why)
       failed = failed + 1
     }
-    (R.ok, module) -> {
+    (R.ok, module) then {
       println("load true ")
       failed = failed + exercise(module)
     }

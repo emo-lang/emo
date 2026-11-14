@@ -12,8 +12,8 @@ require "os"
 
 def start(cfg config.Config) httpd.Server {
   case os.mkdir(cfg.runs_dir) {
-    (R.error, _) -> {}
-    (R.ok, _) -> {}
+    (R.error, _) then {}
+    (R.ok, _) then {}
   }
   const (R.ok, listener) = net.listen(cfg.host, cfg.port)
   const options = httpd.server_options().with_max_body_bytes(65536)

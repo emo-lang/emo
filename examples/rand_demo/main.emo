@@ -36,22 +36,22 @@ println("drbg zero: [" + hex_of(rand.drbg_sha256("x".to_bytes(), 0)) + "]")
 
 // ---- the operating system's source
 case rand.bytes(32) {
-  (R.ok, a) -> {
+  (R.ok, a) then {
     println("os length: " + a.length().to_string())
     case rand.bytes(32) {
-      (R.ok, b) -> {
+      (R.ok, b) then {
         if hex_of(a) == hex_of(b) {
           println("os draws differ: false")
         } else {
           println("os draws differ: true")
         }
       }
-      (R.error, why) -> { println(why) }
+      (R.error, why) then { println(why) }
     }
   }
-  (R.error, why) -> { println(why) }
+  (R.error, why) then { println(why) }
 }
 case rand.bytes(0) {
-  (R.ok, e) -> { println("os zero: " + e.length().to_string()) }
-  (R.error, why) -> { println(why) }
+  (R.ok, e) then { println("os zero: " + e.length().to_string()) }
+  (R.error, why) then { println(why) }
 }

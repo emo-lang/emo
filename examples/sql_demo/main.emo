@@ -151,10 +151,10 @@ println(silent.to_string())
 
 // ---- a malformed statement is a value, not a crash ----
 case sql.parse("SELECT FROM") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected") }
 }
 case sql.parse("SELECT * FROM t WHERE a = ") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected") }
 }

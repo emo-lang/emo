@@ -5,11 +5,11 @@
 // call is guaranteed.
 def counter(total Int64) Int64 {
   receive {
-    ("add", n, from) -> {
+    ("add", n, from) then {
       from <- ("count", total + n)
       return counter(total + n)
     }
-    ("get", from) -> {
+    ("get", from) then {
       from <- ("count", total)
       return counter(total)
     }
@@ -21,15 +21,15 @@ const me = self_pid()
 
 tally <- ("add", 5, me)
 receive {
-  ("count", n) -> { println("after add: ${n}") }
+  ("count", n) then { println("after add: ${n}") }
 }
 
 tally <- ("add", 7, me)
 receive {
-  ("count", n) -> { println("after add: ${n}") }
+  ("count", n) then { println("after add: ${n}") }
 }
 
 tally <- ("get", me)
 receive {
-  ("count", n) -> { println("the tally owns ${n}") }
+  ("count", n) then { println("the tally owns ${n}") }
 }

@@ -8,11 +8,11 @@ const screen_inbox = 1
 
 def update(msg model.Msg, m model.Model) model.Model {
   case msg {
-    model.Msg.save -> { return m.with_draft("") }
-    model.Msg.cancel -> { return m.with_filter("") }
-    model.Msg.filter -> { return m.with_filter(m.filter() + "unread") }
-    model.Msg.compose -> { return m.with_draft("New message") }
-    model.Msg.open_profile -> { return m }
+    model.Msg.save then { return m.with_draft("") }
+    model.Msg.cancel then { return m.with_filter("") }
+    model.Msg.filter then { return m.with_filter(m.filter() + "unread") }
+    model.Msg.compose then { return m.with_draft("New message") }
+    model.Msg.open_profile then { return m }
   }
 }
 

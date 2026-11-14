@@ -159,7 +159,7 @@ def io(me Pid, blk Pid, op Int64, sec Int64, buf Int64) Int64 {
   var done = false
   while !done {
     receive {
-      x -> {
+      x then {
         if op_of(x) >= 0 {
           stash_push(x)
         } else {
@@ -193,7 +193,7 @@ def io_run(me Pid, blk Pid, op Int64, sec Int64, buf Int64, n Int64) Void {
   var done = false
   while !done {
     receive {
-      x -> {
+      x then {
         if op_of(x) >= 0 {
           stash_push(x)
         } else {
@@ -712,7 +712,7 @@ def service(boss Pid, blk Pid, cache Int64) Void {
       serve_gate(me, blk, cache, w)
     } else {
       receive {
-        x -> {
+        x then {
           if op_of(x) >= 0 {
             serve_gate(me, blk, cache, x)
           } else {
@@ -727,7 +727,7 @@ def service(boss Pid, blk Pid, cache Int64) Void {
             var len = 0
             var from = boss
             case x {
-              (op0, from0, name0, nlen0, buf0, len0) -> {
+              (op0, from0, name0, nlen0, buf0, len0) then {
                 kop = op0
                 from = from0
                 name = name0

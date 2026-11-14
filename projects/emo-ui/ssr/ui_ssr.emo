@@ -185,8 +185,8 @@ def same_extent(a (R, Float64), b (R, Float64)) Bool {
     return false
   }
   case ra {
-    R.ok -> { return va == vb }
-    R.error -> { return true }
+    R.ok then { return va == vb }
+    R.error then { return true }
   }
 }
 
@@ -260,10 +260,10 @@ def class_name(i Int64) String {
 
 def align_css(a ui.Align) String {
   case a {
-    ui.Align.start -> { return "flex-start" }
-    ui.Align.center -> { return "center" }
-    ui.Align.end -> { return "flex-end" }
-    ui.Align.stretch -> { return "stretch" }
+    ui.Align.start then { return "flex-start" }
+    ui.Align.center then { return "center" }
+    ui.Align.end then { return "flex-end" }
+    ui.Align.stretch then { return "stretch" }
   }
 }
 
@@ -276,8 +276,8 @@ def grow_css(g Bool) String {
 
 def size_css(name String, slot (R, Float64)) String {
   case slot {
-    (R.ok, v) -> { return " " + name + ": " + v.to_string() + "px;" }
-    (R.error, _) -> { return "" }
+    (R.ok, v) then { return " " + name + ": " + v.to_string() + "px;" }
+    (R.error, _) then { return "" }
   }
 }
 
