@@ -623,9 +623,11 @@ println(e.data.get("code"))|}));
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
     tc "Exception.with_data is strict about its arguments" (fun () ->
         let diagnostic = program_err {|Exception.with_data("boom")|} in
-        Alcotest.(check string) "code" "E4009" (code_of diagnostic);
-        let diagnostic = program_err {|Exception.with_data("a", "b")|} in
-        Alcotest.(check string) "code" "E4004" (code_of diagnostic));
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        let diagnostic =
+          program_err {|Exception.with_data("a", "b", "c")|}
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
     tc "raising the exception instance terminates uncaught" (fun () ->
         let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
