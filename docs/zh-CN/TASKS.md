@@ -2119,22 +2119,31 @@ bootstrap、c、typescript、beam 四个名单;文档 EN+zh。
 
 **Prereq:** 无。**完成标准:** `emo deps resolve` 按项目自己声明的
 targets(或显式 `--target`)解析,并与其他命令一样尊重
-`EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,六个门禁消费它;`just lock-refresh` 一条命令重钉全树所有过期锁;CHECK.md 的 c-target-only 注记退役。(计划:
+`EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,八个门禁消费它;`just lock-refresh` 一条命令重钉全树所有过期锁;CHECK.md 的 c-target-only 注记退役。(计划:
 `plan/step-82-deps-resolve.md`。)
 
-- [ ] **T82.1** — 按项目 targets 解析:去掉 resolve 处理器里的
+- [x] **T82.1** — 按项目 targets 解析:去掉 resolve 处理器里的
       `~target:"c"` 硬编码,按声明的每个 target 各解一轮,逐依赖、点名
       target 地拒绝,新增 `--target <t>`,退役 CHECK.md 的
       c-target-only 注记——即 T4.3 在案的那条 found-not-fixed。
-- [ ] **T82.2** — `scripts/stage-registry.sh`:家族 staging 映射(包 →
-      源目录 → 文件集)收敛一处;六个 `check.sh` 的 staging 块改为消费
+      (2026-11-14 完成:`riscv64`-only 项目解析其 `syscall` pin——前一天
+      还 E5007 被拒——现在通过;`c` target 项目钉 `syscall` 则点名
+      target 拒绝。)
+- [x] **T82.2** — `scripts/stage-registry.sh`:家族 staging 映射(包 →
+      源目录 → 文件集)收敛一处;八个 `check.sh` 的 staging 块改为消费
       它;各门禁 staged 的文件集与之前逐字节一致,摘要一个都不动。
-- [ ] **T82.3** — `just lock-refresh`:遍历每个被跟踪
+      (2026-11-14 完成:tui 门禁整轮跑完锁逐字节不变;全树刷新零锁变化。)
+- [x] **T82.3** — `just lock-refresh`:遍历每个被跟踪
       `package.lock` 所在目录,原地解析,逐目录报告结果,`REGISTRY=<dir>`
-      为家族项目透传;改包源后的刷新流程写在 recipe 旁。
-- [ ] **T82.4** — 测试:声明多 target 的 manifest 仅在全部 target
+      为家族项目透传;改包源后的刷新流程写在 recipe 旁。(2026-11-14
+      完成:118 个锁全部 ok 零 diff;recipe 先重建 CLI——解析器读的内置
+      标准库编译在二进制里,上次构建之后改的源会刷了个寂寞。)
+- [x] **T82.4** — 测试:声明多 target 的 manifest 仅在全部 target
       可行时解析;`riscv64`-only 依赖在 `riscv64`-only 项目里可解析;
-      过期检出重钉是幂等的(第二次 resolve 零变化)。
-- [ ] **T82.5** — 文档:`docs/toolchain.md` 的依赖节(及 zh-CN
-      镜像)写明 targets 规则、registry 链与刷新流程;CHECK.md 退役的
-      注记指向这里。
+      过期检出重钉是幂等的(第二次 resolve 零变化)。(2026-11-14 完成:
+      五个用例进 `test/emo_cli` 的 `resolve_targets` 组,已编译进套件;
+      全量 `dune runtest` 按自动测试规则等点名再跑——同等行为已
+      经 CLI 手动实证。)
+- [x] **T82.5** — 文档:依赖工作流写明 targets 规则、registry 链与
+      刷新流程(EN + zh-CN 镜像,落在 `docs/intro/package-management.md`
+      ——`toolchain.md` 无依赖节);CHECK.md 退役的注记指向这里。

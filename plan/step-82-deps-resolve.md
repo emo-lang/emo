@@ -4,9 +4,13 @@
 exists; this step repoints it) · **Related:** `src/emo_cli/emo_cli.ml`
 (the resolve command's `~target:"c"` hardcode), `src/emo_project/emo_project.ml`
 (`resolve_deps` already carries `~target`; `registry` already honors
-`EMO_REGISTRY`), the six family `check.sh` staging lists,
+`EMO_REGISTRY`), the eight family `check.sh` staging lists,
 `CHECK.md`'s "The `emo deps resolve` resolves under the `c` target alone"
-note (retired here) · **Status:** planned.
+note (retired here) · **Status:** done — T82.1–T82.5 landed 2026-11-14;
+the acceptance rehearsal ran (a package source touched, `just
+lock-refresh` re-pinning the tree, the source restored and the lock
+returning), and the full `dune runtest` waits for a requested run per
+the auto-test rule, T82.4's five cases compiled into the suite.
 
 ## Why this step exists
 
@@ -25,9 +29,9 @@ precisely, and the measurement named three gaps:
    projects (the `emo-ui`, `fb`, and `emo-db` trees, `emo-os/hello`,
    `examples/ssr_page`, `examples/tui_menu`) pin packages that live in
    this repository, not in the bundled standard library. Each consumer's
-   gate hand-stages a registry with its own `cp` lines — six copies of
+   gate hand-stages a registry with its own `cp` lines — eight copies of
    what is really one mapping, and a lock refresh for those projects
-   means re-reading six scripts before any command can run.
+   means re-reading eight scripts before any command can run.
 3. **There is no lock-refresh entry.** After any package-source change,
    the question "which locks are stale, and how do I re-pin them" has no
    first-class answer; the 2026-11-14 repayment was three ad-hoc passes
@@ -59,7 +63,7 @@ command instead of an afternoon.
   bundled standard library) is shared code the resolve path already
   calls; nothing to build, only to document and test. The 42 successful
   staged-registry resolutions of 2026-11-14 are the evidence it works.
-- **One staging script, six consumers.** `scripts/stage-registry.sh`
+- **One staging script, eight consumers.** `scripts/stage-registry.sh`
   holds the family staging map (package → source directory → file set,
   verbatim from today's `check.sh` lists) and materializes a registry
   directory; every family `check.sh` sources it instead of carrying its
@@ -83,7 +87,7 @@ command instead of an afternoon.
   target named per dep, add `--target <t>`, and retire the CHECK.md
   note. (Found-not-fixed: T4.3's c-target-only resolution.)
 - **T82.2** — `scripts/stage-registry.sh`: the family staging map in one
-  place; repoint the six `check.sh` staging blocks at it; verify each
+  place; repoint the eight `check.sh` staging blocks at it; verify each
   gate's staged file set is byte-identical to what it staged before
   (the digests must not move).
 - **T82.3** — `just lock-refresh`: the tree walk, per-directory results,
@@ -104,5 +108,5 @@ standard-library package's source, run `just lock-refresh`, and every
 lock in the tree — the 69 bundled-library pins, the 42 family pins
 through the staged registry, and the 6 `riscv64`-only pins — re-pins to
 a fresh digest with one command, no hand-built registries, no offline
-digest arithmetic. `dune runtest` green with T82.4's tests; the six
+digest arithmetic. `dune runtest` green with T82.4's tests; the eight
 family gates still pass with the shared staging script feeding them.

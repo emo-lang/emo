@@ -19,6 +19,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
+STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
 
 case $(uname -s) in
   Darwin) ;;
@@ -76,11 +77,7 @@ sum=$(cat "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" | cksum | awk '{print $
 csum=$(cat "$UP/corpus/package.emo" "$UP/corpus/main.emo" | cksum | awk '{print $1}')
 msum=$(cat package.emo ui_macos.emo box.emo shim.m | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum-$csum-$msum
-mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_corpus/0.1.0" \
-  "$REG/emo/ui_macos/0.1.0"
-cp "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" "$REG/emo/ui/0.1.0/"
-cp "$UP/corpus/package.emo" "$UP/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
-cp package.emo ui_macos.emo box.emo shim.m "$REG/emo/ui_macos/0.1.0/"
+"$STAGE" "$REG"
 
 # --- the box model type-checks, and its test runs ------------------------
 #

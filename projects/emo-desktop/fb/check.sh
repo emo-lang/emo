@@ -25,6 +25,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
+STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
 
 UI=$(cd ../../emo-ui && pwd)
 SYSCALL_SRC="$PWD/../../../stdlib/registry/syscall/0.1.0"
@@ -88,22 +89,7 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo p
   "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" \
   "$UI/corpus/package.emo" "$UI/corpus/main.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
-mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_fb/0.1.0" \
-  "$REG/emo/ui_fb_canvas/0.1.0" "$REG/emo/ui_fb_frame/0.1.0" "$REG/emo/ui_fb_win/0.1.0" \
-  "$REG/emo/ui_corpus/0.1.0" "$REG/emo_desktop/0.1.0" "$REG/emo/ui_apps/0.1.0" \
-  "$REG/emo/ui_fb_winbuf/0.1.0" "$REG/syscall/0.1.0"
-cp "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo ui_fb.emo pointer.emo raster.emo face_inter.emo face_mono.emo \
-  "$REG/emo/ui_fb/0.1.0/"
-cp canvas/package.emo canvas/ui_fb_canvas.emo "$REG/emo/ui_fb_canvas/0.1.0/"
-cp frame/package.emo frame/ui_fb_frame.emo frame/counter.emo "$REG/emo/ui_fb_frame/0.1.0/"
-cp desktop/package.emo desktop/emo_desktop.emo "$REG/emo_desktop/0.1.0/"
-cp "$UI/corpus/package.emo" "$UI/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
-cp win/package.emo win/ui_fb_win.emo "$REG/emo/ui_fb_win/0.1.0/"
-cp apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
-  "$REG/emo/ui_apps/0.1.0/"
-cp winbuf/package.emo winbuf/ui_fb_winbuf.emo "$REG/emo/ui_fb_winbuf/0.1.0/"
-cp "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" "$REG/syscall/0.1.0/"
+"$STAGE" "$REG"
 
 # --- the type's tables are its grid -------------------------------------
 #

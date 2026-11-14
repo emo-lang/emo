@@ -17,6 +17,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
+STAGE=$(cd "$(dirname "$0")/../.." && pwd)/scripts/stage-registry.sh
 
 mkdir -p .emo-build/check
 OUT=$PWD/.emo-build/check
@@ -136,34 +137,7 @@ sum=$(cat rocksdb/package.emo rocksdb/rocksdb.emo rocksdb/internal/*.emo \
   ../../stdlib/registry/postgres/0.1.0/emo_postgres_shim.c |
   cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
-mkdir -p "$REG/emo/rocksdb/0.1.0/internal" "$REG/emo/record/0.1.0/internal" \
-  "$REG/emo/engine/0.1.0" "$REG/emo/wire/0.1.0" "$REG/sql/0.1.0" \
-  "$REG/float/0.1.0/internal" "$REG/net/0.1.0" "$REG/os/0.1.0" \
-  "$REG/file/0.1.0" "$REG/postgres/0.1.0/internal"
-cp rocksdb/package.emo rocksdb/rocksdb.emo "$REG/emo/rocksdb/0.1.0/"
-cp rocksdb/internal/*.emo "$REG/emo/rocksdb/0.1.0/internal/"
-cp rocksdb/emo_rocksdb_shim.c "$REG/emo/rocksdb/0.1.0/"
-cp record/package.emo record/record.emo "$REG/emo/record/0.1.0/"
-cp record/internal/*.emo "$REG/emo/record/0.1.0/internal/"
-cp engine/package.emo engine/*.emo "$REG/emo/engine/0.1.0/"
-cp wire/package.emo wire/*.emo "$REG/emo/wire/0.1.0/"
-cp ../../stdlib/registry/sql/0.1.0/package.emo \
-  ../../stdlib/registry/sql/0.1.0/sql.emo "$REG/sql/0.1.0/"
-cp ../../stdlib/registry/float/0.1.0/package.emo \
-  ../../stdlib/registry/float/0.1.0/float.emo "$REG/float/0.1.0/"
-cp ../../stdlib/registry/float/0.1.0/internal/*.emo "$REG/float/0.1.0/internal/"
-cp ../../stdlib/registry/net/0.1.0/package.emo \
-  ../../stdlib/registry/net/0.1.0/net.emo "$REG/net/0.1.0/"
-cp ../../stdlib/registry/os/0.1.0/package.emo \
-  ../../stdlib/registry/os/0.1.0/os.emo "$REG/os/0.1.0/"
-cp ../../stdlib/registry/file/0.1.0/package.emo \
-  ../../stdlib/registry/file/0.1.0/file.emo "$REG/file/0.1.0/"
-cp ../../stdlib/registry/postgres/0.1.0/package.emo \
-  ../../stdlib/registry/postgres/0.1.0/postgres.emo "$REG/postgres/0.1.0/"
-cp ../../stdlib/registry/postgres/0.1.0/internal/*.emo \
-  "$REG/postgres/0.1.0/internal/"
-cp ../../stdlib/registry/postgres/0.1.0/emo_postgres_shim.c \
-  "$REG/postgres/0.1.0/"
+"$STAGE" "$REG"
 
 ( cd record && EMO_REGISTRY="$REG" "$EMO" check record.emo ) \
   >"$OUT/record.log" 2>&1 && rc=0 || rc=$?

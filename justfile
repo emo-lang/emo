@@ -180,5 +180,44 @@ test-verbose:
 
 alias tv := test-verbose
 
+# Re-pin every stale package.lock in the tree — the one command to run
+# after a package's sources change. Each tracked lock's directory
+# resolves in place through `emo deps resolve`; the family packages the
+# bundled library cannot serve (emo/ui*, the fb tree, emo-db's,
+# syscall) stage through scripts/stage-registry.sh into a registry
+# under .emo-build, because EMO_REGISTRY replaces the bundled library.
+# REGISTRY=<dir> resolves everything against one staged registry
+# instead of letting the recipe stage one for you.
+#
+# lock-refresh: re-pin every stale lock in the tree (REGISTRY=<dir> optional)
+lock-refresh REGISTRY="":
+    #!/bin/sh
+    set -e
+    ROOT={{justfile_directory()}}
+    EMO="$ROOT/_build/default/src/emo_cli/emo.exe"
+    [ -x "$EMO" ] || { echo "build the CLI first: just build" >&2; exit 64; }
+    # The bundled library the resolver reads is compiled into this
+    # binary — a package source edited since the last build would
+    # refresh nothing, so rebuild first.
+    (cd "$ROOT" && dune build src/emo_cli/emo.exe)
+    REG={{REGISTRY}}
+    if [ -z "$REG" ]; then
+      REG="$ROOT/.emo-build/lock-refresh-registry"
+      "$ROOT/scripts/stage-registry.sh" "$REG"
+    fi
+    export EMO_REGISTRY="$REG"
+    status=0
+    for lock in $(git -C "$ROOT" ls-files '*package.lock'); do
+      dir="$ROOT/$(dirname "$lock")"
+      if (cd "$dir" && "$EMO" deps resolve >/dev/null 2>&1); then
+        echo "ok   $lock"
+      else
+        echo "FAIL $lock" >&2
+        (cd "$dir" && "$EMO" deps resolve >/dev/null) | head -4 >&2 || true
+        status=1
+      fi
+    done
+    exit $status
+
 push:
     git push origin && git push atom

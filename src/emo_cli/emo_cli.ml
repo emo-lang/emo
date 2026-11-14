@@ -1680,7 +1680,7 @@ let write_lock ~(dir : string) (entries : Emo_pkg.Lockfile.entry list) : unit =
         e.Emo_pkg.Lockfile.checksum)
     entries
 
-let deps_resolve ~(name : string option) : int =
+let deps_resolve ~(name : string option) ~(target : string option) : int =
   let dir = Sys.getcwd () in
   let color = Unix.isatty Unix.stderr in
   try
@@ -1691,8 +1691,56 @@ let deps_resolve ~(name : string option) : int =
           prerr_endline (Printf.sprintf "`%s` is not in the manifest's deps" n);
           exit 65)
     | None -> ());
+    let resolve_one t =
+      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:t
+    in
     let entries =
-      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"c"
+      match target with
+      | Some t -> resolve_one t
+      | None -> (
+          (* A lock's checksum hashes package content, not a target — so
+             the one lock must hold for every target the package
+             declares. Solve once per declared target and refuse when
+             any of them cannot build a dep (its error names the pair)
+             or when two targets disagree on the answer. *)
+          match manifest.Emo_pkg.targets with
+          | [] ->
+              prerr_endline
+                "the package block declares no targets — nothing to \
+                 resolve against";
+              exit 65
+          | first :: rest ->
+              let base = resolve_one first in
+              List.iter
+                (fun t ->
+                  let again = resolve_one t in
+                  if again <> base then begin
+                    let differs other =
+                      match
+                        List.find_opt
+                          (fun e -> not (List.mem e other))
+                          base
+                      with
+                      | Some e -> e.Emo_pkg.Lockfile.dep
+                      | None -> (
+                          match
+                            List.find_opt
+                              (fun e -> not (List.mem e base))
+                              other
+                          with
+                          | Some e -> e.Emo_pkg.Lockfile.dep
+                          | None -> "the resolution")
+                    in
+                    prerr_endline
+                      (Printf.sprintf
+                         "%s resolves differently under `%s` than under \
+                          `%s` — the one lock must hold for every target \
+                          the package declares"
+                         (differs again) first t);
+                    exit 65
+                  end)
+                rest;
+              base)
     in
     write_lock ~dir entries;
     Cmd.Exit.ok
@@ -1720,15 +1768,24 @@ let deps_list () : int =
       66
 
 let deps_resolve_cmd =
+  let target =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "target" ] ~docv:"TARGET"
+        ~doc:
+          "resolve for this one target alone, instead of every target \
+           the package declares")
+  in
   Cmd.v
     (Cmd.info "resolve" ~doc:"Resolve the manifest and write package.lock.")
-    Term.(const (fun () -> deps_resolve ~name:None) $ const ())
+    Term.(const (fun t -> deps_resolve ~name:None ~target:t) $ target)
 
 let deps_update_cmd =
   let name = Arg.(required & pos 0 (some string) None & info [] ~docv:"NAME") in
   Cmd.v
     (Cmd.info "update" ~doc:"Regenerate package.lock after changing a pin.")
-    Term.(const (fun n -> deps_resolve ~name:(Some n)) $ name)
+    Term.(const (fun n -> deps_resolve ~name:(Some n) ~target:None) $ name)
 
 (* Inserts `"name" = "version"` into the manifest's deps block, leaving
    the rest of the file byte-for-byte: after the `deps {` opener when the

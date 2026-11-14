@@ -21,6 +21,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
+STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
 
 UP=$(cd .. && pwd)
 RUNNER=$UP/wasm-runner.mjs
@@ -60,12 +61,7 @@ csum=$(cat package.emo main.emo | cksum | awk '{print $1}')
 ssum=$(cat "$UP/ssr/package.emo" "$UP/ssr/ui_ssr.emo" | cksum | awk '{print $1}')
 tsum=$(cat "$UP/tui/package.emo" "$UP/tui/ui_tui.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum-$csum-$ssum-$tsum
-mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_corpus/0.1.0" \
-  "$REG/emo/ui_ssr/0.1.0" "$REG/emo/ui_tui/0.1.0"
-cp "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo main.emo "$REG/emo/ui_corpus/0.1.0/"
-cp "$UP/ssr/package.emo" "$UP/ssr/ui_ssr.emo" "$REG/emo/ui_ssr/0.1.0/"
-cp "$UP/tui/package.emo" "$UP/tui/ui_tui.emo" "$REG/emo/ui_tui/0.1.0/"
+"$STAGE" "$REG"
 
 # --- the corpus application type-checks ---------------------------------
 #

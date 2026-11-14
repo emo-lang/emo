@@ -14,6 +14,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
+STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
 
 UP=$(cd .. && pwd)
 RUNNER=$UP/wasm-runner.mjs
@@ -48,9 +49,7 @@ build() {
 sum=$(cat "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" | cksum | awk '{print $1}')
 ssum=$(cat package.emo ui_ssr.emo | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum-$ssum
-mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_ssr/0.1.0"
-cp "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" "$REG/emo/ui/0.1.0/"
-cp package.emo ui_ssr.emo "$REG/emo/ui_ssr/0.1.0/"
+"$STAGE" "$REG"
 
 # --- the package type-checks, and its test runs -------------------------
 #

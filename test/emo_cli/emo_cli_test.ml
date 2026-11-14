@@ -4338,7 +4338,7 @@ main()
                    in_dir dir (fun () ->
                        Alcotest.(check int)
                          "resolve exits 0" 0
-                         (Emo_cli.deps_resolve ~name:None);
+                         (Emo_cli.deps_resolve ~name:None ~target:None);
                        let lock = read_file "package.lock" in
                        Alcotest.(check string)
                          "the lockfile pins the digest"
@@ -4381,7 +4381,84 @@ main()
                    in_dir dir (fun () ->
                        Alcotest.(check int)
                          "resolve exits 65" 65
-                         (Emo_cli.deps_resolve ~name:None))))));
+                         (Emo_cli.deps_resolve ~name:None ~target:None))))));
+  ]
+
+(* ---- resolve: one lock for every target the package declares ----
+   (step 82, T82.4) A lock's checksum hashes package content, not a
+   target, so the unflagged resolve solves the manifest once per
+   declared target and refuses when any target cannot build a dep —
+   the standing c-target-only gap, retired here. `--target` narrows to
+   one target. The scratch projects pin the bundled standard library's
+   own packages: `base64` builds on all five targets, `syscall` admits
+   `riscv64` alone. *)
+
+let resolve_targets_tests =
+  let project ?(targets = ["ocaml"]) ?(target_override : string option) dep =
+    let dir = Filename.concat scratch (unique "resolve-targets") in
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+    let oc = open_out_bin (Filename.concat dir "package.emo") in
+    output_string oc
+      (Printf.sprintf
+         {|package {
+  name = "local/scratch"
+  version = "0.1.0"
+  targets = [%s]
+
+  deps {
+    %s = "0.1.0"
+  }
+}
+|}
+         (String.concat ", " (List.map (fun t -> "\"" ^ t ^ "\"") targets))
+         dep);
+    close_out oc;
+    in_dir dir (fun () ->
+        match target_override with
+        | Some t -> Emo_cli.deps_resolve ~name:None ~target:(Some t)
+        | None -> Emo_cli.deps_resolve ~name:None ~target:None)
+  in
+  [
+    tc "a dep every declared target can build resolves" (fun () ->
+        Alcotest.(check int) "resolve exits 0" 0
+          (project ~targets:["ocaml"; "c"] "base64"));
+    tc "a dep any declared target cannot build refuses, naming the target"
+      (fun () ->
+        Alcotest.(check int) "resolve exits 65" 65
+          (project ~targets:["ocaml"; "c"] "syscall"));
+    tc "a riscv64-only project resolves its riscv64-only dep" (fun () ->
+        Alcotest.(check int) "resolve exits 0" 0
+          (project ~targets:["riscv64"] "syscall"));
+    tc "the same lock a second resolve produces is the one on disk"
+      (fun () ->
+        let dir =
+          Filename.concat scratch (unique "resolve-idempotent")
+        in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+        let oc = open_out_bin (Filename.concat dir "package.emo") in
+        output_string oc
+          {|package {
+  name = "local/scratch"
+  version = "0.1.0"
+  targets = ["riscv64"]
+
+  deps {
+    "syscall" = "0.1.0"
+  }
+}
+|};
+        close_out oc;
+        let lock = Filename.concat dir "package.lock" in
+        in_dir dir (fun () ->
+            ignore (Emo_cli.deps_resolve ~name:None ~target:None));
+        let first = read_file lock in
+        in_dir dir (fun () ->
+            ignore (Emo_cli.deps_resolve ~name:None ~target:None));
+        Alcotest.(check string) "the second resolve changed nothing" first
+          (read_file lock));
+    tc "--target resolves for the one target alone" (fun () ->
+        Alcotest.(check int) "resolve exits 0" 0
+          (project ~targets:["ocaml"] ~target_override:"c" "base64"));
   ]
 
 (* ---- --locked: the recorded resolution is a prerequisite ---- *)
@@ -6530,6 +6607,7 @@ let () =
       ("publish", publish_tests);
       ("login", login_tests);
       ("http_pull", http_pull_tests);
+      ("resolve_targets", resolve_targets_tests);
       ("locked", locked_tests);
       ("deps_add", deps_add_tests);
       ("new", new_tests);

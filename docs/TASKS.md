@@ -4779,29 +4779,42 @@ and beam lists; docs EN+zh.
 **Prereq:** none. **Done when:** `emo deps resolve` resolves a project
 against its own declared targets (or an explicit `--target`), honoring
 `EMO_REGISTRY` as every other command does; the family staging lists
-live in `scripts/stage-registry.sh` and the six gates consume it;
+live in `scripts/stage-registry.sh` and the eight gates consume it;
 `just lock-refresh` re-pins every stale lock in the tree with one
 command; CHECK.md's c-target-only note is retired. (Plan:
 `plan/step-82-deps-resolve.md`.)
 
-- [ ] **T82.1** — Resolve against the project's targets: drop the
+- [x] **T82.1** — Resolve against the project's targets: drop the
       `~target:"c"` hardcode in the resolve handler, solve once per
       declared target, refuse per dep with the target named, add
       `--target <t>`, and retire CHECK.md's c-target-only note — the
-      standing found-not-fixed from T4.3.
-- [ ] **T82.2** — `scripts/stage-registry.sh`: the family staging map
-      (package → source directory → file set) in one place; the six
+      standing found-not-fixed from T4.3. (Done 2026-11-14: a
+      `riscv64`-only project resolving its `syscall` pin — refused
+      E5007 the day before — now resolves; a `c`-target project
+      pinning `syscall` refuses naming the target.)
+- [x] **T82.2** — `scripts/stage-registry.sh`: the family staging map
+      (package → source directory → file set) in one place; the eight
       `check.sh` staging blocks consume it; each gate's staged file set
-      stays byte-identical to what it staged before, so no digest moves.
-- [ ] **T82.3** — `just lock-refresh`: walk every tracked
+      stays byte-identical to what it staged before, so no digest
+      moves. (Done 2026-11-14: the tui gate's lock byte-identical
+      through a full gate run; the tree-wide refresh changed no lock.)
+- [x] **T82.3** — `just lock-refresh`: walk every tracked
       `package.lock`'s directory, resolve in place, report
       per-directory results, pass `REGISTRY=<dir>` through for the
       family projects; the after-a-package-source-change workflow
-      documented beside the recipe.
-- [ ] **T82.4** — Tests: a manifest declaring multiple targets resolves
+      documented beside the recipe. (Done 2026-11-14: 118 locks, all
+      ok, zero diffs; the recipe rebuilds the CLI first — the bundled
+      library the resolver reads is compiled into the binary, so a
+      source edited since the last build would refresh nothing.)
+- [x] **T82.4** — Tests: a manifest declaring multiple targets resolves
       only when every target qualifies; `riscv64`-only deps resolve in
       a `riscv64`-only project; stale detection re-pins idempotently
-      (a second resolve changes nothing).
-- [ ] **T82.5** — Docs: `docs/toolchain.md`'s dependencies section (and
-      the zh-CN mirror) states the targets rule, the registry chain,
-      and the refresh workflow; CHECK.md's retired note points here.
+      (a second resolve changes nothing). (Done 2026-11-14: five cases
+      in `test/emo_cli`'s `resolve_targets` group, compiled into the
+      suite; the full `dune runtest` waits for a requested run, per the
+      auto-test rule — the same behaviors verified by hand through the
+      CLI.)
+- [x] **T82.5** — Docs: the dependencies workflow states the targets
+      rule, the registry chain, and the refresh workflow (EN + zh-CN
+      mirror, in `docs/intro/package-management.md` — `toolchain.md`
+      carries no deps section); CHECK.md's retired note points here.
