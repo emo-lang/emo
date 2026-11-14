@@ -1232,9 +1232,9 @@ target 上逐字节不变(`CHECK.md`)。
 之间展开,所以每个 target 构造上继承,宏 def 在展开后擦除,拼接的
 代码随模块一起检查。运行期 `eval`、开类与 `method_missing` 作为
 语言机制被永久拒绝(`CHECK.md` 记录决策与被拒的备选);
-`design/macros.md` 是工作设计。
+`docs/macros.md` 是工作设计。
 
-### 步骤 58 — 编译期宏 · `design/macros.md`
+### 步骤 58 — 编译期宏 · `docs/macros.md`
 
 **前置:** Step 9(checker)、21(eval 的内建)。**完成标准:**
 `examples/trace_demo` 在每个 target 上逐字节运行;`// #macro` /
@@ -1274,9 +1274,9 @@ E3030、E4300–E4310)对每种错误拼法响亮拒绝;`dune runtest` 绿。
       调用由被包装声明自己的参数树构造,不会漂移;生成的包装随
       模块一起检查,参数个数不对的包装死在那里。设计决策与被拒
       备选(运行期 eval、`by` 关键字、作为独立机制的值 decorator)
-      在 `design/macros.md`。
+      在 `docs/macros.md`。
 
-### 步骤 59 — 带实参的宏应用与 quote 面 · `design/macros.md`
+### 步骤 59 — 带实参的宏应用与 quote 面 · `docs/macros.md`
 
 **前置:** Step 58(指令层、展开管线、编译期 profile)。**完成
 标准:** `examples/memoize_demo` 在解释器与 c、TypeScript 二进制上
@@ -1314,7 +1314,7 @@ E3030、E4300–E4310)对每种错误拼法响亮拒绝;`dune runtest` 绿。
       计算、表到上限后丢弃、被逐出的实参重新计算——解释器、
       c 二进制、TypeScript 输出三者逐字节一致。
 
-### 步骤 60 — 类上的 `@derive` · `design/macros.md`
+### 步骤 60 — 类上的 `@derive` · `docs/macros.md`
 
 **前置:** Step 59(应用实参、quote 面)。**完成标准:**
 `examples/derive_eq_demo` 在解释器与 c、TypeScript 二进制上逐字节
@@ -1347,7 +1347,7 @@ E3030、E4300–E4310)对每种错误拼法响亮拒绝;`dune runtest` 绿。
       `eq?` 方法(`self` 对 `other`,`&&` 链接,无字段类派生出
       常量 `true`);解释器、c 二进制、TypeScript 输出逐字节一致。
 
-### 步骤 61 — 跨模块宏 · `design/macros.md`
+### 步骤 61 — 跨模块宏 · `docs/macros.md`
 
 **前置:** Step 60(类的座位、宏域门)。**完成标准:**
 `examples/derive_shared` 在解释器与 c、TypeScript 二进制上逐字节

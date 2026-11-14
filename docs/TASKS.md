@@ -3497,9 +3497,9 @@ target inherits by construction, the macro defs erased after expansion,
 and the spliced code checked with the module. Runtime `eval`, open
 classes, and `method_missing` are rejected permanently as a language
 mechanism (`CHECK.md` holds the decision and the rejected
-alternatives); `design/macros.md` is the working design.
+alternatives); `docs/macros.md` is the working design.
 
-### Step 58 — Compile-time macros · `design/macros.md`
+### Step 58 — Compile-time macros · `docs/macros.md`
 
 **Prereq:** Steps 9 (the checker), 21 (the eval's builtins). **Done
 when:** `examples/trace_demo` runs byte-for-byte on every target;
@@ -3554,9 +3554,9 @@ loudly; `dune runtest` green.
       checked with the module, which is where a wrong-arity wrapper
       dies. Design decisions and the rejected alternatives (runtime
       eval, the `by` keyword, value decorators as a separate mechanism)
-      live in `design/macros.md`.
+      live in `docs/macros.md`.
 
-### Step 59 — Macro applications with arguments, and the quote surface · `design/macros.md`
+### Step 59 — Macro applications with arguments, and the quote surface · `docs/macros.md`
 
 **Prereq:** Step 58 (the directive layer, the expansion pipeline, the
 compile-time profile). **Done when:** `examples/memoize_demo` runs
@@ -3605,7 +3605,7 @@ body out as ordinary code with `${...}` holes; the refusal paths
       byte-identical across the interpreter, the c binary, and the
       TypeScript output.
 
-### Step 60 — `@derive` on classes · `design/macros.md`
+### Step 60 — `@derive` on classes · `docs/macros.md`
 
 **Prereq:** Step 59 (application arguments, the quote surface). **Done
 when:** `examples/derive_eq_demo` runs byte-for-byte on the interpreter
@@ -3648,7 +3648,7 @@ green.
       byte-identical across the interpreter, the c binary, and the
       TypeScript output.
 
-### Step 61 — Cross-module macros · `design/macros.md`
+### Step 61 — Cross-module macros · `docs/macros.md`
 
 **Prereq:** Step 60 (the class seat, the macro-domain gate). **Done
 when:** `examples/derive_shared` runs byte-for-byte on the interpreter

@@ -163,7 +163,7 @@ let test_syntax_member_completion () =
   (* `Syntax` is the checker's reserved compile-time type, no
      declaration any index carries — member completion after `Syntax.`
      answers from the completion module's own table, the surface
-     design/macros.md documents and the evaluator implements. *)
+     docs/macros.md documents and the evaluator implements. *)
   let labels =
     List.map
       (fun (i : Lsp_completion.item) -> i.Lsp_completion.label)

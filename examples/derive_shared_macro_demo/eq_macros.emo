@@ -1,4 +1,4 @@
-// The macro library module (design/macros.md, step 61): the `#macro` defs
+// The macro library module (docs/macros.md, step 61): the `#macro` defs
 // here have no runtime presence — they run inside the compiler of
 // whichever module applies them — and `main.emo` reaches them with the
 // qualified spelling `@eq_macros.derive_eq`, the same path shape a value

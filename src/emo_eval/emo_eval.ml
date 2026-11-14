@@ -569,7 +569,7 @@ let count_step () =
   | Some budget when !step_count >= budget -> raise (Budget_exceeded budget)
   | _ -> step_count := !step_count + 1
 
-(* The compile-time macro profile (design/macros.md): while a macro body
+(* The compile-time macro profile (docs/macros.md): while a macro body
    runs, every host-touching builtin refuses and the output hook is
    poisoned — a macro is deterministic by construction, with no effect
    system needed to say so. *)
@@ -1817,7 +1817,7 @@ and eval_method env span recv mname arg_exprs =
               let frame = bind_params closure span args in
               eval_frame closure frame span
           | BuiltinFn _ as fn ->
-              (* a builtin member (the Syntax namespace, design/macros.md):
+              (* a builtin member (the Syntax namespace, docs/macros.md):
                  applies like any builtin call *)
               let args = eval_args_named () in
               apply fn span args
@@ -3036,7 +3036,7 @@ and printf_render span (fmt : string) (items : value array) : string =
     parts;
   Buffer.contents buf
 
-(* ---- quote substitution (design/macros.md) ----
+(* ---- quote substitution (docs/macros.md) ----
 
    The template carries placeholder identifiers where `${expr}` holes
    stood; substitution replaces each with the hole's tree. Holes splice
@@ -3314,7 +3314,7 @@ and apply_builtin span name args =
         error span "E3007"
           (Printf.sprintf "`expect_fail` expects 1 argument, got %d"
              (List.length vs))
-    (* ---- the Syntax API (design/macros.md): the macro model's
+    (* ---- the Syntax API (docs/macros.md): the macro model's
      compile-time surface. Readers take a declaration tree apart;
      constructors build trees for the splice. The `Syntax` group binds
      only inside a running macro body. ---- *)
@@ -3576,7 +3576,7 @@ and apply_builtin span name args =
         SyntaxTree (Sx_expr { Ast.span = gen_span span; desc = Ast.Float f })
     | "syntax_lit_float", [ _ ] ->
         error span "E3001" "`Syntax.lit_float` expects a Float64"
-    (* ---- the class surface (design/macros.md, step 3): the derive
+    (* ---- the class surface (docs/macros.md, step 3): the derive
        reader and the constructors a derivation builds from ---- *)
     | ( "syntax_fields",
         [ SyntaxTree (Sx_item { Ast.item_desc = Ast.Item_class c; _ }) ] ) ->
@@ -4863,7 +4863,7 @@ let eval_item ?(module_path = []) env item =
       define env f.Ast.foreign_name ~mutable_:false
         (ForeignFn f.Ast.foreign_name)
 
-(* ---- Compile-time macros (design/macros.md) ----
+(* ---- Compile-time macros (docs/macros.md) ----
 
    A `// #macro` def runs during compilation: it receives the decorated
    declaration as a syntax tree and returns replacement trees, which are
@@ -5111,7 +5111,7 @@ let is_macro_def (item : Ast.item) : bool =
    precheck callback type-checks the original items first: a macro body
    that does not typecheck is rejected before it ever executes. *)
 (* [extra_macros] carries the program's cross-module macro table
-   (design/macros.md, step 61): (dotted module path, macro name) → the
+   (docs/macros.md, step 61): (dotted module path, macro name) → the
    macro's def, collected by the project layer from a raw scan. A
    qualified application `@mod.macro` — or `@a.b.macro`, any path depth —
    resolves against it; a bare `@macro` resolves in the module that

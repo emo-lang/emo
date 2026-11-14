@@ -1,6 +1,6 @@
 # Macros
 
-Emo's metaprogramming mechanism is the compile-time macro: an ordinary `def` marked `// #macro` that runs during compilation, receives the decorated declaration as a syntax tree, and returns replacement trees which are spliced into the program and then checked like any other code. Applications are written `// @name` above the declaration being transformed. The working design, including the rejected alternatives and the later steps, lives in [`design/macros.md`](../../design/macros.md); a task-oriented walkthrough — the directives, the `Syntax` API, the quote surface, worked recipes, and the error table — is the [macro guide](../macro-guide.md).
+Emo's metaprogramming mechanism is the compile-time macro: an ordinary `def` marked `// #macro` that runs during compilation, receives the decorated declaration as a syntax tree, and returns replacement trees which are spliced into the program and then checked like any other code. Applications are written `// @name` above the declaration being transformed. The working design, including the rejected alternatives and the later steps, lives in [`docs/macros.md`](../macros.md); a task-oriented walkthrough — the directives, the `Syntax` API, the quote surface, worked recipes, and the error table — is the [macro guide](../macro-guide.md).
 
 ## The two directive namespaces
 

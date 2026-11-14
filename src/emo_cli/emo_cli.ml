@@ -3148,7 +3148,7 @@ let emoji_login_cmd =
           | code -> exit code)
       $ registry $ expires_in_days)
 
-(* `emo dump`: the declaration surface after expansion (design/macros.md,
+(* `emo dump`: the declaration surface after expansion (docs/macros.md,
    step 60's visibility). Macros are compile-time equipment — the program
    a target compiles is the expanded one, and this prints it: each
    declaration's signature in source-like form, with `--raw` showing the

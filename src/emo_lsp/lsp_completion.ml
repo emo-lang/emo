@@ -129,7 +129,7 @@ let symbol_item (s : Ix.symbol) : item =
 
 (* The compile-time surface of `Syntax` — the readers, constructors, and
    statement wrappers a macro body builds its splice from, the same list
-   design/macros.md documents and the evaluator implements. `Syntax` is
+   docs/macros.md documents and the evaluator implements. `Syntax` is
    the checker's reserved type, not a declaration any index carries, so
    member completion after `Syntax.` answers from this table. *)
 let syntax_member_items : item list =
@@ -205,7 +205,7 @@ let syntax_hover_at (text : string) (offset : int) : string option =
            "```emo\n\
             Syntax\n\
             ```\n\n\
-            %s — the compile-time macro surface (design/macros.md)"
+            %s — the compile-time macro surface (docs/macros.md)"
            syntax_type_detail)
     else if
       word_start >= 7
@@ -221,7 +221,7 @@ let syntax_hover_at (text : string) (offset : int) : string option =
                "```emo\n\
                 Syntax.%s\n\
                 ```\n\n\
-                the compile-time macro surface (design/macros.md)"
+                the compile-time macro surface (docs/macros.md)"
                detail)
     else None
 

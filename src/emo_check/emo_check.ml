@@ -33,7 +33,7 @@ type t =
       t (* ArrayBuilder's element type; Unknown until a push pins it *)
   | FuncType of (string * t) list * t
   | SyntaxType
-(* the compile-time macro currency (design/macros.md): legal only in
+(* the compile-time macro currency (docs/macros.md): legal only in
          a `// #macro` def's signature and body *)
 
 let rec to_string = function
@@ -539,7 +539,7 @@ let collect ctx (items : Ast.item list) : unit =
               item.Ast.directives
           in
           if is_macro then begin
-            (* The macro shape (design/macros.md): zero or more leading
+            (* The macro shape (docs/macros.md): zero or more leading
                compile-time scalar parameters, exactly one trailing `Syntax`
                parameter (the decorated tree), and a `Syntax` result. *)
             let syntax_type = function
@@ -935,7 +935,7 @@ let empty_env =
         ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
         ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
-        (* The macro namespace (design/macros.md): the member calls check
+        (* The macro namespace (docs/macros.md): the member calls check
            as Unknown like every builtin's do; the E4301 hook on `Ident`
            confines references to the compile-time window. *)
         ("Syntax", { vtype = Unknown; is_var = false; depth = 0 });
@@ -4465,7 +4465,7 @@ let check_module ~(modules : string list list)
   in
   (diagnostics, refs, requires)
 
-(* The expansion-time gate (design/macros.md): before a macro body ever
+(* The expansion-time gate (docs/macros.md): before a macro body ever
    runs, the macro domain checks — the `#macro` defs' shape and bodies
    (quote holes included), and every application's compile-time arguments
    against the macro's declared leading parameters. The *rest* of the

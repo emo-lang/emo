@@ -1,4 +1,4 @@
-// The cross-module macro demo (design/macros.md, step 61): `derive_eq`
+// The cross-module macro demo (docs/macros.md, step 61): `derive_eq`
 // lives in the sibling module `eq_macros.emo` and is applied here with
 // the qualified spelling — `// @eq_macros.derive_eq` — resolving through
 // the program's macro table the way a value reference resolves through

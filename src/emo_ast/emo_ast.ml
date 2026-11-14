@@ -27,7 +27,7 @@ and expr_desc =
   | If_expr of { cond : expr; then_expr : expr; else_expr : expr }
   | Do of expr (* do <call> — the operand is always a Call node *)
   | Quote of quote
-(* quote { ... } — the macro author's template (design/macros.md):
+(* quote { ... } — the macro author's template (docs/macros.md):
          compiles only inside a macro body; the template's holes ride as
          placeholder identifiers and are substituted with the holes' syntax
          trees when the quote evaluates at expansion time *)

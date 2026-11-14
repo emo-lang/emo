@@ -46,7 +46,7 @@ type project = {
          re-lex/parse within a run *)
   mutable parses : int; (* number of actual lex/parse operations *)
   mutable macro_table : ((string list * string) * Ast.fun_def) list option;
-      (* the program's cross-module macro table (design/macros.md, step
+      (* the program's cross-module macro table (docs/macros.md, step
          61): a raw scan over every registered file's `#macro` defs, keyed
          by (module path, macro name). Built lazily on the first
          expansion — a raw parse, no expansion, so the scan itself cannot
@@ -234,7 +234,7 @@ let unit_path_of p (file : string) : string list =
   Hashtbl.iter (fun path f -> if String.equal f file then found := path) p.files;
   !found
 
-(* The program's cross-module macro table (design/macros.md, step 61):
+(* The program's cross-module macro table (docs/macros.md, step 61):
    one raw scan over every registered file, collecting each `// #macro`
    def under its (module path, macro name). Raw means no expansion — the
    scan itself must not recurse through parse_cached; files that fail to
@@ -285,7 +285,7 @@ let parse_cached p (file : string) : Ast.item list =
             raise (Static_errors diagnostics)
         | items, [] -> items
       in
-      (* Macro expansion (design/macros.md) rides the parse cache: every
+      (* Macro expansion (docs/macros.md) rides the parse cache: every
          consumer — check, the backends, the evaluator — sees the expanded
          declarations. The precheck is the original module's full check, so
          a macro body that does not typecheck is rejected before it ever

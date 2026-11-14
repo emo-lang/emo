@@ -223,7 +223,7 @@ let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
 
 (* Raised by the expansion gate: the diagnostics it carries are the
    answer — the same refusal a build stops on, with the full check never
-   running (design/macros.md: a macro body that does not typecheck is
+   running (docs/macros.md: a macro body that does not typecheck is
    rejected before it ever executes). *)
 exception Expansion_failed of Diagnostic.t list
 

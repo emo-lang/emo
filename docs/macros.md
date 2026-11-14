@@ -274,7 +274,7 @@ class's name. The supporting constructors: `Syntax.new_param`,
 is E2031, applications above any other item stay E2031, and the duplicate
 rules (E2032) apply to classes like defs.
 
-The pilot is [`examples/derive_eq_macro_demo`](../../examples/derive_eq_macro_demo/main.emo):
+The pilot is [`examples/derive_eq_macro_demo`](../examples/derive_eq_macro_demo/main.emo):
 `@derive_eq` generates an `eq?` method comparing every field pairwise —
 the generated equality cannot forget a field the class declares, which is
 the drift this mechanism exists to remove — byte-identical across the
@@ -321,7 +321,7 @@ without that macro refuses with E4300 naming the module. The self-
 contained constraint applies to macro bodies everywhere: the body runs
 with only its parameters, `Syntax`, and the builtins in scope.
 
-The pilot is [`examples/derive_shared_macro_demo`](../../examples/derive_shared_macro_demo/main.emo):
+The pilot is [`examples/derive_shared_macro_demo`](../examples/derive_shared_macro_demo/main.emo):
 `derive_eq` lives once in `eq_macros.emo`, two classes in `main.emo`
 apply it qualified, and the output is byte-identical across the
 interpreter, the c binary, and the TypeScript output — code written once

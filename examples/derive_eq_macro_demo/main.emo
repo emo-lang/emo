@@ -1,4 +1,4 @@
-// Step three of the macro ladder (design/macros.md): a macro applied to a
+// Step three of the macro ladder (docs/macros.md): a macro applied to a
 // class. `@derive_eq` reads the class's field list and appends one
 // generated method — `eq?` — comparing every field pairwise: `self` against
 // the `other` parameter, chained with `&&` (a fieldless class derives the

@@ -367,7 +367,7 @@ and parse_primary st =
       advance st |> ignore;
       node tok.Tok.span (Ast.Bool false)
   | Tok.Lower_ident "quote" -> (
-      (* `quote { ... }` — the macro template (design/macros.md). A
+      (* `quote { ... }` — the macro template (docs/macros.md). A
          contextual spelling in operand-start positions only: an
          assignment, an argument list, a binding, or after `return`/`do`/
          an arrow. Everywhere else — the standard library's JSON escaper,
@@ -548,7 +548,7 @@ and parse_registry_call st tok =
 
 (* The quote's hole placeholders are compiler-owned spellings no source
    name may borrow; the counter makes them unique across the compilation.
-   `quote { ... }` — the macro author's template (design/macros.md). The
+   `quote { ... }` — the macro author's template (docs/macros.md). The
    body parses as ordinary items over the quote's own token stream, so the
    tree carries the file's real spans; each `${expr}` hole parses in place
    and leaves a placeholder identifier standing in the stream, which the
@@ -1196,7 +1196,7 @@ and end_statement st =
         ~hint:"start a new statement on the next line"
 
 (* Directives: the reserved `// #`/`// @` comment namespace
-   (design/macros.md). Collected off the front of an item, validated for
+   (docs/macros.md). Collected off the front of an item, validated for
    placement, and attached to the parsed declaration. *)
 
 and directive_desc_of tok =
@@ -1318,7 +1318,7 @@ and validate_and_attach pending item =
         else ();
         dup_check ()
     | Ast.Item_class _ ->
-        (* the derive seat (design/macros.md, step 3): applications
+        (* the derive seat (docs/macros.md, step 3): applications
            transform the class; the role side stays def-only — a macro is
            a def *)
         if roles <> [] then

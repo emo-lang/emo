@@ -1,4 +1,4 @@
-// Step two of the macro ladder (design/macros.md): an application with a
+// Step two of the macro ladder (docs/macros.md): an application with a
 // compile-time argument, the quote surface, and generated runtime state.
 // `@memoize(2)` hands the literal `2` to the macro's leading `limit`
 // parameter — checked against the declared type at the application site

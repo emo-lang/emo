@@ -229,7 +229,7 @@ let lex ~file ~source =
         | '/' when char_at 1 = Some '/' -> (
             skipped := true;
             (* A comment whose first token is `#` or `@` is a directive —
-               the reserved namespace the compiler checks (design/macros.md).
+               the reserved namespace the compiler checks (docs/macros.md).
                Every other comment is prose and stays inert. *)
             let d_line, d_col, d_off = (!line, !col, !offset) in
             let rec spaces k =
@@ -449,7 +449,7 @@ let lex ~file ~source =
             frames := String_frame (here ()) :: !frames;
             bump ()
         | '$' when char_at 1 = Some '{' ->
-            (* The quote's hole opener (design/macros.md): `${` outside a
+            (* The quote's hole opener (docs/macros.md): `${` outside a
                string is the quote's splice marker, lexed as the same
                Interp_open the string form uses. No frame is pushed — the
                quote parser consumes the hole's closing brace itself. *)

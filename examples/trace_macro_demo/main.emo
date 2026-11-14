@@ -1,4 +1,4 @@
-// The macro model's proof chain (design/macros.md): a `// #macro` def runs
+// The macro model's proof chain (docs/macros.md): a `// #macro` def runs
 // during compilation, receives the decorated declaration as a syntax tree,
 // and returns replacement trees that are spliced in place and then checked
 // like any other code. `trace` wraps any single-arity-value def: the

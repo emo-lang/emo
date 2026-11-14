@@ -1,6 +1,6 @@
 # Macro guide
 
-A macro is an ordinary `def` that runs during **compilation**: it receives the decorated declaration as a syntax tree, returns replacement trees, and the compiler splices them in before checking — so everything a macro generates is real, checked Emo code, on every target. This guide shows how to write and apply one. The language-level rules live in [Macros](intro/macros.md); the design record and rejected alternatives in [`design/macros.md`](../design/macros.md).
+A macro is an ordinary `def` that runs during **compilation**: it receives the decorated declaration as a syntax tree, returns replacement trees, and the compiler splices them in before checking — so everything a macro generates is real, checked Emo code, on every target. This guide shows how to write and apply one. The language-level rules live in [Macros](intro/macros.md); the design record and rejected alternatives in [`docs/macros.md`](macros.md).
 
 ## The two directives
 
