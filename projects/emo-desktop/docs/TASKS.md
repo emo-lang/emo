@@ -48,6 +48,10 @@ tree's and EmoOS's, listed there.
 | M28 — the launcher's enumeration and the lock | A28.1–A28.3 | The launcher enumerates the disk's app packages behind its search, and the lock screen takes the session behind D19's hash file — no PAM anywhere. |
 | M29 — the audio ride-along (parked) | — | Volume, the OSD, and the media controls arrive with the audio OS track (the virtio-sound driver, the mixer service, the verb family); until it lands the three render nothing by D15's rule. |
 
+The polished effect's own ladder — the skin layer and the motion the
+rows above do not yet number — is written in
+[`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md).
+
 ## M7 — the screen (the desktop side)
 
 - [x] **A7.1** — The fb backend's hosted core: measure, place, clip,

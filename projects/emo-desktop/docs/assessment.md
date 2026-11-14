@@ -186,7 +186,11 @@ comes from when the product host is the metal. Ten records.
 The ladder this sets: notifications, the clock, workspaces, the
 launcher's enumeration and the lock — each its own milestone with
 the kernel half in EmoOS's tracker; the audio ride-along parked
-behind the audio track; the network nowhere on it.
+behind the audio track; the network nowhere on it. The skin layer —
+the polished effect's own ladder, the alpha compositing, the
+wallpaper's palette, the icons and the motion — is written
+separately: [`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md)
+carries it, milestone by milestone.
 
 ## The growth contract: what it takes to stay honest to a modern desktop
 

@@ -62,7 +62,7 @@ noctalia 一轮的第二组决策:当产品宿主是金属时,桌面的数据从
 - **D21——网络出局,不在本目标的范围内。** virtio-net 与 IP 栈是一整族 OS 里程碑,与桌面效果正交;网络模块保持缺席,只有那条轨道存在时才重议。
 - **D22——托盘退役。** EmoOS 没有第三方守护进程生态,不存在可托管的 StatusNotifierItem 对应物;dock 天生就是托盘。
 
-由此定下的阶梯:通知、时钟、workspace、launcher 枚举与锁——各占一个里程碑,内核半边在 EmoOS 的追踪器;audio 搭车件停在 audio 轨道之后;网络不在阶梯上。
+由此定下的阶梯:通知、时钟、workspace、launcher 枚举与锁——各占一个里程碑,内核半边在 EmoOS 的追踪器;audio 搭车件停在 audio 轨道之后;网络不在阶梯上。皮肤层——精致效果自己的阶梯,alpha 合成、壁纸取色、图标与动效——单独成文:[`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md) 逐里程碑载着它。
 
 ## 生长契约:长到现代桌面还诚实地保持架构,需要什么
 
