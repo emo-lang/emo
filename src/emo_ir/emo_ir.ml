@@ -516,13 +516,35 @@ and lower_call env span callee args =
     List.map (fun { Ast.arg_value; _ } -> lower_expr env arg_value) args
   in
   match callee.Ast.desc with
-  | Ast.Ident name when is_builtin name ->
-      { ety = type_of env span; desc = Builtin { name; args = lower_args () } }
-  | Ast.Ident name when is_runtime_impl name ->
-      {
-        ety = type_of env span;
-        desc = Runtime_impl { name; args = lower_args () };
-      }
+  | Ast.Ident name when is_builtin name || is_runtime_impl name -> (
+      (* The program's own names answer first: a def named `time_of` is
+         the program's def, not the time door its prefix matches (found
+         2026-11-14 — uuid_demo's helper lowered as a runtime door, and
+         the wasm build refused a door the program never asked for). The
+         doors sit below the program's symbols, the way the checker and
+         the interpreter resolve the same call. *)
+      match resolve_callee env callee with
+      | Some (mangled, params) when params = [] && args <> [] ->
+          (* A zero-param symbol called with arguments is a const
+             holding a callable — the same rule the general arm below
+             states. *)
+          {
+            ety = type_of env span;
+            desc =
+              Call_value { f = lower_expr env callee; args = lower_args () };
+          }
+      | Some (mangled, params) ->
+          {
+            ety = type_of env span;
+            desc = Call { func = mangled; args = order_args env params args };
+          }
+      | None when is_builtin name ->
+          { ety = type_of env span; desc = Builtin { name; args = lower_args () } }
+      | None ->
+          {
+            ety = type_of env span;
+            desc = Runtime_impl { name; args = lower_args () };
+          })
   | _ -> (
       match resolve_callee env callee with
       | Some (mangled, params) when params = [] && args <> [] ->
@@ -865,7 +887,7 @@ and collect_pattern_locals (p : Ast.pattern) env =
 
 (* A def lowers with its signature's types. *)
 and lower_func env ~(module_path : string list) ~(mangled : string)
-    ~(self : Emo_check.t option) (d : Ast.fun_def) : func =
+    ~(self : Emo_check.t option) ~(ctor : bool) (d : Ast.fun_def) : func =
   (* the receiver carries its class (T8.26): a method whose signature
      resolves can cross on the typed convention like any def — the
      Unknown it was hardwired to kept every method dynamic whatever its
@@ -897,7 +919,15 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
     | None -> Emo_check.Void
   in
   let fbody =
-    match fresult with Emo_check.Void -> void_tails fbody | _ -> fbody
+    match fresult with
+    (* A constructor's init is not the exit of the function that runs
+       it: the ctor factory must return the instance, so an exit-position
+       bare call stays an effect — the backends' return machinery would
+       hand the factory the call's Void value instead (found 2026-11-14:
+       Digest.new returned the void box, and the first self cast
+       trapped). *)
+    | Emo_check.Void when not ctor -> void_tails fbody
+    | _ -> fbody
   in
   {
     fname = mangled;
@@ -1531,7 +1561,7 @@ let lower (input : input) : program =
           match item.Ast.item_desc with
           | Ast.Item_def d ->
               funcs :=
-                lower_func env ~module_path:m.mpath
+                lower_func env ~module_path:m.mpath ~ctor:false
                   ~mangled:
                     (mangle m.mpath (sanitize_ident d.Ast.def_name))
                   ~self:None d
@@ -1546,13 +1576,13 @@ let lower (input : input) : program =
                   (fun d ->
                     lower_func env ~module_path:m.mpath
                       ~mangled:(mangle m.mpath (display ^ "__init"))
-                      ~self:self_type d)
+                      ~self:self_type ~ctor:true d)
                   c.Ast.class_init
               in
               let methods =
                 List.map
                   (fun d ->
-                    lower_func env ~module_path:m.mpath
+                    lower_func env ~module_path:m.mpath ~ctor:false
                       ~mangled:
                         (mangle m.mpath
                            (display ^ "__" ^ sanitize_ident d.Ast.def_name))
@@ -1573,7 +1603,7 @@ let lower (input : input) : program =
               List.iter
                 (fun d ->
                   funcs :=
-                    lower_func env ~module_path:m.mpath
+                    lower_func env ~module_path:m.mpath ~ctor:false
                       ~mangled:
                         (mangle m.mpath
                            (g.Ast.group_name ^ "__"
@@ -1612,8 +1642,8 @@ let lower (input : input) : program =
                   (* the thunk returns the const's value: Unknown, like
                      every other const binding (Void would lose it) *)
                   let thunk =
-                    lower_func env ~module_path:m.mpath ~mangled ~self:None
-                      thunk_def
+                    lower_func env ~module_path:m.mpath ~ctor:false ~mangled
+                      ~self:None thunk_def
                   in
                   funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
                 g.Ast.group_consts

@@ -477,6 +477,98 @@ def pick(n Int64) Void {
               (Printf.sprintf "expected one tail-position if, got %d stmts"
                  (List.length other)));
         ignore program);
+    tc "a constructor's init keeps its exit call an effect" (fun () ->
+        (* A ctor factory must return the instance, so init's
+           exit-position bare call cannot lower as the return it is —
+           the backends' return machinery would hand the factory the
+           call's Void value instead of the instance (found 2026-11-14:
+           crypto.sha2's Digest.new returned the void box, and the first
+           self cast trapped). *)
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def warm(x Int64) Void {
+  const q = x + 1
+}
+
+class Thing {
+  def init(n Int64) {
+    self.n = n
+    if n > 0 {
+      warm(n)
+    } else {
+      warm(n + 1)
+    }
+  }
+
+  def get() Int64 {
+    return self.n
+  }
+}
+|} );
+            ]
+            ~entry:[]
+        in
+        (match program.Emo_ir.pclasses with
+        | [ c ] ->
+            (match c.Emo_ir.cinit with
+            | Some init -> (
+                match init.Emo_ir.fbody with
+                | [ _; Emo_ir.If { then_; else_; _ } ] ->
+                    let effect_call = function
+                      | [ Emo_ir.Effect { desc = Emo_ir.Call { func; _ }; _ } ] ->
+                          func
+                      | _ -> "not an effect call"
+                    in
+                    Alcotest.(check string)
+                      "then branch keeps the effect" "warm"
+                      (effect_call then_);
+                    Alcotest.(check string)
+                      "else branch keeps the effect" "warm"
+                      (effect_call else_)
+                | other ->
+                    Alcotest.fail
+                      (Printf.sprintf
+                         "expected set-field and one if, got %d stmts"
+                         (List.length other)))
+            | None -> Alcotest.fail "expected an init")
+        | other ->
+            Alcotest.fail (Printf.sprintf "%d classes" (List.length other)));
+        ignore program);
+    tc "a def named like a runtime door is the program's call" (fun () ->
+        (* The doors live below the program's symbols: `time_of` is a
+           bare `time_`-prefixed name, and the call must answer the
+           program's own def, not the time door the prefix matches
+           (found 2026-11-14: uuid_demo's helper lowered as a runtime
+           door, and the wasm build refused it). *)
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def time_of(ms Int64) Int64 {
+  return ms + 1
+}
+
+def use() Int64 {
+  return time_of(5)
+}
+|} );
+            ]
+            ~entry:[]
+        in
+        let f = find_func program "use" in
+        (match f.Emo_ir.fbody with
+        | [ Emo_ir.Return_stmt { desc = Emo_ir.Call { func; _ }; _ } ] ->
+            Alcotest.(check string) "the call is the program's def"
+              "time_of" func
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected one return call, got %d stmts"
+                 (List.length other)));
+        ignore program);
   ]
 
 let () = Alcotest.run "emo_ir" [ ("ir", ir_tests) ]

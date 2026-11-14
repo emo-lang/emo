@@ -3548,17 +3548,55 @@ let rt_source =
 		<_other> when 'true' -> 'false'
 	      end
 	  <_other> when 'true' ->
-	      case call 'erlang':'is_float'(_a) of
+	      case call 'erlang':'is_tuple'(_a) of
 		<'true'> when 'true' ->
-		    case call 'erlang':'is_float'(_b) of
-		      <'true'> when 'true' -> call 'erlang':'=='(_a, _b)
+		    case call 'erlang':'is_tuple'(_b) of
+		      <'true'> when 'true' ->
+			  case call 'erlang':'=='
+				  (call 'erlang':'tuple_size'(_a),
+				   call 'erlang':'tuple_size'(_b)) of
+			    <'true'> when 'true' ->
+				apply 'emo_eq_tuple'/3 (_a, _b, 1)
+			    <'false'> when 'true' -> 'false'
+			  end
 		      <'false'> when 'true' -> 'false'
 		    end
 		<'false'> when 'true' ->
-		    case call 'erlang':'is_float'(_b) of
-		      <'true'> when 'true' -> 'false'
-		      <'false'> when 'true' -> call 'erlang':'=='(_a, _b)
+		    case call 'erlang':'is_float'(_a) of
+		      <'true'> when 'true' ->
+			  case call 'erlang':'is_float'(_b) of
+			    <'true'> when 'true' -> call 'erlang':'=='(_a, _b)
+			    <'false'> when 'true' -> 'false'
+			  end
+		      <'false'> when 'true' ->
+			  case call 'erlang':'is_float'(_b) of
+			    <'true'> when 'true' -> 'false'
+			    <'false'> when 'true' -> call 'erlang':'=='(_a, _b)
+			  end
 		    end
+	      end
+	end
+
+%% The element-wise walk behind emo_eq's tuple arm: a class instance
+%%   ('emo_inst', ...) or a plain tuple may carry a Bytes, List, Map, or
+%%   Builder field, and each of those is a tag over a per-process key —
+%%   two equal buffers carry different keys, so a bare '==' compares the
+%%   tags, not the contents (found 2026-11-14: uuid.nil() == uuid.nil()
+%%   answered false on the beam). The walk recurses through emo_eq, so
+%%   every tagged shape resolves at its own arm and the leaves stay the
+%%   scalar '=='. Sizes are checked by the caller; the walk stops one
+%%   past the last element.
+'emo_eq_tuple'/3 =
+    fun (_a, _b, _i) ->
+	case call 'erlang':'>'(_i, call 'erlang':'tuple_size'(_a)) of
+	  <'true'> when 'true' -> 'true'
+	  <'false'> when 'true' ->
+	      case apply 'emo_eq'/2 (call 'erlang':'element'(_i, _a),
+				     call 'erlang':'element'(_i, _b)) of
+		<'true'> when 'true' ->
+		    apply 'emo_eq_tuple'/3 (_a, _b,
+					    call 'erlang':'+'(_i, 1))
+		<'false'> when 'true' -> 'false'
 	      end
 	end
 

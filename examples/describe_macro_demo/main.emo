@@ -1,11 +1,10 @@
 // A macro applied to a class reads the field list and appends methods.
 // `@describe` generates `to_string` — one interpolated part per field,
-// built from the class's own field trees, so the rendering can never
+// built from the class's own field trees, so the derivation can never
 // forget a field, misorder the parts, or drift away from the fields the
-// class actually declares. "to_string" is the runtime's rendering
-// protocol: `println` prints a class instance through it, so one
-// derivation teaches every println — here and in any importer — how to
-// render the class.
+// class actually declares. A value renders as its structure dump on
+// every target, so the derived to_string answers the explicit call —
+// here and in any importer.
 //
 //   emo run main.emo
 
@@ -47,6 +46,6 @@ class Label {
   }
 }
 
-println(Point.new(x: 1, y: 2))
-println(Point.new(x: -3, y: 0))
-println(Label.new(text: "hello"))
+println(Point.new(x: 1, y: 2).to_string())
+println(Point.new(x: -3, y: 0).to_string())
+println(Label.new(text: "hello").to_string())

@@ -91,7 +91,7 @@ class Order {
 const a = Order.new(id: 7, item: "bolt", qty: 12)
 const b = Order.new(id: 7, item: "bolt", qty: 12)
 const c = Order.new(id: 7, item: "nut", qty: 12)
-println(a)
+println(a.to_string())
 println(a.eq?(b))
 println(a.eq?(c))
 println(a.csv_header())
