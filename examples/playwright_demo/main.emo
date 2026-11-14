@@ -411,79 +411,26 @@ def ref(guid String) json.Json {
 // step answering what the real driver would, the whole script one
 // chain so a wrong step names itself.
 def drive_session(conn TcpConn) (R, Int64) {
-  case step_initialize(conn) {
+  :chain {
+    step_initialize(conn)
+    step_new_page(conn)
+    step_goto(conn)
+    step_title(conn)
+    step_content(conn)
+    step_text_null(conn)
+    step_text_hello(conn)
+    step_click(conn)
+    step_fill(conn)
+    step_press(conn)
+    step_screenshot(conn)
+    step_click_error(conn)
+    step_fill_error(conn)
+    step_page_close(conn)
+    step_browser_close(conn)
+  } then {
+    return drain_until_close(conn)
+  } else {
     (R.error, why) -> { return (R.error, why) }
-    (R.ok, _)      -> {
-      case step_new_page(conn) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, _)      -> {
-          case step_goto(conn) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _)      -> {
-              case step_title(conn) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, _)      -> {
-                  case step_content(conn) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, _)      -> {
-                      case step_text_null(conn) {
-                        (R.error, why) -> { return (R.error, why) }
-                        (R.ok, _)      -> {
-                          case step_text_hello(conn) {
-                            (R.error, why) -> { return (R.error, why) }
-                            (R.ok, _)      -> {
-                              case step_click(conn) {
-                                (R.error, why) -> { return (R.error, why) }
-                                (R.ok, _)      -> {
-                                  case step_fill(conn) {
-                                    (R.error, why) -> { return (R.error, why) }
-                                    (R.ok, _)      -> {
-                                      case step_press(conn) {
-                                        (R.error, why) -> { return (R.error, why) }
-                                        (R.ok, _)      -> {
-                                          case step_screenshot(conn) {
-                                            (R.error, why) -> { return (R.error, why) }
-                                            (R.ok, _)      -> {
-                                              case step_click_error(conn) {
-                                                (R.error, why) -> { return (R.error, why) }
-                                                (R.ok, _)      -> {
-                                                  case step_fill_error(conn) {
-                                                    (R.error, why) -> { return (R.error, why) }
-                                                    (R.ok, _)      -> {
-                                                      case step_page_close(conn) {
-                                                        (R.error, why) -> { return (R.error, why) }
-                                                        (R.ok, _)      -> {
-                                                          case step_browser_close(conn) {
-                                                            (R.error, why) -> { return (R.error, why) }
-                                                            (R.ok, _)      -> { return drain_until_close(conn) }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }
 

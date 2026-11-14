@@ -15,6 +15,21 @@ Emo's syntax favors explicitness: everything is visibly what it is — a call lo
 - **`if` has exactly one statement shape.** `if <cond> { ... }` with an optional `else { ... }` — there is no `else if`, `elif`, or any chaining form; a further test is an `if` visibly nested inside the `else` block. Like all control flow, this `if` is a statement.
 - **The one-line `if` expression picks a value.** `const label = if n >= 90 { "high" } else { "low" }` — both branches hold exactly one expression, the branch types must agree (`Unknown` joins silently), the condition is a Bool, and the `else` branch is required. The whole construct must stay on one line: a line break anywhere inside it is a syntax error pointing at the breaking token. Values that need more than a line are computed by an `if` statement and bound explicitly.
 - **`case` matches a value against patterns.** Branches are `pattern -> { ... }`, first match wins, and a branch may carry a guard: `Color.red when signal.is_bright?()`. Patterns are enum members by qualified name (`Color.red` — a bare lowercase name is a binding pattern, since members and variables share the lowercase space), literals matching by value, and `_` matching anything. Like all control flow, `case` is a statement: results leave a branch through explicit `return` or binding. A scrutinee that matches no branch is a runtime error — never a silent skip.
+- **`:` introduces a sugar form — a compiler-held rewrite into existing syntax.** Sugar is syntax that could not earn construct-hood: it only shortens what plain code already writes, so it ships marked — the colon is on the surface, and the compiler holds the expansion. The word after the colon is looked up in the compiler's sugar table, an unknown `:name` is a compile error, and the words sugar forms use (`chain`, `from`, `then`) stay ordinary identifiers — none of them is reserved.
+- **`:chain` is the success-chain sugar.** A run of steps that must each succeed, one exit for the first failure — the shape behind every `(R.ok, ...)` ladder, rewritten into nested `case`:
+
+  ```emo
+  :chain {
+    step_initialize(conn)
+    (R.ok, page) from step_new_page(conn)
+  } then {
+    return (R.ok, page.length())
+  } else {
+    (R.error, why) -> { return (R.error, why) }
+  }
+  ```
+
+  A bare line expects `(R.ok, _)` and discards the payload; a `pattern from expr` line states the expected shape, and its bindings stay visible to the lines and the `then` body after it. The lines run in order; the first value that misses its shape falls to the `else` arms carrying its actual value, and the rest of the chain is skipped. `then` runs when every line matched, and may be omitted where the chain's value is unused; `else` is required exactly when a line can miss — the compiler proves the arms cover every miss, and refuses an `else` that no line can reach as dead code. Like all control flow, a chain ends its paths in explicit `return`.
 - **Loops are `for` and `while`.** `for var i = 0; i < 100; i = i + 50 { ... }` binds its index in the header — scoped to the loop — and takes three `;`-separated clauses: init, condition, and post. The clauses are all required; the init is a `var` declaration and the post an assignment written out in full (`i = i + 1` — there is no `+=` or `++`). `while cond { ... }` takes a condition and no binding, so its variable is declared before the loop. Both are statements with the same paren-less shape as `if`, and `;` is legal only in a `for` header. `break` leaves the nearest enclosing loop and `continue` skips to the next iteration, running a `for`'s post clause first; both refuse outside a loop, and a loop never satisfies a declared return — the function still has to end in `return`.
 - **Tuples are `(a, b, c)`.** Fixed-length, heterogeneous, immutable values that compare element-wise; the type-declaration form mirrors the literal — `(Int64, String)`. The paren rule resolves by content, with no trailing-comma forms: a comma makes a tuple (`()`, `(a, b)`); a single operator-free value in parentheses is a one-element tuple (`(a)` — grouping a lone value is meaningless); an expression containing operators is a group (`(sum * 3)`, `x && (y || z)`). `(a,)` is a syntax error — the one-element tuple is written `(a)` — and so is a `(` directly opening onto a `(`: `((x))` never parses; bind the inner value to a name first. The pair tuples of `Map.new(("a", 1), ("b", 2))` are the exception — each argument's parentheses are the pair itself, not a nesting. Nesting after a comma is legal and never adjacent: `(a, (b, c))`. In `case` patterns, parentheses are always tuple patterns, destructuring by position: `(Color.red, count) -> { ... }`.
 - **Maps are `{ "key": value }`** — the mutable, insertion-ordered hash table. `{}` is the empty map, keys and values are arbitrary expressions whose types unify across the entries exactly like array elements, and keys must be hashable primitives — `String`, `Int64`, `Byte`, `Bool`, `Char`, `Float64` — with a provably unhashable key a compile error. `Map.new(("a", 1), ("b", 2))` builds from `(key, value)` pairs; a later pair overwrites an earlier one. The method surface: `get` (a missing key is a runtime error), `set` (inserts or replaces and returns the map, so `m.set("a", 1).set("b", 2)` chains; a replacement keeps the key's position), `has`, `remove` (a no-op when absent, returns the map), `length`, `keys`, and `values` — the last two as arrays in insertion order. `==` compares entries regardless of order, a map sent to another process arrives as a snapshot copy, and `m[k]` indexing is a compile error — `get` is the reading form.
@@ -120,6 +135,8 @@ case file.read(path) {
   (R.error, why) -> { println("read failed: ${why}") }
 }
 ```
+
+A ladder of such results — each step running only if the one before it succeeded, one shared exit for the first miss — is the `:chain` sugar: the same matching and the same exhaustive-`else` proof, one level of indentation instead of fifteen (see the `:chain` bullet above).
 
 When a failure is not expected, a binding pattern says so — a pattern that does not match is a runtime error, ending the process loudly:
 

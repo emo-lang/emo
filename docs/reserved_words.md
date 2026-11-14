@@ -251,3 +251,11 @@ compile error, so prose starting with either sigil cannot appear. The role
 side (`#`) is compiler-owned with `#macro` its only member; the application
 side (`@`) resolves the macro name in scope. The rules live in
 [macros.md](intro/macros.md).
+
+## The sugar namespace
+
+The colon-plus-name forms (`:chain` and later sugar) are not reserved words
+at all: the colon pairs with an ordinary identifier, looked up in the
+compiler's sugar table. An unknown `:name` is a compile error, but the words
+sugar forms use — `chain`, `from`, `then` — remain legal identifiers
+everywhere else. See [syntax.md](intro/syntax.md).

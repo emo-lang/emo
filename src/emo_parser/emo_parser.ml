@@ -102,6 +102,11 @@ type parser = {
          and so may stand in assignment-target position *)
 }
 
+(* A `:chain` step line, before the rewrite into nested cases. *)
+type chain_line =
+  | Chain_expr of Ast.expr
+  | Chain_from of Ast.pattern * Ast.expr
+
 let peek st = Emo_lexer.Stream.peek st.stream
 
 let advance st =
@@ -873,6 +878,7 @@ and parse_stmt st =
       let e = parse_expr st in
       end_statement st;
       stmt start_span (Ast.Raise e)
+  | Tok.Op Tok.Colon -> parse_chain st
   | _ ->
       let e = parse_expr st in
       let stmt_desc =
@@ -893,6 +899,172 @@ and parse_stmt st =
             Ast.Expr_stmt e
       in
       stmt start_span stmt_desc
+
+(* `:chain` — the success-chain sugar, a pure rewrite into nested cases.
+   Each step line states the shape the next value must have (a bare line
+   expects `(R.ok, _)`); the first value that misses falls to the `else`
+   arms, and the `then` body runs when every line matched. `chain`,
+   `from`, and `then` are not reserved words — the colon pairs with the
+   sugar name, and an unknown name is a compile error. *)
+and parse_chain st =
+  let colon_tok = advance st in
+  let name =
+    match kind st with
+    | Tok.Lower_ident n ->
+        advance st |> ignore;
+        n
+    | t ->
+        error "E2037" (span st)
+          (Printf.sprintf "expected a sugar name after `:`, found %s"
+             (describe_kind t))
+  in
+  if name <> "chain" then
+    error "E2037" colon_tok.Tok.span
+      (Printf.sprintf "unknown sugar form `:%s`" name)
+      ~hint:"the sugar namespace holds `:chain` — steps that must succeed";
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the chain's steps must open on the `:chain` line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let lines = parse_chain_lines st in
+  if lines = [] then error "E2039" (span st) "a chain needs at least one step";
+  let steps_close = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  let then_body =
+    match kind st with
+    | Tok.Lower_ident "then" ->
+        if newline_before st then
+          error "E2005" (span st) "`then` must stay on the closing brace's line"
+            ~hint:"write `} then {`";
+        advance st |> ignore;
+        if at_op st Tok.LBrace && newline_before st then
+          error "E2001" (span st)
+            "the `then` body must open on the `then`'s line";
+        fst (parse_block st)
+    | _ -> []
+  in
+  let else_close = ref steps_close in
+  let else_branches =
+    match kind st with
+    | Tok.Keyword Tok.Else ->
+        if newline_before st then
+          error "E2005" (span st) "`else` must stay on the closing brace's line"
+            ~hint:"write `} else {`";
+        advance st |> ignore;
+        expect_op st Tok.LBrace "`{`" |> ignore;
+        let branches = parse_branches st in
+        else_close := span st;
+        expect_op st Tok.RBrace "`}`" |> ignore;
+        branches
+    | _ -> []
+  in
+  if
+    else_branches <> []
+    && List.for_all
+         (fun line ->
+           match line with
+           | Chain_expr _ -> false (* a bare line always expects (R.ok, _) *)
+           | Chain_from (p, _) -> not (chain_pattern_refutable p))
+         lines
+  then
+    error "E2038" (span st)
+      "this chain's `else` can never run: no step line can fail"
+      ~hint:"a chain of lines that cannot miss needs no `else`";
+  let construct_end = !else_close in
+  (* The rewrite: the last line nests innermost, the `then` body is the
+     innermost arm's body, and every level carries the `else` arms so the
+     first miss falls straight out with its actual value. *)
+  let ok_pattern span =
+    {
+      Ast.pattern_span = span;
+      Ast.pattern_desc =
+        Ast.Tuple_pattern
+          [
+            {
+              Ast.pattern_span = span;
+              Ast.pattern_desc = Ast.Enum_member ("R", "ok");
+            };
+            { Ast.pattern_span = span; Ast.pattern_desc = Ast.Wildcard };
+          ];
+    }
+  in
+  let rec build lines acc =
+    match lines with
+    | [] -> acc
+    | line :: rest ->
+        let acc = build rest acc in
+        let scrutinee, expected =
+          match line with
+          | Chain_expr e -> (e, ok_pattern e.Ast.span)
+          | Chain_from (p, e) -> (e, p)
+        in
+        [
+          stmt
+            (merge_span scrutinee.Ast.span construct_end)
+            (Ast.Case
+               {
+                 scrutinee;
+                 branches =
+                   { Ast.pattern = expected; guard = None; body = acc }
+                   :: else_branches;
+               });
+        ]
+  in
+  match build lines then_body with [ outer ] -> outer | _ -> assert false
+
+(* The step lines: a line carrying a depth-0 `from` (never as the line's
+   first token) parses as `pattern from expr`; anything else is a bare
+   expression that must succeed as `(R.ok, _)`. *)
+and parse_chain_lines st =
+  let lines = ref [] in
+  let rec loop () =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      lines := parse_chain_line st :: !lines;
+      loop ())
+  in
+  loop ();
+  List.rev !lines
+
+and parse_chain_line st =
+  if chain_line_takes_pattern st then (
+    let pattern = parse_pattern st in
+    (match kind st with
+    | Tok.Lower_ident "from" -> advance st |> ignore
+    | t ->
+        error "E2037" (span st)
+          (Printf.sprintf "expected `from` after the pattern, found %s"
+             (describe_kind t)));
+    if at_eof st || newline_before st then
+      error "E2002" (span st)
+        "the `from` line's expression must stay on the pattern's line";
+    let e = parse_expr st in
+    end_statement st;
+    Chain_from (pattern, e))
+  else
+    let e = parse_expr st in
+    end_statement st;
+    Chain_expr e
+
+and chain_line_takes_pattern st =
+  let rec go k depth =
+    let tok = Emo_lexer.Stream.peek_ahead st.stream k in
+    if k > 0 && tok.Tok.newline_before then false
+    else
+      match tok.Tok.kind with
+      | Tok.Eof -> false
+      | Tok.Lower_ident "from" when k > 0 && depth = 0 -> true
+      | Tok.Op (Tok.LParen | Tok.LBracket | Tok.LBrace) -> go (k + 1) (depth + 1)
+      | Tok.Op (Tok.RParen | Tok.RBracket | Tok.RBrace) ->
+          if depth = 0 then false else go (k + 1) (depth - 1)
+      | _ -> go (k + 1) depth
+  in
+  go 0 0
+
+and chain_pattern_refutable p =
+  match p.Ast.pattern_desc with
+  | Ast.Enum_member _ | Ast.Pattern_literal _ -> true
+  | Ast.Tuple_pattern ps -> List.exists chain_pattern_refutable ps
+  | _ -> false
 
 (* A binding name in declaration position: lower_snake, no trailing `?`. *)
 and parse_binding_name st =
