@@ -4495,7 +4495,7 @@ let registry_routing_tests =
   ]
 
 let () =
-  Alcotest.run ~bail:true "emo_project"
+  let all_groups =
     [
       ("resolution", resolution_tests);
       ("load", load_tests);
@@ -4514,7 +4514,17 @@ let () =
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);
       ("riscv_native", riscv_native_tests);
-      ("bootstrap", bootstrap_tests);
       ("ts_golden", ts_golden_tests);
       ("cross_module", cross_module_tests);
     ]
+  in
+  (* Each bootstrap case compiles and runs a whole example — the suite's
+     long pole. They are opt-in: `dune build @bootstrap` (just
+     test-bootstrap) sets EMO_BOOTSTRAP and runs only that group; a
+     plain `dune test` leaves it out. *)
+  let groups =
+    match Sys.getenv_opt "EMO_BOOTSTRAP" with
+    | Some "1" -> [ ("bootstrap", bootstrap_tests) ]
+    | _ -> all_groups
+  in
+  Alcotest.run ~bail:true "emo_project" groups

@@ -483,6 +483,11 @@ let check_internal_privacy (graph : (string list, string list list) Hashtbl.t) :
    directory reference is a namespace, not a load. *)
 let find_cycle (graph : (string list, string list list) Hashtbl.t) :
     string list list option =
+  (* [finished] memoizes nodes whose whole subtree came up cycle-free.
+     Without it the walk re-enumerates every simple path, which is
+     exponential on a dense reference graph — the wasm package's own
+     module graph never finished checking before this. *)
+  let finished : (string list, unit) Hashtbl.t = Hashtbl.create 64 in
   let rec dfs visiting node =
     if List.mem node visiting then
       (* The cycle runs from [node] (where visiting re-enters) forward. *)
@@ -491,12 +496,19 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
         | x :: rest -> if x = node then [ x ] else x :: chain rest
       in
       Some (node :: chain visiting)
+    else if Hashtbl.mem finished node then None
     else
       match Hashtbl.find_opt graph node with
-      | None | Some [] -> None
-      | Some refs ->
+      | None | Some [] ->
+          Hashtbl.replace finished node ();
+          None
+      | Some refs -> (
           let visiting = node :: visiting in
-          List.find_map (dfs visiting) refs
+          match List.find_map (dfs visiting) refs with
+          | Some c -> Some c
+          | None ->
+              Hashtbl.replace finished node ();
+              None)
   in
   let rec anywhere (nodes : string list list) : string list list option =
     match nodes with

@@ -12,7 +12,8 @@
 ; for the @runtest suites (including the wasm smoke slice), and the
 ; wasm_spec / wasm_runs aliases for the full wasm corpora.
 ; The QEMU metal suite over the projects/ trees is opt-in too:
-; @emo_os, not part of @runtest.
+; @emo_os, not part of @runtest. The example bootstrap builds are
+; opt-in too: @bootstrap, not part of @runtest.
 
 (alias
  (name default)

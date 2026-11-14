@@ -181,6 +181,11 @@ test-verbose:
 
 alias tv := test-verbose
 
+# test-bootstrap: run the example bootstrap builds — every example
+# compiled and run against its golden (opt-in; outside `dune test`)
+test-bootstrap:
+    dune build @bootstrap
+
 # Re-pin every stale package.lock in the tree — the one command to run
 # after a package's sources change. Each tracked lock's directory
 # resolves in place through `emo deps resolve`; the family packages the
