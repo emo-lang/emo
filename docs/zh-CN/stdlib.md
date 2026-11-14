@@ -317,7 +317,7 @@ page.screenshot()                        // (R, Bytes) —— 一张 PNG
 pw.close()                               // (R, Playwright)
 ```
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 示例:`examples/playwright_demo`。
+目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 上手:[`docs/zh-CN/playwright-get-started.md`](playwright-get-started.md) · 示例:`examples/playwright_demo`。
 
 
 ## json 包
