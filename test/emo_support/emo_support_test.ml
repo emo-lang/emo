@@ -230,7 +230,7 @@ let severity_tests =
   ]
 
 let () =
-  Alcotest.run "emo_support"
+  Alcotest.run ~bail:true "emo_support"
     [
       ("span", span_tests);
       ("renderer", renderer_tests);

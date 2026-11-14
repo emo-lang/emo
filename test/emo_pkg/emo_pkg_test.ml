@@ -1524,7 +1524,7 @@ let http_registry_tests =
   ]
 
 let () =
-  Alcotest.run "emo_pkg"
+  Alcotest.run ~bail:true "emo_pkg"
     [
       ("smoke", smoke_tests);
       ("version", version_tests);

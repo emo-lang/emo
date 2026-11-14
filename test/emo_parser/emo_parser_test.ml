@@ -1655,7 +1655,7 @@ let atomic_tests =
   ]
 
 let () =
-  Alcotest.run "emo_parser"
+  Alcotest.run ~bail:true "emo_parser"
     [
       ( "smoke",
         [

@@ -630,7 +630,7 @@ let errors_tests =
   ]
 
 let () =
-  Alcotest.run "emo_lexer"
+  Alcotest.run ~bail:true "emo_lexer"
     [
       ("foundation", foundation_tests);
       ("ident", ident_tests);

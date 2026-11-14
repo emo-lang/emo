@@ -452,5 +452,5 @@ let smoke_tests =
   ]
 
 let () =
-  Alcotest.run "emo_os"
+  Alcotest.run ~bail:true "emo_os"
     [ ("parity_metal", parity_metal_tests); ("smoke", smoke_tests) ]

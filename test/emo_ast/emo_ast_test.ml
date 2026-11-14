@@ -34,4 +34,4 @@ let smoke_tests =
         | _ -> Alcotest.fail "expected a call");
   ]
 
-let () = Alcotest.run "emo_ast" [ ("smoke", smoke_tests) ]
+let () = Alcotest.run ~bail:true "emo_ast" [ ("smoke", smoke_tests) ]

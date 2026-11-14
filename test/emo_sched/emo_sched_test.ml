@@ -1503,7 +1503,7 @@ case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pe
   ]
 
 let () =
-  Alcotest.run "emo_sched"
+  Alcotest.run ~bail:true "emo_sched"
     [
       ("scheduler", scheduler_tests);
       ("isolation", isolation_tests);

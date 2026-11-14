@@ -6562,7 +6562,7 @@ let wasm_run_tests =
   ]
 
 let () =
-  Alcotest.run "emo_cli"
+  Alcotest.run ~bail:true "emo_cli"
     [
       ("smoke", smoke_tests);
       ("run", run_tests);

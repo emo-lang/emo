@@ -4495,7 +4495,7 @@ let registry_routing_tests =
   ]
 
 let () =
-  Alcotest.run "emo_project"
+  Alcotest.run ~bail:true "emo_project"
     [
       ("resolution", resolution_tests);
       ("load", load_tests);

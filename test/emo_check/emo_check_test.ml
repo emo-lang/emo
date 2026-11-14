@@ -2590,7 +2590,7 @@ println(Rep.new().length())|}
   ]
 
 let () =
-  Alcotest.run "emo_check"
+  Alcotest.run ~bail:true "emo_check"
     [
       ("smoke", smoke_tests);
       ("collect", collect_tests);

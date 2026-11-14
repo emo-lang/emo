@@ -39,4 +39,4 @@ let deadline_tests =
           "the backgrounded child was killed too" false (Sys.file_exists marker));
   ]
 
-let () = Alcotest.run "emo_test_support" [ ("deadline", deadline_tests) ]
+let () = Alcotest.run ~bail:true "emo_test_support" [ ("deadline", deadline_tests) ]

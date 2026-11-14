@@ -88,4 +88,4 @@ let runner_tests =
           (Emo_tool.run_or_warn ~what:"test" "exit 0"));
   ]
 
-let () = Alcotest.run "emo_tool" [ ("runner", runner_tests) ]
+let () = Alcotest.run ~bail:true "emo_tool" [ ("runner", runner_tests) ]

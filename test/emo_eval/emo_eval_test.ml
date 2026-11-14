@@ -1493,7 +1493,7 @@ kids.push("a")|}
   ]
 
 let () =
-  Alcotest.run "emo_eval"
+  Alcotest.run ~bail:true "emo_eval"
     [
       ("smoke", smoke_tests);
       ("equality", equality_tests);

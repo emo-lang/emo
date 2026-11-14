@@ -931,7 +931,7 @@ let test_initialize_result () =
     (Yojson.Safe.Util.member "serverInfo" result <> `Null)
 
 let () =
-  Alcotest.run "emo_lsp"
+  Alcotest.run ~bail:true "emo_lsp"
     [
       ( "positions",
         [

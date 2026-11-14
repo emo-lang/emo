@@ -571,4 +571,4 @@ def use() Int64 {
         ignore program);
   ]
 
-let () = Alcotest.run "emo_ir" [ ("ir", ir_tests) ]
+let () = Alcotest.run ~bail:true "emo_ir" [ ("ir", ir_tests) ]

@@ -523,7 +523,7 @@ let program_tests =
   ]
 
 let () =
-  Alcotest.run "emo_ocaml_runtime"
+  Alcotest.run ~bail:true "emo_ocaml_runtime"
     [
       ( "compile",
         List.map (fun (n, f) -> Alcotest.test_case n `Quick f) compile_tests );
