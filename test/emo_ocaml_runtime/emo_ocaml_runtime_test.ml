@@ -1,9 +1,10 @@
 (* The ocaml target's standalone runtime (step 25): fixtures compile
-   against emo_ocaml_runtime.ml alone — extracted from the compiler's
-   generated data into a bare directory and compiled by the target's own
-   toolchain. Zero emo_* dependencies, nothing from the host build tree;
-   the packages are the runtime's own dependency policy (unix, ssl).
-   Scratch directories are never deleted (the repo's test convention). *)
+   against emo_ocaml_runtime.ml and its POSIX stub — both extracted from
+   the compiler's generated data into a bare directory and compiled by
+   the target's own toolchain. Zero emo_* dependencies, nothing from the
+   host build tree; the packages are the runtime's own dependency policy
+   (unix, ssl). Scratch directories are never deleted (the repo's test
+   convention). *)
 
 let scratch_counter = ref 0
 
@@ -40,23 +41,33 @@ let require_ok (status, output) what =
 let extract_runtime dir =
   write_file
     (Filename.concat dir "emo_ocaml_runtime.ml")
-    Emo_codegen.ocaml_runtime_ml
+    Emo_codegen.ocaml_runtime_ml;
+  write_file
+    (Filename.concat dir "emo_ocaml_stub.c")
+    Emo_codegen.ocaml_runtime_stub_c
 
-(* Compiles the extracted runtime, then [unit_names] against it —
-   ocamlfind brings only the runtime's own packages (unix, ssl), never
-   the repository. The -open makes the emitter's qualified paths
-   (Emo_eval.value, Emo_runtime.run) resolve against the runtime's
-   submodules without touching the emitted source. *)
+(* Compiles the extracted runtime and its C stub, then [unit_names]
+   against them — ocamlfind brings only the runtime's own packages
+   (unix, ssl), never the repository. The -open makes the emitter's
+   qualified paths (Emo_eval.value, Emo_runtime.run) resolve against the
+   runtime's submodules without touching the emitted source. *)
 let compile dir unit_names =
   require_ok
     (run
        (Printf.sprintf "cd %s && ocamlfind ocamlopt -package unix,ssl -c %s"
           (Filename.quote dir) "emo_ocaml_runtime.ml"))
     "ocamlfind ocamlopt -c";
+  require_ok
+    (run
+       (Printf.sprintf
+          "cd %s && cc -O2 -I \"$(ocamlfind ocamlc -where)\" -c \
+           emo_ocaml_stub.c -o emo_ocaml_stub.o"
+          (Filename.quote dir)))
+    "cc -c emo_ocaml_stub.c";
   run
     (Printf.sprintf
        "cd %s && ocamlfind ocamlopt -package unix,ssl -linkpkg -open \
-        Emo_ocaml_runtime emo_ocaml_runtime.cmx %s -o a.out"
+        Emo_ocaml_runtime emo_ocaml_runtime.cmx emo_ocaml_stub.o %s -o a.out"
        (Filename.quote dir)
        (String.concat " " (List.map Filename.quote unit_names)))
 
