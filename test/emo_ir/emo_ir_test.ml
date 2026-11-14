@@ -378,8 +378,8 @@ def pick(n Int64) String {
   const k = Kind.fast
   const t = Kind
   case k {
-    Kind.fast -> { return "fast" }
-    Kind.slow -> { return "slow" }
+    Kind.fast then { return "fast" }
+    Kind.slow then { return "slow" }
   }
 }
 |}

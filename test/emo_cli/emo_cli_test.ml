@@ -1079,7 +1079,7 @@ println("root done")
 let root_end_woken =
   {|def child() {
   receive {
-    "go" -> { println("child ran") }
+    "go" then { println("child ran") }
   }
 }
 
@@ -1091,7 +1091,7 @@ println("root done")
 let root_end_parked =
   {|def child() {
   receive {
-    "go" -> { println("child ran") }
+    "go" then { println("child ran") }
   }
 }
 
@@ -1144,8 +1144,8 @@ println(written)
 const (R.ok, text) = file_read("emo-wasm-probe.txt")
 println(text)
 case file_read("emo-wasm-probe-missing.txt") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("unexpected ok") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
 }
 |}
       in
@@ -1421,8 +1421,8 @@ def stops_at_three() Int64 {
   while more {
     i = i + 1
     case i {
-      3 -> { more = false }
-      _ -> { }
+      3 then { more = false }
+      _ then { }
     }
   }
   return i
@@ -1432,8 +1432,8 @@ def weighted(n Int64) Int64 {
   var acc = 0
   for var i = 0; i < n; i = i + 1 {
     case i {
-      2 -> { acc = acc + 100 }
-      _ -> { acc = acc + i }
+      2 then { acc = acc + 100 }
+      _ then { acc = acc + i }
     }
   }
   return acc
@@ -1468,13 +1468,13 @@ main()
           {|
 def drain() {
   receive {
-    (tag, n) -> {
+    (tag, n) then {
       const step = n * 2
       for var i = 0; i < 2; i = i + 1 {
         println(tag + i * step)
       }
     }
-    "done" -> {
+    "done" then {
       for var i = 0; i < 2; i = i + 1 {
         println(i)
       }
@@ -1852,7 +1852,7 @@ let c_child_raise_source =
   {|
 def bomber() Int64 {
   receive {
-    _ -> { raise Exception.new(message: "boom") }
+    _ then { raise Exception.new(message: "boom") }
   }
 }
 
@@ -1865,7 +1865,7 @@ let c_send_snapshot_source =
   {|
 def reader(reply_to Pid) Int64 {
   receive {
-    b -> {
+    b then {
       reply_to <- b.read()
       return halt()
     }
@@ -1877,7 +1877,7 @@ const r = do reader(self_pid())
 r <- box
 box.replace(99)
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 println(box.read())
 |}
@@ -2053,11 +2053,11 @@ package {
 
 def echo_lines(conn TcpConn) Void {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("server read failed: ${why}")
       conn.close()
     }
-    (R.ok, line)   -> {
+    (R.ok, line)   then {
       conn.write("echo: " + line + "\n")
       echo_lines(conn)
     }
@@ -2066,20 +2066,20 @@ def echo_lines(conn TcpConn) Void {
 
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> { echo_lines(conn) }
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then { echo_lines(conn) }
   }
 }
 
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
 do serve(listener)
 case net_tls_connect("localhost", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("loopback\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -2130,11 +2130,11 @@ package {
 
 def echo_lines(conn TcpConn) Void {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("server read failed: ${why}")
       conn.close()
     }
-    (R.ok, line)   -> {
+    (R.ok, line)   then {
       conn.write("echo: " + line + "\n")
       echo_lines(conn)
     }
@@ -2143,8 +2143,8 @@ def echo_lines(conn TcpConn) Void {
 
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, _)  -> { serve(listener) }
-    (R.ok, conn)  -> { echo_lines(conn) }
+    (R.error, _)  then { serve(listener) }
+    (R.ok, conn)  then { echo_lines(conn) }
   }
 }
 
@@ -2153,16 +2153,16 @@ const (R.ok, self_listener) = net_listen_tls("127.0.0.1", 0, "%stls-cert.pem", "
 do serve(ca_listener)
 do serve(self_listener)
 case net_tls_connect("127.0.0.1", self_listener.port(), 5.0) {
-  (R.error, why) -> { println("verify failed as expected") }
-  (R.ok, conn)   -> { println("handshook?!") }
+  (R.error, why) then { println("verify failed as expected") }
+  (R.ok, conn)   then { println("handshook?!") }
 }
 case net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
-  (R.error, why) -> { println("insecure failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("insecure failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("insecure\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
   }
@@ -2215,11 +2215,11 @@ package {
 
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("policy: " + line + "\n")
           conn.close()
         }
@@ -2233,12 +2233,12 @@ const (R.ok, listener) = net.listen_tls_with("127.0.0.1", 0, "%stls-server-cert.
 do serve(listener)
 const client_options = net.tls_client_options().with_ca_file("%stls-ca.pem").with_client_certificate("%stls-cert.pem", "%stls-key.pem").with_server_name("localhost")
 case net.tls_connect_with("127.0.0.1", listener.port(), 5.0, client_options) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -5294,7 +5294,7 @@ let cross_target_tests =
             {|
 def reader(reply_to Pid) {
   receive {
-    b -> {
+    b then {
       reply_to <- b.read()
       halt()
     }
@@ -5307,7 +5307,7 @@ r <- box
 box.replace(99)
 println(box.read())
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 |}
         in
@@ -5332,7 +5332,7 @@ receive {
             {|
 def echo(reply_to Pid) {
   receive {
-    msg -> {
+    msg then {
       reply_to <- msg
       halt()
     }
@@ -5358,7 +5358,7 @@ println(m.get("d"))
 println(l.pop_front())
 println(b.length())
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 |}
         in
@@ -5385,9 +5385,9 @@ receive {
   var out = 0
   for var i = 0; i < n; i = i + 1 {
     case i {
-      0 -> { out = out + 10 }
-      1 -> { out = out + 20 }
-      _ -> { out = out + 30 }
+      0 then { out = out + 10 }
+      1 then { out = out + 20 }
+      _ then { out = out + 30 }
     }
   }
   return out
@@ -5440,11 +5440,11 @@ println("abc".substring(1, 2))
           scratch_entry "cross-ts-net-builtin"
             {|def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("echo: " + line + "\n")
           conn.close()
         }
@@ -5456,12 +5456,12 @@ println("abc".substring(1, 2))
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do serve(listener)
 case net_connect("127.0.0.1", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -5638,8 +5638,8 @@ let term_tests =
 
 def show(r (R, String)) {
   case r {
-    (R.ok, line) -> { println("ok[${line}]") }
-    (R.error, why) -> { println("err[${why}]") }
+    (R.ok, line) then { println("ok[${line}]") }
+    (R.error, why) then { println("err[${why}]") }
   }
 }
 
@@ -5736,8 +5736,8 @@ main()
 
 def say(label String, r (R, Int64)) {
   case r {
-    (R.ok, n) -> { println("${label} ok ${n}") }
-    (R.error, why) -> { println("${label} ${why}") }
+    (R.ok, n) then { println("${label} ok ${n}") }
+    (R.error, why) then { println("${label} ${why}") }
   }
 }
 
@@ -5746,8 +5746,8 @@ def main() {
   say("raw", term.enable_raw())
   say("restore", term.restore())
   case term.size() {
-    (R.ok, dims) -> { println("size ${dims[0]}x${dims[1]}") }
-    (R.error, why) -> { println("size ${why.starts_with("term: size:")}") }
+    (R.ok, dims) then { println("size ${dims[0]}x${dims[1]}") }
+    (R.error, why) then { println("size ${why.starts_with("term: size:")}") }
   }
   const (R.ok, key) = term.read_key()
   println("key ${key[0] == term.Key.eof}")
@@ -5884,7 +5884,7 @@ println(flag.load())
 
 const r = do reader(self_pid(), served)
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 println(served.load())
 

@@ -1584,13 +1584,13 @@ if __token != "" {
 }
 const resp = http.request("GET", __url, headers, "", 60.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     if ok.status == 200 {
       case json.decode(ok.body) {
-        (R.error, why) -> { raise Exception.new(message: "registry answered invalid JSON: " + why) }
-        (R.ok, doc)    -> {
+        (R.error, why) then { raise Exception.new(message: "registry answered invalid JSON: " + why) }
+        (R.ok, doc)    then {
           const versions = doc.get("versions").items()
           var i = 0
           while i < versions.length() {
@@ -1627,13 +1627,13 @@ if __token != "" {
 }
 const resp = http.request("GET", __url, headers, "", 60.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     if ok.status == 200 {
       case json.decode(ok.body) {
-        (R.error, why) -> { raise Exception.new(message: "registry answered invalid JSON: " + why) }
-        (R.ok, doc)    -> {
+        (R.error, why) then { raise Exception.new(message: "registry answered invalid JSON: " + why) }
+        (R.ok, doc)    then {
           const pkgs = doc.entries()
           var p = 0
           while p < pkgs.length() {
@@ -1679,8 +1679,8 @@ if __token != "" {
 }
 const resp = http.request("GET", __url, headers, "", 120.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     println(ok.body)
   }

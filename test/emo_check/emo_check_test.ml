@@ -538,7 +538,7 @@ let var_escape_tests =
   if flag {
     var x = 1
     if flag {
-      const g = -> {
+      const g = -> () {
         return x
       }
       return g()
@@ -559,7 +559,7 @@ let var_escape_tests =
   if flag {
     const x = 1
     if flag {
-      const g = -> {
+      const g = -> () {
         return x
       }
       return g()
@@ -572,7 +572,7 @@ let var_escape_tests =
           "count" 0
           (List.length
              (check {|var x = 1
-const g = -> {
+const g = -> () {
   return x
 }
 println(g())|})));
@@ -583,7 +583,7 @@ println(g())|})));
   if flag {
     const cell = Box.new(1)
     if flag {
-      const g = -> {
+      const g = -> () {
         return cell.read()
       }
       return g()
@@ -604,8 +604,8 @@ let case_tests =
           check
             {|def f(n Int64) Int64 {
   case n {
-    x when x -> { return 1 }
-    _ -> { return 2 }
+    x when x then { return 1 }
+    _ then { return 2 }
   }
 }|}
         in
@@ -618,7 +618,7 @@ enum Mood { happy }
 
 def f(c Color) Int64 {
   case c {
-    Mood.happy -> { return 1 }
+    Mood.happy then { return 1 }
   }
 }|}
         in
@@ -628,8 +628,8 @@ def f(c Color) Int64 {
           check
             {|def f(n Int64) Int64 {
   case n {
-    "one" -> { return 1 }
-    _ -> { return 2 }
+    "one" then { return 1 }
+    _ then { return 2 }
   }
 }|}
         in
@@ -641,7 +641,7 @@ def f(c Color) Int64 {
 
 def f(c Color) Int64 {
   case c {
-    Color.red -> { return 1 }
+    Color.red then { return 1 }
   }
 }|}
         in
@@ -670,8 +670,8 @@ def f(c Color) Int64 {
 
 def f(c Color) Int64 {
   case c {
-    Color.red -> { return 1 }
-    _ -> { return 2 }
+    Color.red then { return 1 }
+    _ then { return 2 }
   }
 }|})));
     tc "a guarded branch does not count toward coverage" (fun () ->
@@ -681,7 +681,7 @@ def f(c Color) Int64 {
 
 def f(c Color) Int64 {
   case c {
-    Color.red when c == Color.red -> { return 1 }
+    Color.red when c == Color.red then { return 1 }
   }
 }|}
         in
@@ -693,7 +693,7 @@ def f(c Color) Int64 {
 
 def show(p (Outcome, Int64)) String {
   case p {
-    (Outcome.ok, v) -> { return v.to_string() }
+    (Outcome.ok, v) then { return v.to_string() }
   }
 }|}
         in
@@ -707,9 +707,9 @@ def show(p (Outcome, Int64)) String {
 
 def show(p (Outcome, Int64)) String {
   case p {
-    (Outcome.ok, v) -> { return v.to_string() }
-    (Outcome.failed, _) -> { return "no" }
-    _ -> { return "?" }
+    (Outcome.ok, v) then { return v.to_string() }
+    (Outcome.failed, _) then { return "no" }
+    _ then { return "?" }
   }
 }|}
         in
@@ -727,8 +727,8 @@ def show(p (Outcome, Int64)) String {
 
 def grade(p (Outcome, Int64)) String {
   case p {
-    (Outcome.ok, v) -> { return v.to_string() }
-    (Outcome.failed, _) -> { return "no" }
+    (Outcome.ok, v) then { return v.to_string() }
+    (Outcome.failed, _) then { return "no" }
   }
 }
 
@@ -743,7 +743,7 @@ def go() String {
              (check
                 {|const anything = [1, "a"][0]
 case anything {
-  1 -> { println(1) }
+  1 then { println(1) }
 }|})));
   ]
 
@@ -888,8 +888,8 @@ let void_tests =
 
 def f(c Color) Int64 {
   case c {
-    Color.red -> { return 1 }
-    Color.green -> { return 2 }
+    Color.red then { return 1 }
+    Color.green then { return 2 }
   }
 }|})
           > 0
@@ -2193,7 +2193,7 @@ def probe(n Int64) Int64 {
 def probe(n Int64) Int64 {
   var i = 0
   while i < n {
-    const g = -> {
+    const g = -> () {
       break
     }
     g()
@@ -2208,7 +2208,7 @@ def probe(n Int64) Int64 {
             {|
 def probe(n Int64) Int64 {
   for var i = 0; i < n; i = i + 1 {
-    const g = -> {
+    const g = -> () {
       return i
     }
     println(g())
@@ -2400,8 +2400,8 @@ let r_enum_tests =
              (check
                 {|def pick(t (R, String)) String {
   case t {
-    (R.ok, n) -> { return "ok ${n}" }
-    (R.error, why) -> { return "error ${why}" }
+    (R.ok, n) then { return "ok ${n}" }
+    (R.error, why) then { return "error ${why}" }
   }
 }
 
@@ -2414,8 +2414,8 @@ println(pick((R.error, "boom")))|})));
              (check
                 {|def show(x R) String {
   case x {
-    R.ok -> { return "yes" }
-    R.error -> { return "no" }
+    R.ok then { return "yes" }
+    R.error then { return "no" }
   }
 }
 
@@ -2428,7 +2428,7 @@ println(show(R.ok))|})));
             {|
 def pick(t (R, String)) String {
   case t {
-    (R.ok, n) -> { return "ok ${n}" }
+    (R.ok, n) then { return "ok ${n}" }
   }
 }
 |}

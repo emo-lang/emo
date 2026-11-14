@@ -2103,8 +2103,8 @@ let upload_program =
 
 const resp = http.request("POST", __url, [("Authorization", "Bearer " + __token), ("Content-Type", "application/octet-stream")], __body, 120.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     println(ok.body)
   }
@@ -2117,8 +2117,8 @@ let login_program =
 
 const resp = http.request("POST", __url, [("Content-Type", "application/json")], __body, 60.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     println(ok.body)
   }
@@ -2132,8 +2132,8 @@ let token_program =
 
 const resp = http.request("POST", __url, [("Authorization", "Basic " + __basic), ("Content-Type", "application/json")], __body, 60.0)
 case resp {
-  (R.error, why) -> { raise Exception.new(message: why) }
-  (R.ok, ok)     -> {
+  (R.error, why) then { raise Exception.new(message: why) }
+  (R.ok, ok)     then {
     println(ok.status)
     println(ok.body)
   }

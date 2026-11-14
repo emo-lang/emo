@@ -301,7 +301,7 @@ let io_tests =
         check_value "tuple" (Emo_eval.Int64 2L) "(1, 2).length()");
     tc "Box constructs, reads, replaces" (fun () ->
         check_value "read" (Emo_eval.Int64 2L)
-          "-> {\n  const b = Box.new(1)\n  b.replace(2)\n  return b.read()\n}()";
+          "-> () {\n  const b = Box.new(1)\n  b.replace(2)\n  return b.read()\n}()";
         check_value "replace returns the new value" (Emo_eval.String "x")
           "Box.new(0).replace(\"x\")");
     tc "method errors name the receiver and method" (fun () ->
@@ -350,7 +350,7 @@ println(is_even(5))|}));
         Alcotest.(check string)
           "by reference" "42\n"
           (run_program
-             {|const later = -> {
+             {|const later = -> () {
   return x + 1
 }
 const x = 41
@@ -359,9 +359,9 @@ println(later())|}));
         Alcotest.(check string)
           "counter" "1\n2\n"
           (run_program
-             {|const make_counter = -> {
+             {|const make_counter = -> () {
   const count = Box.new(0)
-  return -> {
+  return -> () {
     count.replace(count.read() + 1)
     return count.read()
   }
@@ -374,7 +374,7 @@ println(tick())|}));
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
     tc "receive outside a scheduler is refused" (fun () ->
         let diagnostic =
-          program_err "receive {\n  (from, msg) -> { return msg }\n}"
+          program_err "receive {\n  (from, msg) then { return msg }\n}"
         in
         Alcotest.(check string) "code" "E3009" (code_of diagnostic));
     tc "a foreign definition is inert until it is called" (fun () ->
@@ -484,9 +484,9 @@ page(title: "title") {
           (run_program
              {|def name(n Int64) String {
   case n {
-    1 -> { return "one" }
-    2 -> { return "two" }
-    _ -> { return "many" }
+    1 then { return "one" }
+    2 then { return "two" }
+    _ then { return "many" }
   }
 }
 println(name(1))
@@ -498,7 +498,7 @@ println(name(3))|}));
           (run_program
              {|def identity(n Int64) Int64 {
   case n {
-    m -> { return m }
+    m then { return m }
   }
 }
 println(identity(5))|}));
@@ -508,7 +508,7 @@ println(identity(5))|}));
           (run_program
              {|def sum(p (Int64, Int64)) Int64 {
   case p {
-    (a, b) -> { return a + b }
+    (a, b) then { return a + b }
   }
 }
 const pair = (1, 2)
@@ -519,19 +519,19 @@ println(sum(pair))|}));
           (run_program
              {|def size(n Int64) String {
   case n {
-    x when x > 10 -> { return "big" }
-    x -> { return "small" }
+    x when x > 10 then { return "big" }
+    x then { return "small" }
   }
 }
 println(size(42))
 println(size(1))|}));
     tc "guards must be Bools" (fun () ->
         let diagnostic =
-          program_err "case 1 {\n  x when x + 1 -> { return 1 }\n}"
+          program_err "case 1 {\n  x when x + 1 then { return 1 }\n}"
         in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "an unmatched scrutinee is a runtime error naming the tag" (fun () ->
-        let diagnostic = program_err "case 1 {\n  \"one\" -> { return 1 }\n}" in
+        let diagnostic = program_err "case 1 {\n  \"one\" then { return 1 }\n}" in
         Alcotest.(check string) "code" "E3006" (code_of diagnostic);
         Alcotest.(check string)
           "message" "no `case` branch matched this Int64 value"
@@ -542,8 +542,8 @@ println(size(1))|}));
           (run_program
              {|def check(n Int64) String {
   case n {
-    Color.red -> { return "r" }
-    _ -> { return "w" }
+    Color.red then { return "r" }
+    _ then { return "w" }
   }
 }
 println(check(1))|}));
@@ -929,16 +929,16 @@ println(Color.red.is(Greeter))|}));
           "the ok arm" "yes\n"
           (run_program
              {|case (R.ok, 1) {
-  (R.ok, n) -> { println("yes") }
-  (R.error, why) -> { println(why) }
+  (R.ok, n) then { println("yes") }
+  (R.error, why) then { println(why) }
 }
 |});
         Alcotest.(check string)
           "the error arm" "boom\n"
           (run_program
              {|case (R.error, "boom") {
-  (R.ok, n) -> { println(n) }
-  (R.error, why) -> { println(why) }
+  (R.ok, n) then { println(n) }
+  (R.error, why) then { println(why) }
 }
 |}));
   ]

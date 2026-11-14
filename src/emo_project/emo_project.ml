@@ -2187,25 +2187,25 @@ require "file"
 def fmt(v (Int64, Int64)) String {
   var shown = v[1].to_string()
   case wasm.as_i32(v) {
-    (R.ok, n) -> {
+    (R.ok, n) then {
       shown = n.to_string()
     }
-    (R.error, _) -> {
+    (R.error, _) then {
       case wasm.as_i64(v) {
-        (R.ok, n) -> {
+        (R.ok, n) then {
           shown = n.to_string()
         }
-        (R.error, _) -> {
+        (R.error, _) then {
           case wasm.as_f32(v) {
-            (R.ok, f) -> {
+            (R.ok, f) then {
               shown = f.to_string()
             }
-            (R.error, _) -> {
+            (R.error, _) then {
               case wasm.as_f64(v) {
-                (R.ok, f) -> {
+                (R.ok, f) then {
                   shown = f.to_string()
                 }
-                (R.error, _) -> {
+                (R.error, _) then {
                 }
               }
             }
@@ -2227,11 +2227,11 @@ def print_results(results Array[(Int64, Int64)], i Int64) Int64 {
 
 def call_entry(inst Int64, name String) Bool {
   case wasm.call(inst, name, []) {
-    (R.ok, results) -> {
+    (R.ok, results) then {
       print_results(results, 0)
       return true
     }
-    (R.error, why) -> {
+    (R.error, why) then {
       if why == "unknown export" {
         return false
       }
@@ -2247,23 +2247,23 @@ def call_entry(inst Int64, name String) Bool {
 def run() Int64 {
   wasm.set_wasi_args(__args)
   case file.read(__artifact) {
-    (R.error, why) -> {
+    (R.error, why) then {
       raise Exception.new(message: "emo-wasm: " + why)
     }
-    (R.ok, text) -> {
+    (R.ok, text) then {
       case wasm.load(text.to_bytes()) {
-        (R.error, why) -> {
+        (R.error, why) then {
           raise Exception.new(message: "emo-wasm: " + why)
         }
-        (R.ok, module) -> {
+        (R.ok, module) then {
           case wasm.instantiate(module, []) {
-            (R.error, why) -> {
+            (R.error, why) then {
               if why.starts_with("emo-wasm: proc_exit(") {
                 raise Exception.new(message: why)
               }
               raise Exception.new(message: "emo-wasm: " + why)
             }
-            (R.ok, inst) -> {
+            (R.ok, inst) then {
               if call_entry(inst, "_start") {
                 return 0
               }

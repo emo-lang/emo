@@ -33,7 +33,7 @@ let scheduler_tests =
             {|
 def worker() Int64 {
   receive {
-    (sender, n) -> {
+    (sender, n) then {
       sender <- (self_pid(), n * 2)
       return worker()
     }
@@ -43,8 +43,8 @@ def worker() Int64 {
 const pid = do worker()
 pid <- (self_pid(), 21)
 receive {
-  (_who, result) -> { println(result) }
-  _ -> { println("unmatched") }
+  (_who, result) then { println(result) }
+  _ then { println("unmatched") }
 }
 println("done")
 |}
@@ -56,7 +56,7 @@ println("done")
             {|
 def echo() Int64 {
   receive {
-    reply_to -> {
+    reply_to then {
       reply_to <- self_pid()
       return halt()
     }
@@ -66,7 +66,7 @@ def echo() Int64 {
 const pid = do echo()
 pid <- self_pid()
 receive {
-  theirs -> {
+  theirs then {
     println(pid)
     println(theirs == pid)
     println(pid == self_pid())
@@ -82,10 +82,10 @@ receive {
 self_pid() <- "later"
 self_pid() <- ("now", 7)
 receive {
-  ("now", n) -> { println(n) }
+  ("now", n) then { println(n) }
 }
 receive {
-  msg -> { println(msg) }
+  msg then { println(msg) }
 }
 |}
         in
@@ -104,7 +104,7 @@ def slow(reply_to Pid) Int64 {
 
 const pid = do slow(self_pid())
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 println("after")
 |}
@@ -116,7 +116,7 @@ println("after")
             {|
 def quitter() Int64 {
   receive {
-    _ -> { return halt() }
+    _ then { return halt() }
   }
 }
 
@@ -172,7 +172,7 @@ let isolation_tests =
             {|
 def bomber() Int64 {
   receive {
-    _ -> { raise Exception.new("boom") }
+    _ then { raise Exception.new("boom") }
   }
 }
 
@@ -188,8 +188,8 @@ println("still here")
             {|
 def divider() Int64 {
   receive {
-    (_, 0) -> { return 1 / 0 }
-    (_, n) -> { return 100 / n }
+    (_, 0) then { return 1 / 0 }
+    (_, n) then { return 100 / n }
   }
 }
 
@@ -212,7 +212,7 @@ println("main survives")
                  ~source:
                    {|def quitter() Int64 {
   receive {
-    _ -> { return halt() }
+    _ then { return halt() }
   }
 }
 |});
@@ -245,7 +245,7 @@ let box_tests =
             {|
 def reader(reply_to Pid) Int64 {
   receive {
-    b -> {
+    b then {
       reply_to <- b.read()
       return halt()
     }
@@ -257,7 +257,7 @@ const r = do reader(self_pid())
 r <- box
 box.replace(99)
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 println(box.read())
 |}
@@ -271,7 +271,7 @@ println(box.read())
             {|
 def mutator(reply_to Pid) Int64 {
   receive {
-    b -> {
+    b then {
       b.replace(7)
       reply_to <- "mutated"
       return halt()
@@ -283,7 +283,7 @@ const box = Box.new(1)
 const m = do mutator(self_pid())
 m <- box
 receive {
-  _ -> { println(box.read()) }
+  _ then { println(box.read()) }
 }
 |}
         in
@@ -294,7 +294,7 @@ receive {
             {|
 def reader(reply_to Pid) Int64 {
   receive {
-    (b, tag) -> {
+    (b, tag) then {
       reply_to <- (b.read(), tag)
       return halt()
     }
@@ -304,7 +304,7 @@ def reader(reply_to Pid) Int64 {
 const r = do reader(self_pid())
 r <- (Box.new(5), "deep")
 receive {
-  (v, tag) -> {
+  (v, tag) then {
     println(tag)
     println(v)
   }
@@ -345,7 +345,7 @@ let racy =
   {|
 def echo(name String) Int64 {
   receive {
-    reply_to -> {
+    reply_to then {
       reply_to <- name
       return halt()
     }
@@ -357,10 +357,10 @@ const b = do echo("b")
 a <- self_pid()
 b <- self_pid()
 receive {
-  m1 -> { println(m1) }
+  m1 then { println(m1) }
 }
 receive {
-  m2 -> { println(m2) }
+  m2 then { println(m2) }
 }
 |}
 
@@ -438,7 +438,7 @@ let determinism_tests =
           run_det
             {|def parked() Int64 {
   receive {
-    _ -> { return 0 }
+    _ then { return 0 }
   }
 }
 
@@ -462,7 +462,7 @@ println("root done")
         Alcotest.(check string) "output" "root done\n" output);
     tc "a system-wide deadlock is an error" (fun () ->
         match run_det {|receive {
-  _ -> { println("never") }
+  _ then { println("never") }
 }
 |} with
         | _ -> Alcotest.fail "expected E3012"
@@ -481,11 +481,11 @@ let ping_pong =
   {|
 def pong(n Int64) Int64 {
   receive {
-    ("ping", reply_to) -> {
+    ("ping", reply_to) then {
       reply_to <- "pong"
       return pong(n + 1)
     }
-    ("done", report_to) -> {
+    ("done", report_to) then {
       report_to <- n
       return halt()
     }
@@ -501,14 +501,14 @@ def round(i Int64) Int64 {
   } else {
     p <- ("ping", me)
     receive {
-      _ -> { return round(i - 1) }
+      _ then { return round(i - 1) }
     }
   }
 }
 
 round(500000)
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 |}
 
@@ -517,7 +517,7 @@ let fan_out =
   {|
 def worker(reply_to Pid) Int64 {
   receive {
-    n -> {
+    n then {
       reply_to <- n * 2
       return halt()
     }
@@ -542,7 +542,7 @@ def collect(n Int64, sum Int64) Int64 {
     return sum
   } else {
     receive {
-      v -> { return collect(n - 1, sum + v) }
+      v then { return collect(n - 1, sum + v) }
     }
   }
 }
@@ -555,11 +555,11 @@ let deep_loop =
   {|
 def looper(n Int64) Int64 {
   receive {
-    ("stop", report_to) -> {
+    ("stop", report_to) then {
       report_to <- n
       return halt()
     }
-    _ -> {
+    _ then {
       return looper(n + 1)
     }
   }
@@ -579,7 +579,7 @@ def feed(i Int64) Int64 {
 
 feed(1000000)
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 |}
 
@@ -609,11 +609,11 @@ let stress_tests =
             {|
 def looper(n Int64) Int64 {
   receive {
-    ("stop", report_to) -> {
+    ("stop", report_to) then {
       report_to <- n
       return halt()
     }
-    ("tick", reply_to) -> {
+    ("tick", reply_to) then {
       reply_to <- "ack"
       return looper(n + 1)
     }
@@ -629,14 +629,14 @@ def feed(i Int64, who Pid) Int64 {
   } else {
     who <- ("tick", me)
     receive {
-      _ -> { return feed(i - 1, who) }
+      _ then { return feed(i - 1, who) }
     }
   }
 }
 
 feed(100000, l)
 receive {
-  n -> { println(n) }
+  n then { println(n) }
 }
 |}
         in
@@ -696,11 +696,11 @@ let net_tests =
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write(line + "\n")
           serve(listener)
         }
@@ -712,12 +712,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do serve(listener)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("ping\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     println("done")
   }
@@ -741,8 +741,8 @@ println(listener.port() < 65536)
             {|
 def once(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       conn.write("bye")
       conn.close()
     }
@@ -752,15 +752,15 @@ def once(listener TcpListener) Void {
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do once(listener)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     case conn.read_all() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, text)   -> { println(text) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, text)   then { println(text) }
     }
     case conn.read_all() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, text)   -> { println(text) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, text)   then { println(text) }
     }
     println("after")
   }
@@ -776,8 +776,8 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
                {|
 const result = net_connect("127.0.0.1", %d, 0.0)
 case result {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("connected?!") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("connected?!") }
 }
 |}
                port)
@@ -792,20 +792,20 @@ case result {
             {|
 def silent(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> { halt() }
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then { halt() }
   }
 }
 
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do silent(listener)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.set_timeout(0.2)
     case conn.read_line() {
-      (R.error, why) -> { println(why) }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println(why) }
+      (R.ok, line)   then { println(line) }
     }
   }
 }
@@ -824,12 +824,12 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
             {|
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.close()
     case conn.read_line() {
-      (R.error, why) -> { println(why) }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println(why) }
+      (R.ok, line)   then { println(line) }
     }
   }
 }
@@ -848,12 +848,12 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
             {|
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.close()
     case conn.close() {
-      (R.error, why) -> { println(why) }
-      (R.ok, _)      -> { println("closed again?!") }
+      (R.error, why) then { println(why) }
+      (R.ok, _)      then { println("closed again?!") }
     }
   }
 }
@@ -872,8 +872,8 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
             {|
 def cut(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       conn.write("half")
       conn.close()
     }
@@ -883,11 +883,11 @@ def cut(listener TcpListener) Void {
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do cut(listener)
 case net_connect("127.0.0.1", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     case conn.read_line() {
-      (R.error, why) -> { println(why) }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println(why) }
+      (R.ok, line)   then { println(line) }
     }
   }
 }
@@ -909,12 +909,12 @@ const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
 const (R.ok, b) = net_udp_bind("127.0.0.1", 0)
 a.send_to("127.0.0.1", b.port(), "datagram")
 case b.recv_from() {
-  (R.ok, (data, host, port)) -> {
+  (R.ok, (data, host, port)) then {
     println(data)
     println(host == "127.0.0.1")
     println(port == a.port())
   }
-  (R.error, why) -> { println("recv failed: ${why}") }
+  (R.error, why) then { println("recv failed: ${why}") }
 }
 |}
         in
@@ -926,8 +926,8 @@ case b.recv_from() {
 const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
 a.set_timeout(0.1)
 case a.recv_from() {
-  (R.ok, _)      -> { println("received") }
-  (R.error, why) -> { println(why) }
+  (R.ok, _)      then { println("received") }
+  (R.error, why) then { println(why) }
 }
 |}
         in
@@ -946,11 +946,11 @@ case a.recv_from() {
                {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write(line + "\n")
           serve(listener)
         }
@@ -962,12 +962,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_unix("%s")
 do serve(listener)
 case net_connect_unix("%s", 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello unix\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     println("done")
   }
@@ -998,8 +998,8 @@ listener.port()
           run_det
             (Printf.sprintf
                {|case net_connect_unix("%s", 0.0) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("connected?!") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("connected?!") }
 }
 |}
                path)
@@ -1026,11 +1026,11 @@ println(addrs.length() > 0)
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write(line + "\n")
           serve(listener)
         }
@@ -1042,12 +1042,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do serve(listener)
 case net_connect("localhost", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("by name\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     println("done")
   }
@@ -1060,8 +1060,8 @@ case net_connect("localhost", listener.port(), 0.0) {
           run_det
             {|
 case net_resolve("definitely not a host") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("resolved?!") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("resolved?!") }
 }
 |}
         in
@@ -1077,8 +1077,8 @@ const (R.ok, a) = net_udp_bind("localhost", 0)
 const (R.ok, b) = net_udp_bind("localhost", 0)
 a.send_to("localhost", b.port(), "named")
 case b.recv_from() {
-  (R.ok, (data, _host, _port)) -> { println(data) }
-  (R.error, why)               -> { println("recv failed: ${why}") }
+  (R.ok, (data, _host, _port)) then { println(data) }
+  (R.error, why)               then { println("recv failed: ${why}") }
 }
 |}
         in
@@ -1089,11 +1089,11 @@ case b.recv_from() {
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write(line + "\n")
           serve(listener)
         }
@@ -1105,8 +1105,8 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
 case net_tls_connect("localhost", listener.port(), 0.0) {
-  (R.error, why) -> { println(why) }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println(why) }
+  (R.ok, conn)   then {
     conn.write("no\n")
     println("handshook?!")
   }
@@ -1127,11 +1127,11 @@ case net_tls_connect("localhost", listener.port(), 0.0) {
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write(line + "\n")
           serve(listener)
         }
@@ -1143,12 +1143,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
 case net_tls_connect_insecure("localhost", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("secret over tls\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     println("done")
   }
@@ -1169,11 +1169,11 @@ case net_tls_connect_insecure("localhost", listener.port(), 0.0) {
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("verified: " + line + "\n")
           conn.close()
         }
@@ -1185,12 +1185,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
 case net_tls_connect("localhost", listener.port(), 0.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -1215,11 +1215,11 @@ case net_tls_connect("localhost", listener.port(), 0.0) {
             {|
 def echo_lines(conn TcpConn) Void {
   case conn.read_line() {
-    (R.error, why) -> {
+    (R.error, why) then {
       println("server read failed: ${why}")
       conn.close()
     }
-    (R.ok, line)   -> {
+    (R.ok, line)   then {
       conn.write("echo: " + line + "\n")
       echo_lines(conn)
     }
@@ -1228,20 +1228,20 @@ def echo_lines(conn TcpConn) Void {
 
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> { echo_lines(conn) }
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then { echo_lines(conn) }
   }
 }
 
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
 case net_tls_connect("localhost", listener.port(), 5.0) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("loopback\n")
     case conn.read_line() {
-      (R.error, why) -> { println("read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -1259,8 +1259,8 @@ case net_tls_connect("localhost", listener.port(), 5.0) {
           run_det
             {|
 case net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("listening?!") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("listening?!") }
 }
 |}
         in
@@ -1280,11 +1280,11 @@ case net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("own ca: " + line + "\n")
           conn.close()
         }
@@ -1296,12 +1296,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
 case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("client read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("client read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -1318,11 +1318,11 @@ case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pe
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("named: " + line + "\n")
           conn.close()
         }
@@ -1334,12 +1334,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
 case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "localhost", false) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("client read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("client read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -1355,8 +1355,8 @@ case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pe
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       conn.write("unexpected\n")
       conn.close()
     }
@@ -1366,8 +1366,8 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
 case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "wrong.example", false) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     println("unexpected success")
     conn.close()
   }
@@ -1390,8 +1390,8 @@ case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pe
           run_det
             {|
 case net_tls_connect("127.0.0.1", 9, 1.0) {
-  (R.error, why) -> { println(why) }
-  (R.ok, _)      -> { println("connected?!") }
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("connected?!") }
 }
 |}
         in
@@ -1409,11 +1409,11 @@ case net_tls_connect("127.0.0.1", 9, 1.0) {
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("mutual: " + line + "\n")
           conn.close()
         }
@@ -1425,12 +1425,12 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
 do serve(listener)
 case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "fixtures/tls-cert.pem", "fixtures/tls-key.pem", "", false) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     conn.write("hello\n")
     case conn.read_line() {
-      (R.error, why) -> { println("client read failed: ${why}") }
-      (R.ok, line)   -> { println(line) }
+      (R.error, why) then { println("client read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
     }
     conn.close()
     println("done")
@@ -1445,11 +1445,11 @@ case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pe
             {|
 def serve(listener TcpListener) Void {
   case listener.accept() {
-    (R.error, why) -> { println("accept failed: ${why}") }
-    (R.ok, conn)   -> {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then {
       case conn.read_line() {
-        (R.error, why) -> { println("read failed: ${why}") }
-        (R.ok, line)   -> {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, line)   then {
           conn.write("unexpected: " + line + "\n")
           conn.close()
         }
@@ -1461,11 +1461,11 @@ def serve(listener TcpListener) Void {
 const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
 do serve(listener)
 case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
-  (R.error, why) -> { println("connect failed: ${why}") }
-  (R.ok, conn)   -> {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
     case conn.read_line() {
-      (R.error, why) -> { println("client read failed: ${why}") }
-      (R.ok, line)   -> { println("unexpected: ${line}") }
+      (R.error, why) then { println("client read failed: ${why}") }
+      (R.ok, line)   then { println("unexpected: ${line}") }
     }
     conn.close()
   }

@@ -1846,7 +1846,7 @@ let sched_tests =
               ( "main.emo",
                 {|def worker(reply_to Pid) Int64 {
   receive {
-    n -> {
+    n then {
       reply_to <- n * 2
       return halt()
     }
@@ -1856,7 +1856,7 @@ let sched_tests =
 const pid = do worker(self_pid())
 pid <- 21
 receive {
-  v -> { println(v) }
+  v then { println(v) }
 }
 |}
               );
@@ -1874,7 +1874,7 @@ receive {
         let entry =
           with_project
             [ ("main.emo", {|receive {
-  _ -> { println("never") }
+  _ then { println("never") }
 }
 |}) ]
             "main.emo"
@@ -1986,7 +1986,7 @@ let compiled_sched_tests =
           (build_and_run
              {|def parked() Int64 {
   receive {
-    _ -> { return 0 }
+    _ then { return 0 }
   }
 }
 
@@ -2039,8 +2039,8 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 }
 
 case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
-  (R.error, why) -> { println("request failed: ${why}") }
-  (R.ok, resp)   -> {
+  (R.error, why) then { println("request failed: ${why}") }
+  (R.ok, resp)   then {
     println(resp.body)
     println(resp.status)
   }
@@ -2106,8 +2106,8 @@ const server = httpd.serve(listener) -> (req httpd.Request) {
 
 const options = net.tls_client_options().with_ca_file("%s")
 case http.request_with("GET", "https://localhost:" + listener.port().to_string() + "/hello", [], "", 5.0, options) {
-  (R.error, why) -> { println("request failed: ${why}") }
-  (R.ok, resp)   -> {
+  (R.error, why) then { println("request failed: ${why}") }
+  (R.ok, resp)   then {
     println(resp.body)
     println(resp.status)
   }

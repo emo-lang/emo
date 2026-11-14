@@ -337,7 +337,7 @@ and parse_postfix st =
           | Tok.Op Tok.Arrow when not (newline_before st) ->
               let arrow_span = span st in
               advance st |> ignore;
-              let params = parse_params st in
+              let params = parse_arrow_params st in
               let body, close_span = parse_block st in
               let block =
                 node
@@ -424,7 +424,7 @@ and parse_primary st =
             ~hint:"write `do task(x)`")
   | Tok.Op Tok.Arrow ->
       advance st |> ignore;
-      let params = parse_params st in
+      let params = parse_arrow_params st in
       let body, close_span = parse_block st in
       node (merge_span tok.Tok.span close_span) (Ast.Arrow_block (params, body))
   | Tok.Keyword Tok.If -> parse_if_expr st
@@ -1754,6 +1754,19 @@ and parse_enum st =
     enum_name;
     enum_members = List.rev !members;
   }
+
+(* An arrow block always declares its parameter list, even empty:
+   `-> (x Int64) { ... }` or `-> () { ... }`. A bare `-> { ... }` is not
+   a block — the zero-parameter attached block is `f() { ... }`. *)
+and parse_arrow_params st =
+  if at_op st Tok.LParen then parse_params st
+  else
+    error "E2001" (span st)
+      (Printf.sprintf "expected `(` after `->`, found %s"
+         (describe_kind (kind st)))
+      ~hint:
+        "an arrow block declares its parameters: `-> (x Int64) { ... }`; with \
+         none, `-> () { ... }`"
 
 and parse_params st =
   if at_op st Tok.LParen then (

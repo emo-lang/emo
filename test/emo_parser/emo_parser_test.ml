@@ -428,10 +428,13 @@ let control_tests =
           "shape" "(block (param x Int64) (param y Float64)|(return x))"
           (render pp_expr
              (parse_expr "-> (x Int64, y Float64) {\n  return x\n}")));
-    tc "an arrow block may omit its parameters" (fun () ->
+    tc "an arrow block with no parameters carries empty parens" (fun () ->
         Alcotest.(check string)
           "shape" "(block |(return 1))"
-          (render pp_expr (parse_expr "-> {\n  return 1\n}")));
+          (render pp_expr (parse_expr "-> () {\n  return 1\n}")));
+    tc "an arrow block requires a parameter list" (fun () ->
+        let diagnostic = parse_err "-> {\n  return 1\n}" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "arrow block parameters need type declarations" (fun () ->
         let diagnostic = parse_err "-> (x) { x }" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
@@ -570,14 +573,14 @@ let stmt_tests =
     tc "do accepts an immediately invoked block" (fun () ->
         Alcotest.(check string)
           "shape" "(do ((block |(return 1)) call))"
-          (render pp_expr (parse_expr "do -> {\n  return 1\n}()")));
+          (render pp_expr (parse_expr "do -> () {\n  return 1\n}()")));
     tc "do rejects a non-call operand" (fun () ->
         let diagnostic = parse_err "do x" in
         Alcotest.(check string) "code" "E2008" (code_of diagnostic));
     tc "case matches enum members and wildcard" (fun () ->
         match
           parse_program
-            "case c {\n  Color.red -> { return 1 }\n  _ -> { return 2 }\n}"
+            "case c {\n  Color.red then { return 1 }\n  _ then { return 2 }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
@@ -591,8 +594,8 @@ let stmt_tests =
         match
           parse_program
             "case c {\n\
-            \  Color.red when loud -> { return 1 }\n\
-            \  _ -> { return 2 }\n\
+            \  Color.red when loud then { return 1 }\n\
+            \  _ then { return 2 }\n\
              }"
         with
         | [ case_stmt ] ->
@@ -606,7 +609,7 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "tuple patterns destructure by position" (fun () ->
         match
-          parse_program "case p {\n  (Color.red, count) -> { return count }\n}"
+          parse_program "case p {\n  (Color.red, count) then { return count }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
@@ -619,7 +622,7 @@ let stmt_tests =
     tc "fixed-width literals are patterns" (fun () ->
         match
           parse_program
-            "case n {\n  10B -> { return 1 }\n  2 -> { return 2 }\n}"
+            "case n {\n  10B then { return 1 }\n  2 then { return 2 }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
@@ -629,10 +632,10 @@ let stmt_tests =
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "a bare type name is not a pattern" (fun () ->
-        let diagnostic = program_err "case c {\n  Red -> { return 1 }\n}" in
+        let diagnostic = program_err "case c {\n  Red then { return 1 }\n}" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
     tc "a bare lowercase name is a binding pattern" (fun () ->
-        match parse_program "case c {\n  other -> { return 1 }\n}" with
+        match parse_program "case c {\n  other then { return 1 }\n}" with
         | [ case_stmt ] ->
             Alcotest.(check string)
               "shape" "(case c (branch other |(return 1)))"
@@ -642,11 +645,11 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "branches are separated by newlines" (fun () ->
         let diagnostic =
-          program_err "case c { Color.red -> { return 1 } _ -> { return 2 } }"
+          program_err "case c { Color.red then { return 1 } _ then { return 2 } }"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
     tc "receive reuses the case branch shape" (fun () ->
-        match parse_program "receive {\n  (from, msg) -> { return msg }\n}" with
+        match parse_program "receive {\n  (from, msg) then { return msg }\n}" with
         | [ receive_stmt ] ->
             Alcotest.(check string)
               "shape" "(receive (branch (tuple from msg) |(return msg)))"
@@ -722,7 +725,7 @@ let string_tests =
           "shape" "(string \"a \" (interp \"b\") \" c\")"
           (render pp_expr (parse_expr "\"a ${ \"b\" } c\"")));
     tc "plain string patterns match" (fun () ->
-        match parse_program "case s {\n  \"red\" -> { return 1 }\n}" with
+        match parse_program "case s {\n  \"red\" then { return 1 }\n}" with
         | [ case_stmt ] ->
             Alcotest.(check string)
               "shape" "(case s (branch \"red\" |(return 1)))"
@@ -732,7 +735,7 @@ let string_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "interpolated strings are not patterns" (fun () ->
         let diagnostic =
-          program_err "case s {\n  \"a${b}c\" -> { return 1 }\n}"
+          program_err "case s {\n  \"a${b}c\" then { return 1 }\n}"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
   ]
@@ -1336,7 +1339,7 @@ let naming_tests =
         Alcotest.(check string) "code" "E2022" (code_of diagnostic));
     tc "camelCase pattern bindings are rejected" (fun () ->
         let diagnostic =
-          program_err "case c {\n  otherValue -> { return 1 }\n}"
+          program_err "case c {\n  otherValue then { return 1 }\n}"
         in
         Alcotest.(check string) "code" "E2022" (code_of diagnostic));
     tc "question-mark names stay exclusive to defs" (fun () ->
@@ -1346,7 +1349,7 @@ let naming_tests =
           program_err "def f(ready? Int64) Int64 {\n  return ready?\n}"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic);
-        let diagnostic = program_err "case c {\n  ready? -> { return 1 }\n}" in
+        let diagnostic = program_err "case c {\n  ready? then { return 1 }\n}" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
     tc "snake_case names with digits and underscores pass" (fun () ->
         match
