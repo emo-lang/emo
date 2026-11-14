@@ -4818,3 +4818,38 @@ command; CHECK.md's c-target-only note is retired. (Plan:
       rule, the registry chain, and the refresh workflow (EN + zh-CN
       mirror, in `docs/intro/package-management.md` — `toolchain.md`
       carries no deps section); CHECK.md's retired note points here.
+
+## M44 — Strictness first, finished
+
+### Step 83 — The strictness closeout
+
+**Prereq:** none. **Done when:** the four open checker gaps refuse at
+check time with the construct and span named (the shadowed block
+binding, the ladder arms disagreeing on one enum member's payload, the
+`Bytes.new` constructor rule behind the Bytes rules' Unknown tolerance,
+the mixed-payload ladder), the chained-builtin form answers the
+receiver's real value on the interpreter and every compiled target with
+the chained forms pinned in `examples/builtin_names`, the corpus sweeps
+clean, and the checker rules land in the intro docs (EN + zh-CN).
+(Plan: `plan/step-83-strictness-closeout.md`.)
+
+- [ ] **T83.1** — The shadow refusal: a block binding whose name
+      matches an outer binding is a compile error naming both spans;
+      the interpreter's flat rebind retires with it.
+- [ ] **T83.2** — The chained-builtin lifetime: `b.to_bytes().length()`
+      answers the real count on the interpreter (the temporary drains
+      before the chained read today), the five compiled targets probed
+      for the same split, the chained forms pinned in
+      `examples/builtin_names`.
+- [ ] **T83.3** — `Bytes` typing: the Unknown-tolerant pass over the
+      Bytes method rules first, then the `Bytes.new` constructor rule;
+      `Atomic.new(Bytes.new(4))` checks clean and joins the
+      constructor golden.
+- [ ] **T83.4** — The ladder-payload rule: arms on one enum member
+      agree on tuple payload types (and with a typed scrutinee); the
+      refusal names the member and both payload types; `:chain`
+      inherits the check through its nested `case`.
+- [ ] **T83.5** — The sweep and the docs: full-corpus `emo check` under
+      the new rules, the four refusals' negative goldens in
+      `test/emo_cli`, the checker sections of `docs/intro/type-system.md`
+      and `docs/intro/syntax.md` (+ zh-CN mirrors) stating the rules.

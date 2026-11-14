@@ -2147,3 +2147,31 @@ targets(或显式 `--target`)解析,并与其他命令一样尊重
 - [x] **T82.5** — 文档:依赖工作流写明 targets 规则、registry 链与
       刷新流程(EN + zh-CN 镜像,落在 `docs/intro/package-management.md`
       ——`toolchain.md` 无依赖节);CHECK.md 退役的注记指向这里。
+
+## M44 — 严格性收口
+
+### Step 83 — 严格性收口
+
+**Prereq:** 无。**完成标准:** 四个在案 checker 缺口都能在检查期以点名
+构造与位置拒绝(块内遮蔽绑定、同一枚举成员的梯子臂 payload 不一致、
+Bytes 方法规则 Unknown 容忍之后的 `Bytes.new` 构造规则、混合 payload
+梯子),链式内建形态在解释器与全部编译目标上答出 receiver 的真实值且
+链式形态钉进 `examples/builtin_names`,语料在新规则下扫干净,checker
+规则落入门户文档(EN + zh-CN)。(计划:
+`plan/step-83-strictness-closeout.md`。)
+
+- [ ] **T83.1** — 遮蔽拒绝:块内绑定与外层绑定同名即编译错误,两个
+      位置都点名;解释器的平铺重绑定随拒绝一并退役。
+- [ ] **T83.2** — 链式内建的临时值寿命:`b.to_bytes().length()` 在
+      解释器上答出真实字节数(今天临时值在链式读取前就被排走),五个
+      编译目标逐一探查是否有同样分裂,链式形态钉进
+      `examples/builtin_names`。
+- [ ] **T83.3** — `Bytes` 定型:先做 Bytes 方法规则的 Unknown 容忍
+      一轮,再上 `Bytes.new` 构造规则;`Atomic.new(Bytes.new(4))`
+      检查通过并进构造金测。
+- [ ] **T83.4** — 梯子 payload 规则:同一枚举成员的各臂对元组 payload
+      类型必须一致(与已定型的 scrutinee 也要一致);拒绝时点名成员与
+      两处 payload 类型;`:chain` 经其嵌套 `case` 继承该检查。
+- [ ] **T83.5** — 扫描与文档:新规则下全语料 `emo check`,四条拒绝的
+      负例金测进 `test/emo_cli`,`docs/intro/type-system.md` 与
+      `docs/intro/syntax.md`(+ zh-CN 镜像)的 checker 节写明四条规则。
