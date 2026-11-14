@@ -1996,6 +1996,41 @@ and pattern_bind_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
 and pattern_bind env (get : string) (p : Ast.pattern) : unit =
   pattern_bind_sfx env get p ""
 
+(* A `receive`'s branches share one C function, so its pattern bindings
+   are declared once, zeroed, before the retry loop — the unwind at any
+   exit releases every branch's slots, the unmatched ones still zero,
+   and `emo_release` answers a zero without touching it — while the
+   name-to-slot mapping happens at the branch's own section (the assign
+   below), so a branch's body reads its own slot, not a later branch's.
+   Every branch body sits in a block, so a `return` inside one branch
+   declares its `__ret` in that block's scope instead of colliding with
+   a sibling's. *)
+and pattern_declare_sfx env (p : Ast.pattern) (sfx : string) : unit =
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
+  | Ast.Pattern_binding name ->
+      let c = c_ident name ^ sfx in
+      put env "  emo_value %s = (emo_value)0;\n" c;
+      env.owned <- (c, Emo_check.Unknown) :: env.owned
+  | Ast.Tuple_pattern ps ->
+      List.iteri (fun i sub -> pattern_declare_sfx env sub sfx) ps
+
+and pattern_assign_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
+    =
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
+  | Ast.Pattern_binding name ->
+      let c = c_ident name ^ sfx in
+      put env "  %s = emo_retain(%s);\n" c get;
+      env.scope <- (name, c, Emo_check.Unknown) :: env.scope
+  | Ast.Tuple_pattern ps ->
+      List.iteri
+        (fun i sub ->
+          pattern_assign_sfx env
+            (Printf.sprintf "emo_index(%s, INT64_C(%d))" get i)
+            sub sfx)
+        ps
+
 (* Drop a redundant outermost parenthesis pair — a comparison at an
    if-condition's top level keeps clang's -Wparentheses-equality
    quiet. Only when the first `(` really matches the last `)`. *)
@@ -2326,7 +2361,9 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
          accepts (a failed guard leaves the message queued), and parks
          the fiber when nothing matches, rescanning on wake. Branch
          bindings carry the branch index so same-named variables do
-         not collide at C scope. *)
+         not collide at C scope; they are declared once before the
+         retry loop and each branch body sits in a block, so a branch
+         that returns declares its `__ret` in its own scope. *)
       let uniq = env.fresh + 1 in
       env.fresh <- uniq;
       (* through the same salt as fresh_c: a receive inside a cluster
@@ -2336,6 +2373,11 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       let retry = Printf.sprintf "%s__recv_retry_%d" q uniq in
       let end_label = Printf.sprintf "%s__recv_end_%d" q uniq in
       put env "  emo_value %s = (emo_value)0;\n" s;
+      List.iteri
+        (fun i (b : Emo_ir.branch) ->
+          pattern_declare_sfx env b.Emo_ir.pattern
+            (Printf.sprintf "%s__r%d_%d" q uniq i))
+        branches;
       put env "%s: ;\n" retry;
       put env "  if (emo_mailbox_empty()) {\n";
       put env "    emo_process_park_current();\n";
@@ -2374,11 +2416,12 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       put env "  goto %s;\n" retry;
       List.iteri
         (fun i (b : Emo_ir.branch) ->
-          put env "%s: ;\n" (Printf.sprintf "%s__recv_b%d_%d" q i uniq);
-          pattern_bind_sfx env s b.Emo_ir.pattern
+          put env "%s: {\n" (Printf.sprintf "%s__recv_b%d_%d" q i uniq);
+          pattern_assign_sfx env s b.Emo_ir.pattern
             (Printf.sprintf "%s__r%d_%d" q uniq i);
           emit_stmts env b.Emo_ir.body;
-          put env "  goto %s;\n" end_label)
+          put env "  goto %s;\n" end_label;
+          put env "  }\n")
         branches;
       put env "%s: ;\n" end_label
   | Raise e -> put env "  emo_raise(%s);\n" (as_dyn env e)
