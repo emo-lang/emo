@@ -1207,7 +1207,10 @@ let take_compiled proc matcher =
   go [] proc.inbox
 
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
-let next_pid : int ref = ref 0
+(* pid 1 is the root — the metal kernel's own convention (EmoOS T3.3),
+   the one the c runtime and the typescript runtime already keep, so a
+   pid printed on one target reads the same on every other. *)
+let next_pid : int ref = ref 1
 
 (* One id space for the networking handles the driver tracks. *)
 let next_resource_id : int ref = ref 0
@@ -1219,7 +1222,7 @@ let fresh_resource_id () =
 (* (Re)initializes the concurrency state for one program run. *)
 let reset_conc () =
   Hashtbl.reset processes;
-  next_pid := 0;
+  next_pid := 1;
   next_resource_id := 0
 
 let spawn_record () =

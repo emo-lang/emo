@@ -1879,8 +1879,9 @@ const E: any = {
     throw new EHalt();
   },
 
-  // Runs the entry under the main process (pid 0). Spawned tasks run
-  // on the event loop; the program ends when the entry ends.
+  // Runs the entry under the main process (pid 1, the metal kernel's
+  // convention). Spawned tasks run on the event loop; the program ends
+  // when the entry ends.
   runMain(entry: () => Promise<any>): Promise<void> {
     const pid = _nextPid++;
     _mailboxes.set(pid, []);

@@ -74,7 +74,7 @@ receive {
 }
 |}
         in
-        Alcotest.(check string) "output" "<pid 1>\ntrue\nfalse\n" output);
+        Alcotest.(check string) "output" "<pid 2>\ntrue\nfalse\n" output);
     tc "selective receive keeps non-matching messages queued" (fun () ->
         let output =
           run_source
