@@ -152,6 +152,9 @@ const comp_slot_cell = koff + 0x87002eb8
 const comp_slots = koff + 0x87008000 + 2704
 const comp_slot_count = 4
 const comp_slot_bytes = 40
+// The workspaces' bound (emo-desktop M27, EmoOS T13.2): the
+// vocabulary's own, the compositor's count's twin.
+const comp_desks = 4
 
 // One free seat, named in the handoff cell the trap's route word
 // carries; none, and the resource refusal — a client's own verbs
@@ -228,6 +231,15 @@ const route_win_parent = -1020
 const route_win_frame = -1021
 const route_win_minimize = -1022
 const route_win_desk_open = -1023
+// The workspaces (emo-desktop M27, EmoOS T13.2): the family additions-
+// only, the ops past the notification's shape test the trap's own
+// routing already hands the compositor. The query's op is 29, not 32 —
+// the request word packs the seat at thirty-two, so an op of 32 would
+// decode as seat 1's op 0 (the mod-32 the notify family's shape test
+// already lives with); 29 is the highest free op below the bound.
+const route_win_workspace = -1030
+const route_desk_show = -1031
+const route_desk_workspace = -1029
 // The notification family's routes (emo-desktop M25, EmoOS Step 11):
 // verb 27 raise, verb 28 take — the verb the slot-0 op (the input
 // service's own habit), the slot riding above it at thirty-two, the
@@ -942,6 +954,54 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     var dseat = comp_slots + (dslot * comp_slot_bytes)
     poke64(dseat, r0)
     return route_win_desk_open - (32 * dslot)
+  }
+  if n == 30 {
+    // win_workspace(grant, ws) (emo-desktop M27, EmoOS T13.2): the
+    // caller's toplevel carries another desk. The owner's check the
+    // stack's other verbs', the id's and the desk's bounds the shape's
+    // own; which entry the grant names, that it is a toplevel and the
+    // move's pixels are the compositor's answers.
+    if r0 == 0 || r1 < 0 || r1 >= comp_desks {
+      return -reason_argument
+    }
+    var wx = grant_row_of(r0)
+    if wx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (wx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var wslot = comp_slot_take()
+    if wslot < 0 {
+      return -reason_resource
+    }
+    var wseat = comp_slots + (wslot * comp_slot_bytes)
+    poke64(wseat, r0)
+    poke64(wseat + 8, r1)
+    return route_win_workspace - (32 * wslot)
+  }
+  if n == 31 {
+    // desk_show(ws) (emo-desktop M27, EmoOS T13.2): the shell's switch.
+    // The desk's bounds the shape's own here; the panel authority is
+    // the compositor's, the desktop's open's own check — an app's
+    // switch is "not writable", the shell's strip the one layer above
+    // the windows.
+    if r0 < 0 || r0 >= comp_desks {
+      return -reason_argument
+    }
+    var sslot = comp_slot_take()
+    if sslot < 0 {
+      return -reason_resource
+    }
+    var sseat = comp_slots + (sslot * comp_slot_bytes)
+    poke64(sseat, r0)
+    return route_desk_show - (32 * sslot)
+  }
+  if n == 32 {
+    // desk_workspace() (emo-desktop M27, EmoOS T13.2): the query — no
+    // arguments, no seat; the compositor answers the packed word, the
+    // active desk in the low byte and the occupancy mask above it.
+    return route_desk_workspace
   }
   if n == 27 || n == 28 {
     return notify_dispatch(n, r0, r1, r2, r3)

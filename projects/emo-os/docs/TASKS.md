@@ -936,3 +936,33 @@ wall time to read, and the board's goldfish RTC is its ground.
   line joins the ordered chain at the desktop era's start. **Landed
   2026-11-13 — the line answered within the tolerance on both
   transports.**
+
+## Step 13 — the workspaces' kernel side (M27, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-14. The desktop's half is emo-desktop M27, whose
+tracker records the milestone's shape (D18 — the compositor's own
+feature, no new hardware under it); the workspace verb family is
+additions-only, and the trap's decode already passes the family's ops
+to the compositor (the notify-maybe shape test reads 3, 4 and 2 —
+nobody's notification).
+
+- [ ] **T13.1** — The comp page's words and the walk's filter: the
+  workspace word per stack slot (beside the hidden words, the
+  `comp_hidden` precedent — no entry stride changed), the
+  active-workspace cell, the four words of the focus each workspace
+  remembers, and the walk grown the toplevel's test (not hidden, the
+  shown workspace's own — the children riding parents, the panels and
+  the wallpaper always), `win_new`'s landing on the shown workspace,
+  the focus's memory on a switch and its fall to the top toplevel when
+  the workspace remembers none, and `win_desk_open`'s follow to the
+  window's own workspace first.
+- [ ] **T13.2** — The verbs end to end and the golden's beat: the
+  gate's dispatch arms for 30 `win_workspace`, 31 `desk_show` and 32
+  `desk_workspace` (the owner's check the stack verbs' own, the panel
+  authority verb 26's, the routes −1030, −1031 and −1029 — the query's
+  op 29, the seat's packing at thirty-two making 32 itself unusable),
+  the compositor's decode arms (the assignment's repaint both sides of
+  the move, the show's whole-mode damage, the query's packed answer),
+  the stub's three, and `run.sh`'s workspace beats — windows on two
+  workspaces, the pager's switch, an assignment moving a window —
+  graded ×3 double transport byte-identical beside the desktop's A27.3.

@@ -2096,3 +2096,50 @@ the open beat, the calendar panel's ring.
   and the frame line, the pixels' truth the hosted pins carry — the
   2038 edge a non-event, the epoch an Int64 the whole way down. The
   previous/next month's presses stay open, with the corpus module.
+
+## M27 — workspaces (opened 2026-11-14)
+
+The compositor's own feature (D18, decided 2026-11-12): a workspace
+verb family (30 the assignment, 31 the show, 32 the query) grows the
+compositor additions-only — the kernel half is
+[EmoOS's Step 13](../../emo-os/docs/TASKS.md) — and the bar's pager
+rides it. Every window carries its workspace by construction: `win_new`
+lands the new toplevel on the shown one, and the walk paints a toplevel
+iff it is not hidden and its workspace is the shown one — the popups
+and subsurfaces riding their parents, the panels and the wallpaper
+always. The switch is the shell's (the panel authority, verb 26's own):
+the outgoing workspace remembers the focus it held, the incoming one
+shows its own again, falling to its top toplevel when it remembers
+none; the desktop's open follows the window to its workspace. The count
+is four — the vocabulary's bound, the roles' precedent, for
+`desktop-abi.md` to pin. The pager is the bar's next panel twin: the
+query read per paint (the clock's own habit), the active cell the
+accent's ground (the calendar's today-cell precedent), the occupied
+cells inked, the press answered by the show and the wire's `desk <n>`
+line — the `clock <epoch>` twin, the golden's provenance. Hidden stays
+hidden across a switch (the minimize's own memory); a frame callback is
+a composition's completion whatever the walk painted.
+
+- [ ] **A27.1** — The verbs and the walk: the comp page's words (the
+  workspace word per stack slot, the active-workspace cell, the four
+  words of the focus each workspace remembers — the `comp_hidden`
+  precedent, beside the entries, no stride changed), the three verbs
+  through the stub, the gate and the compositor's decode (30
+  `win_workspace` the owner's grant, a toplevel's alone, the range
+  0..3; 31 `desk_show` the panel's authority; 32 `desk_workspace` the
+  active and the occupancy packed), the walk's filter, the focus's
+  memory and fall, `win_new`'s landing on the shown workspace, and
+  `win_desk_open`'s follow to the window's own.
+- [ ] **A27.2** — The bar's pager: the query read per paint, the four
+  cells (the active the accent's ground, the occupied inked, the empty
+  dimmed), the press showing the named workspace and saying
+  `desk <n>` on the wire, and the golden's states — the quiet bar, the
+  occupancy's ink, the accent's move on a switch — across the five
+  hosted targets byte-identically.
+- [ ] **A27.3** — The metal beats and the docs: `run.sh`'s
+  choreography grows the workspace beats (windows opened on two
+  workspaces, the pager's switch, an assignment moving a window, the
+  screendumps' digests naming each state) ×3 double transport
+  byte-identical; `desktop-abi.md`'s workspace family (both
+  languages), `syscalls.md`'s rows 30–32 and the numbering's note, the
+  READMEs, CHECK.md's entries, and the zh mirrors.
