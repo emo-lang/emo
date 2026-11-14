@@ -289,7 +289,7 @@ let listen_on host port : (Unix.file_descr * int, string) result =
       [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
   with
   | [] -> Error (Printf.sprintf "cannot resolve host `%s`" host)
-  | entries ->
+  | entries -> (
       let rec try_all = function
         | [] -> Error (Printf.sprintf "cannot listen on %s:%d" host port)
         | ai :: rest -> (
@@ -301,7 +301,9 @@ let listen_on host port : (Unix.file_descr * int, string) result =
                      (Unix.error_message err))
               else try_all rest)
       in
-      try_all entries
+      match try_all entries with
+      | Ok (fd, bound) -> Ok (fd, bound)
+      | Error _ as e -> e)
 
 (* ---- Operation pumps ----
    Each pump attempts progress; when the socket cannot proceed it parks
@@ -913,6 +915,11 @@ and connect_next state proc k ~target ~deadline ~message
       (* One completion flag per address attempt; moving to the next
          candidate starts a fresh attempt with its own flag. *)
       let finished = ref false in
+      (* The attempt's deadline timer outlives the operation in the
+         timer list — the scheduler holds no handle to cancel it — so
+         the attempt marks itself spent on every exit, and a late fire
+         is a no-op rather than a close of a live socket. *)
+      let deadline_spent = ref false in
       let fd = Unix.socket addr.cfam Unix.SOCK_STREAM 0 in
       Unix.set_nonblock fd;
       let cleanup st =
@@ -929,18 +936,26 @@ and connect_next state proc k ~target ~deadline ~message
       let step st =
         match Unix.getsockopt_error fd with
         | Some err ->
+            (* This address is done, successfully or not: its deadline
+               timer must never fire again, or it would close a socket
+               this attempt no longer owns — or deliver a spurious
+               timeout over an address that went on to connect. *)
+            deadline_spent := true;
             cleanup st;
             (* This address failed; the refusal is only final when the
                last candidate said it. *)
             connect_next st proc k ~target ~deadline ~message ~tls ~tls_name
               ~tls_verify ~last_error:(Some err) span rest
         | None ->
+            deadline_spent := true;
             connect_tls_upgrade st proc k finished fd target tls tls_name
               tls_verify span
       in
       let timeout_step st =
-        cleanup st;
-        finish_w finished st proc k (Emo_eval.net_error message)
+        if !deadline_spent then None
+        else (
+          cleanup st;
+          finish_w finished st proc k (Emo_eval.net_error message))
       in
       match Unix.connect fd addr.caddr with
       | () ->
@@ -952,7 +967,8 @@ and connect_next state proc k ~target ~deadline ~message
           | Some dl ->
               let remaining = max 0.001 (dl -. Unix.gettimeofday ()) in
               add_timer state remaining (fun () ->
-                  Queue.add (Io (proc, timeout_step)) state.runq)
+                  if not !deadline_spent then
+                    Queue.add (Io (proc, timeout_step)) state.runq)
           | None -> ());
           None
       | exception Unix.Unix_error (err, _, _) ->
