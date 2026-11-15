@@ -348,7 +348,12 @@ answered the fixed "the host refused the operation".
   gate covers exactly the sync stream/future read/write builtins,
   and the ungated failure mode is honest and early (parse-time,
   naming `stream.write`). Revisit when wasmtime flips a default or
-  a second runtime matters.
+  a second runtime matters. The two leftover cosmetics closed in the
+  same round: `emo doctor` grew the wasi line it had promised
+  (wasmtime's presence and version, `emo run --target wasm --wasi`
+  named as the consumer), and the smoke rung's list caught up with
+  the golden group — the four macro demos joined, and the rung now
+  runs the same 66 the dune group runs (66/66).
 
 ## Found and fixed (the T85.7 round, 2026-11-15)
 

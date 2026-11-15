@@ -72,7 +72,8 @@ file_read bufio_demo os_fs_demo field_types fixed_width list map
 json_demo toml_demo float_methods math_demo math_trig
 math_inverse_trig math_hyperbolic math_complex math_fft math_blas1
 math_solve math_special math_elefunt typed_calls typed_methods
-plot_demo"
+plot_demo trace_macro_demo memoize_macro_demo derive_eq_macro_demo
+derive_shared_macro_demo"
 
 wpass=0
 wfail=0

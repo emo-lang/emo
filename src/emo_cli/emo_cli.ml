@@ -2696,6 +2696,14 @@ let doctor ~(emit : string -> unit) : int =
     line "wasm:"
       "ok — no external tools needed; `emo wasm run` executes WebAssembly \
        artifacts (Node adds the `emo run --target wasm` path)";
+  if tool_exists "wasmtime" then
+    line "wasi:"
+      ("ok" ^ tool_version "wasmtime"
+     ^ " — `emo run --target wasm --wasi` runs it (wasmtime 46+)")
+  else
+    line "wasi:"
+      "unavailable — wasmtime 46+ not found (`emo run --target wasm --wasi` \
+       and the --wasi demos need it)";
   (match riscv_binutils_prefix () with
   | None ->
       line "riscv64:"
