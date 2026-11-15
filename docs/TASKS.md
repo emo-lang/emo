@@ -69,6 +69,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M40 — The repl's line editor | 79 | The interactive session gains a real editor: the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches — the temp history entry pops on Ctrl-C and end-of-input as ENTER pops it, and the blocking read's verdict errno survives the stop's terminal-probing cleanup) compiles into the CLI through dune's `foreign_stubs` — the first C the OCaml CLI links — behind a binding module whose stubs map the library's errno verdicts onto OCaml variants; the input seam carries the prompt text and distinguishes a completed line from Ctrl-C's abandonment and the input's end; the editor takes the seat only when stdin and stdout are both terminals, pipes and redirects keeping the plain path byte for byte; the history rides per line, saved at the session's end to the state file (`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`), with the unreadable and unwritable cases warning on stderr and the missing file silent; Ctrl-C abandons the pending input instead of killing the process; the continuation prompt indents by two spaces per open bracket; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — typed lines, up-arrow recall, the interrupt that leaks no empty history entry, and a two-session persistence round-trip (`CHECK.md`). |
 | M41 — The standard library: `uuid` | 80 | The `uuid` package: the RFC 9562 identifier as one immutable 16-byte `Uuid` value rendering itself through the `to_string` protocol, answering `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?` and sorting through the RFC 6.11 big-endian `compare`; `v4` drawing 122 random bits over `rand.bytes`, `v7(now_ms)` taking the Unix time in milliseconds from the caller's own clock over 74 random bits (a negative or 48-bit-overflowing timestamp raising), and `v3`/`v5` the deterministic name-based doors over `crypto.legacy` with the four IANA namespace IDs of Table 3; `parse` taking exactly the canonical 36-character form, case-insensitive on the digits, every rejection naming the first offending byte, and `from_bytes` refusing a length other than 16; scoped to Go's standard `uuid` spine, v1/v2/v6 and a v8 constructor out, named; `uuid_demo` riding the RFC's vectors with the random doors printed structure-only, byte-identical on all five target lists (`CHECK.md`). |
 | M42 — The clock and the heartbeat | 81 | The `time` package: the wall clock and the monotonic clock over three runtime doors (`time_now_ms`, `time_mono_ns`, `time_sleep_ms`), everything else pure Emo over them — a `Time` of UTC epoch milliseconds whose calendar fields compute in pure Emo (Hinnant's civil arithmetic), `mono()` the explicit monotonic instrument, durations plain Int64 milliseconds with the conversion family (`time.seconds(n)` …) playing the constants' role, the strict nine-token layout formatting (UTC always, `format_iso`/`format_http` the presets, a malformed token raising naming the byte), and the seconds-speaking timing family — `sleep` the exact-ish park (messages queue, never wake it), `after` the scheduled one-shot in its own process, `tick` the calling process's never-returning heartbeat whose block's own `halt()` is the stop; on wasm the clock half rides two host imports and the timing half raises at the call naming the capability (the os process-half precedent); the goldens flushed a compiler-structure gap and four emitter bugs — the IR's Void-body exit positions lowered a bare trailing call as an Effect, invisible to every backend's tail machinery (now lowered as the Return it is, with the C emitter's Void return path emitting its expression without re-pooling the answer's own claim, and the interpreter's frame threading tailness through the statement walk), the c backend's Void-return discard pooling the claim twice (emosh segfaulted on a doubly-released builder cell), the c backend's closure capture never walking a `Send` statement's operands (a block whose only capture is the pid it sends to now captures it), the TS emitter's `receive` statement carrying no trailing `;` (a following `(`-opening statement parsed as a call), and the BEAM wildcard (two `_` in one pattern now lower as distinct fresh variables) (`CHECK.md`). |
+| M43 — The configuration format | 82 | The `toml` package: TOML 1.1.0 decoded into a `Toml` value tree mirroring the json and yaml design — seven kinds, no null (TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back — pure Emo over the shared runtimes, the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see, multi-line inline tables and trailing commas) and the strict redefinition rules, assembling while it parses over origin-tagged nodes (dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once); `inf`/`nan` and out-of-range integers refuse like every malformed input as `(R.error, reason)` with the byte offset; encode is the document form, scalars first, `decode(encode(v)) == v`; the edge battery flushed seven package bugs — the string fill answering the write length where the next index belongs, hex escape digits with the wrong weights, the float buffer counting the underscores, the exponent value eating the underscores, `doc_inline?` answering true for all-table arrays, section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`CHECK.md`). |
 
 ## Design gates
 
@@ -4770,4 +4771,100 @@ and beam lists; docs EN+zh.
   Core Erlang has no wildcard, so two `_` in one pattern (the calendar
   destructures `const (y, _, _) = ...`) collide as duplicate
   variables. A wildcard now lowers as a distinct fresh variable.
+
+## M43 — The configuration format
+
+### Step 82 — The standard library: `toml`
+
+**Prereq:** Step 78 (the `template` package, the most recent pure-Emo
+format package). **Done when:** `require "toml"` decodes any TOML
+1.1.0 document into a `Toml` value tree — seven kinds, no null, the
+four date-time forms one `TomlDateTime` class with `datetime_kind()`
+naming the form and `to_text()` rendering the canonical text back —
+byte-identical on the interpreter, ocaml, c, typescript, wasm, and
+beam, covering the full 1.1 surface (the `\e`/`\xHH` escapes, seconds
+omittable, lowercase `t`/`z`, multi-line inline tables, trailing
+commas) and the strict redefinition rules, refusing `inf`/`nan` and
+out-of-range integers as `(R.error, reason)` with the byte offset;
+encode gives the document form, scalars first, with
+`decode(encode(v)) == v` at the value level; the goldens
+(`examples/toml_demo`, `examples/toml_edge`) ride the bootstrap, wasm,
+beam, c, and ts lists; docs EN+zh.
+
+- [x] **T82.1** — The package: `stdlib/registry/toml/0.1.0` — the
+      manifest, the value tree (interface, seven classes, the
+      date-time class), decode (the document frame, keys, values,
+      strings, numbers, date-times, arrays, inline tables, the
+      origin-tagged document assembly), and encode (the document
+      form, sections, the value literals, key and string quoting) —
+      pure Emo over the float package.
+- [x] **T82.2** — The goldens: `examples/toml_demo` (the happy path —
+      tables, dotted keys, arrays of tables, inline tables, every
+      number spelling, the four date-time forms, encode round trips)
+      and `examples/toml_edge` (every escape, the number and
+      date-time boundaries, the 1.1 relaxations, the redefinition
+      rules, and the refusals each printing its reason).
+- [x] **T82.3** — The wiring: `test/emo_cli`'s wasm, beam, and c
+      golden lists, `test/emo_project`'s bootstrap and ts_golden
+      suites, and `devtools/wasmtime-smoke.sh`'s GOLDENS.
+- [x] **T82.4** — The docs: `docs/stdlib/toml.md` + zh-CN mirror, the
+      `docs/stdlib.md` row + section + mirror.
+- [x] **T82.5** — The tracking: `plan/step-82-stdlib-toml.md`,
+      `plan/README.md`'s milestone bullet and status row,
+      `docs/TASKS.md`'s M43 section + zh mirror, CHECK.md's settle
+      record.
+
+### Found and fixed here
+
+- **The basic string's fill answered the write length where the next
+  index belongs.** The json two-pass shape answers `(written, next)`;
+  the toml copy answered `written` alone, leaving the parser
+  positioned at a byte offset equal to the string's decoded length
+  after every string.
+- **Hex escape digits read with the wrong weights** — the recursive
+  reader multiplied each digit by sixteen regardless of depth, so
+  `\u4e16` decoded as U+0136 and `\U0001F600` landed nowhere near
+  U+1F600, and the surrogate checks sat inert, the misread values
+  never landing in the surrogate range. Place values restored both.
+- **The float buffer counted the underscores** — `1_000.000_1` sized
+  its integer part by the byte span, leaving a stale zero in the
+  normalized buffer and decoding 9952.0001. The count comes from the
+  digit collector's answer.
+- **The exponent value ate the underscores as digits** — `1e1_0`
+  read an exponent of 570 and refused a number that is exactly 1e10.
+- **`doc_inline?` answered true for all-table arrays** — encode
+  emitted the same value twice, once inline and once as `[[x]]`
+  sections, the inline text itself invalid as a document line.
+- **Section lines rendered the full dotted path** — inside `[owner]`,
+  entries printed as `owner.name = ...`, valid-looking TOML decoding
+  as something else. Keys inside a section are relative.
+- **The date-time class missed the interface** — a `TomlDateTime`
+  outside the `Toml` method set could not ride the tree at all; it
+  implements the interface like every other kind.
+
+Three compiler bugs the goldens flushed on the compiled targets, each
+pre-existing on the tree and each invisible until a package leaned on
+the shape it breaks:
+
+- **The TypeScript backend's Void tail-call driver had no exit** — the
+  labeled `for(;;)` only `return`s, and a Void body whose tail call
+  rides an `if` without an `else` fell through to the loop header:
+  every Void tail recursion spun forever on TS (json's `fill_spaces`
+  and float's `copy_range` included — the whole ts_golden suite burned
+  CPU on this tree). A Void driver now ends in `return undefined;`.
+- **The BEAM backend's runtime dispatch bound its builtin arm through
+  a clobberable map** — an open-receiver call's builtin arm resolved
+  the literal `"__inst_recv"` through `local_map`, which a nested
+  dispatch's `fresh_var` overwrites: one level deep the map answered
+  right (why json_demo passed), two or more deep the outer chain's
+  builtin arm named an out-of-scope inner binding and erlc refused.
+  The arm names its own fresh binding now.
+- **The wasm backend's `deep_eq` had no tuple arm** — a tuple fell
+  through to the constant false, so any class field of
+  `Array[(A, B)]` compared unequal to its own twin (the toml root
+  table, json's `JsonObject` — latent until a golden compared a
+  decoded tree). The array arm parameterized over its operand locals
+  and the tuple arm spills both element arrays into fresh locals and
+  runs it; tuples compare element-wise like arrays do.
+
 

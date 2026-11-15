@@ -559,6 +559,7 @@ let wasm_goldens =
     "csv_demo";
     "json_demo";
     "yaml_demo";
+    "toml_demo";
     "xml_demo";
     "dom_demo";
     "dom_edge";
@@ -652,6 +653,7 @@ let beam_goldens =
     "csv_demo";
     "json_demo";
     "yaml_demo";
+    "toml_demo";
     "xml_demo";
     "dom_demo";
     "dom_edge";
@@ -864,6 +866,7 @@ let c_goldens =
     "httpd_wire";
     "json_demo";
     "yaml_demo";
+    "toml_demo";
     "xml_demo";
     "dom_demo";
     "dom_edge";

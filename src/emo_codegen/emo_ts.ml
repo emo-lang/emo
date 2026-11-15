@@ -740,8 +740,14 @@ let emit_func env (f : Emo_ir.func) : string =
       f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname body f.Emo_ir.fname
   else if tramp then
     Printf.sprintf
-      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  }\n}"
+      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n%s\n  }\n}"
       f.Emo_ir.fname params body
+      (* A Void body can leave the driver by falling off its end — the
+         tail call inside an `if` without an `else` rides the implicit
+         fall-through, and a driver without this exit would spin past
+         it (every Void tail recursion did). Non-Void drivers only
+         reach returns; the checker guarantees every path answers. *)
+      (if f.Emo_ir.fresult = Emo_check.Void then "  return undefined;" else "")
   else
     Printf.sprintf "async function %s(%s) {\n%s\n}" f.Emo_ir.fname params body
 

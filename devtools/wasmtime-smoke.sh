@@ -23,7 +23,8 @@ command -v wasmtime >/dev/null || { echo "wasmtime-smoke: the wasmtime CLI is no
 # the examples a wasm build promises to run.
 GOLDENS="hello_world if_expr fib objects field_types length_method
 language_tour shop pipeline function_group showcase bit_ops fixed_width
-list array_builder map base64_demo csv_demo json_demo yaml_demo xml_demo
+list array_builder map base64_demo csv_demo json_demo yaml_demo
+xml_demo toml_demo
 slog_demo sync_demo loops error_matching float_methods string_methods
 math_demo math_trig math_inverse_trig branch_var builtin_names
 to_string_render typed_calls typed_sigs typed_methods plot_demo png_demo

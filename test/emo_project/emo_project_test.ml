@@ -3922,6 +3922,16 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "csv_edge")
           "csv_edge" "main.emo");
+    tc "toml_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "toml_demo")
+          "toml_demo" "main.emo");
+    tc "toml_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "toml_edge")
+          "toml_edge" "main.emo");
     tc "template_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -4100,6 +4110,7 @@ let ts_golden_tests =
       ("yaml_demo", "main.emo");
       ("xml_demo", "main.emo");
       ("csv_demo", "main.emo");
+      ("toml_demo", "main.emo");
       ("template_demo", "main.emo");
       ("template_edge", "main.emo");
       ("sql_demo", "main.emo");

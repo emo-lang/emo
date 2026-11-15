@@ -1,0 +1,2666 @@
+require "float"
+
+// The toml package: decode and encode TOML 1.1.0 into a Toml value
+// tree that mirrors the json and yaml packages' design — one
+// interface, one class per kind, scalar accessors raising on a kind
+// mismatch, containers read through `is()` into the concrete class.
+// Pure Emo over the shared runtimes; the float package carries the
+// exact-decimal conversion.
+//
+// Supported: the full 1.1 surface — bare, quoted, and dotted keys;
+// all four string forms, the `\e` and `\xHH` escapes included;
+// decimal, hex, octal, and binary integers with underscores; floats;
+// all four date-time forms (seconds omittable, lowercase `t` and
+// `z` allowed as RFC 3339 permits, leap second 60); arrays with
+// trailing commas; inline tables across lines with trailing commas;
+// tables and arrays of tables, with the strict redefinition rules
+// between them (a dotted key's table never reopens under a header,
+// an inline table never grows, `[[x]]` appends only to arrays).
+//
+// Not supported (each answers `(R.error, reason)` from `decode`):
+// the `inf` and `nan` float spellings — no target that lacks
+// non-finite values can carry one — and integers outside Int64.
+// Fraction seconds keep nine digits (nanoseconds); the spec requires
+// further digits be truncated, and they are. The document decodes
+// into one root table whose entries ride in document order. Encode
+// gives the document form — each table's scalar lines first, then its
+// `[a.b]` and `[[a.b]]` sections, the one order a table's own text
+// cannot express being a scalar after its sub-table's section.
+
+enum TomlKind { tbool, tint, tfloat, tstring, tdatetime, tarray, ttable }
+
+enum TomlDateTimeKind { toffset, tlocal_datetime, tlocal_date, tlocal_time }
+
+// The accessors live on the interface, so a payload is one call away
+// without asking what it is: the scalar `as_*` accessors answer with
+// the payload or raise on a kind mismatch, and `get` reads a table's
+// value (every kind answers — the non-tables raise). Container
+// traversal beyond `get` — `items`, `entries` — stays on the concrete
+// classes behind `is()` narrowing.
+interface Toml {
+  def kind() TomlKind
+  def as_bool() Bool
+  def as_int() Int64
+  def as_float() Float64
+  def as_string() String
+  def as_datetime() TomlDateTime
+  def encode() String
+  def get(key String) Toml
+}
+
+// One TOML date-time: the four forms share the fields, and
+// `datetime_kind` says which ones mean anything — `tlocal_date`
+// leaves the clock at zero, `tlocal_time` leaves the date at zero,
+// and `offset_minutes` rides only on `toffset` (0 for `Z`, east
+// positive, west negative).
+class TomlDateTime {
+  def init(kind TomlDateTimeKind, year Int64, month Int64, day Int64, hour Int64, minute Int64, second Int64, nanosecond Int64, offset_minutes Int64) {
+    self.tkind = kind
+    self.tyear = year
+    self.tmonth = month
+    self.tday = day
+    self.thour = hour
+    self.tminute = minute
+    self.tsecond = second
+    self.tnanosecond = nanosecond
+    self.toffset = offset_minutes
+  }
+
+  def datetime_kind() TomlDateTimeKind {
+    return self.tkind
+  }
+
+  def year() Int64 {
+    return self.tyear
+  }
+
+  def month() Int64 {
+    return self.tmonth
+  }
+
+  def day() Int64 {
+    return self.tday
+  }
+
+  def hour() Int64 {
+    return self.thour
+  }
+
+  def minute() Int64 {
+    return self.tminute
+  }
+
+  def second() Int64 {
+    return self.tsecond
+  }
+
+  def nanosecond() Int64 {
+    return self.tnanosecond
+  }
+
+  def offset_minutes() Int64 {
+    return self.toffset
+  }
+
+  // The tree's own surface: a date-time is one Toml kind, so the
+  // interface's scalar accessors all raise here, `as_datetime` hands
+  // the payload back, and `encode` is the canonical text.
+  def kind() TomlKind {
+    return TomlKind.tdatetime
+  }
+
+  def encode() String {
+    return self.to_text()
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got a date-time")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got a date-time")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got a date-time")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got a date-time")
+  }
+
+  def as_datetime() TomlDateTime {
+    return self
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got a date-time")
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got a date-time")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got a date-time")
+  }
+
+  // The canonical text: full seconds, the `T` delimiter for the
+  // date-time forms, `Z` or `±hh:mm`, and a fraction only when the
+  // nanoseconds are nonzero — three, six, or nine digits, the
+  // trailing zeros trimmed, so `decode` reads it back to the same
+  // fields.
+  def to_text() String {
+    const head = four_digits(self.tyear) + "-" + two_digits(self.tmonth) + "-" + two_digits(self.tday)
+    if self.tkind == TomlDateTimeKind.tlocal_date {
+      return head
+    }
+    const clock = two_digits(self.thour) + ":" + two_digits(self.tminute) + ":" + two_digits(self.tsecond)
+    const frac = ns_text(self.tnanosecond)
+    if self.tkind == TomlDateTimeKind.tlocal_time {
+      return clock + frac
+    }
+    if self.tkind == TomlDateTimeKind.tlocal_datetime {
+      return head + "T" + clock + frac
+    }
+    return head + "T" + clock + frac + offset_text(self.toffset)
+  }
+}
+
+class TomlBool {
+  def init(value Bool) {
+    self.value = value
+  }
+
+  def kind() TomlKind {
+    return TomlKind.tbool
+  }
+
+  def encode() String {
+    if self.value {
+      return "true"
+    }
+    return "false"
+  }
+
+  def as_bool() Bool {
+    return self.value
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got true or false")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got true or false")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got true or false")
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got true or false")
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got true or false")
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got true or false")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got true or false")
+  }
+}
+
+class TomlInt {
+  def init(value Int64) {
+    self.value = value
+  }
+
+  def kind() TomlKind {
+    return TomlKind.tint
+  }
+
+  def encode() String {
+    return self.value.to_string()
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got an integer")
+  }
+
+  def as_int() Int64 {
+    return self.value
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got an integer")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got an integer")
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got an integer")
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got an integer")
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got an integer")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got an integer")
+  }
+}
+
+class TomlFloat {
+  def init(value Float64) {
+    self.value = value
+  }
+
+  def kind() TomlKind {
+    return TomlKind.tfloat
+  }
+
+  def encode() String {
+    return float.to_text(self.value)
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got a number")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got a number")
+  }
+
+  def as_float() Float64 {
+    return self.value
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got a number")
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got a number")
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got a number")
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got a number")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got a number")
+  }
+}
+
+class TomlString {
+  def init(value String) {
+    self.value = value
+  }
+
+  def kind() TomlKind {
+    return TomlKind.tstring
+  }
+
+  def encode() String {
+    return quote_basic(self.value)
+  }
+
+  def to_string() String {
+    return self.value
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got a string")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got a string")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got a string")
+  }
+
+  def as_string() String {
+    return self.value
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got a string")
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got a string")
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got a string")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got a string")
+  }
+}
+
+class TomlArray {
+  def init(items Array[Toml]) {
+    self.items = items
+  }
+
+  def kind() TomlKind {
+    return TomlKind.tarray
+  }
+
+  def encode() String {
+    if self.items.length() == 0 {
+      return "[]"
+    }
+    return encode_items(self.items, 0, "")
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got an array")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got an array")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got an array")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got an array")
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got an array")
+  }
+
+  def items() Array[Toml] {
+    return self.items
+  }
+
+  def entries() Array[(String, Toml)] {
+    raise Exception.new(message: "toml: expected a table, got an array")
+  }
+
+  def get(key String) Toml {
+    raise Exception.new(message: "toml: expected a table, got an array")
+  }
+}
+
+class TomlTable {
+  def init(entries Array[(String, Toml)]) {
+    self.entries = entries
+  }
+
+  def kind() TomlKind {
+    return TomlKind.ttable
+  }
+
+  def encode() String {
+    if self.entries.length() == 0 {
+      return "{}"
+    }
+    return encode_entries(self.entries, 0, "")
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "toml: expected true or false, got a table")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "toml: expected an integer, got a table")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "toml: expected a number, got a table")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "toml: expected a string, got a table")
+  }
+
+  def as_datetime() TomlDateTime {
+    raise Exception.new(message: "toml: expected a date-time, got a table")
+  }
+
+  def items() Array[Toml] {
+    raise Exception.new(message: "toml: expected an array, got a table")
+  }
+
+  def entries() Array[(String, Toml)] {
+    return self.entries
+  }
+
+  // The value under `key`; a missing key is a mistake and raises.
+  def get(key String) Toml {
+    return lookup(self.entries, key, self.entries.length() - 1)
+  }
+}
+
+// ---- constructors ----
+
+def bool(b Bool) Toml {
+  return TomlBool.new(value: b)
+}
+
+def int64(n Int64) Toml {
+  return TomlInt.new(value: n)
+}
+
+def float64(x Float64) Toml {
+  if float.finite_bits(x.to_bits()) == false {
+    raise Exception.new(message: "toml: non-finite floats are not supported")
+  }
+  return TomlFloat.new(value: x)
+}
+
+def string(s String) Toml {
+  return TomlString.new(value: s)
+}
+
+def array(items Array[Toml]) Toml {
+  return TomlArray.new(items: items)
+}
+
+def table(entries Array[(String, Toml)]) Toml {
+  return TomlTable.new(entries: entries)
+}
+
+// ---- decode ----
+
+// Parses one document; trailing data after the last expression is a
+// mistake. Malformed input returns `(R.error, reason)` — the reason a
+// String stating exactly what failed, at what byte offset
+// (`why.as_string()` reads it back).
+def decode(text String) (R, Toml) {
+  const data = text.to_bytes()
+  const root = new_table_node(TOrigin.theader)
+  root.declared.replace(true)
+  case parse_doc(data, 0, root, root, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, _) -> { return (R.ok, to_toml(root)) }
+  }
+}
+
+// One expression at a time: blank and comment lines, keyvals into the
+// current table, headers from the root. Tail recursion — the frame
+// never grows with the document.
+def parse_doc(data Bytes, pos Int64, root TTbl, cur TTbl, depth Int64) (R, Int64) {
+  const p = skip_blank(data, pos)
+  if p >= data.length() {
+    return (R.ok, p)
+  }
+  if data.get(p) == 91 {
+    case parse_header(data, p, root, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, hr) -> { return parse_doc(data, hr[1], root, hr[0], depth) }
+    }
+  }
+  case parse_keyval(data, p, cur, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> { return parse_doc(data, kr, root, cur, depth) }
+  }
+}
+
+// Whitespace, comments, and newlines — the run that may sit between
+// expressions and around an array's or inline table's entries.
+def skip_blank(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if b == 32 || b == 9 || b == 10 {
+    return skip_blank(data, i + 1)
+  }
+  if b == 13 {
+    if i + 1 < data.length() {
+      if data.get(i + 1) == 10 {
+        return skip_blank(data, i + 2)
+      }
+    }
+    return i
+  }
+  if b == 35 {
+    return skip_blank(data, skip_comment(data, i))
+  }
+  return i
+}
+
+// The bytes from the `#` to the end of the line; answers at the line
+// terminator.
+def skip_comment(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if b == 10 || b == 13 {
+    return i
+  }
+  return skip_comment(data, i + 1)
+}
+
+// `ws [comment] newline` — or the end of input. Answers the index
+// past the newline.
+def expect_line_end(data Bytes, i Int64) (R, Int64) {
+  const p = skip_ws_h(data, i)
+  if p >= data.length() {
+    return (R.ok, p)
+  }
+  if data.get(p) == 35 {
+    return expect_newline(data, skip_comment(data, p))
+  }
+  return expect_newline(data, p)
+}
+
+def expect_newline(data Bytes, i Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.ok, i)
+  }
+  const b = data.get(i)
+  if b == 10 {
+    return (R.ok, i + 1)
+  }
+  if b == 13 {
+    if i + 1 < data.length() {
+      if data.get(i + 1) == 10 {
+        return (R.ok, i + 2)
+      }
+    }
+    return (R.error, err(i, "bare CR"))
+  }
+  return (R.error, err(i, "expected a newline"))
+}
+
+def skip_ws_h(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 32 || b == 9 {
+      return skip_ws_h(data, i + 1)
+    }
+  }
+  return i
+}
+
+// ---- keys ----
+
+// One key path: simple keys joined by dots, whitespace allowed around
+// the dots. Answers (components, index past the path).
+def parse_key_path(data Bytes, pos Int64) (R, (Array[String], Int64)) {
+  case parse_simple_key(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> { return parse_key_more(data, kr[1], [kr[0]]) }
+  }
+}
+
+def parse_key_more(data Bytes, pos Int64, acc Array[String]) (R, (Array[String], Int64)) {
+  const p = skip_ws_h(data, pos)
+  if p < data.length() {
+    if data.get(p) == 46 {
+      case parse_simple_key(data, skip_ws_h(data, p + 1)) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, kr) -> { return parse_key_more(data, kr[1], acc.append(kr[0])) }
+      }
+    }
+  }
+  return (R.ok, (acc, p))
+}
+
+// A bare key, a basic string, or a literal string — the multi-line
+// forms are not keys.
+def parse_simple_key(data Bytes, pos Int64) (R, (String, Int64)) {
+  if pos >= data.length() {
+    return (R.error, err(pos, "expected a key"))
+  }
+  const b = data.get(pos)
+  if b == 34 {
+    return parse_basic_string(data, pos)
+  }
+  if b == 39 {
+    return parse_literal_string(data, pos)
+  }
+  return parse_bare_key(data, pos, pos)
+}
+
+def parse_bare_key(data Bytes, start Int64, i Int64) (R, (String, Int64)) {
+  if i < data.length() {
+    if is_bare_byte(data.get(i)) {
+      return parse_bare_key(data, start, i + 1)
+    }
+  }
+  if i == start {
+    return (R.error, err(start, "expected a key"))
+  }
+  return (R.ok, (slice_text(data, start, i), i))
+}
+
+def is_bare_byte(b Int64) Bool {
+  if b >= 97 && b <= 122 {
+    return true
+  }
+  if b >= 65 && b <= 90 {
+    return true
+  }
+  if b >= 48 && b <= 57 {
+    return true
+  }
+  if b == 45 || b == 95 {
+    return true
+  }
+  return false
+}
+
+// The path as text, for error messages.
+def key_text(keys Array[String], i Int64) String {
+  if i >= keys.length() {
+    return ""
+  }
+  if i == keys.length() - 1 {
+    return keys[i]
+  }
+  return keys[i] + "." + key_text(keys, i + 1)
+}
+
+// ---- keyvals ----
+
+def parse_keyval(data Bytes, pos Int64, cur TTbl, depth Int64) (R, Int64) {
+  case parse_key_path(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> {
+      const eq = skip_ws_h(data, kr[1])
+      if eq >= data.length() || data.get(eq) != 61 {
+        return (R.error, err(eq, "expected `=`"))
+      }
+      case parse_value(data, skip_ws_h(data, eq + 1), depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, vr) -> {
+          case define_keyval(cur, kr[0], vr[0], pos) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> {
+              return expect_line_end(data, vr[1])
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A keyval's dotted path: the parents walk through tables (creating
+// dotted-key tables as they go), and the leaf must be new — anything
+// already there, of any shape, is defined twice.
+def define_keyval(cur TTbl, keys Array[String], v Toml, at Int64) (R, Int64) {
+  if keys.length() > 512 {
+    return (R.error, err(at, "key deeper than 512"))
+  }
+  case keyval_parent(cur, keys, 0, at) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parent) -> {
+      const k = keys[keys.length() - 1]
+      if parent.children.has(k) {
+        return (R.error, err(at, "key `" + key_text(keys, 0) + "` is defined twice"))
+      }
+      parent.children.set(k, new_value_node(v))
+      return (R.ok, 0)
+    }
+  }
+}
+
+def keyval_parent(cur TTbl, keys Array[String], ki Int64, at Int64) (R, TTbl) {
+  if ki >= keys.length() - 1 {
+    return (R.ok, cur)
+  }
+  const k = keys[ki]
+  if cur.children.has(k) {
+    const child = cur.children.get(k)
+    if child.origin == TOrigin.tvalue {
+      return (R.error, err(at, "key `" + key_text(keys, 0) + "` was defined as a value"))
+    }
+    if child.origin == TOrigin.tarray {
+      return (R.error, err(at, "key `" + key_text(keys, 0) + "` is an array of tables"))
+    }
+    return keyval_parent(child, keys, ki + 1, at)
+  }
+  const child = new_table_node(TOrigin.tdotted)
+  cur.children.set(k, child)
+  return keyval_parent(child, keys, ki + 1, at)
+}
+
+// ---- headers ----
+
+// `[table]` or `[[array]]` — always named from the root. Answers the
+// new current table and the index past the line.
+def parse_header(data Bytes, pos Int64, root TTbl, depth Int64) (R, (TTbl, Int64)) {
+  if pos + 1 >= data.length() {
+    return (R.error, err(pos, "expected a key"))
+  }
+  const is_array = data.get(pos + 1) == 91
+  const off = if is_array { 2 } else { 1 }
+  case parse_key_path(data, skip_ws_h(data, pos + off)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> {
+      if kr[0].length() > 512 {
+        return (R.error, err(pos, "key deeper than 512"))
+      }
+      const close = skip_ws_h(data, kr[1])
+      if is_array {
+        if close + 1 >= data.length() || data.get(close) != 93 || data.get(close + 1) != 93 {
+          return (R.error, err(close, "expected `]]`"))
+        }
+        case define_array_header(root, kr[0], pos) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, cur) -> {
+            case expect_line_end(data, close + 2) {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, end) -> { return (R.ok, (cur, end)) }
+            }
+          }
+        }
+      }
+      if close >= data.length() || data.get(close) != 93 {
+        return (R.error, err(close, "expected `]`"))
+      }
+      case define_std_header(root, kr[0], pos) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, cur) -> {
+          case expect_line_end(data, close + 1) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, end) -> { return (R.ok, (cur, end)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Walks, or creates as implicit header supertables, everything but
+// the last path component. An array in the way descends into its
+// latest element — the element the spec lets sub-tables attach to.
+def header_parent(node TTbl, keys Array[String], ki Int64, at Int64) (R, TTbl) {
+  if ki >= keys.length() - 1 {
+    return (R.ok, node)
+  }
+  const k = keys[ki]
+  if node.children.has(k) {
+    const child = node.children.get(k)
+    if child.origin == TOrigin.tvalue {
+      return (R.error, err(at, "key `" + key_text(keys, 0) + "` was defined as a value"))
+    }
+    if child.origin == TOrigin.tarray {
+      return header_parent(last_element(child), keys, ki + 1, at)
+    }
+    return header_parent(child, keys, ki + 1, at)
+  }
+  const child = new_table_node(TOrigin.theader)
+  node.children.set(k, child)
+  return header_parent(child, keys, ki + 1, at)
+}
+
+// An array node always carries at least one element.
+def last_element(node TTbl) TTbl {
+  return node.elements.get(node.elements.length() - 1)
+}
+
+// A plain header opens its table once: an implicit supertable may be
+// declared afterwards, nothing else may be reopened.
+def define_std_header(root TTbl, keys Array[String], at Int64) (R, TTbl) {
+  case header_parent(root, keys, 0, at) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parent) -> {
+      const k = keys[keys.length() - 1]
+      if parent.children.has(k) == false {
+        const child = new_table_node(TOrigin.theader)
+        child.declared.replace(true)
+        parent.children.set(k, child)
+        return (R.ok, child)
+      }
+      const child = parent.children.get(k)
+      if child.origin == TOrigin.theader {
+        if child.declared.read() {
+          return (R.error, err(at, "table `" + key_text(keys, 0) + "` is defined twice"))
+        }
+        child.declared.replace(true)
+        return (R.ok, child)
+      }
+      if child.origin == TOrigin.tarray {
+        return (R.error, err(at, "`" + key_text(keys, 0) + "` is an array of tables"))
+      }
+      if child.origin == TOrigin.tdotted {
+        return (R.error, err(at, "cannot open `" + key_text(keys, 0) + "`: defined by a dotted key"))
+      }
+      return (R.error, err(at, "cannot extend `" + key_text(keys, 0) + "`: defined as a value"))
+    }
+  }
+}
+
+// `[[array]]` appends one element to the array at the path — creating
+// the array on the first hit, refusing every other shape.
+def define_array_header(root TTbl, keys Array[String], at Int64) (R, TTbl) {
+  case header_parent(root, keys, 0, at) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parent) -> {
+      const k = keys[keys.length() - 1]
+      if parent.children.has(k) == false {
+        const node = new_table_node(TOrigin.tarray)
+        const el = new_table_node(TOrigin.theader)
+        node.elements.push(el)
+        parent.children.set(k, node)
+        return (R.ok, el)
+      }
+      const node = parent.children.get(k)
+      if node.origin == TOrigin.tarray {
+        const el = new_table_node(TOrigin.theader)
+        node.elements.push(el)
+        return (R.ok, el)
+      }
+      if node.origin == TOrigin.tvalue {
+        return (R.error, err(at, "`" + key_text(keys, 0) + "` was defined as a value"))
+      }
+      if node.origin == TOrigin.tdotted {
+        return (R.error, err(at, "cannot append to `" + key_text(keys, 0) + "`: defined by a dotted key"))
+      }
+      return (R.error, err(at, "`" + key_text(keys, 0) + "` is a table, not an array of tables"))
+    }
+  }
+}
+
+// ---- assembly nodes ----
+
+// The document builds through these nodes: a value's leaf, a table a
+// header opened (declared at most once), a dotted key's implicit
+// table, or an array of tables. The children map keeps insertion
+// order, so the decoded tree reads back in document order.
+enum TOrigin { tvalue, theader, tdotted, tarray }
+
+class TTbl {
+  def init(origin TOrigin, value Toml) {
+    self.origin = origin
+    self.declared = Box.new(false)
+    self.children = empty_children()
+    self.elements = empty_elements()
+    self.value = value
+  }
+}
+
+def new_table_node(origin TOrigin) TTbl {
+  return TTbl.new(origin: origin, value: empty_table())
+}
+
+def new_value_node(v Toml) TTbl {
+  return TTbl.new(origin: TOrigin.tvalue, value: v)
+}
+
+def empty_children() Map[String, TTbl] {
+  return Map.new()
+}
+
+def empty_elements() ArrayBuilder[TTbl] {
+  return ArrayBuilder.new()
+}
+
+def empty_table() Toml {
+  return TomlTable.new(entries: [])
+}
+
+// The value tree out of the node tree: leaves hand their value over,
+// arrays of tables fold their elements, tables fold their children in
+// insertion order.
+def to_toml(node TTbl) Toml {
+  if node.origin == TOrigin.tvalue {
+    return node.value
+  }
+  if node.origin == TOrigin.tarray {
+    return TomlArray.new(items: items_of(node.elements.to_array(), 0, []))
+  }
+  return TomlTable.new(entries: entries_of(node.children, node.children.keys(), 0, []))
+}
+
+def items_of(nodes Array[TTbl], i Int64, acc Array[Toml]) Array[Toml] {
+  if i >= nodes.length() {
+    return acc
+  }
+  const t = to_toml(nodes[i])
+  return items_of(nodes, i + 1, acc.append(t))
+}
+
+def entries_of(m Map[String, TTbl], keys Array[String], i Int64, acc Array[(String, Toml)]) Array[(String, Toml)] {
+  if i >= keys.length() {
+    return acc
+  }
+  const t = to_toml(m.get(keys[i]))
+  const pair = (keys[i], t)
+  return entries_of(m, keys, i + 1, acc.append(pair))
+}
+
+// ---- values ----
+
+// One value: strings, booleans, arrays, inline tables, date-times,
+// numbers. The non-finite spellings (`inf`, `nan`, signed) are valid
+// TOML no target here can carry, so they refuse up front.
+def parse_value(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
+  if depth > 512 {
+    return (R.error, err(pos, "nesting deeper than 512"))
+  }
+  if pos >= data.length() {
+    return (R.error, err(pos, "expected a value"))
+  }
+  const b = data.get(pos)
+  if b == 34 {
+    if is_ml_open?(data, pos, 34) {
+      case parse_ml_basic(data, pos) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+      }
+    }
+    case parse_basic_string(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+    }
+  }
+  if b == 39 {
+    if is_ml_open?(data, pos, 39) {
+      case parse_ml_literal(data, pos) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+      }
+    }
+    case parse_literal_string(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+    }
+  }
+  if b == 116 {
+    return parse_bool(data, pos, "true", true)
+  }
+  if b == 102 {
+    return parse_bool(data, pos, "false", false)
+  }
+  if b == 105 || b == 110 {
+    if inf_nan?(data, pos) {
+      return (R.error, err(pos, "non-finite floats are not supported"))
+    }
+    return (R.error, err(pos, "invalid value"))
+  }
+  if b == 91 {
+    return parse_array(data, pos, depth)
+  }
+  if b == 123 {
+    return parse_inline_table(data, pos, depth)
+  }
+  if b >= 48 && b <= 57 {
+    return parse_number_or_datetime(data, pos, depth)
+  }
+  if b == 43 || b == 45 {
+    return parse_signed_value(data, pos, depth)
+  }
+  return (R.error, err(pos, "invalid value"))
+}
+
+def is_ml_open?(data Bytes, pos Int64, q Int64) Bool {
+  if pos + 2 < data.length() {
+    if data.get(pos + 1) == q {
+      if data.get(pos + 2) == q {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+// true and false ride a word boundary — `truex` is a mistake, not a
+// boolean and trailing garbage.
+def parse_bool(data Bytes, pos Int64, word String, v Bool) (R, (Toml, Int64)) {
+  const w = word.to_bytes()
+  if match_at(data, pos, w, 0) == false {
+    return (R.error, err(pos, "invalid value"))
+  }
+  if boundary_ok?(data, pos + w.length()) == false {
+    return (R.error, err(pos, "invalid value"))
+  }
+  return (R.ok, (TomlBool.new(value: v), pos + w.length()))
+}
+
+// The byte past the word closes it — nothing a bare key could
+// continue with.
+def boundary_ok?(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return true
+  }
+  return is_bare_byte(data.get(i)) == false
+}
+
+def inf_nan?(data Bytes, pos Int64) Bool {
+  if match_at(data, pos, "inf".to_bytes(), 0) {
+    return boundary_ok?(data, pos + 3)
+  }
+  if match_at(data, pos, "nan".to_bytes(), 0) {
+    return boundary_ok?(data, pos + 3)
+  }
+  return false
+}
+
+def match_at(data Bytes, pos Int64, w Bytes, i Int64) Bool {
+  if i >= w.length() {
+    return true
+  }
+  if pos + i >= data.length() {
+    return false
+  }
+  if data.get(pos + i) != w.get(i) {
+    return false
+  }
+  return match_at(data, pos, w, i + 1)
+}
+
+// A signed value: the sign belongs to a number or a non-finite
+// spelling, nothing else.
+def parse_signed_value(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
+  const p = pos + 1
+  if p < data.length() {
+    const b = data.get(p)
+    if b == 105 || b == 110 {
+      if inf_nan?(data, p) {
+        return (R.error, err(pos, "non-finite floats are not supported"))
+      }
+      return (R.error, err(pos, "invalid value"))
+    }
+  }
+  return parse_number(data, pos)
+}
+
+// A digit-led value: four digits and a dash opens a date, two digits
+// and a colon a time, anything else is a number.
+def parse_number_or_datetime(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
+  if dig4_dash?(data, pos) {
+    return parse_datetime(data, pos)
+  }
+  if dig2_colon?(data, pos) {
+    return parse_local_time(data, pos)
+  }
+  return parse_number(data, pos)
+}
+
+def dig4_dash?(data Bytes, pos Int64) Bool {
+  if pos + 4 >= data.length() {
+    return false
+  }
+  if data.get(pos + 4) != 45 {
+    return false
+  }
+  return dig_run?(data, pos, 4)
+}
+
+def dig2_colon?(data Bytes, pos Int64) Bool {
+  if pos + 2 >= data.length() {
+    return false
+  }
+  if data.get(pos + 2) != 58 {
+    return false
+  }
+  return dig_run?(data, pos, 2)
+}
+
+def dig_run?(data Bytes, pos Int64, n Int64) Bool {
+  if n <= 0 {
+    return true
+  }
+  const b = byte_at(data, pos)
+  if b < 48 || b > 57 {
+    return false
+  }
+  return dig_run?(data, pos + 1, n - 1)
+}
+
+// ---- strings ----
+
+// The single-line basic string, two passes: the scan validates every
+// escape and measures the decoded text, the fill writes it. Working
+// on bytes keeps every target on the same UTF-8 path.
+def parse_basic_string(data Bytes, pos Int64) (R, (String, Int64)) {
+  case scan_basic(data, pos + 1, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, len) -> {
+      const out = Bytes.new(len)
+      case fill_basic(data, pos + 1, out, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, fr) -> { return (R.ok, (out.to_string(), fr[1])) }
+      }
+    }
+  }
+}
+
+def scan_basic(data Bytes, i Int64, len Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 34 {
+    return (R.ok, len)
+  }
+  if b == 92 {
+    case escape_cp(data, i) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er) -> { return scan_basic(data, er[1], len + utf8_len(er[0])) }
+    }
+  }
+  if b == 9 {
+    return scan_basic(data, i + 1, len + 1)
+  }
+  if b < 32 || b == 127 {
+    return (R.error, err(i, "unescaped control character in string"))
+  }
+  return scan_basic(data, i + 1, len + 1)
+}
+
+// Answers (bytes written, index past the closing quote).
+def fill_basic(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 34 {
+    return (R.ok, (w, i + 1))
+  }
+  if b == 92 {
+    case escape_cp(data, i) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er) -> {
+        const nw = put_cp(out, w, er[0])
+        return fill_basic(data, er[1], out, nw)
+      }
+    }
+  }
+  out.set(w, b)
+  return fill_basic(data, i + 1, out, w + 1)
+}
+
+// The literal string: no escapes at all, one line, raw bytes through.
+def parse_literal_string(data Bytes, pos Int64) (R, (String, Int64)) {
+  case scan_literal(data, pos + 1) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, end) -> {
+      return (R.ok, (slice_text(data, pos + 1, end - 1), end))
+    }
+  }
+}
+
+def scan_literal(data Bytes, i Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 39 {
+    return (R.ok, i + 1)
+  }
+  if b == 9 {
+    return scan_literal(data, i + 1)
+  }
+  if b == 10 || b == 13 {
+    return (R.error, err(i, "newline in literal string"))
+  }
+  if b < 32 || b == 127 {
+    return (R.error, err(i, "unescaped control character in string"))
+  }
+  return scan_literal(data, i + 1)
+}
+
+// The multi-line basic string: one trimmed newline after the
+// delimiters, quote runs of one or two ride as content, and a
+// backslash that only has spaces and tabs before the newline trims
+// every space, tab, and newline that follow.
+def parse_ml_basic(data Bytes, pos Int64) (R, (String, Int64)) {
+  const start = skip_ml_open(data, pos + 3)
+  case scan_ml_basic(data, start, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, len) -> {
+      const out = Bytes.new(len)
+      case fill_ml_basic(data, start, out, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, fr) -> { return (R.ok, (out.to_string(), fr[1])) }
+      }
+    }
+  }
+}
+
+// The one newline allowed right after the opening delimiters.
+def skip_ml_open(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    if data.get(i) == 13 {
+      if i + 1 < data.length() {
+        if data.get(i + 1) == 10 {
+          return i + 2
+        }
+      }
+      return i
+    }
+    if data.get(i) == 10 {
+      return i + 1
+    }
+  }
+  return i
+}
+
+def scan_ml_basic(data Bytes, i Int64, len Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 34 {
+    const run = quote_run(data, i, 0)
+    if run >= 3 {
+      return (R.ok, len + run - 3)
+    }
+    return scan_ml_basic(data, i + run, len + run)
+  }
+  if b == 92 {
+    case scan_ml_escape(data, i, len) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er) -> { return scan_ml_basic(data, er[0], er[1]) }
+    }
+  }
+  if b == 9 || b == 10 {
+    return scan_ml_basic(data, i + 1, len + 1)
+  }
+  if b == 13 {
+    if i + 1 < data.length() {
+      if data.get(i + 1) == 10 {
+        return scan_ml_basic(data, i + 2, len + 2)
+      }
+    }
+    return (R.error, err(i, "bare CR in string"))
+  }
+  if b < 32 || b == 127 {
+    return (R.error, err(i, "unescaped control character in string"))
+  }
+  return scan_ml_basic(data, i + 1, len + 1)
+}
+
+// The number of consecutive quotes at i.
+def quote_run(data Bytes, i Int64, n Int64) Int64 {
+  if i < data.length() {
+    if data.get(i) == 34 {
+      return quote_run(data, i + 1, n + 1)
+    }
+  }
+  return n
+}
+
+// One backslash in a multi-line body: a regular escape, or the
+// line-ending form — backslash, only spaces and tabs to the newline,
+// then every space, tab, and newline is trimmed.
+def scan_ml_escape(data Bytes, bs Int64, len Int64) (R, (Int64, Int64)) {
+  const p = skip_ml_blanks(data, bs + 1)
+  if p < data.length() {
+    if data.get(p) == 10 {
+      return (R.ok, (skip_ml_wsnl(data, p + 1), len))
+    }
+    if data.get(p) == 13 {
+      if p + 1 < data.length() {
+        if data.get(p + 1) == 10 {
+          return (R.ok, (skip_ml_wsnl(data, p + 2), len))
+        }
+      }
+    }
+  }
+  case escape_cp(data, bs) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, er) -> { return (R.ok, (er[1], len + utf8_len(er[0]))) }
+  }
+}
+
+def skip_ml_blanks(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 32 || b == 9 {
+      return skip_ml_blanks(data, i + 1)
+    }
+  }
+  return i
+}
+
+def skip_ml_wsnl(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if b == 32 || b == 9 || b == 10 {
+    return skip_ml_wsnl(data, i + 1)
+  }
+  if b == 13 {
+    if i + 1 < data.length() {
+      if data.get(i + 1) == 10 {
+        return skip_ml_wsnl(data, i + 2)
+      }
+    }
+  }
+  return i
+}
+
+def fill_ml_basic(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 34 {
+    const run = quote_run(data, i, 0)
+    if run >= 3 {
+      const nw = fill_quotes(out, w, run - 3)
+      return (R.ok, (nw, i + run))
+    }
+    const nw = fill_quotes(out, w, run)
+    return fill_ml_basic(data, i + run, out, nw)
+  }
+  if b == 92 {
+    case fill_ml_escape(data, i, out, w) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er) -> { return fill_ml_basic(data, er[0], out, er[1]) }
+    }
+  }
+  if b == 13 {
+    out.set(w, 13)
+    out.set(w + 1, 10)
+    return fill_ml_basic(data, i + 2, out, w + 2)
+  }
+  out.set(w, b)
+  return fill_ml_basic(data, i + 1, out, w + 1)
+}
+
+// `run` quote bytes into out, for the quote-run tails.
+def fill_quotes(out Bytes, w Int64, run Int64) Int64 {
+  if run <= 0 {
+    return w
+  }
+  out.set(w, 34)
+  return fill_quotes(out, w + 1, run - 1)
+}
+
+def fill_ml_escape(data Bytes, bs Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
+  const p = skip_ml_blanks(data, bs + 1)
+  if p < data.length() {
+    if data.get(p) == 10 {
+      return (R.ok, (skip_ml_wsnl(data, p + 1), w))
+    }
+    if data.get(p) == 13 {
+      if p + 1 < data.length() {
+        if data.get(p + 1) == 10 {
+          return (R.ok, (skip_ml_wsnl(data, p + 2), w))
+        }
+      }
+    }
+  }
+  case escape_cp(data, bs) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, er) -> {
+      const nw = put_cp(out, w, er[0])
+      return (R.ok, (er[1], nw))
+    }
+  }
+}
+
+// The multi-line literal string: raw bytes, one trimmed newline after
+// the delimiters, apostrophe runs of one or two ride as content.
+def parse_ml_literal(data Bytes, pos Int64) (R, (String, Int64)) {
+  const start = skip_ml_open(data, pos + 3)
+  case scan_ml_literal(data, start, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, lr) -> {
+      const out = Bytes.new(lr[1])
+      copy_range(data, out, start, 0, lr[1])
+      return (R.ok, (out.to_string(), lr[0]))
+    }
+  }
+}
+
+// The apostrophe run at i.
+def apo_run(data Bytes, i Int64, n Int64) Int64 {
+  if i < data.length() {
+    if data.get(i) == 39 {
+      return apo_run(data, i + 1, n + 1)
+    }
+  }
+  return n
+}
+
+// Answers (index past the closing run, content length).
+def scan_ml_literal(data Bytes, i Int64, len Int64) (R, (Int64, Int64)) {
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b == 39 {
+    const run = apo_run(data, i, 0)
+    if run >= 3 {
+      return (R.ok, (i + run, len + run - 3))
+    }
+    return scan_ml_literal(data, i + run, len + run)
+  }
+  if b == 9 || b == 10 {
+    return scan_ml_literal(data, i + 1, len + 1)
+  }
+  if b == 13 {
+    if i + 1 < data.length() {
+      if data.get(i + 1) == 10 {
+        return scan_ml_literal(data, i + 2, len + 2)
+      }
+    }
+    return (R.error, err(i, "bare CR in string"))
+  }
+  if b < 32 || b == 127 {
+    return (R.error, err(i, "unescaped control character in string"))
+  }
+  return scan_ml_literal(data, i + 1, len + 1)
+}
+
+// One escape sequence; `bs` sits on the backslash. Answers (code
+// point, index past the sequence). A high surrogate half must be
+// followed by a low half in the next `\u` or `\U` escape, and the
+// pair joins into one scalar.
+def escape_cp(data Bytes, bs Int64) (R, (Int64, Int64)) {
+  if bs + 1 >= data.length() {
+    return (R.error, err(bs, "unterminated string"))
+  }
+  const eb = data.get(bs + 1)
+  if eb == 98 {
+    return (R.ok, (8, bs + 2))
+  }
+  if eb == 116 {
+    return (R.ok, (9, bs + 2))
+  }
+  if eb == 110 {
+    return (R.ok, (10, bs + 2))
+  }
+  if eb == 102 {
+    return (R.ok, (12, bs + 2))
+  }
+  if eb == 114 {
+    return (R.ok, (13, bs + 2))
+  }
+  if eb == 101 {
+    return (R.ok, (27, bs + 2))
+  }
+  if eb == 34 {
+    return (R.ok, (34, bs + 2))
+  }
+  if eb == 92 {
+    return (R.ok, (92, bs + 2))
+  }
+  if eb == 120 {
+    case read_hex(data, bs + 2, 2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp) -> { return (R.ok, (cp, bs + 4)) }
+    }
+  }
+  if eb == 117 {
+    return unicode_escape(data, bs + 2, 4)
+  }
+  if eb == 85 {
+    return unicode_escape(data, bs + 2, 8)
+  }
+  return (R.error, err(bs + 1, "invalid escape"))
+}
+
+// One `\u` or `\U` body: the hex digits, then — when the value is a
+// high surrogate half — the next escape with the low half. Answers
+// (scalar, index past the last escape).
+def unicode_escape(data Bytes, i Int64, n Int64) (R, (Int64, Int64)) {
+  case read_hex(data, i, n) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, cp) -> {
+      if cp >= 56320 && cp <= 57343 {
+        return (R.error, err(i - 2, "lone surrogate escape"))
+      }
+      if cp >= 55296 && cp <= 56319 {
+        const nb = i + n
+        if nb + 1 >= data.length() {
+          return (R.error, err(i - 2, "lone surrogate escape"))
+        }
+        const lb = data.get(nb + 1)
+        if lb != 117 && lb != 85 {
+          return (R.error, err(i - 2, "lone surrogate escape"))
+        }
+        const dn = if lb == 117 { 4 } else { 8 }
+        case read_hex(data, nb + 2, dn) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, cp2) -> {
+            if cp2 < 56320 || cp2 > 57343 {
+              return (R.error, err(i - 2, "lone surrogate escape"))
+            }
+            const high = (cp - 55296) << 10
+            return (R.ok, (65536 + high + (cp2 - 56320), nb + 2 + dn))
+          }
+        }
+      }
+      return (R.ok, (cp, i + n))
+    }
+  }
+}
+
+// n hex digits at i, most significant first.
+def read_hex(data Bytes, i Int64, n Int64) (R, Int64) {
+  if n <= 0 {
+    return (R.ok, 0)
+  }
+  if i >= data.length() {
+    return (R.error, err(i, "unterminated string"))
+  }
+  case hex_val(data.get(i)) {
+    (R.error, _) -> { return (R.error, err(i, "invalid hex digit in escape")) }
+    (R.ok, h) -> {
+      case read_hex(data, i + 1, n - 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, rest) -> { return (R.ok, h * pow16(n - 1) + rest) }
+      }
+    }
+  }
+}
+
+def pow16(e Int64) Int64 {
+  if e <= 0 {
+    return 1
+  }
+  return 16 * pow16(e - 1)
+}
+
+def hex_val(b Int64) (R, Int64) {
+  if b >= 48 && b <= 57 {
+    return (R.ok, b - 48)
+  }
+  if b >= 97 && b <= 102 {
+    return (R.ok, b - 87)
+  }
+  if b >= 65 && b <= 70 {
+    return (R.ok, b - 55)
+  }
+  return (R.error, "invalid hex digit")
+}
+
+// The UTF-8 byte count of one code point.
+def utf8_len(cp Int64) Int64 {
+  if cp < 128 {
+    return 1
+  }
+  if cp < 2048 {
+    return 2
+  }
+  if cp < 65536 {
+    return 3
+  }
+  return 4
+}
+
+// Writes one code point's UTF-8 bytes; the one-byte escapes included.
+def put_cp(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 128 {
+    out.set(w, cp)
+    return w + 1
+  }
+  return put_utf8(out, w, cp)
+}
+
+def put_utf8(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 2048 {
+    out.set(w, 192 + (cp / 64))
+    out.set(w + 1, 128 + (cp % 64))
+    return w + 2
+  }
+  if cp < 65536 {
+    const mid = (cp / 64) % 64
+    out.set(w, 224 + (cp / 4096))
+    out.set(w + 1, 128 + mid)
+    out.set(w + 2, 128 + (cp % 64))
+    return w + 3
+  }
+  const mid = (cp / 4096) % 64
+  const low = (cp / 64) % 64
+  out.set(w, 240 + (cp / 262144))
+  out.set(w + 1, 128 + mid)
+  out.set(w + 2, 128 + low)
+  out.set(w + 3, 128 + (cp % 64))
+  return w + 4
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+// The bytes of [start, end) as text.
+def slice_text(data Bytes, start Int64, end Int64) String {
+  const out = Bytes.new(end - start)
+  copy_range(data, out, start, 0, end - start)
+  return out.to_string()
+}
+
+// ---- numbers ----
+
+def is_digit(b Int64) Bool {
+  return b >= 48 && b <= 57
+}
+
+def byte_at(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return -1
+  }
+  return data.get(i)
+}
+
+// Numbers: decimal with an optional sign and no leading zeros, the
+// radix forms unsigned after `0x` / `0o` / `0b`, floats with a
+// fraction and/or an exponent — lowercase `e` only, digits required
+// on both sides of the point — and underscores only between digits.
+def parse_number(data Bytes, pos Int64) (R, (Toml, Int64)) {
+  const neg = data.get(pos) == 45
+  const p = skip_sign(data, pos)
+  if p >= data.length() {
+    return (R.error, err(p, "expected a digit"))
+  }
+  const b = data.get(p)
+  if b == 48 {
+    return parse_zero(data, pos, p, neg)
+  }
+  if b >= 49 && b <= 57 {
+    return parse_dec_or_float(data, pos, p, neg)
+  }
+  return (R.error, err(p, "expected a digit"))
+}
+
+def skip_sign(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 43 || b == 45 {
+      return i + 1
+    }
+  }
+  return i
+}
+
+// After the sign and a leading 0: the radix forms, a float through
+// its fraction or exponent, plain zero — or a leading-zero refusal.
+def parse_zero(data Bytes, pos Int64, p Int64, neg Bool) (R, (Toml, Int64)) {
+  const nb = byte_at(data, p + 1)
+  if nb == 120 {
+    return parse_radix_int(data, pos, p + 2, 16)
+  }
+  if nb == 111 {
+    return parse_radix_int(data, pos, p + 2, 8)
+  }
+  if nb == 98 {
+    return parse_radix_int(data, pos, p + 2, 2)
+  }
+  if nb == 46 {
+    return parse_float_frac(data, pos, p, p + 1, neg)
+  }
+  if nb == 101 {
+    return parse_float_exp(data, pos, p, p + 1, p + 1, p + 1, p + 2, neg)
+  }
+  if nb >= 48 && nb <= 57 {
+    return (R.error, err(p + 1, "leading zero in number"))
+  }
+  return (R.ok, (TomlInt.new(value: 0), p + 1))
+}
+
+// The digits from a sign and a nonzero lead: an integer, or a float
+// once a fraction or an exponent opens.
+def parse_dec_or_float(data Bytes, pos Int64, start Int64, neg Bool) (R, (Toml, Int64)) {
+  case scan_digits(data, start, 10) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, int_end) -> {
+      const b = byte_at(data, int_end)
+      if b == 46 {
+        return parse_float_frac(data, pos, start, int_end, neg)
+      }
+      if b == 101 {
+        return parse_float_exp(data, pos, start, int_end, int_end, int_end, int_end + 1, neg)
+      }
+      if b == 69 {
+        return (R.error, err(int_end, "exponent must be lowercase e"))
+      }
+      return finish_dec_int(data, pos, start, int_end, neg)
+    }
+  }
+}
+
+// int_end sits on the point; a digit must follow it.
+def parse_float_frac(data Bytes, pos Int64, int_start Int64, int_end Int64, neg Bool) (R, (Toml, Int64)) {
+  case scan_digits(data, int_end + 1, 10) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, frac_end) -> {
+      const b = byte_at(data, frac_end)
+      if b == 101 {
+        return parse_float_exp(data, pos, int_start, int_end, int_end + 1, frac_end, frac_end + 1, neg)
+      }
+      if b == 69 {
+        return (R.error, err(frac_end, "exponent must be lowercase e"))
+      }
+      return finish_float(data, pos, int_start, int_end, int_end + 1, frac_end, frac_end, 0, neg)
+    }
+  }
+}
+
+// exp_start sits past the `e`; an optional sign then digits.
+def parse_float_exp(data Bytes, pos Int64, int_start Int64, int_end Int64, frac_start Int64, frac_end Int64, exp_start Int64, neg Bool) (R, (Toml, Int64)) {
+  const eneg = byte_at(data, exp_start) == 45
+  const sn = skip_sign(data, exp_start)
+  case scan_digits(data, sn, 10) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, exp_end) -> {
+      case exp_value(data, sn, exp_end, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, mag) -> {
+          const ev = if eneg { 0 - mag } else { mag }
+          return finish_float(data, pos, int_start, int_end, frac_start, frac_end, exp_end, ev, neg)
+        }
+      }
+    }
+  }
+}
+
+// The digit run in [i, end): digits of the base, underscores only
+// between digits. Answers the index past the run.
+def scan_digits(data Bytes, i Int64, base Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, err(i, "digit expected"))
+  }
+  if is_digit_base(data.get(i), base) == false {
+    return (R.error, err(i, "digit expected"))
+  }
+  return scan_digits_more(data, base, i + 1)
+}
+
+def scan_digits_more(data Bytes, base Int64, i Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.ok, i)
+  }
+  const b = data.get(i)
+  if is_digit_base(b, base) {
+    return scan_digits_more(data, base, i + 1)
+  }
+  if b == 95 {
+    if i + 1 < data.length() {
+      if is_digit_base(data.get(i + 1), base) {
+        return scan_digits_more(data, base, i + 1)
+      }
+    }
+    return (R.error, err(i, "underscore must be between digits"))
+  }
+  return (R.ok, i)
+}
+
+def is_digit_base(b Int64, base Int64) Bool {
+  if base == 16 {
+    return (b >= 48 && b <= 57) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70)
+  }
+  if base == 8 {
+    return b >= 48 && b <= 55
+  }
+  if base == 2 {
+    return b == 48 || b == 49
+  }
+  return b >= 48 && b <= 57
+}
+
+// Copies the run's digits into out, underscores dropped; answers the
+// count written.
+def collect_digits(data Bytes, i Int64, end Int64, out Bytes, w Int64) Int64 {
+  if i >= end {
+    return w
+  }
+  const b = data.get(i)
+  if b == 95 {
+    return collect_digits(data, i + 1, end, out, w)
+  }
+  out.set(w, b)
+  return collect_digits(data, i + 1, end, out, w + 1)
+}
+
+def digit_value(b Int64) Int64 {
+  if b <= 57 {
+    return b - 48
+  }
+  if b <= 90 {
+    return b - 55
+  }
+  return b - 87
+}
+
+// The decimal integer in the buffer's [0, n), honoring neg so the
+// exact minimum is reachable; overflow is an error value.
+def finish_dec_int(data Bytes, pos Int64, start Int64, end Int64, neg Bool) (R, (Toml, Int64)) {
+  const buf = Bytes.new(end - start)
+  const n = collect_digits(data, start, end, buf, 0)
+  case acc_dec(buf, 0, n, 0, neg, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v) -> { return (R.ok, (TomlInt.new(value: v), end)) }
+  }
+}
+
+def acc_dec(buf Bytes, i Int64, n Int64, acc Int64, neg Bool, pos Int64) (R, Int64) {
+  if i >= n {
+    return (R.ok, acc)
+  }
+  const d = buf.get(i) - 48
+  if neg {
+    if acc < -922337203685477580 {
+      return (R.error, err(pos, "integer out of range"))
+    }
+    if acc == -922337203685477580 && d > 8 {
+      return (R.error, err(pos, "integer out of range"))
+    }
+    return acc_dec(buf, i + 1, n, acc * 10 - d, neg, pos)
+  }
+  if acc > 922337203685477580 {
+    return (R.error, err(pos, "integer out of range"))
+  }
+  if acc == 922337203685477580 && d > 7 {
+    return (R.error, err(pos, "integer out of range"))
+  }
+  return acc_dec(buf, i + 1, n, acc * 10 + d, neg, pos)
+}
+
+// The radix integer in the buffer's [0, n): positive only, so the
+// ceiling is Int64's own.
+def parse_radix_int(data Bytes, pos Int64, start Int64, base Int64) (R, (Toml, Int64)) {
+  case scan_digits(data, start, base) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, end) -> {
+      const buf = Bytes.new(end - start)
+      const n = collect_digits(data, start, end, buf, 0)
+      case acc_radix(buf, 0, n, base, 0, pos) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, v) -> { return (R.ok, (TomlInt.new(value: v), end)) }
+      }
+    }
+  }
+}
+
+def acc_radix(buf Bytes, i Int64, n Int64, base Int64, acc Int64, pos Int64) (R, Int64) {
+  if i >= n {
+    return (R.ok, acc)
+  }
+  const d = digit_value(buf.get(i))
+  if acc > radix_quotient(base) {
+    return (R.error, err(pos, "integer out of range"))
+  }
+  if acc == radix_quotient(base) && d > radix_remainder(base) {
+    return (R.error, err(pos, "integer out of range"))
+  }
+  return acc_radix(buf, i + 1, n, base, acc * base + d, pos)
+}
+
+def radix_quotient(base Int64) Int64 {
+  if base == 16 {
+    return 576460752303423487
+  }
+  if base == 8 {
+    return 1152921504606846975
+  }
+  return 4611686018427387903
+}
+
+def radix_remainder(base Int64) Int64 {
+  if base == 16 {
+    return 15
+  }
+  if base == 8 {
+    return 7
+  }
+  return 1
+}
+
+// The exponent value with its sign, clamped — a runaway exponent
+// cannot move a binary64 anyway. Underscores ride through.
+def exp_value(data Bytes, i Int64, end Int64, acc Int64) (R, Int64) {
+  if i >= end {
+    return (R.ok, acc)
+  }
+  const b = data.get(i)
+  if b == 95 {
+    return exp_value(data, i + 1, end, acc)
+  }
+  if acc > 10000 {
+    return (R.ok, 100000)
+  }
+  return exp_value(data, i + 1, end, acc * 10 + (b - 48))
+}
+
+// The float through the float package's exact-decimal constructor:
+// the digits ride in one normalized buffer, int part, point, fraction.
+def finish_float(data Bytes, pos Int64, int_start Int64, int_end Int64, frac_start Int64, frac_end Int64, end Int64, ev Int64, neg Bool) (R, (Toml, Int64)) {
+  const buf = Bytes.new(int_end - int_start + (frac_end - frac_start) + 1)
+  const il = collect_digits(data, int_start, int_end, buf, 0)
+  buf.set(il, 46)
+  const fl = collect_digits(data, frac_start, frac_end, buf, il + 1) - (il + 1)
+  case float.parse_decimal(buf, 0, il, fl, ev, neg) {
+    (R.error, _) -> { return (R.error, err(pos, "number out of range")) }
+    (R.ok, x) -> { return (R.ok, (TomlFloat.new(value: x), end)) }
+  }
+}
+
+// ---- date-times ----
+
+// Four digits and a dash opened a date. The time follows only across
+// `T`, `t`, or a space — and the space is try-and-see, so a plain
+// date followed by other text still reads as the date.
+def parse_datetime(data Bytes, pos Int64) (R, (Toml, Int64)) {
+  case dig4(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, year) -> {
+      case dig2(data, pos + 5) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, month) -> {
+          case dig2(data, pos + 8) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, day) -> {
+              if month < 1 || month > 12 {
+                return (R.error, err(pos + 5, "month out of range"))
+              }
+              if day < 1 || day > days_in_month(year, month) {
+                return (R.error, err(pos + 8, "day out of range"))
+              }
+              const db = byte_at(data, pos + 10)
+              if db == 84 || db == 116 || db == 32 {
+                case parse_clock(data, pos + 11) {
+                  (R.error, why) -> {
+                    if db == 32 {
+                      return local_date_value(year, month, day, pos)
+                    }
+                    return (R.error, why)
+                  }
+                  (R.ok, tr) -> {
+                    return finish_datetime(data, year, month, day, tr[0], tr[1])
+                  }
+                }
+              }
+              return local_date_value(year, month, day, pos)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The clock is there; the offset decides the kind — Z, z, or ±hh:mm
+// for an offset date-time, anything else local.
+def finish_datetime(data Bytes, year Int64, month Int64, day Int64, tr (Int64, Int64, Int64, Int64), at Int64) (R, (Toml, Int64)) {
+  case read_offset(data, at) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, osr) -> {
+      const kind = if osr[0] { TomlDateTimeKind.toffset } else { TomlDateTimeKind.tlocal_datetime }
+      const t = TomlDateTime.new(kind: kind, year: year, month: month, day: day, hour: tr[0], minute: tr[1], second: tr[2], nanosecond: tr[3], offset_minutes: osr[1])
+      return (R.ok, (t, osr[2]))
+    }
+  }
+}
+
+def local_date_value(year Int64, month Int64, day Int64, pos Int64) (R, (Toml, Int64)) {
+  const t = TomlDateTime.new(kind: TomlDateTimeKind.tlocal_date, year: year, month: month, day: day, hour: 0, minute: 0, second: 0, nanosecond: 0, offset_minutes: 0)
+  return (R.ok, (t, pos + 10))
+}
+
+// The time part: hh:mm, seconds omittable (1.1), then the fraction.
+// Answers (hour, minute, second, nanosecond) and the index past it.
+def parse_clock(data Bytes, i Int64) (R, ((Int64, Int64, Int64, Int64), Int64)) {
+  case dig2(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, hour) -> {
+      if hour > 23 {
+        return (R.error, err(i, "hour out of range"))
+      }
+      if byte_at(data, i + 2) != 58 {
+        return (R.error, err(i + 2, "expected `:`"))
+      }
+      case dig2(data, i + 3) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, minute) -> {
+          if minute > 59 {
+            return (R.error, err(i + 3, "minute out of range"))
+          }
+          if byte_at(data, i + 5) != 58 {
+            return (R.ok, ((hour, minute, 0, 0), i + 5))
+          }
+          case dig2(data, i + 6) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, second) -> {
+              if second > 60 {
+                return (R.error, err(i + 6, "second out of range"))
+              }
+              if byte_at(data, i + 8) != 46 {
+                return (R.ok, ((hour, minute, second, 0), i + 8))
+              }
+              case scan_ns(data, i + 9, 0, 0) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, nr) -> {
+                  return (R.ok, ((hour, minute, second, nr[0]), nr[1]))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The fraction's nanoseconds: the first nine digits count, the rest
+// are truncated (the spec requires truncation, never rounding).
+def scan_ns(data Bytes, i Int64, acc Int64, count Int64) (R, (Int64, Int64)) {
+  const b = byte_at(data, i)
+  if b >= 48 && b <= 57 {
+    if count >= 9 {
+      return scan_ns(data, i + 1, acc, count + 1)
+    }
+    return scan_ns(data, i + 1, acc * 10 + (b - 48), count + 1)
+  }
+  if count == 0 {
+    return (R.error, err(i, "digit expected after decimal point"))
+  }
+  return (R.ok, (pad_ns(acc, count), i))
+}
+
+// The kept digits pad back out to nine.
+def pad_ns(acc Int64, count Int64) Int64 {
+  if count >= 9 {
+    return acc
+  }
+  return pad_ns(acc * 10, count + 1)
+}
+
+// A bare time value: no date, no offset — a trailing Z or ±hh:mm is
+// the next expression's problem and errors there.
+def parse_local_time(data Bytes, pos Int64) (R, (Toml, Int64)) {
+  case parse_clock(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, tr) -> {
+      const t = TomlDateTime.new(kind: TomlDateTimeKind.tlocal_time, year: 0, month: 0, day: 0, hour: tr[0][0], minute: tr[0][1], second: tr[0][2], nanosecond: tr[0][3], offset_minutes: 0)
+      return (R.ok, (t, tr[1]))
+    }
+  }
+}
+
+// Two decimal digits; -1 past the end answers through byte_at, so the
+// digit checks fail honestly there.
+def dig2(data Bytes, i Int64) (R, Int64) {
+  const b0 = byte_at(data, i)
+  const b1 = byte_at(data, i + 1)
+  if b0 < 48 || b0 > 57 || b1 < 48 || b1 > 57 {
+    return (R.error, err(i, "digit expected"))
+  }
+  return (R.ok, (b0 - 48) * 10 + (b1 - 48))
+}
+
+def dig4(data Bytes, i Int64) (R, Int64) {
+  const b0 = byte_at(data, i)
+  const b1 = byte_at(data, i + 1)
+  const b2 = byte_at(data, i + 2)
+  const b3 = byte_at(data, i + 3)
+  if b0 < 48 || b0 > 57 || b1 < 48 || b1 > 57 || b2 < 48 || b2 > 57 || b3 < 48 || b3 > 57 {
+    return (R.error, err(i, "digit expected"))
+  }
+  return (R.ok, (b0 - 48) * 1000 + (b1 - 48) * 100 + (b2 - 48) * 10 + (b3 - 48))
+}
+
+def days_in_month(year Int64, month Int64) Int64 {
+  if month == 2 {
+    if leap_year?(year) {
+      return 29
+    }
+    return 28
+  }
+  if month == 4 || month == 6 || month == 9 || month == 11 {
+    return 30
+  }
+  return 31
+}
+
+def leap_year?(year Int64) Bool {
+  if year % 4 != 0 {
+    return false
+  }
+  if year % 100 != 0 {
+    return true
+  }
+  if year % 400 != 0 {
+    return false
+  }
+  return true
+}
+
+// Z, z, or ±hh:mm — or none. Answers (offset present?, minutes, the
+// index past it); minutes run east positive, west negative.
+def read_offset(data Bytes, i Int64) (R, (Bool, Int64, Int64)) {
+  const b = byte_at(data, i)
+  if b == 90 || b == 122 {
+    return (R.ok, (true, 0, i + 1))
+  }
+  if b == 43 || b == 45 {
+    const sign = if b == 45 { -1 } else { 1 }
+    case dig2(data, i + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, oh) -> {
+        if oh > 23 {
+          return (R.error, err(i + 1, "hour out of range"))
+        }
+        if byte_at(data, i + 3) != 58 {
+          return (R.error, err(i + 3, "expected `:`"))
+        }
+        case dig2(data, i + 4) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, om) -> {
+            if om > 59 {
+              return (R.error, err(i + 4, "minute out of range"))
+            }
+            return (R.ok, (true, sign * (oh * 60 + om), i + 6))
+          }
+        }
+      }
+    }
+  }
+  return (R.ok, (false, 0, i))
+}
+
+// ---- arrays ----
+
+// Elements may sit on their own lines with comments between, a
+// trailing comma closes, and the kinds mix freely.
+def parse_array(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
+  case parse_items(data, pos + 1, depth + 1, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ir) -> { return (R.ok, (TomlArray.new(items: ir[0]), ir[1])) }
+  }
+}
+
+def parse_items(data Bytes, pos Int64, depth Int64, acc Array[Toml]) (R, (Array[Toml], Int64)) {
+  const p = skip_blank(data, pos)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated array"))
+  }
+  if data.get(p) == 93 {
+    return (R.ok, (acc, p + 1))
+  }
+  case parse_value(data, p, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, vr) -> {
+      return parse_more_items(data, vr[1], depth, acc.append(vr[0]))
+    }
+  }
+}
+
+def parse_more_items(data Bytes, pos Int64, depth Int64, acc Array[Toml]) (R, (Array[Toml], Int64)) {
+  const p = skip_blank(data, pos)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated array"))
+  }
+  const b = data.get(p)
+  if b == 44 {
+    return parse_items(data, p + 1, depth, acc)
+  }
+  if b == 93 {
+    return (R.ok, (acc, p + 1))
+  }
+  return (R.error, err(p, "expected `,` or `]`"))
+}
+
+// ---- inline tables ----
+
+// A self-contained table: entries until the closing brace, newlines
+// and comments riding between them (TOML 1.1), a trailing comma
+// allowed. Nothing outside the braces ever reaches in.
+def parse_inline_table(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
+  const root = new_table_node(TOrigin.theader)
+  root.declared.replace(true)
+  case parse_inline_entries(data, pos + 1, depth + 1, root) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ir) -> { return (R.ok, (to_toml(ir[0]), ir[1])) }
+  }
+}
+
+def parse_inline_entries(data Bytes, pos Int64, depth Int64, root TTbl) (R, (TTbl, Int64)) {
+  const p = skip_blank(data, pos)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated inline table"))
+  }
+  if data.get(p) == 125 {
+    return (R.ok, (root, p + 1))
+  }
+  case parse_inline_keyval(data, p, root, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> {
+      return parse_inline_more(data, kr, depth, root)
+    }
+  }
+}
+
+def parse_inline_more(data Bytes, pos Int64, depth Int64, root TTbl) (R, (TTbl, Int64)) {
+  const p = skip_blank(data, pos)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated inline table"))
+  }
+  const b = data.get(p)
+  if b == 125 {
+    return (R.ok, (root, p + 1))
+  }
+  if b == 44 {
+    const np = skip_blank(data, p + 1)
+    if np < data.length() {
+      if data.get(np) == 125 {
+        return (R.ok, (root, np + 1))
+      }
+    }
+    return parse_inline_entries(data, np, depth, root)
+  }
+  return (R.error, err(p, "expected `,` or `}`"))
+}
+
+def parse_inline_keyval(data Bytes, pos Int64, root TTbl, depth Int64) (R, Int64) {
+  case parse_key_path(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr) -> {
+      const eq = skip_ws_h(data, kr[1])
+      if eq >= data.length() || data.get(eq) != 61 {
+        return (R.error, err(eq, "expected `=`"))
+      }
+      case parse_value(data, skip_ws_h(data, eq + 1), depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, vr) -> {
+          case define_keyval(root, kr[0], vr[0], pos) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, _) -> { return (R.ok, vr[1]) }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- encode ----
+
+// The document form: the root must be a table, each table renders its
+// scalar and inline-array entries first, then one `[a.b]` section per
+// sub-table and one `[[a.b]]` section per array-of-tables element.
+// An array whose elements are not all tables rides inline, table
+// items included — the only form that can hold a mixed array.
+def encode(v Toml) String {
+  if v.is(TomlTable) {
+    return doc_entries(v.entries(), [], 0, "")
+  }
+  raise Exception.new(message: "toml: encode expects a table")
+}
+
+def doc_entries(entries Array[(String, Toml)], path Array[String], i Int64, acc String) String {
+  if i >= entries.length() {
+    return doc_sections(entries, path, 0, acc)
+  }
+  const pair = entries[i]
+  const v = pair[1]
+  if doc_inline?(v) {
+    return doc_entries(entries, path, i + 1, doc_line(acc, pair[0], v))
+  }
+  return doc_entries(entries, path, i + 1, acc)
+}
+
+// The sections ride after their table's scalar lines — a table's own
+// entries must stay contiguous, and these passes keep them that way.
+def doc_sections(entries Array[(String, Toml)], path Array[String], i Int64, acc String) String {
+  if i >= entries.length() {
+    return acc
+  }
+  const pair = entries[i]
+  const v = pair[1]
+  if v.is(TomlTable) {
+    return doc_sections(entries, path, i + 1, doc_section(acc, path, pair[0], v))
+  }
+  if v.is(TomlArray) {
+    if all_tables?(v.items(), 0, false) {
+      return doc_sections(entries, path, i + 1, doc_elements(acc, path, pair[0], v, 0))
+    }
+  }
+  return doc_sections(entries, path, i + 1, acc)
+}
+
+// Inline at document level: scalars, and every array whose elements
+// are not all tables — an empty array included, since `[[x]]` cannot
+// render an empty one.
+def doc_inline?(v Toml) Bool {
+  if v.is(TomlTable) {
+    return false
+  }
+  if v.is(TomlArray) {
+    return all_tables?(v.items(), 0, false) == false
+  }
+  return true
+}
+
+// A nonempty array of only tables renders as `[[...]]` elements.
+def all_tables?(items Array[Toml], i Int64, seen Bool) Bool {
+  if i >= items.length() {
+    return seen
+  }
+  if items[i].is(TomlTable) {
+    return all_tables?(items, i + 1, true)
+  }
+  return false
+}
+
+// `key = value` — the key rides bare of any path: inside a section
+// every key is relative to the table the header named.
+def doc_line(acc String, key String, v Toml) String {
+  const line = render_one_key(key) + " = " + v.encode()
+  if acc == "" {
+    return line
+  }
+  return acc + "\n" + line
+}
+
+def doc_section(acc String, path Array[String], key String, v TomlTable) String {
+  const npath = path.append(key)
+  const head = if acc == "" { "" } else { acc + "\n" }
+  return head + "[" + render_path(npath, 0) + "]\n" + doc_entries(v.entries(), npath, 0, "")
+}
+
+def doc_elements(acc String, path Array[String], key String, v Toml, i Int64) String {
+  if v.is(TomlArray) {
+    return doc_element_loop(acc, path, key, v.items(), i)
+  }
+  raise Exception.new(message: "toml: unknown value kind")
+}
+
+def doc_element_loop(acc String, path Array[String], key String, items Array[Toml], i Int64) String {
+  if i >= items.length() {
+    return acc
+  }
+  const el = items[i]
+  if el.is(TomlTable) {
+    const npath = path.append(key)
+    const head = if acc == "" { "" } else { acc + "\n" }
+    const next = head + "[[" + render_path(npath, 0) + "]]\n" + doc_entries(el.entries(), npath, 0, "")
+    return doc_element_loop(next, path, key, items, i + 1)
+  }
+  raise Exception.new(message: "toml: unknown value kind")
+}
+
+// The whole path dotted, every component on its own key rules.
+def render_path(path Array[String], i Int64) String {
+  if i == path.length() - 1 {
+    return render_one_key(path[i])
+  }
+  return render_one_key(path[i]) + "." + render_path(path, i + 1)
+}
+
+// Bare keys ride bare — nonempty and only [A-Za-z0-9_-] — everything
+// else quotes.
+def render_one_key(key String) String {
+  const data = key.to_bytes()
+  if data.length() == 0 {
+    return quote_basic(key)
+  }
+  if bare_bytes?(data, 0) {
+    return key
+  }
+  return quote_basic(key)
+}
+
+def bare_bytes?(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return true
+  }
+  if is_bare_byte(data.get(i)) == false {
+    return false
+  }
+  return bare_bytes?(data, i + 1)
+}
+
+// The value-literal forms, one per class: arrays and tables render
+// inline, scalars as their own text.
+def encode_items(items Array[Toml], i Int64, acc String) String {
+  if i >= items.length() {
+    return acc + "]"
+  }
+  if i == 0 {
+    return encode_items(items, i + 1, "[" + items[0].encode())
+  }
+  return encode_items(items, i + 1, acc + ", " + items[i].encode())
+}
+
+def encode_entries(entries Array[(String, Toml)], i Int64, acc String) String {
+  if i >= entries.length() {
+    return acc + " }"
+  }
+  const pair = entries[i]
+  const part = render_one_key(pair[0]) + " = " + pair[1].encode()
+  if i == 0 {
+    return encode_entries(entries, i + 1, "{ " + part)
+  }
+  return encode_entries(entries, i + 1, acc + ", " + part)
+}
+
+// The basic-string form: the short escapes where TOML has one, `\e`
+// for ESC, and `\u00xx` for the rest of the controls; DEL rides
+// `\u007f`. Everything else passes through as the UTF-8 it already
+// is.
+def quote_basic(s String) String {
+  const data = s.to_bytes()
+  const len = quoted_len(data, 0)
+  const out = Bytes.new(len + 2)
+  out.set(0, 34)
+  fill_quoted(data, out, 0, 1)
+  out.set(len + 1, 34)
+  return out.to_string()
+}
+
+def quoted_len(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return 0
+  }
+  const b = data.get(i)
+  if b == 34 || b == 92 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  if b == 8 || b == 9 || b == 10 || b == 12 || b == 13 || b == 27 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  if b < 32 || b == 127 {
+    return 6 + quoted_len(data, i + 1)
+  }
+  return 1 + quoted_len(data, i + 1)
+}
+
+def fill_quoted(data Bytes, out Bytes, i Int64, w Int64) {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 34 || b == 92 {
+      out.set(w, 92)
+      out.set(w + 1, b)
+      fill_quoted(data, out, i + 1, w + 2)
+    } else {
+      if b < 32 || b == 127 {
+        fill_quoted_control(data, out, i, w, b)
+      } else {
+        out.set(w, b)
+        fill_quoted(data, out, i + 1, w + 1)
+      }
+    }
+  }
+}
+
+// One control byte's escape: the short form where TOML has one, ESC
+// as `\e`, anything else as `\u00xx`.
+def fill_quoted_control(data Bytes, out Bytes, i Int64, w Int64, b Int64) {
+  out.set(w, 92)
+  if b == 8 {
+    out.set(w + 1, 98)
+    fill_quoted(data, out, i + 1, w + 2)
+  } else {
+    if b == 9 {
+      out.set(w + 1, 116)
+      fill_quoted(data, out, i + 1, w + 2)
+    } else {
+      if b == 10 {
+        out.set(w + 1, 110)
+        fill_quoted(data, out, i + 1, w + 2)
+      } else {
+        if b == 12 {
+          out.set(w + 1, 102)
+          fill_quoted(data, out, i + 1, w + 2)
+        } else {
+          if b == 13 {
+            out.set(w + 1, 114)
+            fill_quoted(data, out, i + 1, w + 2)
+          } else {
+            if b == 27 {
+              out.set(w + 1, 101)
+              fill_quoted(data, out, i + 1, w + 2)
+            } else {
+              out.set(w + 1, 117)
+              out.set(w + 2, 48)
+              out.set(w + 3, 48)
+              out.set(w + 4, hex_byte(b / 16))
+              out.set(w + 5, hex_byte(b % 16))
+              fill_quoted(data, out, i + 1, w + 6)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Lowercase hex, the digit TOML's escapes spell.
+def hex_byte(n Int64) Int64 {
+  if n < 10 {
+    return 48 + n
+  }
+  return 87 + n
+}
+
+// ---- date-time text ----
+
+def two_digits(n Int64) String {
+  const buf = Bytes.new(2)
+  buf.set(0, 48 + (n / 10) % 10)
+  buf.set(1, 48 + n % 10)
+  return buf.to_string()
+}
+
+def four_digits(n Int64) String {
+  const buf = Bytes.new(4)
+  buf.set(0, 48 + (n / 1000) % 10)
+  buf.set(1, 48 + (n / 100) % 10)
+  buf.set(2, 48 + (n / 10) % 10)
+  buf.set(3, 48 + n % 10)
+  return buf.to_string()
+}
+
+// The fraction: the nine-digit form with trailing zeros trimmed, so
+// `.5` reads back as exactly 500000000 nanoseconds.
+def ns_text(ns Int64) String {
+  if ns == 0 {
+    return ""
+  }
+  const buf = Bytes.new(10)
+  buf.set(0, 46)
+  fill_ns(buf, 1, ns, 8)
+  return trim_ns(buf)
+}
+
+def fill_ns(buf Bytes, w Int64, ns Int64, e Int64) {
+  if e >= 0 {
+    buf.set(w, 48 + (ns / pow10(e)) % 10)
+    fill_ns(buf, w + 1, ns, e - 1)
+  }
+}
+
+def pow10(e Int64) Int64 {
+  if e <= 0 {
+    return 1
+  }
+  return 10 * pow10(e - 1)
+}
+
+// Trailing zeros come off the rendered fraction; at least one digit
+// stays.
+def trim_ns(buf Bytes) String {
+  const n = sig_ns(buf, 9)
+  const out = Bytes.new(n + 1)
+  copy_range(buf, out, 0, 0, n + 1)
+  return out.to_string()
+}
+
+// The significant fraction digits — the index past the last nonzero
+// byte, at least one.
+def sig_ns(buf Bytes, i Int64) Int64 {
+  if i <= 1 {
+    return 1
+  }
+  if buf.get(i) != 48 {
+    return i
+  }
+  return sig_ns(buf, i - 1)
+}
+
+def offset_text(minutes Int64) String {
+  if minutes == 0 {
+    return "Z"
+  }
+  const buf = Bytes.new(6)
+  if minutes < 0 {
+    buf.set(0, 45)
+    fill_offset(buf, 1, 0 - minutes)
+    return buf.to_string()
+  }
+  buf.set(0, 43)
+  fill_offset(buf, 1, minutes)
+  return buf.to_string()
+}
+
+def fill_offset(buf Bytes, w Int64, m Int64) {
+  buf.set(w, 48 + (m / 600) % 10)
+  buf.set(w + 1, 48 + (m / 60) % 10)
+  buf.set(w + 2, 58)
+  buf.set(w + 3, 48 + (m % 60) / 10)
+  buf.set(w + 4, 48 + m % 10)
+}
+
+// ---- shared helpers ----
+
+def err(at Int64, what String) String {
+  return "toml: " + what + " at byte " + at.to_string()
+}
+
+// The table's value under `key`, scanned from the back so a repeated
+// key answers the last one — decode refuses repeats, this is the
+// lookup the raise-free paths share.
+def lookup(entries Array[(String, Toml)], key String, i Int64) Toml {
+  if i < 0 {
+    raise Exception.new(message: "toml: no key `" + key + "` in table")
+  }
+  const pair = entries[i]
+  if pair[0] == key {
+    return pair[1]
+  }
+  return lookup(entries, key, i - 1)
+}
+
+
+

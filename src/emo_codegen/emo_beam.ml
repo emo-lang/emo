@@ -663,6 +663,10 @@ and method_call env self_ name args =
          re-run a side-effecting receiver — while the args ride inside
          each arm, exactly one of which runs. *)
       let recv = fresh_var env "__inst_recv" in
+      (* The dispatch's binding answers under its own fresh name too —
+         the default arm below names it directly, and `expr` resolves
+         locals through this map. *)
+      env.local_map <- (recv, recv) :: env.local_map;
       put env ("let <" ^ recv ^ "> =\n");
       expr env self_;
       put env ("\nin case " ^ recv ^ " of\n");
@@ -682,7 +686,12 @@ and method_call env self_ name args =
           put env ")\n")
         matches;
       put env "  <_> when 'true' ->\n";
-      let via_local = { self_ with Emo_ir.desc = Emo_ir.Var "__inst_recv" } in
+      (* The dispatch's own fresh name, not the `"__inst_recv"` literal:
+         the literal rides `local_map`, which a nested dispatch's
+         `fresh_var` overwrites — a chain two deep then answers the
+         builtin arm with the inner binding, out of scope, and erlc
+         refuses the module on an unbound variable. *)
+      let via_local = { self_ with Emo_ir.desc = Emo_ir.Var recv } in
       put env
         (capturing env (fun () -> builtin_method_call env via_local name args));
       put env "\nend"
