@@ -5017,3 +5017,21 @@ the shape it breaks:
       hint answers none under wasmtime), and `os_getenv` answering
       its scan again. The goldens grow to 46 (`file_read`,
       `bufio_demo`, `os_fs_demo` join); the smoke rung runs 42/42.
+- [x] **T85.8** — The guest-side `%g`: the node host's `floatStr`/`g6`
+      ported wat level — -0 as `-0.0`, integral values under 1e16 as
+      digits + `.0` off the i64, six significant digits fixed between
+      1e-4 and 1e6 (the decimals read off |v| by comparisons, the
+      digits off the scaled i64), exponent form outside with the
+      mantissa rounded to five decimals, the carry to ten through the
+      double division the host's code takes, and the signed
+      zero-padded two-digit exponent. Seven wat-level bugs found and
+      fixed on the way, each pinned by a probe (the abort door as the
+      print, `WASMTIME_LOG=trace`, a process sample of the spinning
+      loop): the NaN test missing its second operand, the extend
+      without its convert leaving an i64 under an f64 mul, a store8
+      without its address, the decimals chain's pairing off by one,
+      the up-adjust loop exiting on the inverted comparison (the
+      infinite spin), the digit write loop reading its copy's zeros,
+      and the exponent suffix's pad colliding with the backward digit
+      walk. The twenty float-rendering demos join `wasi_examples`
+      (66 goldens); the smoke rung runs 62/62.

@@ -237,7 +237,7 @@ Hello, world!
 注意：
 
 - 宿主**必须**是 `wasmtime run -S cli`（或任何带 WASI 0.3 CLI 宿主的运行时）；`--dir` 授予文件系统。没有 `-S cli` 时门能链接但列表返回空。
-- **guest 侧 `%g` 浮点格式化器本档拒绝**——打印浮点的 demo 会以指名消息 abort（found-not-fixed 记录在 `plan/step-85-wasi03.md`）。
+- **guest 侧 `%g` 浮点格式化器完整渲染所有浮点**：node 宿主的 `floatStr`/`g6` 规则以 wat 级移植——整值 `x.0` 形式、1e-4 到 1e6 之间六位有效数字的 fixed 形式、区间外带符号两位指数的 exp 形式——与 Node 和 c 目标逐字节一致。
 - **文件链端到端可用**:经 preopen 表到 `open-at` 的路径解析、stream 读/写循环、目录项扫描——`file`、`bufio`、`os` 的 fd/目录半区与 Node 和 c 目标逐字节一致。把项目目录映射为 guest 根(`--dir <dir>::/`;`emo run` 会替你做):WASI 0.3 没有 cwd 概念——`get-initial-cwd` 在 wasmtime 下答 none——preopen 根是相对路径唯一的锚。
 - `os` 的进程半边与 Node 宿主一致,调用即 raise。
 - 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(46 个 demo 与 Node 金测逐字节一致),`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。

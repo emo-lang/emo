@@ -239,7 +239,7 @@ Plus the guest-side builtins the canon ABI supplies: `stream.new`/`read`/`read-d
 Points to keep in mind:
 
 - The host **must** be `wasmtime run -S cli` (or any runtime with the WASI 0.3 CLI host); `--dir` grants the filesystem. Without `-S cli` the doors link but the lists answer empty.
-- The **guest-side `%g` float formatter refuses** this rung — demos that print floats abort with the named message (recorded found-not-fixed in `plan/step-85-wasi03.md`).
+- The **guest-side `%g` float formatter renders every float**: the node host's `floatStr`/`g6` rule ported wat level — the integral `x.0` form, six significant digits fixed between 1e-4 and 1e6, exponent form outside with the signed two-digit exponent — byte-identical with the Node and c targets.
 - The **file chain runs end to end**: path resolution through the preopen table onto `open-at`, the stream read/write cycles, and the directory-entry scan — `file`, `bufio`, and `os`'s fd/directory half behave byte-identically with the Node and c targets. Map the project directory onto the guest root (`--dir <dir>::/`; `emo run` does it for you): WASI 0.3 has no cwd concept — `get-initial-cwd` answers none under wasmtime — so the preopen root is the only anchor a relative path has.
 - `os`'s process half raises at the call exactly like the Node host.
 - The goldens: `wasi_examples` in `test/emo_cli/emo_cli_test.ml` (46 demos byte-identical with the Node goldens), and `devtools/wasmtime-smoke.sh`'s second rung executes the same list.

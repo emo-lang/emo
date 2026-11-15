@@ -8509,24 +8509,620 @@ let rt_box () : W.func_type =
     fbody = [ W.Local_get 0; W.Struct_new t_vbox ];
   }
 
-(* The wasi mode's guest-side float formatter: this rung refuses with
-   the message naming the rung — the honest door until the %g port
-   lands. The port's algorithm is validated (the fixed-form path ran
-   byte-identical with the node host over the whole float ladder in the
-   2026-11-14 session) and the wat-level exp-form bugs that remain are
-   recorded in plan/step-85-wasi03.md for the next pass. *)
+(* The wasi mode's guest-side float formatter: the Node host's
+   floatStr/g6 rule, wat level. -0 renders as "-0.0"; an integral value
+   under 1e16 as its digits + ".0" (the digits from the i64, never a
+   floating scale); everything else six significant digits — fixed form
+   between 1e-4 and 1e6, exponent form outside it, the exponent signed
+   and zero-padded to two. The rounding is the host's scaled half-up on
+   the double's own value; the decimal exponent comes from the binary
+   exponent times log10(2), corrected against powers of ten built by
+   repeated multiplication. The body is built after the pool's globals
+   list has been snapshotted, so its constants ride raw bytes
+   (string_bytes_instrs), never the pool. Locals: 1 bits, 2 n, 3 ip, 4
+   digits, 5 neg, 6 p, 8 exp, 9 d, 10 k, 12 ax, 13 t, 14 p10 — 7 and 11
+   allocated but unused. *)
 let rt_float_str (env : env) : W.func_type =
+  let bits = 1 and nloc = 2 and iploc = 3 and digits = 4 in
+  let neg = 5 and p = 6 and exp = 8 and d = 9 and k = 10 in
+  let ax = 12 and t = 13 and p10 = 14 in
+  let buf = 0x1700 in
+  (* the decimal-string scratch — the wasi cells end at 0x1618 and the
+     stream scratch starts at 0x2000 *)
+  let log10_2 = 0.3010299956639812 in
+  let lg i = W.Local_get i and ls i = W.Local_set i in
+  let i32 i = W.I32_const i and i64 x = W.I64_const x in
+  let f64 x = W.F64_const x in
+  let put1 c = [ lg p; i32 c; W.I32_store8; lg p; i32 1; W.I32_add; ls p ] in
+  (* the decimal digits of the i64 in [src], written backward from [p];
+     on return [p] sits past the digits and [k] holds their count *)
+  let digits_of src =
+    [ lg src; ls digits; i32 0; ls k ]
+    @ [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    lg digits;
+                    i64 10L;
+                    W.I64_div_u;
+                    ls digits;
+                    lg k;
+                    i32 1;
+                    W.I32_add;
+                    ls k;
+                    lg digits;
+                    W.I64_eqz;
+                    W.Br_if 1;
+                    W.Br 0;
+                  ] );
+            ] );
+      ]
+    @ [ lg src; ls digits ]
+    @ [ lg p; lg k; W.I32_add; ls p; lg k; ls 11 ]
+    @ [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    lg k;
+                    W.I32_eqz;
+                    W.Br_if 1;
+                    lg p;
+                    i32 1;
+                    W.I32_sub;
+                    ls p;
+                    lg p;
+                    lg digits;
+                    i64 10L;
+                    W.I64_rem_u;
+                    W.I32_wrap_i64;
+                    i32 48;
+                    W.I32_add;
+                    W.I32_store8;
+                    lg digits;
+                    i64 10L;
+                    W.I64_div_u;
+                    ls digits;
+                    lg k;
+                    i32 1;
+                    W.I32_sub;
+                    ls k;
+                    W.Br 0;
+                  ] );
+            ] );
+      ]
+    @ [ lg p; lg 11; W.I32_add; ls p; lg 11; ls k ]
+  in
+  (* the trailing-zero strip: shrink while the last byte is '0', then
+     drop a trailing dot — the fraction always follows a dot, so the
+     integer digits survive *)
+  let strip =
+    [
+      W.Block
+        ( W.Void,
+          [
+            W.Loop
+              ( W.Void,
+                [
+                  i32 buf;
+                  lg p;
+                  W.I32_ge;
+                  W.Br_if 1;
+                  lg p;
+                  i32 1;
+                  W.I32_sub;
+                  W.I32_load8_u;
+                  i32 48;
+                  W.I32_ne;
+                  W.Br_if 1;
+                  lg p;
+                  i32 1;
+                  W.I32_sub;
+                  ls p;
+                  W.Br 0;
+                ] );
+          ] );
+      lg p;
+      i32 1;
+      W.I32_sub;
+      W.I32_load8_u;
+      i32 46;
+      W.I32_eq;
+      W.If (W.Void, [ lg p; i32 1; W.I32_sub; ls p ], []);
+    ]
+  in
+  let answer =
+    [
+      i32 buf; lg p; i32 buf; W.I32_sub; W.Call (rt "bytes_from_mem"); W.Return;
+    ]
+  in
+  let minus_if = [ lg neg; W.If (W.Void, put1 45, []) ] in
+  (* the fixed form: decimals = 5 − exp, read off |v| directly *)
+  let fixed_decimals =
+    let rec chain = function
+      | [] -> [ i32 9 ]
+      | (th, dec) :: rest ->
+          [
+            lg ax;
+            f64 th;
+            W.F64_ge;
+            W.If (W.Result W.I32, [ i32 dec ], chain rest);
+          ]
+    in
+    [
+      lg ax;
+      f64 1e5;
+      W.F64_ge;
+      W.If
+        ( W.Result W.I32,
+          [ i32 0 ],
+          chain
+            [
+              (1e4, 1);
+              (1e3, 2);
+              (100.0, 3);
+              (10.0, 4);
+              (1.0, 5);
+              (0.1, 6);
+              (0.01, 7);
+              (0.001, 8);
+            ] );
+      ls d;
+    ]
+  in
   {
     W.ftype_idx = type_idx env (W.FuncT ([ W.F64 ], [ W.RefNull t_bytes ]));
     fparams = [ "v" ];
-    flocals = [];
+    flocals = [ (4, W.I64); (7, W.I32); (3, W.F64) ];
     fbody =
-      (* raw bytes, not the string pool: this body is built after the
-         pool's globals list has been snapshotted, so a pool entry here
-         would answer the wrong global *)
-      string_bytes_instrs
-        "float formatting is not available on the wasi component yet"
-      @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ];
+      (* NaN: v != v *)
+      [
+        lg 0;
+        lg 0;
+        W.F64_eq;
+        W.I32_eqz;
+        W.If (W.Void, string_bytes_instrs "NaN" @ [ W.Return ], []);
+      ]
+      @ [
+          lg 0;
+          W.I64_reinterpret_f64;
+          ls bits;
+          lg bits;
+          i64 0x8000000000000000L;
+          W.I64_eq;
+          W.If (W.Void, string_bytes_instrs "-0.0" @ [ W.Return ], []);
+          lg 0;
+          W.I64_reinterpret_f64;
+          i64 0x7FFFFFFFFFFFFFFFL;
+          W.I64_and;
+          W.F64_reinterpret_i64;
+          ls ax;
+          lg bits;
+          i64 63L;
+          W.I64_shr_u;
+          W.I32_wrap_i64;
+          ls neg;
+        ]
+      @ [
+          (* the integral door: floor(v) == v and |v| < 1e16 renders as
+             the integer's digits + ".0" *)
+          lg 0;
+          W.F64_floor;
+          lg 0;
+          W.F64_eq;
+          lg ax;
+          f64 1e16;
+          W.F64_lt;
+          W.I32_and;
+          W.If
+            ( W.Void,
+              [ lg ax; W.I64_trunc_f64_s; ls nloc; i32 buf; ls p ]
+              @ minus_if @ digits_of nloc @ put1 46 @ put1 48 @ answer,
+              [] );
+        ]
+      @ [
+          (* the decimal exponent: the binary exponent times log10(2),
+             corrected against powers of ten built by repeated
+             multiplication *)
+          lg bits;
+          i64 0x7FF0000000000000L;
+          W.I64_and;
+          i64 52L;
+          W.I64_shr_u;
+          W.I32_wrap_i64;
+          i32 1023;
+          W.I32_sub;
+          ls exp;
+          lg exp;
+          W.I64_extend_i32_s;
+          W.F64_convert_i64_s;
+          f64 log10_2;
+          W.F64_mul;
+          W.F64_floor;
+          W.I64_trunc_f64_s;
+          W.I32_wrap_i64;
+          ls exp;
+          f64 1.0;
+          ls p10;
+          lg exp;
+          ls k;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      i32 0;
+                      lg k;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      ls p10;
+                      lg k;
+                      i32 1;
+                      W.I32_sub;
+                      ls k;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      lg k;
+                      i32 0;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_div;
+                      ls p10;
+                      lg k;
+                      i32 1;
+                      W.I32_add;
+                      ls k;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      lg ax;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      W.F64_lt;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      ls p10;
+                      lg exp;
+                      i32 1;
+                      W.I32_add;
+                      ls exp;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      i32 (-324);
+                      lg exp;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg ax;
+                      lg p10;
+                      W.F64_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_div;
+                      ls p10;
+                      lg exp;
+                      i32 1;
+                      W.I32_sub;
+                      ls exp;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ [
+          lg exp;
+          i32 (-4);
+          W.I32_lt_s;
+          lg exp;
+          i32 6;
+          W.I32_ge;
+          W.I32_or;
+          W.If
+            ( W.Void,
+              (* the exponent form: the mantissa rounded to five
+                 decimals, the carry to ten riding the double division
+                 the host's own code takes *)
+              [
+                lg 0;
+                lg p10;
+                W.F64_div;
+                W.I64_reinterpret_f64;
+                i64 0x7FFFFFFFFFFFFFFFL;
+                W.I64_and;
+                W.F64_reinterpret_i64;
+                ls t;
+                lg t;
+                f64 1e5;
+                W.F64_mul;
+                f64 0.5;
+                W.F64_add;
+                W.F64_floor;
+                W.I64_trunc_f64_s;
+                ls nloc;
+                lg nloc;
+                i64 1000000L;
+                W.I64_ge_s;
+                W.If
+                  ( W.Void,
+                    [
+                      lg nloc;
+                      W.F64_convert_i64_s;
+                      f64 1e5;
+                      W.F64_div;
+                      f64 10.0;
+                      W.F64_div;
+                      ls t;
+                      lg t;
+                      f64 1e5;
+                      W.F64_mul;
+                      f64 0.5;
+                      W.F64_add;
+                      W.F64_floor;
+                      W.I64_trunc_f64_s;
+                      ls nloc;
+                      lg exp;
+                      i32 1;
+                      W.I32_add;
+                      ls exp;
+                    ],
+                    [] );
+                i32 buf;
+                ls p;
+              ]
+              @ minus_if
+              @ [
+                  lg p;
+                  lg nloc;
+                  i64 100000L;
+                  W.I64_div_u;
+                  W.I32_wrap_i64;
+                  i32 48;
+                  W.I32_add;
+                  W.I32_store8;
+                  lg p;
+                  i32 1;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ put1 46
+              @ [ lg nloc; i64 100000L; W.I64_rem_u; ls digits; i32 5; ls k ]
+              @ [
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              W.I32_eqz;
+                              W.Br_if 1;
+                              lg p;
+                              lg k;
+                              i32 1;
+                              W.I32_sub;
+                              W.I32_add;
+                              lg digits;
+                              i64 10L;
+                              W.I64_rem_u;
+                              W.I32_wrap_i64;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg digits;
+                              i64 10L;
+                              W.I64_div_u;
+                              ls digits;
+                              lg k;
+                              i32 1;
+                              W.I32_sub;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  i32 5;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ strip @ put1 101
+              @ [
+                  lg exp;
+                  i32 0;
+                  W.I32_ge;
+                  W.If (W.Void, put1 43, put1 45);
+                  lg exp;
+                  ls k;
+                  lg k;
+                  i32 0;
+                  W.I32_ge;
+                  W.If (W.Void, [], [ i32 0; lg k; W.I32_sub; ls k ]);
+                  lg k;
+                  i32 10;
+                  W.I32_lt_s;
+                  W.If (W.Void, put1 48, []);
+                  (* the digit count after the pad: 1, 2, or 3 *)
+                  lg k;
+                  i32 100;
+                  W.I32_ge;
+                  W.If
+                    ( W.Result W.I32,
+                      [ i32 3 ],
+                      [
+                        lg k;
+                        i32 10;
+                        W.I32_ge;
+                        W.If (W.Result W.I32, [ i32 2 ], [ i32 1 ]);
+                      ] );
+                  ls 11;
+                  lg p;
+                  lg 11;
+                  W.I32_add;
+                  ls p;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              W.I32_eqz;
+                              W.Br_if 1;
+                              lg p;
+                              i32 1;
+                              W.I32_sub;
+                              ls p;
+                              lg p;
+                              lg k;
+                              i32 10;
+                              W.I32_rem_s;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg k;
+                              i32 10;
+                              W.I32_div_s;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  lg 11;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ answer,
+              (* the fixed arm *)
+              fixed_decimals
+              @ [
+                  i64 1L;
+                  ls iploc;
+                  i32 0;
+                  ls k;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              lg d;
+                              W.I32_ge;
+                              W.Br_if 1;
+                              lg iploc;
+                              i64 10L;
+                              W.I64_mul;
+                              ls iploc;
+                              lg k;
+                              i32 1;
+                              W.I32_add;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg ax;
+                  lg iploc;
+                  W.F64_convert_i64_s;
+                  W.F64_mul;
+                  f64 0.5;
+                  W.F64_add;
+                  W.F64_floor;
+                  W.I64_trunc_f64_s;
+                  ls nloc;
+                  lg nloc;
+                  ls digits;
+                  lg digits;
+                  lg iploc;
+                  W.I64_rem_u;
+                  ls nloc;
+                  lg digits;
+                  lg iploc;
+                  W.I64_div_u;
+                  ls iploc;
+                  i32 buf;
+                  ls p;
+                ]
+              @ minus_if @ digits_of iploc @ put1 46
+              @ [
+                  i32 0;
+                  ls k;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              lg d;
+                              W.I32_ge;
+                              W.Br_if 1;
+                              lg p;
+                              lg d;
+                              lg k;
+                              W.I32_sub;
+                              i32 1;
+                              W.I32_sub;
+                              W.I32_add;
+                              lg nloc;
+                              i64 10L;
+                              W.I64_rem_u;
+                              W.I32_wrap_i64;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg nloc;
+                              i64 10L;
+                              W.I64_div_u;
+                              ls nloc;
+                              lg k;
+                              i32 1;
+                              W.I32_add;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  lg d;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ strip @ answer );
+        ]
+      (* every path above returns, but the function-level end still owes
+         the result type — the unreachable door satisfies it *)
+      @ [ W.Unreachable ];
   }
 
 (* ---- The wasi filesystem runtime ----

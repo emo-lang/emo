@@ -210,6 +210,13 @@ assumptions and pinned the encodings:
       goldens grow to 46: `file_read`, `bufio_demo`, and
       `os_fs_demo` join `wasi_examples` byte-identical with the
       Node list; the smoke rung runs 42/42.
+- [x] **T85.8** — The guest-side `%g`: the node host's
+      `floatStr`/`g6` ported wat level (the integral digits + `.0`
+      off the i64, six significant digits fixed and exponent forms,
+      the signed zero-padded exponent), seven wat-level bugs found
+      and fixed on the way (see found and fixed below), the twenty
+      float-rendering demos joining the goldens (66; the smoke rung
+      62/62).
 
 ## Found and fixed (the encoder's first landing)
 
@@ -274,18 +281,48 @@ assumptions and pinned the encodings:
   variant's discriminant at +0 and the error-code's own discriminant
   at +4.
 
+## Found and fixed (the T85.8 round, 2026-11-15)
+
+**The guest-side `%g` renders every float.** The node host's
+`floatStr`/`g6` rule ported wat level: -0 as `-0.0`; an integral
+value under 1e16 as its digits + `.0` off the i64 (never a floating
+scale); six significant digits fixed between 1e-4 and 1e6 — the
+decimals read off |v| by comparisons against the powers, the digits
+off the scaled i64 — and exponent form outside with the mantissa
+rounded to five decimals, the carry to ten riding the double
+division the host's own code takes, and the signed zero-padded
+two-digit exponent. The 2026-11-14 session's fixed-form port had run
+the ladder byte-identical and then died in the exp form; this round
+rebuilt the whole formatter and closed seven wat-level bugs, each
+pinned by a probe (the abort door as the print, `WASMTIME_LOG=trace`
+for the host's view, a process sample of the spinning loop):
+
+- the NaN test compared `v` with nothing — the second operand of the
+  `f64.eq` was missing;
+- the decimal-exponent guess multiplied `log10(2)` into an i64 — the
+  extend had no convert, an f64 mul sat on an i64;
+- the exponent-suffix digit loop's `store8` had no address operand;
+- the fixed-form decimals chain's pairing was off by one (the
+  `1e4 → 1` pair lost, every threshold answered its neighbor's
+  decimals);
+- the finder's up-adjust loop exited on the inverted comparison —
+  for a value below its guess's power of ten the loop multiplied
+  forever (the infinite spin the process sample caught, four hot
+  instructions `mul/set/add/set`);
+- the digit write loop took its remainder from the scratch copy the
+  count loop had already divided to zero — every integer digit
+  rendered as `0`;
+- the exponent suffix's pad `0` collided with the backward digit
+  walk (the pad first, then the digits ending at the pad's slot —
+  the pad written before the walk's first decrement).
+
+The twenty float-rendering demos — the math family, json, map,
+toml, plot, typed_calls, typed_methods, float_methods, field_types,
+fixed_width, list — joined `wasi_examples` (66 goldens
+byte-identical with the Node list); the smoke rung runs 62/62.
+
 ## Found, not fixed (this rung)
 
-- **The guest-side `%g`'s exp form.** The port reached the fixed-form
-  path byte-identical with the node host (the whole float ladder:
-  1.5, 0.1, 123456.789, 0.0001, -42.75, 0.000123457 …) and then the
-  exp-form's wat-level runs hit: the L-scan's exit boundary (the
-  all-zero fraction), the `k` bookkeeping across the strip walks, and
-  the operand-order traps around `local.set` scratch indices. The
-  rung ships the honest refusal; the algorithm and the debug
-  instruments (the n/p0/k probes through `int_str`) are the next
-  pass's starting point. The refusals: the float render names the
-  rung; the filesystem, random, cwd, and fd-0 doors name theirs.
 - **The more-async-builtins gate.** The sync stream builtins ride
   wasmtime's `-W component-model-more-async-builtins=y` — the 🚝-gated
   extension. The run path passes the flag; dropping it means the

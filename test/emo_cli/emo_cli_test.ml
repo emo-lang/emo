@@ -818,11 +818,10 @@ let wasm_examples_tests =
 let wasmtime_available =
   lazy (Sys.command "wasmtime --version >/dev/null 2>&1" = 0)
 
-(* The wasi goldens: the same wasm goldens that render their output
-   through pure string ops (no floats — the guest-side %g refuses
-   this rung) wrapped in the WASI 0.3 command component and executed
-   by wasmtime (46+, -S cli), byte-for-byte against the same
-   expected.txt. Skips when wasmtime is absent; the run maps the
+(* The wasi goldens: the wasm goldens — string ops, floats (the
+   guest-side %g renders them), and the file demos — wrapped in the
+   WASI 0.3 command component and executed by wasmtime (46+, -S cli),
+   byte-for-byte against the same expected.txt. Skips when wasmtime is absent; the run maps the
    example's own directory onto the guest root (--dir <dir>::/) so
    relative file paths resolve like the interpreter's — wasi 0.3 has
    no cwd concept (get-initial-cwd answers none under wasmtime), so
@@ -875,6 +874,28 @@ let wasi_goldens =
     "file_read";
     "bufio_demo";
     "os_fs_demo";
+    (* the float-rendering demos: the guest-side %g covers them since
+       T85.7's second round *)
+    "field_types";
+    "fixed_width";
+    "list";
+    "map";
+    "json_demo";
+    "toml_demo";
+    "float_methods";
+    "math_demo";
+    "math_trig";
+    "math_inverse_trig";
+    "math_hyperbolic";
+    "math_complex";
+    "math_fft";
+    "math_blas1";
+    "math_solve";
+    "math_special";
+    "math_elefunt";
+    "typed_calls";
+    "typed_methods";
+    "plot_demo";
   ]
 
 let wasi_examples_tests =

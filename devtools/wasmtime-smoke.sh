@@ -68,7 +68,11 @@ dom_edge template_demo template_edge slog_demo sync_demo loops
 error_matching string_methods branch_var builtin_names
 to_string_render typed_sigs png_demo sql_demo sql_edge atomic_cell
 crypto_hash crypto_aead crypto_sign crypto_ecdh rand_demo uuid_demo
-file_read bufio_demo os_fs_demo"
+file_read bufio_demo os_fs_demo field_types fixed_width list map
+json_demo toml_demo float_methods math_demo math_trig
+math_inverse_trig math_hyperbolic math_complex math_fft math_blas1
+math_solve math_special math_elefunt typed_calls typed_methods
+plot_demo"
 
 wpass=0
 wfail=0
