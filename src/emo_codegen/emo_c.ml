@@ -2015,8 +2015,8 @@ and pattern_declare_sfx env (p : Ast.pattern) (sfx : string) : unit =
   | Ast.Tuple_pattern ps ->
       List.iteri (fun i sub -> pattern_declare_sfx env sub sfx) ps
 
-and pattern_assign_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
-    =
+and pattern_assign_sfx env (get : string) (p : Ast.pattern) (sfx : string) :
+    unit =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
   | Ast.Pattern_binding name ->

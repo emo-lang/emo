@@ -413,7 +413,8 @@ def run(n Int64) Void {
   }
   note(n + 2)
 }
-|} );
+|}
+              );
             ]
             ~entry:[]
         in
@@ -423,17 +424,15 @@ def run(n Int64) Void {
           | _ -> "not an effect call"
         in
         (match f.Emo_ir.fbody with
-        | [ Emo_ir.If { then_; _ }; Emo_ir.If { then_ = then2; _ }; last ] ->
+        | [ Emo_ir.If { then_; _ }; Emo_ir.If { then_ = then2; _ }; last ] -> (
             Alcotest.(check string)
-              "first branch keeps the effect" "note"
-              (effect_call then_);
+              "first branch keeps the effect" "note" (effect_call then_);
             Alcotest.(check string)
-              "second branch keeps the effect" "note"
-              (effect_call then2);
-            (match last with
+              "second branch keeps the effect" "note" (effect_call then2);
+            match last with
             | Emo_ir.Return_stmt { desc = Emo_ir.Call { func; _ }; _ } ->
-                Alcotest.(check string) "the body's last call is a return" "note"
-                  func
+                Alcotest.(check string)
+                  "the body's last call is a return" "note" func
             | _ -> Alcotest.fail "expected the body's last call to be a return")
         | other ->
             Alcotest.fail
@@ -457,7 +456,8 @@ def pick(n Int64) Void {
     note(n + 1)
   }
 }
-|} );
+|}
+              );
             ]
             ~entry:[]
         in
@@ -468,10 +468,10 @@ def pick(n Int64) Void {
         in
         (match f.Emo_ir.fbody with
         | [ Emo_ir.If { then_; else_; _ } ] ->
-            Alcotest.(check bool) "then branch is a tail return" true
-              (is_return_call then_);
-            Alcotest.(check bool) "else branch is a tail return" true
-              (is_return_call else_)
+            Alcotest.(check bool)
+              "then branch is a tail return" true (is_return_call then_);
+            Alcotest.(check bool)
+              "else branch is a tail return" true (is_return_call else_)
         | other ->
             Alcotest.fail
               (Printf.sprintf "expected one tail-position if, got %d stmts"
@@ -507,27 +507,27 @@ class Thing {
     return self.n
   }
 }
-|} );
+|}
+              );
             ]
             ~entry:[]
         in
         (match program.Emo_ir.pclasses with
-        | [ c ] ->
-            (match c.Emo_ir.cinit with
+        | [ c ] -> (
+            match c.Emo_ir.cinit with
             | Some init -> (
                 match init.Emo_ir.fbody with
                 | [ _; Emo_ir.If { then_; else_; _ } ] ->
                     let effect_call = function
-                      | [ Emo_ir.Effect { desc = Emo_ir.Call { func; _ }; _ } ] ->
+                      | [ Emo_ir.Effect { desc = Emo_ir.Call { func; _ }; _ } ]
+                        ->
                           func
                       | _ -> "not an effect call"
                     in
                     Alcotest.(check string)
-                      "then branch keeps the effect" "warm"
-                      (effect_call then_);
+                      "then branch keeps the effect" "warm" (effect_call then_);
                     Alcotest.(check string)
-                      "else branch keeps the effect" "warm"
-                      (effect_call else_)
+                      "else branch keeps the effect" "warm" (effect_call else_)
                 | other ->
                     Alcotest.fail
                       (Printf.sprintf
@@ -555,15 +555,16 @@ def time_of(ms Int64) Int64 {
 def use() Int64 {
   return time_of(5)
 }
-|} );
+|}
+              );
             ]
             ~entry:[]
         in
         let f = find_func program "use" in
         (match f.Emo_ir.fbody with
         | [ Emo_ir.Return_stmt { desc = Emo_ir.Call { func; _ }; _ } ] ->
-            Alcotest.(check string) "the call is the program's def"
-              "time_of" func
+            Alcotest.(check string)
+              "the call is the program's def" "time_of" func
         | other ->
             Alcotest.fail
               (Printf.sprintf "expected one return call, got %d stmts"

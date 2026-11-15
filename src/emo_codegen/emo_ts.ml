@@ -744,7 +744,12 @@ let emit_func env (f : Emo_ir.func) : string =
        (float.copy_range hung the typescript target this way). A body
        that ends in `return` or `continue` never reaches it. *)
     Printf.sprintf
-      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  break;\n  }\n}"
+      "async function %s(%s) {\n\
+      \  __emo_driver: for (;;) {\n\
+       %s\n\
+      \  break;\n\
+      \  }\n\
+       }"
       f.Emo_ir.fname params body
   else
     Printf.sprintf "async function %s(%s) {\n%s\n}" f.Emo_ir.fname params body

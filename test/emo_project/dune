@@ -31,6 +31,7 @@
 ; The example-driven groups compile and run a whole example per case, so
 ; they live behind their own aliases instead of @runtest:
 ; `dune build @bootstrap` and `dune build @ts_golden`.
+
 (rule
  (alias bootstrap)
  (deps

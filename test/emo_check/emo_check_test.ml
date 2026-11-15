@@ -2565,9 +2565,10 @@ raise Ink.new()|}
           (fun source ->
             let diagnostics = check source in
             Alcotest.(check int)
-              ("diagnostics of " ^ source) 0
-              (List.length diagnostics))
-          fine);    tc "a misspelled member answers with its near miss" (fun () ->
+              ("diagnostics of " ^ source)
+              0 (List.length diagnostics))
+          fine);
+    tc "a misspelled member answers with its near miss" (fun () ->
         let diagnostics =
           check
             {|class Rep {

@@ -12,7 +12,6 @@ module Riscv = Emo_riscv
    (src/emo_codegen/ocaml — step 25): compiled by the user's ocamlopt,
    never linked from the host build tree. *)
 let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
-
 let ocaml_runtime_stub_c = Emo_ocaml_runtime_data.runtime_stub_c
 
 (* The wasm host (src/emo_codegen/wasm — step 56): `emo run --target
@@ -366,8 +365,7 @@ and pattern_bindings (p : Emo_ast.pattern) : (string * int list) list =
     | Ast.Tuple_pattern ps ->
         List.fold_left
           (fun (pos, acc) sub -> (pos + 1, go sub (path @ [ pos ]) acc))
-          (0, acc)
-          ps
+          (0, acc) ps
         |> snd
     | _ -> acc
   in
@@ -417,7 +415,8 @@ and emit_receive env branches ~tail =
                bindings)
         in
         let payload_unpack =
-          if bindings = [] then "true" else Printf.sprintf "%s\n%s" items_at guard_inner
+          if bindings = [] then "true"
+          else Printf.sprintf "%s\n%s" items_at guard_inner
         in
         let payload_return =
           if bindings = [] then Printf.sprintf "Some (%d, [])" i
@@ -426,9 +425,7 @@ and emit_receive env branches ~tail =
                in binding order — not the whole payload. *)
             let picked =
               String.concat "; "
-                (List.map
-                   (fun (_, path) -> path_nth "payload" path)
-                   bindings)
+                (List.map (fun (_, path) -> path_nth "payload" path) bindings)
             in
             Printf.sprintf "Some (%d, [%s])" i picked
         in

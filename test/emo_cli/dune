@@ -32,6 +32,7 @@
 ; The beam-compiling cases run erlc, the suite's slowest target, so they
 ; are opt-in: `dune build @beam` sets EMO_BEAM and runs those groups
 ; alone. A plain `dune test` leaves them out.
+
 (rule
  (alias beam)
  (deps

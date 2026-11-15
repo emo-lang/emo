@@ -609,7 +609,8 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "tuple patterns destructure by position" (fun () ->
         match
-          parse_program "case p {\n  (Color.red, count) then { return count }\n}"
+          parse_program
+            "case p {\n  (Color.red, count) then { return count }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
@@ -645,11 +646,14 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "branches are separated by newlines" (fun () ->
         let diagnostic =
-          program_err "case c { Color.red then { return 1 } _ then { return 2 } }"
+          program_err
+            "case c { Color.red then { return 1 } _ then { return 2 } }"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
     tc "receive reuses the case branch shape" (fun () ->
-        match parse_program "receive {\n  (from, msg) then { return msg }\n}" with
+        match
+          parse_program "receive {\n  (from, msg) then { return msg }\n}"
+        with
         | [ receive_stmt ] ->
             Alcotest.(check string)
               "shape" "(receive (branch (tuple from msg) |(return msg)))"
@@ -1349,7 +1353,9 @@ let naming_tests =
           program_err "def f(ready? Int64) Int64 {\n  return ready?\n}"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic);
-        let diagnostic = program_err "case c {\n  ready? then { return 1 }\n}" in
+        let diagnostic =
+          program_err "case c {\n  ready? then { return 1 }\n}"
+        in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
     tc "snake_case names with digits and underscores pass" (fun () ->
         match

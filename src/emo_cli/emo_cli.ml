@@ -838,7 +838,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                           (Filename.quote stub_c_path)
                           (Filename.quote obj_path)
                       in
-                      if Emo_tool.run_status cc_cmd <> 0 then raise Stub_cc_failed;
+                      if Emo_tool.run_status cc_cmd <> 0 then
+                        raise Stub_cc_failed;
                       Printf.sprintf " %s" (Filename.quote obj_path)
                     in
                     (* Foreign bindings get a compiled C wrapper
@@ -898,8 +899,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                         (Filename.quote
                            (Filename.concat build_dir "emo_ocaml_runtime.cmx"))
                         (Filename.quote ml_path) cclib_flags stub_obj
-                        runtime_stub_obj
-                        (Filename.quote output)
+                        runtime_stub_obj (Filename.quote output)
                     in
                     let exit_code = Emo_tool.run_status compile_runtime in
                     let exit_code =
@@ -1308,8 +1308,8 @@ let run =
         in
         let end_deputized_group () =
           match deputized_group with
-          | Some group ->
-              (try Unix.kill (-group) Sys.sigkill with Unix.Unix_error _ -> ())
+          | Some group -> (
+              try Unix.kill (-group) Sys.sigkill with Unix.Unix_error _ -> ())
           | None -> ()
         in
         match
@@ -1706,8 +1706,8 @@ let deps_resolve ~(name : string option) ~(target : string option) : int =
           match manifest.Emo_pkg.targets with
           | [] ->
               prerr_endline
-                "the package block declares no targets — nothing to \
-                 resolve against";
+                "the package block declares no targets — nothing to resolve \
+                 against";
               exit 65
           | first :: rest ->
               let base = resolve_one first in
@@ -1717,25 +1717,21 @@ let deps_resolve ~(name : string option) ~(target : string option) : int =
                   if again <> base then begin
                     let differs other =
                       match
-                        List.find_opt
-                          (fun e -> not (List.mem e other))
-                          base
+                        List.find_opt (fun e -> not (List.mem e other)) base
                       with
                       | Some e -> e.Emo_pkg.Lockfile.dep
                       | None -> (
                           match
-                            List.find_opt
-                              (fun e -> not (List.mem e base))
-                              other
+                            List.find_opt (fun e -> not (List.mem e base)) other
                           with
                           | Some e -> e.Emo_pkg.Lockfile.dep
                           | None -> "the resolution")
                     in
                     prerr_endline
                       (Printf.sprintf
-                         "%s resolves differently under `%s` than under \
-                          `%s` — the one lock must hold for every target \
-                          the package declares"
+                         "%s resolves differently under `%s` than under `%s` — \
+                          the one lock must hold for every target the package \
+                          declares"
                          (differs again) first t);
                     exit 65
                   end)
@@ -1773,9 +1769,9 @@ let deps_resolve_cmd =
       value
       & opt (some string) None
       & info [ "target" ] ~docv:"TARGET"
-        ~doc:
-          "resolve for this one target alone, instead of every target \
-           the package declares")
+          ~doc:
+            "resolve for this one target alone, instead of every target the \
+             package declares")
   in
   Cmd.v
     (Cmd.info "resolve" ~doc:"Resolve the manifest and write package.lock.")

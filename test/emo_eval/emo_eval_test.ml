@@ -301,7 +301,11 @@ let io_tests =
         check_value "tuple" (Emo_eval.Int64 2L) "(1, 2).length()");
     tc "Box constructs, reads, replaces" (fun () ->
         check_value "read" (Emo_eval.Int64 2L)
-          "-> () {\n  const b = Box.new(1)\n  b.replace(2)\n  return b.read()\n}()";
+          "-> () {\n\
+          \  const b = Box.new(1)\n\
+          \  b.replace(2)\n\
+          \  return b.read()\n\
+           }()";
         check_value "replace returns the new value" (Emo_eval.String "x")
           "Box.new(0).replace(\"x\")");
     tc "method errors name the receiver and method" (fun () ->
@@ -531,7 +535,9 @@ println(size(1))|}));
         in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "an unmatched scrutinee is a runtime error naming the tag" (fun () ->
-        let diagnostic = program_err "case 1 {\n  \"one\" then { return 1 }\n}" in
+        let diagnostic =
+          program_err "case 1 {\n  \"one\" then { return 1 }\n}"
+        in
         Alcotest.(check string) "code" "E3006" (code_of diagnostic);
         Alcotest.(check string)
           "message" "no `case` branch matched this Int64 value"
@@ -624,9 +630,7 @@ println(e.data.get("code"))|}));
     tc "Exception.with_data is strict about its arguments" (fun () ->
         let diagnostic = program_err {|Exception.with_data("boom")|} in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
-        let diagnostic =
-          program_err {|Exception.with_data("a", "b", "c")|}
-        in
+        let diagnostic = program_err {|Exception.with_data("a", "b", "c")|} in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
     tc "raising the exception instance terminates uncaught" (fun () ->
         let diagnostic = program_err {|raise Exception.new(message: "boom")|} in

@@ -539,7 +539,10 @@ and lower_call env span callee args =
             desc = Call { func = mangled; args = order_args env params args };
           }
       | None when is_builtin name ->
-          { ety = type_of env span; desc = Builtin { name; args = lower_args () } }
+          {
+            ety = type_of env span;
+            desc = Builtin { name; args = lower_args () };
+          }
       | None ->
           {
             ety = type_of env span;
@@ -981,18 +984,15 @@ and void_tails (stmts : stmt list) : stmt list =
           | Effect e when is_tailable e -> Return_stmt e
           | If { cond; then_; else_ } ->
               If
-                {
-                  cond;
-                  then_ = rewrite_exit then_;
-                  else_ = rewrite_exit else_;
-                }
+                { cond; then_ = rewrite_exit then_; else_ = rewrite_exit else_ }
           | Case { scrutinee; branches } ->
               Case
                 {
                   scrutinee;
                   branches =
                     List.map
-                      (fun (b : branch) -> { b with body = rewrite_exit b.body })
+                      (fun (b : branch) ->
+                        { b with body = rewrite_exit b.body })
                       branches;
                 }
           | Receive { branches } ->
@@ -1000,7 +1000,8 @@ and void_tails (stmts : stmt list) : stmt list =
                 {
                   branches =
                     List.map
-                      (fun (b : branch) -> { b with body = rewrite_exit b.body })
+                      (fun (b : branch) ->
+                        { b with body = rewrite_exit b.body })
                       branches;
                 }
           | _ -> last
@@ -1300,8 +1301,7 @@ let lower (input : input) : program =
               Hashtbl.replace symbols (m.mpath, d.Ast.def_name)
                 (S_func
                    {
-                     mangled =
-                       mangle m.mpath (sanitize_ident d.Ast.def_name);
+                     mangled = mangle m.mpath (sanitize_ident d.Ast.def_name);
                      params =
                        List.map (fun p -> p.Ast.param_name) d.Ast.def_params;
                    })
@@ -1581,8 +1581,7 @@ let lower (input : input) : program =
           | Ast.Item_def d ->
               funcs :=
                 lower_func env ~module_path:m.mpath ~ctor:false
-                  ~mangled:
-                    (mangle m.mpath (sanitize_ident d.Ast.def_name))
+                  ~mangled:(mangle m.mpath (sanitize_ident d.Ast.def_name))
                   ~self:None d
                 :: !funcs
           | Ast.Item_class c ->
@@ -1626,7 +1625,7 @@ let lower (input : input) : program =
                       ~mangled:
                         (mangle m.mpath
                            (g.Ast.group_name ^ "__"
-                          ^ sanitize_ident d.Ast.def_name))
+                           ^ sanitize_ident d.Ast.def_name))
                       ~self:None d
                     :: !funcs)
                 g.Ast.group_defs;
