@@ -1056,6 +1056,16 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "net_env",
+          {
+            vtype =
+              FuncType
+                ( [ ("name", String) ],
+                  TupleType [ EnumType "R"; String ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "net_udp_bind",
           {
             vtype =
@@ -1190,6 +1200,23 @@ let empty_env =
                     ("client_cert_file", String);
                     ("client_key_file", String);
                     ("server_name", String);
+                    ("insecure", Bool);
+                  ],
+                  TupleType [ EnumType "R"; TcpConn ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "net_tls_wrap",
+          {
+            vtype =
+              FuncType
+                ( [
+                    ("conn", TcpConn);
+                    ("server_name", String);
+                    ("ca_file", String);
+                    ("client_cert_file", String);
+                    ("client_key_file", String);
                     ("insecure", Bool);
                   ],
                   TupleType [ EnumType "R"; TcpConn ] );

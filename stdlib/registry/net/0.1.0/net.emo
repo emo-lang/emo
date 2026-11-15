@@ -9,6 +9,13 @@ def resolve(host String) (R, Array[String]) {
   return net_resolve(host)
 }
 
+// The process environment's value for a name; a name the environment
+// does not carry is the error tuple. The http package reads its proxy
+// settings through this door.
+def env(name String) (R, String) {
+  return net_env(name)
+}
+
 def connect(host String, port Int64, timeout Float64) (R, TcpConn) {
   return net_connect(host, port, timeout)
 }
@@ -80,6 +87,29 @@ def tls_connect_with(host String, port Int64, timeout Float64, options TlsClient
     return (R.error, "tls: a client certificate needs both client_cert_file and client_key_file")
   }
   return net_tls_connect_with(host, port, timeout, options.ca_file, options.client_cert_file, options.client_key_file, options.server_name, options.insecure)
+}
+
+// Upgrades an already-connected plain socket to TLS in place — the
+// primitive a proxy CONNECT tunnel rides once the tunnel is up.
+// `server_name` is the verification and SNI name unless the options
+// carry their own; an empty name with verification on is refused, the
+// same rule `tls_connect_with` applies to an address literal.
+def tls_wrap(conn TcpConn, server_name String, options TlsClientOptions) (R, TcpConn) {
+  if options.client_cert_file != "" && options.client_key_file == "" {
+    return (R.error, "tls: a client certificate needs both client_cert_file and client_key_file")
+  }
+  if options.client_cert_file == "" && options.client_key_file != "" {
+    return (R.error, "tls: a client certificate needs both client_cert_file and client_key_file")
+  }
+  const name = wrap_name(options.server_name, server_name)
+  return net_tls_wrap(conn, name, options.ca_file, options.client_cert_file, options.client_key_file, options.insecure)
+}
+
+def wrap_name(option_name String, server_name String) String {
+  if option_name == "" {
+    return server_name
+  }
+  return option_name
 }
 
 // The server-side policy: `ca_file` is the client-certificate trust

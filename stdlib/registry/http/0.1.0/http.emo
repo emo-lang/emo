@@ -1,4 +1,5 @@
 require "net"
+require "time"
 
 // The standard HTTP client: requests over the net surface, direct
 // style — a request reads like any other function call. Serving HTTP
@@ -43,31 +44,19 @@ def request_value(method String, path String, headers Array[(String, String)], b
 // ---- Client ----
 
 // The general form: every verb and every knob, all explicit. The
-// network's data-driven failures — refused connection, unresolvable
-// name, exceeded deadline, closed socket — ride back as
-// (R.error, reason); an unsupported url scheme is the caller's data
-// failing the same way.
+// timeout is one budget for the whole exchange — the connect, the
+// request write, and the response read all draw from it. `request`
+// takes the proxy from the environment (`https_proxy` / `http_proxy` /
+// `all_proxy`, with `no_proxy` honored); `request_via` states one
+// explicitly, and "" means a direct connection. The network's
+// data-driven failures ride back as (R.error, reason); an unsupported
+// url scheme is the caller's data failing the same way.
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse) {
-  case parse_url(url) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, parts)  then {
-      case parts {
-        ("http", host, port, path) then {
-          case net.connect(host, port, timeout) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
-          }
-        }
-        ("https", host, port, path) then {
-          case net.tls_connect(host, port, timeout) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
-          }
-        }
-        _ then { return (R.error, "http: unsupported url scheme in `" + url + "`") }
-      }
-    }
-  }
+  return request_core(auto_proxy_for(url), method, url, headers, body, timeout, net.tls_client_options())
+}
+
+def request_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse) {
+  return request_core(proxy, method, url, headers, body, timeout, net.tls_client_options())
 }
 
 def get(url String) (R, HttpResponse) {
@@ -79,26 +68,11 @@ def get(url String) (R, HttpResponse) {
 // server-name override `net.tls_connect_with` takes. A plain `http`
 // url has no TLS leg, so the policy applies only to `https`.
 def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse) {
-  case parse_url(url) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, parts)  then {
-      case parts {
-        ("http", host, port, path) then {
-          case net.connect(host, port, timeout) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
-          }
-        }
-        ("https", host, port, path) then {
-          case net.tls_connect_with(host, port, timeout, tls_options) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, conn)   then { return exchange(conn, method, host, path, headers, body) }
-          }
-        }
-        _ then { return (R.error, "http: unsupported url scheme in `" + url + "`") }
-      }
-    }
-  }
+  return request_core(auto_proxy_for(url), method, url, headers, body, timeout, tls_options)
+}
+
+def request_with_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse) {
+  return request_core(proxy, method, url, headers, body, timeout, tls_options)
 }
 
 def post(url String, body String) (R, HttpResponse) {
@@ -113,17 +87,277 @@ def delete(url String) (R, HttpResponse) {
   return request("DELETE", url, [], "", 0.0)
 }
 
+def request_core(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse) {
+  const budget = budget_from(timeout)
+  case parse_url(url) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parts)  then {
+      case parts {
+        ("http", host, port, path) then {
+          return http_exchange(proxy, budget, method, host, port, path, headers, body)
+        }
+        ("https", host, port, path) then {
+          return https_exchange(proxy, budget, method, host, port, path, headers, body, tls_options)
+        }
+        _ then { return (R.error, "http: unsupported url scheme in `" + url + "`") }
+      }
+    }
+  }
+}
+
+// A plain http url through a proxy keeps everything but the request
+// target: the proxy routes on the absolute form.
+def http_exchange(proxy String, budget Int64, method String, host String, port Int64, path String, headers Array[(String, String)], body String) (R, HttpResponse) {
+  if proxy != "" {
+    case parse_proxy(proxy) {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, addr) then {
+        case addr {
+          (phost, pport) then {
+            case net.connect(phost, pport, remaining(budget)) {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, conn) then {
+                return exchange(conn, method, host, port, "http://" + host_header(host, port) + path, headers, body, budget)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  case net.connect(host, port, remaining(budget)) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, conn) then { return exchange(conn, method, host, port, path, headers, body, budget) }
+  }
+}
+
+// An https url through a proxy opens an HTTP CONNECT tunnel to the
+// target authority, then wraps that same connection in TLS.
+def https_exchange(proxy String, budget Int64, method String, host String, port Int64, path String, headers Array[(String, String)], body String, tls_options net.TlsClientOptions) (R, HttpResponse) {
+  if proxy != "" {
+    case parse_proxy(proxy) {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, addr) then {
+        case addr {
+          (phost, pport) then {
+            case net.connect(phost, pport, remaining(budget)) {
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, conn) then {
+                case proxy_tunnel(conn, host, port, budget) {
+                  (R.error, why) then {
+                    conn.close()
+                    return (R.error, why)
+                  }
+                  (R.ok, _) then {
+                    conn.set_timeout(remaining(budget))
+                    case net.tls_wrap(conn, host, tls_options) {
+                      (R.error, why) then {
+                        conn.close()
+                        return (R.error, why)
+                      }
+                      (R.ok, tls) then { return exchange(tls, method, host, port, path, headers, body, budget) }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  case net.tls_connect_with(host, port, remaining(budget), tls_options) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, conn) then { return exchange(conn, method, host, port, path, headers, body, budget) }
+  }
+}
+
+def proxy_tunnel(conn TcpConn, host String, port Int64, budget Int64) (R, Int64) {
+  // CONNECT's authority always carries the port: a portless name is the
+  // proxy's to default, and an https target has no default it can read.
+  const target = host + ":" + port.to_string()
+  conn.set_timeout(remaining(budget))
+  case conn.write("CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n\r\n") {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _) then {
+      case read_status(conn, budget) {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, status) then {
+          case read_headers(conn, [], budget) {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {
+              if status >= 200 && status < 300 {
+                return (R.ok, status)
+              }
+              return (R.error, "http: the proxy refused CONNECT to " + target + " (status " + status.to_string() + ")")
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The proxy settings curl honors: the scheme's variable first, then
+// all_proxy, with no_proxy bypassing both. An explicit proxy passed to
+// `request_via` skips this lookup.
+def auto_proxy_for(url String) String {
+  case parse_url(url) {
+    (R.error, _) then { return "" }
+    (R.ok, parts) then {
+      case parts {
+        ("http", host, port, _) then { return auto_proxy("http", host, port) }
+        ("https", host, port, _) then { return auto_proxy("https", host, port) }
+        _ then { return "" }
+      }
+    }
+  }
+}
+
+def auto_proxy(scheme String, host String, port Int64) String {
+  if no_proxy_matches(host, port) {
+    return ""
+  }
+  if scheme == "https" {
+    return env_proxy("https_proxy", "HTTPS_PROXY")
+  }
+  return env_proxy("http_proxy", "HTTP_PROXY")
+}
+
+def env_proxy(name String, uppercase String) String {
+  const value = env_value(name)
+  if value != "" {
+    return value
+  }
+  const upper = env_value(uppercase)
+  if upper != "" {
+    return upper
+  }
+  const all = env_value("all_proxy")
+  if all != "" {
+    return all
+  }
+  return env_value("ALL_PROXY")
+}
+
+def env_value(name String) String {
+  case net.env(name) {
+    (R.ok, value) then { return value.trim() }
+    (R.error, _) then { return "" }
+  }
+}
+
+def no_proxy_matches(host String, port Int64) Bool {
+  const list = env_value("no_proxy")
+  if list != "" {
+    return no_proxy_entry(list.split(","), host.lower(), port, 0)
+  }
+  return no_proxy_entry(env_value("NO_PROXY").split(","), host.lower(), port, 0)
+}
+
+def no_proxy_entry(entries Array[String], host String, port Int64, i Int64) Bool {
+  if i >= entries.length() {
+    return false
+  }
+  const entry = entries[i].trim().lower()
+  if entry == "*" {
+    return true
+  }
+  if entry == "" {
+    return no_proxy_entry(entries, host, port, i + 1)
+  }
+  const colon = entry.index_of(":")
+  if colon >= 0 {
+    const ehost = entry.substring(0, colon)
+    const eport = entry.substring(colon + 1, entry.length() - colon - 1)
+    if no_proxy_host_matches(host, ehost) && eport == port.to_string() {
+      return true
+    }
+    return no_proxy_entry(entries, host, port, i + 1)
+  }
+  if no_proxy_host_matches(host, entry) {
+    return true
+  }
+  return no_proxy_entry(entries, host, port, i + 1)
+}
+
+def no_proxy_host_matches(host String, entry String) Bool {
+  if entry == "" {
+    return false
+  }
+  const bare = strip_leading_dot(entry)
+  if host == bare {
+    return true
+  }
+  return has_suffix(host, "." + bare)
+}
+
+def strip_leading_dot(entry String) String {
+  if entry.starts_with(".") {
+    return entry.substring(1, entry.length() - 1)
+  }
+  return entry
+}
+
+def has_suffix(text String, suffix String) Bool {
+  if suffix.length() > text.length() {
+    return false
+  }
+  return text.substring(text.length() - suffix.length(), suffix.length()) == suffix
+}
+
+// Proxy urls are http://host:port (the bare host:port form works too);
+// the scheme is the tunnel's, not TLS's. Credentials in the url are
+// refused rather than silently dropped.
+def parse_proxy(proxy String) (R, (String, Int64)) {
+  const value = proxy.trim()
+  case strip_proxy_scheme(value) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, rest) then {
+      if rest.index_of("@") >= 0 {
+        return (R.error, "http: proxy authentication is not supported")
+      }
+      const slash = rest.index_of("/")
+      const authority = authority_before(rest, slash)
+      if authority.index_of("[") >= 0 {
+        return (R.error, "http: IPv6 proxy addresses are not supported")
+      }
+      const colon = authority.index_of(":")
+      if colon < 0 {
+        return (R.error, "http: the proxy url needs a port in `" + proxy + "`")
+      }
+      const phost = authority.substring(0, colon)
+      const pport = authority.substring(colon + 1, authority.length() - colon - 1)
+      if phost == "" || pport == "" {
+        return (R.error, "http: malformed proxy url `" + proxy + "`")
+      }
+      return (R.ok, (phost, pport.to_int64()))
+    }
+  }
+}
+
+def strip_proxy_scheme(value String) (R, String) {
+  if value.starts_with("http://") {
+    return (R.ok, value.substring(7, value.length() - 7))
+  }
+  if value.index_of("://") >= 0 {
+    return (R.error, "http: only http:// proxies are supported, got `" + value + "`")
+  }
+  return (R.ok, value)
+}
+
 // Sends one request and reads one response; the connection closes after
 // each exchange (Connection: close), so no pooling to reason about.
-def exchange(conn TcpConn, method String, host String, path String, headers Array[(String, String)], body String) (R, HttpResponse) {
-  case conn.write(request_head(method, host, path, headers, body) + body) {
+def exchange(conn TcpConn, method String, host String, port Int64, path String, headers Array[(String, String)], body String, budget Int64) (R, HttpResponse) {
+  conn.set_timeout(remaining(budget))
+  case conn.write(request_head(method, host, port, path, headers, body) + body) {
     (R.error, why) then {
       conn.close()
       return (R.error, why)
     }
     (R.ok, _) then { }
   }
-  case read_response(conn) {
+  case read_response(conn, budget) {
     (R.error, why) then {
       conn.close()
       return (R.error, why)
@@ -133,6 +367,27 @@ def exchange(conn TcpConn, method String, host String, path String, headers Arra
       return (R.ok, resp)
     }
   }
+}
+
+// The whole exchange's deadline: milliseconds of the monotonic clock,
+// 0 for no budget. Every socket operation takes the time that is left,
+// so the timeout bounds the request end to end instead of each step.
+def budget_from(timeout Float64) Int64 {
+  if timeout <= 0.0 {
+    return 0
+  }
+  return time.mono() + (timeout * 1000000000.0).to_int64()
+}
+
+def remaining(budget Int64) Float64 {
+  if budget == 0 {
+    return 0.0
+  }
+  const left = budget - time.mono()
+  if left <= 0 {
+    return 0.001
+  }
+  return left.to_float64() / 1000000000.0
 }
 
 // Splits "scheme://authority/path" into (scheme, host, port, path).
@@ -180,10 +435,17 @@ def default_port(scheme String) Int64 {
   return 80
 }
 
-def request_head(method String, host String, path String, headers Array[(String, String)], body String) String {
-  const lines = [method + " " + path + " HTTP/1.1", "Host: " + host, "Content-Length: " + body.length().to_string(), "Connection: close"]
+def request_head(method String, host String, port Int64, path String, headers Array[(String, String)], body String) String {
+  const lines = [method + " " + path + " HTTP/1.1", "Host: " + host_header(host, port), "Content-Length: " + body.length().to_string(), "Connection: close"]
   // The final blank line closes the header section.
   return join_lines(add_all(lines, headers, 0)) + "\r\n\r\n"
+}
+
+def host_header(host String, port Int64) String {
+  if port == 80 || port == 443 {
+    return host
+  }
+  return host + ":" + port.to_string()
 }
 
 def add_all(lines Array[String], extra Array[(String, String)], i Int64) Array[String] {
@@ -208,15 +470,16 @@ def join(lines Array[String], sep String, i Int64, acc String) String {
   return join(lines, sep, i + 1, acc + sep + lines[i])
 }
 
-def read_response(conn TcpConn) (R, HttpResponse) {
-  case read_status(conn) {
+def read_response(conn TcpConn, budget Int64) (R, HttpResponse) {
+  case read_status(conn, budget) {
     (R.error, why) then { return (R.error, why) }
     (R.ok, status) then {
-      case read_headers(conn, []) {
+      case read_headers(conn, [], budget) {
         (R.error, why)  then { return (R.error, why) }
         (R.ok, headers) then {
           const length = header_value(headers, "content-length")
-          case read_body(conn, length) {
+          const transfer = header_value(headers, "transfer-encoding")
+          case read_body(conn, length, transfer, budget) {
             (R.error, why) then { return (R.error, why) }
             (R.ok, body)   then { return (R.ok, response(status, headers, body)) }
           }
@@ -226,14 +489,113 @@ def read_response(conn TcpConn) (R, HttpResponse) {
   }
 }
 
-def read_body(conn TcpConn, length String) (R, String) {
+// Reads the body the response declares: a chunked transfer first (its
+// framing is decoded here), then a Content-Length, then the remainder
+// up to the close.
+def read_body(conn TcpConn, length String, transfer String, budget Int64) (R, String) {
+  if has_token(transfer, "chunked") {
+    return read_chunked(conn, "", budget)
+  }
+  conn.set_timeout(remaining(budget))
   if length == "" {
     return conn.read_all()
   }
   return conn.read_exactly(length.to_int64())
 }
 
-def read_status(conn TcpConn) (R, Int64) {
+// A Transfer-Encoding value is a comma-separated list of codings.
+def has_token(value String, token String) Bool {
+  return has_token_at(value.lower().split(","), token, 0)
+}
+
+def has_token_at(parts Array[String], token String, i Int64) Bool {
+  if i >= parts.length() {
+    return false
+  }
+  if parts[i].trim() == token {
+    return true
+  }
+  return has_token_at(parts, token, i + 1)
+}
+
+// Reads a chunked body: a size line, the chunk's bytes, then its CRLF,
+// repeated until the zero-size chunk. Trailers after it are consumed
+// and dropped.
+def read_chunked(conn TcpConn, acc String, budget Int64) (R, String) {
+  conn.set_timeout(remaining(budget))
+  case conn.read_line() {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line) then {
+      case chunk_size(line) {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, size) then {
+          if size == 0 {
+            return read_trailers(conn, acc, budget)
+          }
+          conn.set_timeout(remaining(budget))
+          case conn.read_exactly(size) {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, data) then {
+              conn.set_timeout(remaining(budget))
+              case conn.read_line() {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, terminator) then {
+                  if terminator != "" {
+                    return (R.error, "http: malformed chunk terminator in a chunked body")
+                  }
+                  return read_chunked(conn, acc + data, budget)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def read_trailers(conn TcpConn, acc String, budget Int64) (R, String) {
+  conn.set_timeout(remaining(budget))
+  case conn.read_line() {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, line) then {
+      if line == "" {
+        return (R.ok, acc)
+      }
+      return read_trailers(conn, acc, budget)
+    }
+  }
+}
+
+// A chunk-size line is hex digits followed by optional `;` extensions.
+def chunk_size(line String) (R, Int64) {
+  const semi = line.index_of(";")
+  return hex_size(size_text(line, semi), 0, 0)
+}
+
+def size_text(line String, semi Int64) String {
+  if semi < 0 {
+    return line.trim()
+  }
+  return line.substring(0, semi).trim()
+}
+
+def hex_size(text String, i Int64, acc Int64) (R, Int64) {
+  if i >= text.length() {
+    if text == "" {
+      return (R.error, "http: missing chunk size in a chunked body")
+    }
+    return (R.ok, acc)
+  }
+  const digit = "0123456789abcdef".index_of(text.substring(i, 1).lower())
+  if digit < 0 {
+    return (R.error, "http: malformed chunk size in `" + text + "`")
+  }
+  return hex_size(text, i + 1, acc * 16 + digit)
+}
+
+def read_status(conn TcpConn, budget Int64) (R, Int64) {
+  conn.set_timeout(remaining(budget))
   case conn.read_line() {
     (R.error, why) then { return (R.error, why) }
     (R.ok, line)   then {
@@ -243,14 +605,15 @@ def read_status(conn TcpConn) (R, Int64) {
   }
 }
 
-def read_headers(conn TcpConn, acc Array[(String, String)]) (R, Array[(String, String)]) {
+def read_headers(conn TcpConn, acc Array[(String, String)], budget Int64) (R, Array[(String, String)]) {
+  conn.set_timeout(remaining(budget))
   case conn.read_line() {
     (R.error, why) then { return (R.error, why) }
     (R.ok, line)   then {
       if line == "" {
         return (R.ok, acc)
       }
-      return read_headers(conn, acc.append(header_pair(line)))
+      return read_headers(conn, acc.append(header_pair(line)), budget)
     }
   }
 }

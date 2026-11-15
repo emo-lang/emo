@@ -3125,10 +3125,21 @@ emo_value emo_net_accept(int64_t listener) {
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
-/* The TCP leg shared by the plain and TLS connects: resolve, socket,
-   the blocking connect, the timeout, the nonblocking flag. Returns the
-   fd, or -1 with the refusal in [why] — the same text the plain
-   connect has always printed. */
+static int64_t emo_net_monotonic_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+}
+
+/* The TCP leg shared by the plain and TLS connects: resolve, then race
+   the candidate addresses — the first starts at once, the next every
+   250ms while nothing has connected, and a refused attempt starts the
+   next immediately (RFC 8305's happy eyeballs; the resolver here is
+   IPv4-only, so the candidates share a family). The first socket to
+   connect wins; the rest close. The timeout bounds the whole race and
+   is set on the winning fd for the reads that follow. Returns the fd,
+   or -1 with the refusal in [why] — the same text the plain connect has
+   always printed. */
 static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
                               char *why, size_t whyn) {
   char *h = emo_cstr_owned(host);
@@ -3137,29 +3148,142 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
     free(h);
     return -1;
   }
-  int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-  if (fd < 0) {
-    snprintf(why, whyn, "connect failed");
-    freeaddrinfo(res);
-    free(h);
-    return -1;
+  struct addrinfo *cand[16];
+  int ncand = 0;
+  for (struct addrinfo *ai = res; ai != NULL && ncand < 16; ai = ai->ai_next)
+    cand[ncand++] = ai;
+  int fds[16];
+  for (int i = 0; i < ncand; i++) fds[i] = -1;
+  int started = 0;
+  int active = 0;
+  int last_err = 0;
+  int winner = -1;
+  int64_t start_next_at = emo_net_monotonic_ms();
+  int64_t deadline_ms =
+      timeout > 0.0 ? start_next_at + (int64_t)(timeout * 1000.0) : 0;
+  while (winner < 0) {
+    int64_t now = emo_net_monotonic_ms();
+    if (started < ncand && now >= start_next_at) {
+      int i = started++;
+      int fd = socket(cand[i]->ai_family, cand[i]->ai_socktype,
+                      cand[i]->ai_protocol);
+      if (fd < 0) {
+        last_err = errno;
+      } else {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        if (connect(fd, cand[i]->ai_addr, cand[i]->ai_addrlen) == 0) {
+          fds[i] = fd;
+          winner = i;
+        } else if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
+          fds[i] = fd;
+          active++;
+        } else {
+          last_err = errno;
+          close(fd);
+        }
+      }
+      start_next_at = now + 250;
+      if (winner >= 0) break;
+      continue;
+    }
+    if (active == 0 && started >= ncand) break;
+    int wait_ms = 250;
+    if (started < ncand) {
+      int64_t left = start_next_at - now;
+      if (left < wait_ms) wait_ms = (int)left;
+    }
+    if (wait_ms < 0) wait_ms = 0;
+    if (deadline_ms > 0) {
+      int64_t left = deadline_ms - now;
+      if (left < 0) left = 0;
+      if (left < wait_ms) wait_ms = (int)left;
+    }
+    struct pollfd pfds[16];
+    int idx[16];
+    int n = 0;
+    for (int i = 0; i < ncand; i++)
+      if (fds[i] >= 0) {
+        pfds[n].fd = fds[i];
+        pfds[n].events = POLLOUT;
+        pfds[n].revents = 0;
+        idx[n] = i;
+        n++;
+      }
+    if (n > 0) {
+      int pr = poll(pfds, (nfds_t)n, wait_ms);
+      if (pr < 0) {
+        if (errno == EINTR) continue;
+        break;
+      }
+      for (int k = 0; k < n && winner < 0; k++) {
+        if (!(pfds[k].revents & (POLLOUT | POLLERR | POLLHUP))) continue;
+        int i = idx[k];
+        int err = 0;
+        socklen_t elen = sizeof err;
+        getsockopt(fds[i], SOL_SOCKET, SO_ERROR, &err, &elen);
+        if (err == 0) {
+          winner = i;
+        } else {
+          last_err = err;
+          close(fds[i]);
+          fds[i] = -1;
+          active--;
+          /* A refusal opens the next candidate at once. */
+          start_next_at = emo_net_monotonic_ms();
+        }
+      }
+    } else if (wait_ms > 0) {
+      struct timespec pause;
+      pause.tv_sec = wait_ms / 1000;
+      pause.tv_nsec = (long)(wait_ms % 1000) * 1000000L;
+      nanosleep(&pause, NULL);
+    }
+    if (winner < 0 && deadline_ms > 0 &&
+        emo_net_monotonic_ms() >= deadline_ms) {
+      for (int i = 0; i < ncand; i++)
+        if (fds[i] >= 0) {
+          close(fds[i]);
+          fds[i] = -1;
+        }
+      snprintf(why, whyn, "timed out after %gs connecting to %s:%d", timeout, h,
+               (int)port);
+      freeaddrinfo(res);
+      free(h);
+      return -1;
+    }
   }
-  if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
-    if (errno == ECONNREFUSED)
-      snprintf(why, whyn, "connection refused to %s:%d", h, (int)port);
-    else
-      snprintf(why, whyn, "cannot connect to %s:%d: %s", h, (int)port,
-               strerror(errno));
-    close(fd);
-    freeaddrinfo(res);
-    free(h);
-    return -1;
-  }
+  for (int i = 0; i < ncand; i++)
+    if (fds[i] >= 0 && i != winner) close(fds[i]);
+  int fd = winner >= 0 ? fds[winner] : -1;
   freeaddrinfo(res);
+  if (fd < 0) {
+    if (last_err == ECONNREFUSED)
+      snprintf(why, whyn, "connection refused to %s:%d", h, (int)port);
+    else if (last_err != 0)
+      snprintf(why, whyn, "cannot connect to %s:%d: %s", h, (int)port,
+               strerror(last_err));
+    else
+      snprintf(why, whyn, "cannot connect to %s:%d", h, (int)port);
+    free(h);
+    return -1;
+  }
   free(h);
   emo_net_set_timeout(fd, timeout);
-  emo_net_nonblock(fd);
   return fd;
+}
+
+emo_value emo_net_env(emo_str name) {
+  char *n = emo_cstr_owned(name);
+  const char *v = getenv(n);
+  if (v == NULL) {
+    char buf[512];
+    snprintf(buf, sizeof buf, "net: env %s: is not set", n);
+    free(n);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+  }
+  free(n);
+  return emo_os_ok(emo_box_str(emo_str_from_cstr(v)));
 }
 
 emo_value emo_net_connect(emo_str host, int64_t port, double timeout) {
@@ -3582,6 +3706,12 @@ static SSL_CTX *emo_tls_client_ctx(int insecure, const char *ca_file,
   }
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, NULL);
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, TLS1_3_VERSION, NULL);
+  /* A peer that closes without close_notify is end of stream for a read:
+     OpenSSL 3 reports it as SSL_R_UNEXPECTED_EOF_WHILE_READING, and a
+     close-delimited HTTP body depends on that close reading as EOF. */
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
+  SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
+#endif
   if (insecure) {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
     return ctx;
@@ -3651,6 +3781,11 @@ static SSL_CTX *emo_tls_server_ctx(emo_str cert_path, emo_str key_path,
   }
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, NULL);
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, TLS1_3_VERSION, NULL);
+  /* Same read semantics as the client context: a close without
+     close_notify ends the stream instead of failing it. */
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
+  SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
+#endif
   if (ca_file.len > 0) {
     const char *ca = emo_str_cstr(ca_file);
     if (SSL_CTX_load_verify_locations(ctx, ca, NULL) != 1) {
@@ -3874,6 +4009,75 @@ emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
 emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
                               int insecure) {
   return emo_tls_connect_impl(host, port, timeout, "", "", "", "", insecure);
+}
+
+/* Upgrades an existing plain connection to TLS in place: the half a
+   proxy CONNECT tunnel needs. The fd keeps its handle; the side table
+   routes it through SSL_read/SSL_write once the handshake completes. */
+emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
+                           emo_str cert_file, emo_str key_file, int insecure) {
+  char why[512];
+  char *name = (char *)emo_str_cstr(server_name);
+  if (emo_tls_lookup(fd) != NULL)
+    return emo_os_pair(
+        "error",
+        emo_box_str(emo_str_from_cstr("the connection is already TLS")));
+  if (!insecure && name[0] == '\0')
+    return emo_os_pair(
+        "error",
+        emo_box_str(emo_str_from_cstr(
+            "tls: verifying a certificate needs a DNS name; pass "
+            "server_name")));
+  if (!insecure && emo_tls_addr_literal(name)) {
+    char what[640];
+    snprintf(what, sizeof what,
+             "tls: cannot verify a certificate for the IP address `%s`; pass "
+             "server_name with the certificate's DNS name",
+             name);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
+  SSL_CTX *ctx =
+      emo_tls_client_ctx(insecure, emo_str_cstr(ca_file), emo_str_cstr(cert_file),
+                         emo_str_cstr(key_file), why, sizeof why);
+  if (ctx == NULL)
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  SSL *ssl = SSL_new(ctx);
+  if (ssl == NULL || SSL_set_fd(ssl, (int)fd) != 1) {
+    char drained[256], what[512];
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(what, sizeof what, "cannot start the TLS handshake: %s", drained);
+    if (ssl != NULL) SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
+  if (!insecure) SSL_set1_host(ssl, name);
+  if (name[0] != '\0' && !emo_tls_addr_literal(name))
+    SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
+             (void *)name);
+  for (;;) {
+    ERR_clear_error();
+    int r = SSL_connect(ssl);
+    if (r == 1) {
+      emo_tls_attach((int)fd, ssl, ctx);
+      return emo_os_pair("ok", emo_box_i64(fd));
+    }
+    int err = SSL_get_error(ssl, r);
+    if (err == SSL_ERROR_WANT_READ) {
+      emo_net_wait_readable(fd);
+      continue;
+    }
+    if (err == SSL_ERROR_WANT_WRITE) {
+      emo_net_wait_writable(fd);
+      continue;
+    }
+    char drained[256], what[640];
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(what, sizeof what, "the TLS handshake with %s failed: %s",
+             name[0] == '\0' ? "the peer" : name, drained);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
 }
 
 #endif /* EMO_HAS_TLS */
@@ -4110,6 +4314,17 @@ emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
   (void)server_name;
   (void)insecure;
   return emo_unsupported("net_tls_connect_with");
+}
+
+emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
+                           emo_str cert_file, emo_str key_file, int insecure) {
+  (void)fd;
+  (void)server_name;
+  (void)ca_file;
+  (void)cert_file;
+  (void)key_file;
+  (void)insecure;
+  return emo_unsupported("net_tls_wrap");
 }
 
 emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,

@@ -180,17 +180,19 @@ w.reset(sink)   // 先刷出,再改挂到 sink
 
 ```emo
 def resolve(host String) (R, Array[String])
+def env(name String) (R, String)
 def connect(host String, port Int64, timeout Float64) (R, TcpConn)
 def listen(host String, port Int64) (R, TcpListener)
 def connect_unix(path String, timeout Float64) (R, TcpConn)
 def listen_unix(path String) (R, TcpListener)
 def tls_connect(host String, port Int64, timeout Float64) (R, TcpConn)
 def tls_connect_insecure(host String, port Int64, timeout Float64) (R, TcpConn)
+def tls_wrap(conn TcpConn, server_name String, options TlsClientOptions) (R, TcpConn)
 def listen_tls(host String, port Int64, cert_path String, key_path String) (R, TcpListener)
 def udp_bind(host String, port Int64) (R, UdpSocket)
 ```
 
-超时以秒计;`0.0` 表示无限等待。`tls_connect` 按系统信任库验证对端证书;`tls_connect_insecure` 是显式、可见危险的退出。
+超时以秒计;`0.0` 表示无限等待。连接会对其候选地址竞速(happy eyeballs),超时同时约束 TLS 握手。`tls_connect` 按系统信任库验证对端证书;`tls_connect_insecure` 是显式、可见危险的退出。`tls_wrap` 把已连好的明文 socket 就地升级为 TLS(即代理 `CONNECT` 隧道的另一半),`env` 读取进程环境——`http` 通过这扇门读取代理设置。
 
 ```emo
 conn.read_line()          // (R, String) —— 一行,不含终止符
@@ -227,7 +229,11 @@ def put(url String, body String) (R, HttpResponse)
 def delete(url String) (R, HttpResponse)
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
+def request_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
+def request_with_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
 ```
+
+`timeout` 是整个请求的一份预算。代理从 `https_proxy` / `http_proxy` / `all_proxy` 读取,并遵守 `no_proxy`;`request_via` 显式指定代理(`""` 强制直连)。chunked 响应会被解码,靠关闭定界的正文读到关闭为止。
 
 URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。`request_with` 把逐连接 TLS 策略(`net.tls_client_options()`)传给 `net.tls_connect_with`:私有信任库、客户端证书,或校验名覆盖。响应:
 

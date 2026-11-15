@@ -42,6 +42,7 @@ the manifest's `deps` block. The package declares the `ocaml`, `c`, and
 
 ```emo
 net.resolve(host)                                   // (R, Array[String])
+net.env(name)                                       // (R, String)
 net.connect(host, port, timeout)                    // (R, TcpConn)
 net.listen(host, port)                              // (R, TcpListener)
 net.connect_unix(path, timeout)                     // (R, TcpConn)
@@ -50,6 +51,7 @@ net.tls_connect(host, port, timeout)                // (R, TcpConn)
 net.tls_connect_insecure(host, port, timeout)       // (R, TcpConn)
 net.tls_client_options()                            // TlsClientOptions
 net.tls_connect_with(host, port, timeout, options)  // (R, TcpConn)
+net.tls_wrap(conn, server_name, options)            // (R, TcpConn)
 net.listen_tls(host, port, cert_path, key_path)     // (R, TcpListener)
 net.tls_server_options()                            // TlsServerOptions
 net.listen_tls_with(host, port, cert_path, key_path, options)
@@ -60,9 +62,17 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
   when DNS yields nothing the answer is the error tuple
   (``cannot resolve host `...` ``). Numeric addresses resolve to
   themselves.
+- `net.env(name)` answers the process environment's value for a name;
+  a name the environment does not carry is the error tuple
+  (`net: env NAME: is not set`). The `http` package reads its proxy
+  settings through this door.
 - `net.connect(host, port, timeout)` resolves the host and connects,
-  answering the `TcpConn`. `timeout` is in seconds; `0.0` waits
-  indefinitely. A refused connection is the error tuple
+  answering the `TcpConn`. `timeout` is in seconds and bounds the whole
+  connect; `0.0` waits indefinitely. Candidates are raced — the first
+  starts at once and the next every 250ms while nothing has connected,
+  alternating address families (RFC 8305's happy eyeballs) — so a dead
+  IPv6 path costs a quarter second rather than the kernel's SYN
+  timeout. A refused connection is the error tuple
   (`connection refused to host:port`).
 - `net.listen(host, port)` binds and listens, answering a
   `TcpListener`. Port `0` asks the kernel for a free port; read it
@@ -71,7 +81,8 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
   Unix-domain pair; a Unix listener has no port.
 - `net.tls_connect` connects with TLS and **verifies the peer certificate
   against the system trust store** — a self-signed certificate fails the
-  handshake, as the error tuple. `SSL_CERT_FILE`/`SSL_CERT_DIR` point
+  handshake, as the error tuple. `timeout` bounds the TCP connect and the
+  handshake alike. `SSL_CERT_FILE`/`SSL_CERT_DIR` point
   the trust store elsewhere on every target that implements TLS.
   `net.tls_connect_insecure` skips verification; it is the explicit,
   visibly dangerous opt-out, meant for tests and self-signed
@@ -87,6 +98,12 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
   connecting to an IP literal while verifying is refused unless
   `server_name` supplies that name. An unloadable CA or certificate
   file is the error tuple, not a panic.
+- `net.tls_wrap(conn, server_name, options)` upgrades an already
+  connected plain `TcpConn` to TLS in place — the half a proxy
+  `CONNECT` tunnel needs. The same `TlsClientOptions` policy applies,
+  with `server_name` as the verification/SNI name unless the options
+  carry their own; the returned handle is the one passed in, now
+  speaking TLS. A connection that is already TLS is the error tuple.
 - `net.listen_tls(host, port, cert_path, key_path)` serves TLS from a PEM
   certificate/key pair; unloadable certificates fail with a precise
   reason (``cannot load the TLS certificate for ... ``).
@@ -116,7 +133,9 @@ conn.set_timeout(seconds) // TcpConn — bounds the operations that follow
   (`the connection to ... closed mid-line`). `read_exactly(n)` fails
   with its reason when the peer closes early (`closed after M of N
   bytes`). `read_all` is the one read that treats EOF as normal: it
-  delivers everything that arrived, empty included.
+  delivers everything that arrived, empty included. A TLS peer that
+  closes without sending `close_notify` counts as a close at the same
+  boundaries — end of stream, not a transport failure.
 - `write(data)` writes the whole string (bytes, not characters — Emo
   strings are byte strings) and answers the connection, so writes
   chain through the destructured `(R.ok, conn)`. A graceful `close()`

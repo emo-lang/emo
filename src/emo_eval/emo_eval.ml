@@ -422,6 +422,8 @@ let global_env () =
     { bound = RuntimeImplFn "net_listen"; mutable_ = false };
   Hashtbl.replace env.frame "net_resolve"
     { bound = RuntimeImplFn "net_resolve"; mutable_ = false };
+  Hashtbl.replace env.frame "net_env"
+    { bound = RuntimeImplFn "net_env"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
     { bound = RuntimeImplFn "net_udp_bind"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect_unix"
@@ -448,6 +450,8 @@ let global_env () =
     { bound = RuntimeImplFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "net_tls_connect_with"
     { bound = RuntimeImplFn "net_tls_connect_with"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_wrap"
+    { bound = RuntimeImplFn "net_tls_wrap"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen_tls_with"
     { bound = RuntimeImplFn "net_listen_tls_with"; mutable_ = false };
   Hashtbl.replace env.frame "file_read"
@@ -1195,6 +1199,8 @@ type _ Effect.t +=
   | Net_tls_connect :
       (string * int * float * tls_client_options * Emo_support.Span.t)
       -> value Effect.t
+  | Net_tls_wrap :
+      (conn * tls_client_options * Emo_support.Span.t) -> value Effect.t
   | (* host, port, timeout, options *)
       Net_tls_listen :
       (string * int * string * string * tls_server_options * Emo_support.Span.t)
@@ -1428,6 +1434,10 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_tls_connect`")
+            | Net_tls_wrap (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_tls_wrap`")
             | Net_tls_listen (_, _, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
@@ -3709,6 +3719,14 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
              (List.length vs))
+    | "net_env", [ String name ] -> (
+        match Sys.getenv_opt name with
+        | Some value -> net_ok (String value)
+        | None -> net_error (Printf.sprintf "net: env %s: is not set" name))
+    | "net_env", vs ->
+        error span "E3007"
+          (Printf.sprintf "`net_env` expects 1 argument, got %d"
+             (List.length vs))
     | "net_connect", _ ->
         error span "E3001"
           "`net_connect` expects (host String, port Int64, timeout Float)"
@@ -4233,6 +4251,38 @@ and apply_runtime_impl span name args =
           "`net_tls_connect_with` expects (host String, port Int64, timeout \
            Float64, ca_file String, client_cert_file String, client_key_file \
            String, server_name String, insecure Bool)"
+    | "net_tls_wrap", args when List.length args <> 6 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_tls_wrap` expects (conn TcpConn, server_name String, \
+              ca_file String, client_cert_file String, client_key_file \
+              String, insecure Bool), got %d arguments"
+             (List.length args))
+    | ( "net_tls_wrap",
+        [
+          TcpConn c;
+          String server_name;
+          String ca_file;
+          String cert_file;
+          String key_file;
+          Bool insecure;
+        ] ) ->
+        Effect.perform
+          (Net_tls_wrap
+             ( c,
+               {
+                 tls_ca_file = ca_file;
+                 tls_client_cert_file = cert_file;
+                 tls_client_key_file = key_file;
+                 tls_server_name = server_name;
+                 tls_insecure = insecure;
+               },
+               span ))
+    | "net_tls_wrap", _ ->
+        error span "E3001"
+          "`net_tls_wrap` expects (conn TcpConn, server_name String, ca_file \
+           String, client_cert_file String, client_key_file String, insecure \
+           Bool)"
     | "net_listen_tls", args when List.length args <> 4 ->
         error span "E3007"
           (Printf.sprintf
@@ -5097,6 +5147,10 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
                     Some
                       (fun (_ : (a, _) continuation) ->
                         refused span "`net_tls_connect`")
+                | Net_tls_wrap (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_tls_wrap`")
                 | Net_tls_listen (_, _, _, _, _, span) ->
                     Some
                       (fun (_ : (a, _) continuation) ->

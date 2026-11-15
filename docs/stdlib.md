@@ -256,19 +256,26 @@ operation, and what went wrong.
 
 ```emo
 def resolve(host String) (R, Array[String])
+def env(name String) (R, String)
 def connect(host String, port Int64, timeout Float64) (R, TcpConn)
 def listen(host String, port Int64) (R, TcpListener)
 def connect_unix(path String, timeout Float64) (R, TcpConn)
 def listen_unix(path String) (R, TcpListener)
 def tls_connect(host String, port Int64, timeout Float64) (R, TcpConn)
 def tls_connect_insecure(host String, port Int64, timeout Float64) (R, TcpConn)
+def tls_wrap(conn TcpConn, server_name String, options TlsClientOptions) (R, TcpConn)
 def listen_tls(host String, port Int64, cert_path String, key_path String) (R, TcpListener)
 def udp_bind(host String, port Int64) (R, UdpSocket)
 ```
 
-Timeouts are seconds; `0.0` waits indefinitely. `tls_connect` verifies
+Timeouts are seconds; `0.0` waits indefinitely. A connect races its
+candidate addresses (happy eyeballs) and its timeout bounds the TLS
+handshake too. `tls_connect` verifies
 the peer certificate against the system trust store;
 `tls_connect_insecure` is the explicit, visibly dangerous opt-out.
+`tls_wrap` upgrades an already-connected plain socket to TLS in place
+(the proxy `CONNECT` tunnel's half), and `env` reads the process
+environment — the door `http` reads its proxy settings through.
 
 ```emo
 conn.read_line()          // (R, String) — one line, without the terminator
@@ -314,7 +321,15 @@ def put(url String, body String) (R, HttpResponse)
 def delete(url String) (R, HttpResponse)
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
+def request_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
+def request_with_via(proxy String, method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
 ```
+
+`timeout` is one budget for the whole request. The proxy comes from
+`https_proxy` / `http_proxy` / `all_proxy` with `no_proxy` honored;
+`request_via` states one explicitly (`""` forces a direct connection).
+Chunked responses are decoded, and a close-delimited body reads to the
+close.
 
 The URL must carry an explicit `http://` or `https://` scheme;
 `https` rides `net.tls_connect` — verification on. `request_with`
