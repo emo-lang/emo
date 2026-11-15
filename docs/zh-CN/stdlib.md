@@ -37,6 +37,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`playwright`](#playwright-包) | Playwright 客户端,经 `run-server` 讲驱动的通道协议 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
+| [`toml`](#toml-包) | TOML 1.1.0 解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`dom`](#dom-包) | 严格 HTML 解析与 CSS 选择器查询 | 全部五个 |
 | [`template`](#template-包) | 文本加洞,从 json 上下文渲染,步步从严 | 全部五个 |
@@ -372,6 +373,21 @@ def encode(v Yaml) String
 解码覆盖块映射与块序列(含紧凑的 `- key: value` 形式)、flow 集合、带 YAML 转义集的引号标量、注释、带 chomping 的 `|`/`>` 块标量,以及按 core schema 解析的 plain 标量(`null`/`~`、布尔、十进制与 `0x`/`0o` 整数、含 `.inf`/`.nan` 的浮点)。锚点与别名、tag、多文档输入、缩进中的 tab 都以 `(R.error, reason)` 返回并带字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/yaml.md`](stdlib/yaml.md) · 示例:`examples/yaml_demo`、`examples/yaml_edge`。
+
+## toml 包
+
+TOML 读写器:TOML 1.1.0 解码进与 json、yaml 包同构设计的 `Toml` 值树,再以文档形式编码回去。各包相互独立——require toml 不需要 json。
+
+```emo
+def decode(text String) (R, Toml)
+def encode(v Toml) String
+```
+
+`Toml` 是一个接口,实现类为 `TomlBool`、`TomlInt`、`TomlFloat`、`TomlString`、`TomlDateTime`、`TomlArray`、`TomlTable`——TOML 没有 null——由 `TomlKind` 区分;访问器和工厂与 json 同名(`toml.bool(b)`、`toml.int64(n)`、`toml.float64(x)`、`toml.string(s)`、`toml.array(items)`、`toml.table(entries)`)。四种日期时间形式共享一个 `TomlDateTime` 类:解析出的字段、指明四种形式之一的 `datetime_kind()`,以及能把规范文本渲染回去的 `to_text()`。
+
+解码覆盖 1.1 全部表面:裸键、带引号键与点分键;四种字符串形式含 `\e` 与 `\xHH` 转义;十进制、十六进制、八进制、二进制整数带下划线;浮点(小写 `e`,小数点两侧必须有数字);全部四种日期时间形式,秒可省略,允许小写 `t`/`z`;数组与多行 inline table 带注释和尾逗号;以及严格的重复定义规则——点分键造出的表不再被 header 打开,inline table 不再增长,`[[x]]` 只向数组追加。`inf`/`nan` 浮点拼写与超出 Int64 的整数,连同一切畸形输入,都以 `(R.error, reason)` 返回并带字节偏移。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/toml.md`](stdlib/toml.md) · 示例:`examples/toml_demo`、`examples/toml_edge`。
 
 ## xml 包
 

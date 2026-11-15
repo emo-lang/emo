@@ -1,0 +1,101 @@
+h	í 世😀A
+raw \n path
+say "" hi
+
+[]
+"x"
+raw
+multi
+
+9223372036854775807
+-9223372036854775808
+0
+0
+1000000
+3735928559
+493
+170
+1.0
+-0.0
+3.1415
+1000000.0
+0.005
+6.626e+34
+1979-05-27T07:32:00Z
+1979-05-27T00:32:00-07:00
+1979-05-27T00:32:00.999999Z
+1979-05-27T07:32:00Z
+1979-05-27T07:32:00
+1979-05-27T07:32:00.5
+1979-05-27
+07:32:00
+07:32:00
+00:32:00.999999
+23:59:60
+1979 5 27 0 -420
+10.0.0.1
+10.0.0.2
+3
+deep
+4
+Anvil
+0
+red
+red delicious
+plantain
+root
+1
+Doe
+2
+3
+3
+v
+1979-05-27
+0
+2
+title = "round trip"
+[owner]
+name = "Tom"
+dob = 1979-05-27T07:32:00Z
+[[database]]
+enabled = true
+[[database.servers]]
+ip = "10.0.0.1"
+ports = [8001, 8001, 8002]
+[[database.servers]]
+ip = "10.0.0.2"
+[[database]]
+enabled = false
+round trip: true
+{ name = "Tom", dob = 1979-05-27T07:32:00Z }
+dup key: toml: key `a` is defined twice at byte 6
+dup table: toml: table `a` is defined twice at byte 4
+header on dotted: toml: cannot open `a`: defined by a dotted key at byte 8
+subtable on dotted: toml: cannot extend `a.b`: defined as a value at byte 8
+extend inline: toml: key `a.c` was defined as a value at byte 14
+array append on value: toml: `a` was defined as a value at byte 6
+array append on static: toml: `a` was defined as a value at byte 7
+table on array: toml: `a` is an array of tables at byte 6
+array on supertable: toml: `a` is a table, not an array of tables at byte 8
+value into array: toml: key `a.b` was defined as a value at byte 8
+inf: toml: non-finite floats are not supported at byte 4
+nan: toml: non-finite floats are not supported at byte 4
+big int: toml: integer out of range at byte 4
+big hex: toml: integer out of range at byte 4
+leading zero: toml: leading zero in number at byte 5
+uppercase E: toml: exponent must be lowercase e at byte 5
+bad frac: toml: digit expected at byte 6
+bad exp: toml: digit expected at byte 6
+lone surrogate: toml: lone surrogate escape at byte 5
+bad escape: toml: invalid escape at byte 6
+bad month: toml: month out of range at byte 9
+bad day: toml: day out of range at byte 12
+bad hour: toml: hour out of range at byte 4
+offset local: toml: expected a newline at byte 12
+no equals: toml: expected `=` at byte 2
+trailing garbage: toml: expected a newline at byte 6
+unclosed array: toml: unterminated array at byte 9
+unclosed string: toml: unterminated string at byte 6
+garbage value: toml: invalid value at byte 4
+empty key path: toml: expected a key at byte 0
+ml key: toml: expected `=` at byte 2

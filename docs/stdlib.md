@@ -66,6 +66,7 @@ The packages:
 | [`playwright`](#the-playwright-package) | Playwright client, the driver's channel protocol over `run-server` | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
+| [`toml`](#the-toml-package) | TOML 1.1.0 decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`dom`](#the-dom-package) | strict HTML parse and CSS-selector query | all five |
 | [`template`](#the-template-package) | text with holes rendered from a json context, strict at every step | all five |
@@ -546,6 +547,41 @@ back as `(R.error, reason)` with the byte offset.
 
 Targets: all five. Reference: [`docs/stdlib/yaml.md`](stdlib/yaml.md)
 · Demos: `examples/yaml_demo`, `examples/yaml_edge`.
+
+## The `toml` package
+
+The TOML reader and writer: TOML 1.1.0 decoded into a `Toml` value
+tree that mirrors the json and yaml packages' design, and encoded
+back in document form. The packages are independent — requiring toml
+does not require json.
+
+```emo
+def decode(text String) (R, Toml)
+def encode(v Toml) String
+```
+
+`Toml` is an interface over `TomlBool`, `TomlInt`, `TomlFloat`,
+`TomlString`, `TomlDateTime`, `TomlArray`, `TomlTable` — TOML has no
+null — discriminated by `TomlKind`, with the same accessors and
+factories as json (`toml.bool(b)`, `toml.int64(n)`, `toml.float64(x)`,
+`toml.string(s)`, `toml.array(items)`, `toml.table(entries)`). The
+date-time forms share one `TomlDateTime` class: the parsed fields,
+`datetime_kind()` naming which of the four forms it is, and
+`to_text()` rendering the canonical text back.
+
+Decode covers the full 1.1 surface: bare, quoted, and dotted keys;
+all four string forms with the `\e` and `\xHH` escapes; decimal,
+hex, octal, and binary integers with underscores; floats (lowercase
+`e`, digits both sides of the point); all four date-time forms with
+seconds omittable and lowercase `t`/`z`; arrays and multi-line inline
+tables with comments and trailing commas; and the strict redefinition
+rules — a dotted key's table never reopens under a header, an inline
+table never grows, `[[x]]` appends only to arrays. The `inf`/`nan`
+float spellings and integers outside Int64 come back as
+`(R.error, reason)` with the byte offset, like every malformed input.
+
+Targets: all five. Reference: [`docs/stdlib/toml.md`](stdlib/toml.md)
+· Demos: `examples/toml_demo`, `examples/toml_edge`.
 
 ## The `xml` package
 

@@ -4375,9 +4375,12 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
         | None -> None)
       env.class_type
   in
-  let array_arm =
+  let array_arms (x : int) (y : int) =
     (* lengths equal, then element-wise deep_eq; the differ exit lands
-       past the inner block, the equal exit carries 1 to the outer *)
+       past the inner block, the equal exit carries 1 to the outer. The
+       operands ride [x] and [y] — the tuple arm spills its unwrapped
+       element arrays into spare locals and calls this a second time,
+       so a tuple compares element-wise like an array does. *)
     [
       W.Block
         ( W.Result W.I32,
@@ -4385,11 +4388,11 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
             W.Block
               ( W.Void,
                 [
-                  W.Local_get 0;
+                  W.Local_get x;
                   W.Ref_cast t_anyarray;
                   W.Array_len t_anyarray;
                   W.Local_set 2;
-                  W.Local_get 1;
+                  W.Local_get y;
                   W.Ref_cast t_anyarray;
                   W.Array_len t_anyarray;
                   W.Local_get 2;
@@ -4405,11 +4408,11 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
                         W.Local_get 2;
                         W.I32_ge;
                         W.Br_if 2;
-                        W.Local_get 0;
+                        W.Local_get x;
                         W.Ref_cast t_anyarray;
                         W.Local_get 3;
                         W.Array_get t_anyarray;
-                        W.Local_get 1;
+                        W.Local_get y;
                         W.Ref_cast t_anyarray;
                         W.Local_get 3;
                         W.Array_get t_anyarray;
@@ -4658,7 +4661,23 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
         @ [ W.Call (rt "str_eq") ]
         @ enum_bytes 0 1 @ enum_bytes 1 1
         @ [ W.Call (rt "str_eq"); W.I32_and ] );
-      (both t_anyarray 0 1, array_arm);
+      (both t_anyarray 0 1, array_arms 0 1);
+      ( both t_vtuple 0 1,
+        (* a tuple is its element array in field 0: spill both, then
+           the array comparison runs unchanged on the spares — the
+           spares are the two locals the tuple arm adds, past the
+           list arm's 6 and 7 *)
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vtuple;
+          W.Struct_get (t_vtuple, 0);
+          W.Local_set 8;
+          W.Local_get 1;
+          W.Ref_cast t_vtuple;
+          W.Struct_get (t_vtuple, 0);
+          W.Local_set 9;
+        ]
+        @ array_arms 8 9 );
       (both t_vbytes 0 1, bytes_arm);
       (both t_vlist 0 1, list_arm);
       (both t_vmap 0 1, map_arm);
@@ -4684,19 +4703,37 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
+      flocals = [
+        (2, W.I32);
+        (2, W.RefNull t_lnode);
+        (2, W.I32);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+      ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
+      flocals = [
+        (2, W.I32);
+        (2, W.RefNull t_lnode);
+        (2, W.I32);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+      ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_sig2;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
+      flocals = [
+        (2, W.I32);
+        (2, W.RefNull t_lnode);
+        (2, W.I32);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+      ];
       fbody = body;
     } )
 

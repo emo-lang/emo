@@ -1,0 +1,190 @@
+require "toml"
+
+// The toml package end to end: decode a document using tables, dotted
+// keys, arrays of tables, inline tables, every number spelling, all
+// four date-time forms, and multi-line strings; read it back through
+// the accessors; encode it and decode the encoding again. Every target
+// must print this file's expected.txt byte for byte — the package is
+// pure Emo over the shared runtimes.
+
+// ---- strings ----
+const (R.ok, s1) = toml.decode("a = \"h\\tí \\u4e16\\U0001F600\\e\\x41\"")
+println(s1.get("a").as_string())
+const (R.ok, s2) = toml.decode("a = 'raw \\n path'")
+println(s2.get("a").as_string())
+const (R.ok, s3) = toml.decode("a = \"\"\"say \"\" hi\\n\"\"\"")
+println(s3.get("a").as_string())
+const (R.ok, s3b) = toml.decode("a = \"\"\"\"\"\"")
+println("[" + s3b.get("a").as_string() + "]")
+const (R.ok, s3c) = toml.decode("a = \"\"\"\"x\"\"\"\"")
+println(s3c.get("a").as_string())
+const (R.ok, s4) = toml.decode("a = '''\nraw\nmulti\n'''")
+println(s4.get("a").as_string())
+
+// ---- integers ----
+const (R.ok, i1) = toml.decode("a = [9223372036854775807, -9223372036854775808, +0, -0, 1_000_000, 0xdead_beef, 0o755, 0b1010_1010]")
+if i1.is(toml.TomlTable) {
+  const a = i1.get("a")
+  if a.is(toml.TomlArray) {
+    const iv = a.items()
+    println(iv[0].as_int())
+    println(iv[1].as_int())
+    println(iv[2].as_int())
+    println(iv[3].as_int())
+    println(iv[4].as_int())
+    println(iv[5].as_int())
+    println(iv[6].as_int())
+    println(iv[7].as_int())
+  }
+}
+
+// ---- floats ----
+const (R.ok, f1) = toml.decode("a = [1.0, -0.0, 3.1415, 1e6, 5e-3, 6.626e34]")
+if f1.is(toml.TomlTable) {
+  const a = f1.get("a")
+  if a.is(toml.TomlArray) {
+    const fv = a.items()
+    println(fv[0].encode())
+    println(fv[1].encode())
+    println(fv[2].encode())
+    println(fv[3].encode())
+    println(fv[4].encode())
+    println(fv[5].encode())
+  }
+}
+
+// ---- datetimes ----
+const (R.ok, d1) = toml.decode("odt1 = 1979-05-27T07:32:00Z\nodt2 = 1979-05-27T00:32:00-07:00\nodt3 = 1979-05-27t00:32:00.999999z\nodt4 = 1979-05-27 07:32Z\nldt = 1979-05-27T07:32:00\nldt2 = 1979-05-27 07:32:00.5\nld = 1979-05-27\nlt = 07:32:00\nlt2 = 07:32\nlt3 = 00:32:00.999999\nleap = 23:59:60\n")
+println(d1.get("odt1").as_datetime().to_text())
+println(d1.get("odt2").as_datetime().to_text())
+println(d1.get("odt3").as_datetime().to_text())
+println(d1.get("odt4").as_datetime().to_text())
+println(d1.get("ldt").as_datetime().to_text())
+println(d1.get("ldt2").as_datetime().to_text())
+println(d1.get("ld").as_datetime().to_text())
+println(d1.get("lt").as_datetime().to_text())
+println(d1.get("lt2").as_datetime().to_text())
+println(d1.get("lt3").as_datetime().to_text())
+println(d1.get("leap").as_datetime().to_text())
+
+// field access
+const odt = d1.get("odt2").as_datetime()
+println(odt.year().to_string() + " " + odt.month().to_string() + " " + odt.day().to_string() + " " + odt.hour().to_string() + " " + odt.offset_minutes().to_string())
+
+// ---- tables and dotted keys ----
+const (R.ok, t1) = toml.decode("[servers.alpha]\nip = \"10.0.0.1\"\n[servers.beta]\nip = \"10.0.0.2\"\npoints.x.y = 3\n[after]\nname = \"deep\"\n")
+println(t1.get("servers").get("alpha").get("ip").as_string())
+println(t1.get("servers").get("beta").get("ip").as_string())
+println(t1.get("servers").get("beta").get("points").get("x").get("y").as_int())
+println(t1.get("after").get("name").as_string())
+
+// array of tables
+const (R.ok, t2) = toml.decode("[[products]]\nname = \"Hammer\"\n[[products]]\nname = \"Nail\"\n[[products]]\nname = \"Anvil\"\n[[products]]\n")
+const pv = t2.get("products")
+if pv.is(toml.TomlArray) {
+  const items = pv.items()
+  println(items.length())
+  println(items[2].get("name").as_string())
+  const last = items[3]
+  if last.is(toml.TomlTable) {
+    println(last.entries().length())
+  }
+}
+
+// sub-tables of the latest element
+const (R.ok, t3) = toml.decode("[[fruit]]\nname = \"apple\"\n[fruit.physical]\ncolor = \"red\"\n[[fruit.variety]]\nname = \"red delicious\"\n[[fruit]]\nname = \"banana\"\n[[fruit.variety]]\nname = \"plantain\"\n")
+const fruits = t3.get("fruit")
+if fruits.is(toml.TomlArray) {
+  const el0 = fruits.items()[0]
+  const el1 = fruits.items()[1]
+  println(el0.get("physical").get("color").as_string())
+  const v0 = el0.get("variety")
+  if v0.is(toml.TomlArray) {
+    println(v0.items()[0].get("name").as_string())
+  }
+  const v1 = el1.get("variety")
+  if v1.is(toml.TomlArray) {
+    println(v1.items()[0].get("name").as_string())
+  }
+}
+
+// supertable declared after its sub-table
+const (R.ok, t4) = toml.decode("[x.y.z.w]\nk = 1\n[x]\nname = \"root\"\n")
+println(t4.get("x").get("name").as_string())
+println(t4.get("x").get("y").get("z").get("w").get("k").as_int())
+
+// ---- inline tables and arrays ----
+const (R.ok, t5) = toml.decode("name = { first = \"John\", last = \"Doe\", }\npoint = { x = 1, y = 2 }\nnested = { a = { b = { c = 3 } } }\nmatrix = [ [1, 2], [3, 4] ]\nmixed = [1, \"two\", true, 1979-05-27, { k = \"v\" }]\nempty = []\nwithnl = [\n  1, # one\n  2, # two\n]\n")
+println(t5.get("name").get("last").as_string())
+println(t5.get("point").get("y").as_int())
+println(t5.get("nested").get("a").get("b").get("c").as_int())
+const matrix = t5.get("matrix")
+if matrix.is(toml.TomlArray) {
+  const row = matrix.items()[1]
+  if row.is(toml.TomlArray) {
+    println(row.items()[0].as_int())
+  }
+}
+const mixed = t5.get("mixed")
+if mixed.is(toml.TomlArray) {
+  println(mixed.items()[4].get("k").as_string())
+  println(mixed.items()[3].as_datetime().to_text())
+}
+const empty = t5.get("empty")
+if empty.is(toml.TomlArray) {
+  println(empty.items().length())
+}
+const withnl = t5.get("withnl")
+if withnl.is(toml.TomlArray) {
+  println(withnl.items()[1].as_int())
+}
+
+// ---- encode round-trips ----
+const (R.ok, rt) = toml.decode("title = \"round trip\"\nowner = { name = \"Tom\", dob = 1979-05-27T07:32:00Z }\n[[database]]\nenabled = true\n[[database.servers]]\nip = \"10.0.0.1\"\nports = [8001, 8001, 8002]\n[[database.servers]]\nip = \"10.0.0.2\"\n[[database]]\nenabled = false\n")
+const text = toml.encode(rt)
+println(text)
+const (R.ok, back) = toml.decode(text)
+println("round trip: " + (back == rt).to_string())
+
+// inline form of a table value
+println(rt.get("owner").encode())
+
+// ---- refusals ----
+def try_decode(label String, text String) {
+  case toml.decode(text) {
+    (R.error, why) -> { println(label + ": " + why) }
+    (R.ok, _) -> { println(label + ": ACCEPTED") }
+  }
+}
+
+try_decode("dup key", "a = 1\na = 2")
+try_decode("dup table", "[a]\n[a]")
+try_decode("header on dotted", "a.b = 1\n[a]")
+try_decode("subtable on dotted", "a.b = 1\n[a.b]")
+try_decode("extend inline", "a = { x = 1 }\n[a.c]")
+try_decode("array append on value", "a = 1\n[[a]]")
+try_decode("array append on static", "a = []\n[[a]]")
+try_decode("table on array", "[[a]]\n[a]")
+try_decode("array on supertable", "[[a.b]]\n[[a]]")
+try_decode("value into array", "a = [1]\na.b = 2")
+try_decode("inf", "a = inf")
+try_decode("nan", "a = -nan")
+try_decode("big int", "a = 9223372036854775808")
+try_decode("big hex", "a = 0xFFFFFFFFFFFFFFFFF")
+try_decode("leading zero", "a = 01")
+try_decode("uppercase E", "a = 1E5")
+try_decode("bad frac", "a = 5.")
+try_decode("bad exp", "a = 5e")
+try_decode("lone surrogate", "a = \"\\ud800\"")
+try_decode("bad escape", "a = \"\\q\"")
+try_decode("bad month", "a = 1979-13-27")
+try_decode("bad day", "a = 1979-02-30")
+try_decode("bad hour", "a = 24:00:00")
+try_decode("offset local", "a = 07:32:00Z")
+try_decode("no equals", "a 1")
+try_decode("trailing garbage", "a = 1 b = 2")
+try_decode("unclosed array", "a = [1, 2")
+try_decode("unclosed string", "a = \"x")
+try_decode("garbage value", "a = whatever")
+try_decode("empty key path", "= 1")
+try_decode("ml key", "\"\"\"k\"\"\" = 1")
