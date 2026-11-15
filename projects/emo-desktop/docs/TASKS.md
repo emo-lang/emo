@@ -2134,12 +2134,36 @@ a composition's completion whatever the walk painted.
   active and the occupancy packed), the walk's filter, the focus's
   memory and fall, `win_new`'s landing on the shown workspace, and
   `win_desk_open`'s follow to the window's own.
-- [ ] **A27.2** — The bar's pager: the query read per paint, the four
+- [x] **A27.2** — The bar's pager: the query read per paint, the four
   cells (the active the accent's ground, the occupied inked, the empty
   dimmed), the press showing the named workspace and saying
   `desk <n>` on the wire, and the golden's states — the quiet bar, the
   occupancy's ink, the accent's move on a switch — across the five
-  hosted targets byte-identically.
+  hosted targets byte-identically. **complete 2026-11-14** — the
+  package grew the pager whole: `paint_pager` (the active cell the
+  calendar's today-cell pair, a live desk the inked number on a
+  translucent slate, an empty desk the dim number alone),
+  `pager_cell`/`pager_hit` the one arithmetic (the cells past the
+  bell — the shell's own span the pad names), and `paint_header` grown
+  the `desks` word — the query verb's own packing the caller reads and
+  hands over, the bar doing no verb of its own (the clock's rule).
+  The golden pins five bar states (the quiet word, the occupancy's
+  ink, the accent's move to a desk with two live, every desk live
+  under desk 3's accent) and the cells' origins with the hit test's
+  verdicts — cell centers name their desks, the gaps and the world
+  outside the bar name none — byte-identical on the interpreter,
+  ocaml, c, wasm and beam; the typescript leg fails inside the tree's
+  own pre-existing red (`Invalid array length`, the old package and
+  the old golden reproducing it untouched — the pager innocent). The
+  metal's glue rides hello: the query read per paint (the clock's own
+  habit), every paint saying the word it drew from (`desk <word>`, the
+  `clock <epoch>` line's twin), the press the show verb's word and the
+  bar's repaint the answer's news. Beside the landing: the wayland
+  harness's `paint_desktop` was M26's own stale call site (six
+  arguments against the seven the clock's parameter made — the
+  env-gated suite the default runtest never builds), now feeding a
+  fixed epoch and the quiet word; the locks pinning `emo_desktop`
+  (the golden, hello, winbuf, the three apps, wayland) re-resolved.
 - [ ] **A27.3** — The metal beats and the docs: `run.sh`'s
   choreography grows the workspace beats (windows opened on two
   workspaces, the pager's switch, an assignment moving a window, the

@@ -13,8 +13,20 @@ tile 0
 tile 1
 tile 2
 wall 1307018457
-bar 337012120
-bar 3321699121
+bar 666231636
+bar 3650918637
+bar 2488337960
+bar 1719633063
+bar 218692669
+pager 104 5
+pager 124 5
+pager 144 5
+pager 164 5
+pager 0
+pager 3
+pager -1
+pager -1
+pager -1
 cal 3416004645
 cal 1494968179
 cal 3082710398
