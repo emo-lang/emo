@@ -51,11 +51,11 @@ def editor_save(r0 String, r1 String) Void {
   var n = poke_str(r0, buf + 4224)
   n = n + poke_str(r1, buf + 4224 + n)
   case syscall.file_write(buf + 4096, nl, buf + 4224, n) {
-    (R.error, _) -> {}
-    (R.ok, _) -> {
+    (R.error, _) then {}
+    (R.ok, _) then {
       case syscall.notify(buf + 4128, 6, buf + 4160, 16) {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
     }
   }

@@ -3370,8 +3370,8 @@ def desk_chrome(f ui_fb.raster.Strike) Void {
   }
   var now = 0
   case syscall.time() {
-    (R.error, _) -> { mark() }
-    (R.ok, t) -> { now = t }
+    (R.error, _) then { mark() }
+    (R.ok, t) then { now = t }
   }
   // The desks are the bar's third live fact (emo-desktop M27, A27.2):
   // the query read per paint, the clock's own habit — the word the
@@ -3379,8 +3379,8 @@ def desk_chrome(f ui_fb.raster.Strike) Void {
   // paint says the state it drew from.
   var desks = 0
   case syscall.desk_workspace() {
-    (R.error, _) -> { mark() }
-    (R.ok, d) -> { desks = d }
+    (R.error, _) then { mark() }
+    (R.ok, d) then { desks = d }
   }
   desk_line(desks)
   clock_line(now)
@@ -3540,8 +3540,8 @@ def desk_strike() (R, ui_fb.raster.Strike) {
 // the canonical quiet reply — absence visible, never fabricated (D15).
 def notify_take_once() (R, emo_notify.Notif) {
   case syscall.notify_take(buf + notify_reply, notify_take_max) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, n) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, n) then {
       if n == 0 {
         return (R.error, "empty")
       }
@@ -3608,31 +3608,31 @@ def notify_open(grant_cell Int64, base_cell Int64, w Int64, h Int64,
   var g = 0
   var b = 0
   case syscall.win_new(w, h) {
-    (R.error, _) -> { return false }
-    (R.ok, ans) -> {
+    (R.error, _) then { return false }
+    (R.ok, ans) then {
       g = win_id(ans)
       b = win_base(ans)
     }
   }
   case syscall.win_role(g, 0) {
-    (R.error, _) -> {
+    (R.error, _) then {
       case syscall.win_close(g) {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
       return false
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
   case syscall.win_move(g, x, y) {
-    (R.error, _) -> {
+    (R.error, _) then {
       case syscall.win_close(g) {
-        (R.error, _) -> {}
-        (R.ok, _) -> {}
+        (R.error, _) then {}
+        (R.ok, _) then {}
       }
       return false
     }
-    (R.ok, _) -> {}
+    (R.ok, _) then {}
   }
   poke64(grant_cell, g)
   poke64(base_cell, b)
@@ -3641,8 +3641,8 @@ def notify_open(grant_cell Int64, base_cell Int64, w Int64, h Int64,
 
 def notify_close(grant_cell Int64, base_cell Int64) Void {
   case syscall.win_close(peek64(grant_cell)) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
   poke64(grant_cell, 0)
   poke64(base_cell, 0)
@@ -3653,8 +3653,8 @@ def notify_close(grant_cell Int64, base_cell Int64) Void {
 def notify_present(grant Int64, base Int64, w Int64, h Int64) Void {
   frame_line(ui_fb_winbuf.round_digest(base, w, h))
   case syscall.present(grant, 0, 0, w, h) {
-    (R.error, _) -> { mark() }
-    (R.ok, _) -> {}
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
   }
 }
 
@@ -3798,8 +3798,8 @@ def cal_toggle(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
   } else {
     var now = 0
     case syscall.time() {
-      (R.error, _) -> { mark() }
-      (R.ok, t) -> { now = t }
+      (R.error, _) then { mark() }
+      (R.ok, t) then { now = t }
     }
     if notify_open(buf + cal_grant, buf + cal_base, emo_desktop.cal_w(),
       emo_desktop.cal_h(), emo_desktop.cal_x(mw), emo_desktop.cal_y()) {
@@ -3877,8 +3877,8 @@ def desktop() Void {
   // The wall clock (emo-desktop M26, EmoOS T12.1): the bar's first
   // live datum, said on the wire for the golden's own eye.
   case syscall.time() {
-    (R.error, _) -> { mark() }
-    (R.ok, now) -> { clock_line(now) }
+    (R.error, _) then { mark() }
+    (R.ok, now) then { clock_line(now) }
   }
   const dw = mw
   const dh = emo_desktop.strip_height()
@@ -4002,8 +4002,8 @@ def desktop() Void {
     // time and the changed minute is the bar's repaint, the digits
     // one wake late the honest bound (the toast's own).
     case syscall.time() {
-      (R.error, _) -> {}
-      (R.ok, now) -> {
+      (R.error, _) then {}
+      (R.ok, now) then {
         if now / 60 != peek64(buf + desk_painted_minute) {
           desk_chrome(f)
         }
@@ -4136,8 +4136,8 @@ def desktop() Void {
                 const pd = emo_desktop.pager_hit(f, px, py)
                 if pd >= 0 {
                   case syscall.desk_show(pd) {
-                    (R.error, _) -> { mark() }
-                    (R.ok, _) -> {}
+                    (R.error, _) then { mark() }
+                    (R.ok, _) then {}
                   }
                   desk_chrome(f)
                 }

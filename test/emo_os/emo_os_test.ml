@@ -208,6 +208,7 @@ let smoke_tests =
             "user.emo";
             "user.S";
             "gate.emo";
+            "notify.emo";
             "frames.emo";
             "sv39.emo";
             "sv39.S";
@@ -307,6 +308,9 @@ let smoke_tests =
             ( "../../projects/emo-desktop/fb/winbuf",
               "emo/ui_fb_winbuf/0.1.0",
               [ "package.emo"; "ui_fb_winbuf.emo" ] );
+            ( "../../projects/emo-desktop/fb/notify",
+              "emo_notify/0.1.0",
+              [ "package.emo"; "emo_notify.emo" ] );
           ];
         Unix.putenv "EMO_REGISTRY" registry;
         (* The user image first: the kernel's tree embeds it, so the
@@ -417,6 +421,17 @@ let smoke_tests =
         Alcotest.(check bool)
           "the type's rasterizer is in the tree" true
           (Sys.file_exists (Filename.concat glyphs_dir "reference.py"));
+        (* The notification center's surfaces (emo-desktop M25): run.sh
+           asserts the center's four frame digests out of its golden and
+           folds each panel's rectangle to its lines — pointed at the
+           repository's file the same way. *)
+        let notify_expected =
+          Filename.concat (Sys.getcwd ())
+            "../../projects/emo-desktop/fb/notify/golden/expected.txt"
+        in
+        Alcotest.(check bool)
+          "the notification center's corpus file is in the tree" true
+          (Sys.file_exists notify_expected);
         (* The budget (2026-11-11): one run is two boots, each a whole
            session — the spinner's loop alone measured 170 s a boot when
            its bytes straddle a page boundary under TCG, 18 s when they
@@ -426,13 +441,15 @@ let smoke_tests =
           run_cmd ~timeout:1500.0
             (Printf.sprintf
                "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
-                DOCK_EXPECTED=%s APPS_EXPECTED=%s GLYPHS_DIR=%s %s"
+                DOCK_EXPECTED=%s APPS_EXPECTED=%s GLYPHS_DIR=%s \
+                NOTIFY_EXPECTED=%s %s"
                (Filename.quote frame_expected)
                (Filename.quote pointer_sprite)
                (Filename.quote win_expected)
                (Filename.quote dock_expected)
                (Filename.quote apps_expected)
                (Filename.quote glyphs_dir)
+               (Filename.quote notify_expected)
                (Filename.quote (Filename.concat scratch "run.sh")))
         in
         (match status with

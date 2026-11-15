@@ -17,12 +17,12 @@ require "net"
 require "os"
 
 case net.connect_unix(path, 5.0) {
-  (R.error, why) -> { println(why) }
-  (R.ok, raw) -> {
+  (R.error, why) then { println(why) }
+  (R.ok, raw) then {
     const c = wayland.conn_of(raw)
     case wayland.handshake(c) {
-      (R.error, why) -> { println(why) }
-      (R.ok, globals) -> { /* globals.find("wl_compositor") ... */ }
+      (R.error, why) then { println(why) }
+      (R.ok, globals) then { /* globals.find("wl_compositor") ... */ }
     }
   }
 }

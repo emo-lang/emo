@@ -15,7 +15,7 @@ def hexed(data Bytes) String {
 
 def show(label String, m wayland.Message) {
   case m.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       println(label + " " + hexed(bytes))
       if has_fd {
         println(label + " carries fd " + fd.to_string())
@@ -50,7 +50,7 @@ def main() {
   bind.u32(3)
   show("bind", bind)
   case bind.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
       const name = args.u32()
       const iface = args.text()
@@ -67,7 +67,7 @@ def main() {
   // the fd's own proof: the stream carries one word fewer than a
   // three-argument message would
   case pool.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
       println("create_pool size " + args.u32().to_string() + " carried " + has_fd.to_string() + " " + fd.to_string())
     }
@@ -76,7 +76,7 @@ def main() {
   const fx = wayland.Message.new(8, 2)
   fx.fixed(0 - 1)
   case fx.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       const args = wayland.Args.new(slice(bytes, 8, bytes.length() - 8), List.new([]))
       println("fixed -1 " + hexed(slice(bytes, 8, bytes.length() - 8)) + " back " + args.fixed().to_string())
     }
@@ -85,7 +85,7 @@ def main() {
   const empty = wayland.Message.new(9, 0)
   empty.text("")
   case empty.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       println("empty text " + hexed(slice(bytes, 8, bytes.length() - 8)))
     }
   }
@@ -98,25 +98,25 @@ def main() {
   var i = 0
   while i < g.length() {
     case g.at(i) {
-      (name, iface, version) -> {
+      (name, iface, version) then {
         println("global " + i.to_string() + " " + iface + " " + version.to_string())
       }
     }
     i = i + 1
   }
   case g.find("wl_shm") {
-    (R.error, why) -> { println("find wl_shm missed " + why) }
-    (R.ok, found) -> {
+    (R.error, why) then { println("find wl_shm missed " + why) }
+    (R.ok, found) then {
       case found {
-        (name, version) -> {
+        (name, version) then {
           println("find wl_shm " + name.to_string() + " " + version.to_string())
         }
       }
     }
   }
   case g.find("wl_foo") {
-    (R.error, why) -> { println("find wl_foo " + why) }
-    (R.ok, found) -> { println("find wl_foo impossible") }
+    (R.error, why) then { println("find wl_foo " + why) }
+    (R.ok, found) then { println("find wl_foo impossible") }
   }
 }
 

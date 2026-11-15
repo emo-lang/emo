@@ -88,20 +88,20 @@ class LiveEye {
 
   def present() {
     case os_pwrite(self.pool_fd, self.canvas.bytes().to_string(), 0) {
-      (R.error, why) -> { println("face: pwrite " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("face: pwrite " + why) }
+      (R.ok, _) then { }
     }
     case wayland.surface_attach(self.c, self.surface_id, self.buffer_id, 0, 0) {
-      (R.error, why) -> { println("face: attach " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("face: attach " + why) }
+      (R.ok, _) then { }
     }
     case wayland.surface_damage(self.c, self.surface_id, 0, 0, self.canvas.width(), self.canvas.height()) {
-      (R.error, why) -> { println("face: damage " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("face: damage " + why) }
+      (R.ok, _) then { }
     }
     case wayland.surface_commit(self.c, self.surface_id) {
-      (R.error, why) -> { println("face: commit " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("face: commit " + why) }
+      (R.ok, _) then { }
     }
     println("frame " + ui_fb_frame.digest(self.canvas).to_string())
   }
@@ -372,8 +372,8 @@ class LiveInput {
 
   def next() (R, Ev) {
     case wayland.next_event(self.c.side) {
-      (R.error, why) -> { return (R.error, Ev.new(kind: 0, surface: 0, x: 0, y: 0, name: "")) }
-      (R.ok, ev) -> {
+      (R.error, why) then { return (R.error, Ev.new(kind: 0, surface: 0, x: 0, y: 0, name: "")) }
+      (R.ok, ev) then {
         println("live: ev oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " len=" + ev.body.length().to_string())
         if ev.oid == self.c.display_id && ev.opcode == 0 {
           const obj = ev.args.u32()
@@ -420,11 +420,11 @@ class LiveInput {
           const fd = ev.args.fd()
           const size = ev.args.u32()
           case os.read(fd, size) {
-            (R.error, why) -> { println("face: keymap read " + why) }
-            (R.ok, body) -> {
+            (R.error, why) then { println("face: keymap read " + why) }
+            (R.ok, body) then {
               case wayland.parse_keymap(body) {
-                (R.error, why) -> { println("face: keymap parse " + why) }
-                (R.ok, km) -> {
+                (R.error, why) then { println("face: keymap parse " + why) }
+                (R.ok, km) then {
                   self.keymap.replace(km)
                   println("face: keymap parsed")
                 }
@@ -533,8 +533,8 @@ class LiveInput {
         if self.known_xdg(ev.oid) && ev.opcode == 0 {
           const serial = ev.args.u32()
           case wayland.surface_ack_configure(self.c, ev.oid, serial) {
-            (R.error, why) -> { println("face: ack " + why) }
-            (R.ok, _) -> { }
+            (R.error, why) then { println("face: ack " + why) }
+            (R.ok, _) then { }
           }
           return self.next()
         }
@@ -554,8 +554,8 @@ class LiveInput {
         }
         if ev.oid == self.wm_base_id() && ev.opcode == 0 {
           case wayland.wm_base_pong(self.c, self.wm_base_id(), ev.args.u32()) {
-            (R.error, why) -> { println("face: pong " + why) }
-            (R.ok, _) -> { }
+            (R.error, why) then { println("face: pong " + why) }
+            (R.ok, _) then { }
           }
           return self.next()
         }
@@ -568,15 +568,15 @@ class LiveInput {
 
 def main() {
   case socket_path() {
-    (R.error, why) -> { println("face: " + why) }
-    (R.ok, path) -> {
+    (R.error, why) then { println("face: " + why) }
+    (R.ok, path) then {
       case net.connect_unix(path, 5.0) {
-        (R.error, why) -> { println("face: connect " + why) }
-        (R.ok, raw) -> {
+        (R.error, why) then { println("face: connect " + why) }
+        (R.ok, raw) then {
           const c = wayland.conn_of(raw)
           case wayland.handshake(c) {
-            (R.error, why) -> { println("face: handshake " + why) }
-            (R.ok, globals) -> {
+            (R.error, why) then { println("face: handshake " + why) }
+            (R.ok, globals) then {
               open_face(c, globals)
             }
           }
@@ -650,52 +650,52 @@ def make_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64,
                 title String, w Int64, h Int64,
                 others Array[(Int64, Int64)]) (R, Win) {
   case wayland.compositor_create_surface(c, comp_id) {
-    (R.error, why) -> { return (R.error, "surface " + why) }
-    (R.ok, surface_id) -> {
+    (R.error, why) then { return (R.error, "surface " + why) }
+    (R.ok, surface_id) then {
       case wayland.wm_base_get_xdg_surface(c, wm_id, surface_id) {
-        (R.error, why) -> { return (R.error, "xdg surface " + why) }
-        (R.ok, xdg_id) -> {
+        (R.error, why) then { return (R.error, "xdg surface " + why) }
+        (R.ok, xdg_id) then {
           case wayland.xdg_surface_get_toplevel(c, xdg_id) {
-            (R.error, why) -> { return (R.error, "toplevel " + why) }
-            (R.ok, toplevel_id) -> {
+            (R.error, why) then { return (R.error, "toplevel " + why) }
+            (R.ok, toplevel_id) then {
               case wayland.toplevel_set_title(c, toplevel_id, title) {
-                (R.error, why) -> { return (R.error, "title " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { return (R.error, "title " + why) }
+                (R.ok, _) then {
                   case wayland.toplevel_set_app_id(c, toplevel_id, title) {
-                    (R.error, why) -> { return (R.error, "app id " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { return (R.error, "app id " + why) }
+                    (R.ok, _) then {
                       case wayland.surface_commit(c, surface_id) {
-                        (R.error, why) -> { return (R.error, "first commit " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { return (R.error, "first commit " + why) }
+                        (R.ok, _) then {
                           case wayland.wait_configure(c, xdg_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read(), seat_slot.read(), others) {
-                            (R.error, why) -> { return (R.error, "configure " + why) }
-                            (R.ok, serial) -> {
+                            (R.error, why) then { return (R.error, "configure " + why) }
+                            (R.ok, serial) then {
                               case wayland.surface_ack_configure(c, xdg_id, serial) {
-                                (R.error, why) -> { return (R.error, "ack " + why) }
-                                (R.ok, _) -> {
+                                (R.error, why) then { return (R.error, "ack " + why) }
+                                (R.ok, _) then {
                               const stride = w * 4
                               const pool_path = "/tmp/emo-app-" + title + "-" + os.getpid().to_string() + ".tmp"
                               case os_shm_open(pool_path) {
-                                (R.error, why) -> { return (R.error, "pool " + why) }
-                                (R.ok, pool_fd) -> {
+                                (R.error, why) then { return (R.error, "pool " + why) }
+                                (R.ok, pool_fd) then {
                                   case os_ftruncate(pool_fd, stride * h) {
-                                    (R.error, why) -> { return (R.error, "ftruncate " + why) }
-                                    (R.ok, _) -> {
+                                    (R.error, why) then { return (R.error, "ftruncate " + why) }
+                                    (R.ok, _) then {
                                       case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
-                                        (R.error, why) -> { return (R.error, "create_pool " + why) }
-                                        (R.ok, pool_id) -> {
+                                        (R.error, why) then { return (R.error, "create_pool " + why) }
+                                        (R.ok, pool_id) then {
                                           case wayland.pool_create_buffer(c, pool_id, 0, w, h, stride, wayland.shm_format_xrgb8888()) {
-                                            (R.error, why) -> { return (R.error, "create_buffer " + why) }
-                                            (R.ok, buffer_id) -> {
+                                            (R.error, why) then { return (R.error, "create_buffer " + why) }
+                                            (R.ok, buffer_id) then {
                                               case wayland.surface_attach(c, surface_id, buffer_id, 0, 0) {
-                                                (R.error, why) -> { return (R.error, "attach " + why) }
-                                                (R.ok, _) -> {
+                                                (R.error, why) then { return (R.error, "attach " + why) }
+                                                (R.ok, _) then {
                                                   case wayland.surface_damage(c, surface_id, 0, 0, w, h) {
-                                                    (R.error, why) -> { return (R.error, "damage " + why) }
-                                                    (R.ok, _) -> {
+                                                    (R.error, why) then { return (R.error, "damage " + why) }
+                                                    (R.ok, _) then {
                                                       case wayland.surface_commit(c, surface_id) {
-                                                        (R.error, why) -> { return (R.error, "commit " + why) }
-                                                        (R.ok, _) -> {
+                                                        (R.error, why) then { return (R.error, "commit " + why) }
+                                                        (R.ok, _) then {
                                                           const canvas = ui_fb_canvas.Canvas.new(width: w, height: h)
                                                           const eye = LiveEye.new(canvas: canvas, c: c, surface_id: surface_id, buffer_id: buffer_id, pool_fd: pool_fd)
                                                           return (R.ok, Win.new(surface_id: surface_id, xdg_id: xdg_id, toplevel_id: toplevel_id, eye: eye))
@@ -749,7 +749,7 @@ def paint_app_window(win Win, app ui.App, f ui_fb.raster.Strike,
   var i = 0
   while i < rects.table().length() {
     case rects.table()[i] {
-      (x, y, bw, bh, tag) -> {
+      (x, y, bw, bh, tag) then {
         table = table.append((x, y + 28, bw, bh, tag))
         println("face: rect " + x.to_string() + " " + (y + 28).to_string() + " " + bw.to_string() + " " + bh.to_string() + " tag " + tag.to_string())
       }
@@ -766,7 +766,7 @@ def name_tag(table Array[(String, Int64)], name String) Int64 {
   var i = 0
   while i < table.length() {
     case table[i] {
-      (n, tag) -> {
+      (n, tag) then {
         if n == name {
           return tag
         }
@@ -783,7 +783,7 @@ def rect_tag(table Array[(Int64, Int64, Int64, Int64, Int64)], x Int64,
   var i = 0
   while i < table.length() {
     case table[i] {
-      (rx, ry, rw, rh, tag) -> {
+      (rx, ry, rw, rh, tag) then {
         if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
           return tag
         }
@@ -888,11 +888,11 @@ class Windows {
 // The compositor's socket: $XDG_RUNTIME_DIR / $WAYLAND_DISPLAY.
 def socket_path() (R, String) {
   case os.getenv("XDG_RUNTIME_DIR") {
-    (R.error, why) -> { return (R.error, "face: " + why) }
-    (R.ok, dir) -> {
+    (R.error, why) then { return (R.error, "face: " + why) }
+    (R.ok, dir) then {
       case os.getenv("WAYLAND_DISPLAY") {
-        (R.error, _) -> { return (R.ok, dir + "/wayland-0") }
-        (R.ok, display) -> { return (R.ok, dir + "/" + display) }
+        (R.error, _) then { return (R.ok, dir + "/wayland-0") }
+        (R.ok, display) then { return (R.ok, dir + "/" + display) }
       }
     }
   }
@@ -902,10 +902,10 @@ def socket_path() (R, String) {
 // chain the face's setup walks.
 def bind_global(c wayland.Conn, globals wayland.Globals, name String, version Int64) (R, Int64) {
   case globals.find(name) {
-    (R.error, why) -> { return (R.error, "face: no global " + name) }
-    (R.ok, found) -> {
+    (R.error, why) then { return (R.error, "face: no global " + name) }
+    (R.ok, found) then {
       case found {
-        (gname, _) -> {
+        (gname, _) then {
           return wayland.registry_bind(c, gname, name, version)
         }
       }
@@ -919,8 +919,8 @@ def bind_global(c wayland.Conn, globals wayland.Globals, name String, version In
 // carries its own and answers to no one's timing).
 def caps_wait(c wayland.Conn, seat_id Int64, shm_id Int64) (R, Int64) {
   case wayland.next_event(c.side) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ev) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ev) then {
       if ev.oid == seat_id && ev.opcode == 0 {
         const caps = ev.args.u32()
         if (caps & 3) == 3 {
@@ -952,45 +952,45 @@ def caps_wait(c wayland.Conn, seat_id Int64, shm_id Int64) (R, Int64) {
 // shm tier, the grants taken.
 def seat_half(c wayland.Conn, globals wayland.Globals, shm_id Int64) (R, (Int64, Int64, Int64)) {
   case bind_global(c, globals, "wl_seat", 5) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, seat_id) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, seat_id) then {
       seat_slot.replace(seat_id)
       case bind_global(c, globals, "zwp_virtual_keyboard_manager_v1", 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, vk_mgr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, vk_mgr) then {
           case bind_global(c, globals, "zwlr_virtual_pointer_manager_v1", 2) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, vp_mgr) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, vp_mgr) then {
               case wayland.virtual_pointer_create(c, vp_mgr, seat_id) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, _) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, _) then {
                   case wayland.virtual_keyboard_create(c, vk_mgr, seat_id) {
-                    (R.error, why) -> { return (R.error, why) }
-                    (R.ok, vkb) -> {
+                    (R.error, why) then { return (R.error, why) }
+                    (R.ok, vkb) then {
                       const map_path = "/tmp/emo-face-map-" + os.getpid().to_string() + ".tmp"
                       case os_shm_open(map_path) {
-                        (R.error, why) -> { return (R.error, "face: map " + why) }
-                        (R.ok, map_fd) -> {
+                        (R.error, why) then { return (R.error, "face: map " + why) }
+                        (R.ok, map_fd) then {
                           const text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
                           case os_ftruncate(map_fd, text.length()) {
-                            (R.error, why) -> { return (R.error, "face: ftruncate " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { return (R.error, "face: ftruncate " + why) }
+                            (R.ok, _) then {
                               case os_pwrite(map_fd, text, 0) {
-                                (R.error, why) -> { return (R.error, "face: pwrite " + why) }
-                                (R.ok, _) -> {
+                                (R.error, why) then { return (R.error, "face: pwrite " + why) }
+                                (R.ok, _) then {
                                   case wayland.virtual_keyboard_keymap(c, vkb, map_fd, text.length()) {
-                                    (R.error, why) -> { return (R.error, "face: keymap " + why) }
-                                    (R.ok, _) -> {
+                                    (R.error, why) then { return (R.error, "face: keymap " + why) }
+                                    (R.ok, _) then {
                                       case caps_wait(c, seat_id, shm_id) {
-                                        (R.error, why) -> { return (R.error, why) }
-                                        (R.ok, _) -> {
+                                        (R.error, why) then { return (R.error, why) }
+                                        (R.ok, _) then {
                                           case wayland.seat_get_pointer(c, seat_id) {
-                                            (R.error, why) -> { return (R.error, "face: " + why) }
-                                            (R.ok, pointer_id) -> {
+                                            (R.error, why) then { return (R.error, "face: " + why) }
+                                            (R.ok, pointer_id) then {
                                               pointer_slot.replace(pointer_id)
                                               case wayland.seat_get_keyboard(c, seat_id) {
-                                                (R.error, why) -> { return (R.error, "face: " + why) }
-                                                (R.ok, keyboard_id) -> {
+                                                (R.error, why) then { return (R.error, "face: " + why) }
+                                                (R.ok, keyboard_id) then {
                                                   keyboard_slot.replace(keyboard_id)
                                                   return (R.ok, (seat_id, pointer_id, keyboard_id))
                                                 }
@@ -1023,19 +1023,19 @@ def seat_half(c wayland.Conn, globals wayland.Globals, shm_id Int64) (R, (Int64,
 // the window.
 def open_face(c wayland.Conn, globals wayland.Globals) {
   case bind_global(c, globals, "wl_compositor", 4) {
-    (R.error, why) -> { println(why) }
-    (R.ok, comp_id) -> {
+    (R.error, why) then { println(why) }
+    (R.ok, comp_id) then {
       case bind_global(c, globals, "wl_shm", 1) {
-        (R.error, why) -> { println(why) }
-        (R.ok, shm_id) -> {
+        (R.error, why) then { println(why) }
+        (R.ok, shm_id) then {
           case bind_global(c, globals, "xdg_wm_base", 2) {
-            (R.error, why) -> { println(why) }
-            (R.ok, wm_id) -> {
+            (R.error, why) then { println(why) }
+            (R.ok, wm_id) then {
               case seat_half(c, globals, shm_id) {
-                (R.error, why) -> { println(why) }
-                (R.ok, g) -> {
+                (R.error, why) then { println(why) }
+                (R.ok, g) then {
                   case g {
-                    (seat_id, pointer_id, keyboard_id) -> {
+                    (seat_id, pointer_id, keyboard_id) then {
                       face_window(c, comp_id, shm_id, wm_id)
                     }
                   }
@@ -1053,29 +1053,29 @@ def open_face(c wayland.Conn, globals wayland.Globals) {
 // configure wait, the ack, and the present bridge.
 def face_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64) {
   case wayland.compositor_create_surface(c, comp_id) {
-    (R.error, why) -> { println("face: surface " + why) }
-    (R.ok, surface_id) -> {
+    (R.error, why) then { println("face: surface " + why) }
+    (R.ok, surface_id) then {
       surface_slot.replace(surface_id)
       case wayland.wm_base_get_xdg_surface(c, wm_id, surface_id) {
-        (R.error, why) -> { println("face: xdg surface " + why) }
-        (R.ok, xdg_surface_id) -> {
+        (R.error, why) then { println("face: xdg surface " + why) }
+        (R.ok, xdg_surface_id) then {
           xdg_surface_slot.replace(xdg_surface_id)
           case wayland.xdg_surface_get_toplevel(c, xdg_surface_id) {
-            (R.error, why) -> { println("face: toplevel " + why) }
-            (R.ok, toplevel_id) -> {
+            (R.error, why) then { println("face: toplevel " + why) }
+            (R.ok, toplevel_id) then {
               toplevel_slot.replace(toplevel_id)
               case wayland.toplevel_set_title(c, toplevel_id, "emo corpus") {
-                (R.error, why) -> { println("face: title " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("face: title " + why) }
+                (R.ok, _) then {
                   case wayland.surface_commit(c, surface_id) {
-                    (R.error, why) -> { println("face: first commit " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("face: first commit " + why) }
+                    (R.ok, _) then {
                       case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read(), seat_slot.read(), []) {
-                        (R.error, why) -> { println("face: configure " + why) }
-                        (R.ok, serial) -> {
+                        (R.error, why) then { println("face: configure " + why) }
+                        (R.ok, serial) then {
                           case wayland.surface_ack_configure(c, xdg_surface_id, serial) {
-                            (R.error, why) -> { println("face: ack " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("face: ack " + why) }
+                            (R.ok, _) then {
                               present_bridge(c, comp_id, surface_id, shm_id, wm_id)
                             }
                           }
@@ -1102,34 +1102,34 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
   const stride = w * 4
   const pool_path = "/tmp/emo-face-" + os.getpid().to_string() + ".tmp"
   case os_shm_open(pool_path) {
-    (R.error, why) -> { println("face: pool " + why) }
-    (R.ok, pool_fd) -> {
+    (R.error, why) then { println("face: pool " + why) }
+    (R.ok, pool_fd) then {
       case os_ftruncate(pool_fd, stride * h) {
-        (R.error, why) -> { println("face: ftruncate " + why) }
-        (R.ok, _) -> {
+        (R.error, why) then { println("face: ftruncate " + why) }
+        (R.ok, _) then {
           case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
-            (R.error, why) -> { println("face: create_pool " + why) }
-            (R.ok, pool_id) -> {
+            (R.error, why) then { println("face: create_pool " + why) }
+            (R.ok, pool_id) then {
               case wayland.pool_create_buffer(c, pool_id, 0, w, h, stride, wayland.shm_format_xrgb8888()) {
-                (R.error, why) -> { println("face: create_buffer " + why) }
-                (R.ok, buffer_id) -> {
+                (R.error, why) then { println("face: create_buffer " + why) }
+                (R.ok, buffer_id) then {
                   case wayland.surface_attach(c, surface_id, buffer_id, 0, 0) {
-                    (R.error, why) -> { println("face: attach " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("face: attach " + why) }
+                    (R.ok, _) then {
                       case wayland.surface_damage(c, surface_id, 0, 0, w, h) {
-                        (R.error, why) -> { println("face: damage " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { println("face: damage " + why) }
+                        (R.ok, _) then {
                           case wayland.surface_commit(c, surface_id) {
-                            (R.error, why) -> { println("face: commit " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("face: commit " + why) }
+                            (R.ok, _) then {
                               const canvas = ui_fb_canvas.Canvas.new(width: w, height: h)
                               const eye = LiveEye.new(canvas: canvas, c: c, surface_id: surface_id, buffer_id: buffer_id, pool_fd: pool_fd)
                               const ids = [seat_slot.read(), pointer_slot.read(), keyboard_slot.read(), surface_id, xdg_surface_slot.read(), toplevel_slot.read(), wm_id]
                               const input = LiveInput.new(c: c, ids: ids)
                               const holder = ArrayBuilder.new()
                               case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
-                                (R.error, why) -> { println("the interface strike refused: ${why}") }
-                                (R.ok, s) -> { holder.push(s) }
+                                (R.error, why) then { println("the interface strike refused: ${why}") }
+                                (R.ok, s) then { holder.push(s) }
                               }
                               const f = holder.get(0)
                               // The three corpus apps, standing from
@@ -1166,11 +1166,11 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                               var more = true
                               while more {
                                 case input.next() {
-                                  (R.error, why) -> {
+                                  (R.error, why) then {
                                     println("face: " + why)
                                     more = false
                                   }
-                                  (R.ok, ev) -> {
+                                  (R.ok, ev) then {
                                     if ev.kind() == 1 {
                                       // A press: the surface under the
                                       // pointer says whose rects the
@@ -1224,8 +1224,8 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                                                       wi = wi + 1
                                                     }
                                                     case make_window(c, comp_id, shm_id, wm_id, slot.name(), 320, 240, others.to_array()) {
-                                                      (R.error, why) -> { println("face: window refused " + why) }
-                                                      (R.ok, win) -> {
+                                                      (R.error, why) then { println("face: window refused " + why) }
+                                                      (R.ok, win) then {
                                                         input.track_window(win.xdg_id(), win.surface_id(), win.toplevel_id())
                                                         windows.open(slot, win)
                                                         launched.replace(launched.read() | (1 << slot.index()))

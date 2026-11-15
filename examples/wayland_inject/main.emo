@@ -30,26 +30,26 @@ def fire(c wayland.Conn, vkb Int64, vptr Int64,
     println("inject: beats out")
   } else {
     case beats[i] {
-      (kind, time_ms, a, b) -> {
+      (kind, time_ms, a, b) then {
         case os.sleep_ms(time_ms - prev) {
-          (R.error, why) -> { println("inject: sleep " + why) }
-          (R.ok, _) -> { }
+          (R.error, why) then { println("inject: sleep " + why) }
+          (R.ok, _) then { }
         }
         if kind == 0 {
           case wayland.virtual_pointer_motion_absolute(c, vptr, time_ms, a, b, 1280, 720) {
-            (R.error, why) -> { println("inject: " + why) }
-            (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+            (R.error, why) then { println("inject: " + why) }
+            (R.ok, _) then { fire(c, vkb, vptr, beats, i + 1, time_ms) }
           }
         } else {
           if kind == 1 {
             case wayland.virtual_pointer_button(c, vptr, time_ms, a, b) {
-              (R.error, why) -> { println("inject: " + why) }
-              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+              (R.error, why) then { println("inject: " + why) }
+              (R.ok, _) then { fire(c, vkb, vptr, beats, i + 1, time_ms) }
             }
           } else {
             case wayland.virtual_keyboard_key(c, vkb, time_ms, a, b) {
-              (R.error, why) -> { println("inject: " + why) }
-              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+              (R.error, why) then { println("inject: " + why) }
+              (R.ok, _) then { fire(c, vkb, vptr, beats, i + 1, time_ms) }
             }
           }
         }
@@ -63,8 +63,8 @@ def fire(c wayland.Conn, vkb Int64, vptr Int64,
 // them alive while it maps, focuses, and decodes.
 def drain(c wayland.Conn) {
   case wayland.next_event(c.side) {
-    (R.error, why) -> { println("inject: drained (" + why + ")") }
-    (R.ok, ev) -> {
+    (R.error, why) then { println("inject: drained (" + why + ")") }
+    (R.ok, ev) then {
       drain(c)
     }
   }
@@ -72,23 +72,23 @@ def drain(c wayland.Conn) {
 
 def main() {
   case os.getenv("XDG_RUNTIME_DIR") {
-    (R.error, why) -> { println("inject: " + why) }
-    (R.ok, dir) -> {
+    (R.error, why) then { println("inject: " + why) }
+    (R.ok, dir) then {
       case net.connect_unix(dir + "/wayland-1", 5.0) {
-        (R.error, why) -> { println("inject: connect " + why) }
-        (R.ok, raw) -> {
+        (R.error, why) then { println("inject: connect " + why) }
+        (R.ok, raw) then {
           const c = wayland.conn_of(raw)
           case wayland.handshake(c) {
-            (R.error, why) -> { println("inject: handshake " + why) }
-            (R.ok, globals) -> {
+            (R.error, why) then { println("inject: handshake " + why) }
+            (R.ok, globals) then {
               case globals.find("wl_seat") {
-                (R.error, why) -> { println("inject: " + why) }
-                (R.ok, found) -> {
+                (R.error, why) then { println("inject: " + why) }
+                (R.ok, found) then {
                   case found {
-                    (seat_name, _) -> {
+                    (seat_name, _) then {
                       case wayland.registry_bind(c, seat_name, "wl_seat", 5) {
-                        (R.error, why) -> { println("inject: " + why) }
-                        (R.ok, seat_id) -> {
+                        (R.error, why) then { println("inject: " + why) }
+                        (R.ok, seat_id) then {
                           bind_managers(c, globals, seat_id)
                         }
                       }
@@ -106,21 +106,21 @@ def main() {
 
 def bind_managers(c wayland.Conn, globals wayland.Globals, seat_id Int64) {
   case globals.find("zwp_virtual_keyboard_manager_v1") {
-    (R.error, why) -> { println("inject: " + why) }
-    (R.ok, found) -> {
+    (R.error, why) then { println("inject: " + why) }
+    (R.ok, found) then {
       case found {
-        (vk_name, _) -> {
+        (vk_name, _) then {
           case wayland.registry_bind(c, vk_name, "zwp_virtual_keyboard_manager_v1", 1) {
-            (R.error, why) -> { println("inject: " + why) }
-            (R.ok, vk_mgr) -> {
+            (R.error, why) then { println("inject: " + why) }
+            (R.ok, vk_mgr) then {
               case globals.find("zwlr_virtual_pointer_manager_v1") {
-                (R.error, why) -> { println("inject: " + why) }
-                (R.ok, found) -> {
+                (R.error, why) then { println("inject: " + why) }
+                (R.ok, found) then {
                   case found {
-                    (vp_name, _) -> {
+                    (vp_name, _) then {
                       case wayland.registry_bind(c, vp_name, "zwlr_virtual_pointer_manager_v1", 2) {
-                        (R.error, why) -> { println("inject: " + why) }
-                        (R.ok, vp_mgr) -> {
+                        (R.error, why) then { println("inject: " + why) }
+                        (R.ok, vp_mgr) then {
                           create_devices(c, vk_mgr, vp_mgr, seat_id)
                         }
                       }
@@ -138,12 +138,12 @@ def bind_managers(c wayland.Conn, globals wayland.Globals, seat_id Int64) {
 
 def create_devices(c wayland.Conn, vk_mgr Int64, vp_mgr Int64, seat_id Int64) {
   case wayland.virtual_pointer_create(c, vp_mgr, seat_id) {
-    (R.error, why) -> { println("inject: pointer " + why) }
-    (R.ok, vptr) -> {
+    (R.error, why) then { println("inject: pointer " + why) }
+    (R.ok, vptr) then {
       println("inject: pointer created")
       case wayland.virtual_keyboard_create(c, vk_mgr, seat_id) {
-        (R.error, why) -> { println("inject: keyboard " + why) }
-        (R.ok, vkb) -> {
+        (R.error, why) then { println("inject: keyboard " + why) }
+        (R.ok, vkb) then {
           println("inject: keyboard created")
           send_keymap(c, vkb, vptr)
         }
@@ -155,19 +155,19 @@ def create_devices(c wayland.Conn, vk_mgr Int64, vp_mgr Int64, seat_id Int64) {
 def send_keymap(c wayland.Conn, vkb Int64, vptr Int64) {
   const map_path = "/tmp/emo-inject-map-" + os.getpid().to_string() + ".tmp"
   case os_shm_open(map_path) {
-    (R.error, why) -> { println("inject: map " + why) }
-    (R.ok, map_fd) -> {
+    (R.error, why) then { println("inject: map " + why) }
+    (R.ok, map_fd) then {
       const text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
       case os_ftruncate(map_fd, text.length()) {
-        (R.error, why) -> { println("inject: ftruncate " + why) }
-        (R.ok, _) -> {
+        (R.error, why) then { println("inject: ftruncate " + why) }
+        (R.ok, _) then {
           case os_pwrite(map_fd, text, 0) {
-            (R.error, why) -> { println("inject: pwrite " + why) }
-            (R.ok, _) -> {
+            (R.error, why) then { println("inject: pwrite " + why) }
+            (R.ok, _) then {
               println("inject: map painted")
               case wayland.virtual_keyboard_keymap(c, vkb, map_fd, text.length()) {
-                (R.error, why) -> { println("inject: keymap sent " + text.length().to_string()) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("inject: keymap sent " + text.length().to_string()) }
+                (R.ok, _) then {
                   // The pointer onto the dock's first tile, press and
                   // release; Enter launches the counter's window (the
                   // compositor's focus follows it); the key `a` drives

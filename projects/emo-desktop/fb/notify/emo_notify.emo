@@ -213,8 +213,8 @@ class Center {
   // raise).
   def take() Void {
     case self.provider.take() {
-      (R.error, _) -> {}
-      (R.ok, n) -> {
+      (R.error, _) then {}
+      (R.ok, n) then {
         self.remember(n)
         if self.dnd.read() == false {
           self.live.replace(n)

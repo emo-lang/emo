@@ -4764,7 +4764,7 @@ def notify_supervisor(boss Pid) Void {
   boss <- inst
   while true {
     receive {
-      w -> {
+      w then {
         if op_of(w) == notice_op {
           if caller_of(w) == pid_num(inst) {
             notify.notify_abandon()

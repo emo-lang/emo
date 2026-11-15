@@ -257,7 +257,7 @@ def notify_service(boss Pid) Void {
       notify_serve(block, w)
     } else {
       receive {
-        x -> {
+        x then {
           notify_serve(block, x)
         }
       }

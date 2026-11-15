@@ -51,11 +51,11 @@ def hex_line(data Bytes) String {
 
 def send_raw(conn TcpConn, m wayland.Message) {
   case m.finish() {
-    (bytes, has_fd, fd) -> {
+    (bytes, has_fd, fd) then {
       if has_fd {
         case net_sendmsg_fd(conn, bytes.to_string(), fd) {
-          (R.error, why) -> { println("mock: fd send " + why) }
-          (R.ok, _) -> { }
+          (R.error, why) then { println("mock: fd send " + why) }
+          (R.ok, _) then { }
         }
       } else {
         conn.write(bytes.to_string())
@@ -67,19 +67,19 @@ def send_raw(conn TcpConn, m wayland.Message) {
 // The mock: three requests asserted, the canned stream out.
 def mock(listener TcpListener, pool_path String) {
   case listener.accept() {
-    (R.error, why) -> { println("mock: accept failed " + why) }
-    (R.ok, conn) -> {
+    (R.error, why) then { println("mock: accept failed " + why) }
+    (R.ok, conn) then {
       const side = wayland.Side.new(conn)
 
       // The handshake: get_registry (new_id 2), sync (callback 3);
       // the advert names wl_seat at v5, the done closes the exchange.
       case wayland.next_event(side) {
-        (R.error, why) -> { println("mock: " + why) }
-        (R.ok, ev) -> {
+        (R.error, why) then { println("mock: " + why) }
+        (R.ok, ev) then {
           const expect = wayland.Message.new(1, 1)
           expect.u32(2)
           case expect.finish() {
-            (bytes, has_fd, fd) -> {
+            (bytes, has_fd, fd) then {
               if ev.oid != 1 || ev.opcode != 1 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
                 raise Exception.new(message: "mock: get_registry off the wire")
               }
@@ -88,12 +88,12 @@ def mock(listener TcpListener, pool_path String) {
         }
       }
       case wayland.next_event(side) {
-        (R.error, why) -> { println("mock: " + why) }
-        (R.ok, ev) -> {
+        (R.error, why) then { println("mock: " + why) }
+        (R.ok, ev) then {
           const expect = wayland.Message.new(1, 0)
           expect.u32(3)
           case expect.finish() {
-            (bytes, has_fd, fd) -> {
+            (bytes, has_fd, fd) then {
               if ev.oid != 1 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
                 raise Exception.new(message: "mock: sync off the wire")
               }
@@ -112,15 +112,15 @@ def mock(listener TcpListener, pool_path String) {
 
       // bind(name="wl_seat", v5, new_id=4) on the registry 2.
       case wayland.next_event(side) {
-        (R.error, why) -> { println("mock: " + why) }
-        (R.ok, ev) -> {
+        (R.error, why) then { println("mock: " + why) }
+        (R.ok, ev) then {
           const expect = wayland.Message.new(2, 0)
           expect.u32(1)
           expect.text("wl_seat")
           expect.u32(5)
           expect.u32(4)
           case expect.finish() {
-            (bytes, has_fd, fd) -> {
+            (bytes, has_fd, fd) then {
               if ev.oid != 2 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
                 println("mock: bind mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
                 raise Exception.new(message: "mock: seat bind off the wire")
@@ -132,12 +132,12 @@ def mock(listener TcpListener, pool_path String) {
 
       // get_pointer on the seat 4, new_id 5.
       case wayland.next_event(side) {
-        (R.error, why) -> { println("mock: " + why) }
-        (R.ok, ev) -> {
+        (R.error, why) then { println("mock: " + why) }
+        (R.ok, ev) then {
           const expect = wayland.Message.new(4, 0)
           expect.u32(5)
           case expect.finish() {
-            (bytes, has_fd, fd) -> {
+            (bytes, has_fd, fd) then {
               if ev.oid != 4 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
                 println("mock: gp mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
                 raise Exception.new(message: "mock: get_pointer off the wire")
@@ -149,12 +149,12 @@ def mock(listener TcpListener, pool_path String) {
 
       // get_keyboard on the seat 4, new_id 6.
       case wayland.next_event(side) {
-        (R.error, why) -> { println("mock: " + why) }
-        (R.ok, ev) -> {
+        (R.error, why) then { println("mock: " + why) }
+        (R.ok, ev) then {
           const expect = wayland.Message.new(4, 1)
           expect.u32(6)
           case expect.finish() {
-            (bytes, has_fd, fd) -> {
+            (bytes, has_fd, fd) then {
               if ev.oid != 4 || ev.opcode != 1 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
                 println("mock: gk mismatch oid=" + ev.oid.to_string() + " op=" + ev.opcode.to_string() + " got " + hex_line(ev.body))
                 raise Exception.new(message: "mock: get_keyboard off the wire")
@@ -188,15 +188,15 @@ def mock(listener TcpListener, pool_path String) {
           // through the shm tier — both symbol spellings the compiled
           // keymaps wear, the shift riding the modifiers beats.
           case os_shm_open(pool_path) {
-            (R.error, why) -> { println("mock: pool " + why) }
-            (R.ok, map_fd) -> {
+            (R.error, why) then { println("mock: pool " + why) }
+            (R.ok, map_fd) then {
               const text = "xkb_keymap {\n  xkb_keycodes {\n    <AD01> = 32;\n    <LCTL> = 37;\n    <LEFT> = 113;\n    <RGHT> = 114;\n    <RTRN> = 36;\n  };\n  xkb_symbols {\n    key <AD01> { [ q, Q ] };\n    key <LCTL> { symbols[Group1] = [ Control_L, Control_L ] };\n    key <LEFT> { [ Left ] };\n    key <RGHT> { [ Right ] };\n    key <RTRN> { [ Return ] };\n  };\n};\n"
               case os_ftruncate(map_fd, text.length()) {
-                (R.error, why) -> { println("mock: ftruncate " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("mock: ftruncate " + why) }
+                (R.ok, _) then {
                   case os_pwrite(map_fd, text, 0) {
-                    (R.error, why) -> { println("mock: pwrite " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("mock: pwrite " + why) }
+                    (R.ok, _) then {
                       const keymap = wayland.Message.new(6, 0)
                       keymap.u32(1)
                       keymap.fd(map_fd)
@@ -275,23 +275,23 @@ def mock(listener TcpListener, pool_path String) {
 def client_body(c wayland.Conn, sock String) {
   println("client: connected")
   case wayland.handshake(c) {
-    (R.error, why) -> { println("client: handshake " + why) }
-    (R.ok, globals) -> {
+    (R.error, why) then { println("client: handshake " + why) }
+    (R.ok, globals) then {
       println("client: globals " + globals.length().to_string())
       case globals.find("wl_seat") {
-        (R.error, why) -> { println("client: " + why) }
-        (R.ok, found) -> {
+        (R.error, why) then { println("client: " + why) }
+        (R.ok, found) then {
           case found {
-            (seat_name, seat_version) -> {
+            (seat_name, seat_version) then {
               case wayland.registry_bind(c, seat_name, "wl_seat", 5) {
-                (R.error, why) -> { println("client: " + why) }
-                (R.ok, seat_id) -> {
+                (R.error, why) then { println("client: " + why) }
+                (R.ok, seat_id) then {
                   case wayland.seat_get_pointer(c, seat_id) {
-                    (R.error, why) -> { println("client: " + why) }
-                    (R.ok, pointer_id) -> {
+                    (R.error, why) then { println("client: " + why) }
+                    (R.ok, pointer_id) then {
                       case wayland.seat_get_keyboard(c, seat_id) {
-                        (R.error, why) -> { println("client: " + why) }
-                        (R.ok, keyboard_id) -> {
+                        (R.error, why) then { println("client: " + why) }
+                        (R.ok, keyboard_id) then {
                           input_loop(c, seat_id, pointer_id, keyboard_id, Box.new(wayland.empty_keymap()), Box.new(false))
                         }
                       }
@@ -314,8 +314,8 @@ def client_body(c wayland.Conn, sock String) {
 def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64,
                keyboard_id Int64, km Box, shift Box) {
   case wayland.next_event(c.side) {
-    (R.error, why) -> { println("client: " + why) }
-    (R.ok, ev) -> {
+    (R.error, why) then { println("client: " + why) }
+    (R.ok, ev) then {
       if ev.oid == seat_id && ev.opcode == 0 {
         const caps = ev.args.u32()
         var line = "client: capabilities "
@@ -359,11 +359,11 @@ def input_loop(c wayland.Conn, seat_id Int64, pointer_id Int64,
         const fd = ev.args.fd()
         const size = ev.args.u32()
         case os.read(fd, size) {
-          (R.error, why) -> { println("client: keymap read " + why) }
-          (R.ok, body) -> {
+          (R.error, why) then { println("client: keymap read " + why) }
+          (R.ok, body) then {
             case wayland.parse_keymap(body) {
-              (R.error, why) -> { println("client: keymap parse " + why) }
-              (R.ok, parsed) -> {
+              (R.error, why) then { println("client: keymap parse " + why) }
+              (R.ok, parsed) then {
                 km.replace(parsed)
                 println("client: keymap parsed " + parsed.code_count().to_string() + " codes " + parsed.key_count().to_string() + " keys")
               }
@@ -413,12 +413,12 @@ def main() {
   os.unlink(sock)
 
   case net.listen_unix(sock) {
-    (R.error, why) -> { println("listen failed: " + why) }
-    (R.ok, listener) -> {
+    (R.error, why) then { println("listen failed: " + why) }
+    (R.ok, listener) then {
       do mock(listener, pool_path)
       case net.connect_unix(sock, 5.0) {
-        (R.error, why) -> { println("connect failed: " + why) }
-        (R.ok, raw) -> {
+        (R.error, why) then { println("connect failed: " + why) }
+        (R.ok, raw) then {
           client_body(wayland.conn_of(raw), sock)
         }
       }

@@ -56,14 +56,14 @@ def handle_event(c wayland.Conn, ev wayland.Event, surface_id Int64, xdg_surface
   }
   if ev.oid == wm_base_id && ev.opcode == 0 {
     case wayland.wm_base_pong(c, wm_base_id, ev.args.u32()) {
-      (R.error, why) -> { println("paint: pong " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("paint: pong " + why) }
+      (R.ok, _) then { }
     }
   }
   if ev.oid == xdg_surface_id && ev.opcode == 0 {
     case wayland.surface_ack_configure(c, xdg_surface_id, ev.args.u32()) {
-      (R.error, why) -> { println("paint: ack " + why) }
-      (R.ok, _) -> { }
+      (R.error, why) then { println("paint: ack " + why) }
+      (R.ok, _) then { }
     }
   }
   if ev.oid == pointer_id && ev.opcode == 0 {
@@ -99,8 +99,8 @@ def handle_event(c wayland.Conn, ev wayland.Event, surface_id Int64, xdg_surface
     const fd = ev.args.fd()
     const size = ev.args.u32()
     case os.read(fd, size) {
-      (R.error, why) -> { println("input: keymap read " + why) }
-      (R.ok, body) -> {
+      (R.error, why) then { println("input: keymap read " + why) }
+      (R.ok, body) then {
         const head = slice2(body.to_bytes(), 0, 10)
         const want = "xkb_keymap".to_bytes()
         if bytes_equal2(head, want) {
@@ -128,8 +128,8 @@ def handle_event(c wayland.Conn, ev wayland.Event, surface_id Int64, xdg_surface
 // The read until the compositor lets go.
 def event_loop(c wayland.Conn, surface_id Int64, xdg_surface_id Int64, toplevel_id Int64, wm_base_id Int64, pointer_id Int64, keyboard_id Int64) {
   case wayland.next_event(c.side) {
-    (R.error, why) -> { println("paint: " + why) }
-    (R.ok, ev) -> {
+    (R.error, why) then { println("paint: " + why) }
+    (R.ok, ev) then {
       if handle_event(c, ev, surface_id, xdg_surface_id, wm_base_id, pointer_id, keyboard_id) {
         event_loop(c, surface_id, xdg_surface_id, toplevel_id, wm_base_id, pointer_id, keyboard_id)
       }
@@ -142,11 +142,11 @@ def event_loop(c wayland.Conn, surface_id Int64, xdg_surface_id Int64, toplevel_
 // variable is the connect failure it becomes.
 def socket_path() (R, String) {
   case os.getenv("XDG_RUNTIME_DIR") {
-    (R.error, why) -> { return (R.error, "paint: " + why) }
-    (R.ok, dir) -> {
+    (R.error, why) then { return (R.error, "paint: " + why) }
+    (R.ok, dir) then {
       case os.getenv("WAYLAND_DISPLAY") {
-        (R.error, _) -> { return (R.ok, dir + "/wayland-0") }
-        (R.ok, display) -> { return (R.ok, dir + "/" + display) }
+        (R.error, _) then { return (R.ok, dir + "/wayland-0") }
+        (R.ok, display) then { return (R.ok, dir + "/" + display) }
       }
     }
   }
@@ -154,40 +154,40 @@ def socket_path() (R, String) {
 
 def main() {
   case socket_path() {
-    (R.error, why) -> { println(why) }
-    (R.ok, path) -> {
+    (R.error, why) then { println(why) }
+    (R.ok, path) then {
       case net.connect_unix(path, 5.0) {
-        (R.error, why) -> { println("paint: connect " + why) }
-        (R.ok, raw) -> {
+        (R.error, why) then { println("paint: connect " + why) }
+        (R.ok, raw) then {
           const c = wayland.conn_of(raw)
       case wayland.handshake(c) {
-        (R.error, why) -> { println("paint: handshake " + why) }
-        (R.ok, globals) -> {
+        (R.error, why) then { println("paint: handshake " + why) }
+        (R.ok, globals) then {
           case globals.find("wl_compositor") {
-            (R.error, why) -> { println("paint: " + why) }
-            (R.ok, found) -> {
+            (R.error, why) then { println("paint: " + why) }
+            (R.ok, found) then {
               case found {
-                (comp_name, comp_version) -> {
+                (comp_name, comp_version) then {
                   case wayland.registry_bind(c, comp_name, "wl_compositor", comp_version) {
-                    (R.error, why) -> { println("paint: " + why) }
-                    (R.ok, comp_id) -> {
+                    (R.error, why) then { println("paint: " + why) }
+                    (R.ok, comp_id) then {
                       case globals.find("wl_shm") {
-                        (R.error, why) -> { println("paint: " + why) }
-                        (R.ok, found) -> {
+                        (R.error, why) then { println("paint: " + why) }
+                        (R.ok, found) then {
                           case found {
-                            (shm_name, shm_version) -> {
+                            (shm_name, shm_version) then {
                               case wayland.registry_bind(c, shm_name, "wl_shm", shm_version) {
-                                (R.error, why) -> { println("paint: " + why) }
-                                (R.ok, shm_id) -> {
+                                (R.error, why) then { println("paint: " + why) }
+                                (R.ok, shm_id) then {
                                   println("paint: compositor+shm bound")
                                   case globals.find("xdg_wm_base") {
-                                    (R.error, why) -> { println("paint: " + why) }
-                                    (R.ok, found) -> {
+                                    (R.error, why) then { println("paint: " + why) }
+                                    (R.ok, found) then {
                                       case found {
-                                        (wm_name, wm_version) -> {
+                                        (wm_name, wm_version) then {
                                           case wayland.registry_bind(c, wm_name, "xdg_wm_base", wm_version) {
-                                            (R.error, why) -> { println("paint: " + why) }
-                                            (R.ok, wm_id) -> {
+                                            (R.error, why) then { println("paint: " + why) }
+                                            (R.ok, wm_id) then {
                                               println("paint: wm_base bound")
                                               window(c, comp_id, shm_id, wm_id, globals)
                                             }
@@ -218,31 +218,31 @@ def main() {
 
 def window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64, globals wayland.Globals) {
   case wayland.compositor_create_surface(c, comp_id) {
-    (R.error, why) -> { println("paint: surface " + why) }
-    (R.ok, surface_id) -> {
+    (R.error, why) then { println("paint: surface " + why) }
+    (R.ok, surface_id) then {
       surface_slot.replace(surface_id)
       case wayland.wm_base_get_xdg_surface(c, wm_id, surface_id) {
-        (R.error, why) -> { println("paint: xdg surface " + why) }
-        (R.ok, xdg_surface_id) -> {
+        (R.error, why) then { println("paint: xdg surface " + why) }
+        (R.ok, xdg_surface_id) then {
           xdg_surface_slot.replace(xdg_surface_id)
           case wayland.xdg_surface_get_toplevel(c, xdg_surface_id) {
-            (R.error, why) -> { println("paint: toplevel " + why) }
-            (R.ok, toplevel_id) -> {
+            (R.error, why) then { println("paint: toplevel " + why) }
+            (R.ok, toplevel_id) then {
               toplevel_slot.replace(toplevel_id)
               case wayland.toplevel_set_title(c, toplevel_id, "emo paint") {
-                (R.error, why) -> { println("paint: title " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("paint: title " + why) }
+                (R.ok, _) then {
                   case wayland.surface_commit(c, surface_id) {
-                    (R.error, why) -> { println("paint: first commit " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("paint: first commit " + why) }
+                    (R.ok, _) then {
                       println("paint: first commit sent")
                       case wayland.wait_configure(c, xdg_surface_id, toplevel_id, wm_id, shm_id, surface_id, pointer_slot.read(), keyboard_slot.read()) {
-                        (R.error, why) -> { println("paint: configure " + why) }
-                        (R.ok, serial) -> {
+                        (R.error, why) then { println("paint: configure " + why) }
+                        (R.ok, serial) then {
                           println("paint: configure serial " + serial.to_string())
                           case wayland.surface_ack_configure(c, xdg_surface_id, serial) {
-                            (R.error, why) -> { println("paint: ack " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("paint: ack " + why) }
+                            (R.ok, _) then {
                               frame(c, surface_id, shm_id, xdg_surface_id, toplevel_id, wm_id, globals)
                             }
                           }
@@ -264,27 +264,27 @@ def frame(c wayland.Conn, surface_id Int64, shm_id Int64, xdg_surface_id Int64, 
   const stride = w * 4
   const pool_path = "/tmp/emo-paint-" + os.getpid().to_string() + ".tmp"
   case os_shm_open(pool_path) {
-    (R.error, why) -> { println("paint: pool " + why) }
-    (R.ok, pool_fd) -> {
+    (R.error, why) then { println("paint: pool " + why) }
+    (R.ok, pool_fd) then {
       case os_ftruncate(pool_fd, stride * h) {
-        (R.error, why) -> { println("paint: ftruncate " + why) }
-        (R.ok, _) -> {
+        (R.error, why) then { println("paint: ftruncate " + why) }
+        (R.ok, _) then {
           paint_rows(pool_fd)
           case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
-            (R.error, why) -> { println("paint: create_pool " + why) }
-            (R.ok, pool_id) -> {
+            (R.error, why) then { println("paint: create_pool " + why) }
+            (R.ok, pool_id) then {
               case wayland.pool_create_buffer(c, pool_id, 0, w, h, stride, wayland.shm_format_argb8888()) {
-                (R.error, why) -> { println("paint: create_buffer " + why) }
-                (R.ok, buffer_id) -> {
+                (R.error, why) then { println("paint: create_buffer " + why) }
+                (R.ok, buffer_id) then {
                   case wayland.surface_attach(c, surface_id, buffer_id, 0, 0) {
-                    (R.error, why) -> { println("paint: attach " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("paint: attach " + why) }
+                    (R.ok, _) then {
                       case wayland.surface_damage(c, surface_id, 0, 0, w, h) {
-                        (R.error, why) -> { println("paint: damage " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { println("paint: damage " + why) }
+                        (R.ok, _) then {
                           case wayland.surface_commit(c, surface_id) {
-                            (R.error, why) -> { println("paint: commit " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("paint: commit " + why) }
+                            (R.ok, _) then {
                               println("paint: commit ok " + w.to_string() + "x" + h.to_string())
                               inject(c, globals, surface_id)
                               event_loop(c, surface_id, xdg_surface_id, toplevel_id, wm_id, pointer_of(c), keyboard_of(c))
@@ -313,13 +313,13 @@ def paint_rows(pool_fd Int64) {
   while r < h {
     if r < h / 2 {
       case os_pwrite(pool_fd, red, r * (w * 4)) {
-        (R.error, why) -> { println("paint: pwrite " + why) }
-        (R.ok, _) -> { }
+        (R.error, why) then { println("paint: pwrite " + why) }
+        (R.ok, _) then { }
       }
     } else {
       case os_pwrite(pool_fd, blue, r * (w * 4)) {
-        (R.error, why) -> { println("paint: pwrite " + why) }
-        (R.ok, _) -> { }
+        (R.error, why) then { println("paint: pwrite " + why) }
+        (R.ok, _) then { }
       }
     }
     r = r + 1
@@ -370,13 +370,13 @@ def slice2(src Bytes, off Int64, n Int64) Bytes {
 // advert is the compositor's named error.
 def inject(c wayland.Conn, globals wayland.Globals, surface_id Int64) {
   case globals.find("wl_seat") {
-    (R.error, why) -> { println("inject: " + why) }
-    (R.ok, found) -> {
+    (R.error, why) then { println("inject: " + why) }
+    (R.ok, found) then {
       case found {
-        (seat_name, _) -> {
+        (seat_name, _) then {
           case wayland.registry_bind(c, seat_name, "wl_seat", 5) {
-            (R.error, why) -> { println("inject: " + why) }
-            (R.ok, seat_id) -> {
+            (R.error, why) then { println("inject: " + why) }
+            (R.ok, seat_id) then {
               println("inject: seat bound")
               inject_devices(c, globals, seat_id, surface_id)
             }
@@ -389,22 +389,22 @@ def inject(c wayland.Conn, globals wayland.Globals, surface_id Int64) {
 
 def inject_devices(c wayland.Conn, globals wayland.Globals, seat_id Int64, surface_id Int64) {
   case globals.find("zwlr_virtual_pointer_manager_v1") {
-    (R.error, why) -> { println("inject: " + why) }
-    (R.ok, found) -> {
+    (R.error, why) then { println("inject: " + why) }
+    (R.ok, found) then {
       case found {
-        (vp_name, _) -> {
+        (vp_name, _) then {
           case wayland.registry_bind(c, vp_name, "zwlr_virtual_pointer_manager_v1", 2) {
-            (R.error, why) -> { println("inject: " + why) }
-            (R.ok, vp_mgr) -> {
+            (R.error, why) then { println("inject: " + why) }
+            (R.ok, vp_mgr) then {
               println("inject: vp mgr bound")
               case globals.find("zwp_virtual_keyboard_manager_v1") {
-                (R.error, why) -> { println("inject: " + why) }
-                (R.ok, found) -> {
+                (R.error, why) then { println("inject: " + why) }
+                (R.ok, found) then {
                   case found {
-                    (vk_name, _) -> {
+                    (vk_name, _) then {
                       case wayland.registry_bind(c, vk_name, "zwp_virtual_keyboard_manager_v1", 1) {
-                        (R.error, why) -> { println("inject: " + why) }
-                        (R.ok, vk_mgr) -> {
+                        (R.error, why) then { println("inject: " + why) }
+                        (R.ok, vk_mgr) then {
                           println("inject: vk mgr bound")
                           inject_create(c, vp_mgr, vk_mgr, seat_id, surface_id)
                         }
@@ -423,29 +423,29 @@ def inject_devices(c wayland.Conn, globals wayland.Globals, seat_id Int64, surfa
 
 def inject_create(c wayland.Conn, vp_mgr Int64, vk_mgr Int64, seat_id Int64, surface_id Int64) {
   case wayland.virtual_pointer_create(c, vp_mgr, seat_id) {
-    (R.error, why) -> { println("inject: pointer " + why) }
-    (R.ok, vptr) -> {
+    (R.error, why) then { println("inject: pointer " + why) }
+    (R.ok, vptr) then {
       println("inject: vptr created")
       case wayland.virtual_keyboard_create(c, vk_mgr, seat_id) {
-        (R.error, why) -> { println("inject: keyboard " + why) }
-        (R.ok, vkb) -> {
+        (R.error, why) then { println("inject: keyboard " + why) }
+        (R.ok, vkb) then {
           println("inject: vkb created")
           // The map: a minimal xkb_v1 keymap, painted through the
           // shm tier, the fd riding the sendmsg tier.
           const map_path = "/tmp/emo-paint-map-" + os.getpid().to_string() + ".tmp"
           case os_shm_open(map_path) {
-            (R.error, why) -> { println("inject: map " + why) }
-            (R.ok, map_fd) -> {
+            (R.error, why) then { println("inject: map " + why) }
+            (R.ok, map_fd) then {
               const keymap_text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
               case os_ftruncate(map_fd, keymap_text.length()) {
-                (R.error, why) -> { println("inject: ftruncate " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("inject: ftruncate " + why) }
+                (R.ok, _) then {
                   case os_pwrite(map_fd, keymap_text, 0) {
-                    (R.error, why) -> { println("inject: pwrite " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("inject: pwrite " + why) }
+                    (R.ok, _) then {
                       case wayland.virtual_keyboard_keymap(c, vkb, map_fd, keymap_text.length()) {
-                        (R.error, why) -> { println("inject: keymap " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { println("inject: keymap " + why) }
+                        (R.ok, _) then {
                           println("inject: keymap sent")
                           vptr_slot.replace(vptr)
                           vkb_slot.replace(vkb)
@@ -455,28 +455,28 @@ def inject_create(c wayland.Conn, vp_mgr Int64, vk_mgr Int64, seat_id Int64, sur
                           // (or any pointer event beside it) is what
                           // fires the beats.
                           case wayland.virtual_pointer_motion(c, vptr, 5, 1, 1) {
-                            (R.error, why) -> { println("inject: wake " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("inject: wake " + why) }
+                            (R.ok, _) then {
                               case wayland.virtual_pointer_frame(c, vptr) {
-                                (R.error, why) -> { println("inject: wake frame " + why) }
-                                (R.ok, _) -> { }
+                                (R.error, why) then { println("inject: wake frame " + why) }
+                                (R.ok, _) then { }
                               }
                             }
                           }
                           // The devices born, the seat now speaks
                           // its capabilities — take the grants.
                           case skip_until_capabilities(c, seat_id) {
-                            (R.error, why) -> { println("inject: caps " + why) }
-                            (R.ok, caps) -> {
+                            (R.error, why) then { println("inject: caps " + why) }
+                            (R.ok, caps) then {
                               println("inject: capabilities " + caps.to_string())
                               case wayland.seat_get_pointer(c, seat_id) {
-                                (R.error, why) -> { println("inject: " + why) }
-                                (R.ok, pointer_id) -> {
+                                (R.error, why) then { println("inject: " + why) }
+                                (R.ok, pointer_id) then {
                                   pointer_slot.replace(pointer_id)
                                   println("inject: pointer granted")
                                   case wayland.seat_get_keyboard(c, seat_id) {
-                                    (R.error, why) -> { println("inject: " + why) }
-                                    (R.ok, keyboard_id) -> {
+                                    (R.error, why) then { println("inject: " + why) }
+                                    (R.ok, keyboard_id) then {
                                       keyboard_slot.replace(keyboard_id)
                                       println("inject: keyboard granted")
                                     }
@@ -504,35 +504,35 @@ def inject_create(c wayland.Conn, vp_mgr Int64, vk_mgr Int64, seat_id Int64, sur
 // keycodes).
 def inject_beats(c wayland.Conn, vptr Int64, vkb Int64, surface_id Int64) {
   case wayland.virtual_pointer_motion_absolute(c, vptr, 10, 200, 100, 1280, 720) {
-    (R.error, why) -> { println("inject: motion " + why) }
-    (R.ok, _) -> {
+    (R.error, why) then { println("inject: motion " + why) }
+    (R.ok, _) then {
       case wayland.virtual_pointer_frame(c, vptr) {
-        (R.error, why) -> { println("inject: frame " + why) }
-        (R.ok, _) -> {
+        (R.error, why) then { println("inject: frame " + why) }
+        (R.ok, _) then {
           case wayland.virtual_pointer_motion_absolute(c, vptr, 20, 640, 360, 1280, 720) {
-            (R.error, why) -> { println("inject: motion " + why) }
-            (R.ok, _) -> {
+            (R.error, why) then { println("inject: motion " + why) }
+            (R.ok, _) then {
               case wayland.virtual_pointer_frame(c, vptr) {
-                (R.error, why) -> { println("inject: frame " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("inject: frame " + why) }
+                (R.ok, _) then {
                   case wayland.virtual_pointer_button(c, vptr, 30, 272, 1) {
-                    (R.error, why) -> { println("inject: press " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("inject: press " + why) }
+                    (R.ok, _) then {
                       case wayland.virtual_pointer_frame(c, vptr) {
-                        (R.error, why) -> { println("inject: frame " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { println("inject: frame " + why) }
+                        (R.ok, _) then {
                           case wayland.virtual_pointer_button(c, vptr, 40, 272, 0) {
-                            (R.error, why) -> { println("inject: release " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("inject: release " + why) }
+                            (R.ok, _) then {
                               case wayland.virtual_pointer_frame(c, vptr) {
-                                (R.error, why) -> { println("inject: frame " + why) }
-                                (R.ok, _) -> {
+                                (R.error, why) then { println("inject: frame " + why) }
+                                (R.ok, _) then {
                                   case wayland.virtual_keyboard_key(c, vkb, 50, 30, 1) {
-                                    (R.error, why) -> { println("inject: keydown " + why) }
-                                    (R.ok, _) -> {
+                                    (R.error, why) then { println("inject: keydown " + why) }
+                                    (R.ok, _) then {
                                       case wayland.virtual_keyboard_key(c, vkb, 60, 30, 0) {
-                                        (R.error, why) -> { println("inject: keyup " + why) }
-                                        (R.ok, _) -> {
+                                        (R.error, why) then { println("inject: keyup " + why) }
+                                        (R.ok, _) then {
                                           println("inject: beats out")
                                         }
                                       }
@@ -563,8 +563,8 @@ def inject_beats(c wayland.Conn, vptr Int64, vkb Int64, surface_id Int64) {
 // the stream stays aligned for the event loop.
 def skip_until_capabilities(c wayland.Conn, seat_id Int64) (R, Int64) {
   case wayland.next_event(c.side) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ev) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ev) then {
       if ev.oid == c.display_id && ev.opcode == 0 {
         const obj = ev.args.u32()
         const message = ev.args.text()
@@ -693,29 +693,29 @@ def skip_until_capabilities(c wayland.Conn, seat_id Int64) (R, Int64) {
 // button, and the key fired from here land where the enter said.
 def fire_beats(c wayland.Conn, vptr Int64, vkb Int64) {
   case wayland.virtual_pointer_motion(c, vptr, 20, 30, 10) {
-    (R.error, why) -> { println("inject: motion " + why) }
-    (R.ok, _) -> {
+    (R.error, why) then { println("inject: motion " + why) }
+    (R.ok, _) then {
       case wayland.virtual_pointer_frame(c, vptr) {
-        (R.error, why) -> { println("inject: frame " + why) }
-        (R.ok, _) -> {
+        (R.error, why) then { println("inject: frame " + why) }
+        (R.ok, _) then {
           case wayland.virtual_pointer_button(c, vptr, 30, 272, 1) {
-            (R.error, why) -> { println("inject: press " + why) }
-            (R.ok, _) -> {
+            (R.error, why) then { println("inject: press " + why) }
+            (R.ok, _) then {
               case wayland.virtual_pointer_frame(c, vptr) {
-                (R.error, why) -> { println("inject: frame " + why) }
-                (R.ok, _) -> {
+                (R.error, why) then { println("inject: frame " + why) }
+                (R.ok, _) then {
                   case wayland.virtual_pointer_button(c, vptr, 40, 272, 0) {
-                    (R.error, why) -> { println("inject: release " + why) }
-                    (R.ok, _) -> {
+                    (R.error, why) then { println("inject: release " + why) }
+                    (R.ok, _) then {
                       case wayland.virtual_pointer_frame(c, vptr) {
-                        (R.error, why) -> { println("inject: frame " + why) }
-                        (R.ok, _) -> {
+                        (R.error, why) then { println("inject: frame " + why) }
+                        (R.ok, _) then {
                           case wayland.virtual_keyboard_key(c, vkb, 50, 30, 1) {
-                            (R.error, why) -> { println("inject: keydown " + why) }
-                            (R.ok, _) -> {
+                            (R.error, why) then { println("inject: keydown " + why) }
+                            (R.ok, _) then {
                               case wayland.virtual_keyboard_key(c, vkb, 60, 30, 0) {
-                                (R.error, why) -> { println("inject: keyup " + why) }
-                                (R.ok, _) -> {
+                                (R.error, why) then { println("inject: keyup " + why) }
+                                (R.ok, _) then {
                                   println("inject: beats out")
                                 }
                               }
