@@ -594,7 +594,11 @@ def main() {
 def paint_desktop(eye LiveEye, f ui_fb.raster.Strike, w Int64, h Int64,
                   focused Int64, launched Int64) {
   emo_desktop.wallpaper(eye, w, h)
-  emo_desktop.paint_header(eye, f, w, w, h, launched)
+  // the clock and the pager read what the caller hands them (the
+  // package's own rule, M26/M27) — the harness has neither verb, so a
+  // fixed epoch and the quiet word stand in, the transcript's digests
+  // the fixed bytes' evidence
+  emo_desktop.paint_header(eye, f, w, w, h, launched, 1774775100, 0)
   const dock = DockSurface.new(base: eye, dy: h - 40)
   emo_desktop.paint(dock, f, w, 40, 0, ["counter", "files", "editor"], focused, launched)
   eye.present()

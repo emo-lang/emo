@@ -877,6 +877,17 @@ def desk_at() Int64 {
   return p
 }
 
+// The pager's word on the wire (emo-desktop M27, A27.2): the packed
+// state every bar paint drew from — the active desk in the low byte,
+// the occupancy above — the `clock <epoch>` line's twin, the metal
+// golden's provenance.
+def desk_line(word Int64) Void {
+  var p = desk_at()
+  p = num_at(word, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 def desk_range_line(mx Int64, my Int64) Void {
   var p = desk_at()
   p = byte_at(p, 114) // r
@@ -3126,11 +3137,14 @@ def desk_count_text(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, right
 }
 
 // The header bar whole: the material's rows, the wordmark one pad in,
-// the wall clock at the right edge and the running count before it —
-// the package's `paint_header` mirrored, every call the carve's own.
-// The clock is `now`, the seconds the caller read (the time verb), the
-// bar's second live fact.
-def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, running Int64, now Int64) Void {
+// the pager's four cells after the bell, the wall clock at the right
+// edge and the running count before it — the package's `paint_header`
+// mirrored, every call the carve's own. The clock is `now`, the
+// seconds the caller read (the time verb); the desks are the pager's
+// word, the query verb's packing (emo-desktop M27, A27.2) — the active
+// desk's cell the accent's ground, a live desk's the inked number, an
+// empty desk's the dim one.
+def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, running Int64, now Int64, desks Int64) Void {
   var y = 0
   while y < emo_desktop.header_height() {
     desk_chrome_row(base, mw, y, y, mh, emo_desktop.header_scrim())
@@ -3141,6 +3155,36 @@ def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, runnin
   const cw = ui_fb.text_width(f, emo_desktop.clock_text(0))
   desk_text(f, base, mw, emo_desktop.header_height(), emo_desktop.clock_text(now), mw - emo_desktop.icon_margin() - cw, ty, emo_desktop.header_ink())
   desk_count_text(f, base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin() - cw - 16, ty, running, emo_desktop.header_ink())
+  const active = desks & 255
+  const mask = (desks >> 8) & 15
+  var i = 0
+  while i < emo_desktop.pager_count() {
+    const pc = emo_desktop.pager_cell(f, i)
+    const px = pc >> 32
+    const py = pc & 4294967295
+    var ground = 0
+    var ink_color = emo_desktop.pager_empty_ink()
+    if i == active {
+      ground = emo_desktop.pager_active_ground()
+      ink_color = emo_desktop.pager_active_ink()
+    } else {
+      if (mask >> i) & 1 == 1 {
+        ground = emo_desktop.pager_occupied_ground()
+        ink_color = emo_desktop.pager_occupied_ink()
+      }
+    }
+    const dims = ui_fb_winbuf.pack(mw, emo_desktop.header_height())
+    if ground != 0 {
+      ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(px, py),
+        ui_fb_winbuf.pack(emo_desktop.pager_size(), emo_desktop.pager_size()),
+        4, ground, ground)
+    }
+    const ns = "${i + 1}"
+    desk_text(f, base, mw, emo_desktop.header_height(), ns,
+      px + (emo_desktop.pager_size() - ui_fb.text_width(f, ns)) / 2,
+      py + (emo_desktop.pager_size() - f.line_height()) / 2, ink_color)
+    i = i + 1
+  }
 }
 
 // The dock's strip whole: the material's rows, the shelf's shadow and
@@ -3329,10 +3373,20 @@ def desk_chrome(f ui_fb.raster.Strike) Void {
     (R.error, _) -> { mark() }
     (R.ok, t) -> { now = t }
   }
+  // The desks are the bar's third live fact (emo-desktop M27, A27.2):
+  // the query read per paint, the clock's own habit — the word the
+  // compositor packed, the active desk and the occupancy, and every
+  // paint says the state it drew from.
+  var desks = 0
+  case syscall.desk_workspace() {
+    (R.error, _) -> { mark() }
+    (R.ok, d) -> { desks = d }
+  }
+  desk_line(desks)
   clock_line(now)
   poke64(buf + desk_painted_minute, now / 60)
   const base = peek64(buf + desk_bar_base)
-  desk_bar_paint(f, base, mw, mh, running, now)
+  desk_bar_paint(f, base, mw, mh, running, now, desks)
   notify_bell_paint(f, base, mw)
   frame_line(carve_digest(base, mw, emo_desktop.header_height()))
   case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw, emo_desktop.header_height()) {
@@ -4072,6 +4126,20 @@ def desktop() Void {
                 }
                 if tile == -1 && py >= emo_desktop.header_height() {
                   desk_icon_press(f, emo_desktop.icon_hit(px, py, peek64(buf + desk_view_count), mw, mh))
+                }
+                // The pager's press (emo-desktop M27, A27.2): the cell
+                // names its desk, the switch the show verb's word —
+                // the bar repainted either way, its paint the new
+                // active cell's news on the wire. The cells overlap no
+                // panel and no clock, so the chain's tail is the same
+                // verdict the head would give.
+                const pd = emo_desktop.pager_hit(f, px, py)
+                if pd >= 0 {
+                  case syscall.desk_show(pd) {
+                    (R.error, _) -> { mark() }
+                    (R.ok, _) -> {}
+                  }
+                  desk_chrome(f)
                 }
               }
             }

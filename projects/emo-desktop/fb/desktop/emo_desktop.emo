@@ -398,19 +398,146 @@ def count_text(s ui_fb.Surface, f ui_fb.raster.Strike, right Int64,
   return x
 }
 
+// ---- the pager (emo-desktop M27, A27.2, D18) ----
+//
+// The bar's four desk cells, the workspace switch's own face: a cell
+// per desk right of the bell, the active desk's cell the accent's
+// rounded ground behind its number (the calendar's today-cell
+// precedent), a desk with live windows the inked number on a
+// translucent slate, an empty desk the dimmed number alone. The state
+// is the query word the caller read — the active desk in the low byte,
+// the occupancy mask above it — the bar painting what the machine
+// said, never a desk of its own (D15's rule, the clock's own shape).
+// A press on a cell names the desk it lands on: the hit test the
+// shell's press handler asks before the panels, the answer the
+// switch's word.
+
+def pager_size() Int64 {
+  return 14
+}
+
+def pager_gap() Int64 {
+  return 6
+}
+
+// The first cell's left edge: past the bell (the shell's own 16×16
+// cell at wordmark +12 — the 40 is the bell's span, the shell's wiring
+// the pad names), one pad of air after it. The painters, the hit test
+// and the metal's typed twin all read this one arithmetic.
+def pager_x0(f ui_fb.raster.Strike) Int64 {
+  return 8 + ui_fb.text_width(f, "EmoOS") + 40
+}
+
+def pager_y() Int64 {
+  return (header_height() - pager_size()) / 2
+}
+
+// Cell `i`'s top-left corner, packed x above y — the layout's one
+// address, the package painter and the hit test and the shell's twin
+// sharing it.
+def pager_cell(f ui_fb.raster.Strike, i Int64) Int64 {
+  return ((pager_x0(f) + i * (pager_size() + pager_gap())) << 32) |
+    pager_y()
+}
+
+// The desk a press landed on, or -1: past the cells, above or below
+// the bar, a gap between cells — no pager's business.
+def pager_hit(f ui_fb.raster.Strike, x Int64, y Int64) Int64 {
+  if y < pager_y() || y >= pager_y() + pager_size() {
+    return -1
+  }
+  var i = 0
+  while i < pager_count() {
+    const cell = pager_cell(f, i)
+    const cx = cell >> 32
+    if x >= cx && x < cx + pager_size() {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// The vocabulary's bound: the count the ABI pins (the roles'
+// precedent), the pager's cell count and the mask's width with it.
+def pager_count() Int64 {
+  return 4
+}
+
+// The pager's grades: the active cell's accent ground and its dark
+// number (the calendar's today-cell pair), the occupied cell's
+// translucent slate and the inked number, the empty desk's dimmed
+// number alone.
+def pager_active_ground() Int64 {
+  return 0xFFE86890
+}
+
+def pager_active_ink() Int64 {
+  return 0x20242C
+}
+
+def pager_occupied_ground() Int64 {
+  return 0x8C3A4150
+}
+
+def pager_occupied_ink() Int64 {
+  return 0xF8F8F0
+}
+
+def pager_empty_ink() Int64 {
+  return 0x78B8BCC4
+}
+
+// The four cells onto the bar's surface: the caller's `desks` word
+// decoded — the active desk in the low byte, the occupancy mask above —
+// one rounded ground where the state names one, the number centered in
+// every cell.
+def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
+  const active = desks & 255
+  const mask = (desks >> 8) & 15
+  var i = 0
+  while i < pager_count() {
+    const cell = pager_cell(f, i)
+    const x = cell >> 32
+    const y = cell & 4294967295
+    var ground = 0
+    var ink_color = pager_empty_ink()
+    if i == active {
+      ground = pager_active_ground()
+      ink_color = pager_active_ink()
+    } else {
+      if (mask >> i) & 1 == 1 {
+        ground = pager_occupied_ground()
+        ink_color = pager_occupied_ink()
+      }
+    }
+    if ground != 0 {
+      s.rounded(x, y, pager_size(), pager_size(), 4, ground, ground)
+    }
+    const ns = "${i + 1}"
+    ui_fb.text(f, ns, x + (pager_size() - ui_fb.text_width(f, ns)) / 2,
+      y + (pager_size() - f.line_height()) / 2, ink_color, s)
+    i = i + 1
+  }
+}
+
 // The header bar onto its own surface, whole from scratch: the
 // wallpaper's formula under the header's scrim, row by row — the bar
 // samples the display's own rows, `mw` and `mh` the mode — then the
-// wordmark one pad in, the wall clock at the right edge and the
-// running count before it. The clock is `now` — the seconds the
-// caller read, never the bar's own (the bar has no clock of its own;
-// the time verb and the caller's wake are its ground, D17) — and the
-// count is the one fact the desktop keeps (its own children's
-// residency; the foreground app's name it does not know, and the bar
-// does not pretend to). The text sits centered in the bar's height,
+// wordmark one pad in, the bell and the pager after it, the wall clock
+// at the right edge and the running count before it. The clock is
+// `now` — the seconds the caller read, never the bar's own (the bar
+// has no clock of its own; the time verb and the caller's wake are its
+// ground, D17) — and the count is the one fact the desktop keeps (its
+// own children's residency; the foreground app's name it does not
+// know, and the bar does not pretend to). The desks are the pager's
+// word — the query verb's own packing, the active desk in the low byte
+// and the occupancy mask above it (D18); the caller read it, the bar
+// does no verb of its own. The text sits centered in the bar's height,
 // the line box's own.
 def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
-                 mw Int64, mh Int64, running Int64, now Int64) Void {
+                 mw Int64, mh Int64, running Int64, now Int64,
+                 desks Int64) Void {
   var y = 0
   while y < header_height() {
     material_row(s, y, y, w, mw, mh, header_scrim())
@@ -421,6 +548,7 @@ def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
   const cw = ui_fb.text_width(f, clock_text(0))
   ui_fb.text(f, clock_text(now), w - icon_margin() - cw, ty, header_ink(), s)
   count_text(s, f, w - icon_margin() - cw - 16, ty, running, header_ink())
+  paint_pager(s, f, desks)
 }
 
 // ---- the wall clock (emo-desktop M26, D17) ----
