@@ -243,15 +243,150 @@ let i_rand_bytes = 17
 let i_time_now_ms = 18
 let i_time_mono_ns = 19
 
+(* The --wasi import indices: twenty-seven imports. The stdio doors and
+   the exit channel ride the shape the stdout probe validated; the
+   stream/future/resource builtins and the filesystem, random, and
+   environment doors land on the canonical ABI's lowered signatures
+   (T81.5). Shared shapes: the unit-handle doors (exit, the drops,
+   resource.drop, read-directory, the three environment doors) share
+   one type, as do the (h,ptr,n)->count stream doors. *)
+let i_wvs_out = 0
+
+(* stdout write-via-stream *)
+let i_wvs_err = 1
+
+(* stderr write-via-stream *)
+let i_exit_code = 2
+let i_s_new = 3
+let i_s_write = 4
+let i_s_read = 5
+let i_s_dw = 6
+
+(* stream.drop-writable *)
+let i_s_dr = 7
+
+(* stream.drop-readable — the u8 file stream *)
+let i_s_dr_dir = 8
+
+(* stream.drop-readable — the directory-entry stream *)
+let i_fdr_cli = 9
+
+(* future.drop-readable — the stdio future *)
+let i_f_read = 10
+
+(* future.read — the fs future *)
+let i_fdr_fs = 11
+
+(* future.drop-readable — the fs future *)
+let i_rdrop = 12
+
+(* resource.drop — the descriptor *)
+let i_rvs = 13
+
+(* fs read-via-stream *)
+let i_wvs_fs = 14
+
+(* fs write-via-stream *)
+let i_avs = 15
+
+(* fs append-via-stream *)
+let i_rdir = 16
+
+(* fs read-directory *)
+let i_mkdir = 17
+
+(* fs create-directory-at *)
+let i_open = 18
+
+(* fs open-at *)
+let i_rmdir = 19
+
+(* fs remove-directory-at *)
+let i_rename = 20
+
+(* fs rename-at *)
+let i_unlink = 21
+
+(* fs unlink-file-at *)
+let i_pre = 22
+
+(* get-directories *)
+let i_rand = 23
+
+(* get-random-bytes *)
+let i_env = 24
+
+(* get-environment *)
+let i_argv = 25
+
+(* get-arguments *)
+let i_cwd = 26
+
+(* get-initial-cwd *)
+let i_s_read_dir = 27
+
+(* stream.read — the directory-entry batch door *)
+let wasi_import_count = 28
+
+(* The wasi mode's fixed scratch cells — page 0, all below the 65536
+   heap base. The bump cursor cell is shared with the provider's realloc
+   (see Emo_component's provider): one cursor, two allocators, no
+   overlap. The fd table's entries are 12 bytes: the descriptor handle
+   and the i64 cursor. *)
+let wasi_bump_cell = 0x100
+let wasi_fs_flag = 0x1000
+let wasi_pre_count = 0x1004
+let wasi_pre_base = 0x1008
+
+(* 12-byte entries: desc, prefix ptr, prefix len; 16 slots *)
+let wasi_cwd_cell = 0x1100
+
+(* ptr, len *)
+let wasi_fd_base = 0x1200
+
+(* 12-byte entries: desc, i64 cursor; 64 slots, fds 3.. *)
+let wasi_retp_a = 0x1600
+
+(* the list answers: (ptr, len) *)
+let wasi_retp_b = 0x1608
+
+(* the handle pairs: (stream, future) *)
+let wasi_retp_c = 0x1610
+
+(* the two-byte result<_,err> answers and the open-at handle *)
+let wasi_scratch = 0x2000
+(* the stream.read scratch, 4096 bytes *)
+
 (* Every defined function's index follows the imports. *)
 let import_count = 20
 
+(* The ABI mode: the Node canonical host's twenty `emo.*` imports, or
+   the WASI 0.3 component's twenty-seven — the stdio doors, the exit
+   channel, the stream/future/resource builtins, and the filesystem,
+   random, and environment doors (step 85). [assemble] sets both before
+   any lowering reads the indices; the wasi import table and the
+   lowered-function list branch on [wasi_mode]. *)
+let wasi_mode = ref false
+let import_base = ref import_count
+let wasi_import_base = wasi_import_count
+
+(* The bump cursor: the wasi mode's guest allocations advance the same
+   shared cell the provider's realloc advances. *)
+let bump_read () : W.instr list =
+  if !wasi_mode then [ W.I32_const wasi_bump_cell; W.I32_load ]
+  else [ W.Global_get 0 ]
+
+let bump_write () : W.instr list =
+  (* the call site pushes [cursor cell; new cursor] — the store pops
+     value first, address second *)
+  if !wasi_mode then [ W.I32_store ] else [ W.Global_set 0 ]
+
 (* Runtime function indices: imports 0..import_count-1, then these —
-   written relative to the import count, so a new host import shifts
-   every defined function mechanically (bump import_count, done). *)
-let rt =
-  let b = import_count in
-  function
+   written relative to the import base, so a mode with a different
+   import table shifts every defined function mechanically. *)
+let rt name =
+  let b = !import_base in
+  match name with
   | "add" -> b
   | "sub" -> b + 1
   | "mul" -> b + 2
@@ -357,7 +492,23 @@ let rt =
   | "atomic_fetch_or" -> b + 102
   | "atomic_fetch_xor" -> b + 103
   | "alloc" -> b + 104
-  | _ -> failwith "wasm: bad runtime function"
+  | "float_str" -> b + 105
+  | "wasi_err_text" -> b + 106
+  | "wasi_fs_init" -> b + 107
+  | "wasi_mem_eq" -> b + 108
+  | "wasi_resolve" -> b + 109
+  | "wasi_read_upto" -> b + 110
+  | "wasi_write_cycle" -> b + 111
+  | "wasi_fd_alloc" -> b + 112
+  | "wasi_fd_lookup" -> b + 113
+  | "wasi_fd_close" -> b + 114
+  | "wasi_sort_builder" -> b + 115
+  | "wasi_open_at" -> b + 116
+  | "wasi_env_scan" -> b + 117
+  | "wasi_argv_array" -> b + 118
+  | "wasi_rand_fill" -> b + 119
+  | "wasi_listdir_scan" -> b + 120
+  | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
    scheduler, the bit and bytes ops, init + main), then the List ops —
@@ -367,8 +518,13 @@ let rt =
    `to_str` chain calls, the Map ops after those, the Bytes rendering,
    the send snapshot's deep copy, the String split surface, the tuple
    rendering, the rest of the String surface, the atomics, the bump
-   allocator last. *)
-let runtime_count = import_count + 105
+   allocator last — and the wasi mode's guest-side float formatter
+   after the allocator, the wasi filesystem runtime after that: the
+   error-code texts, the preopen fetch, the path resolution, the
+   bounded stream read, the fs write cycle, the fd table, the name
+   sort, the open-at and one-string-at wrappers, the environment scan,
+   the argv array, the entropy fill, the directory-entry scan. *)
+let runtime_count () = !import_base + if !wasi_mode then 121 else 105
 
 (* ---- Lowering state ---- *)
 
@@ -622,6 +778,95 @@ let r_pair env ~(ok : W.instr list) ~(err : W.instr list) : W.instr list =
     @ [ W.Array_new_fixed (t_anyarray, 2); W.Struct_new t_vtuple ]
   in
   [ W.If (W.Result W.Anyref, pair "error" err, pair "ok" ok) ]
+
+(* ---- The wasi door helpers ----
+
+   The wasi-mode runtime implementations lower onto the wasi imports
+   through these: the R error shape the Node host's osFail spells, and
+   the path resolution call. *)
+
+(* The wasi-mode R error: <prefix> + <path> + ": " + <text> — the text
+   the error code answers through wasi_err_text. An empty [path] list
+   skips the join (the no-arg doors: read, write, close). *)
+let wasi_fail env ~(prefix : string) ~(path : W.instr list)
+    ~(code : W.instr list) : W.instr list =
+  (* the pool globals ride $vstring; strcat takes $bytes — each const
+     unwraps through the cast, the shape every pool consumer uses *)
+  let const_bytes s =
+    string_const_code env s
+    @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+  in
+  let err_b =
+    code
+    @ [
+        W.I32_const wasi_retp_c;
+        W.Call (rt "wasi_err_text");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+      ]
+  in
+  let joined =
+    match path with
+    | [] ->
+        const_bytes prefix @ const_bytes ": "
+        @ [ W.Call (rt "strcat") ]
+        @ err_b
+        @ [ W.Call (rt "strcat") ]
+    | _ ->
+        const_bytes prefix @ path
+        @ [ W.Call (rt "strcat") ]
+        @ const_bytes ": "
+        @ [ W.Call (rt "strcat") ]
+        @ err_b
+        @ [ W.Call (rt "strcat") ]
+  in
+  joined @ [ W.Struct_new t_vstring ]
+
+(* wasi_resolve's three answers into locals. *)
+let wasi_resolve env ~(ptr : int) ~(len : int) ~(desc : int) ~(relp : int)
+    ~(rell : int) : W.instr list =
+  [
+    W.Local_get ptr;
+    W.Local_get len;
+    W.Call (rt "wasi_resolve");
+    W.Local_set rell;
+    W.Local_set relp;
+    W.Local_set desc;
+  ]
+
+(* The cycle: [base] holds the packed i64 handle the caller has set;
+   [base+1] the readable end, [base+2] the writable, [base+3] the
+   future; [ptr]/[len] the payload instructions (evaluated between the
+   hand-off and the write, the order the probe validated); [wvs] the
+   stdout or stderr door. *)
+let wasi_cycle_instrs ~(base : int) ~(wvs : int) ~(ptr : W.instr list)
+    ~(len : W.instr list) ~(exit_after : bool) : W.instr list =
+  [
+    W.Local_get base;
+    W.I32_wrap_i64;
+    W.Local_set (base + 1);
+    W.Local_get base;
+    W.I64_const 32L;
+    W.I64_shr_u;
+    W.I32_wrap_i64;
+    W.Local_set (base + 2);
+    W.Local_get (base + 1);
+    W.Call wvs;
+    W.Local_set (base + 3);
+    W.Local_get (base + 2);
+  ]
+  @ ptr @ len
+  @ [
+      W.Call i_s_write;
+      W.Drop;
+      W.Local_get (base + 2);
+      W.Call i_s_dw;
+      W.Local_get (base + 3);
+      W.Call i_fdr_cli;
+    ]
+  @
+  if exit_after then [ W.I32_const 1; W.Call i_exit_code; W.Unreachable ]
+  else []
 
 (* The i64 inside a $vint value. *)
 let int64_of (code : W.instr list) : W.instr list =
@@ -958,6 +1203,869 @@ let rec expr env (x : Emo_ir.expr) : unit =
                ("builtin `" ^ name ^ "` is not available on the wasm target")))
   | Runtime_impl { name; args } -> (
       match (name, args) with
+      | _ when !wasi_mode -> (
+          (* the wasi mode: every door lowers onto its wasi import —
+             the filesystem half through the preopen resolution and the
+             fd table, the environment through the read-only lists, the
+             entropy through the short-return loop. The cwd doors
+             refuse by name (0.3 has no cwd concept), the environment
+             writes refuse (the guest's environment is read-only), and
+             fd 0 refuses (stdin's sync door is the gated builtins'
+             territory). *)
+          let wasi_refuse (why : string) =
+            string_const env why;
+            e env (W.Call (rt "throw"));
+            e env W.Unreachable
+          in
+          let path_prologue (path : Emo_ir.expr) =
+            let b = fresh_local env "__path_b" (W.RefNull t_bytes) in
+            let ptr = fresh_local env "__path_p" W.I32 in
+            let len = fresh_local env "__path_l" W.I32 in
+            ( b,
+              ptr,
+              len,
+              expr_block env path
+              @ [
+                  W.Ref_cast t_vstring;
+                  W.Struct_get (t_vstring, 0);
+                  W.Local_set b;
+                  W.Local_get b;
+                  W.Call (rt "write_bytes");
+                  W.Local_get b;
+                  W.Array_len t_bytes;
+                  W.Local_set len;
+                  W.Local_set ptr;
+                ] )
+          in
+          let resolve_into (ptr : int) (len : int) =
+            let desc = fresh_local env "__rs_desc" W.I32 in
+            let relp = fresh_local env "__rs_relp" W.I32 in
+            let rell = fresh_local env "__rs_rell" W.I32 in
+            (desc, relp, rell, wasi_resolve env ~ptr ~len ~desc ~relp ~rell)
+          in
+          match (name, args) with
+          | ("os_getcwd" | "os_chdir"), _ ->
+              wasi_refuse
+                ("the runtime implementation `" ^ name
+               ^ "` is not available on the wasi component (WASI 0.3 has no \
+                  cwd concept)")
+          | ("os_setenv" | "os_unsetenv"), _ ->
+              wasi_refuse
+                ("the runtime implementation `" ^ name
+               ^ "` is not available on the wasi component (the WASI \
+                  environment is read-only)")
+          | "rand_bytes", [ n ] ->
+              (* the entropy fill: get-random-bytes cannot fail, so the
+                 answer is always R.ok — the loop accumulates the short
+                 returns *)
+              let n32 = fresh_local env "__rand_n" W.I32 in
+              let buf = fresh_local env "__rand_buf" W.I32 in
+              es env
+                (int64_of (expr_block env n)
+                @ [
+                    W.I32_wrap_i64;
+                    W.Local_set n32;
+                    W.Local_get n32;
+                    W.Call (rt "alloc");
+                    W.Local_set buf;
+                    W.Local_get buf;
+                    W.Local_get n32;
+                    W.Call (rt "wasi_rand_fill");
+                  ]
+                @ string_const_code env "R" @ string_const_code env "ok"
+                @ [ W.Struct_new t_venum ]
+                @ [
+                    W.Local_get buf;
+                    W.Local_get n32;
+                    W.Call (rt "bytes_from_mem");
+                  ]
+                @ [ W.Struct_new t_vbytes ]
+                @ [ W.Array_new_fixed (t_anyarray, 2); W.Struct_new t_vtuple ])
+          | "os_argv", [] -> es env [ W.Call (rt "wasi_argv_array") ]
+          | "os_getenv", [ name_ ] ->
+              let b = fresh_local env "__env_b" (W.RefNull t_bytes) in
+              let found = fresh_local env "__env_f" W.I32 in
+              let vp = fresh_local env "__env_vp" W.I32 in
+              let vl = fresh_local env "__env_vl" W.I32 in
+              let okv = fresh_local env "__env_okv" W.Anyref in
+              es env
+                (expr_block env name_
+                @ [
+                    W.Ref_cast t_vstring;
+                    W.Struct_get (t_vstring, 0);
+                    W.Local_set b;
+                    W.Local_get b;
+                    W.Call (rt "wasi_env_scan");
+                    W.Local_set vl;
+                    W.Local_set vp;
+                    W.Local_set found;
+                    W.Local_get found;
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get vp;
+                          W.Local_get vl;
+                          W.Call (rt "bytes_from_mem");
+                          W.Struct_new t_vstring;
+                          W.Local_set okv;
+                        ],
+                        [] );
+                    W.Local_get found;
+                    W.I32_eqz;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (string_const_code env "os: getenv "
+                      @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+                      @ [ W.Local_get b ]
+                      @ [ W.Call (rt "strcat") ]
+                      @ string_const_code env ": "
+                      @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+                      @ [ W.Call (rt "strcat") ]
+                      @ string_const_code env "is not set"
+                      @ [
+                          W.Ref_cast t_vstring;
+                          W.Struct_get (t_vstring, 0);
+                          W.Call (rt "strcat");
+                          W.Struct_new t_vstring;
+                        ]))
+          | "file_read", [ path ] ->
+              let b, ptr, len, pro = path_prologue path in
+              let desc, relp, rell, rs = resolve_into ptr len in
+              let err = fresh_local env "__fs_err" W.I32 in
+              let tag = fresh_local env "__fs_tag" W.I32 in
+              let h = fresh_local env "__fs_h" W.I32 in
+              let s = fresh_local env "__fs_s" W.I32 in
+              let fut = fresh_local env "__fs_f" W.I32 in
+              let buf = fresh_local env "__fs_buf" W.I32 in
+              let total = fresh_local env "__fs_total" W.I32 in
+              let okv = fresh_local env "__fs_ok" W.Anyref in
+              es env
+                (pro @ rs
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get desc;
+                          W.Local_get relp;
+                          W.Local_get rell;
+                          W.I32_const 0;
+                          W.I32_const 1;
+                          W.Call (rt "wasi_open_at");
+                          W.Local_set h;
+                          W.Local_set tag;
+                          W.Local_get tag;
+                          W.If
+                            ( W.Void,
+                              [ W.Local_get h; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get h;
+                          W.I64_const 0L;
+                          W.I32_const wasi_retp_b;
+                          W.Call i_rvs;
+                          W.I32_const wasi_retp_b;
+                          W.I32_load;
+                          W.Local_set s;
+                          W.I32_const wasi_retp_b;
+                          W.I32_const 4;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Local_set fut;
+                          W.Local_get s;
+                          W.I32_const 0x7fffffff;
+                          W.Call (rt "wasi_read_upto");
+                          W.Local_set total;
+                          W.Local_set buf;
+                          W.Local_get s;
+                          W.Call i_s_dr;
+                          W.Local_get fut;
+                          W.I32_const wasi_retp_c;
+                          W.Call i_f_read;
+                          W.Drop;
+                          W.Local_get fut;
+                          W.Call i_fdr_fs;
+                          W.Local_get h;
+                          W.Call i_rdrop;
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.Local_get buf;
+                          W.Local_get total;
+                          W.Call (rt "bytes_from_mem");
+                          W.Struct_new t_vstring;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"file: cannot read "
+                         ~path:[ W.Local_get b ] ~code:[ W.Local_get err ]))
+          | "file_write", [ path; contents ] ->
+              let b, ptr, len, pro = path_prologue path in
+              let db = fresh_local env "__fw_db" (W.RefNull t_bytes) in
+              let dptr = fresh_local env "__fw_dp" W.I32 in
+              let dlen = fresh_local env "__fw_dl" W.I32 in
+              let desc, relp, rell, rs = resolve_into ptr len in
+              let err = fresh_local env "__fw_err" W.I32 in
+              let tag = fresh_local env "__fw_tag" W.I32 in
+              let h = fresh_local env "__fw_h" W.I32 in
+              let okv = fresh_local env "__fw_ok" W.Anyref in
+              es env
+                (expr_block env contents
+                @ [
+                    W.Ref_cast t_vstring;
+                    W.Struct_get (t_vstring, 0);
+                    W.Local_set db;
+                    W.Local_get db;
+                    W.Call (rt "write_bytes");
+                    W.Local_get db;
+                    W.Array_len t_bytes;
+                    W.Local_set dlen;
+                    W.Local_set dptr;
+                  ]
+                @ pro @ rs
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get desc;
+                          W.Local_get relp;
+                          W.Local_get rell;
+                          W.I32_const 9;
+                          (* create | truncate *)
+                          W.I32_const 2;
+                          (* write *)
+                          W.Call (rt "wasi_open_at");
+                          W.Local_set h;
+                          W.Local_set tag;
+                          W.Local_get tag;
+                          W.If
+                            ( W.Void,
+                              [ W.Local_get h; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get h;
+                          W.Local_get dptr;
+                          W.Local_get dlen;
+                          W.I64_const 0L;
+                          W.I32_const 0;
+                          W.Call (rt "wasi_write_cycle");
+                          W.Local_set err;
+                          W.Local_get h;
+                          W.Call i_rdrop;
+                          W.Local_get err;
+                          W.If (W.Void, [ W.Br 1 ], []);
+                          W.Local_get dlen;
+                          W.I64_extend_i32_u;
+                          W.Struct_new t_vint;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"file: cannot write "
+                         ~path:[ W.Local_get b ] ~code:[ W.Local_get err ]))
+          | ( (("os_open_read" | "os_open_write" | "os_open_append") as open_name),
+              [ path ] ) ->
+              let openflags =
+                if open_name = "os_open_read" then 0
+                else if open_name = "os_open_write" then 9
+                else 1
+                (* create | truncate for write, create for append *)
+              in
+              let flags = if open_name = "os_open_read" then 1 else 2 in
+              let b, ptr, len, pro = path_prologue path in
+              let desc, relp, rell, rs = resolve_into ptr len in
+              let err = fresh_local env "__op_err" W.I32 in
+              let tag = fresh_local env "__op_tag" W.I32 in
+              let h = fresh_local env "__op_h" W.I32 in
+              let fd = fresh_local env "__op_fd" W.I32 in
+              let okv = fresh_local env "__op_ok" W.Anyref in
+              es env
+                (pro @ rs
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 99; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get desc;
+                          W.Local_get relp;
+                          W.Local_get rell;
+                          W.I32_const openflags;
+                          W.I32_const flags;
+                          W.Call (rt "wasi_open_at");
+                          W.Local_set h;
+                          W.Local_set tag;
+                          W.Local_get tag;
+                          W.If
+                            ( W.Void,
+                              [ W.Local_get h; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get h;
+                          W.Call (rt "wasi_fd_alloc");
+                          W.Local_set fd;
+                          W.Local_get fd;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.Local_get h;
+                                W.Call i_rdrop;
+                                W.I32_const 0;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.Local_get fd;
+                          W.I64_extend_i32_u;
+                          W.Struct_new t_vint;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: open " ~path:[ W.Local_get b ]
+                         ~code:[ W.Local_get err ]))
+          | "os_read", [ fd; n ] ->
+              let f64 = fresh_local env "__rd_f64" W.I64 in
+              let n64 = fresh_local env "__rd_n64" W.I64 in
+              let f = fresh_local env "__rd_f" W.I32 in
+              let desc = fresh_local env "__rd_desc" W.I32 in
+              let slot = fresh_local env "__rd_slot" W.I32 in
+              let cursor = fresh_local env "__rd_cur" W.I32 in
+              let s = fresh_local env "__rd_s" W.I32 in
+              let fut = fresh_local env "__rd_fut" W.I32 in
+              let buf = fresh_local env "__rd_buf" W.I32 in
+              let total = fresh_local env "__rd_total" W.I32 in
+              let err = fresh_local env "__rd_err" W.I32 in
+              let okv = fresh_local env "__rd_ok" W.Anyref in
+              es env
+                (int64_of (expr_block env fd)
+                @ [ W.Local_set f64 ]
+                @ int64_of (expr_block env n)
+                @ [ W.Local_set n64 ]
+                @ [
+                    W.Local_get f64;
+                    W.I64_eqz;
+                    W.If
+                      ( W.Void,
+                        string_const_code env
+                          "os: read: reading fd 0 (stdin) is not available on \
+                           the wasi component yet"
+                        @ [ W.Call (rt "throw"); W.Unreachable ],
+                        [] );
+                    W.Local_get f64;
+                    W.I32_wrap_i64;
+                    W.Local_set f;
+                    W.Local_get f64;
+                    W.Call (rt "wasi_fd_lookup");
+                    W.Local_set desc;
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 2; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get n64;
+                          W.I64_const 0L;
+                          W.I64_le_s;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const 0;
+                                W.Call (rt "alloc");
+                                W.Local_set buf;
+                                W.I32_const 0;
+                                W.Local_set total;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.Local_get f;
+                          W.I32_const 3;
+                          W.I32_sub;
+                          W.I32_const 8;
+                          W.I32_mul;
+                          W.I32_const wasi_fd_base;
+                          W.I32_add;
+                          W.Local_set slot;
+                          W.Local_get slot;
+                          W.I32_const 4;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Local_set cursor;
+                          W.Local_get desc;
+                          W.Local_get cursor;
+                          W.I64_extend_i32_u;
+                          W.I32_const wasi_retp_b;
+                          W.Call i_rvs;
+                          W.I32_const wasi_retp_b;
+                          W.I32_load;
+                          W.Local_set s;
+                          W.I32_const wasi_retp_b;
+                          W.I32_const 4;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Local_set fut;
+                          W.Local_get s;
+                          W.Local_get n64;
+                          W.I32_wrap_i64;
+                          W.Call (rt "wasi_read_upto");
+                          W.Local_set total;
+                          W.Local_set buf;
+                          W.Local_get slot;
+                          W.I32_const 4;
+                          W.I32_add;
+                          W.Local_get cursor;
+                          W.Local_get total;
+                          W.I32_add;
+                          W.I32_store;
+                          W.Local_get s;
+                          W.Call i_s_dr;
+                          W.Local_get fut;
+                          W.I32_const wasi_retp_c;
+                          W.Call i_f_read;
+                          W.Drop;
+                          W.Local_get fut;
+                          W.Call i_fdr_fs;
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.Local_get buf;
+                          W.Local_get total;
+                          W.Call (rt "bytes_from_mem");
+                          W.Struct_new t_vstring;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: read" ~path:[]
+                         ~code:[ W.Local_get err ]))
+          | "os_write", [ fd; data ] ->
+              let f64 = fresh_local env "__wr_f64" W.I64 in
+              let f = fresh_local env "__wr_f" W.I32 in
+              let desc = fresh_local env "__wr_desc" W.I32 in
+              let db = fresh_local env "__wr_db" (W.RefNull t_bytes) in
+              let dptr = fresh_local env "__wr_dp" W.I32 in
+              let dlen = fresh_local env "__wr_dl" W.I32 in
+              let err = fresh_local env "__wr_err" W.I32 in
+              let okv = fresh_local env "__wr_ok" W.Anyref in
+              (* the stdio cycle's locals ride packed..packed+3 —
+                 declared here so the indices exist (found 2026-11-14:
+                 wasi_cycle_instrs reads base+1..3 and the three slots
+                 were never declared) *)
+              let packed = fresh_local env "__wr_packed" W.I64 in
+              let _r = fresh_local env "__wr_r" W.I32 in
+              let _w = fresh_local env "__wr_w" W.I32 in
+              let _fu = fresh_local env "__wr_fu" W.I32 in
+              es env
+                (int64_of (expr_block env fd)
+                @ [ W.Local_set f64 ] @ expr_block env data
+                @ [
+                    W.Ref_cast t_vstring;
+                    W.Struct_get (t_vstring, 0);
+                    W.Local_set db;
+                    W.Local_get db;
+                    W.Call (rt "write_bytes");
+                    W.Local_get db;
+                    W.Array_len t_bytes;
+                    W.Local_set dlen;
+                    W.Local_set dptr;
+                  ]
+                @ [
+                    W.Local_get f64;
+                    W.I64_const 1L;
+                    W.I64_eq;
+                    W.If
+                      ( W.Void,
+                        wasi_cycle_instrs ~base:packed ~wvs:i_wvs_out
+                          ~ptr:[ W.Local_get dptr ] ~len:[ W.Local_get dlen ]
+                          ~exit_after:false,
+                        [
+                          W.Local_get f64;
+                          W.I64_const 2L;
+                          W.I64_eq;
+                          W.If
+                            ( W.Void,
+                              wasi_cycle_instrs ~base:packed ~wvs:i_wvs_err
+                                ~ptr:[ W.Local_get dptr ]
+                                ~len:[ W.Local_get dlen ] ~exit_after:false,
+                              [] );
+                        ] );
+                  ]
+                @ [
+                    W.Local_get f64;
+                    W.I64_const 0L;
+                    W.I64_le_s;
+                    W.Local_get f64;
+                    W.I64_const 2L;
+                    W.I64_gt_s;
+                    W.I32_or;
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get f64;
+                          W.I32_wrap_i64;
+                          W.Local_set f;
+                          W.Local_get f64;
+                          W.Call (rt "wasi_fd_lookup");
+                          W.Local_set desc;
+                          W.Block
+                            ( W.Void,
+                              [
+                                W.Local_get desc;
+                                W.I32_eqz;
+                                W.If
+                                  ( W.Void,
+                                    [ W.I32_const 2; W.Local_set err; W.Br 1 ],
+                                    [] );
+                                W.Local_get desc;
+                                W.Local_get dptr;
+                                W.Local_get dlen;
+                                W.Local_get f;
+                                W.I32_const 3;
+                                W.I32_sub;
+                                W.I32_const 8;
+                                W.I32_mul;
+                                W.I32_const wasi_fd_base;
+                                W.I32_add;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load;
+                                W.I64_extend_i32_u;
+                                W.I32_const 0;
+                                W.Call (rt "wasi_write_cycle");
+                                W.Local_set err;
+                                W.Local_get err;
+                                W.If (W.Void, [ W.Br 1 ], []);
+                                W.Local_get f;
+                                W.I32_const 3;
+                                W.I32_sub;
+                                W.I32_const 8;
+                                W.I32_mul;
+                                W.I32_const wasi_fd_base;
+                                W.I32_add;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.Local_get f;
+                                W.I32_const 3;
+                                W.I32_sub;
+                                W.I32_const 8;
+                                W.I32_mul;
+                                W.I32_const wasi_fd_base;
+                                W.I32_add;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load;
+                                W.Local_get dlen;
+                                W.I32_add;
+                                W.I32_store;
+                              ] );
+                        ],
+                        [] );
+                    W.Local_get dlen;
+                    W.I64_extend_i32_u;
+                    W.Struct_new t_vint;
+                    W.Local_set okv;
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: write" ~path:[]
+                         ~code:[ W.Local_get err ]))
+          | "os_close", [ fd ] ->
+              let f64 = fresh_local env "__cl_f64" W.I64 in
+              let f = fresh_local env "__cl_f" W.I32 in
+              let desc = fresh_local env "__cl_desc" W.I32 in
+              let err = fresh_local env "__cl_err" W.I32 in
+              let okv = fresh_local env "__cl_ok" W.Anyref in
+              es env
+                (int64_of (expr_block env fd)
+                @ [ W.Local_set f64 ]
+                @ [
+                    W.Local_get f;
+                    W.Call (rt "wasi_fd_close");
+                    W.Local_set desc;
+                    W.Local_get desc;
+                    W.I32_eqz;
+                    W.If
+                      ( W.Void,
+                        [ W.I32_const 2; W.Local_set err ],
+                        [
+                          W.Local_get desc;
+                          W.Call i_rdrop;
+                          W.I32_const 0;
+                          W.Local_set err;
+                        ] );
+                    W.I32_const 0;
+                    W.I64_extend_i32_u;
+                    W.Struct_new t_vint;
+                    W.Local_set okv;
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: close" ~path:[]
+                         ~code:[ W.Local_get err ]))
+          | "os_list_dir", [ path ] ->
+              let b, ptr, len, pro = path_prologue path in
+              let desc, relp, rell, rs = resolve_into ptr len in
+              let err = fresh_local env "__ls_err" W.I32 in
+              let tag = fresh_local env "__ls_tag" W.I32 in
+              let h = fresh_local env "__ls_h" W.I32 in
+              let s = fresh_local env "__ls_s" W.I32 in
+              let fut = fresh_local env "__ls_f" W.I32 in
+              let okv = fresh_local env "__ls_ok" W.Anyref in
+              es env
+                (pro @ rs
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get desc;
+                          W.Local_get relp;
+                          W.Local_get rell;
+                          W.I32_const 2;
+                          (* open-flags: directory *)
+                          W.I32_const 1;
+                          (* descriptor-flags: read *)
+                          W.Call (rt "wasi_open_at");
+                          W.Local_set h;
+                          W.Local_set tag;
+                          W.Local_get tag;
+                          W.If
+                            ( W.Void,
+                              [ W.Local_get h; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get h;
+                          W.I32_const wasi_retp_b;
+                          W.Call i_rdir;
+                          W.I32_const wasi_retp_b;
+                          W.I32_load;
+                          W.Local_set s;
+                          W.I32_const wasi_retp_b;
+                          W.I32_const 4;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Local_set fut;
+                          W.Local_get s;
+                          W.Call (rt "wasi_listdir_scan");
+                          W.Local_set okv;
+                          W.Local_get s;
+                          W.Call i_s_dr_dir;
+                          W.Local_get fut;
+                          W.I32_const wasi_retp_c;
+                          W.Call i_f_read;
+                          W.Drop;
+                          W.Local_get fut;
+                          W.Call i_fdr_fs;
+                          W.Local_get h;
+                          W.Call i_rdrop;
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: opendir "
+                         ~path:[ W.Local_get b ] ~code:[ W.Local_get err ]))
+          | (("os_mkdir" | "os_rmdir" | "os_unlink") as op_name), [ path ] ->
+              let door =
+                if op_name = "os_mkdir" then i_mkdir
+                else if op_name = "os_rmdir" then i_rmdir
+                else i_unlink
+              in
+              let b, ptr, len, pro = path_prologue path in
+              let desc, relp, rell, rs = resolve_into ptr len in
+              let err = fresh_local env "__mk_err" W.I32 in
+              let okv = fresh_local env "__mk_ok" W.Anyref in
+              es env
+                (pro @ rs
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get desc;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get desc;
+                          W.Local_get relp;
+                          W.Local_get rell;
+                          W.I32_const wasi_retp_c;
+                          W.Call door;
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 1;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.I32_const 0;
+                          W.I64_extend_i32_u;
+                          W.Struct_new t_vint;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env
+                         ~prefix:("os: " ^ op_name ^ " ")
+                         ~path:[ W.Local_get b ] ~code:[ W.Local_get err ]))
+          | "os_rename", [ old_path; new_path ] ->
+              (* the resolve_into locals ride fresh slots per call —
+                 the bytes locals of the two paths must not collide
+                 with them (found 2026-11-14: the rename arm reused
+                 slots 2/5 for both the $bytes refs and the resolve
+                 rels, and the validator read a $bytes where an i32
+                 belonged) *)
+              let bo, po, lo, pro1 = path_prologue old_path in
+              let bn, pn, ln, pro2 = path_prologue new_path in
+              let d1, r1p, r1l, rs1 = resolve_into po lo in
+              let d2, r2p, r2l, rs2 = resolve_into pn ln in
+              let err = fresh_local env "__rn_err" W.I32 in
+              let okv = fresh_local env "__rn_ok" W.Anyref in
+              es env
+                (pro1 @ pro2 @ rs1 @ rs2
+                @ [
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Local_get d1;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get d2;
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [ W.I32_const 19; W.Local_set err; W.Br 1 ],
+                              [] );
+                          W.Local_get d1;
+                          W.Local_get r1p;
+                          W.Local_get r1l;
+                          W.Local_get d2;
+                          W.Local_get r2p;
+                          W.Local_get r2l;
+                          W.I32_const wasi_retp_c;
+                          W.Call i_rename;
+                          W.I32_const wasi_retp_c;
+                          W.I32_load8_u;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.I32_const wasi_retp_c;
+                                W.I32_const 4;
+                                W.I32_add;
+                                W.I32_load8_u;
+                                W.Local_set err;
+                                W.Br 1;
+                              ],
+                              [] );
+                          W.I32_const 0;
+                          W.I64_extend_i32_u;
+                          W.Struct_new t_vint;
+                          W.Local_set okv;
+                        ] );
+                    W.Local_get err;
+                  ]
+                @ r_pair env ~ok:[ W.Local_get okv ]
+                    ~err:
+                      (wasi_fail env ~prefix:"os: rename "
+                         ~path:[ W.Local_get bo ] ~code:[ W.Local_get err ]))
+          | _ ->
+              (* the process half: a WasmGC module has no process to
+                 fork, so these raise when called — the package ships
+                 (its fd and directory half is real), the capability
+                 names itself at the call *)
+              wasi_refuse
+                ("the runtime implementation `" ^ name
+               ^ "` is not available on the wasm target"))
       | "file_read", [ path ] ->
           let code, size =
             sys_size env i_file_read (string_args env (expr_block env path))
@@ -2684,7 +3792,17 @@ let emit_ctor_factory env (c : Emo_ir.class_) ~(pad : int) : W.func_type =
    reach their __str through method_call before to_str runs, so the
    fallthrough aborts with a host-side message. *)
 
-let rt_to_str : W.func_type =
+(* The wasi mode's float branch calls the guest-side formatter (a
+   defined runtime function, rt "float_str") instead of the host import;
+   this rung it refuses, the honest door until the %g port lands. *)
+let rt_to_str () : W.func_type =
+  let float_code =
+    if !wasi_mode then [ W.Call (rt "float_str"); W.Struct_new t_vstring ]
+    else
+      [
+        W.Call i_float_str; W.Call (rt "bytes_from_mem"); W.Struct_new t_vstring;
+      ]
+  in
   (* One If_else per shape: test -> produce a $vstring, else continue.
      The chain is built inside-out: the innermost else is the
      instance fallthrough. *)
@@ -2747,14 +3865,8 @@ let rt_to_str : W.func_type =
   in
   let float_branch =
     branch (test_of t_vfloat)
-      [
-        W.Local_get 0;
-        W.Ref_cast t_vfloat;
-        W.Struct_get (t_vfloat, 0);
-        W.Call i_float_str;
-        W.Call (rt "bytes_from_mem");
-        W.Struct_new t_vstring;
-      ]
+      ([ W.Local_get 0; W.Ref_cast t_vfloat; W.Struct_get (t_vfloat, 0) ]
+      @ float_code)
       [ bool_branch ]
   in
   let int_branch =
@@ -2828,7 +3940,7 @@ let rt_to_str : W.func_type =
    is still INT64_MIN as a bit pattern, which as an unsigned value is
    exactly its magnitude 2^63, so the signed forms would divide by a
    negative and only yield one digit. *)
-let rt_int_str : W.func_type =
+let rt_int_str () : W.func_type =
   let scratch = 60000 in
   {
     W.ftype_idx = t_int_str;
@@ -2928,7 +4040,7 @@ let rt_int_str : W.func_type =
   }
 
 (* bool_str(b i32) -> (ref null $bytes). *)
-let rt_bool_str : W.func_type =
+let rt_bool_str () : W.func_type =
   {
     W.ftype_idx = t_bool_str;
     fparams = [ "v" ];
@@ -2957,7 +4069,7 @@ let rt_bool_str : W.func_type =
   }
 
 (* char_str(c i32) -> (ref null $bytes): one byte. *)
-let rt_char_str : W.func_type =
+let rt_char_str () : W.func_type =
   {
     W.ftype_idx = t_char_str;
     fparams = [ "v" ];
@@ -2965,34 +4077,65 @@ let rt_char_str : W.func_type =
     fbody = [ W.Local_get 0; W.Array_new_fixed (t_bytes, 1) ];
   }
 
+(* ---- The --wasi stream cycles ----
+
+   The stdout/stderr path runs the probe's validated protocol: new,
+   hand the readable end to write-via-stream, write through the
+   writable end, drop the writable end (the EOF), drop the future —
+   and never drop the readable end, whose ownership transferred into
+   the call. Each println is one complete cycle, so a later println's
+   bytes cannot interleave with an earlier one's. *)
+
 (* instance_str(v) -> aborts: instances reach their __str through
    method_call; an unhandled shape here is a host-visible trap. *)
-let rt_instance_str : W.func_type =
-  {
-    W.ftype_idx = t_sig1;
-    fparams = [ "v" ];
-    flocals = [];
-    fbody =
-      [
-        (* scratch marker "inst" at 61000 *)
-        W.I32_const 61000;
-        W.I32_const 105;
-        W.I32_store8;
-        W.I32_const 61001;
-        W.I32_const 110;
-        W.I32_store8;
-        W.I32_const 61002;
-        W.I32_const 115;
-        W.I32_store8;
-        W.I32_const 61003;
-        W.I32_const 116;
-        W.I32_store8;
-        W.I32_const 61000;
-        W.I32_const 4;
-        W.Call i_abort;
-        W.Unreachable;
-      ];
-  }
+let rt_instance_str () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (1, W.I64); (3, W.I32); (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.I32_const 105;
+          W.I32_const 110;
+          W.I32_const 115;
+          W.I32_const 116;
+          W.Array_new_fixed (t_bytes, 4);
+          W.Local_set 5;
+          W.Call i_s_new;
+          W.Local_set 1;
+        ]
+        @ wasi_cycle_instrs ~base:1 ~wvs:i_wvs_err
+            ~ptr:[ W.Local_get 5; W.Call (rt "write_bytes") ]
+            ~len:[ W.Local_get 5; W.Array_len t_bytes ]
+            ~exit_after:true;
+    }
+  else
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [];
+      fbody =
+        [
+          (* scratch marker "inst" at 61000 *)
+          W.I32_const 61000;
+          W.I32_const 105;
+          W.I32_store8;
+          W.I32_const 61001;
+          W.I32_const 110;
+          W.I32_store8;
+          W.I32_const 61002;
+          W.I32_const 115;
+          W.I32_store8;
+          W.I32_const 61003;
+          W.I32_const 116;
+          W.I32_store8;
+          W.I32_const 61000;
+          W.I32_const 4;
+          W.Call i_abort;
+          W.Unreachable;
+        ];
+    }
 
 (* The entry module renders bare — the interpreter names the entry
    file's module nothing — and a main/ subdirectory keeps its full
@@ -3016,8 +4159,12 @@ let entry_bare (display : string) : string =
    pool are live. *)
 let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
     =
+  (* the dispatch arms' accumulator rides local 6 in the wasi mode —
+     the inlined fallthrough body owns locals 1-5 (local 1 is its
+     packed stream handle) *)
+  let acc = if !wasi_mode then 6 else 1 in
   let cat str =
-    (* [str] onto the accumulator in local 1, as $bytes for strcat *)
+    (* [str] onto the accumulator, as $bytes for strcat *)
     capturing env (fun () -> string_const env str)
     @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
   in
@@ -3042,15 +4189,15 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
               List.concat_map
                 (fun (i, (fname, fidx)) ->
                   (if i > 0 then
-                     (W.Local_get 1 :: cat ", ")
-                     @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                     (W.Local_get acc :: cat ", ")
+                     @ [ W.Call (rt "strcat"); W.Local_set acc ]
                    else [])
-                  @ (W.Local_get 1 :: cat fname)
-                  @ [ W.Call (rt "strcat"); W.Local_set 1 ]
-                  @ (W.Local_get 1 :: cat ": ")
-                  @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                  @ (W.Local_get acc :: cat fname)
+                  @ [ W.Call (rt "strcat"); W.Local_set acc ]
+                  @ (W.Local_get acc :: cat ": ")
+                  @ [ W.Call (rt "strcat"); W.Local_set acc ]
                   @ [
-                      W.Local_get 1;
+                      W.Local_get acc;
                       W.Local_get 0;
                       W.Ref_cast tidx;
                       W.Struct_get (tidx, fidx);
@@ -3058,19 +4205,19 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
                       W.Ref_cast t_vstring;
                       W.Struct_get (t_vstring, 0);
                       W.Call (rt "strcat");
-                      W.Local_set 1;
+                      W.Local_set acc;
                     ])
                 (List.mapi (fun i f -> (i, f)) fields)
             in
             let close =
-              (W.Local_get 1 :: cat ")")
+              (W.Local_get acc :: cat ")")
               @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ]
             in
-            Some (tidx, open_ @ [ W.Local_set 1 ] @ body @ close))
+            Some (tidx, open_ @ [ W.Local_set acc ] @ body @ close))
       program.Emo_ir.pclasses
   in
   let rec chain = function
-    | [] -> rt_instance_str.W.fbody
+    | [] -> (rt_instance_str ()).W.fbody
     | (tidx, arm) :: rest ->
         [
           W.If_else
@@ -3083,13 +4230,25 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
+    (* the fallthrough inlines rt_instance_str's body, whose wasi
+       cycle rides locals 1-5 — the declaration has to cover it *)
+    flocals =
+      (if !wasi_mode then
+         [
+           (1, W.I64);
+           (3, W.I32);
+           (1, W.RefNull t_bytes);
+           (* the inlined fallthrough body rides 1-5; the dispatch
+              arms' accumulator moves to 6 *)
+           (1, W.RefNull t_bytes);
+         ]
+       else [ (1, W.RefNull t_bytes) ]);
     fbody = chain arms;
   }
 
 (* bytes_from_mem(ptr, len) -> (ref null $bytes). Locals: 2 array, 3
    i. *)
-let rt_bytes_from_mem : W.func_type =
+let rt_bytes_from_mem () : W.func_type =
   {
     W.ftype_idx = t_bytes_from_mem;
     fparams = [ "ptr"; "len" ];
@@ -3136,7 +4295,9 @@ let rt_bytes_from_mem : W.func_type =
 
 (* write_bytes(b) -> i32 ptr: bump-allocate and copy. Locals: 1 ptr,
    2 len, 3 i. *)
-let rt_write_bytes : W.func_type =
+let rt_write_bytes () : W.func_type =
+  let cur = bump_read () in
+  let adv = bump_write () in
   {
     W.ftype_idx = t_write_bytes;
     fparams = [ "b" ];
@@ -3146,42 +4307,41 @@ let rt_write_bytes : W.func_type =
       [
         W.Block
           ( W.Void,
-            [
-              W.Global_get 0;
-              W.Local_set 1;
-              W.Local_get 0;
-              W.Array_len t_bytes;
-              W.Local_set 2;
-              W.Global_get 0;
-              W.Local_get 2;
-              W.I32_add;
-              W.Memory_size;
-              W.I32_const 16;
-              W.I32_shl;
-              W.I32_gt;
-              W.If
-                ( W.Void,
-                  [
-                    (* the delta counts from the cursor: pages of (end),
+            cur
+            @ [
+                W.Local_set 1; W.Local_get 0; W.Array_len t_bytes; W.Local_set 2;
+              ]
+            @ cur
+            @ [
+                W.Local_get 2;
+                W.I32_add;
+                W.Memory_size;
+                W.I32_const 16;
+                W.I32_shl;
+                W.I32_gt;
+                W.If
+                  ( W.Void,
+                    [ (* the delta counts from the cursor: pages of (end),
                        minus the pages already there — the first cut
                        paged the length alone and went negative once
-                       the cursor rode along (found 2026-11-08, T56.1) *)
-                    W.Global_get 0;
-                    W.Local_get 2;
-                    W.I32_add;
-                    W.I32_const 65535;
-                    W.I32_add;
-                    W.I32_const 16;
-                    W.I32_shr_u;
-                    W.Memory_size;
-                    W.I32_sub;
-                    W.Memory_grow;
-                    W.Drop;
-                  ],
-                  [] );
-              W.I32_const 0;
-              W.Local_set 3;
-              (* the copy loop wears its own block: its exit branch
+                       the cursor rode along (found 2026-11-08, T56.1) *) ]
+                    @ cur
+                    @ [
+                        W.Local_get 2;
+                        W.I32_add;
+                        W.I32_const 65535;
+                        W.I32_add;
+                        W.I32_const 16;
+                        W.I32_shr_u;
+                        W.Memory_size;
+                        W.I32_sub;
+                        W.Memory_grow;
+                        W.Drop;
+                      ],
+                    [] );
+                W.I32_const 0;
+                W.Local_set 3;
+                (* the copy loop wears its own block: its exit branch
                  (br_if 1) must land on the cursor advance below, not
                  past it — found 2026-11-08 (T56.1): the loop sat
                  directly in the outer block, its exit branch jumped
@@ -3189,43 +4349,46 @@ let rt_write_bytes : W.func_type =
                  moved — harmless while every consumer (println) read
                  the buffer before the next allocation, fatal the
                  moment two bump buffers had to live at once *)
-              W.Block
-                ( W.Void,
-                  [
-                    W.Loop
-                      ( W.Void,
-                        [
-                          W.Local_get 3;
-                          W.Local_get 2;
-                          W.I32_ge;
-                          W.Br_if 1;
-                          W.Local_get 1;
-                          W.Local_get 3;
-                          W.I32_add;
-                          W.Local_get 0;
-                          W.Local_get 3;
-                          W.Array_get_u t_bytes;
-                          W.I32_store8;
-                          W.Local_get 3;
-                          W.I32_const 1;
-                          W.I32_add;
-                          W.Local_set 3;
-                          W.Br 0;
-                        ] );
-                  ] );
-              W.Global_get 0;
-              W.Local_get 2;
-              W.I32_add;
-              W.Global_set 0;
-            ] );
+                W.Block
+                  ( W.Void,
+                    [
+                      W.Loop
+                        ( W.Void,
+                          [
+                            W.Local_get 3;
+                            W.Local_get 2;
+                            W.I32_ge;
+                            W.Br_if 1;
+                            W.Local_get 1;
+                            W.Local_get 3;
+                            W.I32_add;
+                            W.Local_get 0;
+                            W.Local_get 3;
+                            W.Array_get_u t_bytes;
+                            W.I32_store8;
+                            W.Local_get 3;
+                            W.I32_const 1;
+                            W.I32_add;
+                            W.Local_set 3;
+                            W.Br 0;
+                          ] );
+                    ] );
+              ]
+            @ (if !wasi_mode then W.I32_const wasi_bump_cell :: cur else cur)
+            @ [ W.Local_get 2; W.I32_add ]
+            @ adv );
         W.Local_get 1;
       ];
   }
 
 (* alloc(size) -> i32 ptr: the bump without the copy — the buffer the
    guest hands fetch for the host's stashed answer. Locals: 1 ptr, 2
-   need. *)
-let rt_alloc : W.func_type =
+   need. The wasi mode advances the shared cursor cell the provider's
+   realloc advances (see wasi_bump_cell), so the host-written results
+   and the guest's own buffers never overlap. *)
+let rt_alloc () : W.func_type =
+  let cur = bump_read () in
+  let adv = bump_write () in
   {
     W.ftype_idx = t_alloc;
     fparams = [ "size" ];
@@ -3234,67 +4397,101 @@ let rt_alloc : W.func_type =
       [
         W.Block
           ( W.Void,
-            [
-              W.Global_get 0;
-              W.Local_set 1;
-              W.Global_get 0;
-              W.Local_get 0;
-              W.I32_add;
-              W.Local_set 2;
-              W.Local_get 2;
-              W.Memory_size;
-              W.I32_const 16;
-              W.I32_shl;
-              W.I32_gt;
-              W.If
-                ( W.Void,
-                  [
-                    W.Global_get 0;
-                    W.Local_get 0;
-                    W.I32_add;
-                    W.I32_const 65535;
-                    W.I32_add;
-                    W.I32_const 16;
-                    W.I32_shr_u;
-                    W.Memory_size;
-                    W.I32_sub;
-                    W.Memory_grow;
-                    W.Drop;
-                  ],
-                  [] );
-              W.Global_get 0;
-              W.Local_get 0;
-              W.I32_add;
-              W.Global_set 0;
-            ] );
+            cur @ [ W.Local_set 1 ] @ cur
+            @ [
+                W.Local_get 0;
+                W.I32_add;
+                W.Local_set 2;
+                W.Local_get 2;
+                W.Memory_size;
+                W.I32_const 16;
+                W.I32_shl;
+                W.I32_gt;
+              ]
+            @ [
+                W.If
+                  ( W.Void,
+                    cur
+                    @ [
+                        W.Local_get 0;
+                        W.I32_add;
+                        W.I32_const 65535;
+                        W.I32_add;
+                        W.I32_const 16;
+                        W.I32_shr_u;
+                        W.Memory_size;
+                        W.I32_sub;
+                        W.Memory_grow;
+                        W.Drop;
+                      ],
+                    [] );
+              ]
+            @ (if !wasi_mode then W.I32_const wasi_bump_cell :: cur else cur)
+            @ [ W.Local_get 0; W.I32_add ]
+            @ adv );
         W.Local_get 1;
       ];
   }
 
-(* println(v): render, bump-write, call the host. Local: 1 bytes. *)
-let rt_println : W.func_type =
-  {
-    W.ftype_idx = t_println_v;
-    fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
-    fbody =
-      [
-        W.Local_get 0;
-        W.Call (rt "to_str");
-        W.Ref_cast t_vstring;
-        W.Struct_get (t_vstring, 0);
-        W.Local_set 1;
-        W.Local_get 1;
-        W.Call (rt "write_bytes");
-        W.Local_get 1;
-        W.Array_len t_bytes;
-        W.Call i_print;
-      ];
-  }
+(* println(v): render, bump-write, call the host — or, in the wasi
+   mode, run one complete stdout stream cycle per line. Locals (wasi):
+   1 bytes, 2 the newline's bytes, 3 the joined bytes, 4 the pointer,
+   5 the length, 6 the packed handle, 7-9 readable/writable/future. *)
+let rt_println () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_println_v;
+      fparams = [ "v" ];
+      flocals = [ (3, W.RefNull t_bytes); (2, W.I32); (1, W.I64); (3, W.I32) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Call (rt "to_str");
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.I32_const 10;
+          W.Array_new_fixed (t_bytes, 1);
+          W.Local_set 2;
+          W.Local_get 1;
+          W.Local_get 2;
+          W.Call (rt "strcat");
+          W.Local_set 3;
+          W.Local_get 3;
+          W.Call (rt "write_bytes");
+          W.Local_set 4;
+          W.Local_get 3;
+          W.Array_len t_bytes;
+          W.Local_set 5;
+          W.Call i_s_new;
+          W.Local_set 6;
+        ]
+        @ wasi_cycle_instrs ~base:6 ~wvs:i_wvs_out ~ptr:[ W.Local_get 4 ]
+            ~len:[ W.Local_get 5 ] ~exit_after:false;
+    }
+  else
+    {
+      W.ftype_idx = t_println_v;
+      fparams = [ "v" ];
+      flocals = [ (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Call (rt "to_str");
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Call (rt "write_bytes");
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Call i_print;
+        ];
+    }
 
 (* str_eq(a, b) -> i32 (through sig2): byte-wise compare. Locals: 2
    i, 3 la, 4 lb. *)
-let rt_str_eq : W.func_type =
+let rt_str_eq () : W.func_type =
   {
     W.ftype_idx = t_str_eq;
     fparams = [ "a"; "b" ];
@@ -3373,37 +4570,41 @@ let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
     flocals = [ (1, W.RefNull t_proc); (1, W.RefNull t_cons); (1, W.I32) ];
     fbody =
       W.I32_const 65536 :: W.Global_set 0
-      :: (List.concat_map
-            (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
-            pool
-         @ List.mapi
-             (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
-             pool
-         @ [
-             W.I32_const 0;
-             W.I32_const 1;
-             W.I32_const 0;
-             W.Ref_null_any;
-             W.Ref_null_any;
-             W.Ref_null_any;
-             W.Ref_null_any;
-             W.Struct_new t_proc;
-             W.Local_set 0;
-             W.Local_get 0;
-             W.Ref_null_any;
-             W.Struct_new t_cons;
-             W.Local_set 1;
-             W.Local_get 1;
-             W.Global_set g.g_head;
-             W.Local_get 1;
-             W.Global_set g.g_tail;
-             W.Local_get 0;
-             W.Global_set g.g_curp;
-             W.I32_const 1;
-             W.Global_set g.g_next;
-             W.I32_const 0;
-             W.Global_set g.g_root_done;
-           ]);
+      ::
+      (if !wasi_mode then
+         [ W.I32_const wasi_bump_cell; W.I32_const 65536; W.I32_store ]
+       else [])
+      @ List.concat_map
+          (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
+          pool
+      @ List.mapi
+          (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
+          pool
+      @ [
+          W.I32_const 0;
+          W.I32_const 1;
+          W.I32_const 0;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Struct_new t_proc;
+          W.Local_set 0;
+          W.Local_get 0;
+          W.Ref_null_any;
+          W.Struct_new t_cons;
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Global_set g.g_head;
+          W.Local_get 1;
+          W.Global_set g.g_tail;
+          W.Local_get 0;
+          W.Global_set g.g_curp;
+          W.I32_const 1;
+          W.Global_set g.g_next;
+          W.I32_const 0;
+          W.Global_set g.g_root_done;
+        ];
   }
 
 (* ---- Numeric and comparison runtime (sig1: anyref -> anyref where a
@@ -3467,7 +4668,7 @@ let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
   }
 
 (* add: int + int, string + string (concat), otherwise numeric float *)
-let rt_add =
+let rt_add () =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -3490,29 +4691,29 @@ let rt_add =
       ];
   }
 
-let rt_sub =
+let rt_sub () =
   rt_arith
     [ W.I64_sub; W.Struct_new t_vint ]
     [ W.F64_sub; W.Struct_new t_vfloat ]
 
-let rt_mul =
+let rt_mul () =
   rt_arith
     [ W.I64_mul; W.Struct_new t_vint ]
     [ W.F64_mul; W.Struct_new t_vfloat ]
 
 (* div/mod: int division truncates *)
-let rt_div =
+let rt_div () =
   rt_arith
     [ W.I64_div_s; W.Struct_new t_vint ]
     [ W.F64_div; W.Struct_new t_vfloat ]
 
-let rt_mod =
+let rt_mod () =
   rt_arith
     [ W.I64_rem_s; W.Struct_new t_vint ]
     [ W.F64_rem_s; W.Struct_new t_vfloat ]
 
 (* neg *)
-let rt_neg : W.func_type =
+let rt_neg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -3550,7 +4751,7 @@ let rt_bit_xor = rt_bit W.I64_xor
 let rt_shl = rt_bit W.I64_shl
 let rt_shr = rt_bit W.I64_shr_s
 
-let rt_bnot : W.func_type =
+let rt_bnot () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -3592,7 +4793,7 @@ let bytes_const (s : string) : W.instr list =
       (List.mapi (fun i c -> (i, c)) chars)
   @ [ W.Local_get 4 ]
 
-let rt_list_new : W.func_type =
+let rt_list_new () : W.func_type =
   (* list_new(arr): the elements copy into fresh nodes, front to back.
      Locals: 1 array, 2 i, 3 n, 4 head, 5 tail, 6 node. *)
   {
@@ -3656,7 +4857,7 @@ let rt_list_new : W.func_type =
       ];
   }
 
-let rt_list_push_front : W.func_type =
+let rt_list_push_front () : W.func_type =
   (* list_push_front(list, v) -> list. Locals: 2 list, 3 head, 4 node. *)
   {
     W.ftype_idx = t_list2;
@@ -3698,7 +4899,7 @@ let rt_list_push_front : W.func_type =
       ];
   }
 
-let rt_list_push_back : W.func_type =
+let rt_list_push_back () : W.func_type =
   (* list_push_back(list, v) -> list. Locals: 2 list, 3 tail, 4 node. *)
   {
     W.ftype_idx = t_list2;
@@ -3740,7 +4941,7 @@ let rt_list_push_back : W.func_type =
       ];
   }
 
-let rt_list_pop_front : W.func_type =
+let rt_list_pop_front () : W.func_type =
   (* list_pop_front(list) -> v; an empty List traps. Locals: 1 list,
      2 node. *)
   {
@@ -3796,7 +4997,7 @@ let rt_list_pop_front : W.func_type =
       ];
   }
 
-let rt_list_pop_back : W.func_type =
+let rt_list_pop_back () : W.func_type =
   (* list_pop_back(list) -> v; an empty List traps. Locals: 1 list,
      2 node. *)
   {
@@ -3852,7 +5053,7 @@ let rt_list_pop_back : W.func_type =
       ];
   }
 
-let rt_list_len : W.func_type =
+let rt_list_len () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "l" ];
@@ -3867,7 +5068,7 @@ let rt_list_len : W.func_type =
       ];
   }
 
-let rt_list_str : W.func_type =
+let rt_list_str () : W.func_type =
   (* list_str(l) -> $vstring: "List[" elements ", " ... "]". Every
      element renders through to_str, so nested Lists recurse. Locals:
      1 result, 2 node, 3 first, 4 scratch. *)
@@ -3936,7 +5137,7 @@ let rt_list_str : W.func_type =
         ];
   }
 
-let rt_bytes_new : W.func_type =
+let rt_bytes_new () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "len" ];
@@ -3958,7 +5159,7 @@ let rt_bytes_new : W.func_type =
       ];
   }
 
-let rt_bytes_get : W.func_type =
+let rt_bytes_get () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "b"; "i" ];
@@ -3994,7 +5195,7 @@ let rt_bytes_get : W.func_type =
       ];
   }
 
-let rt_bytes_set : W.func_type =
+let rt_bytes_set () : W.func_type =
   {
     W.ftype_idx = t_bytes_set;
     fparams = [ "b"; "i"; "v" ];
@@ -4152,7 +5353,7 @@ let rt_bytes_le_set (width : int) : W.func_type =
 
 (* $vstring -> $vbytes: the copy keeps the two surfaces independent —
    mutating the bytes must never be observable through the string. *)
-let rt_bytes_from_str : W.func_type =
+let rt_bytes_from_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -4208,7 +5409,7 @@ let rt_bytes_from_str : W.func_type =
   }
 
 (* $vbytes -> $vstring: same copy discipline, the other direction. *)
-let rt_bytes_to_str : W.func_type =
+let rt_bytes_to_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -4260,7 +5461,7 @@ let rt_bytes_to_str : W.func_type =
 
 (* $vbytes -> $vstring spelling "Bytes[N]": "Bytes[" lives at scratch
    60000, the digits of N from 60006 on, the bracket after them. *)
-let rt_bytes_label : W.func_type =
+let rt_bytes_label () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -4304,16 +5505,16 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
       ];
   }
 
-let rt_lt =
+let rt_lt () =
   rt_cmp [ W.I64_lt_s; W.Struct_new t_vbool ] [ W.F64_lt; W.Struct_new t_vbool ]
 
-let rt_le =
+let rt_le () =
   rt_cmp [ W.I64_le_s; W.Struct_new t_vbool ] [ W.F64_le; W.Struct_new t_vbool ]
 
-let rt_gt =
+let rt_gt () =
   rt_cmp [ W.I64_gt_s; W.Struct_new t_vbool ] [ W.F64_gt; W.Struct_new t_vbool ]
 
-let rt_ge =
+let rt_ge () =
   rt_cmp [ W.I64_ge_s; W.Struct_new t_vbool ] [ W.F64_ge; W.Struct_new t_vbool ]
 
 (* eq: primitives by content via deep_eq, boxed $vbool *)
@@ -4703,37 +5904,40 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_sig2;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body;
     } )
 
@@ -5058,7 +6262,7 @@ let rt_deep_copy_func (env : env) : W.func_type =
 
 (* append(xs, v) -> a new array: every element copied, v at the end.
    Arrays are never mutated. Locals: 2 src, 3 elem, 4 fresh, 5 i. *)
-let rt_append : W.func_type =
+let rt_append () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "xs"; "v" ];
@@ -5118,7 +6322,7 @@ let rt_append : W.func_type =
       ];
   }
 
-let rt_strcat : W.func_type =
+let rt_strcat () : W.func_type =
   {
     W.ftype_idx = t_strcat;
     fparams = [ "a"; "b" ];
@@ -5195,7 +6399,7 @@ let rt_strcat : W.func_type =
    string independent, and any out-of-bounds (start, len) traps — the
    same failure shape as the Bytes accessors. Locals: 3 src, 4 total,
    5 start, 6 count, 7 dest, 8 i. *)
-let rt_str_substring : W.func_type =
+let rt_str_substring () : W.func_type =
   {
     W.ftype_idx = t_bytes_set;
     fparams = [ "s"; "start"; "len" ];
@@ -5277,7 +6481,7 @@ let rt_str_substring : W.func_type =
 (* slice(src, start, len) -> bytes: the internal helper str_split's
    parts materialize through — the callers compute in-bounds ranges.
    Locals: 3 dest, 4 k. *)
-let rt_str_slice : W.func_type =
+let rt_str_slice () : W.func_type =
   {
     W.ftype_idx = t_str_slice;
     fparams = [ "src"; "start"; "len" ];
@@ -5322,7 +6526,7 @@ let rt_str_slice : W.func_type =
    runtime's emo_str_starts_with rule — an empty prefix holds, a
    prefix longer than the receiver does not. Locals: 2 src, 3 prefix,
    4 i. *)
-let rt_str_starts_with : W.func_type =
+let rt_str_starts_with () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "prefix" ];
@@ -5385,7 +6589,7 @@ let rt_str_starts_with : W.func_type =
    so count and copy are one pass. Locals: 2 src, 3 sep, 4 scratch
    (the message constants), 5 total, 6 seplen, 7 i, 8 start, 9 out,
    10 j, 11 matched. *)
-let rt_str_split : W.func_type =
+let rt_str_split () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "sep" ];
@@ -5532,7 +6736,7 @@ let rt_str_split : W.func_type =
    length, which is what keeps a handed-out array independent of later
    pushes. *)
 
-let rt_builder_new : W.func_type =
+let rt_builder_new () : W.func_type =
   (* builder_new() -> builder. Empty, with room for the first eight. *)
   {
     W.ftype_idx = t_builder_new;
@@ -5548,7 +6752,7 @@ let rt_builder_new : W.func_type =
       ];
   }
 
-let rt_builder_push : W.func_type =
+let rt_builder_push () : W.func_type =
   (* builder_push(b, v) -> b. Locals: 2 builder, 3 fresh, 4 i,
      5 new capacity. *)
   {
@@ -5634,7 +6838,7 @@ let rt_builder_push : W.func_type =
       ];
   }
 
-let rt_builder_get : W.func_type =
+let rt_builder_get () : W.func_type =
   (* builder_get(b, i) -> v; an index outside the live prefix traps.
      Locals: 2 builder, 3 index. *)
   {
@@ -5670,7 +6874,7 @@ let rt_builder_get : W.func_type =
         ];
   }
 
-let rt_builder_to_array : W.func_type =
+let rt_builder_to_array () : W.func_type =
   (* builder_to_array(b) -> a fresh array of exactly the live length.
      Locals: 1 builder, 2 fresh, 3 i. *)
   {
@@ -5721,7 +6925,7 @@ let rt_builder_to_array : W.func_type =
 
 (* array_str(arr) -> $vstring: "[1, 2, 3]", every element through
    to_str. Locals: 1 result, 2 array, 3 i, 4 scratch, 5 first. *)
-let rt_array_str : W.func_type =
+let rt_array_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "a" ];
@@ -5791,7 +6995,7 @@ let rt_array_str : W.func_type =
 
 (* tuple_str(t) -> $vstring: "(a, b, c)". Tuples are the runtime
    tuple wrapper around the same anyref array used by array_str. *)
-let rt_tuple_str : W.func_type =
+let rt_tuple_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "t" ];
@@ -5863,7 +7067,7 @@ let rt_tuple_str : W.func_type =
 (* index_of(recv, needle) -> $vint: the byte offset of the needle's
    first occurrence, -1 when absent, an empty needle found at 0 — the
    interpreter's rule. Locals: 2 src, 3 needle, 4 i, 5 k. *)
-let rt_str_index_of : W.func_type =
+let rt_str_index_of () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "s"; "needle" ];
@@ -5954,7 +7158,7 @@ let trim_space_at (bytes : int) (idx : W.instr list) : W.instr list =
 
 (* trim(recv) -> $vstring: the receiver without its leading and trailing
    trim spaces, sliced once. Locals: 1 src, 2 lo, 3 hi. *)
-let rt_str_trim : W.func_type =
+let rt_str_trim () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6021,7 +7225,7 @@ let rt_str_trim : W.func_type =
 
 (* lower(recv) -> $vstring: A–Z folded to a–z, every other byte kept.
    Locals: 1 src, 2 out, 3 i, 4 c. *)
-let rt_str_lower : W.func_type =
+let rt_str_lower () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6090,7 +7294,7 @@ let rt_str_lower : W.func_type =
    -9223372036854775808 and rejects 9223372036854775808. Locals: 1 src,
    2 i, 3 neg, 4 scratch (the message constants), 5 acc, 6 floor,
    7 message, 8 digit. *)
-let rt_str_to_int64 : W.func_type =
+let rt_str_to_int64 () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "s" ];
@@ -6238,7 +7442,7 @@ let rt_str_to_int64 : W.func_type =
    traps on the casts. The answer to a fetch is the value the cell held,
    which is the payload word itself. *)
 
-let rt_atomic_new : W.func_type =
+let rt_atomic_new () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -6246,7 +7450,7 @@ let rt_atomic_new : W.func_type =
     fbody = [ W.Local_get 0; W.I32_const 0; W.Struct_new t_vatomic ];
   }
 
-let rt_atomic_load : W.func_type =
+let rt_atomic_load () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "cell" ];
@@ -6254,7 +7458,7 @@ let rt_atomic_load : W.func_type =
     fbody = [ W.Local_get 0; W.Ref_cast t_vatomic; W.Struct_get (t_vatomic, 0) ];
   }
 
-let rt_atomic_store : W.func_type =
+let rt_atomic_store () : W.func_type =
   {
     W.ftype_idx = t_atomic_store;
     fparams = [ "cell"; "v" ];
@@ -6265,7 +7469,7 @@ let rt_atomic_store : W.func_type =
       @ [ W.Local_get 2; W.Local_get 3; W.Struct_set (t_vatomic, 0) ];
   }
 
-let rt_atomic_exchange : W.func_type =
+let rt_atomic_exchange () : W.func_type =
   {
     W.ftype_idx = t_atomic_rm;
     fparams = [ "cell"; "v" ];
@@ -6278,7 +7482,7 @@ let rt_atomic_exchange : W.func_type =
       @ [ W.Local_get 4 ];
   }
 
-let rt_atomic_compare_exchange : W.func_type =
+let rt_atomic_compare_exchange () : W.func_type =
   {
     W.ftype_idx = t_atomic_cas;
     fparams = [ "cell"; "expected"; "fresh" ];
@@ -6369,7 +7573,7 @@ let rt_atomic_fetch_and = rt_atomic_fetch W.I64_and (Some W.I32_and)
 let rt_atomic_fetch_or = rt_atomic_fetch W.I64_or (Some W.I32_or)
 let rt_atomic_fetch_xor = rt_atomic_fetch W.I64_xor (Some W.I32_xor)
 
-let rt_builder_str : W.func_type =
+let rt_builder_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -6454,7 +7658,7 @@ let rt_builder_str : W.func_type =
    everything else through `to_str`), and `str_quote` is its quoted
    shape. *)
 
-let rt_map_new : W.func_type =
+let rt_map_new () : W.func_type =
   (* map_new() -> map. Empty, with room for the first eight. *)
   {
     W.ftype_idx = t_builder_new;
@@ -6472,7 +7676,7 @@ let rt_map_new : W.func_type =
       ];
   }
 
-let rt_map_get : W.func_type =
+let rt_map_get () : W.func_type =
   (* map_get(m, k) -> v; a miss raises the interpreter's E3004 message.
      Locals: 2 map, 3 i, 4 scratch (the message constants), 5 message. *)
   {
@@ -6551,7 +7755,7 @@ let rt_map_get : W.func_type =
         ];
   }
 
-let rt_map_set : W.func_type =
+let rt_map_set () : W.func_type =
   (* map_set(m, k, v) -> m: an existing key replaces in place and keeps
      its position, a new key appends — doubling both buffers first when
      they are full. Locals: 3 map, 4 i, 5 new capacity, 6 fresh keys,
@@ -6707,7 +7911,7 @@ let rt_map_set : W.func_type =
       ];
   }
 
-let rt_map_has : W.func_type =
+let rt_map_has () : W.func_type =
   (* map_has(m, k) -> Bool; a key the map could never store is simply
      not present, the interpreter's rule. Locals: 2 map, 3 i. *)
   {
@@ -6755,7 +7959,7 @@ let rt_map_has : W.func_type =
       ];
   }
 
-let rt_map_remove : W.func_type =
+let rt_map_remove () : W.func_type =
   (* map_remove(m, k) -> m: the tail shifts left one slot from the
      removed position, so the relative order survives. Locals: 2 map,
      3 i, 4 shift cursor. *)
@@ -6860,7 +8064,7 @@ let rt_map_remove : W.func_type =
       ];
   }
 
-let rt_map_len : W.func_type =
+let rt_map_len () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "m" ];
@@ -6931,7 +8135,7 @@ let rt_map_values = rt_map_collect 1
    characters spelled, everything else raw. Two passes: the escaped
    length first, then the fill. Locals: 1 source, 2 length, 3 output,
    4 i, 5 o, 6 byte. *)
-let rt_str_quote : W.func_type =
+let rt_str_quote () : W.func_type =
   let is_esc =
     [
       W.Local_get 6;
@@ -7106,7 +8310,7 @@ let rt_str_quote : W.func_type =
 (* bytes_str(b) -> $vstring: "Bytes[n]", the interpreter's rendering.
    Locals: 2 accumulator, 3 the length as bytes, 4 scratch (the
    constants). *)
-let rt_bytes_str : W.func_type =
+let rt_bytes_str () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "b" ];
@@ -7136,7 +8340,7 @@ let rt_bytes_str : W.func_type =
 (* map_dbg(v) -> $vstring: the debug form the map's rendering and
    get-miss message share — a string shows quoted, everything else
    through the shared to_str. *)
-let rt_map_dbg : W.func_type =
+let rt_map_dbg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -7151,7 +8355,7 @@ let rt_map_dbg : W.func_type =
       ];
   }
 
-let rt_map_str : W.func_type =
+let rt_map_str () : W.func_type =
   (* map_str(m) -> $vstring: "{key: value}" in insertion order, keys
      and values through map_dbg. Locals: 1 map, 2 result, 3 i,
      4 scratch (the constants), 5 first. *)
@@ -7243,7 +8447,7 @@ let rt_map_str : W.func_type =
 (* map_key_eq(a, b) -> i32: two boxed keys compare by content within a
    kind; different kinds never compare equal, so the scan walks past.
    One integer kind here — a Byte key is a $vint. *)
-let rt_map_key_eq : W.func_type =
+let rt_map_key_eq () : W.func_type =
   let both t a b =
     [ W.Local_get a; W.Ref_test t; W.Local_get b; W.Ref_test t; W.I32_and ]
   in
@@ -7298,7 +8502,7 @@ let rt_map_key_eq : W.func_type =
   }
 
 (* box(v) -> (ref null $vbox). *)
-let rt_box : W.func_type =
+let rt_box () : W.func_type =
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
@@ -7306,27 +8510,2116 @@ let rt_box : W.func_type =
     fbody = [ W.Local_get 0; W.Struct_new t_vbox ];
   }
 
-(* throw(msg): render the message into memory and abort through the
-   host, which throws. *)
-let rt_throw : W.func_type =
+(* The wasi mode's guest-side float formatter: the Node host's
+   floatStr/g6 rule, wat level. -0 renders as "-0.0"; an integral value
+   under 1e16 as its digits + ".0" (the digits from the i64, never a
+   floating scale); everything else six significant digits — fixed form
+   between 1e-4 and 1e6, exponent form outside it, the exponent signed
+   and zero-padded to two. The rounding is the host's scaled half-up on
+   the double's own value; the decimal exponent comes from the binary
+   exponent times log10(2), corrected against powers of ten built by
+   repeated multiplication. The body is built after the pool's globals
+   list has been snapshotted, so its constants ride raw bytes
+   (string_bytes_instrs), never the pool. Locals: 1 bits, 2 n, 3 ip, 4
+   digits, 5 neg, 6 p, 8 exp, 9 d, 10 k, 12 ax, 13 t, 14 p10 — 7 and 11
+   allocated but unused. *)
+let rt_float_str (env : env) : W.func_type =
+  let bits = 1 and nloc = 2 and iploc = 3 and digits = 4 in
+  let neg = 5 and p = 6 and exp = 8 and d = 9 and k = 10 in
+  let ax = 12 and t = 13 and p10 = 14 in
+  let buf = 0x1700 in
+  (* the decimal-string scratch — the wasi cells end at 0x1618 and the
+     stream scratch starts at 0x2000 *)
+  let log10_2 = 0.3010299956639812 in
+  let lg i = W.Local_get i and ls i = W.Local_set i in
+  let i32 i = W.I32_const i and i64 x = W.I64_const x in
+  let f64 x = W.F64_const x in
+  let put1 c = [ lg p; i32 c; W.I32_store8; lg p; i32 1; W.I32_add; ls p ] in
+  (* the decimal digits of the i64 in [src], written backward from [p];
+     on return [p] sits past the digits and [k] holds their count *)
+  let digits_of src =
+    [ lg src; ls digits; i32 0; ls k ]
+    @ [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    lg digits;
+                    i64 10L;
+                    W.I64_div_u;
+                    ls digits;
+                    lg k;
+                    i32 1;
+                    W.I32_add;
+                    ls k;
+                    lg digits;
+                    W.I64_eqz;
+                    W.Br_if 1;
+                    W.Br 0;
+                  ] );
+            ] );
+      ]
+    @ [ lg src; ls digits ]
+    @ [ lg p; lg k; W.I32_add; ls p; lg k; ls 11 ]
+    @ [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    lg k;
+                    W.I32_eqz;
+                    W.Br_if 1;
+                    lg p;
+                    i32 1;
+                    W.I32_sub;
+                    ls p;
+                    lg p;
+                    lg digits;
+                    i64 10L;
+                    W.I64_rem_u;
+                    W.I32_wrap_i64;
+                    i32 48;
+                    W.I32_add;
+                    W.I32_store8;
+                    lg digits;
+                    i64 10L;
+                    W.I64_div_u;
+                    ls digits;
+                    lg k;
+                    i32 1;
+                    W.I32_sub;
+                    ls k;
+                    W.Br 0;
+                  ] );
+            ] );
+      ]
+    @ [ lg p; lg 11; W.I32_add; ls p; lg 11; ls k ]
+  in
+  (* the trailing-zero strip: shrink while the last byte is '0', then
+     drop a trailing dot — the fraction always follows a dot, so the
+     integer digits survive *)
+  let strip =
+    [
+      W.Block
+        ( W.Void,
+          [
+            W.Loop
+              ( W.Void,
+                [
+                  i32 buf;
+                  lg p;
+                  W.I32_ge;
+                  W.Br_if 1;
+                  lg p;
+                  i32 1;
+                  W.I32_sub;
+                  W.I32_load8_u;
+                  i32 48;
+                  W.I32_ne;
+                  W.Br_if 1;
+                  lg p;
+                  i32 1;
+                  W.I32_sub;
+                  ls p;
+                  W.Br 0;
+                ] );
+          ] );
+      lg p;
+      i32 1;
+      W.I32_sub;
+      W.I32_load8_u;
+      i32 46;
+      W.I32_eq;
+      W.If (W.Void, [ lg p; i32 1; W.I32_sub; ls p ], []);
+    ]
+  in
+  let answer =
+    [
+      i32 buf; lg p; i32 buf; W.I32_sub; W.Call (rt "bytes_from_mem"); W.Return;
+    ]
+  in
+  let minus_if = [ lg neg; W.If (W.Void, put1 45, []) ] in
+  (* the fixed form: decimals = 5 − exp, read off |v| directly *)
+  let fixed_decimals =
+    let rec chain = function
+      | [] -> [ i32 9 ]
+      | (th, dec) :: rest ->
+          [
+            lg ax;
+            f64 th;
+            W.F64_ge;
+            W.If (W.Result W.I32, [ i32 dec ], chain rest);
+          ]
+    in
+    [
+      lg ax;
+      f64 1e5;
+      W.F64_ge;
+      W.If
+        ( W.Result W.I32,
+          [ i32 0 ],
+          chain
+            [
+              (1e4, 1);
+              (1e3, 2);
+              (100.0, 3);
+              (10.0, 4);
+              (1.0, 5);
+              (0.1, 6);
+              (0.01, 7);
+              (0.001, 8);
+            ] );
+      ls d;
+    ]
+  in
   {
-    W.ftype_idx = t_sig1;
+    W.ftype_idx = type_idx env (W.FuncT ([ W.F64 ], [ W.RefNull t_bytes ]));
     fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
+    flocals = [ (4, W.I64); (7, W.I32); (3, W.F64) ];
+    fbody =
+      (* NaN: v != v *)
+      [
+        lg 0;
+        lg 0;
+        W.F64_eq;
+        W.I32_eqz;
+        W.If (W.Void, string_bytes_instrs "NaN" @ [ W.Return ], []);
+      ]
+      @ [
+          lg 0;
+          W.I64_reinterpret_f64;
+          ls bits;
+          lg bits;
+          i64 0x8000000000000000L;
+          W.I64_eq;
+          W.If (W.Void, string_bytes_instrs "-0.0" @ [ W.Return ], []);
+          lg 0;
+          W.I64_reinterpret_f64;
+          i64 0x7FFFFFFFFFFFFFFFL;
+          W.I64_and;
+          W.F64_reinterpret_i64;
+          ls ax;
+          lg bits;
+          i64 63L;
+          W.I64_shr_u;
+          W.I32_wrap_i64;
+          ls neg;
+        ]
+      @ [
+          (* the integral door: floor(v) == v and |v| < 1e16 renders as
+             the integer's digits + ".0" *)
+          lg 0;
+          W.F64_floor;
+          lg 0;
+          W.F64_eq;
+          lg ax;
+          f64 1e16;
+          W.F64_lt;
+          W.I32_and;
+          W.If
+            ( W.Void,
+              [ lg ax; W.I64_trunc_f64_s; ls nloc; i32 buf; ls p ]
+              @ minus_if @ digits_of nloc @ put1 46 @ put1 48 @ answer,
+              [] );
+        ]
+      @ [
+          (* the decimal exponent: the binary exponent times log10(2),
+             corrected against powers of ten built by repeated
+             multiplication *)
+          lg bits;
+          i64 0x7FF0000000000000L;
+          W.I64_and;
+          i64 52L;
+          W.I64_shr_u;
+          W.I32_wrap_i64;
+          i32 1023;
+          W.I32_sub;
+          ls exp;
+          lg exp;
+          W.I64_extend_i32_s;
+          W.F64_convert_i64_s;
+          f64 log10_2;
+          W.F64_mul;
+          W.F64_floor;
+          W.I64_trunc_f64_s;
+          W.I32_wrap_i64;
+          ls exp;
+          f64 1.0;
+          ls p10;
+          lg exp;
+          ls k;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      i32 0;
+                      lg k;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      ls p10;
+                      lg k;
+                      i32 1;
+                      W.I32_sub;
+                      ls k;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      lg k;
+                      i32 0;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_div;
+                      ls p10;
+                      lg k;
+                      i32 1;
+                      W.I32_add;
+                      ls k;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      lg ax;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      W.F64_lt;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_mul;
+                      ls p10;
+                      lg exp;
+                      i32 1;
+                      W.I32_add;
+                      ls exp;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      i32 (-324);
+                      lg exp;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      lg ax;
+                      lg p10;
+                      W.F64_ge;
+                      W.Br_if 1;
+                      lg p10;
+                      f64 10.0;
+                      W.F64_div;
+                      ls p10;
+                      lg exp;
+                      i32 1;
+                      W.I32_sub;
+                      ls exp;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ [
+          lg exp;
+          i32 (-4);
+          W.I32_lt_s;
+          lg exp;
+          i32 6;
+          W.I32_ge;
+          W.I32_or;
+          W.If
+            ( W.Void,
+              (* the exponent form: the mantissa rounded to five
+                 decimals, the carry to ten riding the double division
+                 the host's own code takes *)
+              [
+                lg 0;
+                lg p10;
+                W.F64_div;
+                W.I64_reinterpret_f64;
+                i64 0x7FFFFFFFFFFFFFFFL;
+                W.I64_and;
+                W.F64_reinterpret_i64;
+                ls t;
+                lg t;
+                f64 1e5;
+                W.F64_mul;
+                f64 0.5;
+                W.F64_add;
+                W.F64_floor;
+                W.I64_trunc_f64_s;
+                ls nloc;
+                lg nloc;
+                i64 1000000L;
+                W.I64_ge_s;
+                W.If
+                  ( W.Void,
+                    [
+                      lg nloc;
+                      W.F64_convert_i64_s;
+                      f64 1e5;
+                      W.F64_div;
+                      f64 10.0;
+                      W.F64_div;
+                      ls t;
+                      lg t;
+                      f64 1e5;
+                      W.F64_mul;
+                      f64 0.5;
+                      W.F64_add;
+                      W.F64_floor;
+                      W.I64_trunc_f64_s;
+                      ls nloc;
+                      lg exp;
+                      i32 1;
+                      W.I32_add;
+                      ls exp;
+                    ],
+                    [] );
+                i32 buf;
+                ls p;
+              ]
+              @ minus_if
+              @ [
+                  lg p;
+                  lg nloc;
+                  i64 100000L;
+                  W.I64_div_u;
+                  W.I32_wrap_i64;
+                  i32 48;
+                  W.I32_add;
+                  W.I32_store8;
+                  lg p;
+                  i32 1;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ put1 46
+              @ [ lg nloc; i64 100000L; W.I64_rem_u; ls digits; i32 5; ls k ]
+              @ [
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              W.I32_eqz;
+                              W.Br_if 1;
+                              lg p;
+                              lg k;
+                              i32 1;
+                              W.I32_sub;
+                              W.I32_add;
+                              lg digits;
+                              i64 10L;
+                              W.I64_rem_u;
+                              W.I32_wrap_i64;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg digits;
+                              i64 10L;
+                              W.I64_div_u;
+                              ls digits;
+                              lg k;
+                              i32 1;
+                              W.I32_sub;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  i32 5;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ strip @ put1 101
+              @ [
+                  lg exp;
+                  i32 0;
+                  W.I32_ge;
+                  W.If (W.Void, put1 43, put1 45);
+                  lg exp;
+                  ls k;
+                  lg k;
+                  i32 0;
+                  W.I32_ge;
+                  W.If (W.Void, [], [ i32 0; lg k; W.I32_sub; ls k ]);
+                  lg k;
+                  i32 10;
+                  W.I32_lt_s;
+                  W.If (W.Void, put1 48, []);
+                  (* the digit count after the pad: 1, 2, or 3 *)
+                  lg k;
+                  i32 100;
+                  W.I32_ge;
+                  W.If
+                    ( W.Result W.I32,
+                      [ i32 3 ],
+                      [
+                        lg k;
+                        i32 10;
+                        W.I32_ge;
+                        W.If (W.Result W.I32, [ i32 2 ], [ i32 1 ]);
+                      ] );
+                  ls 11;
+                  lg p;
+                  lg 11;
+                  W.I32_add;
+                  ls p;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              W.I32_eqz;
+                              W.Br_if 1;
+                              lg p;
+                              i32 1;
+                              W.I32_sub;
+                              ls p;
+                              lg p;
+                              lg k;
+                              i32 10;
+                              W.I32_rem_s;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg k;
+                              i32 10;
+                              W.I32_div_s;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  lg 11;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ answer,
+              (* the fixed arm *)
+              fixed_decimals
+              @ [
+                  i64 1L;
+                  ls iploc;
+                  i32 0;
+                  ls k;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              lg d;
+                              W.I32_ge;
+                              W.Br_if 1;
+                              lg iploc;
+                              i64 10L;
+                              W.I64_mul;
+                              ls iploc;
+                              lg k;
+                              i32 1;
+                              W.I32_add;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg ax;
+                  lg iploc;
+                  W.F64_convert_i64_s;
+                  W.F64_mul;
+                  f64 0.5;
+                  W.F64_add;
+                  W.F64_floor;
+                  W.I64_trunc_f64_s;
+                  ls nloc;
+                  lg nloc;
+                  ls digits;
+                  lg digits;
+                  lg iploc;
+                  W.I64_rem_u;
+                  ls nloc;
+                  lg digits;
+                  lg iploc;
+                  W.I64_div_u;
+                  ls iploc;
+                  i32 buf;
+                  ls p;
+                ]
+              @ minus_if @ digits_of iploc @ put1 46
+              @ [
+                  i32 0;
+                  ls k;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              lg k;
+                              lg d;
+                              W.I32_ge;
+                              W.Br_if 1;
+                              lg p;
+                              lg d;
+                              lg k;
+                              W.I32_sub;
+                              i32 1;
+                              W.I32_sub;
+                              W.I32_add;
+                              lg nloc;
+                              i64 10L;
+                              W.I64_rem_u;
+                              W.I32_wrap_i64;
+                              i32 48;
+                              W.I32_add;
+                              W.I32_store8;
+                              lg nloc;
+                              i64 10L;
+                              W.I64_div_u;
+                              ls nloc;
+                              lg k;
+                              i32 1;
+                              W.I32_add;
+                              ls k;
+                              W.Br 0;
+                            ] );
+                      ] );
+                  lg p;
+                  lg d;
+                  W.I32_add;
+                  ls p;
+                ]
+              @ strip @ answer );
+        ]
+      (* every path above returns, but the function-level end still owes
+         the result type — the unreachable door satisfies it *)
+      @ [ W.Unreachable ];
+  }
+
+(* ---- The wasi filesystem runtime ----
+
+   The guest-side half of the wasi:filesystem@0.3.0 door: the error
+   texts the Node host's strerror table spells, the preopen fetch, the
+   path resolution onto the preopen table, the bounded stream read, the
+   fs write cycle, the fd table, the name sort, the open-at wrapper,
+   the environment scan, the argv array, the entropy fill, and the
+   directory-entry scan. These bodies are built after the string pool's
+   snapshot, so every constant rides raw bytes (string_bytes_instrs),
+   never the pool. The W AST has no load-offset form, so every field
+   read computes its address with an I32_add and answers through the
+   fixed scratch cells. *)
+
+(* wasi_err_text(code) -> $vstring: the fs error-code case to the Node
+   strerror text the goldens pin; an unmapped case answers its wasi
+   case name, the honest fallback for a code the golden set never
+   reaches. The mapped texts are the host's STRERROR table, so an
+   error path prints byte-identically across the two engines. *)
+let wasi_err_text_cases : (int * string) list =
+  [
+    (0, "Permission denied");
+    (1, "already");
+    (2, "Bad file descriptor");
+    (3, "busy");
+    (4, "deadlock");
+    (5, "quota");
+    (6, "File exists");
+    (7, "File too large");
+    (8, "illegal-byte-sequence");
+    (9, "in-progress");
+    (10, "Interrupted system call");
+    (11, "Invalid argument");
+    (12, "Input/output error");
+    (13, "Is a directory");
+    (14, "Too many levels of symbolic links");
+    (15, "too-many-links");
+    (16, "message-size");
+    (17, "File name too long");
+    (18, "no-device");
+    (19, "No such file or directory");
+    (20, "no-lock");
+    (21, "insufficient-memory");
+    (22, "No space left on device");
+    (23, "Not a directory");
+    (24, "Directory not empty");
+    (25, "not-recoverable");
+    (26, "unsupported");
+    (27, "no-tty");
+    (28, "no-such-device");
+    (29, "overflow");
+    (30, "Operation not permitted");
+    (31, "pipe");
+    (32, "Read-only file system");
+    (33, "Illegal seek");
+    (34, "text-file-busy");
+    (35, "cross-device");
+  ]
+
+let rt_wasi_err_text (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32; W.I32 ], [ W.Anyref ]));
+    fparams = [ "code"; "retptr" ];
+    flocals = [];
     fbody =
       [
-        W.Local_get 0;
-        W.Ref_cast t_vstring;
-        W.Struct_get (t_vstring, 0);
-        W.Local_set 1;
-        W.Local_get 1;
-        W.Call (rt "write_bytes");
-        W.Local_get 1;
-        W.Array_len t_bytes;
-        W.Call i_abort;
+        W.Block
+          ( W.Result W.Anyref,
+            List.concat_map
+              (fun (i, text) ->
+                [
+                  W.Local_get 0;
+                  W.I32_const i;
+                  W.I32_eq;
+                  W.If
+                    ( W.Void,
+                      string_bytes_instrs text
+                      @ [ W.Struct_new t_vstring; W.Br 1 ],
+                      [] );
+                ])
+              wasi_err_text_cases
+            @ [
+                (* 36 = other(option<string>): the host's own text rides
+                   the answer variant — the error-code's tag sits at
+                   retp+4, the option's tag at retp+8, the string's
+                   (ptr, len) at retp+12/+16 (the string itself the host
+                   wrote through the provider's realloc). A none payload
+                   falls back to the fixed text. *)
+                W.Local_get 0;
+                W.I32_const 36;
+                W.I32_eq;
+                W.If
+                  ( W.Void,
+                    [
+                      W.Block
+                        ( W.Void,
+                          [
+                            W.Local_get 1;
+                            W.I32_const 8;
+                            W.I32_add;
+                            W.I32_load8_u;
+                            W.I32_const 1;
+                            W.I32_ne;
+                            W.Br_if 0;
+                            W.Local_get 1;
+                            W.I32_const 12;
+                            W.I32_add;
+                            W.I32_load;
+                            W.Local_get 1;
+                            W.I32_const 16;
+                            W.I32_add;
+                            W.I32_load;
+                            W.Call (rt "bytes_from_mem");
+                            W.Struct_new t_vstring;
+                            W.Br 1;
+                          ] );
+                    ]
+                    @ string_bytes_instrs "the host refused the operation"
+                    @ [ W.Struct_new t_vstring; W.Br 1 ],
+                    [] );
+              ]
+            @ string_bytes_instrs "unknown error"
+            @ [ W.Struct_new t_vstring ] );
+      ];
+  }
+
+(* wasi_fs_init(): the once-flagged preopen fetch — get-directories
+   fills the 12-byte-entry table at 0x1008, get-initial-cwd anchors the
+   relative-path resolution at 0x1100 (0.3 has no cwd concept; the hint
+   is the resolution's only cwd). Locals: 0 p, 1 n, 2 slot, 3 i. *)
+let rt_wasi_fs_init (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([], []));
+    fparams = [];
+    flocals = [ (4, W.I32) ];
+    fbody =
+      [ W.I32_const wasi_fs_flag; W.I32_load; W.If (W.Void, [ W.Return ], []) ]
+      @ [
+          W.I32_const wasi_fs_flag;
+          W.I32_const 1;
+          W.I32_store;
+          W.I32_const wasi_retp_a;
+          W.Call i_pre;
+          W.I32_const wasi_retp_a;
+          W.I32_load;
+          W.Local_set 0;
+          W.I32_const wasi_retp_a;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.Local_set 1;
+          W.I32_const wasi_pre_base;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+        ]
+      @ [
+          (* the copy loop rides a wrapping block: the Br_if 1 exit must
+             land on the block and fall through to the count store, not
+             on the function-level label (an early return that skipped
+             the cwd fetch and the count store) *)
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 1;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 2;
+                      W.Local_get 0;
+                      W.I32_load;
+                      W.I32_store;
+                      W.Local_get 2;
+                      W.I32_const 4;
+                      W.I32_add;
+                      W.Local_get 0;
+                      W.I32_const 4;
+                      W.I32_add;
+                      W.I32_load;
+                      W.I32_store;
+                      W.Local_get 2;
+                      W.I32_const 8;
+                      W.I32_add;
+                      W.Local_get 0;
+                      W.I32_const 8;
+                      W.I32_add;
+                      W.I32_load;
+                      W.I32_store;
+                      W.Local_get 2;
+                      W.I32_const 12;
+                      W.I32_add;
+                      W.Local_set 2;
+                      W.Local_get 0;
+                      W.I32_const 12;
+                      W.I32_add;
+                      W.Local_set 0;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.I32_const wasi_pre_count;
+          W.Local_get 1;
+          W.I32_store;
+          W.I32_const wasi_retp_b;
+          W.Call i_cwd;
+        ]
+      @ [
+          (* the option<string> answer: the tag byte at 0x1608, the
+             (ptr, len) at +4 and +8 *)
+          W.I32_const wasi_retp_b;
+          W.I32_load8_u;
+          W.I32_const 1;
+          W.I32_eq;
+          W.If
+            ( W.Void,
+              [
+                W.I32_const wasi_cwd_cell;
+                W.I32_const wasi_retp_b;
+                W.I32_const 4;
+                W.I32_add;
+                W.I32_load;
+                W.I32_store;
+                W.I32_const wasi_cwd_cell;
+                W.I32_const 4;
+                W.I32_add;
+                W.I32_const wasi_retp_b;
+                W.I32_const 8;
+                W.I32_add;
+                W.I32_load;
+                W.I32_store;
+              ],
+              [
+                W.I32_const wasi_cwd_cell;
+                W.I32_const 4;
+                W.I32_add;
+                W.I32_const 0;
+                W.I32_store;
+              ] );
+        ];
+  }
+
+(* wasi_mem_eq(a, b, n) -> 1 when the byte ranges match. *)
+let rt_wasi_mem_eq (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32; W.I32; W.I32 ], [ W.I32 ]));
+    fparams = [ "a"; "b"; "n" ];
+    flocals = [ (1, W.I32) ];
+    (* 3 = i *)
+    fbody =
+      [
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Loop
+          ( W.Void,
+            [
+              W.Local_get 3;
+              W.Local_get 2;
+              W.I32_ge;
+              W.If (W.Void, [ W.I32_const 1; W.Return ], []);
+              W.Local_get 0;
+              W.Local_get 3;
+              W.I32_add;
+              W.I32_load8_u;
+              W.Local_get 1;
+              W.Local_get 3;
+              W.I32_add;
+              W.I32_load8_u;
+              W.I32_ne;
+              W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+              W.Local_get 3;
+              W.I32_const 1;
+              W.I32_add;
+              W.Local_set 3;
+              W.Br 0;
+            ] );
+        (* the loop only ever exits through the two returns; the
+           fallthrough edge still owes the validator an i32 *)
         W.Unreachable;
       ];
   }
+
+(* wasi_resolve(ptr, len) -> (desc, rel ptr, rel len): the path onto
+   the preopen table. Absolute paths match the longest preopen prefix
+   with a boundary check (the root preopen "/" matches everything,
+   stripping its slash); relative paths anchor on the get-initial-cwd
+   hint — 0.3 has no cwd concept, so a missing hint leaves the door
+   answering desc 0, the caller's honest no-entry. desc 0 = uncovered.
+   Locals: 2 desc, 3 relp, 4 rell, 5 p, 6 n, 7 slot, 8 i, 9 plen,
+   10 match, 11 best desc, 12 best plen, 13 best relp, 14 best rell,
+   15 buf. *)
+let rt_wasi_resolve (env : env) : W.func_type =
+  let uncovered =
+    [
+      W.I32_const 0;
+      W.Local_set 2;
+      W.I32_const 99;
+      W.Local_set 3;
+      W.I32_const 0;
+      W.Local_set 4;
+      W.Local_get 2;
+      W.Local_get 3;
+      W.Local_get 4;
+      W.Return;
+    ]
+  in
+  let take_best =
+    (* the matched preopen: its descriptor rides slot 7's word 0; the
+       rel values were computed into 13/14 by the match arm *)
+    [
+      W.Local_get 7;
+      W.I32_load;
+      W.Local_set 11;
+      W.Local_get 9;
+      W.Local_set 12;
+      W.Local_get 13;
+      W.Local_set 3;
+      W.Local_get 14;
+      W.Local_set 4;
+    ]
+  in
+  {
+    W.ftype_idx =
+      type_idx env (W.FuncT ([ W.I32; W.I32 ], [ W.I32; W.I32; W.I32 ]));
+    fparams = [ "ptr"; "len" ];
+    flocals = List.init 14 (fun _ -> (1, W.I32));
+    fbody =
+      [ W.Call (rt "wasi_fs_init") ]
+      @ [
+          W.Local_get 1;
+          W.I32_eqz;
+          W.If (W.Void, uncovered, []);
+          W.Local_get 0;
+          W.I32_load8_u;
+          W.I32_const 0x2f;
+          W.I32_eq;
+        ]
+      @ [
+          W.If
+            ( W.Void,
+              [
+                W.I32_const 0;
+                W.Local_set 11;
+                W.I32_const 0;
+                W.Local_set 12;
+                W.I32_const wasi_pre_count;
+                W.I32_load;
+                W.Local_set 6;
+                W.I32_const wasi_pre_base;
+                W.Local_set 7;
+                W.I32_const 0;
+                W.Local_set 8;
+                (* the scan rides a wrapping block: the Br_if 1 exit must
+                   land on the block and fall through to the best-match
+                   pick, not on the if's own label (an exit that skipped
+                   the match and dropped an absolute path into the
+                   relative-path code below) *)
+                W.Block
+                  ( W.Void,
+                    [
+                      W.Loop
+                        ( W.Void,
+                          [
+                            W.Local_get 8;
+                            W.Local_get 6;
+                            W.I32_ge;
+                            W.Br_if 1;
+                            W.Local_get 7;
+                            W.I32_const 8;
+                            W.I32_add;
+                            W.I32_load;
+                            W.Local_set 9;
+                            W.I32_const 0;
+                            W.Local_set 10;
+                            W.Local_get 9;
+                            W.I32_const 1;
+                            W.I32_eq;
+                            W.If
+                              ( W.Void,
+                                [
+                                  (* the root preopen "/": rel is the path
+                               minus its slash *)
+                                  W.I32_const 1;
+                                  W.Local_set 10;
+                                  W.Local_get 0;
+                                  W.I32_const 1;
+                                  W.I32_add;
+                                  W.Local_set 13;
+                                  W.Local_get 1;
+                                  W.I32_const 1;
+                                  W.I32_sub;
+                                  W.Local_set 14;
+                                ],
+                                [] );
+                            W.Local_get 9;
+                            W.I32_const 1;
+                            W.I32_gt;
+                            W.Local_get 1;
+                            W.Local_get 9;
+                            W.I32_ge;
+                            W.I32_and;
+                            W.Local_get 10;
+                            W.I32_eqz;
+                            W.I32_and;
+                            W.If
+                              ( W.Void,
+                                [
+                                  W.Local_get 0;
+                                  W.Local_get 7;
+                                  W.I32_const 4;
+                                  W.I32_add;
+                                  W.I32_load;
+                                  W.Local_get 9;
+                                  W.Call (rt "wasi_mem_eq");
+                                  W.If
+                                    ( W.Void,
+                                      [
+                                        W.Local_get 1;
+                                        W.Local_get 9;
+                                        W.I32_eq;
+                                        W.If
+                                          ( W.Void,
+                                            [
+                                              W.I32_const 1;
+                                              W.Local_set 10;
+                                              W.Local_get 0;
+                                              W.Local_get 9;
+                                              W.I32_add;
+                                              W.Local_set 13;
+                                              W.I32_const 0;
+                                              W.Local_set 14;
+                                            ],
+                                            [] );
+                                        W.Local_get 1;
+                                        W.Local_get 9;
+                                        W.I32_gt;
+                                        W.If
+                                          ( W.Void,
+                                            [
+                                              W.Local_get 0;
+                                              W.Local_get 9;
+                                              W.I32_add;
+                                              W.I32_load8_u;
+                                              W.I32_const 0x2f;
+                                              W.I32_eq;
+                                              W.If
+                                                ( W.Void,
+                                                  [
+                                                    W.I32_const 1;
+                                                    W.Local_set 10;
+                                                    W.Local_get 0;
+                                                    W.Local_get 9;
+                                                    W.I32_const 1;
+                                                    W.I32_add;
+                                                    W.I32_add;
+                                                    W.Local_set 13;
+                                                    W.Local_get 1;
+                                                    W.Local_get 9;
+                                                    W.I32_const 1;
+                                                    W.I32_sub;
+                                                    W.I32_sub;
+                                                    W.Local_set 14;
+                                                  ],
+                                                  [] );
+                                            ],
+                                            [] );
+                                      ],
+                                      [] );
+                                ],
+                                [] );
+                            W.Local_get 10;
+                            W.If
+                              ( W.Void,
+                                [
+                                  W.Local_get 9;
+                                  W.Local_get 12;
+                                  W.I32_gt;
+                                  W.If (W.Void, take_best, []);
+                                ],
+                                [] );
+                            W.Local_get 7;
+                            W.I32_const 12;
+                            W.I32_add;
+                            W.Local_set 7;
+                            W.Local_get 8;
+                            W.I32_const 1;
+                            W.I32_add;
+                            W.Local_set 8;
+                            W.Br 0;
+                          ] );
+                    ] );
+                W.Local_get 11;
+                W.Local_set 2;
+                W.Local_get 2;
+                W.Local_get 3;
+                W.Local_get 4;
+                W.Return;
+              ],
+              [] );
+        ]
+      @ [
+          (* relative: anchor on the cwd hint; without one, the root
+             preopen plays cwd (the hint is the only cwd 0.3 names) *)
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.I32_eqz;
+          W.If
+            ( W.Void,
+              [
+                (* no hint: the root preopen plays cwd — build
+                   "/"+path and answer (root, buf+1, len) directly *)
+                W.Local_get 0;
+                W.Local_get 1;
+                W.I32_const 1;
+                W.I32_add;
+                W.Call (rt "alloc");
+                W.Local_set 15;
+                W.Local_get 15;
+                W.I32_const 0x2f;
+                W.I32_store8;
+                W.Local_get 15;
+                W.I32_const 1;
+                W.I32_add;
+                W.Local_get 0;
+                W.Local_get 1;
+                W.Memory_copy;
+                W.I32_const wasi_pre_base;
+                W.I32_load;
+                W.Local_set 2;
+                W.Local_get 15;
+                W.I32_const 1;
+                W.I32_add;
+                W.Local_set 3;
+                W.Local_get 1;
+                W.Local_set 4;
+                W.Local_get 2;
+                W.Local_get 3;
+                W.Local_get 4;
+                W.Return;
+              ],
+              [] );
+        ]
+      @ [
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.Local_get 1;
+          W.I32_add;
+          W.I32_const 1;
+          W.I32_add;
+          W.Call (rt "alloc");
+          W.Local_set 15;
+          W.Local_get 15;
+          W.I32_const wasi_cwd_cell;
+          W.I32_load;
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.Memory_copy;
+          W.Local_get 15;
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.I32_add;
+          W.I32_const 0x2f;
+          W.I32_store8;
+          W.Local_get 15;
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.I32_const 1;
+          W.I32_add;
+          W.I32_add;
+          W.Local_get 0;
+          W.Local_get 1;
+          W.Memory_copy;
+        ]
+      @ [
+          W.Local_get 15;
+          W.I32_const wasi_cwd_cell;
+          W.I32_const 4;
+          W.I32_add;
+          W.I32_load;
+          W.Local_get 1;
+          W.I32_add;
+          W.I32_const 1;
+          W.I32_add;
+          W.Call (rt "wasi_resolve");
+        ];
+  }
+
+(* wasi_read_upto(s, max) -> (buf, len): the bounded stream read —
+   4096-byte scratch chunks accumulated into a bump buffer that grows
+   by exact need. DROPPED (the packed result's low nibble) is the end;
+   a read with no progress ends too, the honest guard against a
+   stalled stream. Locals: 2 buf, 3 cap, 4 total, 5 r, 6 c, 7 st,
+   8 nb. *)
+let rt_wasi_read_upto (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32; W.I32 ], [ W.I32; W.I32 ]));
+    fparams = [ "s"; "max" ];
+    flocals = [ (7, W.I32) ];
+    fbody =
+      [
+        W.I32_const 4096;
+        W.Call (rt "alloc");
+        W.Local_set 2;
+        W.I32_const 4096;
+        W.Local_set 3;
+        W.I32_const 0;
+        W.Local_set 4;
+        W.Loop
+          ( W.Void,
+            [
+              W.Local_get 4;
+              W.Local_get 1;
+              W.I32_ge;
+              W.If (W.Void, [ W.Local_get 2; W.Local_get 4; W.Return ], []);
+              W.Local_get 0;
+              W.I32_const wasi_scratch;
+              W.I32_const 4096;
+              W.Call i_s_read;
+              W.Local_set 5;
+              W.Local_get 5;
+              W.I32_const 4;
+              W.I32_shr_u;
+              W.Local_set 6;
+              W.Local_get 5;
+              W.I32_const 15;
+              W.I32_and;
+              W.Local_set 7;
+              W.Local_get 6;
+              W.If
+                ( W.Void,
+                  [
+                    W.Local_get 4;
+                    W.Local_get 6;
+                    W.I32_add;
+                    W.Local_get 3;
+                    W.I32_gt;
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 4;
+                          W.Local_get 6;
+                          W.I32_add;
+                          W.Call (rt "alloc");
+                          W.Local_set 8;
+                          W.Local_get 8;
+                          W.Local_get 2;
+                          W.Local_get 4;
+                          W.Memory_copy;
+                          W.Local_get 8;
+                          W.Local_set 2;
+                          W.Local_get 4;
+                          W.Local_get 6;
+                          W.I32_add;
+                          W.Local_set 3;
+                        ],
+                        [] );
+                    W.Local_get 2;
+                    W.Local_get 4;
+                    W.I32_add;
+                    W.I32_const wasi_scratch;
+                    W.Local_get 6;
+                    W.Memory_copy;
+                    W.Local_get 4;
+                    W.Local_get 6;
+                    W.I32_add;
+                    W.Local_set 4;
+                  ],
+                  [] );
+              W.Local_get 7;
+              W.I32_const 1;
+              W.I32_eq;
+              W.If (W.Void, [ W.Local_get 2; W.Local_get 4; W.Return ], []);
+              W.Local_get 6;
+              W.I32_eqz;
+              W.If (W.Void, [ W.Local_get 2; W.Local_get 4; W.Return ], []);
+              W.Br 0;
+            ] );
+        W.Local_get 2;
+        W.Local_get 4;
+      ];
+  }
+
+(* wasi_write_cycle(desc, ptr, len, offset, append) -> code: the fs
+   write door's stream round trip — new, hand the readable end to
+   write-via-stream (or append-via-stream), write through the writable
+   end, drop it (the EOF), read the future's result<_,error-code> two
+   bytes, drop the future. The code answers 0 on ok. Locals: 5 the
+   packed handle, 6 r, 7 w, 8 fut. *)
+let rt_wasi_write_cycle (env : env) : W.func_type =
+  {
+    W.ftype_idx =
+      type_idx env (W.FuncT ([ W.I32; W.I32; W.I32; W.I64; W.I32 ], [ W.I32 ]));
+    fparams = [ "desc"; "ptr"; "len"; "offset"; "append" ];
+    flocals = [ (1, W.I64); (3, W.I32) ];
+    fbody =
+      [
+        W.Call i_s_new;
+        W.Local_set 5;
+        W.Local_get 5;
+        W.I32_wrap_i64;
+        W.Local_set 6;
+        W.Local_get 5;
+        W.I64_const 32L;
+        W.I64_shr_u;
+        W.I32_wrap_i64;
+        W.Local_set 7;
+        W.Local_get 4;
+        W.If
+          ( W.Result W.I32,
+            [ W.Local_get 0; W.Local_get 6; W.Call i_avs ],
+            [ W.Local_get 0; W.Local_get 6; W.Local_get 3; W.Call i_wvs_fs ] );
+        W.Local_set 8;
+        W.Local_get 7;
+        W.Local_get 1;
+        W.Local_get 2;
+        W.Call i_s_write;
+        W.Drop;
+        W.Local_get 7;
+        W.Call i_s_dw;
+        W.Local_get 8;
+        W.I32_const wasi_retp_c;
+        W.Call i_f_read;
+        W.Drop;
+        W.Local_get 8;
+        W.Call i_fdr_fs;
+        (* the future's result<_,error-code>: the ok case carries no
+           payload, so retp_c+4 only speaks on a non-zero tag — reading
+           it unconditionally answers the cell's stale earlier content *)
+        W.I32_const wasi_retp_c;
+        W.I32_load8_u;
+        W.If
+          ( W.Void,
+            [
+              W.I32_const wasi_retp_c;
+              W.I32_const 4;
+              W.I32_add;
+              W.I32_load8_u;
+              W.Local_set 8;
+            ],
+            [ W.I32_const 0; W.Local_set 8 ] );
+        W.Local_get 8;
+      ];
+  }
+
+(* wasi_fd_alloc(desc) -> fd: the first free 8-byte slot at 0x1200 —
+   the descriptor's word and the i32 cursor — fds counting from 3;
+   0 answers full. Locals: 1 i, 2 slot. *)
+let rt_wasi_fd_alloc (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32 ], [ W.I32 ]));
+    fparams = [ "desc" ];
+    flocals = [ (2, W.I32) ];
+    fbody =
+      [
+        W.I32_const 0;
+        W.Local_set 1;
+        W.Loop
+          ( W.Void,
+            [
+              W.Local_get 1;
+              W.I32_const 64;
+              W.I32_ge;
+              W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+              W.Local_get 1;
+              W.I32_const 8;
+              W.I32_mul;
+              W.I32_const wasi_fd_base;
+              W.I32_add;
+              W.Local_set 2;
+              W.Local_get 2;
+              W.I32_load;
+              W.I32_eqz;
+              W.If
+                ( W.Void,
+                  [
+                    W.Local_get 2;
+                    W.Local_get 0;
+                    W.I32_store;
+                    W.Local_get 2;
+                    W.I32_const 4;
+                    W.I32_add;
+                    W.I32_const 0;
+                    W.I32_store;
+                    W.Local_get 1;
+                    W.I32_const 3;
+                    W.I32_add;
+                    W.Return;
+                  ],
+                  [] );
+              W.Local_get 1;
+              W.I32_const 1;
+              W.I32_add;
+              W.Local_set 1;
+              W.Br 0;
+            ] );
+        W.Unreachable;
+      ];
+  }
+
+(* wasi_fd_lookup(fd) -> desc, 0 when bad. *)
+let rt_wasi_fd_lookup (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I64 ], [ W.I32 ]));
+    fparams = [ "fd" ];
+    flocals = [ (1, W.I32) ];
+    (* 1 = f *)
+    fbody =
+      [
+        W.Local_get 0;
+        W.I32_wrap_i64;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.I32_const 3;
+        W.I32_lt_s;
+        W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+        W.Local_get 1;
+        W.I32_const 3;
+        W.I32_sub;
+        W.I32_const 64;
+        W.I32_ge;
+        W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+        W.Local_get 1;
+        W.I32_const 3;
+        W.I32_sub;
+        W.I32_const 8;
+        W.I32_mul;
+        W.I32_const wasi_fd_base;
+        W.I32_add;
+        W.I32_load;
+      ];
+  }
+
+(* wasi_fd_close(fd i32) -> desc, 0 when bad; the slot clears and the
+   descriptor rides back for the resource.drop. *)
+let rt_wasi_fd_close (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32 ], [ W.I32 ]));
+    fparams = [ "fd" ];
+    flocals = [ (2, W.I32) ];
+    (* 1 = slot, 2 = f *)
+    fbody =
+      [
+        W.Local_get 0;
+        W.Local_set 2;
+        W.Local_get 2;
+        W.I32_const 3;
+        W.I32_lt_s;
+        W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+        W.Local_get 2;
+        W.I32_const 3;
+        W.I32_sub;
+        W.I32_const 64;
+        W.I32_ge;
+        W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+        W.Local_get 2;
+        W.I32_const 3;
+        W.I32_sub;
+        W.I32_const 8;
+        W.I32_mul;
+        W.I32_const wasi_fd_base;
+        W.I32_add;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.I32_load;
+        W.Local_set 2;
+        W.Local_get 2;
+        W.I32_eqz;
+        W.If (W.Void, [ W.I32_const 0; W.Return ], []);
+        W.Local_get 1;
+        W.I32_const 0;
+        W.I32_store;
+        W.Local_get 2;
+      ];
+  }
+
+(* wasi_sort_builder(b): the bubble sort the interpreter and the Node
+   host both answer — the readdir order is not the sorted answer the
+   Array[String] surface promises. Byte-wise unsigned compare, the
+   OCaml String.compare order. Locals: 1 items, 2 len, 3 i, 4 j,
+   5 a bytes, 6 b bytes, 7 cmp, 8 k, 9 la, 10 lb, 11 n. *)
+let rt_wasi_sort_builder (env : env) : W.func_type =
+  let strcmp =
+    [
+      W.I32_const 0;
+      W.Local_set 7;
+      W.Local_get 5;
+      W.Array_len t_bytes;
+      W.Local_set 9;
+      W.Local_get 6;
+      W.Array_len t_bytes;
+      W.Local_set 10;
+      W.Local_get 9;
+      W.Local_get 10;
+      W.I32_lt_s;
+      W.If (W.Result W.I32, [ W.Local_get 9 ], [ W.Local_get 10 ]);
+      W.Local_set 11;
+      W.I32_const 0;
+      W.Local_set 8;
+      W.Block
+        ( W.Void,
+          [
+            W.Loop
+              ( W.Void,
+                [
+                  W.Local_get 8;
+                  W.Local_get 11;
+                  W.I32_ge;
+                  W.Br_if 1;
+                  W.Local_get 5;
+                  W.Local_get 8;
+                  W.Array_get_u t_bytes;
+                  W.Local_get 6;
+                  W.Local_get 8;
+                  W.Array_get_u t_bytes;
+                  W.I32_lt_s;
+                  W.If (W.Void, [ W.I32_const (-1); W.Local_set 7; W.Br 2 ], []);
+                  W.Local_get 5;
+                  W.Local_get 8;
+                  W.Array_get_u t_bytes;
+                  W.Local_get 6;
+                  W.Local_get 8;
+                  W.Array_get_u t_bytes;
+                  W.I32_gt;
+                  W.If (W.Void, [ W.I32_const 1; W.Local_set 7; W.Br 2 ], []);
+                  W.Local_get 8;
+                  W.I32_const 1;
+                  W.I32_add;
+                  W.Local_set 8;
+                  W.Br 0;
+                ] );
+          ] );
+      W.Local_get 7;
+      W.I32_eqz;
+      W.If
+        (W.Void, [ W.Local_get 9; W.Local_get 10; W.I32_sub; W.Local_set 7 ], []);
+    ]
+  in
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.Anyref ], []));
+    fparams = [ "b" ];
+    flocals =
+      [
+        (1, W.RefNull t_anyarray);
+        (* 1 = items *)
+        (3, W.I32);
+        (* 2 len, 3 i, 4 j *)
+        (2, W.RefNull t_bytes);
+        (* 5 a bytes, 6 b bytes *)
+        (5, W.I32);
+        (* 7 cmp, 8 k, 9 la, 10 lb, 11 n *)
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vbuilder;
+        W.Struct_get (t_vbuilder, 1);
+        W.I32_const 2;
+        W.I32_lt_s;
+        W.If (W.Void, [ W.Return ], []);
+        W.Local_get 0;
+        W.Ref_cast t_vbuilder;
+        W.Struct_get (t_vbuilder, 0);
+        W.Local_set 1;
+        W.Local_get 0;
+        W.Ref_cast t_vbuilder;
+        W.Struct_get (t_vbuilder, 1);
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.I32_const 1;
+                    W.I32_sub;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.I32_const 0;
+                    W.Local_set 4;
+                    W.Loop
+                      ( W.Void,
+                        [
+                          W.Local_get 4;
+                          W.Local_get 2;
+                          W.Local_get 3;
+                          W.I32_sub;
+                          W.I32_const 1;
+                          W.I32_sub;
+                          W.I32_ge;
+                          W.Br_if 2;
+                          W.Local_get 1;
+                          W.Local_get 4;
+                          W.Array_get t_anyarray;
+                          W.Ref_cast t_vstring;
+                          W.Struct_get (t_vstring, 0);
+                          W.Local_set 5;
+                          W.Local_get 1;
+                          W.Local_get 4;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Array_get t_anyarray;
+                          W.Ref_cast t_vstring;
+                          W.Struct_get (t_vstring, 0);
+                          W.Local_set 6;
+                          W.Block
+                            ( W.Void,
+                              strcmp
+                              @ [
+                                  W.Local_get 7;
+                                  W.I32_const 0;
+                                  W.I32_gt;
+                                  W.If
+                                    ( W.Void,
+                                      [
+                                        W.Local_get 1;
+                                        W.Local_get 4;
+                                        W.Local_get 6;
+                                        W.Array_set t_anyarray;
+                                        W.Local_get 1;
+                                        W.Local_get 4;
+                                        W.I32_const 1;
+                                        W.I32_add;
+                                        W.Local_get 5;
+                                        W.Array_set t_anyarray;
+                                      ],
+                                      [] );
+                                ] );
+                          W.Local_get 4;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Local_set 4;
+                          W.Br 0;
+                        ] );
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+      ];
+  }
+
+(* wasi_open_at(desc, ptr, len, open-flags, flags) -> (tag, val): the
+   open-at wrapper — path-flags pinned to symlink-follow, the answer
+   read off the retptr (the own handle rides offset 4 for tag 0, the
+   error code with it for tag 1). *)
+let rt_wasi_open_at (env : env) : W.func_type =
+  {
+    W.ftype_idx =
+      type_idx env
+        (W.FuncT ([ W.I32; W.I32; W.I32; W.I32; W.I32 ], [ W.I32; W.I32 ]));
+    fparams = [ "desc"; "ptr"; "len"; "openflags"; "flags" ];
+    flocals = [];
+    fbody =
+      [
+        W.Local_get 0;
+        W.I32_const 1;
+        W.Local_get 1;
+        W.Local_get 2;
+        W.Local_get 3;
+        W.Local_get 4;
+        W.I32_const wasi_retp_c;
+        W.Call i_open;
+        W.I32_const wasi_retp_c;
+        W.I32_load8_u;
+        W.I32_const wasi_retp_c;
+        W.I32_const 4;
+        W.I32_add;
+        W.I32_load;
+      ];
+  }
+
+(* wasi_env_scan(name bytes) -> (found, ptr, len): the
+   get-environment list scanned for the name; a miss answers 0. The
+   element is (kptr, klen, vptr, vlen). Locals: 1 p, 2 n, 3 i, 4 kb. *)
+let rt_wasi_env_scan (env : env) : W.func_type =
+  {
+    W.ftype_idx =
+      type_idx env (W.FuncT ([ W.RefNull t_bytes ], [ W.I32; W.I32; W.I32 ]));
+    fparams = [ "name" ];
+    flocals = [ (3, W.I32); (1, W.RefNull t_bytes) ];
+    fbody =
+      [
+        W.I32_const wasi_retp_a;
+        W.Call i_env;
+        W.I32_const wasi_retp_a;
+        W.I32_load;
+        W.Local_set 1;
+        W.I32_const wasi_retp_a;
+        W.I32_const 4;
+        W.I32_add;
+        W.I32_load;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 3;
+                    W.I32_const 16;
+                    W.I32_mul;
+                    W.I32_add;
+                    W.I32_load;
+                    W.Local_get 1;
+                    W.Local_get 3;
+                    W.I32_const 16;
+                    W.I32_mul;
+                    W.I32_add;
+                    W.I32_const 4;
+                    W.I32_add;
+                    W.I32_load;
+                    W.Call (rt "bytes_from_mem");
+                    W.Local_set 4;
+                    W.Local_get 4;
+                    W.Local_get 0;
+                    W.Call (rt "str_eq");
+                    W.If
+                      ( W.Void,
+                        [
+                          W.I32_const 1;
+                          W.Local_get 1;
+                          W.Local_get 3;
+                          W.I32_const 16;
+                          W.I32_mul;
+                          W.I32_add;
+                          W.I32_const 8;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Local_get 1;
+                          W.Local_get 3;
+                          W.I32_const 16;
+                          W.I32_mul;
+                          W.I32_add;
+                          W.I32_const 12;
+                          W.I32_add;
+                          W.I32_load;
+                          W.Return;
+                        ],
+                        [] );
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.I32_const 0;
+        W.I32_const 0;
+        W.I32_const 0;
+      ];
+  }
+
+(* wasi_argv_array() -> Array[String]: get-arguments through the
+   builder. Locals: 0 p, 1 n, 2 i, 3 b, 4 s. *)
+let rt_wasi_argv_array (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([], [ W.Anyref ]));
+    fparams = [];
+    flocals = [ (3, W.I32); (2, W.Anyref) ];
+    (* 0 p, 1 n, 2 i, 3 b, 4 s *)
+    fbody =
+      [
+        W.I32_const wasi_retp_a;
+        W.Call i_argv;
+        W.I32_const wasi_retp_a;
+        W.I32_load;
+        W.Local_set 0;
+        W.I32_const wasi_retp_a;
+        W.I32_const 4;
+        W.I32_add;
+        W.I32_load;
+        W.Local_set 1;
+        W.Call (rt "builder_new");
+        W.Local_set 3;
+        W.I32_const 0;
+        W.Local_set 2;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 2;
+                    W.Local_get 1;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 0;
+                    W.Local_get 2;
+                    W.I32_const 8;
+                    W.I32_mul;
+                    W.I32_add;
+                    W.I32_load;
+                    W.Local_get 0;
+                    W.Local_get 2;
+                    W.I32_const 8;
+                    W.I32_mul;
+                    W.I32_add;
+                    W.I32_const 4;
+                    W.I32_add;
+                    W.I32_load;
+                    W.Call (rt "bytes_from_mem");
+                    W.Struct_new t_vbytes;
+                    W.Call (rt "bytes_to_str");
+                    W.Local_set 4;
+                    W.Local_get 3;
+                    W.Local_get 4;
+                    W.Call (rt "builder_push");
+                    W.Local_set 3;
+                    W.Local_get 2;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 2;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 3;
+        W.Call (rt "builder_to_array");
+      ];
+  }
+
+(* wasi_rand_fill(buf, n): the entropy fill — get-random-bytes answers
+   short returns, so the loop accumulates until n or a zero-length
+   answer. Locals: 2 got, 3 p, 4 l. *)
+let rt_wasi_rand_fill (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32; W.I32 ], []));
+    fparams = [ "buf"; "n" ];
+    flocals = [ (3, W.I32) ];
+    fbody =
+      [
+        W.I32_const 0;
+        W.Local_set 2;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 2;
+                    W.Local_get 1;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 2;
+                    W.I32_sub;
+                    W.I64_extend_i32_u;
+                    W.I32_const wasi_retp_a;
+                    W.Call i_rand;
+                    W.I32_const wasi_retp_a;
+                    W.I32_load;
+                    W.Local_set 3;
+                    W.I32_const wasi_retp_a;
+                    W.I32_const 4;
+                    W.I32_add;
+                    W.I32_load;
+                    W.Local_set 4;
+                    W.Local_get 4;
+                    W.I32_eqz;
+                    W.Br_if 1;
+                    W.Local_get 0;
+                    W.Local_get 2;
+                    W.I32_add;
+                    W.Local_get 3;
+                    W.Local_get 4;
+                    W.Memory_copy;
+                    W.Local_get 2;
+                    W.Local_get 4;
+                    W.I32_add;
+                    W.Local_set 2;
+                    W.Br 0;
+                  ] );
+            ] );
+      ];
+  }
+
+(* wasi_listdir_scan(s) -> Array[String]: the directory-entry stream
+   scanned into the builder, then the sort. Each element is 24 bytes —
+   the name's (ptr, len) at 16 and 20. Eight entries per read ride the
+   4096-byte scratch. Locals: 1 b, 2 r, 3 c, 4 st, 5 j, 6 np, 7 nl,
+   8 s. *)
+let rt_wasi_listdir_scan (env : env) : W.func_type =
+  {
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32 ], [ W.Anyref ]));
+    fparams = [ "s" ];
+    flocals =
+      [
+        (1, W.Anyref);
+        (* 1 b *)
+        (6, W.I32);
+        (* 2 r, 3 c, 4 st, 5 j, 6 np, 7 nl *)
+        (1, W.Anyref);
+        (* 8 s *)
+      ];
+    fbody =
+      [
+        W.Call (rt "builder_new");
+        W.Local_set 1;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    (* the batch read: (stream, buf, cap-bytes) -> the
+                       packed word. The host fills slots as the
+                       enumeration progresses — a zero count with the
+                       stream still open is "not yet", a retry, not
+                       the end; only the closed status ends the loop.
+                       The record rides 24 bytes (the tag word, then
+                       the name's (ptr, len) at +16 and +20) and slots
+                       the host skipped answer a zero length. *)
+                    W.Local_get 0;
+                    W.I32_const wasi_scratch;
+                    W.I32_const 160;
+                    W.Call i_s_read_dir;
+                    W.Local_set 2;
+                    W.Local_get 2;
+                    W.I32_const 4;
+                    W.I32_shr_u;
+                    W.Local_set 3;
+                    W.Local_get 2;
+                    W.I32_const 15;
+                    W.I32_and;
+                    W.Local_set 4;
+                    W.I32_const 0;
+                    W.Local_set 5;
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Loop
+                            ( W.Void,
+                              [
+                                W.Local_get 5;
+                                W.Local_get 3;
+                                W.I32_ge;
+                                W.Br_if 1;
+                                W.I32_const wasi_scratch;
+                                W.Local_get 5;
+                                W.I32_const 24;
+                                W.I32_mul;
+                                W.I32_add;
+                                W.I32_const 16;
+                                W.I32_add;
+                                W.I32_load;
+                                W.Local_set 6;
+                                W.I32_const wasi_scratch;
+                                W.Local_get 5;
+                                W.I32_const 24;
+                                W.I32_mul;
+                                W.I32_add;
+                                W.I32_const 20;
+                                W.I32_add;
+                                W.I32_load;
+                                W.Local_set 7;
+                                W.Block
+                                  ( W.Void,
+                                    [
+                                      W.Local_get 7;
+                                      W.I32_eqz;
+                                      W.Br_if 0;
+                                      W.Local_get 6;
+                                      W.Local_get 7;
+                                      W.Call (rt "bytes_from_mem");
+                                      W.Struct_new t_vbytes;
+                                      W.Call (rt "bytes_to_str");
+                                      W.Local_set 8;
+                                      W.Local_get 1;
+                                      W.Local_get 8;
+                                      W.Call (rt "builder_push");
+                                      W.Local_set 1;
+                                    ] );
+                                W.Local_get 5;
+                                W.I32_const 1;
+                                W.I32_add;
+                                W.Local_set 5;
+                                W.Br 0;
+                              ] );
+                        ] );
+                    W.Local_get 4;
+                    W.I32_const 1;
+                    W.I32_eq;
+                    W.Br_if 1;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 1;
+        W.Call (rt "wasi_sort_builder");
+        W.Local_get 1;
+        W.Call (rt "builder_to_array");
+      ];
+  }
+
+(* throw(msg): render the message into memory and abort through the
+   host, which throws — or, in the wasi mode, write the Node host's
+   "ABORT: msg" line through the stderr stream and exit-with-code(1).
+   Locals (wasi): 1 the message's bytes, 2 the prefix, 3 the newline,
+   4-5 the joins, 6 the pointer, 7 the length, 8 the packed handle,
+   9-11 readable/writable/future. *)
+(* throw(msg): render the message into memory and abort through the
+   host, which throws — or, in the wasi mode, write the Node host's
+   "ABORT: msg" line through the stderr stream and exit-with-code(1).
+   Locals (wasi): 1 the message's bytes, 2 the prefix, 3 the newline,
+   4-5 the joins, 6 the pointer, 7 the length, 8 the packed handle,
+   9-11 readable/writable/future. *)
+let rt_throw () : W.func_type =
+  if !wasi_mode then
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (5, W.RefNull t_bytes); (2, W.I32); (1, W.I64); (3, W.I32) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.I32_const 65;
+          W.I32_const 66;
+          W.I32_const 79;
+          W.I32_const 82;
+          W.I32_const 84;
+          W.I32_const 58;
+          W.I32_const 32;
+          W.Array_new_fixed (t_bytes, 7);
+          W.Local_set 2;
+          W.I32_const 10;
+          W.Array_new_fixed (t_bytes, 1);
+          W.Local_set 3;
+          W.Local_get 2;
+          W.Local_get 1;
+          W.Call (rt "strcat");
+          W.Local_set 4;
+          W.Local_get 4;
+          W.Local_get 3;
+          W.Call (rt "strcat");
+          W.Local_set 5;
+          W.Local_get 5;
+          W.Call (rt "write_bytes");
+          W.Local_set 6;
+          W.Local_get 5;
+          W.Array_len t_bytes;
+          W.Local_set 7;
+          W.Call i_s_new;
+          W.Local_set 8;
+        ]
+        @ wasi_cycle_instrs ~base:8 ~wvs:i_wvs_err ~ptr:[ W.Local_get 6 ]
+            ~len:[ W.Local_get 7 ] ~exit_after:true;
+    }
+  else
+    {
+      W.ftype_idx = t_sig1;
+      fparams = [ "v" ];
+      flocals = [ (1, W.RefNull t_bytes) ];
+      fbody =
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Call (rt "write_bytes");
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Call i_abort;
+          W.Unreachable;
+        ];
+    }
 
 (* ---- The concurrency driver ----
 
@@ -7829,8 +11122,12 @@ let rt_driver_run (g : driver_globals) ~(t_i32_void : int) : W.func_type =
 (* ---- Module assembly ---- *)
 
 (* The exported main runs the entry statements, then the driver loop;
-   exported memory backs the println/abort exchange. *)
-let assemble (program : Emo_ir.program) : W.module_ =
+   exported memory backs the println/abort exchange. The wasi mode
+   builds the same lowering over the seven-import WASI 0.3 surface —
+   the component wrapper (Emo_component) wraps the binary. *)
+let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
+  wasi_mode := wasi;
+  import_base := if wasi then wasi_import_base else import_count;
   let env =
     {
       rev = [];
@@ -7848,7 +11145,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
       funcs = [];
       func_arity = [];
       closure_types = [];
-      nfuncs = runtime_count;
+      nfuncs = runtime_count ();
       fforeigns = [];
       strings = [];
       string_pool = [];
@@ -7975,36 +11272,36 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let rt_deep_copy = rt_deep_copy_func env in
   let rt_funcs =
     [
-      rt_add;
-      rt_sub;
-      rt_mul;
-      rt_div;
-      rt_mod;
-      rt_neg;
-      rt_lt;
-      rt_le;
-      rt_gt;
-      rt_ge;
+      rt_add ();
+      rt_sub ();
+      rt_mul ();
+      rt_div ();
+      rt_mod ();
+      rt_neg ();
+      rt_lt ();
+      rt_le ();
+      rt_gt ();
+      rt_ge ();
       rt_eq;
       rt_ne;
-      rt_to_str;
-      rt_println;
-      rt_strcat;
-      rt_box;
-      rt_throw;
-      rt_int_str;
-      rt_bool_str;
-      rt_char_str;
+      rt_to_str ();
+      rt_println ();
+      rt_strcat ();
+      rt_box ();
+      rt_throw ();
+      rt_int_str ();
+      rt_bool_str ();
+      rt_char_str ();
       (* the program's own instance rendering — its class dispatches
          and dumps fill this slot; the abort body answers when no class
          claims the value *)
-      (if program.Emo_ir.pclasses = [] then rt_instance_str
+      (if program.Emo_ir.pclasses = [] then rt_instance_str ()
        else generated_instance_str env program);
-      rt_write_bytes;
-      rt_bytes_from_mem;
-      rt_str_eq;
+      rt_write_bytes ();
+      rt_bytes_from_mem ();
+      rt_str_eq ();
       rt_deep_eq;
-      rt_append;
+      rt_append ();
     ]
   in
   (* The entry's locals start fresh: the local state still holds the
@@ -8052,12 +11349,21 @@ let assemble (program : Emo_ir.program) : W.module_ =
       W.If (W.Void, [ W.I32_const 1; W.Global_set g.g_root_done ], []);
     ]
   in
+  (* The wasi mode's run answers the bare `result` the world's async
+     export carries — its flattening is one i32 (0 = ok), so the core
+     entry returns it where the Node host's main returns nothing. *)
+  let t_run =
+    if !wasi_mode then type_idx env (W.FuncT ([], [ W.I32 ])) else t_main
+  in
   let main_func : W.func_type =
     {
-      W.ftype_idx = t_main;
+      W.ftype_idx = t_run;
       fparams = [];
       flocals = List.map (fun t -> (1, t)) env.local_decls;
-      fbody = main_stmts @ entry_end @ [ W.Call (rt "driver_run") ];
+      fbody =
+        (main_stmts @ entry_end
+        @ [ W.Call (rt "driver_run") ]
+        @ if !wasi_mode then [ W.I32_const 0 ] else []);
     }
   in
   let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
@@ -8087,69 +11393,91 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_bit_xor;
         rt_shl;
         rt_shr;
-        rt_bnot;
-        rt_bytes_new;
-        rt_bytes_get;
-        rt_bytes_set;
+        rt_bnot ();
+        rt_bytes_new ();
+        rt_bytes_get ();
+        rt_bytes_set ();
         rt_bytes_le_get 2;
         rt_bytes_le_get 4;
         rt_bytes_le_get 8;
         rt_bytes_le_set 2;
         rt_bytes_le_set 4;
         rt_bytes_le_set 8;
-        rt_bytes_from_str;
-        rt_bytes_to_str;
-        rt_bytes_label;
+        rt_bytes_from_str ();
+        rt_bytes_to_str ();
+        rt_bytes_label ();
         init_func;
         main_func;
-        rt_list_new;
-        rt_list_push_front;
-        rt_list_push_back;
-        rt_list_pop_front;
-        rt_list_pop_back;
-        rt_list_len;
-        rt_list_str;
-        rt_str_substring;
-        rt_builder_new;
-        rt_builder_push;
-        rt_builder_get;
-        rt_builder_to_array;
-        rt_array_str;
-        rt_builder_str;
-        rt_map_new;
-        rt_map_get;
-        rt_map_set;
-        rt_map_has;
-        rt_map_remove;
-        rt_map_len;
+        rt_list_new ();
+        rt_list_push_front ();
+        rt_list_push_back ();
+        rt_list_pop_front ();
+        rt_list_pop_back ();
+        rt_list_len ();
+        rt_list_str ();
+        rt_str_substring ();
+        rt_builder_new ();
+        rt_builder_push ();
+        rt_builder_get ();
+        rt_builder_to_array ();
+        rt_array_str ();
+        rt_builder_str ();
+        rt_map_new ();
+        rt_map_get ();
+        rt_map_set ();
+        rt_map_has ();
+        rt_map_remove ();
+        rt_map_len ();
         rt_map_keys;
         rt_map_values;
-        rt_map_str;
-        rt_map_key_eq;
-        rt_map_dbg;
-        rt_str_quote;
-        rt_bytes_str;
+        rt_map_str ();
+        rt_map_key_eq ();
+        rt_map_dbg ();
+        rt_str_quote ();
+        rt_bytes_str ();
         rt_deep_copy;
-        rt_str_slice;
-        rt_str_starts_with;
-        rt_str_split;
-        rt_tuple_str;
-        rt_str_index_of;
-        rt_str_trim;
-        rt_str_lower;
-        rt_str_to_int64;
-        rt_atomic_new;
-        rt_atomic_load;
-        rt_atomic_store;
-        rt_atomic_exchange;
-        rt_atomic_compare_exchange;
+        rt_str_slice ();
+        rt_str_starts_with ();
+        rt_str_split ();
+        rt_tuple_str ();
+        rt_str_index_of ();
+        rt_str_trim ();
+        rt_str_lower ();
+        rt_str_to_int64 ();
+        rt_atomic_new ();
+        rt_atomic_load ();
+        rt_atomic_store ();
+        rt_atomic_exchange ();
+        rt_atomic_compare_exchange ();
         rt_atomic_fetch_add;
         rt_atomic_fetch_sub;
         rt_atomic_fetch_and;
         rt_atomic_fetch_or;
         rt_atomic_fetch_xor;
-        rt_alloc;
+        rt_alloc ();
+        (* the wasi mode's guest-side float door, after the bump
+           allocator per the rt map *)
       ]
+    @ (if !wasi_mode then
+         [
+           rt_float_str env;
+           rt_wasi_err_text env;
+           rt_wasi_fs_init env;
+           rt_wasi_mem_eq env;
+           rt_wasi_resolve env;
+           rt_wasi_read_upto env;
+           rt_wasi_write_cycle env;
+           rt_wasi_fd_alloc env;
+           rt_wasi_fd_lookup env;
+           rt_wasi_fd_close env;
+           rt_wasi_sort_builder env;
+           rt_wasi_open_at env;
+           rt_wasi_env_scan env;
+           rt_wasi_argv_array env;
+           rt_wasi_rand_fill env;
+           rt_wasi_listdir_scan env;
+         ]
+       else [])
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
   (* main rides the map; the List ops follow it before the program's
@@ -8157,59 +11485,122 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let main_idx = rt "main" in
   (* types: the fixed runtime head, then everything the lowering
      appended (env.types accumulates in reverse) — snapped last so the
-     driver's own func types are included *)
+     driver's own func types are included; the wasi mode appends its
+     four import signatures at the very end *)
   let all_types = runtime_types @ List.rev env.types in
+  let wasi_type_base = List.length all_types in
+  let all_types =
+    if !wasi_mode then
+      all_types
+      @ [
+          W.FuncT ([ W.I32 ], [ W.I32 ]);
+          (* 0: stdout/stderr write-via-stream: handle -> future handle *)
+          W.FuncT ([ W.I32 ], []);
+          (* 1: the unit-handle doors — exit-with-code, the drops,
+             resource.drop, read-directory, the three environment doors *)
+          W.FuncT ([], [ W.I64 ]);
+          (* 2: stream.new *)
+          W.FuncT ([ W.I32; W.I32; W.I32 ], [ W.I32 ]);
+          (* 3: stream.write and stream.read: (h, ptr, n) -> count *)
+          W.FuncT ([ W.I32; W.I32 ], [ W.I32 ]);
+          (* 4: future.read and append-via-stream: (h, a) -> b *)
+          W.FuncT ([ W.I32; W.I32; W.I32; W.I32 ], []);
+          (* 5: create/remove/unlink-file-at: (self, ptr, len, retptr)
+             — the async-typed doors sync-lower with a retptr and no
+             core result *)
+          W.FuncT ([ W.I32; W.I32; W.I32; W.I32; W.I32; W.I32; W.I32 ], []);
+          (* 6: open-at: (…, retptr) *)
+          W.FuncT ([ W.I64; W.I32 ], []);
+          (* 7: get-random-bytes: (max-len, retptr) *)
+          W.FuncT ([ W.I32; W.I64; W.I32 ], []);
+          (* 8: read-via-stream: (self, offset, retptr) *)
+          W.FuncT ([ W.I32; W.I32; W.I64 ], [ W.I32 ]);
+          (* 9: fs write-via-stream: (self, data, offset) -> future *)
+          W.FuncT ([ W.I32; W.I32 ], []);
+          (* 10: fs read-directory: (self, retptr) — the answer is the
+             two handle words the guest reads off the retptr *)
+        ]
+    else all_types
+  in
+  let node_imports =
+    [
+      { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
+      { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
+      { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
+      { W.imodule = "emo"; W.iname = "file_read"; W.itype_idx = t_file_read };
+      { W.imodule = "emo"; W.iname = "file_write"; W.itype_idx = t_file_write };
+      { W.imodule = "emo"; W.iname = "fetch"; W.itype_idx = t_fetch };
+      { W.imodule = "emo"; W.iname = "os_open"; W.itype_idx = t_os_open };
+      { W.imodule = "emo"; W.iname = "os_read"; W.itype_idx = t_os_read };
+      { W.imodule = "emo"; W.iname = "os_write"; W.itype_idx = t_os_write };
+      { W.imodule = "emo"; W.iname = "os_close"; W.itype_idx = t_os_close };
+      {
+        W.imodule = "emo";
+        W.iname = "os_list_dir";
+        W.itype_idx = t_os_list_dir;
+      };
+      { W.imodule = "emo"; W.iname = "os_mkdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_rmdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_unlink"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
+      { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
+      { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
+      { W.imodule = "emo"; W.iname = "rand_bytes"; W.itype_idx = t_rand_bytes };
+      { W.imodule = "emo"; W.iname = "time_now_ms"; W.itype_idx = t_time_i64 };
+      { W.imodule = "emo"; W.iname = "time_mono_ns"; W.itype_idx = t_time_i64 };
+    ]
+  in
+  let wasi_imports =
+    let imp mod_ name off =
+      { W.imodule = mod_; W.iname = name; W.itype_idx = wasi_type_base + off }
+    in
+    [
+      imp "wasi:cli/stdout@0.3.0" "write-via-stream" 0;
+      imp "wasi:cli/stderr@0.3.0" "write-via-stream" 0;
+      imp "wasi:cli/exit@0.3.0" "exit-with-code" 1;
+      imp "stream" "new" 2;
+      imp "stream" "write" 3;
+      imp "stream" "read" 3;
+      imp "stream" "drop-writable" 1;
+      imp "stream" "drop-readable" 1;
+      imp "stream" "drop-readable-dir" 1;
+      imp "stream" "future-drop-readable" 1;
+      imp "future" "read" 4;
+      imp "future" "drop-readable" 1;
+      imp "resource" "descriptor-drop" 1;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.read-via-stream" 8;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.write-via-stream" 9;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.append-via-stream" 4;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.read-directory" 10;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.create-directory-at"
+        5;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.open-at" 6;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.remove-directory-at"
+        5;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.rename-at" 6;
+      imp "wasi:filesystem/types@0.3.0" "[method]descriptor.unlink-file-at" 5;
+      imp "wasi:filesystem/preopens@0.3.0" "get-directories" 1;
+      imp "wasi:random/random@0.3.0" "get-random-bytes" 7;
+      imp "wasi:cli/environment@0.3.0" "get-environment" 1;
+      imp "wasi:cli/environment@0.3.0" "get-arguments" 1;
+      imp "wasi:cli/environment@0.3.0" "get-initial-cwd" 1;
+      imp "stream" "read-dir-entries" 3;
+    ]
+  in
   {
     W.types = all_types;
-    imports =
-      [
-        { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
-        { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
-        { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
-        { W.imodule = "emo"; W.iname = "file_read"; W.itype_idx = t_file_read };
-        {
-          W.imodule = "emo";
-          W.iname = "file_write";
-          W.itype_idx = t_file_write;
-        };
-        { W.imodule = "emo"; W.iname = "fetch"; W.itype_idx = t_fetch };
-        { W.imodule = "emo"; W.iname = "os_open"; W.itype_idx = t_os_open };
-        { W.imodule = "emo"; W.iname = "os_read"; W.itype_idx = t_os_read };
-        { W.imodule = "emo"; W.iname = "os_write"; W.itype_idx = t_os_write };
-        { W.imodule = "emo"; W.iname = "os_close"; W.itype_idx = t_os_close };
-        {
-          W.imodule = "emo";
-          W.iname = "os_list_dir";
-          W.itype_idx = t_os_list_dir;
-        };
-        { W.imodule = "emo"; W.iname = "os_mkdir"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_rmdir"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_unlink"; W.itype_idx = t_os_path };
-        { W.imodule = "emo"; W.iname = "os_rename"; W.itype_idx = t_os_rename };
-        { W.imodule = "emo"; W.iname = "os_getcwd"; W.itype_idx = t_os_getcwd };
-        { W.imodule = "emo"; W.iname = "os_chdir"; W.itype_idx = t_os_path };
-        {
-          W.imodule = "emo";
-          W.iname = "rand_bytes";
-          W.itype_idx = t_rand_bytes;
-        };
-        { W.imodule = "emo"; W.iname = "time_now_ms"; W.itype_idx = t_time_i64 };
-        {
-          W.imodule = "emo";
-          W.iname = "time_mono_ns";
-          W.itype_idx = t_time_i64;
-        };
-      ];
+    imports = (if !wasi_mode then wasi_imports else node_imports);
     funcs;
-    memory = 2;
-    export_mem = true;
+    memory = (if !wasi_mode then 0 else 2);
+    import_memory = (if !wasi_mode then Some ("prov", 2) else None);
+    export_mem = not !wasi_mode;
     (* Every defined function, not only the hidden closures: a def named
        as a value is a `ref.func` to a program function or a class
        method, and the validator requires the target of `ref.func` to be
        in the declarative element segment whatever kind of function it
        is. Declaring the whole defined range costs one small segment and
        cannot go stale as lowering grows new `ref.func` sites. *)
-    declared_funcs = List.init (List.length funcs) (fun i -> import_count + i);
+    declared_funcs = List.init (List.length funcs) (fun i -> !import_base + i);
     globals =
       (W.I32, true)
       :: List.concat_map
@@ -8226,7 +11617,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
           (W.I32, true);
         ];
     start = rt "init";
-    exports = [ ("main", main_idx) ];
+    exports = [ ((if !wasi_mode then "run" else "main"), main_idx) ];
   }
 
 (* Serializers re-exported for the CLI. *)

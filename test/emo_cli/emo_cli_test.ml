@@ -740,7 +740,7 @@ let beam_examples_tests =
                 Emo_cli.build_file ~entry:"main.emo" ~output:out
                   ~specialize:false ~cclibs:[]
                   ~native:Emo_project.no_native_inputs ~target:"beam"
-                  ~profile:"kernel")
+                  ~profile:"kernel" ~wasi:false)
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -793,7 +793,7 @@ let wasm_examples_tests =
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
                   ~specialize:false ~cclibs:[]
                   ~native:Emo_project.no_native_inputs ~target:"wasm"
-                  ~profile:"kernel")
+                  ~profile:"kernel" ~wasi:false)
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -814,6 +814,127 @@ let wasm_examples_tests =
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    err)))
     wasm_goldens
+
+let wasmtime_available =
+  lazy (Sys.command "wasmtime --version >/dev/null 2>&1" = 0)
+
+(* The wasi goldens: the wasm goldens — string ops, floats (the
+   guest-side %g renders them), and the file demos — wrapped in the
+   WASI 0.3 command component and executed by wasmtime (46+, -S cli),
+   byte-for-byte against the same expected.txt. Skips when wasmtime is absent; the run maps the
+   example's own directory onto the guest root (--dir <dir>::/) so
+   relative file paths resolve like the interpreter's — wasi 0.3 has
+   no cwd concept (get-initial-cwd answers none under wasmtime), so
+   the preopen root is the only anchor a relative path has. *)
+let wasi_goldens =
+  [
+    "hello_world";
+    "if_expr";
+    "fib";
+    "objects";
+    "length_method";
+    "language_tour";
+    "shop";
+    "pipeline";
+    "function_group";
+    "showcase";
+    "bit_ops";
+    "array_builder";
+    "base64_demo";
+    "csv_demo";
+    "yaml_demo";
+    "xml_demo";
+    "dom_demo";
+    "dom_edge";
+    "template_demo";
+    "template_edge";
+    "slog_demo";
+    "sync_demo";
+    "loops";
+    "error_matching";
+    "string_methods";
+    "branch_var";
+    "builtin_names";
+    "to_string_render";
+    "typed_sigs";
+    "png_demo";
+    "sql_demo";
+    "sql_edge";
+    "atomic_cell";
+    "crypto_hash";
+    "crypto_aead";
+    "crypto_sign";
+    "crypto_ecdh";
+    "trace_macro_demo";
+    "memoize_macro_demo";
+    "derive_eq_macro_demo";
+    "derive_shared_macro_demo";
+    "rand_demo";
+    "uuid_demo";
+    "file_read";
+    "bufio_demo";
+    "os_fs_demo";
+    (* the float-rendering demos: the guest-side %g covers them since
+       T85.7's second round *)
+    "field_types";
+    "fixed_width";
+    "list";
+    "map";
+    "json_demo";
+    "toml_demo";
+    "float_methods";
+    "math_demo";
+    "math_trig";
+    "math_inverse_trig";
+    "math_hyperbolic";
+    "math_complex";
+    "math_fft";
+    "math_blas1";
+    "math_solve";
+    "math_special";
+    "math_elefunt";
+    "typed_calls";
+    "typed_methods";
+    "plot_demo";
+  ]
+
+let wasi_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to wasm --wasi and runs on wasmtime" name)
+        (fun () ->
+          if not (Lazy.force wasmtime_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_wasm = Filename.concat scratch (name ^ "-wasi-main.wasm") in
+          let exit_code =
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"wasm"
+                  ~profile:"kernel" ~wasi:true)
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd =
+            Printf.sprintf
+              "cd %s && wasmtime run -S cli -W \
+               component-model-more-async-builtins=y --dir %s::/ %s"
+              (Filename.quote dir) (Filename.quote dir)
+              (Filename.quote out_wasm)
+          in
+          let out, err, proc_status = run_cmd cmd in
+          Alcotest.(check string) "output" expected out;
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "wasmtime exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   err)))
+    wasi_goldens
 
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
@@ -1139,7 +1260,8 @@ let scratch_entry name source =
 let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
   in_dir (Filename.dirname entry) (fun () ->
       Emo_cli.build_file ~entry ~output ~specialize ~cclibs
-        ~native:Emo_project.no_native_inputs ~target ~profile:"kernel")
+        ~native:Emo_project.no_native_inputs ~target ~profile:"kernel"
+        ~wasi:false)
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -2010,7 +2132,7 @@ let c_examples_tests =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
                   ~specialize:false ~cclibs ~native:Emo_project.no_native_inputs
-                  ~target:"c" ~profile:"kernel")
+                  ~target:"c" ~profile:"kernel" ~wasi:false)
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           (* A TLS golden runs from its own directory: the program
@@ -3631,7 +3753,7 @@ let riscv64_examples_tests =
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
                   ~specialize:false ~cclibs:[]
                   ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                  ~profile:"kernel")
+                  ~profile:"kernel" ~wasi:false)
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -3784,7 +3906,7 @@ let riscv64_profile_tests =
           (Emo_cli.build_file ~entry
              ~output:(Filename.concat (Filename.dirname entry) "out")
              ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
-             ~target:"c" ~profile:"user"));
+             ~target:"c" ~profile:"user" ~wasi:false));
     tc "an unknown profile refuses by name" (fun () ->
         let entry = scratch_entry "profile-x" {|println("ok")|} in
         Alcotest.(check int)
@@ -3792,7 +3914,7 @@ let riscv64_profile_tests =
           (Emo_cli.build_file ~entry
              ~output:(Filename.concat (Filename.dirname entry) "out")
              ~specialize:false ~cclibs:[] ~native:Emo_project.no_native_inputs
-             ~target:"riscv64" ~profile:"turbo"));
+             ~target:"riscv64" ~profile:"turbo" ~wasi:false));
     tc "the profiles pick their own load addresses" (fun () ->
         Alcotest.(check bool)
           "the kernel profile links where OpenSBI enters" true
@@ -4084,7 +4206,7 @@ let foreign_tests =
             | Some message ->
                 Alcotest.fail (target ^ ": unexpected refusal: " ^ message))
           [
-            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
+            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble ~wasi:false p));
             ( "beam",
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
@@ -4115,7 +4237,7 @@ let foreign_tests =
                   && contains message "foreign def"
                   && contains message "host_floor"))
           [
-            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
+            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble ~wasi:false p));
             ( "beam",
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
@@ -4162,7 +4284,7 @@ let specialization_tests =
           in_example "specialize_shapes" (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
                 ~cclibs:[] ~native:Emo_project.no_native_inputs ~target:"ocaml"
-                ~profile:"kernel")
+                ~profile:"kernel" ~wasi:false)
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
@@ -5291,14 +5413,14 @@ let manifest_entry_tests =
                Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
                  ~native:Emo_project.no_native_inputs ~target:"wasm"
-                 ~profile:"kernel"));
+                 ~profile:"kernel" ~wasi:false));
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
                  ~specialize:false ~cclibs:[]
                  ~native:Emo_project.no_native_inputs ~target:"wasm"
-                 ~profile:"kernel")));
+                 ~profile:"kernel" ~wasi:false)));
   ]
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
@@ -6746,6 +6868,7 @@ let () =
         wasm_examples_tests
         @ [ wasm_file_probe_test; wasm_process_refusal_test ]
         @ wasm_process_group_refusal_tests );
+      ("wasi_examples", wasi_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);

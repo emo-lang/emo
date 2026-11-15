@@ -4,6 +4,7 @@ module Ast = Emo_ast
    eponymous module. *)
 module Ts = Emo_ts
 module Wasm = Emo_wasm
+module Component = Emo_component
 module Beam = Emo_beam
 module C = Emo_c
 module Riscv = Emo_riscv

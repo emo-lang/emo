@@ -36,8 +36,10 @@ let require_ok (status, output) what =
         (Printf.sprintf "%s failed:\n%s" (String.escaped what) output)
 
 (* Extracts the runtime from the compiler's generated data into [dir]:
-   the directory then holds exactly the runtime source and whatever the
-   fixture adds. *)
+   the directory then holds exactly the runtime source — the ML and its
+   C stub, whose symbols the runtime's `external`s name (the os surface
+   grew stub-backed declarations in step 63) — and whatever the fixture
+   adds. *)
 let extract_runtime dir =
   write_file
     (Filename.concat dir "emo_ocaml_runtime.ml")
@@ -54,8 +56,9 @@ let extract_runtime dir =
 let compile dir unit_names =
   require_ok
     (run
-       (Printf.sprintf "cd %s && ocamlfind ocamlopt -package unix,ssl -c %s"
-          (Filename.quote dir) "emo_ocaml_runtime.ml"))
+       (Printf.sprintf
+          "cd %s && ocamlfind ocamlopt -package unix,ssl -c %s -c %s"
+          (Filename.quote dir) "emo_ocaml_runtime.ml" "emo_ocaml_stub.c"))
     "ocamlfind ocamlopt -c";
   require_ok
     (run

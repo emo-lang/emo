@@ -72,6 +72,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M43 — The lock refresh | 82 | `emo deps resolve` resolves a project against its own declared targets (or an explicit `--target`), honoring `EMO_REGISTRY` as every other command does; the family staging lists converge into `scripts/stage-registry.sh` consumed byte-identically by the eight gates; `just lock-refresh` walks every tracked lock's directory and re-pins the tree with one command (118 locks, zero diffs); five cases in `test/emo_cli`'s `resolve_targets` group; CHECK.md's c-target-only note retired (`CHECK.md`). |
 | M44 — Strictness first, finished | 83 | The four open checker gaps close as check-time refusals: a block binding may not shadow an outer binding (E4029), arms on one enum member agree on their tuple payload types (E4030, `:chain` inheriting through its rewrite), and `Bytes.new` takes the constructor rule behind the Bytes rules' Unknown tolerance — beside the runtime lifetime bug they were recorded with (the chained-builtin form `b.to_bytes().length()` now answers the receiver's real value on the interpreter and every compiled target, pinned in `examples/builtin_names`); the negative goldens live in `test/emo_cli`'s `strictness_refusal` group, the corpus sweeps clean, and the rules land in `docs/intro/type-system.md` and `docs/intro/syntax.md` (`CHECK.md`). |
 | M45 — The configuration format | 84 | The `toml` package: TOML 1.1.0 decoded into a `Toml` value tree mirroring the json and yaml design — seven kinds, no null (TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back — pure Emo over the shared runtimes, the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see, multi-line inline tables and trailing commas) and the strict redefinition rules, assembling while it parses over origin-tagged nodes (dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once); `inf`/`nan` and out-of-range integers refuse like every malformed input as `(R.error, reason)` with the byte offset; encode is the document form, scalars first, `decode(encode(v)) == v`; the edge battery flushed seven package bugs — the string fill answering the write length where the next index belongs, hex escape digits with the wrong weights, the float buffer counting the underscores, the exponent value eating the underscores, `doc_inline?` answering true for all-table arrays, section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`CHECK.md`). |
+| M46 — The wasm target speaks WASI 0.3 | 85 | `emo build --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes: stdout/stderr ride the native stream cycles through `wasi:cli/stdout`+`stderr`, the exit code through `wasi:cli/exit`, the import table remapped from the eighteen `emo.*` doors to twenty-seven standard ones — `wasi:filesystem` (descriptor as a `(sub resource)` export, open-at, the directory-entry stream, the one-string mutations), `wasi:filesystem/preopens` (the table the path resolution anchors on), `wasi:random/random`, `wasi:cli/environment`; the provider module grew the canonical realloc the host-written lists allocate through, sharing the bump cursor cell with the guest; the store operand order (value before address) fixed at five sites; the guest-side `%g` float formatter recorded found-not-fixed; the file chain's last mile fixed at T85.7 (the provider realloc's cursor store with its operands swapped, two bare loops exiting through the enclosing block's label, the write cycle reading the error-code cell on the ok case, `os_write`'s fd dispatch reading an always-false conjunction, the directory door's missing `read-dir-entries` import, and the bubble pass swapping descending); `wasi_examples` — 46 goldens byte-identical with the Node list — and wasmtime-smoke's execution rung pin the doors (`CHECK.md`). |
 
 ## Design gates
 
@@ -4951,3 +4952,86 @@ the shape it breaks:
   decoded tree). The array arm parameterized over its operand locals
   and the tuple arm spills both element arrays into fresh locals and
   runs it; tuples compare element-wise like arrays do.
+
+## M46 — The wasm target speaks WASI 0.3
+
+### Step 85 — The WASI 0.3 producer door
+
+**Status:** complete. (`plan/step-85-wasi03.md` is the step's record.)
+
+- [x] **T85.1** — The probe campaign: `devtools/wasi03-probe/` — a
+      hand-written component running the full stdout stream cycle
+      against `wasi:cli/stdout@0.3.0`, pinning the four load-bearing
+      facts (the sync lift of the async-typed run, the `use`-split
+      two-instance import shape, the packed-i64 stream handles with
+      the ownership-transfer protocol, the exit channel) and the
+      binary encodings (fact tables 1–16 in its README, including
+      the T85.5 additions: the 37-case fs error-code variant, the
+      `(eq)` export set, the own/borrow deftypes, the realloc-backed
+      host-written lists).
+- [x] **T85.2** — `src/emo_codegen/emo_component.ml`: the
+      component-level AST, the binary writer, and the component WAT
+      printer; `emo build --target wasm --wasi` produces the command
+      component wasmtime 46+ executes, exit codes propagating.
+- [x] **T85.3** — The ABI mode in `emo_wasm.ml`: the import table
+      remapped to twenty-seven standard doors, the memory provider,
+      the stdout/stderr stream cycles, the guest-side `%g` refusing
+      this rung (the honest door until the exp-form port lands).
+- [x] **T85.4** — The CLI flag surface (build/run/doctor).
+- [x] **T85.5** — The filesystem, random, and environment doors: the
+      descriptor as a `(sub resource)` export, the 37-case
+      error-code variant, the `(eq)` export set, the provider's
+      canonical realloc sharing the bump cursor cell with the
+      guest, the preopen table + path resolution + fd table + the
+      stream read/write cycles, the store operand order (value
+      before address) fixed at five sites, the generated
+      `instance_str` accumulator moved to local 6, and the rand
+      fill's remaining-count direction (n − got, not got − n).
+      hello, argv, and the environment read back correctly under
+      wasmtime -S cli; the file chain's last mile (resolve onto the
+      handle the host accepts) recorded found-not-fixed.
+- [x] **T85.6** — The goldens: `wasi_examples` — 43 demos
+      byte-identical with the Node list — skipping without
+      wasmtime; `devtools/wasmtime-smoke.sh`'s execution rung
+      (39/39); `docs/demo-targets.md` EN+zh; TASKS/plan/CHECK
+      updated.
+- [x] **T85.7** — The file chain's last mile, five guest-side bugs
+      each pinned by a probe: the provider realloc's cursor store
+      with its operands swapped (the cell never advanced, every
+      host allocation landed at the same address — the "unknown
+      handle index 256" the probes hit was the cell's own address),
+      `fs_init`'s copy loop and the resolve scan exiting through
+      the enclosing block's label (the count cell stayed zero, the
+      cwd hint never fetched, absolute paths fell into the relative
+      fallback wearing a doubled slash), the write cycle reading
+      the future's error-code cell on the ok case (a successful
+      write answered the stale handle byte), and `os_write`'s fd
+      dispatch reading an always-false conjunction (every file
+      write a fake success; the legs are an `or`). With the chain
+      alive: the directory door's `read-dir-entries` import (the
+      scan rode the u8 read and trapped on the type), the scan's
+      batch shape (slots as the enumeration progresses, the record
+      at 24 bytes, the name's (ptr, len) at +16/+20), the bubble
+      pass swapping ascending, the harness mapping the entry
+      directory onto the guest root (`--dir <dir>::/` — the cwd
+      hint answers none under wasmtime), and `os_getenv` answering
+      its scan again. The goldens grow to 46 (`file_read`,
+      `bufio_demo`, `os_fs_demo` join); the smoke rung runs 42/42.
+- [x] **T85.8** — The guest-side `%g`: the node host's `floatStr`/`g6`
+      ported wat level — -0 as `-0.0`, integral values under 1e16 as
+      digits + `.0` off the i64, six significant digits fixed between
+      1e-4 and 1e6 (the decimals read off |v| by comparisons, the
+      digits off the scaled i64), exponent form outside with the
+      mantissa rounded to five decimals, the carry to ten through the
+      double division the host's code takes, and the signed
+      zero-padded two-digit exponent. Seven wat-level bugs found and
+      fixed on the way, each pinned by a probe (the abort door as the
+      print, `WASMTIME_LOG=trace`, a process sample of the spinning
+      loop): the NaN test missing its second operand, the extend
+      without its convert leaving an i64 under an f64 mul, a store8
+      without its address, the decimals chain's pairing off by one,
+      the up-adjust loop exiting on the inverted comparison (the
+      infinite spin), the digit write loop reading its copy's zeros,
+      and the exponent suffix's pad colliding with the backward digit
+      walk. The twenty float-rendering demos join `wasi_examples`
+      (66 goldens); the smoke rung runs 62/62.

@@ -122,7 +122,7 @@ let parity_metal_tests =
               Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
                 ~specialize:false ~cclibs:[]
                 ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                ~profile:"kernel")
+                ~profile:"kernel" ~wasi:false)
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         (* The serial input rides a named pipe, written only after the
@@ -323,7 +323,7 @@ let smoke_tests =
               Emo_cli.build_file ~entry:"main.emo" ~output:"../hello.elf"
                 ~specialize:false ~cclibs:[]
                 ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                ~profile:"user")
+                ~profile:"user" ~wasi:false)
         in
         Alcotest.(check int) "user build exit" 0 hello_exit;
         let app_build name =
@@ -336,7 +336,7 @@ let smoke_tests =
                   ~output:(Filename.concat scratch (name ^ ".elf"))
                   ~specialize:false ~cclibs:[]
                   ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                  ~profile:"app")
+                  ~profile:"app" ~wasi:false)
           in
           Alcotest.(check int) (name ^ " build exit") 0 exit_code
         in
@@ -349,7 +349,7 @@ let smoke_tests =
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
                 ~specialize:false ~cclibs:[]
                 ~native:Emo_project.no_native_inputs ~target:"riscv64"
-                ~profile:"kernel")
+                ~profile:"kernel" ~wasi:false)
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         (* The corpus leg (emo-desktop A7.3, A8.3): run.sh asserts the

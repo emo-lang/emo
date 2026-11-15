@@ -212,6 +212,38 @@ Points to keep in mind:
 - **A second engine vouches for the shape**: every wasm golden is compile-validated by the wasmtime CLI (`devtools/wasmtime-smoke.sh` — cranelift's validator over the whole module: the GC type hierarchy, the multi-value signatures, the block nesting). Node stays the execution host; wasmtime's CLI cannot supply the custom `emo` imports a non-WASI module needs.
 - The in-repo `runtime/wasm/` is a different thing: an Emo-written WebAssembly decoder/interpreter covering the MVP and a few extensions. It explicitly cannot run the GC modules `emo build --target wasm` emits.
 
+## `wasm --wasi` (the standard-runtime door)
+
+```console
+$ emo build --target wasm --wasi main.emo -o demo-wasi
+built demo-wasi.wasm
+$ wasmtime run -S cli -W component-model-more-async-builtins=y --dir .::/ demo-wasi.wasm
+Hello, world!
+```
+
+`--wasi` wraps the same WasmGC module in a **WASI 0.3 command component** — a real `wasi:cli/run@0.3.0` component any WASI 0.3 runtime executes (wasmtime 46+; the flag `-S cli` turns the CLI host on, `-W component-model-more-async-builtins=y` enables the sync stream builtins the stdio cycle rides). Node stays out of the picture: printing, aborts, and the exit code cross the standard `wasi:cli` stdio/exit doors through native streams.
+
+The import table shrinks from the eighteen `emo.*` doors to **twenty-eight standard ones**:
+
+| Import | Purpose |
+| --- | --- |
+| `wasi:cli/stdout` + `stderr` | `write-via-stream` — one full stream cycle per printed line |
+| `wasi:cli/exit` | `exit-with-code` — the exit code propagates to the shell |
+| `wasi:filesystem/types` | the descriptor resource, open-at, the directory-entry stream, and the one-string directory mutations |
+| `wasi:filesystem/preopens` | `get-directories` — the preopen table the path resolution anchors on |
+| `wasi:random/random` | `get-random-bytes` (short returns looped) |
+| `wasi:cli/environment` | `get-environment`, `get-arguments`, `get-initial-cwd` |
+
+Plus the guest-side builtins the canon ABI supplies: `stream.new`/`read`/`read-dir-entries`/`write`/`drop-*`, `future.read`/`drop-readable`, and `resource.drop` for descriptors.
+
+Points to keep in mind:
+
+- The host **must** be `wasmtime run -S cli` (or any runtime with the WASI 0.3 CLI host); `--dir` grants the filesystem. Without `-S cli` the doors link but the lists answer empty.
+- The **guest-side `%g` float formatter renders every float**: the node host's `floatStr`/`g6` rule ported wat level — the integral `x.0` form, six significant digits fixed between 1e-4 and 1e6, exponent form outside with the signed two-digit exponent — byte-identical with the Node and c targets.
+- The **file chain runs end to end**: path resolution through the preopen table onto `open-at`, the stream read/write cycles, and the directory-entry scan — `file`, `bufio`, and `os`'s fd/directory half behave byte-identically with the Node and c targets. Map the project directory onto the guest root (`--dir <dir>::/`; `emo run` does it for you): WASI 0.3 has no cwd concept — `get-initial-cwd` answers none under wasmtime — so the preopen root is the only anchor a relative path has.
+- `os`'s process half raises at the call exactly like the Node host.
+- The goldens: `wasi_examples` in `test/emo_cli/emo_cli_test.ml` (46 demos byte-identical with the Node goldens), and `devtools/wasmtime-smoke.sh`'s second rung executes the same list.
+
 ## `beam`
 
 ```console

@@ -104,6 +104,9 @@ type instr =
   | F64_ge
   | Memory_size
   | Memory_grow
+  | Memory_copy (* bulk memory: dst, src, len — pushed in that order *)
+  | I32_load
+  | I32_store
   | I32_load8_u
   | I32_store8
   | Array_new_default of int
@@ -141,6 +144,10 @@ type module_ = {
   imports : import list;
   funcs : func_type list; (* indices continue after the imports *)
   memory : int; (* minimum pages; 0 = none *)
+  import_memory : (string * int) option;
+      (* the --wasi mode's provider import: (module name, min pages) —
+         the memory comes from the component's provider core module, so
+         the canon lowers can use it before the guest instantiates *)
   declared_funcs : int list; (* ref.func declarations for closures *)
   export_mem : bool; (* export the memory as "mem" *)
   globals : (valtype * bool) list; (* in order; zero/null init *)
@@ -245,6 +252,9 @@ let rec instr_text indent (i : instr) : string =
   | F64_ge -> Printf.sprintf "%sf64.ge\n" pad
   | Memory_size -> Printf.sprintf "%smemory.size\n" pad
   | Memory_grow -> Printf.sprintf "%smemory.grow\n" pad
+  | Memory_copy -> Printf.sprintf "%smemory.copy\n" pad
+  | I32_load -> Printf.sprintf "%si32.load\n" pad
+  | I32_store -> Printf.sprintf "%si32.store\n" pad
   | I32_load8_u -> Printf.sprintf "%si32.load8_u\n" pad
   | I32_store8 -> Printf.sprintf "%si32.store8\n" pad
   | Array_new_default t -> Printf.sprintf "%sarray.new_default $t%d\n" pad t
@@ -513,6 +523,9 @@ let rec encode_instr buf (i : instr) =
   | F64_ge -> Buffer.add_char buf '\x66'
   | Memory_size -> Buffer.add_string buf "\x3f\x00"
   | Memory_grow -> Buffer.add_string buf "\x40\x00"
+  | Memory_copy -> Buffer.add_string buf "\xfc\x0a\x00\x00"
+  | I32_load -> Buffer.add_string buf "\x28\x02\x00"
+  | I32_store -> Buffer.add_string buf "\x36\x02\x00"
   | I32_load8_u -> Buffer.add_string buf "\x2d\x00\x00"
   | I32_store8 -> Buffer.add_string buf "\x3a\x00\x00"
   | Array_new_default t ->
@@ -629,6 +642,12 @@ let to_text (m : module_) : string =
         (Printf.sprintf "  (import %S %S (func $import%d))\n" imp.imodule
            imp.iname imp.itype_idx))
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      Buffer.add_string buf
+        (Printf.sprintf "  (import %S \"memory\" (memory %d))\n" module_name
+           min_pages));
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
@@ -677,6 +696,12 @@ let to_text (m : module_) : string =
         (Printf.sprintf "  (import %S %S (func $import%d))\n" imp.imodule
            imp.iname imp.itype_idx))
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      Buffer.add_string buf
+        (Printf.sprintf "  (import %S \"memory\" (memory %d))\n" module_name
+           min_pages));
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
@@ -748,7 +773,10 @@ let to_binary (m : module_) : string =
           Buffer.add_char types (if mutable_ then '\x01' else '\x00'))
     m.types;
   let imports = Buffer.create 64 in
-  leb_u imports (List.length m.imports);
+  let nimports =
+    List.length m.imports + if m.import_memory = None then 0 else 1
+  in
+  leb_u imports nimports;
   List.iter
     (fun imp ->
       encode_name imports imp.imodule;
@@ -756,6 +784,16 @@ let to_binary (m : module_) : string =
       Buffer.add_char imports '\x00';
       leb_u imports imp.itype_idx)
     m.imports;
+  (match m.import_memory with
+  | None -> ()
+  | Some (module_name, min_pages) ->
+      encode_name imports module_name;
+      encode_name imports "memory";
+      Buffer.add_char imports '\x02';
+      (* memory kind *)
+      Buffer.add_char imports '\x00';
+      (* no maximum *)
+      leb_u imports min_pages);
   let funcs = Buffer.create 64 in
   leb_u funcs (List.length m.funcs);
   List.iter (fun f -> leb_u funcs f.ftype_idx) m.funcs;
