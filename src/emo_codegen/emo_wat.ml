@@ -104,6 +104,9 @@ type instr =
   | F64_ge
   | Memory_size
   | Memory_grow
+  | Memory_copy (* bulk memory: dst, src, len — pushed in that order *)
+  | I32_load
+  | I32_store
   | I32_load8_u
   | I32_store8
   | Array_new_default of int
@@ -249,6 +252,9 @@ let rec instr_text indent (i : instr) : string =
   | F64_ge -> Printf.sprintf "%sf64.ge\n" pad
   | Memory_size -> Printf.sprintf "%smemory.size\n" pad
   | Memory_grow -> Printf.sprintf "%smemory.grow\n" pad
+  | Memory_copy -> Printf.sprintf "%smemory.copy\n" pad
+  | I32_load -> Printf.sprintf "%si32.load\n" pad
+  | I32_store -> Printf.sprintf "%si32.store\n" pad
   | I32_load8_u -> Printf.sprintf "%si32.load8_u\n" pad
   | I32_store8 -> Printf.sprintf "%si32.store8\n" pad
   | Array_new_default t -> Printf.sprintf "%sarray.new_default $t%d\n" pad t
@@ -517,6 +523,9 @@ let rec encode_instr buf (i : instr) =
   | F64_ge -> Buffer.add_char buf '\x66'
   | Memory_size -> Buffer.add_string buf "\x3f\x00"
   | Memory_grow -> Buffer.add_string buf "\x40\x00"
+  | Memory_copy -> Buffer.add_string buf "\xfc\x0a\x00\x00"
+  | I32_load -> Buffer.add_string buf "\x28\x02\x00"
+  | I32_store -> Buffer.add_string buf "\x36\x02\x00"
   | I32_load8_u -> Buffer.add_string buf "\x2d\x00\x00"
   | I32_store8 -> Buffer.add_string buf "\x3a\x00\x00"
   | Array_new_default t ->

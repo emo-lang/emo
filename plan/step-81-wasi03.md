@@ -154,8 +154,19 @@ assumptions and pinned the encodings:
       wat-level exp-form bugs halted it (see the found-not-fixed
       below); this rung ships the honest refusal instead.
 - [x] **T81.4** — The CLI flag surface (build/run/doctor).
-- [ ] **T81.5** — The filesystem, random, and environment imports; the
-      refusal pins.
+- [x] **T81.5** — The filesystem, random, and environment imports; the
+      refusal pins. The component grows `wasi:filesystem`
+      (types + preopens, the descriptor as a `(sub resource)` export,
+      the 37-case error-code variant with `other(option<string>)`),
+      `wasi:random`, and `wasi:cli/environment`; the provider grows
+      the realloc the host-written results allocate through (the
+      cursor cell shared with the guest bump allocator); the guest
+      grows the preopen table, the path resolution, the fd table,
+      and the bounded stream read/write cycles. hello, argv, and the
+      environment read back correctly under wasmtime; the relative
+      paths anchor on `get-initial-cwd`, falling back to the root
+      preopen. The os half's file chain still answers no-entry (see
+      the found-not-fixed below).
 - [ ] **T81.6** — The wasmtime-smoke execution rung, the docs, and the
       close-out.
 
@@ -184,6 +195,44 @@ assumptions and pinned the encodings:
 - The canon-lift of an async-typed export carries no async option —
   wit-component's own encoding.
 
+## Found and fixed (T81.5's landing)
+
+- The component-level valtype has no inline handle form: own/borrow
+  are deftypes (`0x69`/`0x68` + resource index) declared inside the
+  instance type and referenced by index, never spliced into a param.
+- A `variant` case carries a trailing zero byte per case; the
+  wasi:filesystem error-code is a **variant** (the cli one is an
+  enum) and wasmtime's host carries **37 cases** — the 36 normative
+  ones plus `other(option<string>)`; a smaller guest variant fails
+  the linker case-by-case. All the named fs types (flags, error-code,
+  descriptor-type, directory-entry) needed `(eq)` exports for the
+  host's world match.
+- `tuple<own descriptor, string>` in get-directories, the option
+  tag/pointer/len read-backs, and every host-written result ride the
+  retptr + **realloc** — the realloc cannot reference a guest export
+  (the lowers exist before instantiation), so the provider module
+  grew the canonical realloc: shrink-in-place, aligned bump off the
+  shared cursor cell at 0x100, grow-with-copy. The guest's wasi-mode
+  bump allocator advances the same cell — the two allocators never
+  overlap.
+- `I32_store` pops value first, address second — five sites pushed
+  them swapped (the init-time cursor cell, the bump advance, the
+  preopen count, the fd-slot clear). The symptom chain: the cursor
+  cell read 0, so the host realloc and the guest bump allocator both
+  allocated from address 0 and overwrote each other's data, which
+  read back as handle-shaped garbage and desc=0.
+- `bytes_from_mem` answers a bare `$bytes` array; two list-scan
+  loops fed it straight to `bytes_to_str` (which casts `$vbytes`)
+  — the missing `Struct_new t_vbytes` tripped the cast on the first
+  environment/argv element.
+- get-environment/get-arguments/get-directories answer `(retptr)→()`
+  with the list at the retptr: (ptr, len) at +0/+4, elements of 8
+  (string), 12 (tuple<own,string>), and 16 (tuple<string,string>)
+  bytes. The async-typed fs doors sync-lower with a retptr and no
+  core result — create/remove/unlink/rename write the result
+  variant's discriminant at +0 and the error-code's own discriminant
+  at +4.
+
 ## Found, not fixed (this rung)
 
 - **The guest-side `%g`'s exp form.** The port reached the fixed-form
@@ -196,6 +245,16 @@ assumptions and pinned the encodings:
   instruments (the n/p0/k probes through `int_str`) are the next
   pass's starting point. The refusals: the float render names the
   rung; the filesystem, random, cwd, and fd-0 doors name theirs.
+- **The os half's file chain under wasmtime.** The doors are wired
+  end to end (resolve → open-at → the stream cycles), argv and the
+  environment read back correctly, and the absolute path reaches the
+  host — but the last mile still answers no-entry: the guest-side
+  resolution and the handle the host accepts disagree somewhere in
+  the fd-table layer (the fallback reads the preopen slot into a
+  handle the host calls unknown; the exact misalignment is not yet
+  pinned). The guest-side probes (99/19/200 sentinels through the
+  error texts) and a wasmtime-side handle trace are the next pass's
+  starting point.
 - **The more-async-builtins gate.** The sync stream builtins ride
   wasmtime's `-W component-model-more-async-builtins=y` — the 🚝-gated
   extension. The run path passes the flag; dropping it means the

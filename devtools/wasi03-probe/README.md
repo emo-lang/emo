@@ -21,6 +21,17 @@ asserting `hello` on stdout and exit code 42.
 | 9 | The sync stream builtins (`stream.write`, `future.read`, …) are gated behind wasmtime's `-W component-model-more-async-builtins=y` | the ungated run refuses at parse ("synchronous `stream.write` requires the component model more async builtins feature") |
 | 10 | `wasi:cli/exit@0.3.0`'s `exit-with-code(status-code: u8)` sync-lowers to `(param i32)` and propagates through wasmtime's exit status | the probe exits 42 |
 
+## What T81.5 added (the filesystem/random/environment campaign)
+
+| # | Fact | Evidence |
+| --- | --- | --- |
+| 11 | The component valtype has no inline handle form — own/borrow are deftypes (`0x69`/`0x68` + resource idx) declared inside the instance type and referenced by index | a `0x68`-spliced param fails parse ("invalid leading byte") |
+| 12 | A variant case carries a trailing zero byte; the fs error-code is a **variant** (not an enum) and wasmtime's host carries **37 cases** — the 36 normative plus `other(option<string>)`; fewer cases fails the linker case-by-case ("expected variant case named …, found …") | the incremental probes over case counts |
+| 13 | The fs instance's named types (error-code, path-flags, open-flags, descriptor-flags, descriptor-type, directory-entry) all need `(eq)` exports for the host's world match | the bare-decl instance fails "instance not valid to be used as import"; the all-exports instance passes |
+| 14 | `get-directories`/`get-random-bytes`/`get-environment`/`get-arguments`/`get-initial-cwd` sync-lower to `(retptr)→()` with **realloc**; the realloc cannot reference a guest export, so it lives in the pre-instantiated provider | wit-component's own output carries `(realloc …)` on exactly these lowers |
+| 15 | `wasmtime run -S cli` is required for the p3 CLI host (env/argv/filesystem); without it the imports link but the lists answer empty | the argv/env probes with and without `-S cli` |
+| 16 | The descriptor is a `(sub resource)` export; resource definitions are rejected inside instance types | wit-component's encoding; the hand probe |
+
 ## The validated stdout protocol
 
 ```

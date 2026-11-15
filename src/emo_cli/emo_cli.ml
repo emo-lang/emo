@@ -1299,7 +1299,7 @@ let run =
             (Sys.command
                (Printf.sprintf
                   "cd %s && wasmtime run -W \
-                   component-model-more-async-builtins=y %s"
+                   component-model-more-async-builtins=y --dir /::/ %s"
                   (Filename.quote (Sys.getcwd ()))
                   (Filename.quote component)))
         end
