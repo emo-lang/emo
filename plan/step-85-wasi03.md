@@ -319,7 +319,15 @@ for the host's view, a process sample of the spinning loop):
 The twenty float-rendering demos — the math family, json, map,
 toml, plot, typed_calls, typed_methods, float_methods, field_types,
 fixed_width, list — joined `wasi_examples` (66 goldens
-byte-identical with the Node list); the smoke rung runs 62/62.
+byte-identical with the Node list); the smoke rung runs 62/62. And
+the `other` case (36) of the fs error-code now reads its payload:
+the host's own text rides the answer variant as an
+`option<string>` — the option's tag at retp+8, the string's
+`(ptr, len)` at retp+12/+16 (canonical-ABI nesting, confirmed by a
+forced-36 probe reading the none tag of a bare-case answer) — and
+`wasi_err_text` takes the retptr to render it, falling back to the
+fixed text when the option is none. Previously every such error
+answered the fixed "the host refused the operation".
 
 ## The gate decision (settled 2026-11-15, T85.8's round)
 

@@ -799,6 +799,7 @@ let wasi_fail env ~(prefix : string) ~(path : W.instr list)
   let err_b =
     code
     @ [
+        W.I32_const wasi_retp_c;
         W.Call (rt "wasi_err_text");
         W.Ref_cast t_vstring;
         W.Struct_get (t_vstring, 0);
@@ -9181,13 +9182,12 @@ let wasi_err_text_cases : (int * string) list =
     (33, "Illegal seek");
     (34, "text-file-busy");
     (35, "cross-device");
-    (36, "the host refused the operation");
   ]
 
 let rt_wasi_err_text (env : env) : W.func_type =
   {
-    W.ftype_idx = type_idx env (W.FuncT ([ W.I32 ], [ W.Anyref ]));
-    fparams = [ "code" ];
+    W.ftype_idx = type_idx env (W.FuncT ([ W.I32; W.I32 ], [ W.Anyref ]));
+    fparams = [ "code"; "retptr" ];
     flocals = [];
     fbody =
       [
@@ -9206,6 +9206,46 @@ let rt_wasi_err_text (env : env) : W.func_type =
                       [] );
                 ])
               wasi_err_text_cases
+            @ [
+                (* 36 = other(option<string>): the host's own text rides
+                   the answer variant — the error-code's tag sits at
+                   retp+4, the option's tag at retp+8, the string's
+                   (ptr, len) at retp+12/+16 (the string itself the host
+                   wrote through the provider's realloc). A none payload
+                   falls back to the fixed text. *)
+                W.Local_get 0;
+                W.I32_const 36;
+                W.I32_eq;
+                W.If
+                  ( W.Void,
+                    [
+                      W.Block
+                        ( W.Void,
+                          [
+                            W.Local_get 1;
+                            W.I32_const 8;
+                            W.I32_add;
+                            W.I32_load8_u;
+                            W.I32_const 1;
+                            W.I32_ne;
+                            W.Br_if 0;
+                            W.Local_get 1;
+                            W.I32_const 12;
+                            W.I32_add;
+                            W.I32_load;
+                            W.Local_get 1;
+                            W.I32_const 16;
+                            W.I32_add;
+                            W.I32_load;
+                            W.Call (rt "bytes_from_mem");
+                            W.Struct_new t_vstring;
+                            W.Br 1;
+                          ] );
+                    ]
+                    @ string_bytes_instrs "the host refused the operation"
+                    @ [ W.Struct_new t_vstring; W.Br 1 ],
+                    [] );
+              ]
             @ string_bytes_instrs "unknown error"
             @ [ W.Struct_new t_vstring ] );
       ];
