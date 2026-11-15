@@ -3,8 +3,8 @@ require "toml"
 // One decode, one printed verdict per line.
 def try_decode(label String, text String) {
   case toml.decode(text) {
-    (R.error, why) -> { println(label + ": " + why) }
-    (R.ok, _) -> { println(label + ": ACCEPTED") }
+    (R.error, why) then { println(label + ": " + why) }
+    (R.ok, _) then { println(label + ": ACCEPTED") }
   }
 }
 
@@ -105,8 +105,8 @@ println(k1.get("indented").as_int())
 
 // bare and quoted spellings are one key — the second defines twice
 case toml.decode("k = 1\n\"k\" = 2") {
-  (R.error, why) -> { println(why) }
-  (R.ok, _) -> { println("ACCEPTED") }
+  (R.error, why) then { println(why) }
+  (R.ok, _) then { println("ACCEPTED") }
 }
 
 // ---- 1.1 inline tables and arrays ----

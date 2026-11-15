@@ -4709,8 +4709,7 @@ emo_value emo_os_getenv(emo_str name) {
     /* The unset answer is written by hand — the interpreter's own
        reason, not strerror's errno. */
     char buf[512];
-    snprintf(buf, sizeof buf,
-             "os: getenv %s: the environment does not carry it", n);
+    snprintf(buf, sizeof buf, "os: getenv %s: is not set", n);
     free(n);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
   }

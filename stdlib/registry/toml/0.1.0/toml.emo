@@ -497,8 +497,8 @@ def decode(text String) (R, Toml) {
   const root = new_table_node(TOrigin.theader)
   root.declared.replace(true)
   case parse_doc(data, 0, root, root, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, _) -> { return (R.ok, to_toml(root)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, _) then { return (R.ok, to_toml(root)) }
   }
 }
 
@@ -512,13 +512,13 @@ def parse_doc(data Bytes, pos Int64, root TTbl, cur TTbl, depth Int64) (R, Int64
   }
   if data.get(p) == 91 {
     case parse_header(data, p, root, depth) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, hr) -> { return parse_doc(data, hr[1], root, hr[0], depth) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, hr) then { return parse_doc(data, hr[1], root, hr[0], depth) }
     }
   }
   case parse_keyval(data, p, cur, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> { return parse_doc(data, kr, root, cur, depth) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then { return parse_doc(data, kr, root, cur, depth) }
   }
 }
 
@@ -607,8 +607,8 @@ def skip_ws_h(data Bytes, i Int64) Int64 {
 // the dots. Answers (components, index past the path).
 def parse_key_path(data Bytes, pos Int64) (R, (Array[String], Int64)) {
   case parse_simple_key(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> { return parse_key_more(data, kr[1], [kr[0]]) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then { return parse_key_more(data, kr[1], [kr[0]]) }
   }
 }
 
@@ -617,8 +617,8 @@ def parse_key_more(data Bytes, pos Int64, acc Array[String]) (R, (Array[String],
   if p < data.length() {
     if data.get(p) == 46 {
       case parse_simple_key(data, skip_ws_h(data, p + 1)) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, kr) -> { return parse_key_more(data, kr[1], acc.append(kr[0])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, kr) then { return parse_key_more(data, kr[1], acc.append(kr[0])) }
       }
     }
   }
@@ -684,18 +684,18 @@ def key_text(keys Array[String], i Int64) String {
 
 def parse_keyval(data Bytes, pos Int64, cur TTbl, depth Int64) (R, Int64) {
   case parse_key_path(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then {
       const eq = skip_ws_h(data, kr[1])
       if eq >= data.length() || data.get(eq) != 61 {
         return (R.error, err(eq, "expected `=`"))
       }
       case parse_value(data, skip_ws_h(data, eq + 1), depth) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, vr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, vr) then {
           case define_keyval(cur, kr[0], vr[0], pos) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then {
               return expect_line_end(data, vr[1])
             }
           }
@@ -713,8 +713,8 @@ def define_keyval(cur TTbl, keys Array[String], v Toml, at Int64) (R, Int64) {
     return (R.error, err(at, "key deeper than 512"))
   }
   case keyval_parent(cur, keys, 0, at) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parent) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parent) then {
       const k = keys[keys.length() - 1]
       if parent.children.has(k) {
         return (R.error, err(at, "key `" + key_text(keys, 0) + "` is defined twice"))
@@ -756,8 +756,8 @@ def parse_header(data Bytes, pos Int64, root TTbl, depth Int64) (R, (TTbl, Int64
   const is_array = data.get(pos + 1) == 91
   const off = if is_array { 2 } else { 1 }
   case parse_key_path(data, skip_ws_h(data, pos + off)) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then {
       if kr[0].length() > 512 {
         return (R.error, err(pos, "key deeper than 512"))
       }
@@ -767,11 +767,11 @@ def parse_header(data Bytes, pos Int64, root TTbl, depth Int64) (R, (TTbl, Int64
           return (R.error, err(close, "expected `]]`"))
         }
         case define_array_header(root, kr[0], pos) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, cur) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, cur) then {
             case expect_line_end(data, close + 2) {
-              (R.error, why) -> { return (R.error, why) }
-              (R.ok, end) -> { return (R.ok, (cur, end)) }
+              (R.error, why) then { return (R.error, why) }
+              (R.ok, end) then { return (R.ok, (cur, end)) }
             }
           }
         }
@@ -780,11 +780,11 @@ def parse_header(data Bytes, pos Int64, root TTbl, depth Int64) (R, (TTbl, Int64
         return (R.error, err(close, "expected `]`"))
       }
       case define_std_header(root, kr[0], pos) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, cur) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, cur) then {
           case expect_line_end(data, close + 1) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, end) -> { return (R.ok, (cur, end)) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, end) then { return (R.ok, (cur, end)) }
           }
         }
       }
@@ -824,8 +824,8 @@ def last_element(node TTbl) TTbl {
 // declared afterwards, nothing else may be reopened.
 def define_std_header(root TTbl, keys Array[String], at Int64) (R, TTbl) {
   case header_parent(root, keys, 0, at) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parent) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parent) then {
       const k = keys[keys.length() - 1]
       if parent.children.has(k) == false {
         const child = new_table_node(TOrigin.theader)
@@ -856,8 +856,8 @@ def define_std_header(root TTbl, keys Array[String], at Int64) (R, TTbl) {
 // the array on the first hit, refusing every other shape.
 def define_array_header(root TTbl, keys Array[String], at Int64) (R, TTbl) {
   case header_parent(root, keys, 0, at) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, parent) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, parent) then {
       const k = keys[keys.length() - 1]
       if parent.children.has(k) == false {
         const node = new_table_node(TOrigin.tarray)
@@ -967,25 +967,25 @@ def parse_value(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
   if b == 34 {
     if is_ml_open?(data, pos, 34) {
       case parse_ml_basic(data, pos) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, sr) then { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
       }
     }
     case parse_basic_string(data, pos) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, sr) then { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
     }
   }
   if b == 39 {
     if is_ml_open?(data, pos, 39) {
       case parse_ml_literal(data, pos) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, sr) then { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
       }
     }
     case parse_literal_string(data, pos) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, sr) -> { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, sr) then { return (R.ok, (TomlString.new(value: sr[0]), sr[1])) }
     }
   }
   if b == 116 {
@@ -1137,12 +1137,12 @@ def dig_run?(data Bytes, pos Int64, n Int64) Bool {
 // on bytes keeps every target on the same UTF-8 path.
 def parse_basic_string(data Bytes, pos Int64) (R, (String, Int64)) {
   case scan_basic(data, pos + 1, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, len) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, len) then {
       const out = Bytes.new(len)
       case fill_basic(data, pos + 1, out, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, fr) -> { return (R.ok, (out.to_string(), fr[1])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, fr) then { return (R.ok, (out.to_string(), fr[1])) }
       }
     }
   }
@@ -1158,8 +1158,8 @@ def scan_basic(data Bytes, i Int64, len Int64) (R, Int64) {
   }
   if b == 92 {
     case escape_cp(data, i) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er) -> { return scan_basic(data, er[1], len + utf8_len(er[0])) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er) then { return scan_basic(data, er[1], len + utf8_len(er[0])) }
     }
   }
   if b == 9 {
@@ -1182,8 +1182,8 @@ def fill_basic(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   }
   if b == 92 {
     case escape_cp(data, i) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er) then {
         const nw = put_cp(out, w, er[0])
         return fill_basic(data, er[1], out, nw)
       }
@@ -1196,8 +1196,8 @@ def fill_basic(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
 // The literal string: no escapes at all, one line, raw bytes through.
 def parse_literal_string(data Bytes, pos Int64) (R, (String, Int64)) {
   case scan_literal(data, pos + 1) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, end) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, end) then {
       return (R.ok, (slice_text(data, pos + 1, end - 1), end))
     }
   }
@@ -1230,12 +1230,12 @@ def scan_literal(data Bytes, i Int64) (R, Int64) {
 def parse_ml_basic(data Bytes, pos Int64) (R, (String, Int64)) {
   const start = skip_ml_open(data, pos + 3)
   case scan_ml_basic(data, start, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, len) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, len) then {
       const out = Bytes.new(len)
       case fill_ml_basic(data, start, out, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, fr) -> { return (R.ok, (out.to_string(), fr[1])) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, fr) then { return (R.ok, (out.to_string(), fr[1])) }
       }
     }
   }
@@ -1273,8 +1273,8 @@ def scan_ml_basic(data Bytes, i Int64, len Int64) (R, Int64) {
   }
   if b == 92 {
     case scan_ml_escape(data, i, len) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er) -> { return scan_ml_basic(data, er[0], er[1]) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er) then { return scan_ml_basic(data, er[0], er[1]) }
     }
   }
   if b == 9 || b == 10 {
@@ -1322,8 +1322,8 @@ def scan_ml_escape(data Bytes, bs Int64, len Int64) (R, (Int64, Int64)) {
     }
   }
   case escape_cp(data, bs) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, er) -> { return (R.ok, (er[1], len + utf8_len(er[0]))) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, er) then { return (R.ok, (er[1], len + utf8_len(er[0]))) }
   }
 }
 
@@ -1371,8 +1371,8 @@ def fill_ml_basic(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   }
   if b == 92 {
     case fill_ml_escape(data, i, out, w) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, er) -> { return fill_ml_basic(data, er[0], out, er[1]) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, er) then { return fill_ml_basic(data, er[0], out, er[1]) }
     }
   }
   if b == 13 {
@@ -1408,8 +1408,8 @@ def fill_ml_escape(data Bytes, bs Int64, out Bytes, w Int64) (R, (Int64, Int64))
     }
   }
   case escape_cp(data, bs) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, er) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, er) then {
       const nw = put_cp(out, w, er[0])
       return (R.ok, (er[1], nw))
     }
@@ -1421,8 +1421,8 @@ def fill_ml_escape(data Bytes, bs Int64, out Bytes, w Int64) (R, (Int64, Int64))
 def parse_ml_literal(data Bytes, pos Int64) (R, (String, Int64)) {
   const start = skip_ml_open(data, pos + 3)
   case scan_ml_literal(data, start, 0) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, lr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, lr) then {
       const out = Bytes.new(lr[1])
       copy_range(data, out, start, 0, lr[1])
       return (R.ok, (out.to_string(), lr[0]))
@@ -1505,8 +1505,8 @@ def escape_cp(data Bytes, bs Int64) (R, (Int64, Int64)) {
   }
   if eb == 120 {
     case read_hex(data, bs + 2, 2) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, cp) -> { return (R.ok, (cp, bs + 4)) }
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, cp) then { return (R.ok, (cp, bs + 4)) }
     }
   }
   if eb == 117 {
@@ -1523,8 +1523,8 @@ def escape_cp(data Bytes, bs Int64) (R, (Int64, Int64)) {
 // (scalar, index past the last escape).
 def unicode_escape(data Bytes, i Int64, n Int64) (R, (Int64, Int64)) {
   case read_hex(data, i, n) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, cp) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, cp) then {
       if cp >= 56320 && cp <= 57343 {
         return (R.error, err(i - 2, "lone surrogate escape"))
       }
@@ -1539,8 +1539,8 @@ def unicode_escape(data Bytes, i Int64, n Int64) (R, (Int64, Int64)) {
         }
         const dn = if lb == 117 { 4 } else { 8 }
         case read_hex(data, nb + 2, dn) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, cp2) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, cp2) then {
             if cp2 < 56320 || cp2 > 57343 {
               return (R.error, err(i - 2, "lone surrogate escape"))
             }
@@ -1563,11 +1563,11 @@ def read_hex(data Bytes, i Int64, n Int64) (R, Int64) {
     return (R.error, err(i, "unterminated string"))
   }
   case hex_val(data.get(i)) {
-    (R.error, _) -> { return (R.error, err(i, "invalid hex digit in escape")) }
-    (R.ok, h) -> {
+    (R.error, _) then { return (R.error, err(i, "invalid hex digit in escape")) }
+    (R.ok, h) then {
       case read_hex(data, i + 1, n - 1) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, rest) -> { return (R.ok, h * pow16(n - 1) + rest) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, rest) then { return (R.ok, h * pow16(n - 1) + rest) }
       }
     }
   }
@@ -1724,8 +1724,8 @@ def parse_zero(data Bytes, pos Int64, p Int64, neg Bool) (R, (Toml, Int64)) {
 // once a fraction or an exponent opens.
 def parse_dec_or_float(data Bytes, pos Int64, start Int64, neg Bool) (R, (Toml, Int64)) {
   case scan_digits(data, start, 10) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, int_end) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, int_end) then {
       const b = byte_at(data, int_end)
       if b == 46 {
         return parse_float_frac(data, pos, start, int_end, neg)
@@ -1744,8 +1744,8 @@ def parse_dec_or_float(data Bytes, pos Int64, start Int64, neg Bool) (R, (Toml, 
 // int_end sits on the point; a digit must follow it.
 def parse_float_frac(data Bytes, pos Int64, int_start Int64, int_end Int64, neg Bool) (R, (Toml, Int64)) {
   case scan_digits(data, int_end + 1, 10) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, frac_end) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, frac_end) then {
       const b = byte_at(data, frac_end)
       if b == 101 {
         return parse_float_exp(data, pos, int_start, int_end, int_end + 1, frac_end, frac_end + 1, neg)
@@ -1763,11 +1763,11 @@ def parse_float_exp(data Bytes, pos Int64, int_start Int64, int_end Int64, frac_
   const eneg = byte_at(data, exp_start) == 45
   const sn = skip_sign(data, exp_start)
   case scan_digits(data, sn, 10) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, exp_end) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, exp_end) then {
       case exp_value(data, sn, exp_end, 0) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, mag) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, mag) then {
           const ev = if eneg { 0 - mag } else { mag }
           return finish_float(data, pos, int_start, int_end, frac_start, frac_end, exp_end, ev, neg)
         }
@@ -1850,8 +1850,8 @@ def finish_dec_int(data Bytes, pos Int64, start Int64, end Int64, neg Bool) (R, 
   const buf = Bytes.new(end - start)
   const n = collect_digits(data, start, end, buf, 0)
   case acc_dec(buf, 0, n, 0, neg, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, v) -> { return (R.ok, (TomlInt.new(value: v), end)) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, v) then { return (R.ok, (TomlInt.new(value: v), end)) }
   }
 }
 
@@ -1882,13 +1882,13 @@ def acc_dec(buf Bytes, i Int64, n Int64, acc Int64, neg Bool, pos Int64) (R, Int
 // ceiling is Int64's own.
 def parse_radix_int(data Bytes, pos Int64, start Int64, base Int64) (R, (Toml, Int64)) {
   case scan_digits(data, start, base) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, end) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, end) then {
       const buf = Bytes.new(end - start)
       const n = collect_digits(data, start, end, buf, 0)
       case acc_radix(buf, 0, n, base, 0, pos) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, v) -> { return (R.ok, (TomlInt.new(value: v), end)) }
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, v) then { return (R.ok, (TomlInt.new(value: v), end)) }
       }
     }
   }
@@ -1952,8 +1952,8 @@ def finish_float(data Bytes, pos Int64, int_start Int64, int_end Int64, frac_sta
   buf.set(il, 46)
   const fl = collect_digits(data, frac_start, frac_end, buf, il + 1) - (il + 1)
   case float.parse_decimal(buf, 0, il, fl, ev, neg) {
-    (R.error, _) -> { return (R.error, err(pos, "number out of range")) }
-    (R.ok, x) -> { return (R.ok, (TomlFloat.new(value: x), end)) }
+    (R.error, _) then { return (R.error, err(pos, "number out of range")) }
+    (R.ok, x) then { return (R.ok, (TomlFloat.new(value: x), end)) }
   }
 }
 
@@ -1964,14 +1964,14 @@ def finish_float(data Bytes, pos Int64, int_start Int64, int_end Int64, frac_sta
 // date followed by other text still reads as the date.
 def parse_datetime(data Bytes, pos Int64) (R, (Toml, Int64)) {
   case dig4(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, year) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, year) then {
       case dig2(data, pos + 5) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, month) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, month) then {
           case dig2(data, pos + 8) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, day) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, day) then {
               if month < 1 || month > 12 {
                 return (R.error, err(pos + 5, "month out of range"))
               }
@@ -1981,13 +1981,13 @@ def parse_datetime(data Bytes, pos Int64) (R, (Toml, Int64)) {
               const db = byte_at(data, pos + 10)
               if db == 84 || db == 116 || db == 32 {
                 case parse_clock(data, pos + 11) {
-                  (R.error, why) -> {
+                  (R.error, why) then {
                     if db == 32 {
                       return local_date_value(year, month, day, pos)
                     }
                     return (R.error, why)
                   }
-                  (R.ok, tr) -> {
+                  (R.ok, tr) then {
                     return finish_datetime(data, year, month, day, tr[0], tr[1])
                   }
                 }
@@ -2005,8 +2005,8 @@ def parse_datetime(data Bytes, pos Int64) (R, (Toml, Int64)) {
 // for an offset date-time, anything else local.
 def finish_datetime(data Bytes, year Int64, month Int64, day Int64, tr (Int64, Int64, Int64, Int64), at Int64) (R, (Toml, Int64)) {
   case read_offset(data, at) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, osr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, osr) then {
       const kind = if osr[0] { TomlDateTimeKind.toffset } else { TomlDateTimeKind.tlocal_datetime }
       const t = TomlDateTime.new(kind: kind, year: year, month: month, day: day, hour: tr[0], minute: tr[1], second: tr[2], nanosecond: tr[3], offset_minutes: osr[1])
       return (R.ok, (t, osr[2]))
@@ -2023,8 +2023,8 @@ def local_date_value(year Int64, month Int64, day Int64, pos Int64) (R, (Toml, I
 // Answers (hour, minute, second, nanosecond) and the index past it.
 def parse_clock(data Bytes, i Int64) (R, ((Int64, Int64, Int64, Int64), Int64)) {
   case dig2(data, i) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, hour) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, hour) then {
       if hour > 23 {
         return (R.error, err(i, "hour out of range"))
       }
@@ -2032,8 +2032,8 @@ def parse_clock(data Bytes, i Int64) (R, ((Int64, Int64, Int64, Int64), Int64)) 
         return (R.error, err(i + 2, "expected `:`"))
       }
       case dig2(data, i + 3) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, minute) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, minute) then {
           if minute > 59 {
             return (R.error, err(i + 3, "minute out of range"))
           }
@@ -2041,8 +2041,8 @@ def parse_clock(data Bytes, i Int64) (R, ((Int64, Int64, Int64, Int64), Int64)) 
             return (R.ok, ((hour, minute, 0, 0), i + 5))
           }
           case dig2(data, i + 6) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, second) -> {
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, second) then {
               if second > 60 {
                 return (R.error, err(i + 6, "second out of range"))
               }
@@ -2050,8 +2050,8 @@ def parse_clock(data Bytes, i Int64) (R, ((Int64, Int64, Int64, Int64), Int64)) 
                 return (R.ok, ((hour, minute, second, 0), i + 8))
               }
               case scan_ns(data, i + 9, 0, 0) {
-                (R.error, why) -> { return (R.error, why) }
-                (R.ok, nr) -> {
+                (R.error, why) then { return (R.error, why) }
+                (R.ok, nr) then {
                   return (R.ok, ((hour, minute, second, nr[0]), nr[1]))
                 }
               }
@@ -2091,8 +2091,8 @@ def pad_ns(acc Int64, count Int64) Int64 {
 // the next expression's problem and errors there.
 def parse_local_time(data Bytes, pos Int64) (R, (Toml, Int64)) {
   case parse_clock(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, tr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, tr) then {
       const t = TomlDateTime.new(kind: TomlDateTimeKind.tlocal_time, year: 0, month: 0, day: 0, hour: tr[0][0], minute: tr[0][1], second: tr[0][2], nanosecond: tr[0][3], offset_minutes: 0)
       return (R.ok, (t, tr[1]))
     }
@@ -2157,8 +2157,8 @@ def read_offset(data Bytes, i Int64) (R, (Bool, Int64, Int64)) {
   if b == 43 || b == 45 {
     const sign = if b == 45 { -1 } else { 1 }
     case dig2(data, i + 1) {
-      (R.error, why) -> { return (R.error, why) }
-      (R.ok, oh) -> {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, oh) then {
         if oh > 23 {
           return (R.error, err(i + 1, "hour out of range"))
         }
@@ -2166,8 +2166,8 @@ def read_offset(data Bytes, i Int64) (R, (Bool, Int64, Int64)) {
           return (R.error, err(i + 3, "expected `:`"))
         }
         case dig2(data, i + 4) {
-          (R.error, why) -> { return (R.error, why) }
-          (R.ok, om) -> {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, om) then {
             if om > 59 {
               return (R.error, err(i + 4, "minute out of range"))
             }
@@ -2186,8 +2186,8 @@ def read_offset(data Bytes, i Int64) (R, (Bool, Int64, Int64)) {
 // trailing comma closes, and the kinds mix freely.
 def parse_array(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
   case parse_items(data, pos + 1, depth + 1, []) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ir) -> { return (R.ok, (TomlArray.new(items: ir[0]), ir[1])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ir) then { return (R.ok, (TomlArray.new(items: ir[0]), ir[1])) }
   }
 }
 
@@ -2200,8 +2200,8 @@ def parse_items(data Bytes, pos Int64, depth Int64, acc Array[Toml]) (R, (Array[
     return (R.ok, (acc, p + 1))
   }
   case parse_value(data, p, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, vr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, vr) then {
       return parse_more_items(data, vr[1], depth, acc.append(vr[0]))
     }
   }
@@ -2231,8 +2231,8 @@ def parse_inline_table(data Bytes, pos Int64, depth Int64) (R, (Toml, Int64)) {
   const root = new_table_node(TOrigin.theader)
   root.declared.replace(true)
   case parse_inline_entries(data, pos + 1, depth + 1, root) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, ir) -> { return (R.ok, (to_toml(ir[0]), ir[1])) }
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, ir) then { return (R.ok, (to_toml(ir[0]), ir[1])) }
   }
 }
 
@@ -2245,8 +2245,8 @@ def parse_inline_entries(data Bytes, pos Int64, depth Int64, root TTbl) (R, (TTb
     return (R.ok, (root, p + 1))
   }
   case parse_inline_keyval(data, p, root, depth) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then {
       return parse_inline_more(data, kr, depth, root)
     }
   }
@@ -2275,18 +2275,18 @@ def parse_inline_more(data Bytes, pos Int64, depth Int64, root TTbl) (R, (TTbl, 
 
 def parse_inline_keyval(data Bytes, pos Int64, root TTbl, depth Int64) (R, Int64) {
   case parse_key_path(data, pos) {
-    (R.error, why) -> { return (R.error, why) }
-    (R.ok, kr) -> {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, kr) then {
       const eq = skip_ws_h(data, kr[1])
       if eq >= data.length() || data.get(eq) != 61 {
         return (R.error, err(eq, "expected `=`"))
       }
       case parse_value(data, skip_ws_h(data, eq + 1), depth) {
-        (R.error, why) -> { return (R.error, why) }
-        (R.ok, vr) -> {
+        (R.error, why) then { return (R.error, why) }
+        (R.ok, vr) then {
           case define_keyval(root, kr[0], vr[0], pos) {
-            (R.error, why) -> { return (R.error, why) }
-            (R.ok, _) -> { return (R.ok, vr[1]) }
+            (R.error, why) then { return (R.error, why) }
+            (R.ok, _) then { return (R.ok, vr[1]) }
           }
         }
       }

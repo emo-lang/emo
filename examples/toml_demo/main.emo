@@ -152,8 +152,8 @@ println(rt.get("owner").encode())
 // ---- refusals ----
 def try_decode(label String, text String) {
   case toml.decode(text) {
-    (R.error, why) -> { println(label + ": " + why) }
-    (R.ok, _) -> { println(label + ": ACCEPTED") }
+    (R.error, why) then { println(label + ": " + why) }
+    (R.ok, _) then { println(label + ": ACCEPTED") }
   }
 }
 

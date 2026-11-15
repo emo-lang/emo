@@ -243,7 +243,7 @@ let i_rand_bytes = 17
 let i_time_now_ms = 18
 let i_time_mono_ns = 19
 
-(* The --wasi import indices: twenty-six imports. The stdio doors and
+(* The --wasi import indices: twenty-seven imports. The stdio doors and
    the exit channel ride the shape the stdout probe validated; the
    stream/future/resource builtins and the filesystem, random, and
    environment doors land on the canonical ABI's lowered signatures
@@ -357,14 +357,14 @@ let wasi_scratch = 0x2000
 (* Every defined function's index follows the imports. *)
 let import_count = 20
 
-(* The ABI mode: the Node canonical host's eighteen `emo.*` imports, or
-   the WASI 0.3 component's twenty-six — the stdio doors, the exit
+(* The ABI mode: the Node canonical host's twenty `emo.*` imports, or
+   the WASI 0.3 component's twenty-seven — the stdio doors, the exit
    channel, the stream/future/resource builtins, and the filesystem,
    random, and environment doors (step 85). [assemble] sets both before
    any lowering reads the indices; the wasi import table and the
    lowered-function list branch on [wasi_mode]. *)
 let wasi_mode = ref false
-let import_base = ref 18
+let import_base = ref import_count
 let wasi_import_base = 27
 
 (* The bump cursor: the wasi mode's guest allocations advance the same
@@ -5910,37 +5910,40 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_sig2;
       fparams = [ "a"; "b" ];
-      flocals = [
-        (2, W.I32);
-        (2, W.RefNull t_lnode);
-        (2, W.I32);
-        (1, W.RefNull t_anyarray);
-        (1, W.RefNull t_anyarray);
-      ];
+      flocals =
+        [
+          (2, W.I32);
+          (2, W.RefNull t_lnode);
+          (2, W.I32);
+          (1, W.RefNull t_anyarray);
+          (1, W.RefNull t_anyarray);
+        ];
       fbody = body;
     } )
 
@@ -10454,7 +10457,7 @@ let rt_driver_run (g : driver_globals) ~(t_i32_void : int) : W.func_type =
    the component wrapper (Emo_component) wraps the binary. *)
 let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   wasi_mode := wasi;
-  import_base := if wasi then wasi_import_base else 18;
+  import_base := if wasi then wasi_import_base else import_count;
   let env =
     {
       rev = [];
