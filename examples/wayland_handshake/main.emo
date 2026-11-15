@@ -1,0 +1,273 @@
+// The wayland package's socket golden: a real Unix socket through
+// the whole handshake, the mock compositor one spawned process in
+// this same program and the client the main one. Four requests read
+// back byte-exact against the codec's own encodings, the registry's
+// globals collected from the canned advert, and the pool fd riding
+// the socket out of band (SCM_RIGHTS) with its bytes readable at
+// the far end. Every print happens while the other side is parked
+// on a read, the discipline the transcript's determinism rides.
+
+require "wayland"
+require "crypto"
+require "net"
+require "os"
+
+def bytes_equal(a Bytes, b Bytes) Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  var i = 0
+  while i < a.length() {
+    if a.get(i) != b.get(i) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+def slice(src Bytes, off Int64, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, src.get(off + i))
+    i = i + 1
+  }
+  return out
+}
+
+// One event out of the mock, whole.
+def send_raw(conn TcpConn, m wayland.Message) {
+  case m.finish() {
+    (bytes, has_fd, fd) -> { conn.write(bytes.to_string()) }
+  }
+}
+
+// The mock compositor: one side of one socket. Every request is
+// read whole, framed, and compared against the codec's own
+// encoding of what a correct client sends — a byte off is a raise,
+// and the golden answers for the whole transcript only when the
+// assertions stayed silent. The one print waits for the moment the
+// client is parked reading the closing event.
+def mock(listener TcpListener) {
+  case listener.accept() {
+    (R.error, why) -> { println("mock: accept failed " + why) }
+    (R.ok, conn) -> {
+      const side = wayland.Side.new(conn)
+
+      // get_registry: the display's object 1, the registry id 2.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(1, 1)
+          expect.u32(2)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 1 || ev.opcode != 1 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: get_registry off the wire")
+              }
+            }
+          }
+        }
+      }
+
+      // sync: the callback id 3. The replies go out whole: two
+      // globals, then the done.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(1, 0)
+          expect.u32(3)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 1 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: sync off the wire")
+              }
+            }
+          }
+          const g1 = wayland.Message.new(2, 0)
+          g1.u32(1)
+          g1.text("wl_compositor")
+          g1.u32(5)
+          send_raw(conn, g1)
+          const g2 = wayland.Message.new(2, 0)
+          g2.u32(2)
+          g2.text("wl_shm")
+          g2.u32(1)
+          send_raw(conn, g2)
+          const done = wayland.Message.new(3, 0)
+          done.u32(77)
+          send_raw(conn, done)
+        }
+      }
+
+      // bind wl_compositor at 5, bind wl_shm at 1: the registry's
+      // object 2 speaks them both, the client's ids 4 and 5.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(2, 0)
+          expect.u32(1)
+          expect.text("wl_compositor")
+          expect.u32(5)
+          expect.u32(4)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 2 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: compositor bind off the wire")
+              }
+            }
+          }
+        }
+      }
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          const expect = wayland.Message.new(2, 0)
+          expect.u32(2)
+          expect.text("wl_shm")
+          expect.u32(1)
+          expect.u32(5)
+          case expect.finish() {
+            (bytes, has_fd, fd) -> {
+              if ev.oid != 2 || ev.opcode != 0 || !bytes_equal(ev.body, slice(bytes, 8, bytes.length() - 8)) {
+                raise Exception.new(message: "mock: shm bind off the wire")
+              }
+            }
+          }
+        }
+      }
+
+      // create_pool on the shm object 5: the new pool's id, the pool
+      // size, and the fd that rode beside them — the fd takes no
+      // word in the stream; the decode claims it from the queue.
+      case wayland.next_event(side) {
+        (R.error, why) -> { println("mock: " + why) }
+        (R.ok, ev) -> {
+          if ev.oid != 5 || ev.opcode != 0 {
+            raise Exception.new(message: "mock: create_pool off the wire")
+          }
+          const new_pool = ev.args.u32()
+          if new_pool != 6 {
+            raise Exception.new(message: "mock: create_pool id " + new_pool.to_string() + " off the wire")
+          }
+          const fd = ev.args.fd()
+          const size = ev.args.u32()
+          case os.read(fd, size) {
+            (R.error, why) -> { println("mock: pool read failed " + why) }
+            (R.ok, payload) -> {
+              const painted = slice(payload.to_bytes(), 0, 9)
+              const word = "poolbytes".to_bytes()
+              if !bytes_equal(painted, word) {
+                raise Exception.new(message: "mock: pool payload off")
+              }
+              // The closing beat: retire the pool's object id, and
+              // speak the one transcript line while the client is
+              // parked reading it.
+              const farewell = wayland.Message.new(1, 1)
+              farewell.u32(6)
+              send_raw(conn, farewell)
+              println("mock: 4 requests byte-ok; pool [poolbytes] len " + painted.length().to_string())
+            }
+          }
+        }
+      }
+      conn.close()
+    }
+  }
+}
+
+// The client's beat: handshake, binds, the pool painted and sent,
+// the closing event read.
+def client_body(c wayland.Conn, pool_path String) {
+  println("client: connected")
+  case wayland.handshake(c) {
+    (R.error, why) -> { println("client: handshake " + why) }
+    (R.ok, globals) -> {
+      println("client: globals " + globals.length().to_string())
+      case globals.find("wl_compositor") {
+        (R.error, why) -> { println("client: " + why) }
+        (R.ok, found) -> {
+          case found {
+            (name, version) -> {
+              println("client: global wl_compositor " + version.to_string())
+              case wayland.registry_bind(c, name, "wl_compositor", version) {
+                (R.error, why) -> { println("client: " + why) }
+                (R.ok, _) -> { }
+              }
+            }
+          }
+        }
+      }
+      case globals.find("wl_shm") {
+        (R.error, why) -> { println("client: " + why) }
+        (R.ok, found) -> {
+          case found {
+            (name, version) -> {
+              println("client: global wl_shm " + version.to_string())
+              case wayland.registry_bind(c, name, "wl_shm", version) {
+                (R.error, why) -> { println("client: " + why) }
+                (R.ok, shm_id) -> {
+                  case os_shm_open(pool_path) {
+                    (R.error, why) -> { println("client: pool " + why) }
+                    (R.ok, pool_fd) -> {
+                      case os_ftruncate(pool_fd, 32) {
+                        (R.error, why) -> { println("client: ftruncate " + why) }
+                        (R.ok, _) -> {
+                          case os_pwrite(pool_fd, "poolbytes", 0) {
+                            (R.error, why) -> { println("client: pwrite " + why) }
+                            (R.ok, _) -> {
+                              println("client: pool painted 9")
+                              const pool = wayland.Message.new(shm_id, 0)
+                              pool.u32(6)
+                              pool.fd(pool_fd)
+                              pool.u32(32)
+                              case c.send(pool) {
+                                (R.error, why) -> { println("client: pool send " + why) }
+                                (R.ok, _) -> {
+                                  case wayland.next_event(c.side) {
+                                    (R.error, why) -> { println("client: " + why) }
+                                    (R.ok, ev) -> {
+                                      println("client: delete_id " + ev.args.u32().to_string())
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def main() {
+  const sock = "/tmp/emo-handshake-" + os.getpid().to_string() + ".sock"
+  const pool_path = "/tmp/emo-pool-" + os.getpid().to_string() + ".tmp"
+  os.unlink(sock)
+
+  case net.listen_unix(sock) {
+    (R.error, why) -> { println("listen failed: " + why) }
+    (R.ok, listener) -> {
+      do mock(listener)
+      case net.connect_unix(sock, 5.0) {
+        (R.error, why) -> { println("connect failed: " + why) }
+        (R.ok, raw) -> {
+          client_body(wayland.conn_of(raw), pool_path)
+        }
+      }
+      listener.close()
+    }
+  }
+  os.unlink(pool_path)
+}
+
+main()

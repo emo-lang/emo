@@ -152,6 +152,9 @@ const comp_slot_cell = koff + 0x87002eb8
 const comp_slots = koff + 0x87008000 + 2704
 const comp_slot_count = 4
 const comp_slot_bytes = 40
+// The workspaces' bound (emo-desktop M27, EmoOS T13.2): the
+// vocabulary's own, the compositor's count's twin.
+const comp_desks = 4
 
 // One free seat, named in the handoff cell the trap's route word
 // carries; none, and the resource refusal — a client's own verbs
@@ -228,6 +231,25 @@ const route_win_parent = -1020
 const route_win_frame = -1021
 const route_win_minimize = -1022
 const route_win_desk_open = -1023
+// The workspaces (emo-desktop M27, EmoOS T13.2): the family additions-
+// only, the ops past the notification's shape test the trap's own
+// routing already hands the compositor. The query's op is 29, not 32 —
+// the request word packs the seat at thirty-two, so an op of 32 would
+// decode as seat 1's op 0 (the mod-32 the notify family's shape test
+// already lives with); 29 is the highest free op below the bound.
+const route_win_workspace = -1030
+const route_desk_show = -1031
+const route_desk_workspace = -1029
+// The notification family's routes (emo-desktop M25, EmoOS Step 11):
+// verb 27 raise, verb 28 take — the verb the slot-0 op (the input
+// service's own habit), the slot riding above it at thirty-two, the
+// filesystem's habit at sixteen. The shim's decode names the shape:
+// ops past 26 whose low five bits past twenty-seven are 0 or 1 are
+// the notification service's, the rest the compositor's.
+const route_notify_raise = -1027
+const route_notify_take = -1028
+// The wall clock's own answer (emo-desktop M26, EmoOS T12.1): verb
+// 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
 const route_heap_gone = -104
 
@@ -420,6 +442,100 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     fs.stash_push((op << 32) | peek64(handoff_caller))
   }
   return -(1000 + op)
+}
+
+// The notification verbs (emo-desktop M25, EmoOS Step 11): the
+// filesystem's own shape — every pointer argument inside one writable
+// segment of the caller's, the byte bounds checked here, a slot free,
+// the bytes copied into the slot inside this trap, the route carrying
+// the slot's index above the op. Verb 27 raise(title, tlen, body,
+// blen): the title one to sixty-four bytes, the body zero to one
+// hundred ninety-two, the answer the service's id. Verb 28 take(buf,
+// cap): the capacity at least the reply's head — a capacity under an
+// entry's packed size is the service's to refuse without consuming —
+// and the caller's space word staged, the answer's bytes land in the
+// caller's own table's memory. A request during the gap between an
+// instance's death and the next one's parking goes into the stash the
+// next instance serves first, the caller parking without a post.
+def notify_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  if n == 27 {
+    if r1 < 1 || r1 > notify.notify_title_max {
+      return -reason_argument
+    }
+    if r3 < 0 || r3 > notify.notify_body_max {
+      return -reason_argument
+    }
+    var vt = check_write(r0, r1)
+    if vt != 0 {
+      return -vt
+    }
+    if r3 > 0 {
+      var vb = check_write(r2, r3)
+      if vb != 0 {
+        return -vb
+      }
+    }
+    var k = notify_slot_pick()
+    if k < 0 {
+      return -reason_resource
+    }
+    var s = notify.notify_slots + k * notify.notify_slot_size
+    poke64(s, peek64(handoff_caller))
+    poke64(s + 8, r1)
+    poke64(s + 16, r3)
+    copy_to(s + 64, r0, r1)
+    if r3 > 0 {
+      copy_to(s + 128, r2, r3)
+    }
+    var op = n + 32 * k
+    if peek64(notify.notify_svc_cell) == 0 {
+      notify.notify_stash_push((op << 32) | peek64(handoff_caller))
+    }
+    return -(1000 + op)
+  }
+  if r1 < 24 {
+    return -reason_argument
+  }
+  var vb = check_write(r0, r1)
+  if vb != 0 {
+    return -vb
+  }
+  var k = notify_slot_pick()
+  if k < 0 {
+    return -reason_resource
+  }
+  var s = notify.notify_slots + k * notify.notify_slot_size
+  poke64(s, peek64(handoff_caller))
+  poke64(s + 24, r0)
+  poke64(s + 32, r1)
+  poke64(s + 40, peek64(caller_space_cell))
+  var op = n + 32 * k
+  if peek64(notify.notify_svc_cell) == 0 {
+    notify.notify_stash_push((op << 32) | peek64(handoff_caller))
+  }
+  return -(1000 + op)
+}
+
+def notify_slot_pick() Int64 {
+  var k = 0
+  while k < notify.notify_slot_count {
+    if peek64(notify.notify_slots + k * notify.notify_slot_size) == 0 {
+      return k
+    }
+    k = k + 1
+  }
+  return -1
+}
+
+// The wall clock (emo-desktop M26, EmoOS T12.1): the board's goldfish
+// RTC — TIME_LOW at the page's head, TIME_HIGH at +4 — the pair the
+// nanoseconds since the Unix epoch assemble, the billion the seconds
+// the verb answers. The high word is zero for every year this machine
+// will see; the read is two loads and nothing waits.
+def rtc_seconds() Int64 {
+  const lo = peek32(koff + 0x101000)
+  const hi = peek32(koff + 0x101004)
+  return ((hi << 32) | lo) / 1000000000
 }
 
 // The dispatch: the gate answers what needs no service, routes what
@@ -838,6 +954,60 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     var dseat = comp_slots + (dslot * comp_slot_bytes)
     poke64(dseat, r0)
     return route_win_desk_open - (32 * dslot)
+  }
+  if n == 30 {
+    // win_workspace(grant, ws) (emo-desktop M27, EmoOS T13.2): the
+    // caller's toplevel carries another desk. The owner's check the
+    // stack's other verbs', the id's and the desk's bounds the shape's
+    // own; which entry the grant names, that it is a toplevel and the
+    // move's pixels are the compositor's answers.
+    if r0 == 0 || r1 < 0 || r1 >= comp_desks {
+      return -reason_argument
+    }
+    var wx = grant_row_of(r0)
+    if wx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (wx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    var wslot = comp_slot_take()
+    if wslot < 0 {
+      return -reason_resource
+    }
+    var wseat = comp_slots + (wslot * comp_slot_bytes)
+    poke64(wseat, r0)
+    poke64(wseat + 8, r1)
+    return route_win_workspace - (32 * wslot)
+  }
+  if n == 31 {
+    // desk_show(ws) (emo-desktop M27, EmoOS T13.2): the shell's switch.
+    // The desk's bounds the shape's own here; the panel authority is
+    // the compositor's, the desktop's open's own check — an app's
+    // switch is "not writable", the shell's strip the one layer above
+    // the windows.
+    if r0 < 0 || r0 >= comp_desks {
+      return -reason_argument
+    }
+    var sslot = comp_slot_take()
+    if sslot < 0 {
+      return -reason_resource
+    }
+    var sseat = comp_slots + (sslot * comp_slot_bytes)
+    poke64(sseat, r0)
+    return route_desk_show - (32 * sslot)
+  }
+  if n == 32 {
+    // desk_workspace() (emo-desktop M27, EmoOS T13.2): the query — no
+    // arguments, no seat; the compositor answers the packed word, the
+    // active desk in the low byte and the occupancy mask above it.
+    return route_desk_workspace
+  }
+  if n == 27 || n == 28 {
+    return notify_dispatch(n, r0, r1, r2, r3)
+  }
+  if n == 29 {
+    return rtc_seconds()
   }
   if n == 4 {
     var me = peek64(handoff_caller)

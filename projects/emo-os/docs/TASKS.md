@@ -870,3 +870,99 @@ completion.
   (+3264..+3359; the first cut of the twelve ran +440..+536 and would
   have written the frame callbacks' parks over). Two fresh golden
   rounds green, the sums unchanged.
+
+## Step 11 — the notification service's kernel side (M25, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-12. The desktop's half is emo-desktop M25, whose
+tracker records the milestone's decisions (D16); the reasoning is
+CHECK.md's (2026-11-12). The milestone's row joins the table above at
+its completion.
+
+- [x] **T11.1** — The notification service (the `fs.emo` lineage):
+  `notify.emo` in the kernel image — its own pages (`link.ld`,
+  `trap.S`), the pid cell, the pending ring (eight entries, full the
+  resource refusal, nothing evicted), the monotonic id, the mailbox
+  loop (the gate's raw request words, typed defs, never
+  pattern-matched), the stash for the dead-instance window, the
+  supervisor's restart. **Written 2026-11-12; the kernel builds with
+  it aboard (3.1 MB ELF); graded 2026-11-12 — the metal's rounds
+  green** (`run.sh` exit 0 twice, both timer transports): the boot
+  chain, the services' restarts, the desktop's eras and the frame
+  allocator's books all hold with the service aboard; the two spawn
+  slots it takes (the supervisor, the instance) moved every later
+  pid by two, the pids `run.sh` pins re-pinned (18→20, 20→22, 21→23,
+  `user heap 19`→`21`, 26→28), and the allocator's account moved by
+  the queue's block (`frames 991 783`). **The raise's own decode was
+  the first metal lesson (2026-11-12, A25.3's first run):**
+  `notify_serve`'s `verb = 27 + (op & 31)` read every op — 27, 59, 91,
+  123 — as verb 54, so each raise was served as a take and refused
+  with reason 4; the desktop's take then answered an empty queue and
+  no card appeared. The fix is `27 + ((op - 27) & 31)` (the low five
+  bits *past* twenty-seven, the comment's own words), and the
+  golden's first toast is the grade.
+- [x] **T11.2** — The gate's verbs 27 and 28, and the trap's routes:
+  the notify request slots the gate fills inside the trap (the
+  title's and the body's byte bounds, `check_write` both), the
+  routes −1027/−1028 with the slot riding −32 (verb = slot-0 op, the
+  input service's own habit), the shim's decode branch
+  (`t6 ≥ 27`, `(t6−27) & 31 ≤ 1`), the spawn and the supervisor
+  wiring in `main.emo`, the take's first-taker ownership the
+  service's to keep. **Written 2026-11-12, building; graded
+  2026-11-12 with T11.1 — the same green rounds.** The desktop's
+  half landed beside them (emo-desktop A25.2): the syscall stub's
+  `notify`/`notify_take`, the metal provider's take, and the shell's
+  card and panel — the first take claims the center, the service's
+  owner rule answering as designed.
+
+## Step 12 — the RTC's verb, the clock's kernel side (M26, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-13. The desktop's half is emo-desktop M26, whose
+tracker records the milestone's shape (D17); the bar's clock has had no
+wall time to read, and the board's goldfish RTC is its ground.
+
+- [x] **T12.1** — The RTC's page and the time verb: `sv39.emo` maps
+  the goldfish RTC's page (`0x101000`, the MMIO's own list beside the
+  UART's and the PLIC's), and `gate.emo` answers verb 29 with the
+  seconds since the Unix epoch — TIME_LOW at the page's head,
+  TIME_HIGH at +4, the pair assembled, no service between (a device
+  read, the gate's own). The syscall stub grows `time()` (the
+  `(R, Int64)` answer), and the desktop image builds against it.
+  **Landed 2026-11-13 — the desktop's `clock <epoch>` line is the
+  proof.**
+- [x] **T12.2** — The golden's beat: `run.sh` holds the machine's
+  seconds against the host's own (`date +%s`, two minutes the run's
+  travel) — the RTC is the same wall the host reads, so a drifted
+  answer names the page, the alias or the high word — and the clock
+  line joins the ordered chain at the desktop era's start. **Landed
+  2026-11-13 — the line answered within the tolerance on both
+  transports.**
+
+## Step 13 — the workspaces' kernel side (M27, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-14. The desktop's half is emo-desktop M27, whose
+tracker records the milestone's shape (D18 — the compositor's own
+feature, no new hardware under it); the workspace verb family is
+additions-only, and the trap's decode already passes the family's ops
+to the compositor (the notify-maybe shape test reads 3, 4 and 2 —
+nobody's notification).
+
+- [ ] **T13.1** — The comp page's words and the walk's filter: the
+  workspace word per stack slot (beside the hidden words, the
+  `comp_hidden` precedent — no entry stride changed), the
+  active-workspace cell, the four words of the focus each workspace
+  remembers, and the walk grown the toplevel's test (not hidden, the
+  shown workspace's own — the children riding parents, the panels and
+  the wallpaper always), `win_new`'s landing on the shown workspace,
+  the focus's memory on a switch and its fall to the top toplevel when
+  the workspace remembers none, and `win_desk_open`'s follow to the
+  window's own workspace first.
+- [ ] **T13.2** — The verbs end to end and the golden's beat: the
+  gate's dispatch arms for 30 `win_workspace`, 31 `desk_show` and 32
+  `desk_workspace` (the owner's check the stack verbs' own, the panel
+  authority verb 26's, the routes −1030, −1031 and −1029 — the query's
+  op 29, the seat's packing at thirty-two making 32 itself unusable),
+  the compositor's decode arms (the assignment's repaint both sides of
+  the move, the show's whole-mode damage, the query's packed answer),
+  the stub's three, and `run.sh`'s workspace beats — windows on two
+  workspaces, the pager's switch, an assignment moving a window —
+  graded ×3 double transport byte-identical beside the desktop's A27.3.

@@ -1,0 +1,7 @@
+client: connected
+client: globals 2
+client: global wl_compositor 5
+client: global wl_shm 1
+client: pool painted 9
+mock: 4 requests byte-ok; pool [poolbytes] len 9
+client: delete_id 6

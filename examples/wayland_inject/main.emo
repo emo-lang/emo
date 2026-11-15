@@ -1,0 +1,203 @@
+// The input injector: a virtual pointer and keyboard born on the
+// seat, a keymap painted through the shm tier, and the beats — the
+// choreography as one array of `(kind, time, a, b)` events: kind 0
+// moves the pointer to (a, b), kind 1 presses or releases the
+// pointer's button (a the code, b the state), kind 2 the keyboard's
+// key (a the code, b the state). The dock's first tile takes the
+// click, the arrows walk the focus, Enter launches the counter's
+// panel, and the last two clicks land on the tree's own "+". The
+// focus wait fires them: the keyboard's enter is the compositor's
+// own word that a window holds focus — keys fired before it land on
+// nothing.
+
+require "wayland"
+require "net"
+require "os"
+
+def get_u32(src Bytes, off Int64) Int64 {
+  return src.get(off) | (src.get(off + 1) << 8) | (src.get(off + 2) << 16) | (src.get(off + 3) << 24)
+}
+
+// The beats, walked by index — each event out on its own clock tick
+// (the beat's time is the pacing: the pause since the last one), the
+// transcript's order the array's. The pacing is the point: a window
+// the beats launch takes hundreds of milliseconds to stand,
+// configure, and take the seat's focus, and a beat fired inside that
+// dance is consumed by the wait, not by the window.
+def fire(c wayland.Conn, vkb Int64, vptr Int64,
+         beats Array[(Int64, Int64, Int64, Int64)], i Int64, prev Int64) {
+  if i >= beats.length() {
+    println("inject: beats out")
+  } else {
+    case beats[i] {
+      (kind, time_ms, a, b) -> {
+        case os.sleep_ms(time_ms - prev) {
+          (R.error, why) -> { println("inject: sleep " + why) }
+          (R.ok, _) -> { }
+        }
+        if kind == 0 {
+          case wayland.virtual_pointer_motion_absolute(c, vptr, time_ms, a, b, 1280, 720) {
+            (R.error, why) -> { println("inject: " + why) }
+            (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+          }
+        } else {
+          if kind == 1 {
+            case wayland.virtual_pointer_button(c, vptr, time_ms, a, b) {
+              (R.error, why) -> { println("inject: " + why) }
+              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+            }
+          } else {
+            case wayland.virtual_keyboard_key(c, vkb, time_ms, a, b) {
+              (R.error, why) -> { println("inject: " + why) }
+              (R.ok, _) -> { fire(c, vkb, vptr, beats, i + 1, time_ms) }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The device's lifetime: events consumed until the compositor lets
+// go — the devices die with the process, and the face's window needs
+// them alive while it maps, focuses, and decodes.
+def drain(c wayland.Conn) {
+  case wayland.next_event(c.side) {
+    (R.error, why) -> { println("inject: drained (" + why + ")") }
+    (R.ok, ev) -> {
+      drain(c)
+    }
+  }
+}
+
+def main() {
+  case os.getenv("XDG_RUNTIME_DIR") {
+    (R.error, why) -> { println("inject: " + why) }
+    (R.ok, dir) -> {
+      case net.connect_unix(dir + "/wayland-1", 5.0) {
+        (R.error, why) -> { println("inject: connect " + why) }
+        (R.ok, raw) -> {
+          const c = wayland.conn_of(raw)
+          case wayland.handshake(c) {
+            (R.error, why) -> { println("inject: handshake " + why) }
+            (R.ok, globals) -> {
+              case globals.find("wl_seat") {
+                (R.error, why) -> { println("inject: " + why) }
+                (R.ok, found) -> {
+                  case found {
+                    (seat_name, _) -> {
+                      case wayland.registry_bind(c, seat_name, "wl_seat", 5) {
+                        (R.error, why) -> { println("inject: " + why) }
+                        (R.ok, seat_id) -> {
+                          bind_managers(c, globals, seat_id)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def bind_managers(c wayland.Conn, globals wayland.Globals, seat_id Int64) {
+  case globals.find("zwp_virtual_keyboard_manager_v1") {
+    (R.error, why) -> { println("inject: " + why) }
+    (R.ok, found) -> {
+      case found {
+        (vk_name, _) -> {
+          case wayland.registry_bind(c, vk_name, "zwp_virtual_keyboard_manager_v1", 1) {
+            (R.error, why) -> { println("inject: " + why) }
+            (R.ok, vk_mgr) -> {
+              case globals.find("zwlr_virtual_pointer_manager_v1") {
+                (R.error, why) -> { println("inject: " + why) }
+                (R.ok, found) -> {
+                  case found {
+                    (vp_name, _) -> {
+                      case wayland.registry_bind(c, vp_name, "zwlr_virtual_pointer_manager_v1", 2) {
+                        (R.error, why) -> { println("inject: " + why) }
+                        (R.ok, vp_mgr) -> {
+                          create_devices(c, vk_mgr, vp_mgr, seat_id)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def create_devices(c wayland.Conn, vk_mgr Int64, vp_mgr Int64, seat_id Int64) {
+  case wayland.virtual_pointer_create(c, vp_mgr, seat_id) {
+    (R.error, why) -> { println("inject: pointer " + why) }
+    (R.ok, vptr) -> {
+      println("inject: pointer created")
+      case wayland.virtual_keyboard_create(c, vk_mgr, seat_id) {
+        (R.error, why) -> { println("inject: keyboard " + why) }
+        (R.ok, vkb) -> {
+          println("inject: keyboard created")
+          send_keymap(c, vkb, vptr)
+        }
+      }
+    }
+  }
+}
+
+def send_keymap(c wayland.Conn, vkb Int64, vptr Int64) {
+  const map_path = "/tmp/emo-inject-map-" + os.getpid().to_string() + ".tmp"
+  case os_shm_open(map_path) {
+    (R.error, why) -> { println("inject: map " + why) }
+    (R.ok, map_fd) -> {
+      const text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
+      case os_ftruncate(map_fd, text.length()) {
+        (R.error, why) -> { println("inject: ftruncate " + why) }
+        (R.ok, _) -> {
+          case os_pwrite(map_fd, text, 0) {
+            (R.error, why) -> { println("inject: pwrite " + why) }
+            (R.ok, _) -> {
+              println("inject: map painted")
+              case wayland.virtual_keyboard_keymap(c, vkb, map_fd, text.length()) {
+                (R.error, why) -> { println("inject: keymap sent " + text.length().to_string()) }
+                (R.ok, _) -> {
+                  // The pointer onto the dock's first tile, press and
+                  // release; Enter launches the counter's window (the
+                  // compositor's focus follows it); the key `a` drives
+                  // the counter through its window's own table; a
+                  // click on the tree's own "+"; then the dock's third
+                  // tile, Enter, and the editor's typing. The devices
+                  // stay alive while the windows map, focus, and
+                  // decode.
+                  const beats = [
+                    (0, 5, 36, 688), (1, 15, 272, 1), (1, 25, 272, 0),
+                    (2, 40, 28, 1), (2, 50, 28, 0),
+                    (2, 1600, 30, 1), (2, 1620, 30, 0),
+                    (0, 1740, 300, 300), (1, 1760, 272, 1), (1, 1780, 272, 0),
+                    (2, 1820, 106, 1), (2, 1840, 106, 0),
+                    (2, 1860, 106, 1), (2, 1880, 106, 0),
+                    (2, 1900, 28, 1), (2, 1920, 28, 0),
+                    (2, 3500, 30, 1), (2, 3520, 30, 0),
+                    (2, 3550, 48, 1), (2, 3570, 48, 0),
+                    (2, 3600, 28, 1), (2, 3620, 28, 0)
+                  ]
+                  fire(c, vkb, vptr, beats, 0, 0)
+                  drain(c)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+main()

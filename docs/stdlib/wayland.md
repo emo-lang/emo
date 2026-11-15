@@ -1,0 +1,233 @@
+# The `wayland` Package
+
+The Wayland client protocol in pure Emo over the `net` surface's Unix
+socket: a program connects to the compositor, binds the globals it
+names, shares pixels through `wl_shm`, and answers the events the
+compositor sends — the codec, the interface tables, and the state
+machine living in the package, not in every program's socket loop.
+This is the gate the noctalia track opens onto the real Wayland world:
+the first frame an Emo program has ever put on a real compositor went
+through this package.
+
+## Using the package
+
+```emo
+require "wayland"
+require "net"
+require "os"
+
+case net.connect_unix(path, 5.0) {
+  (R.error, why) -> { println(why) }
+  (R.ok, raw) -> {
+    const c = wayland.conn_of(raw)
+    case wayland.handshake(c) {
+      (R.error, why) -> { println(why) }
+      (R.ok, globals) -> { /* globals.find("wl_compositor") ... */ }
+    }
+  }
+}
+```
+
+`wayland.connect(path, timeout)` wraps the same dance around a socket
+it opens itself; `conn_of` wraps a socket already open (the shape a
+test double starts from). The package declares `c` alone: the Unix
+socket, the fd passage, and the shm tier are the c target's runtime,
+and every other target refuses the package at resolution (the sqlite3
+precedent).
+
+## The wire
+
+The codec is the protocol's own grammar, stated where it is used: the
+8-byte header (object id, opcode, size — little-endian), the argument
+encodings (int32, uint32, fixed 24.8, string with its NUL and the pad
+to 4, new_id, array), and the fd's rule, graded against a real
+compositor: **an fd takes no word in the argument stream** — it rides
+the socket out of band (SCM_RIGHTS), queued in the order the grammar
+names it, and `Args.fd` claims it from that queue. The builder is
+strict about the wire's own rules: a value outside its word, a size
+past the u16, a second fd, a second fd claim with none arriving — each
+raises, because each is a mistake the wire would answer with garbage.
+
+`Message` builds a request or an event; `finish` patches the size word
+and answers the bytes with the fd beside them. `Args` decodes a frame
+in the order the interface's grammar names its arguments; `Side` is
+one end of a socket — every read through recvmsg (a read that dropped
+ancillary data would be the silent loss), the framing owned once, the
+client and a test double sharing it.
+
+## The tables
+
+The interfaces a client speaks, with the opcode numbers stated at
+their call sites: `wl_display`, `wl_registry`, `wl_callback`; the
+`wl_compositor`/`wl_surface` pair a window's tree grows from; `wl_shm`
+and its pool and buffer; and the `xdg-shell` family (`xdg_wm_base`,
+`xdg_surface`, `xdg_toplevel`) — the configure-before-commit
+discipline made structural in `wait_configure`, whose signature names
+what it consumes (the toplevel's own configures set aside, the ping
+answered with the pong, the serial handed back as the ack's and the
+commit's license).
+
+The tables are hand-written — no XML is parsed at runtime — and the
+smoke leg is where a real compositor grades them: sway caught two
+wrong opcodes and a missing request (`create_positioner` at 1,
+`get_xdg_surface` at 2; `ack_configure` at 4; the wl_surface family
+one higher than a first reading guesses, `destroy` at 0) by naming
+the misdispatch in its error events.
+
+## Strictness on the wire
+
+The transport's truths answer `(R.error, reason)` with reasons
+prefixed `wayland:`: a short read, a peer gone mid-frame, a size word
+smaller than the header, a display error event (its message carried
+through). A frame that lies about its own argument lengths is protocol
+corruption and raises loudly — a silent shift by four bytes is the one
+failure a wire must never dress up.
+
+## Painting
+
+The pool's client-side life is `os_shm_open` (a private file at a
+path, unlinked at birth — seekable and mappable on macOS and Linux
+alike; macOS's POSIX shm objects refuse read and pwrite outright),
+`os_ftruncate`, and `os_pwrite` — pixels through pwrite, the
+compositor mmaps, and no mmap exists at the Emo surface. The paint
+sequence the demo drives is the milestone's own ladder: handshake,
+binds at the advertised versions, surface, xdg surface, toplevel,
+title, the empty commit, the configure wait, the ack, the pool
+painted one pwrite a row, attach, damage, the second commit.
+
+## Input
+
+The seat's half of the wire: `wl_seat` (bound at v5 — the pointer's
+frame family and the keyboard's `repeat_info` included), and the
+`wl_pointer`/`wl_keyboard` it grants through `seat_get_pointer` /
+`seat_get_keyboard`. The pointer's events (enter, motion with fixed
+24.8 surface coordinates, button, the frame family) and the
+keyboard's (the keymap whose **fd rides the ancillary queue in the
+event direction** — the same `Args.fd` claim, the bytes read back
+through the passage, enter/leave, key, modifiers) decode through the
+same `Args` cursor. The seat's requests are gated: sway refuses
+`get_pointer` before the capabilities advert names the pointer —
+the grant waits for the capabilities event.
+
+The smoke leg grades the tables end to end: the demo binds sway's
+`zwlr_virtual_pointer_manager_v1` and `zwp_virtual_keyboard_manager_v1`
+globals, paints a minimal xkb_v1 keymap through the shm tier, and
+injects motion, the left button, and a key against its own window —
+the events come back and the script asserts them. Two lessons the
+leg taught: a virtual pointer born with the wire's null seat is a
+device sway registers but never routes (born with the seat, it
+routes); and a compositor's cursor state lags its window
+transactions — the beats fire from the pointer's enter event, the
+one word that says the cursor state has caught up.
+
+The ride's own demo grows the pointer a click path: `LiveInput`
+tracks the pointer's surface coordinates from the motion events, and
+a press runs the caller's rect table — `(x, y, w, h, tag)`, the
+first containing rect wins — so the desktop's dock is clickable: the
+demo paints the desktop's face (`emo_desktop`'s wallpaper, header,
+and dock — the dock's strip-local formulas through an offsetting
+Surface wrapper), and a click on a tile delivers the tile's tag,
+moves the focus, and repaints. The arrows move the focus, Enter
+toggles the launch bit, and the smoke leg asserts the click, the
+arrow, and the launch — the desktop ran live, the click landed, and
+the keys drove it.
+
+The table is no longer hand-written where the content is a tree
+(M22): `ui_fb`'s paint walk carries a rect collector
+(`ui_fb.paint_rects`), every Button it places lands in the table with
+the tag the registry handed the view — a frame's pixels and its click
+targets come from one pass — and the demo paints a launched app's
+tree in-frame, the exported rects joined into the pointer's table
+under the app's tag base. A click on the tree's own "+" then drives
+the app's own `update` through the `ui.App` standing under the quiet
+backend (the corpus counter, required whole from `emo/ui_apps`): the
+count moves, the app's own words ride the transcript, and the smoke
+leg pins the exported rect line and both clicks.
+
+The keys come from the keymap now (M23): the `keymap` event's fd
+reads back through the passage and parses once — the keycodes
+section's `<AD01> = 24;` entries, the symbols section's rows in both
+spellings the compiled keymaps wear, every search bounded by the
+row's own braces — and `name_of(key, shift)` answers the keysym name,
+the compositor's own word for the key. The keycodes the keymap
+speaks are the xkb ones: **evdev plus eight**, the dance every
+Wayland client does before it asks xkb (the injected Enter rides
+evdev 28; the keymap's `<RTRN>` is 36). The demo's tag tables key on
+names — "Left", "Right", "Return" — and the hard-written evdev rows
+of the M19 demo are gone; the smoke leg's live keymap is sway's own
+(compiled, 490 codes, 117 symbol rows, all parsed), and the keys
+deliver by name.
+
+The windows come next (M24): a launch stands the app up as a second
+toplevel — its surface, its xdg surface, its shm pool, its own
+configure wait (`wait_configure` tolerates the seat's own events and
+the siblings' configures, both of which arrive mid-wait once more
+than one window exists) — and `LiveInput` becomes a decoder that
+answers `Ev`s naming the surface they are for: the keyboard's
+entered surface, the pointer's hovered one. The routing is the
+caller's: the desktop's names drive the dock, a window's names drive
+the app behind it, and the rect tables are per window (each repaint
+re-exports its tree's buttons). The seat's focus is the conductor —
+`wl_keyboard.enter` names the surface every key rides to, the
+corpus apps' key tables key on the same names the keymap produces
+("a", "b", "Return" for the editor's typing) — and the pointer's
+clicks carry the surface they landed on. The smoke leg types into
+the editor's window and counts on the counter's, both live under
+sway.
+
+## Limitations
+
+- **One target.** `c` alone; the interpreter's fd-passage stubs (the
+  OCaml runtime's Unix module carries no sendmsg) are the named
+  follow-up.
+- **One fd a message.** The protocols this package speaks carry
+  exactly one; a protocol needing two grows the shape then.
+- **The keymap is a focused reader, not an xkb.** The parser takes
+  the keycodes and symbols sections' plain rows — the shapes sway's
+  compiled keymaps wear — and answers first and second symbols; it
+  does not model groups, levels beyond the first two, or the types
+  and compat sections.
+- **The second window's pointer is the compositor's to route.** The
+  demo's clicks inside a stood-up app window did not arrive under
+  sway 1.7 headless (the keyboard's focus routing delivers, the
+  same rect mechanism proven on the desktop's own surface in M22);
+  the follow-up is a retest against a newer sway and, if it
+  reproduces, the protocol-level question the difference names.
+- **Hand-written tables.** The opcodes live at their call sites and
+  the compositor grades them; no XML is parsed at runtime.
+
+## Riding it: a live window
+
+The bridges a live application needs are small and ride the Elm loop's
+own seams: a `Surface` whose `present()` pushes the canvas's bytes
+through `os_pwrite` into the pool, attaches, damages the whole rect,
+and commits (the canvas's XRGB8888 words are the wl_shm bytes
+verbatim), and an `Input` whose `next()` blocks on Wayland events and
+delivers the tags the application speaks — keys through the
+compositor's own keymap (parsed at the keymap event, the shift state
+read from the modifiers event whose first argument is the serial and
+whose depressed word is second), clicks
+through a rect table hit at the tracked pointer position. Since M24
+the demo is a multi-window client: the desktop's dock plus one
+window per launched app, each with its own pool and buffer, its own
+rect table, and the seat's focus deciding which `ui.App` a key or a
+click serves. The fb backend's own demo runs the convergence
+corpus's applications live on a real compositor: injected keys,
+real repaints, the digest of every frame in the transcript
+(`projects/emo-desktop/wayland/`, the smoke leg
+`devtools/wayland-face-smoke.sh`).
+
+## The examples
+
+- `examples/wayland_wire` — the codec against hand-computed fixtures,
+  byte-level.
+- `examples/wayland_handshake` — a mock compositor over a real Unix
+  socket, byte-exact.
+- `examples/wayland_paint` — the first frame, run by
+  `devtools/wayland-smoke.sh`, the Docker leg that compiles the demo's
+  C and runs it under headless sway, grim the eye.
+- `examples/wayland_input` — the seat's tables against a canned
+  stream: capabilities, pointer, keyboard, the keymap's fd through the
+  passage.
+- `examples/wayland_inject` — the virtual devices the smoke leg
+  drives the live window with: the beats as one array of events.

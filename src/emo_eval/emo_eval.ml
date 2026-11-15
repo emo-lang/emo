@@ -428,6 +428,18 @@ let global_env () =
     { bound = RuntimeImplFn "net_connect_unix"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen_unix"
     { bound = RuntimeImplFn "net_listen_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_sendmsg_fd"
+    { bound = RuntimeImplFn "net_sendmsg_fd"; mutable_ = false };
+  Hashtbl.replace env.frame "net_recvmsg_fd"
+    { bound = RuntimeImplFn "net_recvmsg_fd"; mutable_ = false };
+  Hashtbl.replace env.frame "os_shm_open"
+    { bound = RuntimeImplFn "os_shm_open"; mutable_ = false };
+  Hashtbl.replace env.frame "os_ftruncate"
+    { bound = RuntimeImplFn "os_ftruncate"; mutable_ = false };
+  Hashtbl.replace env.frame "os_sleep_ms"
+    { bound = RuntimeImplFn "os_sleep_ms"; mutable_ = false };
+  Hashtbl.replace env.frame "os_pwrite"
+    { bound = RuntimeImplFn "os_pwrite"; mutable_ = false };
   Hashtbl.replace env.frame "net_tls_connect"
     { bound = RuntimeImplFn "net_tls_connect"; mutable_ = false };
   Hashtbl.replace env.frame "net_tls_connect_insecure"
@@ -444,6 +456,8 @@ let global_env () =
     { bound = RuntimeImplFn "file_write"; mutable_ = false };
   Hashtbl.replace env.frame "os_getpid"
     { bound = RuntimeImplFn "os_getpid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getenv"
+    { bound = RuntimeImplFn "os_getenv"; mutable_ = false };
   Hashtbl.replace env.frame "os_getppid"
     { bound = RuntimeImplFn "os_getppid"; mutable_ = false };
   Hashtbl.replace env.frame "os_fork"
@@ -4036,22 +4050,6 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_argv` expects no arguments, got %d"
              (List.length vs))
-    | "os_getenv", [ String name ] -> (
-        (* The unset answer is written by hand, not ridden through
-         os_result: the reason names the miss (`is not set`), the same
-         text the c runtime prints for it. *)
-        match Sys.getenv_opt name with
-        | Some v -> Tuple [ EnumMember ("R", "ok"); String v ]
-        | None ->
-            Tuple
-              [
-                EnumMember ("R", "error");
-                String (Printf.sprintf "os: getenv %s: is not set" name);
-              ])
-    | "os_getenv", vs ->
-        error span "E3007"
-          (Printf.sprintf "`os_getenv` expects (name String), got %d"
-             (List.length vs))
     | "os_setenv", [ String name; String value ] -> (
         (* The reason names `setenv` — the call the c runtime makes —
          not the OCaml putenv underneath. *)
@@ -4118,6 +4116,53 @@ and apply_runtime_impl span name args =
         Effect.perform (Net_listen_unix (path, span))
     | "net_listen_unix", _ ->
         error span "E3001" "`net_listen_unix` expects (path String)"
+    (* The fd passage and the shm tier (A18.7) ride the c target's
+       runtime only: the interpreter names the refusal instead of
+       pretending. *)
+    | "net_sendmsg_fd", args when List.length args <> 3 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_sendmsg_fd` expects (conn TcpConn, data String, fd Int64), \
+              got %d             arguments"
+             (List.length args))
+    | "net_sendmsg_fd", [ _; _; _ ] ->
+        not_yet span "`net_sendmsg_fd` (the fd passage rides the c target)"
+    | "net_recvmsg_fd", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`net_recvmsg_fd` expects (conn TcpConn, cap Int64), got %d \
+              arguments"
+             (List.length args))
+    | "net_recvmsg_fd", [ _; _ ] ->
+        not_yet span "`net_recvmsg_fd` (the fd passage rides the c target)"
+    | "os_shm_open", args when List.length args <> 1 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_shm_open` expects (name String), got %d arguments"
+             (List.length args))
+    | "os_shm_open", [ _ ] ->
+        not_yet span "`os_shm_open` (the shm tier rides the c target)"
+    | "os_ftruncate", args when List.length args <> 2 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_ftruncate` expects (fd Int64, size Int64), got %d arguments"
+             (List.length args))
+    | "os_ftruncate", [ _; _ ] ->
+        not_yet span "`os_ftruncate` (the shm tier rides the c target)"
+    | "os_pwrite", args when List.length args <> 3 ->
+        error span "E3007"
+          (Printf.sprintf
+             "`os_pwrite` expects (fd Int64, data String, offset Int64), got \
+              %d             arguments"
+             (List.length args))
+    | "os_pwrite", [ _; _; _ ] ->
+        not_yet span "`os_pwrite` (the shm tier rides the c target)"
+    | "os_sleep_ms", args when List.length args <> 1 ->
+        error span "E3007"
+          (Printf.sprintf "`os_sleep_ms` expects (ms Int64), got %d arguments"
+             (List.length args))
+    | "os_sleep_ms", [ _ ] ->
+        not_yet span "`os_sleep_ms` (the pause rides the c target)"
     | "net_tls_connect", args when List.length args <> 3 ->
         error span "E3007"
           (Printf.sprintf

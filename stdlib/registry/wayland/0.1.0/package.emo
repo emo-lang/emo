@@ -1,0 +1,9 @@
+package {
+  name = "wayland"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}

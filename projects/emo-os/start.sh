@@ -48,6 +48,7 @@ win_src="$fb_dir/win/package.emo $fb_dir/win/ui_fb_win.emo"
 desktop_src="$fb_dir/desktop/package.emo $fb_dir/desktop/emo_desktop.emo"
 apps_src="$fb_dir/apps/package.emo $fb_dir/apps/ui_apps.emo $fb_dir/apps/counter.emo $fb_dir/apps/files.emo $fb_dir/apps/editor.emo"
 winbuf_src="$fb_dir/winbuf/package.emo $fb_dir/winbuf/ui_fb_winbuf.emo"
+notify_src="$fb_dir/notify/package.emo $fb_dir/notify/emo_notify.emo"
 counter_src="$fb_dir/apps/counter/package.emo $fb_dir/apps/counter/main.emo"
 files_src="$fb_dir/apps/files/package.emo $fb_dir/apps/files/main.emo"
 editor_src="$fb_dir/apps/editor/package.emo $fb_dir/apps/editor/main.emo"
@@ -56,10 +57,11 @@ spin_src="$fb_dir/apps/spin/package.emo $fb_dir/apps/spin/main.emo"
 registry() {
   local sum
   # shellcheck disable=SC2086
-  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src | cksum | awk '{print $1}')
+  sum=$(cat $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src | cksum | awk '{print $1}')
   local reg="$PWD/.emo-build/registry-$sum"
   mkdir -p "$reg/syscall/0.1.0" "$reg/emo/ui/0.1.0" "$reg/emo/ui_fb/0.1.0" \
     "$reg/emo/ui_fb_frame/0.1.0" "$reg/emo/ui_fb_win/0.1.0" "$reg/emo/ui_apps/0.1.0" \
+    "$reg/emo_notify/0.1.0" \
     "$reg/emo/ui_fb_winbuf/0.1.0"
   # shellcheck disable=SC2086
   cp $syscall_src "$reg/syscall/0.1.0/"
@@ -77,6 +79,7 @@ registry() {
   cp $apps_src "$reg/emo/ui_apps/0.1.0/"
   # shellcheck disable=SC2086
   cp $winbuf_src "$reg/emo/ui_fb_winbuf/0.1.0/"
+  cp $notify_src "$reg/emo_notify/0.1.0/"
   printf '%s' "$reg"
 }
 
@@ -112,7 +115,7 @@ stale() {
 }
 
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src ||
+if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src ||
    stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||

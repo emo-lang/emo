@@ -21,6 +21,37 @@ tree's and EmoOS's, listed there.
 - [x] **D5** — The resolution baseline: 1024×768 XRGB8888, the
   carve sized to it. M14's D6 supersedes it.
 
+## Milestones
+
+| Milestone | Tasks | Exit criteria |
+| --- | --- | --- |
+| M7 — the screen | A7.1–A7.3 | The fb backend (`emo/ui_fb`) paints the box model onto a pixel surface in pure portable Emo — the first frame digests identically hosted and on the metal (the kernel half in EmoOS's tracker). |
+| M8 — glyphs & pointer | A8.1–A8.3 | The bitmap type renders text, the Elm loop runs on the machine, and the pointer moves its plane — text, loops, and pointer on one metal. |
+| M9 — windows | A9.1–A9.3 | The window shell: the window surface, kill-and-restart, and the window verb family — the desktop grows windows the walk paints into. |
+| M10 — the desktop | A10.1–A10.3 | The first apps (counter, files, editor) as corpus packages, the dock and desktop shell (`emo_desktop`), and the whole vocabulary folded into the convergence corpus. |
+| M11 — honest multi-app | A11.1–A11.2 | Apps become disk ELFs through the gate's exec, and two live in the arena at once — the double-mirror desktop. |
+| M12 — the desktop shell era | A12.1–A12.2 | The launcher's replay and the dual-mirror desktop: three apps exec'd, driven, and exited under the shell's own order. |
+| M14 — the HD desktop | A14.1–A14.5 | 1080p: chrome, window shading, software pointer, and the shell's surfaces rebuilt for the bigger mode — run.sh double-transport byte-identical. |
+| M15 — motion | A15.1–A15.2 | The first animation: the three apps' windows rise and sink through an eased eight-frame sequence, per-window damage composing under the D12 beat. |
+| M16 — the window's own menu | A16.1–A16.5 | The one-button menu (Maximize/Minimize/Quit) and title-bar dragging through press-at/move-at, with the interaction depth the cells grew to hold. |
+| M17 — the type at any size | A17.1–A17.4 | The scalable Inter and JetBrains Mono strikes: outlines, the rasterizer, and the ink swap — the type renders at any pixel size, byte-pinned. |
+| M18 — the Wayland gate | A18.1–A18.12 | The pure-Emo `wayland` client package on `c`: the wire codec, fd passage (sendmsg/recvmsg and the shm tier), and the first frame riding headless sway. |
+| M19 — the seat: input on the gate | A19.1–A19.5 | The wl_seat/wl_pointer/wl_keyboard tables plus the virtual devices: injected keys decode through the demo's tables against a canned-stream golden. |
+| M20 — the face rides Wayland | A20.1–A20.6 | The corpus application live on a real compositor: `LiveEye` presents through the shm tier, `LiveInput` translates, the smoke leg grades end to end. |
+| M21 — the dock clicks | A21.1–A21.4 | The pointer's click path (tracked coordinates, rect table, first containing rect wins) and the desktop face (wallpaper, header, dock) painted per frame. |
+| M22 — the tree takes the pointer | A22.1–A22.4 | The rect table is the ui tree's own export (`Rects`/`paint_rects`): the launched app's tree paints in-frame and a click on its "+" drives the app's own update. |
+| M23 — the keymap decodes | A23.1–A23.3 | `parse_keymap` reads the compositor's compiled xkb keymap (keycodes and symbols, both spellings, brace-bounded) and keys deliver by keysym name — the evdev rows retired, evdev+8 recorded. |
+| M24 — the apps become windows | A24.1–A24.4 | A launch stands the app up as a second toplevel (its own pool, buffer, configure); `LiveInput` answers `Ev`s naming their surface and the seat's focus routes keys to the focused window's app. |
+| M25 — notifications | A25.1–A25.4 | The `notify` verb family and the notification service (the `fs.emo` lineage) land on the metal; apps raise through the gate and the shell answers as the notification center by construction — the toast, the history, do-not-disturb (D16; the kernel half in EmoOS's tracker). |
+| M26 — the clock | A26.1–A26.2 | The board's goldfish RTC becomes a time verb; the header's clock and the calendar read wall time — the bar's first real data (D17; the kernel half in EmoOS's tracker). |
+| M27 — workspaces | A27.1–A27.3 | The workspace verb family grows the compositor additions-only; the bar's pager switches and every window carries its workspace (D18; the kernel half in EmoOS's tracker). |
+| M28 — the launcher's enumeration and the lock | A28.1–A28.3 | The launcher enumerates the disk's app packages behind its search, and the lock screen takes the session behind D19's hash file — no PAM anywhere. |
+| M29 — the audio ride-along (parked) | — | Volume, the OSD, and the media controls arrive with the audio OS track (the virtio-sound driver, the mixer service, the verb family); until it lands the three render nothing by D15's rule. |
+
+The polished effect's own ladder — the skin layer and the motion the
+rows above do not yet number — is written in
+[`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md).
+
 ## M7 — the screen (the desktop side)
 
 - [x] **A7.1** — The fb backend's hosted core: measure, place, clip,
@@ -1348,3 +1379,795 @@ lives as long as its app. The decisions are D7 through D12 in
   discipline reached the goldens too — their strike helpers answer
   the holder pattern (build, case, push, read), the bytecode targets
   build them whole. **Landed 2026-11-10.**
+
+## M18 — the Wayland gate (opened 2026-11-11)
+
+The desktop so far lives inside its own machine: the gate, the carve,
+the comp lines — an EmoOS story. The other half of the lineage has
+been waiting since the README's first position line ("Wayland/Quartz
+shape, QNX Screen lineage"): the real Wayland world, the one the
+[noctalia-dev](https://github.com/noctalia-dev) family lives in — the
+Noctalia desktop shell, the Umbriel compositor (scrolling, dwindle,
+master, stacking), the greeter — "a family of native Wayland projects
+that feel like one desktop." M18 opens the gate onto that family from
+the client's side: a pure-Emo Wayland wire-protocol package, so an
+Emo program connects to a real compositor over its Unix socket,
+binds its globals, shares pixels through `wl_shm`, and puts a first
+frame on screen. The direction is decided (2026-11-11): the client
+package is the foundation every later noctalia-track shape rides
+(the fb face ported onto Wayland, a shell, a compositor — each
+re-evaluated once the foundation stands); verification is byte-level
+goldens against a mock compositor plus a Docker Linux leg running
+headless sway with `grim` screenshots. The package declares
+`targets = ["c"]` — the c runtime is where Unix sockets land, and the
+interpreter's fd-passage stubs are a named follow-up, not a debt of
+this milestone. This milestone is hosted-only by construction: **no
+kernel-side half exists, deliberately** (no EmoOS row).
+
+The tasks are sized for idle-time sittings: each is one self-contained
+unit with its own files and its own acceptance (a golden, a digest,
+a build), startable and finishable without the session that wrote the
+list.
+
+- [x] **A18.1** — The package's manifest and its opening words —
+  `stdlib/registry/wayland/0.1.0/package.emo` (name `wayland`,
+  version `0.1.0`, `targets = ["c"]`, `deps { "net" = "0.1.0" }`) and
+  the doc-comment header of `wayland.emo`: what the package is (the
+  Wayland wire protocol in pure Emo over `net`'s Unix socket), the
+  error split (`(R.error, reason)` with reasons prefixed `wayland:`),
+  and the strictness stance (a short read is a failure, never a
+  silence; the fd placeholder word is the codec's, the real fd rides
+  SCM_RIGHTS). **Accept:** the package resolves on `c` and refuses on
+  every other target (E5007, the sqlite3 precedent); the registry's
+  embedded data regenerates on `dune build` untouched.
+  **complete 2026-11-11** — the manifest and the header landed; the
+  package resolves on `c` and refuses on `wasm` with E5007 (the
+  sqlite3 precedent's shape), the registry's embedded data
+  regenerating on `dune build` untouched.
+
+- [x] **A18.2** — The wire's write half: the message builder. The
+  8-byte header (object id, opcode, size — little-endian words), the
+  argument encodings (int32, uint32, fixed 24.8, string with its NUL
+  and the pad to 4, new_id, array, the fd's placeholder word), and
+  the builder hands back one `String` per message, fd arguments
+  queued beside it for the sender to carry. **Accept:** the encodings
+  byte-match hand-computed fixtures (a demo def prints digests).
+  **complete 2026-11-11** — the `Message` builder landed; five
+  hand-computed fixtures matched byte for byte (get_registry, sync,
+  the bind with its padded string, the pool's fd placeholder, the
+  fixed −1 as `00ffffff`), the strictness raising on the out-of-range
+  word, the second fd, and the oversize message.
+
+- [x] **A18.3** — The wire's read half: the event frame reader and
+  the argument decoder. `read_exactly` the header, `read_exactly`
+  the size says, decode the same types back; `wl_display.error`,
+  `wl_callback.done` and `wl_registry.global` are the first events
+  with named shapes. **Accept:** the decoder round-trips A18.2's
+  fixtures and rejects a short frame with `wayland:` reasons.
+  **complete 2026-11-11** — `next_event`'s framing and the `Args`
+  cursor landed; the fixtures decoded back to their exact values
+  (the bind's four arguments, fixed −1, i32 −7, the empty text, the
+  fd's placeholder), and the cursor reading past a frame's end
+  raised with the offset named — the loud failure the wire's
+  corruption earns.
+
+- [x] **A18.4** — The core tables and the handshake: `wl_display`
+  (sync, get_registry, error), `wl_registry` (bind, global,
+  globals remover), `wl_callback` (done); connect through
+  `net.connect_unix`, get_registry, sync, collect the globals into a
+  typed shape, bind by name at the advertised version. **Accept:**
+  the handshake defs compile against the tables; correctness rides
+  the goldens.
+
+- [x] **A18.5** — `examples/wayland_wire`: the codec's golden. Build
+  the handshake's requests, print their digests, parse a canned
+  event stream, print what it saw — all pure function of the codec,
+  no socket. `package.emo` + `package.lock` + `expected.txt` in the
+  corpus discipline, registered in `c_goldens`
+  (`test/emo_cli/emo_cli_test.ml`). **Accept:** the golden passes on
+  the c target; `dune build` after `emo deps resolve` stays green.
+  **complete 2026-11-12** — the golden landed and caught a real bug
+  on its first run: `Globals.at`'s rotation was stateful across
+  calls (at(1) answered the third global) and `find`'s early exit
+  left the deque half-rotated; the walk now goes out and comes all
+  the way home. The transcript pinned in `expected.txt`, registered
+  in `c_goldens` beside httpd's.
+
+- [x] **A18.6** — The c runtime's Unix sockets: `net_listen_unix` and
+  `net_connect_unix` stop refusing on `c` — AF_UNIX bind/listen and
+  connect in `emo_c_runtime.c` (the conn is the boxed fd int; the
+  existing read/write/read_exactly/close work unchanged on the new
+  family), no emitter changes beyond the two names. **Accept:** an
+  in-process demo — a spawned process listens, the main process
+  connects and round-trips bytes — builds and runs on macOS `cc`.
+  **complete 2026-11-12** — AF_UNIX listen/connect in
+  `emo_c_runtime.c` (a stale socket file replaced only when `stat`
+  proves it a socket, never a regular file), the emitter's two arms,
+  the probe's spawned server parking on accept while the client
+  round-tripped bytes. The net docs' "refused on c" line for Unix
+  sockets retired with it.
+
+- [x] **A18.7** — The c runtime's fd passage and shm tier:
+  `net_sendmsg_fd` / `net_recvmsg_fd` (sendmsg/recvmsg with
+  SCM_RIGHTS, the fd queued with the message's own data),
+  `os_shm_open` (POSIX `shm_open` + immediate unlink — macOS and
+  Linux share it), `os_ftruncate`, `os_pwrite`. The emitter arms in
+  `emo_c.ml`, the signatures in `emo_check.ml`, and the interpreter's
+  honest refusal in `emo_eval.ml` ("the fd passage rides the c
+  target" — a runtime failure, never a silence). **Accept:** the
+  primitives compile into the c runtime; a demo sends one fd over a
+  real unix socket and reads it back on the other end.
+  **complete 2026-11-12** — sendmsg/recvmsg with SCM_RIGHTS landed
+  (the probe watched fd 3 leave and fd 7 arrive, the pool's bytes
+  readable at the far end), and three findings reshaped the road:
+  the checker's `(R.error, why)` convention only knew the pair — the
+  three-slot `(R, data, fd)` crashed `fold_left2` after the E4013
+  report, and the convention now reads any `(R, ...)` shape; macOS
+  hides the CMSG macros from a strict-ANSI unit without
+  `_DARWIN_C_SOURCE`; and macOS's POSIX shm objects refuse read and
+  pwrite outright (mmap-only), so `os_shm_open` became a private
+  file at a path, unlinked at birth — seekable and mappable on both
+  platforms, the shape the wl_shm pool accepts.
+
+- [x] **A18.8** — `examples/wayland_handshake`: the mock compositor's
+  golden. One program: a spawned process serves the socket as the
+  canned compositor (registry advert, sync answers, byte-exact
+  request assertions), the main process is the client riding A18.4's
+  handshake — including the `wl_shm` pool fd round trip (the mock
+  receives the fd, reads the pool's bytes back through it, asserts
+  the pattern). The transcript lands in `expected.txt`, registered
+  in `c_goldens`. **Accept:** the golden is byte-deterministic and
+  green on macOS `cc`.
+
+- [x] **A18.9** — The `xdg-shell` and `wl_shm` tables: `xdg_wm_base`
+  (ping/pong, get_xdg_surface), `xdg_surface` (configure/ack,
+  new_toplevel frame callbacks), `xdg_toplevel` (configure events,
+  set_title, close), `wl_shm` (create_pool, formats — ARGB8888
+  first), `wl_shm_pool` (create_buffer), `wl_buffer` (release). The
+  configure-before-commit discipline the protocol demands, made
+  structural in the package's API. **Accept:** the tables compile;
+  the state machine's shape reads in the defs' signatures.
+  **complete 2026-11-12** — the tables landed with their opcode
+  numbers stated where they are used, plus the wl_compositor and
+  wl_surface pair the window's tree grows from, and
+  `wait_configure` — the state machine's heart, the def whose
+  signature names the discipline (the serial out, the ping answered
+  on the way, the toplevel's own configures set aside). The opcode
+  numbers are the hand-written tables' honest risk: the smoke leg
+  (A18.11) is where a real compositor grades them.
+
+- [x] **A18.10** — `examples/wayland_paint`: the first frame. Open a
+  toplevel, `os_pwrite` an ARGB8888 pattern into the pool, wait the
+  configure, ack it, attach, commit — the demo prints its own
+  progress lines and leaves the window up a beat for the screenshot
+  leg. **Accept:** under a real compositor (the smoke leg) the
+  window maps; the pattern's pixels are what `grim` captures.
+  **complete 2026-11-12** — the demo landed and pulled `os.getenv`
+  in with it (the socket path is `$XDG_RUNTIME_DIR`/`$WAYLAND_DISPLAY`,
+  and no real client lives without the environment; the os package's
+  digest moved and the six locks pinning it re-resolved). The
+  sequence drives the whole ladder — handshake, the three binds at
+  the advertised versions, surface, xdg surface, toplevel, title,
+  the empty commit, the configure wait, the ack, the pool painted
+  one pwrite a row, attach, damage, the second commit — then reads
+  events until the compositor lets go. Two demo-shaped lessons: the
+  void def takes no `return` (the loop became `handle_event`
+  answering whether it lives on), and the generated C seeds module
+  consts in the root entry, so a def that binds-but-never-uses them
+  warns — the corpus's own pre-existing shape, recorded, not fixed
+  here. **complete 2026-11-12** — and the demo graded the hand's
+  opcode tables against the real compositor: `get_xdg_surface` is
+  opcode **2** (`create_positioner` sits at 1 — the first smoke run
+  silently minted a positioner@8 and the compositor's error named
+  our get_toplevel as its `set_size`), `pong` is 3,
+  `ack_configure` is 4 (`set_window_geometry` at 3), and the
+  wl_surface family sits one higher than the codec had it
+  (`destroy` at 0: attach 1, damage 2, commit 6). Sway graded
+  every one of them, loudly, by name.
+
+- [x] **A18.11** — The smoke leg: `devtools/wayland-smoke.Dockerfile`
+  (cc, sway, grim — no OCaml in the image) and
+  `devtools/wayland-smoke.sh`: the host emits the demo's C
+  (`emo build --target c`), the container compiles and runs it
+  under headless sway (`WLR_BACKENDS=headless`), `grim` captures,
+  the script checks the pattern's pixels and exits nonzero with the
+  capture beside it on any miss. **Accept:** the script exits 0 and
+  the screenshot shows the pattern — the milestone's first frame on
+  a real compositor.
+  **complete 2026-11-12** — the leg runs on this desk's Docker
+  Desktop (linux/arm64) and exits 0: `red pixels ~63900, blue
+  pixels ~63900`, the 320×200 window's halves counted from grim's
+  PPM. The leg's own lessons: sway refuses root ("unable to drop
+  root" — the image runs as a non-root user), Debian's CDN answered
+  502 for whole pools (the Dockerfile pins the TUNA mirror), and
+  the run script keeps the client's and sway's logs beside the
+  capture on every miss. The debugging it earned is the
+  milestone's deepest finding, recorded in CHECK.md: **the wire's
+  fd argument takes NO word in the argument stream** — the
+  compositor read our spec-shaped placeholder as the next
+  argument's value (the pool's size arrived as 0, then as the fd's
+  own number when the placeholder carried it), and the codec's fd
+  now rides the ancillary queue alone.
+
+- [x] **A18.12** — The docs and the ledger: `docs/stdlib/wayland.md`
+  and its `docs/zh-CN/stdlib/wayland.md` mirror, both `stdlib.md`
+  index rows (English and Chinese), `plan/step-58-wayland-client.md`
+  (the design record: the fd-passage decision, the c-target-first
+  shape, the interpreter stubs as the named follow-up), and the
+  CHECK.md entry carrying the milestone's findings. **Accept:** the
+  docs land in both languages; the ledger entry states what was
+  learned, not what was built.
+  **complete 2026-11-12** — the reference landed in both languages,
+  both `stdlib.md` indexes grew their row and section, the design
+  record is `plan/step-58-wayland-client.md`, and the CHECK.md entry
+  carries the wire's four graded decisions, the two found-not-fixed
+  findings, and the smoke leg's exit 0. The milestone is closed:
+  A18.1–A18.12 complete, the foundation standing.
+
+## M19 — the seat: input on the gate (opened 2026-11-12)
+
+M18's window paints but does not listen: the seat, the pointer, and
+the keyboard are the wire's other half of interactivity. The milestone
+adds the input tables to the wayland package — `wl_seat`
+(capabilities, the pointer and keyboard it grants), `wl_pointer`
+(enter/leave/motion/button/axis, the frame family since v5),
+`wl_keyboard` (the keymap whose fd rides the event direction's own
+ancillary queue, enter/leave/key/modifiers) — every opcode read from
+the authoritative XML before it was written, the discipline M18's
+smoke leg paid for. The smoke leg grades them the honest way: the
+demo binds the `zwlr_virtual_pointer_manager_v1` and
+`zwp_virtual_keyboard_manager_v1` globals sway advertises, injects
+motion, a button press, and a key press against its own window, and
+the transcript answers for what arrived. The seat binds at v5 — the
+frame family and `repeat_info` included, `axis_value120` (v8)
+deliberately out. Keycodes arrive raw; the keymap's bytes are read
+and their shape asserted, but keysym decoding is the named
+follow-up, not this milestone's debt.
+
+- [x] **A19.1** — The input tables in the package: `wl_seat`
+  (get_pointer 0, get_keyboard 1, release 3; capabilities 0, name 1;
+  the capability bits pointer=1 keyboard=2), `wl_pointer` (set_cursor
+  0, release 1; enter 0, leave 1, motion 2, button 3, axis 4, frame 5,
+  axis_source 6, axis_stop 7, axis_discrete 8), `wl_keyboard`
+  (release 0; keymap 0, enter 1, leave 2, key 3, modifiers 4,
+  repeat_info 5); the defs pin the seat at v5 and the decode reads
+  fixed 24.8 coordinates through `Args.fixed`. **Accept:** the tables
+  compile; the opcodes state their source (the XML read, not the
+  guess). **complete 2026-11-12** — the tables landed beside the
+  virtual-device tables the injection would need
+  (`zwlr_virtual_pointer_manager_v1` create 0/destroy 1, the pointer's
+  motion 0 / motion_absolute 1 / button 2 / frame 4 / destroy 8;
+  `zwp_virtual_keyboard_manager_v1` create 0, the keyboard's keymap
+  0 / key 1 / modifiers 2 / destroy 3), all read from wayland.xml and
+  the wlr protocol files before a line was written.
+
+- [x] **A19.2** — `examples/wayland_input`: the mock leg. The mock
+  compositor's canned stream carries a capabilities advert, pointer
+  enter/motion/button, a keyboard keymap (its fd a real one the mock
+  paints through `os_shm_open`, the client reading the keymap's bytes
+  back through the passage), and key events; the client decodes each
+  and prints. Registered in `c_goldens`. **Accept:** byte-deterministic
+  on macOS `cc`; the keymap fd round-trips.
+
+- [x] **A19.3** — The smoke leg's injection half: the demo binds the
+  two virtual-device managers beside the seat, drives
+  `motion_absolute` across its own window, presses and releases the
+  left button, taps a key (the keymap a minimal xkb_v1 map painted
+  through the shm tier), and the event loop's prints name what
+  arrived. **Accept:** under headless sway the transcript shows the
+  motion, the button, and the key — the seat's verdict on the tables.
+
+- [x] **A19.4** — The smoke script asserts the injection: the
+  capture leg stays, the client's transcript gains the input lines,
+  and the script greps for them (motion seen, button pressed, key
+  arrived) and exits nonzero on any miss. **Accept:** the leg exits 0
+  with the input lines present. **complete 2026-11-12** — five
+  assertions (enter, motion, the button press, the key, the keymap
+  fd) and a new pass line: "the frame is on a real compositor and
+  the input came back."
+
+- [x] **A19.5** — The docs and the ledger: the input section in
+  `docs/stdlib/wayland.md` and its zh mirror, the M19 notes in the
+  CHECK.md entry, the TASKS ticks. **Accept:** both languages land;
+  the ledger states what the seat taught. **complete 2026-11-12**
+  — the input section landed in both languages (the limitation line
+  shrank to keysyms alone), and the CHECK.md bullet carries the
+  three grades sway handed down. M19 closed: the window now listens.
+
+## M20 — the face rides Wayland (方案 2, opened 2026-11-12)
+
+M18 opened the gate, M19 wired the seat — the face is the cargo. The
+fb backend's hosted shape needs exactly two bridges to a real
+compositor, both points the Elm loop already draws: a `Surface` whose
+`present()` pushes the canvas's bytes through the shm tier into the
+window (`pwrite` + attach + damage + commit — the canvas's XRGB8888
+words are wl_shm XRGB8888 bytes verbatim), and an `Input` whose
+`next()` blocks on Wayland events and translates them into the tags
+`deliver` speaks (keys through an evdev-to-ASCII table with the shift
+state tracked, clicks through a rect table hit-tested at the
+pointer's last position). The demo is `ui_corpus`'s own application —
+the counter, the form, the whole vocabulary — live on a real
+compositor, driven by the injected keyboard. The packages ride the
+staged-registry pattern the fb gate drew (the emo-ui core, the fb
+packages, and the stdlib's wayland/net/os in one content-named
+directory).
+
+- [x] **A20.1** — The canvas's own bytes: `ui_fb_canvas.Canvas` grows
+  `bytes()` — the hosted canvas's data is the frame the moment it is
+  stored, and the present bridge reads exactly those words. The demo
+  package `projects/emo-desktop/wayland/` with its staged-registry
+  check script (the fb gate's pattern, plus the stdlib's
+  wayland/net/os). **Accept:** the demo resolves and type-checks
+  through the staged registry.
+
+- [x] **A20.2** — The window bridge: `wayland_live.emo`'s
+  `window_open` — the full M18/M19 dance (handshake, the seat grants
+  gated on capabilities, surface, xdg surface, toplevel, the pool
+  sized stride×height, the buffer in wl_shm XRGB8888, first frame)
+  answering a handle the present bridge drives. **Accept:** under
+  headless sway the window maps and the pattern lands.
+
+- [x] **A20.3** — The bridges: `LiveEye` (a `ui_fb.Surface` over the
+  canvas whose `present()` pushes the bytes and presents) and
+  `LiveInput` (an `ui_fb.Input` whose `next()` consumes Wayland
+  events — keyboard keys through the evdev table with the shift
+  state, pointer button with the position the motion events keep —
+  into the caller's tag and rect maps). **Accept:** the corpus demo
+  driven by injected keys shows the state transitions the script
+  once faked.
+
+- [x] **A20.4** — The demo: `ui_corpus`'s application live —
+  keyboard `i`/`d`/Enter mapped to its tags (inc, dec, submit), one
+  frame digest per present in the transcript. **Accept:** under
+  headless sway the injected keys change the model the way the
+  script's tags did, and the digests agree with the corpus's
+  sequence.
+
+- [x] **A20.5** — The smoke leg grades it: headless sway, the
+  virtual keyboard injects `i`, `i`, `d`, Enter, the transcript's
+  digests and state lines are asserted, and the capture shows the
+  frame the last present left. **Accept:** the leg exits 0 with the
+  state lines present.
+
+- [x] **A20.6** — The docs and the ledger: the ride section in
+  `docs/stdlib/wayland.md` and its zh mirror (or the project's own
+  README), the CHECK.md entry, the TASKS ticks. **Accept:** both
+  languages land; the ledger states what the ride taught.
+
+## M21 — the dock clicks: the pointer's tags and the desktop face (opened 2026-11-12)
+
+M20's window listened to keys; the desktop itself was nowhere on the
+canvas. M21 puts the desktop's face behind the live window —
+`emo_desktop`'s wallpaper, header, and dock painted per frame — and
+gives the pointer a click path: the tracked surface coordinates, a
+rect table, and the first containing rect's tag delivered the way a
+key's is. The demo model is the desktop's own: the focused tile and
+the launch bits; a click on a tile focuses it, the arrows move the
+focus, Enter toggles the launch, and every change repaints the whole
+face. The smoke leg grades it with the injector's virtual pointer:
+onto the dock's first tile, press, release — then the arrows and
+Enter on the keyboard.
+
+- [x] **A21.1** — `LiveInput`'s click path: the pointer's surface
+  coordinates tracked from the motion events, the rect table
+  `(x, y, w, h, tag)` hit-tested on a left-button press, the raw-key
+  table beside the ASCII table (the arrows the key table has no byte
+  for). **complete 2026-11-12** — the tables landed; the button's
+  grammar taught one correction: `wl_pointer.button` is four
+  arguments, and a fifth read raised "frame shorter than its
+  arguments" and crashed the face on the first press.
+
+- [x] **A21.2** — The face demo becomes the desktop: the wallpaper's
+  formula, the header bar, and the dock painted per frame — the
+  dock's strip-local formulas through an offsetting Surface wrapper
+  (`DockSurface`, every verb shifted to the display's bottom edge) —
+  the model the focused tile and the launch bits, the corpus app
+  riding out. **complete 2026-11-12** — the composition landed:
+  wallpaper, header, dock, tiles with the lit grade on the focused
+  one, the launch dot per running bit.
+
+- [x] **A21.3** — The smoke leg grades it whole: the injector grows
+  the pointer's beats (motion_absolute onto the dock's first tile,
+  press, release) ahead of the arrows and Enter, and the script
+  asserts the click, the arrow, and the launch. **complete
+  2026-11-12** — exit 0: "click at 36 688 delivers tag 0", "key 106
+  delivers tag 4", "key 10 delivers tag 5", "tile 1 focused launched
+  2", eight frames, three distinct digests. The grade also fixed the
+  seat's own half: the face creates its virtual devices itself (the
+  capabilities its grants wait on), and the choreography held — the
+  face first, the injector after "the desktop runs live".
+
+- [x] **A21.4** — The docs and the ledger: the ride section grows
+  the click path in both languages, the CHECK.md entry carries M21,
+  the TASKS ticks close the milestone. **complete 2026-11-12** —
+  landed.
+
+## M22 — the tree takes the pointer (opened 2026-11-12)
+
+M21's rect table was written by hand — four literals naming the dock's
+tiles — while the window's content itself has no tree anywhere in it.
+M22 lets the click path read its rects out of a `ui` tree instead: the
+fb core's paint walk carries a rect collector, every Button it places
+lands in the table with the tag the button already carries, and the
+face paints a launched app's tree in-frame so a click on the tree's
+own button drives the app's own `update`. The tree is `emo/ui_apps`'s
+counter — the corpus package required whole, never copied — mounted in
+a `ui.App` whose backend stays quiet (the face paints the tree itself,
+from the App's `root()`), and the smoke's injector grows the beats
+that prove the loop: dock, arrows, Enter, then two clicks straight on
+the exported "+".
+
+- [x] **A22.1** — `ui_fb`'s rect export: the `Rects` collector, the
+  walk (`place`, `place_column`, `place_row`) carrying it, and the
+  `paint_rects` entry; a Button's placement appends
+  `(x, y, w, h, event)` mid-walk, so a frame's pixels and its click
+  targets come from one pass. The three-argument `paint` keeps its
+  shape (the family's callers unchanged); `Fb` clears and reuses one
+  collector per frame. **complete 2026-11-12** — the face project and
+  the family's ten hosted consumers re-type-checked; the twelve
+  hosted locks re-resolved, the five metal-side locks left to their
+  own harness (a stale digest refuses loudly there).
+
+- [x] **A22.2** — The face's panel: the launched counter's tree
+  painted in-frame through an offsetting `PanelSurface` (the
+  `DockSurface`'s twin on both axes), the exported rects joined into
+  the pointer's table under the app's tag base (100 + the registry's
+  own), and a click's tag delivered through the App — `deliver` runs
+  the corpus `update`, the face repaints from `root()`. The rect
+  lines ride the transcript: the table is the evidence. **complete
+  2026-11-12** — the panel paints, the rects print, a click on "+"
+  moves the count.
+
+- [x] **A22.3** — The smoke's beats as data: the injector's one-off
+  nested chain becomes a table of `(kind, time, a, b)` events, and
+  the leg grows the sequence — dock tile 0, both arrows, Enter
+  launching the counter, then two clicks on the exported button. The
+  assertions pin the rect line, the click tags, the corpus `update`'s
+  own words, and the count. **complete 2026-11-12** — exit 0 twice:
+  the rect line pinned (`172 160 33 20 tag 100`), both clicks
+  delivered, `add 1` and `add 2` spoken, fourteen frames, five
+  distinct digests; the leg waits on the second count instead of a
+  fixed sleep.
+
+- [x] **A22.4** — The docs and the ledger: the ride section carries
+  the tree click path in both languages, the CHECK.md entry carries
+  M22, the TASKS ticks close the milestone. **complete 2026-11-12** —
+  landed; the mangled examples tail in both ride sections repaired
+  into a proper list.
+
+## M23 — the keymap decodes (opened 2026-11-12)
+
+M19's keyboard translated raw evdev codes through a hand-written
+table — the rows of the US layout spelled out in the demo, the arrows
+named by code. The compositor already ships the real translation: the
+`wl_keyboard.keymap` event carries the compiled xkb keymap, its bytes
+through the fd passage. M23 makes the wayland package parse that text
+— the keycodes section's `<AD01> = 24;` entries, the symbols
+section's `key <AD01> { [ q, Q ] };` rows — and hand the demo a
+`name_of(key, shift)`: the keysym name, the keymap's own word. The
+demo's tables key on names ("Left", "Return"), single-character names
+give the bytes, and the hardcoded rows leave. The input golden grows
+the parse: the mock paints a real keymap and the client decodes its
+keys through it.
+
+- [x] **A23.1** — The wayland package's `Keymap`: the parser over the
+  keymap's text (both the bracket shorthand and the
+  `symbols[Group1] =` spelling the compiled keymaps wear), and
+  `LiveInput` consuming the keymap event — the fd read through
+  `os.read`, the parse stored, every key decoded by `name_of` before
+  the tag tables are asked. **complete 2026-11-12** — the face
+  decodes sway's own compiled keymap by name; the evdev rows are
+  gone. The grade taught two facts: the keymap's keycodes are the
+  xkb ones (evdev plus eight — the client's +8 dance), and a row
+  without a list ends at its closing brace (the unbounded bracket
+  search answered "Group1" for wrong keycodes). Offline replay of
+  the dumped live keymap: 490 codes, 117 of 117 symbol rows parsed.
+
+- [x] **A23.2** — The input golden's keymap leg: the mock paints a
+  compact real keymap (keycodes and symbols sections), the client
+  parses it and decodes the key beats through it — the names in the
+  transcript where the raw codes were. **Accept:** three runs agree
+  byte for byte; `expected.txt` pins the names. **complete
+  2026-11-12** — three runs identical; the mock's keymap carries the
+  +8 codes, the modifiers walk the shift up and back, the transcript
+  pins q, Q, Right, Return.
+
+- [x] **A23.3** — The docs and the ledger: the seat section carries
+  the keymap in both languages, the CHECK.md entry carries M23, the
+  TASKS ticks close the milestone. **Accept:** both languages land.
+  **complete 2026-11-12** — landed; the keysym limitation entry
+  becomes the focused-reader honesty (groups and levels beyond the
+  first two are not modeled).
+
+## M24 — the apps become windows (opened 2026-11-12)
+
+M22's app lived in the desktop's own window — a panel painted in
+frame. M24 lifts them: a launch now makes a toplevel of its own — its
+surface, its xdg surface, its shm pool and buffer, its configure wait
+— titled with the app's name, and the seat's focus follows it: the
+`wl_keyboard.enter`'s surface is tracked, so keys route to the
+focused window's app loop (the counter's a/b, the browser's j/k/o,
+the editor's typing), and clicks route by the surface the pointer is
+over. The three corpus apps all stand up: counter, files, editor —
+each a `ui.App` behind its own window, the desktop keeping the dock
+when the desktop holds the focus.
+
+- [x] **A24.1** — The window registry and the second toplevel: the
+  launch creates the app's window whole (surface, xdg surface,
+  toplevel, pool, buffer, configure, ack) and stands its `ui.App` up
+  behind it; the desktop repaints with the launch dot. **complete
+  2026-11-12** — the window stands ("face: window counter stands on
+  surface 19"), paints its first frame, the sway log shows the map.
+  `wait_configure` grew a seat tolerance (the `wl_seat.name` event
+  carries no serial — the parse read "seat" as a length and died)
+  and an `others` table of sibling (xdg, toplevel) pairs, whose
+  configures arrive mid-wait once more than one window exists.
+
+- [x] **A24.2** — The focus routing: `LiveInput` tracks the
+  keyboard's entered surface and the pointer's hovered surface;
+  `next()` answers `Ev`s naming the surface they are for and the demo
+  dispatches — the desktop's tags when the desktop holds the focus,
+  the app's registry tags when its window does. **complete
+  2026-11-12** — the routing is the transcript's own words: "key a
+  delivers tag 0 to counter" over the corpus `add 1`, "key a delivers
+  tag 0 to editor" over "put a". A two-client probe (the injector
+  standing its own window) cleared sway itself: the focus routing
+  delivers to whoever holds it.
+
+- [x] **A24.3** — The smoke grades the windows: the injector launches
+  the counter's window, drives it by key, then Right-Right-Enter and
+  the editor's typing; the assertions pin the focus lines, the
+  counts, and the buffer. **complete 2026-11-12** — exit 0 twice:
+  "add 1", "put a", "put b", "newline", eighteen frames, eleven
+  distinct digests. The injector's beats pace themselves by their own
+  `time` fields now (`os.sleep_ms`, the new runtime primitive): a
+  beat fired inside a launch's window dance is consumed by the
+  wait's tolerance, not by the window. The in-window pointer click
+  was dropped from the leg: sway 1.7 headless did not deliver the
+  second window's pointer press (the keyboard focus routing delivers;
+  the rect mechanism is M22-proven on the desktop's own surface) —
+  the limitation rides the docs' Limitations section as the named
+  follow-up.
+
+- [x] **A24.4** — The docs and the ledger: the ride section carries
+  the windows in both languages, the CHECK.md entry carries M24, the
+  TASKS ticks close the milestone. **complete 2026-11-12** — landed;
+  the Limitations sections carry the second window's pointer as the
+  named follow-up in both languages.
+
+## M25 — notifications (opened 2026-11-12)
+
+The system-data layer's first module (D16, decided 2026-11-12): the
+`notify` verb family (27 raise, 28 take) and the notification service
+in the `fs.emo` lineage land on the metal — the kernel half is
+[EmoOS's Step 11](../../emo-os/docs/TASKS.md) — and the shell answers
+as the notification center by construction: the toast, the history,
+do-not-disturb are its own surfaces, fed through the provider seam
+(D14 — the metal provider speaks the verbs, the canned provider feeds
+the hosted golden from fixtures). The service keeps the pending queue
+only (raised, not yet taken; full is the resource refusal, nothing
+evicted); the history is the shell's memory; DND is shell policy and
+no verb's business. The wires: a raise copies the title and the body
+into a request slot inside the trap (the filesystem's shape) and
+answers the notification's id; a take drains one packed notification
+into the caller's buffer and names the first taker the center's owner
+(the wallpaper's first-declaration precedent), every later taker
+refused by pid. Absence stays visible (D15): no notification, no
+toast.
+
+- [x] **A25.1** — The notify module and the canned provider: 
+  `fb/notify/emo_notify.emo` (the package `emo_notify`) — the
+  provider seam (`Provider`: one take, `(R.error, "empty")` the dry
+  answer), the toast card in the display's corner (a raise shows it
+  for the residence's 300 ticks, then it is history's alone), the
+  history ring (the shell's own, newest first, sixteen the cap, the
+  overflow the oldest's departure), the DND flag (suppresses the
+  toast's display, never the history's record), the panel's paint
+  and its two press verdicts. The golden (`fb/notify/golden/`) pins
+  the states: the quiet corner, the raise, the residence's 299 beats
+  holding and the 300th retiring, the suppression recording without
+  showing (`suppressed 0`), the panel's rows and the flag's word,
+  the cap's `kept 16 newest 20 oldest 5`. **complete 2026-11-12** —
+  the bytes are the pinned file's on all five hosted targets; the
+  module type-checks and directory-builds on the three hosted ones
+  (the `Surface`-implementor rule, the core's own). Beside the
+  landing: four stale package locks regenerated (`apps/counter`,
+  `apps/files`, `apps/editor`, `winbuf` — the M22-era drift) and a
+  **found, not fixed**: the full `check.sh` hangs at the frame
+  golden's **beam leg** (the `beam.smp` spins, `timeout` kills it,
+  exit 124, reproduced independent of this milestone's tree — every
+  other beam leg in this session's runs answered byte-identically,
+  the notification golden's included); the gate's frame-beam leg is
+  the next sitting's first suspect.
+- [x] **A25.2** — The metal verbs and the app's raise: the syscall
+  stub grows `notify` and `notify_take` (verbs 27 and 28, the
+  `(R, ...)` answer shape), the metal provider speaks them — the
+  take polled once a tick, the empty answer the cheap one — and the
+  editor raises on save (the title and the body its own words), the
+  desktop registering as the center's owner at its first take.
+  **complete 2026-11-12** — verb 27 raises (the title 1..64 bytes,
+  the body 0..192, the answer the id) and verb 28 takes (the packed
+  24-byte head then the bytes, 0 the empty queue, the first taker
+  the center's owner); `hello`'s `MetalFeed` polls it once per desk
+  wake and decodes the head into Strings (`Bytes.new` + `to_string`,
+  the metal's one String-from-bytes path), and the desktop's face
+  grew the two surfaces D16 names as the shell's: the card (a
+  toplevel at the display's right edge, the package's card painted
+  opaque because the blit is a word copy) and the panel (the header
+  bell's toplevel, the DND row and the history newest first), both
+  created on demand and closed when they go — the compositor's ring
+  and mask are theirs for free. The editor's save is the corpus's
+  `Saver` seam (D14, the quiet saver for the hosted golden), the
+  metal saver writes `editor.txt` through the scratch page and
+  raises; the apps' and the notify goldens stay byte-identical, the
+  hosted type-check and the riscv64 image builds green. Two named
+  follow-ups, both recorded in the milestone's words: **the
+  heartbeat** — the merged stream carries no tick event, so the take
+  (and the residence's beat) rides the desk loop's next wake, and
+  the golden's toast appears one wake after the raise; **the seat's
+  modifiers** — the apps' byte table carries none, so the save rides
+  the `s` key (byte 115), not Ctrl+S, until the seat tracks them.
+  Beside the landing: the bell inks the header, so the metal's
+  `frames` line and the header beats' composition sums were re-pinned
+  (`991 783`, the bell's own drawing asserted by the desktop era's
+  pixel model instead); `start.sh` stages `emo_notify` and the
+  drifted locks were regenerated (`hello`, the three apps, `winbuf`,
+  the apps' and notify goldens, `wayland`).
+- [x] **A25.3** — The metal golden leg: `run.sh`'s choreography grows
+  the notify beats — an exec'd app raises, the toast in the
+  screendump's digest, DND toggled and the next raise recorded
+  without showing, the history panel's entries read — ×3 double
+  transport byte-identical. **complete 2026-11-12** — the beats: the
+  editor exec'd anew, its `s` save raising through verb 27, its quit
+  the wake the shell's take rides; the card's surface and the panel's
+  are the package's own drawings (A25.3 lifted `paint_card` and
+  `paint_panel` out of the class, so a window that *is* the card
+  paints the hosted twin's words), and the wire's `frame` lines and
+  the screendumps' round folds both answer the corpus's `card`,
+  `center`, `center_dnd` and `center2` digests the notified golden now
+  carries; the bell's press opens the panel, the DND row's press flips
+  the flag, the second save is recorded and shows nothing (the card's
+  frame line appears exactly once), and the saved file is deleted
+  before the machine ends so the second boot meets the goldens'
+  volume. Four finds, each the grade's: **the kernel's raise decode**
+  (`notify_serve`'s `verb = 27 + (op & 31)` read every op as verb 54 —
+  every raise was served as a take and refused; the low five bits
+  *past* twenty-seven is the fix); **the card's ground** (a toplevel's
+  memory is the allocator's, not a fresh canvas — the window is zeroed
+  before the alpha grades composite, or the card's words move with
+  whatever the last window left); **the pointer's sprite** (a fold is
+  the window alone — the sprite parked outside the rectangle before
+  each screendump, the model's eye); and **the runtime's low alias**
+  (`emo_sched_wake_input` read the input service's pid cell at
+  0x870029e8, mapped only by the kernel's own root — a tick landing
+  while a process's table was live died of it; the high alias, which
+  every table maps, is the fix). The awaited counts are the sessions'
+  own (the trio beat already said its `put a` and its exit), and the
+  boot's books re-pinned (`frames 1285 1073`).
+- [x] **A25.4** — The docs and the trackers: `desktop-abi.md`'s
+  verbs 27 and 28 (both languages), `syscalls.md`'s numbering, the
+  READMEs, CHECK.md's entries — the landing's and the fs request
+  slot's latent misroute find (2026-11-12) — and the zh mirrors.
+  **complete 2026-11-12** — `syscalls.md` grew verbs 27 and 28's rows
+  and the paragraph that says why the family is the filesystem's
+  (the request slot, the route, the owner's rule), and the Chinese
+  table caught up with 25 and 26 beside them; `desktop-abi.md` grew
+  "The notification family" (the raise, the take, the queue's
+  honesty, the restart's rule) in both languages; both READMEs carry
+  the ladder through M25 (complete), and CHECK.md carries A25.2's
+  three bounds and A25.3's four finds. The fs request slot's latent
+  misroute, named and left for the next verb number: the fs packs
+  `op + 16 × slot`, so a future fs verb 11 or 12 in slot 1 rides ops
+  27 and 28 — the numbers the trap's decode hands the notification
+  family; the fs's vocabulary ends at 9 today, and the next verb
+  added under it must clear the 27/28 gate (a stride of its own or a
+  decode by service, not by op alone).
+
+## M26 — the clock (opened 2026-11-13)
+
+D17's ground, landed: the board's goldfish RTC (`google,goldfish-rtc`
+at `0x101000`, one register page beside the UART's) is the gate's time
+verb — the kernel half is [EmoOS's Step 12](../../emo-os/docs/TASKS.md)
+— so the bar's first live data are the wall time. The header's clock
+reads it; the calendar is the month it names. The clock is the one
+*live* region of the chrome: its pixels cannot be pinned by a golden,
+so the wire's `clock <epoch>` line is held against the host's own time
+and the model carries two skips — the clock's box in the bar and, on
+the open beat, the calendar panel's ring.
+
+- [x] **A26.1** — The clock face: `emo_desktop`'s civil section (the
+  day's y/m/d pack, the weekday rule, `clock_text`'s `HH:MM` in UTC —
+  the machine knows no time zone and the chrome does not pretend to),
+  `paint_header` grown the `now` parameter (the clock at the right
+  edge, the count displaced left of it), and the shell's `desk_chrome`
+  reading the verb per paint — every paint says the seconds it drew
+  from (`clock <epoch>` on the wire, the golden's own provenance) and
+  the painted-minute cell keeps, so the loop's first wake past a
+  minute's turn repaints, the digits one wake late the toast's own
+  honest bound. The bar golden's states feed fixed epochs (2026-03-29
+  09:05, 2026-07-31 23:41) and re-pin; the time corpus module
+  (`emo_time`) stays open for the first consumer outside the chrome.
+- [x] **A26.2** — The calendar: a press on the clock opens the month
+  panel (the shell's toplevel, the notification panel's twin — the
+  package's `paint_calendar` on the carve surface direct), the title
+  the month's `YYYY-MM`, the week's initials, six rows always, today's
+  cell the accent's ground; the popover's way — the open panel consumes
+  its own press, a press on the bare desktop closes it. The golden
+  pins five fixed epochs (a Sunday-start month, a 31-day month at
+  23:41, the month opening on a Thursday at 00:07, the leap day
+  2028-02-29, the year's boundary 2027-01-01) across the five hosted
+  targets; the metal's two beats (open, shut) assert the comp lines
+  and the frame line, the pixels' truth the hosted pins carry — the
+  2038 edge a non-event, the epoch an Int64 the whole way down. The
+  previous/next month's presses stay open, with the corpus module.
+
+## M27 — workspaces (opened 2026-11-14)
+
+The compositor's own feature (D18, decided 2026-11-12): a workspace
+verb family (30 the assignment, 31 the show, 32 the query) grows the
+compositor additions-only — the kernel half is
+[EmoOS's Step 13](../../emo-os/docs/TASKS.md) — and the bar's pager
+rides it. Every window carries its workspace by construction: `win_new`
+lands the new toplevel on the shown one, and the walk paints a toplevel
+iff it is not hidden and its workspace is the shown one — the popups
+and subsurfaces riding their parents, the panels and the wallpaper
+always. The switch is the shell's (the panel authority, verb 26's own):
+the outgoing workspace remembers the focus it held, the incoming one
+shows its own again, falling to its top toplevel when it remembers
+none; the desktop's open follows the window to its workspace. The count
+is four — the vocabulary's bound, the roles' precedent, for
+`desktop-abi.md` to pin. The pager is the bar's next panel twin: the
+query read per paint (the clock's own habit), the active cell the
+accent's ground (the calendar's today-cell precedent), the occupied
+cells inked, the press answered by the show and the wire's `desk <n>`
+line — the `clock <epoch>` twin, the golden's provenance. Hidden stays
+hidden across a switch (the minimize's own memory); a frame callback is
+a composition's completion whatever the walk painted.
+
+- [ ] **A27.1** — The verbs and the walk: the comp page's words (the
+  workspace word per stack slot, the active-workspace cell, the four
+  words of the focus each workspace remembers — the `comp_hidden`
+  precedent, beside the entries, no stride changed), the three verbs
+  through the stub, the gate and the compositor's decode (30
+  `win_workspace` the owner's grant, a toplevel's alone, the range
+  0..3; 31 `desk_show` the panel's authority; 32 `desk_workspace` the
+  active and the occupancy packed), the walk's filter, the focus's
+  memory and fall, `win_new`'s landing on the shown workspace, and
+  `win_desk_open`'s follow to the window's own.
+- [x] **A27.2** — The bar's pager: the query read per paint, the four
+  cells (the active the accent's ground, the occupied inked, the empty
+  dimmed), the press showing the named workspace and saying
+  `desk <n>` on the wire, and the golden's states — the quiet bar, the
+  occupancy's ink, the accent's move on a switch — across the five
+  hosted targets byte-identically. **complete 2026-11-14** — the
+  package grew the pager whole: `paint_pager` (the active cell the
+  calendar's today-cell pair, a live desk the inked number on a
+  translucent slate, an empty desk the dim number alone),
+  `pager_cell`/`pager_hit` the one arithmetic (the cells past the
+  bell — the shell's own span the pad names), and `paint_header` grown
+  the `desks` word — the query verb's own packing the caller reads and
+  hands over, the bar doing no verb of its own (the clock's rule).
+  The golden pins five bar states (the quiet word, the occupancy's
+  ink, the accent's move to a desk with two live, every desk live
+  under desk 3's accent) and the cells' origins with the hit test's
+  verdicts — cell centers name their desks, the gaps and the world
+  outside the bar name none — byte-identical on the interpreter,
+  ocaml, c, wasm and beam; the typescript leg fails inside the tree's
+  own pre-existing red (`Invalid array length`, the old package and
+  the old golden reproducing it untouched — the pager innocent). The
+  metal's glue rides hello: the query read per paint (the clock's own
+  habit), every paint saying the word it drew from (`desk <word>`, the
+  `clock <epoch>` line's twin), the press the show verb's word and the
+  bar's repaint the answer's news. Beside the landing: the wayland
+  harness's `paint_desktop` was M26's own stale call site (six
+  arguments against the seven the clock's parameter made — the
+  env-gated suite the default runtest never builds), now feeding a
+  fixed epoch and the quiet word; the locks pinning `emo_desktop`
+  (the golden, hello, winbuf, the three apps, wayland) re-resolved.
+- [ ] **A27.3** — The metal beats and the docs: `run.sh`'s
+  choreography grows the workspace beats (windows opened on two
+  workspaces, the pager's switch, an assignment moving a window, the
+  screendumps' digests naming each state) ×3 double transport
+  byte-identical; `desktop-abi.md`'s workspace family (both
+  languages), `syscalls.md`'s rows 30–32 and the numbering's note, the
+  READMEs, CHECK.md's entries, and the zh mirrors.

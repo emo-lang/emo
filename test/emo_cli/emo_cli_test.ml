@@ -868,6 +868,20 @@ let c_goldens =
     "httpd_parse";
     "httpd_serve";
     "httpd_wire";
+    (* wayland_wire: the wire codec against hand-computed fixtures —
+       the requests built and hexed, the decode-back, the globals'
+       book walked and found; the fd's placeholder word without a
+       socket (A18.5). wayland_handshake: the socket's own golden —
+       a real Unix socket, the mock compositor one spawned process,
+       four requests byte-exact, the pool fd over SCM_RIGHTS with
+       its bytes read at the far end (A18.8). *)
+    "wayland_wire";
+    "wayland_handshake";
+    (* wayland_input: the seat tables against a canned stream — the
+       capabilities advert, pointer enter/motion/button/frame, the
+       keyboard's keymap fd riding the ancillary queue with its bytes
+       read back through the passage, keyboard enter and key (M19). *)
+    "wayland_input";
     "json_demo";
     "yaml_demo";
     "xml_demo";
@@ -1966,6 +1980,15 @@ let c_examples_tests =
     (fun name ->
       tc (Printf.sprintf "%s compiles to c and runs standalone" name) (fun () ->
           if not (Lazy.force cc_available) then Alcotest.skip ();
+          (* The wayland three run under @emo_os only: the socket
+             golden's suite rides the explicit alias, the way the
+             projects/ trees do — plain `dune runtest` skips them
+             (emo-desktop M18's suite, the rebase's seat lesson). *)
+          if
+            List.mem name
+              [ "wayland_wire"; "wayland_handshake"; "wayland_input" ]
+            && Sys.getenv_opt "EMO_WAYLAND_EXAMPLES" = None
+          then Alcotest.skip ();
           if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
             Alcotest.skip ();
           if name = "postgres_demo" && not (Lazy.force postgres_available) then

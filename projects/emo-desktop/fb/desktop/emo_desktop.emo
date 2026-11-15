@@ -398,16 +398,146 @@ def count_text(s ui_fb.Surface, f ui_fb.raster.Strike, right Int64,
   return x
 }
 
+// ---- the pager (emo-desktop M27, A27.2, D18) ----
+//
+// The bar's four desk cells, the workspace switch's own face: a cell
+// per desk right of the bell, the active desk's cell the accent's
+// rounded ground behind its number (the calendar's today-cell
+// precedent), a desk with live windows the inked number on a
+// translucent slate, an empty desk the dimmed number alone. The state
+// is the query word the caller read — the active desk in the low byte,
+// the occupancy mask above it — the bar painting what the machine
+// said, never a desk of its own (D15's rule, the clock's own shape).
+// A press on a cell names the desk it lands on: the hit test the
+// shell's press handler asks before the panels, the answer the
+// switch's word.
+
+def pager_size() Int64 {
+  return 14
+}
+
+def pager_gap() Int64 {
+  return 6
+}
+
+// The first cell's left edge: past the bell (the shell's own 16×16
+// cell at wordmark +12 — the 40 is the bell's span, the shell's wiring
+// the pad names), one pad of air after it. The painters, the hit test
+// and the metal's typed twin all read this one arithmetic.
+def pager_x0(f ui_fb.raster.Strike) Int64 {
+  return 8 + ui_fb.text_width(f, "EmoOS") + 40
+}
+
+def pager_y() Int64 {
+  return (header_height() - pager_size()) / 2
+}
+
+// Cell `i`'s top-left corner, packed x above y — the layout's one
+// address, the package painter and the hit test and the shell's twin
+// sharing it.
+def pager_cell(f ui_fb.raster.Strike, i Int64) Int64 {
+  return ((pager_x0(f) + i * (pager_size() + pager_gap())) << 32) |
+    pager_y()
+}
+
+// The desk a press landed on, or -1: past the cells, above or below
+// the bar, a gap between cells — no pager's business.
+def pager_hit(f ui_fb.raster.Strike, x Int64, y Int64) Int64 {
+  if y < pager_y() || y >= pager_y() + pager_size() {
+    return -1
+  }
+  var i = 0
+  while i < pager_count() {
+    const cell = pager_cell(f, i)
+    const cx = cell >> 32
+    if x >= cx && x < cx + pager_size() {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// The vocabulary's bound: the count the ABI pins (the roles'
+// precedent), the pager's cell count and the mask's width with it.
+def pager_count() Int64 {
+  return 4
+}
+
+// The pager's grades: the active cell's accent ground and its dark
+// number (the calendar's today-cell pair), the occupied cell's
+// translucent slate and the inked number, the empty desk's dimmed
+// number alone.
+def pager_active_ground() Int64 {
+  return 0xFFE86890
+}
+
+def pager_active_ink() Int64 {
+  return 0x20242C
+}
+
+def pager_occupied_ground() Int64 {
+  return 0x8C3A4150
+}
+
+def pager_occupied_ink() Int64 {
+  return 0xF8F8F0
+}
+
+def pager_empty_ink() Int64 {
+  return 0x78B8BCC4
+}
+
+// The four cells onto the bar's surface: the caller's `desks` word
+// decoded — the active desk in the low byte, the occupancy mask above —
+// one rounded ground where the state names one, the number centered in
+// every cell.
+def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
+  const active = desks & 255
+  const mask = (desks >> 8) & 15
+  var i = 0
+  while i < pager_count() {
+    const cell = pager_cell(f, i)
+    const x = cell >> 32
+    const y = cell & 4294967295
+    var ground = 0
+    var ink_color = pager_empty_ink()
+    if i == active {
+      ground = pager_active_ground()
+      ink_color = pager_active_ink()
+    } else {
+      if (mask >> i) & 1 == 1 {
+        ground = pager_occupied_ground()
+        ink_color = pager_occupied_ink()
+      }
+    }
+    if ground != 0 {
+      s.rounded(x, y, pager_size(), pager_size(), 4, ground, ground)
+    }
+    const ns = "${i + 1}"
+    ui_fb.text(f, ns, x + (pager_size() - ui_fb.text_width(f, ns)) / 2,
+      y + (pager_size() - f.line_height()) / 2, ink_color, s)
+    i = i + 1
+  }
+}
+
 // The header bar onto its own surface, whole from scratch: the
 // wallpaper's formula under the header's scrim, row by row — the bar
 // samples the display's own rows, `mw` and `mh` the mode — then the
-// wordmark one pad in, the running count at the right edge — the one
-// live fact the bar carries (the desktop knows its own children's
-// residency; the wall clock and the foreground app's name it does not
-// know, and the bar does not pretend to). The text sits centered in
-// the bar's height, the line box's own.
+// wordmark one pad in, the bell and the pager after it, the wall clock
+// at the right edge and the running count before it. The clock is
+// `now` — the seconds the caller read, never the bar's own (the bar
+// has no clock of its own; the time verb and the caller's wake are its
+// ground, D17) — and the count is the one fact the desktop keeps (its
+// own children's residency; the foreground app's name it does not
+// know, and the bar does not pretend to). The desks are the pager's
+// word — the query verb's own packing, the active desk in the low byte
+// and the occupancy mask above it (D18); the caller read it, the bar
+// does no verb of its own. The text sits centered in the bar's height,
+// the line box's own.
 def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
-                 mw Int64, mh Int64, running Int64) Void {
+                 mw Int64, mh Int64, running Int64, now Int64,
+                 desks Int64) Void {
   var y = 0
   while y < header_height() {
     material_row(s, y, y, w, mw, mh, header_scrim())
@@ -415,7 +545,199 @@ def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
   }
   const ty = (header_height() - f.line_height()) / 2
   ui_fb.text(f, "EmoOS", 8, ty, header_accent(), s)
-  count_text(s, f, w - icon_margin(), ty, running, header_ink())
+  const cw = ui_fb.text_width(f, clock_text(0))
+  ui_fb.text(f, clock_text(now), w - icon_margin() - cw, ty, header_ink(), s)
+  count_text(s, f, w - icon_margin() - cw - 16, ty, running, header_ink())
+  paint_pager(s, f, desks)
+}
+
+// ---- the wall clock (emo-desktop M26, D17) ----
+//
+// The board's RTC answers the seconds since the Unix epoch (the time
+// verb, EmoOS T12.1) and the bar and the calendar read it in UTC —
+// the machine knows no time zone, and the chrome does not pretend to
+// (D15). The conversions are the civil calendar's integer arithmetic;
+// every division sees a non-negative dividend for any date the RTC
+// can report, so truncation is the floor and no correction rides
+// along.
+
+// The civil pack: `(y << 16) | (m << 8) | d` — the year above, the
+// month and the day below, lifted by shift and mask. `day` the days
+// since the epoch; the form is the civil calendar's own.
+def civil(day Int64) Int64 {
+  const z = day + 719468
+  const era = z / 146097
+  const doe = z - era * 146097
+  const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  const y = yoe + era * 400
+  const doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  const mp = (5 * doy + 2) / 153
+  const d = doy - (153 * mp + 2) / 5 + 1
+  var m = mp + 3
+  if mp >= 10 {
+    m = mp - 9
+  }
+  var yy = y
+  if m <= 2 {
+    yy = y + 1
+  }
+  return (yy << 16) | (m << 8) | d
+}
+
+// The weekday of `day`, Sunday 0 — the epoch's own day was a
+// Thursday, the +4 the pack needs.
+def weekday(day Int64) Int64 {
+  var r = (day + 4) % 7
+  if r < 0 {
+    r = r + 7
+  }
+  return r
+}
+
+// `HH:MM`, UTC — the bar's clock, the five bytes the strike draws.
+def clock_text(now Int64) String {
+  const day = now / 86400
+  const secs = now - day * 86400
+  const hh = secs / 3600
+  const mm = (secs - hh * 3600) / 60
+  var hs = "${hh}"
+  if hh < 10 {
+    hs = "0${hh}"
+  }
+  var ms = "${mm}"
+  if mm < 10 {
+    ms = "0${mm}"
+  }
+  return "${hs}:${ms}"
+}
+
+// Whether y leaps — the every-four, except the hundreds, except the
+// four-hundreds.
+def civil_leap(y Int64) Bool {
+  if y % 4 != 0 {
+    return false
+  }
+  if y % 100 != 0 {
+    return true
+  }
+  return y % 400 == 0
+}
+
+// The month's length.
+def civil_dim(y Int64, m Int64) Int64 {
+  if m == 2 {
+    if civil_leap(y) {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  return 31
+}
+
+// The calendar panel's metrics: a cell 36 wide and 24 high, the grid
+// seven across and six down whatever the month, the title a line
+// above it, the pad around the whole — the panel 276 by 220.
+def cal_pad() Int64 {
+  return 12
+}
+
+def cal_cell_w() Int64 {
+  return 36
+}
+
+def cal_cell_h() Int64 {
+  return 24
+}
+
+def cal_title_h() Int64 {
+  return 28
+}
+
+def cal_w() Int64 {
+  return 7 * cal_cell_w() + 2 * cal_pad()
+}
+
+def cal_h() Int64 {
+  return cal_pad() + cal_title_h() + 7 * cal_cell_h() + cal_pad()
+}
+
+// The panel's seat: the display's right edge under the bar's clock,
+// the top the header's height plus the toast's own gap.
+def cal_x(w Int64) Int64 {
+  return w - cal_w() - 8
+}
+
+def cal_y() Int64 {
+  return header_height() + 8
+}
+
+// The panel's ground: the toast's own grades and radius — the panel
+// floats over the desktop's icons, the alpha for what it covers.
+def cal_ground_top() Int64 {
+  return 0xE64A5468
+}
+
+def cal_ground_bottom() Int64 {
+  return 0xE6363E4C
+}
+
+// The calendar panel whole: the title the month's `YYYY-MM`, the
+// week's initials under it, the days the grid — today's cell the
+// accent's rounded ground behind its number. Six rows always, the
+// month's empties nothing at all.
+def paint_calendar(s ui_fb.Surface, f ui_fb.raster.Strike, now Int64) Void {
+  const w = cal_w()
+  const h = cal_h()
+  s.shadow(0, 0, w, h, 12, 8, 0x80000000)
+  s.rounded(0, 0, w, h, 12, cal_ground_top(), cal_ground_bottom())
+  const c = civil(now / 86400)
+  const y = c >> 16
+  const m = (c >> 8) & 255
+  const d = c & 255
+  var ms = "${m}"
+  if m < 10 {
+    ms = "0${m}"
+  }
+  const title = "${y}-${ms}"
+  ui_fb.text(f, title, (w - ui_fb.text_width(f, title)) / 2, cal_pad(),
+    0xF8F8F0, s)
+  const initials = ["S", "M", "T", "W", "T", "F", "S"]
+  var wcol = 0
+  while wcol < 7 {
+    const x = cal_pad() + wcol * cal_cell_w() +
+      (cal_cell_w() - ui_fb.text_width(f, initials[wcol])) / 2
+    ui_fb.text(f, initials[wcol], x, cal_pad() + cal_title_h() + 2, 0xB8BCC4, s)
+    wcol = wcol + 1
+  }
+  const dim = civil_dim(y, m)
+  const first = weekday(now / 86400 - (d - 1))
+  var row = 0
+  while row < 6 {
+    var gcol = 0
+    while gcol < 7 {
+      const n = row * 7 + gcol - first + 1
+      if n >= 1 && n <= dim {
+        const x = cal_pad() + gcol * cal_cell_w()
+        const ty = cal_pad() + cal_title_h() + cal_cell_h() + row * cal_cell_h()
+        if n == d {
+          s.rounded(x + 2, ty + 1, cal_cell_w() - 4, cal_cell_h() - 2, 6,
+            0xFFE86890, 0xFFE86890)
+        }
+        const ns = "${n}"
+        const nx = x + (cal_cell_w() - ui_fb.text_width(f, ns)) / 2
+        if n == d {
+          ui_fb.text(f, ns, nx, ty + 1, 0x20242C, s)
+        } else {
+          ui_fb.text(f, ns, nx, ty + 1, 0xF8F8F0, s)
+        }
+      }
+      gcol = gcol + 1
+    }
+    row = row + 1
+  }
 }
 
 // The selection's blend word: the tile steel at a low coverage laid

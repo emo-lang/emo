@@ -81,6 +81,7 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo p
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
   desktop/package.emo desktop/emo_desktop.emo \
+  notify/package.emo notify/emo_notify.emo \
   apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
   winbuf/package.emo winbuf/ui_fb_winbuf.emo \
   apps/counter/package.emo apps/counter/main.emo \
@@ -147,6 +148,9 @@ expect 0 "the file browser app type-checks" "$rc"
 ( cd apps && EMO_REGISTRY="$REG" "$EMO" check editor.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
 expect 0 "the editor app type-checks" "$rc"
 
+( cd notify && EMO_REGISTRY="$REG" "$EMO" check emo_notify.emo ) >/dev/null 2>&1 && rc=0 || rc=$?
+expect 0 "the notification center type-checks" "$rc"
+
 # --- which targets compile the packages ---------------------------------
 #
 # Nothing in the four directories needs a capability a hosted runtime
@@ -179,6 +183,13 @@ for t in ocaml c typescript; do
   build win ui_fb_win.emo "$t" && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
   expect builds "windows --target $t" "$got"
+  # The notification center carries an interface and no `Surface`
+  # implementor of its own — the core's own property — so its directory
+  # build is the three hosted targets, the wasm and beam claims the
+  # golden's (the consumer brings the canvas and the canned provider).
+  build notify emo_notify.emo "$t" && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
+  expect builds "notification center --target $t" "$got"
 done
 
 # --- the metal's lowering, pinned without a machine ---------------------
@@ -303,6 +314,13 @@ check_golden corpus corpus/expected.txt \
 # folds the strip's rectangle to these digests.
 check_golden desktop/golden desktop/golden/expected.txt \
   "$PWD/.emo-build/check/desktop" "dock" ocaml c typescript wasm beam
+
+# The notification center (emo-desktop M25): the toast's life cycle, the
+# do-not-disturb's suppression, the panel's rows newest first, the
+# ring's cap, the press targets' verdicts — the module the desk pass
+# paints live and the face's rect table routes.
+check_golden notify/golden notify/golden/expected.txt \
+  "$PWD/.emo-build/check/notify" "notification center" ocaml c typescript wasm beam
 
 # The first apps (emo-desktop A10.3): the counter, the file browser and
 # the editor, each a corpus package under `emo/ui_apps`, run through the

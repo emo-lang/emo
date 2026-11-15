@@ -78,6 +78,8 @@ put "$FB/apps" emo/ui_apps package.emo ui_apps.emo counter.emo files.emo \
   editor.emo
 mkfamily emo_desktop
 put "$FB/desktop" emo_desktop package.emo emo_desktop.emo
+mkfamily emo_notify
+put "$FB/notify" emo_notify package.emo emo_notify.emo
 
 mkfamily emo/rocksdb
 mkdir -p "$DEST/emo/rocksdb/0.1.0/internal"
