@@ -61,6 +61,7 @@
 | M40 — repl 的行编辑器 | 79 | 交互会话迎来真正的编辑器:vendored 的上游 linenoise(BSD-2,钉在 `a473823d`,两处显式补丁——临时历史条目在 Ctrl-C 与输入结束时按 ENTER 的方式弹栈,阻塞读的判定 errno 越过 stop 的终端探测存活)经 dune 的 `foreign_stubs` 编进 CLI——OCaml CLI 链接的第一份 C——藏在一个绑定模块后面,其桩把库的 errno 判定映射为 OCaml 变体;输入 seam 携带提示文本,并把完成的一行、Ctrl-C 的放弃、输入的结束区分开;编辑器只在 stdin 与 stdout 都是终端时入座,管道与重定向保持普通路径逐字节不变;历史按行存储,会话结束存入 state 文件(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`),读不动写不进在 stderr 上警告、文件缺失沉默;Ctrl-C 放弃当前待输入而非杀死进程;续行提示按每个未闭合括号缩进两个空格;测试经上游的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实的 C 编辑器——敲入的行、上箭头召回、不漏空条目的打断、以及两会话的持久化往返(`CHECK.md`)。 |
 | M41 — 标准库:`uuid` | 80 | `uuid` 包:RFC 9562 的标识符是一个不可变的 16 字节 `Uuid` 值,经 `to_string` 协议方法自我渲染,回答 `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?`,并按 RFC 6.11 的大端 `compare` 排序;`v4` 经 `rand.bytes` 抽 122 个随机位,`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间骑 74 个随机位(负数或超出 48 位的时间戳 raise),`v3`/`v5` 是骑 `crypto.legacy` 的确定性 name-based 门,表 3 的四个 IANA namespace ID 在旁;`parse` 恰好接受规范的 36 字符形式,数字不区分大小写,每次拒绝点名第一个出错的字节,`from_bytes` 拒绝非 16 的长度;作用域对齐 Go 标准 `uuid` 的骨架,v1/v2/v6 与 v8 构造器点名不在包内;`uuid_demo` 骑 RFC 的向量、随机的门只打印结构,五个 target 名单逐字节一致(`CHECK.md`)。 |
 | M42 — 时钟与心跳 | 81 | `time` 包:墙钟与单调时钟经三个运行时门(`time_now_ms`、`time_mono_ns`、`time_sleep_ms`),其余一切是门上的纯 Emo——UTC 纪元毫秒的 `Time`,日历字段用纯 Emo 计算(Hinnant 的民用历算术),`mono()` 是显式的单调仪器,时长是普通 Int64 毫秒、转换家族(`time.seconds(n)` ……)扮演常量的角色,严格的九记号排版格式化(永远 UTC,`format_iso`/`format_http` 是预设,畸形记号点名字节抛出),以及说秒的定时家族——`sleep` 是精确的泊车(消息只排队,不唤醒),`after` 是自己进程里的排定单发,`tick` 是调用进程永不返回的心跳、块自己的 `halt()` 是停止;wasm 上时钟半经两个宿主导入,定时半在调用处抛出点名能力(os 进程半的先例);golden 冲出一个编译器结构缺口与四个发射器 bug——IR 的 Void 函数体出口位置的裸尾调用被降成 Effect,对每个后端的尾调用机器都不可见(现在降成本来的 Return,C 发射器的 Void return 路径发射它携带的表达式、不再把答案自己的声明重复入池,解释器的帧把 tailness 穿过语句走查),c 后端的 Void return 弃用路径把声明两次入池(emosh 因重复释放的 builder 单元段错误),c 后端的闭包捕获从没走过 `Send` 语句的操作数(只把要发送的 pid 当捕获的块现在能捕获了),TS 发射器的 `receive` 语句没带结尾 `;`(后面一个以 `(` 开头的语句被解析成调用),以及 BEAM 的通配符(一个模式里的两个 `_` 现在降成不同的新变量)(`CHECK.md`)。 |
+| M45 — 配置格式 | 84 | `toml` 包:TOML 1.1.0 解码进与 json、yaml 同构设计的 `Toml` 值树——七个类别、没有 null(TOML 没有)、四种日期时间形式共用一个 `TomlDateTime` 类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——float 包的精确十进制构造器托着每个数字的纯 Emo;decode 覆盖 1.1 全部表面(`\e` 与 `\xHH` 转义、秒可省略、小写 `t`/`z`、空格分隔符试错回退、多行 inline table 与尾逗号)与严格的重复定义规则,边解析边装配 origin 标签节点(点分键把表关上不让 header 打开、inline table 在闭括号处关死、`[[x]]` 只向数组追加、更深的 header 下钻最新元素、隐式超表最多声明一次);`inf`/`nan` 与越界整数像一切畸形输入一样以 `(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行、`decode(encode(v)) == v`;edge 电池冲出七个包内 bug——字符串 fill 在该答下一个下标处答了写入长度、十六进制转义数字位权算错、浮点缓冲把下划线数进去、指数值把下划线当数字、`doc_inline?` 对全表数组答 true、段内行渲染完整点分路径、日期时间类缺接口——编译 golden 又冲出三个后端 bug,都是树上既有的:TS 的 Void 尾调用 driver 没有出口(每个 Void 尾递归在 TS 上永远旋转,整条 ts_golden 名单空烧 CPU)、BEAM 的运行时分派把 builtin 臂绑在可被覆盖的 map 上(两层接口深即被 erlc 拒绝)、wasm 的 `deep_eq` 没有 tuple 臂(任何 `Array[(A, B)]` 类字段的类与自己的孪生比都不相等,直到有 golden 比较解码树才现形)(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -2175,3 +2176,83 @@ Bytes 方法规则 Unknown 容忍之后的 `Bytes.new` 构造规则、混合 pay
 - [x] **T83.5** — 扫描与文档:新规则下全语料 `emo check`,四条拒绝的
       负例金测进 `test/emo_cli`,`docs/intro/type-system.md` 与
       `docs/intro/syntax.md`(+ zh-CN 镜像)的 checker 节写明四条规则。
+
+## M45 — 配置格式
+
+### 步骤 84 — 标准库:`toml`
+
+**前置:** 步骤 78(`template` 包,最近的纯 Emo 格式包)。**完成
+条件:** `require "toml"` 把任何 TOML 1.1.0 文档解码为 `Toml` 值
+树——七个类别、没有 null、四种日期时间形式共用一个 `TomlDateTime`
+类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——在
+解释器、ocaml、c、typescript、wasm、beam 上逐字节相同,覆盖 1.1
+全部表面(`\e`/`\xHH` 转义、秒可省略、小写 `t`/`z`、多行 inline
+table、尾逗号)与严格的重复定义规则,`inf`/`nan` 与越界整数以
+`(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行,
+`decode(encode(v)) == v` 在值层面成立;golden(`examples/toml_demo`、
+`examples/toml_edge`)上 bootstrap、wasm、beam、c、ts 名单;文档
+EN+zh。
+
+- [x] **T84.1** — 包:`stdlib/registry/toml/0.1.0`——manifest、值
+      树(接口、七个类、日期时间类)、decode(文档帧、键、值、字
+      符串、数字、日期时间、数组、inline table、带 origin 标签的
+      文档装配)、encode(文档形式、段、值字面、键与字符串引
+      号)——float 包之上的纯 Emo。
+- [x] **T84.2** — golden:`examples/toml_demo`(happy path——表、
+      点分键、表数组、inline table、每种数字拼写、四种日期时间形
+      式、encode 往返)与 `examples/toml_edge`(每个转义、数字与
+      日期时间的边界、1.1 放宽、重复定义规则、以及每个都打印原因
+      的拒绝)。
+- [x] **T84.3** — 接线:`test/emo_cli` 的 wasm、beam、c golden
+      名单,`test/emo_project` 的 bootstrap 与 ts_golden 套件,以
+      及 `devtools/wasmtime-smoke.sh` 的 GOLDENS。
+- [x] **T84.4** — 文档:`docs/stdlib/toml.md` + zh-CN 镜像、
+      `docs/stdlib.md` 的表行 + 小节 + 镜像。
+- [x] **T84.5** — 跟踪:`plan/step-84-stdlib-toml.md`、
+      `plan/README.md` 的里程碑 bullet 与状态行、`docs/TASKS.md` 的
+      M45 节 + zh 镜像、CHECK.md 的定案记录。
+
+### 在这里发现并修掉
+
+- **basic 字符串的 fill 在"下一个下标"的位置回答了写入长度**——
+  json 的两遍形状回答 `(written, next)`;toml 的拷贝只回答了
+  `written`,于是每个字符串之后解析器停在与解码长度相等的字节偏
+  移上。
+- **十六进制转义数字的位权算错**——递归读取器不管深度一律乘十六,
+  `\u4e16` 解码成 U+0136,`\U0001F600` 离 U+1F600 差了十万八千里,
+  代理检查形同虚设——读错的值根本落不进代理区。位权恢复,两者都
+  对了。
+- **浮点缓冲把下划线数了进去**——`1_000.000_1` 按字节跨度定整数
+  部分长度,规范缓冲里留了一个陈旧的零,解码出 9952.0001。位数
+  现在取自数字收集器的回答。
+- **指数值把下划线当数字吃掉**——`1e1_0` 读出 570 的指数,拒绝
+  了一个恰好等于 1e10 的数。
+- **`doc_inline?` 对全表数组回答 true**——encode 把同一个值输出
+  两次:一次 inline、一次 `[[x]]` 段,inline 文本本身作为文档行就
+  是非法的。
+- **段内的行渲染了完整点分路径**——`[owner]` 里面条目打成
+  `owner.name = ...`,看似合法的 TOML,解码出来是别的东西。段内
+  的键相对 header 点名的表。
+- **日期时间类缺了接口**——站在 `Toml` 方法集之外的
+  `TomlDateTime` 根本上不了树;现在与其他类别一样实现接口。
+
+三个编译器后端缺陷被 golden 冲出——都是树上既有的,直到有一个包压
+到它们弄坏的那个形状才现形:
+
+- **TypeScript 后端的 Void 尾调用 driver 没有出口**——带标签的
+  `for(;;)` 只靠 `return` 退出,尾调用骑在无 `else` 的 `if` 上的
+  Void 函数体跌回循环头:每个 Void 尾递归在 TS 上永远旋转(json 的
+  `fill_spaces`、float 的 `copy_range` 都算——整条 ts_golden 名单
+  在这棵树上空烧 CPU)。Void driver 现在以 `return undefined;`
+  收尾。
+- **BEAM 后端的运行时分派把 builtin 臂绑在可被覆盖的 map 上**——
+  开放接收者的调用的 builtin 臂经由 `local_map` 解析字面量
+  `"__inst_recv"`,嵌套分派的 `fresh_var` 会覆盖它:一层深时 map
+  答对(所以 json_demo 过了),两层及以上的外层链的 builtin 臂指向
+  越scope 的内层绑定,erlc 以未绑定变量拒绝模块。该臂现在直接点名
+  自己的新鲜绑定。
+- **wasm 后端的 `deep_eq` 没有 tuple 臂**——元组跌穿到常量
+  false,于是任何 `Array[(A, B)]` 类型的类字段与自己的孪生比都不
+  相等(toml 的根表、json 的 `JsonObject`——直到有 golden 去比较
+  解码出的树才现形)。数组臂参数化了操作数局部,tuple 臂把两个元素
+  数组溢出到新鲜局部后复用它;元组像数组一样逐元素比较。

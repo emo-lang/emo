@@ -1,0 +1,243 @@
+require "toml"
+
+// One decode, one printed verdict per line.
+def try_decode(label String, text String) {
+  case toml.decode(text) {
+    (R.error, why) -> { println(label + ": " + why) }
+    (R.ok, _) -> { println(label + ": ACCEPTED") }
+  }
+}
+
+// The toml package's edges: every escape, every number spelling, all
+// four date-time forms down to their boundaries, the 1.1 relaxations
+// (multi-line inline tables, trailing commas, seconds omitted,
+// lowercase t and z), the redefinition rules, and the refusals — each
+// printing its reason.
+
+// ---- string escapes ----
+const (R.ok, e1) = toml.decode("v = \"\\b\\t\\n\\f\\r\\\"\\\\\\e\\x2d\\x7f\\u00e9\\u4e16\\U0001F600\\uD83D\\uDE00\"")
+println(e1.get("v").as_string().to_bytes().length())
+const (R.ok, e2) = toml.decode("v = 'C:\\\\no escape \\n here'")
+println("[" + e2.get("v").as_string() + "]")
+
+// quote runs inside multi-line strings, and the one trimmed newline
+const (R.ok, e3) = toml.decode("v = \"\"\"\nfirst\n\"q\" and \"\"qq\"\"\n\"\"\"")
+println(e3.get("v").as_string())
+const (R.ok, e4) = toml.decode("v = \"\"\"ends in quote\"\"\"\"")
+println(e4.get("v").as_string())
+const (R.ok, e5) = toml.decode("v = '''\nstays ''raw''\n'''")
+println(e5.get("v").as_string())
+
+// the line-ending backslash trims everything it hides
+const (R.ok, e6) = toml.decode("v = \"\"\"joined\\\n   \n\t\ttight\"\"\"")
+println("[" + e6.get("v").as_string() + "]")
+const (R.ok, e7) = toml.decode("v = \"\"\"a\r\nb\"\"\"")
+println(e7.get("v").as_string().to_bytes().length())
+
+// ---- integers ----
+const (R.ok, n1) = toml.decode("v = [0x0, 0xFF, 0o0, 0o777, 0b0, 0b11, +9223372036854775807, -9223372036854775808, 1_2_3]")
+if n1.is(toml.TomlTable) {
+  const va = n1.get("v")
+  if va.is(toml.TomlArray) {
+    const vn = va.items()
+    println(vn[0].as_int())
+    println(vn[1].as_int())
+    println(vn[2].as_int())
+    println(vn[3].as_int())
+    println(vn[4].as_int())
+    println(vn[5].as_int())
+    println(vn[6].as_int())
+    println(vn[7].as_int())
+    println(vn[8].as_int())
+  }
+}
+
+// ---- floats ----
+const (R.ok, n2) = toml.decode("v = [+1.0, -1.0, 0.0, -0.0, 1_000.000_1, 1e1_0, 6.6260755e-34, 1.7976931348623157e308, 5e-324]")
+if n2.is(toml.TomlTable) {
+  const fb = n2.get("v")
+  if fb.is(toml.TomlArray) {
+    const vf = fb.items()
+    println(vf[0].encode())
+    println(vf[1].encode())
+    println(vf[2].encode())
+    println(vf[3].encode())
+    println(vf[4].encode())
+    println(vf[5].encode())
+    println(vf[6].encode())
+    println(vf[7].encode())
+    println(vf[8].encode())
+  }
+}
+
+// ---- date-times ----
+const (R.ok, dt) = toml.decode("a = 2000-02-29\nb = 1979-05-27T07:32:00.99999999999-07:30\nc = 00:00:00.9999999999\nd = 1979-05-27t07:32z\ne = 1979-05-27 00:32:00.999999999999+05:15\n")
+println(dt.get("a").as_datetime().to_text())
+println(dt.get("b").as_datetime().to_text())
+println(dt.get("c").as_datetime().to_text())
+println(dt.get("d").as_datetime().to_text())
+println(dt.get("e").as_datetime().to_text())
+
+// the space delimiter is try-and-see: a plain date followed by other
+// text still reads as the date
+const (R.ok, dt2) = toml.decode("a = [1979-05-27, 2]\nb = [1979-05-27 07:32, 3]\n")
+const ka = dt2.get("a")
+if ka.is(toml.TomlArray) {
+  const va = ka.items()
+  println(va[0].as_datetime().to_text())
+  println(va[1].as_int())
+}
+const kb = dt2.get("b")
+if kb.is(toml.TomlArray) {
+  const vb = kb.items()
+  println(vb[0].as_datetime().to_text())
+  println(vb[1].as_int())
+}
+
+// ---- keys ----
+const (R.ok, k1) = toml.decode("1979 = \"year\"\n\"key one\" = 1\n'key two' = 2\n\"\" = 3\na.\"b.c\" = 4\n\tindented = 5\n")
+println(k1.get("1979").as_string())
+println(k1.get("key one").as_int())
+println(k1.get("key two").as_int())
+println(k1.get("").as_int())
+println(k1.get("a").get("b.c").as_int())
+println(k1.get("indented").as_int())
+
+// bare and quoted spellings are one key — the second defines twice
+case toml.decode("k = 1\n\"k\" = 2") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _) -> { println("ACCEPTED") }
+}
+
+// ---- 1.1 inline tables and arrays ----
+const (R.ok, v11) = toml.decode("t = {\n  a = 1, # one\n  b = { c = 2, }, # inner\n}\narr = [\n  { x = 1 },\n  { x = 2 }, # done\n]\n")
+println(v11.get("t").get("a").as_int())
+println(v11.get("t").get("b").get("c").as_int())
+const arr = v11.get("arr")
+if arr.is(toml.TomlArray) {
+  println(arr.items()[1].get("x").as_int())
+}
+
+// a dotted key inside an inline table
+const (R.ok, v12) = toml.decode("t = { a.b.c = 1, a.d = 2 }\n")
+println(v12.get("t").get("a").get("b").get("c").as_int())
+println(v12.get("t").get("a").get("d").as_int())
+
+// ---- redefinition rules ----
+// an implicit supertable declares afterwards
+const (R.ok, r1) = toml.decode("[a.b.c]\nv = 1\n[a]\nw = 2\n[a.d]\nx = 3\n")
+println(r1.get("a").get("w").as_int())
+println(r1.get("a").get("b").get("c").get("v").as_int())
+println(r1.get("a").get("d").get("x").as_int())
+
+// arrays of tables: sub-arrays attach to the latest element, and a
+// deeper header descends into it
+const (R.ok, r2) = toml.decode("[[u]]\nn = 1\n[[u.sub]]\nk = \"a\"\n[[u]]\nn = 2\n[u.sub]\nk = \"b\"\n")
+const us = r2.get("u")
+if us.is(toml.TomlArray) {
+  const items = us.items()
+  const s0 = items[0].get("sub")
+  if s0.is(toml.TomlArray) {
+    println(s0.items()[0].get("k").as_string())
+  }
+  println(items[1].get("n").as_int())
+  println(items[1].get("sub").get("k").as_string())
+}
+
+// ---- encode ----
+const (R.ok, rt) = toml.decode("mixed-title = \"the mixed case\"\nempty-array = []\n\"quoted key\" = \"quoted\"\n\"with.dot\" = 1\nfl = [5.0, 1.5e300]\nwhen = 1979-05-27T07:32:00Z\nmix = [1, { a = 2 }, \"three\"]\nempty-table = {}\n[[widgets]]\nname = \"one\"\n[[widgets]]\nname = \"two\"\ntags = [\"a\", \"b\"]\n")
+const text = toml.encode(rt)
+println(text)
+const (R.ok, back) = toml.decode(text)
+println("round trip: " + (back == rt).to_string())
+
+// ---- refusals ----
+
+try_decode("dup key", "a = 1\na = 2")
+try_decode("dup dotted leaf", "a.b = 1\na.b = 2")
+try_decode("dup dotted vs header", "a.b = 1\n[a]")
+try_decode("dotted siblings ok", "[a]\nx.b = 1\nx.c = 2")
+try_decode("dup inline key", "a = { x = 1, x = 2 }")
+try_decode("dup inline dotted", "a = { x.y = 1, x.z = 2, x = 3 }")
+try_decode("dup table", "[a]\n[a]")
+try_decode("supertable siblings ok", "[a.b]\n[a]\n[a.c]")
+try_decode("extend inline header", "a = { x = 1 }\n[a.y]")
+try_decode("dotted siblings inline ok", "a = { x = 1 }\nb.c = 1\nb.d = 2")
+try_decode("inline array append", "a = [{ x = 1 }]\n[[a]]")
+try_decode("header on value", "a = 1\n[a]")
+try_decode("header through value", "a = 1\n[a.b]")
+try_decode("dotted through array", "[[a]]\n[[a]]\nb.c = 1\nb.c = 2")
+try_decode("table on array", "[[a]]\n[a]")
+try_decode("array on dotted table", "a.b = 1\n[[a]]")
+try_decode("array on table", "[a]\n[[a]]")
+try_decode("static array append", "a = []\n[[a]]")
+try_decode("inf", "a = inf")
+try_decode("+inf", "a = +inf")
+try_decode("-inf", "a = -inf")
+try_decode("nan", "a = nan")
+try_decode("+nan", "a = +nan")
+try_decode("-nan", "a = -nan")
+try_decode("int overflow", "a = 9223372036854775808")
+try_decode("int underflow", "a = -9223372036854775809")
+try_decode("hex overflow", "a = 0x8000000000000000")
+try_decode("oct overflow", "a = 0o2000000000000000000000")
+try_decode("bin overflow", "a = 0b1000000000000000000000000000000000000000000000000000000000000000")
+try_decode("leading zero", "a = 01")
+try_decode("double underscore", "a = 1__0")
+try_decode("trailing underscore", "a = 1_")
+try_decode("leading underscore", "a = _1")
+try_decode("hex trailing underscore", "a = 0xF_")
+try_decode("uppercase E", "a = 1E5")
+try_decode("point no frac", "a = 5.")
+try_decode("point no int", "a = .5")
+try_decode("exp empty", "a = 5e")
+try_decode("exp bare sign", "a = 5e+")
+try_decode("exp underscore lead", "a = 1e_5")
+try_decode("float overflow", "a = 1e400")
+try_decode("lone low surrogate", "a = \"\\ude00\"")
+try_decode("lone high surrogate", "a = \"\\ud83d\"")
+try_decode("surrogate in U", "a = \"\\U0000D800\"")
+try_decode("bad escape", "a = \"\\q\"")
+try_decode("unfinished escape", "a = \"\\")
+try_decode("short hex", "a = \"\\x4\"")
+try_decode("short unicode", "a = \"\\u04\"")
+try_decode("unterminated string", "a = \"x")
+try_decode("unterminated literal", "a = 'x")
+try_decode("unterminated ml", "a = \"\"\"x")
+try_decode("unterminated mll", "a = '''x")
+try_decode("raw newline in basic", "a = \"x\ny\"")
+try_decode("raw CR in basic", "a = \"x\ry\"")
+try_decode("bare CR", "a = 1\rb = 2")
+try_decode("bad month", "a = 1979-13-01")
+try_decode("month 00", "a = 1979-00-01")
+try_decode("day 00", "a = 1979-05-00")
+try_decode("bad leap", "a = 2100-02-29")
+try_decode("good leap", "a = 2000-02-29")
+try_decode("bad hour", "a = 24:00:00")
+try_decode("bad minute", "a = 07:60:00")
+try_decode("second 61", "a = 07:32:61")
+try_decode("offset no colon", "a = 1979-05-27T07:32:00-0700")
+try_decode("offset bad hour", "a = 1979-05-27T07:32:00+99:00")
+try_decode("fraction no digit", "a = 07:32:00.")
+try_decode("date garbage", "a = 1979-05-27x")
+try_decode("time garbage", "a = 07:32x")
+try_decode("bad year digit", "a = 19x9-05-27")
+try_decode("no equals", "a 1")
+try_decode("value then garbage", "a = 1 b = 2")
+try_decode("unterminated array", "a = [1, 2")
+try_decode("array missing comma", "a = [1 2]")
+try_decode("array lone comma", "a = [,]")
+try_decode("unclosed inline", "a = { x = 1")
+try_decode("inline missing equals", "a = { x 1 }")
+try_decode("inline bad sep", "a = { x = 1; y = 2 }")
+try_decode("garbage value", "a = whatever")
+try_decode("empty path", "= 1")
+try_decode("empty bare key", "= 1")
+try_decode("ml string as key", "\"\"\"k\"\"\" = 1")
+try_decode("header unclosed", "[a")
+try_decode("header no key", "[]")
+try_decode("array header single", "[[a]")
+try_decode("bare CR in expr", "a = 1\r\nb = 2\rc = 3")
+try_decode("comment then eof", "# just a comment")
+try_decode("value missing", "a =")
+try_decode("key missing", "a = \n")

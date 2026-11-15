@@ -1,0 +1,158 @@
+23
+[C:\\no escape \n here]
+first
+"q" and ""qq""
+
+ends in quote"
+stays ''raw''
+
+[joinedtight]
+4
+0
+255
+0
+511
+0
+3
+9223372036854775807
+-9223372036854775808
+123
+1.0
+-1.0
+0.0
+-0.0
+1000.0001
+10000000000.0
+6.6260755e-34
+1.7976931348623157e+308
+5.0e-324
+2000-02-29
+1979-05-27T07:32:00.999999999-07:30
+00:00:00.999999999
+1979-05-27T07:32:00Z
+1979-05-27T00:32:00.999999999+05:15
+1979-05-27
+2
+1979-05-27T07:32:00
+3
+year
+1
+2
+3
+4
+5
+toml: key `k` is defined twice at byte 6
+1
+2
+2
+1
+2
+2
+1
+3
+a
+2
+b
+mixed-title = "the mixed case"
+empty-array = []
+"quoted key" = "quoted"
+"with.dot" = 1
+fl = [5.0, 1.5e+300]
+when = 1979-05-27T07:32:00Z
+mix = [1, { a = 2 }, "three"]
+[empty-table]
+
+[[widgets]]
+name = "one"
+[[widgets]]
+name = "two"
+tags = ["a", "b"]
+round trip: true
+dup key: toml: key `a` is defined twice at byte 6
+dup dotted leaf: toml: key `a.b` is defined twice at byte 8
+dup dotted vs header: toml: cannot open `a`: defined by a dotted key at byte 8
+dotted siblings ok: ACCEPTED
+dup inline key: toml: key `x` is defined twice at byte 13
+dup inline dotted: toml: key `x` is defined twice at byte 24
+dup table: toml: table `a` is defined twice at byte 4
+supertable siblings ok: ACCEPTED
+extend inline header: toml: key `a.y` was defined as a value at byte 14
+dotted siblings inline ok: ACCEPTED
+inline array append: toml: `a` was defined as a value at byte 16
+header on value: toml: cannot extend `a`: defined as a value at byte 6
+header through value: toml: key `a.b` was defined as a value at byte 6
+dotted through array: toml: key `b.c` is defined twice at byte 20
+table on array: toml: `a` is an array of tables at byte 6
+array on dotted table: toml: cannot append to `a`: defined by a dotted key at byte 8
+array on table: toml: `a` is a table, not an array of tables at byte 4
+static array append: toml: `a` was defined as a value at byte 7
+inf: toml: non-finite floats are not supported at byte 4
++inf: toml: non-finite floats are not supported at byte 4
+-inf: toml: non-finite floats are not supported at byte 4
+nan: toml: non-finite floats are not supported at byte 4
++nan: toml: non-finite floats are not supported at byte 4
+-nan: toml: non-finite floats are not supported at byte 4
+int overflow: toml: integer out of range at byte 4
+int underflow: toml: integer out of range at byte 4
+hex overflow: toml: integer out of range at byte 4
+oct overflow: toml: integer out of range at byte 4
+bin overflow: toml: integer out of range at byte 4
+leading zero: toml: leading zero in number at byte 5
+double underscore: toml: underscore must be between digits at byte 5
+trailing underscore: toml: underscore must be between digits at byte 5
+leading underscore: toml: invalid value at byte 4
+hex trailing underscore: toml: underscore must be between digits at byte 7
+uppercase E: toml: exponent must be lowercase e at byte 5
+point no frac: toml: digit expected at byte 6
+point no int: toml: invalid value at byte 4
+exp empty: toml: digit expected at byte 6
+exp bare sign: toml: digit expected at byte 7
+exp underscore lead: toml: digit expected at byte 6
+float overflow: toml: number out of range at byte 4
+lone low surrogate: toml: lone surrogate escape at byte 5
+lone high surrogate: toml: lone surrogate escape at byte 5
+surrogate in U: toml: lone surrogate escape at byte 5
+bad escape: toml: invalid escape at byte 6
+unfinished escape: toml: unterminated string at byte 5
+short hex: toml: invalid hex digit in escape at byte 8
+short unicode: toml: invalid hex digit in escape at byte 9
+unterminated string: toml: unterminated string at byte 6
+unterminated literal: toml: unterminated string at byte 6
+unterminated ml: toml: unterminated string at byte 8
+unterminated mll: toml: unterminated string at byte 8
+raw newline in basic: toml: unescaped control character in string at byte 6
+raw CR in basic: toml: unescaped control character in string at byte 6
+bare CR: toml: bare CR at byte 5
+bad month: toml: month out of range at byte 9
+month 00: toml: month out of range at byte 9
+day 00: toml: day out of range at byte 12
+bad leap: toml: day out of range at byte 12
+good leap: ACCEPTED
+bad hour: toml: hour out of range at byte 4
+bad minute: toml: minute out of range at byte 7
+second 61: toml: second out of range at byte 10
+offset no colon: toml: expected `:` at byte 26
+offset bad hour: toml: hour out of range at byte 24
+fraction no digit: toml: digit expected after decimal point at byte 13
+date garbage: toml: expected a newline at byte 14
+time garbage: toml: expected a newline at byte 9
+bad year digit: toml: expected a newline at byte 6
+no equals: toml: expected `=` at byte 2
+value then garbage: toml: expected a newline at byte 6
+unterminated array: toml: unterminated array at byte 9
+array missing comma: toml: expected `,` or `]` at byte 7
+array lone comma: toml: invalid value at byte 5
+unclosed inline: toml: unterminated inline table at byte 11
+inline missing equals: toml: expected `=` at byte 8
+inline bad sep: toml: expected `,` or `}` at byte 11
+garbage value: toml: invalid value at byte 4
+empty path: toml: expected a key at byte 0
+empty bare key: toml: expected a key at byte 0
+ml string as key: toml: expected `=` at byte 2
+header unclosed: toml: expected `]` at byte 2
+header no key: toml: expected a key at byte 1
+array header single: toml: expected `]]` at byte 3
+bare CR in expr: toml: bare CR at byte 12
+comment then eof: ACCEPTED
+value missing: toml: expected a value at byte 3
+key missing: toml: invalid value at byte 4
