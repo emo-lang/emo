@@ -8,7 +8,10 @@ single-value cell whose operations are individually atomic (decided
 operation, and `fence()`, places itself in one total order that all contexts
 agree on; no memory-order parameter exists anywhere in the surface. The first
 cut covers two payloads, `Int64` and `Bool`, and nothing else: atomics on any
-other payload refuse at check time, named.
+other payload refuse at check time, named. `Bytes` joined them (2026-11-14,
+T83.3) once `Bytes.new` typed as `Bytes` — the buffer is a value the cell's
+value-generic operations carry, and atomics on anything else still refuse at
+check time, named.
 
 The immediate demand comes from EmoOS: an interrupt body and the thread code
 it interrupts share one address space on metal, and a read-modify-write built
@@ -33,11 +36,12 @@ is where sharing gets sharp, and it is the reason the work is scheduled now.
 
 ## The surface
 
-The type vocabulary follows the container family: `Atomic[Int64]` and
-`Atomic[Bool]` are the two spellings that check, and a bare `Atomic` means
-"either payload" the way a bare `Box` means "any element". One type taking
-its payload as a parameter — no per-width family of atomic type names.
-`Atomic.new(0)` constructs; the cell's payload is the argument's type.
+The type vocabulary follows the container family: `Atomic[Int64]`,
+`Atomic[Bool]`, and `Atomic[Bytes]` are the spellings that check, and a bare
+`Atomic` means "any payload" the way a bare `Box` means "any element". One
+type taking its payload as a parameter — no per-width family of atomic type
+names. `Atomic.new(0)` constructs; the cell's payload is the argument's type
+(`Atomic.new(Bytes.new(4))` is the buffer cell's spelling).
 
 ```emo
 const served = Atomic.new(0)     // an Atomic[Int64]
@@ -65,6 +69,22 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
 | `compare_exchange(expected, new)` | `(Bool, Bool)` | the same pair contract |
 | `fetch_and(v)` / `fetch_or(v)` / `fetch_xor(v)` | `Bool` | logical read-modify-write, returns the previous value |
 
+`Atomic[Bytes]` — the value-generic four; the read-modify-write family is
+the two scalars' vocabulary and stays off the buffer:
+
+| Operation | Returns | What it does |
+| --- | --- | --- |
+| `load()` | `Bytes` | reads the buffer the cell holds |
+| `store(v)` | — | replaces the buffer |
+| `exchange(v)` | `Bytes` | replaces the buffer, returns the previous one |
+| `compare_exchange(expected, new)` | `(Bool, Bytes)` | the same pair contract over buffers |
+
+One honest caveat: the `beam` cell is an Erlang `atomics` array — integers
+only — so a Bytes cell checks everywhere but dies at run time on `beam`
+alone (`emo_no_atomic`). Carrying a buffer honestly on the BEAM wants the
+non-scalar cell's design, and until that lands the Bytes cell is a
+check-time shape, not a run-everywhere one.
+
 The rules the tables sit on:
 
 - **Every read-modify-write returns the value the cell held before the
@@ -78,8 +98,10 @@ The rules the tables sit on:
   accesses, ordinary and volatile (`peek`/`poke`) alike.
 - **Refusals, per strictness-first.** `fetch_add`/`fetch_sub` refuse on
   `Atomic[Bool]` — arithmetic is not Bool's vocabulary; the bitwise family
-  is. Payloads outside the two refuse by name: `Atomic[Float64]` has no
-  honest lock-free read-modify-write across targets, and non-scalars —
+  is. The whole `fetch_` family refuses on `Atomic[Bytes]` — a cell's
+  read-modify-write is a scalar word's operation, not a buffer's. Payloads
+  outside the three refuse by name: `Atomic[Float64]` has no honest lock-free
+  read-modify-write across targets, and the remaining non-scalars —
   strings, containers, boxes, a nested `Atomic` — are not cells at all.
 - **`==` compares by the values the cells hold now**, each operand read as an
   atomic load — the same structural rule the mutable family follows.

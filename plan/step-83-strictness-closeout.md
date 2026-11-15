@@ -4,7 +4,8 @@
 **Related:** `CHECK.md`'s four open checker gaps (the T45.2 shadow entry,
 the T45.3 chained-builtin entry, the atomic goldens' `Bytes.new` item,
 the `:chain` entry's mixed-payload note), `src/emo_check/emo_check.ml`,
-`src/emo_eval/emo_eval.ml` · **Status:** planned.
+`src/emo_eval/emo_eval.ml` · **Status:** complete — T83.1–T83.5 landed
+(2026-11-14/15).
 
 ## Why this step exists
 

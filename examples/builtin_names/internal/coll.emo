@@ -35,3 +35,57 @@ class Chain {
 def make(n Int64) Chain {
   return Chain.new(n)
 }
+
+// A chunk crosses the gradual List element type through a typed
+// signature: the encoding def is the contract the checker holds.
+def chunk_bytes(chunk String) Bytes {
+  return chunk.to_bytes()
+}
+
+// The deque's second pass crosses values already encoded.
+def as_bytes(b Bytes) Bytes {
+  return b
+}
+
+// The drain: `to_bytes` empties the buffer it answers. A chained or
+// delegated builtin must read the one temporary the sender produced —
+// a second evaluation of the sender would answer the empty buffer.
+class Buffer {
+  def init() {
+    self.chunks = List.new([])
+  }
+
+  def put(s String) Buffer {
+    self.chunks.push_back(s)
+    return self
+  }
+
+  def to_bytes() Bytes {
+    const n = self.chunks.length()
+    var total = 0
+    var parts = List.new([])
+    for var i = 0; i < n; i = i + 1 {
+      const chunk = self.chunks.pop_front()
+      total = total + chunk.length()
+      parts.push_back(chunk_bytes(chunk))
+    }
+    const out = Bytes.new(total)
+    var at = 0
+    for var i = 0; i < n; i = i + 1 {
+      const data = as_bytes(parts.pop_front())
+      for var j = 0; j < data.length(); j = j + 1 {
+        out.set(at, data.get(j))
+        at = at + 1
+      }
+    }
+    return out
+  }
+
+  def to_string() String {
+    return self.to_bytes().to_string()
+  }
+}
+
+def make_drain() Buffer {
+  return Buffer.new()
+}

@@ -1335,8 +1335,8 @@ println("unreachable")
         Alcotest.(check bool)
           "the refusal names os_setpgid" true
           (contains err
-             "the runtime implementation `os_setpgid` is not available on \
-              the wasm target"));
+             "the runtime implementation `os_setpgid` is not available on the \
+              wasm target"));
   ]
 
 (* `-o` names the artifact on every target, and on beam it names the
@@ -4401,7 +4401,7 @@ main()
    `riscv64` alone. *)
 
 let resolve_targets_tests =
-  let project ?(targets = ["ocaml"]) ?(target_override : string option) dep =
+  let project ?(targets = [ "ocaml" ]) ?(target_override : string option) dep =
     let dir = Filename.concat scratch (unique "resolve-targets") in
     ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
     let oc = open_out_bin (Filename.concat dir "package.emo") in
@@ -4427,20 +4427,20 @@ let resolve_targets_tests =
   in
   [
     tc "a dep every declared target can build resolves" (fun () ->
-        Alcotest.(check int) "resolve exits 0" 0
-          (project ~targets:["ocaml"; "c"] "base64"));
+        Alcotest.(check int)
+          "resolve exits 0" 0
+          (project ~targets:[ "ocaml"; "c" ] "base64"));
     tc "a dep any declared target cannot build refuses, naming the target"
       (fun () ->
-        Alcotest.(check int) "resolve exits 65" 65
-          (project ~targets:["ocaml"; "c"] "syscall"));
+        Alcotest.(check int)
+          "resolve exits 65" 65
+          (project ~targets:[ "ocaml"; "c" ] "syscall"));
     tc "a riscv64-only project resolves its riscv64-only dep" (fun () ->
-        Alcotest.(check int) "resolve exits 0" 0
-          (project ~targets:["riscv64"] "syscall"));
-    tc "the same lock a second resolve produces is the one on disk"
-      (fun () ->
-        let dir =
-          Filename.concat scratch (unique "resolve-idempotent")
-        in
+        Alcotest.(check int)
+          "resolve exits 0" 0
+          (project ~targets:[ "riscv64" ] "syscall"));
+    tc "the same lock a second resolve produces is the one on disk" (fun () ->
+        let dir = Filename.concat scratch (unique "resolve-idempotent") in
         ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
         let oc = open_out_bin (Filename.concat dir "package.emo") in
         output_string oc
@@ -4461,11 +4461,12 @@ let resolve_targets_tests =
         let first = read_file lock in
         in_dir dir (fun () ->
             ignore (Emo_cli.deps_resolve ~name:None ~target:None));
-        Alcotest.(check string) "the second resolve changed nothing" first
-          (read_file lock));
+        Alcotest.(check string)
+          "the second resolve changed nothing" first (read_file lock));
     tc "--target resolves for the one target alone" (fun () ->
-        Alcotest.(check int) "resolve exits 0" 0
-          (project ~targets:["ocaml"] ~target_override:"c" "base64"));
+        Alcotest.(check int)
+          "resolve exits 0" 0
+          (project ~targets:[ "ocaml" ] ~target_override:"c" "base64"));
   ]
 
 (* ---- --locked: the recorded resolution is a prerequisite ---- *)
@@ -6201,7 +6202,6 @@ def e(c Atomic[Array[Int64]]) Int64 { return 0 }
 def f(c Atomic[(Int64, Bool)]) Int64 { return 0 }
 def g(c Atomic[Map[String, Int64]]) Int64 { return 0 }
 def h(c Atomic[List[Int64]]) Int64 { return 0 }
-def i(c Atomic[Bytes]) Int64 { return 0 }
 def j(c Atomic[Box[Int64]]) Int64 { return 0 }
 def k(c Atomic[Atomic[Int64]]) Int64 { return 0 }
 def l(c Atomic[Point]) Int64 { return 0 }
@@ -6213,7 +6213,8 @@ def o(c Atomic[Pid]) Int64 { return 0 }
 let atomic_refusal_type_expected =
   List.map
     (fun got ->
-      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+      Printf.sprintf
+        "`Atomic` covers `Int64`, `Bool`, and `Bytes` only, got `%s`" got)
     [
       "Float64";
       "String";
@@ -6223,7 +6224,6 @@ let atomic_refusal_type_expected =
       "(Int64, Bool)";
       "Map[String, Int64]";
       "List[Int64]";
-      "Bytes";
       "Box[Int64]";
       "Atomic[Int64]";
       "Point";
@@ -6258,14 +6258,26 @@ const m = Atomic.new(Exception.new("boom"))
 const n = Atomic.new(-> (x Int64) { return x })
 |}
 
-(* `Atomic.new(Bytes.new(4))` is absent above: `Bytes.new` has no
-   constructor rule in the checker, so its result is Unknown and the
-   payload scope cannot see it (CHECK.md records the gap); the type
-   position pins the Bytes refusal. *)
+(* `Atomic.new(Bytes.new(4))` is absent above on purpose: the buffer is a
+   payload since T83.3 — the constructor rule types `Bytes.new` as `Bytes`
+   and the payload scope carries it — so the clean form joins the
+   constructor golden as the zero-diagnostics pin below, not the refusal
+   list. The pin is check-time only, and deliberately so: `beam`'s cell is
+   an `atomics` array (integers only), where a Bytes payload is a runtime
+   `emo_no_atomic` error — the non-scalar cell's design is recorded in
+   `CHECK.md`, found-not-fixed. *)
+let atomic_constructor_clean_source =
+  {|
+const buf = Atomic.new(Bytes.new(4))
+buf.store("ok".to_bytes())
+println(buf.load().length())
+|}
+
 let atomic_refusal_new_expected =
   List.map
     (fun got ->
-      Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`" got)
+      Printf.sprintf
+        "`Atomic` covers `Int64`, `Bool`, and `Bytes` only, got `%s`" got)
     [
       "Float64";
       "String";
@@ -6353,6 +6365,14 @@ let atomic_refusal_tests =
               (target ^ ": op refusals") atomic_refusal_ops_expected
               (diagnostics target atomic_refusal_ops_source))
           every_target);
+    tc "the Bytes cell checks clean on every target" (fun () ->
+        List.iter
+          (fun target ->
+            Alcotest.(check (list (pair string string)))
+              (target ^ ": the Bytes cell checks clean")
+              []
+              (diagnostics target atomic_constructor_clean_source))
+          every_target);
     tc "emo check answers the refusals with exit 65" (fun () ->
         List.iter
           (fun (name, source) ->
@@ -6399,6 +6419,122 @@ let peek_refusal_expected target =
       ("poke32", "raw memory");
       ("ecall", "the machine's gate");
     ]
+
+(* The strictness refusals' negative goldens (step 83): the shapes the
+   step exists for, each refused at check time with the construct and the
+   spans named. The rules are target-free — the probes run on every
+   compiled target's checker seat, and the legal shapes beside them stay
+   clean everywhere. The chained-builtin lifetime is not a refusal; its
+   golden is `examples/builtin_names`. *)
+let strictness_refusal_tests =
+  let every_target =
+    [ "ocaml"; "c"; "typescript"; "wasm"; "beam"; "riscv64" ]
+  in
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  let shadow_source =
+    {|
+var r = (1, 2)
+if r[0] == 1 {
+  const r = (10, 20)
+  println(r[0])
+}
+println(r[1])
+|}
+  in
+  let shadow_message =
+    "`r` shadows the outer binding at main.emo:2:1 — declare the outer once \
+     and assign it in branches, or give the inner binding its own name"
+  in
+  let ladder_source =
+    {|
+const l = List.new([])
+l.push_back((R.ok, 1))
+case l.pop_front() {
+  (R.ok, 1) then { println(1) }
+  (R.ok, "x") then { println(2) }
+  (R.error, _) then { println(3) }
+}
+|}
+  in
+  let ladder_message =
+    "`R.ok` is matched by two arms with different payload types — (Int64) \
+     beside (String); one member, one payload shape"
+  in
+  List.concat_map
+    (fun target ->
+      [
+        tc
+          (Printf.sprintf
+             "%s: a block binding shadowing an outer binding refuses, both \
+              spans named"
+             target) (fun () ->
+            let got = diagnostics target shadow_source in
+            Alcotest.(check (list string))
+              "codes" [ "E4029" ] (List.map fst got);
+            Alcotest.(check (list string))
+              "messages" [ shadow_message ] (List.map snd got));
+        tc
+          (Printf.sprintf
+             "%s: a def's local shadowing the module's name is ordinary scoping"
+             target) (fun () ->
+            let got =
+              diagnostics target
+                {|
+const name = "module"
+
+def f() Int64 {
+  const name = 5
+  return name
+}
+
+f()
+|}
+            in
+            Alcotest.(check (list string)) "codes" [] (List.map fst got));
+        tc
+          (Printf.sprintf
+             "%s: two arms on one enum member refuse, member and both payloads \
+              named"
+             target) (fun () ->
+            let got = diagnostics target ladder_source in
+            Alcotest.(check (list string))
+              "codes" [ "E4030" ] (List.map fst got);
+            Alcotest.(check (list string))
+              "messages" [ ladder_message ] (List.map snd got));
+        tc
+          (Printf.sprintf
+             "%s: a binding arm beside a literal arm agrees, and arms on \
+              different members never compare"
+             target) (fun () ->
+            let got =
+              diagnostics target
+                {|
+const l = List.new([])
+l.push_back((R.ok, 1))
+case l.pop_front() {
+  (R.ok, 1) then { println(1) }
+  (R.ok, n) then { println(n) }
+  (R.error, "boom") then { println(2) }
+  (R.error, _) then { println(3) }
+}
+|}
+            in
+            Alcotest.(check (list string)) "codes" [] (List.map fst got));
+      ])
+    every_target
 
 let peek_refusal_tests =
   let diagnostics target source =
@@ -6598,6 +6734,7 @@ let () =
       ("atomic_wasm", atomic_wasm_tests);
       ("atomic_riscv64", atomic_riscv64_tests);
       ("atomic_refusal", atomic_refusal_tests);
+      ("strictness_refusal", strictness_refusal_tests);
       ("peek_refusal", peek_refusal_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
@@ -6634,7 +6771,6 @@ let () =
   in
   let suite =
     if beam_enabled then suite
-    else
-      List.filter (fun (name, _) -> not (List.mem name beam_groups)) suite
+    else List.filter (fun (name, _) -> not (List.mem name beam_groups)) suite
   in
   Alcotest.run ~bail:true "emo_cli" suite

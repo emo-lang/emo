@@ -18,3 +18,22 @@ println(held.read().set(0, 9))
 println(held.read().push(4))
 println(held.read().to_string())
 println(held.read().normal())
+
+// The chained lifetime: `to_bytes` drains the buffer, so the chained
+// and delegated builtins answer the one temporary the sender produced.
+const buf = internal.coll.make_drain()
+buf.put("ab")
+const snap = buf.to_bytes()
+println(snap.length())
+buf.put("cd")
+println(buf.to_bytes().length())
+buf.put("ef")
+buf.put("gh")
+println(buf.to_string().length())
+
+def chained_len() Int64 {
+  buf.put("ij")
+  return buf.to_bytes().length()
+}
+
+println(chained_len())

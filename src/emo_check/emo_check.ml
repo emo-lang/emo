@@ -314,13 +314,20 @@ let resolve_type_ref ctx span (ref_ : string) : t option =
    cross-module types stay unchecked this step — so it narrows to Unknown
    instead of reporting E4005. Definitions stay strict. *)
 (* The atomic payload scope (CHECK.md, the atomic memory model): the two
-   scalars the op set covers. Unknown stays silent — inference has not
-   pinned the cell yet. *)
-let atomic_payload_ok = function Int64 | Bool | Unknown -> true | _ -> false
+   scalars the op set covers, plus `Bytes` — the cell's load, store,
+   exchange, and compare_exchange are value-generic, and `Bytes.new`'s
+   constructor rule makes the buffer a real payload the constructor form
+   carries (T83.3). The read-modify-write ops stay the two scalars': they
+   refuse through the op rules on an `Atomic[Bytes]`. Unknown stays
+   silent — inference has not pinned the cell yet. *)
+let atomic_payload_ok = function
+  | Int64 | Bool | Bytes | Unknown -> true
+  | _ -> false
 
 let refuse_atomic_payload ctx span (payload : t) =
   report ctx span "E4027"
-    (Printf.sprintf "`Atomic` covers `Int64` and `Bool` only, got `%s`"
+    (Printf.sprintf
+       "`Atomic` covers `Int64`, `Bool`, and `Bytes` only, got `%s`"
        (to_string payload))
 
 let rec decl_to_type ?(lenient = false) ctx
@@ -833,8 +840,14 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       (ctx, items)
 
 (* Flow environment: an ordered binding list; the depth marks the scope that
-   introduced a binding (used by the var-escape check). *)
-type var_info = { vtype : t; is_var : bool; depth : int }
+   introduced a binding (used by the var-escape check), and the span names
+   where the binding was declared (the shadow refusal names both spans). *)
+type var_info = {
+  vtype : t;
+  is_var : bool;
+  depth : int;
+  span : Emo_support.Span.t;
+}
 
 type env = {
   bindings : (string * var_info) list;
@@ -843,6 +856,11 @@ type env = {
   block_depth : int;
       (* definition depth of the innermost enclosing arrow block, -1 when
          none; a `var` from a shallower scope cannot be captured *)
+  frame_base : int;
+      (* the depth the current function frame's own bindings live at: a
+         block binding shadowing a binding at a shallower depth inside the
+         same frame is the silent rebind the checker refuses, while a
+         frame's locals shadowing the module's names is ordinary scoping *)
   in_void : bool;
       (* true while checking a function whose return type is Void; any
          `return` inside is E4016 *)
@@ -863,6 +881,7 @@ let empty_env =
             vtype = FuncType ([ ("value", Unknown) ], Unknown);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "printf",
           {
@@ -871,51 +890,139 @@ let empty_env =
                 ([ ("format", String); ("data", ArrayType Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
-        ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
-        ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
-        ("fence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+        ( "self_pid",
+          {
+            vtype = FuncType ([], Pid);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "halt",
+          {
+            vtype = FuncType ([], Unknown);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "fence",
+          {
+            vtype = FuncType ([], Void);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "expect_equal",
           {
             vtype =
               FuncType ([ ("expected", Unknown); ("actual", Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "expect_true",
           {
             vtype = FuncType ([ ("value", Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "expect_false",
           {
             vtype = FuncType ([ ("value", Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "expect_fail",
           {
             vtype = FuncType ([ ("message", String) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         (* The capability types: the language's own, import-free names. *)
-        ("Box", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Atomic", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
-        ("List", { vtype = Unknown; is_var = false; depth = 0 });
-        ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
+        ( "Box",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "Atomic",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "Bytes",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "List",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "ArrayBuilder",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "Int64",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "Byte",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "Float64",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         (* The macro namespace (docs/macros.md): the member calls check
            as Unknown like every builtin's do; the E4301 hook on `Ident`
            confines references to the compile-time window. *)
-        ("Syntax", { vtype = Unknown; is_var = false; depth = 0 });
+        ( "Syntax",
+          {
+            vtype = Unknown;
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "Exception",
-          { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
-        ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
+          {
+            vtype = ClassType "Exception";
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "R",
+          {
+            vtype = EnumType "R";
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         (* The runtime's implementations of the standard library: the bare
            names a package's own Emo source calls underneath, never an API,
            and never presented as a surface. *)
@@ -927,6 +1034,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_listen",
           {
@@ -936,6 +1044,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_resolve",
           {
@@ -945,6 +1054,7 @@ let empty_env =
                   TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_udp_bind",
           {
@@ -954,6 +1064,7 @@ let empty_env =
                   TupleType [ EnumType "R"; UdpSocket ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_connect_unix",
           {
@@ -963,6 +1074,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_listen_unix",
           {
@@ -971,6 +1083,7 @@ let empty_env =
                 ([ ("path", String) ], TupleType [ EnumType "R"; TcpListener ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_tls_connect",
           {
@@ -980,6 +1093,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_tls_connect_insecure",
           {
@@ -989,6 +1103,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_listen_tls",
           {
@@ -1003,6 +1118,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_tls_connect_with",
           {
@@ -1021,6 +1137,7 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "net_listen_tls_with",
           {
@@ -1037,28 +1154,38 @@ let empty_env =
                   TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         (* The DOM capability family: the browser target's implementations
            of the dom package. Handles are Int64s into the runtime's node
            table; the page's own objects never cross into Emo. *)
-        ("dom_root", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
+        ( "dom_root",
+          {
+            vtype = FuncType ([], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "dom_element",
           {
             vtype = FuncType ([ ("tag", String) ], Int64);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_text",
           {
             vtype = FuncType ([ ("text", String) ], Int64);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_set_text",
           {
             vtype = FuncType ([ ("node", Int64); ("text", String) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_set_style",
           {
@@ -1067,6 +1194,7 @@ let empty_env =
                 ([ ("node", Int64); ("name", String); ("value", String) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_set_prop",
           {
@@ -1075,18 +1203,21 @@ let empty_env =
                 ([ ("node", Int64); ("name", String); ("value", Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_append",
           {
             vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_clear",
           {
             vtype = FuncType ([ ("node", Int64) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_connect",
           {
@@ -1095,30 +1226,35 @@ let empty_env =
                 ([ ("node", Int64); ("event", String); ("tag", Int64) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_value",
           {
             vtype = FuncType ([ ("node", Int64) ], String);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_sink",
           {
             vtype = FuncType ([ ("sink", Unknown) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_title",
           {
             vtype = FuncType ([ ("title", String) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "dom_viewport",
           {
             vtype = FuncType ([], TupleType [ Float64; Float64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "file_read",
           {
@@ -1126,6 +1262,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; String ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "file_write",
           {
@@ -1135,40 +1272,55 @@ let empty_env =
                   TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_getpid",
-          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+          {
+            vtype = FuncType ([], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_getppid",
-          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+          {
+            vtype = FuncType ([], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_fork",
           {
             vtype = FuncType ([], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_waitpid",
           {
             vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_kill",
           {
             vtype =
               FuncType
-                ([ ("pid", Int64); ("sig", Int64) ],
-                 TupleType [ EnumType "R"; Int64 ]);
+                ( [ ("pid", Int64); ("sig", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_setpgid",
           {
             vtype =
               FuncType
-                ([ ("pid", Int64); ("pgid", Int64) ],
-                 TupleType [ EnumType "R"; Int64 ]);
+                ( [ ("pid", Int64); ("pgid", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_pipe",
           {
@@ -1177,6 +1329,7 @@ let empty_env =
                 ([], TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_execv",
           {
@@ -1185,12 +1338,14 @@ let empty_env =
                 ([ ("path", String); ("argv", ArrayType String) ], Unknown);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os__exit",
           {
             vtype = FuncType ([ ("status", Int64) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_open_read",
           {
@@ -1198,6 +1353,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_open_write",
           {
@@ -1205,6 +1361,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_open_append",
           {
@@ -1212,6 +1369,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_read",
           {
@@ -1221,6 +1379,7 @@ let empty_env =
                   TupleType [ EnumType "R"; String ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "rand_bytes",
           {
@@ -1228,6 +1387,7 @@ let empty_env =
               FuncType ([ ("n", Int64) ], TupleType [ EnumType "R"; Bytes ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_write",
           {
@@ -1237,6 +1397,7 @@ let empty_env =
                   TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_close",
           {
@@ -1244,6 +1405,7 @@ let empty_env =
               FuncType ([ ("fd", Int64) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_list_dir",
           {
@@ -1253,6 +1415,7 @@ let empty_env =
                   TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_mkdir",
           {
@@ -1260,6 +1423,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_rmdir",
           {
@@ -1267,6 +1431,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_unlink",
           {
@@ -1274,6 +1439,7 @@ let empty_env =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_rename",
           {
@@ -1283,15 +1449,22 @@ let empty_env =
                   TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_getcwd",
-          { vtype = FuncType ([], String); is_var = false; depth = 0 } );
+          {
+            vtype = FuncType ([], String);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_chdir",
           {
             vtype =
               FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_dup2",
           {
@@ -1301,6 +1474,7 @@ let empty_env =
                   TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_execvp",
           {
@@ -1309,22 +1483,29 @@ let empty_env =
                 ([ ("file", String); ("argv", ArrayType String) ], Unknown);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_isatty",
           {
             vtype = FuncType ([ ("fd", Int64) ], Bool);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_argv",
-          { vtype = FuncType ([], ArrayType String); is_var = false; depth = 0 }
-        );
+          {
+            vtype = FuncType ([], ArrayType String);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_getenv",
           {
             vtype =
               FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_setenv",
           {
@@ -1334,6 +1515,7 @@ let empty_env =
                   TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_unsetenv",
           {
@@ -1341,6 +1523,7 @@ let empty_env =
               FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_signal_ignore",
           {
@@ -1348,6 +1531,7 @@ let empty_env =
               FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         ( "os_signal_default",
           {
@@ -1355,23 +1539,36 @@ let empty_env =
               FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
         (* The time package's doors: the wall clock, the monotonic
            clock, and the sleep park. *)
         ( "time_now_ms",
-          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+          {
+            vtype = FuncType ([], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "time_mono_ns",
-          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+          {
+            vtype = FuncType ([], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "time_sleep_ms",
           {
             vtype = FuncType ([ ("ms", Int64) ], Void);
             is_var = false;
             depth = 0;
+            span = Emo_support.Span.zero;
           } );
       ];
     depth = 0;
     ret = None;
     block_depth = -1;
+    frame_base = 0;
     in_void = false;
     loop_depth = 0;
   }
@@ -1388,24 +1585,28 @@ let raw_mem_bindings =
         vtype = FuncType ([ ("addr", Int64) ], Byte);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     ( "poke8",
       {
         vtype = FuncType ([ ("addr", Int64); ("value", Byte) ], Void);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     ( "peek64",
       {
         vtype = FuncType ([ ("addr", Int64) ], Int64);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     ( "poke64",
       {
         vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* peek32/poke32 (EmoOS T7.1): the 32-bit device line — MMIO
        registers are 4 bytes, and neither byte writes (each byte offset
@@ -1419,23 +1620,37 @@ let raw_mem_bindings =
         vtype = FuncType ([ ("addr", Int64) ], Int64);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     ( "poke32",
       {
         vtype = FuncType ([ ("addr", Int64); ("value", Int64) ], Void);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* device_wait (T3.7): the kernel sleeps until the device world
        wakes it — the ISR side of an interrupt-driven driver. Same
        admission rule: only the target that owns the machine. *)
-    ("device_wait", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    ( "device_wait",
+      {
+        vtype = FuncType ([], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     (* device_wake (EmoOS T8.11): the device world's wake from a process
        — every device-waiter re-joins the run queue, as the ISR's wake
        brings them back — for a driver that hands another device-waiter
        its events through a ring: a send does not wake a device-waiter,
        and the ISR that woke the driver is gone. Same admission rule. *)
-    ("device_wake", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    ( "device_wake",
+      {
+        vtype = FuncType ([], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     (* ecall (EmoOS T4.2): the machine's syscall instruction, raw — the
        user side of the gate. The verb and its six words ride a7 and
        a0..a5 on the other side of the instruction; the answer comes
@@ -1457,6 +1672,7 @@ let raw_mem_bindings =
               Int64 );
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* user_spawn (EmoOS T4.4): the process service's word — a new user
        process enters the image's program on a fresh stack, and the raw
@@ -1466,6 +1682,7 @@ let raw_mem_bindings =
         vtype = FuncType ([ ("entry", Int64); ("stack", Int64) ], Int64);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* gate_reply (EmoOS T4.4): a service's answer to the gate's
        parked caller — the target's raw pid names the waiter (it rode
@@ -1477,6 +1694,7 @@ let raw_mem_bindings =
         vtype = FuncType ([ ("target", Int64); ("answer", Int64) ], Void);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* gate_post (EmoOS T8.11): a request word into a service's mailbox
        by its raw pid — the post the shim makes for a gate route, from a
@@ -1488,25 +1706,42 @@ let raw_mem_bindings =
         vtype = FuncType ([ ("target", Int64); ("word", Int64) ], Void);
         is_var = false;
         depth = 0;
+        span = Emo_support.Span.zero;
       } );
     (* pid_num (EmoOS T4.4): the raw machine sees a pid as its number —
        the kernel's handoff cells carry numbers, not Pid words. Same
        admission rule. *)
     ( "pid_num",
-      { vtype = FuncType ([ ("p", Pid) ], Int64); is_var = false; depth = 0 } );
+      {
+        vtype = FuncType ([ ("p", Pid) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     (* pid_at (EmoOS T8.16): the conversion's other half — a service
        that becomes a client of another service reads the cell that
        names it (a number) and speaks to it: the box the send takes.
        Same admission rule. *)
     ( "pid_at",
-      { vtype = FuncType ([ ("n", Int64) ], Pid); is_var = false; depth = 0 } );
+      {
+        vtype = FuncType ([ ("n", Int64) ], Pid);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     (* sfence (EmoOS T8.5): the address-translation fence — the live
        page table's own discipline. A table a satp names (a window
        buffer's run mapped after the spawn) owes the hardware the
        flush before its walks may be trusted; the spawn-time build
        writes a table nothing walks yet and owes nothing. Same
        admission rule as the rest of raw memory. *)
-    ("sfence", { vtype = FuncType ([], Void); is_var = false; depth = 0 });
+    ( "sfence",
+      {
+        vtype = FuncType ([], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
   ]
 
 let raw_mem_builtin = function
@@ -1787,6 +2022,14 @@ let check_printf ctx (args : Ast.arg list) =
           | ArrayType elem -> check_elems (List.init slots (fun _ -> elem))
           | _ -> ()))
   | _ -> ()
+
+(* Every name a destructuring pattern binds — the shadow refusal walks
+   the same list a `case` arm's pattern would. *)
+let rec pattern_bound_names (p : Ast.pattern) : string list =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_binding n -> [ n ]
+  | Ast.Tuple_pattern ps -> List.concat_map pattern_bound_names ps
+  | Ast.Enum_member _ | Ast.Pattern_literal _ | Ast.Wildcard -> []
 
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
@@ -2103,10 +2346,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                 vtype = decl_to_type ~lenient:true ctx p.Ast.param_type;
                 is_var = false;
                 depth = env.depth;
+                span = p.Ast.param_type.Ast.type_span;
               })
           {
             (child_scope env) with
             block_depth = env.depth;
+            frame_base = env.depth + 1;
             ret = None;
             in_void = false;
             loop_depth = 0;
@@ -3087,9 +3332,15 @@ and check_method_call ctx env span recv mname args : t =
     | Float64, "to_int64" -> builtin0 Int64
     | Int64, "to_float64" -> builtin0 Float64
     | Bytes, "length" -> builtin0 Int64
+    (* The Bytes rules read a gradual index (and value) the same way the
+       containers do: an Unknown argument checks — the constructor rule
+       typed every `Bytes.new` receiver, so a receiver indexed by a field
+       or a dynamic value must not start failing (the atomic goldens'
+       tolerance pass, T83.3). *)
     | Bytes, "get" -> (
         match arg_values with
-        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
+        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+            Int64
         | [ _ ] ->
             report ctx span "E4004" "`get` expects an Int64 index";
             Int64
@@ -3100,8 +3351,10 @@ and check_method_call ctx env span recv mname args : t =
             Int64)
     | Bytes, (("set" | "set_u16_le" | "set_u32_le") as mname) -> (
         match arg_values with
-        | [ (None, Int64); (None, Int64) ]
-        | [ (Some "i", Int64); ((Some "v" | None), Int64) ] ->
+        | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
+        | [
+            (Some "i", (Int64 | Unknown)); ((Some "v" | None), (Int64 | Unknown));
+          ] ->
             Int64
         | [ _; _ ] ->
             report ctx span "E4004"
@@ -3114,7 +3367,8 @@ and check_method_call ctx env span recv mname args : t =
             Int64)
     | Bytes, (("get_u16_le" | "get_u32_le") as mname) -> (
         match arg_values with
-        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
+        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+            Int64
         | [ _ ] ->
             report ctx span "E4004"
               (Printf.sprintf "`%s` expects an Int64 index" mname);
@@ -3126,7 +3380,8 @@ and check_method_call ctx env span recv mname args : t =
             Int64)
     | Bytes, "get_u64_le" -> (
         match arg_values with
-        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
+        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+            Int64
         | [ _ ] ->
             report ctx span "E4004" "`get_u64_le` expects an Int64 index";
             Int64
@@ -3137,8 +3392,10 @@ and check_method_call ctx env span recv mname args : t =
             Int64)
     | Bytes, "set_u64_le" -> (
         match arg_values with
-        | [ (None, Int64); (None, Int64) ]
-        | [ (Some "i", Int64); ((Some "v" | None), Int64) ] ->
+        | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
+        | [
+            (Some "i", (Int64 | Unknown)); ((Some "v" | None), (Int64 | Unknown));
+          ] ->
             Int64
         | [ _; _ ] ->
             report ctx span "E4004" "`set_u64_le` expects (i Int64, v Int64)";
@@ -3334,12 +3591,13 @@ and narrowed_then_env ctx env cond =
   in
   match narrowed with
   | Some (name, t) ->
-      let is_var =
+      let is_var, span =
         match lookup_env env name with
-        | Some info -> info.is_var
-        | None -> false
+        | Some info -> (info.is_var, info.span)
+        | None -> (false, Emo_support.Span.zero)
       in
-      bind (child_scope env) name { vtype = t; is_var; depth = env.depth + 1 }
+      bind (child_scope env) name
+        { vtype = t; is_var; depth = env.depth + 1; span }
   | None -> child_scope env
 
 and pin_builder_push env (e : Ast.expr) (t : t) : env =
@@ -3403,9 +3661,36 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       pin_builder_push env e t
   | Ast.Binding { mutable_; pattern; init } -> (
       let t = check_expr ctx env init in
+      (* The shadow refusal: a block binding may not rebind a name the
+         same function frame already declares at a shallower depth — the
+         paths disagree what the name means afterward (the interpreter's
+         flat rebind, `c`'s branch scope, the rest refusing or dangling),
+         and a silent rebind of a `var` by a same-named `const` is the
+         mistake class strictness exists for. Both spans are named. *)
+      let refuse_shadow name existing =
+        report ctx span "E4029"
+          (Printf.sprintf
+             "`%s` shadows the outer binding at %s — declare the outer once \
+              and assign it in branches, or give the inner binding its own \
+              name"
+             name
+             (Emo_support.Span.to_string existing.span))
+      in
+      let shadowed name =
+        match lookup_env env name with
+        | Some existing
+          when existing.depth < env.depth && existing.depth >= env.frame_base ->
+            refuse_shadow name existing;
+            bind env name { existing with vtype = t; depth = env.depth; span }
+        | _ -> env
+      in
       match pattern.Ast.pattern_desc with
       | Ast.Pattern_binding name -> (
           match lookup_env env name with
+          | Some existing
+            when existing.depth < env.depth && existing.depth >= env.frame_base
+            ->
+              shadowed name
           | Some existing when existing.depth = env.depth ->
               (* Rebinding in the same scope: drift is an error only when the
                  earlier type is known and the new one provably breaks it. *)
@@ -3418,8 +3703,14 @@ and check_stmt ctx env (s : Ast.stmt) : env =
                      name (to_string existing.vtype) (to_string t));
               bind env name { existing with vtype = t }
           | _ ->
-              bind env name { vtype = t; is_var = mutable_; depth = env.depth })
+              bind env name
+                { vtype = t; is_var = mutable_; depth = env.depth; span })
       | _ ->
+          (* A destructured binding binds flat on the interpreter, the
+             same silent rebind a simple block binding is — every name it
+             introduces is checked like one. *)
+          let names = pattern_bound_names pattern in
+          let env = List.fold_left (fun env n -> shadowed n) env names in
           (* A destructured binding checks through the same pattern
              machinery a `case` arm uses: the pattern must fit the
              initializer's type, and its names enter scope immutable. A
@@ -3549,6 +3840,7 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           in
           ())
         branches;
+      if st = Unknown then check_member_payloads ctx branches;
       check_exhaustive ctx scrutinee.Ast.span st branches;
       env
   | Ast.Receive branches ->
@@ -3578,6 +3870,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           in
           ())
         branches;
+      (* The messages arrive untyped — the scrutinee is silent, so the
+         ladder-payload rule is the only check the arms' claims get. *)
+      check_member_payloads ctx branches;
       env
   | Ast.Send { target; message } ->
       let target_t = check_expr ctx env target in
@@ -3657,7 +3952,13 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
   match p.Ast.pattern_desc with
   | Ast.Wildcard -> env
   | Ast.Pattern_binding name ->
-      bind env name { vtype = scrutinee_t; is_var = false; depth = env.depth }
+      bind env name
+        {
+          vtype = scrutinee_t;
+          is_var = false;
+          depth = env.depth;
+          span = p.Ast.pattern_span;
+        }
   | Ast.Pattern_literal l -> (
       let lt = literal_type l in
       match scrutinee_t with
@@ -3788,6 +4089,81 @@ and check_exhaustive ctx span scrutinee_t (branches : Ast.branch list) : unit =
         (Printf.sprintf "this `case` is missing %s"
            (String.concat ", " missing))
 
+(* The type a pattern element claims about the slot it matches — what the
+   pattern itself announces, beside what it binds. *)
+and pattern_claim ctx (p : Ast.pattern) : t =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_literal l -> literal_type l
+  | Ast.Pattern_binding _ | Ast.Wildcard -> Unknown
+  | Ast.Enum_member (t, _) -> (
+      match resolve_type_ref ctx p.Ast.pattern_span t with
+      | Some (EnumType q) -> EnumType q
+      | _ -> EnumType t)
+  | Ast.Tuple_pattern ps -> TupleType (List.map (pattern_claim ctx) ps)
+
+(* The tuple-headed arm's member and the payload types its elements
+   claim: `(R.ok, 1)` claims `R.ok` carrying `Int64`; a bare member arm
+   claims no payload and stays out of the walk. *)
+and member_payload_claims ctx (p : Ast.pattern) :
+    (string * string * t list) option =
+  match p.Ast.pattern_desc with
+  | Ast.Tuple_pattern ({ Ast.pattern_desc = Ast.Enum_member (t, m); _ } :: rest)
+    ->
+      Some (t, m, List.map (pattern_claim ctx) rest)
+  | _ -> None
+
+(* The ladder-payload rule (the `:chain` track's mixed-payload gap): where
+   the same enum member heads more than one arm of a ladder with tuple
+   payloads, the arms claim the member's payload — `(R.ok, 1)` beside
+   `(R.ok, "x")` is a contradiction about the scrutinee's own type, not
+   two honest arms. With a typed scrutinee the per-arm pattern checks
+   already hold every arm to the scrutinee's slots, so this walks the arms
+   only where the scrutinee is silent; the refusal names the member and
+   both payload types. A `:chain` inherits the rule through its nested
+   `case` rewrite. *)
+and check_member_payloads ctx (branches : Ast.branch list) : unit =
+  (* A contradiction is provable only where both arms announce a type:
+     a binding or a wildcard claims nothing and agrees with anything,
+     and arms of different arity describe different runtime shapes, not
+     one slot's two types. *)
+  let slot_contradicts (a : t) (b : t) : bool =
+    a <> Unknown && b <> Unknown && a <> b
+  in
+  let rec claims_contradict (a : t list) (b : t list) : bool =
+    match (a, b) with
+    | x :: xs, y :: ys -> slot_contradicts x y || claims_contradict xs ys
+    | _ -> false
+  in
+  let qualified t =
+    match resolve_type_ref ctx Emo_support.Span.zero t with
+    | Some (EnumType q) -> q
+    | _ -> t
+  in
+  let seen = ref [] in
+  List.iter
+    (fun b ->
+      match member_payload_claims ctx b.Ast.pattern with
+      | None -> ()
+      | Some (t, m, claims) -> (
+          let name = qualified t in
+          match
+            List.find_opt
+              (fun (kt, km, old) ->
+                String.equal kt name && String.equal km m
+                && claims_contradict old claims)
+              !seen
+          with
+          | Some (_, _, old) ->
+              report ctx b.Ast.pattern.Ast.pattern_span "E4030"
+                (Printf.sprintf
+                   "`%s.%s` is matched by two arms with different payload \
+                    types — (%s) beside (%s); one member, one payload shape"
+                   name m
+                   (String.concat ", " (List.map to_string old))
+                   (String.concat ", " (List.map to_string claims)))
+          | None -> seen := (name, m, claims) :: !seen))
+    branches
+
 (* Definite return: every execution path through the statements ends in
    `return` — or diverges through `raise`, an exhaustive `case` whose
    branches all return, or a `receive` whose branches all return. A
@@ -3859,20 +4235,37 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
       (child_scope env) with
       ret = (if is_init then None else Some effective);
       block_depth = -1;
+      frame_base = env.depth + 1;
       in_void = (not is_init) && effective = Void;
       loop_depth = 0;
     }
   in
+  (* The prebound names are the enclosing scope's own (sibling defs,
+     consts): they live at the module's depth, so a frame-local binding
+     of the same name is the ordinary shadowing every scoping allows,
+     not the same-frame rebind the shadow refusal refuses. *)
   let frame =
     List.fold_left
       (fun env (n, t) ->
-        bind env n { vtype = t; is_var = false; depth = env.depth })
+        bind env n
+          {
+            vtype = t;
+            is_var = false;
+            depth = env.depth - 1;
+            span = Emo_support.Span.zero;
+          })
       frame prebound
   in
   let frame =
     match self with
     | Some (name, t) ->
-        bind frame name { vtype = t; is_var = false; depth = frame.depth }
+        bind frame name
+          {
+            vtype = t;
+            is_var = false;
+            depth = frame.depth;
+            span = Emo_support.Span.zero;
+          }
     | None -> frame
   in
   let frame =
@@ -3883,6 +4276,7 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
             vtype = decl_to_type ctx p.Ast.param_type;
             is_var = false;
             depth = frame.depth;
+            span = p.Ast.param_type.Ast.type_span;
           })
       frame d.Ast.def_params
   in
@@ -3968,6 +4362,7 @@ let check_items ctx (items : Ast.item list) : unit =
                 vtype = signature_of_def ctx d;
                 is_var = false;
                 depth = env.depth;
+                span = d.Ast.def_span;
               }
         | Ast.Item_foreign f ->
             bind env f.Ast.foreign_name
@@ -3983,6 +4378,7 @@ let check_items ctx (items : Ast.item list) : unit =
                     };
                 is_var = false;
                 depth = env.depth;
+                span = f.Ast.foreign_span;
               }
         | _ -> env)
       (base_env ctx.target) items
@@ -4048,6 +4444,7 @@ let check_items ctx (items : Ast.item list) : unit =
                        vtype = FuncType (params, ret);
                        is_var = false;
                        depth = env.depth;
+                       span = g.Ast.group_span;
                      })
                  env defs
              in
@@ -4057,7 +4454,12 @@ let check_items ctx (items : Ast.item list) : unit =
                    let t = check_expr ctx env cexpr in
                    let env =
                      bind env cname
-                       { vtype = t; is_var = false; depth = env.depth }
+                       {
+                         vtype = t;
+                         is_var = false;
+                         depth = env.depth;
+                         span = g.Ast.group_span;
+                       }
                    in
                    ((cname, t) :: acc, env))
                  ([], env) g.Ast.group_consts
@@ -4234,7 +4636,12 @@ let preregister_types ~(packages : string list list)
             match item.Ast.item_desc with
             | Ast.Item_def d ->
                 bind env d.Ast.def_name
-                  { vtype = signature_of_def ctx d; is_var = false; depth = 0 }
+                  {
+                    vtype = signature_of_def ctx d;
+                    is_var = false;
+                    depth = 0;
+                    span = Emo_support.Span.zero;
+                  }
             | Ast.Item_foreign f ->
                 bind env f.Ast.foreign_name
                   {
@@ -4249,6 +4656,7 @@ let preregister_types ~(packages : string list list)
                         };
                     is_var = false;
                     depth = 0;
+                    span = Emo_support.Span.zero;
                   }
             | _ -> env)
           (base_env ctx.target) items
@@ -4287,7 +4695,13 @@ let preregister_types ~(packages : string list list)
                  } ->
                  let t = check_expr ctx env init in
                  Hashtbl.replace tables.pvalues (path, name) t;
-                 bind env name { vtype = t; is_var = mutable_; depth = 0 }
+                 bind env name
+                   {
+                     vtype = t;
+                     is_var = mutable_;
+                     depth = 0;
+                     span = Emo_support.Span.zero;
+                   }
              | Ast.Item_emo_group g ->
                  (* Groups are global at runtime, so the registry is
                     program-wide too: defs from their declarations,
@@ -4315,6 +4729,7 @@ let preregister_types ~(packages : string list list)
                            vtype = FuncType (params, ret);
                            is_var = false;
                            depth = env.depth;
+                           span = g.Ast.group_span;
                          })
                      env gdefs
                  in
@@ -4323,7 +4738,13 @@ let preregister_types ~(packages : string list list)
                      (fun (env, acc) (_, name, init) ->
                        let t = check_expr ctx env init in
                        let env =
-                         bind env name { vtype = t; is_var = false; depth = 0 }
+                         bind env name
+                           {
+                             vtype = t;
+                             is_var = false;
+                             depth = 0;
+                             span = Emo_support.Span.zero;
+                           }
                        in
                        (env, acc @ [ (name, t) ]))
                      (scoped, []) g.Ast.group_consts

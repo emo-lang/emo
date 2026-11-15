@@ -786,7 +786,7 @@ let rec to_string v =
   | RuntimeImplFn name -> Printf.sprintf "<runtime implementation %s>" name
   | ForeignFn name -> Printf.sprintf "<foreign %s>" name
   | ClassDef c -> c.cname
-  | Instance i -> (
+  | Instance i ->
       if
         (* Provisional default format, per the step-06 spec. *)
         i.iclass.builtin_exception
@@ -799,7 +799,7 @@ let rec to_string v =
           String.concat ", "
             (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) i.ifields)
         in
-        "#" ^ i.iclass.cname ^ "(" ^ fields ^ ")")
+        "#" ^ i.iclass.cname ^ "(" ^ fields ^ ")"
   | EnumType e -> e.ename
   | EnumMember (_, m) -> m
   | TypeValue t -> t
@@ -1207,6 +1207,7 @@ let take_compiled proc matcher =
   go [] proc.inbox
 
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
+
 (* pid 1 is the root — the metal kernel's own convention (EmoOS T3.3),
    the one the c runtime and the typescript runtime already keep, so a
    pid printed on one target reads the same on every other. *)
@@ -1738,30 +1739,6 @@ and module_member span h name =
                name))
 
 and eval_method env span recv mname arg_exprs =
-  let argc = List.length arg_exprs in
-  let eval_args () =
-    List.map
-      (fun { Ast.arg_name; arg_value } ->
-        match arg_name with
-        | Some n ->
-            error span "E3007"
-              (Printf.sprintf "methods take positional arguments only (`%s`)" n)
-        | None -> eval_expr env arg_value)
-      arg_exprs
-  in
-  (* Constructors and methods keep the argument names so they can bind by
-     parameter name. *)
-  let eval_args_named () =
-    List.map
-      (fun { Ast.arg_name; arg_value } -> (arg_name, eval_expr env arg_value))
-      arg_exprs
-  in
-  let none_expected what =
-    if argc = 0 then ()
-    else
-      error span "E3007"
-        (Printf.sprintf "`%s` expects no arguments, got %d" what argc)
-  in
   match recv.Ast.desc with
   | Ast.Type_ident gname when Hashtbl.mem !group_registry gname ->
       let members = Hashtbl.find !group_registry gname in
@@ -1776,787 +1753,796 @@ and eval_method env span recv mname arg_exprs =
         error span "E3007"
           (Printf.sprintf "`%s.%s` expects %d argument(s), got %d" gname mname
              arity (List.length arg_exprs));
-      let args = eval_args_named () in
-      apply v span args
-  | _ -> (
-      let base = eval_expr env recv in
-      (* A cross-module class name arrives as a bare TypeValue — the
-         declaration binds only in its own module's environment — so
-         construction resolves through the program's owner index. *)
-      let base =
-        match (base, mname) with
-        | TypeValue t, "new" -> (
-            match !type_owner_of t with
-            | Some (ClassDef _ as v) -> v
-            | _ -> base)
-        | _ -> base
+      (* Constructors and methods keep the argument names so they can bind
+         by parameter name. *)
+      let args =
+        List.map
+          (fun { Ast.arg_name; arg_value } ->
+            (arg_name, eval_expr env arg_value))
+          arg_exprs
       in
-      match (base, mname) with
-      | EmoGroup members, _ -> (
-          (* a group member: defs apply, consts produce their value. A bare
+      apply v span args
+  | _ ->
+      let base = eval_expr env recv in
+      call_method_value env span base mname arg_exprs
+
+(* The value half of a method call: the receiver stands evaluated and
+   this dispatches the name against it. The tail-call sniffs in `eval_stmt`
+   land here with the receiver they already evaluated, so a
+   side-effecting receiver expression never runs twice. *)
+and call_method_value env span base mname arg_exprs =
+  let argc = List.length arg_exprs in
+  let eval_args () =
+    List.map
+      (fun { Ast.arg_name; arg_value } ->
+        match arg_name with
+        | Some n ->
+            error span "E3007"
+              (Printf.sprintf "methods take positional arguments only (`%s`)" n)
+        | None -> eval_expr env arg_value)
+      arg_exprs
+  in
+  let eval_args_named () =
+    List.map
+      (fun { Ast.arg_name; arg_value } -> (arg_name, eval_expr env arg_value))
+      arg_exprs
+  in
+  let none_expected what =
+    if argc = 0 then ()
+    else
+      error span "E3007"
+        (Printf.sprintf "`%s` expects no arguments, got %d" what argc)
+  in
+  (* A cross-module class name arrives as a bare TypeValue — the
+     declaration binds only in its own module's environment — so
+     construction resolves through the program's owner index. *)
+  let base =
+    match (base, mname) with
+    | TypeValue t, "new" -> (
+        match !type_owner_of t with Some (ClassDef _ as v) -> v | _ -> base)
+    | _ -> base
+  in
+  match (base, mname) with
+  | EmoGroup members, _ -> (
+      (* a group member: defs apply, consts produce their value. A bare
          def reference (`Foo.hello` without a call) is the block itself. *)
-          if not (List.mem_assoc mname members) then
-            error span "E4001"
-              (Printf.sprintf "this group has no member `%s`" mname);
-          let v = List.assoc mname members in
-          match v with
-          | ArrowBlock closure ->
-              let args = eval_args_named () in
-              let frame = bind_params closure span args in
-              eval_frame closure frame span
-          | BuiltinFn _ as fn ->
-              (* a builtin member (the Syntax namespace, docs/macros.md):
-                 applies like any builtin call *)
-              let args = eval_args_named () in
-              apply fn span args
-          | const_value ->
-              if argc > 0 then
-                error span "E3007"
-                  (Printf.sprintf "`%s` is a constant and takes no arguments"
-                     mname);
-              const_value)
-      | Module h, _ ->
-          let v = module_member span h mname in
-          let args = eval_args_named () in
-          apply v span args
-      | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
-          let closure = List.assoc mname i.iclass.cmethods in
+      if not (List.mem_assoc mname members) then
+        error span "E4001"
+          (Printf.sprintf "this group has no member `%s`" mname);
+      let v = List.assoc mname members in
+      match v with
+      | ArrowBlock closure ->
           let args = eval_args_named () in
           let frame = bind_params closure span args in
-          define frame "self" ~mutable_:false (Instance i);
           eval_frame closure frame span
-      | ClassDef c, "new" -> (
+      | BuiltinFn _ as fn ->
+          (* a builtin member (the Syntax namespace, docs/macros.md):
+                 applies like any builtin call *)
           let args = eval_args_named () in
-          match c.cinit with
-          | Some init ->
-              let instance = Instance { iclass = c; ifields = [] } in
-              let frame = bind_params init span args in
-              define frame "self" ~mutable_:false instance;
-              (* init constructs; it does not return a value. An early `return`
-             simply ends the window, and no implicit value exists. *)
-              (try List.iter (eval_stmt frame) init.body with
-              | Return_signal _ -> ()
-              | Tail_call _ -> ());
-              instance
-          | None when c.builtin_exception -> (
-              let empty_data = Map (fresh_map ()) in
-              match args with
-              | [ (Some "message", v) ] | [ (None, v) ] ->
-                  Instance
-                    {
-                      iclass = c;
-                      ifields = [ ("message", v); ("data", empty_data) ];
-                    }
-              | _ ->
-                  error span "E3007"
-                    "`Exception.new` expects exactly one argument, the message \
-                     String; a data Map goes to `Exception.with_data`")
-          | None ->
-              if List.length args > 0 then
-                error span "E3007"
-                  (Printf.sprintf
-                     "class `%s` declares no `init`; `new` takes no arguments"
-                     c.cname);
-              Instance { iclass = c; ifields = [] })
-      | ClassDef c, "with_data" when c.builtin_exception -> (
-          let args = eval_args_named () in
-          match args with
-          | [ (Some "message", mv); (Some "data", dv) ]
-          | [ (Some "message", mv); (None, dv) ]
-          | [ (None, mv); (Some "data", dv) ]
-          | [ (None, mv); (None, dv) ] ->
-              Instance
-                { iclass = c; ifields = [ ("message", mv); ("data", dv) ] }
-          | _ ->
-              error span "E3007"
-                "`Exception.with_data` expects `message` and `data`")
-      | ClassDef c, m ->
-          error span "E3007"
-            (Printf.sprintf "class `%s` has no member `%s`" c.cname m)
-      | TypeValue "Box", "new" -> (
-          let args = eval_args () in
-          match args with
-          | [ v ] -> Box (ref v)
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
-      | TypeValue "Atomic", "new" -> (
-          let args = eval_args () in
-          match args with
-          | [ v ] -> Atomic (ref v)
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`Atomic.new` expects 1 argument, got %d" argc))
-      | TypeValue "Byte", "from_int64" -> (
-          let args = eval_args () in
-          match args with
-          | [ Int64 n ] when n >= 0L && n <= 255L -> Byte (Int64.to_int n)
-          | [ Int64 n ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "`Byte.from_int64` needs a value in 0-255, got %Ld" n)
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`Byte.from_int64` expects an Int64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`Byte.from_int64` expects 1 argument, got %d"
-                   argc))
-      | TypeValue "Float64", "from_bits" -> (
-          let args = eval_args () in
-          match args with
-          | [ Int64 b ] -> Float (Int64.float_of_bits b)
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`Float64.from_bits` expects an Int64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`Float64.from_bits` expects 1 argument, got %d"
-                   argc))
-      | Int64 x, "to_byte" ->
-          none_expected "to_byte";
-          Byte (Int64.to_int (Int64.logand x 255L))
-      | Byte n, "to_int64" ->
-          none_expected "to_int64";
-          Int64 (Int64.of_int n)
-      | Float f, "to_bits" ->
-          none_expected "to_bits";
-          Int64 (Int64.bits_of_float f)
-      | Float f, "sqrt" ->
-          none_expected "sqrt";
-          Float (Float.sqrt f)
-      | Float f, "floor" ->
-          none_expected "floor";
-          Float (Float.floor f)
-      | Float f, "ceil" ->
-          none_expected "ceil";
-          Float (Float.ceil f)
-      | Float f, "trunc" ->
-          none_expected "trunc";
-          Float (Float.trunc f)
-      | Float f, "to_int64" ->
-          none_expected "to_int64";
-          Int64 (Int64.of_float f)
-      | Int64 n, "to_float64" ->
-          none_expected "to_float64";
-          Float (Int64.to_float n)
-      | TypeValue "Bytes", "new" -> (
-          let args = eval_args () in
-          match args with
-          | [ Int64 n ] when n >= 0L ->
-              Bytes (Bytes.make (Int64.to_int n) '\000')
-          | [ Int64 n ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "`Bytes.new` needs a non-negative length, got %Ld" n)
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`Bytes.new` expects 1 argument, got %d" argc))
-      | TypeValue "List", "new" -> (
-          (* Copies the array's elements into a fresh deque, front to back. *)
-          match eval_args () with
-          | [ Array xs ] ->
-              let l = fresh_list () in
-              Array.iter (list_push_back l) xs;
-              List l
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`List.new` expects an Array, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`List.new` expects 1 argument, got %d" argc))
-      | TypeValue "ArrayBuilder", "new" ->
-          (* The builder is born empty; its element type is a compile-time
-             question the runtime never asks. *)
-          if argc <> 0 then
+          apply fn span args
+      | const_value ->
+          if argc > 0 then
             error span "E3007"
-              (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
-                 argc)
-          else Builder (fresh_builder ())
-      | TypeValue "Map", "new" ->
-          (* Each argument is a (key, value) pair; later pairs overwrite
+              (Printf.sprintf "`%s` is a constant and takes no arguments" mname);
+          const_value)
+  | Module h, _ ->
+      let v = module_member span h mname in
+      let args = eval_args_named () in
+      apply v span args
+  | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
+      let closure = List.assoc mname i.iclass.cmethods in
+      let args = eval_args_named () in
+      let frame = bind_params closure span args in
+      define frame "self" ~mutable_:false (Instance i);
+      eval_frame closure frame span
+  | ClassDef c, "new" -> (
+      let args = eval_args_named () in
+      match c.cinit with
+      | Some init ->
+          let instance = Instance { iclass = c; ifields = [] } in
+          let frame = bind_params init span args in
+          define frame "self" ~mutable_:false instance;
+          (* init constructs; it does not return a value. An early `return`
+             simply ends the window, and no implicit value exists. *)
+          (try List.iter (eval_stmt frame) init.body with
+          | Return_signal _ -> ()
+          | Tail_call _ -> ());
+          instance
+      | None when c.builtin_exception -> (
+          let empty_data = Map (fresh_map ()) in
+          match args with
+          | [ (Some "message", v) ] | [ (None, v) ] ->
+              Instance
+                {
+                  iclass = c;
+                  ifields = [ ("message", v); ("data", empty_data) ];
+                }
+          | _ ->
+              error span "E3007"
+                "`Exception.new` expects exactly one argument, the message \
+                 String; a data Map goes to `Exception.with_data`")
+      | None ->
+          if List.length args > 0 then
+            error span "E3007"
+              (Printf.sprintf
+                 "class `%s` declares no `init`; `new` takes no arguments"
+                 c.cname);
+          Instance { iclass = c; ifields = [] })
+  | ClassDef c, "with_data" when c.builtin_exception -> (
+      let args = eval_args_named () in
+      match args with
+      | [ (Some "message", mv); (Some "data", dv) ]
+      | [ (Some "message", mv); (None, dv) ]
+      | [ (None, mv); (Some "data", dv) ]
+      | [ (None, mv); (None, dv) ] ->
+          Instance { iclass = c; ifields = [ ("message", mv); ("data", dv) ] }
+      | _ ->
+          error span "E3007"
+            "`Exception.with_data` expects `message` and `data`")
+  | ClassDef c, m ->
+      error span "E3007"
+        (Printf.sprintf "class `%s` has no member `%s`" c.cname m)
+  | TypeValue "Box", "new" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] -> Box (ref v)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+  | TypeValue "Atomic", "new" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] -> Atomic (ref v)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Atomic.new` expects 1 argument, got %d" argc))
+  | TypeValue "Byte", "from_int64" -> (
+      let args = eval_args () in
+      match args with
+      | [ Int64 n ] when n >= 0L && n <= 255L -> Byte (Int64.to_int n)
+      | [ Int64 n ] ->
+          error span "E3004"
+            (Printf.sprintf "`Byte.from_int64` needs a value in 0-255, got %Ld"
+               n)
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`Byte.from_int64` expects an Int64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Byte.from_int64` expects 1 argument, got %d" argc)
+      )
+  | TypeValue "Float64", "from_bits" -> (
+      let args = eval_args () in
+      match args with
+      | [ Int64 b ] -> Float (Int64.float_of_bits b)
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`Float64.from_bits` expects an Int64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Float64.from_bits` expects 1 argument, got %d"
+               argc))
+  | Int64 x, "to_byte" ->
+      none_expected "to_byte";
+      Byte (Int64.to_int (Int64.logand x 255L))
+  | Byte n, "to_int64" ->
+      none_expected "to_int64";
+      Int64 (Int64.of_int n)
+  | Float f, "to_bits" ->
+      none_expected "to_bits";
+      Int64 (Int64.bits_of_float f)
+  | Float f, "sqrt" ->
+      none_expected "sqrt";
+      Float (Float.sqrt f)
+  | Float f, "floor" ->
+      none_expected "floor";
+      Float (Float.floor f)
+  | Float f, "ceil" ->
+      none_expected "ceil";
+      Float (Float.ceil f)
+  | Float f, "trunc" ->
+      none_expected "trunc";
+      Float (Float.trunc f)
+  | Float f, "to_int64" ->
+      none_expected "to_int64";
+      Int64 (Int64.of_float f)
+  | Int64 n, "to_float64" ->
+      none_expected "to_float64";
+      Float (Int64.to_float n)
+  | TypeValue "Bytes", "new" -> (
+      let args = eval_args () in
+      match args with
+      | [ Int64 n ] when n >= 0L -> Bytes (Bytes.make (Int64.to_int n) '\000')
+      | [ Int64 n ] ->
+          error span "E3004"
+            (Printf.sprintf "`Bytes.new` needs a non-negative length, got %Ld" n)
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Bytes.new` expects 1 argument, got %d" argc))
+  | TypeValue "List", "new" -> (
+      (* Copies the array's elements into a fresh deque, front to back. *)
+      match eval_args () with
+      | [ Array xs ] ->
+          let l = fresh_list () in
+          Array.iter (list_push_back l) xs;
+          List l
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`List.new` expects an Array, got %s" (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`List.new` expects 1 argument, got %d" argc))
+  | TypeValue "ArrayBuilder", "new" ->
+      (* The builder is born empty; its element type is a compile-time
+             question the runtime never asks. *)
+      if argc <> 0 then
+        error span "E3007"
+          (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d" argc)
+      else Builder (fresh_builder ())
+  | TypeValue "Map", "new" ->
+      (* Each argument is a (key, value) pair; later pairs overwrite
              earlier ones. *)
-          let m = fresh_map () in
-          List.iter
-            (fun a ->
-              match a with
-              | Tuple [ k; v ] -> map_set span m k v
-              | _ ->
-                  error span "E3007"
-                    (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
-                       (type_name a)))
-            (eval_args ());
-          Map m
-      | TypeValue t, m ->
-          error span "E3009"
-            (Printf.sprintf "type `%s` has no member `%s` yet" t m)
-      | Bytes b, "to_string" ->
-          none_expected "to_string";
-          String (Bytes.to_string b)
-      | v, "to_string" ->
-          none_expected "to_string";
-          String (to_string v)
-      | Array xs, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int (Array.length xs))
-      | Tuple xs, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int (List.length xs))
-      | Box r, "read" ->
-          none_expected "read";
-          !r
-      | Box r, "replace" -> (
-          let args = eval_args () in
-          match args with
-          | [ v ] ->
-              r := v;
-              v
+      let m = fresh_map () in
+      List.iter
+        (fun a ->
+          match a with
+          | Tuple [ k; v ] -> map_set span m k v
           | _ ->
               error span "E3007"
-                (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
-      | Atomic cell, "load" ->
-          none_expected "load";
-          !cell
-      | Atomic cell, "store" -> (
-          let args = eval_args () in
-          match args with
-          | [ v ] ->
-              cell := v;
-              Void
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`store` expects 1 argument, got %d" argc))
-      | Atomic cell, "exchange" -> (
-          let args = eval_args () in
-          match args with
-          | [ v ] ->
-              let old = !cell in
-              cell := v;
-              old
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`exchange` expects 1 argument, got %d" argc))
-      | Atomic cell, "compare_exchange" -> (
-          let args = eval_args () in
-          match args with
-          | [ expected; fresh ] ->
-              let old = !cell in
-              let swapped = equal_value old expected in
-              if swapped then cell := fresh;
-              Tuple [ Bool swapped; old ]
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
-                   argc))
-      | ( Atomic cell,
-          (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor")
-           as mname) ) -> (
-          (* The payload dispatches on the value the cell holds: the
+                (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
+                   (type_name a)))
+        (eval_args ());
+      Map m
+  | TypeValue t, m ->
+      error span "E3009" (Printf.sprintf "type `%s` has no member `%s` yet" t m)
+  | Bytes b, "to_string" ->
+      none_expected "to_string";
+      String (Bytes.to_string b)
+  | v, "to_string" ->
+      none_expected "to_string";
+      String (to_string v)
+  | Array xs, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int (Array.length xs))
+  | Tuple xs, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int (List.length xs))
+  | Box r, "read" ->
+      none_expected "read";
+      !r
+  | Box r, "replace" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] ->
+          r := v;
+          v
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | Atomic cell, "load" ->
+      none_expected "load";
+      !cell
+  | Atomic cell, "store" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] ->
+          cell := v;
+          Void
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`store` expects 1 argument, got %d" argc))
+  | Atomic cell, "exchange" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] ->
+          let old = !cell in
+          cell := v;
+          old
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`exchange` expects 1 argument, got %d" argc))
+  | Atomic cell, "compare_exchange" -> (
+      let args = eval_args () in
+      match args with
+      | [ expected; fresh ] ->
+          let old = !cell in
+          let swapped = equal_value old expected in
+          if swapped then cell := fresh;
+          Tuple [ Bool swapped; old ]
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+               argc))
+  | ( Atomic cell,
+      (("fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor") as
+       mname) ) -> (
+      (* The payload dispatches on the value the cell holds: the
              arithmetic pair is Int64's, the bitwise family is Int64's and
              Bool's — the checker refuses the rest by name, and the
              runtime refuses what a gradual call could still reach. *)
-          let args = eval_args () in
-          match (mname, args, !cell) with
-          | _, [ Int64 v ], Int64 old ->
-              let computed =
-                match mname with
-                | "fetch_add" -> Int64 (Int64.add old v)
-                | "fetch_sub" -> Int64 (Int64.sub old v)
-                | "fetch_and" -> Int64 (Int64.logand old v)
-                | "fetch_or" -> Int64 (Int64.logor old v)
-                | _ -> Int64 (Int64.logxor old v)
-              in
-              cell := computed;
-              Int64 old
-          | ("fetch_and" | "fetch_or" | "fetch_xor"), [ Bool y ], Bool b ->
-              let computed =
-                match mname with
-                | "fetch_and" -> Bool (b && y)
-                | "fetch_or" -> Bool (b || y)
-                | _ -> Bool (b <> y)
-              in
-              cell := computed;
-              Bool b
-          | _, [ v ], (Int64 _ | Bool _) ->
-              error span "E3001"
-                (Printf.sprintf "`%s` expects %s, got %s" mname
-                   (match !cell with Bool _ -> "a Bool" | _ -> "an Int64")
-                   (type_name v))
-          | _, _, other ->
-              error span "E3001"
-                (Printf.sprintf "`%s` expects an Int64 or Bool cell, got %s"
-                   mname (type_name other)))
-      | List l, "push_front" -> (
-          match eval_args () with
-          | [ v ] ->
-              list_push_front l v;
-              List l
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`push_front` expects 1 argument, got %d"
-                   (List.length args)))
-      | List l, "push_back" -> (
-          match eval_args () with
-          | [ v ] ->
-              list_push_back l v;
-              List l
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`push_back` expects 1 argument, got %d"
-                   (List.length args)))
-      | List l, "pop_front" ->
-          none_expected "pop_front";
-          list_pop_front span l
-      | List l, "pop_back" ->
-          none_expected "pop_back";
-          list_pop_back span l
-      | List l, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int l.lsize)
-      | Builder b, "push" -> (
-          match eval_args () with
-          | [ v ] ->
-              builder_push b v;
-              Builder b
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`push` expects 1 argument, got %d"
-                   (List.length args)))
-      | Builder b, "get" -> (
-          match eval_args () with
-          | [ i ] -> builder_get span b i
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`get` expects 1 argument, got %d"
-                   (List.length args)))
-      | Builder b, "to_array" ->
-          none_expected "to_array";
-          builder_to_array b
-      | Builder b, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int b.bsize)
-      | Bytes b, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int (Bytes.length b))
-      | Bytes b, "get" -> (
-          match eval_args () with
-          | [ Int64 i ] when i >= 0L && i < Int64.of_int (Bytes.length b) ->
-              Int64 (Int64.of_int (Char.code (Bytes.get b (Int64.to_int i))))
-          | [ Int64 i ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a length-%d Bytes" i
-                   (Bytes.length b))
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`get` expects an Int64 index, got %s"
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`get` expects 1 argument, got %d"
-                   (List.length args)))
-      | Bytes b, "set" -> (
-          match eval_args () with
-          | [ Int64 i; Int64 v ]
-            when i >= 0L
-                 && i < Int64.of_int (Bytes.length b)
-                 && v >= 0L && v <= 255L ->
-              Bytes.set b (Int64.to_int i) (Char.chr (Int64.to_int v));
-              Int64 v
-          | [ Int64 i; Int64 v ]
-            when i < 0L || i >= Int64.of_int (Bytes.length b) ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a length-%d Bytes" i
-                   (Bytes.length b))
-          | [ Int64 _; Int64 v ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "byte value %Ld is out of range for a byte (0-255)" v)
-          | [ Int64 _; v ] ->
-              error span "E3001"
-                (Printf.sprintf "`set` expects an Int64 byte value, got %s"
-                   (type_name v))
-          | [ v; _ ] ->
-              error span "E3001"
-                (Printf.sprintf "`set` expects an Int64 index, got %s"
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`set` expects 2 arguments, got %d"
-                   (List.length args)))
-      | Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
-          let width = if mname = "get_u16_le" then 2 else 4 in
-          match eval_args () with
-          | [ Int64 i ]
-            when i >= 0L
-                 && Int64.add i (Int64.of_int width)
-                    <= Int64.of_int (Bytes.length b) ->
-              let i = Int64.to_int i in
-              let acc = ref 0 in
-              for k = width - 1 downto 0 do
-                acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
-              done;
-              Int64 (Int64.of_int !acc)
-          | [ Int64 i ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a %s read on a length-%d \
-                    Bytes"
-                   i mname (Bytes.length b))
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`%s` expects an Int64 index, got %s" mname
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-                   (List.length args)))
-      | Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
-          let width = if mname = "set_u16_le" then 2 else 4 in
-          match eval_args () with
-          | [ Int64 i; Int64 v ]
-            when i >= 0L
-                 && Int64.add i (Int64.of_int width)
-                    <= Int64.of_int (Bytes.length b) ->
-              let i = Int64.to_int i in
-              let v =
-                Int64.to_int v land if width = 2 then 0xFFFF else 0xFFFFFFFF
-              in
-              for k = 0 to width - 1 do
-                Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
-              done;
-              Int64 (Int64.of_int v)
-          | [ Int64 i; Int64 _ ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a %s write on a length-%d \
-                    Bytes"
-                   i mname (Bytes.length b))
-          | [ Int64 _; v ] ->
-              error span "E3001"
-                (Printf.sprintf "`%s` expects an Int64 value, got %s" mname
-                   (type_name v))
-          | [ v; _ ] ->
-              error span "E3001"
-                (Printf.sprintf "`%s` expects an Int64 index, got %s" mname
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
-                   (List.length args)))
-      | Bytes b, "get_u64_le" -> (
-          match eval_args () with
-          | [ Int64 i ]
-            when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
-              let i = Int64.to_int i in
-              let acc = ref 0L in
-              for k = 7 downto 0 do
-                acc :=
-                  Int64.logor (Int64.shift_left !acc 8)
-                    (Int64.of_int (Char.code (Bytes.get b (i + k))))
-              done;
-              Int64 !acc
-          | [ Int64 i ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a get_u64_le read on a \
-                    length-%d Bytes"
-                   i (Bytes.length b))
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`get_u64_le` expects an Int64 index, got %s"
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
-                   (List.length args)))
-      | Bytes b, "set_u64_le" -> (
-          match eval_args () with
-          | [ Int64 i; Int64 v ]
-            when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
-              let i = Int64.to_int i in
-              for k = 0 to 7 do
-                Bytes.set b (i + k)
-                  (Char.chr
-                     (Int64.to_int
-                        (Int64.logand
-                           (Int64.shift_right_logical v (8 * k))
-                           0xFFL)))
-              done;
-              Int64 v
-          | [ Int64 i; Int64 _ ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "index %Ld is out of bounds for a set_u64_le write on a \
-                    length-%d Bytes"
-                   i (Bytes.length b))
-          | [ Int64 _; v ] ->
-              error span "E3001"
-                (Printf.sprintf "`set_u64_le` expects an Int64 value, got %s"
-                   (type_name v))
-          | [ v; _ ] ->
-              error span "E3001"
-                (Printf.sprintf "`set_u64_le` expects an Int64 index, got %s"
-                   (type_name v))
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
-                   (List.length args)))
-      | String s, "to_bytes" ->
-          none_expected "to_bytes";
-          Bytes (Bytes.of_string s)
-      | TcpConn c, "read_line" ->
-          none_expected "read_line";
-          Effect.perform (Net_read_line (c, span))
-      | TcpConn c, "read_exactly" -> (
-          match eval_args () with
-          | [ Int64 n ] ->
-              Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`read_exactly` expects an Int64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc)
-          )
-      | TcpConn c, "read_all" ->
-          none_expected "read_all";
-          Effect.perform (Net_read_all (c, span))
-      | TcpConn c, "write" -> (
-          match eval_args () with
-          | [ String s ] -> Effect.perform (Net_write (c, s, span))
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`write` expects a String, got %s" (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`write` expects 1 argument, got %d" argc))
-      | TcpConn c, "close" ->
-          none_expected "close";
-          Effect.perform (Net_close_conn (c, span))
-      | TcpConn c, "set_timeout" -> (
-          match eval_args () with
-          | [ Float f ] when f >= 0.0 ->
-              c.ctimeout <- f;
-              TcpConn c
-          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`set_timeout` expects a Float64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
-          )
-      | TcpListener l, "accept" ->
-          none_expected "accept";
-          Effect.perform (Net_accept (l, span))
-      | TcpListener { lunix = true; ldesc; _ }, "port" ->
+      let args = eval_args () in
+      match (mname, args, !cell) with
+      | _, [ Int64 v ], Int64 old ->
+          let computed =
+            match mname with
+            | "fetch_add" -> Int64 (Int64.add old v)
+            | "fetch_sub" -> Int64 (Int64.sub old v)
+            | "fetch_and" -> Int64 (Int64.logand old v)
+            | "fetch_or" -> Int64 (Int64.logor old v)
+            | _ -> Int64 (Int64.logxor old v)
+          in
+          cell := computed;
+          Int64 old
+      | ("fetch_and" | "fetch_or" | "fetch_xor"), [ Bool y ], Bool b ->
+          let computed =
+            match mname with
+            | "fetch_and" -> Bool (b && y)
+            | "fetch_or" -> Bool (b || y)
+            | _ -> Bool (b <> y)
+          in
+          cell := computed;
+          Bool b
+      | _, [ v ], (Int64 _ | Bool _) ->
+          error span "E3001"
+            (Printf.sprintf "`%s` expects %s, got %s" mname
+               (match !cell with Bool _ -> "a Bool" | _ -> "an Int64")
+               (type_name v))
+      | _, _, other ->
+          error span "E3001"
+            (Printf.sprintf "`%s` expects an Int64 or Bool cell, got %s" mname
+               (type_name other)))
+  | List l, "push_front" -> (
+      match eval_args () with
+      | [ v ] ->
+          list_push_front l v;
+          List l
+      | args ->
           error span "E3007"
-            (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
-      | TcpListener l, "port" ->
-          none_expected "port";
-          Int64 (Int64.of_int l.lport)
-      | TcpListener l, "close" ->
-          none_expected "close";
-          Effect.perform (Net_close_listener (l, span))
-      | TcpListener l, "set_timeout" -> (
-          match eval_args () with
-          | [ Float f ] when f >= 0.0 ->
-              l.ltimeout <- f;
-              TcpListener l
-          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`set_timeout` expects a Float64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
-          )
-      | UdpSocket u, "send_to" -> (
-          match eval_args () with
-          | [ String host; Int64 port; String data ] ->
-              (* The handler resolves the host; failure rides back in
+            (Printf.sprintf "`push_front` expects 1 argument, got %d"
+               (List.length args)))
+  | List l, "push_back" -> (
+      match eval_args () with
+      | [ v ] ->
+          list_push_back l v;
+          List l
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`push_back` expects 1 argument, got %d"
+               (List.length args)))
+  | List l, "pop_front" ->
+      none_expected "pop_front";
+      list_pop_front span l
+  | List l, "pop_back" ->
+      none_expected "pop_back";
+      list_pop_back span l
+  | List l, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int l.lsize)
+  | Builder b, "push" -> (
+      match eval_args () with
+      | [ v ] ->
+          builder_push b v;
+          Builder b
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`push` expects 1 argument, got %d"
+               (List.length args)))
+  | Builder b, "get" -> (
+      match eval_args () with
+      | [ i ] -> builder_get span b i
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`get` expects 1 argument, got %d"
+               (List.length args)))
+  | Builder b, "to_array" ->
+      none_expected "to_array";
+      builder_to_array b
+  | Builder b, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int b.bsize)
+  | Bytes b, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int (Bytes.length b))
+  | Bytes b, "get" -> (
+      match eval_args () with
+      | [ Int64 i ] when i >= 0L && i < Int64.of_int (Bytes.length b) ->
+          Int64 (Int64.of_int (Char.code (Bytes.get b (Int64.to_int i))))
+      | [ Int64 i ] ->
+          error span "E3004"
+            (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
+               (Bytes.length b))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`get` expects an Int64 index, got %s" (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`get` expects 1 argument, got %d"
+               (List.length args)))
+  | Bytes b, "set" -> (
+      match eval_args () with
+      | [ Int64 i; Int64 v ]
+        when i >= 0L
+             && i < Int64.of_int (Bytes.length b)
+             && v >= 0L && v <= 255L ->
+          Bytes.set b (Int64.to_int i) (Char.chr (Int64.to_int v));
+          Int64 v
+      | [ Int64 i; Int64 v ] when i < 0L || i >= Int64.of_int (Bytes.length b)
+        ->
+          error span "E3004"
+            (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
+               (Bytes.length b))
+      | [ Int64 _; Int64 v ] ->
+          error span "E3004"
+            (Printf.sprintf "byte value %Ld is out of range for a byte (0-255)"
+               v)
+      | [ Int64 _; v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set` expects an Int64 byte value, got %s"
+               (type_name v))
+      | [ v; _ ] ->
+          error span "E3001"
+            (Printf.sprintf "`set` expects an Int64 index, got %s" (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`set` expects 2 arguments, got %d"
+               (List.length args)))
+  | Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
+      let width = if mname = "get_u16_le" then 2 else 4 in
+      match eval_args () with
+      | [ Int64 i ]
+        when i >= 0L
+             && Int64.add i (Int64.of_int width)
+                <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
+          let acc = ref 0 in
+          for k = width - 1 downto 0 do
+            acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
+          done;
+          Int64 (Int64.of_int !acc)
+      | [ Int64 i ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "index %Ld is out of bounds for a %s read on a length-%d Bytes" i
+               mname (Bytes.length b))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`%s` expects an Int64 index, got %s" mname
+               (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+               (List.length args)))
+  | Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
+      let width = if mname = "set_u16_le" then 2 else 4 in
+      match eval_args () with
+      | [ Int64 i; Int64 v ]
+        when i >= 0L
+             && Int64.add i (Int64.of_int width)
+                <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
+          let v =
+            Int64.to_int v land if width = 2 then 0xFFFF else 0xFFFFFFFF
+          in
+          for k = 0 to width - 1 do
+            Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
+          done;
+          Int64 (Int64.of_int v)
+      | [ Int64 i; Int64 _ ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "index %Ld is out of bounds for a %s write on a length-%d Bytes"
+               i mname (Bytes.length b))
+      | [ Int64 _; v ] ->
+          error span "E3001"
+            (Printf.sprintf "`%s` expects an Int64 value, got %s" mname
+               (type_name v))
+      | [ v; _ ] ->
+          error span "E3001"
+            (Printf.sprintf "`%s` expects an Int64 index, got %s" mname
+               (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+               (List.length args)))
+  | Bytes b, "get_u64_le" -> (
+      match eval_args () with
+      | [ Int64 i ]
+        when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
+          let acc = ref 0L in
+          for k = 7 downto 0 do
+            acc :=
+              Int64.logor (Int64.shift_left !acc 8)
+                (Int64.of_int (Char.code (Bytes.get b (i + k))))
+          done;
+          Int64 !acc
+      | [ Int64 i ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "index %Ld is out of bounds for a get_u64_le read on a \
+                length-%d Bytes"
+               i (Bytes.length b))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`get_u64_le` expects an Int64 index, got %s"
+               (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
+               (List.length args)))
+  | Bytes b, "set_u64_le" -> (
+      match eval_args () with
+      | [ Int64 i; Int64 v ]
+        when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
+          for k = 0 to 7 do
+            Bytes.set b (i + k)
+              (Char.chr
+                 (Int64.to_int
+                    (Int64.logand (Int64.shift_right_logical v (8 * k)) 0xFFL)))
+          done;
+          Int64 v
+      | [ Int64 i; Int64 _ ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "index %Ld is out of bounds for a set_u64_le write on a \
+                length-%d Bytes"
+               i (Bytes.length b))
+      | [ Int64 _; v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_u64_le` expects an Int64 value, got %s"
+               (type_name v))
+      | [ v; _ ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_u64_le` expects an Int64 index, got %s"
+               (type_name v))
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
+               (List.length args)))
+  | String s, "to_bytes" ->
+      none_expected "to_bytes";
+      Bytes (Bytes.of_string s)
+  | TcpConn c, "read_line" ->
+      none_expected "read_line";
+      Effect.perform (Net_read_line (c, span))
+  | TcpConn c, "read_exactly" -> (
+      match eval_args () with
+      | [ Int64 n ] ->
+          Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`read_exactly` expects an Int64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc))
+  | TcpConn c, "read_all" ->
+      none_expected "read_all";
+      Effect.perform (Net_read_all (c, span))
+  | TcpConn c, "write" -> (
+      match eval_args () with
+      | [ String s ] -> Effect.perform (Net_write (c, s, span))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`write` expects a String, got %s" (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`write` expects 1 argument, got %d" argc))
+  | TcpConn c, "close" ->
+      none_expected "close";
+      Effect.perform (Net_close_conn (c, span))
+  | TcpConn c, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          c.ctimeout <- f;
+          TcpConn c
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | TcpListener l, "accept" ->
+      none_expected "accept";
+      Effect.perform (Net_accept (l, span))
+  | TcpListener { lunix = true; ldesc; _ }, "port" ->
+      error span "E3007"
+        (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
+  | TcpListener l, "port" ->
+      none_expected "port";
+      Int64 (Int64.of_int l.lport)
+  | TcpListener l, "close" ->
+      none_expected "close";
+      Effect.perform (Net_close_listener (l, span))
+  | TcpListener l, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          l.ltimeout <- f;
+          TcpListener l
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | UdpSocket u, "send_to" -> (
+      match eval_args () with
+      | [ String host; Int64 port; String data ] ->
+          (* The handler resolves the host; failure rides back in
                  the tuple like every other data-driven net failure. *)
-              Effect.perform
-                (Net_udp_send_to (u, host, Int64.to_int port, data, span))
-          | _ ->
-              error span "E3007"
-                "`send_to` expects (host String, port Int64, data String)")
-      | UdpSocket u, "recv_from" ->
-          none_expected "recv_from";
-          let received = Effect.perform (Net_udp_recv_from (u, span)) in
-          received
-      | UdpSocket u, "port" ->
-          none_expected "port";
-          Int64 (Int64.of_int u.uport)
-      | UdpSocket u, "close" ->
-          none_expected "close";
-          Effect.perform (Net_udp_close (u, span))
-      | UdpSocket u, "set_timeout" -> (
-          match eval_args () with
-          | [ Float f ] when f >= 0.0 ->
-              u.utimeout <- f;
-              UdpSocket u
-          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-          | [ v ] ->
-              error span "E3001"
-                (Printf.sprintf "`set_timeout` expects a Float64, got %s"
-                   (type_name v))
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
-          )
-      | String s, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int (String.length s))
-      | String s, "substring" -> (
-          match eval_args () with
-          | [ Int64 start; Int64 len ]
-            when start >= 0L && len >= 0L
-                 && Int64.add start len <= Int64.of_int (String.length s) ->
-              String (String.sub s (Int64.to_int start) (Int64.to_int len))
-          | [ Int64 start; Int64 len ] ->
-              error span "E3004"
-                (Printf.sprintf
-                   "substring (%Ld, %Ld) is out of bounds for a length-%d \
-                    String"
-                   start len (String.length s))
-          | _ ->
-              error span "E3007"
-                "`substring` expects (start Int64, length Int64)")
-      | String s, "split" -> (
-          match eval_args () with
-          | [ String sep ] when sep <> "" ->
-              Array
-                (Array.of_list
-                   (List.map (fun part -> String part) (split_on_string sep s)))
-          | [ String _ ] -> error span "E3007" "the separator must not be empty"
-          | _ -> error span "E3007" "`split` expects a String separator")
-      | String s, "trim" ->
-          none_expected "trim";
-          String (String.trim s)
-      | String s, "lower" ->
-          none_expected "lower";
-          String (String.lowercase_ascii s)
-      | String s, "index_of" -> (
-          match eval_args () with
-          | [ String needle ] ->
-              let rec find i =
-                if i + String.length needle > String.length s then None
-                else if String.sub s i (String.length needle) = needle then
-                  Some i
-                else find (i + 1)
-              in
-              Int64
-                (Int64.of_int (match find 0 with Some i -> i | None -> -1))
-          | _ -> error span "E3007" "`index_of` expects a String needle")
-      | String s, "starts_with" -> (
-          match eval_args () with
-          | [ String prefix ] -> Bool (String.starts_with ~prefix s)
-          | _ -> error span "E3007" "`starts_with` expects a String prefix")
-      | String s, "to_int64" -> (
-          match parse_decimal s with
-          | Some n -> Int64 n
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "cannot parse `%s` as an Int64" s))
-      | Array xs, "append" -> (
-          match eval_args () with
-          | [ v ] -> Array (Array.append xs [| v |])
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`append` expects 1 argument, got %d" argc))
-      | Map m, "get" -> (
-          match eval_args () with
-          | [ k ] -> map_get span m k
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`get` expects 1 argument, got %d"
-                   (List.length args)))
-      | Map m, "set" -> (
-          match eval_args () with
-          | [ k; v ] ->
-              map_set span m k v;
-              Map m
-          | _ -> error span "E3007" "`set` expects (key, value)")
-      | Map m, "has" -> (
-          match eval_args () with
-          | [ k ] -> Bool (map_key_ok k && Hashtbl.mem m.entries k)
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`has` expects 1 argument, got %d"
-                   (List.length args)))
-      | Map m, "remove" -> (
-          match eval_args () with
-          | [ k ] ->
-              if map_key_ok k && Hashtbl.mem m.entries k then (
-                Hashtbl.remove m.entries k;
-                m.order <-
-                  List.filter (fun kk -> not (equal_value kk k)) m.order);
-              Map m
-          | args ->
-              error span "E3007"
-                (Printf.sprintf "`remove` expects 1 argument, got %d"
-                   (List.length args)))
-      | Map m, "length" ->
-          none_expected "length";
-          Int64 (Int64.of_int (Hashtbl.length m.entries))
-      | Map m, "keys" ->
-          none_expected "keys";
-          Array (Array.of_list (map_keys m))
-      | Map m, "values" ->
-          none_expected "values";
+          Effect.perform
+            (Net_udp_send_to (u, host, Int64.to_int port, data, span))
+      | _ ->
+          error span "E3007"
+            "`send_to` expects (host String, port Int64, data String)")
+  | UdpSocket u, "recv_from" ->
+      none_expected "recv_from";
+      let received = Effect.perform (Net_udp_recv_from (u, span)) in
+      received
+  | UdpSocket u, "port" ->
+      none_expected "port";
+      Int64 (Int64.of_int u.uport)
+  | UdpSocket u, "close" ->
+      none_expected "close";
+      Effect.perform (Net_udp_close (u, span))
+  | UdpSocket u, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          u.utimeout <- f;
+          UdpSocket u
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float64, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | String s, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int (String.length s))
+  | String s, "substring" -> (
+      match eval_args () with
+      | [ Int64 start; Int64 len ]
+        when start >= 0L && len >= 0L
+             && Int64.add start len <= Int64.of_int (String.length s) ->
+          String (String.sub s (Int64.to_int start) (Int64.to_int len))
+      | [ Int64 start; Int64 len ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "substring (%Ld, %Ld) is out of bounds for a length-%d String"
+               start len (String.length s))
+      | _ ->
+          error span "E3007" "`substring` expects (start Int64, length Int64)")
+  | String s, "split" -> (
+      match eval_args () with
+      | [ String sep ] when sep <> "" ->
           Array
             (Array.of_list
-               (List.map (fun k -> Hashtbl.find m.entries k) (map_keys m)))
-      | Instance i, "is" -> (
-          let args = eval_args () in
-          match args with
-          | [ t ] -> Bool (runtime_is span (Instance i) t)
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-      | (EnumMember _ as v), "is" -> (
-          let args = eval_args () in
-          match args with
-          | [ t ] -> Bool (runtime_is span v t)
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-      | Instance i, mname ->
+               (List.map (fun part -> String part) (split_on_string sep s)))
+      | [ String _ ] -> error span "E3007" "the separator must not be empty"
+      | _ -> error span "E3007" "`split` expects a String separator")
+  | String s, "trim" ->
+      none_expected "trim";
+      String (String.trim s)
+  | String s, "lower" ->
+      none_expected "lower";
+      String (String.lowercase_ascii s)
+  | String s, "index_of" -> (
+      match eval_args () with
+      | [ String needle ] ->
+          let rec find i =
+            if i + String.length needle > String.length s then None
+            else if String.sub s i (String.length needle) = needle then Some i
+            else find (i + 1)
+          in
+          Int64 (Int64.of_int (match find 0 with Some i -> i | None -> -1))
+      | _ -> error span "E3007" "`index_of` expects a String needle")
+  | String s, "starts_with" -> (
+      match eval_args () with
+      | [ String prefix ] -> Bool (String.starts_with ~prefix s)
+      | _ -> error span "E3007" "`starts_with` expects a String prefix")
+  | String s, "to_int64" -> (
+      match parse_decimal s with
+      | Some n -> Int64 n
+      | None ->
+          error span "E3007" (Printf.sprintf "cannot parse `%s` as an Int64" s))
+  | Array xs, "append" -> (
+      match eval_args () with
+      | [ v ] -> Array (Array.append xs [| v |])
+      | _ ->
           error span "E3007"
-            (Printf.sprintf "NoMethodError: `%s` has no method `%s`"
-               i.iclass.cname mname)
-      | Obj o, "is" -> (
-          let args = eval_args () in
-          match args with
-          | [ t ] -> Bool (runtime_is span (Obj o) t)
-          | _ ->
-              error span "E3007"
-                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-      | Obj o, mname -> (
-          match Hashtbl.find_opt o.omethods mname with
-          | Some (_arity, f) ->
-              let args = eval_args () in
-              f args
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "NoMethodError: `%s` has no method `%s`"
-                   o.ocname mname))
-      | v, m ->
+            (Printf.sprintf "`append` expects 1 argument, got %d" argc))
+  | Map m, "get" -> (
+      match eval_args () with
+      | [ k ] -> map_get span m k
+      | args ->
           error span "E3007"
-            (Printf.sprintf "%s has no method `%s`" (type_name v) m))
+            (Printf.sprintf "`get` expects 1 argument, got %d"
+               (List.length args)))
+  | Map m, "set" -> (
+      match eval_args () with
+      | [ k; v ] ->
+          map_set span m k v;
+          Map m
+      | _ -> error span "E3007" "`set` expects (key, value)")
+  | Map m, "has" -> (
+      match eval_args () with
+      | [ k ] -> Bool (map_key_ok k && Hashtbl.mem m.entries k)
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`has` expects 1 argument, got %d"
+               (List.length args)))
+  | Map m, "remove" -> (
+      match eval_args () with
+      | [ k ] ->
+          if map_key_ok k && Hashtbl.mem m.entries k then (
+            Hashtbl.remove m.entries k;
+            m.order <- List.filter (fun kk -> not (equal_value kk k)) m.order);
+          Map m
+      | args ->
+          error span "E3007"
+            (Printf.sprintf "`remove` expects 1 argument, got %d"
+               (List.length args)))
+  | Map m, "length" ->
+      none_expected "length";
+      Int64 (Int64.of_int (Hashtbl.length m.entries))
+  | Map m, "keys" ->
+      none_expected "keys";
+      Array (Array.of_list (map_keys m))
+  | Map m, "values" ->
+      none_expected "values";
+      Array
+        (Array.of_list
+           (List.map (fun k -> Hashtbl.find m.entries k) (map_keys m)))
+  | Instance i, "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span (Instance i) t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+  | (EnumMember _ as v), "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span v t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+  | Instance i, mname ->
+      error span "E3007"
+        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
+           mname)
+  | Obj o, "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span (Obj o) t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+  | Obj o, mname -> (
+      match Hashtbl.find_opt o.omethods mname with
+      | Some (_arity, f) ->
+          let args = eval_args () in
+          f args
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "NoMethodError: `%s` has no method `%s`" o.ocname
+               mname))
+  | v, m ->
+      error span "E3007"
+        (Printf.sprintf "%s has no method `%s`" (type_name v) m)
 
 and apply f span args =
   let check_positional kind name =
@@ -3812,8 +3798,7 @@ and apply_runtime_impl span name args =
             Int64 0L)
     | "os_setpgid", vs ->
         error span "E3007"
-          (Printf.sprintf
-             "`os_setpgid` expects (pid Int64, pgid Int64), got %d"
+          (Printf.sprintf "`os_setpgid` expects (pid Int64, pgid Int64), got %d"
              (List.length vs))
     | "os_pipe", [] ->
         os_result span (fun () ->
@@ -4330,7 +4315,7 @@ and eval_stmt ?(tail = false) env s =
                   arg_exprs
               in
               raise (Tail_call (closure, args, [ ("self", Instance i) ]))
-          | _ -> ignore (eval_expr env e))
+          | _ -> ignore (call_method_value env span base mname arg_exprs))
       | Ast.Call (callee, arg_exprs) -> (
           match eval_expr env callee with
           | ArrowBlock closure ->
@@ -4341,7 +4326,14 @@ and eval_stmt ?(tail = false) env s =
                   arg_exprs
               in
               raise (Tail_call (closure, args, []))
-          | _ -> ignore (eval_expr env e))
+          | not_a_closure ->
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    (arg_name, eval_expr env arg_value))
+                  arg_exprs
+              in
+              ignore (apply not_a_closure span args))
       | _ -> ignore (eval_expr env e))
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
   | Ast.Binding { mutable_; pattern; init } -> (
@@ -4398,7 +4390,10 @@ and eval_stmt ?(tail = false) env s =
                   arg_exprs
               in
               raise (Tail_call (closure, args, [ ("self", Instance i) ]))
-          | _ -> raise (Return_signal (eval_expr env e)))
+          | _ ->
+              raise
+                (Return_signal (call_method_value env span base mname arg_exprs))
+          )
       | Ast.Call (callee, arg_exprs) -> (
           let f = eval_expr env callee in
           match f with

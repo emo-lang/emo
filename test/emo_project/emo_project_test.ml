@@ -3922,12 +3922,14 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "csv_edge")
           "csv_edge" "main.emo");
-    tc "template_demo compiles to a binary with the interpreter's output" (fun () ->
+    tc "template_demo compiles to a binary with the interpreter's output"
+      (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "template_demo")
           "template_demo" "main.emo");
-    tc "template_edge compiles to a binary with the interpreter's output" (fun () ->
+    tc "template_edge compiles to a binary with the interpreter's output"
+      (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "template_edge")
@@ -4046,6 +4048,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "atomic_cell")
           "atomic_cell" "main.emo");
+    tc "builtin_names compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "builtin_names")
+          "builtin_names" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 17) ----
@@ -4123,6 +4130,10 @@ let ts_golden_tests =
       ("crypto_aead", "main.emo");
       ("crypto_sign", "main.emo");
       ("crypto_ecdh", "main.emo");
+      (* builtin_names: the instance-first dispatch and the chained
+         lifetime — a class method in the sender position must leave the
+         chained builtin reading the one temporary it produced *)
+      ("builtin_names", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the
@@ -4525,10 +4536,7 @@ let () =
   let groups =
     match (Sys.getenv_opt "EMO_BOOTSTRAP", Sys.getenv_opt "EMO_TS_GOLDEN") with
     | Some "1", Some "1" ->
-        [
-          ("bootstrap", bootstrap_tests);
-          ("ts_golden", ts_golden_tests);
-        ]
+        [ ("bootstrap", bootstrap_tests); ("ts_golden", ts_golden_tests) ]
     | Some "1", _ -> [ ("bootstrap", bootstrap_tests) ]
     | _, Some "1" -> [ ("ts_golden", ts_golden_tests) ]
     | _ -> all_groups

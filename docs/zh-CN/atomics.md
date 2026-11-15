@@ -6,7 +6,9 @@
 操作各自原子（2026-10-25 定案）。顺序一致性是唯一的 memory order——每个操作
 连同 `fence()` 都进入同一条全序，所有上下文对这条全序看法一致；表面上任何
 地方都不存在 memory order 参数。第一刀只覆盖两种负载，`Int64` 与 `Bool`，
-此外没有第三种：任何其他负载的原子操作在检查期按名拒绝。
+此外没有第三种：任何其他负载的原子操作在检查期按名拒绝。`Bytes` 于
+2026-11-14（T83.3）加入——`Bytes.new` 有了构造规则之后，缓冲区是这个
+cell 的值泛型操作能携带的值；其余负载依旧在检查期按名拒绝。
 
 最直接的需求来自 EmoOS：在裸机上，中断体与被它打断的线程代码共享同一
 地址空间，而用 `peek` 和 `poke` 搭出的读-改-写撑不住落在中间的中断。这个
@@ -26,10 +28,11 @@
 
 ## 表面
 
-类型词汇跟容器家族走：能过检查的拼写只有 `Atomic[Int64]` 与
-`Atomic[Bool]`，裸 `Atomic` 意为「两种负载皆可」，正如裸 `Box` 意为
+类型词汇跟容器家族走：能过检查的拼写是 `Atomic[Int64]`、`Atomic[Bool]` 与
+`Atomic[Bytes]`，裸 `Atomic` 意为「任意负载皆可」，正如裸 `Box` 意为
 「任意元素」。一个类型、负载作参数——没有按位宽铺开的一族原子类型名。
-`Atomic.new(0)` 构造；cell 的负载就是实参的类型。
+`Atomic.new(0)` 构造；cell 的负载就是实参的类型
+（`Atomic.new(Bytes.new(4))` 是缓冲区 cell 的写法）。
 
 ```emo
 const served = Atomic.new(0)     // an Atomic[Int64]
@@ -57,6 +60,21 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
 | `compare_exchange(expected, new)` | `(Bool, Bool)` | 同一对子契约 |
 | `fetch_and(v)` / `fetch_or(v)` / `fetch_xor(v)` | `Bool` | 逻辑读-改-写，返回旧值 |
 
+`Atomic[Bytes]`——只有值泛型的四个；读-改-写家族是两个标量的词汇表，
+不进缓冲区：
+
+| 操作 | 返回 | 行为 |
+| --- | --- | --- |
+| `load()` | `Bytes` | 读出 cell 当前持有的缓冲区 |
+| `store(v)` | — | 替换该缓冲区 |
+| `exchange(v)` | `Bytes` | 替换该缓冲区，返回旧值 |
+| `compare_exchange(expected, new)` | `(Bool, Bytes)` | 同一对子契约，作用在缓冲区上 |
+
+一句诚实的注意：`beam` 的 cell 底座是 Erlang 的 `atomics` 数组——只能装
+整数——所以 Bytes cell 在所有目标上都过检查，但唯独在 `beam` 上一运行就死
+（`emo_no_atomic`）。让 BEAM 诚实地携带缓冲区需要非标量 cell 的设计；在那
+落地之前，Bytes cell 是检查期的形状，不是处处能跑的形状。
+
 表格之下的规则：
 
 - **每个读-改-写都返回操作之前 cell 持有的值**——名字里的 `fetch_` 说的
@@ -69,10 +87,11 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
   某个 cell：对一切内存访问——普通访问与 volatile（`peek`/`poke`）——
   的完整顺序一致性屏障。
 - **拒绝，依 strictness-first。** `fetch_add`/`fetch_sub` 在
-  `Atomic[Bool]` 上拒绝——算术不是 Bool 的词汇表，按位运算才是。两种负载
-  之外的都按名拒绝：`Atomic[Float64]` 在各目标上都拿不出诚实的无锁
-  读-改-写，而非标量——字符串、容器、box、嵌套的 `Atomic`——根本不是
-  cell。
+  `Atomic[Bool]` 上拒绝——算术不是 Bool 的词汇表，按位运算才是。整个
+  `fetch_` 家族在 `Atomic[Bytes]` 上拒绝——cell 的读-改-写是标量字的
+  操作，不是缓冲区的。三种负载之外的都按名拒绝：`Atomic[Float64]` 在各
+  目标上都拿不出诚实的无锁读-改-写，其余非标量——字符串、容器、box、
+  嵌套的 `Atomic`——根本不是 cell。
 - **`==` 比较两个 cell 现在持有的值**，每个操作数各作一次原子读——与
   可变家族同一条结构化规则。
 

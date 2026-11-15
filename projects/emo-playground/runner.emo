@@ -455,9 +455,9 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
 
       const (wpid, raw_status) = os.waitpid(pid)
       const exited = os.wait_exited(raw_status)
-      const code = os.wait_exit_code(raw_status)
+      const raw_code = os.wait_exit_code(raw_status)
       const sig = os.wait_signal(raw_status)
-      var status = status_of(exited, code)
+      var status = status_of(exited, raw_code)
       var err_text = ""
       case file.read(err_path) {
         (R.ok, data) then { err_text = data }
@@ -472,7 +472,7 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
         status = "crash"
       }
       sweep_dir(dir)
-      const exit_code = if exited { code } else { 128 + sig }
+      const exit_code = if exited { raw_code } else { 128 + sig }
       return RunResult.new(status: status, exit_code: exit_code, stdout: scrub(out_text, dir), stderr: scrub(err, dir))
       }
     }
