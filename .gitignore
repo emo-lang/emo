@@ -88,3 +88,16 @@ projects/emo-os/.blk.img.gdb
 *.wasm-art
 *.wasm-art.wasm
 *.wasm-art.wat
+
+# The wasm/wat artifacts a --target wasm build writes beside the entry
+# (the examples were probed under --wasi; the .wat is the readable twin)
+examples/*/*.wasm
+examples/*/*.wat
+examples/*/.emo-build.wasm
+examples/*/.emo-build.wat
+
+# dune's compile_commands export and the BEAM tooling's crash dump /
+# intermediate core, left by smoke runs and the beam goldens
+compile_commands.json
+erl_crash.dump
+*.core
