@@ -815,6 +815,101 @@ let wasm_examples_tests =
                    err)))
     wasm_goldens
 
+let wasmtime_available =
+  lazy (Sys.command "wasmtime --version >/dev/null 2>&1" = 0)
+
+(* The wasi goldens: the same wasm goldens that render their output
+   through pure string ops (no floats — the guest-side %g refuses
+   this rung; no os file calls — the resolve/handle misalignment is
+   recorded as found-not-fixed) wrapped in the WASI 0.3 command
+   component and executed by wasmtime (46+, -S cli), byte-for-byte
+   against the same expected.txt. Skips when wasmtime is absent; the
+   run passes --dir /::/ so relative file paths resolve like the
+   interpreter's. *)
+let wasi_goldens =
+  [
+    "hello_world";
+    "if_expr";
+    "fib";
+    "objects";
+    "length_method";
+    "language_tour";
+    "shop";
+    "pipeline";
+    "function_group";
+    "showcase";
+    "bit_ops";
+    "array_builder";
+    "base64_demo";
+    "csv_demo";
+    "yaml_demo";
+    "xml_demo";
+    "dom_demo";
+    "dom_edge";
+    "template_demo";
+    "template_edge";
+    "slog_demo";
+    "sync_demo";
+    "loops";
+    "error_matching";
+    "string_methods";
+    "branch_var";
+    "builtin_names";
+    "to_string_render";
+    "typed_sigs";
+    "png_demo";
+    "sql_demo";
+    "sql_edge";
+    "atomic_cell";
+    "crypto_hash";
+    "crypto_aead";
+    "crypto_sign";
+    "crypto_ecdh";
+    "trace_macro_demo";
+    "memoize_macro_demo";
+    "derive_eq_macro_demo";
+    "derive_shared_macro_demo";
+    "rand_demo";
+    "uuid_demo";
+  ]
+
+let wasi_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to wasm --wasi and runs on wasmtime" name)
+        (fun () ->
+          if not (Lazy.force wasmtime_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_wasm = Filename.concat scratch (name ^ "-wasi-main.wasm") in
+          let exit_code =
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"wasm"
+                  ~profile:"kernel" ~wasi:true)
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd =
+            Printf.sprintf
+              "cd %s && wasmtime run -S cli -W \
+               component-model-more-async-builtins=y --dir /::/ %s"
+              (Filename.quote dir) (Filename.quote out_wasm)
+          in
+          let out, err, proc_status = run_cmd cmd in
+          Alcotest.(check string) "output" expected out;
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "wasmtime exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   err)))
+    wasi_goldens
+
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
    when cc is absent. The list names the backend's current support
@@ -6747,6 +6842,7 @@ let () =
         wasm_examples_tests
         @ [ wasm_file_probe_test; wasm_process_refusal_test ]
         @ wasm_process_group_refusal_tests );
+      ("wasi_examples", wasi_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);

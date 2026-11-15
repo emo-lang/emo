@@ -397,7 +397,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 if wasi then begin
                   (* The WASI 0.3 command component: the --wasi core
                      module inside the wrapper the probe validated
-                     (step 81). *)
+                     (step 85). *)
                   let core = Emo_codegen.Wasm.to_binary module_ in
                   let binary, text = Emo_codegen.Component.command 2 core in
                   output_string oc binary;
@@ -1287,7 +1287,7 @@ let run =
         else if wasi then begin
           (* The WASI 0.3 command component runs under wasmtime — the
              second engine, the sync stream builtins riding the
-             more-async-builtins gate (step 81). *)
+             more-async-builtins gate (step 85). *)
           if not (tool_exists "wasmtime") then begin
             prerr_endline
               "emo run: --wasi needs wasmtime 46+ on PATH (the WASI 0.3 \

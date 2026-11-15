@@ -360,7 +360,7 @@ let import_count = 20
 (* The ABI mode: the Node canonical host's eighteen `emo.*` imports, or
    the WASI 0.3 component's twenty-six — the stdio doors, the exit
    channel, the stream/future/resource builtins, and the filesystem,
-   random, and environment doors (step 81). [assemble] sets both before
+   random, and environment doors (step 85). [assemble] sets both before
    any lowering reads the indices; the wasi import table and the
    lowered-function list branch on [wasi_mode]. *)
 let wasi_mode = ref false
@@ -4165,8 +4165,12 @@ let entry_bare (display : string) : string =
    pool are live. *)
 let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
     =
+  (* the dispatch arms' accumulator rides local 6 in the wasi mode —
+     the inlined fallthrough body owns locals 1-5 (local 1 is its
+     packed stream handle) *)
+  let acc = if !wasi_mode then 6 else 1 in
   let cat str =
-    (* [str] onto the accumulator in local 1, as $bytes for strcat *)
+    (* [str] onto the accumulator, as $bytes for strcat *)
     capturing env (fun () -> string_const env str)
     @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
   in
@@ -4191,15 +4195,15 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
               List.concat_map
                 (fun (i, (fname, fidx)) ->
                   (if i > 0 then
-                     (W.Local_get 1 :: cat ", ")
-                     @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                     (W.Local_get acc :: cat ", ")
+                     @ [ W.Call (rt "strcat"); W.Local_set acc ]
                    else [])
-                  @ (W.Local_get 1 :: cat fname)
-                  @ [ W.Call (rt "strcat"); W.Local_set 1 ]
-                  @ (W.Local_get 1 :: cat ": ")
-                  @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                  @ (W.Local_get acc :: cat fname)
+                  @ [ W.Call (rt "strcat"); W.Local_set acc ]
+                  @ (W.Local_get acc :: cat ": ")
+                  @ [ W.Call (rt "strcat"); W.Local_set acc ]
                   @ [
-                      W.Local_get 1;
+                      W.Local_get acc;
                       W.Local_get 0;
                       W.Ref_cast tidx;
                       W.Struct_get (tidx, fidx);
@@ -4207,15 +4211,15 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
                       W.Ref_cast t_vstring;
                       W.Struct_get (t_vstring, 0);
                       W.Call (rt "strcat");
-                      W.Local_set 1;
+                      W.Local_set acc;
                     ])
                 (List.mapi (fun i f -> (i, f)) fields)
             in
             let close =
-              (W.Local_get 1 :: cat ")")
+              (W.Local_get acc :: cat ")")
               @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ]
             in
-            Some (tidx, open_ @ [ W.Local_set 1 ] @ body @ close))
+            Some (tidx, open_ @ [ W.Local_set acc ] @ body @ close))
       program.Emo_ir.pclasses
   in
   let rec chain = function
@@ -4232,7 +4236,19 @@ let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
-    flocals = [ (1, W.RefNull t_bytes) ];
+    (* the fallthrough inlines rt_instance_str's body, whose wasi
+       cycle rides locals 1-5 — the declaration has to cover it *)
+    flocals =
+      (if !wasi_mode then
+         [
+           (1, W.I64);
+           (3, W.I32);
+           (1, W.RefNull t_bytes);
+           (* the inlined fallthrough body rides 1-5; the dispatch
+              arms' accumulator moves to 6 *)
+           (1, W.RefNull t_bytes);
+         ]
+       else [ (1, W.RefNull t_bytes) ]);
     fbody = chain arms;
   }
 
@@ -4562,7 +4578,7 @@ let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
       W.I32_const 65536 :: W.Global_set 0
       ::
       (if !wasi_mode then
-         [ W.I32_const 65536; W.I32_const wasi_bump_cell; W.I32_store ]
+         [ W.I32_const wasi_bump_cell; W.I32_const 65536; W.I32_store ]
        else [])
       @ List.concat_map
           (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
@@ -8502,7 +8518,7 @@ let rt_box () : W.func_type =
    lands. The port's algorithm is validated (the fixed-form path ran
    byte-identical with the node host over the whole float ladder in the
    2026-11-14 session) and the wat-level exp-form bugs that remain are
-   recorded in plan/step-81-wasi03.md for the next pass. *)
+   recorded in plan/step-85-wasi03.md for the next pass. *)
 let rt_float_str (env : env) : W.func_type =
   {
     W.ftype_idx = type_idx env (W.FuncT ([ W.F64 ], [ W.RefNull t_bytes ]));
@@ -9718,8 +9734,8 @@ let rt_wasi_rand_fill (env : env) : W.func_type =
                     W.Local_get 1;
                     W.I32_ge;
                     W.Br_if 1;
-                    W.Local_get 2;
                     W.Local_get 1;
+                    W.Local_get 2;
                     W.I32_sub;
                     W.I64_extend_i32_u;
                     W.I32_const wasi_retp_a;

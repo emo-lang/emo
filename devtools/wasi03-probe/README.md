@@ -1,7 +1,7 @@
 # The WASI 0.3 probe
 
-`probe.wat` is the hand-written component the step-81 probe campaign
-(`plan/step-81-wasi03.md`) ended on: a guest core module running the
+`probe.wat` is the hand-written component the step-85 probe campaign
+(`plan/step-85-wasi03.md`) ended on: a guest core module running the
 full stdout stream protocol against `wasi:cli/stdout@0.3.0`, then
 `exit-with-code(42)`. `run.sh` assembles it and runs it under wasmtime,
 asserting `hello` on stdout and exit code 42.

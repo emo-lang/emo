@@ -52,3 +52,42 @@ done
 
 echo "wasmtime-smoke: $pass validated, $fail failed"
 [ "$fail" -eq 0 ]
+
+# ---- The wasi execution rung (step 85) ----
+#
+# The --wasi subset (the demos whose output rides pure string ops —
+# no floats, no os file calls) builds into a WASI 0.3 command
+# component and EXECUTES under wasmtime -S cli, byte-for-byte against
+# expected.txt. The list mirrors wasi_goldens in
+# test/emo_cli/emo_cli_test.ml.
+
+WASI_GOLDENS="hello_world if_expr fib objects length_method
+language_tour shop pipeline function_group showcase bit_ops
+array_builder base64_demo csv_demo yaml_demo xml_demo dom_demo
+dom_edge template_demo template_edge slog_demo sync_demo loops
+error_matching string_methods branch_var builtin_names
+to_string_render typed_sigs png_demo sql_demo sql_edge atomic_cell
+crypto_hash crypto_aead crypto_sign crypto_ecdh rand_demo uuid_demo"
+
+wpass=0
+wfail=0
+for name in $WASI_GOLDENS; do
+    dir="$ROOT/examples/$name"
+    [ -d "$dir" ] || { echo "MISSING  wasi/$name"; wfail=$((wfail + 1)); continue; }
+    if (cd "$dir" && EMO_REGISTRY="$REGISTRY" "$EMO" build main.emo \
+            --target wasm --wasi > /dev/null 2>&1) \
+        && out=$(cd "$dir" && wasmtime run -S cli \
+            -W component-model-more-async-builtins=y --dir /::/ \
+            main.wasm 2>/dev/null) \
+        && [ "$out" = "$(cat "$dir/expected.txt")" ]
+    then
+        wpass=$((wpass + 1))
+        echo "ok       wasi/$name"
+    else
+        wfail=$((wfail + 1))
+        echo "FAIL     wasi/$name"
+    fi
+done
+
+echo "wasmtime-smoke: wasi rung $wpass matched, $wfail failed"
+[ "$wfail" -eq 0 ]

@@ -64,6 +64,7 @@
 | M43 — 锁刷新 | 82 | `emo deps resolve` 按项目自己声明的 targets(或显式 `--target`)解析,并与其他命令一样尊重 `EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,八个门禁逐字节消费它;`just lock-refresh` 遍历每个被跟踪锁的目录,一条命令重钉全树(118 个锁,零 diff);`test/emo_cli` 的 `resolve_targets` 组五个用例;CHECK.md 的 c-target-only 注记退役(`CHECK.md`)。 |
 | M44 — 严格性收口 | 83 | 四个在案 checker 缺口都在检查期拒绝:块内绑定不得遮蔽外层绑定(E4029)、同一枚举成员的各臂元组 payload 类型必须一致(E4030,`:chain` 经其重写继承),以及 Bytes 规则 Unknown 容忍之后的 `Bytes.new` 构造规则——旁边是记录时一并发现的运行期寿命 bug(链式内建形态 `b.to_bytes().length()` 现在在解释器与每个编译目标上答出 receiver 的真实值,钉进 `examples/builtin_names`);负例金测在 `test/emo_cli` 的 `strictness_refusal` 组,语料扫干净,规则落进 `docs/intro/type-system.md` 与 `docs/intro/syntax.md`(`CHECK.md`)。 |
 | M45 — 配置格式 | 84 | `toml` 包:TOML 1.1.0 解码进与 json、yaml 同构设计的 `Toml` 值树——七个类别、没有 null(TOML 没有)、四种日期时间形式共用一个 `TomlDateTime` 类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——float 包的精确十进制构造器托着每个数字的纯 Emo;decode 覆盖 1.1 全部表面(`\e` 与 `\xHH` 转义、秒可省略、小写 `t`/`z`、空格分隔符试错回退、多行 inline table 与尾逗号)与严格的重复定义规则,边解析边装配 origin 标签节点(点分键把表关上不让 header 打开、inline table 在闭括号处关死、`[[x]]` 只向数组追加、更深的 header 下钻最新元素、隐式超表最多声明一次);`inf`/`nan` 与越界整数像一切畸形输入一样以 `(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行、`decode(encode(v)) == v`;edge 电池冲出七个包内 bug——字符串 fill 在该答下一个下标处答了写入长度、十六进制转义数字位权算错、浮点缓冲把下划线数进去、指数值把下划线当数字、`doc_inline?` 对全表数组答 true、段内行渲染完整点分路径、日期时间类缺接口——编译 golden 又冲出三个后端 bug,都是树上既有的:TS 的 Void 尾调用 driver 没有出口(每个 Void 尾递归在 TS 上永远旋转,整条 ts_golden 名单空烧 CPU)、BEAM 的运行时分派把 builtin 臂绑在可被覆盖的 map 上(两层接口深即被 erlc 拒绝)、wasm 的 `deep_eq` 没有 tuple 臂(任何 `Array[(A, B)]` 类字段的类与自己的孪生比都不相等,直到有 golden 比较解码树才现形)(`CHECK.md`)。 |
+| M46 — wasm target 说 WASI 0.3 | 85 | `emo build --target wasm --wasi` 把 WasmGC 模块包进 WASI 0.3 command component(`wasi:cli/run@0.3.0`),wasmtime 46+(`-S cli`)执行:stdout/stderr 走原生 stream 循环经 `wasi:cli/stdout`+`stderr`,退出码走 `wasi:cli/exit`,导入表从十八个 `emo.*` 门重映射为二十七个标准门——`wasi:filesystem`(descriptor 以 `(sub resource)` export 声明,open-at、目录项流、单字符串变更),`wasi:filesystem/preopens`(路径解析所锚定的表),`wasi:random/random`,`wasi:cli/environment`;provider 模块加了宿主写回列表所依赖的 canonical realloc,与 guest 共享 bump cursor cell;五处 store 操作数序(value 先于 address)修复;guest 侧 `%g` 浮点格式化器与文件链最后一层记录为 found-not-fixed;`wasi_examples`——43 个金测与 Node 清单逐字节一致——与 wasmtime-smoke 的执行 rung 钉住各门(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -2258,3 +2259,38 @@ EN+zh。
   相等(toml 的根表、json 的 `JsonObject`——直到有 golden 去比较
   解码出的树才现形)。数组臂参数化了操作数局部,tuple 臂把两个元素
   数组溢出到新鲜局部后复用它;元组像数组一样逐元素比较。
+
+## M46 — wasm target 说 WASI 0.3
+
+### Step 85 — WASI 0.3 生产者之门
+
+**状态:** 完成。(`plan/step-85-wasi03.md` 为本 step 的记录。)
+
+- [x] **T85.1** — 探针战役:`devtools/wasi03-probe/`——手写组件对
+      `wasi:cli/stdout@0.3.0` 跑完整 stdout stream 循环,钉住四个
+      承重事实(async 类型的 run 以 sync ABI lift、`use` 拆分的
+      双 instance 导入形状、packed-i64 stream 句柄与所有权转移
+      协议、exit 通道)及二进制编码(README 事实表 1–16,含
+      T85.5 增补:37-case fs error-code 变体、`(eq)` export 集、
+      own/borrow deftype、宿主写回列表的 realloc)。
+- [x] **T85.2** — `src/emo_codegen/emo_component.ml`:组件级 AST、
+      二进制写出器、组件 WAT 打印器;`emo build --target wasm
+      --wasi` 产出 wasmtime 46+ 可执行的 command component,退出
+      码传递。
+- [x] **T85.3** — `emo_wasm.ml` 的 ABI 模式:导入表重映射为二十
+      七个标准门、memory provider、stdout/stderr stream 循环,
+      guest 侧 `%g` 本档拒绝(exp 式移植落地前的诚实之门)。
+- [x] **T85.4** — CLI flag 面(build/run/doctor)。
+- [x] **T85.5** — 文件系统、随机、环境三门:descriptor 以
+      `(sub resource)` export、37-case error-code 变体、`(eq)`
+      export 集、provider 的 canonical realloc 与 guest 共享 bump
+      cursor cell、preopen 表 + 路径解析 + fd 表 + stream
+      读/写循环、五处 store 操作数序(value 先于 address)修复、
+      generated `instance_str` 的 accumulator 移至 local 6、rand
+      填充的剩余量方向(n − got 而非 got − n)。hello、argv、
+      environment 在 wasmtime -S cli 下读回正确;文件链最后一层
+      (resolve 到宿主接受的句柄)记录为 found-not-fixed。
+- [x] **T85.6** — 金测:`wasi_examples`——43 个 demo 与 Node 清单
+      逐字节一致——无 wasmtime 时跳过;`devtools/wasmtime-smoke.sh`
+      的执行 rung(39/39);`docs/demo-targets.md` EN+zh;
+      TASKS/plan/CHECK 更新。

@@ -1,12 +1,12 @@
 #!/bin/sh
 # The WASI 0.3 probe: the validated minimal command component.
 #
-# probe.wat is the hand-written component the step-81 probe campaign
+# probe.wat is the hand-written component the step-85 probe campaign
 # ended on: a guest core module running the full stdout stream protocol
 # (stream.new, write-via-stream, stream.write, drop-writable,
 # future.drop-readable) and then exit-with-code(42). Running it proves
 # the four load-bearing facts the encoder is built on (see
-# plan/step-81-wasi03.md): wasmtime accepts the sync-lifted async run,
+# plan/step-85-wasi03.md): wasmtime accepts the sync-lifted async run,
 # the two-import shape the `use` split produces, the sync stream
 # builtins under the more-async-builtins gate, and the exit channel.
 #

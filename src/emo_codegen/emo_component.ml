@@ -8,7 +8,7 @@
    follow the component model's Binary.md; the load-bearing facts (the
    use-split import shape, the packed-i64 stream handles, the
    ownership-transfer stdout protocol, the more-async-builtins gate)
-   are the probe campaign's, recorded in plan/step-81-wasi03.md and
+   are the probe campaign's, recorded in plan/step-85-wasi03.md and
    devtools/wasi03-probe. *)
 
 (* ---- Component-level types ---- *)

@@ -1,7 +1,7 @@
-# Step 81 — WASI 0.3: Emo programs as standard command components
+# Step 85 — WASI 0.3: Emo programs as standard command components
 
-**Milestone:** M42 · **Prereq:** step 56 (the wasm target and its
-canonical host), 77 (WASI preview1) · **Status:** in progress
+**Milestone:** M46 · **Prereq:** step 56 (the wasm target and its
+canonical host), 77 (WASI preview1) · **Status:** complete
 
 The wasm target's artifact is a WasmGC module with eighteen `emo.*`
 imports, and only the Node canonical host can supply them — wasmtime
@@ -122,7 +122,7 @@ assumptions and pinned the encodings:
   Node/c targets, the known refusals pinned by name.
 - `devtools/wasmtime-smoke.sh` grown with the component execution rung.
 - Docs: the `--wasi` section in `docs/demo-targets.md` (EN + zh), the
-  ledger updates (plan row, TASKS milestone M42 + step section,
+  ledger updates (plan row, TASKS milestone M46 + step section,
   CHECK.md decision + trail).
 
 ### Out
@@ -140,21 +140,21 @@ assumptions and pinned the encodings:
 
 ## Tasks
 
-- [x] **T81.1** — The probe campaign: the four load-bearing facts, the
+- [x] **T85.1** — The probe campaign: the four load-bearing facts, the
       encodings, the stdout protocol, the exit channel
       (`devtools/wasi03-probe/`).
-- [x] **T81.2** — The component encoder (`emo_component.ml`): the AST,
+- [x] **T85.2** — The component encoder (`emo_component.ml`): the AST,
       the binary writer, the component WAT printer. Validated
       end-to-end: `emo run --target wasm --wasi` on hello_world prints
       the expected bytes under wasmtime 49 and exit codes propagate.
-- [x] **T81.3** — The ABI mode in `emo_wasm.ml`: the remapped import
+- [x] **T85.3** — The ABI mode in `emo_wasm.ml`: the remapped import
       table, the memory provider, the stdout/stderr stream cycles.
       The guest-side `%g` port ran the fixed-form path byte-identical
       with the node host over the whole float ladder before the
       wat-level exp-form bugs halted it (see the found-not-fixed
       below); this rung ships the honest refusal instead.
-- [x] **T81.4** — The CLI flag surface (build/run/doctor).
-- [x] **T81.5** — The filesystem, random, and environment imports; the
+- [x] **T85.4** — The CLI flag surface (build/run/doctor).
+- [x] **T85.5** — The filesystem, random, and environment imports; the
       refusal pins. The component grows `wasi:filesystem`
       (types + preopens, the descriptor as a `(sub resource)` export,
       the 37-case error-code variant with `other(option<string>)`),
@@ -167,8 +167,11 @@ assumptions and pinned the encodings:
       paths anchor on `get-initial-cwd`, falling back to the root
       preopen. The os half's file chain still answers no-entry (see
       the found-not-fixed below).
-- [ ] **T81.6** — The wasmtime-smoke execution rung, the docs, and the
-      close-out.
+- [x] **T85.6** — The goldens: `wasi_examples` — 43 demos
+      byte-identical with the Node list — skipping without
+      wasmtime; `devtools/wasmtime-smoke.sh`'s execution rung
+      (39/39 byte-identical); `docs/demo-targets.md` EN+zh; the
+      ledger rows (TASKS M46 + step section, this plan, CHECK).
 
 ## Found and fixed (the encoder's first landing)
 
@@ -195,7 +198,7 @@ assumptions and pinned the encodings:
 - The canon-lift of an async-typed export carries no async option —
   wit-component's own encoding.
 
-## Found and fixed (T81.5's landing)
+## Found and fixed (T85.5's landing)
 
 - The component-level valtype has no inline handle form: own/borrow
   are deftypes (`0x69`/`0x68` + resource index) declared inside the
