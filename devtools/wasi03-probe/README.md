@@ -31,6 +31,8 @@ asserting `hello` on stdout and exit code 42.
 | 14 | `get-directories`/`get-random-bytes`/`get-environment`/`get-arguments`/`get-initial-cwd` sync-lower to `(retptr)→()` with **realloc**; the realloc cannot reference a guest export, so it lives in the pre-instantiated provider | wit-component's own output carries `(realloc …)` on exactly these lowers |
 | 15 | `wasmtime run -S cli` is required for the p3 CLI host (env/argv/filesystem); without it the imports link but the lists answer empty | the argv/env probes with and without `-S cli` |
 | 16 | The descriptor is a `(sub resource)` export; resource definitions are rejected inside instance types | wit-component's encoding; the hand probe |
+| 17 | The **waitable-set core builtins are ungated** on stock wasmtime (49.0.1, no flags): `waitable-set.new`/`drop` compile and validate plain, and the synchronous `waitable-set.wait` lowers with a `(memory)` option to `(param i32 i32) -> i32` — the async ABI's wait machinery needs no feature flag; only the sync stream/future **read/write** builtins sit behind `component-model-more-async-builtins` | `wait_probe.wat` compiles ungated; the gated set refuses at parse naming `stream.write` |
+| 18 | The gate decision (T85.8's round): **keep riding the flag**. It exists on the stable release the goldens run (the run path passes it explicitly), the alternative — async lowering plus a waitable-set poll loop — swaps it for the equally default-off `component-model-async` after a probe campaign and emitter surgery, and the ungated failure mode is honest and early (parse-time, naming the builtin). Revisit when wasmtime flips a default or a second runtime matters | the `wait_probe.wat` facts 17; the plan's T85.8 note |
 
 ## The validated stdout protocol
 

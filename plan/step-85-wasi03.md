@@ -321,13 +321,26 @@ toml, plot, typed_calls, typed_methods, float_methods, field_types,
 fixed_width, list — joined `wasi_examples` (66 goldens
 byte-identical with the Node list); the smoke rung runs 62/62.
 
-## Found, not fixed (this rung)
+## The gate decision (settled 2026-11-15, T85.8's round)
 
-- **The more-async-builtins gate.** The sync stream builtins ride
-  wasmtime's `-W component-model-more-async-builtins=y` — the 🚝-gated
-  extension. The run path passes the flag; dropping it means the
-  async builtins and a waitable-set poll loop, the async ABI's
-  territory.
+- **The more-async-builtins gate stays.** The sync stream builtins
+  ride wasmtime's `-W component-model-more-async-builtins=y` — the
+  🚝-gated extension. The run path passes the flag, and the flag
+  exists on the stable wasmtime release the goldens run, so the
+  dependency is one explicit CLI word on a shipped runtime — not a
+  nightly build. Dropping it means the async lowering plus a
+  waitable-set poll loop (the async ABI's territory), which swaps
+  the flag for the equally default-off `component-model-async`
+  after a probe campaign and producer surgery — real work for a
+  different flag name. The probe pinned the rewrite's starting
+  point anyway (`devtools/wasi03-probe/wait_probe.wat`, README
+  facts 17-18): the waitable-set machinery — `new`, `drop`, and
+  the synchronous `wait` at `(param i32 i32) -> i32` under a
+  `(memory)` option — is already **ungated** on stock wasmtime; the
+  gate covers exactly the sync stream/future read/write builtins,
+  and the ungated failure mode is honest and early (parse-time,
+  naming `stream.write`). Revisit when wasmtime flips a default or
+  a second runtime matters.
 
 ## Found and fixed (the T85.7 round, 2026-11-15)
 
