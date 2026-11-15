@@ -65,6 +65,7 @@
 | M44 — 严格性收口 | 83 | 四个在案 checker 缺口都在检查期拒绝:块内绑定不得遮蔽外层绑定(E4029)、同一枚举成员的各臂元组 payload 类型必须一致(E4030,`:chain` 经其重写继承),以及 Bytes 规则 Unknown 容忍之后的 `Bytes.new` 构造规则——旁边是记录时一并发现的运行期寿命 bug(链式内建形态 `b.to_bytes().length()` 现在在解释器与每个编译目标上答出 receiver 的真实值,钉进 `examples/builtin_names`);负例金测在 `test/emo_cli` 的 `strictness_refusal` 组,语料扫干净,规则落进 `docs/intro/type-system.md` 与 `docs/intro/syntax.md`(`CHECK.md`)。 |
 | M45 — 配置格式 | 84 | `toml` 包:TOML 1.1.0 解码进与 json、yaml 同构设计的 `Toml` 值树——七个类别、没有 null(TOML 没有)、四种日期时间形式共用一个 `TomlDateTime` 类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——float 包的精确十进制构造器托着每个数字的纯 Emo;decode 覆盖 1.1 全部表面(`\e` 与 `\xHH` 转义、秒可省略、小写 `t`/`z`、空格分隔符试错回退、多行 inline table 与尾逗号)与严格的重复定义规则,边解析边装配 origin 标签节点(点分键把表关上不让 header 打开、inline table 在闭括号处关死、`[[x]]` 只向数组追加、更深的 header 下钻最新元素、隐式超表最多声明一次);`inf`/`nan` 与越界整数像一切畸形输入一样以 `(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行、`decode(encode(v)) == v`;edge 电池冲出七个包内 bug——字符串 fill 在该答下一个下标处答了写入长度、十六进制转义数字位权算错、浮点缓冲把下划线数进去、指数值把下划线当数字、`doc_inline?` 对全表数组答 true、段内行渲染完整点分路径、日期时间类缺接口——编译 golden 又冲出三个后端 bug,都是树上既有的:TS 的 Void 尾调用 driver 没有出口(每个 Void 尾递归在 TS 上永远旋转,整条 ts_golden 名单空烧 CPU)、BEAM 的运行时分派把 builtin 臂绑在可被覆盖的 map 上(两层接口深即被 erlc 拒绝)、wasm 的 `deep_eq` 没有 tuple 臂(任何 `Array[(A, B)]` 类字段的类与自己的孪生比都不相等,直到有 golden 比较解码树才现形)(`CHECK.md`)。 |
 | M46 — wasm target 说 WASI 0.3 | 85 | `emo build --target wasm --wasi` 把 WasmGC 模块包进 WASI 0.3 command component(`wasi:cli/run@0.3.0`),wasmtime 46+(`-S cli`)执行:stdout/stderr 走原生 stream 循环经 `wasi:cli/stdout`+`stderr`,退出码走 `wasi:cli/exit`,导入表从十八个 `emo.*` 门重映射为二十七个标准门——`wasi:filesystem`(descriptor 以 `(sub resource)` export 声明,open-at、目录项流、单字符串变更),`wasi:filesystem/preopens`(路径解析所锚定的表),`wasi:random/random`,`wasi:cli/environment`;provider 模块加了宿主写回列表所依赖的 canonical realloc,与 guest 共享 bump cursor cell;五处 store 操作数序(value 先于 address)修复;文件链最后一层于 T85.7 修复、guest 侧 `%g` 浮点格式化器(fixed 与 exp 形式)于 T85.8 修复(provider realloc 的 cursor store 操作数序反了、两个裸循环从外层块的标签退出、写循环在 ok 分支读 error-code 单元、`os_write` 的 fd 分派读了恒假合取、目录门缺 `read-dir-entries` 导入、冒泡排序在降序时交换);`wasi_examples`——66 个金测与 Node 清单逐字节一致——与 wasmtime-smoke 的执行 rung 钉住各门(`CHECK.md`)。 |
+| M47 — 库的手册 | 86 | `emo man` 从二进制内部读取标准库的参考页:`emo man` 列出各包,`emo man <package>` 把一页渲染成 man page——NAME 取自总览表格,SYNOPSIS 取自内嵌 manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节与示例,外加 SEE ALSO——`emo man stdlib` 渲染总览。文档仍是唯一权威来源:`docs/stdlib.md` 与 `docs/stdlib/*.md` 在构建时生成进 CLI 的页面数据(与标准库源码相同的内嵌路线),所以装好的二进制旁边不需要任何文件;渲染器读取文档所用的 Markdown 子集——正文折行到 `COLUMNS`,代码不折行,过宽表格逐单元格折行——`MANPAGER`/`PAGER` 只在能运行时使用,未知名字以 65 拒绝,`test/emo_cli` 的 `man` 组钉住列表、一个页面与拒绝(`plan/step-86-emo-man.md`)。 |
 
 ## 设计闸门
 
@@ -2320,3 +2321,27 @@ EN+zh。
       up-adjust 循环以反向比较退出(无限自旋)、数字写循环读到副本的
       零、指数后缀的补零与 backward 数字行走相撞。二十个含浮点 demo
       加入 `wasi_examples`(66 个金测);smoke rung 跑 62/62。
+
+## M47 — 库的手册
+
+### Step 86 — 标准库的 man 页:`emo man`
+
+**前置:** Step 24(工具链——标准库以生成数据随二进制分发)。**完成
+标准:** `emo man` 列出随标准库携带的页面,`emo man <package>` 把
+其中一页渲染成 man page——NAME 取自总览表格,SYNOPSIS 取自内嵌
+manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节、
+签名与示例,外加 SEE ALSO——数据在构建时从 `docs/stdlib.md` 与
+`docs/stdlib/*.md` 生成,所以装好的二进制旁边不需要任何文件;渲染
+器读取文档所用的 Markdown 子集(正文折行到 `COLUMNS`,代码不折行,
+过宽表格逐单元格折行);`emo man stdlib` 渲染总览;`MANPAGER`/
+`PAGER` 只在能运行时才使用;未知名字以 65 拒绝;文档 EN+zh。
+
+- [x] **T86.1** — 数据:`devtools/gen-man-data.sh`,以及从文档生成
+      CLI 页面模块的 dune 规则。
+- [x] **T86.2** — 渲染器:`src/emo_cli/emo_man.ml`——Markdown
+      子集、man 版式、取自总览表格的包列表、带可运行检查的分页器。
+- [x] **T86.3** — 命令:`emo_cli.ml` 里的 `emo man [package]`,以及
+      `test/emo_cli` 的 `man` 组。
+- [x] **T86.4** — 文档:`docs/toolchain.md` 与 `docs/stdlib.md` +
+      zh-CN 镜像、`plan/README.md` 的里程碑条目与状态行、本节 +
+      zh 镜像、CHECK.md 的定案记录。

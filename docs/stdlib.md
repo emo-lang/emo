@@ -100,7 +100,10 @@ artifact, and the full build-target set — `c`, `ocaml`, `typescript`,
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
 [`docs/zh-CN/stdlib/`](zh-CN/stdlib/)), and every package a program
-calls on its own has a runnable demo under `examples/`.
+calls on its own has a runnable demo under `examples/`. The same pages
+ride the compiler binary: `emo man <package>` renders one in the
+terminal, and `emo man` lists them (see
+[`docs/toolchain.md`](toolchain.md)).
 
 ## The `file` package
 

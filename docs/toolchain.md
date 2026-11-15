@@ -97,6 +97,36 @@ limitation. TAB completion is deliberately absent — the callback
 rides the binding, but what completes (keywords, the session's names,
 required packages) is a design of its own.
 
+## The standard library's reference pages
+
+`emo man` reads the standard library's reference from inside the
+binary — the same pages `docs/stdlib/` carries, one per package plus
+[`docs/stdlib.md`](stdlib.md) as the overview:
+
+```console
+$ emo man            # list the pages the bundled library carries
+$ emo man json       # render the json package's page
+$ emo man stdlib     # the standard library's overview
+```
+
+A package page reads like a man page: NAME, SYNOPSIS with the
+manifest's pin and the `require`, DESCRIPTION holding the doc's own
+sections, and SEE ALSO. The renderer reads the Markdown subset the
+pages are written in — headings, paragraphs, fenced code, bullets,
+numbered lists, tables, inline code, links, and emphasis — and lays it
+out for a terminal: body text at the man indent, reflowed to `COLUMNS`
+(80 when unset); code blocks indented and never reflowed; a table too
+wide for the page shrunk and wrapped cell by cell. When stdout is a
+terminal and `MANPAGER` (or `PAGER`) names a command that can run, the
+page is piped through it; otherwise it is printed.
+
+The pages are not copied by hand: `devtools/gen-man-data.sh` generates
+the `(name, markdown)` data module from `docs/stdlib.md` and
+`docs/stdlib/*.md` at build time, so editing a page and rebuilding is
+the whole update — the route the stdlib sources themselves take
+(T24.2). The reference is English; the Chinese translations under
+`docs/zh-CN/stdlib/` are for reading in the repository.
+
 ## References
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) — why

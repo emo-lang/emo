@@ -82,6 +82,31 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 刻意缺席——回调本身就在绑定里,但补全什么(关键字、会话内的名字、
 已 require 的包)是另一项设计。
 
+## 标准库的参考页
+
+`emo man` 从二进制内部读取标准库的参考——就是 `docs/stdlib/` 里的
+那些页面,每个包一页,外加 [`docs/stdlib.md`](../stdlib.md) 作为总览:
+
+```console
+$ emo man            # 列出随标准库携带的页面
+$ emo man json       # 渲染 json 包的页面
+$ emo man stdlib     # 标准库总览
+```
+
+包页面读起来就是一张 man page:NAME、SYNOPSIS(清单里的版本钉与
+`require`)、DESCRIPTION(文档自己的各小节)与 SEE ALSO。渲染器读取
+这些页面所用的 Markdown 子集——标题、段落、围栏代码块、无序与有序
+列表、表格、行内代码、链接与强调——按终端排版:正文按 man 的缩进、
+折行到 `COLUMNS`(未设置时 80);代码块只缩进、不折行;过宽的表格
+收缩到页面宽度并逐单元格折行。stdout 是终端、且 `MANPAGER`(或
+`PAGER`)指向一个能运行的命令时,页面交给它分页;否则直接打印。
+
+页面不是手工复制的:构建时由 `devtools/gen-man-data.sh` 从
+`docs/stdlib.md` 与 `docs/stdlib/*.md` 生成 `(名字, Markdown)` 数据
+模块,所以改文档再重新构建就是全部更新——与标准库源码走过的路径
+相同(T24.2)。参考页只有英文;`docs/zh-CN/stdlib/` 下的中文译本供在
+仓库里阅读。
+
 ## 参考
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——

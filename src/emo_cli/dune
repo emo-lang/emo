@@ -13,8 +13,11 @@
   emo_ir
   emo_codegen
   emo_runtime
-  emo_project)
- (modules emo_cli version emo_linenoise)
+  emo_project
+  emo_pkg)
+ ; emo_man reads the standard library's reference pages, which ride the
+ ; binary as generated data (man_data) the way the stdlib sources do.
+ (modules emo_cli emo_man man_data version emo_linenoise)
  ; The vendored linenoise editor (`linenoise.c`, upstream
  ; antirez/linenoise at a473823d74b93eab2ba83480df16ed37617493f2, the
  ; marked emo: patches) and the stubs mapping its verdicts onto
@@ -34,6 +37,21 @@
   (with-stdout-to
    version.ml
    (bash "printf 'let version = \"%s\"\\n' \"$(cat %{version_file})\""))))
+
+; The manual's pages ride the binary as generated data — one
+; (name, markdown) pair per page, built from docs/stdlib.md and
+; docs/stdlib/*.md, so `emo man` answers with nothing beside the binary.
+
+(rule
+ (target man_data.ml)
+ (deps
+  (:gen ../../devtools/gen-man-data.sh)
+  ../../docs/stdlib.md
+  (source_tree ../../docs/stdlib))
+ (action
+  (with-stdout-to
+   man_data.ml
+   (run %{gen} ../../docs))))
 
 (executable
  (name emo)
