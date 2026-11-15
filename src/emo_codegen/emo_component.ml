@@ -524,8 +524,9 @@ let provider_module (pages : int) : string =
   Buffer.add_string body "\x02\x40\x20\x05\x3f\x00\x41\x10\x74\x4e\x0d\x00";
   Buffer.add_string body
     "\x20\x05\x3f\x00\x41\x10\x74\x6b\x41\xff\xff\x03\x6a\x41\x10\x76\x40\x00\x1a\x0b";
-  (* the cursor cell takes the new end *)
-  Buffer.add_string body "\x20\x05\x41\x80\x02\x36\x02\x00";
+  (* the cursor cell takes the new end — the address pushes first, the
+     value last: i32.store pops value then address *)
+  Buffer.add_string body "\x41\x80\x02\x20\x05\x36\x02\x00";
   (* grow path copies the old contents *)
   Buffer.add_string body
     "\x02\x40\x20\x00\x45\x0d\x00\x20\x04\x20\x00\x20\x01\xfc\x0a\x00\x00\x0b";
@@ -748,6 +749,7 @@ let entries (pages : int) (core_module_binary : string) : entry list =
         ("new", CoreFuncE 4);
         ("write", CoreFuncE 5);
         ("read", CoreFuncE 6);
+        ("read-dir-entries", CoreFuncE 9);
         ("drop-writable", CoreFuncE 7);
         ("drop-readable", CoreFuncE 8);
         ("drop-readable-dir", CoreFuncE 10);

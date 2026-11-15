@@ -95,6 +95,9 @@ examples/*/*.wasm
 examples/*/*.wat
 examples/*/.emo-build.wasm
 examples/*/.emo-build.wat
+# the file demos' own runtime outputs (the demo writes and removes them)
+examples/*/emo-file-demo.txt
+examples/*/emo-os-demo.d/
 
 # dune's compile_commands export and the BEAM tooling's crash dump /
 # intermediate core, left by smoke runs and the beam goldens

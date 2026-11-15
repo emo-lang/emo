@@ -1295,13 +1295,25 @@ let run =
             exit 69
           end;
           let component = Filename.concat build_dir "emo_run.wasm" in
+          (* the guest's environment is opt-in on the wasmtime CLI: one
+             --env NAME per host variable, the value inherited from the
+             calling process (never spelled onto the command line) *)
+          let env_flags =
+            Unix.environment () |> Array.to_list
+            |> List.filter_map (fun kv ->
+                match String.index_opt kv '=' with
+                | Some i -> Some ("--env " ^ Filename.quote (String.sub kv 0 i))
+                | None -> None)
+            |> String.concat " "
+          in
           exit
             (Sys.command
                (Printf.sprintf
-                  "cd %s && wasmtime run -W \
-                   component-model-more-async-builtins=y --dir /::/ %s"
+                  "cd %s && wasmtime run -S cli -W \
+                   component-model-more-async-builtins=y --dir %s::/ %s %s"
                   (Filename.quote (Sys.getcwd ()))
-                  (Filename.quote component)))
+                  (Filename.quote (Sys.getcwd ()))
+                  env_flags (Filename.quote component)))
         end
         else if not (tool_exists "node") then begin
           prerr_endline

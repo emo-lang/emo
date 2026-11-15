@@ -165,13 +165,51 @@ assumptions and pinned the encodings:
       and the bounded stream read/write cycles. hello, argv, and the
       environment read back correctly under wasmtime; the relative
       paths anchor on `get-initial-cwd`, falling back to the root
-      preopen. The os half's file chain still answers no-entry (see
-      the found-not-fixed below).
+      preopen. The os half's file chain still answered no-entry at
+      this task's close (the T85.7 round healed it — see found and
+      fixed below).
 - [x] **T85.6** — The goldens: `wasi_examples` — 43 demos
       byte-identical with the Node list — skipping without
       wasmtime; `devtools/wasmtime-smoke.sh`'s execution rung
       (39/39 byte-identical); `docs/demo-targets.md` EN+zh; the
       ledger rows (TASKS M46 + step section, this plan, CHECK).
+- [x] **T85.7** — The file chain's last mile: five guest-side bugs,
+      each pinned by a probe (the handle value thrown through the
+      abort door, the preopen table's words dumped cell by cell) and
+      each gone. The provider's realloc stored its new cursor with
+      the address as the value (the store's operand order again) —
+      the cell never advanced, every host allocation landed at the
+      same address, and the answers overwrote each other; the value
+      256 in a preopen's descriptor slot was the cell's own address.
+      `fs_init`'s copy loop and the resolve scan rode their bare
+      loops — the `br_if 1` exit landed on the enclosing block's
+      label and returned early (fs_init skipped the count store and
+      the cwd fetch; resolve skipped the best-match pick and dropped
+      absolute paths into the relative fallback, which pasted a
+      second slash onto an already-absolute path — wasmtime refused
+      the result as outside the filesystem). Both loops now ride a
+      wrapping block. The write cycle read the future's error-code
+      cell unconditionally — the ok case carries no payload, so a
+      successful write answered the cell's stale earlier content
+      (open-at's handle byte, "Bad file descriptor"); the tag now
+      decides. `os_write`'s fd dispatch read `(fd <= 0) && (fd > 2)`
+      — always false, the fs half dead, every file write a fake
+      success; the two legs are an `or`. The directory door was
+      never wired: the directory-entry `stream.read` canon builtin
+      had no import (the scan rode the u8 read and trapped on the
+      type), so the guest grew `read-dir-entries` and the scan its
+      batch shape — slots as the enumeration progresses, a zero
+      count with the stream open a retry, only the closed status
+      ends it, the record at 24 bytes with the name's (ptr, len) at
+      +16/+20, zero-length slots skipped. The bubble pass swapped on
+      `cmp < 0` — descending; now `cmp > 0`. The harness maps the
+      entry directory onto the guest root (`--dir <dir>::/`; the
+      cwd hint answers none under wasmtime, so the preopen root is
+      the only anchor a relative path has), and `os_getenv` answers
+      its scan again (the probe dump rode the committed tree). The
+      goldens grow to 46: `file_read`, `bufio_demo`, and
+      `os_fs_demo` join `wasi_examples` byte-identical with the
+      Node list; the smoke rung runs 42/42.
 
 ## Found and fixed (the encoder's first landing)
 
@@ -248,21 +286,60 @@ assumptions and pinned the encodings:
   instruments (the n/p0/k probes through `int_str`) are the next
   pass's starting point. The refusals: the float render names the
   rung; the filesystem, random, cwd, and fd-0 doors name theirs.
-- **The os half's file chain under wasmtime.** The doors are wired
-  end to end (resolve → open-at → the stream cycles), argv and the
-  environment read back correctly, and the absolute path reaches the
-  host — but the last mile still answers no-entry: the guest-side
-  resolution and the handle the host accepts disagree somewhere in
-  the fd-table layer (the fallback reads the preopen slot into a
-  handle the host calls unknown; the exact misalignment is not yet
-  pinned). The guest-side probes (99/19/200 sentinels through the
-  error texts) and a wasmtime-side handle trace are the next pass's
-  starting point.
 - **The more-async-builtins gate.** The sync stream builtins ride
   wasmtime's `-W component-model-more-async-builtins=y` — the 🚝-gated
   extension. The run path passes the flag; dropping it means the
   async builtins and a waitable-set poll loop, the async ABI's
   territory.
+
+## Found and fixed (the T85.7 round, 2026-11-15)
+
+The os half's file chain closed: `file_read`, `bufio_demo`, and
+`os_fs_demo` run byte-identically under wasmtime and joined the
+golden group. The last mile was five guest-side bugs, none of them
+where the first reading pointed:
+
+- **The provider's realloc stored its new cursor with the operands
+  swapped** (the store pops value then address — the same family as
+  T85.5's five sites, this one hand-encoded in the provider
+  module): the cell never advanced, every host allocation landed at
+  the same address, and the host-written answers overwrote each
+  other. The "unknown handle index 256" the first probes hit was
+  the cursor cell's own address (0x100) sitting in a descriptor
+  slot.
+- **`fs_init`'s copy loop exited through the function's own
+  label** — the loop sat bare in the body, so the `br_if 1` that
+  should have fallen through to the count store returned early:
+  the count cell stayed zero and the cwd hint never fetched.
+- **The resolve scan's exit skipped the best-match pick** (the
+  same bare-loop shape): an absolute path fell through into the
+  relative fallback, which pasted a second slash onto it; wasmtime
+  refused the doubled path as outside the filesystem — the
+  "Operation not permitted" the absolute probes answered.
+- **The write cycle read the future's error-code cell
+  unconditionally**: the ok case carries no payload, so a
+  successful write answered whatever the cell held from the
+  earlier open-at (its handle byte — "Bad file descriptor" on
+  every write that actually landed).
+- **`os_write`'s fd dispatch read `(fd <= 0) && (fd > 2)`** —
+  always false, the fs half dead, every file write a fake success
+  (the byte length returned, nothing written). The two legs are an
+  `or`.
+
+With the chain alive, two more doors grew: the directory-entry
+`stream.read` canon builtin had no import (the scan rode the u8
+read and trapped on the type — "a stream of a different type"), so
+the guest grew `read-dir-entries` and the scan its batch shape —
+the host fills slots as the enumeration progresses, a zero count
+with the stream open is a retry, only the closed status ends it,
+the record rides 24 bytes with the name's (ptr, len) at +16/+20,
+and zero-length slots skip. The bubble pass swapped on `cmp < 0`
+(descending); it swaps on `cmp > 0`. The harness maps the entry
+directory onto the guest root — `get-initial-cwd` answers none
+under wasmtime (`Ok(None)` in the trace), so the preopen root is
+the only anchor a relative path has — and `os_getenv` answers its
+scan again instead of the probe dump that had ridden the committed
+tree.
 
 ## Acceptance
 

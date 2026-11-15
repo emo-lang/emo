@@ -215,13 +215,13 @@ Hello, world!
 ```console
 $ emo build --target wasm --wasi main.emo -o demo-wasi
 built demo-wasi.wasm
-$ wasmtime run -S cli -W component-model-more-async-builtins=y --dir /::/ demo-wasi.wasm
+$ wasmtime run -S cli -W component-model-more-async-builtins=y --dir .::/ demo-wasi.wasm
 Hello, world!
 ```
 
 `--wasi` 把同一个 WasmGC 模块包进 **WASI 0.3 command component**——一个真正的 `wasi:cli/run@0.3.0` 组件，任何 WASI 0.3 运行时都能执行（wasmtime 46+；`-S cli` 打开 CLI 宿主，`-W component-model-more-async-builtins=y` 打开 stdio 循环所依赖的同步 stream 内建）。Node 彻底退出舞台：打印、abort、退出码都走标准 `wasi:cli` 的 stdio/exit 门与原生 stream。
 
-导入表从十八个 `emo.*` 门缩减为 **27 个标准门**：
+导入表从十八个 `emo.*` 门缩减为 **28 个标准门**：
 
 | 导入 | 用途 |
 | --- | --- |
@@ -232,15 +232,15 @@ Hello, world!
 | `wasi:random/random` | `get-random-bytes`（短返回自动循环） |
 | `wasi:cli/environment` | `get-environment`、`get-arguments`、`get-initial-cwd` |
 
-外加 canon ABI 供给的 guest 侧内建：`stream.new`/`read`/`write`/`drop-*`、`future.read`/`drop-readable`，以及 descriptor 的 `resource.drop`。
+外加 canon ABI 供给的 guest 侧内建：`stream.new`/`read`/`read-dir-entries`/`write`/`drop-*`、`future.read`/`drop-readable`，以及 descriptor 的 `resource.drop`。
 
 注意：
 
 - 宿主**必须**是 `wasmtime run -S cli`（或任何带 WASI 0.3 CLI 宿主的运行时）；`--dir` 授予文件系统。没有 `-S cli` 时门能链接但列表返回空。
 - **guest 侧 `%g` 浮点格式化器本档拒绝**——打印浮点的 demo 会以指名消息 abort（found-not-fixed 记录在 `plan/step-85-wasi03.md`）。
-- **文件链最后一层**——经 preopen 表到 `open-at` 的路径解析——同样记录为 found-not-fixed：相对路径可解析,但门仍回答 no-entry。
+- **文件链端到端可用**:经 preopen 表到 `open-at` 的路径解析、stream 读/写循环、目录项扫描——`file`、`bufio`、`os` 的 fd/目录半区与 Node 和 c 目标逐字节一致。把项目目录映射为 guest 根(`--dir <dir>::/`;`emo run` 会替你做):WASI 0.3 没有 cwd 概念——`get-initial-cwd` 在 wasmtime 下答 none——preopen 根是相对路径唯一的锚。
 - `os` 的进程半边与 Node 宿主一致,调用即 raise。
-- 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(43 个 demo 与 Node 金测逐字节一致),`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
+- 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(46 个 demo 与 Node 金测逐字节一致),`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
 
 ## `beam`
 

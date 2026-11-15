@@ -820,12 +820,13 @@ let wasmtime_available =
 
 (* The wasi goldens: the same wasm goldens that render their output
    through pure string ops (no floats — the guest-side %g refuses
-   this rung; no os file calls — the resolve/handle misalignment is
-   recorded as found-not-fixed) wrapped in the WASI 0.3 command
-   component and executed by wasmtime (46+, -S cli), byte-for-byte
-   against the same expected.txt. Skips when wasmtime is absent; the
-   run passes --dir /::/ so relative file paths resolve like the
-   interpreter's. *)
+   this rung) wrapped in the WASI 0.3 command component and executed
+   by wasmtime (46+, -S cli), byte-for-byte against the same
+   expected.txt. Skips when wasmtime is absent; the run maps the
+   example's own directory onto the guest root (--dir <dir>::/) so
+   relative file paths resolve like the interpreter's — wasi 0.3 has
+   no cwd concept (get-initial-cwd answers none under wasmtime), so
+   the preopen root is the only anchor a relative path has. *)
 let wasi_goldens =
   [
     "hello_world";
@@ -871,6 +872,9 @@ let wasi_goldens =
     "derive_shared_macro_demo";
     "rand_demo";
     "uuid_demo";
+    "file_read";
+    "bufio_demo";
+    "os_fs_demo";
   ]
 
 let wasi_examples_tests =
@@ -893,8 +897,9 @@ let wasi_examples_tests =
           let cmd =
             Printf.sprintf
               "cd %s && wasmtime run -S cli -W \
-               component-model-more-async-builtins=y --dir /::/ %s"
-              (Filename.quote dir) (Filename.quote out_wasm)
+               component-model-more-async-builtins=y --dir %s::/ %s"
+              (Filename.quote dir) (Filename.quote dir)
+              (Filename.quote out_wasm)
           in
           let out, err, proc_status = run_cmd cmd in
           Alcotest.(check string) "output" expected out;
