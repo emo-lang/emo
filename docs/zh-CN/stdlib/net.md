@@ -16,6 +16,7 @@ require "net"
 
 ```emo
 net.resolve(host)                                   // (R, Array[String])
+net.env(name)                                       // (R, String)
 net.connect(host, port, timeout)                    // (R, TcpConn)
 net.listen(host, port)                              // (R, TcpListener)
 net.connect_unix(path, timeout)                     // (R, TcpConn)
@@ -24,6 +25,7 @@ net.tls_connect(host, port, timeout)                // (R, TcpConn)
 net.tls_connect_insecure(host, port, timeout)       // (R, TcpConn)
 net.tls_client_options()                            // TlsClientOptions
 net.tls_connect_with(host, port, timeout, options)  // (R, TcpConn)
+net.tls_wrap(conn, server_name, options)            // (R, TcpConn)
 net.listen_tls(host, port, cert_path, key_path)     // (R, TcpListener)
 net.tls_server_options()                            // TlsServerOptions
 net.listen_tls_with(host, port, cert_path, key_path, options)
@@ -31,11 +33,13 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
 ```
 
 - `net.resolve(host)` 把名字正向解析为 IP 地址字符串数组;DNS 一无所获时以错误元组回答(``cannot resolve host `...` ``)。数字地址解析为其自身。
-- `net.connect(host, port, timeout)` 解析并连接,以 `(R.ok, conn)` 回答 `TcpConn`。`timeout` 以秒计;`0.0` 表示无限等待。连接被拒是错误元组(`connection refused to host:port`)。
+- `net.env(name)` 回答进程环境中该名字的值;环境没有携带这个名字时是错误元组(`net: env NAME: is not set`)。`http` 包通过这扇门读取代理设置。
+- `net.connect(host, port, timeout)` 解析并连接,以 `(R.ok, conn)` 回答 `TcpConn`。`timeout` 以秒计并约束整个连接过程;`0.0` 表示无限等待。候选地址是竞速的——第一个立即开始,此后每 250ms 再启动一个,并在地址族之间交替(RFC 8305 的 happy eyeballs)——所以一条死掉的 IPv6 路径只花四分之一秒,而不是内核的 SYN 超时。连接被拒是错误元组(`connection refused to host:port`)。
 - `net.listen(host, port)` 绑定并监听,回答 `TcpListener`。端口 `0` 让内核分配空闲端口,用 `listener.port()` 读回。
 - `net.connect_unix(path, timeout)` 与 `net.listen_unix(path)` 是 Unix 域的一对;Unix listener 没有端口。
-- `net.tls_connect` 以 TLS 连接并**按系统信任库校验对端证书**——自签证书会让握手失败,失败即错误元组。`SSL_CERT_FILE`/`SSL_CERT_DIR` 在所有实现了 TLS 的目标上都可以改指信任库。`net.tls_connect_insecure` 跳过校验;它是显式的、看起来就危险的逃生门,只用于测试与自签开发环境。
+- `net.tls_connect` 以 TLS 连接并**按系统信任库校验对端证书**——自签证书会让握手失败,失败即错误元组。`timeout` 同时约束 TCP 连接与握手。`SSL_CERT_FILE`/`SSL_CERT_DIR` 在所有实现了 TLS 的目标上都可以改指信任库。`net.tls_connect_insecure` 跳过校验;它是显式的、看起来就危险的逃生门,只用于测试与自签开发环境。
 - `net.tls_connect_with` 是同样的连接,外加逐连接策略——`net.tls_client_options()` 从默认值出发,由 `with_ca_file`、`with_client_certificate`、`with_server_name`、`without_verification` 派生出配置好的值。`ca_file` 替换系统信任库,证书/私钥对(两者都给或都不给)把连接变成双向 TLS,`server_name` 是对端名字与 socket 实际连接的地址不同时,SNI 与校验使用的名字。校验需要一个 DNS 证书名:在开启校验时连接 IP 字面量会被拒绝,除非 `server_name` 给出该名字。CA 或证书文件加载失败是错误元组,不是 panic。
+- `net.tls_wrap(conn, server_name, options)` 把已经连好的明文 `TcpConn` 就地升级为 TLS——这是代理 `CONNECT` 隧道所需的另一半。同样的 `TlsClientOptions` 策略生效,`server_name` 是校验/SNI 名字(除非 options 自带);返回的句柄就是传入的那个,此后说 TLS。已经是 TLS 的连接是错误元组。
 - `net.listen_tls(host, port, cert_path, key_path)` 用 PEM 证书/私钥对服务 TLS;证书加载失败以精确 reason 报错(``cannot load the TLS certificate for ... ``)。
   `net.listen_tls_with` 接收 `net.tls_server_options()` 给出的 `TlsServerOptions`:`with_client_ca(ca_file)` 设置客户端证书信任库,`with_required_client_cert(true)` 拒绝不提供证书的对端。没有客户端 CA 时客户端证书保持关闭;要求证书却没有信任库是错误元组。
 - `net.udp_bind(host, port)` 绑定数据报 socket;端口 `0` 挑选空闲端口。
@@ -51,7 +55,7 @@ conn.close()              // (R, TcpConn)
 conn.set_timeout(seconds) // TcpConn —— 约束其后的操作
 ```
 
-- **EOF 永远不会是静默的部分结果。** `read_line` 剥掉 `\n`(以及前面的 `\r`);行边界上的干净关闭返回 `(R.ok, "")`,但**行中途关闭是错误元组**(`the connection to ... closed mid-line`)。`read_exactly(n)` 在对端提前关闭时以 reason 失败(`closed after M of N bytes`)。`read_all` 是唯一把 EOF 视为正常的读:它交付已到达的全部,包括空。
+- **EOF 永远不会是静默的部分结果。** `read_line` 剥掉 `\n`(以及前面的 `\r`);行边界上的干净关闭返回 `(R.ok, "")`,但**行中途关闭是错误元组**(`the connection to ... closed mid-line`)。`read_exactly(n)` 在对端提前关闭时以 reason 失败(`closed after M of N bytes`)。`read_all` 是唯一把 EOF 视为正常的读:它交付已到达的全部,包括空。未发送 `close_notify` 就关闭的 TLS 对端按同样的边界算作关闭——是流的结束,不是传输失败。
 - `write(data)` 写整个字符串(字节而非字符——Emo 字符串是字节串),并回答连接本身,写经解构出的 `(R.ok, conn)` 链下去。优雅的 `close()` 会先交付未发完的写。
 - `set_timeout(seconds)` 为其后的读写设置**按操作计**的期限:预算在每个操作开始时计算,多步读取共享一份预算。`0.0`——默认值——表示不超时;负数是错误。超过期限是错误元组(`timed out ...`)。
 

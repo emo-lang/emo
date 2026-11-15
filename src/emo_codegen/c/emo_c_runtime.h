@@ -476,6 +476,10 @@ emo_value emo_os_sleep_ms(int64_t ms);
 void emo_net_wait_readable(int64_t fd);
 void emo_net_wait_writable(int64_t fd);
 
+/* The process environment's value for a name: the door the http
+   package's proxy settings read. */
+emo_value emo_net_env(emo_str name);
+
 /* TLS (step 51): the three net TLS builtins. Without EMO_HAS_TLS the
    bodies are today's honest refusal; with it the handshake runs on
    the system OpenSSL/LibreSSL — the fence in the .c carries the
@@ -486,6 +490,8 @@ emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
                                    emo_str ca_file, emo_str cert_file,
                                    emo_str key_file, emo_str server_name,
                                    int insecure);
+emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
+                           emo_str cert_file, emo_str key_file, int insecure);
 emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
                              emo_str key_path);
 emo_value emo_net_listen_tls_with(emo_str host, int64_t port,

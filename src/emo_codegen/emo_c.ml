@@ -600,6 +600,7 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "net_connect" ->
       Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
+  | "net_env" -> Printf.sprintf "emo_net_env(%s)" (arg 0 Emo_check.String)
   (* ---- the Unix-socket tier: the wayland package's road. The same
      boxed-fd shape as TCP, the address family the only news. ---- *)
   | "net_listen_unix" ->
@@ -650,6 +651,11 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
         (arg 2 Emo_check.Float64) (arg 3 Emo_check.String)
         (arg 4 Emo_check.String) (arg 5 Emo_check.String)
         (arg 6 Emo_check.String) (arg 7 Emo_check.Bool)
+  | "net_tls_wrap" ->
+      Printf.sprintf "emo_net_tls_wrap(%s, %s, %s, %s, %s, %s)"
+        (arg 0 Emo_check.TcpConn) (arg 1 Emo_check.String)
+        (arg 2 Emo_check.String) (arg 3 Emo_check.String)
+        (arg 4 Emo_check.String) (arg 5 Emo_check.Bool)
   | "net_listen_tls_with" ->
       Printf.sprintf "emo_net_listen_tls_with(%s, %s, %s, %s, %s, %s)"
         (arg 0 Emo_check.String) (arg 1 Emo_check.Int64)
@@ -3526,6 +3532,7 @@ let emit (program : Emo_ir.program) : string * string * bool =
         "net_tls_connect";
         "net_tls_connect_insecure";
         "net_tls_connect_with";
+        "net_tls_wrap";
         "net_listen_tls";
         "net_listen_tls_with";
       ]

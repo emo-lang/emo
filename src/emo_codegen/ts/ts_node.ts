@@ -154,6 +154,7 @@ class EConn {
   failed: any;
   acc: Buffer;
   reader: boolean;
+  detachReader: (() => void) | null;
   waiting: Set<() => void>;
   isTls: boolean;
 
@@ -166,12 +167,17 @@ class EConn {
     this.failed = null;
     this.acc = Buffer.alloc(0);
     this.reader = false;
+    this.detachReader = null;
     this.waiting = new Set();
     this.isTls = isTls;
     // A socket error must never escape as an uncaught 'error' event;
     // the reader records it and read operations report it.
     sock.on("error", () => {});
-    sock.on("close", () => _netRoots.delete(this));
+    // A wrapped connection swaps its socket; the old socket's close must
+    // not unroot the handle the TLS socket still serves.
+    sock.on("close", () => {
+      if (this.sock === sock) _netRoots.delete(this);
+    });
     _netRoots.add(this);
   }
 }
@@ -295,20 +301,31 @@ function connOpen(c: EConn): void {
 function connStartReader(c: EConn): void {
   if (c.reader) return;
   c.reader = true;
-  (async () => {
-    try {
-      for await (const chunk of c.sock) {
-        const b = chunk as Buffer;
-        c.acc =
-          c.acc.length === 0 ? Buffer.from(b) : Buffer.concat([c.acc, b]);
-        connNotify(c);
-      }
-      c.eof = true;
-    } catch (e) {
-      c.failed = e;
-    }
+  const sock = c.sock;
+  const onData = (b: Buffer) => {
+    if (c.sock !== sock) return;
+    c.acc = c.acc.length === 0 ? Buffer.from(b) : Buffer.concat([c.acc, b]);
     connNotify(c);
-  })();
+  };
+  const onEnd = () => {
+    if (c.sock !== sock) return;
+    c.eof = true;
+    connNotify(c);
+  };
+  const onError = (e: any) => {
+    if (c.sock !== sock) return;
+    c.failed = e;
+    connNotify(c);
+  };
+  sock.on("data", onData);
+  sock.on("end", onEnd);
+  sock.on("error", onError);
+  c.detachReader = () => {
+    sock.off("data", onData);
+    sock.off("end", onEnd);
+    sock.off("error", onError);
+    c.detachReader = null;
+  };
 }
 
 function connCheckRead(c: EConn): void {
@@ -589,6 +606,8 @@ function netIsIpLiteral(host: string): boolean {
 
 function netConnectErrorValue(host: string, port: number, e: any): any {
   const target = host + ":" + port;
+  if (e && (e.code === "ENOTFOUND" || e.code === "EAI_AGAIN"))
+    return new EEmoException("cannot resolve host `" + host + "`");
   if (e && e.code === "ECONNREFUSED")
     return new EEmoException("connection refused to " + target);
   if (e instanceof EEmoException) return e;
@@ -664,7 +683,12 @@ function netConnectOne(
       fn();
     };
     if (tlsOpts !== null) {
-      const opts: any = Object.assign({}, tlsOpts, { host: addr, port: port });
+      const opts: any = Object.assign({}, tlsOpts, {
+        host: addr,
+        port: port,
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 250,
+      });
       const name = tlsOpts.servername || host;
       opts.servername = netIsIpLiteral(name) ? undefined : name;
       sock = nodeTls.connect(opts);
@@ -673,7 +697,12 @@ function netConnectOne(
         finish(() => reject(netTlsErrorValue(host, port, e)))
       );
     } else {
-      sock = nodeNet.createConnection({ host: addr, port: port });
+      sock = nodeNet.createConnection({
+        host: addr,
+        port: port,
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 250,
+      });
       sock.once("connect", () => finish(() => resolve(sock)));
       sock.once("error", (e: any) =>
         finish(() => reject(netConnectErrorValue(host, port, e)))
@@ -710,33 +739,79 @@ async function netConnect(
           "`; pass server_name with the certificate's DNS name"
       );
   }
-  const addrs = await netResolveAddrs(host);
-  _endIfShutdown();
-  if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
+  // Node's own happy eyeballs: the hostname goes to the connector and
+  // autoSelectFamily races the resolved families 250ms apart, the same
+  // policy the native schedulers implement.
   const deadline = netDeadline(t);
   const message =
     "timed out after " + g6(t) + "s connecting to " + host + ":" + p;
-  let last: any = null;
-  for (const addr of addrs) {
-    if (deadline !== null && Date.now() >= deadline) netFail(message);
-    try {
-      const sock = await netConnectOne(
-        addr,
-        p,
-        tlsOpts,
-        host,
-        deadline,
-        message
+  const sock = await netConnectOne(
+    String(host),
+    p,
+    tlsOpts,
+    String(host),
+    deadline,
+    message
+  );
+  _endIfShutdown(sock);
+  return new EConn(sock, netPeerDesc(sock), tlsOpts !== null);
+}
+
+async function netTlsWrap(
+  recv: EConn,
+  serverName: any,
+  caFile: any,
+  certFile: any,
+  keyFile: any,
+  insecure: any
+): Promise<EConn> {
+  connOpen(recv);
+  if (recv.isTls)
+    netFail("the connection to " + recv.desc + " is already TLS");
+  const name = String(serverName);
+  if (!insecure && name === "")
+    netFail(
+      "tls: verifying a certificate needs a DNS name; pass server_name"
+    );
+  if (!insecure && netIsIpLiteral(name))
+    netFail(
+      "tls: cannot verify a certificate for the IP address `" +
+        name +
+        "`; pass server_name with the certificate's DNS name"
+    );
+  const opts = netTlsClientOptions(!insecure, caFile, certFile, keyFile, name);
+  // The CONNECT reply's reader owns the plain socket; detach it before
+  // TLS takes the socket over, or its data handler would race TLS's.
+  if (recv.detachReader) recv.detachReader();
+  recv.reader = false;
+  recv.sock.pause();
+  const plain = recv.sock;
+  const tlsSock: any = await new Promise((resolve, reject) => {
+    const o: any = Object.assign({}, opts, { socket: plain });
+    if (name === "" || netIsIpLiteral(name)) o.servername = undefined;
+    const t = nodeTls.connect(o);
+    const onError = (e: any) =>
+      reject(
+        new EEmoException(
+          "the TLS handshake with " + name + " failed: " + netReason(e)
+        )
       );
-      _endIfShutdown(sock);
-      return new EConn(sock, netPeerDesc(sock), tlsOpts !== null);
-    } catch (e) {
-      if (e instanceof EProgramEnd) throw e;
-      last = e;
-    }
-  }
-  if (last instanceof EEmoException) throw last;
-  netFail("cannot connect to " + host + ":" + p);
+    t.once("secureConnect", () => {
+      t.off("error", onError);
+      resolve(t);
+    });
+    t.once("error", onError);
+  });
+  recv.sock = tlsSock;
+  recv.isTls = true;
+  recv.eof = false;
+  recv.failed = null;
+  recv.acc = Buffer.alloc(0);
+  tlsSock.on("error", () => {});
+  tlsSock.on("close", () => _netRoots.delete(recv));
+  _netRoots.add(recv);
+  _endIfShutdown(tlsSock);
+  return recv;
 }
 
 async function netConnectUnix(path: any, timeout: any): Promise<EConn> {
@@ -976,6 +1051,13 @@ function nodeRuntimeImpl(name: string, args: any[]): any {
     }
     case "net_resolve":
       return netResult(() => netResolve(args[0]));
+    case "net_env": {
+      const name = String(args[0]);
+      const value = process.env[name];
+      return value === undefined
+        ? netErr("net: env " + name + ": is not set")
+        : netOk(value);
+    }
     case "net_connect":
       return netResult(() => netConnect(args[0], args[1], args[2], null));
     case "net_connect_unix":
@@ -1018,6 +1100,10 @@ function nodeRuntimeImpl(name: string, args: any[]): any {
             args[6]
           )
         )
+      );
+    case "net_tls_wrap":
+      return netResult(() =>
+        netTlsWrap(args[0], args[1], args[2], args[3], args[4], args[5])
       );
     case "net_listen_tls":
       return netResult(() =>
