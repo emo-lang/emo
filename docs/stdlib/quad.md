@@ -97,6 +97,30 @@ and the caller decides:
 Code 6 is QUADPACK's validity test: with `epsabs = 0`, `epsrel` must
 reach `1.11e-14` — fifty machine epsilons — or the call refuses.
 
+## The raw bindings
+
+```emo
+foreign def raw_integrate(a Float64, b Float64, epsabs Float64,
+  epsrel Float64, f Integrand) (Float64, Float64, Int64, Int64)
+
+foreign def raw_integrate_infinite(bound Float64, inf Int64,
+  epsabs Float64, epsrel Float64, f Integrand)
+  (Float64, Float64, Int64, Int64)
+```
+
+The wrapped API answers through these two: one `foreign def` per shim
+entry in `emo_quad_shim.c`, carrying the callback contract across the
+C ABI and returning QUADPACK's own `(result, abserr, neval, ier)` tuple
+with no wording attached. They are public because they annotate the
+package's public interface — a module reference in a type annotation
+rides the same graph as a value call (E5003), so an internal module
+naming the root's `Integrand` would close the cycle the package rule
+forbids; the bindings live beside the interface they name, and the
+error-code wording stays in the package's `internal` split. Callers
+want the wrapped `integrate` and `integrate_infinite`; `inf` in the
+raw pair is QUADPACK's own interval code — 1, −1, 2 as `from_bound`,
+`to_bound`, `whole_line`.
+
 ## Targets and reproducibility
 
 `c` only — the vendored translation and the shim are native code the

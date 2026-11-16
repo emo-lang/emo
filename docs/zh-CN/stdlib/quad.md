@@ -68,6 +68,19 @@ QUADPACK 的每个失败码都以 netlib 自己的措辞回答 `(R.error, reason
 
 码 6 是 QUADPACK 的有效性检验:`epsabs = 0` 时 `epsrel` 必须达到 `1.11e-14`——五十个机器精度——否则调用拒绝。
 
+## 原始绑定
+
+```emo
+foreign def raw_integrate(a Float64, b Float64, epsabs Float64,
+  epsrel Float64, f Integrand) (Float64, Float64, Int64, Int64)
+
+foreign def raw_integrate_infinite(bound Float64, inf Int64,
+  epsabs Float64, epsrel Float64, f Integrand)
+  (Float64, Float64, Int64, Int64)
+```
+
+包装 API 正是经由这两个定义作答:每个对应 `emo_quad_shim.c` 里的一个 shim 入口,把回调契约送过 C ABI,原样带回 QUADPACK 自己的 `(result, abserr, neval, ier)` 元组,不带任何措辞。它们公开,是因为它们注解了本包的公开接口——类型注解里的模块引用与值调用走同一张图(E5003),internal 模块若点名根模块的 `Integrand` 就会闭上包规则禁止的环;所以绑定与它们注解的接口同住一处,错误码的措辞留在包的 `internal` 一侧。调用方该用的是包装过的 `integrate` 与 `integrate_infinite`;原始一对里的 `inf` 是 QUADPACK 自己的区间码——1、−1、2 对应 `from_bound`、`to_bound`、`whole_line`。
+
 ## 目标与可复现性
 
 仅 `c`——vendored 翻译与 shim 都是构建编译链接的原生代码。其余目标上 `require` 在装载期失败(E5007);解释器下调用抛 E3009,`emo run` 无法执行触及这个包的程序——用 `emo build --target c` 构建。

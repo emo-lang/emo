@@ -416,6 +416,56 @@ const once = 1|});
         in
         let _, _, _, errors = Emo_project.check_project p in
         Alcotest.(check int) "count" 0 (List.length errors));
+    tc "a type-annotation-only cycle is rejected too" (fun () ->
+        let p =
+          discover
+            [
+              ("a.emo",
+                 {|class A {
+  def init() {
+    self.mark = 0
+  }
+}
+
+def entry(b other.b.B) Int64 {
+  return 0
+}|});
+              ("other/b.emo",
+                 {|class B {
+  def init() {
+    self.mark = 0
+  }
+}
+
+def tag(a a.A) Int64 {
+  return 0
+}|});
+            ]
+        in
+        (* No value reference anywhere — each module's only reference to
+           the other is a type annotation, and the annotation still
+           closes the chain. *)
+        let _, _, _, errors = Emo_project.check_project p in
+        if not (has_code errors "E5003") then
+          Alcotest.fail ("codes: " ^ codes_dump errors));
+    tc "a self-qualified type annotation is not a cycle" (fun () ->
+        let p =
+          discover
+            [
+              ("a.emo",
+                 {|class A {
+  def init() {
+    self.mark = 0
+  }
+}
+
+def entry(v a.A) Int64 {
+  return 0
+}|});
+            ]
+        in
+        let _, _, _, errors = Emo_project.check_project p in
+        Alcotest.(check int) "count" 0 (List.length errors));
   ]
 
 let cache_tests =

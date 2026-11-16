@@ -300,6 +300,13 @@ let resolve_type_ref ctx span (ref_ : string) : t option =
     match owner with
     | None -> None
     | Some owner ->
+        (* A qualified type reference loads the owning module like a value
+           reference does, so it rides the same graph (CHECK.md, E5003): a
+           type annotation that records no edge leaves a package one value
+           reference away from a cycle it cannot see. The current module
+           resolving to itself is not an edge — a self-loop is not a
+           cycle. *)
+        if owner <> ctx.current then ctx.refs := owner :: !(ctx.refs);
         check_internal_type_path ctx span owner name;
         let q = qualify_path owner name in
         if Hashtbl.mem ctx.classes q then Some (ClassType q)

@@ -41,6 +41,28 @@ interface Integrand {
 // QUADPACK's own ignored one (pass 0.0).
 enum InfiniteRange { from_bound, to_bound, whole_line }
 
+// The raw bindings behind the wrapped API: one `foreign def` per shim
+// entry in emo_quad_shim.c, named here beside the interface they
+// annotate — a module reference in a type annotation rides the same
+// graph as a value call (E5003), so an internal module annotating the
+// root's interface would close a cycle the package rule forbids. The
+// integrand crosses the C ABI through the callback contract: the
+// interface-typed parameter expands to the (trampoline, userdata) pair
+// the shim installs as QUADPACK's stateless function pointer. The
+// result is QUADPACK's own (result, abserr, neval, ier) tuple, crossing
+// as a struct by value; the public wrappers below map the ier codes
+// onto the (R.ok, ...)/(R.error, ...) split.
+//
+// `inf` is QUADPACK's own interval code: 1 integrates [bound, +∞), -1
+// integrates (−∞, bound], 2 integrates (−∞, +∞) and ignores bound.
+foreign def raw_integrate(a Float64, b Float64, epsabs Float64,
+  epsrel Float64, f Integrand) (Float64, Float64, Int64, Int64) =
+  "emo_quad_integrate"
+
+foreign def raw_integrate_infinite(bound Float64, inf Int64, epsabs Float64,
+  epsrel Float64, f Integrand) (Float64, Float64, Int64, Int64) =
+  "emo_quad_integrate_infinite"
+
 // Integrates `f` over [a, b] to `max(epsabs, epsrel·|i|)` accuracy,
 // QUADPACK's adaptive 21-point Gauss–Kronrod rule with the
 // ε-algorithm extrapolating the error. The limit is the package's own
@@ -48,8 +70,7 @@ enum InfiniteRange { from_bound, to_bound, whole_line }
 // value instead of growing the workspace.
 def integrate(f Integrand, a Float64, b Float64, epsabs Float64,
   epsrel Float64) (R, (Float64, Float64)) {
-  const (result, abserr, neval, ier) = internal.ffi.integrate(a, b, epsabs,
-    epsrel, f)
+  const (result, abserr, neval, ier) = raw_integrate(a, b, epsabs, epsrel, f)
   return internal.ffi.report(result, abserr, neval, ier)
 }
 
@@ -67,7 +88,7 @@ def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
     InfiniteRange.to_bound   then { code = -1 }
     InfiniteRange.whole_line then { code = 2 }
   }
-  const (result, abserr, neval, ier) = internal.ffi.integrate_infinite(bound,
-    code, epsabs, epsrel, f)
+  const (result, abserr, neval, ier) = raw_integrate_infinite(bound, code,
+    epsabs, epsrel, f)
   return internal.ffi.report(result, abserr, neval, ier)
 }
