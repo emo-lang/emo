@@ -96,12 +96,22 @@ browser and no Node:
 - **The det interpreter's parked read breaks during a held-open call**
   (EBADF on the next read; the c runtime runs the identical ladder
   byte-green) — found-not-fixed, the live check records its run on c.
-- **The json package's escape-length walk recurses per character.**
-  `quoted_len` is a plain recursion over the string's bytes, so a
-  120000-char `json.encode` rides 120000 stack frames — past the c
-  target's fiber stack (the interpreter survives it). Found-not-
-  fixed; the demo hand-assembles its one large reply around it, and
-  the package's own encode calls are all small.
+- **The json package's escape-length walk recursed per character.**
+  `quoted_len` was a plain recursion over the string's bytes, so a
+  large `json.encode` rode one stack frame per byte — past the c
+  target's fiber stack (the interpreter survived it). Found-not-
+  fixed; the demo hand-assembled its one large reply around it, and
+  the package's own encode calls were all small. **Fixed
+  2026-11-16**: `quoted_len` is a loop now — the length half; the
+  write half (`fill_quoted`) and the decode's scan walk were already
+  exit-position tails the backends rebind, so the length walk was
+  the one non-tail ride. The threshold today sat at ~300000 chars of
+  the 8 MiB fiber stack (the record's 120000 predates the wider
+  stack), and 1200000 escaped bytes now encode byte-identical on the
+  interpreter and the `c` binary; the demo's hand-assembled reply
+  retired — it encodes through `json.encode` whole, its golden
+  unchanged — and the seven locks pinning json re-pin with the
+  digest (`just lock-refresh`).
 
 ## Verification
 

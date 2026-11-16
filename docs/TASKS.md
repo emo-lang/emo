@@ -3902,6 +3902,12 @@ in the lockfile suite and in `c_goldens`; docs EN+zh.
       120000-char `json.encode` rides past the c target's fiber
       stack (the interpreter survives; found-not-fixed, the demo
       works around it by hand-assembling the one large reply).
+      Fixed 2026-11-16: the length walk is a loop now (the one
+      non-tail ride; the write half and the decode's scan were
+      already exit-position tails), the demo's workaround retired —
+      it encodes through `json.encode` whole, golden unchanged —
+      and the seven json-pinning locks re-pin with the digest
+      (`CHECK.md`).
 - [x] **T64.7** — The live check: `npm install -g playwright`
       (1.65.0, chromium headless shell 158.0.8127.18), then the
       whole door ladder against a real `playwright run-server`

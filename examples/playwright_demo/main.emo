@@ -588,18 +588,20 @@ def step_press(conn TcpConn) (R, Int64) {
 }
 
 // The screenshot rides one frame past the two-byte length form —
-// 120000 characters of base64 take the eight-byte form. The reply is
-// assembled by hand, linearly: json's encoder walks a string's escape
-// length by plain recursion, and a walk this deep rides the stack
-// past the c target's fiber — a json-package landmine documented in
-// the CHECK notes, worked around here by the shape the encoder would
-// print anyway (the base64 alphabet carries nothing to escape).
+// 120000 characters of base64 take the eight-byte form. The reply
+// rides json.encode whole: the escape walk is a loop now (the length
+// half; the write half rebinds), so the depth the encoder used to
+// ride into the c target's fiber stack is gone — the CHECK notes
+// carry the fix.
 def step_screenshot(conn TcpConn) (R, Int64) {
   case expect_call(conn, "screenshot") {
     (R.error, why) then { return (R.error, why) }
     (R.ok, id)     then {
       const binary = base64.encode(fake_png().to_string())
-      const doc = "{\"id\":" + id.to_string() + ",\"result\":{\"binary\":\"" + binary + "\"}}"
+      const doc = json.object([
+        ("id", json.int64(id)),
+        ("result", json.object([("binary", json.string(binary))]))
+      ]).encode()
       return fake_send_text(conn, doc)
     }
   }
