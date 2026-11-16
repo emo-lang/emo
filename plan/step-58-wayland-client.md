@@ -67,9 +67,17 @@ compositor.**
 
 ## Found, not fixed
 
-- **A bare `{ ... }` block miscompiles silently** (the handshake
-  demo's first shape lost its tail; the case-wrapped shape works).
-  Recorded for the compiler track.
+- **A bare `{ ... }` block miscompiled silently** (the handshake
+  demo's first shape lost its tail; the case-wrapped shape worked).
+  Recorded for the compiler track — **fixed 2026-11-14 (`64e3a944`,
+  the shell's fork-loop shape named the mechanism)**: the void body's
+  tail rewrite folded every branch-trailing bare call into a
+  `Return_stmt`, so a call ending an `if`/`case`/`receive` that was
+  not the body's last statement made the rest of the block dead code.
+  The rewrite keys on exit position (`rewrite_exit`), pinned by the
+  two IR goldens in `test/emo_ir`; the mid-body `if`, the mid-body
+  `case`, and the demo's `c` build byte-identical with its golden
+  verified 2026-11-16.
 - **The generated C seeds module consts in the root entry**, so a
   def binding-but-never-using them warns (`main__w` unused). The
   corpus's own pre-existing shape.
