@@ -31,9 +31,10 @@ case net.connect_unix(path, 5.0) {
 `wayland.connect(path, timeout)` wraps the same dance around a socket
 it opens itself; `conn_of` wraps a socket already open (the shape a
 test double starts from). The package declares `c` alone: the Unix
-socket, the fd passage, and the shm tier are the c target's runtime,
-and every other target refuses the package at resolution (the sqlite3
-precedent).
+socket, the fd passage, and the shm tier are the c target's runtime —
+the interpreter runs them on its own stub leg (the mock golden rides
+both) — and every other target refuses the package at resolution (the
+sqlite3 precedent).
 
 ## The wire
 
@@ -177,9 +178,10 @@ sway.
 
 ## Limitations
 
-- **One target.** `c` alone; the interpreter's fd-passage stubs (the
-  OCaml runtime's Unix module carries no sendmsg) are the named
-  follow-up.
+- **One declared target.** `c` alone; the interpreter runs the same
+  calls on its stub leg (the OCaml runtime's Unix module carries no
+  sendmsg, so C stubs ride beside the interpreter's scheduler), and
+  the ocaml target still refuses the fd natives at run time.
 - **One fd a message.** The protocols this package speaks carry
   exactly one; a protocol needing two grows the shape then.
 - **The keymap is a focused reader, not an xkb.** The parser takes

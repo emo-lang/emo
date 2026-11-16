@@ -693,6 +693,27 @@ let rec handler state (proc : Emo_eval.process) () :
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
                 connect_unix_entry state proc k ~path ~timeout span)
+        | Emo_eval.Net_sendmsg_fd (c, data, pass_fd, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                conn_entry state proc k c span (fun live ->
+                    let finished = ref false in
+                    let deadline = conn_deadline c in
+                    sendmsg_fd_loop state proc k finished c span live deadline
+                      data (Int64.to_int pass_fd)))
+        | Emo_eval.Net_recvmsg_fd (c, cap, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                conn_entry state proc k c span (fun live ->
+                    let finished = ref false in
+                    let deadline = conn_deadline c in
+                    if cap <= 0L then
+                      finish_w finished state proc k
+                        (Emo_eval.net_error
+                           "os: recvmsg capacity: Invalid argument")
+                    else
+                      recvmsg_fd_loop state proc k finished c span live deadline
+                        (Int64.to_int cap)))
         | Emo_eval.Net_listen_unix (path, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -839,7 +860,10 @@ and conn_entry :
           (handler state proc ())
 
 (* Parks on fd interest plus the deadline; the timeout message states the
-   configured budget, which is what the operation was given. *)
+   configured budget, which is what the operation was given. An operation
+   whose fd dies with the timeout — the handshake parks, where no conn
+   owns the fd until success — passes ~on_timeout to close it before the
+   error answers. *)
 and park_fd :
     state ->
     Emo_eval.process ->
@@ -849,10 +873,12 @@ and park_fd :
     [ `R | `W ] ->
     deadline:float option ->
     timeout_message:string ->
+    ?on_timeout:(state -> outcome) ->
     Emo_support.Span.t ->
     (state -> outcome) ->
     outcome =
- fun state proc k finished fd kind ~deadline ~timeout_message span step ->
+ fun state proc k finished fd kind ~deadline ~timeout_message ?on_timeout span
+     step ->
   (* A wake only re-runs the step when nothing has completed the
      operation yet; the completion itself goes through finish_w,
      which set the flag — so a racing timer and readiness wake resume the
@@ -869,8 +895,11 @@ and park_fd :
                  fun st ->
                    if !finished then None
                    else
-                     finish_w finished st proc k
-                       (Emo_eval.net_error timeout_message) ))
+                     match on_timeout with
+                     | Some step -> step st
+                     | None ->
+                         finish_w finished st proc k
+                           (Emo_eval.net_error timeout_message) ))
             state.runq)
   | None -> ());
   None
@@ -1177,7 +1206,9 @@ and connect_tls_upgrade state proc
 
 (* Drives a nonblocking TLS handshake to completion: want_read /
    want_write park the continuation on the fd, so both ends of a
-   loopback handshake progress through the scheduler. *)
+   loopback handshake progress through the scheduler. Failure closes
+   the fd — no conn owns it yet, the conn is minted only on success —
+   the same close the c runtime runs here. *)
 and handshake state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
@@ -1201,6 +1232,10 @@ and handshake state proc
         once
   | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
     ->
+      (* The failed handshake's fd stays unowned — make_tls_conn runs on
+         the success path alone — so the failure closes it here, one
+         bad client one fd spent, none left behind. *)
+      (try Unix.close fd with Unix.Unix_error _ -> ());
       finish_w finished state proc k
         (Emo_eval.net_error
            (Printf.sprintf "the TLS handshake with %s failed: %s" desc
@@ -1208,8 +1243,14 @@ and handshake state proc
 
 and park_and_handshake state proc k finished fd ssl desc ~deadline span kind
     once =
-  park_fd state proc k finished fd kind ~deadline
-    ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc) span
+  (* The deadline kill closes the fd too, by the same unowned-fd rule;
+     a readiness wake racing the timer observes the finished flag and
+     touches nothing. *)
+  let message = Printf.sprintf "timed out handshaking with %s" desc in
+  park_fd state proc k finished fd kind ~deadline ~timeout_message:message span
+    ~on_timeout:(fun st ->
+      (try Unix.close fd with Unix.Unix_error _ -> ());
+      finish_w finished st proc k (Emo_eval.net_error message))
     (fun st -> handshake st proc k finished fd ssl desc ~deadline span once)
 
 (* The TLS half of `net_tls_wrap`: shakes hands on an existing plain
@@ -1602,6 +1643,61 @@ and write_loop state proc
   | None when off >= len ->
       finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.TcpConn c))
   | None -> park `W
+
+(* The fd passage (A18.7): one sendmsg carrying one SCM_RIGHTS name, the
+   call the c runtime runs. A partial send answers its own count;
+   would-block parks on writability like any conn write; the failure
+   reason names the call. The raw fd rides whether or not the conn is
+   TLS — the wire this speaks is a plain unix socket's. *)
+and sendmsg_fd_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) (data : string) (pass_fd : int) :
+    outcome =
+  match Emo_eval.emo_stub_sendmsg_fd (Emo_eval.fd_int live.lfd) data pass_fd with
+  | put when put >= 0 ->
+      finish_w finished state proc k
+        (Emo_eval.net_ok (Emo_eval.Int64 (Int64.of_int put)))
+  | _ ->
+      park_fd state proc k finished live.lfd `W ~deadline
+        ~timeout_message:
+          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc)
+        span
+        (fun st ->
+          sendmsg_fd_loop st proc k finished c span live deadline data pass_fd)
+  | exception Unix.Unix_error (err, _, _) ->
+      finish_w finished state proc k
+        (Emo_eval.net_error
+           (Printf.sprintf "sendmsg failed: %s" (Unix.error_message err)))
+
+(* The passage's read half: one recvmsg, the ancillary queue read back
+   into the triple's fd slot (-1 when the frame carried no name), an
+   empty read still answering (R.ok, "", -1) — the zero-byte frame is
+   data here, not EOF. Would-block parks on readability. *)
+and recvmsg_fd_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) (cap : int) : outcome =
+  match Emo_eval.emo_stub_recvmsg_fd (Emo_eval.fd_int live.lfd) cap with
+  | got, data, passed when got >= 0 ->
+      finish_w finished state proc k
+        (Emo_eval.Tuple
+           [
+             Emo_eval.EnumMember ("R", "ok");
+             Emo_eval.String data;
+             Emo_eval.Int64 (Int64.of_int passed);
+           ])
+  | _ ->
+      park_fd state proc k finished live.lfd `R ~deadline
+        ~timeout_message:
+          (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc)
+        span
+        (fun st ->
+          recvmsg_fd_loop st proc k finished c span live deadline cap)
+  | exception Unix.Unix_error (err, _, _) ->
+      finish_w finished state proc k
+        (Emo_eval.net_error
+           (Printf.sprintf "recvmsg failed: %s" (Unix.error_message err)))
 
 (* Fires due timers, then polls fd readiness once and wakes the parked
    operations whose fd is ready. Waiters that stay parked are untouched. *)

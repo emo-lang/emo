@@ -1194,6 +1194,9 @@ type _ Effect.t +=
   | Net_udp_close : udp * Emo_support.Span.t -> value Effect.t
   | Net_connect_unix : string * float * Emo_support.Span.t -> value Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> value Effect.t
+  | Net_sendmsg_fd :
+      (conn * string * int64 * Emo_support.Span.t) -> value Effect.t
+  | Net_recvmsg_fd : (conn * int64 * Emo_support.Span.t) -> value Effect.t
   | File_read : string * Emo_support.Span.t -> value Effect.t
   | File_write : string * string * Emo_support.Span.t -> value Effect.t
   | Net_tls_connect :
@@ -1422,6 +1425,14 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_unix`")
+            | Net_sendmsg_fd (_, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_sendmsg_fd`")
+            | Net_recvmsg_fd (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_recvmsg_fd`")
             | File_read (_, span) ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused span "`file.read`")
@@ -1492,6 +1503,16 @@ let expect_raise span message = net_raise span message
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
+external emo_stub_sendmsg_fd : int -> string -> int -> int
+  = "emo_stub_sendmsg_fd"
+
+(* (got, data, passed fd); got = -2 is the would-block the scheduler
+   parks on, the passed fd -1 when the read carried no name. *)
+external emo_stub_recvmsg_fd : int -> int -> int * string * int
+  = "emo_stub_recvmsg_fd"
+
+external emo_stub_ftruncate : int -> int64 -> unit = "emo_stub_ftruncate"
+external emo_stub_pwrite : int -> Bytes.t -> int64 -> int = "emo_stub_pwrite"
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -4151,47 +4172,89 @@ and apply_runtime_impl span name args =
         Effect.perform (Net_listen_unix (path, span))
     | "net_listen_unix", _ ->
         error span "E3001" "`net_listen_unix` expects (path String)"
-    (* The fd passage and the shm tier (A18.7) ride the c target's
-       runtime only: the interpreter names the refusal instead of
-       pretending. *)
+    (* The fd passage and the shm tier (A18.7): the socket pair parks
+       through the scheduler like every conn read and write; the pool's
+       calls run synchronously beside the os module's own. The reasons
+       and the answer shapes are the c runtime's. *)
     | "net_sendmsg_fd", args when List.length args <> 3 ->
         error span "E3007"
           (Printf.sprintf
              "`net_sendmsg_fd` expects (conn TcpConn, data String, fd Int64), \
               got %d             arguments"
              (List.length args))
-    | "net_sendmsg_fd", [ _; _; _ ] ->
-        not_yet span "`net_sendmsg_fd` (the fd passage rides the c target)"
+    | "net_sendmsg_fd", [ TcpConn c; String data; Int64 pass_fd ] ->
+        Effect.perform (Net_sendmsg_fd (c, data, pass_fd, span))
+    | "net_sendmsg_fd", _ ->
+        error span "E3001"
+          "`net_sendmsg_fd` expects (conn TcpConn, data String, fd Int64)"
     | "net_recvmsg_fd", args when List.length args <> 2 ->
         error span "E3007"
           (Printf.sprintf
              "`net_recvmsg_fd` expects (conn TcpConn, cap Int64), got %d \
               arguments"
              (List.length args))
-    | "net_recvmsg_fd", [ _; _ ] ->
-        not_yet span "`net_recvmsg_fd` (the fd passage rides the c target)"
+    | "net_recvmsg_fd", [ TcpConn c; Int64 cap ] ->
+        Effect.perform (Net_recvmsg_fd (c, cap, span))
+    | "net_recvmsg_fd", _ ->
+        error span "E3001" "`net_recvmsg_fd` expects (conn TcpConn, cap Int64)"
     | "os_shm_open", args when List.length args <> 1 ->
         error span "E3007"
           (Printf.sprintf
              "`os_shm_open` expects (name String), got %d arguments"
              (List.length args))
-    | "os_shm_open", [ _ ] ->
-        not_yet span "`os_shm_open` (the shm tier rides the c target)"
+    | "os_shm_open", [ String path ] ->
+        (* The pool fd: a private regular file at `path`, unlinked at
+           birth — seekable and mappable on both platforms (macOS's
+           POSIX shm objects refuse read and pwrite outright), the
+           shape the wl_shm pool accepts. The name's whole life is
+           this call: a second open of it refuses (O_EXCL) instead of
+           silently sharing. *)
+        os_result span (fun () ->
+            let fd =
+              Unix.openfile path [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_RDWR ] 0o600
+            in
+            (try Unix.unlink path with Unix.Unix_error _ -> ());
+            Int64 (Int64.of_int (fd_int fd)))
+    | "os_shm_open", _ ->
+        error span "E3001" "`os_shm_open` expects (name String)"
     | "os_ftruncate", args when List.length args <> 2 ->
         error span "E3007"
           (Printf.sprintf
              "`os_ftruncate` expects (fd Int64, size Int64), got %d arguments"
              (List.length args))
-    | "os_ftruncate", [ _; _ ] ->
-        not_yet span "`os_ftruncate` (the shm tier rides the c target)"
+    | "os_ftruncate", [ Int64 fd; Int64 size ] ->
+        os_result span (fun () ->
+            emo_stub_ftruncate (Int64.to_int fd) size;
+            Int64 0L)
+    | "os_ftruncate", _ ->
+        error span "E3001" "`os_ftruncate` expects (fd Int64, size Int64)"
     | "os_pwrite", args when List.length args <> 3 ->
         error span "E3007"
           (Printf.sprintf
              "`os_pwrite` expects (fd Int64, data String, offset Int64), got \
               %d             arguments"
              (List.length args))
-    | "os_pwrite", [ _; _; _ ] ->
-        not_yet span "`os_pwrite` (the shm tier rides the c target)"
+    | "os_pwrite", [ Int64 fd; String data; Int64 offset ] ->
+        os_result span (fun () ->
+            let fd = Int64.to_int fd in
+            let bytes = Bytes.of_string data in
+            let len = Bytes.length bytes in
+            let rec put off total =
+              if off >= len then total
+              else begin
+                let n =
+                  emo_stub_pwrite fd bytes
+                    (Int64.add offset (Int64.of_int off))
+                in
+                if n <= 0 then
+                  raise (Unix.Unix_error (Unix.EIO, "pwrite", ""))
+                else put (off + n) (total + n)
+              end
+            in
+            Int64 (Int64.of_int (put 0 0)))
+    | "os_pwrite", _ ->
+        error span "E3001"
+          "`os_pwrite` expects (fd Int64, data String, offset Int64)"
     | "os_sleep_ms", args when List.length args <> 1 ->
         error span "E3007"
           (Printf.sprintf "`os_sleep_ms` expects (ms Int64), got %d arguments"
@@ -5148,6 +5211,14 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
                     Some
                       (fun (_ : (a, _) continuation) ->
                         refused span "`net_listen_unix`")
+                | Net_sendmsg_fd (_, _, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_sendmsg_fd`")
+                | Net_recvmsg_fd (_, _, span) ->
+                    Some
+                      (fun (_ : (a, _) continuation) ->
+                        refused span "`net_recvmsg_fd`")
                 | File_read (_, span) ->
                     Some
                       (fun (_ : (a, _) continuation) ->

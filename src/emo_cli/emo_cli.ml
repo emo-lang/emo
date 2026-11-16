@@ -324,6 +324,31 @@ let pkg_config_flags (modules : string list) :
              (String.concat ", " modules));
         None
 
+(* The BEAM module is named after the output's stem, and a stem that
+   names an OTP module loses the run before it starts — which way it
+   loses shifts with the OTP version: a preloaded name (`atomics`,
+   `erlang`) dies `undef` on `stem:main()`, a boot-called name (`lists`,
+   `maps`) breaks the boot's own calls (`lists:usort`), and a merely
+   boot-loaded name can even appear to work through `-pa` ordering luck.
+   No embedded list can stay honest across OTP releases, so the check
+   asks the OTP side itself: code:which with the working directory
+   scrubbed from the path, so the project's own earlier .beam cannot
+   claim the name. Where erl cannot answer, the check stays silent —
+   erlc will fail the build in its own words. *)
+let beam_stem_claims_otp_module (stem : string) : bool =
+  if not (tool_exists "erl") then false
+  else
+    let query =
+      Printf.sprintf
+        "code:set_path(lists:delete(\".\", code:get_path())), case \
+         code:which(list_to_atom(\"%s\")) of non_existing -> halt(0); _ -> \
+         halt(65) end."
+        stem
+    in
+    Emo_tool.run_status ~timeout:Emo_tool.probe_deadline
+      (Printf.sprintf "erl -noshell -eval %s" (Filename.quote query))
+    = 65
+
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(native : Emo_project.native_inputs)
     ~(target : string) ~(profile : string) ~(wasi : bool) : int =
@@ -428,6 +453,16 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                         module name is a lower-case letter followed by \
                         letters, digits, `_` or `@`"
                        stem);
+                  65
+                end
+                else if beam_stem_claims_otp_module stem then begin
+                  prerr_endline
+                    (Printf.sprintf
+                       "emo build: `%s` is an OTP module name — the BEAM module \
+                        is named after the output file, and OTP's own `%s` owns \
+                        that name at run time, so the artifact can never run; \
+                        rename the output"
+                       stem stem);
                   65
                 end
                 else

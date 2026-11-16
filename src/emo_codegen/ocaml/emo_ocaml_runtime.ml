@@ -3627,7 +3627,10 @@ module Emo_runtime = struct
       | None -> Effect.Shallow.continue_with k closed (handler state proc ())
 
   (* Parks on fd interest plus the deadline; the timeout message states
-     the configured budget, which is what the operation was given. *)
+     the configured budget, which is what the operation was given. An
+     operation whose fd dies with the timeout — the handshake parks,
+     where no conn owns the fd until success — passes ~on_timeout to
+     close it before the error answers. *)
   and park_fd :
       state ->
       Emo_eval.process ->
@@ -3637,9 +3640,11 @@ module Emo_runtime = struct
       [ `R | `W ] ->
       deadline:float option ->
       timeout_message:string ->
+      ?on_timeout:(state -> Emo_eval.exit_info option) ->
       (state -> Emo_eval.exit_info option) ->
       Emo_eval.exit_info option =
-   fun state proc k finished fd kind ~deadline ~timeout_message step ->
+   fun state proc k finished fd kind ~deadline ~timeout_message ?on_timeout
+       step ->
     (* A wake only re-runs the step when nothing has completed the
        operation yet; the completion itself goes through finish_w,
        which sets the flag — so a racing timer and readiness wake resume
@@ -3656,8 +3661,11 @@ module Emo_runtime = struct
                    fun st ->
                      if !finished then None
                      else
-                       finish_w finished st proc k
-                         (Emo_eval.net_error timeout_message) ))
+                       match on_timeout with
+                       | Some step -> step st
+                       | None ->
+                           finish_w finished st proc k
+                             (Emo_eval.net_error timeout_message) ))
               state.runq)
     | None -> ());
     None
@@ -3967,7 +3975,9 @@ module Emo_runtime = struct
 
   (* Drives a nonblocking TLS handshake to completion: want_read /
      want_write park the continuation on the fd, so both ends of a
-     loopback handshake progress through the scheduler. *)
+     loopback handshake progress through the scheduler. Failure closes
+     the fd — no conn owns it yet, the conn is minted only on success —
+     the same close the c runtime runs here. *)
   and handshake state proc
       (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
@@ -3989,14 +3999,24 @@ module Emo_runtime = struct
         park_and_handshake state proc k finished fd ssl desc ~deadline `W once
     | exception
         (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _) ->
+        (* The failed handshake's fd stays unowned — make_tls_conn runs on
+           the success path alone — so the failure closes it here, one
+           bad client one fd spent, none left behind. *)
+        (try Unix.close fd with Unix.Unix_error _ -> ());
         finish_w finished state proc k
           (Emo_eval.net_error
              (Printf.sprintf "the TLS handshake with %s failed: %s" desc
                 ((Ssl.get_error_string [@alert "-deprecated"]) ())))
 
   and park_and_handshake state proc k finished fd ssl desc ~deadline kind once =
-    park_fd state proc k finished fd kind ~deadline
-      ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc)
+    (* The deadline kill closes the fd too, by the same unowned-fd rule;
+       a readiness wake racing the timer observes the finished flag and
+       touches nothing. *)
+    let message = Printf.sprintf "timed out handshaking with %s" desc in
+    park_fd state proc k finished fd kind ~deadline ~timeout_message:message
+      ~on_timeout:(fun st ->
+        (try Unix.close fd with Unix.Unix_error _ -> ());
+        finish_w finished st proc k (Emo_eval.net_error message))
       (fun st -> handshake st proc k finished fd ssl desc ~deadline once)
 
   (* The TLS half of `net_tls_wrap`: shakes hands on an existing plain

@@ -1512,6 +1512,20 @@ let beam_naming_tests =
         Alcotest.(check bool)
           "nothing was written" false
           (Sys.file_exists (Filename.concat dir "my-app.core")));
+    tc "an OTP module name is refused as the stem" (fun () ->
+        (* The atomic goldens' corpus was first named `atomics`: OTP's own
+           module owns the name at run time, and which way the artifact
+           dies shifts with the OTP version — the build refuses the name
+           outright, asking the OTP side itself (so the pin needs erl). *)
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry "beam-otp-name" "println(\"hello\")\n" in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 65
+          (build_entry ~target:"beam" entry (Filename.concat dir "atomics"));
+        Alcotest.(check bool)
+          "nothing was written" false
+          (Sys.file_exists (Filename.concat dir "atomics.core")));
   ]
 
 (* A bare def is a value, and until this regression a `fun 'mod':'name'/a`
