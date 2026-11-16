@@ -544,8 +544,7 @@ let rec handler state (proc : Emo_eval.process) () :
                             address `%s`; pass server_name with the \
                             certificate's DNS name"
                            name)
-                    else if
-                      (not tls_options.Emo_eval.tls_insecure) && name = ""
+                    else if (not tls_options.Emo_eval.tls_insecure) && name = ""
                     then
                       fail
                         "tls: verifying a certificate needs a DNS name; pass \
@@ -981,8 +980,7 @@ and connect_next state proc k ~target ~deadline ~message
   let last_error = ref last_error in
   let failure_reason () =
     match !last_error with
-    | Some Unix.ECONNREFUSED ->
-        Printf.sprintf "connection refused to %s" target
+    | Some Unix.ECONNREFUSED -> Printf.sprintf "connection refused to %s" target
     | Some err ->
         Printf.sprintf "cannot connect to %s: %s" target
           (Unix.error_message err)
@@ -1062,7 +1060,7 @@ and connect_next state proc k ~target ~deadline ~message
   and stagger () =
     add_timer state 0.25 (fun () ->
         if not !finished then
-          Queue.add (Io (proc, (fun st -> start_next st))) state.runq)
+          Queue.add (Io (proc, fun st -> start_next st)) state.runq)
   in
   (match deadline with
   | Some dl ->
@@ -1070,7 +1068,7 @@ and connect_next state proc k ~target ~deadline ~message
       add_timer state budget (fun () ->
           if not !finished then
             Queue.add
-              (Io (proc, (fun st -> finish_failure st message)))
+              (Io (proc, fun st -> finish_failure st message))
               state.runq)
   | None -> ());
   if addrs = [] then finish_failure state (failure_reason ())
@@ -1168,12 +1166,14 @@ and handshake state proc
       ( Ssl.Connection_error (Ssl.Error_want_read as want)
       | Ssl.Accept_error (Ssl.Error_want_read as want) )
     when want = Ssl.Error_want_read ->
-      park_and_handshake state proc k finished fd ssl desc ~deadline span `R once
+      park_and_handshake state proc k finished fd ssl desc ~deadline span `R
+        once
   | exception
       ( Ssl.Connection_error (Ssl.Error_want_write as want)
       | Ssl.Accept_error (Ssl.Error_want_write as want) )
     when want = Ssl.Error_want_write ->
-      park_and_handshake state proc k finished fd ssl desc ~deadline span `W once
+      park_and_handshake state proc k finished fd ssl desc ~deadline span `W
+        once
   | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
     ->
       finish_w finished state proc k
@@ -1199,24 +1199,23 @@ and wrap_handshake state proc
   match Ssl.connect ssl with
   | () ->
       Hashtbl.replace state.live c.Emo_eval.cid { live with ltls = Some ssl };
-      finish_w finished state proc k
-        (Emo_eval.net_ok (Emo_eval.TcpConn c))
+      finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.TcpConn c))
   | exception
       ( Ssl.Connection_error (Ssl.Error_want_read as want)
       | Ssl.Accept_error (Ssl.Error_want_read as want) )
     when want = Ssl.Error_want_read ->
       park_fd state proc k finished live.lfd `R ~deadline
         ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc)
-        span
-        (fun st -> wrap_handshake st proc k finished c live ssl desc span deadline)
+        span (fun st ->
+          wrap_handshake st proc k finished c live ssl desc span deadline)
   | exception
       ( Ssl.Connection_error (Ssl.Error_want_write as want)
       | Ssl.Accept_error (Ssl.Error_want_write as want) )
     when want = Ssl.Error_want_write ->
       park_fd state proc k finished live.lfd `W ~deadline
         ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc)
-        span
-        (fun st -> wrap_handshake st proc k finished c live ssl desc span deadline)
+        span (fun st ->
+          wrap_handshake st proc k finished c live ssl desc span deadline)
   | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
     ->
       finish_w finished state proc k

@@ -1059,9 +1059,7 @@ let empty_env =
         ( "net_env",
           {
             vtype =
-              FuncType
-                ( [ ("name", String) ],
-                  TupleType [ EnumType "R"; String ] );
+              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;
@@ -4255,10 +4253,13 @@ and check_member_payloads ctx (branches : Ast.branch list) : unit =
     branches
 
 (* Definite return: every execution path through the statements ends in
-   `return` — or diverges through `raise`, an exhaustive `case` whose
-   branches all return, or a `receive` whose branches all return. A
-   function with a declared return type must satisfy this; a Void function
-   is the opposite and must contain no `return` at all. *)
+   `return` — or diverges: through `raise`, or through the tail
+   statement's own no-match route, which never falls through (a `case`
+   that matches nothing is the loud death every target ends the process
+   with; a `receive` that matches nothing parks and keeps waiting), so
+   what the checker asks of that tail is branches that all return. A
+   function with a declared return type must satisfy this; a Void
+   function is the opposite and must contain no `return` at all. *)
 and definitely_returns ctx (stmts : Ast.stmt list) : bool =
   match List.rev stmts with last :: _ -> always_returns ctx last | [] -> false
 
@@ -4272,22 +4273,21 @@ and always_returns ctx (s : Ast.stmt) : bool =
   | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue -> false
   | Ast.If { then_body; else_body = Some else_body; _ } ->
       definitely_returns ctx then_body && definitely_returns ctx else_body
-  | Ast.Case { scrutinee; branches } -> (
-      let scrutinee_t =
-        match
-          Hashtbl.find_opt ctx.types
-            ( scrutinee.Ast.span.Emo_support.Span.file,
-              scrutinee.Ast.span.Emo_support.Span.start,
-              scrutinee.Ast.span.Emo_support.Span.stop )
-        with
-        | Some t -> t
-        | None -> Unknown
-      in
-      match case_missing_members ctx scrutinee_t branches with
-      | Some [] ->
-          List.for_all (fun b -> definitely_returns ctx b.Ast.body) branches
-      | _ -> false)
-  | Ast.Receive branches ->
+  | Ast.Case { branches; _ } | Ast.Receive branches ->
+      (* Both shapes are no-fall-through: a case that matches nothing is
+         the loud no-match death every target ends the process with
+         (E3006, `emo_no_match`, the wasm trap, the BEAM error) — the
+         same divergence `raise` already counts — and a receive that
+         matches nothing parks and keeps waiting. So a case whose
+         branches all return is a return point wherever it is the tail,
+         without the exhaustiveness proof the old gate demanded here:
+         the proof was the checker's proxy for "cannot fall through", and
+         it over-refused exactly where the scrutinee is silent, where
+         coverage cannot be decided — the `:chain` rewrite's ladders took
+         E4017 on every path there. The runtime's loud death is the
+         checker's backstop on those paths; where the scrutinee's type is
+         decidable the case's own E4014 still refuses the missing
+         members, at the case's own site. *)
       List.for_all (fun b -> definitely_returns ctx b.Ast.body) branches
   | _ -> false
 

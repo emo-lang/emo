@@ -6607,7 +6607,12 @@ let peek_refusal_expected target =
    spans named. The rules are target-free — the probes run on every
    compiled target's checker seat, and the legal shapes beside them stay
    clean everywhere. The chained-builtin lifetime is not a refusal; its
-   golden is `examples/builtin_names`. *)
+   golden is `examples/builtin_names`. The chain-return shapes (the
+   `:chain` track's found-not-fixed) pin the no-fall-through rule: a
+   tail case needs branches that all return, not a coverage proof — a
+   case that matches nothing is the loud death every target ends the
+   process with — so the gradual-step chain and the gradual tail case
+   check clean, and the arm without its return still refuses. *)
 let strictness_refusal_tests =
   let every_target =
     [ "ocaml"; "c"; "typescript"; "wasm"; "beam"; "riscv64" ]
@@ -6654,6 +6659,71 @@ case l.pop_front() {
   let ladder_message =
     "`R.ok` is matched by two arms with different payload types — (Int64) \
      beside (String); one member, one payload shape"
+  in
+  (* The chain-return shapes: the `:chain` track's found-not-fixed,
+     fixed 2026-11-16 — the rule is the header's no-fall-through note. *)
+  let chain_source =
+    {|
+const l = List.new([])
+l.push_back((R.ok, 2))
+l.push_back((R.ok, 3))
+
+def drive(ls List) (R, Int64) {
+  :chain {
+    (R.ok, n) from ls.pop_front()
+    (R.ok, m) from ls.pop_front()
+  } then {
+    return (R.ok, n + m)
+  } else {
+    (R.error, why) then { return (R.error, why) }
+  }
+}
+
+case drive(l) {
+  (R.ok, n) then { println(n) }
+  (R.error, why) then { println(why) }
+}
+|}
+  in
+  let tail_case_source =
+    {|
+const l = List.new([])
+l.push_back((R.ok, 1))
+
+def pick(ls List) (R, Int64) {
+  case ls.pop_front() {
+    (R.ok, n) then { return (R.ok, n) }
+    (R.error, why) then { return (R.error, why) }
+  }
+}
+
+case pick(l) {
+  (R.ok, n) then { println(n) }
+  (R.error, why) then { println(why) }
+}
+|}
+  in
+  let no_return_source =
+    {|
+const l = List.new([])
+l.push_back((R.ok, 2))
+
+def drive(ls List) (R, Int64) {
+  :chain {
+    (R.ok, n) from ls.pop_front()
+  } then {
+    println(n)
+  } else {
+    (R.error, why) then { return (R.error, why) }
+  }
+}
+
+drive(l)
+|}
+  in
+  let no_return_message =
+    "`drive` declares the return type (R, Int64), so every path must end in \
+     `return`"
   in
   List.concat_map
     (fun target ->
@@ -6715,6 +6785,26 @@ case l.pop_front() {
 |}
             in
             Alcotest.(check (list string)) "codes" [] (List.map fst got));
+        tc
+          (Printf.sprintf
+             "%s: a chain over a gradual step satisfies a declared return type"
+             target) (fun () ->
+            let got = diagnostics target chain_source in
+            Alcotest.(check (list string)) "codes" [] (List.map fst got));
+        tc
+          (Printf.sprintf
+             "%s: a tail case over a gradual scrutinee rides the same rule"
+             target) (fun () ->
+            let got = diagnostics target tail_case_source in
+            Alcotest.(check (list string)) "codes" [] (List.map fst got));
+        tc
+          (Printf.sprintf "%s: a chain arm that does not return still refuses"
+             target) (fun () ->
+            let got = diagnostics target no_return_source in
+            Alcotest.(check (list string))
+              "codes" [ "E4017" ] (List.map fst got);
+            Alcotest.(check (list string))
+              "messages" [ no_return_message ] (List.map snd got));
       ])
     every_target
 

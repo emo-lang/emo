@@ -1200,7 +1200,8 @@ type _ Effect.t +=
       (string * int * float * tls_client_options * Emo_support.Span.t)
       -> value Effect.t
   | Net_tls_wrap :
-      (conn * tls_client_options * Emo_support.Span.t) -> value Effect.t
+      (conn * tls_client_options * Emo_support.Span.t)
+      -> value Effect.t
   | (* host, port, timeout, options *)
       Net_tls_listen :
       (string * int * string * string * tls_server_options * Emo_support.Span.t)
@@ -4271,8 +4272,8 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf
              "`net_tls_wrap` expects (conn TcpConn, server_name String, \
-              ca_file String, client_cert_file String, client_key_file \
-              String, insecure Bool), got %d arguments"
+              ca_file String, client_cert_file String, client_key_file String, \
+              insecure Bool), got %d arguments"
              (List.length args))
     | ( "net_tls_wrap",
         [
