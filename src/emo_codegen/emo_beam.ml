@@ -543,26 +543,40 @@ let rec expr env (x : Emo_ir.expr) : unit =
           List.iter2
             (fun arg l ->
               put env ("let <" ^ l ^ "> =\n");
+              (* the fun's environment is the crossing: every Bytes
+                 rides packed (its dictionary entry stays behind in the
+                 spawner), and the call inside the child unpacks *)
+              put env "apply 'emo_msg_pack'/1 (";
               expr env arg;
+              put env ")";
               put env "\nin ")
             args arg_locals;
           spawn_registered env
             (Printf.sprintf "apply '%s'/%d (%s)"
                (Emo_ir.sanitize_ident func)
                a
-               (String.concat ", " arg_locals))
+               (String.concat ", "
+                  (List.map
+                     (fun l -> Printf.sprintf "apply 'emo_msg_unpack'/1 (%s)" l)
+                     arg_locals)))
       | None -> failwith ("beam: unbound spawn " ^ func))
   | Spawn_value { f; args } ->
       let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
       List.iter2
         (fun arg l ->
           put env ("let <" ^ l ^ "> =\n");
+          put env "apply 'emo_msg_pack'/1 (";
           expr env arg;
+          put env ")";
           put env "\nin ")
         args arg_locals;
       let f_code = expr_block env f in
       spawn_registered env
-        (Printf.sprintf "apply %s (%s)" f_code (String.concat ", " arg_locals))
+        (Printf.sprintf "apply %s (%s)" f_code
+           (String.concat ", "
+              (List.map
+                 (fun l -> Printf.sprintf "apply 'emo_msg_unpack'/1 (%s)" l)
+                 arg_locals)))
   | Builtin { name; args } -> builtin env name args
   | Runtime_impl { name = "rand_bytes"; args = [ n ] } ->
       (* the rand package's entropy source: crypto:strong_rand_bytes
@@ -1510,15 +1524,26 @@ and stmt env (s : Emo_ir.stmt) : unit =
       emit_branches branches;
       put env "end"
   | Emo_ir.Send { target; message } ->
+      (* the message rides packed: every Bytes in it crosses as the raw
+         buffer ({'emo_bytes_val', Bin}), because the tag's process-
+         dictionary entry stays behind — the receiver's branch bindings
+         unpack and re-register under their own keys *)
       put env "call 'erlang':'!'(";
       expr env target;
-      put env ", ";
+      put env ", apply 'emo_msg_pack'/1 (";
       expr env message;
-      put env ")"
+      put env "))"
   | Emo_ir.Receive { branches } ->
       (* BEAM's selective receive IS the semantics: non-matching
          messages stay in the mailbox. The text grammar requires an
-         after-clause; infinity with a blocking body never fires. *)
+         after-clause; infinity with a blocking body never fires. Each
+         branch's bindings unpack at the body's door: the send packed
+         every Bytes in the message as the raw buffer, because the
+         tag's process-dictionary entry stayed behind in the sender —
+         the unpack re-registers the buffer under this process's own
+         keys. (A guard runs before the lets, so a guard dereferencing
+         a sent Bytes's methods stays in the cannot-cross class's
+         shadow — guards read patterns, not buffers, in practice.) *)
       put env "receive\n";
       let saved = env.local_map in
       List.iter
@@ -1534,6 +1559,16 @@ and stmt env (s : Emo_ir.stmt) : unit =
               guard_expr env g;
               put env " ->\n"
           | None -> put env "when 'true' ->\n");
+          List.iter
+            (fun name ->
+              match List.assoc_opt name env.local_map with
+              | Some old ->
+                  let nv = fresh_var env name in
+                  put env
+                    (Printf.sprintf
+                       "let <%s> = apply 'emo_msg_unpack'/1 (%s) in\n" nv old)
+              | None -> ())
+            (pattern_bound_names b.Emo_ir.pattern);
           stmts env b.Emo_ir.body;
           put env "\n")
         branches;
@@ -2101,6 +2136,14 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
           emit_pattern env sub)
         ps;
       put env "}"
+
+(* The names a pattern binds, in order — the receive's unpack lets run
+   over them at the branch body's door. *)
+and pattern_bound_names (p : Emo_ast.pattern) : string list =
+  match p.Emo_ast.pattern_desc with
+  | Emo_ast.Wildcard | Emo_ast.Pattern_literal _ | Emo_ast.Enum_member _ -> []
+  | Emo_ast.Pattern_binding name -> [ name ]
+  | Emo_ast.Tuple_pattern ps -> List.concat_map pattern_bound_names ps
 
 (* ---- The runtime ----
 
@@ -4751,6 +4794,65 @@ let rt_source =
 	  <'undefined'> when 'true' ->
 	      call 'ets':'new'('emo_procs', ['named_table', 'public', 'set'])
 	  <_t> when 'true' -> _t
+	end
+
+%% ---- The process-boundary pack ----
+%%
+%%   A Bytes is {'emo_bytes', Key} over a process-dictionary binary —
+%%   the tag crosses a send or a spawn's fun environment, the entry
+%%   does not, and the child reading the sent buffer died badarg. The
+%%   crossing rides a packed form instead: the sender's pack resolves
+%%   every Bytes in the message (or the spawn's arguments) to the raw
+%%   buffer under {'emo_bytes_val', Bin} — binaries are shared, the
+%%   copy is a reference — and the receiver's unpack re-registers the
+%%   buffer under its own fresh keys. Both walks recurse through
+%%   tuples and instances (plain element rebuilds when nothing packed
+%%   hides inside). The pd-backed containers (List, Map, Builder) keep
+%%   their tags untouched — their contents not crossing is the
+%%   pre-existing class this walk neither widens nor closes.
+
+'emo_msg_pack'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      {'emo_bytes_val', call 'erlang':'get'(_k)}
+	  <_t> when call 'erlang':'is_tuple'(_t) ->
+	      apply 'emo_msg_pack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
+	  <_other> when 'true' -> _other
+	end
+
+'emo_msg_pack_tuple'/2 =
+    fun (_t, _i) ->
+	case _i of
+	  <0> when 'true' -> _t
+	  <_n> when 'true' ->
+	      apply 'emo_msg_pack_tuple'/2
+		(call 'erlang':'setelement'
+		   (_i, _t, apply 'emo_msg_pack'/1 (call 'erlang':'element'(_i, _t))),
+		 call 'erlang':'-'(_i, 1))
+	end
+
+'emo_msg_unpack'/1 =
+    fun (_v) ->
+	case _v of
+	  <{'emo_bytes_val', _bin}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do call 'erlang':'put'(_k, _bin)
+		 {'emo_bytes', _k}
+	  <_t> when call 'erlang':'is_tuple'(_t) ->
+	      apply 'emo_msg_unpack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
+	  <_other> when 'true' -> _other
+	end
+
+'emo_msg_unpack_tuple'/2 =
+    fun (_t, _i) ->
+	case _i of
+	  <0> when 'true' -> _t
+	  <_n> when 'true' ->
+	      apply 'emo_msg_unpack_tuple'/2
+		(call 'erlang':'setelement'
+		   (_i, _t, apply 'emo_msg_unpack'/1 (call 'erlang':'element'(_i, _t))),
+		 call 'erlang':'-'(_i, 1))
 	end
 
 'emo_spawn_reg'/1 =
