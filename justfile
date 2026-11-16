@@ -8,6 +8,12 @@
 default:
     @just --list
 
+# install-deps: install development dependencies
+install-deps:
+    opam switch create 5.5.1 || true
+    opam install -y eio_main ssl digestif
+    which brew && brew install wasmtime || which cargo && cargo install wasmtime-cli
+
 # Build the emo CLI in the release profile — the single binary every
 # other recipe installs or packages.
 #
