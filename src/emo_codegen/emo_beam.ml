@@ -423,13 +423,19 @@ let rec expr env (x : Emo_ir.expr) : unit =
         es;
       put env "}"
   | Array_lit es ->
-      put env "[";
+      (* the array is a self-contained tagged tuple {'emo_array', Inner}:
+         the inner tuple answers element/2 in constant time, where the
+         old Erlang list answered lists:nth with a walk per read (the
+         19-minute deflate on beam, CHECK.md). Immutable terms cross a
+         process boundary by reference, so the tag rides the payload —
+         no per-process key, no re-registration at the send. *)
+      put env "{'emo_array', {";
       List.iteri
         (fun i e ->
           if i > 0 then put env ", ";
           expr env e)
         es;
-      put env "]"
+      put env "}}"
   | Map_lit pairs ->
       (* the pairs lower as Erlang 2-tuples in the literal's order —
          the insertion order emo_map_new records *)
@@ -441,10 +447,12 @@ let rec expr env (x : Emo_ir.expr) : unit =
         pairs;
       put env "])"
   | Index (b, i) -> (
-      (* a tuple is an Erlang tuple and answers element/2; a list (an
-         array literal) is 1-based and answers lists:nth; a value whose
-         static type is dynamic — an element of an array that started
-         out as a bare `[]` — asks the runtime which it is *)
+      (* a tuple is an Erlang tuple and answers element/2; an array is
+         the {'emo_array', Inner} tag and answers element/2 on the
+         inner tuple — one constant-time read where the old list
+         answered lists:nth with a walk per read; a value whose static
+         type is dynamic — an element of an array that started out as
+         a bare `[]` — asks the runtime which it is *)
       match b.Emo_ir.ety with
       | Emo_check.TupleType _ ->
           put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
@@ -453,11 +461,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env b;
           put env ")"
       | Emo_check.ArrayType _ ->
-          put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
+          put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
           expr env i;
-          put env "), ";
+          put env "), call 'erlang':'element'(2, ";
           expr env b;
-          put env ")"
+          put env "))"
       | _ ->
           put env "apply 'emo_index'/2 (";
           expr env b;
@@ -836,6 +844,10 @@ and builtin_method_call env self_ name args =
            "  <{'emo_builder', _k}> when 'true' ->\n\
            \    apply 'emo_builder_len'/1 (%s)\n"
            recv);
+      put env
+        (Printf.sprintf
+           "  <{'emo_array', _t}> when 'true' ->\n\
+           \    call 'erlang':'tuple_size'(_t)\n");
       put env
         "  <_str> when call 'erlang':'is_binary'(_str) ->\n\
         \    call 'erlang':'byte_size'(_str)\n";
@@ -2212,6 +2224,8 @@ let rt_source =
 	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
 	  <{'emo_map', _k}> when 'true' ->
 	      apply 'emo_map_str'/1 ({'emo_map', _k})
+	  <{'emo_array', _t}> when 'true' ->
+	      apply 'emo_array_to_str'/1 ({'emo_array', _t})
 	  <{'emo_enum', _n, _m}> when 'true' ->
 	      call 'erlang':'atom_to_binary'(_m, 'utf8')
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
@@ -2651,13 +2665,22 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_other, _other)
 	end
 
-%% A dynamic value indexed with [k]: a tuple answers element/2, a list
-%%   (an array) is 1-based and answers lists:nth.
+%% A dynamic value indexed with [k]: the {'emo_array', Inner} tag
+%%   answers element/2 on the inner tuple, a plain tuple answers
+%%   element/2, and a bare list (no array has worn one since the
+%%   tagged form) stays as the last arm's honest fallback.
 'emo_index'/2 =
     fun (_b, _i) ->
-	case call 'erlang':'is_tuple'(_b) of
-	  <'true'> when 'true' -> call 'erlang':'element'(call 'erlang':'+'(1, _i), _b)
-	  <'false'> when 'true' -> call 'lists':'nth'(call 'erlang':'+'(1, _i), _b)
+	case _b of
+	  <{'emo_array', _t}> when 'true' ->
+	      call 'erlang':'element'(call 'erlang':'+'(1, _i), _t)
+	  <_other> when 'true' ->
+	      case call 'erlang':'is_tuple'(_other) of
+		<'true'> when 'true' ->
+		    call 'erlang':'element'(call 'erlang':'+'(1, _i), _other)
+		<'false'> when 'true' ->
+		    call 'lists':'nth'(call 'erlang':'+'(1, _i), _other)
+	      end
 	end
 
 'emo_cmp'/2 =
@@ -2703,7 +2726,13 @@ let rt_source =
 	end
 
 'emo_array_append'/2 =
-    fun (_xs, _x) -> call 'lists':'append'(_xs, [_x])
+    fun (_xs, _x) ->
+	{'emo_array',
+	 call 'erlang':'list_to_tuple'
+	   (call 'lists':'append'
+	      (call 'erlang':'tuple_to_list'
+		 (call 'erlang':'element'(2, _xs)),
+	       [_x]))}
 
 
 %% ---- The Atomic cell ----
@@ -3212,7 +3241,9 @@ let rt_source =
 		({'emo_empty_sep',
 		  call 'erlang':'iolist_to_binary'([116, 104, 101, 32, 115, 101, 112, 97, 114, 97, 116, 111, 114, 32, 109, 117, 115, 116, 32, 110, 111, 116, 32, 98, 101, 32, 101, 109, 112, 116, 121])})
 	  <_other> when 'true' ->
-	      call 'binary':'split'(_s, _sep, ['global'])
+	      {'emo_array',
+	       call 'erlang':'list_to_tuple'
+		 (call 'binary':'split'(_s, _other, ['global']))}
 	end
 
 'emo_str_index_of'/2 =
@@ -3360,7 +3391,11 @@ let rt_source =
 'emo_list_new'/1 =
     fun (_arr) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, {_arr, []})
+	in do call 'erlang':'put'
+	 (_k,
+	  {call 'erlang':'tuple_to_list'
+	     (call 'erlang':'element'(2, _arr)),
+	   []})
 	   {'emo_list', _k}
 
 'emo_list_elems'/1 =
@@ -3547,9 +3582,13 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_builder', _other})
 	end
 
-%% to_array hands out a fresh list — a copy, so the builder stays free to
-%% grow without touching the array it already returned.
-'emo_builder_to_array'/1 = fun (_b) -> apply 'emo_builder_elems'/1 (_b)
+%% to_array hands out a fresh {'emo_array', Inner} tag over a fresh
+%%   inner tuple — a copy, so the builder stays free to grow without
+%%   touching the array it already returned.
+'emo_builder_to_array'/1 =
+    fun (_b) ->
+	{'emo_array',
+	 call 'erlang':'list_to_tuple'(apply 'emo_builder_elems'/1 (_b))}
 
 'emo_builder_to_str'/1 =
     fun (_b) ->
@@ -3602,7 +3641,10 @@ let rt_source =
 'emo_array_to_str'/1 =
     fun (_a) ->
 	call 'erlang':'iolist_to_binary'
-	    (apply 'emo_array_join'/2 (_a, 1))
+	    (apply 'emo_array_join'/2
+	       (call 'erlang':'tuple_to_list'
+		  (call 'erlang':'element'(2, _a)),
+		1))
 
 'emo_array_join'/2 =
     fun (_elems, _first) ->
@@ -3644,6 +3686,18 @@ let rt_source =
 'emo_eq'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_array', _ta}> when 'true' ->
+	      case _b of
+		<{'emo_array', _tb}> when 'true' ->
+		    case call 'erlang':'=='
+			    (call 'erlang':'tuple_size'(_ta),
+			     call 'erlang':'tuple_size'(_tb)) of
+		      <'true'> when 'true' ->
+			  apply 'emo_eq_tuple'/3 (_ta, _tb, 1)
+		      <'false'> when 'true' -> 'false'
+		    end
+		<_other> when 'true' -> 'false'
+	      end
 	  <{'emo_atomic', _ra}> when 'true' ->
 	      case _b of
 		<{'emo_atomic', _rb}> when 'true' ->
@@ -3868,7 +3922,8 @@ let rt_source =
 	case _m of
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' -> _order
+		<{_order, _pairs}> when 'true' ->
+		    {'emo_array', call 'erlang':'list_to_tuple'(_order)}
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_map', _other})
@@ -3880,7 +3935,9 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    apply 'emo_map_values_walk'/2 (_order, _pairs)
+		    {'emo_array',
+		     call 'erlang':'list_to_tuple'
+		       (apply 'emo_map_values_walk'/2 (_order, _pairs))}
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_map', _other})
@@ -4019,7 +4076,11 @@ let rt_source =
 
 'emo_printf'/2 =
     fun (_fmt, _args) ->
-	call 'io':'put_chars'(apply 'emo_printf_walk'/3 (call 'binary':'bin_to_list'(_fmt), _args, []))
+	call 'io':'put_chars'
+	  (apply 'emo_printf_walk'/3
+	     (call 'binary':'bin_to_list'(_fmt),
+	      call 'erlang':'tuple_to_list'(call 'erlang':'element'(2, _args)),
+	      []))
 
 'emo_printf_walk'/3 =
     fun (_b, _a, _acc) ->
